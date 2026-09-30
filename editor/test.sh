@@ -10,3 +10,4 @@ bun tests/parity.ts
 bun tests/styles.ts
 bun tests/input.ts
 bun tests/screenshots.ts
+bun tests/page.ts
