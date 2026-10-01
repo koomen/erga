@@ -9,7 +9,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 
 const keep = process.argv.includes("--keep");
-const only = process.argv.find((a) => a == "html" || a == "md" || a == "agent");
+const only = process.argv.find((a) => a == "html" || a == "md" || a == "agent" || a == "format" || a == "reload");
 mkdirSync(`${ROOT}editor/screenshots`, { recursive: true });
 
 let failures = 0;
@@ -78,7 +78,7 @@ async function htmlScenario(browser: Browser) {
   check("page rendered with units", (await s.count("[data-sw-id]")) >= 9);
   await p.eval(`${F}.body.style.background = "rgb(243, 236, 220)"`);
   await Bun.sleep(450);
-  check("the shell's canvas follows the page's background", await p.eval<string>(`getComputedStyle(document.documentElement).backgroundColor`) == "rgb(243, 236, 220)" && await p.eval<boolean>(`document.body.classList.contains("page-light")`));
+  check("the shell's canvas follows the page's background", await p.eval<string>(`getComputedStyle(document.documentElement).backgroundColor`) == "rgb(243, 236, 220)" && await p.eval<boolean>(`document.documentElement.classList.contains("page-light")`));
   await p.eval(`${F}.body.style.background = ""`);
   check("widget button is a plain button", await p.eval<boolean>(`!${F}.getElementById("bump").closest("[contenteditable]")`));
   check("units are the editing hosts", await p.eval<boolean>(`${F}.body.getAttribute("contenteditable") == null && ${F}.querySelector("h1").getAttribute("contenteditable") == "true"`));
@@ -210,6 +210,11 @@ async function htmlScenario(browser: Browser) {
   const stale = await fetch(`http://127.0.0.1:${s.port}/api/doc`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: "clobbered", version: 1 }) });
   check("a save from a stale version is refused", stale.status == 409 && !s.disk().includes("clobbered"));
 
+  // A change outside the text (a new diagram) can't be patched in: the page renders again on its own.
+  s.write(s.disk().replace("<h2>What changed</h2>", `<svg id="diagram" width="80" height="20"><rect width="80" height="20" fill="#c00"/></svg>\n    <h2>What changed</h2>`));
+  check("a diagram added on disk shows up without a reload", await (async () => { for (let i = 0; i < 40; i++) { if (await p.eval<boolean>(`!!${F}.getElementById("diagram")`)) return true; await Bun.sleep(50); } return false; })());
+  check("and the page still edits", (await s.count("[data-sw-id]")) >= 9);
+
   // Another file in the folder changes: the page renders again and picks it up.
   const css = join(s.dir, "style.css");
   writeFileSync(css, readFileSync(css, "utf8") + "\nh1 { letter-spacing: 3px; }\n");
@@ -292,8 +297,34 @@ async function mdScenario(browser: Browser) {
 
   await s.clickEnd("h1");
   await Bun.sleep(300);
+  await s.clickEnd("h1");
+  await p.key("Enter");
+  await p.type("### Sub");
+  await Bun.sleep(200);
+  check("'### ' in a Markdown file makes a real heading", /^### Sub$/m.test(await s.source()), JSON.stringify((await s.source()).match(/.*Sub.*/)?.[0]));
+  await p.key("z", MOD.Meta); await p.key("z", MOD.Meta); await p.key("z", MOD.Meta);
+  await Bun.sleep(150);
   await p.screenshot(`${ROOT}editor/screenshots/page-md.png`);
   check("no page errors", p.errors.length == 0, p.errors.join("\n"));
+  await s.close();
+}
+
+/** A reload paints the page's own background behind the agent from the first frame, not white. */
+async function backdropReloadScenario(browser: Browser) {
+  console.log("\nReload with a coloured page");
+  const s = await session(browser, "page", "index.html");
+  const { p } = s;
+  writeFileSync(join(s.dir, "style.css"), readFileSync(join(s.dir, "style.css"), "utf8") + "\nbody { background: rgb(243, 236, 220); }\n");
+  await waitFor(() => false, 900);
+  check("the canvas takes the page's colour", (await p.eval<string>(`getComputedStyle(document.documentElement).backgroundColor`)) == "rgb(243, 236, 220)");
+  await p.send("Page.reload", {});
+  // Sample as early as possible: before the page in the frame has loaded.
+  let first = "";
+  for (let i = 0; i < 100 && !first; i++) {
+    try { first = await p.eval<string>(`document.documentElement && document.getElementById("frame") ? getComputedStyle(document.documentElement).backgroundColor : ""`); } catch {}
+    if (!first) await Bun.sleep(5);
+  }
+  check("after a reload it's that colour from the start, not white", first == "rgb(243, 236, 220)", first);
   await s.close();
 }
 
@@ -313,6 +344,91 @@ async function agentOffScenario(browser: Browser) {
   await Bun.sleep(100);
   st = await state();
   check("typing and sending still explains instead of doing nothing", !st.hidden && /ANTHROPIC_API_KEY/.test(st.hint) && (await p.eval<string>(`document.getElementById("agent-input").value`)) == "hello");
+  await s.close();
+}
+
+/** Styling: the style bar, shortcuts across inline elements, Markdown as you type, and the view switcher. */
+async function formatScenario(browser: Browser) {
+  console.log("\nStyling and views");
+  const s = await session(browser, "page", "index.html");
+  const { p, F } = s;
+  // Select from inside <strong>new</strong> into the plain text after it.
+  const r = await p.eval<{ a: number; b: number; y: number }>(`(() => { const d = ${F}; const li = [...d.querySelectorAll("li")][1]; const st = li.querySelector("strong").firstChild, t = st.parentNode.nextSibling; const rg = d.createRange(); rg.setStart(st, 1); rg.setEnd(t, 4); const rs = rg.getClientRects(); const f = document.getElementById("frame").getBoundingClientRect(); return { a: f.left + rs[0].left + 1, b: f.left + rs[rs.length - 1].right - 1, y: f.top + rs[0].top + rs[0].height / 2 }; })()`);
+  await p.drag(r.a, r.y, r.b, r.y);
+  await Bun.sleep(250);
+  check("selecting text shows the style bar", await p.eval<boolean>(`!document.getElementById("fmt").hidden`));
+  await p.key("b", MOD.Meta);
+  await Bun.sleep(150);
+  check("⌘B across the end of a bold word bolds the rest, valid HTML", (await s.source()).includes("<li>A <strong>new</strong> <strong>edi</strong>tor</li>"), (await s.source()).match(/<li>A[\s\S]*?<\/li>/)?.[0]);
+  check("and the bar shows it as bold", (await p.eval<string>(`document.querySelector("#fmt [data-style=strong]").getAttribute("aria-pressed")`)) == "true");
+  await p.eval(`document.querySelector("#fmt [data-style=em]").click()`);
+  await Bun.sleep(150);
+  check("the bar's italic button works", /<em>/.test((await s.source()).match(/<li>A[\s\S]*?<\/li>/)?.[0] ?? ""));
+  await p.key("z", MOD.Meta); await p.key("z", MOD.Meta);
+  await Bun.sleep(150);
+
+  // Markdown as you type.
+  await s.clickEnd("h1");
+  await p.type(" **big** and *small* and `x` done");
+  await Bun.sleep(200);
+  check("typed Markdown becomes styling and the marks disappear", (await s.source()).includes("<h1>Launch notes <strong>big</strong> and <em>small</em> and <code>x</code> done</h1>"), (await s.source()).match(/<h1>.*<\/h1>/)?.[0]);
+  await p.type(" snake_case_name");
+  await Bun.sleep(100);
+  check("an underscore inside a word isn't a shortcut", (await s.source()).includes("snake_case_name</h1>"));
+
+  // Markdown at the start of a line: headings, lists, quotes.
+  await s.clickEnd("p.lede");
+  await p.key("Enter");
+  await p.type("## Sub");
+  await Bun.sleep(150);
+  check("'## ' at the start of a paragraph makes a heading", (await s.source()).includes("<h2>Sub</h2>"));
+  await p.key("Enter");
+  await Bun.sleep(100);
+  check("Enter at the end of a heading starts a well-formed paragraph", /<h2>Sub<\/h2>\s*<p><\/p>/.test(await s.source()), (await s.source()).match(/<h2>Sub[\s\S]{0,40}/)?.[0]);
+  await p.type("- item");
+  await Bun.sleep(150);
+  check("'- ' makes a list, and typing straight after lands in it", /<ul>\s*<li>item<\/li>\s*<\/ul>/.test(await s.source()), (await s.source()).match(/<h2>Sub[\s\S]{0,80}/)?.[0]);
+  await p.key("Enter"); await p.key("Enter");
+  await Bun.sleep(150);
+  check("Enter in an empty last item leaves the list", /<\/ul>\s*<p><\/p>/.test(await s.source()), (await s.source()).match(/<ul>\s*<li>item[\s\S]{0,60}/)?.[0]);
+  await p.type("> quoted");
+  await Bun.sleep(150);
+  check("'> ' makes a quote", /<blockquote>\s*<p>quoted<\/p>\s*<\/blockquote>/.test(await s.source()));
+  for (let i = 0; i < 2; i++) await p.key("z", MOD.Meta);
+  await Bun.sleep(150);
+  check("⌘Z brings back the literal marks", (await s.source()).includes("<p>&gt; </p>"));
+
+  // Styling a code block is refused, with a reason.
+  const pre = await s.rectOf("pre", 0.2);
+  await p.click(pre.x, pre.y); await p.click(pre.x, pre.y, 2);
+  await Bun.sleep(100);
+  await p.key("b", MOD.Meta);
+  await Bun.sleep(100);
+  check("styling a code block says why it can't", /code block/.test(await p.eval<string>(`document.getElementById("toast").textContent`)));
+
+  // view_page's capture, done in this tab: the page as it is now, or one element, with script errors.
+  const shot = await p.eval<{ png: number; width: number; height: number; errors: string[]; error?: string }>(`scratchPage.captureView({}).then((r) => ({ ...r, png: (r.png || "").length }))`);
+  check("the page can be captured in the browser for the agent", shot.png > 1000 && shot.width > 300 && shot.height > 300 && !shot.error, JSON.stringify(shot));
+  const fig = await p.eval<{ png: number; width: number; error?: string }>(`scratchPage.captureView({ selector: "figure" }).then((r) => ({ ...r, png: (r.png || "").length }))`);
+  check("and so can one element", fig.png > 200 && fig.width > 100 && fig.width < 900 && !fig.error, JSON.stringify(fig));
+  const none = await p.eval<{ error?: string }>(`scratchPage.captureView({ selector: "#nope" })`);
+  check("a selector that matches nothing says so", /Nothing on the page matches #nope/.test(none.error ?? ""));
+
+  // The view switcher.
+  await p.eval(`document.querySelector("#mode [data-mode=text]").click()`);
+  await Bun.sleep(100);
+  check("clicking the view button shows all three views", await p.eval<boolean>(`document.getElementById("mode").classList.contains("open")`));
+  await p.eval(`document.querySelector("#mode [data-mode=md]").click()`);
+  await Bun.sleep(300);
+  check("the Markdown view is as wide as the page's text column", await p.eval<boolean>(`(() => { const c = document.querySelector("#source .cm-content").getBoundingClientRect().width; const h = document.getElementById("frame").contentDocument.querySelector("h1").getBoundingClientRect().width; return Math.abs(c - h) < 4; })()`));
+  check("an HTML file's Markdown view is read-only and says so", (await p.eval<string>(`document.querySelector("#source .cm-content").getAttribute("contenteditable")`)) == "false" && !(await p.eval<boolean>(`document.getElementById("mode-note").hidden`)) && (await p.eval<string>(`document.querySelector("#source .cm-content").textContent`)).includes("# Launch notes"));
+  await p.eval(`document.querySelector("#mode [aria-checked=true]").click()`); await Bun.sleep(100);
+  await p.eval(`document.querySelector("#mode [data-mode=html]").click()`); await Bun.sleep(300);
+  check("the HTML view is code: smaller monospace, lines not wrapped", await p.eval<boolean>(`(() => { const c = document.querySelector("#source .cm-content"); return getComputedStyle(c).fontSize == "13px" && !c.classList.contains("cm-lineWrapping"); })()`));
+  check("its HTML view is the file, editable", (await p.eval<string>(`document.querySelector("#source .cm-content").getAttribute("contenteditable")`)) == "true" && (await p.eval<boolean>(`document.getElementById("mode-note").hidden`)));
+  await p.key("Escape"); await Bun.sleep(300);
+  check("Esc goes back to the page", !(await p.eval<boolean>(`document.body.classList.contains("source")`)));
+  check("no page errors", p.errors.length == 0, p.errors.join("\n"));
   await s.close();
 }
 
@@ -343,6 +459,30 @@ async function agentEmptyScenario(browser: Browser) {
   await Bun.sleep(50);
   check("typing enables it and clears the hint", await p.eval<boolean>(`document.getElementById("agent-send").getAttribute("aria-disabled") == "false" && document.getElementById("agent-hint").hidden`));
 
+  // A re-render (here, a stylesheet changing) doesn't pull focus out of the agent's input.
+  await p.eval(`document.getElementById("agent-input").focus()`);
+  writeFileSync(join(s.dir, "style.css"), readFileSync(join(s.dir, "style.css"), "utf8") + "\nh1 { color: rgb(1, 2, 3); }\n");
+  await waitFor(() => false, 900);
+  check("a page re-render leaves focus in the agent's input", (await p.eval<string>(`getComputedStyle(document.getElementById("frame").contentDocument.querySelector("h1")).color`)) == "rgb(1, 2, 3)" && (await p.eval<string>(`document.activeElement.id`)) == "agent-input");
+
+  // The box grows with its text, and the height eases rather than snapping.
+  const grow = await p.eval<number[]>(`new Promise((res) => { const f = document.getElementById("agent-field"), t = document.getElementById("agent-input"); const out = [f.getBoundingClientRect().height]; t.value += "\\ntwo\\nthree"; t.dispatchEvent(new Event("input")); let n = 0; const tick = () => { out.push(f.getBoundingClientRect().height); if (++n < 20) requestAnimationFrame(tick); else res(out); }; requestAnimationFrame(tick); })`);
+  const [h0, hEnd] = [grow[0], grow[grow.length - 1]];
+  check("the agent box grows with its text, easing through the heights between", hEnd > h0 + 30 && grow.some((h) => h > h0 + 2 && h < hEnd - 2), grow.map(Math.round).join(" "));
+  await p.eval(`(() => { const t = document.getElementById("agent-input"); t.value = t.value.split("\\n")[0]; t.dispatchEvent(new Event("input")); })()`);
+
+  // An unsent message survives a reload.
+  await p.eval(`document.getElementById("agent-input").focus()`);
+  await p.type("half a thought");
+  await p.eval(`location.reload()`);
+  await Bun.sleep(700);
+  check("an unsent message in the agent box survives a reload", (await p.eval<string>(`document.getElementById("agent-input").value`)).endsWith("half a thought"), await p.eval<string>(`document.getElementById("agent-input").value`));
+  await p.eval(`(() => { const i = document.getElementById("agent-input"); i.value = ""; i.dispatchEvent(new Event("input")); })()`);
+  await p.eval(`location.reload()`);
+  await Bun.sleep(700);
+  check("and a cleared box stays cleared", (await p.eval<string>(`document.getElementById("agent-input").value`)) == "");
+  await p.eval(`document.getElementById("agent-input").focus()`);
+
   // The pane's open or closed state survives a reload.
   const paneOpen = () => p.eval<boolean>(`document.body.classList.contains("agent-open") && !document.getElementById("agent").inert`);
   await p.eval(`location.reload()`);
@@ -361,7 +501,9 @@ const browser = await Browser.launch();
 try {
   if (!only || only == "html") await htmlScenario(browser);
   if (!only || only == "md") { await mdScenario(browser); await lightOnlyScenario(browser); }
+  if (!only || only == "format") await formatScenario(browser);
   if (!only || only == "agent") { await agentOffScenario(browser); await agentEmptyScenario(browser); }
+  if (!only || only == "reload") await backdropReloadScenario(browser);
 } finally {
   if (!keep) browser.close();
 }

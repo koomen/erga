@@ -12,9 +12,11 @@
 //   SCRATCHWORK_AGENT_EFFORT   low | medium (default) | high | xhigh | max
 
 import type { Model } from "@mariozechner/pi-ai";
+import { Type } from "typebox";
 import {
   AuthStorage,
   createAgentSession,
+  defineTool,
   DefaultResourceLoader,
   ModelRegistry,
   SessionManager,
@@ -23,6 +25,7 @@ import {
   type AgentSessionEvent,
 } from "@mariozechner/pi-coding-agent";
 import { emptyLog, reduce, type Log, type LogEvent } from "./src/page/agent-log";
+import type { ViewRequest, ViewResult } from "./src/page/agent-log";
 
 export interface AgentConfig {
   apiKey: string;
@@ -105,6 +108,13 @@ working directory is the folder that holds it; every file in it is part of the p
   copied from it won't match), and keep edits scoped to what was asked.
 - Messages may begin with an <editor> block saying where the user's caret or selection
   is. "This", "here" and "the selection" refer to it.
+- Edits to the text show up in the page as you make them. Changes to anything else
+  (the page's structure, scripts, styles, other files) show up when you finish your
+  turn.
+- view_page shows you the page as the user sees it (a screenshot, plus any script
+  errors). Use it to check visual work, like a diagram, layout or styling, before you
+  say it's done. It renders your latest changes, including ones the user's page
+  won't show until your turn ends. Pass a CSS selector to look closely at one element.
 - Keep replies short: say what you changed, not how. The user can see the result.
 `.trim();
 
@@ -119,13 +129,31 @@ export interface Agent {
   subscribe(listener: (ev: LogEvent) => void): () => void;
 }
 
-export async function startAgent(opts: { cfg: AgentConfig; cwd: string; docName: string; kind: "html" | "md" }): Promise<Agent> {
+export async function startAgent(opts: { cfg: AgentConfig; cwd: string; docName: string; kind: "html" | "md"; view: (req: ViewRequest) => Promise<ViewResult> }): Promise<Agent> {
   const { cfg, cwd } = opts;
   const authStorage = AuthStorage.inMemory();
   authStorage.setRuntimeApiKey("anthropic", cfg.apiKey);
   const modelRegistry = ModelRegistry.inMemory(authStorage);
   const settingsManager = SettingsManager.inMemory();
   const patch = patchPayload(cfg);
+  const viewPage = defineTool({
+    name: "view_page",
+    label: "Look at the page",
+    description: "See the page as the user sees it: a picture of the latest version rendered in the user's browser, plus any JavaScript errors it threw. By default one screenful from the top; full_page for the whole page (up to 4000px tall); selector for one element.",
+    parameters: Type.Object({
+      selector: Type.Optional(Type.String({ description: "CSS selector of an element to capture, e.g. \"#chart\" or \"figure:nth-of-type(2)\"." })),
+      full_page: Type.Optional(Type.Boolean({ description: "Capture the whole page rather than the first screenful." })),
+      width: Type.Optional(Type.Number({ description: "Width to render at, in CSS pixels (default: as wide as the user's page)." })),
+    }),
+    execute: async (_id, params) => {
+      const v = await opts.view({ selector: params.selector, fullPage: params.full_page, width: params.width });
+      if (v.error || !v.png) throw new Error(v.error ?? "The page couldn't be captured.");
+      const lines = [`Screenshot: ${v.width}×${v.height}px${params.selector ? ` of ${params.selector}` : params.full_page ? ", whole page" : ", top of the page"}.`];
+      if (v.note) lines.push(v.note);
+      lines.push(v.errors.length ? `The page threw ${v.errors.length} error(s):\n${v.errors.slice(0, 10).join("\n")}` : "No script errors.");
+      return { content: [{ type: "image" as const, data: v.png, mimeType: "image/png" }, { type: "text" as const, text: lines.join("\n") }], details: {} };
+    },
+  });
   const model = describeModel(cfg);
 
   const newSession = async (): Promise<AgentSession> => {
@@ -149,7 +177,8 @@ export async function startAgent(opts: { cfg: AgentConfig; cwd: string; docName:
       agentDir: cwd,
       model,
       thinkingLevel: "medium",
-      tools: ["read", "edit", "write", "ls", "find", "grep"],
+      tools: ["read", "edit", "write", "ls", "find", "grep", "view_page"],
+      customTools: [viewPage],
       authStorage,
       modelRegistry,
       settingsManager,
@@ -193,6 +222,7 @@ export async function startAgent(opts: { cfg: AgentConfig; cwd: string; docName:
           t: "tool", id: e.toolCallId, name: e.toolName, path: null,
           status: e.isError ? "error" : "done",
           detail: e.isError ? resultText(e.result).slice(0, 400) : undefined,
+          image: e.isError ? undefined : resultImage(e.result),
         });
         break;
       case "agent_start": emit({ t: "busy", busy: true }); break;
@@ -238,6 +268,13 @@ export async function startAgent(opts: { cfg: AgentConfig; cwd: string; docName:
 function toolPath(args: unknown): string | null {
   const a = args as { path?: unknown } | null;
   return typeof a?.path == "string" ? a.path : null;
+}
+
+/** A tool result's image (view_page's screenshot), as a data URL for the panel. */
+function resultImage(result: unknown): string | undefined {
+  const r = result as { content?: { type: string; data?: string; mimeType?: string }[] } | null;
+  const img = r?.content?.find((c) => c.type == "image" && c.data);
+  return img ? `data:${img.mimeType ?? "image/png"};base64,${img.data}` : undefined;
 }
 
 function resultText(result: unknown): string {

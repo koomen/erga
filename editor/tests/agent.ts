@@ -58,6 +58,7 @@ try {
   const t0 = Date.now();
   const done = await ask(`Change the first heading to "Notes from the field", and add a list item "Buy seeds" at the end of the first list.`);
   check("the agent finishes", done);
+  check("sending clears the saved draft", (await p.eval<string | null>(`localStorage.getItem("scratchwork-editor:agent-draft:v1")`)) == null);
   console.log(`     took ${((Date.now() - t0) / 1000).toFixed(1)}s`);
   const disk = readFileSync(file, "utf8");
   check("the edits are on disk", disk.includes("<h1>Notes from the field</h1>") && disk.includes("<li>Buy seeds</li>"), disk.slice(0, 300));
@@ -70,6 +71,13 @@ try {
   await ask(`Make the h1 color red (#c00) in style.css.`);
   check("the stylesheet edit is on disk", /#c00|red/i.test(readFileSync(join(dir, "style.css"), "utf8")));
   check("and reaches the page", await until(async () => (await p.eval<string>(`getComputedStyle(${F}.querySelector("h1")).color`)) == "rgb(204, 0, 0)", 3000));
+
+  await ask(`Add a small inline SVG bar chart with id "chart" right after the first list. Plain SVG, no script. Then look at it on the page to check it renders.`);
+  check("a diagram from the agent appears without a manual refresh", await until(() => p.eval<boolean>(`!!${F}.getElementById("chart")`), 4000),
+    JSON.stringify({ disk: readFileSync(file, "utf8").includes('id="chart"'), stale: await p.eval(`scratchPage.page.stale`), pill: await p.eval(`document.getElementById("refresh-pill").hidden`), mode: await p.eval(`document.body.className`), tools: await p.eval(`[...document.querySelectorAll(".msg-tool")].map(e => e.textContent).join(" | ")`) }));
+  check("and the refresh pill is gone once it finishes", await p.eval<boolean>(`document.getElementById("refresh-pill").hidden`));
+  check("the agent looked at its work, and the panel shows what it saw", await p.eval<boolean>(`[...document.querySelectorAll(".msg-tool")].some((e) => /Looked at the page/.test(e.textContent) && e.querySelector("img.shot")?.naturalWidth > 0)`),
+    await p.eval<string>(`[...document.querySelectorAll(".msg-tool")].map((e) => e.textContent).join(" | ")`));
 
   const log = await (await fetch(`http://127.0.0.1:${port}/api/agent`)).json() as { log: { items: unknown[] } };
   check("the host keeps the transcript", log.log.items.length >= 4);

@@ -16,7 +16,7 @@
 // resort. IME composition is the one case where the browser edits the DOM
 // first; the text is read back into the model when it ends.
 
-import { EditorState, EditorSelection, Transaction, MapMode, findClusterBreak, type ChangeSet, type TransactionSpec } from "@codemirror/state";
+import { EditorState, EditorSelection, type SelectionRange, Transaction, MapMode, findClusterBreak, type ChangeSet, type TransactionSpec } from "@codemirror/state";
 import { undo, redo, isolateHistory } from "@codemirror/commands";
 import { insertNewlineContinueMarkup, deleteMarkupBackward } from "@codemirror/lang-markdown";
 import * as M from "./manuscript";
@@ -46,7 +46,15 @@ export interface PageEditorConfig {
   onKey?: (e: KeyboardEvent) => boolean;
   /** A pointer moved inside the page. */
   onPointer?: (e: MouseEvent) => void;
+  /** Something the user asked for couldn't be done; say why. */
+  onNotice?: (message: string) => void;
 }
+
+/** Inline styles the editor can apply to a selection. */
+export type InlineStyle = "strong" | "em" | "code";
+
+const STYLE_TAGS: Record<InlineStyle, string[]> = { strong: ["strong", "b"], em: ["em", "i"], code: ["code"] };
+const STYLE_MARKS: Record<InlineStyle, string> = { strong: "**", em: "*", code: "`" };
 
 interface Analysis { units: M.Unit[]; html: string }
 
@@ -152,6 +160,18 @@ function marksFor(changes: ChangeSet, oldUnits: M.Unit[], newUnits: M.Unit[], le
   return { marks, unmarked, first };
 }
 
+/**
+ * The source with every text block cut out and whitespace collapsed: what
+ * patching the text blocks can't update. Two versions of a document with the
+ * same skeleton differ only in their text, which the page can show in place.
+ */
+function skeleton(src: string, units: M.Unit[]): string {
+  let out = "", pos = 0;
+  for (const u of units) { out += src.slice(pos, u.from) + "\u0000"; pos = u.to; }
+  // Runs of blocks count as one, so adding a paragraph among paragraphs (which patching handles) isn't a change.
+  return (out + src.slice(pos)).replace(/\s+/g, " ").replace(/\u0000( ?\u0000)+/g, "\u0000");
+}
+
 /** The rendered text of [from, to) of the source, as the units hold it (markup contributes nothing). */
 function textIn(units: M.Unit[], from: number, to: number): string {
   let out = "";
@@ -199,6 +219,12 @@ export class PageEditor {
   private paintQueued = false;
   private diffQueued = false;
   private fadeTimer = 0;
+  /**
+   * Set when an edit from elsewhere changed something outside the text
+   * blocks (a diagram, a script, the page's structure) that patching can't
+   * show; the shell decides when to render again (see `stale`).
+   */
+  private staleSince: string | null = null;
   private revealPending: number | null = null;
 
   constructor(readonly config: PageEditorConfig) {
@@ -240,6 +266,9 @@ export class PageEditor {
     return `<head>${inject}</head>` + html;
   }
 
+  /** The whole page as it renders now, latest edits included (for view_page's capture). */
+  renderedHtml(): string { return this.analyze(this.state.doc.toString()).html; }
+
   /** The page's title: its <title>, else its first heading. */
   title(): string {
     const t = this.doc?.title?.trim();
@@ -252,6 +281,9 @@ export class PageEditor {
 
   /** Renders the whole page from the current source. */
   render(): void {
+    this.staleSince = null;
+    // A render must not take focus from elsewhere (the agent's input, say); it puts the caret back only if the page had it.
+    const hadFocus = this.hasFocus;
     const token = ++this.renderToken;
     this.rendering = true;
     this.unbind();
@@ -272,7 +304,7 @@ export class PageEditor {
       if (first && !M.unitAt(this.units, head)) {
         this.state = this.state.update({ selection: { anchor: M.textStart(first) }, annotations: noHistory() }).state;
       }
-      this.syncDOMSelection(true);
+      if (hadFocus) this.syncDOMSelection(true);
       this.notify({ docChanged: false, selectionSet: false, rendered: true });
       if (this.pendingFlash.length) { this.flash(this.pendingFlash); this.pendingFlash = []; }
       this.markObserver?.disconnect();
@@ -360,6 +392,21 @@ export class PageEditor {
       len -= l;
     }
     return u.runs.length ? u.runs[u.runs.length - 1].to : u.contentTo;
+  }
+
+  /**
+   * Whether two carets are the same spot on the page: only markup between
+   * them. The DOM can't put a caret after a closing tag at the end of a line
+   * (it lands inside the bold text instead), so when the model's caret is
+   * deliberately outside, as after a Markdown shortcut, the model's wins.
+   */
+  private sameSpot(a: SelectionRange, b: SelectionRange): boolean {
+    if (!a.empty || !b.empty || a.head == b.head) return false;
+    const from = Math.min(a.head, b.head), to = Math.max(a.head, b.head);
+    const u = M.unitAt(this.units, from);
+    if (!u || u != M.unitAt(this.units, to)) return false;
+    const between = this.state.doc.sliceString(from, to);
+    return !/\n|<br|<img/i.test(between) && textIn([u], from, to) == "";
   }
 
   /** A DOM point for a source position (side < 0 prefers the text before a boundary). */
@@ -499,6 +546,7 @@ export class PageEditor {
     if (!sel) return;
     const main = this.state.selection.main;
     if (sel.main.anchor == main.anchor && sel.main.head == main.head) return;
+    if (this.sameSpot(sel.main, main)) return;
     this.state = this.state.update({ selection: sel, userEvent: "select" }).state;
     this.notify({ docChanged: false, selectionSet: true, rendered: false });
   }
@@ -515,8 +563,9 @@ export class PageEditor {
     else if (key.startsWith("arrow")) handled = this.arrow(e);
     else if (mod && !e.altKey && key == "z") handled = e.shiftKey ? this.redo() : this.undo();
     else if (mod && !e.altKey && !e.shiftKey && key == "y" && !isMac) handled = this.redo();
-    else if (mod && !e.altKey && !e.shiftKey && key == "b") handled = this.toggleMark("strong");
-    else if (mod && !e.altKey && !e.shiftKey && key == "i") handled = this.toggleMark("em");
+    else if (mod && !e.altKey && !e.shiftKey && key == "b") handled = this.styleKey("strong");
+    else if (mod && !e.altKey && !e.shiftKey && key == "i") handled = this.styleKey("em");
+    else if (mod && !e.altKey && !e.shiftKey && key == "e") handled = this.styleKey("code");
     else if (mod && !e.altKey && !e.shiftKey && key == "a") handled = this.selectAll();
     if (handled) {
       e.preventDefault();
@@ -676,6 +725,7 @@ export class PageEditor {
     const fromDOM = this.readSelection();
     if (!fromDOM) return this.state.selection.main;
     const main = this.state.selection.main;
+    if (this.sameSpot(fromDOM.main, main)) return main;
     if (fromDOM.main.anchor != main.anchor || fromDOM.main.head != main.head) {
       this.state = this.state.update({ selection: fromDOM, userEvent: "select" }).state;
     }
@@ -723,8 +773,13 @@ export class PageEditor {
 
   insertText(text: string, range: { from: number; to: number } | null, userEvent = "input.type"): boolean {
     const sel = this.currentSelection();
+    // The browser's target range is a DOM caret; if it's the same spot as the model's, the model's wins (see sameSpot).
+    if (range && range.from == range.to && this.sameSpot(EditorSelection.cursor(range.from), sel)) range = null;
     const from = range ? range.from : sel.from, to = range ? range.to : sel.to;
-    return this.replaceRange(from, to, text, userEvent);
+    const done = this.replaceRange(from, to, text, userEvent);
+    if (done && userEvent == "input.type" && (text == "*" || text == "_" || text == "`")) this.inputRule(this.state.selection.main.head);
+    if (done && userEvent == "input.type" && text == " ") this.blockRule(this.state.selection.main.head);
+    return done;
   }
 
   /**
@@ -847,59 +902,271 @@ export class PageEditor {
       return true;
     }
     if (shift || !BLOCK_SPLIT.has(u.tag)) { insertAt("<br>", pos + 4); return true; }
+    // Enter in an empty last list item leaves the list: the item becomes a paragraph after it.
+    const list = u.node?.parent;
+    if (u.tag == "li" && list && (list.tag == "ul" || list.tag == "ol") && !/\S/.test(textIn([u], u.contentFrom, u.contentTo))
+      && !list.children.some((c) => c.kind == "element" && c.from > u.from)) {
+      const indent = M.lineIndent(src, list.from);
+      const before = src.slice(0, u.from).replace(/\s*$/, "").length;
+      const para = `\n${indent}<p></p>`;
+      this.dispatch({ changes: [{ from: before, to: u.to }, { from: list.to, insert: para }], selection: { anchor: before + (list.to - u.to) + para.length - 4 }, userEvent: "input", scrollIntoView: true });
+      return true;
+    }
     const stack = M.inlineStackAt(src, u, pos);
     const atEnd = pos >= M.textEnd(u);
     const openTag = HEADING.test(u.tag) && atEnd ? "<p>" : src.slice(u.openFrom, u.openTo);
     const newTag = HEADING.test(u.tag) && atEnd ? "p" : u.tag;
     const indent = M.lineIndent(src, u.openFrom);
-    const insert = M.closeTags(stack) + `</${u.tag}>\n${indent}` + openTag + (newTag == u.tag ? M.openTags(stack) : "");
+    if (newTag != u.tag) {
+      // The end of a heading: close it as it was written and start a new, empty paragraph.
+      const head = src.slice(pos, u.contentTo) + src.slice(u.contentTo, u.to) + `\n${indent}<${newTag}>`;
+      this.dispatch({ changes: { from: pos, to: u.to, insert: head + `</${newTag}>` }, selection: { anchor: pos + head.length }, userEvent: "input", scrollIntoView: true });
+      return true;
+    }
+    const insert = M.closeTags(stack) + `</${u.tag}>\n${indent}` + openTag + M.openTags(stack);
     insertAt(insert, pos + insert.length);
     return true;
   }
 
-  /** Bold / italic on the selection: wraps it in source, or unwraps it. */
-  toggleMark(mark: "strong" | "em"): boolean {
-    const sel = this.currentSelection();
-    if (sel.empty) return false;
-    const u = M.unitAt(this.units, sel.from);
-    if (!u || u != M.unitAt(this.units, sel.to) || !this.verify(u) || u.tag == "pre") return false;
-    const src = this.state.doc.toString();
-    const { from, to } = sel;
-    if (this.kind == "md") {
-      const m = mark == "strong" ? "**" : "*";
-      const n = m.length;
-      if (src.slice(from - n, from) == m && src.slice(to, to + n) == m) {
-        this.dispatch({ changes: [{ from: from - n, to: from }, { from: to, to: to + n }], selection: EditorSelection.single(from - n, to - n), userEvent: "input" });
-      } else {
-        this.dispatch({ changes: [{ from, insert: m }, { from: to, insert: m }], selection: EditorSelection.single(from + n, to + n), userEvent: "input" });
-      }
-      return true;
-    }
-    const tags = mark == "strong" ? ["strong", "b"] : ["em", "i"];
-    // Exactly wrapped: <strong>|text|</strong>
-    for (const t of tags) {
-      const open = `<${t}>`, close = `</${t}>`;
-      if (src.slice(from - open.length, from).toLowerCase() == open && src.slice(to, to + close.length).toLowerCase() == close) {
-        this.dispatch({ changes: [{ from: from - open.length, to: from }, { from: to, to: to + close.length }], selection: EditorSelection.single(from - open.length, to - open.length), userEvent: "input" });
-        return true;
-      }
-    }
-    // Inside an element of that kind covering the whole selection: remove its tags.
-    const stack = M.inlineStackAt(src, u, from);
-    const covering = stack.find((s) => tags.includes(s.tag));
-    if (covering && M.inlineStackAt(src, u, to).some((s) => s.tag == covering.tag)) {
-      const el = this.findInline(u, covering.tag, from);
-      if (el) {
-        const openLen = el.openTo - el.from, closeLen = el.to - el.closeFrom;
-        this.dispatch({ changes: [{ from: el.from, to: el.openTo }, { from: el.closeFrom, to: el.to }], selection: EditorSelection.single(from - openLen, to - openLen), userEvent: "input" });
-        void closeLen;
-        return true;
-      }
-    }
-    if (!M.balanced(src, from, to)) return false;
-    const open = `<${tags[0]}>`, close = `</${tags[0]}>`;
-    this.dispatch({ changes: [{ from, insert: open }, { from: to, insert: close }], selection: EditorSelection.single(from + open.length, to + open.length), userEvent: "input" });
+  /** A style shortcut: always handled, so the browser never applies its own; if it can't apply, say why. */
+  private styleKey(style: InlineStyle): boolean {
+    const why = this.toggleStyle(style);
+    if (why) this.config.onNotice?.(why);
     return true;
+  }
+
+  /**
+   * The selection as styleable stretches of text: one per text node it
+   * covers (trimmed of surrounding spaces), so a selection may cross inline
+   * elements and paragraphs. Or why it can't be styled.
+   */
+  private styleSegments(): { segments: { u: M.Unit; from: number; to: number }[]; why: string | null } {
+    const sel = this.currentSelection();
+    if (sel.empty) return { segments: [], why: "Select some text to style first." };
+    const segments: { u: M.Unit; from: number; to: number }[] = [];
+    let why: string | null = null;
+    for (const u of this.units) {
+      if (u.contentTo < sel.from || u.contentFrom > sel.to) continue;
+      if (u.tag == "pre") { why = "Text in a code block can't be styled."; continue; }
+      if (!this.verify(u)) { why = "That text is made by the page's script, so it can't be styled here."; continue; }
+      for (const r of u.runs) {
+        if (!r.editable) continue;
+        let a = M.runOffset(r, Math.max(sel.from, r.from)), b = M.runOffset(r, Math.min(sel.to, r.to));
+        while (a < b && /\s/.test(r.text[a])) a++;
+        while (b > a && /\s/.test(r.text[b - 1])) b--;
+        if (a < b) segments.push({ u, from: M.runPos(r, a), to: M.runPos(r, b) });
+      }
+    }
+    return { segments, why: segments.length ? null : why ?? "There's no text in the selection to style." };
+  }
+
+  /** The element of one of `tags` that contains [from, to) of a unit, innermost first. */
+  private enclosing(u: M.Unit, tags: string[], from: number, to: number): M.ElementNode | null {
+    let node = u.node, found: M.ElementNode | null = null;
+    while (node) {
+      let next: M.ElementNode | undefined;
+      for (const c of node.children) if (c.kind == "element" && !c.selfClosing && c.openTo <= from && to <= c.closeFrom) { next = c; break; }
+      if (!next) break;
+      if (tags.includes(next.tag)) found = next;
+      node = next;
+    }
+    return found;
+  }
+
+  /** Why the selection can't be styled, or null if it can (for the toolbar's disabled state). */
+  styleBlocker(): string | null { return this.styleSegments().why; }
+
+  /** Whether the whole selection already has the style (for the toolbar's pressed state). */
+  hasStyle(style: InlineStyle): boolean {
+    const { segments } = this.styleSegments();
+    if (!segments.length) return false;
+    const src = this.state.doc.toString();
+    if (this.kind == "md") {
+      const m = STYLE_MARKS[style];
+      return segments.every((g) => src.slice(g.from - m.length, g.from) == m && src.slice(g.to, g.to + m.length) == m && (style != "em" || (src[g.from - 2] != "*" && src[g.to + 1] != "*")));
+    }
+    return segments.every((g) => !!this.enclosing(g.u, STYLE_TAGS[style], g.from, g.to));
+  }
+
+  /**
+   * Bold, italic or code on the selection: removes the style if all of the
+   * selection has it, else adds it to every stretch of text in the selection.
+   * In HTML, removing it from part of an element splits the element. Returns
+   * null when done, or why it couldn't be done.
+   */
+  toggleStyle(style: InlineStyle): string | null {
+    const { segments, why } = this.styleSegments();
+    if (why) return why;
+    const src = this.state.doc.toString();
+    const sel = this.state.selection.main;
+    const changes: { from: number; to?: number; insert?: string }[] = [];
+    const remove = this.hasStyle(style);
+    if (this.kind == "md") {
+      const m = STYLE_MARKS[style];
+      for (const g of segments) {
+        if (remove) changes.push({ from: g.from - m.length, to: g.from }, { from: g.to, to: g.to + m.length });
+        else changes.push({ from: g.from, insert: m }, { from: g.to, insert: m });
+      }
+    } else if (remove) {
+      // Group the stretches by the element that styles them, then take each element off them.
+      const byEl = new Map<M.ElementNode, { from: number; to: number }>();
+      for (const g of segments) {
+        const el = this.enclosing(g.u, STYLE_TAGS[style], g.from, g.to)!;
+        const r = byEl.get(el);
+        byEl.set(el, r ? { from: Math.min(r.from, g.from), to: Math.max(r.to, g.to) } : { from: g.from, to: g.to });
+      }
+      for (const [el, r] of byEl) {
+        const open = src.slice(el.from, el.openTo), close = src.slice(el.closeFrom, el.to);
+        const atStart = !/\S/.test(src.slice(el.openTo, r.from)), atEnd = !/\S/.test(src.slice(r.to, el.closeFrom));
+        if (atStart && atEnd) changes.push({ from: el.from, to: el.openTo }, { from: el.closeFrom, to: el.to });
+        else if (atStart) changes.push({ from: el.from, to: el.openTo }, { from: r.to, insert: open });
+        else if (atEnd) changes.push({ from: r.from, insert: close }, { from: el.closeFrom, to: el.to });
+        else changes.push({ from: r.from, insert: close }, { from: r.to, insert: open });
+      }
+    } else {
+      // One wrapper when the selection is a single well-formed stretch with
+      // none of the style inside, else one per stretch that lacks it.
+      const tag = STYLE_TAGS[style][0];
+      const first = segments[0], last = segments[segments.length - 1];
+      const lacking = segments.filter((g) => !this.enclosing(g.u, STYLE_TAGS[style], g.from, g.to));
+      const inside = new RegExp(`<(${STYLE_TAGS[style].join("|")})[\\s>]`, "i");
+      if (first.u == last.u && lacking.length == segments.length && M.balanced(src, first.from, last.to) && !inside.test(src.slice(first.from, last.to))) {
+        changes.push({ from: first.from, insert: `<${tag}>` }, { from: last.to, insert: `</${tag}>` });
+      } else for (const g of lacking) changes.push({ from: g.from, insert: `<${tag}>` }, { from: g.to, insert: `</${tag}>` });
+    }
+    const set = this.state.changes(changes);
+    this.dispatch({ changes: set, selection: EditorSelection.single(set.mapPos(sel.from, 1), set.mapPos(sel.to, -1)), userEvent: "input.format" });
+    return null;
+  }
+
+  /** The link the selection is in, if any (for the toolbar). */
+  linkAt(): string | null {
+    const sel = this.state.selection.main;
+    const u = M.unitAt(this.units, sel.from);
+    if (!u) return null;
+    if (this.kind == "md") {
+      const src = this.state.doc.toString();
+      const m = /^\]\(([^)\s]*)\)/.exec(src.slice(sel.to));
+      return m && src[sel.from - 1] == "[" ? m[1] : null;
+    }
+    const el = this.enclosing(u, ["a"], sel.from, sel.to);
+    if (!el) return null;
+    return /href\s*=\s*"([^"]*)"|href\s*=\s*'([^']*)'/i.exec(this.state.doc.sliceString(el.from, el.openTo))?.slice(1).find((x) => x != null) ?? "";
+  }
+
+  /** Links the selection to a URL, or unlinks it when the URL is empty. Returns null when done, or why not. */
+  setLink(url: string): string | null {
+    const { segments, why } = this.styleSegments();
+    if (why) return why;
+    const first = segments[0], last = segments[segments.length - 1];
+    if (first.u != last.u) return "A link can't span paragraphs; select text within one.";
+    const src = this.state.doc.toString();
+    const sel = this.state.selection.main;
+    let changes: { from: number; to?: number; insert?: string }[];
+    if (this.kind == "md") {
+      const linked = src[first.from - 1] == "[" && /^\]\([^)]*\)/.exec(src.slice(last.to));
+      if (linked) changes = [{ from: first.from - 1, to: first.from }, { from: last.to, to: last.to + linked[0].length, insert: url ? `](${url})` : "" }];
+      else if (!url) return null;
+      else changes = [{ from: first.from, insert: "[" }, { from: last.to, insert: `](${url})` }];
+    } else {
+      const el = this.enclosing(first.u, ["a"], first.from, last.to);
+      const href = url.replace(/&/g, "&amp;").replace(/"/g, "&quot;");
+      if (el) {
+        const open = src.slice(el.from, el.openTo);
+        changes = url ? [{ from: el.from, to: el.openTo, insert: /href\s*=/i.test(open) ? open.replace(/href\s*=\s*("[^"]*"|'[^']*'|[^\s>]*)/i, `href="${href}"`) : `<a href="${href}">` }]
+          : [{ from: el.from, to: el.openTo }, { from: el.closeFrom, to: el.to }];
+      } else if (!url) return null;
+      else if (!M.balanced(src, first.from, last.to)) return "That selection crosses other styling; select text inside it, or around all of it.";
+      else changes = [{ from: first.from, insert: `<a href="${href}">` }, { from: last.to, insert: "</a>" }];
+    }
+    const set = this.state.changes(changes);
+    this.dispatch({ changes: set, selection: EditorSelection.single(set.mapPos(sel.from, 1), set.mapPos(sel.to, -1)), userEvent: "input.format" });
+    return null;
+  }
+
+  /** The selection's rectangle in the frame's coordinates, if there is a non-empty one in the page. */
+  selectionRect(): DOMRect | null {
+    const sel = this.doc?.getSelection();
+    if (!sel || sel.isCollapsed || !sel.rangeCount || this.state.selection.main.empty) return null;
+    const r = sel.getRangeAt(0).getBoundingClientRect();
+    return r.width || r.height ? r : null;
+  }
+
+  /**
+   * Markdown at the start of a paragraph: `# ` to `###### ` makes a heading
+   * (or changes a heading's level), `- ` / `* ` a bullet list, `1. ` a
+   * numbered list, `> ` a quote. In an HTML file the paragraph's element is
+   * replaced; in Markdown the marks become real. Its own undo step, like the
+   * inline shortcuts.
+   */
+  private blockRule(pos: number): void {
+    const u = M.unitAt(this.units, pos);
+    if (!u || !this.verify(u)) return;
+    const typed = textIn([u], u.contentFrom, pos).replace(/^\s+/, "");
+    const m = /^(#{1,6}|[-*+]|\d{1,9}[.)]|>) $/.exec(typed);
+    if (!m) return;
+    const mark = m[1];
+    const kind = mark[0] == "#" ? "heading" : mark == ">" ? "quote" : /\d/.test(mark) ? "ol" : "ul";
+    const heading = /^h[1-6]$/.test(u.tag);
+    if (u.tag != "p" && !(heading && kind == "heading")) return;
+    const src = this.state.doc.toString();
+    let change: { from: number; to: number; insert: string }, caret: number;
+    if (this.kind == "md") {
+      if (heading) return;
+      const insert = kind == "heading" ? mark + " " : kind == "ul" ? "- " : kind == "quote" ? "> " : mark + " ";
+      change = { from: u.contentFrom, to: pos, insert };
+      caret = u.contentFrom + insert.length;
+    } else {
+      const rest = src.slice(pos, u.contentTo);
+      const indent = M.lineIndent(src, u.from);
+      let open: string, close: string;
+      if (kind == "heading") { open = `<h${mark.length}>`; close = `</h${mark.length}>`; }
+      else if (kind == "quote") { open = `<blockquote>\n${indent}  <p>`; close = `</p>\n${indent}</blockquote>`; }
+      else {
+        const list = kind == "ol" ? "ol" : "ul";
+        const start = kind == "ol" && parseInt(mark) != 1 ? ` start="${parseInt(mark)}"` : "";
+        open = `<${list}${start}>\n${indent}  <li>`; close = `</li>\n${indent}</${list}>`;
+      }
+      change = { from: u.from, to: u.to, insert: open + rest + close };
+      caret = u.from + open.length;
+    }
+    this.dispatch({ changes: change, selection: { anchor: caret }, annotations: isolateHistory.of("full"), userEvent: "input.format", scrollIntoView: true });
+  }
+
+  /**
+   * Markdown as you type: closing `**bold**`, `*italic*`, `_italic_` or
+   * `` `code` `` turns the text into that style and the marks disappear
+   * (in Markdown source they become real marks; in HTML, tags). It is its own
+   * undo step, so ⌘Z brings back the literal characters.
+   */
+  private inputRule(pos: number): void {
+    const u = M.unitAt(this.units, pos);
+    if (!u || u.tag == "pre" || !this.verify(u)) return;
+    const i = M.runAt(u, pos, true);
+    if (i < 0 || !u.runs[i].editable) return;
+    const run = u.runs[i], before = run.text.slice(0, M.runOffset(run, pos));
+    const src = this.state.doc.toString();
+    if (this.kind == "html" && M.inlineStackAt(src, u, pos).some((t) => t.tag == "code")) return;
+    const rules: [RegExp, InlineStyle, number][] = [
+      [/(^|[^*\\])\*\*(?=\S)([^*]*?\S)\*\*$/, "strong", 2],
+      [/(^|[^_\\\p{L}\p{N}])__(?=\S)([^_]*?\S)__$/u, "strong", 2],
+      [/(^|[^`\\])`([^`]+)`$/, "code", 1],
+      [/(^|[^*\\])\*(?=[^\s*])([^*]*?[^\s*\\])\*$/, "em", 1],
+      [/(^|[^_\\\p{L}\p{N}])_(?=[^\s_])([^_]*?[^\s_\\])_$/u, "em", 1],
+    ];
+    for (const [re, style, n] of rules) {
+      const m = re.exec(before);
+      if (!m) continue;
+      const open = m.index + m[1].length;
+      const from = M.runPos(run, open);
+      const inner = src.slice(M.runPos(run, open + n), M.runPos(run, open + n + m[2].length));
+      const tag = STYLE_TAGS[style][0];
+      const insert = this.kind == "md"
+        ? (style == "code" ? `\`${m[2]}\`` : `${STYLE_MARKS[style]}${inner}${STYLE_MARKS[style]}`)
+        : `<${tag}>${inner}</${tag}>`;
+      this.dispatch({ changes: { from, to: pos, insert }, selection: { anchor: from + insert.length }, annotations: isolateHistory.of("full"), userEvent: "input.format" });
+      return;
+    }
   }
 
   private findInline(u: M.Unit, tag: string, pos: number): M.ElementNode | null {
@@ -951,6 +1218,7 @@ export class PageEditor {
     this.applyChanges(tr, oldUnits, oldSrc);
     if (this.hasFocus) this.syncDOMSelection(true);
     this.notify({ docChanged: true, selectionSet: false, rendered: false });
+    if (this.staleSince == null && skeleton(oldSrc, oldUnits) != skeleton(this.state.doc.toString(), this.units)) this.staleSince = oldSrc;
     const found = marksFor(changes, oldUnits, this.units, 0);
     this.revealPending = found.first;
     if (!this.tracking) {
@@ -964,6 +1232,9 @@ export class PageEditor {
   }
 
   get isTracking(): boolean { return !!this.tracking; }
+
+  /** Whether the page shows an older version of something outside the text blocks; render() fixes it. */
+  get stale(): boolean { return this.staleSince != null; }
 
   /**
    * Track changes: on, every change from now on (yours, the agent's) stays
@@ -1175,28 +1446,43 @@ export class PageEditor {
         this.updateEmpty();
         return;
       }
-      // HTML: patch matched units, create the new ones next to their siblings, drop the rest.
+      // HTML: patch matched units, build the new ones, drop the rest. A new
+      // unit is built with the largest new element around it (a paragraph
+      // turned into a list brings its <ul>), placed next to its nearest
+      // sibling already on the page.
       const els: (Element | undefined)[] = [];
       for (const u of newUnits) {
         const m = matched.get(u.id);
-        if (m) {
-          els[u.id] = m.el;
-          this.patchUnit(m.el, m.old, oldSrc, u, src);
-          continue;
-        }
+        if (m) { els[u.id] = m.el; this.patchUnit(m.el, m.old, oldSrc, u, src); }
+      }
+      const inserted: [number, number][] = [];
+      tr.changes.iterChangedRanges((_fa, _ta, fromB, toB) => inserted.push([fromB, toB]));
+      const isNew = (n: M.ElementNode) => inserted.some(([f, t]) => f <= n.from && n.to <= t);
+      const unitOfNode = new Map<M.ElementNode, M.Unit>();
+      for (const u of newUnits) if (u.node) unitOfNode.set(u.node, u);
+      for (const u of newUnits) {
+        if (els[u.id] || !u.node) continue;
+        let top = u.node;
+        if (isNew(top)) while (top.parent && top.parent.parent && isNew(top.parent)) top = top.parent;
+        const group = newUnits.filter((w) => !els[w.id] && w.from >= top.from && w.to <= top.to);
         const tpl = this.doc.createElement("template");
-        tpl.innerHTML = src.slice(u.from, u.to);
-        const el = tpl.content.firstElementChild;
-        if (!el) throw new Error("unit did not render");
-        el.setAttribute("data-sw-id", String(u.id));
-        this.prepareUnit(el);
-        const prev = newUnits[u.id - 1], next = newUnits[u.id + 1];
-        if (prev && els[u.id - 1] && prev.node?.parent == u.node?.parent) {
-          els[u.id - 1]!.after(el);
-        } else if (next && matched.get(next.id) && next.node?.parent == u.node?.parent) {
-          matched.get(next.id)!.el.before(el);
-        } else throw new Error("no place for the new unit");
-        els[u.id] = el;
+        tpl.innerHTML = M.stamp(src.slice(top.from, top.to), group.map((w) => ({ ...w, openTo: w.openTo - top.from })));
+        const root = tpl.content.firstElementChild;
+        if (!root) throw new Error("unit did not render");
+        for (const w of group) {
+          const el = root.matches(`[data-sw-id="${w.id}"]`) ? root : root.querySelector(`[data-sw-id="${w.id}"]`);
+          if (!el) throw new Error("unit did not render");
+          this.prepareUnit(el);
+          els[w.id] = el;
+        }
+        // Next to the nearest sibling that's a unit already on the page.
+        const sibs = (top.parent?.children ?? []).filter((c): c is M.ElementNode => c.kind == "element");
+        const i = sibs.indexOf(top);
+        const placedEl = (n: M.ElementNode | undefined) => { const w = n && unitOfNode.get(n); return w && els[w.id] && !group.includes(w) ? els[w.id] : undefined; };
+        let done = false;
+        for (let j = i - 1; j >= 0 && !done; j--) { const el = placedEl(sibs[j]); if (el) { el.after(root); done = true; } }
+        for (let j = i + 1; j < sibs.length && !done; j++) { const el = placedEl(sibs[j]); if (el) { el.before(root); done = true; } }
+        if (!done) throw new Error("no place for the new unit");
       }
       const keep = new Set(els);
       for (const el of oldEls) if (el && !keep.has(el)) el.remove();
@@ -1230,6 +1516,9 @@ export class PageEditor {
     }
     el.innerHTML = this.kind == "md" ? u.innerHtml ?? "" : src.slice(u.contentFrom, u.contentTo);
     this.prepareUnit(el);
+    // Same whitespace treatment as a text patch, so a trailing space stays visible (and holds the caret).
+    const nodes = this.textNodes(el);
+    if (nodes.length == u.runs.length) this.domTexts(u).forEach((t, i) => { if (nodes[i].nodeValue != t) nodes[i].nodeValue = t; });
     return true;
   }
 }

@@ -34,6 +34,7 @@ import * as Console from "effect/Console";
 import * as Chunk from "effect/Chunk";
 import * as Schedule from "effect/Schedule";
 import { loadConfig, startAgent, type Agent } from "./agent";
+import type { ViewRequest, ViewResult } from "./src/page/agent-log";
 
 const EDITOR_DIR = new URL(".", import.meta.url).pathname.replace(/\/$/, "");
 
@@ -45,6 +46,15 @@ interface Doc {
 }
 
 const SaveBody = Schema.Struct({ text: Schema.String, version: Schema.Number });
+const ViewBody = Schema.Struct({
+  id: Schema.String,
+  png: Schema.optional(Schema.String),
+  width: Schema.Number,
+  height: Schema.Number,
+  errors: Schema.Array(Schema.String),
+  note: Schema.optional(Schema.String),
+  error: Schema.optional(Schema.String),
+});
 const PromptBody = Schema.Struct({ text: Schema.String, context: Schema.optional(Schema.NullOr(Schema.String)) });
 
 const MIME: Record<string, string> = {
@@ -114,12 +124,26 @@ const program = Effect.gen(function* () {
   const encoder = new TextEncoder();
   const send = (msg: unknown) => PubSub.publish(changes, "data: " + JSON.stringify(msg) + "\n\n");
 
-  // The agent, if configured. Its events go to every open shell.
+  // The agent, if configured. Its events go to every open shell. To look at
+  // the page it asks the open shells: each renders the latest version and
+  // the first to answer wins (src/page/main.ts). With no shell open, there's
+  // nothing to look with, and the tool says so.
+  const shells = yield* Ref.make(0);
+  const views = new Map<string, (r: ViewResult) => void>();
+  const view = (req: ViewRequest): Promise<ViewResult> => {
+    if (Effect.runSync(Ref.get(shells)) == 0) return Promise.resolve({ width: 0, height: 0, errors: [], error: "Nobody has the editor open, so there's no browser to look at the page with." });
+    const id = crypto.randomUUID();
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => { views.delete(id); resolve({ width: 0, height: 0, errors: [], error: "The editor didn't send a picture back in time." }); }, 20_000);
+      views.set(id, (r) => { clearTimeout(timer); views.delete(id); resolve(r); });
+      Effect.runSync(send({ type: "view", id, req }));
+    });
+  };
   const cfg = yield* Effect.promise(() => loadConfig(process.env.SCRATCHWORK_AGENT_ENV_FILE || path.join(EDITOR_DIR, ".env")));
   let agent: Agent | null = null;
   let agentOff = "missing" in cfg ? cfg.missing : "";
   if (!("missing" in cfg)) {
-    const started = yield* Effect.tryPromise(() => startAgent({ cfg, cwd: doc.dir, docName: doc.name, kind: doc.kind })).pipe(Effect.either);
+    const started = yield* Effect.tryPromise(() => startAgent({ cfg, cwd: doc.dir, docName: doc.name, kind: doc.kind, view })).pipe(Effect.either);
     if (started._tag == "Right") {
       agent = started.right;
       agent.subscribe((ev) => Effect.runSync(send({ type: "agent", ev })));
@@ -200,8 +224,11 @@ const program = Effect.gen(function* () {
       return yield* HttpServerResponse.json(result, { status: result.ok ? 200 : 409 });
     })),
     HttpRouter.get("/api/events", Effect.gen(function* () {
+      // Counted, so view_page knows whether there's a shell to ask.
       const stream = Stream.make(encoder.encode(": connected\n\n")).pipe(
         Stream.concat(Stream.fromPubSub(changes).pipe(Stream.map((s) => encoder.encode(s)))),
+        Stream.onStart(Ref.update(shells, (n) => n + 1)),
+        Stream.ensuring(Ref.update(shells, (n) => n - 1)),
       );
       return HttpServerResponse.stream(stream, { headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache, no-transform", Connection: "keep-alive" } });
     })),
@@ -212,6 +239,12 @@ const program = Effect.gen(function* () {
       const body = yield* HttpServerRequest.schemaBodyJson(PromptBody);
       if (!agent) return yield* HttpServerResponse.json({ ok: false, reason: agentOff }, { status: 503 });
       agent.prompt(body.text, body.context ?? null);
+      return yield* HttpServerResponse.json({ ok: true });
+    })),
+    HttpRouter.post("/api/agent/view", Effect.gen(function* () {
+      const body = yield* HttpServerRequest.schemaBodyJson(ViewBody);
+      const { id, ...result } = body;
+      views.get(id)?.({ ...result, errors: [...result.errors] });
       return yield* HttpServerResponse.json({ ok: true });
     })),
     HttpRouter.post("/api/agent/abort", Effect.gen(function* () {

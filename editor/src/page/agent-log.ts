@@ -7,14 +7,14 @@ export type LogItem =
   | { kind: "user"; text: string }
   | { kind: "assistant"; text: string }
   | { kind: "thinking"; text: string }
-  | { kind: "tool"; id: string; name: string; path: string | null; status: "running" | "done" | "error"; detail?: string }
+  | { kind: "tool"; id: string; name: string; path: string | null; status: "running" | "done" | "error"; detail?: string; image?: string }
   | { kind: "error"; text: string };
 
 export type LogEvent =
   | { t: "user"; text: string }
   | { t: "text"; delta: string }
   | { t: "thinking"; delta: string }
-  | { t: "tool"; id: string; name: string; path: string | null; status: "running" | "done" | "error"; detail?: string }
+  | { t: "tool"; id: string; name: string; path: string | null; status: "running" | "done" | "error"; detail?: string; image?: string }
   | { t: "error"; text: string }
   | { t: "busy"; busy: boolean }
   | { t: "reset" };
@@ -39,7 +39,7 @@ export function reduce(log: Log, ev: LogEvent): number {
       return items.length - 1;
     case "tool": {
       const i = items.findIndex((x) => x.kind == "tool" && x.id == ev.id);
-      const item: LogItem = { kind: "tool", id: ev.id, name: ev.name, path: ev.path, status: ev.status, detail: ev.detail };
+      const item: LogItem = { kind: "tool", id: ev.id, name: ev.name, path: ev.path, status: ev.status, detail: ev.detail, image: ev.image };
       if (i >= 0) { items[i] = item; return i; }
       items.push(item);
       return items.length - 1;
@@ -48,4 +48,27 @@ export function reduce(log: Log, ev: LogEvent): number {
     case "busy": log.busy = ev.busy; return -1;
     case "reset": items.length = 0; log.busy = false; return -1;
   }
+}
+
+// ------------------------------------------------------------------ view_page
+
+/** The agent asks to see the page; an open editor tab renders and captures it. */
+export interface ViewRequest {
+  /** CSS selector of one element to capture. */
+  selector?: string;
+  /** The whole page rather than one screenful. */
+  fullPage?: boolean;
+  /** Width to render at, in CSS pixels (default: as wide as the user's page). */
+  width?: number;
+}
+
+/** What the tab sends back: a PNG (base64), or why it couldn't. */
+export interface ViewResult {
+  png?: string;
+  width: number;
+  height: number;
+  /** Errors the page's scripts threw while it rendered. */
+  errors: string[];
+  note?: string;
+  error?: string;
 }

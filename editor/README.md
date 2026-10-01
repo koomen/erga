@@ -28,8 +28,26 @@ file on disk 400ms after you stop typing; edits made on disk by anything else
 
 Click into any text and type. Enter makes a new paragraph or list item, Shift-Enter
 a line break, Backspace at the start of a paragraph joins it to the one above,
-⌘B and ⌘I toggle bold and italic, ⌘Z undoes, ⌘⇧P shows the source in a
-CodeMirror view (same document state, same undo history), ⌘-click opens a link.
+⌘Z undoes, ⌘-click opens a link.
+
+Selecting text brings up a small style bar (bold, italic, code, link); ⌘B, ⌘I,
+⌘E and ⌘K do the same. A selection may cross inline elements and paragraphs:
+each stretch of text gets the style, so the HTML stays well-formed, and taking
+a style off part of an element splits it. Markdown works as you type:
+closing `**bold**`, `*italic*`, `_italic_` or `` `code` `` turns the text into
+that style and the marks disappear (real marks in a Markdown file, tags in an
+HTML one); ⌘Z brings the literal characters back. At the start of a paragraph,
+`# ` to `###### ` makes a heading (or changes a heading's level), `- ` or `* `
+a bullet list, `1. ` a numbered list and `> ` a quote; Enter in an empty last
+list item leaves the list. Whatever can't be styled
+(a code block, text the page's script made) says why rather than doing nothing.
+
+The view button at the top right shows the current view; click it for all
+three: T (the page), *T* (Markdown) and <T> (HTML). The view in the file's own
+format is the file, editable in CodeMirror with the page's state and undo
+history (⌘⇧P toggles to it). The other is a read-only conversion, an HTML
+file's text as Markdown or the HTML a Markdown file renders to, because
+editing through a lossy conversion would rewrite the file; it says so.
 
 There's no dark mode: pages are shown as their authors made them, and most
 don't support one. The editor's own controls take their colours from the page
@@ -48,7 +66,14 @@ coding agent, embedded in the host (`agent.ts`), with read, edit, write, ls,
 find and grep tools rooted at the document's folder, so it can change the page
 and anything next to it (styles, scripts, other pages). There's no bash tool.
 Each message carries where your caret or selection is, so "tighten this
-paragraph" works. It defaults to Claude Opus 5.5 in fast mode at medium effort;
+paragraph" works. It can also see its work: `view_page` asks the editor tabs that are open for a
+picture, and the first to answer renders the latest version of the page in a
+hidden frame and draws it to a PNG in the browser (modern-screenshot, which
+renders the DOM through an SVG foreignObject, so fonts, CSS and SVG diagrams
+come out as the browser draws them), of one screenful, the whole page or one
+element by CSS selector, plus any errors the page's scripts threw. No browser
+runs on the server: whoever has the editor open is the agent's eyes, and with
+nobody there the tool says so. The panel shows a thumbnail of what it saw. It defaults to Claude Opus 5.5 in fast mode at medium effort;
 set that up with
 
     cp wip/editor/.env.example wip/editor/.env   # then add ANTHROPIC_API_KEY
@@ -77,8 +102,12 @@ clears the marks. If you have typed something that isn't saved yet, the
 incoming edit is mapped over your edits, so both are kept. Saves name the
 version they were based on, and the host refuses one that would overwrite a
 change it hasn't seen, so the shell merges and saves again. Agent edits are
-undoable, one step each. A change to any other file in the folder re-renders
-the page, keeping its scroll position. The conversation lives in the host, so
+undoable, one step each. A change patching can't show, to another file in the
+folder or to anything outside the text blocks (a diagram, a script, the page's
+structure), re-renders the page, keeping its scroll position and leaving focus
+where it is. While the agent is working that waits until its turn ends, so
+half-built changes never render; a pill at the top says a refresh
+is pending and offers to do it now. The conversation lives in the host, so
 a reload keeps it; + starts a new one.
 
 ### How it works
@@ -113,8 +142,8 @@ The design is the one in `notes/scratchwork-2.0-editing.html`:
 - **Markdown renders through CodeMirror's Lezer parser**, which gives every node
   a source position, so `**bold**` becomes `<strong>` whose text still maps to
   the characters between the marks. Enter and Backspace in lists and quotes use
-  CodeMirror's own Markdown commands. Typed Markdown syntax is escaped so it
-  stays literal; ⌘B writes the marks.
+  CodeMirror's own Markdown commands. A lone typed `*` or `_` is escaped so it
+  stays literal, until it closes a Markdown shortcut.
 
 `bun tests/agent.ts` asks the real agent for edits through the panel and checks
 they reach the disk and the open page without a reload (it calls the API, so
