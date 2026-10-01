@@ -3,10 +3,19 @@
 // The cookie holds the GitHub login and display name with an expiry, signed
 // with HMAC-SHA256 (SESSION_SECRET), so the Worker can trust it without a
 // session store. Only logins in ALLOWED_USERS may sign in.
+//
+// A signed-in person can also mint a test token (/tokens): it signs in
+// throwaway test people (Ada, Bo...) who can open only test documents
+// (ids starting "test"), so the test suite can run against erga.dev.
 
 import type { Env } from "./env";
 
-export interface Session { login: string; name: string }
+export interface Session {
+  login: string;
+  name: string;
+  /** A test person, signed in with a test token minted by `by`. */
+  test?: { by: string };
+}
 
 const COOKIE = "erga_session", STATE = "erga_oauth";
 const DAY = 24 * 60 * 60;
@@ -49,8 +58,10 @@ export async function sessionOf(env: Env, request: Request): Promise<Session | n
   if (!value) return null;
   try {
     const s = JSON.parse(new TextDecoder().decode(unb64(value))) as Session & { exp: number };
-    const ok = allowed(env, s.login) || isDev(env, new URL(request.url));
-    return s.exp > Date.now() / 1000 && ok ? { login: s.login, name: s.name } : null;
+    if (typeof s.login != "string" || !(s.exp > Date.now() / 1000)) return null;
+    // A test person's token was minted by someone allowed, who must still be.
+    if (s.test) return allowed(env, s.test.by) ? { login: s.login, name: s.name, test: { by: s.test.by } } : null;
+    return allowed(env, s.login) || isDev(env, new URL(request.url)) ? { login: s.login, name: s.name } : null;
   } catch { return null; }
 }
 
@@ -63,10 +74,10 @@ export const allowed = (env: Env, login: string) =>
 /** Only paths on this site: "/koomen/abc", never "//elsewhere" or a full URL. */
 export const safeNext = (next: string | null) => (next && next.startsWith("/") && !next.startsWith("//") ? next : "/");
 
-async function signIn(env: Env, request: Request, session: Session, next: string): Promise<Response> {
-  const value = b64(new TextEncoder().encode(JSON.stringify({ ...session, exp: Math.floor(Date.now() / 1000) + 30 * DAY })));
+async function signIn(env: Env, request: Request, session: Session, next: string, ttl = 30 * DAY): Promise<Response> {
+  const value = b64(new TextEncoder().encode(JSON.stringify({ ...session, exp: Math.floor(Date.now() / 1000) + ttl })));
   const headers = new Headers({ Location: next });
-  headers.append("Set-Cookie", cookie(request, COOKIE, await sign(env, value), 30 * DAY));
+  headers.append("Set-Cookie", cookie(request, COOKIE, await sign(env, value), ttl));
   headers.append("Set-Cookie", cookie(request, STATE, "", 0));
   return new Response(null, { status: 302, headers });
 }
@@ -117,6 +128,39 @@ export async function finishSignIn(env: Env, request: Request): Promise<Response
   if (!user.login) return page("Sign-in failed", "GitHub didn't say who you are. <a href=\"/\">Try again</a>.", 400);
   if (!allowed(env, user.login)) return page("Invite only", `Erga is invite-only for now, and <b>${escape(user.login)}</b> isn't on the list yet.`, 403);
   return signIn(env, request, { login: user.login, name: user.name?.trim().split(/\s+/)[0] || user.login }, safeNext(next ?? null));
+}
+
+// ------------------------------------------------------------ test tokens
+
+const TOKEN = "erga_test_", TOKEN_DAYS = 7;
+
+/** A test token for the test suite, minted by a signed-in (non-test) person; valid for a week. */
+export async function mintTestToken(env: Env, by: string): Promise<{ token: string; expires: Date }> {
+  const exp = Math.floor(Date.now() / 1000) + TOKEN_DAYS * DAY;
+  // Signed with a "test-token:" prefix, so a token can never pass for a session cookie or the other way round.
+  const payload = b64(new TextEncoder().encode(JSON.stringify({ by, exp })));
+  const signed = await sign(env, `test-token:${payload}`);
+  return { token: TOKEN + signed.slice("test-token:".length), expires: new Date(exp * 1000) };
+}
+
+async function readTestToken(env: Env, token: string): Promise<{ by: string; exp: number } | null> {
+  if (!token.startsWith(TOKEN)) return null;
+  const value = await unsign(env, `test-token:${token.slice(TOKEN.length)}`);
+  if (!value) return null;
+  try {
+    const t = JSON.parse(new TextDecoder().decode(unb64(value.slice("test-token:".length)))) as { by: string; exp: number };
+    return t.exp > Date.now() / 1000 && allowed(env, t.by) ? t : null;
+  } catch { return null; }
+}
+
+/** /auth/test?token=...&as=Ada: signs in a test person, for as long as the token lasts. */
+export async function testSignIn(env: Env, request: Request): Promise<Response> {
+  const url = new URL(request.url);
+  const t = await readTestToken(env, url.searchParams.get("token") ?? "");
+  if (!t) return new Response("Unknown or expired test token", { status: 401 });
+  const name = (url.searchParams.get("as") ?? "Tester").trim().slice(0, 40) || "Tester";
+  const login = "test-" + (name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "tester");
+  return signIn(env, request, { login, name, test: { by: t.by } }, safeNext(url.searchParams.get("next")), t.exp - Math.floor(Date.now() / 1000));
 }
 
 /** /auth/logout */

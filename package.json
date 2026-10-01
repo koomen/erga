@@ -10,7 +10,8 @@
     "typecheck": "tsc -p . && tsc -p worker",
     "site": "./site.sh",
     "dev:worker": "./site.sh && vite dev",
-    "deploy": "./site.sh && cf deploy"
+    "deploy": "./site.sh && cf deploy",
+    "test:prod": "bun tests/suite/prod.ts"
   },
   "dependencies": {
     "@codemirror/commands": "6.11.1",

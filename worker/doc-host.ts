@@ -18,6 +18,7 @@ import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Redacted from "effect/Redacted";
 import * as Scope from "effect/Scope";
 import { HttpRouter } from "effect/http";
 import * as Etag from "effect/http/Etag";
@@ -27,8 +28,8 @@ import { makeHost } from "../host";
 import { FileStore, Room, StateStore, StoreError } from "../room";
 import type { Env } from "./env";
 
-/** What a document is: who made it and which file is its page. */
-interface Meta { owner: string; index: string; created: number }
+/** What a document is: who made it, which file is its page, and whether it's a test document. */
+interface Meta { owner: string; index: string; created: number; test?: boolean }
 
 interface Person { id: string; name: string }
 
@@ -47,11 +48,11 @@ export class DocHost extends DurableObject<Env> {
   private open: Promise<Opened | null> | null = null;
 
   /** Creates the document from a template's files; false if it already exists. */
-  async create(owner: string, files: Record<string, string>, index: string): Promise<boolean> {
+  async create(owner: string, files: Record<string, string>, index: string, opts: { test?: boolean } = {}): Promise<boolean> {
     if (await this.ctx.storage.get<Meta>(META)) return false;
     const encoder = new TextEncoder();
     for (const [path, text] of Object.entries(files)) await this.ctx.storage.put(FILE + path, encoder.encode(text));
-    await this.ctx.storage.put(META, { owner, index, created: Date.now() } satisfies Meta);
+    await this.ctx.storage.put(META, { owner, index, created: Date.now(), ...(opts.test ? { test: true } : {}) } satisfies Meta);
     return true;
   }
 
@@ -96,7 +97,10 @@ export class DocHost extends DurableObject<Env> {
       Effect.provideService(StateStore, state),
       Scope.provide(scope),
     ));
-    const agent = await Effect.runPromise(agentConfigFrom(ConfigProvider.fromUnknown(this.env)));
+    // A test document's agent is the scripted one (agent.ts): free, and the same every run.
+    const agent = meta.test
+      ? { apiKey: Redacted.make(""), model: "script" as const, effort: "medium" }
+      : await Effect.runPromise(agentConfigFrom(ConfigProvider.fromUnknown(this.env)));
     const host = makeHost({
       room, files, agent,
       doc: { name: meta.index, path: meta.index, kind: meta.index.endsWith(".md") ? "md" : "html", dir: meta.owner },
@@ -104,7 +108,7 @@ export class DocHost extends DurableObject<Env> {
       baseUrl: (req) => req.headers["x-erga-base"] ?? "",
       signedIn: true,
       // People's ids are their GitHub logins, so GitHub serves their pictures.
-      avatarOf: (person) => `${AVATARS}/${encodeURIComponent(person.id)}?s=64`,
+      avatarOf: (person) => (person.id.startsWith("test-") ? undefined : `${AVATARS}/${encodeURIComponent(person.id)}?s=64`),
     });
     const { handler } = HttpRouter.toWebHandler(host.app.pipe(Layer.provide(platform)), { disableLogger: true });
 

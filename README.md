@@ -48,6 +48,14 @@ string) and `ANTHROPIC_API_KEY`. Locally they come from `.dev.vars`, where
 `ERGA_AGENT_MODEL=script` swaps in the scripted agent. The multiplayer suite
 runs against it unchanged: see `tests/suite/README.md` for the remote target.
 
+To run it against erga.dev itself, get a test token from
+https://erga.dev/tokens (it lasts a week) and:
+
+    ERGA_TEST_TOKEN=erga_test_... bun run test:prod
+
+The token signs in test people (Ada, Bo, ...) who can open only test documents
+(`/<you>/test....`), where the scripted agent stands in for the model.
+
 ## Page editor
 
 The host (`open.ts`, Effect on Bun) serves the editor at `http://127.0.0.1:4400/`
