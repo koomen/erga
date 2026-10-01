@@ -23,6 +23,7 @@
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
+import { HttpApiBuilder, HttpApiMiddleware } from "effect/http-api";
 import { Argument, Command, Flag } from "effect/cli";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { Socket } from "effect/socket";
@@ -36,9 +37,11 @@ import * as Stream from "effect/Stream";
 import * as Config from "effect/Config";
 import * as Console from "effect/Console";
 import * as Option from "effect/Option";
+import * as Redacted from "effect/Redacted";
 import * as Schedule from "effect/Schedule";
 import { MODELS, externalGuide, isModelChoice, loadConfig, startSession, type AgentSession } from "./agent";
 import { FileStore, Room, StateStore, StoreError, digest } from "./room";
+import { AgentOff, Api, BadRequest, ExplainBadRequests, ModelFixed, NoSuchModel, NoSuchTool, Person, PersonFromQuery, SessionFailed, ShareToken, ToolFailed, Unauthorized, type AgentState, type ModelState } from "./api";
 import type { ViewRequest, ViewResult } from "./src/page/agent-log";
 import { version } from "./package.json";
 
@@ -54,19 +57,6 @@ interface Doc {
   readonly name: string;
   readonly kind: "html" | "md";
 }
-
-const ViewBody = Schema.Struct({
-  id: Schema.String,
-  png: Schema.optional(Schema.String),
-  width: Schema.Number,
-  height: Schema.Number,
-  errors: Schema.Array(Schema.String),
-  note: Schema.optional(Schema.String),
-  error: Schema.optional(Schema.String),
-});
-const ModelBody = Schema.Struct({ model: Schema.String });
-const ShareBody = Schema.Struct({ rotate: Schema.optional(Schema.Boolean) });
-const PromptBody = Schema.Struct({ text: Schema.String, context: Schema.optional(Schema.NullOr(Schema.String)), after: Schema.optional(Schema.String) });
 
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8", ".htm": "text/html; charset=utf-8", ".md": "text/markdown; charset=utf-8",
@@ -224,7 +214,14 @@ const program = (args: { target: string; port: number; open: boolean }) => Effec
     }
     return s;
   };
-  const session = (user: { id: string; name: string }) => Effect.tryPromise(() => sessionFor(user)).pipe(Effect.result);
+  /** The person's agent session, or why it didn't start. */
+  const session = (user: { id: string; name: string }) => Effect.tryPromise(() => sessionFor(user));
+  /** For the panel's endpoints: their session, unless the embedded agent is off. */
+  const agentSession = Person.use((user) => agentOff
+    ? Effect.fail(new AgentOff({ ok: false, reason: agentOff }))
+    : Effect.mapError(session(user), () => new AgentOff({ ok: false, reason: "the agent did not start" })));
+  /** For an external agent: the session's tools work even with the embedded agent off. */
+  const extSession = Person.use((user) => Effect.mapError(session(user), () => new SessionFailed({ ok: false, error: "The agent's session didn't start." })));
 
   // Sharing with an external agent: the share button mints a token that
   // stands for one person, and an agent holding it calls that person's
@@ -242,13 +239,6 @@ const program = (args: { target: string; port: number; open: boolean }) => Effec
     tokenOf.set(user.id, token);
     return token;
   };
-  /** The person an external agent's request acts for, from its bearer token. */
-  const bearer = HttpServerRequest.HttpServerRequest.useSync((r) => {
-    const m = /^Bearer\s+(\S+)$/i.exec(r.headers["authorization"] ?? "");
-    return m ? shareTokens.get(m[1]) ?? null : null;
-  });
-  const unauthorized = HttpServerResponse.jsonUnsafe({ ok: false, error: "Missing or unknown token: send the one you were given as \"Authorization: Bearer <token>\". Ask for a new prompt if it stopped working (the editor may have restarted)." }, { status: 401 });
-  const baseUrl = HttpServerRequest.HttpServerRequest.useSync((r) => `http://${r.headers["host"] ?? `127.0.0.1:${port}`}`);
 
   // Watch the folder, subfolders included, and hand every change to the
   // room: it merges text edits it didn't make and notes changed assets.
@@ -271,19 +261,89 @@ const program = (args: { target: string; port: number; open: boolean }) => Effec
     return { id: name.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-|-$/g, "") || "anon", name };
   };
   const requestUrl = HttpServerRequest.HttpServerRequest.useSync((r) => new URL(r.url, "http://localhost"));
-  /** The session's model, and what it can switch to (nothing when scripted). */
-  const modelState = (s: AgentSession) => ({
+  const modelState = (s: AgentSession): ModelState => ({
     model: s.model,
     choice: s.modelChoice,
     models: s.modelChoice == null ? [] : Object.entries(MODELS).map(([id, m]) => ({ id, label: m.label })),
   });
-  const agentState = (s: AgentSession | null, err?: unknown) => s
-    ? (agentOff ? { enabled: false, reason: agentOff, log: s.log() } : { enabled: true, ...modelState(s), log: s.log() })
-    : { enabled: false, reason: `the agent did not start: ${String((err as Error).message ?? err)}` };
+
+  // ---------------------------------------------------------- the API (api.ts)
+
+  const personFromQuery = Layer.succeed(PersonFromQuery, (handler) =>
+    Effect.flatMap(requestUrl, (url) => Effect.provideService(handler, Person, userOf(url))));
+  const shareToken = Layer.succeed(ShareToken, {
+    bearer: (handler, { credential }) => {
+      const user = shareTokens.get(Redacted.value(credential));
+      return user
+        ? Effect.provideService(handler, Person, user)
+        : Effect.fail(new Unauthorized({ ok: false, error: "Missing or unknown token: send the one you were given as \"Authorization: Bearer <token>\". Ask for a new prompt if it stopped working (the editor may have restarted)." }));
+    },
+  });
+  const explainBadRequests = HttpApiMiddleware.layerSchemaErrorTransform(ExplainBadRequests, (e) =>
+    e.kind == "Params" || e.kind == "Headers" || e.kind == "Query" || e.kind == "Payload"
+      ? Effect.fail(new BadRequest({ ok: false, error: e.cause.message }))
+      : Effect.die(e));
+
+  const docApi = HttpApiBuilder.group(Api, "doc", (h) => h
+    .handle("info", () => Effect.succeed({ name: doc.name, path: docPath, kind: doc.kind, dir: doc.dir, user: defaultName, writeDelay: room.writeDelay })));
+
+  const agentApi = HttpApiBuilder.group(Api, "agent", (h) => h
+    .handle("state", () => Person.use((user) => session(user).pipe(
+      Effect.map((s): AgentState => agentOff ? { enabled: false, reason: agentOff, log: s.log() } : { enabled: true, ...modelState(s), log: s.log() }),
+      Effect.catch((e) => Effect.succeed<AgentState>({ enabled: false, reason: `the agent did not start: ${e.cause instanceof Error ? e.cause.message : String(e.cause)}` })),
+    )))
+    .handle("prompt", ({ payload }) => Effect.gen(function* () {
+      const s = yield* agentSession;
+      // The sender's last keystrokes travel over its WebSocket; let them land first.
+      if (payload.after) yield* room.waitFor(payload.after);
+      s.prompt(payload.text, payload.context ?? null);
+      return { ok: true as const };
+    }))
+    .handle("model", ({ payload }) => Effect.gen(function* () {
+      const s = yield* agentSession;
+      if (!isModelChoice(payload.model)) return yield* new NoSuchModel({ ok: false, reason: `there's no model "${payload.model}"` });
+      if (!s.setModel(payload.model)) return yield* new ModelFixed({ ok: false, reason: "this agent's model can't be changed" });
+      const state = modelState(s);
+      sendTo((yield* Person).id, { type: "model", ...state });
+      return { ok: true as const, ...state };
+    }))
+    .handle("view", ({ payload: { id, ...result } }) => Effect.sync(() => {
+      views.get(id)?.({ ...result, errors: [...result.errors] });
+      return { ok: true as const };
+    }))
+    .handle("abort", () => Person.use((user) => session(user).pipe(
+      Effect.map((s) => s.abort()), Effect.ignore, Effect.as({ ok: true as const }))))
+    .handle("reset", () => Person.use((user) => session(user).pipe(
+      Effect.flatMap((s) => Effect.promise(() => s.reset())), Effect.ignore, Effect.as({ ok: true as const }))))
+    .handle("undo", () => Person.use((user) => session(user).pipe(
+      Effect.map((s) => ({ ok: s.undo() })), Effect.orElseSucceed(() => ({ ok: false })))))
+    .handle("share", ({ payload }) => Person.useSync((user) => ({ token: mintToken(user, payload.rotate ?? false) }))));
+
+  const extApi = HttpApiBuilder.group(Api, "ext", (h) => h
+    .handle("guide", () => Effect.gen(function* () {
+      const user = yield* Person;
+      const s = yield* extSession;
+      const host = (yield* HttpServerRequest.HttpServerRequest).headers["host"] ?? `127.0.0.1:${port}`;
+      return externalGuide({ docName: docPath, kind: doc.kind, owner: user.name, base: `http://${host}`, tools: s.tools() });
+    }))
+    .handle("tools", () => Effect.map(extSession, (s) => ({ ok: true as const, tools: s.tools() })))
+    .handle("run", ({ params: { name }, payload }) => Effect.gen(function* () {
+      const s = yield* extSession;
+      if (!s.tools().some((t) => t.name == name)) return yield* new NoSuchTool({ ok: false, error: `There's no tool named "${name}". The tools are: ${s.tools().map((t) => t.name).join(", ")}.` });
+      const content = yield* Effect.tryPromise({ try: () => s.runTool(name, payload), catch: (e) => new ToolFailed({ ok: false, error: (e as Error).message }) });
+      return { ok: true as const, content };
+    })));
+
+  const api = HttpApiBuilder.layer(Api).pipe(Layer.provide([
+    docApi.pipe(Layer.provide(explainBadRequests)),
+    agentApi.pipe(Layer.provide([personFromQuery, explainBadRequests])),
+    extApi.pipe(Layer.provide([shareToken, explainBadRequests])),
+  ]));
+
+  // ---------------------------------------------------------- everything else
 
   const routes: Array<HttpRouter.Route<unknown, FileSystem.FileSystem | Path.Path>> = [
     HttpRouter.route("GET", "/", serveFile(EDITOR_DIR, "page.html")),
-    HttpRouter.route("GET", "/api/doc", Effect.sync(() => HttpServerResponse.jsonUnsafe({ name: doc.name, path: docPath, kind: doc.kind, dir: doc.dir, user: defaultName, writeDelay: room.writeDelay }))),
     // The room: Yjs sync and awareness over a WebSocket (y-websocket's protocol).
     HttpRouter.route("GET", "/api/room/*", Effect.gen(function* () {
       const req = yield* HttpServerRequest.HttpServerRequest;
@@ -317,87 +377,6 @@ const program = (args: { target: string; port: number; open: boolean }) => Effec
       );
       return HttpServerResponse.empty();
     }).pipe(Effect.scoped)),
-    HttpRouter.route("GET", "/api/agent", Effect.gen(function* () {
-      const s = yield* session(userOf(yield* requestUrl));
-      return yield* HttpServerResponse.json(s._tag == "Success" ? agentState(s.success) : agentState(null, s.failure));
-    })),
-    HttpRouter.route("POST", "/api/agent", Effect.gen(function* () {
-      const body = yield* HttpServerRequest.schemaBodyJson(PromptBody);
-      const s = yield* session(userOf(yield* requestUrl));
-      if (agentOff || s._tag != "Success") return yield* HttpServerResponse.json({ ok: false, reason: agentOff || "the agent did not start" }, { status: 503 });
-      // The sender's last keystrokes travel over its WebSocket; let them land first.
-      if (body.after) yield* room.waitFor(body.after);
-      s.success.prompt(body.text, body.context ?? null);
-      return yield* HttpServerResponse.json({ ok: true });
-    })),
-    // The share button: a token for this person's external agent (rotate: true revokes the old one).
-    HttpRouter.route("POST", "/api/share", Effect.gen(function* () {
-      const body = yield* HttpServerRequest.schemaBodyJson(ShareBody);
-      const user = userOf(yield* requestUrl);
-      return yield* HttpServerResponse.json({ token: mintToken(user, body.rotate ?? false) });
-    })),
-    // An external agent: its guide, the tools as JSON, and a tool call.
-    HttpRouter.route("GET", "/api/ext", Effect.gen(function* () {
-      const user = yield* bearer;
-      if (!user) return unauthorized;
-      const s = yield* session(user);
-      if (s._tag != "Success") return HttpServerResponse.jsonUnsafe({ ok: false, error: "The agent's session didn't start." }, { status: 503 });
-      const guide = externalGuide({ docName: docPath, kind: doc.kind, owner: user.name, base: yield* baseUrl, tools: s.success.tools() });
-      return HttpServerResponse.text(guide, { contentType: "text/markdown; charset=utf-8" });
-    })),
-    HttpRouter.route("GET", "/api/ext/tools", Effect.gen(function* () {
-      const user = yield* bearer;
-      if (!user) return unauthorized;
-      const s = yield* session(user);
-      if (s._tag != "Success") return HttpServerResponse.jsonUnsafe({ ok: false, error: "The agent's session didn't start." }, { status: 503 });
-      return yield* HttpServerResponse.json({ ok: true, tools: s.success.tools() });
-    })),
-    HttpRouter.route("POST", "/api/ext/tools/:name", Effect.gen(function* () {
-      const user = yield* bearer;
-      if (!user) return unauthorized;
-      const { name } = yield* HttpRouter.params;
-      const args = yield* HttpServerRequest.HttpServerRequest.pipe(Effect.flatMap((r) => r.json), Effect.orElseSucceed(() => undefined));
-      if (args === undefined || typeof args != "object" || args === null || Array.isArray(args)) return HttpServerResponse.jsonUnsafe({ ok: false, error: "The body must be a JSON object of the tool's arguments." }, { status: 400 });
-      const s = yield* session(user);
-      if (s._tag != "Success") return HttpServerResponse.jsonUnsafe({ ok: false, error: "The agent's session didn't start." }, { status: 503 });
-      if (!s.success.tools().some((t) => t.name == name)) return HttpServerResponse.jsonUnsafe({ ok: false, error: `There's no tool named "${name}". The tools are: ${s.success.tools().map((t) => t.name).join(", ")}.` }, { status: 404 });
-      const run = yield* Effect.tryPromise({ try: () => s.success.runTool(name!, args), catch: (e) => (e as Error).message }).pipe(Effect.result);
-      return run._tag == "Success"
-        ? HttpServerResponse.jsonUnsafe({ ok: true, content: run.success })
-        : HttpServerResponse.jsonUnsafe({ ok: false, error: run.failure }, { status: 400 });
-    })),
-    // Switch the person's agent to another model, from its next turn; their other tabs follow.
-    HttpRouter.route("POST", "/api/agent/model", Effect.gen(function* () {
-      const body = yield* HttpServerRequest.schemaBodyJson(ModelBody);
-      const user = userOf(yield* requestUrl);
-      const s = yield* session(user);
-      if (agentOff || s._tag != "Success") return HttpServerResponse.jsonUnsafe({ ok: false, reason: agentOff || "the agent did not start" }, { status: 503 });
-      if (!isModelChoice(body.model)) return HttpServerResponse.jsonUnsafe({ ok: false, reason: `there's no model "${body.model}"` }, { status: 400 });
-      if (!s.success.setModel(body.model)) return HttpServerResponse.jsonUnsafe({ ok: false, reason: "this agent's model can't be changed" }, { status: 409 });
-      const state = modelState(s.success);
-      sendTo(user.id, { type: "model", ...state });
-      return HttpServerResponse.jsonUnsafe({ ok: true, ...state });
-    })),
-    HttpRouter.route("POST", "/api/agent/view", Effect.gen(function* () {
-      const body = yield* HttpServerRequest.schemaBodyJson(ViewBody);
-      const { id, ...result } = body;
-      views.get(id)?.({ ...result, errors: [...result.errors] });
-      return yield* HttpServerResponse.json({ ok: true });
-    })),
-    HttpRouter.route("POST", "/api/agent/abort", Effect.gen(function* () {
-      const s = yield* session(userOf(yield* requestUrl));
-      if (s._tag == "Success") s.success.abort();
-      return yield* HttpServerResponse.json({ ok: true });
-    })),
-    HttpRouter.route("POST", "/api/agent/reset", Effect.gen(function* () {
-      const s = yield* session(userOf(yield* requestUrl));
-      if (s._tag == "Success") yield* Effect.promise(() => s.success.reset());
-      return yield* HttpServerResponse.json({ ok: true });
-    })),
-    HttpRouter.route("POST", "/api/agent/undo", Effect.gen(function* () {
-      const s = yield* session(userOf(yield* requestUrl));
-      return yield* HttpServerResponse.json({ ok: s._tag == "Success" && s.success.undo() });
-    })),
     // What storage holds (not the room): lets a test see the room's writes
     // land, and send an edit that arrives as a file (a publish, a git pull)
     // without depending on a filesystem watcher. Hosted, this is the
@@ -427,10 +406,10 @@ const program = (args: { target: string; port: number; open: boolean }) => Effec
     }))),
     HttpRouter.route("GET", "/*", HttpRouter.params.pipe(Effect.flatMap((p) => serveFile(EDITOR_DIR, p["*"] ?? "", "no-cache")))),
   ];
-  // A request that doesn't parse is the client's mistake (400); anything else is ours.
+  // A plain route's failure: a request that doesn't parse is the client's mistake (400); anything else is ours.
   const badRequest = (e: { _tag?: string; reason?: { _tag?: string } }) => e._tag == "SchemaError" || e.reason?._tag == "RequestParseError";
   const failed = (e: unknown) => HttpServerResponse.text(String((e as { message?: string }).message ?? e), { status: badRequest(e as object) ? 400 : 500 });
-  const app = HttpRouter.addAll(routes.map((r) => HttpRouter.route(r.method, r.path, Effect.catch(r.handler, (e) => Effect.succeed(failed(e))))));
+  const app = Layer.mergeAll(api, HttpRouter.addAll(routes.map((r) => HttpRouter.route(r.method, r.path, Effect.catch(r.handler, (e) => Effect.succeed(failed(e)))))));
 
   const url = `http://127.0.0.1:${port}/`;
   const server = Layer.unwrap(

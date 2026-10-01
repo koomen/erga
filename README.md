@@ -290,6 +290,8 @@ back, merging edits from disk, the agent's exact-match edits and attribution.
 ## Files
 
 - `open.ts`, `page.html`, `page.js`: the page editor's host, shell and built script
+- `api.ts`: the host's HTTP API (Effect's HttpApi): each endpoint's request,
+  response and failures; the editor imports its types
 - `room.ts`: the document room (shared Yjs doc, sync, write-back, disk merges)
 - `agent.ts`, `workspace.ts`, `.env.example`: the per-person agent session, its
   tools over the shared doc, and its settings

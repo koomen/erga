@@ -15,7 +15,7 @@ import { syntaxHighlighting, HighlightStyle } from "@codemirror/language";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { html } from "@codemirror/lang-html";
 import { tags as t } from "@lezer/highlight";
-import { PageEditor, ms, type Kind, type InlineStyle, type MarkAuthor, type Peer } from "./editor";
+import { PageEditor, ms, type InlineStyle, type MarkAuthor, type Peer } from "./editor";
 import { changesBetween } from "./merge";
 import { Collab, type Presence } from "./collab";
 import { colorFor, type Author } from "../room/doc";
@@ -23,6 +23,7 @@ import { analyzeMarkdown } from "./markdown";
 import TurndownService from "turndown";
 import { emptyLog, reduce, type Log, type LogEvent, type LogItem, type ViewRequest, type ViewResult } from "./agent-log";
 import { domToPng } from "modern-screenshot";
+import type { AgentState, DocInfo, ModelState } from "../../api";
 
 const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 
@@ -70,7 +71,6 @@ declare global {
   interface Window { ergaPage?: unknown }
 }
 
-interface DocInfo { name: string; path: string; kind: Kind; dir: string; user: string }
 
 (async () => {
   const $ = (id: string) => document.getElementById(id)!;
@@ -1205,7 +1205,6 @@ Once you've read it, await further instructions.`;
   $("agent-fab").addEventListener("click", () => toggleAgent(true));
   // Which model the agent runs on: a menu when there's a choice (Sonnet 5.5 or
   // Opus 5.5 fast), plain text otherwise. The choice is per person, kept by the host.
-  interface ModelState { model: string | null; choice: string | null; models: { id: string; label: string }[] }
   function renderModel(m: Partial<ModelState> | null) {
     const agentModel = $("agent-model");
     agentModel.textContent = "";
@@ -1231,7 +1230,7 @@ Once you've read it, await further instructions.`;
     fetch(api("/api/agent")).then((r) => {
       if (!r.ok) throw new Error(r.status == 404 ? "this host was started before the agent existed; restart open.ts" : `the host answered ${r.status}`);
       return r.json();
-    }).then((a: { enabled: boolean; model?: string; reason?: string; log?: Log } & Partial<ModelState>) => {
+    }).then((a: AgentState) => {
       agentOff = a.enabled ? null : `The agent is off: ${a.reason ?? "the host did not start it"}.`;
       renderModel(a.enabled ? a : null);
       if (a.log) { log.items = a.log.items; log.busy = a.log.busy; log.undoable = a.log.undoable; setAgentBusy(a.log.busy || busyAgents().length > 0); }
