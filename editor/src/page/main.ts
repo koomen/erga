@@ -15,7 +15,7 @@ import { syntaxHighlighting, HighlightStyle } from "@codemirror/language";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { html } from "@codemirror/lang-html";
 import { tags as t } from "@lezer/highlight";
-import { PageEditor, type Kind, type InlineStyle, type MarkAuthor, type Peer } from "./editor";
+import { PageEditor, ms, type Kind, type InlineStyle, type MarkAuthor, type Peer } from "./editor";
 import { changesBetween } from "./merge";
 import { Collab, type Presence } from "./collab";
 import { colorFor, type Author } from "../room/doc";
@@ -269,7 +269,7 @@ interface DocInfo { name: string; path: string; kind: Kind; dir: string; user: s
     clearTimeout(statusTimer);
     status.textContent = text;
     status.className = "status show" + (kind ? " " + kind : "");
-    if (kind != "error") statusTimer = window.setTimeout(() => status.classList.remove("show"), 1600);
+    if (kind != "error") statusTimer = window.setTimeout(() => status.classList.remove("show"), ms(1600));
   }
   // The room writes files to disk as edits land; there's nothing to save
   // here. Without a connection, edits stay in this tab and sync on return.
@@ -500,20 +500,20 @@ interface DocInfo { name: string; path: string; kind: Kind; dir: string; user: s
   let toastTimer = 0;
   let explaining = 0; // when an explanation went up, or 0
   /** A short confirmation ("Saved"): fades on its own. */
-  function flash(text: string, ms = 1400) {
+  function flash(text: string, duration = 1400) {
     explaining = 0;
     toast.classList.remove("actionable");
     toast.textContent = text;
     toast.classList.add("show");
     clearTimeout(toastTimer);
-    toastTimer = window.setTimeout(() => toast.classList.remove("show"), ms);
+    toastTimer = window.setTimeout(() => toast.classList.remove("show"), ms(duration));
   }
   // An explanation (why something can't be done, or what's wrong with the
   // page) is there to be read: it stays at least EXPLAIN_MS, then until the
   // next click or keypress anywhere. When the document is at fault it never
   // sends you off to fix it by hand: it offers a button that asks the agent
   // to, with a prompt that names the problem.
-  const EXPLAIN_MS = 5000;
+  const EXPLAIN_MS = ms(5000);
   const problemQueue: { text: string; fix?: string; key?: string }[] = [];
   function explain(text: string, fix?: string, key?: string) {
     clearTimeout(toastTimer);
@@ -951,7 +951,7 @@ interface DocInfo { name: string; path: string; kind: Kind; dir: string; user: s
     agentHint.textContent = text;
     agentHint.hidden = false;
     agentHint.classList.toggle("sticky", sticky);
-    if (!sticky) hintTimer = window.setTimeout(hideHint, 2600);
+    if (!sticky) hintTimer = window.setTimeout(hideHint, ms(2600));
   }
   function hideHint() {
     clearTimeout(hintTimer);

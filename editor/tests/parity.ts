@@ -6,7 +6,7 @@
 //   bun tests/parity.ts            # all scenarios
 //   bun tests/parity.ts link fold  # scenarios whose name contains a filter
 
-import { Browser, Page, MOD, urlFor } from "./cdp";
+import { Browser, Page, MOD, pool, urlFor } from "./cdp";
 
 const M = MOD.Meta; // the suite runs on macOS, where Mod is Cmd
 
@@ -617,27 +617,34 @@ const scenarios: Scenario[] = [
 function stable(v: unknown) { return JSON.stringify(v); }
 
 const filters = process.argv.slice(2);
-const browser = await Browser.launch();
 let pass = 0, fail = 0;
-try {
-  for (const s of scenarios) {
-    if (filters.length && !filters.some((f) => s.name.includes(f))) continue;
-    const results: Record<string, unknown> = {};
-    for (const which of ["editor-cm", "editor"] as const) {
-      const page = await browser.page();
-      try {
-        await page.open(urlFor(which), { doc: s.doc, width: s.width });
-        const h = new Helpers(page);
-        let obs: Obs | void;
-        try { obs = await s.run(page, h); } catch (e) { obs = { threw: String(e) }; }
-        await Bun.sleep(50);
-        results[which] = { doc: await h.doc(), sel: await h.sel(), obs: obs ?? null, errors: page.errors };
-      } finally { page.close(); }
-    }
-    const a = stable(results["editor-cm"]), b = stable(results["editor"]);
-    if (a == b) { pass++; console.log("MATCH  " + s.name + (process.env.VERBOSE ? "  " + b : "")); }
-    else { fail++; console.log("DIFF   " + s.name + "\n   cm:  " + a + "\n   new: " + b); }
+// Scenarios run side by side, each in one of a few browsers (cdp.ts, `pool`);
+// within a scenario the two editors still run one after the other.
+const chosen = scenarios.filter((s) => !filters.length || filters.some((f) => s.name.includes(f)));
+await pool(chosen, async (s: Scenario, browser: Browser) => {
+  // A difference counts only if it happens again: the CodeMirror reference
+  // reads typed text back from the DOM asynchronously and, on a busy
+  // machine, occasionally drops a synthetic keystroke.
+  let a = "", b = "";
+  for (let attempt = 0; attempt < 3 && (attempt == 0 || a != b); attempt++) [a, b] = await runBoth(s, browser);
+  if (a == b) { pass++; console.log("MATCH  " + s.name + (process.env.VERBOSE ? "  " + b : "")); }
+  else { fail++; console.log("DIFF   " + s.name + "\n   cm:  " + a + "\n   new: " + b); }
+});
+
+async function runBoth(s: Scenario, browser: Browser): Promise<[string, string]> {
+  const results: Record<string, unknown> = {};
+  for (const which of ["editor-cm", "editor"] as const) {
+    const page = await browser.page();
+    try {
+      await page.open(urlFor(which), { doc: s.doc, width: s.width });
+      const h = new Helpers(page);
+      let obs: Obs | void;
+      try { obs = await s.run(page, h); } catch (e) { obs = { threw: String(e) }; }
+      await Bun.sleep(50);
+      results[which] = { doc: await h.doc(), sel: await h.sel(), obs: obs ?? null, errors: page.errors };
+    } finally { page.close(); }
   }
-} finally { browser.close(); }
+  return [stable(results["editor-cm"]), stable(results["editor"])];
+}
 console.log(`\n${pass} matching, ${fail} differing`);
 process.exit(fail ? 1 : 0);

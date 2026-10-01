@@ -49,7 +49,6 @@ export interface StateStore {
 }
 
 const MSG_SYNC = 0, MSG_AWARENESS = 1, MSG_QUERY_AWARENESS = 3;
-const WRITE_DELAY = 400;
 const MAX_TEXT = 2_000_000;
 
 /** One participant's connection to the room. */
@@ -75,13 +74,14 @@ export class Room {
   private readonly me: Author = { user: "disk", name: "On disk", color: "#6b7280", kind: "disk" };
   private decoder = new TextDecoder("utf-8", { fatal: true });
 
-  private constructor(private store: FileStore, private state: StateStore | null, private log: (line: string) => void) {
+  private constructor(private store: FileStore, private state: StateStore | null, private log: (line: string) => void, readonly writeDelay: number) {
     // The room itself is not a visible participant.
     this.awareness.setLocalState(null);
   }
 
-  static async open(store: FileStore, opts: { state?: StateStore; log?: (line: string) => void } = {}): Promise<Room> {
-    const room = new Room(store, opts.state ?? null, opts.log ?? (() => {}));
+  /** `writeDelay`: how long after the last edit to a file it's written (400ms unless a test wants it sooner). */
+  static async open(store: FileStore, opts: { state?: StateStore; log?: (line: string) => void; writeDelay?: number } = {}): Promise<Room> {
+    const room = new Room(store, opts.state ?? null, opts.log ?? (() => {}), opts.writeDelay ?? 400);
     await room.restore();
     room.doc.on("update", (update: Uint8Array, origin: unknown) => room.broadcast(syncUpdate(update), origin));
     room.doc.on("afterTransaction", (tr: Y.Transaction) => room.noteDirty(tr));
@@ -231,12 +231,12 @@ export class Room {
       if (type === (files(this.doc) as Y.AbstractType<any>)) { for (const k of keys) if (k) this.dirty.add(k); }
       else { const path = pathOf(type); if (path != null) this.dirty.add(path); }
     }
-    if (this.dirty.size && !this.writeTimer) this.writeTimer = setTimeout(() => this.flush(), WRITE_DELAY);
+    if (this.dirty.size && !this.writeTimer) this.writeTimer = setTimeout(() => this.flush(), this.writeDelay);
   }
 
   private markDirty(path: string): void {
     this.dirty.add(path);
-    this.writeTimer ??= setTimeout(() => this.flush(), WRITE_DELAY);
+    this.writeTimer ??= setTimeout(() => this.flush(), this.writeDelay);
   }
 
   /** Writes every file that changed since storage last saw it, then the room's state. */

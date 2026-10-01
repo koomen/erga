@@ -47,6 +47,7 @@ export const fuzz: Test[] = [
   {
     name: "random concurrent edits, offline spells and publishes: nothing lost, nothing resurrected",
     timeoutMs: 120_000,
+    slow: true,
     async run(ctx) {
       const d = await ctx.doc();
       const n = ctx.long ? 8 : 4, rounds = ctx.long ? 1500 : 300;
@@ -55,6 +56,7 @@ export const fuzz: Test[] = [
       const live = new Set<string>();       // tokens that must be there at the end
       const owned = new Map<Participant, string[]>(ps.map((p) => [p, []]));
       let counter = 0, offlineEdits = 0, publishes = 0, refusedPublishes = 0;
+      const inflight: Promise<void>[] = [];
       for (let r = 0; r < rounds; r++) {
         const p = ctx.rng.pick(ps);
         const roll = ctx.rng();
@@ -76,20 +78,23 @@ export const fuzz: Test[] = [
         } else if (roll < 0.76 && p.connected) {
           p.disconnect();
         } else if (roll < 0.86 && !p.connected) {
-          await p.reconnect();
+          p.provider.connect(); // back online in the background; edits go on meanwhile
         } else if (roll < 0.9) {
-          // A publish: the stored file plus one token, conditional on its version.
-          const s = await d.stored(d.path);
-          if (s) {
-            const tok = `⟦pub.${counter++}⟧`;
-            const at = ctx.rng.pick(slots(s.text));
-            await sleep(ctx.rng.int(500)); // time for the room to move on, so some pushes are stale
+          // A publish, in the background like a real one: the stored file plus
+          // one token, conditional on its version.
+          const tok = `⟦pub.${counter++}⟧`, wait = ctx.rng.int(ctx.long ? 500 : 150), pick = ctx.rng();
+          inflight.push((async () => {
+            const s = await d.stored(d.path);
+            if (!s) return;
+            const sl = slots(s.text), at = sl[Math.floor(pick * sl.length)];
+            await sleep(wait); // time for the room to move on, so some pushes are stale
             const res = await d.push(d.path, s.text.slice(0, at) + tok + s.text.slice(at), s.etag);
             if (res.ok) { live.add(tok); publishes++; } else { expect(res.status == 412, `a push is taken or refused as stale (got ${res.status})`); refusedPublishes++; }
-          }
+          })());
         }
         if (ctx.rng.chance(0.3)) await sleep(ctx.rng.int(25));
       }
+      await Promise.all(inflight);
       const text = await settle(ctx, d, ps);
       const found: string[] = text.match(TOKEN) ?? [];
       const dup = found.filter((t, i) => found.indexOf(t) != i);
@@ -113,6 +118,7 @@ export const fuzz: Test[] = [
   {
     name: "arbitrary edits (any text, any range, unicode) from many hands converge",
     timeoutMs: 120_000,
+    slow: true,
     async run(ctx) {
       const d = await ctx.doc();
       const n = ctx.long ? 10 : 5, rounds = ctx.long ? 2000 : 400;
@@ -139,6 +145,7 @@ export const fuzz: Test[] = [
   {
     name: "newcomers joining in the middle of a burst catch up",
     timeoutMs: 60_000,
+    slow: true,
     async run(ctx) {
       const d = await ctx.doc();
       const ps = await crowd(d, 3);

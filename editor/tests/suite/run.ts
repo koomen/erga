@@ -5,6 +5,7 @@
 //
 //   bun tests/suite/run.ts                      local host, every suite
 //   bun tests/suite/run.ts --suite fuzz,agent   some suites
+//   bun tests/suite/run.ts --skip latency       all but some
 //   bun tests/suite/run.ts --grep "restart"     tests whose name matches
 //   bun tests/suite/run.ts --seed 1234          replay a randomised run
 //   bun tests/suite/run.ts --long               bigger crowds, longer runs, real idle eviction waits
@@ -12,8 +13,10 @@
 //   bun tests/suite/run.ts --remote             against SCRATCHWORK_TARGET_DOC (see target.ts)
 //   bun tests/suite/run.ts --live-agent         local, with the real model instead of the script
 //   bun tests/suite/run.ts --json out.json      also write the results as JSON
+//   bun tests/suite/run.ts --jobs 4             how many tests at once (default: one per CPU core, 4 to 16)
 
 import { writeFileSync } from "fs";
+import { availableParallelism } from "os";
 import { runTests, type Result, type Test } from "./harness";
 import { LocalTarget, RemoteTarget, type Target } from "./target";
 import { sync } from "./suites/sync";
@@ -41,9 +44,10 @@ const opt = (name: string) => { const i = args.indexOf(name); return i >= 0 ? ar
 const has = (name: string) => args.includes(name);
 
 const only = opt("--suite")?.split(",");
+const skip = opt("--skip")?.split(",") ?? [];
 const unknown = only?.filter((s) => !SUITES.some((x) => x.name == s));
 if (unknown?.length) { console.error(`no such suite: ${unknown.join(", ")} (have ${SUITES.map((s) => s.name).join(", ")})`); process.exit(2); }
-const suites = SUITES.filter((s) => !only || only.includes(s.name));
+const suites = SUITES.filter((s) => (!only || only.includes(s.name)) && !skip.includes(s.name));
 const target: Target = has("--remote") ? new RemoteTarget() : new LocalTarget({ liveAgent: has("--live-agent"), browser: !has("--no-browser") });
 const repeat = Number(opt("--repeat") ?? 1);
 const firstSeed = Number(opt("--seed") ?? (Date.now() % 1_000_000));
@@ -53,8 +57,8 @@ const all: (Result & { seed: number })[] = [];
 try {
   for (let r = 0; r < repeat; r++) {
     const seed = firstSeed + r;
-    console.log(`\n=== seed ${seed}${repeat > 1 ? ` (run ${r + 1} of ${repeat})` : ""}${has("--long") ? ", long" : ""}`);
-    const results = await runTests(target, suites, { seed, long: has("--long"), filter: opt("--grep") ? new RegExp(opt("--grep")!, "i") : undefined, verbose: has("--verbose") });
+    console.log(`=== seed ${seed}${repeat > 1 ? ` (run ${r + 1} of ${repeat})` : ""}${has("--long") ? ", long" : ""}`);
+    const results = await runTests(target, suites, { seed, long: has("--long"), filter: opt("--grep") ? new RegExp(opt("--grep")!, "i") : undefined, verbose: has("--verbose"), jobs: Number(opt("--jobs") ?? Math.min(16, Math.max(4, availableParallelism()))) });
     all.push(...results.map((x) => ({ ...x, seed })));
   }
 } finally {

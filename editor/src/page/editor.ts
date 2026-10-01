@@ -106,6 +106,13 @@ const STYLE_MARKS: Record<InlineStyle, string> = { strong: "**", em: "*", code: 
 interface Analysis { units: M.Unit[]; html: string }
 
 const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
+
+/**
+ * Scales the editor's timed behaviour (how long notes stay, how marks fade).
+ * 1 for people; the tests set `window.__swTimescale` lower so they don't sit
+ * through real seconds to check what happens after them.
+ */
+export const ms = (n: number) => n * ((globalThis as { __swTimescale?: number }).__swTimescale ?? 1);
 const noHistory = () => Transaction.addToHistory.of(false);
 
 /** The changed region between two texts, placing an ambiguous edit at `preferredPos` (CodeMirror's findDiff). */
@@ -1488,7 +1495,7 @@ export class PageEditor {
 
   /** Brief marks hold for a moment, then fade out step by step. */
   private startFade(): void {
-    const HOLD = 2200, STEP = 110, LEVELS = 6;
+    const HOLD = ms(2200), STEP = ms(110), LEVELS = 6;
     const born = performance.now();
     for (const m of this.marks) m.born ??= born;
     if (this.fadeTimer) return;

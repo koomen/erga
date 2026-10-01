@@ -229,6 +229,24 @@ The design is the one in `notes/scratchwork-2.0-editing.html`:
   CodeMirror's own Markdown commands. A lone typed `*` or `_` is escaped so it
   stays literal, until it closes a Markdown shortcut.
 
+### Tests
+
+Fast on purpose, because iteration speed matters: test files run at the same
+time, tests inside them run side by side (each with its own host, document
+and tab), nothing waits a fixed time when it can wait for the thing itself,
+and the editor's timers (how long notes stay up, how marks fade) run at a
+fraction of real time under test (`window.__swTimescale`, `ms` in
+`src/page/editor.ts`).
+
+    ./test.sh          # page editor + multiplayer: ~14s
+    ./test.sh md       # the Markdown editor (parity, styles, input): ~25s
+    ./test.sh all      # both
+    ./test.sh shots    # regenerate screenshots/ (pictures, not a test)
+
+Each file also runs alone: `bun tests/page.ts` (~7s), `bun tests/suite/run.ts`
+(~11s; `--suite`, `--grep` and `--seed` narrow it, `--long` for the big slow
+version), `bun test tests/` (under a second).
+
 `bun tests/agent.ts` asks the real agent for edits through the panel and checks
 they reach the open page without a reload and then the disk, that the agent
 shows up as a participant, and that its last change can be undone (it calls
@@ -260,9 +278,10 @@ a build. `vendor/vendor.js` bundles marked and DOMPurify for the preview pane
 only; `./vendor/build.sh` (or `./build.sh --vendor`) rebuilds it from pinned
 versions in a temp dir, so nothing lands in the repo.
 
-`./test.sh` runs everything. The browser suites drive headless Chrome and run
-each scripted interaction against both this editor and the CodeMirror version
-kept in `wip/editor-cm/` as the reference:
+`./test.sh md` runs its tests (in parallel, across a few headless Chromes, each
+with its own storage). The browser suites run each scripted interaction
+against both this editor and the CodeMirror version kept in `wip/editor-cm/`
+as the reference:
 
 - `bun test tests/`: the Markdown parser and the change-set and undo code,
   fuzzed against Lezer's and CodeMirror's own implementations.
@@ -272,8 +291,9 @@ kept in `wip/editor-cm/` as the reference:
   line, and the caret and selection rectangles, in light and dark.
 - `bun tests/input.ts`: spellcheck/autocorrect replacements and other input
   that only an OS produces.
-- `bun tests/screenshots.ts`: side-by-side captures (CodeMirror left) with a
-  pixel diff, written to `screenshots/`.
+- `bun tests/screenshots.ts` (`./test.sh shots`): side-by-side captures
+  (CodeMirror left) with a pixel diff, written to `screenshots/`; pictures to
+  look at, not a pass/fail test, so not part of the default run.
 
 ## Design choices
 

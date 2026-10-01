@@ -152,7 +152,8 @@ const program = Effect.gen(function* () {
       yield* fs.rename(stateFile + ".tmp", stateFile);
     })),
   };
-  const room = yield* Effect.promise(() => Room.open(store, { state, log: (line) => console.log(line) }));
+  // SCRATCHWORK_WRITE_DELAY_MS shortens the room's write delay (tests do; people don't need to).
+  const room = yield* Effect.promise(() => Room.open(store, { state, log: (line) => console.log(line), writeDelay: Number(process.env.SCRATCHWORK_WRITE_DELAY_MS) || undefined }));
   /** A request's path inside the folder, refusing ones that leave it. */
   const cleanRel = (raw: string | undefined) => {
     const rel = path.normalize(decodeURIComponent(raw ?? "")).replace(/^\/+/, "");
@@ -231,7 +232,7 @@ const program = Effect.gen(function* () {
 
   const router = HttpRouter.empty.pipe(
     HttpRouter.get("/", serveFile(EDITOR_DIR, "page.html")),
-    HttpRouter.get("/api/doc", HttpServerResponse.json({ name: doc.name, path: docPath, kind: doc.kind, dir: doc.dir, user: defaultName })),
+    HttpRouter.get("/api/doc", Effect.sync(() => HttpServerResponse.unsafeJson({ name: doc.name, path: docPath, kind: doc.kind, dir: doc.dir, user: defaultName, writeDelay: room.writeDelay }))),
     // The room: Yjs sync and awareness over a WebSocket (y-websocket's protocol).
     HttpRouter.get("/api/room/*", Effect.gen(function* () {
       const req = yield* HttpServerRequest.HttpServerRequest;

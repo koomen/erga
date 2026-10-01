@@ -68,7 +68,7 @@ try {
   check("without a reload", await p.eval<boolean>(`document.getElementById("frame").contentWindow.__marker == 1`));
   check("the panel shows the edit", await p.eval<boolean>(`[...document.querySelectorAll(".msg-tool")].some((e) => /Edited/.test(e.textContent))`));
   check("and a reply", await p.eval<boolean>(`!!document.querySelector(".msg-assistant")?.textContent.trim()`));
-  check("the agent is a participant: its avatar is at the top", await p.eval<boolean>(`[...document.querySelectorAll("#people .avatar.is-agent")].some((e) => /agent/.test(e.dataset.tip))`));
+  check("the agent is a participant: its badge is on its owner's avatar", await p.eval<boolean>(`[...document.querySelectorAll("#people .agent-badge")].some((e) => /agent/.test(e.dataset.tip))`));
   check("and its caret sits where it last edited", await p.eval<boolean>(`[...${F}.querySelectorAll("sw-peer[data-agent] sw-peer-name")].some((e) => /agent/.test(e.textContent))`));
 
   // Undo the agent's last change (one tool call), from the panel.

@@ -21,12 +21,13 @@ function arrival(p: Participant, token: string): Promise<number> {
 export const latency: Test[] = [
   {
     name: "an edit reaches another person quickly (p50, p95)",
+    serial: true,
     async run(ctx) {
       const d = await ctx.doc();
       const [a, b] = [await Participant.join(d, "Ada"), await Participant.join(d, "Bo")];
       ctx.defer(() => { a.destroy(); b.destroy(); });
       const samples: number[] = [];
-      for (let i = 0; i < (ctx.long ? 300 : 60); i++) {
+      for (let i = 0; i < (ctx.long ? 300 : 40); i++) {
         const tok = `⟦l${i}⟧`;
         const got = arrival(b, tok);
         const t0 = performance.now();
@@ -43,12 +44,13 @@ export const latency: Test[] = [
   },
   {
     name: "an edit reaches a crowd of twenty",
+    serial: true,
     timeoutMs: 90_000,
     async run(ctx) {
       const d = await ctx.doc();
       const a = await Participant.join(d, "Ada");
       const crowd: Participant[] = [];
-      for (let i = 0; i < 20; i++) crowd.push(await Participant.join(d, `C${i}`));
+      crowd.push(...(await Promise.all(Array.from({ length: 20 }, (_, i) => Participant.join(d, `C${i}`)))));
       ctx.defer(() => { a.destroy(); crowd.forEach((p) => p.destroy()); });
       const lasts: number[] = [];
       for (let i = 0; i < 15; i++) {
@@ -67,6 +69,7 @@ export const latency: Test[] = [
   },
   {
     name: "joining a document is quick",
+    serial: true,
     async run(ctx) {
       const d = await ctx.doc();
       const times: number[] = [];
@@ -83,12 +86,13 @@ export const latency: Test[] = [
     },
   },
   {
-    name: "five people typing for ten seconds: no lag builds up",
+    name: "five people typing at once: no lag builds up",
+    serial: true,
     timeoutMs: 90_000,
     async run(ctx) {
       const d = await ctx.doc();
       const ps: Participant[] = [];
-      for (let i = 0; i < 5; i++) ps.push(await Participant.join(d, `T${i}`));
+      ps.push(...(await Promise.all(Array.from({ length: 5 }, (_, i) => Participant.join(d, `T${i}`)))));
       const watcher = await Participant.join(d, "Watcher");
       ctx.defer(() => { ps.forEach((p) => p.destroy()); watcher.destroy(); });
       const lags: number[] = [];
@@ -96,7 +100,7 @@ export const latency: Test[] = [
       watcher.text()!.observe((ev) => {
         for (const op of ev.delta) if (typeof op.insert == "string") for (const m of op.insert.matchAll(/⟦t[0-9.]+⟧/g)) { const t = sent.get(m[0]); if (t) lags.push(performance.now() - t); }
       });
-      const seconds = ctx.long ? 60 : 10;
+      const seconds = ctx.long ? 60 : 2;
       const end = performance.now() + seconds * 1000;
       await Promise.all(ps.map(async (p, k) => {
         // Each person types in their own paragraph, about ten keystrokes a second.

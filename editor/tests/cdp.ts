@@ -1,8 +1,8 @@
 // Minimal Chrome DevTools Protocol driver for the tests: launches headless
 // Chrome, opens pages and sends real input events.
 import { spawn, type Subprocess } from "bun";
-import { mkdtempSync, rmSync } from "fs";
-import { tmpdir } from "os";
+import { mkdtempSync, readFileSync, rmSync } from "fs";
+import { availableParallelism, tmpdir } from "os";
 import { join } from "path";
 
 const CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
@@ -13,17 +13,29 @@ export const urlFor = (which: "editor" | "editor-cm") => `file://${ROOT}${which}
 export class Browser {
   private constructor(private proc: Subprocess, private port: number, private profile: string) {}
 
-  static async launch(port = 9400 + Math.floor(Math.random() * 400)): Promise<Browser> {
+  /**
+   * Starts a headless Chrome on a port it picks itself (port 0, read back
+   * from DevToolsActivePort): with many browsers starting at once, a random
+   * port of our own would sometimes collide, and two test workers would
+   * silently share one browser and its storage.
+   */
+  static async launch(): Promise<Browser> {
     const profile = mkdtempSync(join(process.env.TMPDIR || tmpdir(), "edtest-"));
-    const proc = spawn([CHROME, "--headless=new", `--remote-debugging-port=${port}`, `--user-data-dir=${profile}`,
+    const proc = spawn([CHROME, "--headless=new", "--remote-debugging-port=0", `--user-data-dir=${profile}`,
       "--no-first-run", "--no-default-browser-check", "--hide-scrollbars", "--allow-file-access-from-files",
-      "--disable-features=Translate", "about:blank"], { stdout: "ignore", stderr: "ignore" });
-    for (let i = 0; i < 100; i++) {
+      "--disable-features=Translate,CalculateNativeWinOcclusion,IntensiveWakeUpThrottling",
+      // Tests run many tabs at once: a tab in the background must keep its
+      // timers and frames running as if it were in front.
+      "--disable-background-timer-throttling", "--disable-renderer-backgrounding", "--disable-backgrounding-occluded-windows",
+      "about:blank"], { stdout: "ignore", stderr: "ignore" });
+    for (let i = 0; i < 600; i++) {
       try {
-        await fetch(`http://127.0.0.1:${port}/json/version`);
-        return new Browser(proc, port, profile);
-      } catch { await Bun.sleep(100); }
+        const port = Number(readFileSync(join(profile, "DevToolsActivePort"), "utf8").split("\n")[0]);
+        if (port) { await fetch(`http://127.0.0.1:${port}/json/version`); return new Browser(proc, port, profile); }
+      } catch { /* not up yet */ }
+      await Bun.sleep(25);
     }
+    proc.kill();
     throw new Error("Chrome did not start");
   }
 
@@ -38,6 +50,22 @@ export class Browser {
     this.proc.kill();
     try { rmSync(this.profile, { recursive: true, force: true }); } catch {}
   }
+}
+
+/**
+ * Runs `items` across `workers` headless Chromes, one item at a time each.
+ * Separate browsers, not tabs, because pages on the same file:// origin share
+ * localStorage, which the editor tests seed and read. Results keep `items`' order.
+ */
+export async function pool<T, R>(items: T[], run: (item: T, browser: Browser) => Promise<R>, workers = Math.min(8, Math.max(2, availableParallelism() - 2))): Promise<R[]> {
+  const out: R[] = new Array(items.length);
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.min(workers, items.length) }, async () => {
+    const browser = await Browser.launch();
+    try { while (next < items.length) { const i = next++; out[i] = await run(items[i], browser); } }
+    finally { browser.close(); }
+  }));
+  return out;
 }
 
 export const MOD = { Alt: 1, Ctrl: 2, Meta: 4, Shift: 8 };
@@ -79,10 +107,12 @@ export class Page {
     this.ready = new Promise((r) => (this.ws.onopen = () => r()));
   }
 
-  send(method: string, params: any = {}): Promise<any> {
+  /** A DevTools command; never waits forever (a stuck browser fails the test rather than hanging it). */
+  send(method: string, params: any = {}, timeoutMs = 30_000): Promise<any> {
     return new Promise((resolve, reject) => {
       const i = ++this.id;
-      this.pending.set(i, (d) => (d.error ? reject(new Error(method + ": " + JSON.stringify(d.error))) : resolve(d.result)));
+      const timer = setTimeout(() => { this.pending.delete(i); reject(new Error(`${method}: no answer from the browser in ${timeoutMs / 1000}s`)); }, timeoutMs);
+      this.pending.set(i, (d) => { clearTimeout(timer); d.error ? reject(new Error(method + ": " + JSON.stringify(d.error))) : resolve(d.result); });
       this.ws.send(JSON.stringify({ id: i, method, params }));
     });
   }
@@ -93,23 +123,42 @@ export class Page {
     return r.result.value;
   }
 
-  async open(url: string, opts: { width?: number; height?: number; dark?: boolean; clear?: boolean; doc?: string; scale?: number } = {}) {
+  async open(url: string, opts: { width?: number; height?: number; dark?: boolean; clear?: boolean; doc?: string; scale?: number; timescale?: number } = {}) {
     await this.send("Runtime.enable");
     await this.send("Page.enable");
+    // The page editor's timers run this much faster (src/page/editor.ts, `ms`); kept across reloads.
+    if (opts.timescale) await this.send("Page.addScriptToEvaluateOnNewDocument", { source: `window.__swTimescale = ${opts.timescale}` });
     await this.send("Emulation.setDeviceMetricsOverride", { width: opts.width ?? 1300, height: opts.height ?? 860, deviceScaleFactor: opts.scale ?? 1, mobile: false });
     await this.send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-color-scheme", value: opts.dark ? "dark" : "light" }] });
     await this.send("Emulation.setFocusEmulationEnabled", { enabled: true });
     if (opts.clear !== false || opts.doc != null) {
       // Seed storage from a blank page on the same (file://) origin, so no
       // editor instance is around to autosave over it on pagehide.
-      await this.send("Page.navigate", { url: `file://${ROOT}editor/tests/blank.html` });
-      await Bun.sleep(100);
+      await this.navigate(`file://${ROOT}editor/tests/blank.html`);
       await this.eval(`localStorage.clear(); ${opts.doc != null ? `localStorage.setItem("scratchwork-editor:doc:v1", ${JSON.stringify(opts.doc)}); localStorage.setItem("scratchwork-editor:view:v1", JSON.stringify({anchor: 0, head: 0, scrollY: 0}));` : ""} true`);
     }
-    await this.send("Page.navigate", { url });
-    await Bun.sleep(200);
+    await this.navigate(url);
     await this.eval("document.fonts.ready.then(() => true)");
-    await Bun.sleep(250);
+    await this.settle();
+  }
+
+  /** Navigates and waits for the load event (not a fixed pause). */
+  async navigate(url: string) {
+    const loaded = new Promise<void>((resolve) => {
+      const done = () => { this.listeners.set("Page.loadEventFired", (this.listeners.get("Page.loadEventFired") ?? []).filter((f) => f != done)); resolve(); };
+      this.onEvent("Page.loadEventFired", done);
+    });
+    await this.send("Page.navigate", { url });
+    await Promise.race([loaded, Bun.sleep(10_000)]);
+  }
+
+  /**
+   * Lets the page catch up with input just sent: two animation frames, so
+   * selectionchange, input handlers and the next paint have all run (with
+   * a timeout in case frames are throttled).
+   */
+  async settle() {
+    await this.eval(`new Promise((r) => { const t = setTimeout(r, 100); requestAnimationFrame(() => requestAnimationFrame(() => { clearTimeout(t); r(true); })); })`);
   }
 
   async key(key: string, modifiers = 0) {
@@ -127,8 +176,11 @@ export class Page {
     const sendText = plain && text ? (modifiers & MOD.Shift && text.length == 1 ? text.toUpperCase() : text) : undefined;
     let keyName = key;
     if (modifiers & MOD.Shift && key.length == 1) keyName = key.toUpperCase();
-    await this.send("Input.dispatchKeyEvent", { type: sendText ? "keyDown" : "rawKeyDown", key: keyName, code, windowsVirtualKeyCode: keyCode, nativeVirtualKeyCode: keyCode, modifiers, text: sendText, unmodifiedText: sendText });
-    await this.send("Input.dispatchKeyEvent", { type: "keyUp", key: keyName, code, windowsVirtualKeyCode: keyCode, nativeVirtualKeyCode: keyCode, modifiers });
+    // No nativeVirtualKeyCode: on macOS it makes Chrome build a native key
+    // event (and it wants a Mac key code, not this Windows one), which AppKit
+    // answers with the system beep whenever the page doesn't handle the key.
+    await this.send("Input.dispatchKeyEvent", { type: sendText ? "keyDown" : "rawKeyDown", key: keyName, code, windowsVirtualKeyCode: keyCode, modifiers, text: sendText, unmodifiedText: sendText });
+    await this.send("Input.dispatchKeyEvent", { type: "keyUp", key: keyName, code, windowsVirtualKeyCode: keyCode, modifiers });
   }
 
   async type(text: string, delay = 0) {
@@ -149,7 +201,7 @@ export class Page {
       await this.mouse("mousePressed", x, y, { clickCount: c, modifiers, buttons: 1 });
       await this.mouse("mouseReleased", x, y, { clickCount: c, modifiers });
     }
-    await Bun.sleep(60);
+    await this.settle();
   }
 
   async drag(x1: number, y1: number, x2: number, y2: number, steps = 8) {
@@ -157,7 +209,7 @@ export class Page {
     await this.mouse("mousePressed", x1, y1, { clickCount: 1, buttons: 1 });
     for (let i = 1; i <= steps; i++) await this.mouse("mouseMoved", x1 + ((x2 - x1) * i) / steps, y1 + ((y2 - y1) * i) / steps, { buttons: 1, button: "left" });
     await this.mouse("mouseReleased", x2, y2, { clickCount: 1 });
-    await Bun.sleep(60);
+    await this.settle();
   }
 
   async screenshot(path: string) {

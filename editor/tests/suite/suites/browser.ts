@@ -9,13 +9,13 @@ import { Participant } from "../client";
 import { expect, sleep, until, type Ctx, type Test } from "../harness";
 import type { Doc } from "../target";
 
-let browser: Browser | null = null;
-export async function closeBrowser() { browser?.close(); browser = null; }
+let browser: Promise<Browser> | null = null;
+export async function closeBrowser() { (await browser)?.close(); browser = null; }
 
 /** Opens the shell as a person, with the target's auth headers on every request. */
 async function open(ctx: Ctx, d: Doc, user: string) {
-  browser ??= await Browser.launch();
-  const p: Page = await browser.page();
+  browser ??= Browser.launch();
+  const p: Page = await (await browser).page();
   ctx.defer(() => p.close());
   const headers = d.headersFor(user);
   if (Object.keys(headers).length) {
@@ -24,6 +24,8 @@ async function open(ctx: Ctx, d: Doc, user: string) {
   }
   await p.open(d.pageUrl(user), { clear: false, width: 1100, height: 800 });
   await until(() => p.eval<boolean>(`!!window.scratchPage && !!document.getElementById("frame").contentDocument?.querySelector("[data-sw-id]")`), 10_000, `${user}'s page renders`);
+  await p.eval(`document.getElementById("frame").contentDocument.fonts.ready.then(() => true)`);
+  await p.settle();
   return tab(p);
 }
 
@@ -123,13 +125,14 @@ export const browserTests: Test[] = [
   {
     name: "the agent pane follows the agent's output until you scroll back, like a terminal",
     needs: ["browser", "scriptedAgent"],
+    slow: true,
     timeoutMs: 90_000,
     async run(ctx) {
       const d = await ctx.doc();
       const a = await open(ctx, d, "Ada");
       const p = a.p;
       await p.key("j", MOD.Meta);
-      await sleep(400);
+      await until(() => p.eval<boolean>(`document.body.classList.contains("agent-open") && !!document.getElementById("agent-model").textContent`), 3000, "the panel opens");
       const pane = () => p.eval<{ top: number; max: number; jump: boolean }>(`(() => { const l = document.getElementById("agent-log"); return { top: l.scrollTop, max: l.scrollHeight - l.clientHeight, jump: !document.getElementById("agent-jump").hidden }; })()`);
       const atBottom = async () => { const s = await pane(); return s.max - s.top <= 8; };
       const send = async (steps: unknown[]) => {
@@ -139,10 +142,10 @@ export const browserTests: Test[] = [
       const busy = () => p.eval<boolean>(`document.getElementById("agent-send").classList.contains("stop")`);
       const long = Array.from({ length: 60 }, (_, i) => `Line ${i + 1} of a long answer.`).join("\n");
       // A long run: tool calls trickling in, a screenshot (which loads after its event), a long reply.
-      const reads = Array.from({ length: 8 }, () => ({ tool: "read", args: { path: d.path }, delay: 250 }));
+      const reads = Array.from({ length: 6 }, () => ({ tool: "read", args: { path: d.path }, delay: 120 }));
       await send([...reads, { tool: "view_page", args: {} }, { text: long, delay: 200 }]);
       await until(async () => !(await busy()) && await p.eval<boolean>(`!!document.querySelector(".msg-assistant")`), 20_000, "the run finishes");
-      await sleep(400);
+      await p.settle();
       const s0 = await pane();
       expect(s0.max > 200, "the log overflows the pane", s0);
       expect(await atBottom(), "the pane followed the output to the end, screenshot and all", s0);
@@ -152,23 +155,24 @@ export const browserTests: Test[] = [
       await until(busy, 5000, "the second run starts");
       const box = await p.eval<{ x: number; y: number }>(`(() => { const r = document.getElementById("agent-log").getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`);
       await p.send("Input.dispatchMouseEvent", { type: "mouseWheel", x: box.x, y: box.y, deltaX: 0, deltaY: -600 });
-      await sleep(300);
+      await until(async () => { const s = await pane(); return s.max - s.top > 100; }, 2000, "the wheel scrolls the log up");
+      await p.settle();
       const reading = (await pane()).top;
       await until(async () => !(await busy()), 20_000, "the second run finishes");
-      await sleep(300);
+      await p.settle();
       const s1 = await pane();
       expect(Math.abs(s1.top - reading) <= 2 && s1.max - s1.top > 100, "new output didn't pull you down", { reading, ...s1 });
       expect(s1.jump, "a 'Jump to latest' button offers the way back");
       await p.eval(`document.getElementById("agent-jump").click()`);
-      await sleep(200);
+      await p.settle();
       expect(await atBottom() && !(await pane()).jump, "jumping goes to the bottom and hides the button");
 
       // Following again: the next run's output is followed; so is a new message sent while scrolled back.
       await p.send("Input.dispatchMouseEvent", { type: "mouseWheel", x: box.x, y: box.y, deltaX: 0, deltaY: -600 });
-      await sleep(200);
-      await send([{ text: long, delay: 300 }]);
+      await p.settle();
+      await send([{ text: long, delay: 150 }]);
       await until(async () => !(await busy()), 10_000, "the third run finishes");
-      await sleep(300);
+      await p.settle();
       expect(await atBottom(), "sending a message brings the pane back to follow its answer", await pane());
       noErrors(a, "Ada");
     },

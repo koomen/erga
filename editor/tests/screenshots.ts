@@ -3,7 +3,7 @@
 // count to wip/editor/screenshots/.
 //   bun tests/screenshots.ts
 
-import { Browser, Page, MOD, urlFor, ROOT } from "./cdp";
+import { Browser, Page, MOD, pool, urlFor, ROOT } from "./cdp";
 import { mkdirSync } from "fs";
 
 const OUT = `${ROOT}editor/screenshots`;
@@ -33,12 +33,11 @@ const scenes: Scene[] = [
   { name: "mobile", width: 390, height: 844 },
 ];
 
-const browser = await Browser.launch();
-const composer = await browser.page();
-await composer.open(`file://${ROOT}editor/tests/blank.html`, { clear: false });
-try {
-  for (const dark of [false, true]) {
-    for (const scene of scenes) {
+// Every scene in both themes, side by side across a few browsers (cdp.ts, `pool`).
+const cases = [false, true].flatMap((dark) => scenes.map((scene) => ({ dark, scene })));
+await pool(cases, async ({ dark, scene }, browser: Browser) => {
+      const composer = await browser.page();
+      await composer.open(`file://${ROOT}editor/tests/blank.html`, { clear: false });
       const shots: string[] = [], docs: string[] = [];
       // The CodeMirror reference reads typed text back from the DOM
       // asynchronously and occasionally garbles fast synthetic typing, so
@@ -77,6 +76,5 @@ try {
       })()`);
       await Bun.write(`${OUT}/${name}.png`, Buffer.from(result.png, "base64"));
       console.log(`${name.padEnd(22)} differing pixels: ${result.diff} of ${result.total} (${((100 * result.diff) / result.total).toFixed(3)}%)${(result as any).box ? "  in css box " + JSON.stringify((result as any).box) : ""}`);
-    }
-  }
-} finally { browser.close(); }
+      composer.close();
+});

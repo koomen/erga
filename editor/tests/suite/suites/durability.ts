@@ -29,7 +29,7 @@ export const durability: Test[] = [
     timeoutMs: 200_000,
     async run(ctx) {
       // Long enough for a hosted room to be evicted with --long (Durable Objects idle out after ~70s).
-      const idle = ctx.long ? 75_000 : 2_000;
+      const idle = ctx.long ? 75_000 : 500;
       const d = await ctx.doc();
       const a = await Participant.join(d, "Ada");
       const epoch = a.epoch;

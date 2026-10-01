@@ -34,6 +34,8 @@ export interface Doc {
   base: string;
   /** The document's own file, as the room names it (e.g. "index.html"). */
   path: string;
+  /** How long after an edit the server writes it to storage (from /api/doc; 400 if it doesn't say). */
+  writeDelay: number;
   /** The fixture's files, as they were when the document was created. */
   fixture: Record<string, string>;
   /** Headers every request (and WebSocket) needs: auth, on a deployment. */
@@ -66,6 +68,8 @@ export interface Doc {
 export interface Target {
   name: string;
   caps: Set<Capability>;
+  /** Whether tests may run at once (each gets its own document). */
+  parallel: boolean;
   newDoc(fixture: string): Promise<Doc>;
   close(): Promise<void>;
 }
@@ -96,6 +100,7 @@ function makeDoc(base: string, headers: Record<string, string>, fixture: Record<
     fixture,
     headers,
     headersFor: (user) => ({ ...headers, ...(perUser[user] ?? {}) }),
+    writeDelay: 400,
     roomUrl: base.replace(/^http/, "ws") + "/api/room",
     roomName: "doc",
     pageUrl: (user) => `${base}/?user=${encodeURIComponent(user)}`,
@@ -120,6 +125,7 @@ function makeDoc(base: string, headers: Record<string, string>, fixture: Record<
 
 export class LocalTarget implements Target {
   name = "local";
+  parallel = true;
   caps: Set<Capability>;
   constructor(private opts: { liveAgent?: boolean; browser?: boolean } = {}) {
     this.caps = new Set<Capability>(["restart", "kill", "disk", opts.liveAgent ? "liveAgent" : "scriptedAgent", ...(opts.browser === false ? [] : ["browser" as const])]);
@@ -130,16 +136,18 @@ export class LocalTarget implements Target {
     const stateDir = mkdtempSync(join(tmpdir(), "sw-suite-state-"));
     cpSync(join(FIXTURES, fixture), dir, { recursive: true });
     const port = 20000 + Math.floor(Math.random() * 20000);
-    const env: Record<string, string> = { ...process.env as Record<string, string>, SCRATCHWORK_ROOM_STATE_DIR: stateDir, SCRATCHWORK_AGENT_ENV_FILE: "/nonexistent/.env" };
+    // A short write delay: the suite waits on storage a lot, and aims at the delay where it matters.
+    const env: Record<string, string> = { ...process.env as Record<string, string>, SCRATCHWORK_ROOM_STATE_DIR: stateDir, SCRATCHWORK_AGENT_ENV_FILE: "/nonexistent/.env", SCRATCHWORK_WRITE_DELAY_MS: "100" };
     if (!this.opts.liveAgent) env.SCRATCHWORK_AGENT_MODEL = "script";
     let host: ReturnType<typeof Bun.spawn> | null = null;
     let output = "";
     const start = async () => {
       host = Bun.spawn(["bun", join(EDITOR, "open.ts"), dir, "--port", String(port), "--no-open"], { env, stdout: "pipe", stderr: "pipe" });
       for (const s of [host.stdout, host.stderr] as ReadableStream<Uint8Array>[]) (async () => { for await (const c of s) output = (output + new TextDecoder().decode(c)).slice(-20000); })();
-      for (let i = 0; i < 100; i++) {
+      // Usually ~200ms; the margin is for a machine busy running everything else at once.
+      for (let i = 0; i < 600; i++) {
         try { if ((await fetch(`http://127.0.0.1:${port}/api/doc`)).ok) return; } catch { /* not up yet */ }
-        await Bun.sleep(50);
+        await Bun.sleep(25);
       }
       throw new Error(`host didn't start:\n${output}`);
     };
@@ -152,7 +160,9 @@ export class LocalTarget implements Target {
     };
     await start();
     const base = `http://127.0.0.1:${port}`;
+    const writeDelay = ((await (await fetch(`${base}/api/doc`)).json()) as { writeDelay?: number }).writeDelay ?? 400;
     return makeDoc(base, {}, readFixture(fixture), {
+      writeDelay,
       writeDisk(p, data) { const full = join(dir, p); mkdirSync(dirname(full), { recursive: true }); writeFileSync(full, data); },
       async restart(how, whileDown) {
         await stop(how == "graceful" ? "SIGTERM" : "SIGKILL");
@@ -175,6 +185,8 @@ export class LocalTarget implements Target {
 
 export class RemoteTarget implements Target {
   name: string;
+  /** One scratch document for every test: one at a time. */
+  parallel = false;
   caps: Set<Capability>;
   private base: string;
   private headers: Record<string, string>;
@@ -203,6 +215,7 @@ export class RemoteTarget implements Target {
     const doc = makeDoc(this.base, this.headers, files, { async dispose() {} }, this.users);
     const info = await doc.fetch("/api/doc");
     if (!info.ok) throw new Error(`${this.base}/api/doc answered ${info.status}`);
+    doc.writeDelay = ((await info.json()) as { writeDelay?: number }).writeDelay ?? 400;
     for (const [p, text] of Object.entries(files)) {
       const r = await doc.push(p, text);
       if (!r.ok) throw new Error(`resetting ${p}: ${r.status} ${await r.text()}`);

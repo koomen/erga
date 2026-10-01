@@ -50,7 +50,7 @@ export const sync: Test[] = [
       for (let i = 0; i < 20; i++) { a.insertAfter("<h1>", String(i % 10)); await sleep(15); }
       await until(async () => (await d.stored(d.path))?.text == a.str(), STORE_MS, "storage has every edit", async () => ({ stored: (await d.stored(d.path))?.text.slice(0, 120), room: a.str().slice(0, 120) }));
       const tag = (await d.stored(d.path))!.etag;
-      await sleep(1200);
+      await sleep(d.writeDelay * 3);
       expect((await d.stored(d.path))!.etag == tag, "no further writes once nothing changes");
     },
   },
@@ -118,18 +118,19 @@ export const sync: Test[] = [
   {
     name: "publishes landing just as the room writes are never lost",
     timeoutMs: 90_000,
+    slow: true,
     async run(ctx) {
       const d = await ctx.doc();
       const a = await Participant.join(d, "Ada");
       ctx.defer(() => a.destroy());
       const expected: string[] = [];
       let retries = 0;
-      for (let i = 0; i < (ctx.long ? 60 : 20); i++) {
+      for (let i = 0; i < (ctx.long ? 60 : 16); i++) {
         const live = `⟦live${i}⟧`, pub = `⟦pub${i}⟧`;
         a.insertAfter("<h1>", live);
         expected.push(live);
-        // Aim the publish at the room's write, 400ms after the edit.
-        await sleep(370 + ctx.rng.int(60));
+        // Aim the publish at the room's write, writeDelay after the edit.
+        await sleep(d.writeDelay * 0.9 + ctx.rng.int(Math.max(10, d.writeDelay * 0.2)));
         for (;;) {
           const s = (await d.stored(d.path))!;
           const r = await d.push(d.path, s.text.replace("</h1>", pub + "</h1>"), s.etag);

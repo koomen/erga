@@ -3,7 +3,7 @@
 // box, and the drawn caret and selection rectangles.
 //   bun tests/styles.ts
 
-import { Browser, urlFor } from "./cdp";
+import { Browser, pool, urlFor } from "./cdp";
 import { corpus, WELCOME } from "./corpus";
 
 const docs: [string, string][] = [
@@ -41,25 +41,41 @@ const collect = `(() => {
   return out;
 })()`;
 
-const browser = await Browser.launch();
 let failures = 0;
-try {
-  for (const dark of [false, true]) {
-    for (const [name, doc] of docs) {
+/**
+ * Waits until the editor has settled: its lines all drawn, and the caret and
+ * selection layers in place. CodeMirror draws some of these a few frames
+ * after a dispatch, and only what's in its viewport, which it measures over
+ * a few frames too; so: the same reading three times running, 40ms apart.
+ * (Timers, not animation frames: a tab in the background may get no frames.)
+ */
+async function layersSettled(p: import("./cdp").Page) {
+  const snap = () => p.eval<string>(`JSON.stringify([(() => { const v = scratchEditor.view, vp = v.viewport; return vp ? [vp.from, vp.to, v.state.doc.length] : 0; })(), document.querySelectorAll(".cm-content > .cm-line, .ed-content > .line").length, document.documentElement.scrollHeight, ...[...document.querySelectorAll(".cm-cursor, .ed-cursor, .cm-selectionBackground, .ed-selection-bg")].map((e) => { const b = e.getBoundingClientRect(); return [b.left, b.top, b.width, b.height]; })])`);
+  let last = await snap(), same = 0;
+  for (let i = 0; i < 60 && same < 2; i++) {
+    await Bun.sleep(40);
+    const now = await snap();
+    same = now == last ? same + 1 : 0;
+    last = now;
+  }
+}
+// Every document in both themes, side by side across a few browsers (cdp.ts, `pool`).
+const cases = [false, true].flatMap((dark) => docs.map(([name, doc]) => ({ dark, name, doc })));
+await pool(cases, async ({ dark, name, doc }, browser: Browser) => {
       const res: Record<string, any> = {};
       for (const which of ["editor-cm", "editor"] as const) {
         const p = await browser.page();
         await p.open(urlFor(which), { doc, dark, height: 2400 });
         // caret at the end (links fold), then a selection spanning lines
         await p.eval(`scratchEditor.view.dispatch({ selection: { anchor: scratchEditor.view.state.doc.length } }); true`);
-        await Bun.sleep(80);
+        await layersSettled(p);
         const a = await p.eval(collect);
         const n = await p.eval<number>("scratchEditor.view.state.doc.length");
         await p.eval(`scratchEditor.view.dispatch({ selection: { anchor: ${Math.floor(n * 0.2)}, head: ${Math.floor(n * 0.45)} } }); true`);
-        await Bun.sleep(80);
+        await layersSettled(p);
         const b = await p.eval(collect);
         await p.eval(`scratchEditor.view.dispatch({ selection: { anchor: 3, head: 9 } }); true`);
-        await Bun.sleep(80);
+        await layersSettled(p);
         const c = await p.eval(collect);
         res[which] = { a, b: b.layers, c: c.layers };
         p.close();
@@ -85,7 +101,5 @@ try {
       cmp("short selection", cm.c.selection, ed.c.selection);
       if (diffs.length) { failures++; console.log(`DIFF   ${label}\n  ` + diffs.join("\n  ")); }
       else console.log(`MATCH  ${label}  (${cm.a.lines.length} lines, ${cm.a.chars.length} chars)`);
-    }
-  }
-} finally { browser.close(); }
+});
 process.exit(failures ? 1 : 0);

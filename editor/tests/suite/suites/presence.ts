@@ -71,6 +71,7 @@ export const presence: Test[] = [
   },
   {
     name: "thirty people: everyone sees everyone, and the right ones leave",
+    slow: true,
     timeoutMs: 90_000,
     async run(ctx) {
       const d = await ctx.doc();
