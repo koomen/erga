@@ -25,7 +25,6 @@
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
-import { HttpApiBuilder, HttpApiMiddleware } from "effect/http-api";
 import { Argument, Command, Flag } from "effect/cli";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { Socket } from "effect/socket";
@@ -39,12 +38,10 @@ import * as Stream from "effect/Stream";
 import * as Config from "effect/Config";
 import * as Console from "effect/Console";
 import * as Option from "effect/Option";
-import * as Redacted from "effect/Redacted";
 import * as Schedule from "effect/Schedule";
-import { MODELS, externalGuide, isModelChoice, loadConfig, startSession, type AgentSession } from "./agent";
-import { FileStore, Room, StateStore, StoreError, digest } from "./room";
-import { AgentOff, Api, BadRequest, ExplainBadRequests, ModelFixed, NoSuchModel, NoSuchTool, Person, PersonFromQuery, SessionFailed, ShareToken, ToolFailed, Unauthorized, type AgentState, type ModelState } from "./api";
-import type { ViewRequest, ViewResult } from "./src/page/agent-log";
+import { MODELS, loadConfig } from "./agent";
+import { FileStore, Room, StateStore, StoreError } from "./room";
+import { failed, ignored, makeHost, mimeOf } from "./host";
 import { version } from "./package.json";
 
 const EDITOR_DIR = new URL(".", import.meta.url).pathname.replace(/\/$/, "");
@@ -60,13 +57,6 @@ interface Doc {
   readonly kind: "html" | "md";
 }
 
-const MIME: Record<string, string> = {
-  ".html": "text/html; charset=utf-8", ".htm": "text/html; charset=utf-8", ".md": "text/markdown; charset=utf-8",
-  ".js": "text/javascript; charset=utf-8", ".mjs": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8",
-  ".json": "application/json; charset=utf-8", ".svg": "image/svg+xml", ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
-  ".gif": "image/gif", ".webp": "image/webp", ".ico": "image/x-icon", ".woff2": "font/woff2", ".woff": "font/woff", ".ttf": "font/ttf",
-  ".txt": "text/plain; charset=utf-8", ".wasm": "application/wasm", ".mp4": "video/mp4", ".webm": "video/webm", ".mp3": "audio/mpeg",
-};
 
 /** The host's settings from the environment: tests set these; people rarely need to. */
 const settings = Config.all({
@@ -115,7 +105,7 @@ const serveFile = (root: string, rel: string, cacheControl = "no-store") =>
     const info = yield* fs.stat(full).pipe(Effect.option);
     if (info._tag === "None" || info.value.type !== "File") return HttpServerResponse.text("Not found", { status: 404 });
     const bytes = yield* fs.readFile(full);
-    const type = MIME[path.extname(full).toLowerCase()] ?? "application/octet-stream";
+    const type = mimeOf(full) ?? "application/octet-stream";
     return HttpServerResponse.uint8Array(bytes, { contentType: type, headers: { "Cache-Control": cacheControl } });
   });
 
@@ -143,7 +133,6 @@ const program = (args: { target: Option.Option<string>; port: number; open: bool
 
   // The folder as a FileStore (room.ts): what the room loads, writes back
   // and re-reads when the watcher sees a change. Writes are atomic renames.
-  const ignored = (rel: string) => rel.split(/[\\/]/).some((seg) => seg.startsWith(".") || seg == "node_modules");
   const storeError = (e: { message: string }) => new StoreError({ message: e.message });
   const store = FileStore.of({
     list: fs.readDirectory(doc.dir, { recursive: true }).pipe(
@@ -177,81 +166,22 @@ const program = (args: { target: Option.Option<string>; port: number; open: bool
     Effect.provideService(FileStore, store),
     Effect.provideService(StateStore, state),
   );
-  /** A request's path inside the folder, refusing ones that leave it. */
-  const cleanRel = (raw: string | undefined) => {
-    const rel = path.normalize(decodeURIComponent(raw ?? "")).replace(/^\/+/, "");
-    if (!rel || rel.startsWith("..") || path.isAbsolute(rel) || ignored(rel)) throw new UsageError({ message: `bad path: ${raw}` });
-    return rel.split(path.sep).join("/");
-  };
   if (room.text(docPath) == null) return yield* new UsageError({ message: `${doc.name}: not a UTF-8 text file` });
 
-  // Each person's open tabs, as event streams: their agent's events and its
-  // requests to look at the page go only to them.
-  interface Tab { user: string; send: (msg: unknown) => void }
-  const tabs = new Set<Tab>();
-  const sendTo = (user: string, msg: unknown) => { for (const t of tabs) if (t.user == user) t.send(msg); };
-
-  // view_page: ask the owner's tabs; the first to answer wins. With none of
-  // their tabs open there's nothing to look with (no server-side browser
-  // here; hosted, Cloudflare Browser Rendering would stand in), and the tool
-  // says so.
-  const views = new Map<string, (r: ViewResult) => void>();
-  const view = (user: string) => (req: ViewRequest): Promise<ViewResult> => {
-    if (![...tabs].some((t) => t.user == user)) return Promise.resolve({ width: 0, height: 0, errors: [], error: "Your user has no editor tab open, so there's no browser to look at the page with." });
-    const id = crypto.randomUUID();
-    return new Promise((resolve) => {
-      const timer = setTimeout(() => { views.delete(id); resolve({ width: 0, height: 0, errors: [], error: "The editor didn't send a picture back in time." }); }, 20_000);
-      views.set(id, (r) => { clearTimeout(timer); views.delete(id); resolve(r); });
-      sendTo(user, { type: "view", id, req });
-    });
+  // Who a request is from. Locally that's just a name per tab (?user=Ada),
+  // defaulting to the person running the host.
+  const userOf = (url: URL) => {
+    const name = (url.searchParams.get("user") || "").trim().slice(0, 40) || defaultName;
+    return { id: name.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-|-$/g, "") || "anon", name };
   };
-
+  const urlOf = (req: HttpServerRequest.HttpServerRequest) => new URL(req.url, "http://localhost");
   const cfg = yield* loadConfig(Option.getOrElse(env.agentEnvFile, () => path.join(EDITOR_DIR, ".env")));
-  const agentOff = "missing" in cfg ? cfg.missing : "";
-  const sessions = new Map<string, Promise<AgentSession>>();
-  /**
-   * A person's agent session, started the first time they open the panel. With
-   * the embedded agent off it still exists, for an external agent's tool calls.
-   */
-  const sessionFor = (user: { id: string; name: string }) => {
-    let s = sessions.get(user.id);
-    if (!s) {
-      s = startSession({
-        cfg: "missing" in cfg ? null : cfg, room, owner: user, docName: doc.name, kind: doc.kind,
-        canEdit: () => true, // locally everyone may edit; hosted, the project role decides
-        view: view(user.id),
-        readAsset: (rel) => Effect.runPromise(Effect.orElseSucceed(store.read(rel), () => null)),
-      });
-      s.then((session) => session.subscribe((ev) => sendTo(user.id, { type: "agent", ev })), () => sessions.delete(user.id));
-      sessions.set(user.id, s);
-    }
-    return s;
-  };
-  /** The person's agent session, or why it didn't start. */
-  const session = (user: { id: string; name: string }) => Effect.tryPromise(() => sessionFor(user));
-  /** For the panel's endpoints: their session, unless the embedded agent is off. */
-  const agentSession = Person.use((user) => agentOff
-    ? Effect.fail(new AgentOff({ ok: false, reason: agentOff }))
-    : Effect.mapError(session(user), () => new AgentOff({ ok: false, reason: "the agent did not start" })));
-  /** For an external agent: the session's tools work even with the embedded agent off. */
-  const extSession = Person.use((user) => Effect.mapError(session(user), () => new SessionFailed({ ok: false, error: "The agent's session didn't start." })));
-
-  // Sharing with an external agent: the share button mints a token that
-  // stands for one person, and an agent holding it calls that person's
-  // agent tools over /api/ext, as their agent. Tokens live as long as the
-  // host; rotating one revokes the old. Hosted, they'd be stored and scoped
-  // to the project like any other credential.
-  const shareTokens = new Map<string, { id: string; name: string }>();
-  const tokenOf = new Map<string, string>();
-  const mintToken = (user: { id: string; name: string }, rotate: boolean) => {
-    const old = tokenOf.get(user.id);
-    if (old && !rotate) return old;
-    if (old) shareTokens.delete(old);
-    const token = "erga_" + Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("base64url");
-    shareTokens.set(token, user);
-    tokenOf.set(user.id, token);
-    return token;
-  };
+  const host = makeHost({
+    room, files: store, agent: cfg,
+    doc: { name: doc.name, path: docPath, kind: doc.kind, dir: doc.dir },
+    personOf: (req) => userOf(urlOf(req)),
+    baseUrl: (req) => `http://${req.headers["host"] ?? `127.0.0.1:${port}`}`,
+  });
 
   // Watch the folder, subfolders included, and hand every change to the
   // room: it merges text edits it didn't make and notes changed assets.
@@ -267,100 +197,13 @@ const program = (args: { target: Option.Option<string>; port: number; open: bool
     Effect.catchCause(() => Effect.void),
   );
 
-  // Who a request is from. Locally that's just a name per tab (?user=Ada),
-  // defaulting to the person running the host; hosted, the session cookie.
-  const userOf = (url: URL) => {
-    const name = (url.searchParams.get("user") || "").trim().slice(0, 40) || defaultName;
-    return { id: name.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-|-$/g, "") || "anon", name };
-  };
-  const requestUrl = HttpServerRequest.HttpServerRequest.useSync((r) => new URL(r.url, "http://localhost"));
-  const modelState = (s: AgentSession): ModelState => ({
-    model: s.model,
-    choice: s.modelChoice,
-    models: s.modelChoice == null ? [] : Object.entries(MODELS).map(([id, m]) => ({ id, label: m.label })),
-  });
-
-  // ---------------------------------------------------------- the API (api.ts)
-
-  const personFromQuery = Layer.succeed(PersonFromQuery, (handler) =>
-    Effect.flatMap(requestUrl, (url) => Effect.provideService(handler, Person, userOf(url))));
-  const shareToken = Layer.succeed(ShareToken, {
-    bearer: (handler, { credential }) => {
-      const user = shareTokens.get(Redacted.value(credential));
-      return user
-        ? Effect.provideService(handler, Person, user)
-        : Effect.fail(new Unauthorized({ ok: false, error: "Missing or unknown token: send the one you were given as \"Authorization: Bearer <token>\". Ask for a new prompt if it stopped working (the editor may have restarted)." }));
-    },
-  });
-  const explainBadRequests = HttpApiMiddleware.layerSchemaErrorTransform(ExplainBadRequests, (e) =>
-    e.kind == "Params" || e.kind == "Headers" || e.kind == "Query" || e.kind == "Payload"
-      ? Effect.fail(new BadRequest({ ok: false, error: e.cause.message }))
-      : Effect.die(e));
-
-  const docApi = HttpApiBuilder.group(Api, "doc", (h) => h
-    .handle("info", () => Effect.succeed({ name: doc.name, path: docPath, kind: doc.kind, dir: doc.dir, user: defaultName, writeDelay: room.writeDelay })));
-
-  const agentApi = HttpApiBuilder.group(Api, "agent", (h) => h
-    .handle("state", () => Person.use((user) => session(user).pipe(
-      Effect.map((s): AgentState => agentOff ? { enabled: false, reason: agentOff, log: s.log() } : { enabled: true, ...modelState(s), log: s.log() }),
-      Effect.catch((e) => Effect.succeed<AgentState>({ enabled: false, reason: `the agent did not start: ${e.cause instanceof Error ? e.cause.message : String(e.cause)}` })),
-    )))
-    .handle("prompt", ({ payload }) => Effect.gen(function* () {
-      const s = yield* agentSession;
-      // The sender's last keystrokes travel over its WebSocket; let them land first.
-      if (payload.after) yield* room.waitFor(payload.after);
-      s.prompt(payload.text, payload.context ?? null);
-      return { ok: true as const };
-    }))
-    .handle("model", ({ payload }) => Effect.gen(function* () {
-      const s = yield* agentSession;
-      if (!isModelChoice(payload.model)) return yield* new NoSuchModel({ ok: false, reason: `there's no model "${payload.model}"` });
-      if (!s.setModel(payload.model)) return yield* new ModelFixed({ ok: false, reason: "this agent's model can't be changed" });
-      const state = modelState(s);
-      sendTo((yield* Person).id, { type: "model", ...state });
-      return { ok: true as const, ...state };
-    }))
-    .handle("view", ({ payload: { id, ...result } }) => Effect.sync(() => {
-      views.get(id)?.({ ...result, errors: [...result.errors] });
-      return { ok: true as const };
-    }))
-    .handle("abort", () => Person.use((user) => session(user).pipe(
-      Effect.map((s) => s.abort()), Effect.ignore, Effect.as({ ok: true as const }))))
-    .handle("reset", () => Person.use((user) => session(user).pipe(
-      Effect.flatMap((s) => Effect.promise(() => s.reset())), Effect.ignore, Effect.as({ ok: true as const }))))
-    .handle("undo", () => Person.use((user) => session(user).pipe(
-      Effect.map((s) => ({ ok: s.undo() })), Effect.orElseSucceed(() => ({ ok: false })))))
-    .handle("share", ({ payload }) => Person.useSync((user) => ({ token: mintToken(user, payload.rotate ?? false) }))));
-
-  const extApi = HttpApiBuilder.group(Api, "ext", (h) => h
-    .handle("guide", () => Effect.gen(function* () {
-      const user = yield* Person;
-      const s = yield* extSession;
-      const host = (yield* HttpServerRequest.HttpServerRequest).headers["host"] ?? `127.0.0.1:${port}`;
-      return externalGuide({ docName: docPath, kind: doc.kind, owner: user.name, base: `http://${host}`, tools: s.tools() });
-    }))
-    .handle("tools", () => Effect.map(extSession, (s) => ({ ok: true as const, tools: s.tools() })))
-    .handle("run", ({ params: { name }, payload }) => Effect.gen(function* () {
-      const s = yield* extSession;
-      if (!s.tools().some((t) => t.name == name)) return yield* new NoSuchTool({ ok: false, error: `There's no tool named "${name}". The tools are: ${s.tools().map((t) => t.name).join(", ")}.` });
-      const content = yield* Effect.tryPromise({ try: () => s.runTool(name, payload), catch: (e) => new ToolFailed({ ok: false, error: (e as Error).message }) });
-      return { ok: true as const, content };
-    })));
-
-  const api = HttpApiBuilder.layer(Api).pipe(Layer.provide([
-    docApi.pipe(Layer.provide(explainBadRequests)),
-    agentApi.pipe(Layer.provide([personFromQuery, explainBadRequests])),
-    extApi.pipe(Layer.provide([shareToken, explainBadRequests])),
-  ]));
-
-  // ---------------------------------------------------------- everything else
-
+  // The editor's own files, and the WebSockets (host.ts leaves those to each platform).
   const routes: Array<HttpRouter.Route<unknown, FileSystem.FileSystem | Path.Path>> = [
     HttpRouter.route("GET", "/", serveFile(EDITOR_DIR, "page.html")),
     // The room: Yjs sync and awareness over a WebSocket (y-websocket's protocol).
     HttpRouter.route("GET", "/api/room/*", Effect.gen(function* () {
       const req = yield* HttpServerRequest.HttpServerRequest;
-      const epoch = new URL(req.url, "http://localhost").searchParams.get("epoch");
+      const epoch = urlOf(req).searchParams.get("epoch");
       const socket = yield* req.upgrade;
       const pull = yield* Socket.readerBytes(socket);
       const { write } = yield* socket.writer;
@@ -378,58 +221,28 @@ const program = (args: { target: Option.Option<string>; port: number; open: bool
     // tab's event stream would hold one, leaving later requests (sending the
     // agent a message) queued forever. WebSockets don't count against that.
     HttpRouter.route("GET", "/api/events", Effect.gen(function* () {
-      const user = userOf(yield* requestUrl);
-      const socket = yield* (yield* HttpServerRequest.HttpServerRequest).upgrade;
+      const req = yield* HttpServerRequest.HttpServerRequest;
+      const user = userOf(urlOf(req));
+      const socket = yield* req.upgrade;
       const { pull } = yield* socket.reader;
       const { write } = yield* socket.writer;
-      const tab: Tab = { user: user.id, send: (msg) => { Effect.runFork(write(JSON.stringify(msg)).pipe(Effect.ignore)); } };
-      tabs.add(tab);
+      const leave = host.addTab(user.id, (msg) => { Effect.runFork(write(JSON.stringify(msg)).pipe(Effect.ignore)); });
       yield* each(pull, () => Effect.void).pipe(
         Effect.catch(() => Effect.void),
-        Effect.ensuring(Effect.sync(() => tabs.delete(tab))),
+        Effect.ensuring(Effect.sync(leave)),
       );
       return HttpServerResponse.empty();
     }).pipe(Effect.scoped)),
-    // What storage holds (not the room): lets a test see the room's writes
-    // land, and send an edit that arrives as a file (a publish, a git pull)
-    // without depending on a filesystem watcher. Hosted, this is the
-    // publish path, behind the project's write role.
-    HttpRouter.route("GET", "/api/stored/*", Effect.gen(function* () {
-      const params = yield* HttpRouter.params;
-      const rel = yield* Effect.try(() => cleanRel(params["*"]));
-      const bytes = yield* store.read(rel);
-      return bytes ? HttpServerResponse.uint8Array(bytes, { contentType: "application/octet-stream", headers: { "Cache-Control": "no-store", ETag: `"${digest(bytes)}"` } }) : HttpServerResponse.text("Not found", { status: 404 });
-    }).pipe(Effect.catchTag("UnknownError", () => Effect.succeed(HttpServerResponse.text("Bad path", { status: 400 }))))),
-    // With If-Match, refused (412) if storage has changed since that version.
-    HttpRouter.route("PUT", "/api/stored/*", Effect.gen(function* () {
-      const params = yield* HttpRouter.params;
-      const rel = yield* Effect.try(() => cleanRel(params["*"]));
-      const req = yield* HttpServerRequest.HttpServerRequest;
-      const text = yield* req.text;
-      const ifMatch = req.headers["if-match"]?.replace(/^W\//, "").replace(/"/g, "") ?? null;
-      const r = yield* room.push(rel, text, ifMatch);
-      return yield* HttpServerResponse.json(r, { status: r.ok ? 200 : r.reason == "stale" ? 412 : 415, headers: r.etag ? { ETag: `"${r.etag}"` } : {} });
-    }).pipe(Effect.catchTag("UnknownError", () => Effect.succeed(HttpServerResponse.text("Bad path", { status: 400 }))))),
-    HttpRouter.route("GET", "/doc/*", HttpRouter.params.pipe(Effect.flatMap((p) => {
-      const rel = decodeURIComponent(p["*"] ?? "").replace(/^\/+/, "");
-      const text = room.text(rel);
-      return text != null
-        ? Effect.succeed(HttpServerResponse.text(text, { contentType: MIME[path.extname(rel).toLowerCase()] ?? "text/plain; charset=utf-8", headers: { "Cache-Control": "no-store" } }))
-        : serveFile(doc.dir, rel);
-    }))),
     HttpRouter.route("GET", "/*", HttpRouter.params.pipe(Effect.flatMap((p) => serveFile(EDITOR_DIR, p["*"] ?? "", "no-cache")))),
   ];
-  // A plain route's failure: a request that doesn't parse is the client's mistake (400); anything else is ours.
-  const badRequest = (e: { _tag?: string; reason?: { _tag?: string } }) => e._tag == "SchemaError" || e.reason?._tag == "RequestParseError";
-  const failed = (e: unknown) => HttpServerResponse.text(String((e as { message?: string }).message ?? e), { status: badRequest(e as object) ? 400 : 500 });
-  const app = Layer.mergeAll(api, HttpRouter.addAll(routes.map((r) => HttpRouter.route(r.method, r.path, Effect.catch(r.handler, (e) => Effect.succeed(failed(e)))))));
+  const app = Layer.mergeAll(host.app, HttpRouter.addAll(routes.map((r) => HttpRouter.route(r.method, r.path, Effect.catch(r.handler, (e) => Effect.succeed(failed(e)))))));
 
   const url = `http://127.0.0.1:${port}/`;
   const server = Layer.unwrap(
     Effect.gen(function* () {
       const rel = path.relative(process.cwd(), doc.path);
       const what = Option.isNone(args.target) ? "the demo (a copy of templates/demo; edits last until the host stops)" : rel.startsWith("..") ? doc.path : rel || doc.name;
-      yield* Console.log(`\n  editing ${doc.kind === "md" ? "Markdown" : "HTML"}: ${what}\n  ${url}   (another person: ${url}?user=Ada)\n  agent: ${"missing" in cfg ? `off (${agentOff})` : `${cfg.model == "script" ? "script" : MODELS[cfg.model].label} to start (each person can switch)`}\n`);
+      yield* Console.log(`\n  editing ${doc.kind === "md" ? "Markdown" : "HTML"}: ${what}\n  ${url}   (another person: ${url}?user=Ada)\n  agent: ${"missing" in cfg ? `off (${host.agentOff})` : `${cfg.model == "script" ? "script" : MODELS[cfg.model].label} to start (each person can switch)`}\n`);
       if (args.open) yield* Effect.forkDetach(Effect.ignore(spawner.exitCode(ChildProcess.make("open", [url]))));
       // Tabs hold their sockets open for good, so waiting for connections to
       // finish (Bun's graceful shutdown) would only stall every exit by 20s.

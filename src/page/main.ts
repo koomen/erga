@@ -24,6 +24,7 @@ import TurndownService from "turndown";
 import { emptyLog, reduce, type Log, type LogEvent, type LogItem, type ViewRequest, type ViewResult } from "./agent-log";
 import { domToPng } from "modern-screenshot";
 import type { AgentState, DocInfo, ModelState } from "../../api";
+import { BASE } from "./base";
 
 const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 
@@ -134,7 +135,7 @@ declare global {
   const frame = $("frame") as HTMLIFrameElement;
   let info: DocInfo | null = null;
   try {
-    const res = await fetch("/api/doc");
+    const res = await fetch(`${BASE}/api/doc`);
     if (!res.ok) throw new Error(await res.text());
     info = (await res.json()) as DocInfo;
   } catch (e) {
@@ -155,7 +156,7 @@ declare global {
   const me: Author = { user: myId, name: myName, color: colorFor(myId), kind: "person" };
   const self: MarkAuthor = { name: me.name, color: me.color };
   /** The host's agent endpoints, as this person. */
-  const api = (path: string) => `${path}?user=${encodeURIComponent(myName)}`;
+  const api = (path: string) => `${BASE}${path}?user=${encodeURIComponent(myName)}`;
 
   // Join the room and wait for the document's text. Presence and connection
   // news before the shell is set up is picked up once it is (`started`).
@@ -520,7 +521,7 @@ declare global {
   const shareCopy = $("share-copy"), shareRotate = $("share-rotate");
   let shareToken: string | null = null;
   function promptFor(token: string): string {
-    const api = `${location.origin}/api/ext`;
+    const api = `${location.origin}${BASE}/api/ext`;
     return `I'd like your help editing "${info?.path ?? info?.name ?? "the document"}", an Erga document I have open in my editor. You can read and change it through the editor's API, working as my agent: your edits show up in my editor as you make them.
 
 API: ${api}
@@ -655,7 +656,7 @@ Once you've read it, await further instructions.`;
     frame,
     kind: info.kind,
     state,
-    base: "/doc/",
+    base: `${BASE}/doc/`,
     markdownHead,
     self,
     onUpdate(u) {

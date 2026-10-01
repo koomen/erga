@@ -29,6 +29,7 @@
 // participants stays synchronous (`connect`, `text`), since Yjs and the
 // sockets are callback APIs; everything that touches storage is an Effect.
 
+import { createHash } from "node:crypto";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Latch from "effect/Latch";
@@ -90,7 +91,7 @@ export class Room {
   private turn = Semaphore.makeUnsafe(1);
   private conns = new Map<object, { send: (m: Uint8Array) => void; clients: Set<number> }>();
   private readonly me: Author = { user: "disk", name: "On disk", color: "#6b7280", kind: "disk" };
-  private decoder = new TextDecoder("utf-8", { fatal: true });
+  private decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false });
 
   private constructor(private store: FileStore["Service"], private state: StateStore["Service"], private log: (line: string) => void, readonly writeDelay: number) {
     // The room itself is not a visible participant.
@@ -403,7 +404,7 @@ function awarenessMessage(awareness: awarenessProtocol.Awareness, clients: numbe
 
 /** A short content hash: an asset's versioned reference, and a file's etag. */
 export function digest(bytes: Uint8Array): string {
-  return new Bun.CryptoHasher("sha1").update(bytes).digest("hex").slice(0, 16);
+  return createHash("sha1").update(bytes).digest("hex").slice(0, 16);
 }
 
 /**

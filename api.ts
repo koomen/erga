@@ -41,7 +41,7 @@ export class ToolFailed extends Schema.TaggedError<ToolFailed>()("ToolFailed", {
 /** The person a request acts for. */
 export class Person extends Context.Service<Person, { readonly id: string; readonly name: string }>()("erga/Person") {}
 
-/** Locally, a tab names its person in ?user= (the host's user by default); hosted, the session cookie would. */
+/** Who a request is from: locally ?user= (the host's user by default); hosted, the session the Worker checked. */
 export class PersonFromQuery extends HttpApiMiddleware.Service<PersonFromQuery, { provides: Person }>()("erga/PersonFromQuery") {}
 
 /** An external agent's bearer token, which stands for the person who shared it. */
@@ -63,7 +63,7 @@ export const DocInfo = Schema.Struct({
   path: Schema.String,
   kind: Schema.Literals(["html", "md"]),
   dir: Schema.String,
-  /** Who a tab is when it doesn't say (?user=). */
+  /** Who's asking: the signed-in person hosted, the host's user locally (unless ?user= says). */
   user: Schema.String,
   writeDelay: Schema.Number,
 });
@@ -97,7 +97,8 @@ const ToolSpec = Schema.Struct({ name: Schema.String, description: Schema.String
 
 export const Api = HttpApi.make("erga")
   .add(HttpApiGroup.make("doc")
-    .add(HttpApiEndpoint.get("info", "/api/doc", { success: DocInfo })))
+    .add(HttpApiEndpoint.get("info", "/api/doc", { success: DocInfo }))
+    .middleware(PersonFromQuery))
   .add(HttpApiGroup.make("agent")
     .add(HttpApiEndpoint.get("state", "/api/agent", { success: AgentState }))
     /** A message for the person's agent; `after` is the sender's state vector, so its last keystrokes land first. */

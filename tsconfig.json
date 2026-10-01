@@ -10,5 +10,5 @@
     "skipLibCheck": true,
     "types": ["bun"]
   },
-  "include": ["src", "open.ts", "agent.ts", "room.ts", "workspace.ts", "tests/suite", "tests/tab.ts", "tests/cdp.ts"]
+  "include": ["text-imports.d.ts", "src", "open.ts", "agent.ts", "room.ts", "workspace.ts", "tests/suite", "tests/tab.ts", "tests/cdp.ts"]
 }

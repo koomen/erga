@@ -1,0 +1,20 @@
+import type { DocHost } from "./doc-host";
+
+/** The Worker's bindings (cloudflare.config.ts); secrets are set with `cf workers secrets update`. */
+export interface Env {
+  /** One Durable Object per document, named "<owner>/<id>". */
+  DOCS: DurableObjectNamespace<DocHost>;
+  /** The editor's own files (page.html as editor.html, page.js, style.css, fonts). */
+  ASSETS: Fetcher;
+  /** GitHub logins allowed to sign in, comma-separated. */
+  ALLOWED_USERS: string;
+  GITHUB_CLIENT_ID: string;
+  GITHUB_CLIENT_SECRET: string;
+  /** Signs session cookies. */
+  SESSION_SECRET: string;
+  ANTHROPIC_API_KEY: string;
+  /** Local development only: sign in as this login without GitHub (honoured only on localhost). */
+  DEV_LOGIN?: string;
+  /** "script" for the test suite's scripted agent; unset on erga.dev. */
+  ERGA_AGENT_MODEL?: string;
+}

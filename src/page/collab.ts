@@ -16,6 +16,7 @@ import { WebsocketProvider } from "y-websocket";
 import type { ChangeSet } from "@codemirror/state";
 import { applyChanges, assets, authorOf, deltaToChanges, files, hasSeen, introduce, roomInfo, stamp, stateVector, type Author } from "../room/doc";
 import { changesBetween } from "./merge";
+import { BASE } from "./base";
 
 /** Someone in the room, from awareness. */
 export interface Presence {
@@ -56,7 +57,7 @@ export class Collab {
 
   constructor(private opts: CollabOptions, params: Record<string, string>) {
     const proto = location.protocol == "https:" ? "wss:" : "ws:";
-    this.provider = new WebsocketProvider(`${proto}//${location.host}/api/room`, "doc", this.doc, { params, disableBc: true });
+    this.provider = new WebsocketProvider(`${proto}//${location.host}${BASE}/api/room`, "doc", this.doc, { params, disableBc: true });
     const awareness = this.provider.awareness;
     awareness.setLocalState({ user: opts.me, cursor: null });
     awareness.on("change", ({ added, updated, removed }: { added: number[]; updated: number[]; removed: number[] }) => {

@@ -27,6 +27,27 @@ your edits to it last until the host stops. `templates/doc/` is an empty
 document in the same style: copy the folder to start a new one
 (`cp -r templates/doc ./my-doc && bun start ./my-doc`).
 
+## Hosted: erga.dev
+
+The same editor runs on Cloudflare. A front-door Worker (`worker/index.ts`)
+shows the demo read-only at `/` with an Edit button; Edit signs you in with
+GitHub (only the logins in `ALLOWED_USERS`, in `cloudflare.config.ts`) and
+makes you a fresh copy at `/<you>/<id>`, which anyone signed in can open and
+edit with you. Each document is a Durable Object (`worker/doc-host.ts`) that
+keeps its files and Yjs state in its own storage and serves the same
+per-document host as the local server (`host.ts`), agent included.
+
+    bun run dev:worker              # the Worker locally (needs .dev.vars, below)
+    bun run deploy                  # build and deploy with the cf CLI
+
+Secrets are set with `bunx cf workers secrets update`: `GITHUB_CLIENT_ID` and
+`GITHUB_CLIENT_SECRET` (a GitHub OAuth app whose callback is
+`https://erga.dev/auth/github/callback`), `SESSION_SECRET` (any long random
+string) and `ANTHROPIC_API_KEY`. Locally they come from `.dev.vars`, where
+`DEV_LOGIN=<login>` signs you in without GitHub (on localhost only) and
+`ERGA_AGENT_MODEL=script` swaps in the scripted agent. The multiplayer suite
+runs against it unchanged: see `tests/suite/README.md` for the remote target.
+
 ## Page editor
 
 The host (`open.ts`, Effect on Bun) serves the editor at `http://127.0.0.1:4400/`

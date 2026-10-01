@@ -5,3 +5,8 @@ node_modules/
 **/.env
 **/.env.*
 !**/.env.example
+
+# cf build output and local state
+.cloudflare/
+.site/
+.dev.vars

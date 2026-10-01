@@ -27,7 +27,6 @@
 // `scriptModel`), for the test suite in tests/suite/: deterministic, free,
 // and it needs no key. Never set it on a deployment real people use.
 
-import { readFileSync } from "fs";
 import * as Config from "effect/Config";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
@@ -44,6 +43,7 @@ import type { ViewRequest, ViewResult } from "./src/page/agent-log";
 import { agentName, colorFor, files, introduce, stamp, stateVector, type Author } from "./src/room/doc";
 import { joinLocal, type Room } from "./room";
 import { YjsWorkspace, WorkspaceError, cleanPath, globToRegExp, type Workspace } from "./workspace";
+import documentPrompt from "./DOCUMENT_PROMPT.md" with { type: "text" };
 
 /** The models a person can switch between, by key; prices per million tokens. */
 export const MODELS = {
@@ -79,6 +79,11 @@ export const loadConfig = (envPath: string): Effect.Effect<AgentConfig | { missi
     Effect.map((file) => ConfigProvider.orElse(file, env)),
     Effect.orElseSucceed(() => env),
   );
+  return yield* agentConfigFrom(provider);
+});
+
+/** Reads the agent's settings from a provider (hosted: the Worker's bindings). */
+export const agentConfigFrom = (provider: ConfigProvider.ConfigProvider): Effect.Effect<AgentConfig | { missing: string }> => Effect.gen(function* () {
   const read = yield* Effect.result(settings.parse(provider));
   if (read._tag == "Failure") {
     // "ERGA_AGENT_MODEL should be "sonnet" or "opus-fast"", not the schema's own wording.
@@ -176,7 +181,7 @@ async function scriptStep(context: Context) {
  * How to write documents the page editor can keep editing by hand
  * (DOCUMENT_PROMPT.md, the one copy of these rules), appended to the system prompt.
  */
-const DOCUMENT_RULES = readFileSync(new URL("./DOCUMENT_PROMPT.md", import.meta.url), "utf8").trim();
+const DOCUMENT_RULES = documentPrompt.trim();
 
 const systemPrompt = (docName: string, kind: "html" | "md", owner: string) => `
 You are ${agentName(owner)}, embedded in Erga's page editor. ${owner} is looking at
