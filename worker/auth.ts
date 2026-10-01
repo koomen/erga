@@ -105,8 +105,12 @@ export async function finishSignIn(env: Env, request: Request): Promise<Response
     method: "POST",
     headers: { Accept: "application/json", "Content-Type": "application/json" },
     body: JSON.stringify({ client_id: env.GITHUB_CLIENT_ID, client_secret: env.GITHUB_CLIENT_SECRET, code: url.searchParams.get("code"), redirect_uri: `${url.origin}/auth/github/callback` }),
-  }).then((r) => r.json() as Promise<{ access_token?: string }>);
-  if (!token.access_token) return page("Sign-in failed", "GitHub didn't let you in. <a href=\"/\">Try again</a>.", 400);
+  }).then((r) => r.json() as Promise<{ access_token?: string; error?: string; error_description?: string }>);
+  if (!token.access_token) {
+    // GitHub's own reason (e.g. incorrect_client_credentials: a wrong GITHUB_CLIENT_SECRET) goes to the logs and the page.
+    console.log(`GitHub sign-in failed: ${token.error}: ${token.error_description}`);
+    return page("Sign-in failed", `GitHub didn't let you in${token.error ? ` (${escape(token.error_description ?? token.error)})` : ""}. <a href="/">Try again</a>.`, 400);
+  }
   const user = await fetch("https://api.github.com/user", {
     headers: { Authorization: `Bearer ${token.access_token}`, Accept: "application/vnd.github+json", "User-Agent": "erga.dev" },
   }).then((r) => r.json() as Promise<{ login?: string; name?: string | null }>);
