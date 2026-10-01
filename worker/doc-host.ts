@@ -101,6 +101,7 @@ export class DocHost extends DurableObject<Env> {
       doc: { name: meta.index, path: meta.index, kind: meta.index.endsWith(".md") ? "md" : "html", dir: meta.owner },
       personOf: (req) => personOf(new Headers(req.headers as Record<string, string>)),
       baseUrl: (req) => req.headers["x-erga-base"] ?? "",
+      signedIn: true,
     });
     const { handler } = HttpRouter.toWebHandler(host.app.pipe(Layer.provide(platform)), { disableLogger: true });
 

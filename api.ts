@@ -65,6 +65,10 @@ export const DocInfo = Schema.Struct({
   dir: Schema.String,
   /** Who's asking: the signed-in person hosted, the host's user locally (unless ?user= says). */
   user: Schema.String,
+  /** Their id: what their carets, edits and agent are attributed to. */
+  userId: Schema.String,
+  /** Signed in (hosted): the name and id are theirs to keep, not chosen per tab. */
+  signedIn: Schema.Boolean,
   writeDelay: Schema.Number,
 });
 export type DocInfo = typeof DocInfo.Type;

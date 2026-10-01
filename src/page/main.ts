@@ -151,8 +151,11 @@ declare global {
   const NAME_KEY = "erga:user:v1";
   const asked = new URLSearchParams(location.search).get("user")?.trim();
   if (asked) try { sessionStorage.setItem(NAME_KEY, asked); } catch {}
-  const myName = (asked || (() => { try { return sessionStorage.getItem(NAME_KEY); } catch { return null; } })() || store.get(NAME_KEY) || info.user).slice(0, 40);
-  const myId = myName.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-|-$/g, "") || "anon";
+  // Signed in (on erga.dev), you're who you signed in as: the host attributes
+  // your edits and your agent to that id, so the tab mustn't pick another.
+  const signedIn = info.signedIn;
+  const myName = signedIn ? info.user : (asked || (() => { try { return sessionStorage.getItem(NAME_KEY); } catch { return null; } })() || store.get(NAME_KEY) || info.user).slice(0, 40);
+  const myId = signedIn ? info.userId : myName.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-|-$/g, "") || "anon";
   const me: Author = { user: myId, name: myName, color: colorFor(myId), kind: "person" };
   const self: MarkAuthor = { name: me.name, color: me.color };
   /** The host's agent endpoints, as this person. */
@@ -443,8 +446,8 @@ declare global {
       b.className = "avatar" + (p.client == -1 ? " me" : "") + (here ? "" : " away");
       b.style.setProperty("--c", p.user.color);
       b.textContent = (p.user.name.trim()[0] ?? "?").toUpperCase();
-      b.dataset.tip = p.client == -1 ? `You (${me.name}); click to change your name` : here ? p.user.name : `${p.user.name} (not here)`;
-      if (p.client == -1) b.addEventListener("click", rename);
+      b.dataset.tip = p.client == -1 ? (signedIn ? `You (${me.name})` : `You (${me.name}); click to change your name`) : here ? p.user.name : `${p.user.name} (not here)`;
+      if (p.client == -1 && !signedIn) b.addEventListener("click", rename);
       else if (here) revealOnClick(b, p, " (not in the text yet)");
       else b.setAttribute("aria-disabled", "true");
       b.setAttribute("aria-label", b.dataset.tip);
