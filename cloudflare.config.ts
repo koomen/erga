@@ -11,6 +11,8 @@ export default defineConfig(({ mode }) => ({
     compatibilityFlags: ["nodejs_compat"],
     entrypoint,
     domains: ["erga.dev"],
+    // Logs and exceptions, queryable afterwards (cf observability telemetry query).
+    observability: { enabled: true, logs: { enabled: true, invocationLogs: true } },
     // The Worker decides everything (view mode at /, documents under
     // /<owner>/<id>) and asks for the editor's files when it needs them.
     assets: { htmlHandling: "none", notFoundHandling: "none", runWorkerFirst: true },

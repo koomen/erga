@@ -109,14 +109,15 @@ export class DocHost extends DurableObject<Env> {
       roomSocket: (url) => {
         const [client, server] = Object.values(new WebSocketPair());
         server.accept();
+        // Binary frames as ArrayBuffers: with this compatibility date they'd otherwise arrive as Blobs.
+        server.binaryType = "arraybuffer";
         const send = (m: Uint8Array) => { try { server.send(m); } catch { /* already closed */ } };
         const conn = room.connect(send, { epoch: url.searchParams.get("epoch") });
         // A tab holding another epoch's history is refused, never merged (room.ts).
         if (!conn) server.close(4409, "stale epoch");
         else {
           server.addEventListener("message", (e) => {
-            const data = typeof e.data == "string" ? new TextEncoder().encode(e.data) : new Uint8Array(e.data);
-            if (!conn.receive(data)) server.close(4400, "malformed message");
+            if (!conn.receive(bytesOf(e.data))) server.close(4400, "malformed message");
           });
           const leave = () => conn.close();
           server.addEventListener("close", leave);
@@ -142,6 +143,13 @@ interface Opened {
   roomSocket: (url: URL) => Response;
   eventSocket: (person: Person) => Response;
   close: () => Promise<void>;
+}
+
+/** A frame's bytes, whether it came as text, an ArrayBuffer or a view on one. */
+function bytesOf(data: string | ArrayBuffer | ArrayBufferView): Uint8Array {
+  if (typeof data == "string") return new TextEncoder().encode(data);
+  if (ArrayBuffer.isView(data)) return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+  return new Uint8Array(data);
 }
 
 /** The person the front door vouched for (anonymous if it didn't, which only /api/ext should see). */
