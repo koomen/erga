@@ -38,7 +38,7 @@ import * as Console from "effect/Console";
 import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
 import { MODELS, externalGuide, isModelChoice, loadConfig, startSession, type AgentSession } from "./agent";
-import { Room, digest, type FileStore, type StateStore } from "./room";
+import { FileStore, Room, StateStore, StoreError, digest } from "./room";
 import type { ViewRequest, ViewResult } from "./src/page/agent-log";
 import { version } from "./package.json";
 
@@ -141,34 +141,39 @@ const program = (args: { target: string; port: number; open: boolean }) => Effec
   // The folder as a FileStore (room.ts): what the room loads, writes back
   // and re-reads when the watcher sees a change. Writes are atomic renames.
   const ignored = (rel: string) => rel.split(/[\\/]/).some((seg) => seg.startsWith(".") || seg == "node_modules");
-  const run = <A, E>(e: Effect.Effect<A, E, FileSystem.FileSystem | Path.Path>) => Effect.runPromise(e.pipe(Effect.provide(BunServices.layer)));
-  const store: FileStore = {
-    list: () => run(fs.readDirectory(doc.dir, { recursive: true }).pipe(
+  const storeError = (e: { message: string }) => new StoreError({ message: e.message });
+  const store = FileStore.of({
+    list: fs.readDirectory(doc.dir, { recursive: true }).pipe(
       Effect.map((all) => all.map((r) => r.split(path.sep).join("/")).filter((r) => !ignored(r))),
       Effect.flatMap((all) => Effect.filter(all, (r) => fs.stat(path.join(doc.dir, r)).pipe(Effect.map((s) => s.type == "File"), Effect.orElseSucceed(() => false)))),
-    )),
-    read: (rel) => run(fs.readFile(path.join(doc.dir, rel)).pipe(Effect.orElseSucceed(() => null))),
-    write: (rel, text) => run(Effect.gen(function* () {
+      Effect.mapError(storeError),
+    ),
+    read: (rel) => fs.readFile(path.join(doc.dir, rel)).pipe(Effect.orElseSucceed(() => null)),
+    write: (rel, text) => Effect.gen(function* () {
       const full = path.join(doc.dir, rel);
       yield* fs.makeDirectory(path.dirname(full), { recursive: true });
       const tmp = path.join(path.dirname(full), `.${path.basename(full)}.erga-${process.pid}.tmp`);
       yield* fs.writeFileString(tmp, text);
       yield* fs.rename(tmp, full);
-    })),
-  };
+    }).pipe(Effect.mapError(storeError)),
+  });
   // The room's Yjs state lives in a cache file named for the folder, so a
   // restarted host picks up the same history (room.ts).
   const stateDir = Option.getOrElse(env.stateDir, () => path.join(Option.getOrElse(env.cacheHome, () => path.join(env.home, ".cache")), "erga", "rooms"));
   const stateFile = path.join(stateDir, new Bun.CryptoHasher("sha1").update(doc.dir).digest("hex").slice(0, 20) + ".yjs");
-  const state: StateStore = {
-    load: () => run(fs.readFile(stateFile).pipe(Effect.orElseSucceed(() => null))),
-    save: (bytes) => run(Effect.gen(function* () {
+  const state = StateStore.of({
+    load: fs.readFile(stateFile).pipe(Effect.orElseSucceed(() => null)),
+    save: (bytes) => Effect.gen(function* () {
       yield* fs.makeDirectory(path.dirname(stateFile), { recursive: true });
       yield* fs.writeFile(stateFile + ".tmp", bytes);
       yield* fs.rename(stateFile + ".tmp", stateFile);
-    })),
-  };
-  const room = yield* Effect.promise(() => Room.open(store, { state, log: (line) => console.log(line), writeDelay: Option.getOrUndefined(env.writeDelay) }));
+    }).pipe(Effect.mapError(storeError)),
+  });
+  // Open for as long as the host runs; on the way out it writes what's unsaved.
+  const room = yield* Room.make({ log: (line) => console.log(line), writeDelay: Option.getOrUndefined(env.writeDelay) }).pipe(
+    Effect.provideService(FileStore, store),
+    Effect.provideService(StateStore, state),
+  );
   /** A request's path inside the folder, refusing ones that leave it. */
   const cleanRel = (raw: string | undefined) => {
     const rel = path.normalize(decodeURIComponent(raw ?? "")).replace(/^\/+/, "");
@@ -212,7 +217,7 @@ const program = (args: { target: string; port: number; open: boolean }) => Effec
         cfg: "missing" in cfg ? null : cfg, room, owner: user, docName: doc.name, kind: doc.kind,
         canEdit: () => true, // locally everyone may edit; hosted, the project role decides
         view: view(user.id),
-        readAsset: store.read,
+        readAsset: (rel) => Effect.runPromise(Effect.orElseSucceed(store.read(rel), () => null)),
       });
       s.then((session) => session.subscribe((ev) => sendTo(user.id, { type: "agent", ev })), () => sessions.delete(user.id));
       sessions.set(user.id, s);
@@ -251,7 +256,9 @@ const program = (args: { target: string; port: number; open: boolean }) => Effec
     Stream.map((ev) => path.relative(doc.dir, path.resolve(doc.dir, ev.path)).split(path.sep).join("/")),
     Stream.filter((rel) => !ignored(rel)),
     Stream.groupedWithin(1000, "60 millis"),
-    Stream.mapEffect((chunk) => Effect.forEach(new Set(chunk), (rel) => Effect.promise(() => room.fileChanged(rel)), { discard: true })),
+    Stream.mapEffect((chunk) => Effect.forEach(new Set(chunk), (rel) => room.fileChanged(rel).pipe(
+      Effect.catch((e) => Effect.sync(() => console.log(`  could not read ${rel}: ${e.message}`))),
+    ), { discard: true })),
     Stream.retry(Schedule.spaced("250 millis")),
     Stream.runDrain,
     Effect.catchCause(() => Effect.void),
@@ -319,7 +326,7 @@ const program = (args: { target: string; port: number; open: boolean }) => Effec
       const s = yield* session(userOf(yield* requestUrl));
       if (agentOff || s._tag != "Success") return yield* HttpServerResponse.json({ ok: false, reason: agentOff || "the agent did not start" }, { status: 503 });
       // The sender's last keystrokes travel over its WebSocket; let them land first.
-      if (body.after) yield* Effect.promise(() => room.waitFor(body.after!));
+      if (body.after) yield* room.waitFor(body.after);
       s.success.prompt(body.text, body.context ?? null);
       return yield* HttpServerResponse.json({ ok: true });
     })),
@@ -398,7 +405,7 @@ const program = (args: { target: string; port: number; open: boolean }) => Effec
     HttpRouter.route("GET", "/api/stored/*", Effect.gen(function* () {
       const params = yield* HttpRouter.params;
       const rel = yield* Effect.try(() => cleanRel(params["*"]));
-      const bytes = yield* Effect.promise(() => store.read(rel));
+      const bytes = yield* store.read(rel);
       return bytes ? HttpServerResponse.uint8Array(bytes, { contentType: "application/octet-stream", headers: { "Cache-Control": "no-store", ETag: `"${digest(bytes)}"` } }) : HttpServerResponse.text("Not found", { status: 404 });
     }).pipe(Effect.catchTag("UnknownError", () => Effect.succeed(HttpServerResponse.text("Bad path", { status: 400 }))))),
     // With If-Match, refused (412) if storage has changed since that version.
@@ -408,7 +415,7 @@ const program = (args: { target: string; port: number; open: boolean }) => Effec
       const req = yield* HttpServerRequest.HttpServerRequest;
       const text = yield* req.text;
       const ifMatch = req.headers["if-match"]?.replace(/^W\//, "").replace(/"/g, "") ?? null;
-      const r = yield* Effect.promise(() => room.push(rel, text, ifMatch));
+      const r = yield* room.push(rel, text, ifMatch);
       return yield* HttpServerResponse.json(r, { status: r.ok ? 200 : r.reason == "stale" ? 412 : 415, headers: r.etag ? { ETag: `"${r.etag}"` } : {} });
     }).pipe(Effect.catchTag("UnknownError", () => Effect.succeed(HttpServerResponse.text("Bad path", { status: 400 }))))),
     HttpRouter.route("GET", "/doc/*", HttpRouter.params.pipe(Effect.flatMap((p) => {
@@ -437,8 +444,6 @@ const program = (args: { target: string; port: number; open: boolean }) => Effec
     }),
   );
   yield* Effect.forkScoped(watcher);
-  // Whatever the room hasn't written yet goes to disk on the way out.
-  yield* Effect.addFinalizer(() => Effect.promise(() => room.close()));
   yield* Layer.launch(server);
 });
 
