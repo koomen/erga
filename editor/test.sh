@@ -11,3 +11,4 @@ bun tests/styles.ts
 bun tests/input.ts
 bun tests/screenshots.ts
 bun tests/page.ts
+bun tests/suite/run.ts

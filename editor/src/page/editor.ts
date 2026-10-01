@@ -31,6 +31,42 @@ export interface PageUpdate {
   selectionSet: boolean;
   /** The page was rendered again from scratch. */
   rendered: boolean;
+  /** What changed in the document, if it did. */
+  changes: ChangeSet | null;
+  /** The change came from elsewhere (`applyExternal`), not from this editor. */
+  remote: boolean;
+}
+
+/** Something wrong with the document that the user can see, and how the agent could fix it. */
+export interface PageProblem {
+  /** Identifies the problem across renders (the same error, the same missing file). */
+  key: string;
+  message: string;
+  /** A prompt asking the agent to fix it. */
+  fix: string;
+}
+
+/**
+ * Put first in the page's <head>: catches the page's script errors and
+ * files that fail to load (from the first script on, before the editor can
+ * listen), and hands them to the editor once it's there (`__swReport`).
+ */
+const PROBLEM_WATCH = `<script data-sw>(function(){var q=window.__swProblems=[];function r(p){window.__swReport?window.__swReport(p):q.push(p)}addEventListener("error",function(e){var t=e.target;if(t&&t!==window&&t.tagName){var u=t.getAttribute("src")||t.getAttribute("href");if(u)r({kind:"resource",tag:t.tagName.toLowerCase(),url:u})}else r({kind:"script",message:String(e.message||"Script error"),file:e.filename||"",line:e.lineno||0})},true);addEventListener("unhandledrejection",function(e){r({kind:"script",message:"Unhandled promise rejection: "+String(e.reason&&e.reason.message||e.reason),file:"",line:0})})})()</script>`;
+
+/** Who made a change, for its marks: a name and a colour. */
+export interface MarkAuthor { name: string; color: string }
+
+/** Someone else in the document: their caret (and selection) as source positions. */
+export interface Peer {
+  key: number;
+  name: string;
+  color: string;
+  anchor: number;
+  /** The other end of their selection, if they have one. */
+  head: number | null;
+  agent?: boolean;
+  /** What an agent is doing ("editing index.html"), shown on its label. */
+  activity?: string | null;
 }
 
 export interface PageEditorConfig {
@@ -46,8 +82,19 @@ export interface PageEditorConfig {
   onKey?: (e: KeyboardEvent) => boolean;
   /** A pointer moved inside the page. */
   onPointer?: (e: MouseEvent) => void;
-  /** Something the user asked for couldn't be done; say why. */
-  onNotice?: (message: string) => void;
+  /**
+   * Something the user asked for couldn't be done; say why. When the
+   * document itself is at fault, `fix` is a prompt that asks the agent to
+   * repair it, and the shell offers it as a button.
+   */
+  onNotice?: (message: string, fix?: string) => void;
+  /**
+   * The page looks broken without anyone asking: its script threw, or a
+   * file it refers to didn't load. Reported once per render per problem.
+   */
+  onProblem?: (problem: PageProblem) => void;
+  /** Whoever is using this editor, for the marks on their own edits while tracking. */
+  self?: MarkAuthor;
 }
 
 /** Inline styles the editor can apply to a selection. */
@@ -123,9 +170,18 @@ const PAGE_STYLE = `
 ::highlight(sw-add-3) { background-color: rgba(34, 197, 94, 0.12); }
 ::highlight(sw-add-4) { background-color: rgba(34, 197, 94, 0.07); }
 ::highlight(sw-add-5) { background-color: rgba(34, 197, 94, 0.03); }
+sw-peers { all: initial; position: absolute; top: 0; left: 0; width: 0; height: 0; z-index: 2147483646; pointer-events: none; }
+sw-peer-sel { all: initial; position: absolute; border-radius: 2px; }
+sw-peer { all: initial; position: absolute; width: 2px; margin-left: -1px; background: var(--sw-peer); border-radius: 1px; }
+sw-peer[data-agent] { background: repeating-linear-gradient(to bottom, var(--sw-peer) 0 3px, transparent 3px 5px); }
+sw-peer-name {
+  all: initial; position: absolute; left: -1px; bottom: 100%; margin-bottom: 1px; white-space: nowrap;
+  font: 600 10.5px/1.5 ui-sans-serif, system-ui, -apple-system, sans-serif; color: #fff;
+  background: var(--sw-peer); border-radius: 3px 3px 3px 0; padding: 0 5px; opacity: 0.92;
+}
 sw-marks { all: initial; position: absolute; top: 0; left: 0; width: 0; height: 0; z-index: 2147483647; pointer-events: none; }
-sw-del { all: initial; position: absolute; width: 2px; margin-left: -1px; background: #e5484d; border-radius: 1px; pointer-events: auto; cursor: help; transition: opacity 120ms linear; }
-sw-del::before { content: ""; position: absolute; top: -5px; left: -3px; border: 4px solid transparent; border-top-color: #e5484d; border-bottom: 0; }
+sw-del { all: initial; position: absolute; width: 2px; margin-left: -1px; background: var(--sw-del, #e5484d); border-radius: 1px; pointer-events: auto; cursor: help; transition: opacity 120ms linear; }
+sw-del::before { content: ""; position: absolute; top: -5px; left: -3px; border: 4px solid transparent; border-top-color: var(--sw-del, #e5484d); border-bottom: 0; }
 sw-del::after { content: ""; position: absolute; inset: -6px -5px -2px; }
 sw-tip {
   all: initial; display: none; position: absolute; bottom: calc(100% + 7px); left: 50%; transform: translateX(-50%);
@@ -136,24 +192,35 @@ sw-tip {
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
 }
 sw-del:hover sw-tip { display: block; }
+sw-who { all: initial; display: inline-block; font: 600 11px/1.55 ui-sans-serif, system-ui, -apple-system, sans-serif; margin-right: 6px; text-decoration: none; }
 `;
 
-type Mark = ({ kind: "add"; from: number; to: number } | { kind: "del"; pos: number; text: string }) & { level?: number; born?: number };
+type Mark = ({ kind: "add"; from: number; to: number } | { kind: "del"; pos: number; text: string }) & { level?: number; born?: number; author?: MarkAuthor | null };
+
+/** Fill alphas for an added-text highlight as it fades (level 0 is fresh). */
+const FADE = [0.3, 0.24, 0.18, 0.12, 0.07, 0.03];
+
+function rgba(hex: string, alpha: number): string {
+  const n = parseInt(hex.slice(1), 16);
+  return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`;
+}
 
 /**
  * The marks for a set of changes: text they add that shows on the page, and
  * text they remove that showed (read from the units before and after, so
  * markup contributes nothing). Changes with neither are `unmarked`.
  */
-function marksFor(changes: ChangeSet, oldUnits: M.Unit[], newUnits: M.Unit[], level: number) {
+function marksFor(changes: ChangeSet, oldUnits: M.Unit[], newUnits: M.Unit[], level: number, author: MarkAuthor | null = null) {
   const marks: Mark[] = [];
   const unmarked: { from: number; to: number }[] = [];
   let first: number | null = null;
-  changes.iterChanges((fromA, toA, fromB, toB) => {
+  changes.iterChanges((fromA, toA, fromB, toB, inserted) => {
     const gone = toA > fromA ? textIn(oldUnits, fromA, toA).replace(/\s+/g, " ").trim() : "";
     const shown = toB > fromB && /\S/.test(textIn(newUnits, fromB, toB));
-    if (shown) marks.push({ kind: "add", from: fromB, to: toB, level });
-    if (gone) marks.push({ kind: "del", pos: fromB, text: gone, level });
+    if (shown) marks.push({ kind: "add", from: fromB, to: toB, level, author });
+    if (gone) marks.push({ kind: "del", pos: fromB, text: gone, level, author });
+    // A typed space (someone else typing, a keystroke at a time) is nothing to point at.
+    if (!shown && !gone && toA == fromA && !/\S/.test(inserted.toString())) return;
     if (!shown && !gone) unmarked.push({ from: fromB, to: toB });
     else first ??= fromB;
   });
@@ -187,6 +254,29 @@ function textIn(units: M.Unit[], from: number, to: number): string {
   return out;
 }
 
+type RawProblem = { kind: "resource"; tag: string; url: string } | { kind: "script"; message: string; file: string; line: number };
+
+/** A problem the page reported, in words, with a prompt for the agent to fix it. */
+function describeProblem(raw: RawProblem, base: string): PageProblem | null {
+  const local = (u: string) => { try { const url = new URL(u, location.origin + base); return url.origin == location.origin && url.pathname.startsWith(base) ? decodeURIComponent(url.pathname.slice(base.length)) : u; } catch { return u; } };
+  if (raw.kind == "resource") {
+    const what = raw.tag == "link" ? "stylesheet" : raw.tag == "script" ? "script" : raw.tag == "img" ? "image" : `file`;
+    const name = local(raw.url);
+    return {
+      key: `resource:${name}`,
+      message: `The page's ${what} “${name}” didn't load, so the page may not look or work as it should.`,
+      fix: `The page refers to the ${what} “${name}”, but it fails to load in the browser. Find out why (a wrong path, a missing file) and fix it.`,
+    };
+  }
+  if (/^Script error\.?$/.test(raw.message) && !raw.file) return null; // cross-origin, nothing to go on
+  const where = raw.file && !/srcdoc/.test(raw.file) ? ` (${local(raw.file)}${raw.line ? `, line ${raw.line}` : ""})` : raw.line ? ` (the page's inline script, line ${raw.line})` : "";
+  return {
+    key: `script:${raw.message}`,
+    message: `The page's script hit an error: ${raw.message}${where}. Parts of the page may not work.`,
+    fix: `The page's script throws an error in the browser: “${raw.message}”${where}. Find the cause and fix it.`,
+  };
+}
+
 export class PageEditor {
   state: EditorState;
   readonly kind: Kind;
@@ -213,8 +303,18 @@ export class PageEditor {
    * the document against `tracking.baseline`, whoever made the changes.
    */
   private marks: Mark[] = [];
-  private tracking: { baseline: string; units: M.Unit[] } | null = null;
+  /**
+   * While tracking, who wrote what: every insertion and deletion since it
+   * started, with its author, mapped through later changes. The tracked diff
+   * is computed from the text alone; its marks take their authors from here.
+   */
+  private tracking: { baseline: string; units: M.Unit[]; adds: { from: number; to: number; author: MarkAuthor | null }[]; dels: { pos: number; author: MarkAuthor | null }[] } | null = null;
   private overlay: HTMLElement | null = null;
+  /** Other people's carets and selections, drawn over the page like the marks. */
+  private peers: Peer[] = [];
+  private peerLayer: HTMLElement | null = null;
+  /** Highlight names registered for each author colour. */
+  private authorStyles = new Map<string, number>();
   private markObserver: ResizeObserver | null = null;
   private paintQueued = false;
   private diffQueued = false;
@@ -225,6 +325,8 @@ export class PageEditor {
    * show; the shell decides when to render again (see `stale`).
    */
   private staleSince: string | null = null;
+  /** Why each locked unit (see `verify`) can't be edited, for when someone clicks it. */
+  private lockReasons = new WeakMap<Element, { message: string; fix?: string }>();
   private revealPending: number | null = null;
 
   constructor(readonly config: PageEditorConfig) {
@@ -253,12 +355,12 @@ export class PageEditor {
       return { units: a.units, html: this.injectHead(M.stamp(src, a.units)) };
     }
     const a = analyzeMarkdown(src, this.state.selection.main.head);
-    const head = `<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><base href="${this.config.base}">${this.config.markdownHead ?? ""}<style>${PAGE_STYLE}</style>`;
+    const head = `${PROBLEM_WATCH}<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><base href="${this.config.base}">${this.config.markdownHead ?? ""}<style>${PAGE_STYLE}</style>`;
     return { units: a.units, html: `<!doctype html><html><head>${head}</head><body><article class="prose" id="sw-article">${a.html}</article></body></html>` };
   }
 
   private injectHead(html: string): string {
-    const inject = `<base href="${this.config.base}"><style data-sw>${PAGE_STYLE}</style>`;
+    const inject = `${PROBLEM_WATCH}<base href="${this.config.base}"><style data-sw>${PAGE_STYLE}</style>`;
     const m = /<head(\s[^>]*)?>/i.exec(html);
     if (m) return html.slice(0, m.index + m[0].length) + inject + html.slice(m.index + m[0].length);
     const h = /<html(\s[^>]*)?>/i.exec(html);
@@ -287,17 +389,25 @@ export class PageEditor {
     const token = ++this.renderToken;
     this.rendering = true;
     this.unbind();
-    const a = this.analyze(this.state.doc.toString());
+    const src = this.state.doc.toString();
+    const a = this.analyze(src);
     this.units = a.units;
     const onLoad = () => {
       if (token != this.renderToken) return;
       this.frame.removeEventListener("load", onLoad);
       this.doc = this.frame.contentDocument!;
+      this.watchProblems();
       this.collectEls();
       this.bind();
       this.rendering = false;
       for (const el of this.els) if (el) this.prepareUnit(el);
+      // Verified, never guessed: a unit whose DOM text doesn't match the
+      // source is locked now, not when someone tries to type into it.
+      for (const u of this.units) this.verify(u);
       this.updateEmpty();
+      // Edits that arrived while the page loaded (someone else typing) are patched in now.
+      const now = this.state.doc.toString();
+      if (now != src) this.applyChanges({ changes: changesBetween(src, now) }, this.units, src);
       // Start with the caret in the manuscript, like a document that opens ready to type.
       const head = this.state.selection.main.head;
       const first = this.units.find((u) => u.runs.some((r) => r.editable && /\S/.test(r.text))) ?? this.units[0];
@@ -305,16 +415,33 @@ export class PageEditor {
         this.state = this.state.update({ selection: { anchor: M.textStart(first) }, annotations: noHistory() }).state;
       }
       if (hadFocus) this.syncDOMSelection(true);
-      this.notify({ docChanged: false, selectionSet: false, rendered: true });
+      this.notify({ docChanged: false, selectionSet: false, rendered: true, changes: null, remote: false });
       if (this.pendingFlash.length) { this.flash(this.pendingFlash); this.pendingFlash = []; }
       this.markObserver?.disconnect();
+      // The old document's layers are gone with it (though they'd still say isConnected).
       this.overlay = null;
+      this.peerLayer = null;
       const RO = (this.frame.contentWindow as (Window & typeof globalThis) | null)?.ResizeObserver;
       if (RO) { this.markObserver = new RO(() => this.queuePaint()); this.markObserver.observe(this.doc.documentElement); }
       this.paintMarks();
     };
     this.frame.addEventListener("load", onLoad);
     this.frame.srcdoc = a.html;
+  }
+
+  /** Hands the page's problems (see PROBLEM_WATCH) to the shell, as they happen. */
+  private watchProblems(): void {
+    const win = this.frame.contentWindow as (Window & { __swProblems?: RawProblem[]; __swReport?: (p: RawProblem) => void }) | null;
+    if (!win) return;
+    const seen = new Set<string>();
+    const report = (raw: RawProblem) => {
+      const p = describeProblem(raw, this.config.base);
+      if (!p || seen.has(p.key)) return;
+      seen.add(p.key);
+      this.config.onProblem?.(p);
+    };
+    win.__swReport = report;
+    for (const raw of win.__swProblems ?? []) report(raw);
   }
 
   private collectEls(): void {
@@ -359,8 +486,37 @@ export class PageEditor {
     if (!ok) {
       el.classList.add("sw-locked");
       el.setAttribute("contenteditable", "false");
+      this.lockReasons.set(el, this.whyLocked(unit));
     }
     return ok;
+  }
+
+  /**
+   * Why a unit's text can't be mapped to the source, in words someone can
+   * act on, and when the document is at fault, a prompt for the agent to
+   * fix it. Worked out from the unit's own source, so it names the actual
+   * problem (the stray tag, the line).
+   */
+  private whyLocked(unit: M.Unit): { message: string; fix?: string } {
+    const src = this.state.doc.sliceString(unit.contentFrom, unit.contentTo);
+    const what = unit.tag == "p" ? "paragraph" : HEADING.test(unit.tag) ? "heading" : unit.tag == "li" ? "list item" : `<${unit.tag}>`;
+    const text = unit.runs.map((r) => r.text).join("").replace(/\s+/g, " ").trim();
+    const quote = text.length > 60 ? text.slice(0, 57).trimEnd() + "…" : text;
+    const line = this.state.doc.lineAt(unit.from).number;
+    // An end tag with nothing open to close: the browser drops it, so the
+    // page's text no longer lines up with the file's.
+    const open: string[] = [];
+    for (const m of src.matchAll(/<(\/?)([a-zA-Z][\w-]*)[^>]*?(\/?)>/g)) {
+      const [, close, name, selfClose] = m, tag = name.toLowerCase();
+      if (selfClose || /^(br|img|wbr|hr|input|meta|link|source|area|col|embed|track)$/.test(tag)) continue;
+      if (!close) open.push(tag);
+      else if (open.at(-1) == tag) open.pop();
+      else return {
+        message: `This ${what} can't be edited: its HTML has a stray </${tag}> that the browser ignores, so the page's text no longer lines up with the file.`,
+        fix: `The ${what} “${quote}” (line ${line}) has a stray </${tag}> in its HTML, which the browser ignores, so I can't edit it on the page. Fix the markup so it's well-formed, keeping its text exactly as it is.`,
+      };
+    }
+    return { message: `This text was changed by the page's script after it loaded, so it can't be edited here.` };
   }
 
   private unitOf(node: Node): M.Unit | null {
@@ -531,6 +687,12 @@ export class PageEditor {
   }
 
   private mousedown(e: MouseEvent): void {
+    // A locked unit takes no caret; say why instead of doing nothing.
+    const locked = (e.target as Element).closest?.(".sw-locked");
+    if (locked && !(e.target as Element).closest('button, a[href], input, textarea, select, [contenteditable="true"]')) {
+      const why = this.lockReasons.get(locked);
+      if (why) this.config.onNotice?.(why.message, why.fix);
+    }
     // Inside manuscript the browser doesn't follow links; Cmd-click does.
     if (!this.ours(e)) return;
     const a = (e.target as Element).closest?.("a[href]") as HTMLAnchorElement | null;
@@ -548,7 +710,7 @@ export class PageEditor {
     if (sel.main.anchor == main.anchor && sel.main.head == main.head) return;
     if (this.sameSpot(sel.main, main)) return;
     this.state = this.state.update({ selection: sel, userEvent: "select" }).state;
-    this.notify({ docChanged: false, selectionSet: true, rendered: false });
+    this.notify({ docChanged: false, selectionSet: true, rendered: false, changes: null, remote: false });
   }
 
   private keydown(e: KeyboardEvent): void {
@@ -614,6 +776,18 @@ export class PageEditor {
     const type = e.inputType;
     if (type == "insertCompositionText" || (this.composing && e.isComposing)) return;
     if (this.rendering) { e.preventDefault(); return; }
+    // Never fall back to the model's caret when the browser's can't be
+    // mapped: that caret is somewhere else, maybe the top of the page, and
+    // the edit would land there.
+    if (!type.startsWith("history") && !this.readSelection()) {
+      e.preventDefault();
+      const u = this.unitOf(e.target as Node);
+      const el = u ? this.els[u.id] : null;
+      const why = el ? this.lockReasons.get(el) : undefined;
+      if (u && el && !this.verify(u)) this.config.onNotice?.(why?.message ?? "This text can't be edited here.", why?.fix);
+      else this.config.onNotice?.("Can't tell where the caret is in the file, so that wasn't typed. Click into the text again.");
+      return;
+    }
     switch (type) {
       case "historyUndo": e.preventDefault(); this.undo(); return;
       case "historyRedo": e.preventDefault(); this.redo(); return;
@@ -738,13 +912,14 @@ export class PageEditor {
     this.state = tr.state;
     if (tr.docChanged) {
       this.mapMarks(tr.changes);
+      this.recordAuthorship(tr.changes, this.config.self ?? null);
       this.applyChanges(tr, oldUnits, oldSrc);
       if (this.tracking) this.queueDiff();
       else this.paintMarks();
     }
     this.syncDOMSelection(true);
     if (tr.docChanged || tr.scrollIntoView) this.scrollCaretIntoView();
-    this.notify({ docChanged: tr.docChanged, selectionSet: !!tr.selection, rendered: false });
+    this.notify({ docChanged: tr.docChanged, selectionSet: !!tr.selection, rendered: false, changes: tr.docChanged ? tr.changes : null, remote: false });
   }
 
   private scrollCaretIntoView(): void {
@@ -1203,23 +1378,25 @@ export class PageEditor {
   }
 
   /**
-   * Applies changes made elsewhere (an agent, another editor) on top of the
-   * current document. They are undoable, as one step of their own, and marked
-   * (see `marks`); a change with no visible text (markup only) flashes its
-   * paragraph instead. The caret stays where it was, and focus stays wherever
-   * it is.
+   * Applies changes made elsewhere (a collaborator, an agent, an edit on
+   * disk) on top of the current document, and marks them (see `marks`) in
+   * their author's colour; a change with no visible text (markup only)
+   * flashes its paragraph instead. The caret stays where it was, and focus
+   * stays wherever it is. They stay out of this editor's undo history, which
+   * is mapped over them: ⌘Z only ever undoes your own edits.
    */
-  applyExternal(changes: ChangeSet): void {
+  applyExternal(changes: ChangeSet, author: MarkAuthor | null = null): void {
     if (changes.empty) return;
-    const tr = this.state.update({ changes, annotations: isolateHistory.of("full"), userEvent: "external" });
+    const tr = this.state.update({ changes, annotations: noHistory(), userEvent: "external" });
     const oldUnits = this.units, oldSrc = this.state.doc.toString();
     this.state = tr.state;
     this.mapMarks(changes);
+    this.recordAuthorship(changes, author);
     this.applyChanges(tr, oldUnits, oldSrc);
     if (this.hasFocus) this.syncDOMSelection(true);
-    this.notify({ docChanged: true, selectionSet: false, rendered: false });
+    this.notify({ docChanged: true, selectionSet: false, rendered: false, changes, remote: true });
     if (this.staleSince == null && skeleton(oldSrc, oldUnits) != skeleton(this.state.doc.toString(), this.units)) this.staleSince = oldSrc;
-    const found = marksFor(changes, oldUnits, this.units, 0);
+    const found = marksFor(changes, oldUnits, this.units, 0, author);
     this.revealPending = found.first;
     if (!this.tracking) {
       this.marks.push(...found.marks);
@@ -1243,8 +1420,48 @@ export class PageEditor {
   setTracking(on: boolean): void {
     if (on == !!this.tracking) return;
     this.marks = [];
-    this.tracking = on ? { baseline: this.state.doc.toString(), units: this.units } : null;
+    this.tracking = on ? { baseline: this.state.doc.toString(), units: this.units, adds: [], dels: [] } : null;
     this.paintMarks();
+  }
+
+  /**
+   * Records who made a change, while tracking (see `tracking`). The page's
+   * own edits and `applyExternal`'s are recorded here; the shell records
+   * the ones made in the source view.
+   */
+  recordAuthorship(changes: ChangeSet, author: MarkAuthor | null): void {
+    const t = this.tracking;
+    if (!t) return;
+    t.adds = t.adds.flatMap((a) => {
+      const from = changes.mapPos(a.from, 1), to = changes.mapPos(a.to, -1);
+      return to > from ? [{ ...a, from, to }] : [];
+    });
+    for (const d of t.dels) d.pos = changes.mapPos(d.pos, -1);
+    changes.iterChanges((fromA, toA, fromB, toB) => {
+      if (toB > fromB) t.adds.push({ from: fromB, to: toB, author });
+      if (toA > fromA) t.dels.push({ pos: fromB, author });
+    });
+    if (t.adds.length > 2000) t.adds.splice(0, t.adds.length - 2000);
+    if (t.dels.length > 2000) t.dels.splice(0, t.dels.length - 2000);
+  }
+
+  /** The author of a tracked mark: whoever wrote most of an addition, or deleted nearest a deletion. */
+  private trackedAuthor(m: Mark): MarkAuthor | null {
+    const t = this.tracking!;
+    if (m.kind == "add") {
+      let best: MarkAuthor | null = null, most = 0;
+      for (const a of t.adds) {
+        const overlap = Math.min(a.to, m.to) - Math.max(a.from, m.from);
+        if (overlap > most) { most = overlap; best = a.author; }
+      }
+      return best;
+    }
+    let best: MarkAuthor | null = null, dist = Infinity;
+    for (let i = t.dels.length - 1; i >= 0; i--) {
+      const d = Math.abs(t.dels[i].pos - m.pos);
+      if (d < dist) { dist = d; best = t.dels[i].author; }
+    }
+    return dist <= Math.max(8, m.text.length) ? best : null;
   }
 
   private mapMarks(changes: ChangeSet): void {
@@ -1264,6 +1481,7 @@ export class PageEditor {
       this.diffQueued = false;
       if (!this.tracking) return;
       this.marks = marksFor(changesBetween(this.tracking.baseline, this.state.doc.toString()), this.tracking.units, this.units, 0).marks;
+      for (const m of this.marks) m.author = this.trackedAuthor(m);
       this.paintMarks();
     });
   }
@@ -1284,7 +1502,7 @@ export class PageEditor {
   }
 
   private queuePaint(): void {
-    if (this.paintQueued || (!this.marks.length && !this.overlay)) return;
+    if (this.paintQueued || (!this.marks.length && !this.overlay && !this.peers.length && !this.peerLayer)) return;
     this.paintQueued = true;
     requestAnimationFrame(() => { this.paintQueued = false; this.paintMarks(); });
   }
@@ -1294,29 +1512,19 @@ export class PageEditor {
     const doc = this.doc, win = this.frame.contentWindow as (Window & typeof globalThis & { Highlight?: new (...r: Range[]) => unknown }) | null;
     if (!doc || !win || this.rendering) return;
     const registry = (win.CSS as unknown as { highlights?: Map<string, unknown> }).highlights;
-    const byLevel: Range[][] = [[], [], [], [], [], []];
+    // One highlight per author colour and fade level: "sw-add-<level>" for
+    // unattributed changes (green), "sw-a<n>-<level>" for each author's.
+    const groups = new Map<string, Range[]>();
     for (const m of this.marks) {
       if (m.kind != "add") continue;
-      for (const u of this.units) {
-        if (u.contentTo < m.from || u.contentFrom > m.to) continue;
-        const el = this.els[u.id];
-        if (!el) continue;
-        const nodes = this.textNodes(el);
-        if (nodes.length != u.runs.length) continue;
-        u.runs.forEach((run, i) => {
-          const s = Math.max(m.from, run.from), e = Math.min(m.to, run.to);
-          if (s >= e) return;
-          const range = doc.createRange();
-          try { range.setStart(nodes[i], M.runOffset(run, s)); range.setEnd(nodes[i], M.runOffset(run, e)); } catch { return; }
-          byLevel[m.level ?? 0].push(range);
-        });
-      }
+      const name = m.author ? `sw-a${this.authorStyle(m.author.color)}-${m.level ?? 0}` : `sw-add-${m.level ?? 0}`;
+      let ranges = groups.get(name);
+      if (!ranges) groups.set(name, (ranges = []));
+      ranges.push(...this.rangesIn(m.from, m.to));
     }
     if (registry && win.Highlight) {
-      byLevel.forEach((ranges, level) => {
-        if (ranges.length) registry.set(`sw-add-${level}`, new win.Highlight!(...ranges));
-        else registry.delete(`sw-add-${level}`);
-      });
+      for (const name of [...registry.keys()]) if (/^sw-(add|a\d+)-\d$/.test(name) && !groups.has(name)) registry.delete(name);
+      for (const [name, ranges] of groups) registry.set(name, new win.Highlight!(...ranges));
     }
 
     const dels = this.marks.filter((m): m is Mark & { kind: "del" } => m.kind == "del");
@@ -1334,18 +1542,111 @@ export class PageEditor {
         if (!at) continue;
         const notch = doc.createElement("sw-del");
         notch.style.cssText = `left:${at.rect.left + win.scrollX}px;top:${at.rect.top + win.scrollY}px;height:${at.inline ? at.rect.height : 18}px;opacity:${1 - (m.level ?? 0) / 6}`;
-        notch.setAttribute("aria-label", `Deleted: ${m.text}`);
+        if (m.author) notch.style.setProperty("--sw-del", m.author.color);
+        notch.setAttribute("aria-label", `Deleted${m.author ? ` by ${m.author.name}` : ""}: ${m.text}`);
         const tip = doc.createElement("sw-tip");
-        tip.textContent = m.text.length > 160 ? m.text.slice(0, 160) + "…" : m.text;
+        if (m.author) { const who = doc.createElement("sw-who"); who.textContent = m.author.name; who.style.color = m.author.color; tip.append(who); }
+        tip.append(m.text.length > 160 ? m.text.slice(0, 160) + "…" : m.text);
         notch.append(tip);
         this.overlay.append(notch);
       }
     }
 
+    this.paintPeers();
+
     if (this.revealPending != null) {
       const at = this.anchorAt(this.revealPending);
       this.revealPending = null;
       if (at && (at.rect.bottom < 0 || at.rect.top > win.innerHeight)) win.scrollBy({ top: at.rect.top - win.innerHeight / 2, behavior: "smooth" });
+    }
+  }
+
+  /** DOM ranges over the page text of source [from, to), one per text node it touches. */
+  private rangesIn(from: number, to: number): Range[] {
+    const out: Range[] = [];
+    for (const u of this.units) {
+      if (u.contentTo < from || u.contentFrom > to) continue;
+      const el = this.els[u.id];
+      if (!el) continue;
+      const nodes = this.textNodes(el);
+      if (nodes.length != u.runs.length) continue;
+      u.runs.forEach((run, i) => {
+        const s = Math.max(from, run.from), e = Math.min(to, run.to);
+        if (s >= e) return;
+        const range = this.doc!.createRange();
+        try { range.setStart(nodes[i], M.runOffset(run, s)); range.setEnd(nodes[i], M.runOffset(run, e)); } catch { return; }
+        out.push(range);
+      });
+    }
+    return out;
+  }
+
+  /** The index of an author colour's highlights, writing their styles into the page the first time. */
+  private authorStyle(color: string): number {
+    let n = this.authorStyles.get(color);
+    if (n == null) this.authorStyles.set(color, (n = this.authorStyles.size));
+    const doc = this.doc!;
+    let style = doc.getElementById("sw-authors");
+    if (!style || style.dataset.count != String(this.authorStyles.size)) {
+      style ??= doc.head.appendChild(Object.assign(doc.createElement("style"), { id: "sw-authors" }));
+      style.dataset.count = String(this.authorStyles.size);
+      style.textContent = [...this.authorStyles].map(([c, i]) => FADE.map((a, level) => `::highlight(sw-a${i}-${level}) { background-color: ${rgba(c, a * 0.9)}; }`).join("\n")).join("\n");
+    }
+    return n;
+  }
+
+  /** Scrolls a source position into view, if it's off screen (to find someone's caret). */
+  reveal(pos: number): void {
+    const win = this.frame.contentWindow;
+    const at = this.anchorAt(pos);
+    if (win && at && (at.rect.bottom < 0 || at.rect.top > win.innerHeight)) win.scrollBy({ top: at.rect.top - win.innerHeight / 2, behavior: "smooth" });
+  }
+
+  /** Shows other people's carets and selections (positions in the current source). */
+  setPeers(peers: Peer[]): void {
+    this.peers = peers;
+    this.paintPeers();
+  }
+
+  private paintPeers(): void {
+    const doc = this.doc, win = this.frame.contentWindow;
+    if (!doc || !win || this.rendering) return;
+    if (!this.peers.length) { this.peerLayer?.remove(); this.peerLayer = null; return; }
+    if (!this.peerLayer || !this.peerLayer.isConnected) {
+      this.peerLayer = doc.createElement("sw-peers");
+      doc.documentElement.append(this.peerLayer);
+    }
+    const layer = this.peerLayer;
+    layer.textContent = "";
+    const len = this.state.doc.length;
+    for (const p of this.peers) {
+      const anchor = Math.min(p.anchor, len);
+      if (p.head != null && p.head != anchor) {
+        const from = Math.min(anchor, p.head), to = Math.min(len, Math.max(anchor, p.head));
+        for (const r of this.rangesIn(from, to)) for (const rect of r.getClientRects()) {
+          const box = doc.createElement("sw-peer-sel");
+          box.style.cssText = `left:${rect.left + win.scrollX}px;top:${rect.top + win.scrollY}px;width:${rect.width}px;height:${rect.height}px;background:${rgba(p.color, 0.18)}`;
+          layer.append(box);
+        }
+      }
+      // An agent's caret can sit between blocks (after an edit to the markup):
+      // show it at the end of the text before, or the start of the text after.
+      let caretAt = Math.min(p.head ?? anchor, len);
+      if (!M.unitAt(this.units, caretAt)) {
+        const prev = [...this.units].reverse().find((u) => u.to <= caretAt && this.els[u.id]);
+        const near = prev ?? this.units.find((u) => u.from >= caretAt && this.els[u.id]);
+        if (!near) continue;
+        caretAt = near == prev ? M.textEnd(near) : M.textStart(near);
+      }
+      const rect = this.coordsAtPos(Math.min(caretAt, len), -1);
+      if (!rect || (!rect.height && !rect.width && !rect.top)) continue;
+      const caret = doc.createElement("sw-peer");
+      caret.style.cssText = `left:${rect.left + win.scrollX}px;top:${rect.top + win.scrollY}px;height:${rect.height || 18}px;--sw-peer:${p.color}`;
+      if (p.agent) caret.setAttribute("data-agent", "");
+      const label = doc.createElement("sw-peer-name");
+      label.textContent = p.activity ? `${p.name} · ${p.activity}` : p.name;
+      caret.append(label);
+      layer.append(caret);
     }
   }
 
@@ -1406,8 +1707,35 @@ export class PageEditor {
     return u.tag + "|" + out + src.slice(pos, u.contentTo);
   }
 
-  private applyChanges(tr: Transaction, oldUnits: M.Unit[], oldSrc: string): void {
+  private applyChanges(tr: { changes: ChangeSet }, oldUnits: M.Unit[], oldSrc: string): void {
     if (!this.doc || this.rendering) return;
+    if (this.patch(tr, oldUnits, oldSrc)) this.recheck(tr.changes);
+  }
+
+  /**
+   * Re-verifies the units a change touched: a change can break a unit (a
+   * stray tag typed into it) or mend a locked one (the agent fixing it), and
+   * either has to show without a full render.
+   */
+  private recheck(changes: ChangeSet): void {
+    const ranges: [number, number][] = [];
+    changes.iterChangedRanges((_fa, _ta, fromB, toB) => ranges.push([fromB, toB]));
+    for (const u of this.units) {
+      if (!ranges.some(([f, t]) => f <= u.to && t >= u.from)) continue;
+      const el = this.els[u.id];
+      if (!el) continue;
+      if (el.classList.contains("sw-locked")) {
+        el.classList.remove("sw-locked");
+        this.lockReasons.delete(el);
+        this.prepareUnit(el);
+      }
+      this.verify(u);
+    }
+  }
+
+  /** Patches the DOM to the new source; false if it had to render the page afresh instead. */
+  private patch(tr: { changes: ChangeSet }, oldUnits: M.Unit[], oldSrc: string): boolean {
+    if (!this.doc) return false;
     const src = this.state.doc.toString();
     const a = this.analyze(src);
     const newUnits = a.units;
@@ -1435,7 +1763,7 @@ export class PageEditor {
           if (this.patchUnit(el, old, oldSrc, u, src)) changed.add(u.id);
         }
         this.updateEmpty(changed);
-        return;
+        return true;
       }
       if (this.kind == "md") {
         const article = this.doc.getElementById("sw-article");
@@ -1444,7 +1772,7 @@ export class PageEditor {
         this.collectEls();
         for (const el of this.els) if (el) this.prepareUnit(el);
         this.updateEmpty();
-        return;
+        return true;
       }
       // HTML: patch matched units, build the new ones, drop the rest. A new
       // unit is built with the largest new element around it (a paragraph
@@ -1489,8 +1817,10 @@ export class PageEditor {
       this.els = els;
       for (const u of newUnits) els[u.id]!.setAttribute("data-sw-id", String(u.id));
       this.updateEmpty();
+      return true;
     } catch {
       this.render();
+      return false;
     }
   }
 

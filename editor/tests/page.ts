@@ -1,9 +1,11 @@
 // End-to-end check of the page editor: starts the host on a scratch copy of
 // a fixture, drives headless Chrome with real clicks and keys, and reads the
-// file back from disk after each edit. Runs the HTML and the Markdown fixture.
-//   bun tests/page.ts [html|md] [--keep]   (--keep leaves the host running and prints its URL)
+// file back from disk after each edit. Runs the HTML and the Markdown
+// fixture. (Two people at once: tests/suite, `bun tests/suite/run.ts --suite browser`.)
+//   bun tests/page.ts [html|md|format|agent|reload] [--keep]   (--keep leaves the host running and prints its URL)
 
 import { Browser, MOD, ROOT } from "./cdp";
+import { tab } from "./tab";
 import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -20,7 +22,7 @@ const check = (name: string, ok: boolean, detail = "") => {
 const waitFor = async (f: () => boolean, ms = 2000) => { const t = Date.now(); while (Date.now() - t < ms) { if (f()) return true; await Bun.sleep(50); } return f(); };
 
 /** Starts a host on a scratch copy of a fixture and opens the editor on it. */
-async function session(browser: Browser, fixture: string, fileName: string, env: Record<string, string> = {}) {
+async function session(browser: Browser, fixture: string, fileName: string, env: Record<string, string> = {}, query = "") {
   const port = 4500 + Math.floor(Math.random() * 400);
   const dir = mkdtempSync(join(tmpdir(), "sw-page-"));
   cpSync(`${ROOT}editor/tests/fixtures/${fixture}`, dir, { recursive: true });
@@ -31,33 +33,13 @@ async function session(browser: Browser, fixture: string, fileName: string, env:
     await Bun.sleep(100);
   }
   const p = await browser.page();
-  await p.open(`http://127.0.0.1:${port}/`, { clear: false, width: 1100, height: 800 });
+  await p.open(`http://127.0.0.1:${port}/${query}`, { clear: false, width: 1100, height: 800 });
   await Bun.sleep(400);
-  const F = `document.getElementById("frame").contentDocument`;
   const s = {
-    p, F, port, dir,
+    ...tab(p),
+    port, dir,
     disk: () => readFileSync(file, "utf8"),
     write: (text: string) => writeFileSync(file, text),
-    source: () => p.eval<string>("scratchPage.state.doc.toString()"),
-    textOf: (selector: string) => p.eval<string>(`${F}.querySelector(${JSON.stringify(selector)}).textContent`),
-    count: (selector: string) => p.eval<number>(`${F}.querySelectorAll(${JSON.stringify(selector)}).length`),
-    /** Scrolls an element into view and returns a point inside it, `at` along its width. */
-    async rectOf(selector: string, at = 0.5) {
-      const r = await p.eval<{ x: number; y: number }>(`(() => { const el = ${F}.querySelector(${JSON.stringify(selector)}); el.scrollIntoView({ block: "center" }); const r = el.getBoundingClientRect(); const f = document.getElementById("frame").getBoundingClientRect(); return { x: f.left + r.left + r.width * ${at}, y: f.top + r.top + r.height / 2 }; })()`);
-      await Bun.sleep(30);
-      return r;
-    },
-    /** Clicks just past the end of an element's text. */
-    async clickEnd(selector: string) {
-      const r = await s.rectOf(selector, 0.98);
-      await p.click(r.x + 2, r.y);
-      await Bun.sleep(60);
-    },
-    /** Drags across the first `n` characters of an element's first text node. */
-    async selectChars(selector: string, n: number) {
-      const r = await p.eval<{ a: number; b: number; y: number }>(`(() => { const el = ${F}.querySelector(${JSON.stringify(selector)}); el.scrollIntoView({ block: "center" }); const t = el.firstChild; const rg = ${F}.createRange(); rg.setStart(t, 0); rg.setEnd(t, ${n}); const r = rg.getBoundingClientRect(); const f = document.getElementById("frame").getBoundingClientRect(); return { a: f.left + r.left + 1, b: f.left + r.right, y: f.top + r.top + r.height / 2 }; })()`);
-      await p.drag(r.a, r.y, r.b, r.y);
-    },
     async close() {
       if (keep) {
         console.log(`\nhost kept at http://127.0.0.1:${port}/  (${dir})`);
@@ -70,6 +52,7 @@ async function session(browser: Browser, fixture: string, fileName: string, env:
   };
   return s;
 }
+
 
 async function htmlScenario(browser: Browser) {
   console.log("\nHTML page");
@@ -156,12 +139,11 @@ async function htmlScenario(browser: Browser) {
   s.write(s.disk().replace("Where the leads go.", "Where the leads went."));
   await Bun.sleep(400);
   check("disk edits reach the page", await waitFor(() => false, 200) || (await s.textOf("figcaption")) == "Where the leads went.");
-  // Added text: the green highlights (any fade level). Removed text: the notches' hover text.
-  const marks = () => p.eval<{ added: string[]; gone: string[] }>(`(() => { const w = document.getElementById("frame").contentWindow; const added = []; for (let i = 0; i < 6; i++) { const h = w.CSS.highlights.get("sw-add-" + i); if (h) added.push(...[...h].map((r) => r.toString())); } return { added, gone: [...${F}.querySelectorAll("sw-del sw-tip")].map((e) => e.textContent) }; })()`);
+  const marks = s.marks;
   let m = await marks();
   check("disk edits patch the page in place", (await s.count("[data-sw-id]")) >= 9 && !(await p.eval<boolean>(`!!${F}.querySelector("figcaption.sw-flash")`)));
   check("the added word is highlighted, exactly", m.added.join("|") == "went", JSON.stringify(m));
-  check("the removed word is marked where it was", m.gone.join("|") == "go", JSON.stringify(m));
+  check("the removed word is marked where it was, and who removed it", m.gone.join("|") == "Edited on diskgo", JSON.stringify(m));
   check("marks don't touch the page's text", (await s.textOf("figcaption")) == "Where the leads went.");
   await Bun.sleep(3200);
   m = await marks();
@@ -178,9 +160,10 @@ async function htmlScenario(browser: Browser) {
   check("marks follow typing elsewhere", m.added.some((x) => /go now/.test(x)), JSON.stringify(m));
   await p.key("z", MOD.Meta);
   await Bun.sleep(100);
-  check("undo takes back the disk edit on its own", (await s.textOf("figcaption")) == "Where the leads went." && (await s.textOf("h1")).endsWith(" now"));
+  check("⌘Z takes back your typing, never the disk's edit", !(await s.textOf("h1")).endsWith(" now") && (await s.textOf("figcaption")) == "Where the leads go now.", `${await s.textOf("h1")} | ${await s.textOf("figcaption")}`);
   await p.key("z", MOD.Meta | MOD.Shift);
   await Bun.sleep(100);
+  check("and ⌘⇧Z brings it back", (await s.textOf("h1")).endsWith(" now"));
 
   // Track changes: every change, yours or from disk, stays marked as a diff from when it was switched on.
   await p.eval(`document.getElementById("btn-track").click()`);
@@ -190,7 +173,7 @@ async function htmlScenario(browser: Browser) {
   s.write(s.disk().replace("Where the leads go now.", "Where leads go now."));
   await Bun.sleep(3500);
   m = await marks();
-  check("tracking keeps your edits and the disk's marked", m.added.some((x) => /too/.test(x)) && m.gone.join("|").trim() == "the", JSON.stringify(m));
+  check("tracking keeps your edits and the disk's marked", m.added.some((x) => /too/.test(x)) && m.gone.join("|").trim() == "Edited on diskthe", JSON.stringify(m));
   await p.key("Backspace"); await p.key("Backspace"); await p.key("Backspace"); await p.key("Backspace");
   await Bun.sleep(150);
   m = await marks();
@@ -207,8 +190,6 @@ async function htmlScenario(browser: Browser) {
   check("switching tracking off clears the marks", !m.added.length && !m.gone.length, JSON.stringify(m));
   await Bun.sleep(500);
 
-  const stale = await fetch(`http://127.0.0.1:${s.port}/api/doc`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: "clobbered", version: 1 }) });
-  check("a save from a stale version is refused", stale.status == 409 && !s.disk().includes("clobbered"));
 
   // A change outside the text (a new diagram) can't be patched in: the page renders again on its own.
   s.write(s.disk().replace("<h2>What changed</h2>", `<svg id="diagram" width="80" height="20"><rect width="80" height="20" fill="#c00"/></svg>\n    <h2>What changed</h2>`));
@@ -497,9 +478,75 @@ async function agentEmptyScenario(browser: Browser) {
   await s.close();
 }
 
+/** A paragraph whose HTML has a stray end tag: it's locked and says why, and typing never lands somewhere else. */
+async function strayTagScenario(browser: Browser) {
+  console.log("\nStray end tag");
+  const s = await session(browser, "stray", "index.html");
+  const { p, F } = s;
+  check("the malformed paragraph is locked", await p.eval<boolean>(`${F}.querySelector(".box p").classList.contains("sw-locked")`));
+  check("its neighbours aren't", await p.eval<boolean>(`!${F}.querySelector(".box h4").classList.contains("sw-locked") && !${F}.querySelector("body > p").classList.contains("sw-locked")`));
+  const before = await s.source();
+  const r = await s.rectOf(".box p", 0.3);
+  await p.click(r.x, r.y);
+  await Bun.sleep(80);
+  const toast = () => p.eval<{ text: string; shown: boolean }>(`(() => { const t = document.getElementById("toast"); return { text: t.textContent, shown: t.classList.contains("show") }; })()`);
+  check("clicking it says why", /stray <\/h2>/.test((await toast()).text) && (await toast()).shown);
+  check("and offers the agent's help, not a trip to the HTML", !/HTML view|⌘⇧P/.test((await toast()).text) && await p.eval<boolean>(`!!document.querySelector("#toast .toast-fix")`));
+  await Bun.sleep(6500);
+  check("the explanation stays up while nothing else happens", (await toast()).shown);
+  const elsewhere = await s.rectOf("h1", 0.5);
+  await p.click(elsewhere.x, elsewhere.y);
+  await Bun.sleep(400);
+  check("and goes when you click somewhere else", !(await toast()).shown);
+  // Typing into the locked paragraph explains again, and changes nothing.
+  await p.click(r.x, r.y);
+  await Bun.sleep(80);
+  await p.type("xyz");
+  await Bun.sleep(150);
+  check("typing into it explains again", (await toast()).shown && /stray/.test((await toast()).text));
+  check("and changes nothing (no edit at the top of the page)", (await s.source()) == before, (await s.source()).slice(0, 300));
+  // A click elsewhere straight away doesn't cut it short: it stays its minimum first.
+  await p.click(elsewhere.x, elsewhere.y);
+  await Bun.sleep(2500);
+  check("a click elsewhere right away leaves it up for its minimum", (await toast()).shown);
+  await Bun.sleep(3000);
+  check("then it goes", !(await toast()).shown);
+  await s.clickEnd("body > p");
+  await p.type("!");
+  await Bun.sleep(150);
+  check("the paragraph above still edits", (await s.source()).includes("This paragraph is fine.!</p>"));
+  check("no page errors", p.errors.length == 0, p.errors.join("\n"));
+  await s.close();
+}
+
+/** A page with problems nobody asked about: each is explained in turn, with a button to have the agent fix it. */
+async function brokenPageScenario(browser: Browser) {
+  console.log("\nBroken page");
+  const s = await session(browser, "broken", "index.html", { ANTHROPIC_API_KEY: "", SCRATCHWORK_AGENT_ENV_FILE: "/nonexistent/.env" });
+  const { p } = s;
+  const toast = () => p.eval<{ text: string; shown: boolean; fix: boolean; fixDisabled: string | null; fixTitle: string }>(`(() => { const t = document.getElementById("toast"), b = t.querySelector(".toast-fix"); return { text: t.querySelector(".toast-text")?.textContent ?? t.textContent, shown: t.classList.contains("show"), fix: !!b, fixDisabled: b?.getAttribute("aria-disabled") ?? null, fixTitle: b?.title ?? "" }; })()`);
+  await waitFor(() => false, 600);
+  const first = await toast();
+  check("a broken page says what's wrong on its own", first.shown && /missing\.css|drawTheChart/.test(first.text), first);
+  check("with a button to have the agent fix it", first.fix);
+  check("which, with the agent off, is disabled and says why", first.fixDisabled == "true" && /agent is off/i.test(first.fixTitle), first);
+  await p.eval(`document.querySelector("#toast .toast-fix").click()`);
+  await Bun.sleep(150);
+  check("clicking it anyway explains", /agent is off/i.test((await toast()).text), await toast());
+  await Bun.sleep(5200);
+  const h1 = await s.rectOf("h1", 0.5);
+  await p.click(h1.x, h1.y);
+  await Bun.sleep(600);
+  const second = await toast();
+  check("the other problem comes next", second.shown && second.fix && second.text != first.text && /missing\.css|drawTheChart/.test(second.text), { first: first.text, second });
+  const both = first.text + " " + second.text;
+  check("they name the missing stylesheet and the script error", /stylesheet “missing\.css”/.test(both) && /drawTheChart is not defined/.test(both), both);
+  await s.close();
+}
+
 const browser = await Browser.launch();
 try {
-  if (!only || only == "html") await htmlScenario(browser);
+  if (!only || only == "html") { await htmlScenario(browser); await strayTagScenario(browser); await brokenPageScenario(browser); }
   if (!only || only == "md") { await mdScenario(browser); await lightOnlyScenario(browser); }
   if (!only || only == "format") await formatScenario(browser);
   if (!only || only == "agent") { await agentOffScenario(browser); await agentEmptyScenario(browser); }

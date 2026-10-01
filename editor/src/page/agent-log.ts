@@ -1,7 +1,9 @@
 // The agent conversation as the editor shows it, shared by the host (which
 // keeps the transcript, so a reload picks it back up) and the shell (which
-// renders it). The host folds pi's session events into these small events,
-// sends each one to the shell over SSE, and both apply them with `reduce`.
+// renders it). The host folds pi's agent events into these small events,
+// sends each one to its user's tabs over SSE, and both apply them with
+// `reduce`. A transcript is private to one person and one document: their
+// tabs all show it, collaborators never see it.
 
 export type LogItem =
   | { kind: "user"; text: string }
@@ -17,11 +19,13 @@ export type LogEvent =
   | { t: "tool"; id: string; name: string; path: string | null; status: "running" | "done" | "error"; detail?: string; image?: string }
   | { t: "error"; text: string }
   | { t: "busy"; busy: boolean }
+  /** How many of the agent's changes "Undo the agent's change" can take back. */
+  | { t: "undoable"; count: number }
   | { t: "reset" };
 
-export interface Log { items: LogItem[]; busy: boolean }
+export interface Log { items: LogItem[]; busy: boolean; undoable: number }
 
-export const emptyLog = (): Log => ({ items: [], busy: false });
+export const emptyLog = (): Log => ({ items: [], busy: false, undoable: 0 });
 
 /** Applies one event in place; returns the index of the item it touched, or -1. */
 export function reduce(log: Log, ev: LogEvent): number {
@@ -46,6 +50,7 @@ export function reduce(log: Log, ev: LogEvent): number {
     }
     case "error": items.push({ kind: "error", text: ev.text }); return items.length - 1;
     case "busy": log.busy = ev.busy; return -1;
+    case "undoable": log.undoable = ev.count; return -1;
     case "reset": items.length = 0; log.busy = false; return -1;
   }
 }
@@ -60,6 +65,11 @@ export interface ViewRequest {
   fullPage?: boolean;
   /** Width to render at, in CSS pixels (default: as wide as the user's page). */
   width?: number;
+  /**
+   * The agent's Yjs state vector when it asked (src/room/doc.ts): the tab
+   * renders once it has seen every edit the agent had made by then.
+   */
+  after?: string;
 }
 
 /** What the tab sends back: a PNG (base64), or why it couldn't. */

@@ -1,31 +1,41 @@
-// The embedded agent: a pi coding-agent session (https://github.com/badlogic/pi-mono)
-// running in the editor's host, with file tools rooted at the document's folder.
-// Its edits land on disk like anyone else's, and the host's watcher carries them
-// into the open page as they happen. This module is the Promise edge: pi's SDK is
-// async, and open.ts wraps what it exposes in Effect.
+// The agent editor: one session per person per document, running in the
+// host. A session holds that person's transcript and runs, and joins the
+// document room as an ordinary Yjs peer with its own replica of the shared
+// doc. The room never holds a conversation, a long run doesn't load the
+// room, and closing the tab doesn't stop the agent.
+//
+// It runs on pi's agent core (https://github.com/badlogic/pi-mono:
+// @mariozechner/pi-agent-core + pi-ai) with our own tools, written against
+// the small Workspace interface in workspace.ts, so the same agent could
+// run elsewhere (a browser) if it ever needs to. Others see only its edits,
+// attributed ("Pete's agent"), and its presence while it works: a labelled
+// cursor where it last edited, and whether it's busy, on awareness.
+//
+// This module is the Promise edge: pi's SDK is async, and open.ts wraps
+// what it exposes in Effect.
 //
 // Configuration comes from wip/editor/.env (see .env.example; SCRATCHWORK_AGENT_ENV_FILE
-// points elsewhere), falling back to the environment:
+// points elsewhere), falling back to the environment. The key lives only here,
+// in the host:
 //   ANTHROPIC_API_KEY          required
 //   SCRATCHWORK_AGENT_MODEL    default claude-opus-5-5
 //   SCRATCHWORK_AGENT_SPEED    "fast" (default) or "standard"
 //   SCRATCHWORK_AGENT_EFFORT   low | medium (default) | high | xhigh | max
+//
+// SCRATCHWORK_AGENT_MODEL=script swaps the model for a scripted one (see
+// `scriptModel`), for the test suite in tests/suite/: deterministic, free,
+// and it needs no key. Never set it on a deployment real people use.
 
-import type { Model } from "@mariozechner/pi-ai";
+import * as Y from "yjs";
+import { Awareness } from "y-protocols/awareness";
+import { fauxAssistantMessage, fauxText, fauxToolCall, registerFauxProvider, type Context, type Model } from "@mariozechner/pi-ai";
+import { Agent as PiAgent, type AgentEvent, type AgentTool } from "@mariozechner/pi-agent-core";
 import { Type } from "typebox";
-import {
-  AuthStorage,
-  createAgentSession,
-  defineTool,
-  DefaultResourceLoader,
-  ModelRegistry,
-  SessionManager,
-  SettingsManager,
-  type AgentSession,
-  type AgentSessionEvent,
-} from "@mariozechner/pi-coding-agent";
 import { emptyLog, reduce, type Log, type LogEvent } from "./src/page/agent-log";
 import type { ViewRequest, ViewResult } from "./src/page/agent-log";
+import { agentName, colorFor, files, introduce, stamp, stateVector, type Author } from "./src/room/doc";
+import { joinLocal, type Room } from "./room";
+import { YjsWorkspace, WorkspaceError, cleanPath, globToRegExp, type Workspace } from "./workspace";
 
 export interface AgentConfig {
   apiKey: string;
@@ -33,6 +43,8 @@ export interface AgentConfig {
   speed: "fast" | "standard";
   effort: string;
 }
+
+const isScript = (cfg: AgentConfig) => cfg.model == "script";
 
 /** Reads the agent's settings from the given env file, falling back to the process env. */
 export async function loadConfig(envPath: string): Promise<AgentConfig | { missing: string }> {
@@ -47,6 +59,7 @@ export async function loadConfig(envPath: string): Promise<AgentConfig | { missi
   }
   const get = (k: string) => env[k] || process.env[k] || "";
   const apiKey = get("ANTHROPIC_API_KEY");
+  if (get("SCRATCHWORK_AGENT_MODEL") == "script") return { apiKey: "", model: "script", speed: "standard", effort: "medium" };
   if (!apiKey) return { missing: `ANTHROPIC_API_KEY is not set (copy wip/editor/.env.example to wip/editor/.env)` };
   return {
     apiKey,
@@ -86,107 +99,269 @@ function describeModel(cfg: AgentConfig): Model<"anthropic-messages"> {
  * effort, and fast mode.
  */
 function patchPayload(cfg: AgentConfig) {
-  return (payload: Record<string, unknown>) => ({
-    ...payload,
-    max_tokens: 64_000,
-    thinking: { type: "adaptive", display: "summarized" },
-    output_config: { ...(payload.output_config as object | undefined), effort: cfg.effort },
-    ...(cfg.speed == "fast" ? { speed: "fast" } : {}),
-  });
+  return (payload: unknown) => {
+    const p = payload as Record<string, unknown>;
+    return {
+      ...p,
+      max_tokens: 64_000,
+      thinking: { type: "adaptive", display: "summarized" },
+      output_config: { ...(p.output_config as object | undefined), effort: cfg.effort },
+      ...(cfg.speed == "fast" ? { speed: "fast" } : {}),
+    };
+  };
 }
 
-const guidance = (docName: string, kind: "html" | "md") => `
-You are embedded in Scratchwork's page editor. The user is looking at ${docName}
-(${kind == "md" ? "Markdown" : "HTML"}) rendered as a live page, and editing its text in place. Your
-working directory is the folder that holds it; every file in it is part of the page
-(styles, scripts, images, other pages), and you may read and change any of them.
+/**
+ * The scripted model, for tests. A message containing `@script` followed by
+ * a JSON array of steps plays them in order, one per model call:
+ *
+ *   { "tool": "edit", "args": { ... } }   call a tool
+ *   { "text": "Done." }                   reply and end the turn
+ *   { "error": "overloaded" }             fail the request
+ *
+ * Any step may add "delay": ms, to wait before answering (so a test can act
+ * between two tool calls). Once the steps run out it says "(script done)".
+ */
+let script: ReturnType<typeof registerFauxProvider> | null = null;
+function scriptModel(): Model<string> {
+  script ??= registerFauxProvider({ provider: "script", models: [{ id: "script", name: "script (test model)", input: ["text", "image"] }] });
+  if (script.getPendingResponseCount() < 100) script.appendResponses(Array.from({ length: 1000 }, () => scriptStep));
+  return script.getModel();
+}
 
-- Every edit you make to a file shows up in the user's page as soon as it is written,
-  so prefer small, targeted edits (the edit tool) over rewriting whole files.
-- The user may be typing at the same time. Always read a file right before editing it
-  (with read, not grep: search output cuts long lines and drops indentation, so text
-  copied from it won't match), and keep edits scoped to what was asked.
-- Messages may begin with an <editor> block saying where the user's caret or selection
+async function scriptStep(context: Context) {
+  const msgs = context.messages;
+  let at = -1, steps: { tool?: string; args?: Record<string, unknown>; text?: string; error?: string; delay?: number }[] = [];
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    const m = msgs[i];
+    if (m.role != "user") continue;
+    const text = typeof m.content == "string" ? m.content : m.content.map((c) => (c.type == "text" ? c.text : "")).join("");
+    const k = text.indexOf("@script");
+    if (k < 0) continue;
+    try { steps = JSON.parse(text.slice(k + 7).trim()); } catch (e) { return fauxAssistantMessage(`bad script: ${(e as Error).message}`); }
+    at = i;
+    break;
+  }
+  if (at < 0) return fauxAssistantMessage("(no script)");
+  const step = steps[msgs.slice(at + 1).filter((m) => m.role == "assistant").length];
+  if (step?.delay) await new Promise((r) => setTimeout(r, step.delay));
+  if (!step) return fauxAssistantMessage("(script done)");
+  if (step.error) return fauxAssistantMessage([], { stopReason: "error", errorMessage: step.error });
+  if (step.tool) return fauxAssistantMessage([fauxToolCall(step.tool, step.args ?? {})], { stopReason: "toolUse" });
+  return fauxAssistantMessage([fauxText(step.text ?? "")]);
+}
+
+const systemPrompt = (docName: string, kind: "html" | "md", owner: string) => `
+You are ${agentName(owner)}, embedded in Scratchwork's page editor. ${owner} is looking at
+${docName} (${kind == "md" ? "Markdown" : "HTML"}) rendered as a live page, and editing its text in
+place. Other people may have the same document open and be editing it too, each with
+their own agent; you work for ${owner} only. The document is a folder of files (the page,
+its styles, scripts, images, other pages); your tools see that folder, and you may read
+and change any text file in it. Paths are relative to the folder.
+
+- Your edits go straight into the shared document and show up in everyone's page as
+  you make them, attributed to you. Prefer small, targeted edits (the edit tool) over
+  rewriting whole files.
+- People may be typing while you work. edit matches oldText against the text as it is
+  at that moment; if it fails because the text changed, read the file again and retry.
+  Read a file right before editing it (with read, not grep: search output cuts long
+  lines, so text copied from it won't match), and keep edits scoped to what was asked.
+- Messages may begin with an <editor> block saying where ${owner}'s caret or selection
   is. "This", "here" and "the selection" refer to it.
 - Edits to the text show up in the page as you make them. Changes to anything else
   (the page's structure, scripts, styles, other files) show up when you finish your
   turn.
-- view_page shows you the page as the user sees it (a screenshot, plus any script
+- view_page shows you the page as ${owner} sees it (a screenshot, plus any script
   errors). Use it to check visual work, like a diagram, layout or styling, before you
-  say it's done. It renders your latest changes, including ones the user's page
-  won't show until your turn ends. Pass a CSS selector to look closely at one element.
-- Keep replies short: say what you changed, not how. The user can see the result.
+  say it's done. It renders your latest changes, including ones the page won't show
+  until your turn ends. Pass a CSS selector to look closely at one element.
+- Keep replies short: say what you changed, not how. ${owner} can see the result.
 `.trim();
 
-export interface Agent {
+const MAX_LINES = 2000, MAX_BYTES = 50 * 1024;
+const IMAGE = /\.(png|jpe?g|gif|webp)$/i;
+const MIME: Record<string, string> = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp" };
+
+/** The agent's tools, over a workspace. */
+function makeTools(ws: Workspace, opts: {
+  view: (req: ViewRequest) => Promise<ViewResult>;
+  readAsset: (path: string) => Promise<Uint8Array | null>;
+  edited: (path: string, at: number) => void;
+}): AgentTool[] {
+  const text = (s: string) => ({ content: [{ type: "text" as const, text: s }], details: {} });
+  const guard = <T>(f: () => T): T => {
+    try { return f(); } catch (e) { throw new Error(e instanceof WorkspaceError ? e.message : String((e as Error).message ?? e)); }
+  };
+  return [
+    {
+      name: "read",
+      label: "Read",
+      description: `Read a file's current text (or see an image: png, jpg, gif, webp). Output is cut to ${MAX_LINES} lines or ${MAX_BYTES / 1024}KB; use offset/limit for more.`,
+      parameters: Type.Object({
+        path: Type.String({ description: "Path of the file, relative to the document's folder" }),
+        offset: Type.Optional(Type.Number({ description: "Line number to start reading from (1-indexed)" })),
+        limit: Type.Optional(Type.Number({ description: "Maximum number of lines to read" })),
+      }),
+      execute: async (_id, p: { path: string; offset?: number; limit?: number }) => {
+        const path = guard(() => cleanPath(p.path));
+        if (!ws.isText(path) && IMAGE.test(path)) {
+          const bytes = await opts.readAsset(path);
+          if (!bytes) throw new Error(`${path} doesn't exist`);
+          return { content: [{ type: "image" as const, data: Buffer.from(bytes).toString("base64"), mimeType: MIME[path.split(".").pop()!.toLowerCase()] }], details: {} };
+        }
+        const lines = guard(() => ws.read(path)).split("\n");
+        const start = Math.max(0, (p.offset ?? 1) - 1);
+        if (start >= lines.length && lines.length > 1) throw new Error(`Offset ${p.offset} is beyond the end of the file (${lines.length} lines)`);
+        let end = Math.min(lines.length, start + (p.limit ?? MAX_LINES));
+        let out = lines.slice(start, end).join("\n");
+        while (out.length > MAX_BYTES && end > start + 1) { end = start + Math.max(1, Math.floor((end - start) / 2)); out = lines.slice(start, end).join("\n"); }
+        if (end < lines.length) out += `\n\n[Showing lines ${start + 1}-${end} of ${lines.length}. Use offset=${end + 1} to continue.]`;
+        return text(out);
+      },
+    },
+    {
+      name: "edit",
+      label: "Edit",
+      description: "Edit a file by exact text replacement, against its text as it is right now. Every edits[].oldText must match a unique, non-overlapping region. If two changes touch the same block, merge them into one edit. If oldText isn't found, the file changed since you read it: read it again.",
+      parameters: Type.Object({
+        path: Type.String({ description: "Path of the file to edit" }),
+        edits: Type.Array(Type.Object({
+          oldText: Type.String({ description: "Exact text to replace; must be unique in the file" }),
+          newText: Type.String({ description: "Replacement text" }),
+        }), { description: "One or more targeted replacements, each matched against the current file" }),
+      }),
+      execute: async (_id, p: { path: string; edits: { oldText: string; newText: string }[] }) => {
+        const r = guard(() => ws.edit(p.path, p.edits));
+        opts.edited(r.path, r.at);
+        return text(r.summary);
+      },
+    },
+    {
+      name: "write",
+      label: "Write",
+      description: "Write a file's whole content, creating it if needed. For an existing file only the differences are applied, but prefer edit for targeted changes.",
+      parameters: Type.Object({
+        path: Type.String({ description: "Path of the file to write" }),
+        content: Type.String({ description: "The file's new content" }),
+      }),
+      execute: async (_id, p: { path: string; content: string }) => {
+        const r = guard(() => ws.write(p.path, p.content));
+        opts.edited(r.path, r.at);
+        return text(r.summary);
+      },
+    },
+    {
+      name: "ls",
+      label: "List",
+      description: "List the files and folders directly inside a folder of the document (default: its root).",
+      parameters: Type.Object({ path: Type.Optional(Type.String({ description: "Folder to list" })) }),
+      execute: async (_id, p: { path?: string }) => {
+        const dir = p.path && p.path.replace(/^[./]+$/, "") ? guard(() => cleanPath(p.path!)) + "/" : "";
+        const entries = new Set<string>();
+        for (const f of ws.paths()) if (f.startsWith(dir)) { const rest = f.slice(dir.length); entries.add(rest.includes("/") ? rest.slice(0, rest.indexOf("/") + 1) : rest); }
+        if (!entries.size) throw new Error(`${p.path} is empty or doesn't exist`);
+        return text([...entries].sort().join("\n"));
+      },
+    },
+    {
+      name: "find",
+      label: "Find files",
+      description: "Find files by glob pattern, e.g. \"*.css\" or \"posts/**/*.md\".",
+      parameters: Type.Object({ pattern: Type.String({ description: "Glob pattern" }) }),
+      execute: async (_id, p: { pattern: string }) => {
+        const re = globToRegExp(p.pattern);
+        const found = ws.paths().filter((f) => re.test(f));
+        return text(found.length ? found.slice(0, 500).join("\n") : "No files match.");
+      },
+    },
+    {
+      name: "grep",
+      label: "Search",
+      description: "Search the text files for a regular expression (or literal text). Returns path:line: text, long lines cut.",
+      parameters: Type.Object({
+        pattern: Type.String({ description: "Regular expression, or literal text with literal: true" }),
+        glob: Type.Optional(Type.String({ description: "Only files matching this glob" })),
+        ignoreCase: Type.Optional(Type.Boolean()),
+        literal: Type.Optional(Type.Boolean()),
+      }),
+      execute: async (_id, p: { pattern: string; glob?: string; ignoreCase?: boolean; literal?: boolean }) => {
+        let re: RegExp;
+        try { re = new RegExp(p.literal ? p.pattern.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") : p.pattern, p.ignoreCase ? "i" : ""); } catch (e) { throw new Error(`bad pattern: ${(e as Error).message}`); }
+        const only = p.glob ? globToRegExp(p.glob) : null;
+        const out: string[] = [];
+        for (const f of ws.paths()) {
+          if (!ws.isText(f) || (only && !only.test(f))) continue;
+          ws.read(f).split("\n").forEach((line, i) => { if (out.length < 100 && re.test(line)) out.push(`${f}:${i + 1}: ${line.length > 300 ? line.slice(0, 300) + "…" : line}`); });
+        }
+        return text(out.length ? out.join("\n") + (out.length == 100 ? "\n[First 100 matches.]" : "") : "No matches.");
+      },
+    },
+    {
+      name: "view_page",
+      label: "Look at the page",
+      description: "See the page as the user sees it: a picture of the latest version rendered in the user's browser, plus any JavaScript errors it threw. By default one screenful from the top; full_page for the whole page (up to 4000px tall); selector for one element.",
+      parameters: Type.Object({
+        selector: Type.Optional(Type.String({ description: "CSS selector of an element to capture, e.g. \"#chart\" or \"figure:nth-of-type(2)\"." })),
+        full_page: Type.Optional(Type.Boolean({ description: "Capture the whole page rather than the first screenful." })),
+        width: Type.Optional(Type.Number({ description: "Width to render at, in CSS pixels (default: as wide as the user's page)." })),
+      }),
+      execute: async (_id, p: { selector?: string; full_page?: boolean; width?: number }) => {
+        const v = await opts.view({ selector: p.selector, fullPage: p.full_page, width: p.width });
+        if (v.error || !v.png) throw new Error(v.error ?? "The page couldn't be captured.");
+        const lines = [`Screenshot: ${v.width}×${v.height}px${p.selector ? ` of ${p.selector}` : p.full_page ? ", whole page" : ", top of the page"}.`];
+        if (v.note) lines.push(v.note);
+        lines.push(v.errors.length ? `The page threw ${v.errors.length} error(s):\n${v.errors.slice(0, 10).join("\n")}` : "No script errors.");
+        return { content: [{ type: "image" as const, data: v.png, mimeType: "image/png" }, { type: "text" as const, text: lines.join("\n") }], details: {} };
+      },
+    },
+  ] as AgentTool[];
+}
+
+export interface AgentSession {
   readonly model: string;
-  /** The transcript so far (for a shell that just loaded). */
+  /** The transcript so far (for a tab that just loaded). */
   log(): Log;
   /** Sends a message; while a turn is running it steers the current one. */
   prompt(text: string, context: string | null): void;
-  abort(): Promise<void>;
+  abort(): void;
   reset(): Promise<void>;
+  /** Takes back the agent's most recent change (one tool call), if any. */
+  undo(): boolean;
   subscribe(listener: (ev: LogEvent) => void): () => void;
 }
 
-export async function startAgent(opts: { cfg: AgentConfig; cwd: string; docName: string; kind: "html" | "md"; view: (req: ViewRequest) => Promise<ViewResult> }): Promise<Agent> {
-  const { cfg, cwd } = opts;
-  const authStorage = AuthStorage.inMemory();
-  authStorage.setRuntimeApiKey("anthropic", cfg.apiKey);
-  const modelRegistry = ModelRegistry.inMemory(authStorage);
-  const settingsManager = SettingsManager.inMemory();
-  const patch = patchPayload(cfg);
-  const viewPage = defineTool({
-    name: "view_page",
-    label: "Look at the page",
-    description: "See the page as the user sees it: a picture of the latest version rendered in the user's browser, plus any JavaScript errors it threw. By default one screenful from the top; full_page for the whole page (up to 4000px tall); selector for one element.",
-    parameters: Type.Object({
-      selector: Type.Optional(Type.String({ description: "CSS selector of an element to capture, e.g. \"#chart\" or \"figure:nth-of-type(2)\"." })),
-      full_page: Type.Optional(Type.Boolean({ description: "Capture the whole page rather than the first screenful." })),
-      width: Type.Optional(Type.Number({ description: "Width to render at, in CSS pixels (default: as wide as the user's page)." })),
-    }),
-    execute: async (_id, params) => {
-      const v = await opts.view({ selector: params.selector, fullPage: params.full_page, width: params.width });
-      if (v.error || !v.png) throw new Error(v.error ?? "The page couldn't be captured.");
-      const lines = [`Screenshot: ${v.width}×${v.height}px${params.selector ? ` of ${params.selector}` : params.full_page ? ", whole page" : ", top of the page"}.`];
-      if (v.note) lines.push(v.note);
-      lines.push(v.errors.length ? `The page threw ${v.errors.length} error(s):\n${v.errors.slice(0, 10).join("\n")}` : "No script errors.");
-      return { content: [{ type: "image" as const, data: v.png, mimeType: "image/png" }, { type: "text" as const, text: lines.join("\n") }], details: {} };
-    },
-  });
-  const model = describeModel(cfg);
+export interface SessionOptions {
+  cfg: AgentConfig;
+  room: Room;
+  /** The person this session works for. */
+  owner: { id: string; name: string };
+  docName: string;
+  kind: "html" | "md";
+  /** Whether the owner may edit (an agent acts with its user's permissions). */
+  canEdit: () => boolean;
+  /** Asks one of the owner's open tabs to render and capture the page. */
+  view: (req: ViewRequest) => Promise<ViewResult>;
+  readAsset: (path: string) => Promise<Uint8Array | null>;
+}
 
-  const newSession = async (): Promise<AgentSession> => {
-    // Nothing from ~/.pi or the repository leaks in: no extensions, skills,
-    // prompt templates or AGENTS.md files; just the editor's own guidance.
-    const resourceLoader = new DefaultResourceLoader({
-      cwd,
-      agentDir: cwd,
-      settingsManager,
-      noExtensions: true,
-      noSkills: true,
-      noPromptTemplates: true,
-      noThemes: true,
-      noContextFiles: true,
-      appendSystemPrompt: [guidance(opts.docName, opts.kind)],
-      extensionFactories: [(pi) => { pi.on("before_provider_request", (ev) => patch(ev.payload as Record<string, unknown>)); }],
-    });
-    await resourceLoader.reload();
-    const { session } = await createAgentSession({
-      cwd,
-      agentDir: cwd,
-      model,
-      thinkingLevel: "medium",
-      tools: ["read", "edit", "write", "ls", "find", "grep", "view_page"],
-      customTools: [viewPage],
-      authStorage,
-      modelRegistry,
-      settingsManager,
-      resourceLoader,
-      sessionManager: SessionManager.inMemory(cwd),
-    });
-    return session;
-  };
+const TOOL_ACTIVITY: Record<string, string> = { read: "reading", edit: "editing", write: "writing", ls: "looking around", find: "looking for files", grep: "searching", view_page: "looking at the page" };
+
+export async function startSession(opts: SessionOptions): Promise<AgentSession> {
+  const { cfg, owner } = opts;
+  const me: Author = { user: owner.id, name: agentName(owner.name), color: colorFor(owner.id, true), kind: "agent" };
+
+  // The session's own replica of the shared doc, joined to the room as a peer.
+  const doc = new Y.Doc();
+  const awareness = new Awareness(doc);
+  awareness.setLocalState({ user: me, busy: false, activity: null, cursor: null });
+  joinLocal(opts.room, doc, awareness);
+  await new Promise((r) => setTimeout(r, 0)); // the in-process sync is microtasks: done by now
+  introduce(doc, me);
+
+  const origin = { agent: owner.id }, undoOrigin = { agentUndo: owner.id };
+  const undo = new Y.UndoManager(files(doc), { trackedOrigins: new Set([origin]), captureTimeout: 0 });
+  const ws = new YjsWorkspace(doc, me, opts.canEdit, origin);
+  const model = isScript(cfg) ? scriptModel() : describeModel(cfg);
 
   const log = emptyLog();
   const listeners = new Set<(ev: LogEvent) => void>();
@@ -200,8 +375,28 @@ export async function startAgent(opts: { cfg: AgentConfig; cwd: string; docName:
     reduce(log, ev);
     for (const l of listeners) l(ev);
   };
+  const presence = (patch: Record<string, unknown>) => awareness.setLocalState({ ...awareness.getLocalState(), ...patch });
+  const undoable = () => emit({ t: "undoable", count: undo.undoStack.length });
 
-  const translate = (e: AgentSessionEvent) => {
+  const tools = makeTools(ws, {
+    view: (req) => opts.view({ ...req, after: stateVector(doc) }),
+    readAsset: opts.readAsset,
+    edited: (path, at) => {
+      // One undo step per tool call, and the agent's cursor where it last wrote.
+      undo.stopCapturing();
+      undoable();
+      const t = files(doc).get(path);
+      if (t) presence({ cursor: { path, anchor: Y.relativePositionToJSON(Y.createRelativePositionFromTypeIndex(t, at)), head: null } });
+    },
+  });
+
+  const agent = new PiAgent({
+    initialState: { systemPrompt: systemPrompt(opts.docName, opts.kind, owner.name), model, thinkingLevel: "medium", tools },
+    getApiKey: () => cfg.apiKey || "none",
+    onPayload: isScript(cfg) ? undefined : patchPayload(cfg),
+  });
+
+  agent.subscribe((e: AgentEvent) => {
     switch (e.type) {
       case "message_update": {
         const m = e.assistantMessageEvent;
@@ -214,10 +409,14 @@ export async function startAgent(opts: { cfg: AgentConfig; cwd: string; docName:
         if (msg.role == "assistant" && msg.stopReason == "error") emit({ t: "error", text: msg.errorMessage || "The request failed." });
         break;
       }
-      case "tool_execution_start":
-        emit({ t: "tool", id: e.toolCallId, name: e.toolName, path: toolPath(e.args), status: "running" });
+      case "tool_execution_start": {
+        const path = toolPath(e.args);
+        presence({ activity: `${TOOL_ACTIVITY[e.toolName] ?? e.toolName}${path ? ` ${path}` : ""}` });
+        emit({ t: "tool", id: e.toolCallId, name: e.toolName, path, status: "running" });
         break;
+      }
       case "tool_execution_end":
+        presence({ activity: "thinking" });
         emit({
           t: "tool", id: e.toolCallId, name: e.toolName, path: null,
           status: e.isError ? "error" : "done",
@@ -225,38 +424,42 @@ export async function startAgent(opts: { cfg: AgentConfig; cwd: string; docName:
           image: e.isError ? undefined : resultImage(e.result),
         });
         break;
-      case "agent_start": emit({ t: "busy", busy: true }); break;
-      case "agent_end": emit({ t: "busy", busy: false }); break;
+      case "agent_start": presence({ busy: true, activity: "thinking" }); emit({ t: "busy", busy: true }); break;
+      case "agent_end": presence({ busy: false, activity: null }); emit({ t: "busy", busy: false }); break;
     }
-  };
-
-  let session = await newSession();
-  let unsubscribe = session.subscribe(translate);
-
-  const run = (text: string) => {
-    const p = session.isStreaming ? session.steer(text) : session.prompt(text);
-    p.catch((err: unknown) => {
-      emit({ t: "error", text: err instanceof Error ? err.message : String(err) });
-      emit({ t: "busy", busy: false });
-    });
-  };
+  });
 
   return {
     model: model.name,
     log: () => log,
     prompt(text, context) {
       emit({ t: "user", text });
-      run(context ? `<editor>\n${context}\n</editor>\n\n${text}` : text);
+      const content = context ? `<editor>\n${context}\n</editor>\n\n${text}` : text;
+      if (isScript(cfg)) scriptModel();
+      if (agent.state.isStreaming) { agent.steer({ role: "user", content, timestamp: Date.now() }); return; }
+      agent.prompt(content).catch((err: unknown) => {
+        emit({ t: "error", text: err instanceof Error ? err.message : String(err) });
+        presence({ busy: false, activity: null });
+        emit({ t: "busy", busy: false });
+      });
     },
-    abort: () => session.abort(),
+    abort: () => agent.abort(),
     async reset() {
-      await session.abort();
-      unsubscribe();
-      session.dispose();
+      agent.abort();
+      await agent.waitForIdle();
+      agent.reset();
       paths.clear();
-      session = await newSession();
-      unsubscribe = session.subscribe(translate);
+      undo.clear();
+      presence({ busy: false, activity: null, cursor: null });
       emit({ t: "reset" });
+      undoable();
+    },
+    undo() {
+      if (!undo.undoStack.length) return false;
+      // Stamped, so the undo is attributed to the agent even when it only deletes (src/room/doc.ts).
+      doc.transact(() => { undo.undo(); stamp(doc, me); }, undoOrigin);
+      undoable();
+      return true;
     },
     subscribe(listener) {
       listeners.add(listener);

@@ -446,6 +446,14 @@ kbd {
   transition: opacity 200ms ease, transform 200ms var(--ease);
 }
 .toast.show { opacity: 1; transform: translate(-50%, 0); }
+/* An explanation with a fix: takes clicks, and the button sits beside the text. */
+.toast:not(.show) { pointer-events: none !important; }
+.toast.actionable { pointer-events: auto; display: flex; align-items: center; gap: 12px; border-radius: 16px; padding: 8px 8px 8px 16px; max-width: min(680px, calc(100vw - 32px)); }
+.toast-fix {
+  flex: none; border: 0; border-radius: 10px; padding: 7px 12px; cursor: pointer;
+  font: 600 13px var(--font-text); background: var(--fg-strong); color: var(--bg);
+}
+.toast-fix[aria-disabled="true"] { opacity: 0.45; cursor: not-allowed; }
 
 @keyframes pop { from { opacity: 0; transform: translateY(-4px); } }
 

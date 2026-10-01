@@ -9,5 +9,5 @@
     "skipLibCheck": true,
     "types": ["bun-types"]
   },
-  "include": ["src", "open.ts", "agent.ts"]
+  "include": ["src", "open.ts", "agent.ts", "room.ts", "workspace.ts", "tests/suite", "tests/tab.ts", "tests/cdp.ts"]
 }

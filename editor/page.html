@@ -56,6 +56,8 @@
     }
     #welcome code { font-family: var(--font-mono); font-size: 0.9em; background: var(--code-bg); border-radius: 4px; padding: 0.1em 0.35em; }
     #welcome[hidden] { display: none; }
+    #welcome.blocking { z-index: 100; background: color-mix(in srgb, var(--bg) 92%, transparent); color: var(--fg); }
+    #welcome button { font: 600 14px var(--font-text); padding: 8px 16px; border-radius: 10px; border: 0; background: var(--fg-strong); color: var(--bg); cursor: pointer; }
     /* View switcher: shows the current view; click it and all three appear. */
     .mode { display: flex; align-items: center; height: 34px; border-radius: 9px; padding: 0 2px; transition: background-color 160ms ease; }
     .mode.open { background: color-mix(in srgb, var(--chrome) 12%, transparent); }
@@ -175,6 +177,10 @@
     .agent-head .model { color: var(--chrome); font-size: 12px; margin-left: 6px; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .agent-log { flex: 1; overflow-y: auto; padding: 4px 16px 16px; display: flex; flex-direction: column; gap: 10px; }
     .agent-log:empty::before { content: attr(data-empty); color: var(--chrome); margin: auto; text-align: center; padding: 0 24px; }
+    .msg-user.pending { opacity: 0.55; }
+    .msg-user.failed { box-shadow: inset 0 0 0 1px #d0453a; }
+    .send-failed { display: block; margin-top: 4px; color: #d0453a; font-size: 12.5px; }
+    .send-failed button { border: 0; background: none; padding: 0; color: inherit; font: inherit; font-weight: 600; text-decoration: underline; cursor: pointer; }
     .msg-user { align-self: flex-end; max-width: 88%; background: var(--code-bg); border-radius: 12px; padding: 7px 11px; white-space: pre-wrap; overflow-wrap: anywhere; }
     .msg-assistant { white-space: pre-wrap; overflow-wrap: anywhere; }
     .msg-assistant code, .msg-tool code { font: 0.88em var(--font-mono); background: var(--code-bg); border-radius: 4px; padding: 0.1em 0.3em; }
@@ -209,6 +215,41 @@
     .agent-hint { margin: 0 10px 8px; padding: 7px 10px; border-radius: 10px; background: var(--code-bg); color: var(--soft); font-size: 12.5px; line-height: 1.45; }
     .agent-hint.sticky { color: var(--fg); }
     .agent-hint[hidden] { display: none; }
+    #agent-undo[aria-disabled="true"] { opacity: 0.4; cursor: not-allowed; }
+    /* Shown while you've scrolled back and the agent has written more below. */
+    .agent-jump {
+      align-self: center; margin: -40px 0 8px; position: relative; z-index: 1; border: 1px solid var(--panel-border); border-radius: 999px;
+      padding: 5px 12px; background: var(--bg); color: var(--fg); box-shadow: var(--shadow); font: 600 12px var(--font-text); cursor: pointer;
+    }
+    .agent-jump[hidden] { display: none; }
+    .agent-log { overflow-anchor: none; }
+    .agent-log:focus { outline: none; } /* focusable only so it can scroll by keyboard; the ring on a click is noise */
+
+    /* Who's here: you, then everyone else and their agents, in their colours. */
+    .people { display: flex; align-items: center; gap: 4px; margin-right: 6px; }
+    .people:empty { display: none; }
+    .avatar {
+      position: relative; width: 26px; height: 26px; border-radius: 50%; border: 0; padding: 0; cursor: pointer;
+      display: grid; place-items: center; font: 600 12px/1 var(--font-text); color: #fff; background: var(--c);
+      box-shadow: 0 0 0 2px var(--bg);
+    }
+    .avatar.me { box-shadow: 0 0 0 2px var(--bg), 0 0 0 3.5px var(--c); }
+    .avatar.is-agent { border-radius: 8px; font-size: 13px; background: color-mix(in srgb, var(--c) 16%, var(--bg)); color: var(--c); }
+    .avatar.is-agent.busy::after { content: ""; position: absolute; inset: -3px; border-radius: 10px; border: 2px solid transparent; border-top-color: var(--c); border-right-color: var(--c); animation: agent-spin 1s linear infinite; }
+    .avatar[aria-disabled="true"] { cursor: default; }
+    .avatar[data-tip]:hover::before {
+      content: attr(data-tip); position: absolute; top: calc(100% + 8px); right: 0; z-index: 40; white-space: nowrap;
+      font: 500 12px/1.4 var(--font-text); color: var(--fg); background: var(--bg); border: 1px solid var(--panel-border);
+      border-radius: 7px; padding: 4px 8px; box-shadow: var(--shadow); pointer-events: none;
+    }
+
+    /* Other people's carets in the source view. */
+    .cm-peer { position: relative; border-left: 2px solid var(--c); margin-left: -1px; margin-right: -1px; }
+    .cm-peer.agent { border-left-style: dashed; }
+    .cm-peer-name {
+      position: absolute; left: -2px; bottom: 100%; white-space: nowrap; pointer-events: none;
+      font: 600 10.5px/1.5 var(--font-text); color: #fff; background: var(--c); border-radius: 3px 3px 3px 0; padding: 0 5px;
+    }
   </style>
 </head>
 <body>
@@ -222,6 +263,7 @@
   </button>
 
   <header class="chrome chrome-top" aria-label="Controls">
+    <div class="people" id="people" aria-label="Who's here"></div>
     <button type="button" class="icon-btn" id="btn-track" aria-label="Track changes" data-tip="Track changes" aria-pressed="false">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4.5h7.5L19 9v10.5a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1v-14a1 1 0 0 1 1-1Z"/><path d="M9.5 11.5h5M12 9v5M9.5 17h5"/></svg>
     </button>
@@ -253,6 +295,7 @@
       <dt>Hide controls</dt><dd><kbd>Esc</kbd></dd>
     </dl>
     <p>Select text for the style bar, or type Markdown: **bold**, *italic*, `code`. Click into any text on the page and type. Edits are written to the file on disk as you go. ⌘-click a link to open it.</p>
+    <p>Others editing the page show as carets with their names, and their edits are marked in their colour. ⌘Z only undoes your own edits; the agent panel has its own undo for your agent's.</p>
   </div>
 
   <button type="button" class="agent-fab" id="agent-fab" aria-label="Open the agent (⌘J)" title="Agent  ⌘J" aria-expanded="false" aria-controls="agent">
@@ -261,6 +304,9 @@
   <aside id="agent" class="agent" inert aria-label="Agent"><div class="agent-card">
     <div class="agent-head">
       <span class="title">Agent</span><span class="model" id="agent-model"></span>
+      <button type="button" class="icon-btn" id="agent-undo" aria-label="Undo the agent's last change" data-tip="Undo the agent's last change" aria-disabled="true">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 14 4.5 9.5 9 5"/><path d="M4.5 9.5H14a5.5 5.5 0 0 1 0 11h-3"/></svg>
+      </button>
       <button type="button" class="icon-btn" id="agent-reset" aria-label="New conversation" data-tip="New conversation">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
       </button>
@@ -268,7 +314,8 @@
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 19 11 13M5 19v-4.5M5 19h4.5M19 5l-6 6M19 5v4.5M19 5h-4.5"/></svg>
       </button>
     </div>
-    <div class="agent-log" id="agent-log" data-empty="Ask for an edit. The agent can change any file in this page's folder, and you'll see its edits here as they land." aria-live="polite"></div>
+    <div class="agent-log" id="agent-log" data-empty="Ask for an edit. The agent can change any file in this page's folder, and you'll see its edits here as they land." aria-live="polite" tabindex="-1"></div>
+    <button type="button" class="agent-jump" id="agent-jump" hidden>↓ Jump to latest</button>
     <p class="agent-hint" id="agent-hint" role="status" hidden></p>
     <form class="agent-compose" id="agent-form">
       <div class="agent-field" id="agent-field"><textarea id="agent-input" rows="1" placeholder="Ask the agent…" aria-label="Message the agent"></textarea></div>
