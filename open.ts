@@ -2,7 +2,7 @@
 // Opens a page from disk in the page editor, as a document room that people
 // and their agents edit together.
 //
-//   bun open.ts <file-or-directory> [--port 4400] [--no-open]
+//   bun open.ts <file-or-directory> [--port 4400] [--no-open]   (--help for more)
 //
 // A directory must hold index.html or index.md. The host turns the folder
 // into one document room (room.ts): a shared Yjs doc of its text files that
@@ -23,6 +23,8 @@
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
+import { Argument, Command, Flag } from "effect/cli";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { Socket } from "effect/socket";
 import * as BunServices from "@effect/platform-bun/BunServices";
 import * as BunHttpServer from "@effect/platform-bun/BunHttpServer";
@@ -31,11 +33,14 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as Config from "effect/Config";
 import * as Console from "effect/Console";
+import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
 import { MODELS, externalGuide, isModelChoice, loadConfig, startSession, type AgentSession } from "./agent";
 import { Room, digest, type FileStore, type StateStore } from "./room";
 import type { ViewRequest, ViewResult } from "./src/page/agent-log";
+import { version } from "./package.json";
 
 const EDITOR_DIR = new URL(".", import.meta.url).pathname.replace(/\/$/, "");
 
@@ -70,6 +75,19 @@ const MIME: Record<string, string> = {
   ".gif": "image/gif", ".webp": "image/webp", ".ico": "image/x-icon", ".woff2": "font/woff2", ".woff": "font/woff", ".ttf": "font/ttf",
   ".txt": "text/plain; charset=utf-8", ".wasm": "application/wasm", ".mp4": "video/mp4", ".webm": "video/webm", ".mp3": "audio/mpeg",
 };
+
+/** The host's settings from the environment: tests set these; people rarely need to. */
+const settings = Config.all({
+  /** Where the room's Yjs state is kept (the suite uses a scratch folder). */
+  stateDir: Config.option(Config.String("ERGA_ROOM_STATE_DIR")),
+  cacheHome: Config.option(Config.String("XDG_CACHE_HOME")),
+  home: Config.withDefault(Config.String("HOME"), "/tmp"),
+  user: Config.withDefault(Config.String("USER"), ""),
+  /** Shortens the room's write delay (tests do). */
+  writeDelay: Config.option(Config.Int("ERGA_WRITE_DELAY_MS")),
+  /** The agent's settings file, if not .env next to this one. */
+  agentEnvFile: Config.option(Config.String("ERGA_AGENT_ENV_FILE")),
+});
 
 class UsageError extends Schema.TaggedError<UsageError>()("UsageError", { message: Schema.String }) {}
 
@@ -109,20 +127,15 @@ const serveFile = (root: string, rel: string, cacheControl = "no-store") =>
     return HttpServerResponse.uint8Array(bytes, { contentType: type, headers: { "Cache-Control": cacheControl } });
   });
 
-const program = Effect.gen(function* () {
-  const args = process.argv.slice(2);
-  const flag = (name: string) => { const i = args.indexOf(name); return i >= 0 ? args.splice(i, 1)[0] : null; };
-  const noOpen = flag("--no-open") != null;
-  const portIdx = args.indexOf("--port");
-  const port = portIdx >= 0 ? Number(args.splice(portIdx, 2)[1]) : 4400;
-  const target = args[0];
-  if (!target || !Number.isFinite(port)) return yield* new UsageError({ message: "usage: bun open.ts <file-or-directory> [--port N] [--no-open]" });
-
+const program = (args: { target: string; port: number; open: boolean }) => Effect.gen(function* () {
+  const { target, port } = args;
+  const env = yield* settings;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const doc = yield* resolveDoc(target);
-  const gitName = yield* Effect.promise(() => new Response(Bun.spawn(["git", "config", "user.name"], { stdout: "pipe", stderr: "ignore" }).stdout).text()).pipe(Effect.orElseSucceed(() => ""));
-  const defaultName = gitName.trim().split(/\s+/)[0] || process.env.USER || "Me";
+  const gitName = yield* spawner.string(ChildProcess.make("git", ["config", "user.name"])).pipe(Effect.orElseSucceed(() => ""));
+  const defaultName = gitName.trim().split(/\s+/)[0] || env.user || "Me";
   const docPath = path.relative(doc.dir, doc.path).split(path.sep).join("/");
 
   // The folder as a FileStore (room.ts): what the room loads, writes back
@@ -145,8 +158,7 @@ const program = Effect.gen(function* () {
   };
   // The room's Yjs state lives in a cache file named for the folder, so a
   // restarted host picks up the same history (room.ts).
-  // (ERGA_ROOM_STATE_DIR puts it elsewhere; the test suite uses a scratch folder.)
-  const stateDir = process.env.ERGA_ROOM_STATE_DIR || path.join(process.env.XDG_CACHE_HOME || path.join(process.env.HOME || "/tmp", ".cache"), "erga", "rooms");
+  const stateDir = Option.getOrElse(env.stateDir, () => path.join(Option.getOrElse(env.cacheHome, () => path.join(env.home, ".cache")), "erga", "rooms"));
   const stateFile = path.join(stateDir, new Bun.CryptoHasher("sha1").update(doc.dir).digest("hex").slice(0, 20) + ".yjs");
   const state: StateStore = {
     load: () => run(fs.readFile(stateFile).pipe(Effect.orElseSucceed(() => null))),
@@ -156,8 +168,7 @@ const program = Effect.gen(function* () {
       yield* fs.rename(stateFile + ".tmp", stateFile);
     })),
   };
-  // ERGA_WRITE_DELAY_MS shortens the room's write delay (tests do; people don't need to).
-  const room = yield* Effect.promise(() => Room.open(store, { state, log: (line) => console.log(line), writeDelay: Number(process.env.ERGA_WRITE_DELAY_MS) || undefined }));
+  const room = yield* Effect.promise(() => Room.open(store, { state, log: (line) => console.log(line), writeDelay: Option.getOrUndefined(env.writeDelay) }));
   /** A request's path inside the folder, refusing ones that leave it. */
   const cleanRel = (raw: string | undefined) => {
     const rel = path.normalize(decodeURIComponent(raw ?? "")).replace(/^\/+/, "");
@@ -187,7 +198,7 @@ const program = Effect.gen(function* () {
     });
   };
 
-  const cfg = yield* Effect.promise(() => loadConfig(process.env.ERGA_AGENT_ENV_FILE || path.join(EDITOR_DIR, ".env")));
+  const cfg = yield* loadConfig(Option.getOrElse(env.agentEnvFile, () => path.join(EDITOR_DIR, ".env")));
   const agentOff = "missing" in cfg ? cfg.missing : "";
   const sessions = new Map<string, Promise<AgentSession>>();
   /**
@@ -419,7 +430,7 @@ const program = Effect.gen(function* () {
     Effect.gen(function* () {
       const rel = path.relative(process.cwd(), doc.path);
       yield* Console.log(`\n  editing ${doc.kind === "md" ? "Markdown" : "HTML"}: ${rel.startsWith("..") ? doc.path : rel || doc.name}\n  ${url}   (another person: ${url}?user=Ada)\n  agent: ${"missing" in cfg ? `off (${agentOff})` : `${cfg.model == "script" ? "script" : MODELS[cfg.model].label} to start (each person can switch)`}\n`);
-      if (!noOpen) Bun.spawn(["open", url], { stdout: "ignore", stderr: "ignore" });
+      if (args.open) yield* Effect.forkDetach(Effect.ignore(spawner.exitCode(ChildProcess.make("open", [url]))));
       // Tabs hold their sockets open for good, so waiting for connections to
       // finish (Bun's graceful shutdown) would only stall every exit by 20s.
       return HttpRouter.serve(app, { disableLogger: true, disableListenLog: true }).pipe(Layer.provide(BunHttpServer.layer({ port, idleTimeout: 0, gracefulShutdownTimeout: 0 })));
@@ -431,9 +442,16 @@ const program = Effect.gen(function* () {
   yield* Layer.launch(server);
 });
 
-program.pipe(
+const open = Command.make("open", {
+  target: Argument.String("file-or-directory").pipe(Argument.withDescription("An .html or .md file, or a folder holding index.html or index.md")),
+  port: Flag.Int("port").pipe(Flag.withDefault(4400), Flag.withDescription("The port to serve the editor on")),
+  open: Flag.Boolean("open").pipe(Flag.withDefault(true), Flag.withDescription("Open the editor in a browser (--no-open doesn't)")),
+}, (args) => program(args).pipe(
   Effect.scoped,
   Effect.catchTag("UsageError", (e) => Console.error(e.message).pipe(Effect.andThen(Effect.sync(() => process.exit(2))))),
+)).pipe(Command.withDescription("Opens a page from disk in the editor, for people and their agents to edit together."));
+
+Command.run(open, { version }).pipe(
   Effect.provide(BunServices.layer),
   BunRuntime.runMain,
 );

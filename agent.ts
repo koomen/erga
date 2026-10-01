@@ -28,7 +28,12 @@
 // and it needs no key. Never set it on a deployment real people use.
 
 import { readFileSync } from "fs";
+import * as Config from "effect/Config";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
+import type * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
+import * as Redacted from "effect/Redacted";
 import * as Y from "yjs";
 import { Awareness } from "y-protocols/awareness";
 import { fauxAssistantMessage, fauxText, fauxToolCall, registerFauxProvider, validateToolArguments, type Context, type Model } from "@mariozechner/pi-ai";
@@ -50,7 +55,7 @@ export const DEFAULT_MODEL: ModelChoice = "sonnet";
 export const isModelChoice = (s: string): s is ModelChoice => Object.hasOwn(MODELS, s);
 
 export interface AgentConfig {
-  apiKey: string;
+  apiKey: Redacted.Redacted<string>;
   /** The model sessions start on, or the scripted test model. */
   model: ModelChoice | "script";
   effort: string;
@@ -58,25 +63,33 @@ export interface AgentConfig {
 
 const isScript = (cfg: AgentConfig) => cfg.model == "script";
 
+const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
+
+/** The agent's settings; the key stays redacted, so it can't end up in a log. */
+const settings = Config.all({
+  apiKey: Config.option(Config.Redacted("ANTHROPIC_API_KEY")),
+  model: Config.withDefault(Config.Literals([...Object.keys(MODELS) as ModelChoice[], "script"], "ERGA_AGENT_MODEL"), DEFAULT_MODEL),
+  effort: Config.withDefault(Config.Literals(EFFORTS, "ERGA_AGENT_EFFORT"), "medium"),
+});
+
 /** Reads the agent's settings from the given env file, falling back to the process env. */
-export async function loadConfig(envPath: string): Promise<AgentConfig | { missing: string }> {
-  const file = Bun.file(envPath);
-  const env: Record<string, string> = {};
-  if (await file.exists()) {
-    for (const line of (await file.text()).split(/\r?\n/)) {
-      const m = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$/.exec(line);
-      if (!m || line.trimStart().startsWith("#")) continue;
-      env[m[1]] = m[2].replace(/^(['"])(.*)\1$/, "$2");
-    }
+export const loadConfig = (envPath: string): Effect.Effect<AgentConfig | { missing: string }, never, FileSystem.FileSystem> => Effect.gen(function* () {
+  const env = ConfigProvider.fromEnv();
+  const provider = yield* ConfigProvider.fromDotEnv({ path: envPath }).pipe(
+    Effect.map((file) => ConfigProvider.orElse(file, env)),
+    Effect.orElseSucceed(() => env),
+  );
+  const read = yield* Effect.result(settings.parse(provider));
+  if (read._tag == "Failure") {
+    // "ERGA_AGENT_MODEL should be "sonnet" or "opus-fast"", not the schema's own wording.
+    const m = /Expected (.+)\n\s*at \["(\w+)"\]/.exec(read.failure.message);
+    return { missing: m ? `${m[2]} should be ${m[1].replaceAll(" | ", " or ")}` : read.failure.message };
   }
-  const get = (k: string) => env[k] || process.env[k] || "";
-  const apiKey = get("ANTHROPIC_API_KEY");
-  const model = get("ERGA_AGENT_MODEL") || DEFAULT_MODEL;
-  if (model == "script") return { apiKey: "", model: "script", effort: "medium" };
-  if (!apiKey) return { missing: `ANTHROPIC_API_KEY is not set (copy .env.example to .env)` };
-  if (!isModelChoice(model)) return { missing: `ERGA_AGENT_MODEL is "${model}"; it should be one of ${Object.keys(MODELS).join(", ")}` };
-  return { apiKey, model, effort: get("ERGA_AGENT_EFFORT") || "medium" };
-}
+  const { apiKey, model, effort } = read.success;
+  if (model == "script") return { apiKey: Redacted.make(""), model, effort: "medium" } satisfies AgentConfig;
+  if (Option.isNone(apiKey) || !Redacted.value(apiKey.value)) return { missing: `ANTHROPIC_API_KEY is not set (copy .env.example to .env)` };
+  return { apiKey: apiKey.value, model, effort } satisfies AgentConfig;
+});
 
 /**
  * pi's built-in catalogue predates the 5.5 models, so they're described here.
@@ -438,7 +451,7 @@ export async function startSession(opts: SessionOptions): Promise<AgentSession> 
 
   const agent = cfg && model ? new PiAgent({
     initialState: { systemPrompt: systemPrompt(opts.docName, opts.kind, owner.name), model, thinkingLevel: "medium", tools },
-    getApiKey: () => cfg.apiKey || "none",
+    getApiKey: () => Redacted.value(cfg.apiKey) || "none",
     onPayload: isScript(cfg) ? undefined : patchPayload(cfg, () => choice ?? DEFAULT_MODEL),
   }) : null;
 
