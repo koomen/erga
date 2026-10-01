@@ -20,13 +20,11 @@
 // The share button gives a person a token for an external agent, which
 // calls the same tools in the same session over /api/ext.
 
-import * as FileSystem from "@effect/platform/FileSystem";
-import * as Path from "@effect/platform/Path";
-import * as HttpRouter from "@effect/platform/HttpRouter";
-import * as HttpServer from "@effect/platform/HttpServer";
-import * as HttpServerRequest from "@effect/platform/HttpServerRequest";
-import * as HttpServerResponse from "@effect/platform/HttpServerResponse";
-import * as BunContext from "@effect/platform-bun/BunContext";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
+import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
+import { Socket } from "effect/socket";
+import * as BunServices from "@effect/platform-bun/BunServices";
 import * as BunHttpServer from "@effect/platform-bun/BunHttpServer";
 import * as BunRuntime from "@effect/platform-bun/BunRuntime";
 import * as Effect from "effect/Effect";
@@ -34,14 +32,16 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as Console from "effect/Console";
-import * as Chunk from "effect/Chunk";
 import * as Schedule from "effect/Schedule";
 import { MODELS, externalGuide, isModelChoice, loadConfig, startSession, type AgentSession } from "./agent";
 import { Room, digest, type FileStore, type StateStore } from "./room";
-import * as Socket from "@effect/platform/Socket";
 import type { ViewRequest, ViewResult } from "./src/page/agent-log";
 
 const EDITOR_DIR = new URL(".", import.meta.url).pathname.replace(/\/$/, "");
+
+/** Hands each message a socket receives to f, until the socket closes (which fails the pull). */
+const each = <A, E>(pull: Effect.Effect<ReadonlyArray<A>, Socket.SocketError>, f: (data: A) => Effect.Effect<void, E>) =>
+  Effect.forever(Effect.flatMap(pull, (batch) => Effect.forEach(batch, f, { discard: true })));
 
 interface Doc {
   readonly path: string;
@@ -128,7 +128,7 @@ const program = Effect.gen(function* () {
   // The folder as a FileStore (room.ts): what the room loads, writes back
   // and re-reads when the watcher sees a change. Writes are atomic renames.
   const ignored = (rel: string) => rel.split(/[\\/]/).some((seg) => seg.startsWith(".") || seg == "node_modules");
-  const run = <A, E>(e: Effect.Effect<A, E, FileSystem.FileSystem | Path.Path>) => Effect.runPromise(e.pipe(Effect.provide(BunContext.layer)));
+  const run = <A, E>(e: Effect.Effect<A, E, FileSystem.FileSystem | Path.Path>) => Effect.runPromise(e.pipe(Effect.provide(BunServices.layer)));
   const store: FileStore = {
     list: () => run(fs.readDirectory(doc.dir, { recursive: true }).pipe(
       Effect.map((all) => all.map((r) => r.split(path.sep).join("/")).filter((r) => !ignored(r))),
@@ -208,7 +208,7 @@ const program = Effect.gen(function* () {
     }
     return s;
   };
-  const session = (user: { id: string; name: string }) => Effect.tryPromise(() => sessionFor(user)).pipe(Effect.either);
+  const session = (user: { id: string; name: string }) => Effect.tryPromise(() => sessionFor(user)).pipe(Effect.result);
 
   // Sharing with an external agent: the share button mints a token that
   // stands for one person, and an agent holding it calls that person's
@@ -221,18 +221,18 @@ const program = Effect.gen(function* () {
     const old = tokenOf.get(user.id);
     if (old && !rotate) return old;
     if (old) shareTokens.delete(old);
-    const token = "swx_" + Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("base64url");
+    const token = "erga_" + Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("base64url");
     shareTokens.set(token, user);
     tokenOf.set(user.id, token);
     return token;
   };
   /** The person an external agent's request acts for, from its bearer token. */
-  const bearer = HttpServerRequest.HttpServerRequest.pipe(Effect.map((r) => {
+  const bearer = HttpServerRequest.HttpServerRequest.useSync((r) => {
     const m = /^Bearer\s+(\S+)$/i.exec(r.headers["authorization"] ?? "");
     return m ? shareTokens.get(m[1]) ?? null : null;
-  }));
-  const unauthorized = HttpServerResponse.unsafeJson({ ok: false, error: "Missing or unknown token: send the one you were given as \"Authorization: Bearer <token>\". Ask for a new prompt if it stopped working (the editor may have restarted)." }, { status: 401 });
-  const baseUrl = HttpServerRequest.HttpServerRequest.pipe(Effect.map((r) => `http://${r.headers["host"] ?? `127.0.0.1:${port}`}`));
+  });
+  const unauthorized = HttpServerResponse.jsonUnsafe({ ok: false, error: "Missing or unknown token: send the one you were given as \"Authorization: Bearer <token>\". Ask for a new prompt if it stopped working (the editor may have restarted)." }, { status: 401 });
+  const baseUrl = HttpServerRequest.HttpServerRequest.useSync((r) => `http://${r.headers["host"] ?? `127.0.0.1:${port}`}`);
 
   // Watch the folder, subfolders included, and hand every change to the
   // room: it merges text edits it didn't make and notes changed assets.
@@ -240,10 +240,10 @@ const program = Effect.gen(function* () {
     Stream.map((ev) => path.relative(doc.dir, path.resolve(doc.dir, ev.path)).split(path.sep).join("/")),
     Stream.filter((rel) => !ignored(rel)),
     Stream.groupedWithin(1000, "60 millis"),
-    Stream.mapEffect((chunk) => Effect.forEach(new Set(Chunk.toReadonlyArray(chunk)), (rel) => Effect.promise(() => room.fileChanged(rel)), { discard: true })),
+    Stream.mapEffect((chunk) => Effect.forEach(new Set(chunk), (rel) => Effect.promise(() => room.fileChanged(rel)), { discard: true })),
     Stream.retry(Schedule.spaced("250 millis")),
     Stream.runDrain,
-    Effect.catchAllCause(() => Effect.void),
+    Effect.catchCause(() => Effect.void),
   );
 
   // Who a request is from. Locally that's just a name per tab (?user=Ada),
@@ -252,7 +252,7 @@ const program = Effect.gen(function* () {
     const name = (url.searchParams.get("user") || "").trim().slice(0, 40) || defaultName;
     return { id: name.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-|-$/g, "") || "anon", name };
   };
-  const requestUrl = HttpServerRequest.HttpServerRequest.pipe(Effect.map((r) => new URL(r.url, "http://localhost")));
+  const requestUrl = HttpServerRequest.HttpServerRequest.useSync((r) => new URL(r.url, "http://localhost"));
   /** The session's model, and what it can switch to (nothing when scripted). */
   const modelState = (s: AgentSession) => ({
     model: s.model,
@@ -263,20 +263,21 @@ const program = Effect.gen(function* () {
     ? (agentOff ? { enabled: false, reason: agentOff, log: s.log() } : { enabled: true, ...modelState(s), log: s.log() })
     : { enabled: false, reason: `the agent did not start: ${String((err as Error).message ?? err)}` };
 
-  const router = HttpRouter.empty.pipe(
-    HttpRouter.get("/", serveFile(EDITOR_DIR, "page.html")),
-    HttpRouter.get("/api/doc", Effect.sync(() => HttpServerResponse.unsafeJson({ name: doc.name, path: docPath, kind: doc.kind, dir: doc.dir, user: defaultName, writeDelay: room.writeDelay }))),
+  const routes: Array<HttpRouter.Route<unknown, FileSystem.FileSystem | Path.Path>> = [
+    HttpRouter.route("GET", "/", serveFile(EDITOR_DIR, "page.html")),
+    HttpRouter.route("GET", "/api/doc", Effect.sync(() => HttpServerResponse.jsonUnsafe({ name: doc.name, path: docPath, kind: doc.kind, dir: doc.dir, user: defaultName, writeDelay: room.writeDelay }))),
     // The room: Yjs sync and awareness over a WebSocket (y-websocket's protocol).
-    HttpRouter.get("/api/room/*", Effect.gen(function* () {
+    HttpRouter.route("GET", "/api/room/*", Effect.gen(function* () {
       const req = yield* HttpServerRequest.HttpServerRequest;
       const epoch = new URL(req.url, "http://localhost").searchParams.get("epoch");
       const socket = yield* req.upgrade;
-      const write = yield* socket.writer;
+      const pull = yield* Socket.readerBytes(socket);
+      const { write } = yield* socket.writer;
       const conn = room.connect((m) => { Effect.runFork(write(m)); }, { epoch });
       // A tab holding another epoch's history is refused, never merged (room.ts).
       if (!conn) return yield* write(new Socket.CloseEvent(4409, "stale epoch")).pipe(Effect.as(HttpServerResponse.empty()), Effect.orElseSucceed(() => HttpServerResponse.empty()));
-      yield* socket.run((data) => conn.receive(data) ? Effect.void : write(new Socket.CloseEvent(4400, "malformed message"))).pipe(
-        Effect.catchAll(() => Effect.void),
+      yield* each(pull, (data) => conn.receive(data) ? Effect.void : write(new Socket.CloseEvent(4400, "malformed message"))).pipe(
+        Effect.catch(() => Effect.void),
         Effect.ensuring(Effect.sync(() => conn.close())),
       );
       return HttpServerResponse.empty();
@@ -285,111 +286,112 @@ const program = Effect.gen(function* () {
     // browser allows only six HTTP/1.1 connections per host and every open
     // tab's event stream would hold one, leaving later requests (sending the
     // agent a message) queued forever. WebSockets don't count against that.
-    HttpRouter.get("/api/events", Effect.gen(function* () {
+    HttpRouter.route("GET", "/api/events", Effect.gen(function* () {
       const user = userOf(yield* requestUrl);
       const socket = yield* (yield* HttpServerRequest.HttpServerRequest).upgrade;
-      const write = yield* socket.writer;
+      const { pull } = yield* socket.reader;
+      const { write } = yield* socket.writer;
       const tab: Tab = { user: user.id, send: (msg) => { Effect.runFork(write(JSON.stringify(msg)).pipe(Effect.ignore)); } };
       tabs.add(tab);
-      yield* socket.run(() => Effect.void).pipe(
-        Effect.catchAll(() => Effect.void),
+      yield* each(pull, () => Effect.void).pipe(
+        Effect.catch(() => Effect.void),
         Effect.ensuring(Effect.sync(() => tabs.delete(tab))),
       );
       return HttpServerResponse.empty();
     }).pipe(Effect.scoped)),
-    HttpRouter.get("/api/agent", Effect.gen(function* () {
+    HttpRouter.route("GET", "/api/agent", Effect.gen(function* () {
       const s = yield* session(userOf(yield* requestUrl));
-      return yield* HttpServerResponse.json(s._tag == "Right" ? agentState(s.right) : agentState(null, s.left));
+      return yield* HttpServerResponse.json(s._tag == "Success" ? agentState(s.success) : agentState(null, s.failure));
     })),
-    HttpRouter.post("/api/agent", Effect.gen(function* () {
+    HttpRouter.route("POST", "/api/agent", Effect.gen(function* () {
       const body = yield* HttpServerRequest.schemaBodyJson(PromptBody);
       const s = yield* session(userOf(yield* requestUrl));
-      if (agentOff || s._tag != "Right") return yield* HttpServerResponse.json({ ok: false, reason: agentOff || "the agent did not start" }, { status: 503 });
+      if (agentOff || s._tag != "Success") return yield* HttpServerResponse.json({ ok: false, reason: agentOff || "the agent did not start" }, { status: 503 });
       // The sender's last keystrokes travel over its WebSocket; let them land first.
       if (body.after) yield* Effect.promise(() => room.waitFor(body.after!));
-      s.right.prompt(body.text, body.context ?? null);
+      s.success.prompt(body.text, body.context ?? null);
       return yield* HttpServerResponse.json({ ok: true });
     })),
     // The share button: a token for this person's external agent (rotate: true revokes the old one).
-    HttpRouter.post("/api/share", Effect.gen(function* () {
+    HttpRouter.route("POST", "/api/share", Effect.gen(function* () {
       const body = yield* HttpServerRequest.schemaBodyJson(ShareBody);
       const user = userOf(yield* requestUrl);
       return yield* HttpServerResponse.json({ token: mintToken(user, body.rotate ?? false) });
     })),
     // An external agent: its guide, the tools as JSON, and a tool call.
-    HttpRouter.get("/api/ext", Effect.gen(function* () {
+    HttpRouter.route("GET", "/api/ext", Effect.gen(function* () {
       const user = yield* bearer;
       if (!user) return unauthorized;
       const s = yield* session(user);
-      if (s._tag != "Right") return HttpServerResponse.unsafeJson({ ok: false, error: "The agent's session didn't start." }, { status: 503 });
-      const guide = externalGuide({ docName: docPath, kind: doc.kind, owner: user.name, base: yield* baseUrl, tools: s.right.tools() });
+      if (s._tag != "Success") return HttpServerResponse.jsonUnsafe({ ok: false, error: "The agent's session didn't start." }, { status: 503 });
+      const guide = externalGuide({ docName: docPath, kind: doc.kind, owner: user.name, base: yield* baseUrl, tools: s.success.tools() });
       return HttpServerResponse.text(guide, { contentType: "text/markdown; charset=utf-8" });
     })),
-    HttpRouter.get("/api/ext/tools", Effect.gen(function* () {
+    HttpRouter.route("GET", "/api/ext/tools", Effect.gen(function* () {
       const user = yield* bearer;
       if (!user) return unauthorized;
       const s = yield* session(user);
-      if (s._tag != "Right") return HttpServerResponse.unsafeJson({ ok: false, error: "The agent's session didn't start." }, { status: 503 });
-      return yield* HttpServerResponse.json({ ok: true, tools: s.right.tools() });
+      if (s._tag != "Success") return HttpServerResponse.jsonUnsafe({ ok: false, error: "The agent's session didn't start." }, { status: 503 });
+      return yield* HttpServerResponse.json({ ok: true, tools: s.success.tools() });
     })),
-    HttpRouter.post("/api/ext/tools/:name", Effect.gen(function* () {
+    HttpRouter.route("POST", "/api/ext/tools/:name", Effect.gen(function* () {
       const user = yield* bearer;
       if (!user) return unauthorized;
       const { name } = yield* HttpRouter.params;
       const args = yield* HttpServerRequest.HttpServerRequest.pipe(Effect.flatMap((r) => r.json), Effect.orElseSucceed(() => undefined));
-      if (args === undefined || typeof args != "object" || args === null || Array.isArray(args)) return HttpServerResponse.unsafeJson({ ok: false, error: "The body must be a JSON object of the tool's arguments." }, { status: 400 });
+      if (args === undefined || typeof args != "object" || args === null || Array.isArray(args)) return HttpServerResponse.jsonUnsafe({ ok: false, error: "The body must be a JSON object of the tool's arguments." }, { status: 400 });
       const s = yield* session(user);
-      if (s._tag != "Right") return HttpServerResponse.unsafeJson({ ok: false, error: "The agent's session didn't start." }, { status: 503 });
-      if (!s.right.tools().some((t) => t.name == name)) return HttpServerResponse.unsafeJson({ ok: false, error: `There's no tool named "${name}". The tools are: ${s.right.tools().map((t) => t.name).join(", ")}.` }, { status: 404 });
-      const run = yield* Effect.tryPromise({ try: () => s.right.runTool(name!, args), catch: (e) => (e as Error).message }).pipe(Effect.either);
-      return run._tag == "Right"
-        ? HttpServerResponse.unsafeJson({ ok: true, content: run.right })
-        : HttpServerResponse.unsafeJson({ ok: false, error: run.left }, { status: 400 });
+      if (s._tag != "Success") return HttpServerResponse.jsonUnsafe({ ok: false, error: "The agent's session didn't start." }, { status: 503 });
+      if (!s.success.tools().some((t) => t.name == name)) return HttpServerResponse.jsonUnsafe({ ok: false, error: `There's no tool named "${name}". The tools are: ${s.success.tools().map((t) => t.name).join(", ")}.` }, { status: 404 });
+      const run = yield* Effect.tryPromise({ try: () => s.success.runTool(name!, args), catch: (e) => (e as Error).message }).pipe(Effect.result);
+      return run._tag == "Success"
+        ? HttpServerResponse.jsonUnsafe({ ok: true, content: run.success })
+        : HttpServerResponse.jsonUnsafe({ ok: false, error: run.failure }, { status: 400 });
     })),
     // Switch the person's agent to another model, from its next turn; their other tabs follow.
-    HttpRouter.post("/api/agent/model", Effect.gen(function* () {
+    HttpRouter.route("POST", "/api/agent/model", Effect.gen(function* () {
       const body = yield* HttpServerRequest.schemaBodyJson(ModelBody);
       const user = userOf(yield* requestUrl);
       const s = yield* session(user);
-      if (agentOff || s._tag != "Right") return HttpServerResponse.unsafeJson({ ok: false, reason: agentOff || "the agent did not start" }, { status: 503 });
-      if (!isModelChoice(body.model)) return HttpServerResponse.unsafeJson({ ok: false, reason: `there's no model "${body.model}"` }, { status: 400 });
-      if (!s.right.setModel(body.model)) return HttpServerResponse.unsafeJson({ ok: false, reason: "this agent's model can't be changed" }, { status: 409 });
-      const state = modelState(s.right);
+      if (agentOff || s._tag != "Success") return HttpServerResponse.jsonUnsafe({ ok: false, reason: agentOff || "the agent did not start" }, { status: 503 });
+      if (!isModelChoice(body.model)) return HttpServerResponse.jsonUnsafe({ ok: false, reason: `there's no model "${body.model}"` }, { status: 400 });
+      if (!s.success.setModel(body.model)) return HttpServerResponse.jsonUnsafe({ ok: false, reason: "this agent's model can't be changed" }, { status: 409 });
+      const state = modelState(s.success);
       sendTo(user.id, { type: "model", ...state });
-      return HttpServerResponse.unsafeJson({ ok: true, ...state });
+      return HttpServerResponse.jsonUnsafe({ ok: true, ...state });
     })),
-    HttpRouter.post("/api/agent/view", Effect.gen(function* () {
+    HttpRouter.route("POST", "/api/agent/view", Effect.gen(function* () {
       const body = yield* HttpServerRequest.schemaBodyJson(ViewBody);
       const { id, ...result } = body;
       views.get(id)?.({ ...result, errors: [...result.errors] });
       return yield* HttpServerResponse.json({ ok: true });
     })),
-    HttpRouter.post("/api/agent/abort", Effect.gen(function* () {
+    HttpRouter.route("POST", "/api/agent/abort", Effect.gen(function* () {
       const s = yield* session(userOf(yield* requestUrl));
-      if (s._tag == "Right") s.right.abort();
+      if (s._tag == "Success") s.success.abort();
       return yield* HttpServerResponse.json({ ok: true });
     })),
-    HttpRouter.post("/api/agent/reset", Effect.gen(function* () {
+    HttpRouter.route("POST", "/api/agent/reset", Effect.gen(function* () {
       const s = yield* session(userOf(yield* requestUrl));
-      if (s._tag == "Right") yield* Effect.promise(() => s.right.reset());
+      if (s._tag == "Success") yield* Effect.promise(() => s.success.reset());
       return yield* HttpServerResponse.json({ ok: true });
     })),
-    HttpRouter.post("/api/agent/undo", Effect.gen(function* () {
+    HttpRouter.route("POST", "/api/agent/undo", Effect.gen(function* () {
       const s = yield* session(userOf(yield* requestUrl));
-      return yield* HttpServerResponse.json({ ok: s._tag == "Right" && s.right.undo() });
+      return yield* HttpServerResponse.json({ ok: s._tag == "Success" && s.success.undo() });
     })),
     // What storage holds (not the room): lets a test see the room's writes
     // land, and send an edit that arrives as a file (a publish, a git pull)
     // without depending on a filesystem watcher. Hosted, this is the
     // publish path, behind the project's write role.
-    HttpRouter.get("/api/stored/*", Effect.gen(function* () {
+    HttpRouter.route("GET", "/api/stored/*", Effect.gen(function* () {
       const params = yield* HttpRouter.params;
       const rel = yield* Effect.try(() => cleanRel(params["*"]));
       const bytes = yield* Effect.promise(() => store.read(rel));
       return bytes ? HttpServerResponse.uint8Array(bytes, { contentType: "application/octet-stream", headers: { "Cache-Control": "no-store", ETag: `"${digest(bytes)}"` } }) : HttpServerResponse.text("Not found", { status: 404 });
-    }).pipe(Effect.catchTag("UnknownException", () => Effect.succeed(HttpServerResponse.text("Bad path", { status: 400 }))))),
+    }).pipe(Effect.catchTag("UnknownError", () => Effect.succeed(HttpServerResponse.text("Bad path", { status: 400 }))))),
     // With If-Match, refused (412) if storage has changed since that version.
-    HttpRouter.put("/api/stored/*", Effect.gen(function* () {
+    HttpRouter.route("PUT", "/api/stored/*", Effect.gen(function* () {
       const params = yield* HttpRouter.params;
       const rel = yield* Effect.try(() => cleanRel(params["*"]));
       const req = yield* HttpServerRequest.HttpServerRequest;
@@ -397,26 +399,30 @@ const program = Effect.gen(function* () {
       const ifMatch = req.headers["if-match"]?.replace(/^W\//, "").replace(/"/g, "") ?? null;
       const r = yield* Effect.promise(() => room.push(rel, text, ifMatch));
       return yield* HttpServerResponse.json(r, { status: r.ok ? 200 : r.reason == "stale" ? 412 : 415, headers: r.etag ? { ETag: `"${r.etag}"` } : {} });
-    }).pipe(Effect.catchTag("UnknownException", () => Effect.succeed(HttpServerResponse.text("Bad path", { status: 400 }))))),
-    HttpRouter.get("/doc/*", HttpRouter.params.pipe(Effect.flatMap((p) => {
+    }).pipe(Effect.catchTag("UnknownError", () => Effect.succeed(HttpServerResponse.text("Bad path", { status: 400 }))))),
+    HttpRouter.route("GET", "/doc/*", HttpRouter.params.pipe(Effect.flatMap((p) => {
       const rel = decodeURIComponent(p["*"] ?? "").replace(/^\/+/, "");
       const text = room.text(rel);
       return text != null
         ? Effect.succeed(HttpServerResponse.text(text, { contentType: MIME[path.extname(rel).toLowerCase()] ?? "text/plain; charset=utf-8", headers: { "Cache-Control": "no-store" } }))
         : serveFile(doc.dir, rel);
     }))),
-    HttpRouter.get("/*", HttpRouter.params.pipe(Effect.flatMap((p) => serveFile(EDITOR_DIR, p["*"] ?? "", "no-cache")))),
-    // A request that doesn't parse is the client's mistake (400); anything else is ours.
-    HttpRouter.catchAll((e) => Effect.succeed(HttpServerResponse.text(String((e as { message?: string }).message ?? e), { status: ["ParseError", "RequestError"].includes((e as { _tag?: string })._tag ?? "") ? 400 : 500 }))),
-  );
+    HttpRouter.route("GET", "/*", HttpRouter.params.pipe(Effect.flatMap((p) => serveFile(EDITOR_DIR, p["*"] ?? "", "no-cache")))),
+  ];
+  // A request that doesn't parse is the client's mistake (400); anything else is ours.
+  const badRequest = (e: { _tag?: string; reason?: { _tag?: string } }) => e._tag == "SchemaError" || e.reason?._tag == "RequestParseError";
+  const failed = (e: unknown) => HttpServerResponse.text(String((e as { message?: string }).message ?? e), { status: badRequest(e as object) ? 400 : 500 });
+  const app = HttpRouter.addAll(routes.map((r) => HttpRouter.route(r.method, r.path, Effect.catch(r.handler, (e) => Effect.succeed(failed(e))))));
 
   const url = `http://127.0.0.1:${port}/`;
-  const server = Layer.unwrapEffect(
+  const server = Layer.unwrap(
     Effect.gen(function* () {
       const rel = path.relative(process.cwd(), doc.path);
       yield* Console.log(`\n  editing ${doc.kind === "md" ? "Markdown" : "HTML"}: ${rel.startsWith("..") ? doc.path : rel || doc.name}\n  ${url}   (another person: ${url}?user=Ada)\n  agent: ${"missing" in cfg ? `off (${agentOff})` : `${cfg.model == "script" ? "script" : MODELS[cfg.model].label} to start (each person can switch)`}\n`);
       if (!noOpen) Bun.spawn(["open", url], { stdout: "ignore", stderr: "ignore" });
-      return HttpServer.serve(router).pipe(Layer.provide(BunHttpServer.layer({ port, idleTimeout: 0 })));
+      // Tabs hold their sockets open for good, so waiting for connections to
+      // finish (Bun's graceful shutdown) would only stall every exit by 20s.
+      return HttpRouter.serve(app, { disableLogger: true, disableListenLog: true }).pipe(Layer.provide(BunHttpServer.layer({ port, idleTimeout: 0, gracefulShutdownTimeout: 0 })));
     }),
   );
   yield* Effect.forkScoped(watcher);
@@ -427,7 +433,7 @@ const program = Effect.gen(function* () {
 
 program.pipe(
   Effect.scoped,
-  Effect.catchTag("UsageError", (e) => Console.error(e.message).pipe(Effect.zipRight(Effect.sync(() => process.exit(2))))),
-  Effect.provide(BunContext.layer),
+  Effect.catchTag("UsageError", (e) => Console.error(e.message).pipe(Effect.andThen(Effect.sync(() => process.exit(2))))),
+  Effect.provide(BunServices.layer),
   BunRuntime.runMain,
 );

@@ -134,7 +134,7 @@ export const agent: Test[] = [
       ctx.defer(() => b.destroy());
       const share = async (rotate = false) => ((await (await d.fetch("/api/share?user=Ada", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ rotate }) }, "Ada")).json()) as { token: string }).token;
       const token = await share();
-      expect(/^swx_[\w-]{40,}$/.test(token), "the share button gets a token", token);
+      expect(/^erga_[\w-]{40,}$/.test(token), "the share button gets a token", token);
       expect((await share()) == token, "asking again gives the same one");
       const ext = (path: string, init: RequestInit = {}, t = token) => fetch(d.base + path, { ...init, headers: { Authorization: `Bearer ${t}`, "Content-Type": "application/json" } });
       expect((await fetch(d.base + "/api/ext")).status == 401, "the API needs the token");

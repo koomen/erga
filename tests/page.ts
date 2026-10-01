@@ -579,7 +579,7 @@ async function shareScenario(browser: Browser) {
   const { p } = s;
   await p.eval(`document.getElementById("btn-share").click()`);
   check("the share button opens its dialog", await p.eval<boolean>(`!document.getElementById("share").hidden && document.getElementById("btn-share").getAttribute("aria-expanded") == "true"`));
-  check("with a prompt", await until(() => p.eval<boolean>(`document.getElementById("share-prompt").value.includes("Token: swx_")`)));
+  check("with a prompt", await until(() => p.eval<boolean>(`document.getElementById("share-prompt").value.includes("Token: erga_")`)));
   const prompt = await p.eval<string>(`document.getElementById("share-prompt").value`);
   const token = /Token: (\S+)/.exec(prompt)?.[1], api = /API: (\S+)/.exec(prompt)?.[1];
   check("naming the API and the token, which works", !!api && !!token && (await fetch(api, { headers: { Authorization: `Bearer ${token}` } })).ok, prompt);

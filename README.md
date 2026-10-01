@@ -267,6 +267,7 @@ fraction of real time under test (`window.__ergaTimescale`, `ms` in
 `src/page/editor.ts`).
 
     ./test.sh          # page editor + multiplayer: ~14s
+    bun run typecheck  # tsc over the host, the editor and the suite
 
 Each file also runs alone: `bun tests/page.ts` (~7s), `bun tests/suite/run.ts`
 (~11s; `--suite`, `--grep` and `--seed` narrow it, `--long` for the big slow
