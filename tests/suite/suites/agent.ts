@@ -139,7 +139,7 @@ export const agent: Test[] = [
       const ext = (path: string, init: RequestInit = {}, t = token) => fetch(d.base + path, { ...init, headers: { Authorization: `Bearer ${t}`, "Content-Type": "application/json" } });
       expect((await fetch(d.base + "/api/ext")).status == 401, "the API needs the token");
       const guide = await (await ext("/api/ext")).text();
-      expect(/Editing .* in Scratchwork/.test(guide) && /### edit/.test(guide) && /data-sw-noedit/.test(guide), "the guide explains the tools and the document rules", guide.slice(0, 300));
+      expect(/Editing .* in Erga/.test(guide) && /### edit/.test(guide) && /data-sw-noedit/.test(guide), "the guide explains the tools and the document rules", guide.slice(0, 300));
       const run = async (name: string, args: unknown) => { const r = await ext(`/api/ext/tools/${name}`, { method: "POST", body: JSON.stringify(args) }); return { status: r.status, body: (await r.json()) as { ok: boolean; content?: { type: string; text?: string }[]; error?: string } }; };
       const read = await run("read", { path: d.path });
       expect(read.body.ok && read.body.content?.[0]?.text?.includes("<h1>Launch notes") == true, "read returns the file", read);

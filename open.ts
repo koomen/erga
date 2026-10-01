@@ -145,8 +145,8 @@ const program = Effect.gen(function* () {
   };
   // The room's Yjs state lives in a cache file named for the folder, so a
   // restarted host picks up the same history (room.ts).
-  // (SCRATCHWORK_ROOM_STATE_DIR puts it elsewhere; the test suite uses a scratch folder.)
-  const stateDir = process.env.SCRATCHWORK_ROOM_STATE_DIR || path.join(process.env.XDG_CACHE_HOME || path.join(process.env.HOME || "/tmp", ".cache"), "scratchwork-editor", "rooms");
+  // (ERGA_ROOM_STATE_DIR puts it elsewhere; the test suite uses a scratch folder.)
+  const stateDir = process.env.ERGA_ROOM_STATE_DIR || path.join(process.env.XDG_CACHE_HOME || path.join(process.env.HOME || "/tmp", ".cache"), "erga", "rooms");
   const stateFile = path.join(stateDir, new Bun.CryptoHasher("sha1").update(doc.dir).digest("hex").slice(0, 20) + ".yjs");
   const state: StateStore = {
     load: () => run(fs.readFile(stateFile).pipe(Effect.orElseSucceed(() => null))),
@@ -156,8 +156,8 @@ const program = Effect.gen(function* () {
       yield* fs.rename(stateFile + ".tmp", stateFile);
     })),
   };
-  // SCRATCHWORK_WRITE_DELAY_MS shortens the room's write delay (tests do; people don't need to).
-  const room = yield* Effect.promise(() => Room.open(store, { state, log: (line) => console.log(line), writeDelay: Number(process.env.SCRATCHWORK_WRITE_DELAY_MS) || undefined }));
+  // ERGA_WRITE_DELAY_MS shortens the room's write delay (tests do; people don't need to).
+  const room = yield* Effect.promise(() => Room.open(store, { state, log: (line) => console.log(line), writeDelay: Number(process.env.ERGA_WRITE_DELAY_MS) || undefined }));
   /** A request's path inside the folder, refusing ones that leave it. */
   const cleanRel = (raw: string | undefined) => {
     const rel = path.normalize(decodeURIComponent(raw ?? "")).replace(/^\/+/, "");
@@ -187,7 +187,7 @@ const program = Effect.gen(function* () {
     });
   };
 
-  const cfg = yield* Effect.promise(() => loadConfig(process.env.SCRATCHWORK_AGENT_ENV_FILE || path.join(EDITOR_DIR, ".env")));
+  const cfg = yield* Effect.promise(() => loadConfig(process.env.ERGA_AGENT_ENV_FILE || path.join(EDITOR_DIR, ".env")));
   const agentOff = "missing" in cfg ? cfg.missing : "";
   const sessions = new Map<string, Promise<AgentSession>>();
   /**

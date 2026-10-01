@@ -1,9 +1,8 @@
-# Editor concept
+# Erga
 
-The page editor (`open.ts`, `page.html`, `src/page/`) is a prototype of the
-human-facing editor for Scratchwork 2.0. It opens any HTML or Markdown page from
-disk and lets you edit its text in place, on the rendered page, with the page's
-own styles and scripts running around it. Its document model, undo history,
+Erga is a page editor (`open.ts`, `page.html`, `src/page/`). It opens any HTML
+or Markdown page from disk and lets you edit its text in place, on the rendered
+page, with the page's own styles and scripts running around it. Its document model, undo history,
 Markdown parser and source view are CodeMirror 6 (pinned in `package.json`;
 run `bun install` before building).
 
@@ -171,7 +170,7 @@ The agent runs on Claude Sonnet 5.5 by default, at medium effort; the model
 name in the panel's header is a menu that switches it to Claude Opus 5.5 in
 fast mode and back. The choice is per person (all their tabs follow, and a
 reload keeps it) and applies from the next message, so a running turn
-finishes on the model it started with. `SCRATCHWORK_AGENT_MODEL=opus-fast`
+finishes on the model it started with. `ERGA_AGENT_MODEL=opus-fast`
 starts everyone on Opus instead. Set it up with
 
     cp .env.example .env   # then add ANTHROPIC_API_KEY
@@ -225,7 +224,7 @@ dialog turns the old one off, and so does restarting the host.
 
 ### How it works
 
-The design is the one in `notes/scratchwork-2.0-editing.html`:
+The design:
 
 - **Manuscript vs app logic.** A deterministic parse of the source
   (`src/page/manuscript.ts` for HTML, `src/page/markdown.ts` for Markdown)

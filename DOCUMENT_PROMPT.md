@@ -1,6 +1,6 @@
-# Writing Scratchwork documents
+# Writing Erga documents
 
-Rules for an agent creating or editing a Scratchwork document so that people
+Rules for an agent creating or editing an Erga document so that people
 can keep editing it by hand in the page editor. A document is a folder (or a
 single file) with an `index.html` or `index.md` page, plus whatever styles,
 scripts and images it uses.

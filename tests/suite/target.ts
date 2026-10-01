@@ -7,11 +7,11 @@
 //   local    spawns open.ts on a scratch copy of a fixture, one host per
 //            document, with the scripted agent model. It can also restart
 //            or kill the host and edit files on disk.
-//   remote   a deployed document at SCRATCHWORK_TARGET_DOC (its URL must
+//   remote   a deployed document at ERGA_TARGET_DOC (its URL must
 //            contain "test": the suite rewrites it), with optional auth
-//            (SCRATCHWORK_TARGET_COOKIE, SCRATCHWORK_TARGET_HEADERS as JSON,
-//            and per person SCRATCHWORK_TARGET_USERS: {"Ada": {"Cookie": ...}})
-//            and capabilities (SCRATCHWORK_TARGET_CAPS, comma-separated).
+//            (ERGA_TARGET_COOKIE, ERGA_TARGET_HEADERS as JSON,
+//            and per person ERGA_TARGET_USERS: {"Ada": {"Cookie": ...}})
+//            and capabilities (ERGA_TARGET_CAPS, comma-separated).
 
 import { cpSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync, mkdirSync, statSync } from "fs";
 import { tmpdir } from "os";
@@ -137,8 +137,8 @@ export class LocalTarget implements Target {
     cpSync(join(FIXTURES, fixture), dir, { recursive: true });
     const port = 20000 + Math.floor(Math.random() * 20000);
     // A short write delay: the suite waits on storage a lot, and aims at the delay where it matters.
-    const env: Record<string, string> = { ...process.env as Record<string, string>, SCRATCHWORK_ROOM_STATE_DIR: stateDir, SCRATCHWORK_AGENT_ENV_FILE: "/nonexistent/.env", SCRATCHWORK_WRITE_DELAY_MS: "100" };
-    if (!this.opts.liveAgent) env.SCRATCHWORK_AGENT_MODEL = "script";
+    const env: Record<string, string> = { ...process.env as Record<string, string>, ERGA_ROOM_STATE_DIR: stateDir, ERGA_AGENT_ENV_FILE: "/nonexistent/.env", ERGA_WRITE_DELAY_MS: "100" };
+    if (!this.opts.liveAgent) env.ERGA_AGENT_MODEL = "script";
     let host: ReturnType<typeof Bun.spawn> | null = null;
     let output = "";
     const start = async () => {
@@ -193,16 +193,16 @@ export class RemoteTarget implements Target {
   private users: Record<string, Record<string, string>>;
 
   constructor() {
-    const url = process.env.SCRATCHWORK_TARGET_DOC;
-    if (!url) throw new Error("set SCRATCHWORK_TARGET_DOC to a scratch document's URL");
+    const url = process.env.ERGA_TARGET_DOC;
+    if (!url) throw new Error("set ERGA_TARGET_DOC to a scratch document's URL");
     if (!/test/i.test(url)) throw new Error(`refusing ${url}: the suite rewrites the document, so its URL must contain "test"`);
     this.base = url.replace(/\/+$/, "");
     this.name = `remote ${this.base}`;
-    this.headers = { ...JSON.parse(process.env.SCRATCHWORK_TARGET_HEADERS || "{}") };
-    if (process.env.SCRATCHWORK_TARGET_COOKIE) this.headers.Cookie = process.env.SCRATCHWORK_TARGET_COOKIE;
+    this.headers = { ...JSON.parse(process.env.ERGA_TARGET_HEADERS || "{}") };
+    if (process.env.ERGA_TARGET_COOKIE) this.headers.Cookie = process.env.ERGA_TARGET_COOKIE;
     // Each test person signed in as their own account, so the server sees different people.
-    this.users = JSON.parse(process.env.SCRATCHWORK_TARGET_USERS || "{}");
-    this.caps = new Set((process.env.SCRATCHWORK_TARGET_CAPS || "browser").split(",").map((s) => s.trim()).filter(Boolean) as Capability[]);
+    this.users = JSON.parse(process.env.ERGA_TARGET_USERS || "{}");
+    this.caps = new Set((process.env.ERGA_TARGET_CAPS || "browser").split(",").map((s) => s.trim()).filter(Boolean) as Capability[]);
   }
 
   /**

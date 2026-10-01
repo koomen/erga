@@ -11,9 +11,9 @@ deployment once there is one:
     bun tests/suite/run.ts --suite fuzz --seed 4711     # replay one randomised run
     bun tests/suite/run.ts --grep restart     # tests whose name matches
 
-    SCRATCHWORK_TARGET_DOC=https://edit.example.com/p/sw-test/doc \
-    SCRATCHWORK_TARGET_USERS='{"Ada":{"Cookie":"..."},"Bo":{"Cookie":"..."}, ...}' \
-    SCRATCHWORK_TARGET_CAPS=browser,scriptedAgent \
+    ERGA_TARGET_DOC=https://edit.example.com/p/sw-test/doc \
+    ERGA_TARGET_USERS='{"Ada":{"Cookie":"..."},"Bo":{"Cookie":"..."}, ...}' \
+    ERGA_TARGET_CAPS=browser,scriptedAgent \
     bun tests/suite/run.ts --remote           # a deployment
 
 A failing randomised test prints its seed and the command that replays it.
@@ -29,7 +29,7 @@ A failing randomised test prints its seed and the command that replays it.
 | durability | everyone leaving, idle eviction (same epoch after), graceful restart mid-write, a tab editing through a restart, a killed server, a room that lost its saved history refusing old tabs, a foreign replica refused |
 | robustness | random bytes, truncated/corrupt/unknown Yjs messages, a storm of 80 connections and ten ghosts, a 1MB paste, path traversal on every file endpoint, bad requests to the agent |
 | fuzz | seeded random edits from several hands with offline spells and (sometimes stale) publishes: everyone converges, storage and the served page match, a newcomer matches, and no token inserted is lost, duplicated or resurrected; arbitrary edits with unicode; newcomers mid-burst |
-| latency | edit propagation p50/p95/max, the slowest of twenty, join time, five people typing for ten seconds with no lag building up (budgets: 60ms locally, 400ms remote, or `SCRATCHWORK_SUITE_P95_MS`) |
+| latency | edit propagation p50/p95/max, the slowest of twenty, join time, five people typing for ten seconds with no lag building up (budgets: 60ms locally, 400ms remote, or `ERGA_SUITE_P95_MS`) |
 | browser | real tabs in headless Chrome: typing on the page, carets and coloured marks, interleaved typing, ⌘Z only your own, the source view, a headless participant's edit on the page, the agent panel per person and `view_page` through the owner's tab, a tab riding out a restart, a refused tab offering a reload |
 
 Every test gets a fresh document. Capabilities a target lacks skip the tests
@@ -82,18 +82,18 @@ locally; whatever the hosted server gives a document).
   `POST /api/ext/tools/<name>` a tool call with its arguments as JSON →
   `{ ok, content }` or `{ ok: false, error }` (400, 401, 404).
 - Locally a person is `?user=Name`; hosted, it's their session (and
-  `SCRATCHWORK_TARGET_USERS` gives the suite one signed-in account per test
+  `ERGA_TARGET_USERS` gives the suite one signed-in account per test
   person).
 
 ## Running it against production
 
 - Point it at a **scratch document** whose URL contains `test`: the suite
   rewrites it for every test (`RemoteTarget` refuses anything else).
-- The scripted agent model (`SCRATCHWORK_AGENT_MODEL=script`) is for staging
+- The scripted agent model (`ERGA_AGENT_MODEL=script`) is for staging
   only: never let real users reach a server running it. On production, leave
   `scriptedAgent` out of the capabilities (the agent tests skip) and add
   `liveAgent` for a smoke test with the real model if wanted.
 - Run `--long` at least once per deploy: it waits out Durable Object eviction
   and fuzzes with more hands for longer.
-- The latency budgets are a starting point; set `SCRATCHWORK_SUITE_P95_MS`
+- The latency budgets are a starting point; set `ERGA_SUITE_P95_MS`
   to what production should meet, and watch the `--json` metrics over time.

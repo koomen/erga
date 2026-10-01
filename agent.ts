@@ -14,16 +14,16 @@
 // This module is the Promise edge: pi's SDK is async, and open.ts wraps
 // what it exposes in Effect.
 //
-// Configuration comes from .env (see .env.example; SCRATCHWORK_AGENT_ENV_FILE
+// Configuration comes from .env (see .env.example; ERGA_AGENT_ENV_FILE
 // points elsewhere), falling back to the environment. The key lives only here,
 // in the host:
 //   ANTHROPIC_API_KEY          required
-//   SCRATCHWORK_AGENT_MODEL    the model a session starts on: sonnet (default,
+//   ERGA_AGENT_MODEL    the model a session starts on: sonnet (default,
 //                              Claude Sonnet 5.5) or opus-fast (Claude Opus 5.5
 //                              in fast mode); each person can switch in the panel
-//   SCRATCHWORK_AGENT_EFFORT   low | medium (default) | high | xhigh | max
+//   ERGA_AGENT_EFFORT   low | medium (default) | high | xhigh | max
 //
-// SCRATCHWORK_AGENT_MODEL=script swaps the model for a scripted one (see
+// ERGA_AGENT_MODEL=script swaps the model for a scripted one (see
 // `scriptModel`), for the test suite in tests/suite/: deterministic, free,
 // and it needs no key. Never set it on a deployment real people use.
 
@@ -70,11 +70,11 @@ export async function loadConfig(envPath: string): Promise<AgentConfig | { missi
   }
   const get = (k: string) => env[k] || process.env[k] || "";
   const apiKey = get("ANTHROPIC_API_KEY");
-  const model = get("SCRATCHWORK_AGENT_MODEL") || DEFAULT_MODEL;
+  const model = get("ERGA_AGENT_MODEL") || DEFAULT_MODEL;
   if (model == "script") return { apiKey: "", model: "script", effort: "medium" };
   if (!apiKey) return { missing: `ANTHROPIC_API_KEY is not set (copy .env.example to .env)` };
-  if (!isModelChoice(model)) return { missing: `SCRATCHWORK_AGENT_MODEL is "${model}"; it should be one of ${Object.keys(MODELS).join(", ")}` };
-  return { apiKey, model, effort: get("SCRATCHWORK_AGENT_EFFORT") || "medium" };
+  if (!isModelChoice(model)) return { missing: `ERGA_AGENT_MODEL is "${model}"; it should be one of ${Object.keys(MODELS).join(", ")}` };
+  return { apiKey, model, effort: get("ERGA_AGENT_EFFORT") || "medium" };
 }
 
 /**
@@ -165,7 +165,7 @@ async function scriptStep(context: Context) {
 const DOCUMENT_RULES = readFileSync(new URL("./DOCUMENT_PROMPT.md", import.meta.url), "utf8").trim();
 
 const systemPrompt = (docName: string, kind: "html" | "md", owner: string) => `
-You are ${agentName(owner)}, embedded in Scratchwork's page editor. ${owner} is looking at
+You are ${agentName(owner)}, embedded in Erga's page editor. ${owner} is looking at
 ${docName} (${kind == "md" ? "Markdown" : "HTML"}) rendered as a live page, and editing its text in
 place. Other people may have the same document open and be editing it too, each with
 their own agent; you work for ${owner} only. The document is a folder of files (the page,
@@ -562,9 +562,9 @@ const EXTERNAL_IDLE_MS = 8_000;
  */
 export function externalGuide(o: { docName: string; kind: "html" | "md"; owner: string; base: string; tools: ToolSpec[] }): string {
   const tools = o.tools.map((t) => `### ${t.name}\n\n${t.description}\n\nArguments (JSON Schema):\n\n\`\`\`json\n${JSON.stringify(t.parameters, null, 2)}\n\`\`\``).join("\n\n");
-  return `# Editing "${o.docName}" in Scratchwork
+  return `# Editing "${o.docName}" in Erga
 
-${o.owner} has ${o.docName} (${o.kind == "md" ? "Markdown" : "HTML"}) open in Scratchwork's page editor and
+${o.owner} has ${o.docName} (${o.kind == "md" ? "Markdown" : "HTML"}) open in Erga's page editor and
 has given you access to edit it as their agent, ${agentName(o.owner)}. The document
 is a folder of files (the page, its styles, scripts, images, other pages); the
 tools below see that folder, and you may read and change any text file in it.

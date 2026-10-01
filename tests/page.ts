@@ -316,7 +316,7 @@ async function backdropReloadScenario(browser: Browser) {
 /** Send never refuses silently: it always says why it can't send. */
 async function agentOffScenario(browser: Browser) {
   say("\nAgent off");
-  const s = await session(browser, "page", "index.html", { ANTHROPIC_API_KEY: "", SCRATCHWORK_AGENT_ENV_FILE: "/nonexistent/.env" });
+  const s = await session(browser, "page", "index.html", { ANTHROPIC_API_KEY: "", ERGA_AGENT_ENV_FILE: "/nonexistent/.env" });
   const { p } = s;
   await p.key("j", MOD.Meta);
   await until(() => p.eval<boolean>(`!document.getElementById("agent-hint").hidden`));
@@ -432,7 +432,7 @@ async function lightOnlyScenario(browser: Browser) {
 
 async function agentEmptyScenario(browser: Browser) {
   say("\nAgent, empty message");
-  const s = await session(browser, "page", "index.html", { ANTHROPIC_API_KEY: "sk-ant-test-not-used", SCRATCHWORK_AGENT_ENV_FILE: "/nonexistent/.env" });
+  const s = await session(browser, "page", "index.html", { ANTHROPIC_API_KEY: "sk-ant-test-not-used", ERGA_AGENT_ENV_FILE: "/nonexistent/.env" });
   const { p } = s;
   await p.key("j", MOD.Meta);
   await until(() => p.eval<boolean>(`/Type a message/.test(document.getElementById("agent-send").title)`));
@@ -552,7 +552,7 @@ async function noEditScenario(browser: Browser) {
 /** The model menu: Sonnet 5.5 by default, switchable to Opus 5.5 fast; the person's other tabs and a reload follow. */
 async function modelScenario(browser: Browser) {
   say("\nAgent model");
-  const s = await session(browser, "noedit", "index.html", { ANTHROPIC_API_KEY: "sk-ant-test-not-used", SCRATCHWORK_AGENT_ENV_FILE: "/nonexistent/.env", SCRATCHWORK_AGENT_MODEL: "" });
+  const s = await session(browser, "noedit", "index.html", { ANTHROPIC_API_KEY: "sk-ant-test-not-used", ERGA_AGENT_ENV_FILE: "/nonexistent/.env", ERGA_AGENT_MODEL: "" });
   const { p } = s;
   const sel = (q: typeof p) => q.eval<{ value: string; text: string; options: string[] } | null>(`(() => { const s = document.getElementById("agent-model-select"); return s && { value: s.value, text: s.selectedOptions[0]?.text, options: [...s.options].map((o) => o.text) }; })()`);
   await until(async () => !!(await sel(p)));
@@ -592,7 +592,7 @@ async function shareScenario(browser: Browser) {
 /** A page with problems nobody asked about/** A page with problems nobody asked about: each is explained in turn, with a button to have the agent fix it. */
 async function brokenPageScenario(browser: Browser) {
   say("\nBroken page");
-  const s = await session(browser, "broken", "index.html", { ANTHROPIC_API_KEY: "", SCRATCHWORK_AGENT_ENV_FILE: "/nonexistent/.env" });
+  const s = await session(browser, "broken", "index.html", { ANTHROPIC_API_KEY: "", ERGA_AGENT_ENV_FILE: "/nonexistent/.env" });
   const { p } = s;
   const toast = () => p.eval<{ text: string; shown: boolean; fix: boolean; fixDisabled: string | null; fixTitle: string }>(`(() => { const t = document.getElementById("toast"), b = t.querySelector(".toast-fix"); return { text: t.querySelector(".toast-text")?.textContent ?? t.textContent, shown: t.classList.contains("show"), fix: !!b, fixDisabled: b?.getAttribute("aria-disabled") ?? null, fixTitle: b?.title ?? "" }; })()`);
   await until(async () => (await toast()).shown);

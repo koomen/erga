@@ -75,7 +75,7 @@ interface DocInfo { name: string; path: string; kind: Kind; dir: string; user: s
 (async () => {
   const $ = (id: string) => document.getElementById(id)!;
 
-  const KEYS = { settings: "scratchwork-editor:settings:v1" };
+  const KEYS = { settings: "erga:settings:v1" };
   const store = {
     get(key: string) { try { return localStorage.getItem(key); } catch { return null; } },
     set(key: string, value: string) { try { localStorage.setItem(key, value); return true; } catch { return false; } },
@@ -120,7 +120,7 @@ interface DocInfo { name: string; path: string; kind: Kind; dir: string; user: s
     document.documentElement.classList.toggle("page-dark", !!color && dark);
     document.documentElement.classList.toggle("page-light", !!color && !dark);
     // Remembered so the next load paints it before the page arrives (see page.html), not white first.
-    store.set("scratchwork-editor:backdrop:v1", JSON.stringify({ bg: color, image: cs.backgroundImage != "none" ? cs.backgroundImage : "", tone: color ? (dark ? "page-dark" : "page-light") : "" }));
+    store.set("erga:backdrop:v1", JSON.stringify({ bg: color, image: cs.backgroundImage != "none" ? cs.backgroundImage : "", tone: color ? (dark ? "page-dark" : "page-light") : "" }));
     // Follow the page if its own script switches themes.
     if (!backdropObserver) backdropObserver = new MutationObserver(() => syncBackdrop());
     backdropObserver.disconnect();
@@ -147,7 +147,7 @@ interface DocInfo { name: string; path: string; kind: Kind; dir: string; user: s
   // tab (and is remembered for it), otherwise the name you last chose, or
   // the person running the host. Tabs with the same name are the same
   // person: they share an agent and its conversation.
-  const NAME_KEY = "scratchwork-editor:user:v1";
+  const NAME_KEY = "erga:user:v1";
   const asked = new URLSearchParams(location.search).get("user")?.trim();
   if (asked) try { sessionStorage.setItem(NAME_KEY, asked); } catch {}
   const myName = (asked || (() => { try { return sessionStorage.getItem(NAME_KEY); } catch { return null; } })() || store.get(NAME_KEY) || info.user).slice(0, 40);
@@ -521,7 +521,7 @@ interface DocInfo { name: string; path: string; kind: Kind; dir: string; user: s
   let shareToken: string | null = null;
   function promptFor(token: string): string {
     const api = `${location.origin}/api/ext`;
-    return `I'd like your help editing "${info?.path ?? info?.name ?? "the document"}", a Scratchwork document I have open in my editor. You can read and change it through the editor's API, working as my agent: your edits show up in my editor as you make them.
+    return `I'd like your help editing "${info?.path ?? info?.name ?? "the document"}", an Erga document I have open in my editor. You can read and change it through the editor's API, working as my agent: your edits show up in my editor as you make them.
 
 API: ${api}
 Token: ${token}
@@ -1164,7 +1164,7 @@ Once you've read it, await further instructions.`;
   }
 
   // An unsent message survives a reload (kept in this browser only).
-  const DRAFT_KEY = "scratchwork-editor:agent-draft:v1";
+  const DRAFT_KEY = "erga:agent-draft:v1";
   function saveDraft() {
     if (agentInput.value) store.set(DRAFT_KEY, agentInput.value);
     else try { localStorage.removeItem(DRAFT_KEY); } catch {}

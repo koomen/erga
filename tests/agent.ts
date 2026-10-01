@@ -59,7 +59,7 @@ try {
   const t0 = Date.now();
   const done = await ask(`Change the first heading to "Notes from the field", and add a list item "Buy seeds" at the end of the first list.`);
   check("the agent finishes", done);
-  check("sending clears the saved draft", (await p.eval<string | null>(`localStorage.getItem("scratchwork-editor:agent-draft:v1")`)) == null);
+  check("sending clears the saved draft", (await p.eval<string | null>(`localStorage.getItem("erga:agent-draft:v1")`)) == null);
   console.log(`     took ${((Date.now() - t0) / 1000).toFixed(1)}s`);
   const onDisk = () => { const d = readFileSync(file, "utf8"); return d.includes("<h1>Notes from the field</h1>") && d.includes("<li>Buy seeds</li>"); };
   check("the edits are on disk", await until(onDisk, 2000), readFileSync(file, "utf8").slice(0, 300));

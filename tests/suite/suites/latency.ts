@@ -1,12 +1,12 @@
 // How fast it feels: an edit's trip from one person to another, to a crowd,
 // a newcomer's join, and sustained typing from several people at once.
 // Thresholds default to something reasonable for the target (tighter
-// locally) and can be set with SCRATCHWORK_SUITE_P95_MS.
+// locally) and can be set with ERGA_SUITE_P95_MS.
 
 import { converged, Participant } from "../client";
 import { expect, percentile, sleep, until, type Ctx, type Test } from "../harness";
 
-const budget = (ctx: Ctx) => Number(process.env.SCRATCHWORK_SUITE_P95_MS) || (ctx.target.name == "local" ? 60 : 400);
+const budget = (ctx: Ctx) => Number(process.env.ERGA_SUITE_P95_MS) || (ctx.target.name == "local" ? 60 : 400);
 
 /** Waits for a token to appear in a participant's text and returns when it did. */
 function arrival(p: Participant, token: string): Promise<number> {

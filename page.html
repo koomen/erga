@@ -3,14 +3,14 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>Scratchwork</title>
+  <title>Erga</title>
   <meta name="color-scheme" content="light">
   <script>
     // Paint the page's background (remembered from last time) before the page
     // itself has loaded, so a reload doesn't flash white behind the agent.
     (function () {
       try {
-        var b = JSON.parse(localStorage.getItem("scratchwork-editor:backdrop:v1") || "null");
+        var b = JSON.parse(localStorage.getItem("erga:backdrop:v1") || "null");
         var root = document.documentElement;
         if (b && b.bg) root.style.setProperty("--page-bg", b.bg);
         if (b && b.image) root.style.setProperty("--page-bg-image", b.image);

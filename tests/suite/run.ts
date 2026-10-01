@@ -10,7 +10,7 @@
 //   bun tests/suite/run.ts --seed 1234          replay a randomised run
 //   bun tests/suite/run.ts --long               bigger crowds, longer runs, real idle eviction waits
 //   bun tests/suite/run.ts --repeat 5           run it all five times (new seeds)
-//   bun tests/suite/run.ts --remote             against SCRATCHWORK_TARGET_DOC (see target.ts)
+//   bun tests/suite/run.ts --remote             against ERGA_TARGET_DOC (see target.ts)
 //   bun tests/suite/run.ts --live-agent         local, with the real model instead of the script
 //   bun tests/suite/run.ts --json out.json      also write the results as JSON
 //   bun tests/suite/run.ts --jobs 4             how many tests at once (default: one per CPU core, 4 to 16)

@@ -6,7 +6,7 @@
 // While it's open the room is the source of truth. It writes each text file
 // back to storage 400ms after the last edit to it, so publishing, the CLI
 // and git still see ordinary files, and edits that arrive as files (an
-// editor, git, `scratchwork publish`) are merged in as ordinary edits:
+// editor, git) are merged in as ordinary edits:
 // diffed word by word against the last version both sides agreed on and
 // rebased over the room's edits since (src/page/merge.ts). Writes and merges
 // take turns on one queue, so neither can slip between the other's read and

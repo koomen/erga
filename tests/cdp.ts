@@ -11,9 +11,9 @@ export const ROOT = new URL("..", import.meta.url).pathname;
 /**
  * Where scripts that exist to take pictures (screenshots.ts, smoke.ts,
  * multi-shot.ts) put them: a temp folder, printed when written, so nothing
- * lands in the repo and the OS cleans up. SCRATCHWORK_SHOTS puts them elsewhere.
+ * lands in the repo and the OS cleans up. ERGA_SHOTS puts them elsewhere.
  */
-export const SHOTS = process.env.SCRATCHWORK_SHOTS || join(process.env.TMPDIR || tmpdir(), "scratchwork-editor-shots");
+export const SHOTS = process.env.ERGA_SHOTS || join(process.env.TMPDIR || tmpdir(), "erga-shots");
 
 export class Browser {
   private constructor(private proc: Subprocess, private port: number, private profile: string) {}
@@ -140,7 +140,7 @@ export class Page {
       // Seed storage from a blank page on the same (file://) origin, so no
       // editor instance is around to autosave over it on pagehide.
       await this.navigate(`file://${ROOT}tests/blank.html`);
-      await this.eval(`localStorage.clear(); ${opts.doc != null ? `localStorage.setItem("scratchwork-editor:doc:v1", ${JSON.stringify(opts.doc)}); localStorage.setItem("scratchwork-editor:view:v1", JSON.stringify({anchor: 0, head: 0, scrollY: 0}));` : ""} true`);
+      await this.eval(`localStorage.clear(); ${opts.doc != null ? `localStorage.setItem("erga:doc:v1", ${JSON.stringify(opts.doc)}); localStorage.setItem("erga:view:v1", JSON.stringify({anchor: 0, head: 0, scrollY: 0}));` : ""} true`);
     }
     await this.navigate(url);
     await this.eval("document.fonts.ready.then(() => true)");
