@@ -11,7 +11,7 @@ deployment once there is one:
     bun tests/suite/run.ts --suite fuzz --seed 4711     # replay one randomised run
     bun tests/suite/run.ts --grep restart     # tests whose name matches
 
-    ERGA_TARGET_DOC=https://edit.example.com/p/sw-test/doc \
+    ERGA_TARGET_DOC=https://edit.example.com/p/erga-test/doc \
     ERGA_TARGET_USERS='{"Ada":{"Cookie":"..."},"Bo":{"Cookie":"..."}, ...}' \
     ERGA_TARGET_CAPS=browser,scriptedAgent \
     bun tests/suite/run.ts --remote           # a deployment

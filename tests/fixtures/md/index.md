@@ -4,7 +4,7 @@ title: "Field notes"
 
 # Field notes
 
-A first paragraph with *emphasis*, **bold**, `code` and a [link](https://scratchwork.dev).
+A first paragraph with *emphasis*, **bold**, `code` and a [link](https://example.com).
 It continues on a second line & has an ampersand.
 
 ## Things to do

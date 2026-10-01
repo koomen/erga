@@ -43,14 +43,14 @@ rendered page:
    elements to position them, and don't put text in CSS (`content:` in
    `::before`/`::after`) that people would expect to edit.
 
-4. **Mark what people shouldn't edit by hand with `data-sw-noedit`.** Put
+4. **Mark what people shouldn't edit by hand with `data-erga-noedit`.** Put
    the attribute on any element whose text is generated, computed, or kept
    in step with something else (a total, a summary of data, a build stamp, a
    table a script fills in):
 
    ```html
-   <p>Total: <span data-sw-noedit>42</span> items.</p>
-   <section data-sw-noedit>
+   <p>Total: <span data-erga-noedit>42</span> items.</p>
+   <section data-erga-noedit>
      <h2>Generated summary</h2>
      <p>Kept in step with data.json.</p>
    </section>
@@ -63,7 +63,7 @@ rendered page:
 5. **Never let scripts rewrite manuscript text.** Text a script changes no
    longer matches the source, so its unit locks. Give a script its own
    target: an empty `div` or `span` (empty elements aren't units), an `svg`
-   or `canvas`, or an element marked `data-sw-noedit`. Don't fill an empty
+   or `canvas`, or an element marked `data-erga-noedit`. Don't fill an empty
    `<p>` or heading from a script: those are units even while empty.
 
 6. **Use relative URLs for the document's own files.** Write `style.css`,
@@ -77,8 +77,8 @@ rendered page:
 8. **Give the page an explicit background colour** on `body` or `html`. The
    editor's floating controls take their colours from it, light or dark.
 
-9. **Leave `data-sw*` alone.** Apart from `data-sw-noedit`, the editor owns
-   every `data-sw` attribute and `sw-` element and class; never write them
+9. **Leave `data-erga*` alone.** Apart from `data-erga-noedit`, the editor owns
+   every `data-erga` attribute and `erga-` element and class; never write them
    into a document.
 
 ## Markdown documents
@@ -88,7 +88,7 @@ rendered page:
   all editable.
 - A raw HTML block is rendered as it is and is never editable, so it is the
   way to fence off generated or fixed content in Markdown. (Inline HTML
-  inside a paragraph stays editable, and `data-sw-noedit` has no effect
+  inside a paragraph stays editable, and `data-erga-noedit` has no effect
   there.)
 - Prefer Markdown syntax to inline HTML for styling (`**bold**`, `*italic*`,
   `` `code` ``, `[text](url)`), since that is what the editor writes back

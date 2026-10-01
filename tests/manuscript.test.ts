@@ -65,9 +65,9 @@ describe("analyzeHtml", () => {
 
   test("stamping inserts ids into open tags only", () => {
     const html = stamp(doc, units);
-    expect(html).toContain('<h1 class="big" data-sw-id="0">Hello</h1>');
-    expect(html).toContain('<li data-sw-id="4">one<li data-sw-id="5">two');
-    expect(html.replace(/ data-sw-id="\d+"/g, "")).toBe(doc);
+    expect(html).toContain('<h1 class="big" data-erga-id="0">Hello</h1>');
+    expect(html).toContain('<li data-erga-id="4">one<li data-erga-id="5">two');
+    expect(html.replace(/ data-erga-id="\d+"/g, "")).toBe(doc);
   });
 
   test("unitAt and text bounds", () => {
@@ -98,16 +98,16 @@ describe("analyzeHtml", () => {
   });
 });
 
-describe("data-sw-noedit", () => {
+describe("data-erga-noedit", () => {
   const src = `<body>
   <p>Editable</p>
-  <section data-sw-noedit><h2>Fixed</h2><p>Also fixed</p></section>
-  <p data-sw-noedit>Fixed para</p>
-  <p data-sw-noedit="">Fixed too</p>
-  <div><p data-sw-noedit>Fixed child</p><p>Free child</p></div>
-  <p>Total: <span data-sw-noedit>42 <b>items</b></span> today</p>
-  <p data-sw-noeditable>Not the attribute</p>
-  <p class="x" DATA-SW-NOEDIT>Any case</p>
+  <section data-erga-noedit><h2>Fixed</h2><p>Also fixed</p></section>
+  <p data-erga-noedit>Fixed para</p>
+  <p data-erga-noedit="">Fixed too</p>
+  <div><p data-erga-noedit>Fixed child</p><p>Free child</p></div>
+  <p>Total: <span data-erga-noedit>42 <b>items</b></span> today</p>
+  <p data-erga-noeditable>Not the attribute</p>
+  <p class="x" DATA-ERGA-NOEDIT>Any case</p>
 </body>`;
   const { units } = analyzeHtml(src);
   const texts = units.map((u) => u.runs.map((r) => r.text).join(""));
@@ -126,7 +126,7 @@ describe("data-sw-noedit", () => {
   });
 
   test("a paragraph whose only text is no-edit is still a unit, with nothing editable", () => {
-    const [u] = analyzeHtml(`<p><span data-sw-noedit>only</span></p>`).units;
+    const [u] = analyzeHtml(`<p><span data-erga-noedit>only</span></p>`).units;
     expect(u.runs.every((r) => !r.editable)).toBe(true);
   });
 });

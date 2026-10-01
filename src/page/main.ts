@@ -67,7 +67,7 @@ const peersField = StateField.define<DecorationSet>({
 });
 
 declare global {
-  interface Window { scratchPage?: unknown }
+  interface Window { ergaPage?: unknown }
 }
 
 interface DocInfo { name: string; path: string; kind: Kind; dir: string; user: string }
@@ -188,7 +188,7 @@ interface DocInfo { name: string; path: string; kind: Kind; dir: string; user: s
     .prose { padding-top: 12vh; padding-bottom: 40vh; }
     .prose li > p { margin: 0; }
     .prose ul.loose li > p { margin: 0 0 0.6em; }
-    .prose [data-sw-id]:empty::before, .prose .sw-empty:empty::before { content: ""; }
+    .prose [data-erga-id]:empty::before, .prose .erga-empty:empty::before { content: ""; }
   </style><script>document.documentElement.setAttribute("data-theme", "light")</script>`;
 
   // One CodeMirror state serves both the page editor and the source view, so
@@ -219,7 +219,7 @@ interface DocInfo { name: string; path: string; kind: Kind; dir: string; user: s
   function measureColumn() {
     const d = frame.contentDocument, win = frame.contentWindow;
     let left = Infinity, right = -Infinity;
-    for (const el of d?.querySelectorAll("[data-sw-id]") ?? []) {
+    for (const el of d?.querySelectorAll("[data-erga-id]") ?? []) {
       const r = el.getBoundingClientRect();
       if (r.width > 0 && r.width < (win?.innerWidth ?? 1e9)) { left = Math.min(left, r.left); right = Math.max(right, r.right); }
     }
@@ -795,7 +795,7 @@ Once you've read it, await further instructions.`;
   }
   function markdownToHtml(src: string): string {
     return analyzeMarkdown(src).html
-      .replace(/ data-sw-id="\d+"/g, "").replace(/ class="sw-empty"/g, "")
+      .replace(/ data-erga-id="\d+"/g, "").replace(/ class="erga-empty"/g, "")
       .replace(/(<(?:ul|ol|blockquote|table|thead|tbody|tr)>)/g, "$1\n")
       .replace(/(<\/(?:h[1-6]|p|li|ul|ol|blockquote|pre|table|thead|tbody|tr|hr)>)/g, "$1\n");
   }
@@ -877,7 +877,7 @@ Once you've read it, await further instructions.`;
   // (modern-screenshot: the DOM through an SVG foreignObject), then sends it
   // back with any errors the page's scripts threw. No server-side browser:
   // whoever has the editor open is the agent's eyes.
-  const CATCH_ERRORS = `<script>window.__swErrors=[];addEventListener("error",function(e){__swErrors.push(String(e.message))});addEventListener("unhandledrejection",function(e){__swErrors.push("Unhandled rejection: "+String(e.reason&&e.reason.message||e.reason))});(function(){var ce=console.error;console.error=function(){__swErrors.push("console.error: "+[].map.call(arguments,String).join(" "));return ce.apply(console,arguments)}})()</script>`;
+  const CATCH_ERRORS = `<script>window.__ergaErrors=[];addEventListener("error",function(e){__ergaErrors.push(String(e.message))});addEventListener("unhandledrejection",function(e){__ergaErrors.push("Unhandled rejection: "+String(e.reason&&e.reason.message||e.reason))});(function(){var ce=console.error;console.error=function(){__ergaErrors.push("console.error: "+[].map.call(arguments,String).join(" "));return ce.apply(console,arguments)}})()</script>`;
   const MAX_SHOT = 4000;
   async function captureView(req: ViewRequest): Promise<ViewResult> {
     const width = Math.round(Math.max(320, Math.min(2400, req.width ?? (frame.clientWidth || 1280))));
@@ -891,7 +891,7 @@ Once you've read it, await further instructions.`;
     document.body.append(shot);
     try {
       await new Promise<void>((resolve, reject) => { shot.onload = () => resolve(); setTimeout(() => reject(new Error("the page took too long to load")), 10_000); });
-      const d = shot.contentDocument!, win = shot.contentWindow as (Window & { __swErrors?: string[] }) | null;
+      const d = shot.contentDocument!, win = shot.contentWindow as (Window & { __ergaErrors?: string[] }) | null;
       await d.fonts?.ready;
       await new Promise((r) => setTimeout(r, 600)); // let the page's own scripts draw
       const bg = getComputedStyle(document.documentElement).getPropertyValue("--page-bg").trim() || "#ffffff";
@@ -899,9 +899,9 @@ Once you've read it, await further instructions.`;
       if (req.selector) {
         let el: Element | null = null;
         try { el = d.querySelector(req.selector); } catch { return { width: 0, height: 0, errors: [], error: `${req.selector} isn't a valid CSS selector` }; }
-        if (!el) return { width: 0, height: 0, errors: win?.__swErrors ?? [], error: `Nothing on the page matches ${req.selector}` };
+        if (!el) return { width: 0, height: 0, errors: win?.__ergaErrors ?? [], error: `Nothing on the page matches ${req.selector}` };
         const r = el.getBoundingClientRect();
-        if (r.width < 1 || r.height < 1) return { width: 0, height: 0, errors: win?.__swErrors ?? [], error: `${req.selector} has no size (${Math.round(r.width)}×${Math.round(r.height)}); it may not have rendered` };
+        if (r.width < 1 || r.height < 1) return { width: 0, height: 0, errors: win?.__ergaErrors ?? [], error: `${req.selector} has no size (${Math.round(r.width)}×${Math.round(r.height)}); it may not have rendered` };
         target = el; w = Math.ceil(r.width); h = Math.min(MAX_SHOT, Math.ceil(r.height));
         if (r.height > MAX_SHOT) note = `${req.selector} is ${Math.round(r.height)}px tall; this shows the top ${MAX_SHOT}px.`;
       } else if (req.fullPage) {
@@ -911,7 +911,7 @@ Once you've read it, await further instructions.`;
       }
       // An element is drawn at its own size, without the margins around it (they'd shift it inside the image).
       const url = await domToPng(target, target == d.documentElement ? { width: w, height: h, backgroundColor: bg, scale: 1 } : { backgroundColor: bg, scale: 1, style: { margin: "0" } });
-      return { png: url.slice(url.indexOf(",") + 1), width: w, height: h, errors: win?.__swErrors ?? [], note };
+      return { png: url.slice(url.indexOf(",") + 1), width: w, height: h, errors: win?.__ergaErrors ?? [], note };
     } finally {
       shot.remove();
     }
@@ -1297,5 +1297,5 @@ Once you've read it, await further instructions.`;
 
   started = true;
   presenceChanged();
-  window.scratchPage = { page, collab, toggleSource, captureView, get state() { return currentState(); } };
+  window.ergaPage = { page, collab, toggleSource, captureView, get state() { return currentState(); } };
 })();

@@ -39,7 +39,7 @@ list item leaves the list. Whatever can't be styled
 (a code block, text the page's script made) says why rather than doing nothing.
 
 A document can fence off parts that shouldn't be edited by hand (generated
-totals, a summary kept in step with data) with the `data-sw-noedit`
+totals, a summary kept in step with data) with the `data-erga-noedit`
 attribute: that element and everything in it stay out of the editor, and
 clicking them says to ask the agent. [DOCUMENT_PROMPT.md](DOCUMENT_PROMPT.md)
 collects the rules an agent follows to write documents that edit well; the
@@ -236,7 +236,7 @@ The design:
   nodes in order with their source offsets, including a map through character
   references (`&amp;`), CR LF and Markdown marks, so a caret on the page is a
   source offset and typing is the smallest character change to the file. Tags
-  and attributes stay byte for byte. Ids (`data-sw-id`) exist only in the
+  and attributes stay byte for byte. Ids (`data-erga-id`) exist only in the
   browser.
 - **Two regimes.** The page renders in an iframe. Each unit is its own
   contenteditable host: click into one and it is an editor (caret, selection,
@@ -263,7 +263,7 @@ Fast on purpose, because iteration speed matters: test files run at the same
 time, tests inside them run side by side (each with its own host, document
 and tab), nothing waits a fixed time when it can wait for the thing itself,
 and the editor's timers (how long notes stay up, how marks fade) run at a
-fraction of real time under test (`window.__swTimescale`, `ms` in
+fraction of real time under test (`window.__ergaTimescale`, `ms` in
 `src/page/editor.ts`).
 
     ./test.sh          # page editor + multiplayer: ~14s

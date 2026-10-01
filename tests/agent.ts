@@ -24,7 +24,7 @@ async function until(f: () => Promise<boolean> | boolean, ms: number) {
 }
 
 const port = 4500 + Math.floor(Math.random() * 400);
-const dir = mkdtempSync(join(tmpdir(), "sw-agent-"));
+const dir = mkdtempSync(join(tmpdir(), "erga-agent-"));
 cpSync(`${ROOT}tests/fixtures/page`, dir, { recursive: true });
 const file = join(dir, "index.html");
 const host = Bun.spawn(["bun", `${ROOT}open.ts`, dir, "--port", String(port), "--no-open"], { stdout: "pipe", stderr: "pipe" });
@@ -69,14 +69,14 @@ try {
   check("the panel shows the edit", await p.eval<boolean>(`[...document.querySelectorAll(".msg-tool")].some((e) => /Edited/.test(e.textContent))`));
   check("and a reply", await p.eval<boolean>(`!!document.querySelector(".msg-assistant")?.textContent.trim()`));
   check("the agent is a participant: its badge is on its owner's avatar", await p.eval<boolean>(`[...document.querySelectorAll("#people .agent-badge")].some((e) => /agent/.test(e.dataset.tip))`));
-  check("and its caret sits where it last edited", await p.eval<boolean>(`[...${F}.querySelectorAll("sw-peer[data-agent] sw-peer-name")].some((e) => /agent/.test(e.textContent))`));
+  check("and its caret sits where it last edited", await p.eval<boolean>(`[...${F}.querySelectorAll("erga-peer[data-agent] erga-peer-name")].some((e) => /agent/.test(e.textContent))`));
 
   // Undo the agent's last change (one tool call), from the panel.
-  const before = await p.eval<string>(`scratchPage.state.doc.toString()`);
+  const before = await p.eval<string>(`ergaPage.state.doc.toString()`);
   check("its undo is on", (await p.eval<string>(`document.getElementById("agent-undo").getAttribute("aria-disabled")`)) == "false");
   await p.eval(`document.getElementById("agent-undo").click()`);
-  check("undo takes back the agent's last change", await until(async () => (await p.eval<string>(`scratchPage.state.doc.toString()`)) != before, 2000));
-  const undone = await p.eval<string>(`scratchPage.state.doc.toString()`);
+  check("undo takes back the agent's last change", await until(async () => (await p.eval<string>(`ergaPage.state.doc.toString()`)) != before, 2000));
+  const undone = await p.eval<string>(`ergaPage.state.doc.toString()`);
   check("and only that", (undone.includes("Notes from the field") != undone.includes("Buy seeds")) || (!undone.includes("Notes from the field") && !undone.includes("Buy seeds")), undone.slice(0, 400));
 
   await ask(`Make the h1 color red (#c00) in style.css.`);
@@ -85,14 +85,14 @@ try {
 
   await ask(`Add a small inline SVG bar chart with id "chart" right after the first list. Plain SVG, no script. Then look at it on the page to check it renders.`);
   check("a diagram from the agent appears without a manual refresh", await until(() => p.eval<boolean>(`!!${F}.getElementById("chart")`), 4000),
-    JSON.stringify({ disk: readFileSync(file, "utf8").includes('id="chart"'), stale: await p.eval(`scratchPage.page.stale`), pill: await p.eval(`document.getElementById("refresh-pill").hidden`), mode: await p.eval(`document.body.className`), tools: await p.eval(`[...document.querySelectorAll(".msg-tool")].map(e => e.textContent).join(" | ")`) }));
+    JSON.stringify({ disk: readFileSync(file, "utf8").includes('id="chart"'), stale: await p.eval(`ergaPage.page.stale`), pill: await p.eval(`document.getElementById("refresh-pill").hidden`), mode: await p.eval(`document.body.className`), tools: await p.eval(`[...document.querySelectorAll(".msg-tool")].map(e => e.textContent).join(" | ")`) }));
   check("and the refresh pill is gone once it finishes", await p.eval<boolean>(`document.getElementById("refresh-pill").hidden`));
   check("the agent looked at its work, and the panel shows what it saw", await p.eval<boolean>(`[...document.querySelectorAll(".msg-tool")].some((e) => /Looked at the page/.test(e.textContent) && e.querySelector("img.shot")?.naturalWidth > 0)`),
     await p.eval<string>(`[...document.querySelectorAll(".msg-tool")].map((e) => e.textContent).join(" | ")`));
 
   // A paragraph broken on disk: clicking it explains, and "Fix with agent" repairs it.
   writeFileSync(file, readFileSync(file, "utf8").replace("things &amp; ship them.", "things</h2> &amp; ship them."));
-  check("the broken paragraph gets locked", await until(() => p.eval<boolean>(`!!${F}.querySelector("p.lede.sw-locked")`), 5000));
+  check("the broken paragraph gets locked", await until(() => p.eval<boolean>(`!!${F}.querySelector("p.lede.erga-locked")`), 5000));
   const lede = await p.eval<{ x: number; y: number }>(`(() => { const r = ${F}.querySelector("p.lede").getBoundingClientRect(), f = document.getElementById("frame").getBoundingClientRect(); return { x: f.left + r.left + 20, y: f.top + r.top + r.height / 2 }; })()`);
   await p.click(lede.x, lede.y);
   await Bun.sleep(150);
@@ -100,9 +100,9 @@ try {
   await p.eval(`document.querySelector("#toast .toast-fix").click()`);
   check("the agent sets to work", await until(() => p.eval<boolean>(`document.getElementById("agent-send").classList.contains("stop")`), 5000));
   await until(async () => !(await p.eval<boolean>(`document.getElementById("agent-send").classList.contains("stop")`)), 90_000);
-  check("and fixes it: the paragraph edits again", await until(() => p.eval<boolean>(`!!${F}.querySelector("p.lede") && !${F}.querySelector("p.lede").classList.contains("sw-locked")`), 5000));
+  check("and fixes it: the paragraph edits again", await until(() => p.eval<boolean>(`!!${F}.querySelector("p.lede") && !${F}.querySelector("p.lede").classList.contains("erga-locked")`), 5000));
   const fixedLede = readFileSync(file, "utf8").match(/<p class="lede">[\s\S]*?<\/p>/)?.[0] ?? "";
-  check("with its text untouched", fixedLede == `<p class="lede">Build <em>cool</em> things &amp; ship them. This paragraph has <a href="https://scratchwork.dev">a link</a> and <code>code</code>.</p>`, fixedLede);
+  check("with its text untouched", fixedLede == `<p class="lede">Build <em>cool</em> things &amp; ship them. This paragraph has <a href="https://example.com">a link</a> and <code>code</code>.</p>`, fixedLede);
 
   const log = await (await fetch(`http://127.0.0.1:${port}/api/agent`)).json() as { log: { items: unknown[] } };
   check("the host keeps the transcript", log.log.items.length >= 4);

@@ -9,7 +9,7 @@ export function tab(p: Page) {
   const F = `document.getElementById("frame").contentDocument`;
   const s = {
     p, F,
-    source: () => p.eval<string>("scratchPage.state.doc.toString()"),
+    source: () => p.eval<string>("ergaPage.state.doc.toString()"),
     textOf: (selector: string) => p.eval<string>(`${F}.querySelector(${JSON.stringify(selector)}).textContent`),
     count: (selector: string) => p.eval<number>(`${F}.querySelectorAll(${JSON.stringify(selector)}).length`),
     /** Scrolls an element into view and returns a point inside it, `at` along its width. */
@@ -30,7 +30,7 @@ export function tab(p: Page) {
       await p.drag(r.a, r.y, r.b, r.y);
     },
     /** Added text (the highlights, by name) and removed text (the notches' hover text). */
-    marks: () => p.eval<{ added: string[]; gone: string[]; names: string[] }>(`(() => { const w = document.getElementById("frame").contentWindow; const added = [], names = []; for (const [name, h] of w.CSS.highlights) { if (!/^sw-(add|a\\d+)-\\d$/.test(name)) continue; for (const r of h) { added.push(r.toString()); names.push(name); } } return { added, names, gone: [...${F}.querySelectorAll("sw-del sw-tip")].map((e) => e.textContent) }; })()`),
+    marks: () => p.eval<{ added: string[]; gone: string[]; names: string[] }>(`(() => { const w = document.getElementById("frame").contentWindow; const added = [], names = []; for (const [name, h] of w.CSS.highlights) { if (!/^erga-(add|a\\d+)-\\d$/.test(name)) continue; for (const r of h) { added.push(r.toString()); names.push(name); } } return { added, names, gone: [...${F}.querySelectorAll("erga-del erga-tip")].map((e) => e.textContent) }; })()`),
   };
   return s;
 }

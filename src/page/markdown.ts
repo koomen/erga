@@ -98,7 +98,7 @@ class Renderer {
     if (lineEnd < 0) lineEnd = this.src.length;
     if (!/^[\s>]*$/.test(this.src.slice(lineStart, lineEnd))) return;
     if (this.units.some((u) => u.contentFrom <= c && c <= u.contentTo)) return;
-    this.pushUnit("p", ' class="sw-empty"', null, [], "", "<p></p>", c, c);
+    this.pushUnit("p", ' class="erga-empty"', null, [], "", "<p></p>", c, c);
     this.caret = -1;
   }
 
@@ -166,7 +166,7 @@ class Renderer {
       // placed after the marker and the space that follows it.
       let pos = this.abs(marker.to);
       while (this.src[pos] == " " && pos < this.src.length) pos++;
-      this.pushUnit("p", ' class="sw-empty"', null, [], "", "<p></p>", pos, pos);
+      this.pushUnit("p", ' class="erga-empty"', null, [], "", "<p></p>", pos, pos);
     }
     this.blocks(kids, item);
     this.out += "</li>";
@@ -243,10 +243,10 @@ class Renderer {
     const from = contentFrom ?? this.abs(n!.from), to = contentTo ?? this.abs(n!.to);
     const unit: Unit = {
       id, tag, from, to, openFrom: from, openTo: from, contentFrom: from, contentTo: to, runs,
-      innerHtml: inner, outerHtml: outer.replace(`<${tag}${attrs}>`, `<${tag}${attrs} data-sw-id="${id}">`),
+      innerHtml: inner, outerHtml: outer.replace(`<${tag}${attrs}>`, `<${tag}${attrs} data-erga-id="${id}">`),
     };
     this.units.push(unit);
-    this.out += `<${tag}${attrs} data-sw-id="${id}">${inner}</${tag}>`;
+    this.out += `<${tag}${attrs} data-erga-id="${id}">${inner}</${tag}>`;
     return unit;
   }
 

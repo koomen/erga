@@ -23,13 +23,13 @@ async function open(ctx: Ctx, d: Doc, user: string) {
     await p.send("Network.setExtraHTTPHeaders", { headers });
   }
   await p.open(d.pageUrl(user), { clear: false, width: 1100, height: 800 });
-  await until(() => p.eval<boolean>(`!!window.scratchPage && !!document.getElementById("frame").contentDocument?.querySelector("[data-sw-id]")`), 10_000, `${user}'s page renders`);
+  await until(() => p.eval<boolean>(`!!window.ergaPage && !!document.getElementById("frame").contentDocument?.querySelector("[data-erga-id]")`), 10_000, `${user}'s page renders`);
   await p.eval(`document.getElementById("frame").contentDocument.fonts.ready.then(() => true)`);
   await p.settle();
   return tab(p);
 }
 
-const peerNames = (t: ReturnType<typeof tab>) => t.p.eval<string>(`[...${t.F}.querySelectorAll("sw-peer-name")].map((e) => e.textContent).join("|")`);
+const peerNames = (t: ReturnType<typeof tab>) => t.p.eval<string>(`[...${t.F}.querySelectorAll("erga-peer-name")].map((e) => e.textContent).join("|")`);
 const noErrors = (t: ReturnType<typeof tab>, who: string) => expect(t.p.errors.length == 0, `no page errors (${who})`, t.p.errors);
 
 export const browserTests: Test[] = [
@@ -47,7 +47,7 @@ export const browserTests: Test[] = [
       await until(async () => (await b.textOf("h1")) == (await a.textOf("h1")), 3000, "Bo's page shows Ada's typing");
       expect(await b.p.eval<boolean>(`document.getElementById("frame").contentWindow.__marker == 1`), "without a reload");
       const m = await b.marks();
-      expect(m.added.join("").includes("(draft)") && m.names.every((n) => /^sw-a\d+-/.test(n)), "marked in Ada's colour", m);
+      expect(m.added.join("").includes("(draft)") && m.names.every((n) => /^erga-a\d+-/.test(n)), "marked in Ada's colour", m);
       await until(async () => (await peerNames(b)) == "Ada", 3000, "Ada's caret shows on Bo's page");
       noErrors(a, "Ada"); noErrors(b, "Bo");
     },
@@ -187,7 +187,7 @@ export const browserTests: Test[] = [
       const broken = s.text.replace("Where the leads go.", "Where the</h2> leads go.");
       expect(broken != s.text, "the fixture has the sentence");
       expect((await d.push(d.path, broken, s.etag)).ok, "the broken markup is published");
-      await until(() => a.p.eval<boolean>(`!!${a.F}.querySelector("figcaption.sw-locked")`), 5000, "the paragraph locks");
+      await until(() => a.p.eval<boolean>(`!!${a.F}.querySelector("figcaption.erga-locked")`), 5000, "the paragraph locks");
       const r = await a.rectOf("figcaption", 0.2);
       await a.p.click(r.x, r.y);
       await until(() => a.p.eval<boolean>(`!!document.querySelector("#toast.show .toast-fix")`), 2000, "the note offers a fix");
@@ -258,7 +258,7 @@ export const browserTests: Test[] = [
       await until(async () => !(await a.p.eval<boolean>(`document.getElementById("welcome").hidden`)), 10_000, "the notice appears");
       expect(/out of date/.test(await a.p.eval<string>(`document.getElementById("welcome").textContent`)), "it explains");
       await a.p.eval(`document.getElementById("stale-reload").click()`);
-      await until(async () => a.p.eval<boolean>(`document.getElementById("welcome").hidden && !!window.scratchPage`), 10_000, "a reload brings the page back");
+      await until(async () => a.p.eval<boolean>(`document.getElementById("welcome").hidden && !!window.ergaPage`), 10_000, "a reload brings the page back");
     },
   },
 ];

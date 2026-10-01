@@ -138,7 +138,7 @@ const program = Effect.gen(function* () {
     write: (rel, text) => run(Effect.gen(function* () {
       const full = path.join(doc.dir, rel);
       yield* fs.makeDirectory(path.dirname(full), { recursive: true });
-      const tmp = path.join(path.dirname(full), `.${path.basename(full)}.sw-${process.pid}.tmp`);
+      const tmp = path.join(path.dirname(full), `.${path.basename(full)}.erga-${process.pid}.tmp`);
       yield* fs.writeFileString(tmp, text);
       yield* fs.rename(tmp, full);
     })),

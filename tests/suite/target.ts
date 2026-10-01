@@ -132,8 +132,8 @@ export class LocalTarget implements Target {
   }
 
   async newDoc(fixture: string): Promise<Doc> {
-    const dir = mkdtempSync(join(tmpdir(), "sw-suite-"));
-    const stateDir = mkdtempSync(join(tmpdir(), "sw-suite-state-"));
+    const dir = mkdtempSync(join(tmpdir(), "erga-suite-"));
+    const stateDir = mkdtempSync(join(tmpdir(), "erga-suite-state-"));
     cpSync(join(FIXTURES, fixture), dir, { recursive: true });
     const port = 20000 + Math.floor(Math.random() * 20000);
     // A short write delay: the suite waits on storage a lot, and aims at the delay where it matters.

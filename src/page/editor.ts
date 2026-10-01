@@ -49,9 +49,9 @@ export interface PageProblem {
 /**
  * Put first in the page's <head>: catches the page's script errors and
  * files that fail to load (from the first script on, before the editor can
- * listen), and hands them to the editor once it's there (`__swReport`).
+ * listen), and hands them to the editor once it's there (`__ergaReport`).
  */
-const PROBLEM_WATCH = `<script data-sw>(function(){var q=window.__swProblems=[];function r(p){window.__swReport?window.__swReport(p):q.push(p)}addEventListener("error",function(e){var t=e.target;if(t&&t!==window&&t.tagName){var u=t.getAttribute("src")||t.getAttribute("href");if(u)r({kind:"resource",tag:t.tagName.toLowerCase(),url:u})}else r({kind:"script",message:String(e.message||"Script error"),file:e.filename||"",line:e.lineno||0})},true);addEventListener("unhandledrejection",function(e){r({kind:"script",message:"Unhandled promise rejection: "+String(e.reason&&e.reason.message||e.reason),file:"",line:0})})})()</script>`;
+const PROBLEM_WATCH = `<script data-erga>(function(){var q=window.__ergaProblems=[];function r(p){window.__ergaReport?window.__ergaReport(p):q.push(p)}addEventListener("error",function(e){var t=e.target;if(t&&t!==window&&t.tagName){var u=t.getAttribute("src")||t.getAttribute("href");if(u)r({kind:"resource",tag:t.tagName.toLowerCase(),url:u})}else r({kind:"script",message:String(e.message||"Script error"),file:e.filename||"",line:e.lineno||0})},true);addEventListener("unhandledrejection",function(e){r({kind:"script",message:"Unhandled promise rejection: "+String(e.reason&&e.reason.message||e.reason),file:"",line:0})})})()</script>`;
 
 /** Who made a change, for its marks: a name and a colour. */
 export interface MarkAuthor { name: string; color: string }
@@ -109,10 +109,10 @@ const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 
 /**
  * Scales the editor's timed behaviour (how long notes stay, how marks fade).
- * 1 for people; the tests set `window.__swTimescale` lower so they don't sit
+ * 1 for people; the tests set `window.__ergaTimescale` lower so they don't sit
  * through real seconds to check what happens after them.
  */
-export const ms = (n: number) => n * ((globalThis as { __swTimescale?: number }).__swTimescale ?? 1);
+export const ms = (n: number) => n * ((globalThis as { __ergaTimescale?: number }).__ergaTimescale ?? 1);
 const noHistory = () => Transaction.addToHistory.of(false);
 
 /** The changed region between two texts, placing an ambiguous edit at `preferredPos` (CodeMirror's findDiff). */
@@ -164,33 +164,33 @@ function balanceWhitespace(text: string): string {
 }
 
 const PAGE_STYLE = `
-[data-sw-id][contenteditable] { caret-color: #3b7cf0; cursor: text; outline: none; }
-[data-sw-id].sw-empty { min-height: 1lh; }
-[data-sw-id].sw-locked { cursor: default; }
-[data-sw-id] [contenteditable="false"] { cursor: default; }
-[data-sw-id][contenteditable] a[href] { cursor: text; }
-@keyframes sw-flash { from { background-color: rgba(59, 124, 240, 0.24); } to { background-color: rgba(59, 124, 240, 0); } }
-[data-sw-id].sw-flash { animation: sw-flash 1.8s ease-out; border-radius: 3px; }
-::highlight(sw-add-0) { background-color: rgba(34, 197, 94, 0.3); }
-::highlight(sw-add-1) { background-color: rgba(34, 197, 94, 0.24); }
-::highlight(sw-add-2) { background-color: rgba(34, 197, 94, 0.18); }
-::highlight(sw-add-3) { background-color: rgba(34, 197, 94, 0.12); }
-::highlight(sw-add-4) { background-color: rgba(34, 197, 94, 0.07); }
-::highlight(sw-add-5) { background-color: rgba(34, 197, 94, 0.03); }
-sw-peers { all: initial; position: absolute; top: 0; left: 0; width: 0; height: 0; z-index: 2147483646; pointer-events: none; }
-sw-peer-sel { all: initial; position: absolute; border-radius: 2px; }
-sw-peer { all: initial; position: absolute; width: 2px; margin-left: -1px; background: var(--sw-peer); border-radius: 1px; }
-sw-peer[data-agent] { background: repeating-linear-gradient(to bottom, var(--sw-peer) 0 3px, transparent 3px 5px); }
-sw-peer-name {
+[data-erga-id][contenteditable] { caret-color: #3b7cf0; cursor: text; outline: none; }
+[data-erga-id].erga-empty { min-height: 1lh; }
+[data-erga-id].erga-locked { cursor: default; }
+[data-erga-id] [contenteditable="false"] { cursor: default; }
+[data-erga-id][contenteditable] a[href] { cursor: text; }
+@keyframes erga-flash { from { background-color: rgba(59, 124, 240, 0.24); } to { background-color: rgba(59, 124, 240, 0); } }
+[data-erga-id].erga-flash { animation: erga-flash 1.8s ease-out; border-radius: 3px; }
+::highlight(erga-add-0) { background-color: rgba(34, 197, 94, 0.3); }
+::highlight(erga-add-1) { background-color: rgba(34, 197, 94, 0.24); }
+::highlight(erga-add-2) { background-color: rgba(34, 197, 94, 0.18); }
+::highlight(erga-add-3) { background-color: rgba(34, 197, 94, 0.12); }
+::highlight(erga-add-4) { background-color: rgba(34, 197, 94, 0.07); }
+::highlight(erga-add-5) { background-color: rgba(34, 197, 94, 0.03); }
+erga-peers { all: initial; position: absolute; top: 0; left: 0; width: 0; height: 0; z-index: 2147483646; pointer-events: none; }
+erga-peer-sel { all: initial; position: absolute; border-radius: 2px; }
+erga-peer { all: initial; position: absolute; width: 2px; margin-left: -1px; background: var(--erga-peer); border-radius: 1px; }
+erga-peer[data-agent] { background: repeating-linear-gradient(to bottom, var(--erga-peer) 0 3px, transparent 3px 5px); }
+erga-peer-name {
   all: initial; position: absolute; left: -1px; bottom: 100%; margin-bottom: 1px; white-space: nowrap;
   font: 600 10.5px/1.5 ui-sans-serif, system-ui, -apple-system, sans-serif; color: #fff;
-  background: var(--sw-peer); border-radius: 3px 3px 3px 0; padding: 0 5px; opacity: 0.92;
+  background: var(--erga-peer); border-radius: 3px 3px 3px 0; padding: 0 5px; opacity: 0.92;
 }
-sw-marks { all: initial; position: absolute; top: 0; left: 0; width: 0; height: 0; z-index: 2147483647; pointer-events: none; }
-sw-del { all: initial; position: absolute; width: 2px; margin-left: -1px; background: var(--sw-del, #e5484d); border-radius: 1px; pointer-events: auto; cursor: help; transition: opacity 120ms linear; }
-sw-del::before { content: ""; position: absolute; top: -5px; left: -3px; border: 4px solid transparent; border-top-color: var(--sw-del, #e5484d); border-bottom: 0; }
-sw-del::after { content: ""; position: absolute; inset: -6px -5px -2px; }
-sw-tip {
+erga-marks { all: initial; position: absolute; top: 0; left: 0; width: 0; height: 0; z-index: 2147483647; pointer-events: none; }
+erga-del { all: initial; position: absolute; width: 2px; margin-left: -1px; background: var(--erga-del, #e5484d); border-radius: 1px; pointer-events: auto; cursor: help; transition: opacity 120ms linear; }
+erga-del::before { content: ""; position: absolute; top: -5px; left: -3px; border: 4px solid transparent; border-top-color: var(--erga-del, #e5484d); border-bottom: 0; }
+erga-del::after { content: ""; position: absolute; inset: -6px -5px -2px; }
+erga-tip {
   all: initial; display: none; position: absolute; bottom: calc(100% + 7px); left: 50%; transform: translateX(-50%);
   font: 500 12px/1.55 ui-sans-serif, system-ui, -apple-system, sans-serif; color: #b42318;
   background: #fee4e2; border: 1px solid #fecdca; border-radius: 5px; padding: 1px 6px;
@@ -198,8 +198,8 @@ sw-tip {
   white-space: nowrap; max-width: 360px; overflow: hidden; text-overflow: ellipsis;
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
 }
-sw-del:hover sw-tip { display: block; }
-sw-who { all: initial; display: inline-block; font: 600 11px/1.55 ui-sans-serif, system-ui, -apple-system, sans-serif; margin-right: 6px; text-decoration: none; }
+erga-del:hover erga-tip { display: block; }
+erga-who { all: initial; display: inline-block; font: 600 11px/1.55 ui-sans-serif, system-ui, -apple-system, sans-serif; margin-right: 6px; text-decoration: none; }
 `;
 
 type Mark = ({ kind: "add"; from: number; to: number } | { kind: "del"; pos: number; text: string }) & { level?: number; born?: number; author?: MarkAuthor | null };
@@ -363,11 +363,11 @@ export class PageEditor {
     }
     const a = analyzeMarkdown(src, this.state.selection.main.head);
     const head = `${PROBLEM_WATCH}<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><base href="${this.config.base}">${this.config.markdownHead ?? ""}<style>${PAGE_STYLE}</style>`;
-    return { units: a.units, html: `<!doctype html><html><head>${head}</head><body><article class="prose" id="sw-article">${a.html}</article></body></html>` };
+    return { units: a.units, html: `<!doctype html><html><head>${head}</head><body><article class="prose" id="erga-article">${a.html}</article></body></html>` };
   }
 
   private injectHead(html: string): string {
-    const inject = `${PROBLEM_WATCH}<base href="${this.config.base}"><style data-sw>${PAGE_STYLE}</style>`;
+    const inject = `${PROBLEM_WATCH}<base href="${this.config.base}"><style data-erga>${PAGE_STYLE}</style>`;
     const m = /<head(\s[^>]*)?>/i.exec(html);
     if (m) return html.slice(0, m.index + m[0].length) + inject + html.slice(m.index + m[0].length);
     const h = /<html(\s[^>]*)?>/i.exec(html);
@@ -438,7 +438,7 @@ export class PageEditor {
 
   /** Hands the page's problems (see PROBLEM_WATCH) to the shell, as they happen. */
   private watchProblems(): void {
-    const win = this.frame.contentWindow as (Window & { __swProblems?: RawProblem[]; __swReport?: (p: RawProblem) => void }) | null;
+    const win = this.frame.contentWindow as (Window & { __ergaProblems?: RawProblem[]; __ergaReport?: (p: RawProblem) => void }) | null;
     if (!win) return;
     const seen = new Set<string>();
     const report = (raw: RawProblem) => {
@@ -447,19 +447,19 @@ export class PageEditor {
       seen.add(p.key);
       this.config.onProblem?.(p);
     };
-    win.__swReport = report;
-    for (const raw of win.__swProblems ?? []) report(raw);
+    win.__ergaReport = report;
+    for (const raw of win.__ergaProblems ?? []) report(raw);
   }
 
   private collectEls(): void {
     const doc = this.doc!;
     this.els = [];
-    for (const u of this.units) this.els[u.id] = doc.querySelector(`[data-sw-id="${u.id}"]`) ?? undefined;
+    for (const u of this.units) this.els[u.id] = doc.querySelector(`[data-erga-id="${u.id}"]`) ?? undefined;
   }
 
   /** A unit element is its own editing host; anything atomic inside it stays a normal widget. */
   private prepareUnit(el: Element): void {
-    if (!el.classList.contains("sw-locked")) el.setAttribute("contenteditable", "true");
+    if (!el.classList.contains("erga-locked")) el.setAttribute("contenteditable", "true");
     // No spellcheck: these are technical documents, full of names a dictionary flags.
     el.setAttribute("spellcheck", "false");
     for (const atom of el.querySelectorAll("*")) if (M.ATOMIC.has(atom.localName)) atom.setAttribute("contenteditable", "false");
@@ -472,7 +472,7 @@ export class PageEditor {
       const el = this.els[u.id];
       if (!el) continue;
       const empty = !u.runs.some((r) => r.editable && /\S/.test(r.text)) && !el.querySelector("img,svg,video,canvas,input");
-      el.classList.toggle("sw-empty", empty);
+      el.classList.toggle("erga-empty", empty);
     }
   }
 
@@ -488,11 +488,11 @@ export class PageEditor {
   /** The unit's DOM text still matches the source; otherwise lock it. */
   private verify(unit: M.Unit): boolean {
     const el = this.els[unit.id];
-    if (!el || el.classList.contains("sw-locked")) return false;
+    if (!el || el.classList.contains("erga-locked")) return false;
     const nodes = this.textNodes(el);
     const ok = nodes.length == unit.runs.length && nodes.every((n, i) => same(n.nodeValue!, unit.runs[i].text));
     if (!ok) {
-      el.classList.add("sw-locked");
+      el.classList.add("erga-locked");
       el.setAttribute("contenteditable", "false");
       this.lockReasons.set(el, this.whyLocked(unit));
     }
@@ -528,9 +528,9 @@ export class PageEditor {
   }
 
   private unitOf(node: Node): M.Unit | null {
-    const el = (node.nodeType == 1 ? (node as Element) : node.parentElement)?.closest("[data-sw-id]");
+    const el = (node.nodeType == 1 ? (node as Element) : node.parentElement)?.closest("[data-erga-id]");
     if (!el) return null;
-    const u = this.units[+el.getAttribute("data-sw-id")!];
+    const u = this.units[+el.getAttribute("data-erga-id")!];
     return u && this.els[u.id] == el ? u : null;
   }
 
@@ -603,7 +603,7 @@ export class PageEditor {
   /** The unit element that has focus, if any. */
   private get activeUnit(): Element | null {
     const el = this.doc?.activeElement;
-    return el && el.hasAttribute("data-sw-id") ? el : null;
+    return el && el.hasAttribute("data-erga-id") ? el : null;
   }
 
   /** Makes the DOM selection match the model's, focusing the unit that holds it. */
@@ -617,7 +617,7 @@ export class PageEditor {
     const head = main.empty ? anchor : this.domAtPos(main.head, main.head > main.anchor ? -1 : 1) ?? anchor;
     const sel = doc.getSelection();
     if (!sel) return;
-    const host = (anchor.node.nodeType == 1 ? (anchor.node as Element) : anchor.node.parentElement)?.closest("[data-sw-id]") as HTMLElement | null;
+    const host = (anchor.node.nodeType == 1 ? (anchor.node as Element) : anchor.node.parentElement)?.closest("[data-erga-id]") as HTMLElement | null;
     this.writingSelection = true;
     try {
       if (host && host != doc.activeElement) host.focus({ preventScroll: true });
@@ -691,12 +691,12 @@ export class PageEditor {
     const el = t.nodeType == 1 ? (t as Element) : t.parentElement;
     if (!el) return false;
     if (el.closest('[contenteditable="false"], input, textarea, select')) return false;
-    return !!el.closest("[data-sw-id]");
+    return !!el.closest("[data-erga-id]");
   }
 
   private mousedown(e: MouseEvent): void {
     // A locked unit takes no caret; say why instead of doing nothing.
-    const locked = (e.target as Element).closest?.(".sw-locked");
+    const locked = (e.target as Element).closest?.(".erga-locked");
     if (locked && !(e.target as Element).closest('button, a[href], input, textarea, select, [contenteditable="true"]')) {
       const why = this.lockReasons.get(locked);
       if (why) this.config.onNotice?.(why.message, why.fix);
@@ -1525,18 +1525,18 @@ export class PageEditor {
     const doc = this.doc, win = this.frame.contentWindow as (Window & typeof globalThis & { Highlight?: new (...r: Range[]) => unknown }) | null;
     if (!doc || !win || this.rendering) return;
     const registry = (win.CSS as unknown as { highlights?: Map<string, unknown> }).highlights;
-    // One highlight per author colour and fade level: "sw-add-<level>" for
-    // unattributed changes (green), "sw-a<n>-<level>" for each author's.
+    // One highlight per author colour and fade level: "erga-add-<level>" for
+    // unattributed changes (green), "erga-a<n>-<level>" for each author's.
     const groups = new Map<string, Range[]>();
     for (const m of this.marks) {
       if (m.kind != "add") continue;
-      const name = m.author ? `sw-a${this.authorStyle(m.author.color)}-${m.level ?? 0}` : `sw-add-${m.level ?? 0}`;
+      const name = m.author ? `erga-a${this.authorStyle(m.author.color)}-${m.level ?? 0}` : `erga-add-${m.level ?? 0}`;
       let ranges = groups.get(name);
       if (!ranges) groups.set(name, (ranges = []));
       ranges.push(...this.rangesIn(m.from, m.to));
     }
     if (registry && win.Highlight) {
-      for (const name of [...registry.keys()]) if (/^sw-(add|a\d+)-\d$/.test(name) && !groups.has(name)) registry.delete(name);
+      for (const name of [...registry.keys()]) if (/^erga-(add|a\d+)-\d$/.test(name) && !groups.has(name)) registry.delete(name);
       for (const [name, ranges] of groups) registry.set(name, new win.Highlight!(...ranges));
     }
 
@@ -1546,19 +1546,19 @@ export class PageEditor {
       this.overlay = null;
     } else {
       if (!this.overlay || !this.overlay.isConnected) {
-        this.overlay = doc.createElement("sw-marks");
+        this.overlay = doc.createElement("erga-marks");
         doc.documentElement.append(this.overlay);
       }
       this.overlay.textContent = "";
       for (const m of dels) {
         const at = this.anchorAt(m.pos);
         if (!at) continue;
-        const notch = doc.createElement("sw-del");
+        const notch = doc.createElement("erga-del");
         notch.style.cssText = `left:${at.rect.left + win.scrollX}px;top:${at.rect.top + win.scrollY}px;height:${at.inline ? at.rect.height : 18}px;opacity:${1 - (m.level ?? 0) / 6}`;
-        if (m.author) notch.style.setProperty("--sw-del", m.author.color);
+        if (m.author) notch.style.setProperty("--erga-del", m.author.color);
         notch.setAttribute("aria-label", `Deleted${m.author ? ` by ${m.author.name}` : ""}: ${m.text}`);
-        const tip = doc.createElement("sw-tip");
-        if (m.author) { const who = doc.createElement("sw-who"); who.textContent = m.author.name; who.style.color = m.author.color; tip.append(who); }
+        const tip = doc.createElement("erga-tip");
+        if (m.author) { const who = doc.createElement("erga-who"); who.textContent = m.author.name; who.style.color = m.author.color; tip.append(who); }
         tip.append(m.text.length > 160 ? m.text.slice(0, 160) + "…" : m.text);
         notch.append(tip);
         this.overlay.append(notch);
@@ -1599,11 +1599,11 @@ export class PageEditor {
     let n = this.authorStyles.get(color);
     if (n == null) this.authorStyles.set(color, (n = this.authorStyles.size));
     const doc = this.doc!;
-    let style = doc.getElementById("sw-authors");
+    let style = doc.getElementById("erga-authors");
     if (!style || style.dataset.count != String(this.authorStyles.size)) {
-      style ??= doc.head.appendChild(Object.assign(doc.createElement("style"), { id: "sw-authors" }));
+      style ??= doc.head.appendChild(Object.assign(doc.createElement("style"), { id: "erga-authors" }));
       style.dataset.count = String(this.authorStyles.size);
-      style.textContent = [...this.authorStyles].map(([c, i]) => FADE.map((a, level) => `::highlight(sw-a${i}-${level}) { background-color: ${rgba(c, a * 0.9)}; }`).join("\n")).join("\n");
+      style.textContent = [...this.authorStyles].map(([c, i]) => FADE.map((a, level) => `::highlight(erga-a${i}-${level}) { background-color: ${rgba(c, a * 0.9)}; }`).join("\n")).join("\n");
     }
     return n;
   }
@@ -1626,7 +1626,7 @@ export class PageEditor {
     if (!doc || !win || this.rendering) return;
     if (!this.peers.length) { this.peerLayer?.remove(); this.peerLayer = null; return; }
     if (!this.peerLayer || !this.peerLayer.isConnected) {
-      this.peerLayer = doc.createElement("sw-peers");
+      this.peerLayer = doc.createElement("erga-peers");
       doc.documentElement.append(this.peerLayer);
     }
     const layer = this.peerLayer;
@@ -1637,7 +1637,7 @@ export class PageEditor {
       if (p.head != null && p.head != anchor) {
         const from = Math.min(anchor, p.head), to = Math.min(len, Math.max(anchor, p.head));
         for (const r of this.rangesIn(from, to)) for (const rect of r.getClientRects()) {
-          const box = doc.createElement("sw-peer-sel");
+          const box = doc.createElement("erga-peer-sel");
           box.style.cssText = `left:${rect.left + win.scrollX}px;top:${rect.top + win.scrollY}px;width:${rect.width}px;height:${rect.height}px;background:${rgba(p.color, 0.18)}`;
           layer.append(box);
         }
@@ -1653,10 +1653,10 @@ export class PageEditor {
       }
       const rect = this.coordsAtPos(Math.min(caretAt, len), -1);
       if (!rect || (!rect.height && !rect.width && !rect.top)) continue;
-      const caret = doc.createElement("sw-peer");
-      caret.style.cssText = `left:${rect.left + win.scrollX}px;top:${rect.top + win.scrollY}px;height:${rect.height || 18}px;--sw-peer:${p.color}`;
+      const caret = doc.createElement("erga-peer");
+      caret.style.cssText = `left:${rect.left + win.scrollX}px;top:${rect.top + win.scrollY}px;height:${rect.height || 18}px;--erga-peer:${p.color}`;
       if (p.agent) caret.setAttribute("data-agent", "");
-      const label = doc.createElement("sw-peer-name");
+      const label = doc.createElement("erga-peer-name");
       label.textContent = p.activity ? `${p.name} · ${p.activity}` : p.name;
       caret.append(label);
       layer.append(caret);
@@ -1684,10 +1684,10 @@ export class PageEditor {
       if (!ranges.some((r) => r.from <= u.to && r.to >= u.from)) continue;
       const el = this.els[u.id];
       if (!el) continue;
-      el.classList.remove("sw-flash");
+      el.classList.remove("erga-flash");
       void (el as HTMLElement).offsetWidth;
-      el.classList.add("sw-flash");
-      el.addEventListener("animationend", () => el.classList.remove("sw-flash"), { once: true });
+      el.classList.add("erga-flash");
+      el.addEventListener("animationend", () => el.classList.remove("erga-flash"), { once: true });
       first ??= el;
     }
     if (first && win && reveal) {
@@ -1737,8 +1737,8 @@ export class PageEditor {
       if (!ranges.some(([f, t]) => f <= u.to && t >= u.from)) continue;
       const el = this.els[u.id];
       if (!el) continue;
-      if (el.classList.contains("sw-locked")) {
-        el.classList.remove("sw-locked");
+      if (el.classList.contains("erga-locked")) {
+        el.classList.remove("erga-locked");
         this.lockReasons.delete(el);
         this.prepareUnit(el);
       }
@@ -1779,7 +1779,7 @@ export class PageEditor {
         return true;
       }
       if (this.kind == "md") {
-        const article = this.doc.getElementById("sw-article");
+        const article = this.doc.getElementById("erga-article");
         if (!article) throw new Error("no article");
         article.innerHTML = a.html;
         this.collectEls();
@@ -1811,7 +1811,7 @@ export class PageEditor {
         const root = tpl.content.firstElementChild;
         if (!root) throw new Error("unit did not render");
         for (const w of group) {
-          const el = root.matches(`[data-sw-id="${w.id}"]`) ? root : root.querySelector(`[data-sw-id="${w.id}"]`);
+          const el = root.matches(`[data-erga-id="${w.id}"]`) ? root : root.querySelector(`[data-erga-id="${w.id}"]`);
           if (!el) throw new Error("unit did not render");
           this.prepareUnit(el);
           els[w.id] = el;
@@ -1828,7 +1828,7 @@ export class PageEditor {
       const keep = new Set(els);
       for (const el of oldEls) if (el && !keep.has(el)) el.remove();
       this.els = els;
-      for (const u of newUnits) els[u.id]!.setAttribute("data-sw-id", String(u.id));
+      for (const u of newUnits) els[u.id]!.setAttribute("data-erga-id", String(u.id));
       this.updateEmpty();
       return true;
     } catch {

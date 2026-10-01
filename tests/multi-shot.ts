@@ -6,7 +6,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 
 const port = 4500 + Math.floor(Math.random() * 400);
-const dir = mkdtempSync(join(tmpdir(), "sw-shot-"));
+const dir = mkdtempSync(join(tmpdir(), "erga-shot-"));
 cpSync(`${ROOT}tests/fixtures/page`, dir, { recursive: true });
 const host = Bun.spawn(["bun", `${ROOT}open.ts`, dir, "--port", String(port), "--no-open"], { stdout: "ignore", stderr: "inherit" });
 const browser = await Browser.launch();

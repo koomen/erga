@@ -8,7 +8,7 @@
 // is, its content is text and inline elements only, with at least one
 // non-whitespace character. Containers (elements with block children) are
 // walked into; excluded elements (script, svg, button...) are never units.
-// A document opts a part of itself out with the `data-sw-noedit` attribute:
+// A document opts a part of itself out with the `data-erga-noedit` attribute:
 // the element and everything in it are treated like app logic, never
 // editable by hand (only by changing the source, say through the agent).
 //
@@ -34,7 +34,7 @@ export interface TextRun {
 }
 
 export interface Unit {
-  /** Index in the unit list; stamped as data-sw-id on the rendered element. */
+  /** Index in the unit list; stamped as data-erga-id on the rendered element. */
   id: number;
   tag: string;
   /** The whole element in source, open tag through close tag. */
@@ -103,7 +103,7 @@ const NEVER_UNIT = new Set(["html", "head", "body", "title", "meta", "link", "ba
 /** Text holders: a unit even while empty, so a paragraph you just created can take the caret. */
 const TEXT_TAGS = new Set(["p", "h1", "h2", "h3", "h4", "h5", "h6", "li", "dt", "dd", "td", "th", "figcaption", "caption", "summary", "pre", "legend"]);
 /** Marks an element, and everything in it, as not editable by hand. */
-export const NO_EDIT_ATTR = "data-sw-noedit";
+export const NO_EDIT_ATTR = "data-erga-noedit";
 const NO_EDIT = new RegExp(`\\s${NO_EDIT_ATTR}(?=[\\s=/>])`, "i");
 /** Whether an element's open tag carries the no-edit attribute. */
 export function noEdit(src: string, el: ElementNode): boolean {
@@ -417,14 +417,14 @@ function makeUnit(src: string, el: ElementNode, id: number, decode: EntityDecode
   };
 }
 
-/** Inserts data-sw-id attributes into the units' open tags. */
+/** Inserts data-erga-id attributes into the units' open tags. */
 export function stamp(src: string, units: Unit[]): string {
   let out = "";
   let pos = 0;
   for (const u of units) {
     let at = u.openTo - 1; // before ">"
     if (src[at - 1] == "/") at--; // before "/>"
-    out += src.slice(pos, at) + ` data-sw-id="${u.id}"`;
+    out += src.slice(pos, at) + ` data-erga-id="${u.id}"`;
     pos = at;
   }
   return out + src.slice(pos);

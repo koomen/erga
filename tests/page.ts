@@ -31,12 +31,12 @@ const until = async (f: () => Promise<unknown> | unknown, ms = 3000) => { const 
 const TIMESCALE = 0.1;
 const T = (ms: number) => ms * TIMESCALE;
 /** After a (re)load: the shell is up, the page rendered, the agent's status in. */
-const loaded = (p: Awaited<ReturnType<Browser["page"]>>) => until(() => p.eval<boolean>(`!!window.scratchPage && !!document.getElementById("frame").contentDocument?.querySelector("[data-sw-id]") && !!document.getElementById("agent-model").textContent`), 10_000);
+const loaded = (p: Awaited<ReturnType<Browser["page"]>>) => until(() => p.eval<boolean>(`!!window.ergaPage && !!document.getElementById("frame").contentDocument?.querySelector("[data-erga-id]") && !!document.getElementById("agent-model").textContent`), 10_000);
 
 /** Starts a host on a scratch copy of a fixture and opens the editor on it. */
 async function session(browser: Browser, fixture: string, fileName: string, env: Record<string, string> = {}, query = "", timescale = TIMESCALE) {
   const port = 20000 + Math.floor(Math.random() * 20000);
-  const dir = mkdtempSync(join(tmpdir(), "sw-page-"));
+  const dir = mkdtempSync(join(tmpdir(), "erga-page-"));
   cpSync(`${ROOT}tests/fixtures/${fixture}`, dir, { recursive: true });
   const file = join(dir, fileName);
   const host = Bun.spawn(["bun", `${ROOT}open.ts`, dir, "--port", String(port), "--no-open"], { stdout: "pipe", stderr: "pipe", env: { ...process.env, ...env } });
@@ -46,7 +46,7 @@ async function session(browser: Browser, fixture: string, fileName: string, env:
   }
   const p = await browser.page();
   await p.open(`http://127.0.0.1:${port}/${query}`, { clear: false, width: 1100, height: 800, timescale });
-  await until(() => p.eval<boolean>(`!!window.scratchPage && !!document.getElementById("frame").contentDocument?.querySelector("[data-sw-id]")`), 10_000);
+  await until(() => p.eval<boolean>(`!!window.ergaPage && !!document.getElementById("frame").contentDocument?.querySelector("[data-erga-id]")`), 10_000);
   // The page's own fonts too: text measured before they load moves when they do.
   await p.eval(`document.getElementById("frame").contentDocument.fonts.ready.then(() => true)`);
   await p.settle();
@@ -73,7 +73,7 @@ async function htmlScenario(browser: Browser) {
   say("\nHTML page");
   const s = await session(browser, "page", "index.html");
   const { p, F } = s;
-  check("page rendered with units", (await s.count("[data-sw-id]")) >= 9);
+  check("page rendered with units", (await s.count("[data-erga-id]")) >= 9);
   await p.eval(`${F}.body.style.background = "rgb(243, 236, 220)"`);
   check("the shell's canvas follows the page's background", await until(async () => await p.eval<string>(`getComputedStyle(document.documentElement).backgroundColor`) == "rgb(243, 236, 220)" && await p.eval<boolean>(`document.documentElement.classList.contains("page-light")`)));
   await p.eval(`${F}.body.style.background = ""`);
@@ -81,12 +81,12 @@ async function htmlScenario(browser: Browser) {
   check("units are the editing hosts", await p.eval<boolean>(`${F}.body.getAttribute("contenteditable") == null && ${F}.querySelector("h1").getAttribute("contenteditable") == "true"`));
 
   // Clicking non-editable content places no caret and does not move the model's selection.
-  const before = await p.eval<string>("JSON.stringify(scratchPage.state.selection.main)");
+  const before = await p.eval<string>("JSON.stringify(ergaPage.state.selection.main)");
   const box = await s.rectOf("#stats", 0.9);
   await p.click(box.x, box.y);
   await Bun.sleep(100);
   check("clicking a widget area focuses nothing", await p.eval<boolean>(`!${F}.activeElement || ${F}.activeElement == ${F}.body`));
-  check("and leaves the selection alone", (await p.eval<string>("JSON.stringify(scratchPage.state.selection.main)")) == before);
+  check("and leaves the selection alone", (await p.eval<string>("JSON.stringify(ergaPage.state.selection.main)")) == before);
 
   await s.clickEnd("h1");
   await p.type(" v2");
@@ -143,7 +143,7 @@ async function htmlScenario(browser: Browser) {
   await Bun.sleep(100);
   check("⌘B again unwraps", /<li>A <strong>new<\/strong> editor<\/li>/.test(await s.source()));
 
-  check("svg text is not editable", await p.eval<boolean>(`!${F}.querySelector("svg text").closest("[data-sw-id]")`));
+  check("svg text is not editable", await p.eval<boolean>(`!${F}.querySelector("svg text").closest("[data-erga-id]")`));
   await s.clickEnd("pre");
   await p.type(" // ok");
   await Bun.sleep(100);
@@ -154,7 +154,7 @@ async function htmlScenario(browser: Browser) {
   check("disk edits reach the page", await until(async () => (await s.textOf("figcaption")) == "Where the leads went."));
   const marks = s.marks;
   let m = await marks();
-  check("disk edits patch the page in place", (await s.count("[data-sw-id]")) >= 9 && !(await p.eval<boolean>(`!!${F}.querySelector("figcaption.sw-flash")`)));
+  check("disk edits patch the page in place", (await s.count("[data-erga-id]")) >= 9 && !(await p.eval<boolean>(`!!${F}.querySelector("figcaption.erga-flash")`)));
   check("the added word is highlighted, exactly", m.added.join("|") == "went", JSON.stringify(m));
   check("the removed word is marked where it was, and who removed it", m.gone.join("|") == "Edited on diskgo", JSON.stringify(m));
   check("marks don't touch the page's text", (await s.textOf("figcaption")) == "Where the leads went.");
@@ -202,8 +202,8 @@ async function htmlScenario(browser: Browser) {
   // A change outside the text (a new diagram) can't be patched in: the page renders again on its own.
   s.write(s.disk().replace("<h2>What changed</h2>", `<svg id="diagram" width="80" height="20"><rect width="80" height="20" fill="#c00"/></svg>\n    <h2>What changed</h2>`));
   check("a diagram added on disk shows up without a reload", await until(() => p.eval<boolean>(`!!${F}.getElementById("diagram")`)));
-  await until(() => p.eval<boolean>(`!!${F}.querySelector("[data-sw-id]")`));
-  check("and the page still edits", (await s.count("[data-sw-id]")) >= 9);
+  await until(() => p.eval<boolean>(`!!${F}.querySelector("[data-erga-id]")`));
+  check("and the page still edits", (await s.count("[data-erga-id]")) >= 9);
 
   // Another file in the folder changes: the page renders again and picks it up.
   const css = join(s.dir, "style.css");
@@ -213,7 +213,7 @@ async function htmlScenario(browser: Browser) {
   await p.key("p", MOD.Meta | MOD.Shift);
   check("source view shows the file", await until(async () => await p.eval<boolean>(`document.body.classList.contains("source")`) && (await s.source()).includes("Where leads go now.")));
   await p.key("p", MOD.Meta | MOD.Shift);
-  await until(() => p.eval<boolean>(`!document.body.classList.contains("source") && !!${F}.querySelector("h1[data-sw-id]")`));
+  await until(() => p.eval<boolean>(`!document.body.classList.contains("source") && !!${F}.querySelector("h1[data-erga-id]")`));
   await s.clickEnd("h1");
   check("no page errors", p.errors.length == 0, p.errors.join("\n"));
   await s.close();
@@ -223,8 +223,8 @@ async function mdScenario(browser: Browser) {
   say("\nMarkdown page");
   const s = await session(browser, "md", "index.md");
   const { p } = s;
-  check("front matter is not rendered", !(await s.textOf("#sw-article")).includes("title:"));
-  check("units rendered", (await s.count("[data-sw-id]")) >= 8);
+  check("front matter is not rendered", !(await s.textOf("#erga-article")).includes("title:"));
+  check("units rendered", (await s.count("[data-erga-id]")) >= 8);
 
   await s.clickEnd("h1");
   await p.type(" 2026");
@@ -391,11 +391,11 @@ async function formatScenario(browser: Browser) {
   check("styling a code block says why it can't", /code block/.test(await p.eval<string>(`document.getElementById("toast").textContent`)));
 
   // view_page's capture, done in this tab: the page as it is now, or one element, with script errors.
-  const shot = await p.eval<{ png: number; width: number; height: number; errors: string[]; error?: string }>(`scratchPage.captureView({}).then((r) => ({ ...r, png: (r.png || "").length }))`);
+  const shot = await p.eval<{ png: number; width: number; height: number; errors: string[]; error?: string }>(`ergaPage.captureView({}).then((r) => ({ ...r, png: (r.png || "").length }))`);
   check("the page can be captured in the browser for the agent", shot.png > 1000 && shot.width > 300 && shot.height > 300 && !shot.error, JSON.stringify(shot));
-  const fig = await p.eval<{ png: number; width: number; error?: string }>(`scratchPage.captureView({ selector: "figure" }).then((r) => ({ ...r, png: (r.png || "").length }))`);
+  const fig = await p.eval<{ png: number; width: number; error?: string }>(`ergaPage.captureView({ selector: "figure" }).then((r) => ({ ...r, png: (r.png || "").length }))`);
   check("and so can one element", fig.png > 200 && fig.width > 100 && fig.width < 900 && !fig.error, JSON.stringify(fig));
-  const none = await p.eval<{ error?: string }>(`scratchPage.captureView({ selector: "#nope" })`);
+  const none = await p.eval<{ error?: string }>(`ergaPage.captureView({ selector: "#nope" })`);
   check("a selector that matches nothing says so", /Nothing on the page matches #nope/.test(none.error ?? ""));
 
   // The view switcher.
@@ -494,8 +494,8 @@ async function strayTagScenario(browser: Browser) {
   const TS = 0.4, T = (ms: number) => ms * TS;
   const s = await session(browser, "stray", "index.html", {}, "", TS);
   const { p, F } = s;
-  check("the malformed paragraph is locked", await p.eval<boolean>(`${F}.querySelector(".box p").classList.contains("sw-locked")`));
-  check("its neighbours aren't", await p.eval<boolean>(`!${F}.querySelector(".box h4").classList.contains("sw-locked") && !${F}.querySelector("body > p").classList.contains("sw-locked")`));
+  check("the malformed paragraph is locked", await p.eval<boolean>(`${F}.querySelector(".box p").classList.contains("erga-locked")`));
+  check("its neighbours aren't", await p.eval<boolean>(`!${F}.querySelector(".box h4").classList.contains("erga-locked") && !${F}.querySelector("body > p").classList.contains("erga-locked")`));
   const before = await s.source();
   const r = await s.rectOf(".box p", 0.3);
   await p.click(r.x, r.y);
@@ -526,12 +526,12 @@ async function strayTagScenario(browser: Browser) {
   await s.close();
 }
 
-/** Parts marked data-sw-noedit: never editable by hand, and clicking them says so. */
+/** Parts marked data-erga-noedit: never editable by hand, and clicking them says so. */
 async function noEditScenario(browser: Browser) {
   say("\nNo-edit parts");
   const s = await session(browser, "noedit", "index.html");
   const { p, F } = s;
-  check("a no-edit section has no editable text", await p.eval<boolean>(`[...${F}.querySelectorAll(".fixed h2, .fixed p")].every((e) => !e.hasAttribute("data-sw-id") && !e.isContentEditable)`));
+  check("a no-edit section has no editable text", await p.eval<boolean>(`[...${F}.querySelectorAll(".fixed h2, .fixed p")].every((e) => !e.hasAttribute("data-erga-id") && !e.isContentEditable)`));
   check("a no-edit span inside a paragraph is fenced off", await p.eval<boolean>(`${F}.querySelector(".free").isContentEditable && !${F}.querySelector(".count").isContentEditable`));
   const before = await s.source();
   const r = await s.rectOf(".fixed p", 0.3);

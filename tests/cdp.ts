@@ -132,7 +132,7 @@ export class Page {
     await this.send("Runtime.enable");
     await this.send("Page.enable");
     // The page editor's timers run this much faster (src/page/editor.ts, `ms`); kept across reloads.
-    if (opts.timescale) await this.send("Page.addScriptToEvaluateOnNewDocument", { source: `window.__swTimescale = ${opts.timescale}` });
+    if (opts.timescale) await this.send("Page.addScriptToEvaluateOnNewDocument", { source: `window.__ergaTimescale = ${opts.timescale}` });
     await this.send("Emulation.setDeviceMetricsOverride", { width: opts.width ?? 1300, height: opts.height ?? 860, deviceScaleFactor: opts.scale ?? 1, mobile: false });
     await this.send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-color-scheme", value: opts.dark ? "dark" : "light" }] });
     await this.send("Emulation.setFocusEmulationEnabled", { enabled: true });
