@@ -29,6 +29,11 @@ export function tab(p: Page) {
       const r = await p.eval<{ a: number; b: number; y: number }>(`(() => { const el = ${F}.querySelector(${JSON.stringify(selector)}); el.scrollIntoView({ block: "center" }); const t = el.firstChild; const rg = ${F}.createRange(); rg.setStart(t, 0); rg.setEnd(t, ${n}); const r = rg.getBoundingClientRect(); const f = document.getElementById("frame").getBoundingClientRect(); return { a: f.left + r.left + 1, b: f.left + r.right, y: f.top + r.top + r.height / 2 }; })()`);
       await p.drag(r.a, r.y, r.b, r.y);
     },
+    /** Drags across all of an element's text, from its first character to its last. */
+    async selectAllOf(selector: string) {
+      const r = await p.eval<{ a: number; ay: number; b: number; by: number }>(`(() => { const el = ${F}.querySelector(${JSON.stringify(selector)}); el.scrollIntoView({ block: "center" }); const rg = ${F}.createRange(); rg.selectNodeContents(el); const rs = [...rg.getClientRects()].filter((r) => r.width), first = rs[0], last = rs[rs.length - 1]; const f = document.getElementById("frame").getBoundingClientRect(); return { a: f.left + first.left + 1, ay: f.top + first.top + first.height / 2, b: f.left + last.right, by: f.top + last.top + last.height / 2 }; })()`);
+      await p.drag(r.a, r.ay, r.b, r.by);
+    },
     /** Added text (the highlights, by name) and removed text (the notches' hover text). */
     marks: () => p.eval<{ added: string[]; gone: string[]; names: string[] }>(`(() => { const w = document.getElementById("frame").contentWindow; const added = [], names = []; for (const [name, h] of w.CSS.highlights) { if (!/^erga-(add|a\\d+)-\\d$/.test(name)) continue; for (const r of h) { added.push(r.toString()); names.push(name); } } return { added, names, gone: [...${F}.querySelectorAll("erga-del erga-tip")].map((e) => e.textContent) }; })()`),
   };

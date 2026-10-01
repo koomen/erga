@@ -40,9 +40,9 @@ per-document host as the local server (`host.ts`), agent included.
     bun run dev:worker              # the Worker locally (needs .dev.vars, below)
     bun run deploy                  # build and deploy with the cf CLI
 
-Secrets are set with `bunx cf workers secrets update`: `GITHUB_CLIENT_ID` and
-`GITHUB_CLIENT_SECRET` (a GitHub OAuth app whose callback is
-`https://erga.dev/auth/github/callback`), `SESSION_SECRET` (any long random
+Secrets are set with `bunx cf workers secrets update`: `GITHUB_CLIENT_SECRET`
+(for the GitHub OAuth app whose client ID is in `cloudflare.config.ts`, with
+the callback `https://erga.dev/auth/github/callback`), `SESSION_SECRET` (any long random
 string) and `ANTHROPIC_API_KEY`. Locally they come from `.dev.vars`, where
 `DEV_LOGIN=<login>` signs you in without GitHub (on localhost only) and
 `ERGA_AGENT_MODEL=script` swaps in the scripted agent. The multiplayer suite

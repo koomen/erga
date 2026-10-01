@@ -21,7 +21,7 @@ export default defineConfig({
       DOCS: bindings.durableObject({ worker: "erga", exportName: "DocHost" }),
       ASSETS: bindings.assets(),
       ALLOWED_USERS: bindings.text("koomen,dsiroker"),
-      GITHUB_CLIENT_ID: bindings.secret(),
+      GITHUB_CLIENT_ID: bindings.text("Ov23ctkY7oLarHcPA97b"),
       GITHUB_CLIENT_SECRET: bindings.secret(),
       SESSION_SECRET: bindings.secret(),
       ANTHROPIC_API_KEY: bindings.secret(),

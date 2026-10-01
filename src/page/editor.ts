@@ -20,7 +20,7 @@ import { EditorState, EditorSelection, type SelectionRange, Transaction, MapMode
 import { undo, redo, isolateHistory } from "@codemirror/commands";
 import { insertNewlineContinueMarkup, deleteMarkupBackward } from "@codemirror/lang-markdown";
 import * as M from "./manuscript";
-import { analyzeMarkdown, escapeMarkdownText } from "./markdown";
+import { analyzeMarkdown, escapeMarkdownText, parseMarkdown, type Node as MdNode } from "./markdown";
 import { changesBetween } from "./merge";
 
 export type Kind = "html" | "md";
@@ -102,6 +102,10 @@ export type InlineStyle = "strong" | "em" | "code";
 
 const STYLE_TAGS: Record<InlineStyle, string[]> = { strong: ["strong", "b"], em: ["em", "i"], code: ["code"] };
 const STYLE_MARKS: Record<InlineStyle, string> = { strong: "**", em: "*", code: "`" };
+/** Inline elements that only style text, which clearing formatting takes off. */
+const FORMAT_TAGS = new Set(["strong", "b", "em", "i", "code", "a", "u", "s", "strike", "del", "ins", "mark", "small", "sub", "sup", "kbd"]);
+/** Markdown's styled spans, each between a pair of marks. */
+const MD_STYLED = new Set(["Emphasis", "StrongEmphasis", "Strikethrough", "InlineCode"]);
 
 interface Analysis { units: M.Unit[]; html: string }
 
@@ -741,6 +745,7 @@ export class PageEditor {
     else if (mod && !e.altKey && !e.shiftKey && key == "b") handled = this.styleKey("strong");
     else if (mod && !e.altKey && !e.shiftKey && key == "i") handled = this.styleKey("em");
     else if (mod && !e.altKey && !e.shiftKey && key == "e") handled = this.styleKey("code");
+    else if (mod && !e.altKey && !e.shiftKey && key == "\\") { const why = this.clearStyles(); if (why) this.config.onNotice?.(why); handled = true; }
     else if (mod && !e.altKey && !e.shiftKey && key == "a") handled = this.selectAll();
     if (handled) {
       e.preventDefault();
@@ -1225,6 +1230,108 @@ export class PageEditor {
     const set = this.state.changes(changes);
     this.dispatch({ changes: set, selection: EditorSelection.single(set.mapPos(sel.from, 1), set.mapPos(sel.to, -1)), userEvent: "input.format" });
     return null;
+  }
+
+  /**
+   * Clear formatting: takes every inline style (bold, italic, code, links and
+   * the other styling elements) off the selection, splitting the ones it only
+   * partly covers, and turns headings it touches into paragraphs. Returns
+   * null when done, or why it couldn't be done.
+   */
+  clearStyles(): string | null {
+    const { segments, why } = this.styleSegments();
+    if (why) return why;
+    const src = this.state.doc.toString();
+    const sel = this.state.selection.main;
+    // The selection within each paragraph it touches.
+    const spans = new Map<M.Unit, { from: number; to: number }>();
+    for (const g of segments) {
+      const r = spans.get(g.u);
+      spans.set(g.u, r ? { from: Math.min(r.from, g.from), to: Math.max(r.to, g.to) } : { from: g.from, to: g.to });
+    }
+    const { changes, inserts } = this.kind == "md" ? this.clearMarkdown(src, spans) : this.clearHtml(src, spans);
+    // Tags closed at one place close innermost first; tags reopened open outermost first.
+    inserts.sort((a, b) => a.at - b.at || a.order - b.order);
+    const all = [...changes, ...inserts.map((x) => ({ from: x.at, insert: x.insert }))];
+    if (!all.length) return null;
+    const set = this.state.changes(all);
+    if (this.kind == "html") {
+      const after = set.apply(this.state.doc).toString();
+      for (const u of spans.keys()) {
+        if (!M.balanced(after, set.mapPos(u.from, -1), set.mapPos(u.to, 1))) return "That selection crosses other markup; select text inside it, or around all of it.";
+      }
+    }
+    this.dispatch({ changes: set, selection: EditorSelection.single(set.mapPos(sel.from, 1), set.mapPos(sel.to, -1)), userEvent: "input.format" });
+    return null;
+  }
+
+  private clearHtml(src: string, spans: Map<M.Unit, { from: number; to: number }>) {
+    const changes: { from: number; to: number; insert?: string }[] = [];
+    const inserts: { at: number; insert: string; order: number }[] = [];
+    const hasText = (from: number, to: number) => /\S/.test(src.slice(from, to).replace(/<[^>]*>/g, ""));
+    for (const [u, { from, to }] of spans) {
+      const walk = (node: M.ElementNode, depth: number) => {
+        for (const c of node.children) {
+          if (c.kind != "element" || c.selfClosing || c.closeFrom <= from || c.openTo >= to) continue;
+          if (FORMAT_TAGS.has(c.tag)) {
+            // Take the element off the selected stretch: drop a tag at an end the selection reaches, else close or reopen it there.
+            const s = Math.max(from, c.openTo), e = Math.min(to, c.closeFrom);
+            if (hasText(c.openTo, s)) inserts.push({ at: s, insert: `</${c.tag}>`, order: -depth });
+            else changes.push({ from: c.from, to: c.openTo });
+            if (hasText(e, c.closeFrom)) inserts.push({ at: e, insert: src.slice(c.from, c.openTo), order: depth });
+            else changes.push({ from: c.closeFrom, to: c.to });
+          }
+          walk(c, depth + 1);
+        }
+      };
+      if (u.node) walk(u.node, 0);
+      if (/^h[1-6]$/.test(u.tag) && /^<h[1-6]/i.test(src.slice(u.openFrom, u.openFrom + 3)) && /^<\/h[1-6]/i.test(src.slice(u.contentTo, u.contentTo + 4))) {
+        changes.push({ from: u.openFrom + 1, to: u.openFrom + 3, insert: "p" }, { from: u.contentTo + 2, to: u.contentTo + 4, insert: "p" });
+      }
+    }
+    return { changes, inserts };
+  }
+
+  private clearMarkdown(src: string, spans: Map<M.Unit, { from: number; to: number }>) {
+    const changes: { from: number; to: number; insert?: string }[] = [];
+    const inserts: { at: number; insert: string; order: number }[] = [];
+    const { tree, offset } = parseMarkdown(src);
+    const hasText = (from: number, to: number) => /[^\s*_~`]/.test(src.slice(from, to));
+    const headings = new Set<number>();
+    for (const { from, to } of spans.values()) {
+      const walk = (n: MdNode, depth: number) => {
+        for (const c of n.children) {
+          const cFrom = c.from + offset, cTo = c.to + offset;
+          if (cTo <= from || cFrom >= to) continue;
+          const marks = c.children.filter((k) => k.name.endsWith("Mark")).map((k) => ({ from: k.from + offset, to: k.to + offset }));
+          if (MD_STYLED.has(c.name) && marks.length >= 2) {
+            const open = marks[0], close = marks[marks.length - 1], mark = src.slice(open.from, open.to);
+            let s = Math.max(from, open.to), e = Math.min(to, close.from);
+            // A mark can't sit against a space on its inner side, so a split closes before the spaces and reopens after them.
+            if (hasText(open.to, s)) { while (/\s/.test(src[s - 1])) s--; inserts.push({ at: s, insert: mark, order: -depth }); }
+            else changes.push(open);
+            if (hasText(e, close.from)) { while (/\s/.test(src[e])) e++; inserts.push({ at: e, insert: mark, order: depth }); }
+            else changes.push(close);
+          } else if (c.name == "Link" && marks.length >= 2) {
+            // [text](url) becomes text.
+            changes.push(marks[0], { from: marks[1].from, to: cTo });
+          } else if (/^ATXHeading/.test(c.name) && !headings.has(cFrom)) {
+            headings.add(cFrom);
+            const lead = marks[0];
+            if (lead) { let end = lead.to; while (src[end] == " " || src[end] == "\t") end++; changes.push({ from: lead.from, to: end }); }
+            const trail = marks.length > 1 ? marks[marks.length - 1] : null;
+            if (trail) { let start = trail.from; while (start > lead.to && /[ \t]/.test(src[start - 1])) start--; changes.push({ from: start, to: trail.to }); }
+          } else if (/^SetextHeading/.test(c.name) && !headings.has(cFrom) && marks.length) {
+            headings.add(cFrom);
+            const line = marks[marks.length - 1];
+            changes.push({ from: src.lastIndexOf("\n", line.from - 1), to: line.to });
+          }
+          walk(c, depth + 1);
+        }
+      };
+      walk(tree, 0);
+    }
+    return { changes, inserts };
   }
 
   /** The link the selection is in, if any (for the toolbar). */

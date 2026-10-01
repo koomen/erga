@@ -688,7 +688,7 @@ Once you've read it, await further instructions.`;
   // ---------------------------------------------------------------- style bar
 
   // Select text in the page and a small bar floats above it: bold, italic,
-  // code, link. Buttons that can't apply say why (title), and so does a click.
+  // code, link, clear formatting. Buttons that can't apply say why (title), and so does a click.
   const fmt = $("fmt");
   const fmtLink = $("fmt-link") as HTMLInputElement;
   let pointerDown = false;
@@ -742,6 +742,11 @@ Once you've read it, await further instructions.`;
       if (why) explain(why);
       queueFmt();
     } else if (b.dataset.act == "link") openLink();
+    else if (b.dataset.act == "clear") {
+      const why = page.clearStyles();
+      if (why) explain(why);
+      queueFmt();
+    }
   });
   fmtLink.addEventListener("keydown", (e) => {
     if (e.key == "Enter") {

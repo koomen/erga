@@ -60,6 +60,12 @@ export function analyzeMarkdown(src: string, caret = -1): MarkdownAnalysis {
   return { units: r.units, html: r.out, frontMatter: fm };
 }
 
+/** The document's syntax tree; its positions are offsets into the body after the front matter, `offset` characters in. */
+export function parseMarkdown(src: string): { tree: Node; offset: number } {
+  const offset = frontMatterLength(src);
+  return { tree: fromTree(markdownLanguage.parser.parse(src.slice(offset))), offset };
+}
+
 function frontMatterLength(src: string): number {
   if (!src.startsWith("---\n") && !src.startsWith("---\r\n")) return 0;
   const m = /\n(---|\.\.\.)[ \t]*(\r?\n|$)/.exec(src.slice(3));

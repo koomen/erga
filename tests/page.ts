@@ -282,6 +282,18 @@ async function mdScenario(browser: Browser) {
   await Bun.sleep(100);
   check("table cell edit", /\| Ada\s+Lovelace\s*\| Math\s*\|/.test(await s.source()), (await s.source()).match(/\| Ada.*\n/)?.[0]);
 
+  // Clear formatting: marks and link syntax go, and a heading becomes a paragraph.
+  await s.selectAllOf("p:nth-of-type(1)");
+  await p.key("\\", MOD.Meta);
+  await Bun.sleep(150);
+  check("⌘\\ in Markdown drops the marks", (await s.source()).includes("A first paragraph with emphasis, bold\\*, code and a link.\nIt continues"), (await s.source()).match(/A first.*\n/)?.[0]);
+  await s.selectAllOf("h2");
+  await p.key("\\", MOD.Meta);
+  await Bun.sleep(150);
+  check("and a heading's #s", (await s.source()).includes("\nThings to do\n"), (await s.source()).match(/.*Things to do.*/)?.[0]);
+  await p.key("z", MOD.Meta); await p.key("z", MOD.Meta);
+  await Bun.sleep(150);
+
   await s.clickEnd("h1");
   await Bun.sleep(300);
   await s.clickEnd("h1");
@@ -350,6 +362,30 @@ async function formatScenario(browser: Browser) {
   check("the bar's italic button works", /<em>/.test((await s.source()).match(/<li>A[\s\S]*?<\/li>/)?.[0] ?? ""));
   await p.key("z", MOD.Meta); await p.key("z", MOD.Meta);
   await Bun.sleep(150);
+
+  // Clear formatting.
+  const original = await s.source();
+  await s.selectAllOf("p.lede");
+  await p.key("\\", MOD.Meta);
+  await Bun.sleep(150);
+  check("⌘\\ takes every style off the selection", (await s.source()).includes('<p class="lede">Build cool things &amp; ship them. This paragraph has a link and code.</p>'), (await s.source()).match(/<p class="lede">.*<\/p>/)?.[0]);
+  await p.key("z", MOD.Meta);
+  await Bun.sleep(150);
+  const ew = await p.eval<{ a: number; b: number; y: number }>(`(() => { const d = ${F}; const t = [...d.querySelectorAll("li")][1].querySelector("strong").firstChild; const rg = d.createRange(); rg.setStart(t, 1); rg.setEnd(t, 3); const r = rg.getBoundingClientRect(); const f = document.getElementById("frame").getBoundingClientRect(); return { a: f.left + r.left + 1, b: f.left + r.right - 1, y: f.top + r.top + r.height / 2 }; })()`);
+  await p.drag(ew.a, ew.y, ew.b, ew.y);
+  await until(() => p.eval<boolean>(`!document.getElementById("fmt").hidden`));
+  await p.eval(`document.querySelector("#fmt [data-act=clear]").click()`);
+  await Bun.sleep(150);
+  check("the bar's clear button splits an element it only partly covers", (await s.source()).includes("<li>A <strong>n</strong>ew editor</li>"), (await s.source()).match(/<li>A[\s\S]*?<\/li>/)?.[0]);
+  await p.key("z", MOD.Meta);
+  await Bun.sleep(150);
+  await s.selectAllOf("h2");
+  await p.key("\\", MOD.Meta);
+  await Bun.sleep(150);
+  check("clearing a heading makes it a paragraph", (await s.source()).includes("<p>What changed</p>"), (await s.source()).match(/<(h2|p)>What[\s\S]*?<\/\w+>/)?.[0]);
+  await p.key("z", MOD.Meta);
+  await Bun.sleep(150);
+  check("and each clear is one undo step", (await s.source()) == original);
 
   // Markdown as you type.
   await s.clickEnd("h1");
