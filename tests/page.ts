@@ -693,7 +693,7 @@ async function voiceScenario(browser: Browser) {
   await p.eval(`document.getElementById("agent-voice").click()`);
   v = await st();
   check("leaving voice mode keeps what wasn't sent in the box, to edit", v.on == "false" && v.input == "thanks" && !v.readOnly && v.sent.length == 2, v);
-  await Bun.sleep(T(1500) + 100);
+  await Bun.sleep(T(1000) + 100);
   check("and doesn't send it later", (await st()).sent.length == 2);
 
   await p.eval(`document.getElementById("agent-voice").click()`);

@@ -1168,7 +1168,7 @@ Once you've read it, await further instructions.`;
     onend: (() => void) | null;
   };
   const Speech = ((window as any).SpeechRecognition ?? (window as any).webkitSpeechRecognition) as (new () => Recognition) | undefined;
-  const PAUSE_MS = 1500;
+  const PAUSE_MS = 1000;
   const agentVoice = $("agent-voice") as HTMLButtonElement;
   agentVoice.hidden = !Speech;
   function listenVoice(before: string) {
