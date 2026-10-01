@@ -9,10 +9,20 @@ run `bun install` before building).
 It is multiplayer: people and their agents edit one page together (see
 [Together](#together)).
 
-## Page editor
+## Getting started
 
-    bun open.ts ./path/to/site      # a folder with index.html or index.md
-    bun open.ts ./notes/some.html   # or a single file
+With [Bun](https://bun.sh) 1.4 or later:
+
+    bun install
+    bun run example                 # opens example/index.md in the editor
+    bun start ./path/to/site        # or any folder with index.html or index.md
+    bun start ./notes/some.html     # or a single file
+
+`bun start` rebuilds `page.js` and runs the host (`bun open.ts`, which takes the
+same arguments; `bun open.ts --help` lists them). For the agent, copy
+`.env.example` to `.env` and add an `ANTHROPIC_API_KEY`.
+
+## Page editor
 
 The host (`open.ts`, Effect on Bun) serves the editor at `http://127.0.0.1:4400/`
 and opens it. The document's folder is served at `/doc/`, so its scripts,
