@@ -67,3 +67,14 @@ test("adding or removing letters in a word marks just those letters", () => {
   expect(hunks("<p>undo it</p>", "<p>redo undo it</p>")).toEqual(["->redo "]);
   expect(hunks("<p>do it</p>", "<p>undo it</p>")).toEqual(["->un"]);
 });
+
+test("an insertion already at a word boundary stays exactly where it was made", () => {
+  // Sliding it along repeated characters (here the "⟧") would put it inside
+  // the neighbouring text: same result on its own, but a concurrent deletion
+  // of that neighbour, once merged, would cut a piece off the insertion.
+  const at = (a: string, b: string) => { let out = -1; changesBetween(a, b).iterChanges((fa) => { out = fa; }); return out; };
+  expect(at("cod⟦p1.36⟧e", "cod⟦p1.36⟧⟦pub.87⟧e")).toBe("cod⟦p1.36⟧".length);
+  expect(at("a (one) b", "a (one)(two) b")).toBe("a (one)".length);
+  // Mid-word it still moves to a boundary.
+  expect(at("<p>undo it</p>", "<p>redo undo it</p>")).toBe(3);
+});

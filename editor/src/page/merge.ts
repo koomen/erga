@@ -56,8 +56,11 @@ function tidy(a: string, h: { from: number; to: number; insert: string }, lo: nu
     !(isWord(before) && isWord(first)) && !(isWord(last) && isWord(after));
 
   if (!insert && from < to) {
-    // A deletion: try every equivalent position, leftmost first.
+    // A deletion: where it is, if that's at word boundaries; otherwise every
+    // equivalent position, leftmost first. (Never moved needlessly: when this
+    // change is merged with others, which characters it sits between matters.)
     const minimal = { from, to, insert };
+    if (clean(a[from - 1], a[from], a[to - 1], a[to])) return minimal;
     while (from > lo && a[from - 1] == a[to - 1]) { from--; to--; }
     for (let f = from, t = to; ; f++, t++) {
       if (clean(a[f - 1], a[f], a[t - 1], a[t])) return { from: f, to: t, insert: "" };
@@ -68,6 +71,7 @@ function tidy(a: string, h: { from: number; to: number; insert: string }, lo: nu
   if (insert && from == to) {
     // An insertion, likewise.
     const minimal = { from, to, insert };
+    if (clean(a[from - 1], insert[0], insert[insert.length - 1], a[from])) return minimal;
     while (from > lo && a[from - 1] == insert[insert.length - 1]) { from--; insert = a[from] + insert.slice(0, -1); }
     for (let f = from, ins = insert; ; f++) {
       if (clean(a[f - 1], ins[0], ins[ins.length - 1], a[f])) return { from: f, to: f, insert: ins };
