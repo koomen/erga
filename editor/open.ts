@@ -2,7 +2,7 @@
 // Opens a page from disk in the page editor, as a document room that people
 // and their agents edit together.
 //
-//   bun wip/editor/open.ts <file-or-directory> [--port 4400] [--no-open]
+//   bun editor/open.ts <file-or-directory> [--port 4400] [--no-open]
 //
 // A directory must hold index.html or index.md. The host turns the folder
 // into one document room (room.ts): a shared Yjs doc of its text files that
@@ -12,7 +12,7 @@
 // files from the room (so a page always loads the latest shared version)
 // and everything else from disk.
 //
-// Each person gets their own agent session (agent.ts) when wip/editor/.env
+// Each person gets their own agent session (agent.ts) when editor/.env
 // holds an API key: a private transcript, shared by that person's tabs, and
 // a replica of the shared doc it edits as another participant. A tab names
 // its person in ?user=; the agent's progress comes back on that person's
@@ -36,7 +36,7 @@ import * as Stream from "effect/Stream";
 import * as Console from "effect/Console";
 import * as Chunk from "effect/Chunk";
 import * as Schedule from "effect/Schedule";
-import { externalGuide, loadConfig, startSession, type AgentSession } from "./agent";
+import { MODELS, externalGuide, isModelChoice, loadConfig, startSession, type AgentSession } from "./agent";
 import { Room, digest, type FileStore, type StateStore } from "./room";
 import * as Socket from "@effect/platform/Socket";
 import type { ViewRequest, ViewResult } from "./src/page/agent-log";
@@ -59,6 +59,7 @@ const ViewBody = Schema.Struct({
   note: Schema.optional(Schema.String),
   error: Schema.optional(Schema.String),
 });
+const ModelBody = Schema.Struct({ model: Schema.String });
 const ShareBody = Schema.Struct({ rotate: Schema.optional(Schema.Boolean) });
 const PromptBody = Schema.Struct({ text: Schema.String, context: Schema.optional(Schema.NullOr(Schema.String)), after: Schema.optional(Schema.String) });
 
@@ -115,7 +116,7 @@ const program = Effect.gen(function* () {
   const portIdx = args.indexOf("--port");
   const port = portIdx >= 0 ? Number(args.splice(portIdx, 2)[1]) : 4400;
   const target = args[0];
-  if (!target || !Number.isFinite(port)) return yield* new UsageError({ message: "usage: bun wip/editor/open.ts <file-or-directory> [--port N] [--no-open]" });
+  if (!target || !Number.isFinite(port)) return yield* new UsageError({ message: "usage: bun editor/open.ts <file-or-directory> [--port N] [--no-open]" });
 
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -252,8 +253,14 @@ const program = Effect.gen(function* () {
     return { id: name.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-|-$/g, "") || "anon", name };
   };
   const requestUrl = HttpServerRequest.HttpServerRequest.pipe(Effect.map((r) => new URL(r.url, "http://localhost")));
+  /** The session's model, and what it can switch to (nothing when scripted). */
+  const modelState = (s: AgentSession) => ({
+    model: s.model,
+    choice: s.modelChoice,
+    models: s.modelChoice == null ? [] : Object.entries(MODELS).map(([id, m]) => ({ id, label: m.label })),
+  });
   const agentState = (s: AgentSession | null, err?: unknown) => s
-    ? (agentOff ? { enabled: false, reason: agentOff, log: s.log() } : { enabled: true, model: s.model, log: s.log() })
+    ? (agentOff ? { enabled: false, reason: agentOff, log: s.log() } : { enabled: true, ...modelState(s), log: s.log() })
     : { enabled: false, reason: `the agent did not start: ${String((err as Error).message ?? err)}` };
 
   const router = HttpRouter.empty.pipe(
@@ -339,6 +346,18 @@ const program = Effect.gen(function* () {
         ? HttpServerResponse.unsafeJson({ ok: true, content: run.right })
         : HttpServerResponse.unsafeJson({ ok: false, error: run.left }, { status: 400 });
     })),
+    // Switch the person's agent to another model, from its next turn; their other tabs follow.
+    HttpRouter.post("/api/agent/model", Effect.gen(function* () {
+      const body = yield* HttpServerRequest.schemaBodyJson(ModelBody);
+      const user = userOf(yield* requestUrl);
+      const s = yield* session(user);
+      if (agentOff || s._tag != "Right") return HttpServerResponse.unsafeJson({ ok: false, reason: agentOff || "the agent did not start" }, { status: 503 });
+      if (!isModelChoice(body.model)) return HttpServerResponse.unsafeJson({ ok: false, reason: `there's no model "${body.model}"` }, { status: 400 });
+      if (!s.right.setModel(body.model)) return HttpServerResponse.unsafeJson({ ok: false, reason: "this agent's model can't be changed" }, { status: 409 });
+      const state = modelState(s.right);
+      sendTo(user.id, { type: "model", ...state });
+      return HttpServerResponse.unsafeJson({ ok: true, ...state });
+    })),
     HttpRouter.post("/api/agent/view", Effect.gen(function* () {
       const body = yield* HttpServerRequest.schemaBodyJson(ViewBody);
       const { id, ...result } = body;
@@ -395,7 +414,7 @@ const program = Effect.gen(function* () {
   const server = Layer.unwrapEffect(
     Effect.gen(function* () {
       const rel = path.relative(process.cwd(), doc.path);
-      yield* Console.log(`\n  editing ${doc.kind === "md" ? "Markdown" : "HTML"}: ${rel.startsWith("..") ? doc.path : rel || doc.name}\n  ${url}   (another person: ${url}?user=Ada)\n  agent: ${"missing" in cfg ? `off (${agentOff})` : `${cfg.model}${cfg.speed == "fast" ? " (fast)" : ""}`}\n`);
+      yield* Console.log(`\n  editing ${doc.kind === "md" ? "Markdown" : "HTML"}: ${rel.startsWith("..") ? doc.path : rel || doc.name}\n  ${url}   (another person: ${url}?user=Ada)\n  agent: ${"missing" in cfg ? `off (${agentOff})` : `${cfg.model == "script" ? "script" : MODELS[cfg.model].label} to start (each person can switch)`}\n`);
       if (!noOpen) Bun.spawn(["open", url], { stdout: "ignore", stderr: "ignore" });
       return HttpServer.serve(router).pipe(Layer.provide(BunHttpServer.layer({ port, idleTimeout: 0 })));
     }),

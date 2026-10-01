@@ -8,8 +8,8 @@ collaboration, sync or backend here. It sits outside the CI gate, like `notes/`.
 
 Open `index.html` in a browser (a `file://` URL works). Or serve the folder:
 
-    bunx serve wip/editor
-    scratchwork dev wip/editor
+    bunx serve editor
+    scratchwork dev editor
 
 Everything loads from this folder, with no network requests. The Inter web font
 is self-hosted in `fonts/` (the variable woff2 files from Google Fonts, split by

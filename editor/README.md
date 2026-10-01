@@ -17,8 +17,8 @@ together (see [Together](#together)). Both sit outside the CI gate, like `notes/
 
 ## Page editor
 
-    bun wip/editor/open.ts ./path/to/site      # a folder with index.html or index.md
-    bun wip/editor/open.ts ./notes/some.html   # or a single file
+    bun editor/open.ts ./path/to/site      # a folder with index.html or index.md
+    bun editor/open.ts ./notes/some.html   # or a single file
 
 The host (`open.ts`, Effect on Bun) serves the editor at `http://127.0.0.1:4400/`
 and opens it. The document's folder is served at `/doc/`, so its scripts,
@@ -170,14 +170,21 @@ element by CSS selector, plus any errors the page's scripts threw. It asks the
 agent's own person's tabs, and the tab waits until it has every edit the agent
 had made when it asked (a Yjs state vector). No browser runs on the server:
 whoever has the editor open is the agent's eyes, and with none of their tabs
-open the tool says so. The panel shows a thumbnail of what it saw. It defaults to Claude Opus 5.5 in fast mode at medium effort;
-set that up with
+open the tool says so. The panel shows a thumbnail of what it saw.
 
-    cp wip/editor/.env.example wip/editor/.env   # then add ANTHROPIC_API_KEY
+The agent runs on Claude Sonnet 5.5 by default, at medium effort; the model
+name in the panel's header is a menu that switches it to Claude Opus 5.5 in
+fast mode and back. The choice is per person (all their tabs follow, and a
+reload keeps it) and applies from the next message, so a running turn
+finishes on the model it started with. `SCRATCHWORK_AGENT_MODEL=opus-fast`
+starts everyone on Opus instead. Set it up with
+
+    cp editor/.env.example editor/.env   # then add ANTHROPIC_API_KEY
 
 (`ANTHROPIC_API_KEY` in the environment works too). pi's model catalogue
-predates Opus 5.5, so `agent.ts` describes the model itself and rewrites each
-request for adaptive thinking, effort and `speed: "fast"`.
+predates the 5.5 models, so `agent.ts` describes them itself (`MODELS`) and
+rewrites each request for adaptive thinking, effort and, on Opus fast,
+`speed: "fast"`.
 
 The agent's edits reach the page the way anyone's do: as changes from the
 room. The page patches only the units those changes touch, and marks exactly
@@ -292,8 +299,8 @@ back, merging edits from disk, the agent's exact-match edits and attribution.
 
 Open `index.html` in a browser (a `file://` URL works). Or serve the folder:
 
-    bunx serve wip/editor
-    scratchwork dev wip/editor
+    bunx serve editor
+    scratchwork dev editor
 
 Everything loads from this folder, with no network requests. The Inter web font
 is self-hosted in `fonts/` (the variable woff2 files from Google Fonts, split by
@@ -307,7 +314,7 @@ versions in a temp dir, so nothing lands in the repo.
 
 `./test.sh md` runs its tests (in parallel, across a few headless Chromes, each
 with its own storage). The browser suites run each scripted interaction
-against both this editor and the CodeMirror version kept in `wip/editor-cm/`
+against both this editor and the CodeMirror version kept in `editor-cm/`
 as the reference:
 
 - `bun test tests/`: the Markdown parser and the change-set and undo code,

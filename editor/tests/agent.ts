@@ -3,7 +3,7 @@
 // the page, one to its stylesheet), and checks that they reach the open page
 // through the document room without a reload, and the disk after it, that
 // the agent shows up as a participant, and that its last change can be undone. Calls the real API, so it needs
-// ANTHROPIC_API_KEY (in wip/editor/.env or the environment) and costs a little.
+// ANTHROPIC_API_KEY (in editor/.env or the environment) and costs a little.
 //   bun tests/agent.ts [--keep]
 
 import { Browser, MOD, ROOT } from "./cdp";

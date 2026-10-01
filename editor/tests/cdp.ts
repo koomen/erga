@@ -7,7 +7,7 @@ import { join } from "path";
 
 const CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 
-export const ROOT = new URL("../..", import.meta.url).pathname; // wip/
+export const ROOT = new URL("../..", import.meta.url).pathname; // repo root
 /**
  * Where scripts that exist to take pictures (screenshots.ts, smoke.ts,
  * multi-shot.ts) put them: a temp folder, printed when written, so nothing

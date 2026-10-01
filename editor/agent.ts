@@ -14,12 +14,13 @@
 // This module is the Promise edge: pi's SDK is async, and open.ts wraps
 // what it exposes in Effect.
 //
-// Configuration comes from wip/editor/.env (see .env.example; SCRATCHWORK_AGENT_ENV_FILE
+// Configuration comes from editor/.env (see .env.example; SCRATCHWORK_AGENT_ENV_FILE
 // points elsewhere), falling back to the environment. The key lives only here,
 // in the host:
 //   ANTHROPIC_API_KEY          required
-//   SCRATCHWORK_AGENT_MODEL    default claude-opus-5-5
-//   SCRATCHWORK_AGENT_SPEED    "fast" (default) or "standard"
+//   SCRATCHWORK_AGENT_MODEL    the model a session starts on: sonnet (default,
+//                              Claude Sonnet 5.5) or opus-fast (Claude Opus 5.5
+//                              in fast mode); each person can switch in the panel
 //   SCRATCHWORK_AGENT_EFFORT   low | medium (default) | high | xhigh | max
 //
 // SCRATCHWORK_AGENT_MODEL=script swaps the model for a scripted one (see
@@ -38,10 +39,19 @@ import { agentName, colorFor, files, introduce, stamp, stateVector, type Author 
 import { joinLocal, type Room } from "./room";
 import { YjsWorkspace, WorkspaceError, cleanPath, globToRegExp, type Workspace } from "./workspace";
 
+/** The models a person can switch between, by key; prices per million tokens. */
+export const MODELS = {
+  sonnet: { id: "claude-sonnet-5-5", label: "Sonnet 5.5", fast: false, cost: { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 } },
+  "opus-fast": { id: "claude-opus-5-5", label: "Opus 5.5 fast", fast: true, cost: { input: 8, output: 40, cacheRead: 0.8, cacheWrite: 10 } },
+} as const;
+export type ModelChoice = keyof typeof MODELS;
+export const DEFAULT_MODEL: ModelChoice = "sonnet";
+export const isModelChoice = (s: string): s is ModelChoice => Object.hasOwn(MODELS, s);
+
 export interface AgentConfig {
   apiKey: string;
-  model: string;
-  speed: "fast" | "standard";
+  /** The model sessions start on, or the scripted test model. */
+  model: ModelChoice | "script";
   effort: string;
 }
 
@@ -60,46 +70,42 @@ export async function loadConfig(envPath: string): Promise<AgentConfig | { missi
   }
   const get = (k: string) => env[k] || process.env[k] || "";
   const apiKey = get("ANTHROPIC_API_KEY");
-  if (get("SCRATCHWORK_AGENT_MODEL") == "script") return { apiKey: "", model: "script", speed: "standard", effort: "medium" };
-  if (!apiKey) return { missing: `ANTHROPIC_API_KEY is not set (copy wip/editor/.env.example to wip/editor/.env)` };
-  return {
-    apiKey,
-    model: get("SCRATCHWORK_AGENT_MODEL") || "claude-opus-5-5",
-    speed: get("SCRATCHWORK_AGENT_SPEED") == "standard" ? "standard" : "fast",
-    effort: get("SCRATCHWORK_AGENT_EFFORT") || "medium",
-  };
+  const model = get("SCRATCHWORK_AGENT_MODEL") || DEFAULT_MODEL;
+  if (model == "script") return { apiKey: "", model: "script", effort: "medium" };
+  if (!apiKey) return { missing: `ANTHROPIC_API_KEY is not set (copy editor/.env.example to editor/.env)` };
+  if (!isModelChoice(model)) return { missing: `SCRATCHWORK_AGENT_MODEL is "${model}"; it should be one of ${Object.keys(MODELS).join(", ")}` };
+  return { apiKey, model, effort: get("SCRATCHWORK_AGENT_EFFORT") || "medium" };
 }
 
 /**
- * pi's built-in catalogue predates Claude Opus 5.5, so the model is described
- * here. Fast mode is the `fast-mode-2026-02-01` beta plus `speed: "fast"` in the
- * request body (added in `patchPayload`); prices are per million tokens.
+ * pi's built-in catalogue predates the 5.5 models, so they're described here.
+ * Fast mode (Opus only) is the `fast-mode-2026-02-01` beta plus `speed: "fast"`
+ * in the request body (added in `patchPayload`).
  */
-function describeModel(cfg: AgentConfig): Model<"anthropic-messages"> {
-  const fast = cfg.speed == "fast";
-  const mult = fast ? 2 : 1;
+function describeModel(choice: ModelChoice): Model<"anthropic-messages"> {
+  const m = MODELS[choice];
   return {
-    id: cfg.model,
-    name: `${cfg.model}${fast ? " (fast)" : ""}`,
+    id: m.id,
+    name: m.label,
     api: "anthropic-messages",
     provider: "anthropic",
     baseUrl: "https://api.anthropic.com",
     reasoning: true,
     input: ["text", "image"],
-    cost: { input: 4 * mult, output: 20 * mult, cacheRead: 0.2 * mult, cacheWrite: 5 * mult },
+    cost: { ...m.cost },
     contextWindow: 1_000_000,
     maxTokens: 128_000,
-    headers: fast ? { "anthropic-beta": "fast-mode-2026-02-01" } : undefined,
+    headers: m.fast ? { "anthropic-beta": "fast-mode-2026-02-01" } : undefined,
   };
 }
 
 /**
  * pi only knows adaptive thinking for the 4.6/4.7 models and would send a
- * budget (or `disabled`), both of which Opus 5.5 rejects. Rewrite the request:
- * adaptive thinking with summaries (so the panel can show them), explicit
- * effort, and fast mode.
+ * budget (or `disabled`), both of which the 5.5 models reject. Rewrite the
+ * request: adaptive thinking with summaries (so the panel can show them),
+ * explicit effort, and fast mode when the current model has it.
  */
-function patchPayload(cfg: AgentConfig) {
+function patchPayload(cfg: AgentConfig, current: () => ModelChoice) {
   return (payload: unknown) => {
     const p = payload as Record<string, unknown>;
     return {
@@ -107,7 +113,7 @@ function patchPayload(cfg: AgentConfig) {
       max_tokens: 64_000,
       thinking: { type: "adaptive", display: "summarized" },
       output_config: { ...(p.output_config as object | undefined), effort: cfg.effort },
-      ...(cfg.speed == "fast" ? { speed: "fast" } : {}),
+      ...(MODELS[current()].fast ? { speed: "fast" } : {}),
     };
   };
 }
@@ -336,6 +342,10 @@ export interface ToolSpec { name: string; description: string; parameters: unkno
 export interface AgentSession {
   /** The model's name, or null when the embedded agent is off (its tools still work). */
   readonly model: string | null;
+  /** The model it's on, of MODELS; null when off or scripted (nothing to switch). */
+  readonly modelChoice: ModelChoice | null;
+  /** Switches model from the next turn on (a running turn finishes on the old one). */
+  setModel(choice: ModelChoice): boolean;
   /** The transcript so far (for a tab that just loaded). */
   log(): Log;
   /** Sends a message; while a turn is running it steers the current one. */
@@ -388,7 +398,8 @@ export async function startSession(opts: SessionOptions): Promise<AgentSession> 
   const origin = { agent: owner.id }, undoOrigin = { agentUndo: owner.id };
   const undo = new Y.UndoManager(files(doc), { trackedOrigins: new Set([origin]), captureTimeout: 0 });
   const ws = new YjsWorkspace(doc, me, opts.canEdit, origin);
-  const model = cfg == null ? null : isScript(cfg) ? scriptModel() : describeModel(cfg);
+  let choice: ModelChoice | null = cfg == null || cfg.model == "script" ? null : cfg.model;
+  const model = cfg == null ? null : choice == null ? scriptModel() : describeModel(choice);
 
   const log = emptyLog();
   const listeners = new Set<(ev: LogEvent) => void>();
@@ -428,7 +439,7 @@ export async function startSession(opts: SessionOptions): Promise<AgentSession> 
   const agent = cfg && model ? new PiAgent({
     initialState: { systemPrompt: systemPrompt(opts.docName, opts.kind, owner.name), model, thinkingLevel: "medium", tools },
     getApiKey: () => cfg.apiKey || "none",
-    onPayload: isScript(cfg) ? undefined : patchPayload(cfg),
+    onPayload: isScript(cfg) ? undefined : patchPayload(cfg, () => choice ?? DEFAULT_MODEL),
   }) : null;
 
   agent?.subscribe((e: AgentEvent) => {
@@ -465,7 +476,14 @@ export async function startSession(opts: SessionOptions): Promise<AgentSession> 
   });
 
   return {
-    model: model?.name ?? null,
+    get model() { return agent?.state.model.name ?? null; },
+    get modelChoice() { return choice; },
+    setModel(next) {
+      if (!agent || choice == null) return false;
+      choice = next;
+      agent.state.model = describeModel(next);
+      return true;
+    },
     log: () => log,
     prompt(text, context) {
       emit({ t: "user", text });

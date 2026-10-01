@@ -139,7 +139,7 @@ interface DocInfo { name: string; path: string; kind: Kind; dir: string; user: s
     info = (await res.json()) as DocInfo;
   } catch (e) {
     $("welcome").hidden = false;
-    $("welcome").innerHTML = `<div><p>Nothing to edit here.</p><p>Open a page with <code>bun wip/editor/open.ts ./path/to/site</code></p></div>`;
+    $("welcome").innerHTML = `<div><p>Nothing to edit here.</p><p>Open a page with <code>bun editor/open.ts ./path/to/site</code></p></div>`;
     return;
   }
 
@@ -361,6 +361,7 @@ interface DocInfo { name: string; path: string; kind: Kind; dir: string; user: s
       let msg: { type?: string; ev?: LogEvent; id?: string; req?: ViewRequest } = {};
       try { msg = JSON.parse(String(ev.data)); } catch { return; }
       if (msg.type == "agent" && msg.ev) agentEvent(msg.ev);
+      else if (msg.type == "model") renderModel(msg as unknown as ModelState);
       else if (msg.type == "view" && msg.id) answerView(msg.id, msg.req ?? {});
     };
     // Events sent while the channel was down are gone; catch up from the transcript.
@@ -1202,19 +1203,43 @@ Once you've read it, await further instructions.`;
   });
   $("agent-close").addEventListener("click", () => toggleAgent(false));
   $("agent-fab").addEventListener("click", () => toggleAgent(true));
+  // Which model the agent runs on: a menu when there's a choice (Sonnet 5.5 or
+  // Opus 5.5 fast), plain text otherwise. The choice is per person, kept by the host.
+  interface ModelState { model: string | null; choice: string | null; models: { id: string; label: string }[] }
+  function renderModel(m: Partial<ModelState> | null) {
+    const agentModel = $("agent-model");
+    agentModel.textContent = "";
+    if (!m) { agentModel.textContent = "off"; return; }
+    if (!m.models?.length || !m.choice) { agentModel.textContent = m.model ?? ""; return; }
+    const sel = document.createElement("select");
+    sel.id = "agent-model-select";
+    sel.setAttribute("aria-label", "Model");
+    for (const o of m.models) sel.append(new Option(o.label, o.id, false, o.id == m.choice));
+    sel.title = "The model your agent runs on; a switch applies from your next message";
+    sel.addEventListener("change", async () => {
+      const want = sel.value;
+      const res = await fetch(api("/api/agent/model"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ model: want }), signal: AbortSignal.timeout(10_000) })
+        .then(async (r) => ({ ok: r.ok, body: (await r.json().catch(() => ({}))) as Partial<ModelState> & { reason?: string } }))
+        .catch(() => ({ ok: false, body: { reason: "the editor's host didn't answer" } as Partial<ModelState> & { reason?: string } }));
+      if (!res.ok) { sel.value = m.choice!; showHint(`Couldn't switch models: ${res.body.reason ?? "the host refused"}.`); return; }
+      renderModel(res.body);
+      flash(log.busy ? `${sel.selectedOptions[0]?.text}: from your next message` : `Switched to ${sel.selectedOptions[0]?.text}`);
+    });
+    agentModel.append(sel);
+  }
   function loadAgent() {
     fetch(api("/api/agent")).then((r) => {
       if (!r.ok) throw new Error(r.status == 404 ? "this host was started before the agent existed; restart open.ts" : `the host answered ${r.status}`);
       return r.json();
-    }).then((a: { enabled: boolean; model?: string; reason?: string; log?: Log }) => {
+    }).then((a: { enabled: boolean; model?: string; reason?: string; log?: Log } & Partial<ModelState>) => {
       agentOff = a.enabled ? null : `The agent is off: ${a.reason ?? "the host did not start it"}.`;
-      $("agent-model").textContent = a.enabled ? a.model ?? "" : "off";
+      renderModel(a.enabled ? a : null);
       if (a.log) { log.items = a.log.items; log.busy = a.log.busy; log.undoable = a.log.undoable; setAgentBusy(a.log.busy || busyAgents().length > 0); }
       renderLog();
       renderUndo();
     }).catch((e: Error) => {
       agentOff = `The agent is off: ${e.message}.`;
-      $("agent-model").textContent = "off";
+      renderModel(null);
       renderLog();
       renderUndo();
     });

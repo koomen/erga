@@ -1,4 +1,4 @@
-// Loads the CodeMirror reference bundle (wip/editor-cm/vendor/vendor.js) into
+// Loads the CodeMirror reference bundle (editor-cm/vendor/vendor.js) into
 // Bun so tests can compare against the real Lezer parser and CodeMirror state.
 const path = new URL("../../editor-cm/vendor/vendor.js", import.meta.url).pathname;
 const code = await Bun.file(path).text();

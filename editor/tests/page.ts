@@ -549,6 +549,29 @@ async function noEditScenario(browser: Browser) {
   await s.close();
 }
 
+/** The model menu: Sonnet 5.5 by default, switchable to Opus 5.5 fast; the person's other tabs and a reload follow. */
+async function modelScenario(browser: Browser) {
+  say("\nAgent model");
+  const s = await session(browser, "noedit", "index.html", { ANTHROPIC_API_KEY: "sk-ant-test-not-used", SCRATCHWORK_AGENT_ENV_FILE: "/nonexistent/.env", SCRATCHWORK_AGENT_MODEL: "" });
+  const { p } = s;
+  const sel = (q: typeof p) => q.eval<{ value: string; text: string; options: string[] } | null>(`(() => { const s = document.getElementById("agent-model-select"); return s && { value: s.value, text: s.selectedOptions[0]?.text, options: [...s.options].map((o) => o.text) }; })()`);
+  await until(async () => !!(await sel(p)));
+  const first = await sel(p);
+  check("the agent starts on Sonnet 5.5, with Opus 5.5 fast to pick", first?.value == "sonnet" && first.options.join("|") == "Sonnet 5.5|Opus 5.5 fast", first);
+  const q = await browser.page();
+  await q.open(`http://127.0.0.1:${s.port}/`, { clear: false, width: 900, height: 700 });
+  await until(async () => (await sel(q))?.value == "sonnet");
+  await p.eval(`(() => { const s = document.getElementById("agent-model-select"); s.value = "opus-fast"; s.dispatchEvent(new Event("change")); })()`);
+  check("picking Opus 5.5 fast switches it", await until(async () => (await (await fetch(`http://127.0.0.1:${s.port}/api/agent`)).json() as { choice: string }).choice == "opus-fast"));
+  check("the person's other tab follows", await until(async () => (await sel(q))?.value == "opus-fast"));
+  q.close();
+  await p.eval(`location.reload()`);
+  await until(async () => !!(await sel(p)));
+  check("and a reload keeps it", (await sel(p))?.value == "opus-fast");
+  check("no page errors", p.errors.length == 0, p.errors.join("\n"));
+  await s.close();
+}
+
 /** The share button: a prompt with this page's API and a working token; Escape closes it. */
 async function shareScenario(browser: Browser) {
   say("\nShare with an agent");
@@ -594,7 +617,7 @@ const SCENARIOS: [string, (b: Browser) => Promise<void>][] = [
   ["html", htmlScenario], ["html", strayTagScenario], ["html", noEditScenario], ["html", brokenPageScenario],
   ["md", mdScenario], ["md", lightOnlyScenario],
   ["format", formatScenario],
-  ["agent", agentOffScenario], ["agent", shareScenario], ["agent", agentEmptyScenario],
+  ["agent", agentOffScenario], ["agent", shareScenario], ["agent", modelScenario], ["agent", agentEmptyScenario],
   ["reload", backdropReloadScenario],
 ];
 const browser = await Browser.launch();

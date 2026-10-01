@@ -1,0 +1,7 @@
+.DS_Store
+node_modules/
+
+# Local environment files. Keep .env.example files committed.
+**/.env
+**/.env.*
+!**/.env.example

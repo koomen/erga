@@ -1,6 +1,6 @@
 // Parity suite: runs the same scripted interactions (real CDP input events)
-// against the CodeMirror reference (wip/editor-cm) and the new editor
-// (wip/editor), and compares the resulting document, selection and any extra
+// against the CodeMirror reference (editor-cm) and the new editor
+// (editor), and compares the resulting document, selection and any extra
 // observations each scenario records.
 //
 //   bun tests/parity.ts            # all scenarios

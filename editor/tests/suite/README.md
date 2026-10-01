@@ -73,6 +73,7 @@ locally; whatever the hosted server gives a document).
   path. Hosted, behind the project's write role.
 - `GET /api/agent?user=` → `{ enabled, model, log }`; `POST /api/agent`
   `{ text, context?, after? }`; `POST /api/agent/{abort,reset,undo}`;
+  `POST /api/agent/model` `{ model }` (`sonnet` or `opus-fast`);
   `GET /api/events?user=` (a WebSocket) the person's events as JSON
   messages (agent events, view requests); `POST /api/agent/view` a tab's answer to one.
 - `POST /api/share?user=` `{ rotate? }` → `{ token }`, the person's token for
