@@ -75,6 +75,11 @@ locally; whatever the hosted server gives a document).
   `{ text, context?, after? }`; `POST /api/agent/{abort,reset,undo}`;
   `GET /api/events?user=` (a WebSocket) the person's events as JSON
   messages (agent events, view requests); `POST /api/agent/view` a tab's answer to one.
+- `POST /api/share?user=` `{ rotate? }` → `{ token }`, the person's token for
+  an external agent; with `Authorization: Bearer <token>`, `GET /api/ext`
+  the guide (Markdown), `GET /api/ext/tools` the tools as JSON Schema, and
+  `POST /api/ext/tools/<name>` a tool call with its arguments as JSON →
+  `{ ok, content }` or `{ ok: false, error }` (400, 401, 404).
 - Locally a person is `?user=Name`; hosted, it's their session (and
   `SCRATCHWORK_TARGET_USERS` gives the suite one signed-in account per test
   person).

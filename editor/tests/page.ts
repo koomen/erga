@@ -549,7 +549,24 @@ async function noEditScenario(browser: Browser) {
   await s.close();
 }
 
-/** A page with problems nobody asked about: each is explained in turn, with a button to have the agent fix it. */
+/** The share button: a prompt with this page's API and a working token; Escape closes it. */
+async function shareScenario(browser: Browser) {
+  say("\nShare with an agent");
+  const s = await session(browser, "noedit", "index.html");
+  const { p } = s;
+  await p.eval(`document.getElementById("btn-share").click()`);
+  check("the share button opens its dialog", await p.eval<boolean>(`!document.getElementById("share").hidden && document.getElementById("btn-share").getAttribute("aria-expanded") == "true"`));
+  check("with a prompt", await until(() => p.eval<boolean>(`document.getElementById("share-prompt").value.includes("Token: swx_")`)));
+  const prompt = await p.eval<string>(`document.getElementById("share-prompt").value`);
+  const token = /Token: (\S+)/.exec(prompt)?.[1], api = /API: (\S+)/.exec(prompt)?.[1];
+  check("naming the API and the token, which works", !!api && !!token && (await fetch(api, { headers: { Authorization: `Bearer ${token}` } })).ok, prompt);
+  await p.key("Escape");
+  check("Escape closes it", await p.eval<boolean>(`document.getElementById("share").hidden`));
+  check("no page errors", p.errors.length == 0, p.errors.join("\n"));
+  await s.close();
+}
+
+/** A page with problems nobody asked about/** A page with problems nobody asked about: each is explained in turn, with a button to have the agent fix it. */
 async function brokenPageScenario(browser: Browser) {
   say("\nBroken page");
   const s = await session(browser, "broken", "index.html", { ANTHROPIC_API_KEY: "", SCRATCHWORK_AGENT_ENV_FILE: "/nonexistent/.env" });
@@ -577,7 +594,7 @@ const SCENARIOS: [string, (b: Browser) => Promise<void>][] = [
   ["html", htmlScenario], ["html", strayTagScenario], ["html", noEditScenario], ["html", brokenPageScenario],
   ["md", mdScenario], ["md", lightOnlyScenario],
   ["format", formatScenario],
-  ["agent", agentOffScenario], ["agent", agentEmptyScenario],
+  ["agent", agentOffScenario], ["agent", shareScenario], ["agent", agentEmptyScenario],
   ["reload", backdropReloadScenario],
 ];
 const browser = await Browser.launch();

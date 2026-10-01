@@ -126,6 +126,40 @@ export const agent: Test[] = [
     },
   },
   {
+    name: "an external agent with Ada's share token edits as Ada's agent, and she can undo it",
+    needs: ["scriptedAgent"],
+    async run(ctx) {
+      const d = await ctx.doc();
+      const b = await Participant.join(d, "Bo");
+      ctx.defer(() => b.destroy());
+      const share = async (rotate = false) => ((await (await d.fetch("/api/share?user=Ada", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ rotate }) }, "Ada")).json()) as { token: string }).token;
+      const token = await share();
+      expect(/^swx_[\w-]{40,}$/.test(token), "the share button gets a token", token);
+      expect((await share()) == token, "asking again gives the same one");
+      const ext = (path: string, init: RequestInit = {}, t = token) => fetch(d.base + path, { ...init, headers: { Authorization: `Bearer ${t}`, "Content-Type": "application/json" } });
+      expect((await fetch(d.base + "/api/ext")).status == 401, "the API needs the token");
+      const guide = await (await ext("/api/ext")).text();
+      expect(/Editing .* in Scratchwork/.test(guide) && /### edit/.test(guide) && /data-sw-noedit/.test(guide), "the guide explains the tools and the document rules", guide.slice(0, 300));
+      const run = async (name: string, args: unknown) => { const r = await ext(`/api/ext/tools/${name}`, { method: "POST", body: JSON.stringify(args) }); return { status: r.status, body: (await r.json()) as { ok: boolean; content?: { type: string; text?: string }[]; error?: string } }; };
+      const read = await run("read", { path: d.path });
+      expect(read.body.ok && read.body.content?.[0]?.text?.includes("<h1>Launch notes") == true, "read returns the file", read);
+      const ed = await run("edit", edit(d.path, "<h1>Launch notes", "<h1>Launch notes EXT").args);
+      expect(ed.body.ok, "edit succeeds", ed);
+      await until(() => b.str().includes("Launch notes EXT"), 3000, "Bo sees the external agent's edit");
+      expect(b.seen.at(-1)?.author == "Ada’s agent", "attributed to Ada's agent", b.seen.slice(-2));
+      const bad = await run("edit", { path: d.path });
+      expect(bad.status == 400 && /edits/.test(bad.body.error ?? ""), "bad arguments say what's wrong", bad);
+      expect((await run("nope", {})).status == 404, "an unknown tool is a 404");
+      const log = await agentLog(d, "Ada");
+      expect(log.items.some((i) => i.kind == "tool" && i.name == "edit" && i.status == "done" && (i as { via?: string }).via == "external"), "the call is in Ada's transcript, marked external", log.items);
+      expect(log.undoable == 1, "and Ada can undo it");
+      await d.fetch("/api/agent/undo?user=Ada", { method: "POST" }, "Ada");
+      await until(() => !b.str().includes("EXT"), 3000, "the undo takes it back");
+      const fresh = await share(true);
+      expect((await ext("/api/ext")).status == 401 && (await ext("/api/ext", {}, fresh)).status == 200, "a new token turns the old one off");
+    },
+  },
+  {
     name: "conversations are private: Bo's tabs never see Ada's",
     needs: ["scriptedAgent"],
     async run(ctx) {

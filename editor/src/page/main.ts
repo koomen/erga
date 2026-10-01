@@ -485,7 +485,7 @@ interface DocInfo { name: string; path: string; kind: Kind; dir: string; user: s
   let anchor: { x: number; y: number; t: number } | null = null;
   let lastKeyAt = 0;
   function hideChrome() {
-    if (chromeHidden || !$("help").hidden) return;
+    if (chromeHidden || !$("help").hidden || !$("share").hidden) return;
     chromeHidden = true;
     anchor = null;
     document.body.classList.add("chrome-hidden");
@@ -509,8 +509,66 @@ interface DocInfo { name: string; path: string; kind: Kind; dir: string; user: s
   function toggleHelp(force?: boolean) {
     const open = typeof force == "boolean" ? force : help.hidden;
     help.hidden = !open;
-    if (open) showChrome();
+    if (open) { showChrome(); toggleShare(false); }
   }
+
+  // Share with an external agent: a prompt carrying this page's API and a
+  // token that lets the agent call your agent's tools (open.ts, /api/ext).
+  const share = $("share"), shareBtn = $("btn-share");
+  const sharePrompt = $("share-prompt") as HTMLTextAreaElement, shareStatus = $("share-status");
+  const shareCopy = $("share-copy"), shareRotate = $("share-rotate");
+  let shareToken: string | null = null;
+  function promptFor(token: string): string {
+    const api = `${location.origin}/api/ext`;
+    return `I'd like your help editing "${info?.path ?? info?.name ?? "the document"}", a Scratchwork document I have open in my editor. You can read and change it through the editor's API, working as my agent: your edits show up in my editor as you make them.
+
+API: ${api}
+Token: ${token}
+
+Send the token on every request, as the header "Authorization: Bearer ${token}". Start by reading the API guide, which explains the tools and how to call them:
+
+curl -s -H "Authorization: Bearer ${token}" ${api}
+
+Once you've read it, await further instructions.`;
+  }
+  async function loadShare(rotate: boolean) {
+    for (const b of [shareCopy, shareRotate]) { b.setAttribute("aria-disabled", "true"); b.title = "Getting a token…"; }
+    shareStatus.textContent = rotate ? "Making a new token…" : "";
+    const res = await fetch(api("/api/share"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ rotate }), signal: AbortSignal.timeout(10_000) })
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`the host answered ${r.status}`))) as Promise<{ token: string }>)
+      .catch((e: Error) => e);
+    if (res instanceof Error) {
+      shareToken = null;
+      sharePrompt.value = "";
+      shareStatus.textContent = `Couldn't get a token: ${res.name == "TimeoutError" ? "the editor's host didn't answer" : res.message}.`;
+      shareCopy.title = "There's no prompt to copy: getting a token failed.";
+      shareRotate.removeAttribute("aria-disabled");
+      shareRotate.title = "Try again";
+      return;
+    }
+    shareToken = res.token;
+    sharePrompt.value = promptFor(res.token);
+    for (const b of [shareCopy, shareRotate]) { b.removeAttribute("aria-disabled"); b.title = ""; }
+    shareRotate.title = "Turn this token off and make a new one";
+    shareStatus.textContent = rotate ? "New token: the old one no longer works." : "";
+  }
+  function toggleShare(force?: boolean) {
+    const open = typeof force == "boolean" ? force : share.hidden;
+    share.hidden = !open;
+    shareBtn.setAttribute("aria-expanded", String(open));
+    if (!open) return;
+    showChrome();
+    toggleHelp(false);
+    if (!shareToken) loadShare(false);
+  }
+  shareBtn.addEventListener("click", () => toggleShare());
+  shareCopy.addEventListener("click", async () => {
+    if (!shareToken) { shareStatus.textContent = shareCopy.title || "Getting a token…"; return; }
+    const copied = await navigator.clipboard.writeText(sharePrompt.value).then(() => true, () => false);
+    if (!copied) { sharePrompt.focus(); sharePrompt.select(); }
+    shareStatus.textContent = copied ? "Copied" : "Couldn't reach the clipboard: the prompt is selected, press ⌘C.";
+  });
+  shareRotate.addEventListener("click", () => { if (shareRotate.getAttribute("aria-disabled") != "true") loadShare(true); });
   if (!isMac) {
     for (const k of help.querySelectorAll("kbd")) {
       if (k.textContent == "⌘") k.textContent = "Ctrl";
@@ -898,13 +956,15 @@ interface DocInfo { name: string; path: string; kind: Kind; dir: string; user: s
     else {
       const [doing, done] = TOOL_VERBS[item.name] ?? [item.name, item.name];
       const what = item.path ? ` <code>${escapeHtml(item.path)}</code>` : "";
+      // A call from an agent you shared the page with (the share button) says so.
+      const via = item.via == "external" ? `<span class="via" title="An agent you shared this page with, working as your agent">External agent:</span> ` : "";
       if (retried(i)) {
         el.classList.add("retried");
         el.title = item.detail ?? "";
-        el.innerHTML = `<span>${doing}${what} didn't apply; retried</span>`;
+        el.innerHTML = `<span>${via}${doing}${what} didn't apply; retried</span>`;
       } else {
         el.classList.add(item.status);
-        el.innerHTML = `<span>${item.status == "running" ? doing : item.status == "error" ? `${doing} failed:` : done}${what}${item.detail ? `<span class="detail">${escapeHtml(item.detail)}</span>` : ""}${item.image ? `<img class="shot" alt="What the agent saw" src="${item.image}">` : ""}</span>`;
+        el.innerHTML = `<span>${via}${item.status == "running" ? doing : item.status == "error" ? `${doing} failed:` : done}${what}${item.detail ? `<span class="detail">${escapeHtml(item.detail)}</span>` : ""}${item.image ? `<img class="shot" alt="What the agent saw" src="${item.image}">` : ""}</span>`;
       }
     }
     return el;
@@ -1173,6 +1233,7 @@ interface DocInfo { name: string; path: string; kind: Kind; dir: string; user: s
     if (mod && !e.shiftKey && key == "s") { flash(connected ? "Saved: edits go to disk as you type" : "Offline: edits sync when the host is back", 2200); return true; }
     if (e.key == "Escape") {
       if (!help.hidden) toggleHelp(false);
+      else if (!share.hidden) toggleShare(false);
       else if (agentPanel.contains(document.activeElement)) toggleAgent(false);
       else if (modeEl.classList.contains("open")) closeModeMenu();
       else if (mode != "text") setMode("text");
@@ -1203,9 +1264,10 @@ interface DocInfo { name: string; path: string; kind: Kind; dir: string; user: s
   for (const b of document.querySelectorAll(".chrome button")) b.addEventListener("mousedown", (e) => e.preventDefault());
   document.addEventListener("mousedown", (e) => {
     if (!help.hidden && !help.contains(e.target as Node) && !$("btn-help").contains(e.target as Node)) toggleHelp(false);
+    if (!share.hidden && !share.contains(e.target as Node) && !shareBtn.contains(e.target as Node)) toggleShare(false);
   });
   frame.addEventListener("load", () => {
-    frame.contentDocument?.addEventListener("mousedown", () => { if (!help.hidden) toggleHelp(false); });
+    frame.contentDocument?.addEventListener("mousedown", () => { if (!help.hidden) toggleHelp(false); if (!share.hidden) toggleShare(false); });
   });
 
   started = true;

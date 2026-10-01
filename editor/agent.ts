@@ -29,7 +29,7 @@
 import { readFileSync } from "fs";
 import * as Y from "yjs";
 import { Awareness } from "y-protocols/awareness";
-import { fauxAssistantMessage, fauxText, fauxToolCall, registerFauxProvider, type Context, type Model } from "@mariozechner/pi-ai";
+import { fauxAssistantMessage, fauxText, fauxToolCall, registerFauxProvider, validateToolArguments, type Context, type Model } from "@mariozechner/pi-ai";
 import { Agent as PiAgent, type AgentEvent, type AgentTool } from "@mariozechner/pi-agent-core";
 import { Type } from "typebox";
 import { emptyLog, reduce, type Log, type LogEvent } from "./src/page/agent-log";
@@ -328,8 +328,14 @@ function makeTools(ws: Workspace, opts: {
   ] as AgentTool[];
 }
 
+/** What a tool returns: text, and for read on an image or view_page, a picture. */
+export type ToolContent = { type: "text"; text: string } | { type: "image"; data: string; mimeType: string };
+/** A tool as an external agent sees it: its arguments as JSON Schema. */
+export interface ToolSpec { name: string; description: string; parameters: unknown }
+
 export interface AgentSession {
-  readonly model: string;
+  /** The model's name, or null when the embedded agent is off (its tools still work). */
+  readonly model: string | null;
   /** The transcript so far (for a tab that just loaded). */
   log(): Log;
   /** Sends a message; while a turn is running it steers the current one. */
@@ -339,10 +345,20 @@ export interface AgentSession {
   /** Takes back the agent's most recent change (one tool call), if any. */
   undo(): boolean;
   subscribe(listener: (ev: LogEvent) => void): () => void;
+  /** The tools, for an external agent. */
+  tools(): ToolSpec[];
+  /**
+   * Runs one tool for an external agent, exactly as the embedded agent would:
+   * same replica of the doc, same attribution, presence and undo history. The
+   * call shows in the transcript, marked as external. Throws with a message
+   * the caller can act on (unknown tool, bad arguments, the tool's own error).
+   */
+  runTool(name: string, args: unknown): Promise<ToolContent[]>;
 }
 
 export interface SessionOptions {
-  cfg: AgentConfig;
+  /** Null when the embedded agent is off: no model, but the tools still work for an external agent. */
+  cfg: AgentConfig | null;
   room: Room;
   /** The person this session works for. */
   owner: { id: string; name: string };
@@ -372,7 +388,7 @@ export async function startSession(opts: SessionOptions): Promise<AgentSession> 
   const origin = { agent: owner.id }, undoOrigin = { agentUndo: owner.id };
   const undo = new Y.UndoManager(files(doc), { trackedOrigins: new Set([origin]), captureTimeout: 0 });
   const ws = new YjsWorkspace(doc, me, opts.canEdit, origin);
-  const model = isScript(cfg) ? scriptModel() : describeModel(cfg);
+  const model = cfg == null ? null : isScript(cfg) ? scriptModel() : describeModel(cfg);
 
   const log = emptyLog();
   const listeners = new Set<(ev: LogEvent) => void>();
@@ -387,6 +403,14 @@ export async function startSession(opts: SessionOptions): Promise<AgentSession> 
     for (const l of listeners) l(ev);
   };
   const presence = (patch: Record<string, unknown>) => awareness.setLocalState({ ...awareness.getLocalState(), ...patch });
+  // Busy while the embedded agent runs, or while an external agent is
+  // calling tools: during a call, and for a while after the last one, since
+  // it's thinking between calls and nothing says when it's done.
+  const busy = { agent: false, ext: 0, extTimer: null as ReturnType<typeof setTimeout> | null };
+  const syncBusy = (activity?: string | null) => {
+    const on = busy.agent || busy.ext > 0 || busy.extTimer != null;
+    presence({ busy: on, activity: on ? activity ?? (awareness.getLocalState()?.activity as string | null) ?? "working" : null });
+  };
   const undoable = () => emit({ t: "undoable", count: undo.undoStack.length });
 
   const tools = makeTools(ws, {
@@ -401,13 +425,13 @@ export async function startSession(opts: SessionOptions): Promise<AgentSession> 
     },
   });
 
-  const agent = new PiAgent({
+  const agent = cfg && model ? new PiAgent({
     initialState: { systemPrompt: systemPrompt(opts.docName, opts.kind, owner.name), model, thinkingLevel: "medium", tools },
     getApiKey: () => cfg.apiKey || "none",
     onPayload: isScript(cfg) ? undefined : patchPayload(cfg),
-  });
+  }) : null;
 
-  agent.subscribe((e: AgentEvent) => {
+  agent?.subscribe((e: AgentEvent) => {
     switch (e.type) {
       case "message_update": {
         const m = e.assistantMessageEvent;
@@ -435,33 +459,39 @@ export async function startSession(opts: SessionOptions): Promise<AgentSession> 
           image: e.isError ? undefined : resultImage(e.result),
         });
         break;
-      case "agent_start": presence({ busy: true, activity: "thinking" }); emit({ t: "busy", busy: true }); break;
-      case "agent_end": presence({ busy: false, activity: null }); emit({ t: "busy", busy: false }); break;
+      case "agent_start": busy.agent = true; syncBusy("thinking"); emit({ t: "busy", busy: true }); break;
+      case "agent_end": busy.agent = false; syncBusy(); emit({ t: "busy", busy: false }); break;
     }
   });
 
   return {
-    model: model.name,
+    model: model?.name ?? null,
     log: () => log,
     prompt(text, context) {
       emit({ t: "user", text });
+      if (!agent || !cfg) { emit({ t: "error", text: "The agent is off." }); return; }
       const content = context ? `<editor>\n${context}\n</editor>\n\n${text}` : text;
       if (isScript(cfg)) scriptModel();
       if (agent.state.isStreaming) { agent.steer({ role: "user", content, timestamp: Date.now() }); return; }
       agent.prompt(content).catch((err: unknown) => {
         emit({ t: "error", text: err instanceof Error ? err.message : String(err) });
-        presence({ busy: false, activity: null });
+        busy.agent = false;
+        syncBusy();
         emit({ t: "busy", busy: false });
       });
     },
-    abort: () => agent.abort(),
+    abort: () => agent?.abort(),
     async reset() {
-      agent.abort();
-      await agent.waitForIdle();
-      agent.reset();
+      if (agent) {
+        agent.abort();
+        await agent.waitForIdle();
+        agent.reset();
+      }
       paths.clear();
       undo.clear();
-      presence({ busy: false, activity: null, cursor: null });
+      busy.agent = false;
+      syncBusy();
+      presence({ cursor: null });
       emit({ t: "reset" });
       undoable();
     },
@@ -476,7 +506,92 @@ export async function startSession(opts: SessionOptions): Promise<AgentSession> 
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
+    tools: () => tools.map((t) => ({ name: t.name, description: t.description, parameters: JSON.parse(JSON.stringify(t.parameters)) })),
+    async runTool(name, args) {
+      const tool = tools.find((t) => t.name == name);
+      if (!tool) throw new Error(`There's no tool named "${name}". The tools are: ${tools.map((t) => t.name).join(", ")}.`);
+      const id = `ext-${crypto.randomUUID()}`;
+      const params = validateToolArguments(tool, { type: "toolCall", id, name, arguments: (args ?? {}) as Record<string, unknown> });
+      const path = toolPath(params);
+      busy.ext++;
+      if (busy.extTimer) { clearTimeout(busy.extTimer); busy.extTimer = null; }
+      syncBusy(`${TOOL_ACTIVITY[name] ?? name}${path ? ` ${path}` : ""}`);
+      emit({ t: "tool", id, name, path, status: "running", via: "external" });
+      try {
+        const result = await tool.execute(id, params);
+        emit({ t: "tool", id, name, path, status: "done", image: resultImage(result), via: "external" });
+        return result.content as ToolContent[];
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e);
+        emit({ t: "tool", id, name, path, status: "error", detail: message.slice(0, 400), via: "external" });
+        throw new Error(message);
+      } finally {
+        busy.ext--;
+        if (busy.extTimer) clearTimeout(busy.extTimer);
+        busy.extTimer = setTimeout(() => { busy.extTimer = null; syncBusy(); }, EXTERNAL_IDLE_MS);
+        syncBusy("working");
+      }
+    },
   };
+}
+
+/** How long an external agent counts as working after its last tool call. */
+const EXTERNAL_IDLE_MS = 8_000;
+
+/**
+ * The guide an external agent reads first (GET /api/ext): how to call the
+ * tools, what they are, and the same working rules the embedded agent follows.
+ */
+export function externalGuide(o: { docName: string; kind: "html" | "md"; owner: string; base: string; tools: ToolSpec[] }): string {
+  const tools = o.tools.map((t) => `### ${t.name}\n\n${t.description}\n\nArguments (JSON Schema):\n\n\`\`\`json\n${JSON.stringify(t.parameters, null, 2)}\n\`\`\``).join("\n\n");
+  return `# Editing "${o.docName}" in Scratchwork
+
+${o.owner} has ${o.docName} (${o.kind == "md" ? "Markdown" : "HTML"}) open in Scratchwork's page editor and
+has given you access to edit it as their agent, ${agentName(o.owner)}. The document
+is a folder of files (the page, its styles, scripts, images, other pages); the
+tools below see that folder, and you may read and change any text file in it.
+Paths are relative to the folder.
+
+## Calling the tools
+
+Every request carries the token you were given:
+
+    Authorization: Bearer <token>
+
+Run a tool by POSTing its arguments as JSON:
+
+    curl -s -X POST ${o.base}/api/ext/tools/read \\
+      -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \\
+      -d '{"path": "${o.docName}"}'
+
+The answer is JSON: \`{"ok": true, "content": [...]}\`, where each content item is
+\`{"type": "text", "text": "..."}\` or \`{"type": "image", "mimeType": "image/png", "data": "<base64>"}\`.
+A failure is \`{"ok": false, "error": "..."}\` with HTTP status 400 (bad call; the
+error says what to fix), 401 (bad token) or 404 (no such tool).
+\`GET ${o.base}/api/ext/tools\` lists the tools as JSON.
+
+## How to work
+
+- Your edits go straight into the shared document and show up in everyone's page
+  as you make them, attributed to ${agentName(o.owner)}. ${o.owner} can undo them one tool
+  call at a time. Prefer small, targeted edits (edit) over rewriting whole files.
+- People may be typing while you work. edit matches oldText against the text as it
+  is at that moment; if it fails because the text changed, read the file again and
+  retry. Read a file right before editing it (with read, not grep: search output
+  cuts long lines, so text copied from it won't match), and keep edits scoped to
+  what was asked.
+- view_page shows you the page as ${o.owner} sees it, rendered in their browser (so it
+  needs their editor open): a screenshot plus any script errors. Use it to check
+  visual work before you say it's done.
+- Follow the rules below whenever you create or change a page, so people can keep
+  editing it by hand.
+
+## Tools
+
+${tools}
+
+${DOCUMENT_RULES.replace(/^(#+) /gm, "#$1 ")}
+`;
 }
 
 function toolPath(args: unknown): string | null {

@@ -204,6 +204,23 @@ waiting for and offers to refresh now. The conversation lives in the host, so
 a reload keeps it; + starts a new one, and the undo arrow takes back the
 agent's last change.
 
+### Sharing with an external agent
+
+The share button (top right) lets another agent, such as Claude Code or Codex
+on the same machine, edit the page as your agent. It shows a prompt to copy
+with the page's API (`/api/ext`) and a token that stands for you; paste it
+into the other agent, which reads the guide and waits, then say what to change. The agent reads the guide at
+`GET /api/ext` (how to call the tools, their JSON schemas, and
+[DOCUMENT_PROMPT.md](DOCUMENT_PROMPT.md)), then calls
+`POST /api/ext/tools/<name>` with the arguments as JSON. These are the
+embedded agent's own tools (read, edit, write, ls, find, grep, view_page),
+run in your agent's session, so its edits are handled exactly like your
+agent's: attributed to "Pete's agent", marked in its colour, undoable from
+the agent panel, with its badge spinning while it works. Each call shows in
+your agent panel as "External agent: …". It works with the embedded agent
+off too (no API key needed). Tokens are held in memory: New token in the
+dialog turns the old one off, and so does restarting the host.
+
 ### How it works
 
 The design is the one in `notes/scratchwork-2.0-editing.html`:

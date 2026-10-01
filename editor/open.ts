@@ -17,6 +17,8 @@
 // a replica of the shared doc it edits as another participant. A tab names
 // its person in ?user=; the agent's progress comes back on that person's
 // event channel (a WebSocket at /api/events), and view_page asks that person's tabs.
+// The share button gives a person a token for an external agent, which
+// calls the same tools in the same session over /api/ext.
 
 import * as FileSystem from "@effect/platform/FileSystem";
 import * as Path from "@effect/platform/Path";
@@ -34,7 +36,7 @@ import * as Stream from "effect/Stream";
 import * as Console from "effect/Console";
 import * as Chunk from "effect/Chunk";
 import * as Schedule from "effect/Schedule";
-import { loadConfig, startSession, type AgentSession } from "./agent";
+import { externalGuide, loadConfig, startSession, type AgentSession } from "./agent";
 import { Room, digest, type FileStore, type StateStore } from "./room";
 import * as Socket from "@effect/platform/Socket";
 import type { ViewRequest, ViewResult } from "./src/page/agent-log";
@@ -57,6 +59,7 @@ const ViewBody = Schema.Struct({
   note: Schema.optional(Schema.String),
   error: Schema.optional(Schema.String),
 });
+const ShareBody = Schema.Struct({ rotate: Schema.optional(Schema.Boolean) });
 const PromptBody = Schema.Struct({ text: Schema.String, context: Schema.optional(Schema.NullOr(Schema.String)), after: Schema.optional(Schema.String) });
 
 const MIME: Record<string, string> = {
@@ -186,13 +189,15 @@ const program = Effect.gen(function* () {
   const cfg = yield* Effect.promise(() => loadConfig(process.env.SCRATCHWORK_AGENT_ENV_FILE || path.join(EDITOR_DIR, ".env")));
   const agentOff = "missing" in cfg ? cfg.missing : "";
   const sessions = new Map<string, Promise<AgentSession>>();
-  /** A person's agent session, started the first time they open the panel. */
+  /**
+   * A person's agent session, started the first time they open the panel. With
+   * the embedded agent off it still exists, for an external agent's tool calls.
+   */
   const sessionFor = (user: { id: string; name: string }) => {
-    if ("missing" in cfg) return null;
     let s = sessions.get(user.id);
     if (!s) {
       s = startSession({
-        cfg, room, owner: user, docName: doc.name, kind: doc.kind,
+        cfg: "missing" in cfg ? null : cfg, room, owner: user, docName: doc.name, kind: doc.kind,
         canEdit: () => true, // locally everyone may edit; hosted, the project role decides
         view: view(user.id),
         readAsset: store.read,
@@ -202,10 +207,31 @@ const program = Effect.gen(function* () {
     }
     return s;
   };
-  const session = (user: { id: string; name: string }) => {
-    const s = sessionFor(user);
-    return s ? Effect.tryPromise(() => s).pipe(Effect.either) : Effect.succeed(null);
+  const session = (user: { id: string; name: string }) => Effect.tryPromise(() => sessionFor(user)).pipe(Effect.either);
+
+  // Sharing with an external agent: the share button mints a token that
+  // stands for one person, and an agent holding it calls that person's
+  // agent tools over /api/ext, as their agent. Tokens live as long as the
+  // host; rotating one revokes the old. Hosted, they'd be stored and scoped
+  // to the project like any other credential.
+  const shareTokens = new Map<string, { id: string; name: string }>();
+  const tokenOf = new Map<string, string>();
+  const mintToken = (user: { id: string; name: string }, rotate: boolean) => {
+    const old = tokenOf.get(user.id);
+    if (old && !rotate) return old;
+    if (old) shareTokens.delete(old);
+    const token = "swx_" + Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("base64url");
+    shareTokens.set(token, user);
+    tokenOf.set(user.id, token);
+    return token;
   };
+  /** The person an external agent's request acts for, from its bearer token. */
+  const bearer = HttpServerRequest.HttpServerRequest.pipe(Effect.map((r) => {
+    const m = /^Bearer\s+(\S+)$/i.exec(r.headers["authorization"] ?? "");
+    return m ? shareTokens.get(m[1]) ?? null : null;
+  }));
+  const unauthorized = HttpServerResponse.unsafeJson({ ok: false, error: "Missing or unknown token: send the one you were given as \"Authorization: Bearer <token>\". Ask for a new prompt if it stopped working (the editor may have restarted)." }, { status: 401 });
+  const baseUrl = HttpServerRequest.HttpServerRequest.pipe(Effect.map((r) => `http://${r.headers["host"] ?? `127.0.0.1:${port}`}`));
 
   // Watch the folder, subfolders included, and hand every change to the
   // room: it merges text edits it didn't make and notes changed assets.
@@ -227,8 +253,8 @@ const program = Effect.gen(function* () {
   };
   const requestUrl = HttpServerRequest.HttpServerRequest.pipe(Effect.map((r) => new URL(r.url, "http://localhost")));
   const agentState = (s: AgentSession | null, err?: unknown) => s
-    ? { enabled: true, model: s.model, log: s.log() }
-    : { enabled: false, reason: err ? `the agent did not start: ${String((err as Error).message ?? err)}` : agentOff };
+    ? (agentOff ? { enabled: false, reason: agentOff, log: s.log() } : { enabled: true, model: s.model, log: s.log() })
+    : { enabled: false, reason: `the agent did not start: ${String((err as Error).message ?? err)}` };
 
   const router = HttpRouter.empty.pipe(
     HttpRouter.get("/", serveFile(EDITOR_DIR, "page.html")),
@@ -266,16 +292,52 @@ const program = Effect.gen(function* () {
     }).pipe(Effect.scoped)),
     HttpRouter.get("/api/agent", Effect.gen(function* () {
       const s = yield* session(userOf(yield* requestUrl));
-      return yield* HttpServerResponse.json(s == null ? agentState(null) : s._tag == "Right" ? agentState(s.right) : agentState(null, s.left));
+      return yield* HttpServerResponse.json(s._tag == "Right" ? agentState(s.right) : agentState(null, s.left));
     })),
     HttpRouter.post("/api/agent", Effect.gen(function* () {
       const body = yield* HttpServerRequest.schemaBodyJson(PromptBody);
       const s = yield* session(userOf(yield* requestUrl));
-      if (s?._tag != "Right") return yield* HttpServerResponse.json({ ok: false, reason: agentOff || "the agent did not start" }, { status: 503 });
+      if (agentOff || s._tag != "Right") return yield* HttpServerResponse.json({ ok: false, reason: agentOff || "the agent did not start" }, { status: 503 });
       // The sender's last keystrokes travel over its WebSocket; let them land first.
       if (body.after) yield* Effect.promise(() => room.waitFor(body.after!));
       s.right.prompt(body.text, body.context ?? null);
       return yield* HttpServerResponse.json({ ok: true });
+    })),
+    // The share button: a token for this person's external agent (rotate: true revokes the old one).
+    HttpRouter.post("/api/share", Effect.gen(function* () {
+      const body = yield* HttpServerRequest.schemaBodyJson(ShareBody);
+      const user = userOf(yield* requestUrl);
+      return yield* HttpServerResponse.json({ token: mintToken(user, body.rotate ?? false) });
+    })),
+    // An external agent: its guide, the tools as JSON, and a tool call.
+    HttpRouter.get("/api/ext", Effect.gen(function* () {
+      const user = yield* bearer;
+      if (!user) return unauthorized;
+      const s = yield* session(user);
+      if (s._tag != "Right") return HttpServerResponse.unsafeJson({ ok: false, error: "The agent's session didn't start." }, { status: 503 });
+      const guide = externalGuide({ docName: docPath, kind: doc.kind, owner: user.name, base: yield* baseUrl, tools: s.right.tools() });
+      return HttpServerResponse.text(guide, { contentType: "text/markdown; charset=utf-8" });
+    })),
+    HttpRouter.get("/api/ext/tools", Effect.gen(function* () {
+      const user = yield* bearer;
+      if (!user) return unauthorized;
+      const s = yield* session(user);
+      if (s._tag != "Right") return HttpServerResponse.unsafeJson({ ok: false, error: "The agent's session didn't start." }, { status: 503 });
+      return yield* HttpServerResponse.json({ ok: true, tools: s.right.tools() });
+    })),
+    HttpRouter.post("/api/ext/tools/:name", Effect.gen(function* () {
+      const user = yield* bearer;
+      if (!user) return unauthorized;
+      const { name } = yield* HttpRouter.params;
+      const args = yield* HttpServerRequest.HttpServerRequest.pipe(Effect.flatMap((r) => r.json), Effect.orElseSucceed(() => undefined));
+      if (args === undefined || typeof args != "object" || args === null || Array.isArray(args)) return HttpServerResponse.unsafeJson({ ok: false, error: "The body must be a JSON object of the tool's arguments." }, { status: 400 });
+      const s = yield* session(user);
+      if (s._tag != "Right") return HttpServerResponse.unsafeJson({ ok: false, error: "The agent's session didn't start." }, { status: 503 });
+      if (!s.right.tools().some((t) => t.name == name)) return HttpServerResponse.unsafeJson({ ok: false, error: `There's no tool named "${name}". The tools are: ${s.right.tools().map((t) => t.name).join(", ")}.` }, { status: 404 });
+      const run = yield* Effect.tryPromise({ try: () => s.right.runTool(name!, args), catch: (e) => (e as Error).message }).pipe(Effect.either);
+      return run._tag == "Right"
+        ? HttpServerResponse.unsafeJson({ ok: true, content: run.right })
+        : HttpServerResponse.unsafeJson({ ok: false, error: run.left }, { status: 400 });
     })),
     HttpRouter.post("/api/agent/view", Effect.gen(function* () {
       const body = yield* HttpServerRequest.schemaBodyJson(ViewBody);
@@ -285,17 +347,17 @@ const program = Effect.gen(function* () {
     })),
     HttpRouter.post("/api/agent/abort", Effect.gen(function* () {
       const s = yield* session(userOf(yield* requestUrl));
-      if (s?._tag == "Right") s.right.abort();
+      if (s._tag == "Right") s.right.abort();
       return yield* HttpServerResponse.json({ ok: true });
     })),
     HttpRouter.post("/api/agent/reset", Effect.gen(function* () {
       const s = yield* session(userOf(yield* requestUrl));
-      if (s?._tag == "Right") yield* Effect.promise(() => s.right.reset());
+      if (s._tag == "Right") yield* Effect.promise(() => s.right.reset());
       return yield* HttpServerResponse.json({ ok: true });
     })),
     HttpRouter.post("/api/agent/undo", Effect.gen(function* () {
       const s = yield* session(userOf(yield* requestUrl));
-      return yield* HttpServerResponse.json({ ok: s?._tag == "Right" && s.right.undo() });
+      return yield* HttpServerResponse.json({ ok: s._tag == "Right" && s.right.undo() });
     })),
     // What storage holds (not the room): lets a test see the room's writes
     // land, and send an edit that arrives as a file (a publish, a git pull)

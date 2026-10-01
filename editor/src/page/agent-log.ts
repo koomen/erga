@@ -1,22 +1,23 @@
 // The agent conversation as the editor shows it, shared by the host (which
 // keeps the transcript, so a reload picks it back up) and the shell (which
 // renders it). The host folds pi's agent events into these small events,
-// sends each one to its user's tabs over SSE, and both apply them with
-// `reduce`. A transcript is private to one person and one document: their
+// sends each one to its user's tabs over their event WebSocket, and both
+// apply them with `reduce`. Tool calls an external agent makes through the
+// API (`via: "external"`) land in the same transcript. A transcript is private to one person and one document: their
 // tabs all show it, collaborators never see it.
 
 export type LogItem =
   | { kind: "user"; text: string }
   | { kind: "assistant"; text: string }
   | { kind: "thinking"; text: string }
-  | { kind: "tool"; id: string; name: string; path: string | null; status: "running" | "done" | "error"; detail?: string; image?: string }
+  | { kind: "tool"; id: string; name: string; path: string | null; status: "running" | "done" | "error"; detail?: string; image?: string; via?: "external" }
   | { kind: "error"; text: string };
 
 export type LogEvent =
   | { t: "user"; text: string }
   | { t: "text"; delta: string }
   | { t: "thinking"; delta: string }
-  | { t: "tool"; id: string; name: string; path: string | null; status: "running" | "done" | "error"; detail?: string; image?: string }
+  | { t: "tool"; id: string; name: string; path: string | null; status: "running" | "done" | "error"; detail?: string; image?: string; via?: "external" }
   | { t: "error"; text: string }
   | { t: "busy"; busy: boolean }
   /** How many of the agent's changes "Undo the agent's change" can take back. */
@@ -43,7 +44,7 @@ export function reduce(log: Log, ev: LogEvent): number {
       return items.length - 1;
     case "tool": {
       const i = items.findIndex((x) => x.kind == "tool" && x.id == ev.id);
-      const item: LogItem = { kind: "tool", id: ev.id, name: ev.name, path: ev.path, status: ev.status, detail: ev.detail, image: ev.image };
+      const item: LogItem = { kind: "tool", id: ev.id, name: ev.name, path: ev.path, status: ev.status, detail: ev.detail, image: ev.image, via: ev.via };
       if (i >= 0) { items[i] = item; return i; }
       items.push(item);
       return items.length - 1;
