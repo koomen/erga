@@ -28,6 +28,7 @@
 // and it needs no key. Never set it on a deployment real people use.
 
 import { readFileSync } from "fs";
+import * as Effect from "effect/Effect";
 import * as Y from "yjs";
 import { Awareness } from "y-protocols/awareness";
 import { fauxAssistantMessage, fauxText, fauxToolCall, registerFauxProvider, validateToolArguments, type Context, type Model } from "@mariozechner/pi-ai";
@@ -206,9 +207,8 @@ function makeTools(ws: Workspace, opts: {
   edited: (path: string, at: number) => void;
 }): AgentTool[] {
   const text = (s: string) => ({ content: [{ type: "text" as const, text: s }], details: {} });
-  const guard = <T>(f: () => T): T => {
-    try { return f(); } catch (e) { throw new Error(e instanceof WorkspaceError ? e.message : String((e as Error).message ?? e)); }
-  };
+  /** Runs a workspace operation; its failure becomes the tool's error, which the model reads. */
+  const run = <T>(op: Effect.Effect<T, WorkspaceError>): T => Effect.runSync(Effect.mapError(op, (e) => new Error(e.message)));
   return [
     {
       name: "read",
@@ -220,13 +220,13 @@ function makeTools(ws: Workspace, opts: {
         limit: Type.Optional(Type.Number({ description: "Maximum number of lines to read" })),
       }),
       execute: async (_id, p: { path: string; offset?: number; limit?: number }) => {
-        const path = guard(() => cleanPath(p.path));
+        const path = run(cleanPath(p.path));
         if (!ws.isText(path) && IMAGE.test(path)) {
           const bytes = await opts.readAsset(path);
           if (!bytes) throw new Error(`${path} doesn't exist`);
           return { content: [{ type: "image" as const, data: Buffer.from(bytes).toString("base64"), mimeType: MIME[path.split(".").pop()!.toLowerCase()] }], details: {} };
         }
-        const lines = guard(() => ws.read(path)).split("\n");
+        const lines = run(ws.read(path)).split("\n");
         const start = Math.max(0, (p.offset ?? 1) - 1);
         if (start >= lines.length && lines.length > 1) throw new Error(`Offset ${p.offset} is beyond the end of the file (${lines.length} lines)`);
         let end = Math.min(lines.length, start + (p.limit ?? MAX_LINES));
@@ -248,7 +248,7 @@ function makeTools(ws: Workspace, opts: {
         }), { description: "One or more targeted replacements, each matched against the current file" }),
       }),
       execute: async (_id, p: { path: string; edits: { oldText: string; newText: string }[] }) => {
-        const r = guard(() => ws.edit(p.path, p.edits));
+        const r = run(ws.edit(p.path, p.edits));
         opts.edited(r.path, r.at);
         return text(r.summary);
       },
@@ -262,7 +262,7 @@ function makeTools(ws: Workspace, opts: {
         content: Type.String({ description: "The file's new content" }),
       }),
       execute: async (_id, p: { path: string; content: string }) => {
-        const r = guard(() => ws.write(p.path, p.content));
+        const r = run(ws.write(p.path, p.content));
         opts.edited(r.path, r.at);
         return text(r.summary);
       },
@@ -273,7 +273,7 @@ function makeTools(ws: Workspace, opts: {
       description: "List the files and folders directly inside a folder of the document (default: its root).",
       parameters: Type.Object({ path: Type.Optional(Type.String({ description: "Folder to list" })) }),
       execute: async (_id, p: { path?: string }) => {
-        const dir = p.path && p.path.replace(/^[./]+$/, "") ? guard(() => cleanPath(p.path!)) + "/" : "";
+        const dir = p.path && p.path.replace(/^[./]+$/, "") ? run(cleanPath(p.path!)) + "/" : "";
         const entries = new Set<string>();
         for (const f of ws.paths()) if (f.startsWith(dir)) { const rest = f.slice(dir.length); entries.add(rest.includes("/") ? rest.slice(0, rest.indexOf("/") + 1) : rest); }
         if (!entries.size) throw new Error(`${p.path} is empty or doesn't exist`);
@@ -308,7 +308,7 @@ function makeTools(ws: Workspace, opts: {
         const out: string[] = [];
         for (const f of ws.paths()) {
           if (!ws.isText(f) || (only && !only.test(f))) continue;
-          ws.read(f).split("\n").forEach((line, i) => { if (out.length < 100 && re.test(line)) out.push(`${f}:${i + 1}: ${line.length > 300 ? line.slice(0, 300) + "…" : line}`); });
+          run(ws.read(f)).split("\n").forEach((line, i) => { if (out.length < 100 && re.test(line)) out.push(`${f}:${i + 1}: ${line.length > 300 ? line.slice(0, 300) + "…" : line}`); });
         }
         return text(out.length ? out.join("\n") + (out.length == 100 ? "\n[First 100 matches.]" : "") : "No matches.");
       },

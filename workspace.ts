@@ -10,15 +10,20 @@
 // makes an agent's stale picture of the file safe. Each tool call is one
 // transaction of minimal deletes and inserts, so concurrent edits anywhere
 // else in the file survive.
+//
+// Each operation is an Effect that fails with a WorkspaceError: its reason
+// says what went wrong, its message says it to the model.
 
+import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import * as Y from "yjs";
 import { changesBetween, rebase } from "./src/page/merge";
 import { applyChanges, assets, files, stamp, type Author } from "./src/room/doc";
 
 export interface Workspace {
-  read(path: string): string;
-  edit(path: string, edits: { oldText: string; newText: string }[]): EditResult;
-  write(path: string, content: string): EditResult;
+  read(path: string): Effect.Effect<string, WorkspaceError>;
+  edit(path: string, edits: { oldText: string; newText: string }[]): Effect.Effect<EditResult, WorkspaceError>;
+  write(path: string, content: string): Effect.Effect<EditResult, WorkspaceError>;
   /** Every path, text and binary, sorted. */
   paths(): string[];
   isText(path: string): boolean;
@@ -27,18 +32,23 @@ export interface Workspace {
 /** Where an edit landed: the first changed position, for the agent's cursor. */
 export interface EditResult { path: string; at: number; summary: string }
 
-export class WorkspaceError extends Error {}
+export class WorkspaceError extends Schema.TaggedError<WorkspaceError>()("WorkspaceError", {
+  reason: Schema.Literals(["outside", "noPath", "binary", "missing", "noEdits", "emptyEdit", "notFound", "ambiguous", "overlap", "readOnly"]),
+  message: Schema.String,
+}) {}
+
+const fail = (reason: WorkspaceError["reason"], message: string) => Effect.fail(new WorkspaceError({ reason, message }));
 
 /** Normalises a path the model gives (leading ./ or /) and refuses ones that leave the folder. */
-export function cleanPath(path: string): string {
+export function cleanPath(path: string): Effect.Effect<string, WorkspaceError> {
   const parts: string[] = [];
   for (const seg of path.replace(/\\/g, "/").split("/")) {
     if (!seg || seg == ".") continue;
-    if (seg == "..") throw new WorkspaceError(`${path} is outside the document's folder`);
+    if (seg == "..") return fail("outside", `${path} is outside the document's folder`);
     parts.push(seg);
   }
-  if (!parts.length) throw new WorkspaceError("give a file path");
-  return parts.join("/");
+  if (!parts.length) return fail("noPath", "give a file path");
+  return Effect.succeed(parts.join("/"));
 }
 
 export class YjsWorkspace implements Workspace {
@@ -54,11 +64,11 @@ export class YjsWorkspace implements Workspace {
     private origin: object,
   ) {}
 
-  private text(path: string): Y.Text {
+  private text(path: string): Effect.Effect<Y.Text, WorkspaceError> {
     const t = files(this.doc).get(path);
-    if (t) return t;
-    if (assets(this.doc).has(path)) throw new WorkspaceError(`${path} is a binary file; it can't be read or edited as text`);
-    throw new WorkspaceError(`${path} doesn't exist`);
+    if (t) return Effect.succeed(t);
+    if (assets(this.doc).has(path)) return fail("binary", `${path} is a binary file; it can't be read or edited as text`);
+    return fail("missing", `${path} doesn't exist`);
   }
 
   isText(path: string): boolean { return files(this.doc).has(path); }
@@ -67,29 +77,42 @@ export class YjsWorkspace implements Workspace {
     return [...files(this.doc).keys(), ...assets(this.doc).keys()].sort();
   }
 
-  read(path: string): string {
-    path = cleanPath(path);
-    const text = this.text(path).toString();
-    this.seen.set(path, text);
-    return text;
+  read(path: string): Effect.Effect<string, WorkspaceError> {
+    const self = this;
+    return Effect.gen(function* () {
+      path = yield* cleanPath(path);
+      const text = (yield* self.text(path)).toString();
+      self.seen.set(path, text);
+      return text;
+    });
   }
 
-  edit(path: string, edits: { oldText: string; newText: string }[]): EditResult {
-    path = cleanPath(path);
-    this.mayEdit();
-    const t = this.text(path);
-    const current = t.toString();
-    if (!edits.length) throw new WorkspaceError("no edits given");
-    // Aim every edit at the current text first; apply only if all of them land.
-    const spans = edits.map((e, i) => {
-      const label = edits.length > 1 ? `edits[${i}]` : "oldText";
-      if (!e.oldText) throw new WorkspaceError(`${label} is empty`);
-      const at = current.indexOf(e.oldText);
-      if (at < 0) throw new WorkspaceError(`${label} isn't in the current text of ${path}. It may have just changed (someone could be editing it); read the file again and retry.`);
-      if (current.indexOf(e.oldText, at + 1) >= 0) throw new WorkspaceError(`${label} matches more than once in ${path}; include more surrounding text to make it unique.`);
-      return { from: at, to: at + e.oldText.length, insert: e.newText };
-    }).sort((a, b) => a.from - b.from);
-    for (let i = 1; i < spans.length; i++) if (spans[i].from < spans[i - 1].to) throw new WorkspaceError("two edits overlap; merge them into one");
+  edit(path: string, edits: { oldText: string; newText: string }[]): Effect.Effect<EditResult, WorkspaceError> {
+    const self = this;
+    return Effect.gen(function* () {
+      path = yield* cleanPath(path);
+      yield* self.mayEdit();
+      const t = yield* self.text(path);
+      const current = t.toString();
+      if (!edits.length) return yield* fail("noEdits", "no edits given");
+      // Aim every edit at the current text first; apply only if all of them land.
+      const spans: { from: number; to: number; insert: string }[] = [];
+      for (const [i, e] of edits.entries()) {
+        const label = edits.length > 1 ? `edits[${i}]` : "oldText";
+        if (!e.oldText) return yield* fail("emptyEdit", `${label} is empty`);
+        const at = current.indexOf(e.oldText);
+        if (at < 0) return yield* fail("notFound", `${label} isn't in the current text of ${path}. It may have just changed (someone could be editing it); read the file again and retry.`);
+        if (current.indexOf(e.oldText, at + 1) >= 0) return yield* fail("ambiguous", `${label} matches more than once in ${path}; include more surrounding text to make it unique.`);
+        spans.push({ from: at, to: at + e.oldText.length, insert: e.newText });
+      }
+      spans.sort((a, b) => a.from - b.from);
+      for (let i = 1; i < spans.length; i++) if (spans[i].from < spans[i - 1].to) return yield* fail("overlap", "two edits overlap; merge them into one");
+      return self.apply(path, t, current, edits, spans);
+    });
+  }
+
+  /** Applies edits that all landed, each as its smallest change, in one transaction. */
+  private apply(path: string, t: Y.Text, current: string, edits: { oldText: string; newText: string }[], spans: { from: number; to: number; insert: string }[]): EditResult {
     // Each as the smallest change: trim what old and new share at both ends.
     const minimal = spans.map(({ from, to, insert }) => {
       let s = 0;
@@ -115,10 +138,18 @@ export class YjsWorkspace implements Workspace {
     return { path, at: last.from + shift + last.insert.length, summary: `Edited ${path} (${minimal.length} change${minimal.length > 1 ? "s" : ""}).` };
   }
 
-  write(path: string, content: string): EditResult {
-    path = cleanPath(path);
-    this.mayEdit();
-    if (assets(this.doc).has(path)) throw new WorkspaceError(`${path} is a binary file; it can't be written as text`);
+  write(path: string, content: string): Effect.Effect<EditResult, WorkspaceError> {
+    const self = this;
+    return Effect.gen(function* () {
+      path = yield* cleanPath(path);
+      yield* self.mayEdit();
+      if (assets(self.doc).has(path)) return yield* fail("binary", `${path} is a binary file; it can't be written as text`);
+      return self.merge(path, content);
+    });
+  }
+
+  /** Creates the file, or merges the agent's version of it into the current text. */
+  private merge(path: string, content: string): EditResult {
     const t = files(this.doc).get(path);
     if (!t) {
       this.seen.set(path, content);
@@ -145,8 +176,8 @@ export class YjsWorkspace implements Workspace {
     return { path, at, summary: changes.empty ? `No change to ${path}.` : `Wrote ${path}.` };
   }
 
-  private mayEdit(): void {
-    if (!this.canEdit()) throw new WorkspaceError("Your user can only view this document, so you can't change it.");
+  private mayEdit(): Effect.Effect<void, WorkspaceError> {
+    return this.canEdit() ? Effect.void : fail("readOnly", "Your user can only view this document, so you can't change it.");
   }
 }
 

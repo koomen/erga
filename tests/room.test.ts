@@ -6,7 +6,8 @@ import { expect, test } from "bun:test";
 import * as Y from "yjs";
 import { Awareness } from "y-protocols/awareness";
 import { Room, joinLocal, type FileStore } from "../room";
-import { YjsWorkspace } from "../workspace";
+import * as Effect from "effect/Effect";
+import { YjsWorkspace, type WorkspaceError } from "../workspace";
 import { authorOf, files, introduce, type Author } from "../src/room/doc";
 
 function memoryStore(init: Record<string, string>) {
@@ -19,6 +20,9 @@ function memoryStore(init: Record<string, string>) {
   };
   return { store, writes, get: (p: string) => new TextDecoder().decode(data.get(p)), set: (p: string, t: string) => data.set(p, new TextEncoder().encode(t)) };
 }
+
+/** Why a workspace operation failed, and what it told the model. */
+const failure = (op: Effect.Effect<unknown, WorkspaceError>) => Effect.runSync(Effect.flip(op));
 
 const tick = () => new Promise((r) => setTimeout(r, 0));
 const person = (name: string): Author => ({ user: name.toLowerCase(), name, color: "#2f6fec", kind: "person" });
@@ -82,29 +86,31 @@ test("the agent's edits aim at the current text and keep others' edits", async (
   // Ada types while the agent works; the agent's edit lands on top.
   ada.text().insert(ada.text().toString().indexOf("dog"), "lazy ");
   await tick();
-  ws.edit("index.html", [{ oldText: "quick brown fox", newText: "quick red fox" }]);
+  Effect.runSync(ws.edit("index.html", [{ oldText: "quick brown fox", newText: "quick red fox" }]));
   await tick();
   expect(ada.text().toString()).toBe("<h1>Notes</h1>\n<p>The quick red fox.</p>\n<p>Jumps over the lazy dog.</p>\n");
 
   // Text the agent remembers but that's since changed: a clean failure.
-  expect(() => ws.edit("index.html", [{ oldText: "over the dog", newText: "under the dog" }])).toThrow(/isn't in the current text/);
-  expect(() => ws.edit("index.html", [{ oldText: "<p>", newText: "<p class=x>" }])).toThrow(/more than once/);
+  const stale = failure(ws.edit("index.html", [{ oldText: "over the dog", newText: "under the dog" }]));
+  expect(stale.reason).toBe("notFound");
+  expect(stale.message).toMatch(/isn't in the current text/);
+  expect(failure(ws.edit("index.html", [{ oldText: "<p>", newText: "<p class=x>" }])).reason).toBe("ambiguous");
 
   // write applies only the differences, so a concurrent edit elsewhere survives.
-  const draft = ws.read("index.html").replace("Notes", "Field notes");
+  const draft = Effect.runSync(ws.read("index.html")).replace("Notes", "Field notes");
   ada.text().insert(ada.text().toString().indexOf("Jumps"), "It ");
   await tick();
-  ws.write("index.html", draft);
+  Effect.runSync(ws.write("index.html", draft));
   await tick();
   expect(ada.text().toString()).toBe("<h1>Field notes</h1>\n<p>The quick red fox.</p>\n<p>It Jumps over the lazy dog.</p>\n");
 
   // New files, and no escaping the folder; a viewer's agent can't edit.
-  ws.write("notes/extra.md", "hi\n");
+  Effect.runSync(ws.write("notes/extra.md", "hi\n"));
   await tick();
   expect(room.text("notes/extra.md")).toBe("hi\n");
-  expect(() => ws.read("../secret")).toThrow(/outside/);
+  expect(failure(ws.read("../secret")).reason).toBe("outside");
   const viewer = new YjsWorkspace(agent.doc, agentMe, () => false, {});
-  expect(() => viewer.edit("index.html", [{ oldText: "red", newText: "blue" }])).toThrow(/only view/);
+  expect(failure(viewer.edit("index.html", [{ oldText: "red", newText: "blue" }])).reason).toBe("readOnly");
 });
 
 test("every edit is attributed, deletions included", async () => {
@@ -120,7 +126,7 @@ test("every edit is attributed, deletions included", async () => {
 
   bo.doc.transact(() => bo.text().insert(3, "zero "));
   await tick();
-  ws.edit("index.html", [{ oldText: " two", newText: "" }]); // only deletes
+  Effect.runSync(ws.edit("index.html", [{ oldText: " two", newText: "" }])); // only deletes
   await tick();
   m.set("index.html", "<p>zero one three!</p>");
   await room.fileChanged("index.html");
