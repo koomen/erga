@@ -12,6 +12,10 @@
 //            (ERGA_TARGET_COOKIE, ERGA_TARGET_HEADERS as JSON,
 //            and per person ERGA_TARGET_USERS: {"Ada": {"Cookie": ...}})
 //            and capabilities (ERGA_TARGET_CAPS, comma-separated).
+//            With ERGA_TARGET_NEW_DOC (a URL that makes a document and
+//            redirects to it; "{id}" becomes a fresh test id), each test
+//            gets its own document instead, as locally, and they run in
+//            parallel.
 
 import { cpSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync, mkdirSync, statSync } from "fs";
 import { tmpdir } from "os";
@@ -191,6 +195,7 @@ export class RemoteTarget implements Target {
   private base: string;
   private headers: Record<string, string>;
   private users: Record<string, Record<string, string>>;
+  private newDocUrl = process.env.ERGA_TARGET_NEW_DOC;
 
   constructor() {
     const url = process.env.ERGA_TARGET_DOC;
@@ -203,6 +208,17 @@ export class RemoteTarget implements Target {
     // Each test person signed in as their own account, so the server sees different people.
     this.users = JSON.parse(process.env.ERGA_TARGET_USERS || "{}");
     this.caps = new Set((process.env.ERGA_TARGET_CAPS || "browser").split(",").map((s) => s.trim()).filter(Boolean) as Capability[]);
+    this.parallel = !!this.newDocUrl;
+  }
+
+  /** A fresh document from ERGA_TARGET_NEW_DOC, or else the one scratch document. */
+  private async docBase(): Promise<string> {
+    if (!this.newDocUrl) return this.base;
+    const id = "test" + Array.from(crypto.getRandomValues(new Uint8Array(4)), (b) => "abcdefghjkmnpqrstuvwxyz23456789"[b % 31]).join("");
+    const r = await fetch(this.newDocUrl.replace("{id}", id), { headers: this.headers, redirect: "manual" });
+    const location = r.headers.get("location");
+    if (r.status != 302 || !location) throw new Error(`making a test document: ${r.status} ${await r.text()}`);
+    return new URL(location, this.newDocUrl).toString().replace(/\/+$/, "");
   }
 
   /**
@@ -212,16 +228,18 @@ export class RemoteTarget implements Target {
    */
   async newDoc(fixture: string): Promise<Doc> {
     const files = readFixture(fixture);
-    const doc = makeDoc(this.base, this.headers, files, { async dispose() {} }, this.users);
+    const base = await this.docBase();
+    const doc = makeDoc(base, this.headers, files, { async dispose() {} }, this.users);
     const info = await doc.fetch("/api/doc");
-    if (!info.ok) throw new Error(`${this.base}/api/doc answered ${info.status}`);
+    if (!info.ok) throw new Error(`${base}/api/doc answered ${info.status}`);
     doc.writeDelay = ((await info.json()) as { writeDelay?: number }).writeDelay ?? 400;
     for (const [p, text] of Object.entries(files)) {
       const r = await doc.push(p, text);
       if (!r.ok) throw new Error(`resetting ${p}: ${r.status} ${await r.text()}`);
     }
-    // Agent sessions from earlier tests start over.
-    for (const user of ["Ada", "Bo", "Cy"]) await doc.fetch(`/api/agent/reset?user=${user}`, { method: "POST" }, user).catch(() => {});
+    // Agent sessions from earlier tests start over (a fresh document has none,
+    // and asking would start them, as extra participants).
+    if (!this.newDocUrl) for (const user of ["Ada", "Bo", "Cy"]) await doc.fetch(`/api/agent/reset?user=${user}`, { method: "POST" }, user).catch(() => {});
     return doc;
   }
 

@@ -649,11 +649,63 @@ async function brokenPageScenario(browser: Browser) {
   await s.close();
 }
 
+/** Voice mode, against a stand-in for the browser's speech recognition: dictation fills the box and each pause sends it. */
+async function voiceScenario(browser: Browser) {
+  say("\nAgent, voice mode");
+  const s = await session(browser, "page", "index.html", { ANTHROPIC_API_KEY: "sk-ant-test-not-used", ERGA_AGENT_ENV_FILE: "/nonexistent/.env" });
+  const { p } = s;
+  // The stand-in records each session in __recs; messages to the agent are caught in __sent, not sent.
+  await p.send("Page.addScriptToEvaluateOnNewDocument", { source: `
+    window.__recs = []; window.__sent = [];
+    window.SpeechRecognition = class extends EventTarget { start() { this.running = true; __recs.push(this); } stop() { this.abort(); } abort() { if (!this.running) return; this.running = false; setTimeout(() => this.onend?.()); } };
+    window.__hear = (...rs) => __recs.at(-1).onresult({ results: rs.map(([t, f]) => Object.assign([{ transcript: t }], { isFinal: f })) });
+    const f = window.fetch;
+    window.fetch = (url, init) => /\\/api\\/agent$/.test(String(url)) ? (__sent.push(JSON.parse(init.body).text), Promise.resolve(new Response("{}"))) : f(url, init);
+  ` });
+  await p.eval(`location.reload()`);
+  await loaded(p);
+  await p.key("j", MOD.Meta);
+  const st = () => p.eval<{ on: string | null; input: string; readOnly: boolean; send: string | null; title: string; sent: string[]; recs: number }>(`(() => { const v = document.getElementById("agent-voice"), i = document.getElementById("agent-input"), b = document.getElementById("agent-send"); return { on: v.getAttribute("aria-pressed"), input: i.value, readOnly: i.readOnly, send: b.getAttribute("aria-disabled"), title: b.title, sent: __sent, recs: __recs.length }; })()`);
+  check("the voice button shows where speech recognition exists", await p.eval<boolean>(`!document.getElementById("agent-voice").hidden`));
+  await p.eval(`document.getElementById("agent-voice").click()`);
+  let v = await st();
+  check("voice mode listens, and Send is off and says why", v.on == "true" && v.recs == 1 && v.readOnly && v.send == "true" && /Voice mode/.test(v.title), v);
+
+  await p.eval(`__hear(["make the title", false])`);
+  v = await st();
+  check("words show in the box as they're heard, unsent", v.input == "make the title" && v.sent.length == 0, v);
+  await p.eval(`__hear(["make the title blue", true])`);
+  check("a pause sends what was said", await until(async () => (await st()).sent.length == 1, 2000));
+  v = await st();
+  check("and empties the box", v.sent[0] == "make the title blue" && v.input == "", v);
+
+  // The session's first result was sent; the next words not yet final are sent at the pause too, then the session restarts.
+  await p.eval(`__hear(["make the title blue", true], [" and bigger", false])`);
+  v = await st();
+  check("the next words show alone", v.input == "and bigger", v);
+  await until(async () => (await st()).sent.length == 2, 2000);
+  v = await st();
+  check("each pause sends again, words not yet final included", v.sent[1] == "and bigger", v);
+  check("and a fresh session takes over, so they don't come again", await until(async () => (await st()).recs == 2, 2000));
+
+  await p.eval(`__hear(["thanks", true])`);
+  await p.eval(`document.getElementById("agent-voice").click()`);
+  v = await st();
+  check("leaving voice mode keeps what wasn't sent in the box, to edit", v.on == "false" && v.input == "thanks" && !v.readOnly && v.sent.length == 2, v);
+  await Bun.sleep(T(1500) + 100);
+  check("and doesn't send it later", (await st()).sent.length == 2);
+
+  await p.eval(`document.getElementById("agent-voice").click()`);
+  await p.key("j", MOD.Meta);
+  check("collapsing the panel stops listening", (await st()).on == "false" && await p.eval<boolean>(`!__recs.at(-1).running`));
+  await s.close();
+}
+
 const SCENARIOS: [string, (b: Browser) => Promise<void>][] = [
   ["html", htmlScenario], ["html", strayTagScenario], ["html", noEditScenario], ["html", brokenPageScenario],
   ["md", mdScenario], ["md", lightOnlyScenario],
   ["format", formatScenario],
-  ["agent", agentOffScenario], ["agent", shareScenario], ["agent", modelScenario], ["agent", agentEmptyScenario],
+  ["agent", agentOffScenario], ["agent", shareScenario], ["agent", modelScenario], ["agent", agentEmptyScenario], ["agent", voiceScenario],
   ["reload", backdropReloadScenario],
 ];
 const browser = await Browser.launch();

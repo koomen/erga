@@ -223,6 +223,18 @@
     .agent-send { flex: none; height: 38px; padding: 0 12px; border: 0; border-radius: 12px; background: var(--fg-strong); color: var(--bg); font: 600 13px var(--font-text); cursor: pointer; }
     .agent-send.stop { background: var(--code-bg); color: var(--fg); }
     .agent-send[aria-disabled="true"] { opacity: 0.4; cursor: not-allowed; }
+    /* Voice mode: a round button with a waveform, which moves while it listens. */
+    .agent-voice { flex: none; height: 38px; width: 38px; border-radius: 50%; color: var(--fg); background: var(--code-bg); }
+    .agent-voice svg { stroke-width: 2.2; overflow: visible; }
+    .agent-voice[hidden] { display: none; }
+    .agent-voice[aria-pressed="true"], .agent-voice[aria-pressed="true"]:hover { color: var(--bg); background: var(--fg-strong); }
+    .agent-voice[aria-pressed="true"] path { transform-box: fill-box; transform-origin: center; animation: agent-wave 900ms ease-in-out infinite alternate; }
+    .agent-voice path:nth-child(2) { animation-delay: -300ms; }
+    .agent-voice path:nth-child(3) { animation-delay: -600ms; }
+    .agent-voice path:nth-child(4) { animation-delay: -150ms; }
+    .agent-voice path:nth-child(5) { animation-delay: -450ms; }
+    @keyframes agent-wave { from { transform: scaleY(0.45); } to { transform: scaleY(1); } }
+    @media (prefers-reduced-motion: reduce) { .agent-voice path { animation: none !important; } }
     .agent-hint { margin: 0 10px 8px; padding: 7px 10px; border-radius: 10px; background: var(--code-bg); color: var(--soft); font-size: 12.5px; line-height: 1.45; }
     .agent-hint.sticky { color: var(--fg); }
     .agent-hint[hidden] { display: none; }
@@ -375,6 +387,9 @@
     <p class="agent-hint" id="agent-hint" role="status" hidden></p>
     <form class="agent-compose" id="agent-form">
       <div class="agent-field" id="agent-field"><textarea id="agent-input" rows="1" placeholder="Ask the agent…" aria-label="Message the agent"></textarea></div>
+      <button type="button" class="icon-btn agent-voice" id="agent-voice" aria-label="Voice mode" title="Voice mode: talk, and what you say is sent when you pause" aria-pressed="false" hidden>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 10v4"/><path d="M9 7.5v9"/><path d="M12 6v12"/><path d="M15 7.5v9"/><path d="M18 10v4"/></svg>
+      </button>
       <button type="submit" class="agent-send" id="agent-send">Send</button>
     </form>
   </div></aside>

@@ -958,6 +958,8 @@ Once you've read it, await further instructions.`;
   const agentHint = $("agent-hint");
   // Why the agent can't take a message right now, shown in the panel until it can.
   let agentOff: string | null = "Connecting to the agent…";
+  /** The live voice session (voice mode, below), or null when it's off. `sent` counts the session's results already sent, of `results` heard so far. */
+  let voice: { rec: Recognition; before: string; sent: number; results: number; heard: string; partial: boolean; timer: number } | null = null;
   let hintTimer = 0;
 
   const escapeHtml = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
@@ -1037,19 +1039,21 @@ Once you've read it, await further instructions.`;
   /** Why Send can't send right now, or null if it can. Never a silent no. */
   function sendBlocker(): string | null {
     if (agentOff) return agentOff;
+    if (voice) return "Voice mode is on: what you say is sent when you pause.";
     if (!log.busy && !agentInput.value.trim()) return "Type a message to send it.";
     return null;
   }
   function renderBusy() {
-    const stop = log.busy && !agentInput.value.trim();
-    const why = sendBlocker();
+    // In voice mode the button can't send, so while the agent works it's Stop.
+    const stop = log.busy && (!!voice || !agentInput.value.trim());
+    const why = agentOff ?? (stop ? null : sendBlocker());
     agentSend.textContent = stop ? "Stop" : "Send";
     agentSend.classList.toggle("stop", stop);
     // aria-disabled rather than disabled: a disabled button gets no hover or
     // click, so it could never say why it's disabled.
     agentSend.setAttribute("aria-disabled", String(!!why));
     agentSend.title = why ?? (stop ? "Stop the agent" : log.busy ? "Send (Enter); the agent will take it into account as it works" : "Send (Enter)");
-    agentInput.placeholder = agentOff ? "The agent is off" : log.busy ? "Add to what the agent is doing…" : "Ask the agent…";
+    agentInput.placeholder = agentOff ? "The agent is off" : voice ? "Listening… pause to send" : log.busy ? "Add to what the agent is doing…" : "Ask the agent…";
     if (agentOff) showHint(agentOff, true);
     else if (agentHint.classList.contains("sticky")) hideHint();
     $("agent-fab").classList.toggle("busy", log.busy);
@@ -1149,6 +1153,91 @@ Once you've read it, await further instructions.`;
     }
     renderBusy();
   }
+  // Voice mode: what you say is dictated into the box and sent when you
+  // pause, through the browser's speech recognition (Chrome sends the audio
+  // to Google; Safari to Apple). While the agent works, each send steers it,
+  // as typing does. The browser's own final results come at every breath, so
+  // a pause is our own: no new words for PAUSE_MS. Then everything heard is
+  // sent, words not yet final included, and if there were any the session is
+  // restarted so they can't arrive again later.
+  type Recognition = EventTarget & {
+    continuous: boolean; interimResults: boolean; lang: string;
+    start(): void; stop(): void; abort(): void;
+    onresult: ((e: { results: ArrayLike<ArrayLike<{ transcript: string }> & { isFinal: boolean }> }) => void) | null;
+    onerror: ((e: { error: string }) => void) | null;
+    onend: (() => void) | null;
+  };
+  const Speech = ((window as any).SpeechRecognition ?? (window as any).webkitSpeechRecognition) as (new () => Recognition) | undefined;
+  const PAUSE_MS = 1500;
+  const agentVoice = $("agent-voice") as HTMLButtonElement;
+  agentVoice.hidden = !Speech;
+  function listenVoice(before: string) {
+    const rec = new Speech!();
+    rec.continuous = true;
+    rec.interimResults = true;
+    rec.lang = navigator.language;
+    const v = voice = { rec, before, sent: 0, results: 0, heard: "", partial: false, timer: 0 };
+    rec.onresult = (e) => {
+      if (voice != v) return;
+      let heard = "", partial = false;
+      for (let i = v.sent; i < e.results.length; i++) {
+        heard += e.results[i][0].transcript;
+        if (!e.results[i].isFinal) partial = true;
+      }
+      Object.assign(v, { heard, partial, results: e.results.length });
+      agentInput.value = (v.before + " " + heard).trim();
+      sizeInput();
+      clearTimeout(v.timer);
+      v.timer = window.setTimeout(voiceSend, ms(PAUSE_MS));
+    };
+    rec.onerror = (e) => {
+      if (voice != v) return;
+      if (e.error == "not-allowed" || e.error == "service-not-allowed") { stopVoice(); showHint("Voice mode needs the microphone: allow it for this site, then try again.", true); }
+      else if (e.error == "network") { stopVoice(); showHint("Voice mode couldn't reach the browser's speech service."); }
+      else if (e.error == "audio-capture") { stopVoice(); showHint("Voice mode couldn't find a microphone."); }
+      // "no-speech" and "aborted": the session ends and onend starts another.
+    };
+    // Recognition ends on its own (silence, a time limit); keep listening.
+    rec.onend = () => { if (voice == v) listenVoice((v.before + " " + v.heard).trim()); };
+    try { rec.start(); } catch { stopVoice(); }
+  }
+  function voiceSend() {
+    const v = voice;
+    if (!v) return;
+    const text = (v.before + " " + v.heard).trim();
+    if (!text) return;
+    if (agentOff) { showHint(agentOff, true); return; } // kept in the box until the agent's back
+    v.before = "";
+    v.heard = "";
+    agentInput.value = "";
+    saveDraft();
+    sizeInput();
+    ask(text, editorContext());
+    // Words sent before they were final would come back final: start afresh.
+    if (v.partial) { v.partial = false; v.rec.abort(); }
+    else v.sent = v.results;
+  }
+  function startVoice() {
+    if (!Speech || voice) return;
+    agentVoice.setAttribute("aria-pressed", "true");
+    agentInput.readOnly = true;
+    listenVoice(agentInput.value.trim());
+    renderBusy();
+  }
+  /** Leaves voice mode; anything heard since the last send stays in the box, to edit or send. */
+  function stopVoice() {
+    const v = voice;
+    if (!v) return;
+    voice = null;
+    clearTimeout(v.timer);
+    v.rec.abort();
+    agentVoice.setAttribute("aria-pressed", "false");
+    agentInput.readOnly = false;
+    saveDraft();
+    renderBusy();
+    if (document.body.classList.contains("agent-open")) agentInput.focus();
+  }
+  agentVoice.addEventListener("click", () => voice ? stopVoice() : startVoice());
   /** The "Fix with agent" button: opens the panel and sends the prompt that names the problem. */
   function fixWithAgent(prompt: string, key?: string) {
     if (key) shownProblems.delete(key);
@@ -1182,6 +1271,7 @@ Once you've read it, await further instructions.`;
     $("agent-fab").setAttribute("aria-expanded", String(open));
     settings.agent = open;
     saveSettings();
+    if (!open) stopVoice(); // the mic never listens behind a closed panel
     if (open) { showChrome(); agentInput.focus(); follow(true); }
     else if (sourceView) sourceView.focus();
     else page.focus();

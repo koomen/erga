@@ -5,8 +5,10 @@
 //
 // The token signs in test people (Tester, Ada, Bo, ...), each with their own
 // session cookie, and one of them makes (or reuses) the test document
-// /<you>/testsuit, whose agent is the scripted one. Then it's the remote
-// target (target.ts), as for any deployment.
+// /<you>/testsuit, whose agent is the scripted one. Each test then makes its
+// own fresh test document, so leftovers (agent sessions, people who left)
+// can't spill from one test into the next; it's the remote target
+// (target.ts), as for any deployment.
 
 const base = (process.env.ERGA_PROD_URL || "https://erga.dev").replace(/\/+$/, "");
 const token = process.env.ERGA_TEST_TOKEN;
@@ -34,7 +36,7 @@ if (made.status != 302 || !location) throw new Error(`making the test document: 
 const doc = new URL(location, base).toString();
 console.log(`suite against ${doc}`);
 
-const run = Bun.spawn(["bun", new URL("./run.ts", import.meta.url).pathname, ...process.argv.slice(2)], {
+const run = Bun.spawn(["bun", new URL("./run.ts", import.meta.url).pathname, "--remote", ...process.argv.slice(2)], {
   stdout: "inherit",
   stderr: "inherit",
   env: {
@@ -43,6 +45,7 @@ const run = Bun.spawn(["bun", new URL("./run.ts", import.meta.url).pathname, ...
     ERGA_TARGET_COOKIE: tester,
     ERGA_TARGET_USERS: JSON.stringify(users),
     ERGA_TARGET_CAPS: process.env.ERGA_TARGET_CAPS || "browser,scriptedAgent",
+    ERGA_TARGET_NEW_DOC: `${base}/new?id={id}`,
   },
 });
 process.exit(await run.exited);

@@ -44,11 +44,38 @@ export class Browser {
     throw new Error("Chrome did not start");
   }
 
-  async page(): Promise<Page> {
-    const t = await (await fetch(`http://127.0.0.1:${this.port}/json/new?about:blank`, { method: "PUT" })).json();
-    const page = new Page(t.webSocketDebuggerUrl);
+  /** A tab, in the default context or in one from `context()`. */
+  async page(context?: string): Promise<Page> {
+    let url: string;
+    if (context) {
+      const { targetId } = await (await this.browserLevel()).send("Target.createTarget", { url: "about:blank", browserContextId: context });
+      url = `ws://127.0.0.1:${this.port}/devtools/page/${targetId}`;
+    } else {
+      url = (await (await fetch(`http://127.0.0.1:${this.port}/json/new?about:blank`, { method: "PUT" })).json()).webSocketDebuggerUrl;
+    }
+    const page = new Page(url);
     await page.ready;
     return page;
+  }
+
+  /**
+   * A fresh browser context, like a private window: its own storage and
+   * cookies, so tabs in it don't share localStorage with other tests' tabs on
+   * the same origin (every document on a deployment is one origin).
+   */
+  async context(): Promise<string> {
+    return (await (await this.browserLevel()).send("Target.createBrowserContext", { disposeOnDetach: false })).browserContextId;
+  }
+
+  private browser?: Promise<Page>;
+  /** The browser-level DevTools connection (for contexts and targets). */
+  private browserLevel(): Promise<Page> {
+    return (this.browser ??= (async () => {
+      const { webSocketDebuggerUrl } = await (await fetch(`http://127.0.0.1:${this.port}/json/version`)).json();
+      const conn = new Page(webSocketDebuggerUrl);
+      await conn.ready;
+      return conn;
+    })());
   }
 
   close() {

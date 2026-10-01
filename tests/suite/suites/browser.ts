@@ -12,10 +12,17 @@ import type { Doc } from "../target";
 let browser: Promise<Browser> | null = null;
 export async function closeBrowser() { (await browser)?.close(); browser = null; }
 
+const contexts = new WeakMap<Ctx, Promise<string>>();
+
 /** Opens the shell as a person, with the target's auth headers on every request. */
 async function open(ctx: Ctx, d: Doc, user: string) {
   browser ??= Browser.launch();
-  const p: Page = await (await browser).page();
+  // Each test in its own browser context: a deployment's documents share an
+  // origin, so tests running side by side would otherwise share localStorage.
+  // A test's own tabs share it, as one person's tabs do.
+  const b = await browser;
+  contexts.set(ctx, contexts.get(ctx) ?? b.context());
+  const p: Page = await b.page(await contexts.get(ctx)!);
   ctx.defer(() => p.close());
   const headers = d.headersFor(user);
   if (Object.keys(headers).length) {
@@ -221,7 +228,7 @@ export const browserTests: Test[] = [
       await a.p.key("j", MOD.Meta);
       await sleep(300);
       // The host stops answering the agent's endpoint for a moment.
-      await a.p.eval(`window.__realFetch = window.fetch; window.fetch = (u, o) => String(u).startsWith("/api/agent?") && o?.method == "POST" ? Promise.reject(new TypeError("Failed to fetch")) : window.__realFetch(u, o)`);
+      await a.p.eval(`window.__realFetch = window.fetch; window.fetch = (u, o) => String(u).includes("/api/agent?") && o?.method == "POST" ? Promise.reject(new TypeError("Failed to fetch")) : window.__realFetch(u, o)`);
       await a.p.eval(`(() => { const i = document.getElementById("agent-input"); i.value = "hello there"; i.dispatchEvent(new Event("input")); })()`);
       await a.p.key("Enter");
       await until(() => a.p.eval<boolean>(`!!document.querySelector("#agent-log .msg-user.failed .send-failed button")`), 2000, "the message is marked as not sent, with a retry");
