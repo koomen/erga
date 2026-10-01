@@ -7,6 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@500;600;700&family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,600;1,7..72,400&family=JetBrains+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Alfa+Slab+One&family=Courier+Prime:ital,wght@0,400;0,700;1,400&family=Oswald:wght@600&display=swap">
 <style>
   /* One reading column; open decisions boxed at the end. */
   :root {
@@ -39,6 +40,8 @@
   h2 { font-size: 1.3rem; font-weight: 600; }
   h3 { font-size: 1rem; font-weight: 600; }
   p { margin: 0; }
+  a { color: inherit; text-decoration: underline; text-decoration-color: var(--rule); text-underline-offset: 3px; }
+  a:hover { text-decoration-color: var(--muted); }
   .lede { font-size: 1.1rem; color: var(--muted); }
   section { display: grid; gap: 12px; min-width: 0; }
   section > * { min-width: 0; }
@@ -175,6 +178,159 @@
   .sample:not(.open) .sample-body { transform: translate(calc(-50% + 20px), 32px); box-shadow: 0 10px 28px rgba(20, 28, 40, .18); cursor: text; }
   @media (max-width: 640px) { .sample { grid-template-columns: 1fr; } .sample:not(.open) .sample-file, .sample:not(.open) .sample-body { transform: none; } .sample:not(.open) { margin-bottom: 8px; } }
   @media (prefers-reduced-motion: reduce) { .sample, .sample-file, .sample-body { transition: none; } }
+  /* Embedded agent demo: a miniature editor window whose agent restyles the scene. */
+  .ag { --ag-bg: #ffffff; --ag-fg: #1c1c1f; --ag-strong: #0d0d0f; --ag-soft: #6b6b73; --ag-chrome: #9a9aa2; --ag-rule: rgba(0, 0, 0, .08); --ag-code: rgba(0, 0, 0, .05); --ag-caret: #3b7cf0;
+    --ag-w: 236px; --ag-inset: 10px; --ag-fab: 36px; --ag-ease: cubic-bezier(.32, .72, 0, 1); --ag-ms: 520ms;
+    width: min(680px, calc(100vw - 32px)); margin: 8px 0 8px calc((100% - min(680px, calc(100vw - 32px))) / 2); display: grid; gap: 10px; }
+  :root[data-theme="dark"] .ag { --ag-bg: #232830; --ag-fg: #cacad2; --ag-strong: #ececf1; --ag-soft: #9a9aa4; --ag-chrome: #74747d; --ag-rule: rgba(255, 255, 255, .08); --ag-code: rgba(255, 255, 255, .07); --ag-caret: #6aa1ff; }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .ag { --ag-bg: #232830; --ag-fg: #cacad2; --ag-strong: #ececf1; --ag-soft: #9a9aa4; --ag-chrome: #74747d; --ag-rule: rgba(255, 255, 255, .08); --ag-code: rgba(255, 255, 255, .07); --ag-caret: #6aa1ff; } }
+  .ag-window { background: var(--surface); border: 1.5px solid var(--ink); border-radius: 10px; overflow: hidden; box-shadow: 0 12px 30px rgba(20, 28, 40, .16); container-type: inline-size; }
+  /* The stage is the page's own background, so the space the agent opens up is the same surface as the page. */
+  .ag-stage { position: relative; height: 430px; overflow: hidden; background: var(--surface); font-family: var(--display); transition: background-color .5s ease; }
+  .ag-stage:has(.pulp) { background: #f1dfae radial-gradient(ellipse at 30% 20%, rgba(255, 250, 225, .7), transparent 60%), radial-gradient(ellipse at 80% 100%, rgba(150, 90, 20, .28), transparent 70%); }
+  .ag-stage:has(.pulp)::before { content: ""; position: absolute; inset: 0; pointer-events: none; box-shadow: inset 0 0 60px rgba(90, 50, 10, .35); }
+  .ag-view { position: absolute; inset: 0; transition: left var(--ag-ms) var(--ag-ease); }
+  .ag.open .ag-view { left: calc(var(--ag-w) + var(--ag-inset) * 2); }
+  @container (max-width: 560px) { .ag.open .ag-view { left: 0; } .ag { --ag-w: calc(100cqw - 20px); } }
+  .ag-page { position: absolute; inset: 0; overflow: hidden; padding: 26px 26px 20px; display: grid; align-content: start; gap: 10px; }
+  .ag-page h3 { font-family: var(--display); font-size: 14px; font-weight: 600; }
+  .ag-page p { font-size: 13px; line-height: 1.5; }
+  .ag-page .who { display: block; font-family: var(--display); font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+  .ag-page :is(.pf-mast, .pf-price, .pf-stamp) { display: none; }
+  /* After the agent: a pulp paperback. */
+  .ag-page.pulp { color: #1a1208; padding: 18px 26px 20px; gap: 9px; animation: ag-in .6s ease; }
+  .ag-page.pulp .pf-mast { display: block; margin: 0 -26px; padding: 6px 26px 4px; background: #c8221d; color: #f6d33c; font: 400 34px/1 "Alfa Slab One", Georgia, serif; letter-spacing: .02em; text-shadow: 2px 2px 0 #1a1208; border-block: 3px solid #1a1208; }
+  .ag-page.pulp .pf-price { display: grid; place-items: center; position: absolute; top: 12px; right: 16px; width: 46px; height: 46px; border-radius: 50%; background: #f6d33c; border: 2.5px solid #1a1208; color: #1a1208; font: 400 15px/1 "Alfa Slab One", Georgia, serif; transform: rotate(12deg); z-index: 1; }
+  .ag-page.pulp h3 { font: 600 12px/1 Oswald, var(--display); letter-spacing: .3em; text-transform: uppercase; color: #c8221d; border-bottom: 1.5px solid #1a120833; padding-bottom: 6px; }
+  .ag-page.pulp p { font: 13px/1.45 "Courier Prime", "Courier New", monospace; padding-left: 12px; border-left: 3px solid #c8221d; margin-right: 84px; }
+  .ag-page.pulp .who { font: 600 12px/1.3 Oswald, var(--display); letter-spacing: .12em; color: #c8221d; }
+  .ag-page.pulp .pf-stamp { display: block; position: absolute; right: 14px; bottom: 12px; width: 92px; transform: rotate(-10deg); z-index: 1; }
+  @keyframes ag-in { from { opacity: 0; filter: blur(2px); } }
+  /* The refresh pill, as in the editor. */
+  .ag-pill { position: absolute; left: 50%; top: 10px; z-index: 3; display: flex; align-items: center; gap: 7px; white-space: nowrap; border: 1px solid var(--ag-rule); border-radius: 999px; padding: 5px 12px 5px 9px;
+    background: var(--ag-bg); color: var(--ag-fg); box-shadow: 0 6px 18px rgba(0, 0, 0, .12); font-size: 11.5px; opacity: 0; transform: translate(-50%, -8px); transition: opacity .2s ease, transform .3s var(--ag-ease); pointer-events: none; }
+  .ag-pill b { font-weight: 600; color: var(--ag-caret); }
+  .ag-pill svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; animation: ag-spin 1.6s linear infinite; }
+  .ag.refreshing .ag-pill { opacity: 1; transform: translate(-50%, 0); }
+  @keyframes ag-spin { to { transform: rotate(360deg); } }
+  /* The agent button, and the card that grows out of it. */
+  .ag-fab { position: absolute; left: var(--ag-inset); bottom: var(--ag-inset); z-index: 5; width: var(--ag-fab); height: var(--ag-fab); padding: 0; border-radius: 50%; border: 1px solid var(--ag-rule); display: grid; place-items: center; cursor: pointer;
+    background: var(--ag-bg); color: var(--ag-fg); box-shadow: 0 6px 18px rgba(0, 0, 0, .14); transition: transform var(--ag-ms) var(--ag-ease), opacity 200ms ease 160ms; }
+  .ag-fab svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+  .ag-fab::before { content: ""; position: absolute; inset: -1px; border-radius: 50%; box-shadow: 0 0 0 0 var(--ag-caret); animation: ag-ping 1.8s ease-out infinite; }
+  @keyframes ag-ping { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--ag-caret) 55%, transparent); } 100% { box-shadow: 0 0 0 14px transparent; } }
+  .ag.open .ag-fab { opacity: 0; transform: scale(.6); pointer-events: none; transition: transform var(--ag-ms) var(--ag-ease), opacity 120ms ease; }
+  .ag-hint { position: absolute; left: calc(var(--ag-inset) + var(--ag-fab) + 12px); bottom: calc(var(--ag-inset) + 6px); z-index: 4; display: flex; align-items: center; gap: 6px; padding: 5px 11px 5px 9px; border-radius: 8px; white-space: nowrap; line-height: 1.3;
+    background: var(--ag-strong); color: var(--ag-bg); font-size: 12px; font-weight: 600; box-shadow: 0 6px 18px rgba(0, 0, 0, .18); animation: ag-nudge 1.4s ease-in-out infinite; transition: opacity .15s; }
+  .ag-hint::before { content: ""; position: absolute; left: -5px; top: 50%; width: 10px; height: 10px; background: inherit; transform: translateY(-50%) rotate(45deg); border-radius: 2px; }
+  @keyframes ag-nudge { 50% { transform: translateX(4px); } }
+  .ag.open .ag-hint, .ag.done .ag-hint { opacity: 0; pointer-events: none; }
+  .ag-agent { position: absolute; z-index: 4; left: var(--ag-inset); top: var(--ag-inset); bottom: var(--ag-inset); width: var(--ag-w); filter: drop-shadow(0 10px 24px rgba(0, 0, 0, .12)) drop-shadow(0 1px 3px rgba(0, 0, 0, .06));
+    visibility: hidden; transition: visibility 0s linear var(--ag-ms); }
+  .ag.open .ag-agent { visibility: visible; transition: visibility 0s; }
+  .ag-card { position: absolute; inset: 0; display: flex; flex-direction: column; background: var(--ag-bg); border: 1px solid var(--ag-rule); border-radius: 14px; font-size: 12.5px; line-height: 1.5; color: var(--ag-fg);
+    clip-path: inset(calc(100% - var(--ag-fab)) calc(100% - var(--ag-fab)) 0 0 round calc(var(--ag-fab) / 2)); opacity: 0; transition: clip-path var(--ag-ms) var(--ag-ease), opacity 180ms ease 140ms; }
+  .ag.open .ag-card { clip-path: inset(0 0 0 0 round 14px); opacity: 1; transition: clip-path var(--ag-ms) var(--ag-ease), opacity 100ms ease; }
+  .ag-card > * { opacity: 0; transform: translateY(6px); transition: opacity 160ms ease, transform var(--ag-ms) var(--ag-ease); }
+  .ag.open .ag-card > * { opacity: 1; transform: none; transition: opacity 260ms ease 140ms, transform var(--ag-ms) var(--ag-ease) 60ms; }
+  .ag-head { display: flex; align-items: center; gap: 6px; padding: 9px 8px 5px 14px; }
+  .ag-head b { font-weight: 600; color: var(--ag-strong); }
+  .ag-head span { flex: 1; font-size: 11px; color: var(--ag-chrome); }
+  .ag-close { width: 24px; height: 24px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--ag-chrome); display: grid; place-items: center; cursor: pointer; }
+  .ag-close:hover { color: var(--ag-fg); background: var(--ag-code); }
+  .ag-close svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+  .ag-log { flex: 1; overflow: hidden; padding: 4px 12px 12px; display: flex; flex-direction: column; justify-content: flex-end; gap: 8px; }
+  .ag-empty { margin: auto; text-align: center; color: var(--ag-chrome); padding: 0 14px; }
+  .ag-user { align-self: flex-end; max-width: 90%; background: var(--ag-code); border-radius: 10px; padding: 6px 10px; animation: ag-rise .3s var(--ag-ease); }
+  .ag-tool { color: var(--ag-soft); font-size: 11.5px; display: flex; gap: 7px; align-items: baseline; animation: ag-rise .3s var(--ag-ease); }
+  .ag-tool::before { content: ""; flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--ag-chrome); transform: translateY(-1px); }
+  .ag-tool.running::before { background: var(--ag-caret); animation: ag-pulse 1s ease-in-out infinite alternate; }
+  .ag-tool code, .ag-said code { font-family: var(--mono); font-size: .88em; background: var(--ag-code); border: 0; border-radius: 4px; padding: .1em .3em; }
+  .ag-said { animation: ag-rise .3s var(--ag-ease); }
+  @keyframes ag-pulse { from { opacity: .35; } to { opacity: 1; } }
+  @keyframes ag-rise { from { opacity: 0; transform: translateY(4px); } }
+  .ag-compose { display: flex; gap: 6px; align-items: flex-end; padding: 8px; border-top: 1px solid var(--ag-rule); }
+  .ag-input { flex: 1; min-width: 0; min-height: 32px; border: 1px solid var(--ag-rule); border-radius: 10px; padding: 6px 9px; color: var(--ag-fg); }
+  .ag-input:empty::before { content: attr(data-placeholder); color: var(--ag-chrome); }
+  .ag.typing .ag-input { border-color: color-mix(in srgb, var(--ag-caret) 60%, var(--ag-rule)); }
+  .ag.typing .ag-input::after { content: ""; display: inline-block; width: 1.5px; height: 1.1em; margin-left: 1px; vertical-align: text-bottom; background: var(--ag-caret); animation: ag-blink 1s steps(1) infinite; }
+  @keyframes ag-blink { 50% { opacity: 0; } }
+  .ag-send { flex: none; display: grid; place-items: center; height: 32px; padding: 0 11px; border: 0; border-radius: 10px; background: var(--ag-strong); color: var(--ag-bg); font: 600 12px var(--display); opacity: .4; transition: opacity .15s, transform .1s; }
+  .ag.ready .ag-send { opacity: 1; }
+  .ag.sent .ag-send { transform: scale(.94); }
+  @media (prefers-reduced-motion: reduce) { .ag { --ag-ms: 1ms; } .ag *, .ag *::before { animation: none !important; } }
+  /* Share demo: the editor beside a Claude Code terminal that edits it through the API. */
+  .cc { --cc-me: #d9577a; --cc-term: #17181c; --cc-tfg: #d4d6db; --cc-tdim: #7d808a; --cc-orange: #d97757; --cc-green: #4eba65; }
+  .cc-stage { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; container-type: inline-size; }
+  @container (max-width: 560px) { .cc-stage { grid-template-columns: 1fr; } }
+  .cc-win { position: relative; height: 410px; display: flex; flex-direction: column; border: 1.5px solid var(--ink); border-radius: 10px; overflow: hidden; box-shadow: 0 12px 30px rgba(20, 28, 40, .16); }
+  .cc-page { position: relative; flex: 1; background: var(--surface); padding: 44px 18px 18px; display: grid; align-content: start; gap: 9px; font-family: var(--display); }
+  .cc-page h3 { font-size: 14px; font-weight: 600; }
+  .cc-page p { font-size: 12.5px; line-height: 1.5; }
+  .cc-page .who { display: block; font-size: 10.5px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+  .cc-say { border-radius: 2px; transition: background-color .2s; }
+  .cc-say.sel { background: color-mix(in srgb, var(--cc-me) 24%, transparent); }
+  .cc-say.new { animation: cc-flash 1.8s ease-out; }
+  @keyframes cc-flash { from { background-color: rgba(34, 197, 94, .3); } to { background-color: transparent; } }
+  .cc-caret { position: relative; display: inline-block; width: 0; height: 1.15em; margin-left: -1px; vertical-align: text-bottom; border-left: 2px dashed var(--cc-me); }
+  .cc-caret::after { content: "Pete's agent"; position: absolute; left: -2px; bottom: 100%; margin-bottom: 1px; white-space: nowrap; font: 600 9.5px/1.5 var(--display); color: #fff; background: var(--cc-me); border-radius: 3px 3px 3px 0; padding: 0 4px; }
+  /* The editor's floating controls: you, and the share button. */
+  .cc-ctrl { position: absolute; top: 9px; right: 10px; z-index: 3; display: flex; align-items: center; gap: 6px; }
+  .cc-person { position: relative; display: grid; }
+  .cc-avatar { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; font: 600 10.5px/1 var(--display); color: #fff; background: var(--cc-me); box-shadow: 0 0 0 2px var(--surface), 0 0 0 3.5px var(--cc-me); }
+  .cc-badge { position: absolute; right: -5px; bottom: -5px; width: 13px; height: 13px; border-radius: 50%; display: grid; place-items: center; font: 600 8px/1 var(--display); color: var(--cc-me);
+    background: color-mix(in srgb, var(--cc-me) 16%, var(--surface)); box-shadow: 0 0 0 1.5px var(--surface); opacity: 0; transform: scale(.5); transition: opacity .2s, transform .3s var(--ag-ease); }
+  .cc-badge span { display: block; }
+  .cc.agent .cc-badge { opacity: 1; transform: none; }
+  .cc.busy .cc-badge span { animation: ag-spin 1.2s linear infinite; }
+  .cc-share { position: relative; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 7px; display: grid; place-items: center; cursor: pointer; background: transparent; color: var(--muted); }
+  .cc-share:hover, .cc.sharing .cc-share { color: var(--ink); background: color-mix(in srgb, var(--muted) 14%, transparent); }
+  .cc-share svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+  .cc-share::before { content: ""; position: absolute; inset: 0; border-radius: 7px; animation: cc-ping 1.8s ease-out infinite; }
+  @keyframes cc-ping { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--ag-caret) 55%, transparent); } 100% { box-shadow: 0 0 0 10px transparent; } }
+  .cc:not(.idle) .cc-share::before { animation: none; }
+  .cc-hint { position: absolute; top: 44px; right: 6px; z-index: 3; padding: 5px 11px; border-radius: 8px; white-space: nowrap; line-height: 1.3; background: var(--ag-strong); color: var(--ag-bg); font: 600 12px var(--display);
+    box-shadow: 0 6px 18px rgba(0, 0, 0, .18); animation: cc-nudge 1.4s ease-in-out infinite; transition: opacity .15s; }
+  .cc-hint::before { content: ""; position: absolute; right: 13px; top: -5px; width: 10px; height: 10px; background: inherit; transform: rotate(45deg); border-radius: 2px; }
+  @keyframes cc-nudge { 50% { transform: translateY(3px); } }
+  .cc:not(.idle) .cc-hint { opacity: 0; pointer-events: none; }
+  /* The share popover, as in the editor. */
+  .cc-pop { position: absolute; top: 44px; right: 8px; left: 8px; z-index: 4; max-width: 280px; margin-left: auto; padding: 12px 13px; border-radius: 10px; background: var(--ag-bg); border: 1px solid var(--ag-rule); color: var(--ag-fg);
+    box-shadow: 0 10px 28px rgba(0, 0, 0, .16); font: 11.5px/1.45 var(--display); opacity: 0; transform: translateY(-4px); pointer-events: none; transition: opacity .15s, transform .2s var(--ag-ease); }
+  .cc.sharing .cc-pop { opacity: 1; transform: none; }
+  .cc-pop b { display: block; font-size: 12.5px; color: var(--ag-strong); margin-bottom: 3px; }
+  .cc-pop pre { margin: 8px 0; height: 76px; overflow: hidden; padding: 6px 8px; border-radius: 7px; background: var(--ag-code); border: 1px solid var(--ag-rule); font: 9.5px/1.5 var(--mono); white-space: pre-wrap;
+    -webkit-mask-image: linear-gradient(#000 60%, transparent); mask-image: linear-gradient(#000 60%, transparent); }
+  .cc-acts { display: flex; align-items: center; gap: 6px; }
+  .cc-acts span { font-weight: 600; font-size: 11px; border-radius: 6px; padding: 4px 9px; border: 1px solid var(--ag-rule); transition: transform .1s; }
+  .cc-acts .primary { background: var(--ag-caret); border-color: var(--ag-caret); color: #fff; }
+  .cc.copying .cc-acts .primary { transform: scale(.94); }
+  .cc-acts i { font-style: normal; color: var(--ag-soft); opacity: 0; transition: opacity .15s; }
+  .cc.copied .cc-acts i { opacity: 1; }
+  /* Claude Code in a terminal. */
+  .cc-term { order: -1; background: var(--cc-term); color: var(--cc-tfg); border-color: #000; font: 10.5px/1.5 var(--mono); }
+  .cc-term .doc-chrome { justify-content: flex-start; border-bottom-color: #2a2c32; }
+  .cc-term .doc-chrome span { background: #3a3d44; }
+  .cc-term .doc-chrome em { flex: 1; margin-right: 26px; text-align: center; font: 10px var(--mono); font-style: normal; color: var(--cc-tdim); }
+  .cc-log { flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; gap: 7px; padding: 10px 12px 4px; }
+  .cc-log > * { flex: none; animation: ag-rise .25s var(--ag-ease); }
+  .cc-welcome { margin-bottom: auto; border: 1px solid var(--cc-orange); border-radius: 5px; padding: 5px 9px; }
+  .cc-welcome b { color: var(--cc-orange); font-weight: 500; }
+  .cc-welcome span { display: block; color: var(--cc-tdim); }
+  .cc-me { color: var(--cc-tdim); display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+  .cc-dot { position: relative; padding-left: 14px; }
+  .cc-dot::before { content: "⏺"; position: absolute; left: 0; color: var(--cc-tfg); }
+  .cc-dot.tool::before { color: var(--cc-green); }
+  .cc-dot.run::before { color: var(--cc-tdim); animation: ag-blink 1s steps(1) infinite; }
+  .cc-dot.tool { word-break: break-all; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+  .cc-dot strong { font-weight: 700; color: #fff; }
+  .cc-out { color: var(--cc-tdim); padding-left: 14px; margin-top: -6px; white-space: pre; overflow: hidden; text-overflow: ellipsis; }
+  .cc-prompt { flex: none; margin: 4px 10px 0; display: flex; gap: 7px; border: 1px solid #4a4d55; border-radius: 5px; padding: 4px 8px; }
+  .cc-prompt::before { content: ">"; color: var(--cc-tfg); }
+  .cc-input { flex: 1; min-width: 0; }
+  .cc-input::after { content: ""; display: inline-block; width: .6em; height: 1.2em; vertical-align: text-bottom; background: var(--cc-tfg); animation: ag-blink 1s steps(1) infinite; }
+  .cc-input i { font-style: normal; color: var(--cc-tdim); }
+  .cc-foot { flex: none; padding: 3px 19px 8px; color: var(--cc-tdim); font-size: 9.5px; }
   @media (max-width: 480px) { body { font-size: 16px; } h1 { font-size: 1.9rem; } }
 </style>
 </head>
@@ -427,189 +583,198 @@ fetch('mail.json')
       })();
       </script>
     </figure>
-    <p class="lede">This is a</p>
-    <p class="lede"></p>
-    <p class="lede"></p>
-    <p class="lede"></p>
-    <p class="lede"></p>
-    <p class="lede"></p>
-    <p class="lede">People edit the manuscripts of an agent-built document on the rendered page, live with other viewers, and the edits land in the source files. Everything else is app logic, which agents edit in the files.</p>
+    <p class="lede">The Erga editor is also operable by agents. You can use the embedded agent to do that:</p>
+    <figure class="ag" data-erga-noedit aria-label="Demo: opening the embedded agent and asking it to restyle a scene from Pulp Fiction.">
+      <div class="ag-window">
+        <div class="doc-chrome"><span></span><span></span><span></span></div>
+        <div class="ag-stage">
+          <div class="ag-view">
+            <div class="ag-page">
+              <div class="pf-mast">Pulp Fiction</div>
+              <div class="pf-price">10¢</div>
+              <h3>Scene 2</h3>
+              <p><span class="who">Vincent</span>Also, you know what they call a Quarter Pounder with Cheese in Paris?</p>
+              <p><span class="who">Jules</span>They don't call it a Quarter Pounder with Cheese?</p>
+              <p><span class="who">Vincent</span>No, they got the metric system there, they wouldn't know what the fuck a Quarter Pounder is.</p>
+              <p><span class="who">Jules</span>What'd they call it?</p>
+              <svg class="pf-stamp" viewBox="0 0 120 120" aria-hidden="true">
+                <defs><path id="pf-ring" d="M60 60 m-46 0 a46 46 0 1 1 92 0 a46 46 0 1 1 -92 0"/></defs>
+                <circle cx="60" cy="60" r="57" fill="#f6d33c" stroke="#1a1208" stroke-width="3"/>
+                <circle cx="60" cy="60" r="38" fill="none" stroke="#1a1208" stroke-width="1.5"/>
+                <text font-family="Oswald, sans-serif" font-weight="600" font-size="11" fill="#c8221d"><textPath href="#pf-ring" textLength="286" lengthAdjust="spacing">ROYALE WITH CHEESE · ROYALE WITH CHEESE ·</textPath></text>
+                <path d="M38 58c0-11 10-18 22-18s22 7 22 18z" fill="#d98a2b" stroke="#1a1208" stroke-width="2"/>
+                <circle cx="52" cy="50" r="1.4" fill="#fff4cf"/><circle cx="62" cy="47" r="1.4" fill="#fff4cf"/><circle cx="70" cy="52" r="1.4" fill="#fff4cf"/>
+                <path d="M36 61h48l-5 6-6-5-6 6-6-6-6 6-6-5-6 5z" fill="#f2b41c" stroke="#1a1208" stroke-width="1.6" stroke-linejoin="round"/>
+                <rect x="37" y="66" width="46" height="8" rx="4" fill="#6b3416" stroke="#1a1208" stroke-width="2"/>
+                <path d="M38 77h44c0 5-4 8-9 8H47c-5 0-9-3-9-8z" fill="#d98a2b" stroke="#1a1208" stroke-width="2"/>
+              </svg>
+            </div>
+            <div class="ag-pill"><svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.34-5.66M20 4v5h-5"/></svg><span>Page changes will show when the agent finishes · <b>Refresh now</b></span></div>
+          </div>
+          <button type="button" class="ag-fab" aria-label="Open the agent"><svg viewBox="0 0 24 24"><path d="M12 3.5c.4 3.9 2.6 6.1 6.5 6.5-3.9.4-6.1 2.6-6.5 6.5-.4-3.9-2.6-6.1-6.5-6.5 3.9-.4 6.1-2.6 6.5-6.5Z"/><path d="M18.5 15.5c.2 1.6 1 2.4 2.5 2.5-1.5.2-2.3 1-2.5 2.5-.2-1.5-1-2.3-2.5-2.5 1.5-.1 2.3-.9 2.5-2.5Z"/></svg></button>
+          <div class="ag-hint" aria-hidden="true">Click the agent button</div>
+          <div class="ag-agent"><div class="ag-card">
+            <div class="ag-head"><b>Agent</b><span>Claude</span>
+              <button type="button" class="ag-close" aria-label="Collapse"><svg viewBox="0 0 24 24"><path d="M5 19 11 13M5 19v-4.5M5 19h4.5M19 5l-6 6M19 5v4.5M19 5h-4.5"/></svg></button>
+            </div>
+            <div class="ag-log"><div class="ag-empty">Ask for an edit. The agent can change any file in this page's folder.</div></div>
+            <div class="ag-compose"><div class="ag-input" data-placeholder="Ask the agent…"></div><span class="ag-send">Send</span></div>
+          </div></div>
+        </div>
+      </div>
+      <script>
+      (() => {
+        const fig = document.currentScript.closest('.ag');
+        const log = fig.querySelector('.ag-log'), input = fig.querySelector('.ag-input'), page = fig.querySelector('.ag-page');
+        const ask = 'Use stylized formatting, fonts, and images to make this snippet really feel like the movie it came from';
+        const wait = ms => new Promise(r => setTimeout(r, ms));
+        let run = 0, started = false;
+        const add = (cls, html) => { const d = document.createElement('div'); d.className = cls; d.innerHTML = html; log.append(d); return d; };
+        const tool = async (doing, done, path, ms, id) => {
+          const t = add('ag-tool running', `<span>${doing} <code>${path}</code></span>`);
+          await wait(ms); if (run != id) return;
+          t.className = 'ag-tool'; t.innerHTML = `<span>${done} <code>${path}</code></span>`;
+        };
+        const reset = () => {
+          run++; started = false; fig.className = 'ag'; page.classList.remove('pulp'); input.textContent = '';
+          log.innerHTML = '<div class="ag-empty">Ask for an edit. The agent can change any file in this page\'s folder.</div>';
+        };
+        const play = async () => {
+          const id = run, live = () => run == id;
+          fig.classList.add('open');
+          if (started) return;
+          started = true;
+          await wait(700); if (!live()) return;
+          fig.classList.add('typing');
+          for (const ch of ask) { input.textContent += ch; fig.classList.add('ready'); await wait(24 + Math.random() * 30); if (!live()) return; }
+          await wait(500); if (!live()) return;
+          fig.classList.add('sent'); await wait(120); fig.classList.remove('sent', 'typing', 'ready');
+          log.innerHTML = ''; add('ag-user', input.textContent); input.textContent = '';
+          await wait(500); if (!live()) return;
+          await tool('Reading', 'Read', 'index.html', 700, id); if (!live()) return;
+          fig.classList.add('refreshing');
+          await tool('Editing', 'Edited', 'index.html', 900, id); if (!live()) return;
+          await tool('Writing', 'Wrote', 'pulp.css', 800, id); if (!live()) return;
+          await tool('Writing', 'Wrote', 'royale.svg', 700, id); if (!live()) return;
+          fig.classList.remove('refreshing'); page.classList.add('pulp');
+          await wait(500); if (!live()) return;
+          add('ag-said', 'Done. The scene is now a pulp paperback: a red masthead, a price badge, typewriter dialogue, and a Royale with Cheese stamp.');
+          fig.classList.add('done');
+        };
+        fig.querySelector('.ag-fab').addEventListener('click', play);
+        fig.querySelector('.ag-close').addEventListener('click', () => fig.classList.remove('open'));
+      })();
+      </script>
+    </figure>
+    <p class="lede">You can bring your own agent too! Use the "share with an agent" button to instruct Claude/Codex/Pi/Whatever to edit your document:</p>
+    <figure class="ag cc idle" data-erga-noedit aria-label="Demo: sharing a document with Claude Code, which then edits it through the editor's API.">
+      <div class="cc-stage">
+        <div class="cc-win">
+          <div class="doc-chrome"><span></span><span></span><span></span></div>
+          <div class="cc-page">
+            <div class="cc-ctrl">
+              <span class="cc-person"><span class="cc-avatar">P</span><span class="cc-badge"><span>✦</span></span></span>
+              <button type="button" class="cc-share" aria-label="Share with an agent"><svg viewBox="0 0 24 24"><path d="M12 15V3.5M7.5 8 12 3.5 16.5 8"/><path d="M8 11.5H6.5a1 1 0 0 0-1 1v7a1 1 0 0 0 1 1h11a1 1 0 0 0 1-1v-7a1 1 0 0 0-1-1H16"/></svg></button>
+            </div>
+            <div class="cc-hint" aria-hidden="true">Click Share</div>
+            <div class="cc-pop">
+              <b>Let another agent edit this page</b>
+              Paste this into an agent that can run commands on this computer (Claude Code, Codex…).
+              <pre>I'd like your help editing "index.html", an Erga document I have open in my editor. You can read and change it through the editor's API, working as my agent…
+
+API: http://127.0.0.1:4400/api/ext
+Token: erga_OIoY…</pre>
+              <div class="cc-acts"><span class="primary">Copy prompt</span><span>New token</span><i>Copied</i></div>
+            </div>
+            <h3>Scene 2</h3>
+            <p><span class="who">Vincent</span><span class="cc-say">Also, you know what they call a Quarter Pounder with Cheese in Paris?</span></p>
+            <p><span class="who">Jules</span><span class="cc-say">They don't call it a Quarter Pounder with Cheese?</span></p>
+            <p><span class="who">Vincent</span><span class="cc-say">No, they got the metric system there, they wouldn't know what the fuck a Quarter Pounder is.</span></p>
+            <p><span class="who">Jules</span><span class="cc-say">What'd they call it?</span></p>
+          </div>
+        </div>
+        <div class="cc-win cc-term">
+          <div class="doc-chrome"><span></span><span></span><span></span><em>claude</em></div>
+          <div class="cc-log"><div class="cc-welcome"><b>✻</b> Welcome to Claude Code!<span>cwd: ~/scripts</span></div></div>
+          <div class="cc-prompt"><div class="cc-input"></div></div>
+          <div class="cc-foot">? for shortcuts</div>
+        </div>
+      </div>
+      <script>
+      (() => {
+        const fig = document.currentScript.closest('.cc');
+        const log = fig.querySelector('.cc-log'), input = fig.querySelector('.cc-input'), says = [...fig.querySelectorAll('.cc-say')];
+        const french = [
+          'Et tu sais comment ils appellent un Quarter Pounder with Cheese à Paris ?',
+          "Ils l'appellent pas Quarter Pounder with Cheese ?",
+          "Non, ils ont le système métrique là-bas, ils sauraient même pas ce que c'est, un putain de Quarter Pounder.",
+          'Comment ils l’appellent ?',
+        ];
+        const wait = ms => new Promise(r => setTimeout(r, ms));
+        let run = 0, started = false;
+        const line = (cls, html) => { const d = document.createElement('div'); d.className = cls; d.innerHTML = html; log.append(d); return d; };
+        const tool = async (call, out, ms, live) => {
+          const t = line('cc-dot tool run', call);
+          await wait(ms); if (!live()) return false;
+          t.classList.remove('run'); line('cc-out', '⎿  ' + out);
+          return true;
+        };
+        const type = async (text, live) => { for (const ch of text) { input.textContent += ch; await wait(30 + Math.random() * 40); if (!live()) return false; } return true; };
+        const play = async () => {
+          if (started) return;
+          started = true;
+          const id = run, live = () => run == id;
+          fig.classList.remove('idle'); fig.classList.add('sharing');
+          await wait(1300); if (!live()) return;
+          fig.classList.add('copying'); await wait(120); fig.classList.remove('copying'); fig.classList.add('copied');
+          await wait(900); if (!live()) return;
+          fig.classList.remove('sharing', 'copied');
+          input.innerHTML = '<i>[Pasted text #1 +9 lines]</i>';
+          await wait(1000); if (!live()) return;
+          input.textContent = '';
+          line('cc-me', '&gt; I\'d like your help editing "index.html", an Erga document I have open in my editor. You can read and change it through the editor\'s API…');
+          await wait(600); if (!live()) return;
+          if (!await tool('<strong>Bash</strong>(curl -s -H "Authorization: Bearer erga_OIoY…" http://127.0.0.1:4400/api/ext)', '# Editing "index.html" in Erga … +214 lines', 1100, live)) return;
+          await wait(400); if (!live()) return;
+          line('cc-dot', "I've read the API guide. What would you like me to change?");
+          await wait(800); if (!live()) return;
+          if (!await type('Translate the scene into French', live)) return;
+          await wait(400); if (!live()) return;
+          line('cc-me', '&gt; ' + input.textContent); input.textContent = '';
+          await wait(600); if (!live()) return;
+          fig.classList.add('agent', 'busy');
+          if (!await tool('<strong>Bash</strong>(curl -s -X POST …/tools/read -d \'{"path":"index.html"}\')', 'Read 7 lines', 900, live)) return;
+          const call = line('cc-dot tool run', '<strong>Bash</strong>(curl -s -X POST …/tools/edit -d \'{"path":"index.html","edits":[…]}\')');
+          const caret = document.createElement('span'); caret.className = 'cc-caret';
+          for (const [k, s] of says.entries()) {
+            s.classList.add('sel'); await wait(380); if (!live()) return;
+            s.classList.remove('sel'); s.textContent = ''; const t = document.createTextNode(''); s.append(t, caret);
+            for (const ch of french[k]) { t.data += ch; await wait(16); if (!live()) return; }
+            s.classList.add('new'); await wait(250); if (!live()) return;
+          }
+          call.classList.remove('run'); line('cc-out', '⎿  Edited index.html (4 changes).');
+          fig.classList.remove('busy');
+          await wait(500); if (!live()) return;
+          caret.remove();
+          line('cc-dot', 'Done. The scene is in French now, though Vincent would point out they still call it a Royale with Cheese.');
+          fig.classList.add('done');
+        };
+        fig.querySelector('.cc-share').addEventListener('click', play);
+      })();
+      </script>
+    </figure>
   </header>
 
   <section>
-    <h2>Principles</h2>
+    <p>Erga documents are just web pages, and any web page can be an erga document. Erga feels like a normal text editor, but it's much more powerful:</p>
     <ul>
-      <li><b>Standardize as little as possible.</b> No document format. An agent can still invent its own conventions (e.g. <code>---</code> between slides).</li>
-      <li><b>Edit the rendered page, not the source.</b> Source files are for agents.</li>
-      <li><b>Manuscript is hand-editable. App logic isn't.</b> Text in a widget's JS is changed by asking an agent.</li>
-      <li><b>No model in the editing loop.</b> Mapping is deterministic, merging is a CRDT, typing never waits.</li>
+      <li>If it can be expressed in code, you can put it in your document</li>
+      <li>Use the editor to choose the words, use an agent for styling, formatting, animations, demos, etc.</li>
+      <li>There's no fixed document format, which means that you can use Erga for docs,  slides, or anything else you can dream up</li>
+      <li>It's fully multi-player. Share your document URL with a friend or colleague and they can edit too.</li>
     </ul>
-  </section>
-
-  <section>
-    <h2>Manuscript and app logic</h2>
-    <p>A document has two kinds of text:</p>
-    <ul>
-      <li><b>Manuscript</b> is prose in the basic elements Markdown can express: headings, paragraphs, list items, blockquotes, table cells, code blocks, and inline emphasis, links and code. The source can be Markdown or plain HTML using only those elements. People edit it on the rendered page.</li>
-      <li><b>App logic</b> is everything else: JS, components, SVG, canvas, and any string in code or built at runtime. Agents edit it in the files.</li>
-    </ul>
-    <p>The test is mechanical: an element is manuscript if a deterministic parse of the source finds its text at a known position. Text that JS created or changed fails the test and is locked. Clicking it does nothing in v1; later it can open the embedded agent with that text as context.</p>
-  </section>
-
-  <section>
-    <h2>How an edit works</h2>
-    <figure class="flow">
-      <svg viewBox="0 0 800 790" role="img" aria-label="Alice and Carol edit the same paragraph at the same moment. At load the parser indexed the paragraph as p7 at a known range in index.html, so each browser diffs its new text against the index and sends a character edit at a file position. The server's file CRDT merges both edits into the same result on every machine. The same file edits then reach every browser, which re-renders, and Bob's laptop, where erga sync writes them to disk and sends Bob's own saves back the same way.">
-        <defs>
-          <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-            <path d="M0 0 L10 5 L0 10 z" style="fill: var(--muted)"/>
-          </marker>
-        </defs>
-
-        <!-- Rail -->
-        <text class="rail" x="20" y="106">1 · EDIT</text>
-        <text class="rail" x="20" y="248">2 · MAP</text>
-        <text class="rail" x="20" y="520">3 · MERGE</text>
-        <text class="rail" x="20" y="684">4 · CONVERGE</text>
-
-        <!-- 1 · Edit -->
-        <rect class="box" x="150" y="40" width="550" height="124" rx="8"/>
-        <text class="t mid" x="425" y="64">Alice and Carol edit the same paragraph at the same moment</text>
-        <text class="who alice" x="290" y="98">Alice types</text>
-        <text class="b" x="306" y="98">Build <tspan class="alice">very </tspan>cool things</text>
-        <text class="who carol" x="290" y="128">Carol types</text>
-        <text class="b" x="306" y="128">Build cool <tspan class="carol">stuff</tspan></text>
-        <text class="m mid" x="425" y="154">Neither has seen the other's change yet.</text>
-
-        <line class="arr" x1="425" y1="164" x2="425" y2="192" marker-end="url(#arrow)"/>
-
-        <!-- 2 · Map -->
-        <rect class="box" x="150" y="196" width="550" height="96" rx="8"/>
-        <text class="t" x="164" y="218">At load, the parser indexed every manuscript element</text>
-        <text class="c" x="164" y="242">&lt;p data-erga-id="p7"&gt;Build cool things&lt;/p&gt;</text>
-        <text class="c" x="164" y="262">p7 → index.html @1206–1222   "Build cool things"</text>
-        <text class="m" x="164" y="280">the id exists only in the browser; the file never sees it</text>
-
-        <line class="arr" x1="425" y1="292" x2="425" y2="328" marker-end="url(#arrow)"/>
-        <text class="al" x="437" y="307">diff the new text against the index,</text>
-        <text class="al" x="437" y="321">add the element's file offset</text>
-
-        <rect class="box" x="150" y="328" width="550" height="96" rx="8"/>
-        <text class="t" x="164" y="350">Each browser turns its edit into a character edit to the file</text>
-        <text class="who alice" x="204" y="374">Alice</text>
-        <text class="c" x="216" y="374">insert "very " @1212</text>
-        <text class="who carol" x="204" y="396">Carol</text>
-        <text class="c" x="216" y="396">replace "things" @1217 → "stuff"</text>
-        <text class="m" x="164" y="414">no model in the loop: it goes straight to the server</text>
-
-        <line class="arr" x1="425" y1="424" x2="425" y2="460" marker-end="url(#arrow)"/>
-        <text class="al" x="437" y="446">two file edits</text>
-
-        <!-- 3 · Merge -->
-        <rect class="box truth" x="150" y="460" width="550" height="112" rx="8"/>
-        <text class="t mid" x="425" y="484">Server: the file CRDT merges both edits</text>
-        <text class="b mid" x="425" y="514">Build <tspan class="alice">very </tspan>cool <tspan class="carol">stuff</tspan></text>
-        <text class="m mid" x="425" y="538">same result on every machine, whatever order they arrive in</text>
-        <text class="m mid" x="425" y="556">the server orders edits, keeps the log, and saves a snapshot</text>
-
-        <!-- 4 · Converge -->
-        <path class="arr" d="M425 572 V600 H245 V628" marker-end="url(#arrow)"/>
-        <path class="arr" d="M425 600 H605 V628" marker-end="url(#arrow)"/>
-        <text class="al" x="437" y="590">the same file edits go to everyone</text>
-        <path class="arr" d="M680 628 V572" marker-end="url(#arrow)"/>
-        <text class="al" x="690" y="596">file edits</text>
-        <text class="al" x="690" y="610">from disk</text>
-
-        <rect class="box" x="110" y="628" width="270" height="104" rx="8"/>
-        <text class="t" x="124" y="650">Alice's and Carol's browsers</text>
-        <text class="m" x="124" y="672">apply the edits, re-parse, re-render</text>
-        <text class="b" x="124" y="700">Build very cool stuff</text>
-        <text class="m" x="124" y="720">exactly what a fresh load would show</text>
-
-        <rect class="box" x="470" y="628" width="270" height="104" rx="8"/>
-        <text class="t" x="484" y="650">Bob's laptop · erga sync</text>
-        <text class="m" x="484" y="672">writes the edits to ./doc on disk</text>
-        <text class="c" x="484" y="696">&lt;p&gt;Build very cool stuff&lt;/p&gt;</text>
-        <text class="m" x="484" y="716">Claude Code edits files here; each save</text>
-        <text class="m" x="484" y="730">is diffed into file edits and sent back</text>
-
-        <text class="sub" x="425" y="770">Everyone holds the same file. Only character edits to files ever cross the network.</text>
-      </svg>
-      <figcaption>Every source file is a CRDT (a Yjs <code>Y.Text</code>): simultaneous edits merge to the same result everywhere, and the merged file is the only truth. Ids like <code>p7</code> never leave the browser. Bob's agent edits the same files on disk, and its saves join the same merge.</figcaption>
-    </figure>
-  </section>
-
-  <section>
-    <h2>Mechanics</h2>
-    <ul>
-      <li><b>Parse.</b> On load, a deterministic parser walks the source (HTML, or Markdown we render), numbers the manuscript elements in document order, stamps each with <code>data-erga-id</code>, and records the source range of every text node inside it.</li>
-      <li><b>Map.</b> An edit to a stamped element is diffed against its indexed text and becomes the smallest character change to those ranges. Only text nodes are spliced; tags and attributes stay byte-for-byte identical, so inline <code>&lt;em&gt;</code> and <code>&lt;a&gt;</code> survive.</li>
-      <li><b>Lock.</b> Elements without an id, or whose text no longer matches the index when clicked, are not editable.</li>
-      <li><br></li>
-      <li><b>Sync.</b> Every file is a Yjs <code>Y.Text</code>; all of a document's files share one Yjs document and one connection. Only file changes cross the network. Browsers re-parse and re-render; the CLI writes changes to disk and diffs local saves back. One mechanism covers concurrent typing, offline edits and edits made on disk.</li>
-      <li><b>Server.</b> Orders changes, keeps the log, saves snapshots so new page requests get current source.</li>
-    </ul>
-  </section>
-
-  <section>
-    <h2>Code architecture</h2>
-    <div class="sketch"><pre>Hosts      Editor (browser)  Viewer (browser)  CLI (disk)      Server
-           DOM ⇄ edits       edits → DOM       files ⇄ disk    log, order, snapshots
-Services   FileStore · Sync                    (one interface, one impl per host)
-Core       parse · stamp · toFileOps · fromFileOps
-           pure, deterministic, no I/O, identical everywhere</pre></div>
-    <div class="table-wrap">
-      <table>
-        <thead><tr><th></th><th>Browser</th><th>CLI (disk)</th><th>Server</th></tr></thead>
-        <tbody>
-          <tr><td><b>FileStore</b></td><td>memory + IndexedDB/OPFS</td><td><code>@effect/platform</code> FileSystem</td><td>existing <code>ObjectStorage</code></td></tr>
-          <tr><td><b>Sync</b></td><td>WebSocket client</td><td>WebSocket + file watcher</td><td>ordering service (D2)</td></tr>
-        </tbody>
-      </table>
-    </div>
-    <p>Core and the change schemas live in <code>shared/src/doc/</code>; each host implements the services in its own workspace; the editor and viewer get a new browser workspace. <code>erga sync ./doc</code> is the disk host. Outside agents just edit files.</p>
-    <p><b>Prototype.</b> <code>bun open.ts ./site</code> opens a folder or file in the page editor: the parse, the mapping, the in-place editing, disk save and disk watch, for HTML and Markdown. No sync yet; the host is Effect on Bun, the browser core plain TypeScript pending D1.</p>
-  </section>
-
-  <section>
-    <h2>Decisions</h2>
-    <div class="decisions">
-      <article class="decision">
-        <div class="decision-head"><h3><span class="id">D1</span>Is the core plain TypeScript or Effect?</h3><span class="chip done">Decided</span></div>
-        <p>The viewer runtime is injected into every published page. Measured with <code>bun build --minify</code>, Effect 3.22: a minimal <code>Effect.gen</code> + <code>runSync</code> program is 39 KB gzipped, 51 KB with Schema. Yjs alone is 23 KB; today's renderer is 75 KB. Effect adds real weight, but not enough to justify a second exception to invariant 1.</p>
-        <p class="lean call"><strong>Decided</strong>Effect everywhere, including the browser core. Keep the viewer bundle measured in the gate.</p>
-      </article>
-      <article class="decision">
-        <div class="decision-head"><h3><span class="id">D2</span>Where does ordering and sync run?</h3><span class="chip done">Decided</span></div>
-        <p>One sync interface with identical observable behavior on every target (invariant 6), proven by a shared conformance suite.</p>
-        <p class="lean call"><strong>Decided</strong>Durable Objects on Cloudflare, plus an in-memory local implementation. AWS gets its own implementation of the same interface later.</p>
-      </article>
-      <article class="decision">
-        <div class="decision-head"><h3><span class="id">D3</span>Which elements are manuscript?</h3><span class="chip done">Decided</span></div>
-        <p>The Markdown list (<code>p</code>, <code>h1</code>–<code>h6</code>, <code>li</code>, <code>blockquote</code>, <code>td</code>/<code>th</code>, <code>pre</code>, inline <code>em</code>, <code>strong</code>, <code>a</code>, <code>code</code>) plus <code>div</code> and <code>span</code>, judged by a deterministic text-likeness rule: an element is text-like if its children are text and inline elements (a leaf), or if all its element children are text-like blocks (a container, like a <code>div</code> of paragraphs). Grow the list by adding elements.</p>
-        <p class="lean call"><strong>Decided</strong>Markdown list + <code>div</code>/<code>span</code>, with the text-like rule. The exact rule is worked out in code.</p>
-      </article>
-      <article class="decision">
-        <div class="decision-head"><h3><span class="id">D4</span>Are styles and structural edits in scope?</h3><span class="chip done">Decided</span></div>
-        <p>Inline styles (bold, italic, links, code) and structure (new paragraph, list item, heading) are spelled differently in HTML and Markdown. Manuscript has only those two spellings, so both can be implemented without per-document hints.</p>
-        <p class="lean call"><strong>Decided</strong>Yes to both. Text splicing ships first; styles and structure follow for both source spellings.</p>
-      </article>
-      <article class="decision">
-        <div class="decision-head"><h3><span class="id">D5</span>How do agent file edits and live edits coexist?</h3><span class="chip lean">Leaning</span></div>
-        <p>An agent that rewrites a file (or a republish from disk) is diffed into changes and merged by the CRDT like any other edit, however large. The risk is a large diff colliding with concurrent live edits and producing broken markup.</p>
-        <p class="lean"><strong>Lean</strong>Merge consistently by default. Detect when a publish's diff collides with concurrent edits beyond a threshold and reject it. A publish can optionally take a lock on the document, in which case live edits are rejected instead. The threshold and lock semantics are open.</p>
-      </article>
-      <article class="decision">
-        <div class="decision-head"><h3><span class="id">D6</span>How are the editor and page JS isolated?</h3><span class="chip done">Decided</span></div>
-        <p>Agent-written JS must not have the editor's write access.</p>
-        <p class="lean call"><strong>Decided</strong>The page runs in a sandboxed iframe; <code>contenteditable</code> and edits cross a narrow postMessage bridge.</p>
-      </article>
-      <article class="decision">
-        <div class="decision-head"><h3><span class="id">D7</span>Which CRDT, and how does undo work?</h3><span class="chip done">Decided</span></div>
-        <p>Building our own is tempting but premature. Yjs at defaults covers text merging, one document per doc, and per-origin undo via <code>UndoManager</code>.</p>
-        <p class="lean call"><strong>Decided</strong>Yjs at defaults, including <code>UndoManager</code> scoped to your own edits. Revisit building our own only if defaults prove wrong.</p>
-      </article>
-    </div>
+    <p>You can try it yourself by editing this document or <a href="https://erga.dev/new">creating a new one</a>.</p>
+    <p> </p>
   </section>
 
 </main>
