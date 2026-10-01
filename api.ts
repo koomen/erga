@@ -69,6 +69,8 @@ export const DocInfo = Schema.Struct({
   userId: Schema.String,
   /** Signed in (hosted): the name and id are theirs to keep, not chosen per tab. */
   signedIn: Schema.Boolean,
+  /** Their picture, if they have one (their GitHub avatar, hosted). */
+  avatar: Schema.optional(Schema.String),
   writeDelay: Schema.Number,
 });
 export type DocInfo = typeof DocInfo.Type;

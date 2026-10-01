@@ -28,6 +28,8 @@ export interface Author {
   /** A colour from PALETTE. */
   color: string;
   kind: AuthorKind;
+  /** Their picture, if signed in with one (a GitHub avatar's URL). */
+  avatar?: string;
 }
 
 export const files = (doc: Y.Doc) => doc.getMap<Y.Text>("files");

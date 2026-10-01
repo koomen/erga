@@ -42,6 +42,8 @@ export interface HostOptions {
   readonly baseUrl: (request: HttpServerRequest.HttpServerRequest) => string;
   /** Hosted: people are who they signed in as, so a tab can't pick its own name (?user=). */
   readonly signedIn?: boolean;
+  /** A person's picture, if the platform knows one (hosted: their GitHub avatar). */
+  readonly avatarOf?: (person: { id: string; name: string }) => string | undefined;
   /** Whether a person may edit (locally everyone may; hosted, the project role would decide). */
   readonly canEdit?: (person: { id: string; name: string }) => boolean;
 }
@@ -163,7 +165,7 @@ export function makeHost(opts: HostOptions) {
       : Effect.die(e));
 
   const docApi = HttpApiBuilder.group(Api, "doc", (h) => h
-    .handle("info", () => Person.useSync((user) => ({ name: doc.name, path: doc.path, kind: doc.kind, dir: doc.dir, user: user.name, userId: user.id, signedIn: opts.signedIn ?? false, writeDelay: room.writeDelay }))));
+    .handle("info", () => Person.useSync((user) => ({ name: doc.name, path: doc.path, kind: doc.kind, dir: doc.dir, user: user.name, userId: user.id, signedIn: opts.signedIn ?? false, avatar: opts.avatarOf?.(user), writeDelay: room.writeDelay }))));
 
   const agentApi = HttpApiBuilder.group(Api, "agent", (h) => h
     .handle("state", () => Person.use((user) => session(user).pipe(

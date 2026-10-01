@@ -156,7 +156,7 @@ declare global {
   const signedIn = info.signedIn;
   const myName = signedIn ? info.user : (asked || (() => { try { return sessionStorage.getItem(NAME_KEY); } catch { return null; } })() || store.get(NAME_KEY) || info.user).slice(0, 40);
   const myId = signedIn ? info.userId : myName.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-|-$/g, "") || "anon";
-  const me: Author = { user: myId, name: myName, color: colorFor(myId), kind: "person" };
+  const me: Author = { user: myId, name: myName, color: colorFor(myId), kind: "person", ...(signedIn && info.avatar ? { avatar: info.avatar } : {}) };
   const self: MarkAuthor = { name: me.name, color: me.color };
   /** The host's agent endpoints, as this person. */
   const api = (path: string) => `${BASE}${path}?user=${encodeURIComponent(myName)}`;
@@ -446,6 +446,14 @@ declare global {
       b.className = "avatar" + (p.client == -1 ? " me" : "") + (here ? "" : " away");
       b.style.setProperty("--c", p.user.color);
       b.textContent = (p.user.name.trim()[0] ?? "?").toUpperCase();
+      const picture = pictureOf(p.user);
+      if (picture) {
+        const img = document.createElement("img");
+        img.src = picture;
+        img.alt = "";
+        img.addEventListener("error", () => img.remove()); // the initial shows through
+        b.append(img);
+      }
       b.dataset.tip = p.client == -1 ? (signedIn ? `You (${me.name})` : `You (${me.name}); click to change your name`) : here ? p.user.name : `${p.user.name} (not here)`;
       if (p.client == -1 && !signedIn) b.addEventListener("click", rename);
       else if (here) revealOnClick(b, p, " (not in the text yet)");
@@ -466,6 +474,13 @@ declare global {
       }
       people.append(wrap);
     }
+  }
+  /**
+   * A participant's picture: only GitHub avatars, since anyone in the room
+   * can put anything in their presence and we'd rather not fetch it.
+   */
+  function pictureOf(user: Author): string | null {
+    try { return user.avatar && new URL(user.avatar).origin == "https://avatars.githubusercontent.com" ? user.avatar : null; } catch { return null; }
   }
   /** Clicking a participant scrolls to their caret; with none yet, the button says so. */
   function revealOnClick(b: HTMLElement, p: Presence, none: string) {

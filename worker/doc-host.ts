@@ -33,6 +33,7 @@ interface Meta { owner: string; index: string; created: number }
 interface Person { id: string; name: string }
 
 const FILE = "file:", META = "meta", STATE = "state";
+const AVATARS = "https://avatars.githubusercontent.com";
 
 /** HttpApi's platform needs, none of which a document served from storage uses. */
 const platform = Layer.mergeAll(
@@ -102,6 +103,8 @@ export class DocHost extends DurableObject<Env> {
       personOf: (req) => personOf(new Headers(req.headers as Record<string, string>)),
       baseUrl: (req) => req.headers["x-erga-base"] ?? "",
       signedIn: true,
+      // People's ids are their GitHub logins, so GitHub serves their pictures.
+      avatarOf: (person) => `${AVATARS}/${encodeURIComponent(person.id)}?s=64`,
     });
     const { handler } = HttpRouter.toWebHandler(host.app.pipe(Layer.provide(platform)), { disableLogger: true });
 
