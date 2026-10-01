@@ -2,7 +2,9 @@
 // Opens a page from disk in the page editor, as a document room that people
 // and their agents edit together.
 //
-//   bun open.ts <file-or-directory> [--port 4400] [--no-open]   (--help for more)
+//   bun open.ts [file-or-directory] [--port 4400] [--no-open]   (--help for more)
+//
+// With no document named, it opens a scratch copy of the demo (templates/demo).
 //
 // A directory must hold index.html or index.md. The host turns the folder
 // into one document room (room.ts): a shared Yjs doc of its text files that
@@ -117,12 +119,23 @@ const serveFile = (root: string, rel: string, cacheControl = "no-store") =>
     return HttpServerResponse.uint8Array(bytes, { contentType: type, headers: { "Cache-Control": cacheControl } });
   });
 
-const program = (args: { target: string; port: number; open: boolean }) => Effect.gen(function* () {
-  const { target, port } = args;
+/** A scratch copy of templates/demo, removed when the host stops. */
+const demoCopy = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const dir = path.join(yield* fs.makeTempDirectoryScoped({ prefix: "erga-demo-" }), "demo");
+  yield* fs.copy(path.join(EDITOR_DIR, "templates", "demo"), dir);
+  return dir;
+}).pipe(Effect.mapError((e) => new UsageError({ message: `couldn't copy the demo: ${e.message}` })));
+
+const program = (args: { target: Option.Option<string>; port: number; open: boolean }) => Effect.gen(function* () {
+  const { port } = args;
   const env = yield* settings;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  // No document named: the demo, from a fresh copy so the template stays as it is.
+  const target = Option.isSome(args.target) ? args.target.value : yield* demoCopy;
   const doc = yield* resolveDoc(target);
   const gitName = yield* spawner.string(ChildProcess.make("git", ["config", "user.name"])).pipe(Effect.orElseSucceed(() => ""));
   const defaultName = gitName.trim().split(/\s+/)[0] || env.user || "Me";
@@ -415,7 +428,8 @@ const program = (args: { target: string; port: number; open: boolean }) => Effec
   const server = Layer.unwrap(
     Effect.gen(function* () {
       const rel = path.relative(process.cwd(), doc.path);
-      yield* Console.log(`\n  editing ${doc.kind === "md" ? "Markdown" : "HTML"}: ${rel.startsWith("..") ? doc.path : rel || doc.name}\n  ${url}   (another person: ${url}?user=Ada)\n  agent: ${"missing" in cfg ? `off (${agentOff})` : `${cfg.model == "script" ? "script" : MODELS[cfg.model].label} to start (each person can switch)`}\n`);
+      const what = Option.isNone(args.target) ? "the demo (a copy of templates/demo; edits last until the host stops)" : rel.startsWith("..") ? doc.path : rel || doc.name;
+      yield* Console.log(`\n  editing ${doc.kind === "md" ? "Markdown" : "HTML"}: ${what}\n  ${url}   (another person: ${url}?user=Ada)\n  agent: ${"missing" in cfg ? `off (${agentOff})` : `${cfg.model == "script" ? "script" : MODELS[cfg.model].label} to start (each person can switch)`}\n`);
       if (args.open) yield* Effect.forkDetach(Effect.ignore(spawner.exitCode(ChildProcess.make("open", [url]))));
       // Tabs hold their sockets open for good, so waiting for connections to
       // finish (Bun's graceful shutdown) would only stall every exit by 20s.
@@ -427,7 +441,10 @@ const program = (args: { target: string; port: number; open: boolean }) => Effec
 });
 
 const open = Command.make("open", {
-  target: Argument.String("file-or-directory").pipe(Argument.withDescription("An .html or .md file, or a folder holding index.html or index.md")),
+  target: Argument.String("file-or-directory").pipe(
+    Argument.withDescription("An .html or .md file, or a folder holding index.html or index.md (the demo if left out)"),
+    Argument.optional,
+  ),
   port: Flag.Int("port").pipe(Flag.withDefault(4400), Flag.withDescription("The port to serve the editor on")),
   open: Flag.Boolean("open").pipe(Flag.withDefault(true), Flag.withDescription("Open the editor in a browser (--no-open doesn't)")),
 }, (args) => program(args).pipe(

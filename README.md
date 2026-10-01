@@ -14,7 +14,7 @@ It is multiplayer: people and their agents edit one page together (see
 With [Bun](https://bun.sh) 1.4 or later:
 
     bun install
-    bun run demo                    # opens demo/, an explainer you can edit
+    bun start                       # opens the demo, an explainer you can edit
     bun start ./path/to/site        # or any folder with index.html or index.md
     bun start ./notes/some.html     # or a single file
 
@@ -22,8 +22,10 @@ With [Bun](https://bun.sh) 1.4 or later:
 same arguments; `bun open.ts --help` lists them). For the agent, copy
 `.env.example` to `.env` and add an `ANTHROPIC_API_KEY`.
 
-`templates/doc/` is an empty document in the same style as the demo: copy the
-folder to start a new one (`cp -r templates/doc ./my-doc && bun start ./my-doc`).
+With no document named, the host opens a scratch copy of `templates/demo/`, so
+your edits to it last until the host stops. `templates/doc/` is an empty
+document in the same style: copy the folder to start a new one
+(`cp -r templates/doc ./my-doc && bun start ./my-doc`).
 
 ## Page editor
 
