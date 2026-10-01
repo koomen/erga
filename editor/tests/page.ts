@@ -9,7 +9,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 
 const keep = process.argv.includes("--keep");
-const only = process.argv.find((a) => a == "html" || a == "md");
+const only = process.argv.find((a) => a == "html" || a == "md" || a == "agent");
 mkdirSync(`${ROOT}editor/screenshots`, { recursive: true });
 
 let failures = 0;
@@ -20,12 +20,12 @@ const check = (name: string, ok: boolean, detail = "") => {
 const waitFor = async (f: () => boolean, ms = 2000) => { const t = Date.now(); while (Date.now() - t < ms) { if (f()) return true; await Bun.sleep(50); } return f(); };
 
 /** Starts a host on a scratch copy of a fixture and opens the editor on it. */
-async function session(browser: Browser, fixture: string, fileName: string) {
+async function session(browser: Browser, fixture: string, fileName: string, env: Record<string, string> = {}) {
   const port = 4500 + Math.floor(Math.random() * 400);
   const dir = mkdtempSync(join(tmpdir(), "sw-page-"));
   cpSync(`${ROOT}editor/tests/fixtures/${fixture}`, dir, { recursive: true });
   const file = join(dir, fileName);
-  const host = Bun.spawn(["bun", `${ROOT}editor/open.ts`, dir, "--port", String(port), "--no-open"], { stdout: "pipe", stderr: "pipe" });
+  const host = Bun.spawn(["bun", `${ROOT}editor/open.ts`, dir, "--port", String(port), "--no-open"], { stdout: "pipe", stderr: "pipe", env: { ...process.env, ...env } });
   for (let i = 0; i < 50; i++) {
     try { if ((await fetch(`http://127.0.0.1:${port}/api/doc`)).ok) break; } catch {}
     await Bun.sleep(100);
@@ -76,6 +76,10 @@ async function htmlScenario(browser: Browser) {
   const s = await session(browser, "page", "index.html");
   const { p, F } = s;
   check("page rendered with units", (await s.count("[data-sw-id]")) >= 9);
+  await p.eval(`${F}.body.style.background = "rgb(243, 236, 220)"`);
+  await Bun.sleep(450);
+  check("the shell's canvas follows the page's background", await p.eval<string>(`getComputedStyle(document.documentElement).backgroundColor`) == "rgb(243, 236, 220)" && await p.eval<boolean>(`document.body.classList.contains("page-light")`));
+  await p.eval(`${F}.body.style.background = ""`);
   check("widget button is a plain button", await p.eval<boolean>(`!${F}.getElementById("bump").closest("[contenteditable]")`));
   check("units are the editing hosts", await p.eval<boolean>(`${F}.body.getAttribute("contenteditable") == null && ${F}.querySelector("h1").getAttribute("contenteditable") == "true"`));
 
@@ -152,10 +156,68 @@ async function htmlScenario(browser: Browser) {
   s.write(s.disk().replace("Where the leads go.", "Where the leads went."));
   await Bun.sleep(400);
   check("disk edits reach the page", await waitFor(() => false, 200) || (await s.textOf("figcaption")) == "Where the leads went.");
+  // Added text: the green highlights (any fade level). Removed text: the notches' hover text.
+  const marks = () => p.eval<{ added: string[]; gone: string[] }>(`(() => { const w = document.getElementById("frame").contentWindow; const added = []; for (let i = 0; i < 6; i++) { const h = w.CSS.highlights.get("sw-add-" + i); if (h) added.push(...[...h].map((r) => r.toString())); } return { added, gone: [...${F}.querySelectorAll("sw-del sw-tip")].map((e) => e.textContent) }; })()`);
+  let m = await marks();
+  check("disk edits patch the page in place", (await s.count("[data-sw-id]")) >= 9 && !(await p.eval<boolean>(`!!${F}.querySelector("figcaption.sw-flash")`)));
+  check("the added word is highlighted, exactly", m.added.join("|") == "went", JSON.stringify(m));
+  check("the removed word is marked where it was", m.gone.join("|") == "go", JSON.stringify(m));
+  check("marks don't touch the page's text", (await s.textOf("figcaption")) == "Where the leads went.");
+  await Bun.sleep(3200);
+  m = await marks();
+  check("with tracking off, the marks fade away", !m.added.length && !m.gone.length, JSON.stringify(m));
+
+  // Typing and an edit on disk at the same moment: both survive.
+  await s.clickEnd("h1");
+  await p.type(" now");
+  s.write(s.disk().replace("Where the leads went.", "Where the leads go now."));
+  await waitFor(() => s.disk().includes(" now</h1>") && s.disk().includes("leads go now."), 3000);
+  check("concurrent disk edit merges with unsaved typing", s.disk().includes(" now</h1>") && s.disk().includes("leads go now."), s.disk().match(/<h1>.*<\/h1>|<figcaption>.*<\/figcaption>/g)?.join(" | "));
+  check("and the page shows both", (await s.textOf("h1")).endsWith(" now") && (await s.textOf("figcaption")) == "Where the leads go now.");
+  m = await marks();
+  check("marks follow typing elsewhere", m.added.some((x) => /go now/.test(x)), JSON.stringify(m));
+  await p.key("z", MOD.Meta);
+  await Bun.sleep(100);
+  check("undo takes back the disk edit on its own", (await s.textOf("figcaption")) == "Where the leads went." && (await s.textOf("h1")).endsWith(" now"));
+  await p.key("z", MOD.Meta | MOD.Shift);
+  await Bun.sleep(100);
+
+  // Track changes: every change, yours or from disk, stays marked as a diff from when it was switched on.
+  await p.eval(`document.getElementById("btn-track").click()`);
+  await Bun.sleep(100);
+  await s.clickEnd("h1");
+  await p.type(" too");
+  s.write(s.disk().replace("Where the leads go now.", "Where leads go now."));
+  await Bun.sleep(3500);
+  m = await marks();
+  check("tracking keeps your edits and the disk's marked", m.added.some((x) => /too/.test(x)) && m.gone.join("|").trim() == "the", JSON.stringify(m));
+  await p.key("Backspace"); await p.key("Backspace"); await p.key("Backspace"); await p.key("Backspace");
+  await Bun.sleep(150);
+  m = await marks();
+  check("it's a diff: typing and deleting leaves no mark", !m.added.some((x) => /too/.test(x)) && m.gone.length == 1, JSON.stringify(m));
+  await p.type("s");
+  await Bun.sleep(150);
+  m = await marks();
+  check("adding a letter to a word marks just the letter", m.added.includes("s") && !m.added.some((x) => /nows/.test(x)) && m.gone.length == 1, JSON.stringify(m));
+  await p.key("Backspace");
+  await Bun.sleep(100);
+  await p.eval(`document.getElementById("btn-track").click()`);
+  await Bun.sleep(100);
+  m = await marks();
+  check("switching tracking off clears the marks", !m.added.length && !m.gone.length, JSON.stringify(m));
+  await Bun.sleep(500);
+
+  const stale = await fetch(`http://127.0.0.1:${s.port}/api/doc`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: "clobbered", version: 1 }) });
+  check("a save from a stale version is refused", stale.status == 409 && !s.disk().includes("clobbered"));
+
+  // Another file in the folder changes: the page renders again and picks it up.
+  const css = join(s.dir, "style.css");
+  writeFileSync(css, readFileSync(css, "utf8") + "\nh1 { letter-spacing: 3px; }\n");
+  check("a stylesheet change reaches the page", await (async () => { for (let i = 0; i < 40; i++) { if (await p.eval<string>(`getComputedStyle(${F}.querySelector("h1")).letterSpacing`) == "3px") return true; await Bun.sleep(50); } return false; })());
 
   await p.key("p", MOD.Meta | MOD.Shift);
   await Bun.sleep(300);
-  check("source view shows the file", await p.eval<boolean>(`document.body.classList.contains("source")`) && (await s.source()).includes("Where the leads went."));
+  check("source view shows the file", await p.eval<boolean>(`document.body.classList.contains("source")`) && (await s.source()).includes("Where leads go now."));
   await p.key("p", MOD.Meta | MOD.Shift);
   await Bun.sleep(400);
   await s.clickEnd("h1");
@@ -235,10 +297,71 @@ async function mdScenario(browser: Browser) {
   await s.close();
 }
 
+/** Send never refuses silently: it always says why it can't send. */
+async function agentOffScenario(browser: Browser) {
+  console.log("\nAgent off");
+  const s = await session(browser, "page", "index.html", { ANTHROPIC_API_KEY: "", SCRATCHWORK_AGENT_ENV_FILE: "/nonexistent/.env" });
+  const { p } = s;
+  await p.key("j", MOD.Meta);
+  await Bun.sleep(700);
+  const state = () => p.eval<{ hint: string; hidden: boolean; disabled: string | null; title: string }>(`(() => { const h = document.getElementById("agent-hint"), b = document.getElementById("agent-send"); return { hint: h.textContent, hidden: h.hidden, disabled: b.getAttribute("aria-disabled"), title: b.title }; })()`);
+  let st = await state();
+  check("with no key, the panel says the agent is off and why", !st.hidden && /agent is off/.test(st.hint) && /ANTHROPIC_API_KEY/.test(st.hint), JSON.stringify(st));
+  check("and Send carries the same reason", st.disabled == "true" && st.title == st.hint, JSON.stringify(st));
+  await p.type("hello");
+  await p.key("Enter");
+  await Bun.sleep(100);
+  st = await state();
+  check("typing and sending still explains instead of doing nothing", !st.hidden && /ANTHROPIC_API_KEY/.test(st.hint) && (await p.eval<string>(`document.getElementById("agent-input").value`)) == "hello");
+  await s.close();
+}
+
+/** No dark mode: with the system set to dark, the Markdown page and the shell stay light. */
+async function lightOnlyScenario(browser: Browser) {
+  console.log("\nSystem in dark mode");
+  const s = await session(browser, "md", "index.md");
+  const { p, F } = s;
+  await p.send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-color-scheme", value: "dark" }] });
+  await Bun.sleep(300);
+  check("the Markdown page stays light", (await p.eval<string>(`getComputedStyle(${F}.body).backgroundColor`)) == "rgb(255, 255, 255)");
+  check("and so does the shell", (await p.eval<string>(`getComputedStyle(document.documentElement).backgroundColor`)) == "rgb(255, 255, 255)");
+  check("there is no theme toggle", !(await p.eval<boolean>(`!!document.getElementById("btn-theme")`)));
+  await s.close();
+}
+
+async function agentEmptyScenario(browser: Browser) {
+  console.log("\nAgent, empty message");
+  const s = await session(browser, "page", "index.html", { ANTHROPIC_API_KEY: "sk-ant-test-not-used", SCRATCHWORK_AGENT_ENV_FILE: "/nonexistent/.env" });
+  const { p } = s;
+  await p.key("j", MOD.Meta);
+  await Bun.sleep(700);
+  check("an empty message: Send says to type one", await p.eval<boolean>(`(() => { const b = document.getElementById("agent-send"); return b.getAttribute("aria-disabled") == "true" && /Type a message/.test(b.title); })()`));
+  await p.key("Enter");
+  await Bun.sleep(100);
+  check("and pressing it says so in the panel", await p.eval<boolean>(`(() => { const h = document.getElementById("agent-hint"); return !h.hidden && /Type a message/.test(h.textContent); })()`));
+  await p.type("x");
+  await Bun.sleep(50);
+  check("typing enables it and clears the hint", await p.eval<boolean>(`document.getElementById("agent-send").getAttribute("aria-disabled") == "false" && document.getElementById("agent-hint").hidden`));
+
+  // The pane's open or closed state survives a reload.
+  const paneOpen = () => p.eval<boolean>(`document.body.classList.contains("agent-open") && !document.getElementById("agent").inert`);
+  await p.eval(`location.reload()`);
+  await Bun.sleep(150);
+  check("an open pane is still open after a reload, from the first frame", await paneOpen());
+  await Bun.sleep(600);
+  await p.key("j", MOD.Meta);
+  await Bun.sleep(100);
+  await p.eval(`location.reload()`);
+  await Bun.sleep(700);
+  check("a collapsed pane stays collapsed after a reload", !(await paneOpen()) && (await p.eval<string>(`document.getElementById("agent-fab").getAttribute("aria-expanded")`)) == "false");
+  await s.close();
+}
+
 const browser = await Browser.launch();
 try {
   if (!only || only == "html") await htmlScenario(browser);
-  if (!only || only == "md") await mdScenario(browser);
+  if (!only || only == "md") { await mdScenario(browser); await lightOnlyScenario(browser); }
+  if (!only || only == "agent") { await agentOffScenario(browser); await agentEmptyScenario(browser); }
 } finally {
   if (!keep) browser.close();
 }

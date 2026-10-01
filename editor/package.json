@@ -11,6 +11,8 @@
     "@codemirror/view": "6.43.13",
     "@lezer/common": "1.5.3",
     "@lezer/highlight": "1.2.5",
-    "@lezer/markdown": "1.7.2"
+    "@lezer/markdown": "1.7.2",
+    "@mariozechner/pi-coding-agent": "0.73.1",
+    "diff": "8.0.2"
   }
 }

@@ -31,6 +31,56 @@ a line break, Backspace at the start of a paragraph joins it to the one above,
 ⌘B and ⌘I toggle bold and italic, ⌘Z undoes, ⌘⇧P shows the source in a
 CodeMirror view (same document state, same undo history), ⌘-click opens a link.
 
+There's no dark mode: pages are shown as their authors made them, and most
+don't support one. The editor's own controls take their colours from the page
+under them instead.
+
+### The agent
+
+⌘J, or the round button in the lower-left corner, opens the agent: a
+floating card on the left that grows out of that button while the page slides
+right to make room (Esc or the collapse button shrinks it back). The editor
+paints the space behind the card with the page's own background, and tints
+the card and the other controls from it, so opening the agent never shows a
+strip of a different colour. There you can
+ask an agent for edits. It is [pi](https://github.com/badlogic/pi-mono)'s
+coding agent, embedded in the host (`agent.ts`), with read, edit, write, ls,
+find and grep tools rooted at the document's folder, so it can change the page
+and anything next to it (styles, scripts, other pages). There's no bash tool.
+Each message carries where your caret or selection is, so "tighten this
+paragraph" works. It defaults to Claude Opus 5.5 in fast mode at medium effort;
+set that up with
+
+    cp wip/editor/.env.example wip/editor/.env   # then add ANTHROPIC_API_KEY
+
+(`ANTHROPIC_API_KEY` in the environment works too). pi's model catalogue
+predates Opus 5.5, so `agent.ts` describes the model itself and rewrites each
+request for adaptive thinking, effort and `speed: "fast"`.
+
+The agent's edits reach the page the way any edit on disk does: the host
+watches the folder and sends the document's new text to the shell, which
+diffs it word by word (`src/page/merge.ts`) and applies it as small changes.
+The page patches only the units those changes touch, and marks exactly what
+changed, drawn over the page without touching its text: added words get a
+green highlight (the CSS Custom Highlight API), and removed text a small red
+notch at the spot it was taken from; hover the notch to see what was removed.
+A change with no visible text, like swapping `<strong>` for `<em>`, flashes its
+paragraph instead. Diffs are tidied to whole words, so a mark never starts
+mid-word.
+
+The track-changes button at the top right picks how long marks last. Off, the
+agent's edits are marked for a couple of seconds and fade. On, every change,
+yours or the agent's, stays marked as a diff against the document as it was
+when you switched it on (so typing something and deleting it again leaves no
+trace), and the button stays in view while tracking is on. Switching it off
+clears the marks. If you have typed something that isn't saved yet, the
+incoming edit is mapped over your edits, so both are kept. Saves name the
+version they were based on, and the host refuses one that would overwrite a
+change it hasn't seen, so the shell merges and saves again. Agent edits are
+undoable, one step each. A change to any other file in the folder re-renders
+the page, keeping its scroll position. The conversation lives in the host, so
+a reload keeps it; + starts a new one.
+
 ### How it works
 
 The design is the one in `notes/scratchwork-2.0-editing.html`:
@@ -66,6 +116,9 @@ The design is the one in `notes/scratchwork-2.0-editing.html`:
   CodeMirror's own Markdown commands. Typed Markdown syntax is escaped so it
   stays literal; ⌘B writes the marks.
 
+`bun tests/agent.ts` asks the real agent for edits through the panel and checks
+they reach the disk and the open page without a reload (it calls the API, so
+it isn't part of `./test.sh`).
 `bun tests/page.ts` runs the end-to-end check (headless Chrome, real clicks and
 keys, file read back from disk) on the fixtures in `tests/fixtures/`, and
 `bun tests/smoke.ts <path>` opens any document, types into it and screenshots.
@@ -166,10 +219,13 @@ Windows and Linux, use Ctrl in place of ⌘.
 ## Files
 
 - `open.ts`, `page.html`, `page.js`: the page editor's host, shell and built script
+- `agent.ts`, `.env.example`: the embedded agent and its settings
 - `src/page/`: the page editor, on CodeMirror 6: `manuscript.ts` (HTML source
   analysis), `markdown.ts` (Markdown rendering with source ranges),
-  `editor.ts` (the editing surface), `main.ts` (shell, saving, source view)
-- `package.json`: the pinned CodeMirror packages the page editor bundles
+  `editor.ts` (the editing surface), `main.ts` (shell, saving, source view,
+  agent panel), `merge.ts` (disk edits as change sets), `agent-log.ts` (the
+  agent transcript, shared by host and shell)
+- `package.json`: the pinned CodeMirror packages the page editor bundles, and pi
 - `index.html`: page shell, the chrome, and a script that sets the theme before first paint
 - `style.css`: theme colours, typography, editor and Markdown styling, chrome behaviour
 - `src/`: the editor. `app.ts` is the page (formatting commands, autosave,

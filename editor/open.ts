@@ -9,6 +9,11 @@
 // to read the document, write edits back to disk, and hear about edits made
 // on disk by anything else (an agent, another editor). The file on disk is
 // the source of truth; the editor never holds a copy it doesn't write back.
+//
+// It also runs the embedded agent (agent.ts) when wip/editor/.env holds an
+// API key: the shell sends messages to /api/agent, the agent's progress comes
+// back over the same event stream, and its edits reach the page through the
+// watcher like any other change on disk.
 
 import * as FileSystem from "@effect/platform/FileSystem";
 import * as Path from "@effect/platform/Path";
@@ -26,6 +31,9 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as Console from "effect/Console";
+import * as Chunk from "effect/Chunk";
+import * as Schedule from "effect/Schedule";
+import { loadConfig, startAgent, type Agent } from "./agent";
 
 const EDITOR_DIR = new URL(".", import.meta.url).pathname.replace(/\/$/, "");
 
@@ -36,7 +44,8 @@ interface Doc {
   readonly kind: "html" | "md";
 }
 
-const SaveBody = Schema.Struct({ text: Schema.String });
+const SaveBody = Schema.Struct({ text: Schema.String, version: Schema.Number });
+const PromptBody = Schema.Struct({ text: Schema.String, context: Schema.optional(Schema.NullOr(Schema.String)) });
 
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8", ".htm": "text/html; charset=utf-8", ".md": "text/markdown; charset=utf-8",
@@ -98,36 +107,80 @@ const program = Effect.gen(function* () {
   const doc = yield* resolveDoc(target);
   // What the editor last wrote (or we last read), so disk changes it caused are not echoed back.
   const known = yield* Ref.make(yield* fs.readFileString(doc.path));
+  // Bumped on every change to the document, ours or not. A save names the
+  // version it was based on, so it can never overwrite a change it hasn't seen.
+  const version = yield* Ref.make(1);
   const changes = yield* PubSub.unbounded<string>();
   const encoder = new TextEncoder();
+  const send = (msg: unknown) => PubSub.publish(changes, "data: " + JSON.stringify(msg) + "\n\n");
+
+  // The agent, if configured. Its events go to every open shell.
+  const cfg = yield* Effect.promise(() => loadConfig(process.env.SCRATCHWORK_AGENT_ENV_FILE || path.join(EDITOR_DIR, ".env")));
+  let agent: Agent | null = null;
+  let agentOff = "missing" in cfg ? cfg.missing : "";
+  if (!("missing" in cfg)) {
+    const started = yield* Effect.tryPromise(() => startAgent({ cfg, cwd: doc.dir, docName: doc.name, kind: doc.kind })).pipe(Effect.either);
+    if (started._tag == "Right") {
+      agent = started.right;
+      agent.subscribe((ev) => Effect.runSync(send({ type: "agent", ev })));
+    } else agentOff = `the agent did not start: ${String(started.left.error)}`;
+  }
 
   const readDoc = Effect.gen(function* () {
     const text = yield* fs.readFileString(doc.path);
-    return { name: doc.name, kind: doc.kind, text, dir: doc.dir };
+    yield* noteDisk(text);
+    return { name: doc.name, kind: doc.kind, text, dir: doc.dir, version: yield* Ref.get(version) };
   });
 
-  const writeDoc = (text: string) =>
+  /** Records the document's text on disk; true if it had changed behind our back. */
+  const noteDisk = (text: string) =>
+    Ref.get(known).pipe(Effect.flatMap((k) => k === text ? Effect.succeed(false) : Ref.set(known, text).pipe(
+      Effect.zipRight(Ref.update(version, (v) => v + 1)),
+      Effect.zipRight(Console.log(`  changed on disk: ${doc.name}`)),
+      Effect.as(true),
+    )));
+
+  /** Writes the editor's text, unless the file changed since the version it was based on. */
+  const writeDoc = (text: string, base: number) =>
     Effect.gen(function* () {
+      const onDisk = yield* fs.readFileString(doc.path);
+      const moved = yield* noteDisk(onDisk);
+      const v = yield* Ref.get(version);
+      if (moved || base !== v) {
+        if (moved) yield* send({ type: "doc", text: onDisk, version: v });
+        return { ok: false as const, text: onDisk, version: v };
+      }
       yield* Ref.set(known, text);
+      const next = yield* Ref.updateAndGet(version, (n) => n + 1);
       const tmp = path.join(doc.dir, `.${doc.name}.sw-${process.pid}.tmp`);
       yield* fs.writeFileString(tmp, text);
       yield* fs.rename(tmp, doc.path);
+      return { ok: true as const, version: next };
     });
 
-  // Watch the document's folder; a change to the file that isn't ours is pushed to the editor.
-  const watcher = fs.watch(doc.dir).pipe(
-    Stream.filter((ev) => path.basename(ev.path) === doc.name),
-    Stream.debounce("60 millis"),
-    Stream.mapEffect(() => fs.readFileString(doc.path).pipe(Effect.option)),
-    Stream.filterMap((o) => o),
-    Stream.mapEffect((text) =>
-      Ref.get(known).pipe(
-        Effect.flatMap((k) => (k === text ? Effect.void : Ref.set(known, text).pipe(
-          Effect.zipRight(PubSub.publish(changes, "data: " + JSON.stringify({ text }) + "\n\n")),
-          Effect.zipRight(Console.log(`  changed on disk: ${doc.name}`)),
-        ))),
-      ),
-    ),
+  // Watch the document's folder, subfolders included. A change to the document
+  // that isn't ours is sent to the editor as its new text; a change to any other
+  // file (a stylesheet, a script, an image) as its path, so the page reloads.
+  const docChanged = fs.readFileString(doc.path).pipe(
+    Effect.option,
+    Effect.flatMap((o) => o._tag == "None" ? Effect.void : noteDisk(o.value).pipe(
+      Effect.flatMap((moved) => moved ? Ref.get(version).pipe(Effect.flatMap((v) => send({ type: "doc", text: o.value, version: v }))) : Effect.void),
+    )),
+  );
+  const ignored = (rel: string) => rel.split(/[\\/]/).some((seg) => seg.startsWith(".") || seg == "node_modules");
+  const watcher = fs.watch(doc.dir, { recursive: true }).pipe(
+    Stream.map((ev) => path.relative(doc.dir, path.resolve(doc.dir, ev.path))),
+    Stream.filter((rel) => !ignored(rel)),
+    Stream.groupedWithin(1000, "60 millis"),
+    Stream.mapEffect((chunk) => {
+      const rels = [...new Set(Chunk.toReadonlyArray(chunk))];
+      const others = rels.filter((r) => r != doc.name);
+      return Effect.all([
+        rels.includes(doc.name) ? docChanged : Effect.void,
+        others.length ? send({ type: "files", paths: others }) : Effect.void,
+      ]);
+    }),
+    Stream.retry(Schedule.spaced("250 millis")),
     Stream.runDrain,
     Effect.catchAllCause(() => Effect.void),
   );
@@ -137,20 +190,37 @@ const program = Effect.gen(function* () {
     HttpRouter.get("/api/doc", readDoc.pipe(Effect.flatMap((d) => HttpServerResponse.json(d)))),
     HttpRouter.put("/api/doc", Effect.gen(function* () {
       const body = yield* HttpServerRequest.schemaBodyJson(SaveBody);
-      yield* writeDoc(body.text);
-      return yield* HttpServerResponse.json({ ok: true });
+      const result = yield* writeDoc(body.text, body.version);
+      return yield* HttpServerResponse.json(result, { status: result.ok ? 200 : 409 });
     })),
     HttpRouter.post("/api/doc", Effect.gen(function* () {
       // sendBeacon on page hide: same as PUT.
       const body = yield* HttpServerRequest.schemaBodyJson(SaveBody);
-      yield* writeDoc(body.text);
-      return yield* HttpServerResponse.json({ ok: true });
+      const result = yield* writeDoc(body.text, body.version);
+      return yield* HttpServerResponse.json(result, { status: result.ok ? 200 : 409 });
     })),
     HttpRouter.get("/api/events", Effect.gen(function* () {
       const stream = Stream.make(encoder.encode(": connected\n\n")).pipe(
         Stream.concat(Stream.fromPubSub(changes).pipe(Stream.map((s) => encoder.encode(s)))),
       );
       return HttpServerResponse.stream(stream, { headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache, no-transform", Connection: "keep-alive" } });
+    })),
+    HttpRouter.get("/api/agent", HttpServerResponse.json(
+      agent ? { enabled: true, model: agent.model, log: agent.log() } : { enabled: false, reason: agentOff },
+    )),
+    HttpRouter.post("/api/agent", Effect.gen(function* () {
+      const body = yield* HttpServerRequest.schemaBodyJson(PromptBody);
+      if (!agent) return yield* HttpServerResponse.json({ ok: false, reason: agentOff }, { status: 503 });
+      agent.prompt(body.text, body.context ?? null);
+      return yield* HttpServerResponse.json({ ok: true });
+    })),
+    HttpRouter.post("/api/agent/abort", Effect.gen(function* () {
+      if (agent) yield* Effect.promise(() => agent!.abort());
+      return yield* HttpServerResponse.json({ ok: true });
+    })),
+    HttpRouter.post("/api/agent/reset", Effect.gen(function* () {
+      if (agent) yield* Effect.promise(() => agent!.reset());
+      return yield* HttpServerResponse.json({ ok: true });
     })),
     HttpRouter.get("/doc/*", HttpRouter.params.pipe(Effect.flatMap((p) => serveFile(doc.dir, p["*"] ?? "")))),
     HttpRouter.get("/*", HttpRouter.params.pipe(Effect.flatMap((p) => serveFile(EDITOR_DIR, p["*"] ?? "", "no-cache")))),
@@ -161,7 +231,7 @@ const program = Effect.gen(function* () {
   const server = Layer.unwrapEffect(
     Effect.gen(function* () {
       const rel = path.relative(process.cwd(), doc.path);
-      yield* Console.log(`\n  editing ${doc.kind === "md" ? "Markdown" : "HTML"}: ${rel.startsWith("..") ? doc.path : rel || doc.name}\n  ${url}\n`);
+      yield* Console.log(`\n  editing ${doc.kind === "md" ? "Markdown" : "HTML"}: ${rel.startsWith("..") ? doc.path : rel || doc.name}\n  ${url}\n  agent: ${agent ? agent.model : `off (${agentOff})`}\n`);
       if (!noOpen) Bun.spawn(["open", url], { stdout: "ignore", stderr: "ignore" });
       return HttpServer.serve(router).pipe(Layer.provide(BunHttpServer.layer({ port, idleTimeout: 0 })));
     }),

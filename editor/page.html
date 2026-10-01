@@ -1,24 +1,39 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="light">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Scratchwork</title>
-  <meta name="color-scheme" content="light dark">
-  <script>
-    // Resolve the theme before first paint so a dark-mode reload never flashes white.
-    (function () {
-      var theme = null;
-      try { theme = (JSON.parse(localStorage.getItem("scratchwork-editor:settings:v1") || "{}")).theme || null; } catch (e) {}
-      if (theme === "light" || theme === "dark") document.documentElement.setAttribute("data-theme", theme);
-    })();
-  </script>
+  <meta name="color-scheme" content="light">
   <link rel="stylesheet" href="/fonts/inter.css">
   <link rel="stylesheet" href="/style.css">
   <style>
     /* The page fills the window; the chrome floats over it, as in the Markdown editor. */
     body { overflow: hidden; }
-    #frame { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; background: var(--bg); }
+    #frame { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; background: transparent; }
+
+    /* The shell's canvas is the page's own background (main.ts reads it from
+       the page), so the space the agent opens up is the same surface as the
+       page, with no seam. In the source view it's the editor's again. */
+    html { background: var(--page-bg, var(--bg)); background-image: var(--page-bg-image, none); transition: background-color 300ms ease; }
+    body { background: transparent; }
+    html:has(body.source) { background: var(--bg); }
+
+    /* The floating UI takes its colours from the page under it rather than
+       the editor's own: a card lifted from the page's own colour, with light
+       or dark text to suit it. */
+    body:not(.source).page-light :is(.agent, .agent-fab, .chrome) {
+      --fg: #1c1c1f; --fg-strong: #0d0d0f; --soft: #6b6b73; --chrome: #9a9aa2; --chrome-hover: #3f3f46;
+      --rule: rgba(0, 0, 0, 0.08); --code-bg: rgba(0, 0, 0, 0.05); --caret: #3b7cf0; --panel-border: rgba(0, 0, 0, 0.07);
+      --bg: color-mix(in srgb, var(--page-bg) 45%, #fff);
+      --panel-bg: var(--bg);
+    }
+    body:not(.source).page-dark :is(.agent, .agent-fab, .chrome) {
+      --fg: #cacad2; --fg-strong: #ececf1; --soft: #9a9aa4; --chrome: #74747d; --chrome-hover: #dcdce2;
+      --rule: rgba(255, 255, 255, 0.08); --code-bg: rgba(255, 255, 255, 0.07); --caret: #6aa1ff; --panel-border: rgba(255, 255, 255, 0.08);
+      --bg: color-mix(in srgb, var(--page-bg) 90%, #fff);
+      --panel-bg: var(--bg);
+    }
     body.source #frame { visibility: hidden; }
     body.source { overflow: auto; }
     #source[hidden] { display: none; }
@@ -33,6 +48,103 @@
     .i-page { display: none; }
     body.source .i-page { display: block; }
     body.source #btn-source { color: var(--chrome-hover); }
+    #btn-track[aria-pressed="true"] { color: #16a34a; background: rgba(34, 197, 94, 0.12); }
+    body.chrome-hidden .chrome-top:has(#btn-track[aria-pressed="true"]) { opacity: 1; }
+    body.chrome-hidden .chrome-top:has(#btn-track[aria-pressed="true"]) > :not(#btn-track) { opacity: 0; pointer-events: none; }
+
+    /* The agent floats on the left as a rounded card. Collapsed, it is a round
+       button in the lower-left corner; expanding grows the card out of that
+       button (a clip-path from the button's circle to the full card), and the
+       page slides right to make room, on the same curve. */
+    :root {
+      --agent-w: min(380px, calc(100vw - 32px));
+      --agent-inset: 16px;
+      --agent-fab: 44px;
+      --agent-ease: cubic-bezier(0.32, 0.72, 0, 1);
+      --agent-ms: 520ms;
+    }
+    #frame { left: 0; width: 100%; transition: left var(--agent-ms) var(--agent-ease), width var(--agent-ms) var(--agent-ease); }
+    #source { transition: margin-left var(--agent-ms) var(--agent-ease); }
+    .chrome-bottom { transition: opacity var(--show-ms) var(--ease), padding-left var(--agent-ms) var(--agent-ease); padding-left: calc(var(--agent-inset) + var(--agent-fab) + 14px); }
+    @media (min-width: 760px) {
+      body.agent-open #frame { left: calc(var(--agent-w) + var(--agent-inset) * 2); width: calc(100% - var(--agent-w) - var(--agent-inset) * 2); }
+      body.agent-open #source { margin-left: calc(var(--agent-w) + var(--agent-inset)); }
+      body.agent-open .chrome-bottom { padding-left: calc(var(--agent-w) + var(--agent-inset) * 2 + 6px); }
+    }
+    .agent-fab {
+      position: fixed; left: var(--agent-inset); bottom: max(var(--agent-inset), env(safe-area-inset-bottom)); z-index: 21;
+      width: var(--agent-fab); height: var(--agent-fab); border-radius: 50%; border: 1px solid var(--panel-border);
+      display: grid; place-items: center; padding: 0; cursor: pointer;
+      background: var(--panel-bg); color: var(--chrome-hover); box-shadow: var(--shadow);
+      transition: transform var(--agent-ms) var(--agent-ease), opacity 200ms ease 160ms, box-shadow 200ms ease;
+    }
+    .agent-fab:hover { box-shadow: 0 10px 34px rgba(0, 0, 0, 0.14), 0 1px 2px rgba(0, 0, 0, 0.06); }
+    .agent-fab svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+    .agent-fab.busy::after { content: ""; position: absolute; inset: -3px; border-radius: 50%; border: 2px solid transparent; border-top-color: var(--caret); animation: agent-spin 0.9s linear infinite; }
+    @keyframes agent-spin { to { transform: rotate(360deg); } }
+    body.agent-open .agent-fab { opacity: 0; transform: scale(0.6); pointer-events: none; transition: transform var(--agent-ms) var(--agent-ease), opacity 120ms ease; }
+    /* The wrapper carries the shadow as a filter, so it follows the clipped,
+       rounded card mid-animation instead of being cut off by the clip. */
+    .agent {
+      position: fixed; z-index: 20;
+      left: var(--agent-inset); top: var(--agent-inset); bottom: max(var(--agent-inset), env(safe-area-inset-bottom));
+      width: var(--agent-w);
+      filter: drop-shadow(0 12px 28px rgba(0, 0, 0, 0.11)) drop-shadow(0 1px 3px rgba(0, 0, 0, 0.06));
+      visibility: hidden;
+      transition: visibility 0s linear var(--agent-ms);
+    }
+    body.agent-open .agent { visibility: visible; transition: visibility 0s; }
+    .agent-card {
+      position: absolute; inset: 0;
+      display: flex; flex-direction: column;
+      background: var(--bg); border: 1px solid var(--panel-border); border-radius: 18px;
+      font: 14px/1.55 var(--font-text); color: var(--fg);
+      clip-path: inset(calc(100% - var(--agent-fab)) calc(100% - var(--agent-fab)) 0 0 round calc(var(--agent-fab) / 2));
+      opacity: 0;
+      transition: clip-path var(--agent-ms) var(--agent-ease), opacity 180ms ease 140ms;
+    }
+    body.agent-open .agent-card {
+      clip-path: inset(0 0 0 0 round 18px);
+      opacity: 1;
+      transition: clip-path var(--agent-ms) var(--agent-ease), opacity 100ms ease;
+    }
+    .agent-card > * { opacity: 0; transform: translateY(6px); transition: opacity 160ms ease, transform var(--agent-ms) var(--agent-ease); }
+    body.agent-open .agent-card > * { opacity: 1; transform: none; transition: opacity 260ms ease 140ms, transform var(--agent-ms) var(--agent-ease) 60ms; }
+    body.no-motion, body.no-motion * { transition: none !important; }
+    @media (prefers-reduced-motion: reduce) {
+      :root { --agent-ms: 1ms; }
+    }
+    .agent-head { display: flex; align-items: center; gap: 4px; padding: 10px 8px 6px 18px; }
+    .agent-head .title { font-weight: 600; color: var(--fg-strong); }
+    .agent-head .model { color: var(--chrome); font-size: 12px; margin-left: 6px; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .agent-log { flex: 1; overflow-y: auto; padding: 4px 16px 16px; display: flex; flex-direction: column; gap: 10px; }
+    .agent-log:empty::before { content: attr(data-empty); color: var(--chrome); margin: auto; text-align: center; padding: 0 24px; }
+    .msg-user { align-self: flex-end; max-width: 88%; background: var(--code-bg); border-radius: 12px; padding: 7px 11px; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .msg-assistant { white-space: pre-wrap; overflow-wrap: anywhere; }
+    .msg-assistant code, .msg-tool code { font: 0.88em var(--font-mono); background: var(--code-bg); border-radius: 4px; padding: 0.1em 0.3em; }
+    .msg-thinking { color: var(--chrome); font-size: 12.5px; white-space: pre-wrap; max-height: 4.8em; overflow: hidden; -webkit-mask-image: linear-gradient(to bottom, transparent, #000 1.6em); mask-image: linear-gradient(to bottom, transparent, #000 1.6em); display: flex; flex-direction: column; justify-content: flex-end; }
+    .msg-tool { color: var(--soft); font-size: 12.5px; display: flex; gap: 7px; align-items: baseline; }
+    .msg-tool::before { content: ""; flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--chrome); transform: translateY(-1px); }
+    .msg-tool.running::before { background: var(--caret); animation: agent-pulse 1s ease-in-out infinite alternate; }
+    .msg-tool.error { color: #d0453a; }
+    .msg-tool.error::before { background: #d0453a; }
+    .msg-tool.retried { color: var(--chrome); }
+    .msg-tool.retried::before { background: color-mix(in srgb, var(--chrome) 60%, transparent); }
+    .msg-tool .detail { display: block; white-space: pre-wrap; font-size: 12px; opacity: 0.85; }
+    .msg-error { color: #d0453a; white-space: pre-wrap; font-size: 13px; }
+    @keyframes agent-pulse { from { opacity: 0.35; } to { opacity: 1; } }
+    .agent-compose { padding: 10px; border-top: 1px solid var(--rule); display: flex; gap: 6px; align-items: flex-end; }
+    .agent-compose textarea {
+      flex: 1; resize: none; border: 1px solid var(--rule); border-radius: 12px; padding: 8px 10px;
+      font: inherit; color: var(--fg); background: var(--bg); max-height: 40vh; min-height: 38px; outline: none;
+    }
+    .agent-compose textarea:focus { border-color: color-mix(in srgb, var(--caret) 60%, var(--rule)); }
+    .agent-send { flex: none; height: 38px; padding: 0 12px; border: 0; border-radius: 12px; background: var(--fg-strong); color: var(--bg); font: 600 13px var(--font-text); cursor: pointer; }
+    .agent-send.stop { background: var(--code-bg); color: var(--fg); }
+    .agent-send[aria-disabled="true"] { opacity: 0.4; cursor: not-allowed; }
+    .agent-hint { margin: 0 10px 8px; padding: 7px 10px; border-radius: 10px; background: var(--code-bg); color: var(--soft); font-size: 12.5px; line-height: 1.45; }
+    .agent-hint.sticky { color: var(--fg); }
+    .agent-hint[hidden] { display: none; }
   </style>
 </head>
 <body>
@@ -41,13 +153,12 @@
   <main id="source" hidden aria-label="Source"></main>
 
   <header class="chrome chrome-top" aria-label="Controls">
+    <button type="button" class="icon-btn" id="btn-track" aria-label="Track changes" data-tip="Track changes" aria-pressed="false">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4.5h7.5L19 9v10.5a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1v-14a1 1 0 0 1 1-1Z"/><path d="M9.5 11.5h5M12 9v5M9.5 17h5"/></svg>
+    </button>
     <button type="button" class="icon-btn" id="btn-source" aria-label="View source (⌘⇧P)" data-tip="Source  ⌘⇧P" aria-pressed="false">
       <svg class="i-code" viewBox="0 0 24 24" aria-hidden="true"><path d="m8 7-5 5 5 5M16 7l5 5-5 5M14 4l-4 16"/></svg>
       <svg class="i-page" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5.5A1.5 1.5 0 0 1 5.5 4h13A1.5 1.5 0 0 1 20 5.5v13a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 18.5v-13Z"/><path d="M8 9h8M8 12.5h8M8 16h5"/></svg>
-    </button>
-    <button type="button" class="icon-btn" id="btn-theme" aria-label="Toggle theme (⌘⇧L)" data-tip="Theme  ⌘⇧L">
-      <svg class="i-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5Z"/></svg>
-      <svg class="i-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M4.6 4.6l1.4 1.4M18 18l1.4 1.4M2.5 12h2M19.5 12h2M4.6 19.4 6 18M18 6l1.4-1.4"/></svg>
     </button>
     <button type="button" class="icon-btn" id="btn-help" aria-label="Keyboard shortcuts (⌘/)" data-tip="Shortcuts  ⌘/">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9.25 9.25a2.75 2.75 0 1 1 3.9 2.5c-.75.35-1.15.95-1.15 1.75v.5"/><circle cx="12" cy="17.25" r=".4" fill="currentColor"/></svg>
@@ -56,7 +167,6 @@
 
   <footer class="chrome chrome-bottom">
     <span id="status" class="status" role="status" aria-live="polite"></span>
-    <button type="button" id="stat" class="stat" aria-label="Word count; click to switch between words, characters and reading time"></button>
   </footer>
 
   <div id="help" class="help" hidden role="dialog" aria-label="Keyboard shortcuts">
@@ -66,12 +176,33 @@
       <dt>New paragraph</dt><dd><kbd>Enter</kbd></dd>
       <dt>Line break</dt><dd><kbd>⇧</kbd><kbd>Enter</kbd></dd>
       <dt>Undo / redo</dt><dd><kbd>⌘</kbd><kbd>Z</kbd> / <kbd>⌘</kbd><kbd>⇧</kbd><kbd>Z</kbd></dd>
+      <dt>Agent</dt><dd><kbd>⌘</kbd><kbd>J</kbd></dd>
       <dt>View source</dt><dd><kbd>⌘</kbd><kbd>⇧</kbd><kbd>P</kbd></dd>
-      <dt>Light / dark</dt><dd><kbd>⌘</kbd><kbd>⇧</kbd><kbd>L</kbd></dd>
       <dt>Hide controls</dt><dd><kbd>Esc</kbd></dd>
     </dl>
     <p>Click into any text on the page and type. Edits are written to the file on disk as you go. ⌘-click a link to open it.</p>
   </div>
+
+  <button type="button" class="agent-fab" id="agent-fab" aria-label="Open the agent (⌘J)" title="Agent  ⌘J" aria-expanded="false" aria-controls="agent">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5c.4 3.9 2.6 6.1 6.5 6.5-3.9.4-6.1 2.6-6.5 6.5-.4-3.9-2.6-6.1-6.5-6.5 3.9-.4 6.1-2.6 6.5-6.5Z"/><path d="M18.5 15.5c.2 1.6 1 2.4 2.5 2.5-1.5.2-2.3 1-2.5 2.5-.2-1.5-1-2.3-2.5-2.5 1.5-.1 2.3-.9 2.5-2.5Z"/></svg>
+  </button>
+  <aside id="agent" class="agent" inert aria-label="Agent"><div class="agent-card">
+    <div class="agent-head">
+      <span class="title">Agent</span><span class="model" id="agent-model"></span>
+      <button type="button" class="icon-btn" id="agent-reset" aria-label="New conversation" data-tip="New conversation">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+      </button>
+      <button type="button" class="icon-btn" id="agent-close" aria-label="Collapse (Esc)" data-tip="Collapse  Esc">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 19 11 13M5 19v-4.5M5 19h4.5M19 5l-6 6M19 5v4.5M19 5h-4.5"/></svg>
+      </button>
+    </div>
+    <div class="agent-log" id="agent-log" data-empty="Ask for an edit. The agent can change any file in this page's folder, and you'll see its edits here as they land." aria-live="polite"></div>
+    <p class="agent-hint" id="agent-hint" role="status" hidden></p>
+    <form class="agent-compose" id="agent-form">
+      <textarea id="agent-input" rows="1" placeholder="Ask the agent…" aria-label="Message the agent"></textarea>
+      <button type="submit" class="agent-send" id="agent-send">Send</button>
+    </form>
+  </div></aside>
 
   <div id="toast" class="toast" aria-hidden="true"></div>
 

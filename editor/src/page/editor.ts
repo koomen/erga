@@ -16,11 +16,12 @@
 // resort. IME composition is the one case where the browser edits the DOM
 // first; the text is read back into the model when it ends.
 
-import { EditorState, EditorSelection, Transaction, MapMode, findClusterBreak, type TransactionSpec } from "@codemirror/state";
-import { undo, redo } from "@codemirror/commands";
+import { EditorState, EditorSelection, Transaction, MapMode, findClusterBreak, type ChangeSet, type TransactionSpec } from "@codemirror/state";
+import { undo, redo, isolateHistory } from "@codemirror/commands";
 import { insertNewlineContinueMarkup, deleteMarkupBackward } from "@codemirror/lang-markdown";
 import * as M from "./manuscript";
 import { analyzeMarkdown, escapeMarkdownText } from "./markdown";
+import { changesBetween } from "./merge";
 
 export type Kind = "html" | "md";
 
@@ -106,7 +107,65 @@ const PAGE_STYLE = `
 [data-sw-id].sw-locked { cursor: default; }
 [data-sw-id] [contenteditable="false"] { cursor: default; }
 [data-sw-id][contenteditable] a[href] { cursor: text; }
+@keyframes sw-flash { from { background-color: rgba(59, 124, 240, 0.24); } to { background-color: rgba(59, 124, 240, 0); } }
+[data-sw-id].sw-flash { animation: sw-flash 1.8s ease-out; border-radius: 3px; }
+::highlight(sw-add-0) { background-color: rgba(34, 197, 94, 0.3); }
+::highlight(sw-add-1) { background-color: rgba(34, 197, 94, 0.24); }
+::highlight(sw-add-2) { background-color: rgba(34, 197, 94, 0.18); }
+::highlight(sw-add-3) { background-color: rgba(34, 197, 94, 0.12); }
+::highlight(sw-add-4) { background-color: rgba(34, 197, 94, 0.07); }
+::highlight(sw-add-5) { background-color: rgba(34, 197, 94, 0.03); }
+sw-marks { all: initial; position: absolute; top: 0; left: 0; width: 0; height: 0; z-index: 2147483647; pointer-events: none; }
+sw-del { all: initial; position: absolute; width: 2px; margin-left: -1px; background: #e5484d; border-radius: 1px; pointer-events: auto; cursor: help; transition: opacity 120ms linear; }
+sw-del::before { content: ""; position: absolute; top: -5px; left: -3px; border: 4px solid transparent; border-top-color: #e5484d; border-bottom: 0; }
+sw-del::after { content: ""; position: absolute; inset: -6px -5px -2px; }
+sw-tip {
+  all: initial; display: none; position: absolute; bottom: calc(100% + 7px); left: 50%; transform: translateX(-50%);
+  font: 500 12px/1.55 ui-sans-serif, system-ui, -apple-system, sans-serif; color: #b42318;
+  background: #fee4e2; border: 1px solid #fecdca; border-radius: 5px; padding: 1px 6px;
+  text-decoration: line-through; text-decoration-color: rgba(180, 35, 24, 0.6);
+  white-space: nowrap; max-width: 360px; overflow: hidden; text-overflow: ellipsis;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
+}
+sw-del:hover sw-tip { display: block; }
 `;
+
+type Mark = ({ kind: "add"; from: number; to: number } | { kind: "del"; pos: number; text: string }) & { level?: number; born?: number };
+
+/**
+ * The marks for a set of changes: text they add that shows on the page, and
+ * text they remove that showed (read from the units before and after, so
+ * markup contributes nothing). Changes with neither are `unmarked`.
+ */
+function marksFor(changes: ChangeSet, oldUnits: M.Unit[], newUnits: M.Unit[], level: number) {
+  const marks: Mark[] = [];
+  const unmarked: { from: number; to: number }[] = [];
+  let first: number | null = null;
+  changes.iterChanges((fromA, toA, fromB, toB) => {
+    const gone = toA > fromA ? textIn(oldUnits, fromA, toA).replace(/\s+/g, " ").trim() : "";
+    const shown = toB > fromB && /\S/.test(textIn(newUnits, fromB, toB));
+    if (shown) marks.push({ kind: "add", from: fromB, to: toB, level });
+    if (gone) marks.push({ kind: "del", pos: fromB, text: gone, level });
+    if (!shown && !gone) unmarked.push({ from: fromB, to: toB });
+    else first ??= fromB;
+  });
+  return { marks, unmarked, first };
+}
+
+/** The rendered text of [from, to) of the source, as the units hold it (markup contributes nothing). */
+function textIn(units: M.Unit[], from: number, to: number): string {
+  let out = "";
+  for (const u of units) {
+    if (u.contentTo < from || u.contentFrom > to) continue;
+    let unitText = "";
+    for (const r of u.runs) {
+      const s = Math.max(from, r.from), e = Math.min(to, r.to);
+      if (s < e) unitText += r.text.slice(M.runOffset(r, s), M.runOffset(r, e));
+    }
+    if (unitText) out += (out ? " " : "") + unitText;
+  }
+  return out;
+}
 
 export class PageEditor {
   state: EditorState;
@@ -124,6 +183,23 @@ export class PageEditor {
   private listeners: ((u: PageUpdate) => void)[] = [];
   /** Set while a full render is in flight; edits wait for it. */
   private rendering = false;
+  /** Source ranges to flash once the render in flight is done. */
+  private pendingFlash: { from: number; to: number }[] = [];
+  /**
+   * What changed, drawn over the page without touching its text: added text
+   * gets a green highlight, removed text a red notch (hover it for the text).
+   * With tracking off, edits from elsewhere are marked briefly and fade
+   * (`level` counts up the fade); with tracking on, the marks are a diff of
+   * the document against `tracking.baseline`, whoever made the changes.
+   */
+  private marks: Mark[] = [];
+  private tracking: { baseline: string; units: M.Unit[] } | null = null;
+  private overlay: HTMLElement | null = null;
+  private markObserver: ResizeObserver | null = null;
+  private paintQueued = false;
+  private diffQueued = false;
+  private fadeTimer = 0;
+  private revealPending: number | null = null;
 
   constructor(readonly config: PageEditorConfig) {
     this.state = config.state;
@@ -164,13 +240,6 @@ export class PageEditor {
     return `<head>${inject}</head>` + html;
   }
 
-  /** The manuscript as plain text (for word counts). */
-  manuscriptText(): string {
-    const out: string[] = [];
-    for (const u of this.units) for (const r of u.runs) if (r.editable) out.push(r.text);
-    return out.join(" ");
-  }
-
   /** The page's title: its <title>, else its first heading. */
   title(): string {
     const t = this.doc?.title?.trim();
@@ -205,6 +274,12 @@ export class PageEditor {
       }
       this.syncDOMSelection(true);
       this.notify({ docChanged: false, selectionSet: false, rendered: true });
+      if (this.pendingFlash.length) { this.flash(this.pendingFlash); this.pendingFlash = []; }
+      this.markObserver?.disconnect();
+      this.overlay = null;
+      const RO = (this.frame.contentWindow as (Window & typeof globalThis) | null)?.ResizeObserver;
+      if (RO) { this.markObserver = new RO(() => this.queuePaint()); this.markObserver.observe(this.doc.documentElement); }
+      this.paintMarks();
     };
     this.frame.addEventListener("load", onLoad);
     this.frame.srcdoc = a.html;
@@ -219,7 +294,8 @@ export class PageEditor {
   /** A unit element is its own editing host; anything atomic inside it stays a normal widget. */
   private prepareUnit(el: Element): void {
     if (!el.classList.contains("sw-locked")) el.setAttribute("contenteditable", "true");
-    el.setAttribute("spellcheck", "true");
+    // No spellcheck: these are technical documents, full of names a dictionary flags.
+    el.setAttribute("spellcheck", "false");
     for (const atom of el.querySelectorAll("*")) if (M.ATOMIC.has(atom.localName)) atom.setAttribute("contenteditable", "false");
   }
 
@@ -610,7 +686,12 @@ export class PageEditor {
     const tr = spec instanceof Transaction ? spec : this.state.update(spec);
     const oldUnits = this.units, oldSrc = this.state.doc.toString();
     this.state = tr.state;
-    if (tr.docChanged) this.applyChanges(tr, oldUnits, oldSrc);
+    if (tr.docChanged) {
+      this.mapMarks(tr.changes);
+      this.applyChanges(tr, oldUnits, oldSrc);
+      if (this.tracking) this.queueDiff();
+      else this.paintMarks();
+    }
     this.syncDOMSelection(true);
     if (tr.docChanged || tr.scrollIntoView) this.scrollCaretIntoView();
     this.notify({ docChanged: tr.docChanged, selectionSet: !!tr.selection, rendered: false });
@@ -854,10 +935,188 @@ export class PageEditor {
     this.dispatch({ changes: { from: 0, to: this.state.doc.length, insert: text }, annotations: noHistory(), userEvent: "external" });
   }
 
+  /**
+   * Applies changes made elsewhere (an agent, another editor) on top of the
+   * current document. They are undoable, as one step of their own, and marked
+   * (see `marks`); a change with no visible text (markup only) flashes its
+   * paragraph instead. The caret stays where it was, and focus stays wherever
+   * it is.
+   */
+  applyExternal(changes: ChangeSet): void {
+    if (changes.empty) return;
+    const tr = this.state.update({ changes, annotations: isolateHistory.of("full"), userEvent: "external" });
+    const oldUnits = this.units, oldSrc = this.state.doc.toString();
+    this.state = tr.state;
+    this.mapMarks(changes);
+    this.applyChanges(tr, oldUnits, oldSrc);
+    if (this.hasFocus) this.syncDOMSelection(true);
+    this.notify({ docChanged: true, selectionSet: false, rendered: false });
+    const found = marksFor(changes, oldUnits, this.units, 0);
+    this.revealPending = found.first;
+    if (!this.tracking) {
+      this.marks.push(...found.marks);
+      this.startFade();
+    }
+    if (this.rendering) { this.pendingFlash = found.unmarked; return; }
+    if (found.unmarked.length) this.flash(found.unmarked, found.first == null);
+    if (this.tracking) this.queueDiff();
+    else this.paintMarks();
+  }
+
+  get isTracking(): boolean { return !!this.tracking; }
+
+  /**
+   * Track changes: on, every change from now on (yours, the agent's) stays
+   * marked, as a diff against the document as it is now; off, the marks go.
+   */
+  setTracking(on: boolean): void {
+    if (on == !!this.tracking) return;
+    this.marks = [];
+    this.tracking = on ? { baseline: this.state.doc.toString(), units: this.units } : null;
+    this.paintMarks();
+  }
+
+  private mapMarks(changes: ChangeSet): void {
+    if (this.tracking || !this.marks.length) return;
+    this.marks = this.marks.flatMap((m): Mark[] => {
+      if (m.kind == "del") return [{ ...m, pos: changes.mapPos(m.pos, -1) }];
+      const from = changes.mapPos(m.from, 1), to = changes.mapPos(m.to, -1);
+      return to > from ? [{ ...m, from, to }] : [];
+    });
+  }
+
+  /** Recomputes the tracked diff (coalesced to one per frame: it runs on every keystroke). */
+  private queueDiff(): void {
+    if (this.diffQueued) return;
+    this.diffQueued = true;
+    requestAnimationFrame(() => {
+      this.diffQueued = false;
+      if (!this.tracking) return;
+      this.marks = marksFor(changesBetween(this.tracking.baseline, this.state.doc.toString()), this.tracking.units, this.units, 0).marks;
+      this.paintMarks();
+    });
+  }
+
+  /** Brief marks hold for a moment, then fade out step by step. */
+  private startFade(): void {
+    const HOLD = 2200, STEP = 110, LEVELS = 6;
+    const born = performance.now();
+    for (const m of this.marks) m.born ??= born;
+    if (this.fadeTimer) return;
+    this.fadeTimer = window.setInterval(() => {
+      const now = performance.now();
+      this.marks = this.marks.filter((m) => now - m.born! < HOLD + LEVELS * STEP);
+      for (const m of this.marks) m.level = Math.max(0, Math.min(LEVELS - 1, Math.floor((now - m.born! - HOLD) / STEP) + 1));
+      if (!this.marks.length || this.tracking) { clearInterval(this.fadeTimer); this.fadeTimer = 0; }
+      this.paintMarks();
+    }, 60);
+  }
+
+  private queuePaint(): void {
+    if (this.paintQueued || (!this.marks.length && !this.overlay)) return;
+    this.paintQueued = true;
+    requestAnimationFrame(() => { this.paintQueued = false; this.paintMarks(); });
+  }
+
+  /** Draws the marks: CSS highlights over added text (the DOM is untouched), notches in an overlay for removed text. */
+  private paintMarks(): void {
+    const doc = this.doc, win = this.frame.contentWindow as (Window & typeof globalThis & { Highlight?: new (...r: Range[]) => unknown }) | null;
+    if (!doc || !win || this.rendering) return;
+    const registry = (win.CSS as unknown as { highlights?: Map<string, unknown> }).highlights;
+    const byLevel: Range[][] = [[], [], [], [], [], []];
+    for (const m of this.marks) {
+      if (m.kind != "add") continue;
+      for (const u of this.units) {
+        if (u.contentTo < m.from || u.contentFrom > m.to) continue;
+        const el = this.els[u.id];
+        if (!el) continue;
+        const nodes = this.textNodes(el);
+        if (nodes.length != u.runs.length) continue;
+        u.runs.forEach((run, i) => {
+          const s = Math.max(m.from, run.from), e = Math.min(m.to, run.to);
+          if (s >= e) return;
+          const range = doc.createRange();
+          try { range.setStart(nodes[i], M.runOffset(run, s)); range.setEnd(nodes[i], M.runOffset(run, e)); } catch { return; }
+          byLevel[m.level ?? 0].push(range);
+        });
+      }
+    }
+    if (registry && win.Highlight) {
+      byLevel.forEach((ranges, level) => {
+        if (ranges.length) registry.set(`sw-add-${level}`, new win.Highlight!(...ranges));
+        else registry.delete(`sw-add-${level}`);
+      });
+    }
+
+    const dels = this.marks.filter((m): m is Mark & { kind: "del" } => m.kind == "del");
+    if (!dels.length) {
+      this.overlay?.remove();
+      this.overlay = null;
+    } else {
+      if (!this.overlay || !this.overlay.isConnected) {
+        this.overlay = doc.createElement("sw-marks");
+        doc.documentElement.append(this.overlay);
+      }
+      this.overlay.textContent = "";
+      for (const m of dels) {
+        const at = this.anchorAt(m.pos);
+        if (!at) continue;
+        const notch = doc.createElement("sw-del");
+        notch.style.cssText = `left:${at.rect.left + win.scrollX}px;top:${at.rect.top + win.scrollY}px;height:${at.inline ? at.rect.height : 18}px;opacity:${1 - (m.level ?? 0) / 6}`;
+        notch.setAttribute("aria-label", `Deleted: ${m.text}`);
+        const tip = doc.createElement("sw-tip");
+        tip.textContent = m.text.length > 160 ? m.text.slice(0, 160) + "…" : m.text;
+        notch.append(tip);
+        this.overlay.append(notch);
+      }
+    }
+
+    if (this.revealPending != null) {
+      const at = this.anchorAt(this.revealPending);
+      this.revealPending = null;
+      if (at && (at.rect.bottom < 0 || at.rect.top > win.innerHeight)) win.scrollBy({ top: at.rect.top - win.innerHeight / 2, behavior: "smooth" });
+    }
+  }
+
+  /** Where a source position is on the page: inside text (a caret rect), or else at the start of the next paragraph. */
+  private anchorAt(pos: number): { rect: DOMRect; inline: boolean } | null {
+    const u = M.unitAt(this.units, pos);
+    if (u && this.els[u.id]) {
+      const rect = this.coordsAtPos(pos, -1);
+      if (rect) return { rect, inline: true };
+    }
+    const next = this.units.find((x) => x.from >= pos && this.els[x.id]) ?? [...this.units].reverse().find((x) => this.els[x.id]);
+    if (!next) return null;
+    const r = this.els[next.id]!.getBoundingClientRect();
+    return { rect: new DOMRect(r.left, next.from >= pos ? r.top : r.bottom - 18, 0, 0), inline: false };
+  }
+
+  /** Highlights the units that overlap the ranges, scrolling the first into view if it is off screen. */
+  private flash(ranges: { from: number; to: number }[], reveal = true): void {
+    const win = this.frame.contentWindow;
+    let first: Element | null = null;
+    for (const u of this.units) {
+      if (!ranges.some((r) => r.from <= u.to && r.to >= u.from)) continue;
+      const el = this.els[u.id];
+      if (!el) continue;
+      el.classList.remove("sw-flash");
+      void (el as HTMLElement).offsetWidth;
+      el.classList.add("sw-flash");
+      el.addEventListener("animationend", () => el.classList.remove("sw-flash"), { once: true });
+      first ??= el;
+    }
+    if (first && win && reveal) {
+      const r = first.getBoundingClientRect();
+      if (r.bottom < 0 || r.top > win.innerHeight) first.scrollIntoView({ block: "center", behavior: "smooth" });
+    }
+  }
+
   /** Adopts a state edited elsewhere (the source view) and re-renders. */
   setState(state: EditorState): void {
     if (state == this.state) return;
     this.state = state;
+    if (this.tracking) this.queueDiff();
+    else this.marks = [];
     this.render();
   }
 

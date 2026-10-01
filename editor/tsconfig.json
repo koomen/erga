@@ -9,5 +9,5 @@
     "skipLibCheck": true,
     "types": ["bun-types"]
   },
-  "include": ["src", "open.ts"]
+  "include": ["src", "open.ts", "agent.ts"]
 }
