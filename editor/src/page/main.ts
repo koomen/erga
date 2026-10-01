@@ -417,33 +417,56 @@ interface DocInfo { name: string; path: string; kind: Kind; dir: string; user: s
 
   const people = $("people");
   function renderPeople() {
-    // One avatar per person, and per agent once it has done something, you first.
-    const seen = new Map<string, Presence>();
+    // One avatar per person, you first. A person's agent, once it has done
+    // something, is a small badge on their avatar that spins while it works.
+    const persons = new Map<string, Presence>(), agents = new Map<string, Presence>();
     for (const p of collab.others()) {
-      if (p.user.kind == "agent" && !p.busy && !p.cursor) continue;
-      const key = `${p.user.kind}:${p.user.user}`;
-      const prev = seen.get(key);
-      if (!prev || (p.busy && !prev.busy)) seen.set(key, p);
+      if (p.user.kind == "agent") {
+        if (!p.busy && !p.cursor) continue;
+        const prev = agents.get(p.user.user);
+        if (!prev || (p.busy && !prev.busy)) agents.set(p.user.user, p);
+      } else if (p.user.kind == "person" && p.user.user != me.user && !persons.has(p.user.user)) persons.set(p.user.user, p);
     }
-    const all = [{ client: -1, user: me } as Presence, ...[...seen.values()].filter((p) => !(p.user.kind == "person" && p.user.user == me.user))];
+    const all: { p: Presence; here: boolean }[] = [{ p: { client: -1, user: me } as Presence, here: true }, ...[...persons.values()].map((p) => ({ p, here: true }))];
+    // An agent keeps working with its person's tabs closed: show them, faded, to carry it.
+    for (const [user, a] of agents) {
+      if (user != me.user && !persons.has(user)) all.push({ p: { client: -2, user: { user, name: a.user.name.replace(/[’']s agent$/, ""), color: a.user.color, kind: "person" } } as Presence, here: false });
+    }
     people.textContent = "";
-    for (const p of all) {
+    for (const { p, here } of all) {
+      const wrap = document.createElement("span");
+      wrap.className = "person";
       const b = document.createElement("button");
       b.type = "button";
-      b.className = "avatar" + (p.user.kind == "agent" ? " is-agent" : "") + (p.busy ? " busy" : "") + (p.client == -1 ? " me" : "");
+      b.className = "avatar" + (p.client == -1 ? " me" : "") + (here ? "" : " away");
       b.style.setProperty("--c", p.user.color);
-      b.textContent = p.user.kind == "agent" ? "✦" : (p.user.name.trim()[0] ?? "?").toUpperCase();
-      const what = p.user.kind == "agent" ? (p.busy ? `: ${p.activity ?? "working"}` : ": idle") : "";
-      b.dataset.tip = p.client == -1 ? `You (${me.name}); click to change your name` : `${p.user.name}${what}`;
-      b.setAttribute("aria-label", b.dataset.tip);
+      b.textContent = (p.user.name.trim()[0] ?? "?").toUpperCase();
+      b.dataset.tip = p.client == -1 ? `You (${me.name}); click to change your name` : here ? p.user.name : `${p.user.name} (not here)`;
       if (p.client == -1) b.addEventListener("click", rename);
-      else {
-        const at = collab.positions(p);
-        if (at) b.addEventListener("click", () => { page.reveal(at.head ?? at.anchor); });
-        else { b.setAttribute("aria-disabled", "true"); b.dataset.tip += p.user.kind == "agent" ? " (hasn't edited yet)" : " (not in the text yet)"; }
+      else if (here) revealOnClick(b, p, " (not in the text yet)");
+      else b.setAttribute("aria-disabled", "true");
+      b.setAttribute("aria-label", b.dataset.tip);
+      wrap.append(b);
+      const a = agents.get(p.user.user);
+      if (a) {
+        const badge = document.createElement("button");
+        badge.type = "button";
+        badge.className = "agent-badge" + (a.busy ? " busy" : "");
+        badge.style.setProperty("--c", a.user.color);
+        badge.innerHTML = `<span aria-hidden="true">✦</span>`;
+        badge.dataset.tip = `${a.user.name}: ${a.busy ? a.activity ?? "working" : "idle"}`;
+        revealOnClick(badge, a, " (hasn't edited yet)");
+        badge.setAttribute("aria-label", badge.dataset.tip);
+        wrap.append(badge);
       }
-      people.append(b);
+      people.append(wrap);
     }
+  }
+  /** Clicking a participant scrolls to their caret; with none yet, the button says so. */
+  function revealOnClick(b: HTMLElement, p: Presence, none: string) {
+    const at = collab.positions(p);
+    if (at) b.addEventListener("click", () => { page.reveal(at.head ?? at.anchor); });
+    else { b.setAttribute("aria-disabled", "true"); b.dataset.tip += none; }
   }
   function rename() {
     const name = prompt("Your name, as others see it on your caret and edits:", me.name)?.trim();

@@ -529,6 +529,29 @@ async function strayTagScenario(browser: Browser) {
   await s.close();
 }
 
+/** Parts marked data-sw-noedit: never editable by hand, and clicking them says so. */
+async function noEditScenario(browser: Browser) {
+  say("\nNo-edit parts");
+  const s = await session(browser, "noedit", "index.html");
+  const { p, F } = s;
+  check("a no-edit section has no editable text", await p.eval<boolean>(`[...${F}.querySelectorAll(".fixed h2, .fixed p")].every((e) => !e.hasAttribute("data-sw-id") && !e.isContentEditable)`));
+  check("a no-edit span inside a paragraph is fenced off", await p.eval<boolean>(`${F}.querySelector(".free").isContentEditable && !${F}.querySelector(".count").isContentEditable`));
+  const before = await s.source();
+  const r = await s.rectOf(".fixed p", 0.3);
+  await p.click(r.x, r.y);
+  const toast = () => p.eval<{ text: string; shown: boolean }>(`(() => { const t = document.getElementById("toast"); return { text: t.textContent, shown: t.classList.contains("show") }; })()`);
+  check("clicking it says why", await until(async () => { const t = await toast(); return t.shown && /not editable by hand/.test(t.text); }), await toast());
+  await p.type("xyz");
+  await p.settle();
+  check("and typing changes nothing", (await s.source()) == before);
+  await s.clickEnd(".free");
+  await p.type("!");
+  await Bun.sleep(150);
+  check("the rest of the paragraph still edits", (await s.source()).includes("items.!</p>"), (await s.source()).slice(0, 400));
+  check("no page errors", p.errors.length == 0, p.errors.join("\n"));
+  await s.close();
+}
+
 /** A page with problems nobody asked about: each is explained in turn, with a button to have the agent fix it. */
 async function brokenPageScenario(browser: Browser) {
   say("\nBroken page");
@@ -554,7 +577,7 @@ async function brokenPageScenario(browser: Browser) {
 }
 
 const SCENARIOS: [string, (b: Browser) => Promise<void>][] = [
-  ["html", htmlScenario], ["html", strayTagScenario], ["html", brokenPageScenario],
+  ["html", htmlScenario], ["html", strayTagScenario], ["html", noEditScenario], ["html", brokenPageScenario],
   ["md", mdScenario], ["md", lightOnlyScenario],
   ["format", formatScenario],
   ["agent", agentOffScenario], ["agent", agentEmptyScenario],

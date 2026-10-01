@@ -8,6 +8,9 @@
 // is, its content is text and inline elements only, with at least one
 // non-whitespace character. Containers (elements with block children) are
 // walked into; excluded elements (script, svg, button...) are never units.
+// A document opts a part of itself out with the `data-sw-noedit` attribute:
+// the element and everything in it are treated like app logic, never
+// editable by hand (only by changing the source, say through the agent).
 //
 // For every unit we record the source range of each of its text nodes, in DOM
 // order, so a caret in the rendered page maps to one source offset and an
@@ -99,6 +102,13 @@ const NEVER_UNIT = new Set(["html", "head", "body", "title", "meta", "link", "ba
   "ul", "ol", "dl", "menu", "source", "track", "area", "map", "datalist", "hr", "br", ...ATOMIC]);
 /** Text holders: a unit even while empty, so a paragraph you just created can take the caret. */
 const TEXT_TAGS = new Set(["p", "h1", "h2", "h3", "h4", "h5", "h6", "li", "dt", "dd", "td", "th", "figcaption", "caption", "summary", "pre", "legend"]);
+/** Marks an element, and everything in it, as not editable by hand. */
+export const NO_EDIT_ATTR = "data-sw-noedit";
+const NO_EDIT = new RegExp(`\\s${NO_EDIT_ATTR}(?=[\\s=/>])`, "i");
+/** Whether an element's open tag carries the no-edit attribute. */
+export function noEdit(src: string, el: ElementNode): boolean {
+  return NO_EDIT.test(src.slice(el.from, el.openTo));
+}
 /** Their content is not in the DOM tree the page shows (template) or is dropped. */
 const NO_DOM_CONTENT = new Set(["template"]);
 
@@ -350,7 +360,7 @@ export function analyzeHtml(src: string, decode: EntityDecoder = basicDecoder): 
     for (const child of el.children) {
       if (child.kind != "element") continue;
       const tag = child.tag;
-      const childExcluded = excluded || ATOMIC.has(tag);
+      const childExcluded = excluded || ATOMIC.has(tag) || noEdit(src, child);
       if (!childExcluded && !NEVER_UNIT.has(tag) && classify(src, child) == "unit") {
         units.push(makeUnit(src, child, units.length, decode));
         continue;
@@ -374,7 +384,8 @@ function classify(src: string, el: ElementNode): Kind {
       } else if (TRANSPARENT.has(child.tag) || ATOMIC.has(child.tag)) {
         continue;
       } else if (INLINE.has(child.tag)) {
-        scan(child);
+        // A no-edit span is part of its unit but has no editable text.
+        if (!noEdit(src, child)) scan(child);
       } else {
         hasBlock = true;
       }
@@ -396,7 +407,7 @@ function makeUnit(src: string, el: ElementNode, id: number, decode: EntityDecode
         continue;
       }
       if (NO_DOM_CONTENT.has(child.tag)) continue;
-      walk(child, editable && !ATOMIC.has(child.tag) && !TRANSPARENT.has(child.tag));
+      walk(child, editable && !ATOMIC.has(child.tag) && !TRANSPARENT.has(child.tag) && !noEdit(src, child));
     }
   };
   walk(el, true);

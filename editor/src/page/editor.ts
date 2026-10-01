@@ -463,6 +463,7 @@ export class PageEditor {
     // No spellcheck: these are technical documents, full of names a dictionary flags.
     el.setAttribute("spellcheck", "false");
     for (const atom of el.querySelectorAll("*")) if (M.ATOMIC.has(atom.localName)) atom.setAttribute("contenteditable", "false");
+    for (const fixed of el.querySelectorAll(`[${M.NO_EDIT_ATTR}]`)) fixed.setAttribute("contenteditable", "false");
   }
 
   private updateEmpty(changed?: Set<number>): void {
@@ -699,6 +700,11 @@ export class PageEditor {
     if (locked && !(e.target as Element).closest('button, a[href], input, textarea, select, [contenteditable="true"]')) {
       const why = this.lockReasons.get(locked);
       if (why) this.config.onNotice?.(why.message, why.fix);
+    }
+    // So does text the document marked as not editable by hand (on a widget, the click is the widget's).
+    const fixed = (e.target as Element).closest?.(`[${M.NO_EDIT_ATTR}]`);
+    if (fixed && !(e.target as Element).closest('button, a[href], input, textarea, select, label, canvas, svg, video, audio, iframe, [contenteditable="true"]')) {
+      this.config.onNotice?.("This part of the page is marked as not editable by hand. Ask the agent to change it.");
     }
     // Inside manuscript the browser doesn't follow links; Cmd-click does.
     if (!this.ours(e)) return;

@@ -44,6 +44,12 @@ a bullet list, `1. ` a numbered list and `> ` a quote; Enter in an empty last
 list item leaves the list. Whatever can't be styled
 (a code block, text the page's script made) says why rather than doing nothing.
 
+A document can fence off parts that shouldn't be edited by hand (generated
+totals, a summary kept in step with data) with the `data-sw-noedit`
+attribute: that element and everything in it stay out of the editor, and
+clicking them says to ask the agent. [DOCUMENT_PROMPT.md](DOCUMENT_PROMPT.md)
+collects the rules an agent follows to write documents that edit well.
+
 The view button at the top right shows the current view; click it for all
 three: T (the page), *T* (Markdown) and <T> (HTML). The view in the file's own
 format is the file, editable in CodeMirror with the page's state and undo
@@ -101,9 +107,11 @@ name in your git config. Tabs with the same name are the same person.
   Agents publish a caret where they last edited, but it isn't drawn (one
   lingering on the page distracts); their avatar says what they're doing,
   and clicking it scrolls there.
-- **Who's here.** Avatars at the top right: you (ringed), the others, and
-  any agent that has done something, spinning while it works. Click someone
-  to scroll to their caret.
+- **Who's here.** Avatars at the top right: you (ringed), then the others.
+  A person's agent, once it has done something, is a small ✦ badge on the
+  lower right of their avatar, spinning while it works (an agent still
+  working after its person left keeps their avatar, faded). Click someone, or
+  their badge, to scroll to their caret or the agent's last edit.
 - **Attribution.** Marks are drawn in their author's colour, and a removed
   text's notch says who removed it. With track changes on, the diff covers
   every author, each in their colour. Authorship comes from the Yjs client

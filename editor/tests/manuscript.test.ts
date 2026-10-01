@@ -98,6 +98,39 @@ describe("analyzeHtml", () => {
   });
 });
 
+describe("data-sw-noedit", () => {
+  const src = `<body>
+  <p>Editable</p>
+  <section data-sw-noedit><h2>Fixed</h2><p>Also fixed</p></section>
+  <p data-sw-noedit>Fixed para</p>
+  <p data-sw-noedit="">Fixed too</p>
+  <div><p data-sw-noedit>Fixed child</p><p>Free child</p></div>
+  <p>Total: <span data-sw-noedit>42 <b>items</b></span> today</p>
+  <p data-sw-noeditable>Not the attribute</p>
+  <p class="x" DATA-SW-NOEDIT>Any case</p>
+</body>`;
+  const { units } = analyzeHtml(src);
+  const texts = units.map((u) => u.runs.map((r) => r.text).join(""));
+
+  test("an element with it, and everything inside, is never a unit", () => {
+    expect(texts).toEqual(["Editable", "Free child", "Total: 42 items today", "Not the attribute"]);
+  });
+
+  test("a block with it still makes its parent a container", () => {
+    expect(units.some((u) => u.tag == "div")).toBe(false);
+  });
+
+  test("an inline element with it is a non-editable run in its unit", () => {
+    const p = units[2];
+    expect(p.runs.map((r) => [r.text, r.editable])).toEqual([["Total: ", true], ["42 ", false], ["items", false], [" today", true]]);
+  });
+
+  test("a paragraph whose only text is no-edit is still a unit, with nothing editable", () => {
+    const [u] = analyzeHtml(`<p><span data-sw-noedit>only</span></p>`).units;
+    expect(u.runs.every((r) => !r.editable)).toBe(true);
+  });
+});
+
 describe("decodeText", () => {
   test("newlines and entities", () => {
     const src = "a\r\nb&#x41;&lt;c";

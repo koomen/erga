@@ -117,7 +117,7 @@ export const browserTests: Test[] = [
       expect(await a.p.eval<boolean>(`[...document.querySelectorAll(".msg-tool")].some((e) => /Looked at the page/.test(e.textContent) && e.querySelector("img.shot")?.naturalWidth > 0)`), "view_page captured the page in Ada's tab", await a.p.eval(`[...document.querySelectorAll(".msg-tool")].map((e) => e.textContent).join(" | ")`));
       await until(async () => (await b.textOf("h1")).includes("by agent"), 3000, "Bo's page shows the agent's edit");
       expect(!(await b.p.eval<boolean>(`[...document.querySelectorAll(".msg-user, .msg-assistant")].length > 0`)), "Bo's panel shows none of it");
-      await until(async () => b.p.eval<boolean>(`[...document.querySelectorAll("#people .avatar.is-agent")].some((e) => /Ada’s agent/.test(e.dataset.tip))`), 3000, "the agent's avatar shows on Bo's page");
+      await until(async () => b.p.eval<boolean>(`[...document.querySelectorAll("#people .agent-badge")].some((e) => /Ada’s agent/.test(e.dataset.tip))`), 3000, "the agent's badge shows on Bo's page");
       expect(!(await peerNames(b)).includes("Ada’s agent"), "but no caret of its own on the page", await peerNames(b));
       noErrors(a, "Ada"); noErrors(b, "Bo");
     },

@@ -234,10 +234,19 @@
       box-shadow: 0 0 0 2px var(--bg);
     }
     .avatar.me { box-shadow: 0 0 0 2px var(--bg), 0 0 0 3.5px var(--c); }
-    .avatar.is-agent { border-radius: 8px; font-size: 13px; background: color-mix(in srgb, var(--c) 16%, var(--bg)); color: var(--c); }
-    .avatar.is-agent.busy::after { content: ""; position: absolute; inset: -3px; border-radius: 10px; border: 2px solid transparent; border-top-color: var(--c); border-right-color: var(--c); animation: agent-spin 1s linear infinite; }
-    .avatar[aria-disabled="true"] { cursor: default; }
-    .avatar[data-tip]:hover::before {
+    .avatar.away { opacity: 0.45; }
+    /* A person's agent: a small badge on their avatar's lower right, spinning while it works. */
+    .person { position: relative; display: grid; }
+    .agent-badge {
+      position: absolute; right: -5px; bottom: -5px; width: 15px; height: 15px; border-radius: 50%; border: 0; padding: 0; cursor: pointer;
+      display: grid; place-items: center; font: 600 9px/1 var(--font-text); color: var(--c);
+      background: color-mix(in srgb, var(--c) 16%, var(--bg)); box-shadow: 0 0 0 1.5px var(--bg);
+    }
+    .agent-badge span { display: block; }
+    .agent-badge.busy span { animation: agent-spin 1.2s linear infinite; }
+    @media (prefers-reduced-motion: reduce) { .agent-badge.busy span { animation-duration: 4s; } }
+    :is(.avatar, .agent-badge)[aria-disabled="true"] { cursor: default; }
+    :is(.avatar, .agent-badge)[data-tip]:hover::before {
       content: attr(data-tip); position: absolute; top: calc(100% + 8px); right: 0; z-index: 40; white-space: nowrap;
       font: 500 12px/1.4 var(--font-text); color: var(--fg); background: var(--bg); border: 1px solid var(--panel-border);
       border-radius: 7px; padding: 4px 8px; box-shadow: var(--shadow); pointer-events: none;
