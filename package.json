@@ -6,7 +6,7 @@
   "scripts": {
     "build": "./build.sh",
     "start": "./build.sh && bun open.ts",
-    "example": "./build.sh && bun open.ts example",
+    "demo": "./build.sh && bun open.ts demo",
     "test": "./test.sh",
     "typecheck": "tsc -p ."
   },

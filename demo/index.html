@@ -1,0 +1,617 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Editing Rendered Documents</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@500;600;700&family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,600;1,7..72,400&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+  /* One reading column; open decisions boxed at the end. */
+  :root {
+    --bg: #f7f8fa; --surface: #ffffff; --ink: #1b2330; --muted: #5b6676; --rule: #dde2ea; --accent: #1f5f8b;
+    --alice: #1f5f8b; --carol: #b3541c;
+    --open-bg: #fbeed3; --open-fg: #7a4d00; --lean-bg: #dcebf7; --lean-fg: #1f5f8b; --done-bg: #dcf1e3; --done-fg: #1e6b3c;
+    --display: "Instrument Sans", "Helvetica Neue", Arial, sans-serif;
+    --body: "Literata", Georgia, "Times New Roman", serif;
+    --mono: "JetBrains Mono", ui-monospace, Menlo, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #12161d; --surface: #1a2029; --ink: #e4e8ee; --muted: #9aa5b4; --rule: #2c3440; --accent: #7fb6e0;
+      --alice: #7fb6e0; --carol: #f0a468;
+      --open-bg: #3a2e14; --open-fg: #f0c46e; --lean-bg: #173049; --lean-fg: #9ccbef; --done-bg: #173524; --done-fg: #8fd6a8; color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #12161d; --surface: #1a2029; --ink: #e4e8ee; --muted: #9aa5b4; --rule: #2c3440; --accent: #7fb6e0;
+    --alice: #7fb6e0; --carol: #f0a468;
+    --open-bg: #3a2e14; --open-fg: #f0c46e; --lean-bg: #173049; --lean-fg: #9ccbef; --done-bg: #173524; --done-fg: #8fd6a8; color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--body); font-size: 17px; line-height: 1.6; }
+  .page { max-width: 44rem; margin: 0 auto; padding: 56px 16px 96px; display: grid; gap: 36px; }
+  header { display: grid; gap: 10px; }
+  .eyebrow { font-family: var(--mono); font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+  h1, h2, h3 { font-family: var(--display); line-height: 1.15; margin: 0; text-wrap: balance; }
+  h1 { font-size: 2.3rem; font-weight: 700; letter-spacing: -.01em; text-align: center; }
+  h2 { font-size: 1.3rem; font-weight: 600; }
+  h3 { font-size: 1rem; font-weight: 600; }
+  p { margin: 0; }
+  .lede { font-size: 1.1rem; color: var(--muted); }
+  section { display: grid; gap: 12px; min-width: 0; }
+  section > * { min-width: 0; }
+  ul, ol { margin: 0; padding-left: 1.3em; display: grid; gap: 6px; }
+  code { font-family: var(--mono); font-size: .85em; background: var(--surface); border: 1px solid var(--rule); border-radius: 4px; padding: 0 .3em; }
+  .sketch { overflow-x: auto; background: var(--surface); border: 1px solid var(--rule); border-radius: 10px; padding: 16px 18px; }
+  .sketch pre { margin: 0; font-family: var(--mono); font-size: 12.5px; line-height: 1.55; }
+  .flow { width: min(820px, calc(100vw - 32px)); margin-left: calc((100% - min(820px, calc(100vw - 32px))) / 2); margin-block: 0; display: grid; gap: 12px; overflow-x: auto; background: var(--surface); border: 1px solid var(--rule); border-radius: 10px; padding: 16px; }
+  .flow svg { display: block; width: 100%; min-width: 620px; height: auto; font-family: var(--display); }
+  .flow .box { fill: var(--bg); stroke: var(--rule); stroke-width: 1.5; }
+  .flow .truth { stroke: var(--ink); stroke-width: 2; }
+  .flow .rail { fill: var(--muted); font-family: var(--mono); font-size: 11px; letter-spacing: .08em; }
+  .flow .t { fill: var(--ink); font-size: 13px; font-weight: 700; }
+  .flow .m { fill: var(--muted); font-size: 12px; }
+  .flow .c { fill: var(--ink); font-family: var(--mono); font-size: 11px; }
+  .flow .b { fill: var(--ink); font-family: var(--body); font-size: 15px; }
+  .flow .mid { text-anchor: middle; }
+  .flow .who { font-size: 12px; font-weight: 600; text-anchor: end; }
+  .flow .alice { fill: var(--alice); font-weight: 700; }
+  .flow .carol { fill: var(--carol); font-weight: 700; }
+  .flow .arr { fill: none; stroke: var(--muted); stroke-width: 1.5; }
+  .flow .al { fill: var(--muted); font-size: 11.5px; }
+  .flow .sub { fill: var(--muted); font-size: 13px; text-anchor: middle; }
+  .flow figcaption { font-size: 14px; color: var(--muted); }
+  .table-wrap { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-size: 15px; }
+  th, td { text-align: left; vertical-align: top; padding: 8px 10px; border-bottom: 1px solid var(--rule); }
+  th { font-family: var(--display); font-weight: 600; font-size: 13px; color: var(--muted); }
+  .decisions { display: grid; gap: 14px; }
+  .decision { background: var(--surface); border: 1px solid var(--rule); border-radius: 10px; padding: 16px 20px; display: grid; gap: 8px; }
+  .decision-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+  .decision-head .id { font-family: var(--mono); font-size: 13px; color: var(--muted); margin-right: 8px; }
+  .chip { font-family: var(--display); font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; padding: 2px 8px; border-radius: 999px; background: var(--open-bg); color: var(--open-fg); white-space: nowrap; }
+  .chip.lean { background: var(--lean-bg); color: var(--lean-fg); }
+  .chip.done { background: var(--done-bg); color: var(--done-fg); }
+  .lean.call strong { color: var(--done-fg); }
+  .lean { font-size: 15.5px; padding-left: 12px; border-left: 2px solid var(--rule); color: var(--muted); }
+  .lean strong { font-family: var(--display); font-size: 12px; letter-spacing: .04em; text-transform: uppercase; color: var(--accent); margin-right: 6px; }
+  /* Live document diagram */
+  /* The page sits in front of its source files, which fan out behind it up and to the left. */
+  .docfig { position: relative; width: min(740px, calc(100vw - 32px)); margin: 8px 0 8px calc((100% - min(740px, calc(100vw - 32px))) / 2); }
+  .doc-file { position: absolute; width: 244px; height: 170px; overflow: hidden; border-radius: 8px; background: #1b2330; color: #d7dde6; padding: 9px 12px; box-shadow: 0 0 0 1px rgba(255, 255, 255, .06), 0 6px 18px rgba(20, 28, 40, .18); }
+  .doc-file b { display: block; font-family: var(--mono); font-size: 11px; font-weight: 500; color: #9aa5b4; margin-bottom: 6px; }
+  .doc-file pre { margin: 0; font-family: var(--mono); font-size: 10px; line-height: 1.55; white-space: pre; }
+  .doc-file .c { color: #7d8898; }
+  .doc-file.f1 { z-index: 3; left: 92px; top: 52px; }
+  .doc-file.f2 { z-index: 2; left: 66px; top: 26px; }
+  .doc-file.f3 { z-index: 1; left: 40px; top: 0; }
+  .doc-window { position: relative; z-index: 4; width: 480px; margin: 100px 0 0 170px; background: var(--surface); border: 1.5px solid var(--ink); border-radius: 8px; overflow: hidden;
+    box-shadow: 0 12px 30px rgba(20, 28, 40, .2); }
+  .doc-chrome { height: 22px; display: flex; align-items: center; gap: 5px; padding: 0 10px; border-bottom: 1.5px solid var(--rule); }
+  .doc-chrome span { width: 7px; height: 7px; border-radius: 50%; background: var(--rule); }
+  .doc-body { padding: 12px 14px 14px; display: grid; grid-template-columns: 1fr 212px; gap: 16px; align-items: start; }
+  .doc-text { display: grid; gap: 5px; min-width: 0; }
+  .doc-body h3 { font-size: 15px; font-weight: 600; }
+  .doc-body p { font-size: 11.5px; line-height: 1.5; color: var(--muted); margin: 0; }
+  .doc-body h4 { font-family: var(--display); font-size: 11.5px; font-weight: 600; margin: 4px 0 0; }
+  /* Inbox demo: a miniature, polished mail client */
+  .mx { --mx-brand: #5b5bd6; --mx-brand-soft: rgba(91, 91, 214, .09); --mx-line: rgba(27, 35, 48, .07);
+    font-family: var(--display); color: var(--ink); background: var(--surface); border-radius: 10px; overflow: hidden;
+    box-shadow: 0 0 0 1px rgba(27, 35, 48, .07), 0 1px 2px rgba(27, 35, 48, .05), 0 8px 24px -8px rgba(27, 35, 48, .18); user-select: none; }
+  :root[data-theme="dark"] .mx { --mx-brand: #8b8bf0; --mx-brand-soft: rgba(139, 139, 240, .12); --mx-line: rgba(255, 255, 255, .07); box-shadow: 0 0 0 1px rgba(255, 255, 255, .08), 0 8px 24px -8px rgba(0, 0, 0, .6); }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .mx { --mx-brand: #8b8bf0; --mx-brand-soft: rgba(139, 139, 240, .12); --mx-line: rgba(255, 255, 255, .07); box-shadow: 0 0 0 1px rgba(255, 255, 255, .08), 0 8px 24px -8px rgba(0, 0, 0, .6); } }
+  .mx-top { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px 8px; }
+  .mx-title { font-size: 13px; font-weight: 700; letter-spacing: -.01em; display: flex; align-items: center; gap: 6px; }
+  .mx-count { font-size: 9.5px; font-weight: 600; color: var(--mx-brand); background: var(--mx-brand-soft); border-radius: 999px; padding: 1px 6px; transition: opacity .2s; }
+  .mx-tabs { display: flex; gap: 2px; background: var(--bg); border-radius: 6px; padding: 2px; }
+  .mx-tabs span { font-size: 9px; font-weight: 600; color: var(--muted); padding: 2px 6px; border-radius: 4px; }
+  .mx-tabs span.on { background: var(--surface); color: var(--ink); box-shadow: 0 1px 2px rgba(0, 0, 0, .08); }
+  .mx-agent { display: flex; align-items: center; gap: 6px; margin: 0 8px 4px; padding: 6px 8px; border-radius: 6px; background: var(--mx-brand-soft); font-size: 9.5px; color: var(--mx-brand); font-weight: 500; }
+  .mx-agent svg { flex: none; }
+  .mx-agent span { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .mx-list { padding: 2px 4px 4px; }
+  .mx-row { position: relative; display: grid; grid-template-columns: 24px 1fr; gap: 0 8px; padding: 7px 8px; border-radius: 7px; cursor: pointer; max-height: 80px; overflow: hidden;
+    transition: background .15s, opacity .25s, max-height .3s ease .1s, padding .3s ease .1s, transform .25s; }
+  .mx-row + .mx-row::before { content: ""; position: absolute; top: 0; left: 40px; right: 8px; border-top: 1px solid var(--mx-line); }
+  .mx-row:hover { background: var(--bg); }
+  .mx-row:hover::before, .mx-row:hover + .mx-row::before { opacity: 0; }
+  .mx-row.gone { opacity: 0; transform: translateX(16px); max-height: 0; padding-block: 0; }
+  .mx-av { width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; font-size: 9px; font-weight: 700; color: #fff; letter-spacing: .02em; }
+  .mx-main { min-width: 0; display: grid; gap: 1px; }
+  .mx-line1 { display: flex; align-items: baseline; gap: 6px; }
+  .mx-from { flex: 1; min-width: 0; font-size: 10.5px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .mx-time { font-size: 9px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .mx-subj { font-size: 10px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .mx-prev { font-size: 9.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .mx-tag { justify-self: start; margin-top: 3px; font-size: 8.5px; font-weight: 600; padding: 1px 6px; border-radius: 4px; display: inline-flex; align-items: center; gap: 4px; }
+  .mx-tag::before { content: ""; width: 4px; height: 4px; border-radius: 50%; background: currentColor; }
+  .mx-tag.reply { color: #b4540a; background: rgba(234, 120, 20, .12); }
+  .mx-tag.done { color: #1e7a46; background: rgba(30, 160, 90, .12); }
+  .mx-tag.fyi { color: var(--muted); background: var(--bg); }
+  .mx-row::after { content: ""; position: absolute; left: 2px; top: 17px; width: 4px; height: 4px; border-radius: 50%; background: var(--mx-brand); transition: opacity .2s; }
+  .mx-row.read::after { opacity: 0; }
+  .mx-row.read .mx-from, .mx-row.read .mx-subj { font-weight: 500; }
+  .mx-row.read .mx-subj { color: var(--muted); }
+  .mx-archive { position: absolute; right: 6px; top: 6px; width: 20px; height: 20px; border: 0; border-radius: 5px; display: grid; place-items: center; cursor: pointer;
+    background: var(--surface); color: var(--muted); box-shadow: 0 0 0 1px var(--mx-line), 0 1px 2px rgba(0, 0, 0, .06); opacity: 0; transform: scale(.9); transition: opacity .15s, transform .15s, color .15s; }
+  .mx-row:hover .mx-archive { opacity: 1; transform: none; }
+  .mx-row:hover .mx-time { visibility: hidden; }
+  .mx-archive:hover { color: var(--mx-brand); }
+  .mx-empty { display: none; padding: 18px 12px 20px; text-align: center; }
+  .mx.zero .mx-empty { display: grid; gap: 4px; justify-items: center; animation: mx-in .4s ease; }
+  .mx-empty b { font-size: 11.5px; }
+  .mx-empty span { font-size: 9.5px; color: var(--muted); }
+  .mx-empty button { margin-top: 6px; font: inherit; font-size: 9.5px; font-weight: 600; color: var(--mx-brand); background: var(--mx-brand-soft); border: 0; border-radius: 5px; padding: 3px 9px; cursor: pointer; }
+  .mx-check { width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; background: rgba(30, 160, 90, .12); color: #1e7a46; margin-bottom: 4px; }
+  @keyframes mx-in { from { opacity: 0; transform: translateY(4px); } }
+  @media (max-width: 760px) {
+    .docfig { display: grid; gap: 10px; }
+    .doc-file { position: static; width: auto; height: 130px; }
+    .doc-window { width: auto; margin: 0; box-shadow: none; }
+  }
+  @media (max-width: 520px) { .doc-body { grid-template-columns: 1fr; } }
+  @media (prefers-reduced-motion: reduce) { .docfig * { animation: none !important; } }
+  /* Editable sample document */
+  .sample { width: min(740px, calc(100vw - 32px)); margin: 8px 0 8px calc((100% - min(740px, calc(100vw - 32px))) / 2); display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: stretch; }
+  .sample-file, .sample-body { min-width: 0; border-radius: 8px; }
+  .sample-file { background: #1b2330; color: #d7dde6; padding: 10px 12px; }
+  .sample-file b { display: block; font-family: var(--mono); font-size: 11.5px; font-weight: 500; color: #9aa5b4; margin-bottom: 8px; }
+  .sample-src { margin: 0; font-family: var(--mono); font-size: 11.5px; line-height: 1.6; white-space: pre-wrap; word-break: break-word; }
+  .sample-src mark { background: #f0c46e44; color: #fff; border-radius: 2px; box-shadow: 0 0 0 1px #f0c46e88; }
+  .sample-src mark.cut { box-shadow: none; border-left: 2px solid #f0a468; margin-right: -2px; }
+  .sample-body { background: var(--surface); border: 1.5px solid var(--ink); padding: 18px 22px 22px; font-family: "Courier Prime", "Courier New", Courier, monospace; font-size: 14px; line-height: 1.5; display: grid; gap: 12px; }
+  .sample-body h3 { font-family: inherit; font-size: 14px; font-weight: 700; text-transform: uppercase; }
+  .sample-body .dir { color: var(--muted); font-style: italic; }
+  .sample-body .line { padding-left: 2em; }
+  .sample-body .line strong { display: block; padding-left: 6em; font-weight: 400; text-transform: uppercase; }
+  /* At rest the page sits on top of its source, shifted down and right; editing it springs them side by side. */
+  .sample { --spring: cubic-bezier(.34, 1.45, .64, 1); transition: margin-bottom .55s var(--spring); }
+  .sample-file, .sample-body { transition: transform .55s var(--spring), box-shadow .3s ease; }
+  .sample-body { position: relative; z-index: 1; }
+  .sample:not(.open) { margin-bottom: 40px; }
+  .sample:not(.open) .sample-file { transform: translateX(calc(50% - 20px)); }
+  .sample:not(.open) .sample-body { transform: translate(calc(-50% + 20px), 32px); box-shadow: 0 10px 28px rgba(20, 28, 40, .18); cursor: text; }
+  @media (max-width: 640px) { .sample { grid-template-columns: 1fr; } .sample:not(.open) .sample-file, .sample:not(.open) .sample-body { transform: none; } .sample:not(.open) { margin-bottom: 8px; } }
+  @media (prefers-reduced-motion: reduce) { .sample, .sample-file, .sample-body { transition: none; } }
+  @media (max-width: 480px) { body { font-size: 16px; } h1 { font-size: 1.9rem; } }
+</style>
+</head>
+<body>
+<main class="page">
+
+  <header>
+    <div class="eyebrow"></div>
+    <h1>Erga</h1>
+    <p class="lede">Erga is a collaborative environment for expressing ideas with AI. It's meant to fill the gap between Google Docs, where the user writes everything by hand in a narrowly constrained format, and Claude Artifacts, where the user has great expressive freedom but can only exercise it by asking an agent to do everything for them.</p>
+    <p class="lede">It gives users unlimited expressive power without forcing them to give up control over their words.</p>
+    <p class="lede">The concept revolves around a <strong>document</strong>. Under the hood, a document is a collection of files that can be rendered as a single 'page' in a web browser:</p>
+    <figure class="docfig" aria-label="A document is a folder of files (index.html, style.css, demo.js) that a web browser renders as one live page.">
+      <div class="doc-file f1" data-erga-noedit aria-hidden="true"><b>index.html</b><pre>&lt;!doctype html&gt;
+&lt;link rel="stylesheet" href="style.css"&gt;
+&lt;main class="doc"&gt;
+  &lt;h1&gt;Inbox Design Doc&lt;/h1&gt;
+  &lt;p&gt;This is a design doc for our new
+    email client, &lt;strong&gt;Inbox&lt;/strong&gt;.&lt;/p&gt;
+  &lt;h2&gt;Goals&lt;/h2&gt;
+  &lt;p&gt;Our goal is to build an email
+    client where users direct agents
+    to triage their email so they can
+    focus on the important messages.&lt;/p&gt;
+  &lt;h2&gt;Prototype&lt;/h2&gt;
+  &lt;div id="inbox"&gt;&lt;/div&gt;
+&lt;/main&gt;
+&lt;script src="demo.js"&gt;&lt;/script&gt;</pre></div>
+      <div class="doc-file f2" data-erga-noedit aria-hidden="true"><b>style.css</b><pre>.doc {
+  display: grid;
+  grid-template-columns: 1fr 212px;
+  gap: 16px;
+  font: 15px/1.5 Literata, serif;
+}
+.doc h2 { font: 600 12px Inter; }
+
+.row {
+  display: grid;
+  grid-template-columns: 24px 1fr;
+  padding: 7px 8px;
+  border-radius: 7px;
+}
+.row:hover { background: #f7f8fa; }
+.row.read .subject { color: #5b6676; }
+.tag.reply { color: #b4540a; }</pre></div>
+      <div class="doc-file f3" data-erga-noedit aria-hidden="true"><b>demo.js</b><pre><span class="c">// Render the agent's Focus list.</span>
+const inbox = document.getElementById('inbox');
+
+fetch('mail.json')
+  .then(r =&gt; r.json())
+  .then(mail =&gt; {
+    for (const m of mail.filter(m =&gt; m.focus)) {
+      const row = el('div', 'row');
+      row.append(avatar(m.from), summary(m));
+      row.onclick = () =&gt; {
+        row.classList.toggle('read');
+        updateCount();
+      };
+      inbox.append(row);
+    }
+  });</pre></div>
+      <div class="doc-window" aria-hidden="true">
+        <div class="doc-chrome"><span></span><span></span><span></span></div>
+        <div class="doc-body">
+          <div class="doc-text">
+            <h3>Inbox Design Doc</h3>
+            <p>This is a design doc for our new email client, <strong>Inbox</strong>.</p>
+            <h4>Goals</h4>
+            <p>Our goal is to build an email client where users direct agents to triage their email so they can focus on the important messages. </p>
+            <h4>Prototype</h4>
+            <p>Take a look at the prototype on the right. It captures what we're going for here: an interface designed to focus a user's attention on the only tasks that deserve it.</p>
+          </div>
+          <div class="mx">
+            <div class="mx-top">
+              <div class="mx-title">Inbox <span class="mx-count">3</span></div>
+              <div class="mx-tabs"><span class="on">Focus</span><span>Other</span></div>
+            </div>
+            <div class="mx-agent">
+              <svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0l1.8 5.2L15 7l-5.2 1.8L8 14l-1.8-5.2L1 7l5.2-1.8z"/><path d="M13.5 10.5l.7 1.8 1.8.7-1.8.7-.7 1.8-.7-1.8-1.8-.7 1.8-.7z" opacity=".6"/></svg>
+              <span>Agent sorted 41 · 3 need you</span>
+            </div>
+            <div class="mx-list">
+              <div class="mx-row">
+                <div class="mx-av" style="background: linear-gradient(135deg, #f093a6, #d9577a)">PS</div>
+                <div class="mx-main">
+                  <div class="mx-line1"><span class="mx-from">Priya Shah</span><span class="mx-time">9:41</span></div>
+                  <div class="mx-subj">Q3 roadmap sign-off</div>
+                  <div class="mx-prev">Can you approve the launch dates by Friday?</div>
+                  <span class="mx-tag reply">Needs reply</span>
+                </div>
+                <button class="mx-archive" title="Archive"><svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="1.5" y="2.5" width="13" height="3.5" rx="1"/><path d="M2.5 6v6.5a1 1 0 001 1h9a1 1 0 001-1V6M6.5 9h3"/></svg></button>
+              </div>
+              <div class="mx-row">
+                <div class="mx-av" style="background: linear-gradient(135deg, #7cc4fa, #3b82d6)">ML</div>
+                <div class="mx-main">
+                  <div class="mx-line1"><span class="mx-from">Marcus Lee</span><span class="mx-time">8:15</span></div>
+                  <div class="mx-subj">Lunch Thursday?</div>
+                  <div class="mx-prev">Booked 12:30 at Tartine, on your calendar.</div>
+                  <span class="mx-tag done">Agent scheduled</span>
+                </div>
+                <button class="mx-archive" title="Archive"><svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="1.5" y="2.5" width="13" height="3.5" rx="1"/><path d="M2.5 6v6.5a1 1 0 001 1h9a1 1 0 001-1V6M6.5 9h3"/></svg></button>
+              </div>
+              <div class="mx-row">
+                <div class="mx-av" style="background: linear-gradient(135deg, #a5e3b8, #3fa56b)">DT</div>
+                <div class="mx-main">
+                  <div class="mx-line1"><span class="mx-from">Design Team</span><span class="mx-time">Tue</span></div>
+                  <div class="mx-subj">New icon set is live</div>
+                  <div class="mx-prev">Summary: 120 icons, Figma library updated.</div>
+                  <span class="mx-tag fyi">FYI</span>
+                </div>
+                <button class="mx-archive" title="Archive"><svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="1.5" y="2.5" width="13" height="3.5" rx="1"/><path d="M2.5 6v6.5a1 1 0 001 1h9a1 1 0 001-1V6M6.5 9h3"/></svg></button>
+              </div>
+            </div>
+            <div class="mx-empty">
+              <div class="mx-check"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.5l3.2 3L13 4.5"/></svg></div>
+              <b>You're all caught up</b>
+              <span>Your agent is watching for new mail.</span>
+              <button>Reset demo</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <script>
+      (() => {
+        const fig = document.currentScript.closest('.docfig');
+        const mx = fig.querySelector('.mx'), count = mx.querySelector('.mx-count'), rows = [...mx.querySelectorAll('.mx-row')];
+        const update = () => {
+          const live = rows.filter(r => !r.classList.contains('gone'));
+          const unread = live.filter(r => !r.classList.contains('read')).length;
+          count.textContent = unread; count.style.opacity = unread ? 1 : 0;
+          mx.classList.toggle('zero', !live.length);
+          mx.querySelector('.mx-list').style.display = live.length ? '' : 'none';
+        };
+        rows.forEach(r => {
+          r.addEventListener('click', () => { r.classList.toggle('read'); update(); });
+          r.querySelector('.mx-archive').addEventListener('click', e => {
+            e.stopPropagation(); r.classList.add('gone');
+            setTimeout(update, rows.every(x => x.classList.contains('gone')) ? 420 : 0);
+          });
+        });
+        mx.querySelector('.mx-empty button').addEventListener('click', () => {
+          rows.forEach(r => r.classList.remove('gone', 'read')); update();
+        });
+      })();
+      </script>
+    </figure>
+    <p class="lede">You can use the Erga <strong>editor</strong> to edit the rendered version of a document. When you do that, your edits are applied directly to the source files, like this:</p>
+    <figure class="sample">
+      <div class="sample-file"><b>index.html</b><pre class="sample-src" data-erga-noedit></pre></div>
+      <div class="sample-body">
+        <h3>Scene 2</h3>
+        <p class="line"><strong>Vincent</strong>Also, you know what they call a Quarter Pounder with Cheese in Paris?</p>
+        <p class="line"><strong>Jules</strong>They don't call it a Quarter Pounder with Cheese?</p>
+        <p class="line"><strong>Vincent</strong>No, they got the metric system there, they wouldn't know what the fuck a Quarter Pounder is.</p>
+        <p class="line"><strong>Jules</strong>What'd they call it?</p>
+      </div>
+      <script>
+      // Shows what the editor does to the file: it indexes each paragraph's position in the
+      // source once, then turns every edit on the page into a character edit at that position.
+      // The source pane never re-serializes the live page, which carries the editor's own markup.
+      (() => {
+        const fig = document.currentScript.closest('.sample');
+        const body = fig.querySelector('.sample-body'), pane = fig.querySelector('.sample-src');
+        const ENT = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' };
+        const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        const isChrome = n => n.localName.startsWith('erga-') || [...n.classList].some(c => c.startsWith('erga-'));
+        // The text of the source between start and end, with each character's [from, to) in the source.
+        const scan = (src, start, end) => {
+          const chars = [];
+          for (let i = start; i < end;) {
+            if (src[i] == '<') { i = src.indexOf('>', i) + 1; continue; }
+            if (src[i] == '&') {
+              const m = /^&(#x[\da-f]+|#\d+|\w+);/i.exec(src.slice(i, end));
+              if (m) {
+                const e = m[1], ch = e[0] == '#' ? String.fromCodePoint(e[1] == 'x' || e[1] == 'X' ? parseInt(e.slice(2), 16) : +e.slice(1)) : ENT[e] ?? m[0];
+                chars.push({ ch, from: i, to: i + m[0].length }); i += m[0].length; continue;
+              }
+            }
+            chars.push({ ch: src[i], from: i, to: i + 1 }); i++;
+          }
+          return chars;
+        };
+        const rendered = el => {
+          let s = '';
+          const walk = n => n.childNodes.forEach(c => c.nodeType == 3 ? s += c.data : c.nodeType == 1 && !isChrome(c) && walk(c));
+          walk(el);
+          return s.replace(/ /g, ' ');
+        };
+        // A copy of a block with only the markup an author would have written.
+        const clean = el => {
+          const c = el.cloneNode(true);
+          for (const n of [c, ...c.querySelectorAll('*')]) {
+            if (n != c && isChrome(n)) { n.remove(); continue; }
+            for (const a of [...n.attributes]) if (a.name != 'class' && a.name != 'href') n.removeAttribute(a.name);
+            n.classList.remove(...[...n.classList].filter(x => x.startsWith('erga-')));
+            if (n.classList.length == 0) n.removeAttribute('class');
+          }
+          return c.outerHTML.replace(/&nbsp;/g, ' ');
+        };
+
+        let src = '', units = [], mark = null;
+        const index = blocks => {
+          src = blocks.join('\n'); units = []; let at = 0;
+          [...body.children].forEach((el, k) => {
+            const b = blocks[k], start = at + b.indexOf('>') + 1, end = at + b.lastIndexOf('</');
+            units.push({ el, start, end, text: scan(src, start, end).map(c => c.ch).join('') });
+            at += b.length + 1;
+          });
+        };
+        const show = () => {
+          if (!mark) { pane.textContent = src; return; }
+          const m = document.createElement('mark');
+          m.textContent = src.slice(mark[0], mark[1]);
+          if (mark[0] == mark[1]) m.className = 'cut';
+          pane.replaceChildren(src.slice(0, mark[0]), m, src.slice(mark[1]));
+        };
+        const sync = () => {
+          const els = [...body.children];
+          // A paragraph added or removed: write the new blocks out plainly and index again.
+          if (els.length != units.length || els.some((el, k) => el != units[k].el)) {
+            index(els.map(clean)); mark = null; show(); return;
+          }
+          let shift = 0;
+          for (const u of units) {
+            u.start += shift; u.end += shift;
+            const next = rendered(u.el);
+            if (next == u.text) continue;
+            let a = 0, b = 0;
+            while (a < next.length && a < u.text.length && next[a] == u.text[a]) a++;
+            while (b < next.length - a && b < u.text.length - a && next[next.length - 1 - b] == u.text[u.text.length - 1 - b]) b++;
+            const chars = scan(src, u.start, u.end), cut = u.text.length - a - b, ins = esc(next.slice(a, next.length - b));
+            // Insert just after the character before the change, so typing at the end of a bold word stays bold.
+            const from = cut ? chars[a].from : a ? chars[a - 1].to : chars[0]?.from ?? u.start;
+            const to = cut ? chars[a + cut - 1].to : from;
+            src = src.slice(0, from) + ins + src.slice(to);
+            const d = ins.length - (to - from);
+            u.end += d; shift += d; u.text = next; mark = [from, from + ins.length];
+          }
+          show();
+        };
+
+        index([...body.children].map(clean));
+        show();
+        new MutationObserver(sync).observe(body, { subtree: true, childList: true, characterData: true });
+
+        // Clicking into the page opens the pair side by side; clicking anywhere else closes it.
+        const setOpen = on => fig.classList.toggle('open', on);
+        document.addEventListener('pointerdown', e => setOpen(body.contains(e.target)), true);
+        document.addEventListener('focusin', e => setOpen(body.contains(e.target)));
+      })();
+      </script>
+    </figure>
+    <p class="lede">This is a</p>
+    <p class="lede"></p>
+    <p class="lede"></p>
+    <p class="lede"></p>
+    <p class="lede"></p>
+    <p class="lede"></p>
+    <p class="lede">People edit the manuscripts of an agent-built document on the rendered page, live with other viewers, and the edits land in the source files. Everything else is app logic, which agents edit in the files.</p>
+  </header>
+
+  <section>
+    <h2>Principles</h2>
+    <ul>
+      <li><b>Standardize as little as possible.</b> No document format. An agent can still invent its own conventions (e.g. <code>---</code> between slides).</li>
+      <li><b>Edit the rendered page, not the source.</b> Source files are for agents.</li>
+      <li><b>Manuscript is hand-editable. App logic isn't.</b> Text in a widget's JS is changed by asking an agent.</li>
+      <li><b>No model in the editing loop.</b> Mapping is deterministic, merging is a CRDT, typing never waits.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Manuscript and app logic</h2>
+    <p>A document has two kinds of text:</p>
+    <ul>
+      <li><b>Manuscript</b> is prose in the basic elements Markdown can express: headings, paragraphs, list items, blockquotes, table cells, code blocks, and inline emphasis, links and code. The source can be Markdown or plain HTML using only those elements. People edit it on the rendered page.</li>
+      <li><b>App logic</b> is everything else: JS, components, SVG, canvas, and any string in code or built at runtime. Agents edit it in the files.</li>
+    </ul>
+    <p>The test is mechanical: an element is manuscript if a deterministic parse of the source finds its text at a known position. Text that JS created or changed fails the test and is locked. Clicking it does nothing in v1; later it can open the embedded agent with that text as context.</p>
+  </section>
+
+  <section>
+    <h2>How an edit works</h2>
+    <figure class="flow">
+      <svg viewBox="0 0 800 790" role="img" aria-label="Alice and Carol edit the same paragraph at the same moment. At load the parser indexed the paragraph as p7 at a known range in index.html, so each browser diffs its new text against the index and sends a character edit at a file position. The server's file CRDT merges both edits into the same result on every machine. The same file edits then reach every browser, which re-renders, and Bob's laptop, where erga sync writes them to disk and sends Bob's own saves back the same way.">
+        <defs>
+          <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0 0 L10 5 L0 10 z" style="fill: var(--muted)"/>
+          </marker>
+        </defs>
+
+        <!-- Rail -->
+        <text class="rail" x="20" y="106">1 · EDIT</text>
+        <text class="rail" x="20" y="248">2 · MAP</text>
+        <text class="rail" x="20" y="520">3 · MERGE</text>
+        <text class="rail" x="20" y="684">4 · CONVERGE</text>
+
+        <!-- 1 · Edit -->
+        <rect class="box" x="150" y="40" width="550" height="124" rx="8"/>
+        <text class="t mid" x="425" y="64">Alice and Carol edit the same paragraph at the same moment</text>
+        <text class="who alice" x="290" y="98">Alice types</text>
+        <text class="b" x="306" y="98">Build <tspan class="alice">very </tspan>cool things</text>
+        <text class="who carol" x="290" y="128">Carol types</text>
+        <text class="b" x="306" y="128">Build cool <tspan class="carol">stuff</tspan></text>
+        <text class="m mid" x="425" y="154">Neither has seen the other's change yet.</text>
+
+        <line class="arr" x1="425" y1="164" x2="425" y2="192" marker-end="url(#arrow)"/>
+
+        <!-- 2 · Map -->
+        <rect class="box" x="150" y="196" width="550" height="96" rx="8"/>
+        <text class="t" x="164" y="218">At load, the parser indexed every manuscript element</text>
+        <text class="c" x="164" y="242">&lt;p data-erga-id="p7"&gt;Build cool things&lt;/p&gt;</text>
+        <text class="c" x="164" y="262">p7 → index.html @1206–1222   "Build cool things"</text>
+        <text class="m" x="164" y="280">the id exists only in the browser; the file never sees it</text>
+
+        <line class="arr" x1="425" y1="292" x2="425" y2="328" marker-end="url(#arrow)"/>
+        <text class="al" x="437" y="307">diff the new text against the index,</text>
+        <text class="al" x="437" y="321">add the element's file offset</text>
+
+        <rect class="box" x="150" y="328" width="550" height="96" rx="8"/>
+        <text class="t" x="164" y="350">Each browser turns its edit into a character edit to the file</text>
+        <text class="who alice" x="204" y="374">Alice</text>
+        <text class="c" x="216" y="374">insert "very " @1212</text>
+        <text class="who carol" x="204" y="396">Carol</text>
+        <text class="c" x="216" y="396">replace "things" @1217 → "stuff"</text>
+        <text class="m" x="164" y="414">no model in the loop: it goes straight to the server</text>
+
+        <line class="arr" x1="425" y1="424" x2="425" y2="460" marker-end="url(#arrow)"/>
+        <text class="al" x="437" y="446">two file edits</text>
+
+        <!-- 3 · Merge -->
+        <rect class="box truth" x="150" y="460" width="550" height="112" rx="8"/>
+        <text class="t mid" x="425" y="484">Server: the file CRDT merges both edits</text>
+        <text class="b mid" x="425" y="514">Build <tspan class="alice">very </tspan>cool <tspan class="carol">stuff</tspan></text>
+        <text class="m mid" x="425" y="538">same result on every machine, whatever order they arrive in</text>
+        <text class="m mid" x="425" y="556">the server orders edits, keeps the log, and saves a snapshot</text>
+
+        <!-- 4 · Converge -->
+        <path class="arr" d="M425 572 V600 H245 V628" marker-end="url(#arrow)"/>
+        <path class="arr" d="M425 600 H605 V628" marker-end="url(#arrow)"/>
+        <text class="al" x="437" y="590">the same file edits go to everyone</text>
+        <path class="arr" d="M680 628 V572" marker-end="url(#arrow)"/>
+        <text class="al" x="690" y="596">file edits</text>
+        <text class="al" x="690" y="610">from disk</text>
+
+        <rect class="box" x="110" y="628" width="270" height="104" rx="8"/>
+        <text class="t" x="124" y="650">Alice's and Carol's browsers</text>
+        <text class="m" x="124" y="672">apply the edits, re-parse, re-render</text>
+        <text class="b" x="124" y="700">Build very cool stuff</text>
+        <text class="m" x="124" y="720">exactly what a fresh load would show</text>
+
+        <rect class="box" x="470" y="628" width="270" height="104" rx="8"/>
+        <text class="t" x="484" y="650">Bob's laptop · erga sync</text>
+        <text class="m" x="484" y="672">writes the edits to ./doc on disk</text>
+        <text class="c" x="484" y="696">&lt;p&gt;Build very cool stuff&lt;/p&gt;</text>
+        <text class="m" x="484" y="716">Claude Code edits files here; each save</text>
+        <text class="m" x="484" y="730">is diffed into file edits and sent back</text>
+
+        <text class="sub" x="425" y="770">Everyone holds the same file. Only character edits to files ever cross the network.</text>
+      </svg>
+      <figcaption>Every source file is a CRDT (a Yjs <code>Y.Text</code>): simultaneous edits merge to the same result everywhere, and the merged file is the only truth. Ids like <code>p7</code> never leave the browser. Bob's agent edits the same files on disk, and its saves join the same merge.</figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <h2>Mechanics</h2>
+    <ul>
+      <li><b>Parse.</b> On load, a deterministic parser walks the source (HTML, or Markdown we render), numbers the manuscript elements in document order, stamps each with <code>data-erga-id</code>, and records the source range of every text node inside it.</li>
+      <li><b>Map.</b> An edit to a stamped element is diffed against its indexed text and becomes the smallest character change to those ranges. Only text nodes are spliced; tags and attributes stay byte-for-byte identical, so inline <code>&lt;em&gt;</code> and <code>&lt;a&gt;</code> survive.</li>
+      <li><b>Lock.</b> Elements without an id, or whose text no longer matches the index when clicked, are not editable.</li>
+      <li><br></li>
+      <li><b>Sync.</b> Every file is a Yjs <code>Y.Text</code>; all of a document's files share one Yjs document and one connection. Only file changes cross the network. Browsers re-parse and re-render; the CLI writes changes to disk and diffs local saves back. One mechanism covers concurrent typing, offline edits and edits made on disk.</li>
+      <li><b>Server.</b> Orders changes, keeps the log, saves snapshots so new page requests get current source.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Code architecture</h2>
+    <div class="sketch"><pre>Hosts      Editor (browser)  Viewer (browser)  CLI (disk)      Server
+           DOM ⇄ edits       edits → DOM       files ⇄ disk    log, order, snapshots
+Services   FileStore · Sync                    (one interface, one impl per host)
+Core       parse · stamp · toFileOps · fromFileOps
+           pure, deterministic, no I/O, identical everywhere</pre></div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th></th><th>Browser</th><th>CLI (disk)</th><th>Server</th></tr></thead>
+        <tbody>
+          <tr><td><b>FileStore</b></td><td>memory + IndexedDB/OPFS</td><td><code>@effect/platform</code> FileSystem</td><td>existing <code>ObjectStorage</code></td></tr>
+          <tr><td><b>Sync</b></td><td>WebSocket client</td><td>WebSocket + file watcher</td><td>ordering service (D2)</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>Core and the change schemas live in <code>shared/src/doc/</code>; each host implements the services in its own workspace; the editor and viewer get a new browser workspace. <code>erga sync ./doc</code> is the disk host. Outside agents just edit files.</p>
+    <p><b>Prototype.</b> <code>bun open.ts ./site</code> opens a folder or file in the page editor: the parse, the mapping, the in-place editing, disk save and disk watch, for HTML and Markdown. No sync yet; the host is Effect on Bun, the browser core plain TypeScript pending D1.</p>
+  </section>
+
+  <section>
+    <h2>Decisions</h2>
+    <div class="decisions">
+      <article class="decision">
+        <div class="decision-head"><h3><span class="id">D1</span>Is the core plain TypeScript or Effect?</h3><span class="chip done">Decided</span></div>
+        <p>The viewer runtime is injected into every published page. Measured with <code>bun build --minify</code>, Effect 3.22: a minimal <code>Effect.gen</code> + <code>runSync</code> program is 39 KB gzipped, 51 KB with Schema. Yjs alone is 23 KB; today's renderer is 75 KB. Effect adds real weight, but not enough to justify a second exception to invariant 1.</p>
+        <p class="lean call"><strong>Decided</strong>Effect everywhere, including the browser core. Keep the viewer bundle measured in the gate.</p>
+      </article>
+      <article class="decision">
+        <div class="decision-head"><h3><span class="id">D2</span>Where does ordering and sync run?</h3><span class="chip done">Decided</span></div>
+        <p>One sync interface with identical observable behavior on every target (invariant 6), proven by a shared conformance suite.</p>
+        <p class="lean call"><strong>Decided</strong>Durable Objects on Cloudflare, plus an in-memory local implementation. AWS gets its own implementation of the same interface later.</p>
+      </article>
+      <article class="decision">
+        <div class="decision-head"><h3><span class="id">D3</span>Which elements are manuscript?</h3><span class="chip done">Decided</span></div>
+        <p>The Markdown list (<code>p</code>, <code>h1</code>–<code>h6</code>, <code>li</code>, <code>blockquote</code>, <code>td</code>/<code>th</code>, <code>pre</code>, inline <code>em</code>, <code>strong</code>, <code>a</code>, <code>code</code>) plus <code>div</code> and <code>span</code>, judged by a deterministic text-likeness rule: an element is text-like if its children are text and inline elements (a leaf), or if all its element children are text-like blocks (a container, like a <code>div</code> of paragraphs). Grow the list by adding elements.</p>
+        <p class="lean call"><strong>Decided</strong>Markdown list + <code>div</code>/<code>span</code>, with the text-like rule. The exact rule is worked out in code.</p>
+      </article>
+      <article class="decision">
+        <div class="decision-head"><h3><span class="id">D4</span>Are styles and structural edits in scope?</h3><span class="chip done">Decided</span></div>
+        <p>Inline styles (bold, italic, links, code) and structure (new paragraph, list item, heading) are spelled differently in HTML and Markdown. Manuscript has only those two spellings, so both can be implemented without per-document hints.</p>
+        <p class="lean call"><strong>Decided</strong>Yes to both. Text splicing ships first; styles and structure follow for both source spellings.</p>
+      </article>
+      <article class="decision">
+        <div class="decision-head"><h3><span class="id">D5</span>How do agent file edits and live edits coexist?</h3><span class="chip lean">Leaning</span></div>
+        <p>An agent that rewrites a file (or a republish from disk) is diffed into changes and merged by the CRDT like any other edit, however large. The risk is a large diff colliding with concurrent live edits and producing broken markup.</p>
+        <p class="lean"><strong>Lean</strong>Merge consistently by default. Detect when a publish's diff collides with concurrent edits beyond a threshold and reject it. A publish can optionally take a lock on the document, in which case live edits are rejected instead. The threshold and lock semantics are open.</p>
+      </article>
+      <article class="decision">
+        <div class="decision-head"><h3><span class="id">D6</span>How are the editor and page JS isolated?</h3><span class="chip done">Decided</span></div>
+        <p>Agent-written JS must not have the editor's write access.</p>
+        <p class="lean call"><strong>Decided</strong>The page runs in a sandboxed iframe; <code>contenteditable</code> and edits cross a narrow postMessage bridge.</p>
+      </article>
+      <article class="decision">
+        <div class="decision-head"><h3><span class="id">D7</span>Which CRDT, and how does undo work?</h3><span class="chip done">Decided</span></div>
+        <p>Building our own is tempting but premature. Yjs at defaults covers text merging, one document per doc, and per-origin undo via <code>UndoManager</code>.</p>
+        <p class="lean call"><strong>Decided</strong>Yjs at defaults, including <code>UndoManager</code> scoped to your own edits. Revisit building our own only if defaults prove wrong.</p>
+      </article>
+    </div>
+  </section>
+
+</main>
+</body>
+</html>
