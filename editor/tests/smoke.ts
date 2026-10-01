@@ -1,7 +1,7 @@
 // Opens real documents in the page editor, types into the first heading, and screenshots.
 //   bun tests/smoke.ts <path> [name]
-import { Browser, ROOT } from "./cdp";
-import { cpSync, mkdtempSync, rmSync, statSync } from "fs";
+import { Browser, ROOT, SHOTS } from "./cdp";
+import { cpSync, mkdirSync, mkdtempSync, rmSync, statSync } from "fs";
 import { tmpdir } from "os";
 import { join, basename, dirname } from "path";
 const target = process.argv[2];
@@ -27,5 +27,7 @@ console.log(`${name}: ${units} units, ${locked} locked, source changed: ${before
 for (const e of p.errors) console.log("  ", e.split("\n")[0]);
 await p.eval(`${F}.defaultView.scrollTo(0, 0)`);
 await Bun.sleep(300);
-await p.screenshot(`${ROOT}editor/screenshots/smoke-${name}.png`);
+mkdirSync(SHOTS, { recursive: true });
+await p.screenshot(`${SHOTS}/smoke-${name}.png`);
+console.log(`picture: ${SHOTS}/smoke-${name}.png`);
 browser.close(); host.kill(); rmSync(dir, { recursive: true, force: true });

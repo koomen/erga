@@ -8,6 +8,12 @@ import { join } from "path";
 const CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 
 export const ROOT = new URL("../..", import.meta.url).pathname; // wip/
+/**
+ * Where scripts that exist to take pictures (screenshots.ts, smoke.ts,
+ * multi-shot.ts) put them: a temp folder, printed when written, so nothing
+ * lands in the repo and the OS cleans up. SCRATCHWORK_SHOTS puts them elsewhere.
+ */
+export const SHOTS = process.env.SCRATCHWORK_SHOTS || join(process.env.TMPDIR || tmpdir(), "scratchwork-editor-shots");
 export const urlFor = (which: "editor" | "editor-cm") => `file://${ROOT}${which}/index.html`;
 
 export class Browser {

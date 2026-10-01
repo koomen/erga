@@ -6,7 +6,7 @@
 #                     the multiplayer suite (what changes day to day)
 #   ./test.sh md      the Markdown editor: parity with CodeMirror, styles, input
 #   ./test.sh all     both
-#   ./test.sh shots   regenerate screenshots/ (pictures, not a test)
+#   ./test.sh shots   side-by-side pictures, in a temp folder (not a test)
 #
 # Not here, run by hand: tests/agent.ts (the real model, costs a little) and
 # tests/suite/run.ts --long (bigger, slower, real idle-eviction waits).

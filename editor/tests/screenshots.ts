@@ -1,12 +1,12 @@
 // Captures the same scenes from both editors, light and dark, and writes
 // side-by-side images (CodeMirror left, new editor right) plus a pixel diff
-// count to wip/editor/screenshots/.
+// count to a temp folder (cdp.ts, SHOTS; printed at the end).
 //   bun tests/screenshots.ts
 
-import { Browser, Page, MOD, pool, urlFor, ROOT } from "./cdp";
+import { Browser, Page, MOD, pool, urlFor, ROOT, SHOTS } from "./cdp";
 import { mkdirSync } from "fs";
 
-const OUT = `${ROOT}editor/screenshots`;
+const OUT = SHOTS;
 mkdirSync(OUT, { recursive: true });
 
 type Scene = { name: string; doc?: string; width?: number; height?: number; setup?: (p: Page) => Promise<void> };
@@ -78,3 +78,4 @@ await pool(cases, async ({ dark, scene }, browser: Browser) => {
       console.log(`${name.padEnd(22)} differing pixels: ${result.diff} of ${result.total} (${((100 * result.diff) / result.total).toFixed(3)}%)${(result as any).box ? "  in css box " + JSON.stringify((result as any).box) : ""}`);
       composer.close();
 });
+console.log(`\npictures in ${OUT}`);

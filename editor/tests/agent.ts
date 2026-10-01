@@ -106,7 +106,6 @@ try {
 
   const log = await (await fetch(`http://127.0.0.1:${port}/api/agent`)).json() as { log: { items: unknown[] } };
   check("the host keeps the transcript", log.log.items.length >= 4);
-  await p.screenshot(`${ROOT}editor/screenshots/page-agent.png`);
   check("no page errors", p.errors.length == 0, p.errors.join("\n"));
   if (keep) {
     console.log(`\nhost kept at http://127.0.0.1:${port}/  (${dir})`);

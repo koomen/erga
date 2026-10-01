@@ -1,7 +1,7 @@
-// Screenshot of two people on one page (Bo's view of Ada's edits), for the README.
+// Screenshot of two people on one page (Bo's view of Ada's edits), written to a temp folder (cdp.ts, SHOTS).
 //   bun tests/multi-shot.ts
-import { Browser, ROOT } from "./cdp";
-import { cpSync, mkdtempSync, rmSync } from "fs";
+import { Browser, ROOT, SHOTS } from "./cdp";
+import { cpSync, mkdirSync, mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 
@@ -30,7 +30,9 @@ try {
   await Bun.sleep(400);
   await bo.eval(`document.body.classList.remove("chrome-hidden")`);
   await Bun.sleep(300);
-  await bo.screenshot(`${ROOT}editor/screenshots/page-multi.png`);
+  mkdirSync(SHOTS, { recursive: true });
+  await bo.screenshot(`${SHOTS}/page-multi.png`);
+  console.log(`picture: ${SHOTS}/page-multi.png`);
 } finally {
   browser.close(); host.kill(); rmSync(dir, { recursive: true, force: true });
 }

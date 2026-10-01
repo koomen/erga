@@ -131,7 +131,7 @@ the document); such a tab says it's out of date and offers a reload.
 `tests/suite/` tests all of this from the outside, the way a deployment
 will be tested (see its README): `bun tests/suite/run.ts`.
 
-`tests/multi-shot.ts` takes the picture in `screenshots/page-multi.png`: Bo's
+`bun tests/multi-shot.ts` takes a picture (and prints where: a temp folder): Bo's
 view of the page, tracking changes, with Ada's edit and caret in orange and
 his own edit in teal.
 
@@ -249,7 +249,7 @@ fraction of real time under test (`window.__swTimescale`, `ms` in
     ./test.sh          # page editor + multiplayer: ~14s
     ./test.sh md       # the Markdown editor (parity, styles, input): ~25s
     ./test.sh all      # both
-    ./test.sh shots    # regenerate screenshots/ (pictures, not a test)
+    ./test.sh shots    # side-by-side pictures, written to a temp folder (not a test)
 
 Each file also runs alone: `bun tests/page.ts` (~7s), `bun tests/suite/run.ts`
 (~11s; `--suite`, `--grep` and `--seed` narrow it, `--long` for the big slow
@@ -300,7 +300,7 @@ as the reference:
 - `bun tests/input.ts`: spellcheck/autocorrect replacements and other input
   that only an OS produces.
 - `bun tests/screenshots.ts` (`./test.sh shots`): side-by-side captures
-  (CodeMirror left) with a pixel diff, written to `screenshots/`; pictures to
+  (CodeMirror left) with a pixel diff, written to a temp folder it prints; pictures to
   look at, not a pass/fail test, so not part of the default run.
 
 ## Design choices
@@ -388,5 +388,3 @@ Windows and Linux, use Ctrl in place of ⌘.
 - `vendor/`: `entry.js`, `build.sh` and the built `vendor.js` (marked, DOMPurify)
 - `tests/`: parity and unit tests (see above); `page.ts`, `smoke.ts` and
   `fixtures/` for the page editor
-- `screenshots/`: pictures the tests write (`./test.sh shots`, `tests/multi-shot.ts`,
-  `tests/agent.ts`); generated locally and gitignored
