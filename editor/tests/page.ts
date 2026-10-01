@@ -6,14 +6,13 @@
 
 import { Browser, MOD, ROOT } from "./cdp";
 import { tab } from "./tab";
-import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from "fs";
+import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { AsyncLocalStorage } from "node:async_hooks";
 
 const keep = process.argv.includes("--keep");
 const only = process.argv.find((a) => a == "html" || a == "md" || a == "agent" || a == "format" || a == "reload");
-mkdirSync(`${ROOT}editor/screenshots`, { recursive: true });
 
 // Scenarios run at once, each in its own host and tab; each one's lines are
 // collected and printed together when it finishes.
@@ -216,7 +215,6 @@ async function htmlScenario(browser: Browser) {
   await p.key("p", MOD.Meta | MOD.Shift);
   await until(() => p.eval<boolean>(`!document.body.classList.contains("source") && !!${F}.querySelector("h1[data-sw-id]")`));
   await s.clickEnd("h1");
-  await p.screenshot(`${ROOT}editor/screenshots/page-html.png`);
   check("no page errors", p.errors.length == 0, p.errors.join("\n"));
   await s.close();
 }
@@ -293,7 +291,6 @@ async function mdScenario(browser: Browser) {
   check("'### ' in a Markdown file makes a real heading", /^### Sub$/m.test(await s.source()), JSON.stringify((await s.source()).match(/.*Sub.*/)?.[0]));
   await p.key("z", MOD.Meta); await p.key("z", MOD.Meta); await p.key("z", MOD.Meta);
   await Bun.sleep(150);
-  await p.screenshot(`${ROOT}editor/screenshots/page-md.png`);
   check("no page errors", p.errors.length == 0, p.errors.join("\n"));
   await s.close();
 }

@@ -388,4 +388,5 @@ Windows and Linux, use Ctrl in place of ⌘.
 - `vendor/`: `entry.js`, `build.sh` and the built `vendor.js` (marked, DOMPurify)
 - `tests/`: parity and unit tests (see above); `page.ts`, `smoke.ts` and
   `fixtures/` for the page editor
-- `screenshots/`: side-by-side captures, CodeMirror version left, light and dark
+- `screenshots/`: pictures the tests write (`./test.sh shots`, `tests/multi-shot.ts`,
+  `tests/agent.ts`); generated locally and gitignored
