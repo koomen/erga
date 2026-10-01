@@ -4,7 +4,7 @@
 import { bindings, defineConfig, exports } from "cf/config";
 import * as entrypoint from "./worker/index.ts" with { type: "cf-worker" };
 
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   worker: {
     name: "erga",
     compatibilityDate: "2026-09-30",
@@ -25,10 +25,13 @@ export default defineConfig({
       GITHUB_CLIENT_SECRET: bindings.secret(),
       SESSION_SECRET: bindings.secret(),
       ANTHROPIC_API_KEY: bindings.secret(),
-      // Local development only (.dev.vars); never set on erga.dev.
-      DEV_LOGIN: bindings.secret(),
-      // "script" swaps the agent's model for the free scripted one (agent.ts), for the test suite.
-      ERGA_AGENT_MODEL: bindings.secret(),
+      // Local development only (vite dev reads them from .dev.vars); erga.dev never has them.
+      ...(mode == "development" ? {
+        // Sign in without GitHub, on localhost.
+        DEV_LOGIN: bindings.secret(),
+        // "script" swaps the agent's model for the free scripted one (agent.ts), for the test suite.
+        ERGA_AGENT_MODEL: bindings.secret(),
+      } : {}),
     },
   },
-});
+}));
