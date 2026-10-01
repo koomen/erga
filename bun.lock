@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "scratchwork-editor-wip",
+      "name": "erga",
       "dependencies": {
         "@codemirror/commands": "6.11.1",
         "@codemirror/lang-html": "6.4.12",
