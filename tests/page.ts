@@ -660,11 +660,12 @@ async function voiceScenario(browser: Browser) {
     window.SpeechRecognition = class extends EventTarget { start() { this.running = true; __recs.push(this); } stop() { this.abort(); } abort() { if (!this.running) return; this.running = false; setTimeout(() => this.onend?.()); } };
     window.__hear = (...rs) => __recs.at(-1).onresult({ results: rs.map(([t, f]) => Object.assign([{ transcript: t }], { isFinal: f })) });
     const f = window.fetch;
-    window.fetch = (url, init) => /\\/api\\/agent$/.test(String(url)) ? (__sent.push(JSON.parse(init.body).text), Promise.resolve(new Response("{}"))) : f(url, init);
+    window.fetch = (url, init) => String(url).includes("/api/agent?") && init?.method == "POST" ? (__sent.push(JSON.parse(init.body).text), Promise.resolve(new Response("{}"))) : f(url, init);
   ` });
   await p.eval(`location.reload()`);
   await loaded(p);
   await p.key("j", MOD.Meta);
+  await until(() => p.eval<boolean>(`/Type a message/.test(document.getElementById("agent-send").title)`), 10_000);
   const st = () => p.eval<{ on: string | null; input: string; readOnly: boolean; send: string | null; title: string; sent: string[]; recs: number }>(`(() => { const v = document.getElementById("agent-voice"), i = document.getElementById("agent-input"), b = document.getElementById("agent-send"); return { on: v.getAttribute("aria-pressed"), input: i.value, readOnly: i.readOnly, send: b.getAttribute("aria-disabled"), title: b.title, sent: __sent, recs: __recs.length }; })()`);
   check("the voice button shows where speech recognition exists", await p.eval<boolean>(`!document.getElementById("agent-voice").hidden`));
   await p.eval(`document.getElementById("agent-voice").click()`);
