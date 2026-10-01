@@ -1239,6 +1239,10 @@ Once you've read it, await further instructions.`;
     sel.setAttribute("aria-label", "Model");
     for (const o of m.models) sel.append(new Option(o.label, o.id, false, o.id == m.choice));
     sel.title = "The model your agent runs on; a switch applies from your next message";
+    // A select counts as focus-visible even after a click, so the ring is ours
+    // to show: for the keyboard, not for whoever just used the mouse.
+    sel.addEventListener("pointerdown", () => sel.classList.add("by-pointer"));
+    sel.addEventListener("keydown", () => sel.classList.remove("by-pointer"));
     sel.addEventListener("change", async () => {
       const want = sel.value;
       const res = await fetch(api("/api/agent/model"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ model: want }), signal: AbortSignal.timeout(10_000) })
