@@ -26,6 +26,7 @@
 // `scriptModel`), for the test suite in tests/suite/: deterministic, free,
 // and it needs no key. Never set it on a deployment real people use.
 
+import { readFileSync } from "fs";
 import * as Y from "yjs";
 import { Awareness } from "y-protocols/awareness";
 import { fauxAssistantMessage, fauxText, fauxToolCall, registerFauxProvider, type Context, type Model } from "@mariozechner/pi-ai";
@@ -151,6 +152,12 @@ async function scriptStep(context: Context) {
   return fauxAssistantMessage([fauxText(step.text ?? "")]);
 }
 
+/**
+ * How to write documents the page editor can keep editing by hand
+ * (DOCUMENT_PROMPT.md, the one copy of these rules), appended to the system prompt.
+ */
+const DOCUMENT_RULES = readFileSync(new URL("./DOCUMENT_PROMPT.md", import.meta.url), "utf8").trim();
+
 const systemPrompt = (docName: string, kind: "html" | "md", owner: string) => `
 You are ${agentName(owner)}, embedded in Scratchwork's page editor. ${owner} is looking at
 ${docName} (${kind == "md" ? "Markdown" : "HTML"}) rendered as a live page, and editing its text in
@@ -176,6 +183,10 @@ and change any text file in it. Paths are relative to the folder.
   say it's done. It renders your latest changes, including ones the page won't show
   until your turn ends. Pass a CSS selector to look closely at one element.
 - Keep replies short: say what you changed, not how. ${owner} can see the result.
+- Follow the rules below whenever you create or change a page, so people can keep
+  editing it by hand. When you fix a page that breaks them, keep its text as it is.
+
+${DOCUMENT_RULES}
 `.trim();
 
 const MAX_LINES = 2000, MAX_BYTES = 50 * 1024;

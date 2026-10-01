@@ -48,7 +48,9 @@ A document can fence off parts that shouldn't be edited by hand (generated
 totals, a summary kept in step with data) with the `data-sw-noedit`
 attribute: that element and everything in it stay out of the editor, and
 clicking them says to ask the agent. [DOCUMENT_PROMPT.md](DOCUMENT_PROMPT.md)
-collects the rules an agent follows to write documents that edit well.
+collects the rules an agent follows to write documents that edit well; the
+embedded agent's system prompt includes it as is (`agent.ts` reads it at
+startup), so edit the rules there.
 
 The view button at the top right shows the current view; click it for all
 three: T (the page), *T* (Markdown) and <T> (HTML). The view in the file's own
