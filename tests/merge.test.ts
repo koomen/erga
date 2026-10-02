@@ -78,3 +78,20 @@ test("an insertion already at a word boundary stays exactly where it was made", 
   // Mid-word it still moves to a boundary.
   expect(at("<p>undo it</p>", "<p>redo undo it</p>")).toBe(3);
 });
+
+test("a rewrite stays fast when the clock stands still, as on Workers", () => {
+  // Two long texts with little in common: the worst case for the word diff.
+  const words = (seed: number, n: number) => Array.from({ length: n }, (_, i) => `w${(i * seed) % 9973}`).join(" ");
+  const a = `<p>${words(7, 12000)}</p>`, b = `<div>${words(13, 9000)}</div>`;
+  const now = Date.now;
+  const frozen = now();
+  Date.now = () => frozen;
+  try {
+    const t0 = performance.now();
+    const cs = changesBetween(a, b);
+    expect(performance.now() - t0).toBeLessThan(2000);
+    expect(apply(a, cs)).toBe(b);
+  } finally {
+    Date.now = now;
+  }
+});
