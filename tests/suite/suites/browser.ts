@@ -37,6 +37,8 @@ async function open(ctx: Ctx, d: Doc, user: string) {
 }
 
 const peerNames = (t: ReturnType<typeof tab>) => t.p.eval<string>(`[...${t.F}.querySelectorAll("erga-peer-name")].map((e) => e.textContent).join("|")`);
+/** Whether a caret drawn on the page sits in the element. */
+const caretIn = (t: ReturnType<typeof tab>, selector: string) => t.p.eval<boolean>(`(() => { const w = document.getElementById("frame").contentWindow, r = ${t.F}.querySelector(${JSON.stringify(selector)}).getBoundingClientRect(); return [...${t.F}.querySelectorAll("erga-peer")].some((c) => { const y = parseFloat(c.style.top) - w.scrollY; return y >= r.top - 2 && y < r.bottom; }); })()`);
 const noErrors = (t: ReturnType<typeof tab>, who: string) => expect(t.p.errors.length == 0, `no page errors (${who})`, t.p.errors);
 
 export const browserTests: Test[] = [
@@ -57,6 +59,25 @@ export const browserTests: Test[] = [
       expect(m.added.join("").includes("(draft)") && m.names.every((n) => /^erga-a\d+-/.test(n)), "marked in Ada's colour", m);
       await until(async () => (await peerNames(b)) == "Ada", 3000, "Ada's caret shows on Bo's page");
       noErrors(a, "Ada"); noErrors(b, "Bo");
+    },
+  },
+  {
+    name: "your other tabs' carets aren't drawn, and someone with several tabs shows one caret, from the tab they used last",
+    needs: ["browser"],
+    async run(ctx) {
+      const d = await ctx.doc();
+      const [a1, a2, b] = [await open(ctx, d, "Ada"), await open(ctx, d, "Ada"), await open(ctx, d, "Bo")];
+      await b.clickEnd("li:first-child");
+      await a1.clickEnd("h1");
+      await a2.clickEnd("figcaption");
+      await until(async () => (await peerNames(b)) == "Ada" && (await caretIn(b, "figcaption")), 3000, "Bo sees one Ada caret, from the tab she used last", async () => peerNames(b));
+      for (const [t, who] of [[a1, "Ada's first tab"], [a2, "Ada's second tab"]] as const) {
+        await until(async () => (await peerNames(t)) == "Bo", 3000, `${who} shows Bo's caret and not her own other tab's`, async () => peerNames(t));
+      }
+      await a1.p.type("!");
+      await until(async () => (await b.textOf("h1")).endsWith("!"), 3000, "Bo has Ada's typing in her first tab");
+      await until(async () => (await peerNames(b)) == "Ada" && (await caretIn(b, "h1")) && !(await caretIn(b, "figcaption")), 3000, "her caret moves to the tab she's using now", async () => peerNames(b));
+      noErrors(a1, "Ada 1"); noErrors(a2, "Ada 2"); noErrors(b, "Bo");
     },
   },
   {

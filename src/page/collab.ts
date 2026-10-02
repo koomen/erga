@@ -8,8 +8,8 @@
 // agent edits always took (`PageEditor.applyExternal`), so the page patches
 // in place and marks the change, now in its author's colour. Presence rides
 // on awareness: who is here, where their caret is (as Yjs relative
-// positions, so it stays put while the text around it changes), and whether
-// an agent is busy.
+// positions, so it stays put while the text around it changes), when each
+// tab was last used, and whether an agent is busy.
 
 import * as Y from "yjs";
 import { WebsocketProvider } from "y-websocket";
@@ -25,6 +25,11 @@ export interface Presence {
   busy?: boolean;
   activity?: string | null;
   cursor?: { path: string; anchor: unknown; head: unknown | null } | null;
+  /**
+   * When this tab was last focused or used (ms). A person with several tabs
+   * open is shown by the one they used last, so only its caret is drawn.
+   */
+  active?: number;
 }
 
 export interface CollabOptions {
@@ -59,7 +64,7 @@ export class Collab {
     const proto = location.protocol == "https:" ? "wss:" : "ws:";
     this.provider = new WebsocketProvider(`${proto}//${location.host}${BASE}/api/room`, "doc", this.doc, { params, disableBc: true });
     const awareness = this.provider.awareness;
-    awareness.setLocalState({ user: opts.me, cursor: null });
+    awareness.setLocalState({ user: opts.me, cursor: null, active: document.hasFocus() ? Date.now() : 0 });
     awareness.on("change", ({ added, updated, removed }: { added: number[]; updated: number[]; removed: number[] }) => {
       // This tab's own cursor moving is no news to it.
       if ([...added, ...updated, ...removed].some((c) => c != this.doc.clientID)) opts.onPresence();
@@ -133,6 +138,8 @@ export class Collab {
   push(changes: ChangeSet): void {
     const t = this.text;
     if (!t || changes.empty) return;
+    // Typing without keys (dictation, a paste from the menu) is using the tab too.
+    this.activate();
     this.doc.transact(() => {
       const { inserted, deleted } = applyChanges(t, changes);
       if (deleted && !inserted) stamp(this.doc, this.opts.me);
@@ -149,6 +156,37 @@ export class Collab {
     if (!t || anchor == null) { if (prev.cursor) aw.setLocalStateField("cursor", null); return; }
     const rel = (i: number) => Y.relativePositionToJSON(Y.createRelativePositionFromTypeIndex(t, i));
     aw.setLocalStateField("cursor", { path: this.opts.path, anchor: rel(anchor), head: head == null || head == anchor ? null : rel(head) });
+  }
+
+  /**
+   * This tab was focused or used: make it the one its person is shown by.
+   * Newer than any of their other tabs even if the clocks disagree, and
+   * nothing is sent while it already is.
+   */
+  activate(): void {
+    const aw = this.provider.awareness;
+    const mine = (aw.getLocalState()?.active as number | undefined) ?? 0;
+    let newest = -1;
+    for (const p of this.others()) if (p.user.kind == "person" && p.user.user == this.opts.me.user) newest = Math.max(newest, p.active ?? 0);
+    if (mine > newest) return;
+    aw.setLocalStateField("active", Math.max(Date.now(), newest + 1));
+  }
+
+  /**
+   * Everyone else as they're shown: one presence per person, from the tab
+   * they used last, and none for your own other tabs. Agents are their own
+   * participants, each shown as it is.
+   */
+  shown(): Presence[] {
+    const out: Presence[] = [], persons = new Map<string, Presence>();
+    for (const p of this.others()) {
+      if (p.user.kind != "person") { out.push(p); continue; }
+      if (p.user.user == this.opts.me.user) continue;
+      const prev = persons.get(p.user.user);
+      const newer = !prev || (p.active ?? 0) > (prev.active ?? 0) || ((p.active ?? 0) == (prev.active ?? 0) && p.client > prev.client);
+      if (newer) persons.set(p.user.user, p);
+    }
+    return [...persons.values(), ...out];
   }
 
   /** Everyone else in the room. */

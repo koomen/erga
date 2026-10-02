@@ -379,7 +379,9 @@ declare global {
 
   // Everyone's caret on the page (or in the source view), with their name;
   // agents' carets sit where they last edited, dashed. The avatars at the
-  // top say who's here and what each agent is doing.
+  // top say who's here and what each agent is doing. A person with several
+  // tabs open is shown by the one they used last, and your own other tabs
+  // not at all (Collab.shown).
   function busyAgents(): string[] {
     return collab.others().filter((p) => p.user.kind == "agent" && p.busy).map((p) => p.user.name);
   }
@@ -396,7 +398,7 @@ declare global {
   }
   function paintPeers() {
     const peers: Peer[] = [];
-    for (const p of collab.others()) {
+    for (const p of collab.shown()) {
       // Agents' carets aren't drawn: one left where an agent last edited
       // lingers on the page and distracts. Their avatars say what they're doing.
       if (p.user.kind == "agent") continue;
@@ -408,7 +410,8 @@ declare global {
     else page.setPeers(peers);
   }
   // This tab's caret, for everyone else. It stays where you left it when
-  // you switch away, as a caret on paper would.
+  // you switch away, as a caret on paper would (but with another of your
+  // tabs in use since, that one's caret is shown instead).
   let cursorQueued = false;
   function queueCursor() {
     if (cursorQueued) return;
@@ -425,12 +428,12 @@ declare global {
     // One avatar per person, you first. A person's agent, once it has done
     // something, is a small badge on their avatar that spins while it works.
     const persons = new Map<string, Presence>(), agents = new Map<string, Presence>();
-    for (const p of collab.others()) {
+    for (const p of collab.shown()) {
       if (p.user.kind == "agent") {
         if (!p.busy && !p.cursor) continue;
         const prev = agents.get(p.user.user);
         if (!prev || (p.busy && !prev.busy)) agents.set(p.user.user, p);
-      } else if (p.user.kind == "person" && p.user.user != me.user && !persons.has(p.user.user)) persons.set(p.user.user, p);
+      } else if (p.user.kind == "person") persons.set(p.user.user, p);
     }
     const all: { p: Presence; here: boolean }[] = [{ p: { client: -1, user: me } as Presence, here: true }, ...[...persons.values()].map((p) => ({ p, here: true }))];
     // An agent keeps working with its person's tabs closed: show them, faded, to carry it.
@@ -664,6 +667,13 @@ Once you've read it, await further instructions.`;
   for (const type of ["pointerdown", "keydown"]) window.addEventListener(type, dismissExplanation, true);
   frame.addEventListener("load", () => {
     for (const type of ["pointerdown", "keydown"]) frame.contentDocument?.addEventListener(type, dismissExplanation, true);
+  });
+  // Focusing or using this tab makes it the one you're shown by. Focus
+  // lands on the frame's window when the caret is in the page.
+  const activate = () => collab.activate();
+  for (const type of ["focus", "pointerdown", "keydown"]) window.addEventListener(type, activate, true);
+  frame.addEventListener("load", () => {
+    for (const type of ["focus", "pointerdown", "keydown"]) frame.contentWindow?.addEventListener(type, activate, true);
   });
 
   // ---------------------------------------------------------------- the page editor
