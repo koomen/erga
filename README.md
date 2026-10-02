@@ -97,6 +97,13 @@ history (⌘⇧P toggles to it). The other is a read-only conversion, an HTML
 file's text as Markdown or the HTML a Markdown file renders to, because
 editing through a lossy conversion would rewrite the file; it says so.
 
+A page whose script reacts to clicks and keys (slides that advance on click,
+a game) can be paused to edit it: the pause button at the top right calls the
+page's `window.ergaPause(true)`, and the page ignores input until it's
+resumed, so only the editor answers clicks. The page has to support it
+(DOCUMENT_PROMPT.md, rule 10); on one that doesn't, the button is disabled,
+and hovering it explains, with a **Fix with agent** button.
+
 There's no dark mode: pages are shown as their authors made them, and most
 don't support one. The editor's own controls take their colours from the page
 under them instead.

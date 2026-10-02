@@ -267,6 +267,9 @@ function textIn(units: M.Unit[], from: number, to: number): string {
 
 type RawProblem = { kind: "resource"; tag: string; url: string } | { kind: "script"; message: string; file: string; line: number };
 
+/** A page that lets the editor pause it (DOCUMENT_PROMPT.md, rule 10). */
+type PausableWindow = Window & { ergaPause?: unknown };
+
 /** A problem the page reported, in words, with a prompt for the agent to fix it. */
 function describeProblem(raw: RawProblem, base: string): PageProblem | null {
   const local = (u: string) => { try { const url = new URL(u, location.origin + base); return url.origin == location.origin && url.pathname.startsWith(base) ? decodeURIComponent(url.pathname.slice(base.length)) : u; } catch { return u; } };
@@ -336,6 +339,10 @@ export class PageEditor {
    * show; the shell decides when to render again (see `stale`).
    */
   private staleSince: string | null = null;
+  /** Whether the page's own scripts are paused (see setPaused); kept across renders. */
+  private paused = false;
+  /** Reports a problem with the page as the page's own watcher would (set once it renders). */
+  private reportRaw: ((raw: RawProblem) => void) | null = null;
   /** Why each locked unit (see `verify`) can't be edited, for when someone clicks it. */
   private lockReasons = new WeakMap<Element, { message: string; fix?: string }>();
   private revealPending: number | null = null;
@@ -410,6 +417,8 @@ export class PageEditor {
       this.watchProblems();
       this.collectEls();
       this.bind();
+      // A new page starts live: tell it it's paused again, if it still can be.
+      if (this.paused) { if (this.canPause) this.tellPause(); else this.paused = false; }
       this.rendering = false;
       for (const el of this.els) if (el) this.prepareUnit(el);
       // Verified, never guessed: a unit whose DOM text doesn't match the
@@ -452,7 +461,37 @@ export class PageEditor {
       this.config.onProblem?.(p);
     };
     win.__ergaReport = report;
+    this.reportRaw = report;
     for (const raw of win.__ergaProblems ?? []) report(raw);
+  }
+
+  // ------------------------------------------------------------ pausing
+
+  /**
+   * Whether the page can be paused: it defines `window.ergaPause`, which the
+   * editor calls with true to pause the page's own handling of clicks and
+   * keys (so only the editor answers them) and false to resume it.
+   */
+  get canPause(): boolean {
+    return typeof (this.frame.contentWindow as PausableWindow | null)?.ergaPause == "function";
+  }
+
+  get isPaused(): boolean { return this.paused; }
+
+  /** Pauses or resumes the page; false if it can't be paused. A render keeps it paused. */
+  setPaused(on: boolean): boolean {
+    if (on && !this.canPause) return false;
+    if (on == this.paused) return true;
+    this.paused = on;
+    this.tellPause();
+    return true;
+  }
+
+  private tellPause(): void {
+    const win = this.frame.contentWindow as PausableWindow | null;
+    if (typeof win?.ergaPause != "function") return;
+    try { (win.ergaPause as (paused: boolean) => void)(this.paused); }
+    catch (e) { this.reportRaw?.({ kind: "script", message: `window.ergaPause(${this.paused}) threw: ${e instanceof Error ? e.message : String(e)}`, file: "", line: 0 }); }
   }
 
   private collectEls(): void {

@@ -685,6 +685,7 @@ Once you've read it, await further instructions.`;
       if (u.docChanged || u.selectionSet) { queueCursor(); queuePeers(); }
       if (u.rendered) {
         syncBackdrop();
+        syncPause();
         const t = page.title();
         document.title = t ? `${t} · ${info!.name}` : info!.name;
         if (restoreScroll != null) { frame.contentWindow?.scrollTo(0, restoreScroll); restoreScroll = null; }
@@ -1376,6 +1377,7 @@ Once you've read it, await further instructions.`;
     if (e.key == "Escape") {
       if (!help.hidden) toggleHelp(false);
       else if (!share.hidden) toggleShare(false);
+      else if (!$("pause-card").hidden) showPauseCard(false);
       else if (agentPanel.contains(document.activeElement)) toggleAgent(false);
       else if (modeEl.classList.contains("open")) closeModeMenu();
       else if (mode != "text") setMode("text");
@@ -1403,13 +1405,66 @@ Once you've read it, await further instructions.`;
   $("btn-track").addEventListener("click", () => setTracking(!page.isTracking));
   if (settings.track) { page.setTracking(true); $("btn-track").setAttribute("aria-pressed", "true"); $("btn-track").dataset.tip = "Tracking changes (click to stop)"; }
   $("btn-help").addEventListener("click", () => toggleHelp());
+
+  // Pausing the page: a page that reacts to clicks and keys (slides that
+  // advance on click, a game) gets in the way of editing its text. If it
+  // defines window.ergaPause (DOCUMENT_PROMPT.md, rule 10), the pause button
+  // tells it to stop, and only the editor answers clicks until it resumes.
+  // A page that can't be paused gets the button disabled, with a card that
+  // offers to have the agent make it pausable.
+  const PAUSE_FIX = "Make this page pausable in the editor, so people can edit its text without the page reacting to their clicks and keys. Follow the document rules: define window.ergaPause(paused), which the editor calls with true when someone pauses the page and false when they resume, and while it's paused have the page ignore clicks, keys and scrolling, and stop anything that changes the page on its own. If nothing on the page reacts to input, there's nothing to pause: say so rather than adding it.";
+  /** Brings the button up to date with the page, which may have gained or lost window.ergaPause. */
+  function syncPause() {
+    const b = $("btn-pause"), can = page.canPause;
+    if (!can && page.isPaused) page.setPaused(false);
+    const on = page.isPaused;
+    b.setAttribute("aria-disabled", String(!can));
+    b.setAttribute("aria-pressed", String(on));
+    b.setAttribute("aria-label", !can ? "This page can't be paused" : on ? "Resume the page" : "Pause the page");
+    // The disabled button explains itself with its card instead of a tooltip.
+    if (can) b.dataset.tip = on ? "Paused: only the editor responds (click to resume)" : "Pause the page to edit it";
+    else delete b.dataset.tip;
+    if (can) showPauseCard(false);
+  }
+  let pauseCardTimer = 0;
+  function showPauseCard(open: boolean) {
+    clearTimeout(pauseCardTimer);
+    const card = $("pause-card");
+    if (open != (card.hidden == true)) return;
+    card.hidden = !open;
+    if (!open) return;
+    showChrome(); toggleHelp(false); toggleShare(false);
+    const fix = $("pause-fix");
+    // aria-disabled, not disabled: it can still say why it can't.
+    fix.setAttribute("aria-disabled", String(!!agentOff));
+    fix.title = agentOff ?? "";
+  }
+  // Hovering the disabled button opens the card; it stays while the pointer moves into it.
+  for (const el of [$("btn-pause"), $("pause-card")]) {
+    el.addEventListener("mouseenter", () => { syncPause(); if (!page.canPause) showPauseCard(true); });
+    el.addEventListener("mouseleave", () => { clearTimeout(pauseCardTimer); pauseCardTimer = window.setTimeout(() => showPauseCard(false), 300); });
+  }
+  $("btn-pause").addEventListener("click", () => {
+    syncPause();
+    if (!page.canPause) { showPauseCard($("pause-card").hidden == true); return; }
+    page.setPaused(!page.isPaused);
+    syncPause();
+    flash(page.isPaused ? "Paused: the page ignores clicks and keys while you edit" : "Resumed: the page responds again");
+  });
+  $("pause-fix").addEventListener("click", () => {
+    if (agentOff) { explain(agentOff); return; }
+    showPauseCard(false);
+    fixWithAgent(PAUSE_FIX);
+  });
+  syncPause();
   for (const b of document.querySelectorAll(".chrome button")) b.addEventListener("mousedown", (e) => e.preventDefault());
   document.addEventListener("mousedown", (e) => {
     if (!help.hidden && !help.contains(e.target as Node) && !$("btn-help").contains(e.target as Node)) toggleHelp(false);
     if (!share.hidden && !share.contains(e.target as Node) && !shareBtn.contains(e.target as Node)) toggleShare(false);
+    if (!$("pause-card").hidden && !$("pause-card").contains(e.target as Node) && !$("btn-pause").contains(e.target as Node)) showPauseCard(false);
   });
   frame.addEventListener("load", () => {
-    frame.contentDocument?.addEventListener("mousedown", () => { if (!help.hidden) toggleHelp(false); if (!share.hidden) toggleShare(false); });
+    frame.contentDocument?.addEventListener("mousedown", () => { if (!help.hidden) toggleHelp(false); if (!share.hidden) toggleShare(false); showPauseCard(false); });
   });
 
   started = true;

@@ -649,6 +649,49 @@ async function brokenPageScenario(browser: Browser) {
   await s.close();
 }
 
+/** Pausing the page: a page that defines window.ergaPause stops answering clicks, so its text can be edited; one that doesn't says so. */
+async function pauseScenario(browser: Browser) {
+  say("\nPausing the page");
+  const s = await session(browser, "pause", "index.html");
+  const { p, F } = s;
+  const btn = () => p.eval<{ disabled: string | null; pressed: string | null }>(`(() => { const b = document.getElementById("btn-pause"); return { disabled: b.getAttribute("aria-disabled"), pressed: b.getAttribute("aria-pressed") }; })()`);
+  const slide = () => p.eval<number>(`${F}.defaultView.slide`);
+  check("a page with window.ergaPause can be paused", (await btn()).disabled == "false", await btn());
+  await s.clickEnd("h1");
+  check("live, a click on its text drives the page", await until(async () => (await slide()) == 2), await slide());
+  await p.eval(`document.getElementById("btn-pause").click()`);
+  check("the pause button pauses it", (await btn()).pressed == "true", await btn());
+  await s.clickEnd("h1");
+  await p.type("!");
+  await Bun.sleep(150);
+  check("paused, a click places the caret and the page stays put", (await slide()) == 2, await slide());
+  check("and the text edits", (await s.source()).includes("advance on click!</h1>"), (await s.source()).slice(0, 400));
+  // A fresh page (a render from scratch starts its script over, at slide 1) is told it's paused too.
+  await p.eval(`window.ergaPage.page.render()`);
+  await until(async () => (await slide()) == 1);
+  await s.clickEnd("h1");
+  await Bun.sleep(150);
+  check("a re-rendered page stays paused", (await btn()).pressed == "true" && (await slide()) == 1, { btn: await btn(), slide: await slide() });
+  await p.eval(`document.getElementById("btn-pause").click()`);
+  await s.clickEnd("h1");
+  check("resuming hands clicks back to the page", (await btn()).pressed == "false" && await until(async () => (await slide()) == 2), { btn: await btn(), slide: await slide() });
+  check("no page errors", p.errors.length == 0, p.errors.join("\n"));
+  await s.close();
+
+  const t = await session(browser, "noedit", "index.html", { ANTHROPIC_API_KEY: "", ERGA_AGENT_ENV_FILE: "/nonexistent/.env" });
+  const card = () => t.p.eval<{ shown: boolean; text: string; fixDisabled: string | null; fixTitle: string }>(`(() => { const c = document.getElementById("pause-card"), f = document.getElementById("pause-fix"); return { shown: !c.hidden, text: c.textContent, fixDisabled: f.getAttribute("aria-disabled"), fixTitle: f.title }; })()`);
+  check("a page without it can't be paused", await t.p.eval<boolean>(`document.getElementById("btn-pause").getAttribute("aria-disabled") == "true"`));
+  await t.p.eval(`document.getElementById("btn-pause").dispatchEvent(new MouseEvent("mouseenter"))`);
+  check("hovering the button explains", (await card()).shown && /can't be paused/.test((await card()).text), await card());
+  check("with a fix button, disabled while the agent is off", (await card()).fixDisabled == "true" && /agent is off/i.test((await card()).fixTitle), await card());
+  await t.p.eval(`document.getElementById("btn-pause").click()`);
+  check("clicking it doesn't pause anything", await t.p.eval<boolean>(`document.getElementById("btn-pause").getAttribute("aria-pressed") == "false"`));
+  await t.p.key("Escape");
+  check("Escape closes the card", !(await card()).shown, await card());
+  check("no page errors", t.p.errors.length == 0, t.p.errors.join("\n"));
+  await t.close();
+}
+
 /** Voice mode, against a stand-in for the browser's speech recognition: dictation fills the box and each pause sends it. */
 async function voiceScenario(browser: Browser) {
   say("\nAgent, voice mode");
@@ -703,7 +746,7 @@ async function voiceScenario(browser: Browser) {
 }
 
 const SCENARIOS: [string, (b: Browser) => Promise<void>][] = [
-  ["html", htmlScenario], ["html", strayTagScenario], ["html", noEditScenario], ["html", brokenPageScenario],
+  ["html", htmlScenario], ["html", strayTagScenario], ["html", noEditScenario], ["html", brokenPageScenario], ["html", pauseScenario],
   ["md", mdScenario], ["md", lightOnlyScenario],
   ["format", formatScenario],
   ["agent", agentOffScenario], ["agent", shareScenario], ["agent", modelScenario], ["agent", agentEmptyScenario], ["agent", voiceScenario],

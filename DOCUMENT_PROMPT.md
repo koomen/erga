@@ -81,6 +81,25 @@ rendered page:
    every `data-erga` attribute and `erga-` element and class; never write them
    into a document.
 
+10. **Let the editor pause a page that reacts to input.** If the page's script
+    answers clicks, keys or scrolling on the page itself (slides that advance
+    on click, a game, a canvas that grabs the mouse), people editing its text
+    end up fighting it. Define `window.ergaPause`: the editor's pause button
+    calls it with `true` when someone pauses the page to edit it, and `false`
+    when they resume. While paused, ignore that input and stop anything that
+    changes the page on its own (timers, autoplay); animation may keep
+    running. Outside the editor nothing calls it, so the page works as usual.
+
+    ```js
+    let paused = false;
+    window.ergaPause = (p) => { paused = p; };
+    addEventListener("click", () => { if (!paused) nextSlide(); });
+    ```
+
+    A page without it can't be paused, and the pause button says so. A page
+    that doesn't react to input has nothing to pause and needs no
+    `ergaPause`.
+
 ## Markdown documents
 
 - CommonMark with GitHub's extensions (tables, task lists, strikethrough).

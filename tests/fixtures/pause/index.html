@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Pausable page</title>
+<style>body { background: #fff; font: 16px/1.5 sans-serif; margin: 40px; }</style>
+</head>
+<body>
+  <h1>Slides that advance on click</h1>
+  <p>A click anywhere moves on to the next slide.</p>
+  <script>
+    let paused = false;
+    window.slide = 1;
+    window.ergaPause = (p) => { paused = p; };
+    addEventListener("click", () => { if (!paused) window.slide++; });
+  </script>
+</body>
+</html>
