@@ -40,6 +40,10 @@ per-document host as the local server (`host.ts`), agent included.
     bun run dev:worker              # the Worker locally (needs .dev.vars, below)
     bun run deploy                  # build and deploy with the cf CLI
 
+Pushes to `main` deploy on their own: Workers Builds runs `./site.sh` then
+`bunx cf deploy`, with `BUN_VERSION` set to match `.bun-version`
+(`cf builds workers get` and `cf builds triggers` show and change it).
+
 Secrets are set with `bunx cf workers secrets update`: `GITHUB_CLIENT_SECRET`
 (for the GitHub OAuth app whose client ID is in `cloudflare.config.ts`, with
 the callback `https://erga.dev/auth/github/callback`), `SESSION_SECRET` (any long random
