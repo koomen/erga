@@ -168,6 +168,7 @@
   .sample-body h3 { font-family: inherit; font-size: 14px; font-weight: 700; text-transform: uppercase; }
   .sample-body .dir { color: var(--muted); font-style: italic; }
   .sample-body .line { padding-left: 2em; }
+  .sample-body:focus { outline: none; }
   .sample-body .line strong { display: block; padding-left: 6em; font-weight: 400; text-transform: uppercase; }
   /* At rest the page sits on top of its source, shifted down and right; editing it springs them side by side. */
   .sample { --spring: cubic-bezier(.34, 1.45, .64, 1); transition: margin-bottom .55s var(--spring); }
@@ -575,6 +576,15 @@ fetch('mail.json')
         index([...body.children].map(clean));
         show();
         new MutationObserver(sync).observe(body, { subtree: true, childList: true, characterData: true });
+
+        // Outside the editor (the page published as is, like the read-only demo at erga.dev/),
+        // nothing makes the scene editable, so make it editable here and the demo still works.
+        // In the editor the page runs in its frame and the editor's own editing drives it.
+        if (!window.frameElement) {
+          body.contentEditable = 'plaintext-only';
+          if (body.contentEditable != 'plaintext-only') body.contentEditable = 'true';
+          body.spellcheck = false;
+        }
 
         // Clicking into the page opens the pair side by side; clicking anywhere else closes it.
         const setOpen = on => fig.classList.toggle('open', on);
