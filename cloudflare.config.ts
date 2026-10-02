@@ -1,5 +1,6 @@
 // erga.dev on Cloudflare: the front door Worker (worker/index.ts), one
-// Durable Object per document (worker/doc-host.ts), and the editor's own
+// Durable Object per document (worker/doc-host.ts) and one per person
+// listing their documents (worker/doc-list.ts), and the editor's own
 // files as static assets (built into .site/ by `bun run site`).
 import { bindings, defineConfig, exports } from "cf/config";
 import * as entrypoint from "./worker/index.ts" with { type: "cf-worker" };
@@ -18,9 +19,11 @@ export default defineConfig(({ mode }) => ({
     assets: { htmlHandling: "none", notFoundHandling: "none", runWorkerFirst: true },
     exports: {
       DocHost: exports.durableObject({ storage: "sqlite" }),
+      DocList: exports.durableObject({ storage: "sqlite" }),
     },
     env: {
       DOCS: bindings.durableObject({ worker: "erga", exportName: "DocHost" }),
+      LISTS: bindings.durableObject({ worker: "erga", exportName: "DocList" }),
       ASSETS: bindings.assets(),
       ALLOWED_USERS: bindings.text("koomen,dsiroker"),
       GITHUB_CLIENT_ID: bindings.text("Ov23ctkY7oLarHcPA97b"),

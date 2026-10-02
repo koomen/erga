@@ -32,10 +32,24 @@ document in the same style: copy the folder to start a new one
 The same editor runs on Cloudflare. A front-door Worker (`worker/index.ts`)
 shows the demo read-only at `/` with an Edit button; Edit signs you in with
 GitHub (only the logins in `ALLOWED_USERS`, in `cloudflare.config.ts`) and
-makes you a fresh copy at `/<you>/<id>`, which anyone signed in can open and
-edit with you. Each document is a Durable Object (`worker/doc-host.ts`) that
-keeps its files and Yjs state in its own storage and serves the same
+makes you a copy of the demo at `/<you>/<id>`, which anyone signed in can
+open and edit with you. `/new` makes a blank document instead (a copy of
+`templates/doc/`). Each document is a Durable Object (`worker/doc-host.ts`)
+that keeps its files and Yjs state in its own storage and serves the same
 per-document host as the local server (`host.ts`), agent included.
+
+`/docs` lists your documents, latest edit first, titled by their first
+heading (or `<title>`), with a New document button and a delete button on
+each; the editor's top bar links to it. The list is a Durable Object per
+person (`worker/doc-list.ts`) that each document keeps up to date: when
+it's made, when one of its files changes, when it's deleted, and whenever
+it opens, so documents made before the list existed join it the first time
+they're opened. A document nobody edits is deleted `UNEDITED_HOURS` (24)
+after it's made, by an alarm set when it's made. An edit is a change to a
+file's text, from a person, an agent or a publish; opening the document,
+moving a caret or the room's own bookkeeping never are. One still open in
+a tab when its time comes gets another hour. Test documents are neither
+listed nor deleted.
 
     bun run dev:worker              # the Worker locally (needs .dev.vars, below)
     bun run deploy                  # build and deploy with the cf CLI
@@ -51,6 +65,9 @@ string) and `ANTHROPIC_API_KEY`. Locally they come from `.dev.vars`, where
 `DEV_LOGIN=<login>` signs you in without GitHub (on localhost only) and
 `ERGA_AGENT_MODEL=script` swaps in the scripted agent. The multiplayer suite
 runs against it unchanged: see `tests/suite/README.md` for the remote target.
+`bun tests/worker.ts http://localhost:5173` checks the front door's own
+routes against it: `/new`, `/docs` and its titles, deleting, and expiry
+(locally, `/new?unedited=<ms>` shortens a document's time).
 
 To run it against erga.dev itself, get a test token from
 https://erga.dev/tokens (it lasts a week) and:

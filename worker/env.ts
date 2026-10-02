@@ -1,9 +1,12 @@
 import type { DocHost } from "./doc-host";
+import type { DocList } from "./doc-list";
 
 /** The Worker's bindings (cloudflare.config.ts); secrets are set with `cf workers secrets update`. */
 export interface Env {
   /** One Durable Object per document, named "<owner>/<id>". */
   DOCS: DurableObjectNamespace<DocHost>;
+  /** Each person's list of their documents, named by their login (lowercase). */
+  LISTS: DurableObjectNamespace<DocList>;
   /** The editor's own files (page.html as editor.html, page.js, style.css, fonts). */
   ASSETS: Fetcher;
   /** GitHub logins allowed to sign in, comma-separated. */

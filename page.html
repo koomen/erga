@@ -90,6 +90,8 @@
     #btn-pause[aria-pressed="true"] { color: #d97706; background: rgba(245, 158, 11, 0.14); }
     #btn-pause[aria-disabled="true"] { opacity: 0.4; cursor: default; }
     #btn-pause[aria-disabled="true"]:hover { background: transparent; color: var(--chrome); }
+    /* Back to your documents: signed in (erga.dev) only. */
+    #btn-docs[hidden] { display: none; }
     /* A mode that's on stays in sight while the rest of the controls hide. */
     body.chrome-hidden .chrome-top:has(:is(#btn-track, #btn-pause)[aria-pressed="true"]) { opacity: 1; }
     body.chrome-hidden .chrome-top:has(:is(#btn-track, #btn-pause)[aria-pressed="true"]) > :not([aria-pressed="true"]) { opacity: 0; pointer-events: none; }
@@ -326,6 +328,9 @@
   </button>
 
   <header class="chrome chrome-top" aria-label="Controls">
+    <a class="icon-btn" id="btn-docs" href="/docs" hidden aria-label="Your documents" data-tip="Your documents">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 4.5h6.5L19 9v10.5a1 1 0 0 1-1 1H8a1 1 0 0 1-1-1v-14a1 1 0 0 1 1-1Z"/><path d="M4.5 7.5v12a2 2 0 0 0 2 2h8.5"/></svg>
+    </a>
     <div class="people" id="people" aria-label="Who's here"></div>
     <button type="button" class="icon-btn" id="btn-pause" aria-label="Pause the page" aria-pressed="false" aria-disabled="true" aria-controls="pause-card">
       <svg class="i-pause" viewBox="0 0 24 24" aria-hidden="true"><path d="M9.25 6.5v11M14.75 6.5v11"/></svg>
