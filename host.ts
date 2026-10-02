@@ -13,10 +13,10 @@
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
-import type * as Etag from "effect/http/Etag";
-import type * as FileSystem from "effect/FileSystem";
-import type * as HttpPlatform from "effect/http/HttpPlatform";
-import type * as Path from "effect/Path";
+import * as Etag from "effect/http/Etag";
+import * as FileSystem from "effect/FileSystem";
+import * as HttpPlatform from "effect/http/HttpPlatform";
+import * as Path from "effect/Path";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { HttpApiBuilder, HttpApiMiddleware } from "effect/http-api";
 import { MODELS, externalGuide, isModelChoice, startSession, type AgentConfig, type AgentSession } from "./agent";
@@ -76,6 +76,14 @@ export const MIME: Record<string, string> = {
   ".txt": "text/plain; charset=utf-8", ".wasm": "application/wasm", ".mp4": "video/mp4", ".webm": "video/webm", ".mp3": "audio/mpeg",
 };
 export const mimeOf = (path: string) => MIME[/\.[^./]+$/.exec(path.toLowerCase())?.[0] ?? ""];
+
+/** HttpApi's platform needs, none of which a document served from storage uses. */
+const fromStorage = Layer.mergeAll(
+  HttpPlatform.layer.pipe(Layer.provide(FileSystem.layerNoop({}))),
+  Etag.layerWeak,
+  FileSystem.layerNoop({}),
+  Path.layer,
+);
 
 export function makeHost(opts: HostOptions) {
   const { room, files, doc, agent } = opts;
@@ -255,15 +263,20 @@ export function makeHost(opts: HostOptions) {
     })),
   ];
 
+  const app = Layer.mergeAll(api, HttpRouter.addAll(routes.map((r) => HttpRouter.route(r.method, r.path, Effect.catch(r.handler, (e) => Effect.succeed(failed(e))))))) as Layer.Layer<
+    never, never, HttpRouter.HttpRouter | HttpPlatform.HttpPlatform | Etag.Generator | FileSystem.FileSystem | Path.Path
+  >;
+  const web = HttpRouter.toWebHandler(app.pipe(Layer.provide(fromStorage)), { disableLogger: true });
+
   return {
     /**
-     * The document's HTTP app: the API, /api/stored and /doc/. It needs the
-     * platform's HttpPlatform, Etag generator, FileSystem and Path (HttpApi's
-     * requirements), and the caller adds the WebSockets and the editor's files.
+     * The document's HTTP app, as a web handler: the API, /api/stored and
+     * /doc/, for requests whose path is the one inside the document. The
+     * caller adds the WebSockets and the editor's files.
      */
-    app: Layer.mergeAll(api, HttpRouter.addAll(routes.map((r) => HttpRouter.route(r.method, r.path, Effect.catch(r.handler, (e) => Effect.succeed(failed(e))))))) as Layer.Layer<
-      never, never, HttpRouter.HttpRouter | HttpPlatform.HttpPlatform | Etag.Generator | FileSystem.FileSystem | Path.Path
-    >,
+    handler: (request: Request) => web.handler(request),
+    /** Releases the handler (when the document closes). */
+    dispose: web.dispose,
     /** A tab joins its person's event channel; returns the leave function. */
     addTab: (user: string, send: (msg: unknown) => void) => {
       const tab: Tab = { user, send };

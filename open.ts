@@ -1,18 +1,27 @@
 #!/usr/bin/env bun
-// Opens a page from disk in the page editor, as a document room that people
-// and their agents edit together.
+// The local host: erga.dev's app on your machine, for you and your agents.
 //
-//   bun open.ts [file-or-directory] [--port 4400] [--no-open]   (--help for more)
+//   bun open.ts [file-or-directory] [--port 4400] [--no-open] [--data ~/.erga]   (--help for more)
 //
-// With no document named, it opens a scratch copy of the demo (templates/demo).
+// It serves the same front door as the hosted Worker (front.ts): the demo
+// at /, /new, your documents at /docs, and each document at /<you>/<id>,
+// with the per-document host (host.ts) under it. What the platform does on
+// Cloudflare is done here with local stand-ins:
 //
-// A directory must hold index.html or index.md. The host turns the folder
-// into one document room (room.ts): a shared Yjs doc of its text files that
-// editor tabs join over a WebSocket at /api/room, with files written back to
-// disk on a debounce and edits made on disk (an editor, git) merged in. It
-// serves the editor shell at / and the document's folder at /doc/, text
-// files from the room (so a page always loads the latest shared version)
-// and everything else from disk.
+//   - who you are: the name in your git config, no sign-in. A tab can be
+//     someone else with ?user=Ada; /auth/github?as=Ada signs this browser in
+//     as Ada (a cookie) and /auth/logout back out
+//   - documents: folders in the data directory (docs.ts), real files you
+//     can look at, kept across restarts; one nobody edits goes after 24
+//     hours, as hosted
+//   - the editor's own files: from this folder
+//
+// Naming a file or folder opens it as one of your documents, edited in
+// place: the room (room.ts) writes edits back to it 400ms after the last
+// one and merges edits made to it on disk (an editor, git). It gets an
+// address of its own, the same every time, joins /docs, and the browser
+// opens on it. A directory must hold index.html or index.md. With nothing
+// named, the browser opens on the demo.
 //
 // Each person gets their own agent session (agent.ts) when .env
 // holds an API key: a private transcript, shared by that person's tabs, and
@@ -34,14 +43,13 @@ import * as BunRuntime from "@effect/platform-bun/BunRuntime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
-import * as Stream from "effect/Stream";
 import * as Config from "effect/Config";
 import * as Console from "effect/Console";
 import * as Option from "effect/Option";
-import * as Schedule from "effect/Schedule";
 import { MODELS, loadConfig } from "./agent";
-import { FileStore, Room, StateStore, StoreError } from "./room";
-import { failed, ignored, makeHost, mimeOf } from "./host";
+import { LocalDocs } from "./docs";
+import { frontDoor, ID, OWNER, safeNext, type Platform, type Session } from "./front";
+import { failed, mimeOf } from "./host";
 import { version } from "./package.json";
 
 const EDITOR_DIR = new URL(".", import.meta.url).pathname.replace(/\/$/, "");
@@ -57,12 +65,10 @@ interface Doc {
   readonly kind: "html" | "md";
 }
 
-
 /** The host's settings from the environment: tests set these; people rarely need to. */
 const settings = Config.all({
-  /** Where the room's Yjs state is kept (the suite uses a scratch folder). */
-  stateDir: Config.option(Config.String("ERGA_ROOM_STATE_DIR")),
-  cacheHome: Config.option(Config.String("XDG_CACHE_HOME")),
+  /** Where documents are kept, if not ~/.erga (--data says it too). */
+  dataDir: Config.option(Config.String("ERGA_DATA_DIR")),
   home: Config.withDefault(Config.String("HOME"), "/tmp"),
   user: Config.withDefault(Config.String("USER"), ""),
   /** Shortens the room's write delay (tests do). */
@@ -78,7 +84,8 @@ const resolveDoc = (arg: string) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const abs = path.resolve(arg);
+    // Its real path: the document's address comes from it, so it's the same however it's named.
+    const abs = yield* fs.realPath(path.resolve(arg)).pipe(Effect.mapError(() => new UsageError({ message: `${arg}: not found` })));
     const info = yield* fs.stat(abs).pipe(Effect.mapError(() => new UsageError({ message: `${arg}: not found` })));
     let file = abs;
     if (info.type === "Directory") {
@@ -109,110 +116,130 @@ const serveFile = (root: string, rel: string, cacheControl = "no-store") =>
     return HttpServerResponse.uint8Array(bytes, { contentType: type, headers: { "Cache-Control": cacheControl } });
   });
 
-/** A scratch copy of templates/demo, removed when the host stops. */
-const demoCopy = Effect.gen(function* () {
+/** The templates' text files, by template then path, as the Worker bundles them. */
+const readTemplates = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const dir = path.join(yield* fs.makeTempDirectoryScoped({ prefix: "erga-demo-" }), "demo");
-  yield* fs.copy(path.join(EDITOR_DIR, "templates", "demo"), dir);
-  return dir;
-}).pipe(Effect.mapError((e) => new UsageError({ message: `couldn't copy the demo: ${e.message}` })));
+  const root = path.join(EDITOR_DIR, "templates");
+  const out: Record<string, Record<string, string>> = {};
+  for (const name of yield* fs.readDirectory(root)) {
+    for (const rel of yield* fs.readDirectory(path.join(root, name), { recursive: true })) {
+      const full = path.join(root, name, rel);
+      if ((yield* fs.stat(full)).type == "File") (out[name] ??= {})[rel.split(path.sep).join("/")] = yield* fs.readFileString(full);
+    }
+  }
+  return out;
+});
 
-const program = (args: { target: Option.Option<string>; port: number; open: boolean }) => Effect.gen(function* () {
+/** The local stand-in for the session cookie: just the name this browser signed in as. */
+const COOKIE = "erga_session";
+const cookieOf = (header: string | null | undefined) => {
+  for (const part of (header ?? "").split(";")) {
+    const [k, ...v] = part.trim().split("=");
+    if (k == COOKIE) try { return decodeURIComponent(v.join("=")); } catch { return ""; }
+  }
+  return "";
+};
+
+const program = (args: { target: Option.Option<string>; port: number; open: boolean; data: Option.Option<string> }) => Effect.gen(function* () {
   const { port } = args;
   const env = yield* settings;
-  const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  // No document named: the demo, from a fresh copy so the template stays as it is.
-  const target = Option.isSome(args.target) ? args.target.value : yield* demoCopy;
-  const doc = yield* resolveDoc(target);
   const gitName = yield* spawner.string(ChildProcess.make("git", ["config", "user.name"])).pipe(Effect.orElseSucceed(() => ""));
   const defaultName = gitName.trim().split(/\s+/)[0] || env.user || "Me";
-  const docPath = path.relative(doc.dir, doc.path).split(path.sep).join("/");
 
-  // The folder as a FileStore (room.ts): what the room loads, writes back
-  // and re-reads when the watcher sees a change. Writes are atomic renames.
-  const storeError = (e: { message: string }) => new StoreError({ message: e.message });
-  const store = FileStore.of({
-    list: fs.readDirectory(doc.dir, { recursive: true }).pipe(
-      Effect.map((all) => all.map((r) => r.split(path.sep).join("/")).filter((r) => !ignored(r))),
-      Effect.flatMap((all) => Effect.filter(all, (r) => fs.stat(path.join(doc.dir, r)).pipe(Effect.map((s) => s.type == "File"), Effect.orElseSucceed(() => false)))),
-      Effect.mapError(storeError),
-    ),
-    read: (rel) => fs.readFile(path.join(doc.dir, rel)).pipe(Effect.orElseSucceed(() => null)),
-    write: (rel, text) => Effect.gen(function* () {
-      const full = path.join(doc.dir, rel);
-      yield* fs.makeDirectory(path.dirname(full), { recursive: true });
-      const tmp = path.join(path.dirname(full), `.${path.basename(full)}.erga-${process.pid}.tmp`);
-      yield* fs.writeFileString(tmp, text);
-      yield* fs.rename(tmp, full);
-    }).pipe(Effect.mapError(storeError)),
-  });
-  // The room's Yjs state lives in a cache file named for the folder, so a
-  // restarted host picks up the same history (room.ts).
-  const stateDir = Option.getOrElse(env.stateDir, () => path.join(Option.getOrElse(env.cacheHome, () => path.join(env.home, ".cache")), "erga", "rooms"));
-  const stateFile = path.join(stateDir, new Bun.CryptoHasher("sha1").update(doc.dir).digest("hex").slice(0, 20) + ".yjs");
-  const state = StateStore.of({
-    load: fs.readFile(stateFile).pipe(Effect.orElseSucceed(() => null)),
-    save: (bytes) => Effect.gen(function* () {
-      yield* fs.makeDirectory(path.dirname(stateFile), { recursive: true });
-      yield* fs.writeFile(stateFile + ".tmp", bytes);
-      yield* fs.rename(stateFile + ".tmp", stateFile);
-    }).pipe(Effect.mapError(storeError)),
-  });
-  // Open for as long as the host runs; on the way out it writes what's unsaved.
-  const room = yield* Room.make({ log: (line) => console.log(line), writeDelay: Option.getOrUndefined(env.writeDelay) }).pipe(
-    Effect.provideService(FileStore, store),
-    Effect.provideService(StateStore, state),
-  );
-  if (room.text(docPath) == null) return yield* new UsageError({ message: `${doc.name}: not a UTF-8 text file` });
-
-  // Who a request is from. Locally that's just a name per tab (?user=Ada),
-  // defaulting to the person running the host.
-  const userOf = (url: URL) => {
-    const name = (url.searchParams.get("user") || "").trim().slice(0, 40) || defaultName;
+  // Who a request is from. Locally that's a name: the tab's own (?user=Ada),
+  // else the one this browser signed in as, else the person running the host.
+  // Their login, the owner part of their documents' addresses, is the name
+  // in letters and digits.
+  const nameOf = (url: URL, cookie: string | null | undefined) =>
+    (url.searchParams.get("user") || cookieOf(cookie)).trim().slice(0, 40) || defaultName;
+  const personOf = (url: URL, cookie: string | null | undefined) => {
+    const name = nameOf(url, cookie);
     return { id: name.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-|-$/g, "") || "anon", name };
   };
+  const loginOf = (name: string) =>
+    name.normalize("NFKD").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 39) || "me";
+  const sessionOf = (request: Request): Session => {
+    const url = new URL(request.url);
+    const name = nameOf(url, request.headers.get("cookie"));
+    return { login: loginOf(name), name, ...(url.searchParams.get("user") ? { as: name } : {}) };
+  };
   const urlOf = (req: HttpServerRequest.HttpServerRequest) => new URL(req.url, "http://localhost");
+
+  const dataDir = path.resolve(Option.getOrElse(Option.orElse(args.data, () => env.dataDir), () => path.join(env.home, ".erga")));
   const cfg = yield* loadConfig(Option.getOrElse(env.agentEnvFile, () => path.join(EDITOR_DIR, ".env")));
-  const host = makeHost({
-    room, files: store, agent: cfg,
-    doc: { name: doc.name, path: docPath, kind: doc.kind, dir: doc.dir },
-    personOf: (req) => userOf(urlOf(req)),
-    baseUrl: (req) => `http://${req.headers["host"] ?? `127.0.0.1:${port}`}`,
+  const docs = new LocalDocs(dataDir, {
+    agent: cfg,
+    personOf: (req) => personOf(urlOf(req), req.headers["cookie"]),
+    writeDelay: Option.getOrUndefined(env.writeDelay),
+    log: (line) => console.log(line),
   });
+  // Open for as long as the host runs; on the way out each room writes what's unsaved.
+  yield* Effect.acquireRelease(Effect.promise(() => docs.start()), () => Effect.promise(() => docs.close()));
 
-  // Watch the folder, subfolders included, and hand every change to the
-  // room: it merges text edits it didn't make and notes changed assets.
-  const watcher = fs.watch(doc.dir, { recursive: true }).pipe(
-    Stream.map((ev) => path.relative(doc.dir, path.resolve(doc.dir, ev.path)).split(path.sep).join("/")),
-    Stream.filter((rel) => !ignored(rel)),
-    Stream.groupedWithin(1000, "60 millis"),
-    Stream.mapEffect((chunk) => Effect.forEach(new Set(chunk), (rel) => room.fileChanged(rel).pipe(
-      Effect.catch((e) => Effect.sync(() => console.log(`  could not read ${rel}: ${e.message}`))),
-    ), { discard: true })),
-    Stream.retry(Schedule.spaced("250 millis")),
-    Stream.runDrain,
-    Effect.catchCause(() => Effect.void),
-  );
+  // A file or folder named: one of your documents, edited where it is.
+  const me = loginOf(defaultName);
+  let start = "/";
+  let opened: Doc | null = null;
+  if (Option.isSome(args.target)) {
+    const doc = opened = yield* resolveDoc(args.target.value);
+    const index = path.relative(doc.dir, doc.path).split(path.sep).join("/");
+    const id = yield* Effect.promise(() => docs.link(me, doc.dir, index));
+    const room = (yield* Effect.promise(() => docs.open(me, id)))?.room;
+    if (room?.text(index) == null) {
+      yield* Effect.promise(() => docs.delete(me, id));
+      return yield* new UsageError({ message: `${doc.name}: not a UTF-8 text file` });
+    }
+    start = `/${me}/${id}`;
+  }
 
-  // The editor's own files, and the WebSockets (host.ts leaves those to each platform).
+  const templates = yield* readTemplates;
+  const editorFile = path.join(EDITOR_DIR, "page.html");
+  const platform: Platform = {
+    sessionOf: async (request) => sessionOf(request),
+    templates,
+    editor: async () => new Response(Bun.file(editorFile)),
+    mayCreate: () => true,
+    dev: () => true,
+    docs: {
+      create: (owner, id, files, index, opts) => docs.create(owner, id, files, index, opts),
+      exists: (owner, id) => docs.exists(owner, id),
+      delete: (owner, id) => docs.delete(owner, id),
+      // The list is read from the documents' folders, so there's no stale entry to drop.
+      unlist: async () => {},
+      list: (owner) => docs.list(owner),
+      fetch: (owner, id, request) => docs.fetch(owner, id, request),
+    },
+  };
+
+  /** The document a socket is for, opened if need be. */
+  const docOf = Effect.gen(function* () {
+    const { owner, id } = yield* HttpRouter.params;
+    return owner && id && OWNER.test(owner) && ID.test(id) ? yield* Effect.promise(() => docs.open(owner, id)) : null;
+  });
+  const notFound = HttpServerResponse.text("No such document", { status: 404 });
+
+  // The WebSockets (host.ts leaves those to each platform), the editor's own
+  // files, signing in, and everything else to the front door.
   const routes: Array<HttpRouter.Route<unknown, FileSystem.FileSystem | Path.Path>> = [
-    HttpRouter.route("GET", "/", serveFile(EDITOR_DIR, "page.html")),
     // The room: Yjs sync and awareness over a WebSocket (y-websocket's protocol).
-    HttpRouter.route("GET", "/api/room/*", Effect.gen(function* () {
+    HttpRouter.route("GET", "/:owner/:id/api/room/*", Effect.gen(function* () {
+      const doc = yield* docOf;
+      if (!doc) return notFound;
       const req = yield* HttpServerRequest.HttpServerRequest;
       const epoch = urlOf(req).searchParams.get("epoch");
       const socket = yield* req.upgrade;
       const pull = yield* Socket.readerBytes(socket);
       const { write } = yield* socket.writer;
-      const conn = room.connect((m) => { Effect.runFork(write(m)); }, { epoch });
+      const conn = doc.room.connect((m) => { Effect.runFork(write(m)); }, { epoch });
       // A tab holding another epoch's history is refused, never merged (room.ts).
       if (!conn) return yield* write(new Socket.CloseEvent(4409, "stale epoch")).pipe(Effect.as(HttpServerResponse.empty()), Effect.orElseSucceed(() => HttpServerResponse.empty()));
+      const leave = doc.track(() => { Effect.runFork(Effect.ignore(write(new Socket.CloseEvent(4404, "document deleted")))); });
       yield* each(pull, (data) => conn.receive(data) ? Effect.void : write(new Socket.CloseEvent(4400, "malformed message"))).pipe(
         Effect.catch(() => Effect.void),
-        Effect.ensuring(Effect.sync(() => conn.close())),
+        Effect.ensuring(Effect.sync(() => { leave(); conn.close(); })),
       );
       return HttpServerResponse.empty();
     }).pipe(Effect.scoped)),
@@ -220,50 +247,75 @@ const program = (args: { target: Option.Option<string>; port: number; open: bool
     // browser allows only six HTTP/1.1 connections per host and every open
     // tab's event stream would hold one, leaving later requests (sending the
     // agent a message) queued forever. WebSockets don't count against that.
-    HttpRouter.route("GET", "/api/events", Effect.gen(function* () {
+    HttpRouter.route("GET", "/:owner/:id/api/events", Effect.gen(function* () {
+      const doc = yield* docOf;
+      if (!doc) return notFound;
       const req = yield* HttpServerRequest.HttpServerRequest;
-      const user = userOf(urlOf(req));
+      const user = personOf(urlOf(req), req.headers["cookie"]);
       const socket = yield* req.upgrade;
       const { pull } = yield* socket.reader;
       const { write } = yield* socket.writer;
-      const leave = host.addTab(user.id, (msg) => { Effect.runFork(write(JSON.stringify(msg)).pipe(Effect.ignore)); });
+      const leaveTab = doc.host.addTab(user.id, (msg) => { Effect.runFork(write(JSON.stringify(msg)).pipe(Effect.ignore)); });
+      const leave = doc.track(() => { Effect.runFork(Effect.ignore(write(new Socket.CloseEvent(4404, "document deleted")))); });
       yield* each(pull, () => Effect.void).pipe(
         Effect.catch(() => Effect.void),
-        Effect.ensuring(Effect.sync(leave)),
+        Effect.ensuring(Effect.sync(() => { leave(); leaveTab(); })),
       );
       return HttpServerResponse.empty();
     }).pipe(Effect.scoped)),
-    HttpRouter.route("GET", "/*", HttpRouter.params.pipe(Effect.flatMap((p) => serveFile(EDITOR_DIR, p["*"] ?? "", "no-cache")))),
+    HttpRouter.route("GET", "/page.js", serveFile(EDITOR_DIR, "page.js", "no-cache")),
+    HttpRouter.route("GET", "/style.css", serveFile(EDITOR_DIR, "style.css", "no-cache")),
+    HttpRouter.route("GET", "/fonts/*", HttpRouter.params.pipe(Effect.flatMap((p) => serveFile(path.join(EDITOR_DIR, "fonts"), p["*"] ?? "", "no-cache")))),
+    // Signing in: nothing to check locally. ?as= names who this browser is
+    // (as DEV_LOGIN does for the Worker in development), and signing out
+    // goes back to the person running the host.
+    HttpRouter.route("GET", "/auth/github", Effect.gen(function* () {
+      const url = urlOf(yield* HttpServerRequest.HttpServerRequest);
+      const as = url.searchParams.get("as")?.trim().slice(0, 40);
+      const headers: Record<string, string> = { Location: safeNext(url.searchParams.get("next")) };
+      if (as) headers["Set-Cookie"] = `${COOKIE}=${encodeURIComponent(as)}; Path=/; HttpOnly; SameSite=Lax`;
+      return HttpServerResponse.empty({ status: 302, headers });
+    })),
+    HttpRouter.route("GET", "/auth/logout", HttpServerResponse.empty({ status: 302, headers: { Location: "/", "Set-Cookie": `${COOKIE}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax` } })),
+    HttpRouter.route("*", "*", Effect.gen(function* () {
+      const request = yield* HttpServerRequest.toWeb(yield* HttpServerRequest.HttpServerRequest);
+      return HttpServerResponse.fromWeb(yield* Effect.promise(() => frontDoor(request, platform)));
+    })),
   ];
-  const app = Layer.mergeAll(host.app, HttpRouter.addAll(routes.map((r) => HttpRouter.route(r.method, r.path, Effect.catch(r.handler, (e) => Effect.succeed(failed(e)))))));
+  const app = HttpRouter.addAll(routes.map((r) => HttpRouter.route(r.method, r.path, Effect.catch(r.handler, (e) => Effect.succeed(failed(e))))));
 
-  const url = `http://127.0.0.1:${port}/`;
+  const base = `http://127.0.0.1:${port}`;
   const server = Layer.unwrap(
     Effect.gen(function* () {
-      const rel = path.relative(process.cwd(), doc.path);
-      const what = Option.isNone(args.target) ? "the demo (a copy of templates/demo; edits last until the host stops)" : rel.startsWith("..") ? doc.path : rel || doc.name;
-      yield* Console.log(`\n  editing ${doc.kind === "md" ? "Markdown" : "HTML"}: ${what}\n  ${url}   (another person: ${url}?user=Ada)\n  agent: ${"missing" in cfg ? `off (${host.agentOff})` : `${cfg.model == "script" ? "script" : MODELS[cfg.model].label} to start (each person can switch)`}\n`);
-      if (args.open) yield* Effect.forkDetach(Effect.ignore(spawner.exitCode(ChildProcess.make("open", [url]))));
+      const where = dataDir.replace(env.home, "~");
+      if (opened) {
+        const rel = path.relative(process.cwd(), opened.path);
+        yield* Console.log(`\n  editing ${opened.kind === "md" ? "Markdown" : "HTML"}: ${rel.startsWith("..") ? opened.path : rel || opened.name}\n  ${base}${start}   (another person: ${base}${start}?user=Ada)`);
+      } else {
+        yield* Console.log(`\n  ${base}/   (the demo; Edit makes you a copy)`);
+      }
+      yield* Console.log(`  your documents: ${base}/docs   (kept in ${where}, as ${me})\n  agent: ${"missing" in cfg ? `off (${cfg.missing})` : `${cfg.model == "script" ? "script" : MODELS[cfg.model].label} to start (each person can switch)`}\n`);
+      if (args.open) yield* Effect.forkDetach(Effect.ignore(spawner.exitCode(ChildProcess.make("open", [base + start]))));
       // Tabs hold their sockets open for good, so waiting for connections to
       // finish (Bun's graceful shutdown) would only stall every exit by 20s.
       return HttpRouter.serve(app, { disableLogger: true, disableListenLog: true }).pipe(Layer.provide(BunHttpServer.layer({ port, idleTimeout: 0, gracefulShutdownTimeout: 0 })));
     }),
   );
-  yield* Effect.forkScoped(watcher);
   yield* Layer.launch(server);
 });
 
 const open = Command.make("open", {
   target: Argument.String("file-or-directory").pipe(
-    Argument.withDescription("An .html or .md file, or a folder holding index.html or index.md (the demo if left out)"),
+    Argument.withDescription("An .html or .md file, or a folder holding index.html or index.md, to edit where it is (left out, the browser opens on the demo)"),
     Argument.optional,
   ),
-  port: Flag.Int("port").pipe(Flag.withDefault(4400), Flag.withDescription("The port to serve the editor on")),
-  open: Flag.Boolean("open").pipe(Flag.withDefault(true), Flag.withDescription("Open the editor in a browser (--no-open doesn't)")),
+  port: Flag.Int("port").pipe(Flag.withDefault(4400), Flag.withDescription("The port to serve the app on")),
+  open: Flag.Boolean("open").pipe(Flag.withDefault(true), Flag.withDescription("Open the browser (--no-open doesn't)")),
+  data: Flag.String("data").pipe(Flag.withDescription("Where documents are kept (default: $ERGA_DATA_DIR, else ~/.erga)"), Flag.optional),
 }, (args) => program(args).pipe(
   Effect.scoped,
   Effect.catchTag("UsageError", (e) => Console.error(e.message).pipe(Effect.andThen(Effect.sync(() => process.exit(2))))),
-)).pipe(Command.withDescription("Opens a page from disk in the editor, for people and their agents to edit together."));
+)).pipe(Command.withDescription("Serves erga.dev's app locally: the demo, your documents (/docs, /new), and any page from disk to edit in place, for people and their agents."));
 
 Command.run(open, { version }).pipe(
   Effect.provide(BunServices.layer),

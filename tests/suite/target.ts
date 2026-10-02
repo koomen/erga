@@ -4,9 +4,9 @@
 // endpoints, what's served and what's stored. Nothing here peeks inside the
 // server, so the same tests run against the local host and a deployment.
 //
-//   local    spawns open.ts on a scratch copy of a fixture, one host per
-//            document, with the scripted agent model. It can also restart
-//            or kill the host and edit files on disk.
+//   local    spawns open.ts on a scratch copy of a fixture (tests/host.ts),
+//            one host per document, with the scripted agent model. It can
+//            also restart or kill the host and edit files on disk.
 //   remote   a deployed document at ERGA_TARGET_DOC (its URL must
 //            contain "test": the suite rewrites it), with optional auth
 //            (ERGA_TARGET_COOKIE, ERGA_TARGET_HEADERS as JSON,
@@ -20,6 +20,7 @@
 import { cpSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync, mkdirSync, statSync } from "fs";
 import { tmpdir } from "os";
 import { dirname, join, relative } from "path";
+import { startHost } from "../host";
 
 /**
  * What a target can do beyond the contract:
@@ -137,47 +138,26 @@ export class LocalTarget implements Target {
 
   async newDoc(fixture: string): Promise<Doc> {
     const dir = mkdtempSync(join(tmpdir(), "erga-suite-"));
-    const stateDir = mkdtempSync(join(tmpdir(), "erga-suite-state-"));
     cpSync(join(FIXTURES, fixture), dir, { recursive: true });
-    const port = 20000 + Math.floor(Math.random() * 20000);
     // A short write delay: the suite waits on storage a lot, and aims at the delay where it matters.
-    const env: Record<string, string> = { ...process.env as Record<string, string>, ERGA_ROOM_STATE_DIR: stateDir, ERGA_AGENT_ENV_FILE: "/nonexistent/.env", ERGA_WRITE_DELAY_MS: "100" };
+    const env: Record<string, string> = { ERGA_AGENT_ENV_FILE: "/nonexistent/.env", ERGA_WRITE_DELAY_MS: "100" };
     if (!this.opts.liveAgent) env.ERGA_AGENT_MODEL = "script";
-    let host: ReturnType<typeof Bun.spawn> | null = null;
-    let output = "";
-    const start = async () => {
-      host = Bun.spawn(["bun", join(EDITOR, "open.ts"), dir, "--port", String(port), "--no-open"], { env, stdout: "pipe", stderr: "pipe" });
-      for (const s of [host.stdout, host.stderr] as ReadableStream<Uint8Array>[]) (async () => { for await (const c of s) output = (output + new TextDecoder().decode(c)).slice(-20000); })();
-      // Usually ~200ms; the margin is for a machine busy running everything else at once.
-      for (let i = 0; i < 600; i++) {
-        try { if ((await fetch(`http://127.0.0.1:${port}/api/doc`)).ok) return; } catch { /* not up yet */ }
-        await Bun.sleep(25);
-      }
-      throw new Error(`host didn't start:\n${output}`);
-    };
-    const stop = async (signal: "SIGTERM" | "SIGKILL") => {
-      const h = host as ReturnType<typeof Bun.spawn> | null;
-      if (!h) return;
-      h.kill(signal);
-      await h.exited;
-      host = null;
-    };
-    await start();
-    const base = `http://127.0.0.1:${port}`;
-    const writeDelay = ((await (await fetch(`${base}/api/doc`)).json()) as { writeDelay?: number }).writeDelay ?? 400;
-    return makeDoc(base, {}, readFixture(fixture), {
+    // The folder opens as a document of its own, edited in place, at an address that stays the same across restarts.
+    const host = await startHost(dir, { env });
+    const writeDelay = ((await (await fetch(`${host.base}/api/doc`)).json()) as { writeDelay?: number }).writeDelay ?? 400;
+    return makeDoc(host.base, {}, readFixture(fixture), {
       writeDelay,
       writeDisk(p, data) { const full = join(dir, p); mkdirSync(dirname(full), { recursive: true }); writeFileSync(full, data); },
       async restart(how, whileDown) {
-        await stop(how == "graceful" ? "SIGTERM" : "SIGKILL");
-        if (how == "lose-state") { rmSync(stateDir, { recursive: true, force: true }); mkdirSync(stateDir, { recursive: true }); }
+        await host.stop(how == "graceful" ? "SIGTERM" : "SIGKILL");
+        // The room's saved state goes with the host's data (its record of the folder is made again on start).
+        if (how == "lose-state") { rmSync(host.data, { recursive: true, force: true }); mkdirSync(host.data, { recursive: true }); }
         await whileDown?.();
-        await start();
+        await host.start();
       },
       async dispose() {
-        await stop("SIGTERM");
+        await host.dispose();
         rmSync(dir, { recursive: true, force: true });
-        rmSync(stateDir, { recursive: true, force: true });
       },
     });
   }

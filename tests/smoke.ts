@@ -1,20 +1,19 @@
 // Opens real documents in the page editor, types into the first heading, and screenshots.
 //   bun tests/smoke.ts <path> [name]
-import { Browser, ROOT, SHOTS } from "./cdp";
+import { Browser, SHOTS } from "./cdp";
+import { startHost } from "./host";
 import { cpSync, mkdirSync, mkdtempSync, rmSync, statSync } from "fs";
 import { tmpdir } from "os";
 import { join, basename, dirname } from "path";
 const target = process.argv[2];
 const name = process.argv[3] ?? basename(target).replace(/\W+/g, "-");
-const port = 4700 + Math.floor(Math.random() * 200);
 const dir = mkdtempSync(join(tmpdir(), "erga-smoke-"));
 const isFile = statSync(target).isFile();
 cpSync(isFile ? dirname(target) : target, dir, { recursive: true });
-const host = Bun.spawn(["bun", `${ROOT}open.ts`, isFile ? join(dir, basename(target)) : dir, "--port", String(port), "--no-open"], { stdout: "pipe", stderr: "pipe" });
-for (let i = 0; i < 50; i++) { try { if ((await fetch(`http://127.0.0.1:${port}/api/doc`)).ok) break; } catch {} await Bun.sleep(100); }
+const host = await startHost(isFile ? join(dir, basename(target)) : dir);
 const browser = await Browser.launch();
 const p = await browser.page();
-await p.open(`http://127.0.0.1:${port}/`, { clear: false, width: 1200, height: 900 });
+await p.open(`${host.base}/`, { clear: false, width: 1200, height: 900 });
 await Bun.sleep(800);
 const F = `document.getElementById("frame").contentDocument`;
 const units = await p.eval<number>(`${F}.querySelectorAll("[data-erga-id]").length`);
@@ -30,4 +29,4 @@ await Bun.sleep(300);
 mkdirSync(SHOTS, { recursive: true });
 await p.screenshot(`${SHOTS}/smoke-${name}.png`);
 console.log(`picture: ${SHOTS}/smoke-${name}.png`);
-browser.close(); host.kill(); rmSync(dir, { recursive: true, force: true });
+browser.close(); await host.dispose(); rmSync(dir, { recursive: true, force: true });

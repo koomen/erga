@@ -5,18 +5,8 @@
 // when one of its files changes, and removes it when it's deleted.
 
 import { DurableObject } from "cloudflare:workers";
+import type { Listed } from "../front";
 import type { Env } from "./env";
-
-/** A document as its owner's list shows it. */
-export interface Listed {
-  id: string;
-  title: string;
-  created: number;
-  /** When a file last changed (when it was made, if never). */
-  modified: number;
-  /** When it goes away if nobody edits it (only while it's never been edited). */
-  expires?: number;
-}
 
 const DOC = "doc:";
 

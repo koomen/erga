@@ -7,6 +7,7 @@
 //   bun tests/agent.ts [--keep]
 
 import { Browser, MOD, ROOT } from "./cdp";
+import { startHost } from "./host";
 import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -23,24 +24,19 @@ async function until(f: () => Promise<boolean> | boolean, ms: number) {
   return f();
 }
 
-const port = 4500 + Math.floor(Math.random() * 400);
 const dir = mkdtempSync(join(tmpdir(), "erga-agent-"));
 cpSync(`${ROOT}tests/fixtures/page`, dir, { recursive: true });
 const file = join(dir, "index.html");
-const host = Bun.spawn(["bun", `${ROOT}open.ts`, dir, "--port", String(port), "--no-open"], { stdout: "pipe", stderr: "pipe" });
+const host = await startHost(dir);
 const browser = await Browser.launch();
 try {
-  for (let i = 0; i < 80; i++) {
-    try { if ((await fetch(`http://127.0.0.1:${port}/api/doc`)).ok) break; } catch {}
-    await Bun.sleep(100);
-  }
-  const info = await (await fetch(`http://127.0.0.1:${port}/api/agent`)).json() as { enabled: boolean; reason?: string; model?: string };
+  const info = await (await fetch(`${host.base}/api/agent`)).json() as { enabled: boolean; reason?: string; model?: string };
   check("agent is on", info.enabled, info.reason);
   if (!info.enabled) throw new Error("agent off");
   console.log(`     model: ${info.model}`);
 
   const p = await browser.page();
-  await p.open(`http://127.0.0.1:${port}/`, { clear: false, width: 1280, height: 800 });
+  await p.open(`${host.base}/`, { clear: false, width: 1280, height: 800 });
   await Bun.sleep(500);
   const F = `document.getElementById("frame").contentDocument`;
   await p.eval(`document.getElementById("frame").contentWindow.__marker = 1`);
@@ -104,15 +100,15 @@ try {
   const fixedLede = readFileSync(file, "utf8").match(/<p class="lede">[\s\S]*?<\/p>/)?.[0] ?? "";
   check("with its text untouched", fixedLede == `<p class="lede">Build <em>cool</em> things &amp; ship them. This paragraph has <a href="https://example.com">a link</a> and <code>code</code>.</p>`, fixedLede);
 
-  const log = await (await fetch(`http://127.0.0.1:${port}/api/agent`)).json() as { log: { items: unknown[] } };
+  const log = await (await fetch(`${host.base}/api/agent`)).json() as { log: { items: unknown[] } };
   check("the host keeps the transcript", log.log.items.length >= 4);
   check("no page errors", p.errors.length == 0, p.errors.join("\n"));
   if (keep) {
-    console.log(`\nhost kept at http://127.0.0.1:${port}/  (${dir})`);
+    console.log(`\nhost kept at ${host.base}/  (${dir})`);
     await new Promise(() => {});
   }
 } finally {
-  if (!keep) { browser.close(); host.kill(); rmSync(dir, { recursive: true, force: true }); }
+  if (!keep) { browser.close(); await host.dispose(); rmSync(dir, { recursive: true, force: true }); }
 }
 console.log(failures ? `\n${failures} failing` : "\nall passing");
 process.exit(failures ? 1 : 0);

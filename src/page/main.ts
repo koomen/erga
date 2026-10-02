@@ -158,8 +158,10 @@ declare global {
   const myId = signedIn ? info.userId : myName.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-|-$/g, "") || "anon";
   const me: Author = { user: myId, name: myName, color: colorFor(myId), kind: "person", ...(signedIn && info.avatar ? { avatar: info.avatar } : {}) };
   const self: MarkAuthor = { name: me.name, color: me.color };
-  // Signed in, you have a list of your documents to go back to (test people don't).
-  $("btn-docs").hidden = !signedIn || myId.startsWith("test-");
+  // Your documents to go back to (test people have none). Locally, a tab
+  // that's someone else (?user=) goes to theirs.
+  $("nav-docs").hidden = myId.startsWith("test-");
+  if (!signedIn && myName != info.user) $("nav-docs").querySelector("a")!.href = `/docs?user=${encodeURIComponent(myName)}`;
   /** The host's agent endpoints, as this person. */
   const api = (path: string) => `${BASE}${path}?user=${encodeURIComponent(myName)}`;
 

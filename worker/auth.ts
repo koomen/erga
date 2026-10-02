@@ -8,14 +8,8 @@
 // throwaway test people (Ada, Bo...) who can open only test documents
 // (ids starting "test"), so the test suite can run against erga.dev.
 
+import { page, safeNext, type Session } from "../front";
 import type { Env } from "./env";
-
-export interface Session {
-  login: string;
-  name: string;
-  /** A test person, signed in with a test token minted by `by`. */
-  test?: { by: string };
-}
 
 const COOKIE = "erga_session", STATE = "erga_oauth";
 const DAY = 24 * 60 * 60;
@@ -70,9 +64,6 @@ export const isDev = (env: Env, url: URL) => !!env.DEV_LOGIN && (url.hostname ==
 
 export const allowed = (env: Env, login: string) =>
   env.ALLOWED_USERS.split(",").map((u) => u.trim().toLowerCase()).includes(login.toLowerCase());
-
-/** Only paths on this site: "/koomen/abc", never "//elsewhere" or a full URL. */
-export const safeNext = (next: string | null) => (next && next.startsWith("/") && !next.startsWith("//") ? next : "/");
 
 async function signIn(env: Env, request: Request, session: Session, next: string, ttl = 30 * DAY): Promise<Response> {
   const value = b64(new TextEncoder().encode(JSON.stringify({ ...session, exp: Math.floor(Date.now() / 1000) + ttl })));
@@ -169,10 +160,3 @@ export function signOut(request: Request): Response {
 }
 
 const escape = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
-
-/** A small page for when something about signing in goes wrong. */
-export function page(title: string, html: string, status: number): Response {
-  return new Response(`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${title} · Erga</title>
-<style>body{font:17px/1.6 system-ui,sans-serif;max-width:32rem;margin:20vh auto;padding:0 16px;color:#1b2330;background:#f7f8fa}h1{font-size:1.4rem}a{color:#1f5f8b}
-@media(prefers-color-scheme:dark){body{color:#e4e8ee;background:#12161d}a{color:#7fb6e0}}</style><h1>${title}</h1><p>${html}</p>`, { status, headers: { "Content-Type": "text/html; charset=utf-8" } });
-}

@@ -1,5 +1,5 @@
 // One document on erga.dev, as a Durable Object: the hosted counterpart of
-// open.ts. It keeps the document's files and the room's Yjs state in its own
+// a local document (docs.ts). It keeps the document's files and the room's Yjs state in its own
 // storage, opens the room (room.ts) when the first request arrives, and
 // serves the same per-document host as the local server (host.ts): the API,
 // /api/stored and /doc/. It takes the two WebSockets itself, since a Durable
@@ -18,23 +18,13 @@ import { DurableObject } from "cloudflare:workers";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
-import * as FileSystem from "effect/FileSystem";
-import * as Layer from "effect/Layer";
-import * as Path from "effect/Path";
 import * as Redacted from "effect/Redacted";
 import * as Scope from "effect/Scope";
-import { HttpRouter } from "effect/http";
-import * as Etag from "effect/http/Etag";
-import * as HttpPlatform from "effect/http/HttpPlatform";
 import { agentConfigFrom } from "../agent";
+import { afterUnedited, HOUR, titleOf, UNEDITED_HOURS, type Listed } from "../front";
 import { makeHost } from "../host";
 import { FileStore, Room, StateStore, StoreError } from "../room";
-import type { Listed } from "./doc-list";
 import type { Env } from "./env";
-
-/** How long a new document lasts if nobody ever edits it. */
-export const UNEDITED_HOURS = 24;
-const HOUR = 60 * 60 * 1000;
 
 /**
  * What a document is: its id, who made it, which file is its page, whether
@@ -47,14 +37,6 @@ interface Person { id: string; name: string }
 
 const FILE = "file:", META = "meta", STATE = "state";
 const AVATARS = "https://avatars.githubusercontent.com";
-
-/** HttpApi's platform needs, none of which a document served from storage uses. */
-const platform = Layer.mergeAll(
-  HttpPlatform.layer.pipe(Layer.provide(FileSystem.layerNoop({}))),
-  Etag.layerWeak,
-  FileSystem.layerNoop({}),
-  Path.layer,
-);
 
 export class DocHost extends DurableObject<Env> {
   private open: Promise<Opened | null> | null = null;
@@ -92,8 +74,10 @@ export class DocHost extends DurableObject<Env> {
    */
   async alarm(): Promise<void> {
     const meta = await this.ctx.storage.get<Meta>(META);
-    if (!meta || meta.modified || meta.test) return;
-    if (this.sockets.size) return this.ctx.storage.setAlarm(Date.now() + HOUR);
+    if (!meta) return;
+    const next = afterUnedited(meta, this.sockets.size > 0, Date.now());
+    if (next == "keep") return;
+    if (next != "delete") return this.ctx.storage.setAlarm(next);
     console.log(`deleting ${meta.owner}/${this.idOf(meta)}: not edited in ${UNEDITED_HOURS} hours`);
     await this.destroy(meta);
   }
@@ -203,10 +187,9 @@ export class DocHost extends DurableObject<Env> {
       // People's ids are their GitHub logins, so GitHub serves their pictures.
       avatarOf: (person) => (person.id.startsWith("test-") ? undefined : `${AVATARS}/${encodeURIComponent(person.id)}?s=64`),
     });
-    const { handler } = HttpRouter.toWebHandler(host.app.pipe(Layer.provide(platform)), { disableLogger: true });
 
     return {
-      handler: (request) => handler(request),
+      handler: host.handler,
       roomSocket: (url) => {
         const [client, server] = Object.values(new WebSocketPair());
         server.accept();
@@ -236,7 +219,7 @@ export class DocHost extends DurableObject<Env> {
         server.addEventListener("error", leave);
         return new Response(null, { status: 101, webSocket: client });
       },
-      close: () => Effect.runPromise(Scope.close(scope, Exit.void)),
+      close: () => Effect.runPromise(Scope.close(scope, Exit.void)).then(host.dispose),
     };
   }
 
@@ -254,24 +237,6 @@ interface Opened {
   eventSocket: (person: Person) => Response;
   close: () => Promise<void>;
 }
-
-/**
- * A page's title, as the list shows it: its first top-level heading (what
- * people edit on the page), else an HTML page's <title>. Null if it has neither.
- */
-export function titleOf(text: string, path: string): string | null {
-  const clean = (s: string) => decodeEntities(s.replace(/<[^>]*>/g, "")).replace(/\s+/g, " ").trim().slice(0, 120) || null;
-  if (path.endsWith(".md")) {
-    const heading = /^#{1,6}[ \t]+(.+?)[ \t#]*$/m.exec(text);
-    return heading ? clean(heading[1].replace(/[*_`]/g, "")) : null;
-  }
-  const h1 = /<h1\b[^>]*>([\s\S]*?)<\/h1>/i.exec(text), title = /<title\b[^>]*>([\s\S]*?)<\/title>/i.exec(text);
-  return (h1 && clean(h1[1])) || (title && clean(title[1])) || null;
-}
-
-const ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " " };
-const decodeEntities = (s: string) => s.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (m, e: string) =>
-  e[0] == "#" ? String.fromCodePoint(parseInt(e[1] == "x" || e[1] == "X" ? e.slice(2) : e.slice(1), e[1] == "x" || e[1] == "X" ? 16 : 10)) : ENTITIES[e.toLowerCase()] ?? m);
 
 function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
   if (a.length != b.length) return false;

@@ -5,6 +5,7 @@
 //   bun tests/page.ts [html|md|format|agent|reload] [--keep]   (--keep leaves the host running and prints its URL)
 
 import { Browser, MOD, ROOT } from "./cdp";
+import { startHost } from "./host";
 import { tab } from "./tab";
 import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
@@ -35,33 +36,28 @@ const loaded = (p: Awaited<ReturnType<Browser["page"]>>) => until(() => p.eval<b
 
 /** Starts a host on a scratch copy of a fixture and opens the editor on it. */
 async function session(browser: Browser, fixture: string, fileName: string, env: Record<string, string> = {}, query = "", timescale = TIMESCALE) {
-  const port = 20000 + Math.floor(Math.random() * 20000);
   const dir = mkdtempSync(join(tmpdir(), "erga-page-"));
   cpSync(`${ROOT}tests/fixtures/${fixture}`, dir, { recursive: true });
   const file = join(dir, fileName);
-  const host = Bun.spawn(["bun", `${ROOT}open.ts`, dir, "--port", String(port), "--no-open"], { stdout: "pipe", stderr: "pipe", env: { ...process.env, ...env } });
-  for (let i = 0; i < 400; i++) {
-    try { if ((await fetch(`http://127.0.0.1:${port}/api/doc`)).ok) break; } catch {}
-    await Bun.sleep(15);
-  }
+  const host = await startHost(dir, { env });
   const p = await browser.page();
-  await p.open(`http://127.0.0.1:${port}/${query}`, { clear: false, width: 1100, height: 800, timescale });
+  await p.open(`${host.base}/${query}`, { clear: false, width: 1100, height: 800, timescale });
   await until(() => p.eval<boolean>(`!!window.ergaPage && !!document.getElementById("frame").contentDocument?.querySelector("[data-erga-id]")`), 10_000);
   // The page's own fonts too: text measured before they load moves when they do.
   await p.eval(`document.getElementById("frame").contentDocument.fonts.ready.then(() => true)`);
   await p.settle();
   const s = {
     ...tab(p),
-    port, dir,
+    base: host.base, dir,
     disk: () => readFileSync(file, "utf8"),
     write: (text: string) => writeFileSync(file, text),
     async close() {
       if (keep) {
-        console.log(`\nhost kept at http://127.0.0.1:${port}/  (${dir})`);
+        console.log(`\nhost kept at ${host.base}/  (${dir})`);
         await new Promise(() => {});
       }
       p.close();
-      host.kill();
+      await host.dispose();
       rmSync(dir, { recursive: true, force: true });
     },
   };
@@ -595,10 +591,10 @@ async function modelScenario(browser: Browser) {
   const first = await sel(p);
   check("the agent starts on Sonnet 5.5, with Opus 5.5 fast to pick", first?.value == "sonnet" && first.options.join("|") == "Sonnet 5.5|Opus 5.5 fast", first);
   const q = await browser.page();
-  await q.open(`http://127.0.0.1:${s.port}/`, { clear: false, width: 900, height: 700 });
+  await q.open(`${s.base}/`, { clear: false, width: 900, height: 700 });
   await until(async () => (await sel(q))?.value == "sonnet");
   await p.eval(`(() => { const s = document.getElementById("agent-model-select"); s.value = "opus-fast"; s.dispatchEvent(new Event("change")); })()`);
-  check("picking Opus 5.5 fast switches it", await until(async () => (await (await fetch(`http://127.0.0.1:${s.port}/api/agent`)).json() as { choice: string }).choice == "opus-fast"));
+  check("picking Opus 5.5 fast switches it", await until(async () => (await (await fetch(`${s.base}/api/agent`)).json() as { choice: string }).choice == "opus-fast"));
   check("the person's other tab follows", await until(async () => (await sel(q))?.value == "opus-fast"));
   q.close();
   await p.eval(`location.reload()`);

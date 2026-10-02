@@ -14,23 +14,25 @@ It is multiplayer: people and their agents edit one page together (see
 With [Bun](https://bun.sh) 1.4 or later:
 
     bun install
-    bun start                       # opens the demo, an explainer you can edit
-    bun start ./path/to/site        # or any folder with index.html or index.md
+    bun start                       # erga.dev's app, locally: the demo, /new, your documents at /docs
+    bun start ./path/to/site        # and any folder with index.html or index.md, edited in place
     bun start ./notes/some.html     # or a single file
 
-`bun start` rebuilds `page.js` and runs the host (`bun open.ts`, which takes the
-same arguments; `bun open.ts --help` lists them). For the agent, copy
-`.env.example` to `.env` and add an `ANTHROPIC_API_KEY`.
+`bun start` rebuilds `page.js` and runs the local host (`bun open.ts`, which
+takes the same arguments; `bun open.ts --help` lists them). For the agent,
+copy `.env.example` to `.env` and add an `ANTHROPIC_API_KEY`.
 
-With no document named, the host opens a scratch copy of `templates/demo/`, so
-your edits to it last until the host stops. `templates/doc/` is an empty
-document in the same style: copy the folder to start a new one
-(`cp -r templates/doc ./my-doc && bun start ./my-doc`).
+Locally you get the same app as on erga.dev (below), with the same routes
+and pages: with nothing named, the browser opens on the demo, whose Edit
+button makes you a copy; `/new` makes a blank document (a copy of
+`templates/doc/`); `/docs` lists yours. A file or folder you name joins
+them, edited where it is (see [Local host](#local-host)).
 
 ## Hosted: erga.dev
 
 The same editor runs on Cloudflare. A front-door Worker (`worker/index.ts`)
-shows the demo read-only at `/` with an Edit button; Edit signs you in with
+serves the app's routes, which live in `front.ts` so the local host serves
+the very same ones. It shows the demo read-only at `/` with an Edit button; Edit signs you in with
 GitHub (only the logins in `ALLOWED_USERS`, in `cloudflare.config.ts`) and
 makes you a copy of the demo at `/<you>/<id>`, which anyone signed in can
 open and edit with you. `/new` makes a blank document instead (a copy of
@@ -67,7 +69,8 @@ string) and `ANTHROPIC_API_KEY`. Locally they come from `.dev.vars`, where
 runs against it unchanged: see `tests/suite/README.md` for the remote target.
 `bun tests/worker.ts http://localhost:5173` checks the front door's own
 routes against it: `/new`, `/docs` and its titles, deleting, and expiry
-(locally, `/new?unedited=<ms>` shortens a document's time).
+(locally, `/new?unedited=<ms>` shortens a document's time);
+`bun tests/worker.ts --local` checks the same against the local host.
 
 To run it against erga.dev itself, get a test token from
 https://erga.dev/tokens (it lasts a week) and:
@@ -77,15 +80,50 @@ https://erga.dev/tokens (it lasts a week) and:
 The token signs in test people (Ada, Bo, ...) who can open only test documents
 (`/<you>/test....`), where the scripted agent stands in for the model.
 
-## Page editor
+## Local host
 
-The host (`open.ts`, Effect on Bun) serves the editor at `http://127.0.0.1:4400/`
-and opens it. The document's folder is served at `/doc/`, so its scripts,
-styles and images load as they would when published. Edits are written to the
-file on disk 400ms after the last one; edits made on disk by anything else
-(another editor, git) show up in the page as they happen. `--port N` and
-`--no-open` are accepted. Open `http://127.0.0.1:4400/?user=Ada` in another
-window to be a second person.
+The local host (`open.ts`, Effect on Bun) serves erga.dev's app at
+`http://127.0.0.1:4400/`: the same front door (`front.ts`: the demo at `/`,
+`/new`, `/docs`, delete, documents at `/<you>/<id>`) and the same
+per-document host under each document (`host.ts`). Where the Worker uses
+Cloudflare, it has local stand-ins:
+
+- **Who you are**: there's no sign-in. You're the first name in your git
+  config (`$USER` without one), and your documents are under that name in
+  lowercase (`/peter/<id>`). `?user=Ada` makes a tab someone else (open
+  `http://127.0.0.1:4400/<you>/<id>?user=Ada` in another window to be a
+  second person); `/auth/github?as=Ada` signs the browser in as Ada (a
+  cookie, unchecked) and `/auth/logout` back out.
+- **Documents** (`docs.ts`, for the Durable Objects): folders in the data
+  directory, `~/.erga` unless `--data <dir>` or `ERGA_DATA_DIR` says
+  otherwise. `docs/<owner>/<id>/` holds `meta.json` (its page, owner, when
+  it was made, last edited and goes if unedited), `files/` (the document's
+  files, ordinary files: change them with anything and the open page
+  follows) and `state.yjs` (the room's Yjs state). They last across
+  restarts. `/docs` is read from these folders, so there's no list to keep.
+- **Expiry**: as hosted, a document nobody edits goes `UNEDITED_HOURS` (24)
+  after it's made (another hour if it's open), by a timer instead of an
+  alarm; the host sets them again when it starts, and deletes those whose
+  time came while it was stopped.
+
+A file or folder named on the command line becomes one of your documents
+too, edited in place: it gets an address of its own (`/<you>/<id>`, the id
+from its real path, so it's the same every time), joins `/docs` (marked
+"On disk") and the browser opens on it, while the rest of the app works
+alongside. Its `meta.json` and `state.yjs` are kept in the data directory,
+never in your folder. Edits are written to the file 400ms after the last
+one; edits made on disk by anything else (another editor, git) show up in
+the page as they happen. It never expires, and deleting it in `/docs` only
+takes it off the list: its files stay. Once listed it opens from `/docs`
+even in a later run that named something else. `--port N` and `--no-open`
+are accepted.
+
+The document's folder is served at `/<you>/<id>/doc/`, so its scripts,
+styles and images load as they would when published. Not mirrored locally:
+GitHub sign-in and `ALLOWED_USERS`, test tokens (`/tokens`, `/auth/test`)
+and GitHub avatars.
+
+## Page editor
 
 Click into any text and type. Enter makes a new paragraph or list item, Shift-Enter
 a line break, Backspace at the start of a paragraph joins it to the one above,
@@ -161,8 +199,9 @@ it's on disk. The room is platform-neutral (storage is a four-method
 Object as is.
 
 A person, locally, is a name: `?user=Ada` names a tab (remembered for that
-tab), otherwise it's the name you chose last (click your avatar), or the first
-name in your git config. Tabs with the same name are the same person.
+tab), otherwise it's the name you chose last (click your avatar), or the name
+the browser signed in as, or the first name in your git config. Tabs with the
+same name are the same person.
 
 - **Live edits.** Your keystrokes become Yjs transactions on the file's
   `Y.Text`; everyone else's come back as Y.Text events, are turned into
@@ -189,8 +228,8 @@ name in your git config. Tabs with the same name are the same person.
   agent's (CodeMirror's history, mapped over everyone else's changes). The
   agent panel has its own button to undo your agent's last change.
 
-The room keeps its Yjs state as well as the files (a cache file per
-folder, saved with every write), so a restarted host picks up the same
+The room keeps its Yjs state as well as the files (`state.yjs` in the
+document's folder in the data directory, saved with every write), so a restarted host picks up the same
 history and open tabs reconnect and merge as if nothing happened. If that
 state is lost, the room starts a new *epoch* from the files and refuses tabs
 holding the old one (their history would merge with the new one and double
@@ -338,7 +377,7 @@ and the editor's timers (how long notes stay up, how marks fade) run at a
 fraction of real time under test (`window.__ergaTimescale`, `ms` in
 `src/page/editor.ts`).
 
-    ./test.sh          # page editor + multiplayer: ~14s
+    ./test.sh          # page editor, front door + multiplayer: ~14s
     bun run typecheck  # tsc over the host, the editor and the suite
 
 Each file also runs alone: `bun tests/page.ts` (~7s), `bun tests/suite/run.ts`
@@ -349,6 +388,9 @@ version), `bun test tests/` (under a second).
 they reach the open page without a reload and then the disk, that the agent
 shows up as a participant, and that its last change can be undone (it calls
 the API, so it isn't part of `./test.sh`).
+`bun tests/worker.ts --local` checks the app's own routes (`/new`, `/docs`,
+deleting, expiry) on the local host, as it does on the Worker. Tests start
+the local host with `tests/host.ts`, each with a scratch data directory.
 `bun tests/page.ts` runs the end-to-end check (headless Chrome, real clicks and
 keys, file read back from disk) on the fixtures in `tests/fixtures/`, and
 `bun tests/smoke.ts <path>` opens any document, types into it and screenshots.
@@ -361,7 +403,12 @@ back, merging edits from disk, the agent's exact-match edits and attribution.
 
 ## Files
 
-- `open.ts`, `page.html`, `page.js`: the page editor's host, shell and built script
+- `open.ts`, `page.html`, `page.js`: the local host, the editor's shell and built script
+- `front.ts`: the app's own routes and pages (the demo, `/new`, `/docs`,
+  delete, the unedited rule, titles), shared by the Worker and the local host
+- `docs.ts`: the local host's documents (folders in the data directory)
+- `host.ts`: the per-document host (API, `/doc/`), the same in both
+- `worker/`: erga.dev on Cloudflare (front door, sign-in, Durable Objects)
 - `api.ts`: the host's HTTP API (Effect's HttpApi): each endpoint's request,
   response and failures; the editor imports its types
 - `room.ts`: the document room (shared Yjs doc, sync, write-back, disk merges)

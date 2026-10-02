@@ -1,19 +1,23 @@
 #!/usr/bin/env bun
-// The hosted front door's own routes, against a Worker running locally
-// (`bun run dev:worker`, with DEV_LOGIN in .dev.vars): /new makes a blank
-// document, /docs lists it and follows its edits, a document nobody edits
-// goes by itself (and looking at it isn't editing it), and a deleted one is gone.
+// The front door's own routes (front.ts), against a Worker running locally
+// (`bun run dev:worker`, with DEV_LOGIN in .dev.vars) or the local host:
+// /new makes a blank document, /docs lists it and follows its edits, a
+// document nobody edits goes by itself (and looking at it isn't editing
+// it), and a deleted one is gone.
 //
 //   bun tests/worker.ts [http://localhost:5173]
+//   bun tests/worker.ts --local        the local host (open.ts), started with scratch data
 //
 // Each run signs in as a fresh person, so it starts from an empty list.
 
 import { readFileSync } from "fs";
+import { startHost } from "./host";
 import { Participant } from "./suite/client";
 import { expect, sleep, until } from "./suite/harness";
 import type { Doc } from "./suite/target";
 
-const base = (process.argv[2] || process.env.ERGA_WORKER_URL || "http://localhost:5173").replace(/\/+$/, "");
+const local = process.argv[2] == "--local" ? await startHost(null, { env: { ERGA_AGENT_MODEL: "script", ERGA_AGENT_ENV_FILE: "/nonexistent/.env" } }) : null;
+const base = (local?.base || process.argv[2] || process.env.ERGA_WORKER_URL || "http://localhost:5173").replace(/\/+$/, "");
 const login = `wtest${Date.now().toString(36)}`;
 const template = (name: string) => readFileSync(new URL(`../templates/${name}/index.html`, import.meta.url), "utf8");
 
@@ -89,7 +93,9 @@ try {
   ok("a document deleted from the list is gone");
 } catch (e) {
   console.error(`FAIL ${(e as Error).message}`);
+  await local?.dispose();
   process.exit(1);
 }
+await local?.dispose();
 console.log(`\n${checks.length} passed`);
 process.exit(0);

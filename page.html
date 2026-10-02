@@ -90,8 +90,17 @@
     #btn-pause[aria-pressed="true"] { color: #d97706; background: rgba(245, 158, 11, 0.14); }
     #btn-pause[aria-disabled="true"] { opacity: 0.4; cursor: default; }
     #btn-pause[aria-disabled="true"]:hover { background: transparent; color: var(--chrome); }
-    /* Back to your documents: signed in (erga.dev) only. */
-    #btn-docs[hidden] { display: none; }
+    /* Back to your documents, top left (hidden for test people, who have none). */
+    .chrome-nav { top: max(12px, env(safe-area-inset-top)); left: 14px; transition: opacity var(--show-ms) var(--ease), left var(--agent-ms) var(--agent-ease); }
+    .chrome-nav[hidden] { display: none; }
+    .nav-back {
+      display: flex; align-items: center; gap: 2px; height: 34px; padding: 0 10px 0 4px; border-radius: 8px;
+      color: var(--chrome); font: 500 13px/1 var(--font-text); text-decoration: none;
+      transition: color 150ms ease, background-color 150ms ease;
+    }
+    .nav-back:hover { color: var(--chrome-hover); background: color-mix(in srgb, var(--chrome) 12%, transparent); }
+    .nav-back:focus-visible { outline: 2px solid var(--caret); outline-offset: 1px; }
+    .nav-back svg { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
     /* A mode that's on stays in sight while the rest of the controls hide. */
     body.chrome-hidden .chrome-top:has(:is(#btn-track, #btn-pause)[aria-pressed="true"]) { opacity: 1; }
     body.chrome-hidden .chrome-top:has(:is(#btn-track, #btn-pause)[aria-pressed="true"]) > :not([aria-pressed="true"]) { opacity: 0; pointer-events: none; }
@@ -118,6 +127,7 @@
       body.agent-open #frame { left: calc(var(--agent-w) + var(--agent-inset) * 2); width: calc(100% - var(--agent-w) - var(--agent-inset) * 2); }
       body.agent-open #source { left: calc(var(--agent-w) + var(--agent-inset) * 2); }
       body.agent-open .chrome-bottom { padding-left: calc(var(--agent-w) + var(--agent-inset) * 2 + 6px); }
+      body.agent-open .chrome-nav { left: calc(var(--agent-w) + var(--agent-inset) * 2 + 6px); }
     }
     .agent-fab {
       position: fixed; left: var(--agent-inset); bottom: max(var(--agent-inset), env(safe-area-inset-bottom)); z-index: 21;
@@ -327,10 +337,14 @@
     <span>Page changes will show when the agent finishes · <b>Refresh now</b></span>
   </button>
 
-  <header class="chrome chrome-top" aria-label="Controls">
-    <a class="icon-btn" id="btn-docs" href="/docs" hidden aria-label="Your documents" data-tip="Your documents">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 4.5h6.5L19 9v10.5a1 1 0 0 1-1 1H8a1 1 0 0 1-1-1v-14a1 1 0 0 1 1-1Z"/><path d="M4.5 7.5v12a2 2 0 0 0 2 2h8.5"/></svg>
+  <nav class="chrome chrome-nav" id="nav-docs" aria-label="Documents" hidden>
+    <a class="nav-back" href="/docs">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.5 6 8.5 12l6 6"/></svg>
+      <span>Documents</span>
     </a>
+  </nav>
+
+  <header class="chrome chrome-top" aria-label="Controls">
     <div class="people" id="people" aria-label="Who's here"></div>
     <button type="button" class="icon-btn" id="btn-pause" aria-label="Pause the page" aria-pressed="false" aria-disabled="true" aria-controls="pause-card">
       <svg class="i-pause" viewBox="0 0 24 24" aria-hidden="true"><path d="M9.25 6.5v11M14.75 6.5v11"/></svg>

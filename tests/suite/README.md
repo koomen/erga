@@ -56,8 +56,9 @@ Durable Objects): break each piece and see the suite go red.
 
 ## The contract
 
-Everything is relative to a document's base URL (`http://127.0.0.1:4400`
-locally; whatever the hosted server gives a document).
+Everything is relative to a document's base URL (`http://127.0.0.1:<port>/<you>/<id>`
+locally, the address the host prints for the folder it opened; whatever the
+hosted server gives a document).
 
 - `GET /` the shell. `GET /api/doc` → `{ name, path, kind }`.
 - `WS /api/room/<name>?user=…&epoch=…` the room, in y-websocket's protocol
