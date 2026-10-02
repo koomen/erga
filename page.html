@@ -21,9 +21,12 @@
   <link rel="stylesheet" href="/fonts/inter.css">
   <link rel="stylesheet" href="/style.css">
   <style>
-    /* The page fills the window; the chrome floats over it, as in the Markdown editor. */
+    /* The page fills the window below a strip kept clear for the top controls
+       (their 34px row, its offset and a gap), so the top of a document never
+       sits under them; the rest of the chrome floats over the page. */
+    :root { --top-clear: calc(max(12px, env(safe-area-inset-top)) + 34px + 14px); }
     body { overflow: hidden; }
-    #frame { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; background: transparent; }
+    #frame { position: fixed; top: var(--top-clear); left: 0; width: 100%; height: calc(100% - var(--top-clear)); border: 0; background: transparent; }
 
     /* The shell's canvas is the page's own background (main.ts reads it from
        the page), so the space the agent opens up is the same surface as the
@@ -48,7 +51,7 @@
       --panel-bg: var(--bg);
     }
     body.source #frame { visibility: hidden; }
-    #source { position: fixed; top: 0; bottom: 0; left: 0; right: 0; }
+    #source { position: fixed; top: var(--top-clear); bottom: 0; left: 0; right: 0; }
     #source[hidden] { display: none; }
     #welcome {
       position: fixed; inset: 0; display: grid; place-items: center; text-align: center;
