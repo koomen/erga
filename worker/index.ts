@@ -12,7 +12,8 @@
 //                              /<owner>/<id> and old slugs redirect here
 //   /d/<id>/<rest>             the document's own host: /api/..., /doc/..., the sockets (also under the other addresses)
 //   /auth/github[/callback]    signing in; /auth/logout signs out
-//   /tokens                    a test token, for running the test suite against erga.dev
+//   /llms.txt, /api/..., /mcp  the server's API for agents, with an agent token (server-api.ts, tokens.ts)
+//   /tokens                    your agent tokens, and a test token for running the test suite against erga.dev
 //   /auth/test?token=&as=      a test person (Ada, Bo...) signed in with one; they open only test documents
 //   /page.js, /style.css, ...  the editor's own files (static assets)
 //
@@ -24,9 +25,10 @@
 //   /__erga/mirror/<id>            the WebSocket the document reaches its files on disk through
 
 import { idShaped, slugify, type Route } from "../directory";
-import { frontDoor, OWNER, page, type Platform } from "../front";
+import { frontDoor, OWNER, withTokens, type Platform } from "../front";
+import { serverApi, tokensDoor } from "../server-api";
 import { finishSignIn, isDev, mintTestToken, sessionOf, signOut, startSignIn, testSignIn } from "./auth";
-import { directoryOf } from "./d1";
+import { directoryOf, tokensOf } from "./d1";
 import type { Env } from "./env";
 
 export { DocHost } from "./doc-host";
@@ -48,8 +50,10 @@ export default {
     if (path == "/auth/github/callback") return finishSignIn(env, request);
     if (path == "/auth/logout") return signOut(request);
     if (path == "/auth/test") return testSignIn(env, request);
-    if (path == "/tokens") return tokens(env, request);
     if (assets) return env.ASSETS.fetch(request);
+    // The server's API for agents, and people's agent tokens (server-api.ts).
+    if (path == "/llms.txt" || path == "/mcp" || path == "/api" || path.startsWith("/api/")) return serverApi(request, withTokens(platform(env), url));
+    if (path == "/tokens" || path.startsWith("/tokens/")) return tokensDoor(request, withTokens(platform(env), url));
     if (path.startsWith("/__erga/")) return linked(env, request, url);
     return frontDoor(request, platform(env));
   },
@@ -72,8 +76,12 @@ const platform = (env: Env): Platform => {
     // Locally (vite dev) each document's page runs on <id>-<owner>.localhost, which browsers send to this machine.
     pagesDomain: (url) => (url.hostname == "localhost" || url.hostname.endsWith(".localhost") || url.hostname == "127.0.0.1" ? "localhost" : "erga-pages.dev"),
     secret: env.SESSION_SECRET,
+    tokens: tokensOf(env),
+    testToken: (login) => mintTestToken(env, login),
     docs: {
       create: (doc, files, index, opts) => host(doc).create(doc.owner, doc.id, files, index, opts),
+      publish: (doc, files, remove) => host(doc).publish(files, remove),
+      paths: (doc) => host(doc).paths(),
       exists: (doc) => host(doc).exists(),
       delete: (doc) => host(doc).delete(),
       list: async (owner) => {
@@ -141,17 +149,3 @@ async function migrate(db: D1Database): Promise<string[]> {
   return applied;
 }
 
-/** /tokens: a fresh test token for the signed-in person, and how to use it. */
-async function tokens(env: Env, request: Request): Promise<Response> {
-  const session = await sessionOf(env, request);
-  if (!session) return new Response(null, { status: 302, headers: { Location: `/auth/github?next=${encodeURIComponent("/tokens")}` } });
-  if (session.test) return page("Not for test people", "Sign in as yourself to make a test token.", 403);
-  const { token, expires } = await mintTestToken(env, session.login);
-  const origin = new URL(request.url).origin;
-  return page("Test token", `This token signs in test people (Ada, Bo, ...) who can open only test documents under
-<b>/${session.login}/test…</b>, where a scripted agent stands in for the model, so the test suite runs here for free.
-It lasts until ${expires.toUTCString()}. Each visit makes a new one.</p>
-<p><code style="word-break:break-all;user-select:all">${token}</code></p>
-<p>Run the suite against ${origin}:</p>
-<p><code style="word-break:break-all;user-select:all">ERGA_TEST_TOKEN=${token} bun run test:prod</code>`, 200);
-}
