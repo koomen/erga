@@ -515,6 +515,20 @@ declare global {
   window.addEventListener("keydown", () => { lastKeyAt = performance.now(); }, true);
   window.addEventListener("mousemove", pointerMoved, { passive: true });
 
+  // The on-screen keyboard. Where the browser lays it over the page instead
+  // of resizing the window (Safari), --kb is its height, and the page, the
+  // source view, the cards and the agent stop above it (page.html). Zoomed
+  // in, the visual viewport is small for another reason: none of it is keyboard.
+  const vv = window.visualViewport;
+  if (vv) {
+    const keyboard = () => {
+      const kb = vv.scale > 1.01 ? 0 : Math.max(0, Math.round(window.innerHeight - vv.height - vv.offsetTop));
+      document.documentElement.style.setProperty("--kb", `${kb}px`);
+    };
+    vv.addEventListener("resize", keyboard);
+    vv.addEventListener("scroll", keyboard);
+  }
+
   const help = $("help");
   function toggleHelp(force?: boolean) {
     const open = typeof force == "boolean" ? force : help.hidden;
@@ -722,6 +736,7 @@ Once you've read it, await further instructions.`;
   // code, link, clear formatting. Buttons that can't apply say why (title), and so does a click.
   const fmt = $("fmt");
   const fmtLink = $("fmt-link") as HTMLInputElement;
+  const coarse = matchMedia("(pointer: coarse)");
   let pointerDown = false;
   let fmtQueued = false;
   function queueFmt() {
@@ -739,8 +754,10 @@ Once you've read it, await further instructions.`;
     const rect = mode != "text" || pointerDown ? null : page.selectionRect();
     if (!rect) { hideFmt(); return; }
     const f = frame.getBoundingClientRect();
-    const below = rect.top < 56;
-    fmt.style.left = Math.max(110, Math.min(window.innerWidth - 110, f.left + rect.left + rect.width / 2)) + "px";
+    // On touch, the system's own copy and paste menu takes the space above a selection.
+    const below = rect.top < 56 || coarse.matches;
+    const half = coarse.matches ? 120 : 110; // half the bar (its buttons are bigger on touch), and a margin
+    fmt.style.left = Math.max(half, Math.min(window.innerWidth - half, f.left + rect.left + rect.width / 2)) + "px";
     fmt.style.top = f.top + (below ? rect.bottom : rect.top) + "px";
     fmt.classList.toggle("below", below);
     const why = page.styleBlocker();
@@ -1401,9 +1418,10 @@ Once you've read it, await further instructions.`;
     fix.title = agentOff ?? "";
   }
   // Hovering the disabled button opens the card; it stays while the pointer moves into it.
+  // (A mouse only: a tap opens and closes it with the click below.)
   for (const el of [$("btn-pause"), $("pause-card")]) {
-    el.addEventListener("mouseenter", () => { syncPause(); if (!page.canPause) showPauseCard(true); });
-    el.addEventListener("mouseleave", () => { clearTimeout(pauseCardTimer); pauseCardTimer = window.setTimeout(() => showPauseCard(false), 300); });
+    el.addEventListener("pointerenter", (e) => { if (e.pointerType == "mouse") { syncPause(); if (!page.canPause) showPauseCard(true); } });
+    el.addEventListener("pointerleave", (e) => { if (e.pointerType == "mouse") { clearTimeout(pauseCardTimer); pauseCardTimer = window.setTimeout(() => showPauseCard(false), 300); } });
   }
   $("btn-pause").addEventListener("click", () => {
     syncPause();

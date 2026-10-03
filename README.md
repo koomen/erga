@@ -163,6 +163,12 @@ resumed, so only the editor answers clicks. The page has to support it
 (DOCUMENT_PROMPT.md, rule 10); on one that doesn't, the button is disabled,
 and hovering it explains, with a **Fix with agent** button.
 
+On a phone the controls make room: the Documents link shrinks to its arrow,
+the shortcuts button goes, avatars overlap, the agent covers the page instead
+of pushing it aside, and the style bar sits below a selection (the system's
+copy menu is above it). The page, the agent and the cards stop above the
+on-screen keyboard, and keep clear of a notch.
+
 There's no dark mode: pages are shown as their authors made them, and most
 don't support one. The editor's own controls take their colours from the page
 under them instead.

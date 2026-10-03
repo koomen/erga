@@ -679,7 +679,7 @@ async function pauseScenario(browser: Browser) {
   const t = await session(browser, "noedit", "index.html", { ANTHROPIC_API_KEY: "", ERGA_AGENT_ENV_FILE: "/nonexistent/.env" });
   const card = () => t.p.eval<{ shown: boolean; text: string; fixDisabled: string | null; fixTitle: string }>(`(() => { const c = document.getElementById("pause-card"), f = document.getElementById("pause-fix"); return { shown: !c.hidden, text: c.textContent, fixDisabled: f.getAttribute("aria-disabled"), fixTitle: f.title }; })()`);
   check("a page without it can't be paused", await t.p.eval<boolean>(`document.getElementById("btn-pause").getAttribute("aria-disabled") == "true"`));
-  await t.p.eval(`document.getElementById("btn-pause").dispatchEvent(new MouseEvent("mouseenter"))`);
+  await t.p.eval(`document.getElementById("btn-pause").dispatchEvent(new PointerEvent("pointerenter", { pointerType: "mouse" }))`);
   check("hovering the button explains", (await card()).shown && /can't be paused/.test((await card()).text), await card());
   check("with a fix button, disabled while the agent is off", (await card()).fixDisabled == "true" && /agent is off/i.test((await card()).fixTitle), await card());
   await t.p.eval(`document.getElementById("btn-pause").click()`);

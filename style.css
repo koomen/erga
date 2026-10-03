@@ -285,7 +285,7 @@ button { font: inherit; color: inherit; }
   opacity: 1;
   transition: opacity var(--show-ms) var(--ease);
 }
-.chrome-top { top: max(12px, env(safe-area-inset-top)); right: 14px; gap: 2px; }
+.chrome-top { top: max(12px, env(safe-area-inset-top)); right: max(14px, env(safe-area-inset-right)); gap: 2px; }
 .chrome-bottom {
   left: 0; right: 0; bottom: max(12px, env(safe-area-inset-bottom));
   justify-content: space-between;
@@ -437,7 +437,7 @@ kbd {
 }
 
 .toast {
-  left: 50%; bottom: 44px;
+  left: 50%; bottom: calc(max(12px, env(safe-area-inset-bottom)) + 32px);
   transform: translate(-50%, 6px);
   padding: 7px 14px;
   border-radius: 999px;

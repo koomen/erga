@@ -214,6 +214,8 @@ const EDIT_BUTTON_STYLE = `
   .erga-edit-button:hover { background: #2f3b4d; }
   .erga-docs-button { right: auto; left: 16px; color: #1b2330; background: #fff; }
   .erga-docs-button:hover { background: #eef1f5; }
+  /* On a phone they'd sit over the text the whole way down: they stay at the top instead, and are bigger to tap. */
+  @media (max-width: 640px), (max-height: 480px) { .erga-edit-button { position: absolute; padding: 10px 18px; } }
   @media (prefers-color-scheme: dark) {
     .erga-edit-button { color: #12161d; background: #e4e8ee; } .erga-edit-button:hover { background: #fff; }
     .erga-docs-button { color: #e4e8ee; background: #1a2029; } .erga-docs-button:hover { background: #232a35; }
@@ -342,6 +344,8 @@ function docsPage(session: Session, docs: Listed[], now: number): string {
   footer a { color: inherit; text-decoration: none; }
   footer a:hover { color: var(--chrome-hover); }
   @media (max-width: 520px) { .note { display: none; } main { padding-top: 8vh; } }
+  /* Touch: room for a finger. */
+  @media (pointer: coarse) { .new { padding: 10px 16px; } .delete { width: 40px; height: 40px; margin-right: -6px; } footer a { padding: 8px 0; margin: -8px 0; } }
 </style>
 <main>
   <header>

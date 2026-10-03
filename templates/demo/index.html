@@ -192,7 +192,14 @@
   .ag-stage:has(.pulp)::before { content: ""; position: absolute; inset: 0; pointer-events: none; box-shadow: inset 0 0 60px rgba(90, 50, 10, .35); }
   .ag-view { position: absolute; inset: 0; transition: left var(--ag-ms) var(--ag-ease); }
   .ag.open .ag-view { left: calc(var(--ag-w) + var(--ag-inset) * 2); }
-  @container (max-width: 560px) { .ag.open .ag-view { left: 0; } .ag { --ag-w: calc(100cqw - 20px); } }
+  /* Narrow, the page stays put and the agent rises over its lower half as a sheet, so what it does to the page shows above it. */
+  @container (max-width: 560px) {
+    .ag.open .ag-view { left: 0; }
+    .ag-stage { height: 480px; }
+    .ag-stage .ag-agent { top: 44%; right: var(--ag-inset); width: auto; }
+    .ag-pill { max-width: calc(100% - 20px); }
+    .ag-pill span { overflow: hidden; text-overflow: ellipsis; }
+  }
   .ag-page { position: absolute; inset: 0; overflow: hidden; padding: 26px 26px 20px; display: grid; align-content: start; gap: 10px; }
   .ag-page h3 { font-family: var(--display); font-size: 14px; font-weight: 600; }
   .ag-page p { font-size: 13px; line-height: 1.5; }
@@ -262,8 +269,9 @@
   @media (prefers-reduced-motion: reduce) { .ag { --ag-ms: 1ms; } .ag *, .ag *::before { animation: none !important; } }
   /* Share demo: the editor beside a Claude Code terminal that edits it through the API. */
   .cc { --cc-me: #d9577a; --cc-term: #17181c; --cc-tfg: #d4d6db; --cc-tdim: #7d808a; --cc-orange: #d97757; --cc-green: #4eba65; }
-  .cc-stage { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; container-type: inline-size; }
-  @container (max-width: 560px) { .cc-stage { grid-template-columns: 1fr; } }
+  .cc { container-type: inline-size; }
+  .cc-stage { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  @container (max-width: 560px) { .cc-stage { grid-template-columns: 1fr; } .cc-win { height: 360px; } }
   .cc-win { position: relative; height: 410px; display: flex; flex-direction: column; border: 1.5px solid var(--ink); border-radius: 10px; overflow: hidden; box-shadow: 0 12px 30px rgba(20, 28, 40, .16); }
   .cc-page { position: relative; flex: 1; background: var(--surface); padding: 44px 18px 18px; display: grid; align-content: start; gap: 9px; font-family: var(--display); }
   .cc-page h3 { font-size: 14px; font-weight: 600; }

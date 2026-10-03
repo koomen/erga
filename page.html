@@ -2,7 +2,7 @@
 <html lang="en" data-theme="light">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
   <title>Erga</title>
   <meta name="color-scheme" content="light">
   <script>
@@ -23,10 +23,16 @@
   <style>
     /* The page fills the window below a strip kept clear for the top controls
        (their 34px row, its offset and a gap), so the top of a document never
-       sits under them; the rest of the chrome floats over the page. */
-    :root { --top-clear: calc(max(12px, env(safe-area-inset-top)) + 34px + 14px); }
+       sits under them; the rest of the chrome floats over the page. It stops
+       at the on-screen keyboard (--kb, set by main.ts where the browser lays
+       the keyboard over the page rather than resizing it), and keeps out of a
+       phone's notch held sideways (--safe-l, --safe-r). */
+    :root {
+      --top-clear: calc(max(12px, env(safe-area-inset-top)) + 34px + 14px);
+      --safe-l: env(safe-area-inset-left, 0px); --safe-r: env(safe-area-inset-right, 0px);
+    }
     body { overflow: hidden; }
-    #frame { position: fixed; top: var(--top-clear); left: 0; width: 100%; height: calc(100% - var(--top-clear)); border: 0; background: transparent; }
+    #frame { position: fixed; top: var(--top-clear); left: 0; width: 100%; height: calc(100% - var(--top-clear) - var(--kb, 0px)); border: 0; background: transparent; }
 
     /* The shell's canvas is the page's own background (main.ts reads it from
        the page), so the space the agent opens up is the same surface as the
@@ -51,7 +57,7 @@
       --panel-bg: var(--bg);
     }
     body.source #frame { visibility: hidden; }
-    #source { position: fixed; top: var(--top-clear); bottom: 0; left: 0; right: 0; }
+    #source { position: fixed; top: var(--top-clear); bottom: var(--kb, 0px); left: var(--safe-l); right: var(--safe-r); }
     #source[hidden] { display: none; }
     #welcome {
       position: fixed; inset: 0; display: grid; place-items: center; text-align: center;
@@ -94,7 +100,7 @@
     #btn-pause[aria-disabled="true"] { opacity: 0.4; cursor: default; }
     #btn-pause[aria-disabled="true"]:hover { background: transparent; color: var(--chrome); }
     /* Back to your documents, top left (hidden for test people, who have none). */
-    .chrome-nav { top: max(12px, env(safe-area-inset-top)); left: 14px; transition: opacity var(--show-ms) var(--ease), left var(--agent-ms) var(--agent-ease); }
+    .chrome-nav { top: max(12px, env(safe-area-inset-top)); left: max(14px, var(--safe-l)); transition: opacity var(--show-ms) var(--ease), left var(--agent-ms) var(--agent-ease); }
     .chrome-nav[hidden] { display: none; }
     .nav-back {
       display: flex; align-items: center; gap: 2px; height: 34px; padding: 0 10px 0 4px; border-radius: 8px;
@@ -119,21 +125,24 @@
     :root {
       --agent-w: min(380px, calc(100vw - 32px));
       --agent-inset: 16px;
+      --agent-left: max(var(--agent-inset), var(--safe-l));
       --agent-fab: 44px;
       --agent-ease: cubic-bezier(0.32, 0.72, 0, 1);
       --agent-ms: 520ms;
     }
-    #frame { left: 0; width: 100%; transition: left var(--agent-ms) var(--agent-ease), width var(--agent-ms) var(--agent-ease); }
+    #frame { left: var(--safe-l); width: calc(100% - var(--safe-l) - var(--safe-r)); transition: left var(--agent-ms) var(--agent-ease), width var(--agent-ms) var(--agent-ease); }
     #source { transition: left var(--agent-ms) var(--agent-ease); }
-    .chrome-bottom { transition: opacity var(--show-ms) var(--ease), padding-left var(--agent-ms) var(--agent-ease); padding-left: calc(var(--agent-inset) + var(--agent-fab) + 14px); }
+    .chrome-bottom { transition: opacity var(--show-ms) var(--ease), padding-left var(--agent-ms) var(--agent-ease); padding-left: calc(var(--agent-left) + var(--agent-fab) + 14px); }
     @media (min-width: 760px) {
-      body.agent-open #frame { left: calc(var(--agent-w) + var(--agent-inset) * 2); width: calc(100% - var(--agent-w) - var(--agent-inset) * 2); }
-      body.agent-open #source { left: calc(var(--agent-w) + var(--agent-inset) * 2); }
-      body.agent-open .chrome-bottom { padding-left: calc(var(--agent-w) + var(--agent-inset) * 2 + 6px); }
-      body.agent-open .chrome-nav { left: calc(var(--agent-w) + var(--agent-inset) * 2 + 6px); }
+      body.agent-open #frame { left: calc(var(--agent-left) + var(--agent-w) + var(--agent-inset)); width: calc(100% - var(--agent-left) - var(--agent-w) - var(--agent-inset) - var(--safe-r)); }
+      body.agent-open #source { left: calc(var(--agent-left) + var(--agent-w) + var(--agent-inset)); }
+      body.agent-open .chrome-bottom { padding-left: calc(var(--agent-left) + var(--agent-w) + var(--agent-inset) + 6px); }
+      body.agent-open .chrome-nav { left: calc(var(--agent-left) + var(--agent-w) + var(--agent-inset) + 6px); }
     }
+    /* Narrower, the agent covers the page instead, and the style bar with it. */
+    @media (max-width: 759.98px) { body.agent-open .fmt { display: none; } }
     .agent-fab {
-      position: fixed; left: var(--agent-inset); bottom: max(var(--agent-inset), env(safe-area-inset-bottom)); z-index: 21;
+      position: fixed; left: var(--agent-left); bottom: max(var(--agent-inset), env(safe-area-inset-bottom), calc(var(--kb, 0px) + var(--agent-inset))); z-index: 21;
       width: var(--agent-fab); height: var(--agent-fab); border-radius: 50%; border: 1px solid var(--panel-border);
       display: grid; place-items: center; padding: 0; cursor: pointer;
       background: var(--panel-bg); color: var(--chrome-hover); box-shadow: var(--shadow);
@@ -148,7 +157,8 @@
        rounded card mid-animation instead of being cut off by the clip. */
     .agent {
       position: fixed; z-index: 20;
-      left: var(--agent-inset); top: var(--agent-inset); bottom: max(var(--agent-inset), env(safe-area-inset-bottom));
+      left: var(--agent-left); top: max(var(--agent-inset), env(safe-area-inset-top));
+      bottom: max(var(--agent-inset), env(safe-area-inset-bottom), calc(var(--kb, 0px) + var(--agent-inset)));
       width: var(--agent-w);
       filter: drop-shadow(0 12px 28px rgba(0, 0, 0, 0.11)) drop-shadow(0 1px 3px rgba(0, 0, 0, 0.06));
       visibility: hidden;
@@ -315,10 +325,43 @@
     .agent-badge.busy span { animation: agent-spin 1.2s linear infinite; }
     @media (prefers-reduced-motion: reduce) { .agent-badge.busy span { animation-duration: 4s; } }
     :is(.avatar, .agent-badge)[aria-disabled="true"] { cursor: default; }
-    :is(.avatar, .agent-badge)[data-tip]:hover::before {
-      content: attr(data-tip); position: absolute; top: calc(100% + 8px); right: 0; z-index: 40; white-space: nowrap;
-      font: 500 12px/1.4 var(--font-text); color: var(--fg); background: var(--bg); border: 1px solid var(--panel-border);
-      border-radius: 7px; padding: 4px 8px; box-shadow: var(--shadow); pointer-events: none;
+    @media (hover: hover) {
+      :is(.avatar, .agent-badge)[data-tip]:hover::before {
+        content: attr(data-tip); position: absolute; top: calc(100% + 8px); right: 0; z-index: 40; white-space: nowrap;
+        font: 500 12px/1.4 var(--font-text); color: var(--fg); background: var(--bg); border: 1px solid var(--panel-border);
+        border-radius: 7px; padding: 4px 8px; box-shadow: var(--shadow); pointer-events: none;
+      }
+    }
+
+    /* The cards under the top row start below it (it moves down for a notch),
+       and scroll inside themselves when the window is too short for them. */
+    .help {
+      top: calc(var(--top-clear) - 2px); right: max(16px, var(--safe-r));
+      max-height: calc(100% - var(--top-clear) - var(--kb, 0px) - max(16px, env(safe-area-inset-bottom))); overflow-y: auto; overscroll-behavior: contain;
+    }
+
+    /* Phones. The top row keeps to what fits beside the Documents link, which
+       shrinks to its arrow: the shortcuts card goes (a phone has no keys for
+       them), avatars overlap, and notes that would cover the row sit under it. */
+    @media (max-width: 520px) {
+      .nav-back { padding: 0 8px; }
+      .nav-back span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+      #btn-help { display: none; }
+      .people { gap: 0; }
+      .people > * + * { margin-left: -5px; }
+      .mode-note, .refresh-pill { top: calc(var(--top-clear) - 6px); left: 16px; right: 16px; width: fit-content; max-width: none; margin: 0 auto; transform: none; }
+      .toast { bottom: calc(max(var(--agent-inset), env(safe-area-inset-bottom)) + var(--agent-fab) + 12px); }
+      #source .cm-scroller { padding-top: 24px; padding-left: 16px; }
+    }
+    /* Touch. A finger needs more room than the controls are drawn with, so
+       their hit areas reach past it; and fields are 16px, so Safari doesn't
+       zoom the page in when one is focused. */
+    @media (pointer: coarse) {
+      .nav-back { position: relative; }
+      :is(.icon-btn, .nav-back)::before { content: ""; position: absolute; inset: -5px -1px; }
+      .avatar::after { content: ""; position: absolute; inset: -8px -3px; }
+      .fmt button { width: 38px; height: 36px; }
+      .fmt input, .agent-compose textarea { font-size: 16px; }
     }
 
     /* Other people's carets in the source view. */
