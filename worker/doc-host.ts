@@ -8,8 +8,9 @@
 // The front door (worker/index.ts) has already checked who's asking: it
 // forwards each request with the path inside the document (/api/doc, not
 // /koomen/abc123/api/doc), the document's public address in x-erga-base,
-// and the signed-in person in x-erga-person. An external agent's requests
-// to /api/ext carry its share token instead, which this host checks.
+// and the signed-in person in x-erga-person. A request that came with an
+// agent token (tokens.ts) also has x-erga-agent: only those may call the
+// external agent's tools (/api/ext), as the person the token stands for.
 //
 // It also keeps its row in the directory (directory.ts, D1) up to date: when
 // it was last edited, and the title that follows its first heading (at most
@@ -35,7 +36,7 @@ import { DIRECTORY_EVERY_MS, nameOf, namingFor, throttle, UNTITLED, type DocName
 import { afterUnedited, titleOf, UNEDITED_HOURS } from "../front";
 import { makeHost } from "../host";
 import { FileStore, Room, StateStore, StoreError } from "../room";
-import { assets, files as texts } from "../src/room/doc";
+import { assets, isTextPath, files as texts } from "../src/room/doc";
 import { directoryOf } from "./d1";
 import { DiskLink } from "./disk";
 import type { Env } from "./env";
@@ -77,11 +78,11 @@ export class DocHost extends DurableObject<Env> {
    * someone edits it, it's deleted at `expires` (UNEDITED_HOURS after it's
    * made, or sooner when local development asks, to test it).
    */
-  async create(owner: string, id: string, files: Record<string, string>, index: string, opts: { test?: boolean; expires: number | null }): Promise<boolean> {
+  async create(owner: string, id: string, files: Record<string, string | Uint8Array>, index: string, opts: { test?: boolean; expires: number | null; modified?: number }): Promise<boolean> {
     if (await this.ctx.storage.get<Meta>(META)) return false;
     const encoder = new TextEncoder();
-    for (const [path, text] of Object.entries(files)) await this.ctx.storage.put(FILE + path, encoder.encode(text));
-    const meta: Meta = { id, owner: owner.toLowerCase(), index, created: Date.now(), ...(opts.test ? { test: true } : {}) };
+    for (const [path, data] of Object.entries(files)) await this.ctx.storage.put(FILE + path, typeof data == "string" ? encoder.encode(data) : data);
+    const meta: Meta = { id, owner: owner.toLowerCase(), index, created: Date.now(), ...(opts.modified ? { modified: opts.modified } : {}), ...(opts.test ? { test: true } : {}) };
     await this.ctx.storage.put(META, meta);
     if (!meta.test && opts.expires != null) await this.ctx.storage.setAlarm(opts.expires);
     return true;
@@ -99,6 +100,53 @@ export class DocHost extends DurableObject<Env> {
     await this.ctx.storage.put(META, meta ? { ...meta, index, disk } : { id, owner: owner.toLowerCase(), index, created: Date.now(), disk });
     await this.ctx.storage.deleteAlarm();
     return (await this.register())!;
+  }
+
+  /**
+   * Files arriving whole (a publish, from the server's API): each written and
+   * taken into the room as an edit "on disk", so open tabs see it at once and
+   * edits people are making merge with it. Text files go through the room's
+   * push; others (images) are stored and the room told. `remove` deletes
+   * files. Says what it did with each.
+   */
+  async publish(files: Record<string, string | Uint8Array>, remove: string[]): Promise<{ written: string[]; removed: string[]; refused: { path: string; why: string }[] }> {
+    const opened = await (this.open ??= this.load());
+    if (!opened) { this.open = null; throw new Error("There's no such document."); }
+    const meta = (await this.ctx.storage.get<Meta>(META))!;
+    const out = { written: [] as string[], removed: [] as string[], refused: [] as { path: string; why: string }[] };
+    const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false });
+    for (const [path, data] of Object.entries(files)) {
+      if (meta.disk?.only && path != meta.index) { out.refused.push({ path, why: `this document is the single file ${meta.index}` }); continue; }
+      let text: string | null = null;
+      if (typeof data == "string") text = data;
+      else if (isTextPath(path)) { try { text = decoder.decode(data); } catch { out.refused.push({ path, why: "not UTF-8 text" }); continue; } }
+      if (text != null && isTextPath(path)) {
+        const r = await Effect.runPromise(opened.room.push(path, text));
+        if (r.ok) out.written.push(path); else out.refused.push({ path, why: r.reason ?? "refused" });
+        continue;
+      }
+      if (meta.disk) { out.refused.push({ path, why: "a document on disk takes only text files this way" }); continue; }
+      await this.ctx.storage.put(FILE + path, typeof data == "string" ? new TextEncoder().encode(data) : data);
+      await Effect.runPromise(opened.room.fileChanged(path));
+      out.written.push(path);
+    }
+    for (const path of remove) {
+      if (path == meta.index) { out.refused.push({ path, why: "it's the document's page" }); continue; }
+      if (meta.disk) { out.refused.push({ path, why: "files on disk aren't deleted this way" }); continue; }
+      if (!(await this.ctx.storage.get(FILE + path))) continue;
+      await this.ctx.storage.delete(FILE + path);
+      await Effect.runPromise(opened.room.fileChanged(path));
+      out.removed.push(path);
+    }
+    if (out.written.length || out.removed.length) await this.touch();
+    return out;
+  }
+
+  /** Every file the document holds (the room's view: text files and others). */
+  async paths(): Promise<string[]> {
+    const opened = await (this.open ??= this.load());
+    if (!opened) { this.open = null; return []; }
+    return [...new Set([...texts(opened.room.doc).keys(), ...assets(opened.room.doc).keys()])].sort();
   }
 
   /** Deletes the document (the front door has asked the directory who may): everyone on it is disconnected. */
@@ -303,6 +351,8 @@ export class DocHost extends DurableObject<Env> {
       doc: { name: meta.index, path: meta.index, kind: meta.index.endsWith(".md") ? "md" : "html", dir: meta.disk?.path ?? meta.owner },
       only: meta.disk?.only ? meta.index : undefined,
       personOf: (req) => personOf(new Headers(req.headers as Record<string, string>)),
+      // The front door sets x-erga-agent only on a request whose agent token it checked.
+      agentOf: (req) => (req.headers["x-erga-agent"] ? personOf(new Headers(req.headers as Record<string, string>)) : null),
       baseUrl: (req) => req.headers["x-erga-base"] ?? "",
       // People's ids are their GitHub logins, so GitHub serves their pictures.
       avatarOf: (person) => (person.id.startsWith("test-") ? undefined : `${AVATARS}/${encodeURIComponent(person.id)}?s=64`),
@@ -389,7 +439,7 @@ function bytesOf(data: string | ArrayBuffer | ArrayBufferView): Uint8Array {
   return new Uint8Array(data);
 }
 
-/** The person the front door vouched for (anonymous if it didn't, which only /api/ext should see). */
+/** The person the front door vouched for (anonymous if it didn't: the pages origin's requests for files). */
 function personOf(headers: Headers): Person {
   try {
     const p = JSON.parse(headers.get("x-erga-person") ?? "") as Person;

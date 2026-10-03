@@ -597,8 +597,10 @@ declare global {
     if (open) { showChrome(); toggleShare(false); toggleNaming(false); }
   }
 
-  // Share with an external agent: a prompt carrying this page's API and a
-  // token that lets the agent call your agent's tools (host.ts, /api/ext).
+  // Share with an external agent: a prompt carrying this page's API and your
+  // agent token (tokens.ts: the share button's, the same until rotated), which
+  // lets the agent call your agent's tools here (host.ts, /api/ext) and act
+  // as you on the rest of the server (server-api.ts).
   const share = $("share"), shareBtn = $("btn-share");
   const sharePrompt = $("share-prompt") as HTMLTextAreaElement, shareStatus = $("share-status");
   const shareCopy = $("share-copy"), shareRotate = $("share-rotate");
@@ -614,7 +616,9 @@ Send the token on every request, as the header "Authorization: Bearer ${token}".
 
 curl -s -H "Authorization: Bearer ${token}" ${api}
 
-Once you've read it, await further instructions.`;
+The same token works for the rest of Erga as me (my other documents, new ones, publishing a site): ${location.origin}/api/ext explains it, if I ask for that.
+
+Once you've read the guide, await further instructions.`;
   }
   async function loadShare(rotate: boolean) {
     for (const b of [shareCopy, shareRotate]) { b.setAttribute("aria-disabled", "true"); b.title = "Getting a token…"; }

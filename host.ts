@@ -1,6 +1,6 @@
 // The host for one document, run by its Durable Object (worker/doc-host.ts).
 // Given the open room, its files and the agent's settings, it keeps each
-// person's agent session, their open tabs and their share tokens, and serves
+// person's agent session and their open tabs, and serves
 // the document's API (api.ts), what storage holds (/api/stored) and the
 // document's files (/doc/).
 //
@@ -10,7 +10,6 @@
 
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Redacted from "effect/Redacted";
 import * as Etag from "effect/http/Etag";
 import * as FileSystem from "effect/FileSystem";
 import * as HttpPlatform from "effect/http/HttpPlatform";
@@ -18,7 +17,7 @@ import * as Path from "effect/Path";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { HttpApiBuilder, HttpApiMiddleware } from "effect/http-api";
 import { MODELS, externalGuide, isModelChoice, startSession, type AgentConfig, type AgentSession } from "./agent";
-import { AgentOff, Api, BadRequest, ExplainBadRequests, ModelFixed, NameRefused, NoSuchModel, NoSuchTool, Person, PersonFromRequest, SessionFailed, ShareToken, ToolFailed, Unauthorized, type AgentState, type ModelState } from "./api";
+import { AgentOff, Api, BadRequest, ExplainBadRequests, ModelFixed, NameRefused, NoSuchModel, NoSuchTool, Person, PersonFromRequest, SessionFailed, ExternalAgent, ToolFailed, Unauthorized, type AgentState, type ModelState } from "./api";
 import type { DocName, Naming } from "./directory";
 import { digest, type FileStore, type Room } from "./room";
 import { ignored } from "./src/room/doc";
@@ -38,6 +37,11 @@ export interface HostOptions {
   readonly agent: AgentConfig | { readonly missing: string };
   /** Who a request is from. */
   readonly personOf: (request: HttpServerRequest.HttpServerRequest) => { id: string; name: string };
+  /**
+   * Whom an external agent's request acts for: the person its token stands
+   * for, as the front door vouched (null if it came without one).
+   */
+  readonly agentOf: (request: HttpServerRequest.HttpServerRequest) => { id: string; name: string } | null;
   /** The document's public address for a request, for the external agent's guide. */
   readonly baseUrl: (request: HttpServerRequest.HttpServerRequest) => string;
   /** A person's picture, if the platform knows one (hosted: their GitHub avatar). */
@@ -141,21 +145,9 @@ export function makeHost(opts: HostOptions) {
   /** For an external agent: the session's tools work even with the embedded agent off. */
   const extSession = Person.use((user) => Effect.mapError(session(user), () => new SessionFailed({ ok: false, error: "The agent's session didn't start." })));
 
-  // Sharing with an external agent: the share button mints a token that
-  // stands for one person, and an agent holding it calls that person's
-  // agent tools over /api/ext, as their agent. Tokens live as long as the
-  // host; rotating one revokes the old.
-  const shareTokens = new Map<string, { id: string; name: string }>();
-  const tokenOf = new Map<string, string>();
-  const mintToken = (user: { id: string; name: string }, rotate: boolean) => {
-    const old = tokenOf.get(user.id);
-    if (old && !rotate) return old;
-    if (old) shareTokens.delete(old);
-    const token = "erga_" + Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("base64url");
-    shareTokens.set(token, user);
-    tokenOf.set(user.id, token);
-    return token;
-  };
+  // An external agent (Claude Code, Codex...) holds one of the person's
+  // agent tokens (tokens.ts; the share button makes one), which the front
+  // door checks; over /api/ext it calls that person's agent tools, as their agent.
 
   const modelState = (s: AgentSession): ModelState => ({
     model: s.model,
@@ -167,14 +159,11 @@ export function makeHost(opts: HostOptions) {
 
   const personFromRequest = Layer.succeed(PersonFromRequest, (handler) =>
     HttpServerRequest.HttpServerRequest.use((req) => Effect.provideService(handler, Person, opts.personOf(req))));
-  const shareToken = Layer.succeed(ShareToken, {
-    bearer: (handler, { credential }) => {
-      const user = shareTokens.get(Redacted.value(credential));
-      return user
-        ? Effect.provideService(handler, Person, user)
-        : Effect.fail(new Unauthorized({ ok: false, error: "Missing or unknown token: send the one you were given as \"Authorization: Bearer <token>\". Ask for a new prompt if it stopped working (the editor may have restarted)." }));
-    },
-  });
+  const externalAgent = Layer.succeed(ExternalAgent, (handler) => Effect.gen(function* () {
+    const user = opts.agentOf(yield* HttpServerRequest.HttpServerRequest);
+    if (!user) return yield* new Unauthorized({ ok: false, error: "Missing or unknown token: send the one you were given as \"Authorization: Bearer <token>\". If it stopped working it was revoked: ask for a new one." });
+    return yield* Effect.provideService(handler, Person, user);
+  }));
   const explainBadRequests = HttpApiMiddleware.layerSchemaErrorTransform(ExplainBadRequests, (e) =>
     e.kind == "Params" || e.kind == "Headers" || e.kind == "Query" || e.kind == "Payload"
       ? Effect.fail(new BadRequest({ ok: false, error: e.cause.message }))
@@ -223,8 +212,7 @@ export function makeHost(opts: HostOptions) {
     .handle("reset", () => Person.use((user) => session(user).pipe(
       Effect.flatMap((s) => Effect.promise(() => s.reset())), Effect.ignore, Effect.as({ ok: true as const }))))
     .handle("undo", () => Person.use((user) => session(user).pipe(
-      Effect.map((s) => ({ ok: s.undo() })), Effect.orElseSucceed(() => ({ ok: false })))))
-    .handle("share", ({ payload }) => Person.useSync((user) => ({ token: mintToken(user, payload.rotate ?? false) }))));
+      Effect.map((s) => ({ ok: s.undo() })), Effect.orElseSucceed(() => ({ ok: false }))))));
 
   const extApi = HttpApiBuilder.group(Api, "ext", (h) => h
     .handle("guide", () => Effect.gen(function* () {
@@ -244,7 +232,7 @@ export function makeHost(opts: HostOptions) {
   const api = HttpApiBuilder.layer(Api).pipe(Layer.provide([
     docApi.pipe(Layer.provide([personFromRequest, explainBadRequests])),
     agentApi.pipe(Layer.provide([personFromRequest, explainBadRequests])),
-    extApi.pipe(Layer.provide([shareToken, explainBadRequests])),
+    extApi.pipe(Layer.provide([externalAgent, explainBadRequests])),
   ]));
 
   // ---------------------------------------------------------- storage and files

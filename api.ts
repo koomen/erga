@@ -8,13 +8,16 @@
 // plus a _tag naming which failure it was. A body or parameter that doesn't
 // decode is a 400 saying what's wrong (BadRequest).
 //
+// The share button's /api/share isn't here either: tokens are the front
+// door's (front.ts, tokens.ts), which answers it before it reaches a document.
+//
 // Not here: the WebSockets (/api/room, /api/events), the files (the editor's
 // own, and the document's under /doc/), and /api/stored, which moves raw
 // bytes with ETags. Those stay plain routes in host.ts and worker/doc-host.ts.
 
 import * as Context from "effect/Context";
 import * as Schema from "effect/Schema";
-import { HttpApi, HttpApiEndpoint, HttpApiGroup, HttpApiMiddleware, HttpApiSchema, HttpApiSecurity } from "effect/http-api";
+import { HttpApi, HttpApiEndpoint, HttpApiGroup, HttpApiMiddleware, HttpApiSchema } from "effect/http-api";
 import type { Log } from "./src/page/agent-log";
 
 // ------------------------------------------------------------ failures
@@ -23,7 +26,7 @@ const failed = { ok: Schema.Literal(false) };
 
 /** The body or a parameter didn't decode; `error` says how. */
 export class BadRequest extends Schema.TaggedError<BadRequest>()("BadRequest", { ...failed, error: Schema.String }, { httpApiStatus: 400 }) {}
-/** No share token, or one that's been rotated away. */
+/** No agent token, or one that's been revoked. */
 export class Unauthorized extends Schema.TaggedError<Unauthorized>()("Unauthorized", { ...failed, error: Schema.String }, { httpApiStatus: 401 }) {}
 /** The embedded agent is off (no key), or its session didn't start. */
 export class AgentOff extends Schema.TaggedError<AgentOff>()("AgentOff", { ...failed, reason: Schema.String }, { httpApiStatus: 503 }) {}
@@ -46,10 +49,12 @@ export class Person extends Context.Service<Person, { readonly id: string; reado
 /** Who a request is from: the person the front door vouched for (its session, or ?user= in local development). */
 export class PersonFromRequest extends HttpApiMiddleware.Service<PersonFromRequest, { provides: Person }>()("erga/PersonFromRequest") {}
 
-/** An external agent's bearer token, which stands for the person who shared it. */
-export class ShareToken extends HttpApiMiddleware.Service<ShareToken, { provides: Person }>()("erga/ShareToken", {
+/**
+ * An external agent: a request that came with an agent token (tokens.ts),
+ * which the front door checked and turned into the person it stands for.
+ */
+export class ExternalAgent extends HttpApiMiddleware.Service<ExternalAgent, { provides: Person }>()("erga/ExternalAgent", {
   error: Unauthorized,
-  security: { bearer: HttpApiSecurity.bearer },
 }) {}
 
 /** Turns a request that doesn't decode into a BadRequest (a response that doesn't encode stays a 500). */
@@ -163,11 +168,6 @@ export const Api = HttpApi.make("erga")
     .add(HttpApiEndpoint.post("reset", "/api/agent/reset", { success: Ok }))
     /** Undoes the agent's last change; ok is false when there was nothing to undo. */
     .add(HttpApiEndpoint.post("undo", "/api/agent/undo", { success: Schema.Struct({ ok: Schema.Boolean }) }))
-    /** The share button: a token for this person's external agent (rotate: true revokes the old one). */
-    .add(HttpApiEndpoint.post("share", "/api/share", {
-      payload: Schema.Struct({ rotate: Schema.optional(Schema.Boolean) }),
-      success: Schema.Struct({ token: Schema.String }),
-    }))
     .middleware(PersonFromRequest))
   .add(HttpApiGroup.make("ext")
     /** The external agent's guide: how to call the tools, and the document rules. */
@@ -186,5 +186,5 @@ export const Api = HttpApi.make("erga")
       success: Schema.Struct({ ok: Schema.Literal(true), content: Schema.Any }),
       error: [SessionFailed, NoSuchTool, ToolFailed],
     }))
-    .middleware(ShareToken))
+    .middleware(ExternalAgent))
   .middleware(ExplainBadRequests);

@@ -2,6 +2,7 @@
 // host's SQLite file, through D1's API. A batch is one transaction.
 
 import { Directory, type Param, type Sql } from "../directory";
+import { Tokens } from "../tokens";
 import type { Env } from "./env";
 
 const sqlOn = (db: D1Database): Sql => {
@@ -20,4 +21,9 @@ let directory: { db: D1Database; dir: Directory } | null = null;
 export function directoryOf(env: Env): Directory {
   if (directory?.db !== env.DB) directory = { db: env.DB, dir: new Directory(sqlOn(env.DB)) };
   return directory.dir;
+}
+
+/** Agent tokens (tokens.ts), on the same database. */
+export function tokensOf(env: Env): Tokens {
+  return new Tokens(sqlOn(env.DB), env.SESSION_SECRET);
 }

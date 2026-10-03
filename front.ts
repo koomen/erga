@@ -14,11 +14,18 @@
 //                              editor uses this address, which never changes. Under any of the
 //                              addresses above it works too (older tabs and share links use them).
 //
+// The server's API for agents (/llms.txt, /api/..., /mcp) and /tokens are
+// server-api.ts's, which the Worker calls with `withTokens(platform)`.
+//
+// Anywhere, "Authorization: Bearer erga_..." (an agent token, tokens.ts)
+// signs in as the person it stands for, as their agent (Session.agent).
+//
 // Signing in, the editor's own files and the WebSockets stay with the
 // Worker. The rule for when an unedited document goes (`afterUnedited`) is
 // here; the document's alarm applies it.
 
 import { type Directory, type DocRow, type Route, type Who, UNTITLED } from "./directory.ts";
+import type { AgentToken, Tokens } from "./tokens.ts";
 
 /** Who's signed in. */
 export interface Session {
@@ -28,6 +35,8 @@ export interface Session {
   test?: { by: string };
   /** In local development, the name a tab gave in ?user=, carried along in the links it follows. */
   as?: string;
+  /** Signed in with an agent token (tokens.ts): an agent acting as this person. */
+  agent?: AgentToken;
 }
 
 /** A document as its owner's list shows it. */
@@ -72,13 +81,24 @@ export interface Platform {
   secret: string;
   /** Every document's address, title and members. */
   directory: Directory;
+  /** Agent tokens (tokens.ts). */
+  tokens: Tokens;
+  /** A test token for the test suite, minted by `login` (shown on /tokens), where the platform makes them. */
+  testToken?(login: string): Promise<{ token: string; expires: Date }>;
   docs: {
     /**
      * Makes the host of a document already in the directory, from a
      * template's files; false if it already has one. Unless someone edits
      * it, it goes at `expires`.
      */
-    create(doc: Route, files: Record<string, string>, index: string, opts: { test?: boolean; expires: number | null }): Promise<boolean>;
+    create(doc: Route, files: Record<string, string | Uint8Array>, index: string, opts: { test?: boolean; expires: number | null; modified?: number }): Promise<boolean>;
+    /**
+     * Files arriving whole into an existing document (a publish): written,
+     * and merged into its room as edits; `remove` deletes files.
+     */
+    publish(doc: Route, files: Record<string, string | Uint8Array>, remove: string[]): Promise<{ written: string[]; removed: string[]; refused: { path: string; why: string }[] }>;
+    /** Every file a document holds. */
+    paths(doc: Route): Promise<string[]>;
     exists(doc: Route): Promise<boolean>;
     /** Deletes a document (its host takes it out of the directory too); false if it had no host. */
     delete(doc: Route): Promise<boolean>;
@@ -112,11 +132,12 @@ export const ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789";
 const newId = () => Array.from(crypto.getRandomValues(new Uint8Array(8)), (b) => ALPHABET[b % ALPHABET.length]).join("");
 
 /** The front door's answer to a request, for any path (a page saying so when there's nothing there). */
-export async function frontDoor(request: Request, platform: Platform): Promise<Response> {
+export async function frontDoor(request: Request, base: Platform): Promise<Response> {
   const url = new URL(request.url);
   const path = url.pathname;
-  const pages = pagesHost(url, platform);
-  if (pages) return pagesDoor(request, url, pages, platform);
+  const pages = pagesHost(url, base);
+  if (pages) return pagesDoor(request, url, pages, base);
+  const platform = withTokens(base, url);
   if (path == "/") return viewDemo(platform, await platform.sessionOf(request));
   if (path == "/new") return newDoc(platform, request);
   if (path == "/docs") return listDocs(platform, request);
@@ -147,10 +168,36 @@ export async function frontDoor(request: Request, platform: Platform): Promise<R
   }
   const route = await documentRoute(platform, first, second);
   if (!route) return new Response("No such document", { status: 404 });
-  // An external agent brings its share token, which the document checks; everyone else needs a session.
-  if (!session && !rest.startsWith("/api/ext")) return new Response("Sign in first", { status: 401 });
-  if (session && !(await platform.directory.may(whoOf(session), "open", route))) return new Response("Not allowed", { status: 403 });
+  // An external agent brings its token (Session.agent); everyone else signs in.
+  if (!session) {
+    return rest.startsWith("/api/ext")
+      ? Response.json({ ok: false, error: "Missing or unknown token: send the one you were given as \"Authorization: Bearer <token>\". If it stopped working it was revoked: ask for a new one." }, { status: 401, headers: { "WWW-Authenticate": 'Bearer realm="erga"' } })
+      : new Response("Sign in first", { status: 401 });
+  }
+  if (!(await platform.directory.may(whoOf(session), "open", route))) return new Response("Not allowed", { status: 403 });
+  // The share button's token is the front door's (tokens.ts), not the document's.
+  if (rest == "/api/share" && request.method == "POST") return shareToken(platform, request, session);
   return platform.docs.fetch(route, forwarded(request, url, rest, `${url.origin}/d/${route.id}`, session));
+}
+
+/**
+ * The platform with agent tokens: a request carrying one ("Authorization:
+ * Bearer erga_...") is signed in as the person it stands for, as long as
+ * they may still sign in, whatever cookie it has. A bearer token that isn't
+ * a good one signs in nobody.
+ */
+export function withTokens(platform: Platform, url: URL): Platform {
+  return {
+    ...platform,
+    async sessionOf(request) {
+      const bearer = /^Bearer\s+(\S+)\s*$/i.exec(request.headers.get("authorization") ?? "")?.[1];
+      if (!bearer) return platform.sessionOf(request);
+      const token = await platform.tokens.verify(bearer).catch(() => null);
+      if (!token) return null;
+      const session: Session = { login: token.login, name: token.name, agent: token };
+      return platform.mayCreate(session, url) ? session : null;
+    },
+  };
 }
 
 /** Who a session is, to the directory's `may`. */
@@ -337,20 +384,42 @@ async function newDoc(platform: Platform, request: Request): Promise<Response> {
  * by the template's heading, its slug following that), then its host. Null
  * if the id is taken.
  */
-async function makeDoc(platform: Platform, owner: string, id: string, files: Record<string, string>, opts: { test?: boolean; unedited?: number }): Promise<DocRow | null> {
+export async function makeDoc(platform: Platform, owner: string, id: string, files: Record<string, string | Uint8Array>, opts: MakeOptions): Promise<DocRow | null> {
   const created = Date.now();
-  const expires = opts.test ? null : created + (opts.unedited ?? UNEDITED_HOURS * HOUR);
+  // A published one has been edited already (its files are someone's work): it never expires.
+  const expires = opts.test || opts.published ? null : created + (opts.unedited ?? UNEDITED_HOURS * HOUR);
+  const index = opts.index ?? "index.html";
+  const page = files[index];
+  const pageText = typeof page == "string" ? page : page ? new TextDecoder().decode(page) : "";
   const { doc, added } = await platform.directory.add({
-    id, owner, title: titleOf(files["index.html"] ?? "", "index.html") ?? UNTITLED,
-    ...(opts.test ? { slug: id, slugSet: true } : {}),
+    id, owner,
+    ...(opts.title?.trim() ? { title: opts.title, titleSet: true } : { title: titleOf(pageText, index) ?? UNTITLED }),
+    ...(opts.test ? { slug: id, slugSet: true } : opts.slug?.trim() ? { slug: opts.slug, slugSet: true } : {}),
     doName: id, created, expires, test: opts.test,
+    ...(opts.published ? { modified: created } : {}),
   });
   if (!added) return null;
-  if (await platform.docs.create(doc, files, "index.html", { test: opts.test, expires })) return doc;
+  if (await platform.docs.create(doc, files, index, { test: opts.test, expires, ...(opts.published ? { modified: created } : {}) })) return doc;
   // A host by that name was there already (an id from before the directory): leave it, and try another id.
   await platform.directory.remove(id);
   return null;
 }
+
+export interface MakeOptions {
+  test?: boolean;
+  /** How soon it goes if nobody edits it, in ms (local development's tests). */
+  unedited?: number;
+  /** Its page (index.html if not given). */
+  index?: string;
+  /** A title (set: it won't follow the page's heading) and slug (set: it won't follow the title). */
+  title?: string;
+  slug?: string;
+  /** Made from someone's files (the server's API): counts as edited, so it never expires. */
+  published?: boolean;
+}
+
+/** A new document's id: 8 letters and digits, none easily mistaken for another. */
+export const newDocId = newId;
 
 /** /docs: the signed-in person's documents, most recently edited first. */
 async function listDocs(platform: Platform, request: Request): Promise<Response> {
@@ -598,16 +667,35 @@ export const confirmAction = (title: string, button: string, action: string) =>
 const signInFirst = (next: string) => new Response(null, { status: 302, headers: { Location: `/auth/github?next=${encodeURIComponent(safeNext(next))}` } });
 
 /**
+ * POST <document>/api/share {rotate}: the share button's token, the
+ * person's one 'share' token (tokens.ts), the same each time until rotated.
+ */
+async function shareToken(platform: Platform, request: Request, session: Session): Promise<Response> {
+  const refuse = (error: string) => Response.json({ ok: false, error }, { status: 403 });
+  if (session.agent) return refuse("An agent can't make tokens.");
+  if (session.test) return refuse("Test people can't share documents with agents.");
+  const origin = request.headers.get("origin");
+  if (origin && origin != new URL(request.url).origin) return refuse("Forbidden");
+  const body = (await request.json().catch(() => ({}))) as { rotate?: unknown };
+  const { token } = await platform.tokens.share({ login: session.login, name: session.name }, body?.rotate === true);
+  return Response.json({ token }, { headers: { "Cache-Control": "no-store" } });
+}
+
+/**
  * A request for the document's host: the path inside the document, its
  * public address, and who's asking (never what the browser claimed: those
- * headers are replaced).
+ * headers are replaced), and whether it's an agent with a token.
  */
-function forwarded(request: Request, url: URL, rest: string, base: string, session: Session | null): Request {
+export function forwarded(request: Request, url: URL, rest: string, base: string, session: Session | null): Request {
   const inner = new URL(rest + url.search, url.origin);
   const headers = new Headers(request.headers);
   headers.delete("x-erga-person");
+  headers.delete("x-erga-agent");
+  headers.delete("authorization");
   headers.set("x-erga-base", base);
   if (session) headers.set("x-erga-person", JSON.stringify({ id: session.login.toLowerCase(), name: session.name }));
+  // Only an agent token's request may call a document's external agent tools (host.ts).
+  if (session?.agent) headers.set("x-erga-agent", session.agent.id);
   return new Request(inner, { method: request.method, headers, body: request.body, redirect: "manual" });
 }
 
