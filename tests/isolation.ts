@@ -13,14 +13,13 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { Browser } from "./cdp";
-import { startHost } from "./host";
+import { freePort, startHost } from "./host";
 import { F } from "./tab";
 import { expect, until } from "./suite/harness";
 
 const dir = mkdtempSync(join(tmpdir(), "erga-isolation-"));
-const host0 = await startHost(null);
-const shell = host0.base;
-await host0.dispose();
+const port = freePort();
+const shell = `http://127.0.0.1:${port}`;
 
 // The page knows the editor's address (anyone can guess erga.dev) and tries its luck there.
 writeFileSync(join(dir, "index.html"), `<!doctype html>
@@ -49,7 +48,7 @@ writeFileSync(join(dir, "index.html"), `<!doctype html>
 </body></html>
 `);
 
-const host = await startHost(join(dir, "index.html"), { port: new URL(shell).port ? Number(new URL(shell).port) : undefined });
+const host = await startHost(join(dir, "index.html"), { port });
 const browser = await Browser.launch();
 let passed = 0;
 const ok = (what: string) => { passed++; console.log(`ok   ${what}`); };

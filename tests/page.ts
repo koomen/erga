@@ -707,14 +707,14 @@ async function voiceScenario(browser: Browser) {
   await loaded(p);
   await p.key("j", MOD.Meta);
   await until(() => p.eval<boolean>(`/Type a message/.test(document.getElementById("agent-send").title)`), 10_000);
-  const st = () => p.eval<{ on: string | null; input: string; readOnly: boolean; send: string | null; title: string; sent: string[]; recs: number }>(`(() => { const v = document.getElementById("agent-voice"), i = document.getElementById("agent-input"), b = document.getElementById("agent-send"); return { on: v.getAttribute("aria-pressed"), input: i.value, readOnly: i.readOnly, send: b.getAttribute("aria-disabled"), title: b.title, sent: __sent, recs: __recs.length }; })()`);
+  // `before` runs in the same evaluation as the read: the pause timer is a tenth of real time under test, shorter than a round trip on a busy machine.
+  const st = (before = "") => p.eval<{ on: string | null; input: string; readOnly: boolean; send: string | null; title: string; sent: string[]; recs: number }>(`(() => { ${before}; const v = document.getElementById("agent-voice"), i = document.getElementById("agent-input"), b = document.getElementById("agent-send"); return { on: v.getAttribute("aria-pressed"), input: i.value, readOnly: i.readOnly, send: b.getAttribute("aria-disabled"), title: b.title, sent: [...__sent], recs: __recs.length }; })()`);
   check("the voice button shows where speech recognition exists", await p.eval<boolean>(`!document.getElementById("agent-voice").hidden`));
   await p.eval(`document.getElementById("agent-voice").click()`);
   let v = await st();
   check("voice mode listens, and Send is off and says why", v.on == "true" && v.recs == 1 && v.readOnly && v.send == "true" && /Voice mode/.test(v.title), v);
 
-  await p.eval(`__hear(["make the title", false])`);
-  v = await st();
+  v = await st(`__hear(["make the title", false])`);
   check("words show in the box as they're heard, unsent", v.input == "make the title" && v.sent.length == 0, v);
   await p.eval(`__hear(["make the title blue", true])`);
   check("a pause sends what was said", await until(async () => (await st()).sent.length == 1, 2000));
@@ -722,17 +722,14 @@ async function voiceScenario(browser: Browser) {
   check("and empties the box", v.sent[0] == "make the title blue" && v.input == "", v);
 
   // The session's first result was sent; the next words not yet final are sent at the pause too, then the session restarts.
-  await p.eval(`__hear(["make the title blue", true], [" and bigger", false])`);
-  v = await st();
+  v = await st(`__hear(["make the title blue", true], [" and bigger", false])`);
   check("the next words show alone", v.input == "and bigger", v);
   await until(async () => (await st()).sent.length == 2, 2000);
   v = await st();
   check("each pause sends again, words not yet final included", v.sent[1] == "and bigger", v);
   check("and a fresh session takes over, so they don't come again", await until(async () => (await st()).recs == 2, 2000));
 
-  await p.eval(`__hear(["thanks", true])`);
-  await p.eval(`document.getElementById("agent-voice").click()`);
-  v = await st();
+  v = await st(`__hear(["thanks", true]); document.getElementById("agent-voice").click()`);
   check("leaving voice mode keeps what wasn't sent in the box, to edit", v.on == "false" && v.input == "thanks" && !v.readOnly && v.sent.length == 2, v);
   await Bun.sleep(T(1000) + 100);
   check("and doesn't send it later", (await st()).sent.length == 2);

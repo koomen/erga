@@ -25,8 +25,17 @@ export interface Host {
   dispose(): Promise<void>;
 }
 
+/** A port nothing is listening on right now. */
+export function freePort(): number {
+  const probe = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+  const port = probe.port;
+  probe.stop(true);
+  return port;
+}
+
 export async function startHost(target: string | null, opts: { port?: number; env?: Record<string, string>; data?: string } = {}): Promise<Host> {
-  const port = opts.port ?? 20000 + Math.floor(Math.random() * 20000);
+  // A port the OS says is free: a random guess collides now and then with this many hosts starting at once.
+  const port = opts.port ?? freePort();
   const data = opts.data ?? mkdtempSync(join(tmpdir(), "erga-data-"));
   const env = { ...process.env as Record<string, string>, ERGA_DATA_DIR: data, ...opts.env };
   let proc: ReturnType<typeof Bun.spawn> | null = null;

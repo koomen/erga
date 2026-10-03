@@ -48,7 +48,7 @@ export const browserTests: Test[] = [
     async run(ctx) {
       const d = await ctx.doc();
       const [a, b] = [await open(ctx, d, "Ada"), await open(ctx, d, "Bo")];
-      const tips = (t: typeof a) => t.p.eval<string[]>(`[...document.querySelectorAll("#people .avatar")].map((e) => e.dataset.tip)`);
+      const tips = (t: typeof a) => t.p.eval<string[]>(`[...document.querySelectorAll(":is(#me, #people) .avatar")].map((e) => e.dataset.tip)`);
       await until(async () => (await tips(a)).some((t) => t.startsWith("Bo")) && (await tips(b)).some((t) => t.startsWith("Ada")), 3000, "each sees the other at the top", async () => [await tips(a), await tips(b)]);
       await b.frame(`${W}.__marker = 1`);
       await a.clickEnd("h1");
@@ -146,7 +146,7 @@ export const browserTests: Test[] = [
       expect(await a.p.eval<boolean>(`[...document.querySelectorAll(".msg-tool")].some((e) => /Looked at the page/.test(e.textContent) && e.querySelector("img.shot")?.naturalWidth > 0)`), "view_page captured the page in Ada's tab", await a.p.eval(`[...document.querySelectorAll(".msg-tool")].map((e) => e.textContent).join(" | ")`));
       await until(async () => (await b.textOf("h1")).includes("by agent"), 3000, "Bo's page shows the agent's edit");
       expect(!(await b.p.eval<boolean>(`[...document.querySelectorAll(".msg-user, .msg-assistant")].length > 0`)), "Bo's panel shows none of it");
-      await until(async () => b.p.eval<boolean>(`[...document.querySelectorAll("#people .agent-badge")].some((e) => /Ada’s agent/.test(e.dataset.tip))`), 3000, "the agent's badge shows on Bo's page");
+      await until(async () => b.p.eval<boolean>(`[...document.querySelectorAll(":is(#people, #me) .agent-badge")].some((e) => /Ada’s agent/.test(e.dataset.tip))`), 3000, "the agent's badge shows on Bo's page");
       expect(!(await peerNames(b)).includes("Ada’s agent"), "but no caret of its own on the page", await peerNames(b));
       noErrors(a, "Ada"); noErrors(b, "Bo");
     },
