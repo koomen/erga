@@ -5,8 +5,9 @@
 #   ./test.sh         unit tests, tests/page.ts, the front door's routes
 #                     (tests/worker.ts, on the local host) and the multiplayer suite
 #
-# Not here, run by hand: tests/agent.ts (the real model, costs a little) and
-# tests/suite/run.ts --long (bigger, slower, real idle-eviction waits).
+# Not here, run by hand: tests/agent.ts (the real model, costs a little),
+# tests/suite/run.ts --long (bigger, slower, real idle-eviction waits) and
+# tests/scripts-gate.ts (needs the Worker: bun run dev:worker).
 set -euo pipefail
 cd "$(dirname "$0")"
 start=$(date +%s)

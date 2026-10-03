@@ -162,6 +162,12 @@ declare global {
   // that's someone else (?user=) goes to theirs.
   $("nav-docs").hidden = myId.startsWith("test-");
   if (!signedIn && myName != info.user) $("nav-docs").querySelector("a")!.href = `/docs?user=${encodeURIComponent(myName)}`;
+  // Someone else's page on erga.dev could act as you while its scripts run
+  // (it's served from this origin), so they stay off until you say so, for
+  // this tab. Locally, every page is from your own disk.
+  const owner = BASE.split("/")[1]?.toLowerCase() ?? "";
+  const scriptsKey = `erga:scripts:${BASE}`;
+  const trusted = !signedIn || owner == myId || (() => { try { return sessionStorage.getItem(scriptsKey) == "on"; } catch { return false; } })();
   /** The host's agent endpoints, as this person. */
   const api = (path: string) => `${BASE}${path}?user=${encodeURIComponent(myName)}`;
 
@@ -691,6 +697,7 @@ Once you've read it, await further instructions.`;
     base: `${BASE}/doc/`,
     markdownHead,
     self,
+    scripts: trusted,
     onUpdate(u) {
       if (u.changes && !u.remote) {
         collab.push(u.changes);
@@ -700,6 +707,7 @@ Once you've read it, await further instructions.`;
       if (u.rendered) {
         syncBackdrop();
         syncPause();
+        syncScriptsPill();
         const t = page.title();
         document.title = t ? `${t} · ${info!.name}` : info!.name;
         if (restoreScroll != null) { frame.contentWindow?.scrollTo(0, restoreScroll); restoreScroll = null; }
@@ -716,6 +724,16 @@ Once you've read it, await further instructions.`;
       const r = frame.getBoundingClientRect();
       pointerMoved(new MouseEvent("mousemove", { clientX: e.clientX + r.left, clientY: e.clientY + r.top }));
     },
+  });
+
+  // With scripts off, a page that has any says so, and offers to run them.
+  const scriptsPill = $("scripts-pill");
+  const hasScripts = () => /<script\b|<iframe\b|\son[a-z]+\s*=|javascript:/i.test(page.state.doc.toString());
+  const syncScriptsPill = () => { scriptsPill.hidden = page.scriptsOn || mode != "text" || !hasScripts(); };
+  scriptsPill.addEventListener("click", () => {
+    try { sessionStorage.setItem(scriptsKey, "on"); } catch {}
+    scriptsPill.hidden = true;
+    page.setScripts(true);
   });
 
   // ---------------------------------------------------------------- style bar
@@ -880,6 +898,7 @@ Once you've read it, await further instructions.`;
       modeNote.hidden = false;
     }
     renderMode();
+    syncScriptsPill();
     queueFmt();
   }
   /** Keeps a read-only conversion up to date when the file changes underneath it. */
@@ -922,7 +941,7 @@ Once you've read it, await further instructions.`;
     const width = Math.round(Math.max(320, Math.min(2400, req.width ?? (frame.clientWidth || 1280))));
     const viewport = frame.clientHeight || 800;
     const shot = document.createElement("iframe");
-    shot.setAttribute("sandbox", "allow-scripts allow-same-origin");
+    shot.setAttribute("sandbox", page.scriptsOn ? "allow-scripts allow-same-origin" : "allow-same-origin");
     shot.setAttribute("aria-hidden", "true");
     shot.style.cssText = `position:fixed;left:-100000px;top:0;width:${width}px;height:${viewport}px;border:0;`;
     const html = page.renderedHtml();

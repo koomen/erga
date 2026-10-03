@@ -8,7 +8,7 @@
 // throwaway test people (Ada, Bo...) who can open only test documents
 // (ids starting "test"), so the test suite can run against erga.dev.
 
-import { page, safeNext, type Session } from "../front";
+import { confirmAction, fromElsewhere, page, safeNext, type Session } from "../front";
 import type { Env } from "./env";
 
 const COOKIE = "erga_session", STATE = "erga_oauth";
@@ -154,8 +154,10 @@ export async function testSignIn(env: Env, request: Request): Promise<Response> 
   return signIn(env, request, { login, name, test: { by: t.by } }, safeNext(url.searchParams.get("next")), t.exp - Math.floor(Date.now() / 1000));
 }
 
-/** /auth/logout */
+/** /auth/logout (another site's link to it asks first) */
 export function signOut(request: Request): Response {
+  const url = new URL(request.url);
+  if (request.method == "POST" ? request.headers.get("origin") != url.origin : fromElsewhere(request)) return confirmAction("Sign out", "Sign out of Erga", "/auth/logout");
   return new Response(null, { status: 302, headers: { Location: "/", "Set-Cookie": cookie(request, COOKIE, "", 0) } });
 }
 

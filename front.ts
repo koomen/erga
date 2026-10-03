@@ -146,6 +146,10 @@ async function newDoc(platform: Platform, request: Request): Promise<Response> {
   const url = new URL(request.url);
   const params = url.searchParams;
   if (!session) return signInFirst(`/new${params.size ? `?${params}` : ""}`);
+  // Another site may not make documents for you (nor an unconfirmed sign-in on the way back from GitHub).
+  if (request.method == "POST" ? request.headers.get("origin") != url.origin : fromElsewhere(request)) {
+    return confirmAction("New document", params.get("from") == "demo" ? "Make your copy of the demo" : "Make a new document", `/new${url.search}`);
+  }
   const wanted = params.get("id");
   const from = params.get("from");
   const template = platform.templates[from && FROM.has(from) ? from : "doc"];
@@ -284,8 +288,29 @@ function docsPage(session: Session, docs: Listed[], now: number): string {
 </html>`;
 }
 
-/** Only paths on this site: "/koomen/abc", never "//elsewhere" or a full URL. */
-export const safeNext = (next: string | null) => (next && next.startsWith("/") && !next.startsWith("//") ? next : "/");
+/**
+ * Only paths on this site: "/koomen/abc", never "//elsewhere" or a full URL.
+ * No backslashes or control characters either: browsers read "/\elsewhere"
+ * as "//elsewhere", and drop tabs and newlines ("/\t/elsewhere").
+ */
+export const safeNext = (next: string | null) => (next && next.startsWith("/") && !/[\\\x00-\x1f\x7f]/.test(next) && !next.startsWith("//") ? next : "/");
+
+/**
+ * A request that another site started (its link, form or image), as the
+ * browser reports it. Clients that don't say (scripts, tests) aren't
+ * browsers carrying someone's cookie, so they count as this site.
+ */
+export const fromElsewhere = (request: Request) => {
+  const site = request.headers.get("sec-fetch-site");
+  return site != null && site != "same-origin" && site != "none";
+};
+
+/**
+ * For an action another site may not take on someone's behalf: asks them to
+ * confirm it with a button, which posts back from this site.
+ */
+export const confirmAction = (title: string, button: string, action: string) =>
+  page(title, `<form method="post" action="${esc(action)}"><button style="font:inherit;font-weight:600;padding:8px 16px;border:0;border-radius:10px;background:#1b2330;color:#fff;cursor:pointer">${esc(button)}</button></form>`, 200);
 
 const signInFirst = (next: string) => new Response(null, { status: 302, headers: { Location: `/auth/github?next=${encodeURIComponent(safeNext(next))}` } });
 

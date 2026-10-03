@@ -85,6 +85,23 @@ try {
   ok("an unedited document is deleted on time; edited or open ones stay");
   for (const p of [ada, bo, cy]) p.destroy();
 
+  // Another site can't make documents for you: its link gets a button instead, which posts from here.
+  const before = await docs();
+  const linked = await get("/new?from=demo", { headers: { "Sec-Fetch-Site": "cross-site" } });
+  expect(linked.status == 200 && (await linked.text()).includes(`<form method="post" action="/new?from=demo">`), "a link from another site asks first");
+  expect((await docs()) == before, "and makes nothing");
+  expect((await get("/new", { method: "POST", headers: { Origin: "https://elsewhere.example" } })).status == 200, "a form from another site asks too");
+  const posted = await get("/new?from=demo", { method: "POST", headers: { Origin: new URL(base).origin } });
+  expect(posted.status == 302 && (posted.headers.get("location") ?? "").startsWith(`/${login}/`), "the button makes the document");
+  ok("another site's link or form to /new asks first; the button makes it");
+
+  // Signing in never sends you off the site, however the address is dressed up.
+  for (const next of ["//elsewhere.example", "/\\elsewhere.example", "/\t/elsewhere.example", "https://elsewhere.example"]) {
+    const r = await fetch(`${base}/auth/github?as=${login}&next=${encodeURIComponent(next)}`, { redirect: "manual" });
+    expect(r.headers.get("location") == "/", `sign-in won't go to ${JSON.stringify(next)}`, r.headers.get("location"));
+  }
+  ok("sign-in's next= stays on the site");
+
   // Deleting: only from this site's pages, and then it's gone.
   const form = (headers: Record<string, string>) => get("/docs/delete", { method: "POST", body: new URLSearchParams({ id: kept }), headers });
   expect((await form({})).status == 403, "a delete without an Origin is refused");
