@@ -330,12 +330,17 @@ export class Directory {
     ]);
   }
 
-  /** The documents someone has a permission of their own on (test documents aside), most recently edited first. */
-  async list(login: string): Promise<(DocRow & { role: Role })[]> {
-    const rows = await this.sql.all<Row & { role: Role }>(
-      `SELECT d.*, p.role FROM permissions p JOIN documents d ON d.id = p.doc_id
+  /**
+   * The documents someone has a permission of their own on (test documents
+   * aside), most recently edited first, with their role and how many
+   * permissions besides the owner's each has (`shared`; "*" counts as one).
+   */
+  async list(login: string): Promise<(DocRow & { role: Role; shared: number })[]> {
+    const rows = await this.sql.all<Row & { role: Role; shared: number }>(
+      `SELECT d.*, p.role, (SELECT COUNT(*) FROM permissions q WHERE q.doc_id = d.id AND q.role != 'owner') AS shared
+       FROM permissions p JOIN documents d ON d.id = p.doc_id
        WHERE p.login = ?1 AND d.test = 0 ORDER BY COALESCE(d.modified, d.created) DESC`, login.toLowerCase());
-    return rows.map((r) => ({ ...fromRow(r), role: r.role }));
+    return rows.map((r) => ({ ...fromRow(r), role: r.role, shared: Number(r.shared) }));
   }
 
   /** The role someone's own permission gives them ("*" for anyone's), not counting anyone's. */
