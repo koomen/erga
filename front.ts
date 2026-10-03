@@ -18,7 +18,7 @@
 // Worker. The rule for when an unedited document goes (`afterUnedited`) is
 // here; the document's alarm applies it.
 
-import { type Directory, type DocRow, type Route, type Who, UNTITLED } from "./directory";
+import { type Directory, type DocRow, type Route, type Who, UNTITLED } from "./directory.ts";
 
 /** Who's signed in. */
 export interface Session {

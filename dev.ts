@@ -54,7 +54,8 @@ if (!process.env.ERGA_BUILT) {
 }
 
 const secret = process.env.ERGA_LINK_SECRET || randomBytes(24).toString("hex");
-const vite = Bun.spawn(["node", join(EDITOR, "node_modules/vite/bin/vite.js"), "dev", "--port", String(port), "--strictPort"], {
+// No Web Storage in Node (Node 25+ warns when something reaches for it, and nothing here needs it).
+const vite = Bun.spawn(["node", "--no-experimental-webstorage", join(EDITOR, "node_modules/vite/bin/vite.js"), "dev", "--port", String(port), "--strictPort"], {
   cwd: EDITOR,
   stdio: ["ignore", "inherit", "inherit"],
   // Its own process group: Ctrl-C comes to us first, so the documents write to disk before it stops.
