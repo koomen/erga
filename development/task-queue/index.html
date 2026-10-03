@@ -104,7 +104,7 @@ function actions(t) {
   if (t.url && !["merged", "discarded"].includes(t.status)) b.push(`<a class="btn" href="${esc(t.url)}" target="_blank" onclick="event.stopPropagation()"><span class="dot ${t.previewUp ? "up" : ""}" title="${t.previewUp ? "preview is up" : "preview is down"}"></span>Open</a>`);
   if (t.port && t.worktree && !t.previewUp && ["working", "complete", "failed"].includes(t.status)) b.push(`<button data-act="preview" data-id="${t.id}">Start preview</button>`);
   if (t.status == "complete") b.push(`<button class="primary" data-act="merge" data-id="${t.id}">Merge</button>`);
-  if (t.status == "merging") b.push(`<button disabled><span class="spin"></span> Merging…</button>`);
+  if (t.status == "merging") b.push(`<button disabled><span class="spin"></span> ${t.log.at(-1)?.message.startsWith("Merge requested: waiting") ? "Waiting to merge…" : "Merging…"}</button>`);
   if (!["merging", "merged", "discarded"].includes(t.status))
     b.push(armed.has(t.id) ? `<button class="confirm" data-act="discard" data-id="${t.id}">Discard branch?</button>` : `<button class="danger" data-act="arm" data-id="${t.id}">Discard</button>`);
   return b.length ? `<div class="actions">${b.join("")}</div>` : "";
