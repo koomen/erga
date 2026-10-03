@@ -12,7 +12,9 @@
 // server's API for agents (server-api.ts): agent tokens (made at /tokens,
 // by the share button, or asked for by an agent and approved), publishing a
 // folder as a document, every tool over HTTP and MCP, with the person's own
-// permissions, and revoking.
+// permissions, and revoking. Admins configure the server (settings, users)
+// and owners share documents through the same tools, over the API and in
+// the editor's agent (server-tools.ts).
 //
 //   bun tests/worker.ts [http://localhost:4400]
 //   bun tests/worker.ts --local        a dev server of its own (tests/host.ts)
