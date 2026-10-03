@@ -316,6 +316,7 @@
     .share-actions button[aria-disabled="true"] { opacity: 0.5; cursor: default; }
     .share-status { font-size: 12px; color: var(--soft); }
     .share .share-note { margin: 10px 0 0; font-size: 12px; }
+    .share .share-note a { color: inherit; }
     .msg-tool .via { font-weight: 600; }
     /* A person's agent: a small badge on their avatar's lower right, spinning while it works. */
     .person { position: relative; display: grid; }
@@ -463,7 +464,7 @@
       <button type="button" id="share-rotate">New token</button>
       <span id="share-status" class="share-status" role="status" aria-live="polite"></span>
     </div>
-    <p class="share-note">Anyone with this token can edit the document as your agent. New token turns the old one off; restarting the editor does too.</p>
+    <p class="share-note">Anyone with this token can act as you on Erga: edit this document as your agent, and your other documents too. New token turns the old one off; <a href="/tokens" target="_blank">your tokens</a> lists and revokes them all.</p>
   </div>
 
   <div id="naming" class="help naming" hidden role="dialog" aria-label="Title and address">

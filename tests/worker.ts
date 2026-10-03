@@ -8,7 +8,11 @@
 // follow the page until they're set, renaming (by API, from /docs and by
 // the agent's tools over /api/ext), and open tabs following a rename. Who
 // may: nobody but the owner until it's shared, then editors edit and
-// viewers only look (their edits go nowhere), and only the owner shares.
+// viewers only look (their edits go nowhere), and only the owner shares. The
+// server's API for agents (server-api.ts): agent tokens (made at /tokens,
+// by the share button, or asked for by an agent and approved), publishing a
+// folder as a document, every tool over HTTP and MCP, with the person's own
+// permissions, and revoking.
 //
 //   bun tests/worker.ts [http://localhost:4400]
 //   bun tests/worker.ts --local        a dev server of its own (tests/host.ts)
@@ -71,6 +75,135 @@ const location = async (path: string) => { const r = await get(path); return r.s
 const checks: string[] = [];
 const ok = (what: string) => { checks.push(what); console.log(`ok   ${what}`); };
 const browser = await Browser.launch();
+
+/** The server's API for agents, with one token for everything (server-api.ts, tokens.ts). */
+async function serverApiScenario() {
+  const guide = await (await fetch(`${base}/llms.txt`)).text();
+  expect(guide.includes("/api/auth/request") && guide.includes("/api/publish") && guide.includes("### create_document") && guide.includes(`${origin}/mcp`), "/llms.txt explains getting a token, publishing and the tools, to anyone", guide.slice(0, 300));
+  expect((await fetch(`${base}/api/ext/tools/whoami`, { method: "POST", body: "{}" })).status == 401, "the tools need a token");
+  expect((await fetch(`${base}/api/ext/tools/whoami`, { method: "POST", body: "{}", headers: { Authorization: "Bearer erga_forged" } })).status == 401, "a made-up token is refused");
+  ok("/llms.txt is the guide; the tools need a real token");
+
+  // An agent asks for a token; its person approves on /tokens/approve; the agent collects it, once.
+  const asked = (await (await fetch(`${base}/api/auth/request`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ label: "Worker test agent" }) })).json()) as { code: string; user_code: string; approve_url: string };
+  const poll = () => fetch(`${base}/api/auth/poll`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code: asked.code }) });
+  expect((await poll()).status == 202, "polling before it's approved waits");
+  const approvePage = await (await get(new URL(asked.approve_url).pathname + new URL(asked.approve_url).search)).text();
+  expect(approvePage.includes(asked.user_code) && approvePage.includes("Worker test agent") && approvePage.includes("Approve"), "the approve link shows the request and its code", approvePage.slice(0, 500));
+  expect((await get("/tokens/approve", { method: "POST", body: new URLSearchParams({ code: asked.user_code }) })).status == 403, "approving needs this site's own page");
+  expect((await (await get("/tokens/approve", { method: "POST", body: new URLSearchParams({ code: asked.user_code }), headers: { Origin: origin } })).text()).includes("Approved"), "the person approves it");
+  const got = (await (await poll()).json()) as { token?: string; login?: string };
+  const token = got.token ?? "";
+  expect(token.startsWith("erga_") && got.login == login, "the agent collects its token", got);
+  expect((await poll()).status == 410, "once");
+  const auth = { Authorization: `Bearer ${token}` };
+  const tool = async (name: string, args: unknown) => {
+    const res = await fetch(`${base}/api/ext/tools/${name}`, { method: "POST", headers: { ...auth, "Content-Type": "application/json" }, body: JSON.stringify(args) });
+    const body = (await res.json()) as { ok: boolean; content?: { type: string; text?: string; data?: string }[]; error?: string };
+    const text = body.content?.map((c) => c.text ?? "").join("") ?? "";
+    let data: any = null;
+    try { data = JSON.parse(text); } catch { /* text */ }
+    return { status: res.status, text: text || body.error || "", data, body };
+  };
+  const me = await tool("whoami", {});
+  expect(me.status == 200 && me.data?.login == login && me.data?.token?.label == "Worker test agent", "the token stands for its person", me);
+  expect((await (await get("/tokens")).text()).includes("Worker test agent"), "/tokens lists it");
+  ok("an agent asks for a token, its person approves, and it acts as them");
+
+  // Publishing a folder from the command line: multipart, each part named by its path.
+  const png = Uint8Array.from(atob("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkaPhfDwAEgQHAp0dVPQAAAABJRU5ErkJggg=="), (c) => c.charCodeAt(0));
+  const site = new FormData();
+  site.set("title", "Published app");
+  site.set("index.html", new Blob([`<!doctype html><title>x</title><link rel="stylesheet" href="css/app.css"><h1>Hello from a folder</h1><img src="img/dot.png"><script src="app.js"></script>`]), "index.html");
+  site.set("css/app.css", new Blob(["h1 { color: rebeccapurple }"]), "app.css");
+  site.set("file", new Blob(["console.log('hi')"]), "app.js");
+  site.set("img/dot.png", new Blob([png]), "dot.png");
+  let res = await fetch(`${base}/api/publish`, { method: "POST", headers: auth, body: site });
+  const pub = (await res.json()) as { ok: boolean; id: string; address: string; url: string; files: string[] };
+  expect(res.ok && pub.address == `/${login}/published-app` && pub.url == `${origin}/${login}/published-app` && pub.files.join() == "app.js,css/app.css,img/dot.png,index.html", "POST /api/publish makes a document of the folder, at its title's address", pub);
+  expect(new Uint8Array(await (await get(`/d/${pub.id}/doc/img/dot.png`)).arrayBuffer()).join() == png.join(), "images arrive byte for byte");
+  expect((await (await get(`/d/${pub.id}/doc/css/app.css`)).text()).includes("rebeccapurple"), "and styles as text");
+  const list = await docs();
+  expect(list.includes(`href="/${login}/published-app"`) && !list.slice(list.indexOf(`/${login}/published-app"`)).split("</li>")[0].includes("Unedited"), "a published document is listed, and doesn't expire", list);
+  ok("POST /api/publish puts a folder of files on the server as a document, which stays");
+
+  // The document tools, for any document: a `document` argument.
+  let t = await tool("read", { document: pub.address, path: "index.html" });
+  expect(t.status == 200 && t.text.includes("Hello from a folder"), "read works on a document named by its address", t);
+  t = await tool("read", { document: pub.url, path: "img/dot.png" });
+  expect(t.body.content?.[0]?.type == "image", "and by its URL, images as images", t.body);
+  t = await tool("edit", { document: "published-app", path: "index.html", edits: [{ oldText: "Hello from a folder", newText: "Hello, edited by an agent" }] });
+  expect(t.status == 200 && (await (await get(`/d/${pub.id}/doc/index.html`)).text()).includes("Hello, edited by an agent"), "edit works by slug, and lands in the document", t);
+  t = await tool("edit", { document: pub.id, path: "index.html", edits: [{ oldText: "not there", newText: "x" }] });
+  expect(t.status == 400 && t.text.length > 0, "a document tool's failure says why", t);
+  t = await tool("read", { document: "/nobody/nothing", path: "index.html" });
+  expect(t.status == 404, "an unknown document is a 404", t);
+  t = await tool("list_documents", {});
+  expect(t.data?.some((d: { id: string }) => d.id == pub.id), "list_documents lists it", t.text.slice(0, 300));
+  ok("the document tools work on any of your documents, named by address, URL, slug or id");
+
+  // MCP: the same tools, stateless.
+  const mcp = async (body: unknown) => { const r = await fetch(`${base}/mcp`, { method: "POST", headers: { ...auth, "Content-Type": "application/json", Accept: "application/json, text/event-stream" }, body: JSON.stringify(body) }); return { status: r.status, body: r.status == 202 ? null : (await r.json()) as any }; };
+  let m = await mcp({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "test", version: "1" } } });
+  expect(m.body?.result?.protocolVersion == "2025-06-18" && m.body.result.capabilities.tools, "MCP initialize", m.body);
+  expect((await mcp({ jsonrpc: "2.0", method: "notifications/initialized" })).status == 202, "a notification gets 202");
+  m = await mcp({ jsonrpc: "2.0", id: 2, method: "tools/list" });
+  const listed = (m.body?.result?.tools ?? []) as { name: string; inputSchema: { required?: string[] } }[];
+  expect(listed.some((x) => x.name == "create_document") && listed.find((x) => x.name == "edit")?.inputSchema.required?.includes("document") == true, "tools/list has the server's tools and the document tools", listed.map((x) => x.name));
+  m = await mcp({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "create_document", arguments: { title: "Made over MCP", files: { "index.md": "# Made over MCP\n\nHello." } } } });
+  const made = JSON.parse(m.body?.result?.content?.[0]?.text ?? "{}") as { id: string; address: string };
+  expect(made.address == `/${login}/made-over-mcp` && (await (await get(`/d/${made.id}/doc/index.md`)).text()).includes("Hello."), "tools/call create_document makes a Markdown document", m.body);
+  m = await mcp({ jsonrpc: "2.0", id: 4, method: "tools/call", params: { name: "delete_document", arguments: { document: "/nobody/nothing" } } });
+  expect(m.body?.result?.isError === true, "a tool's failure is isError", m.body);
+  expect((await fetch(`${base}/mcp`, { method: "POST", body: "{}" })).status == 401, "MCP needs the token too");
+  ok("/mcp serves the same tools as a stateless MCP server");
+
+  // Publishing again into the same document replaces its files; renaming and deleting.
+  res = await fetch(`${base}/api/publish`, { method: "POST", headers: { ...auth, "Content-Type": "application/json" }, body: JSON.stringify({ document: pub.id, files: { "index.html": "<!doctype html><h1>Version two</h1>" } }) });
+  const again = (await res.json()) as { written: string[]; removed: string[] };
+  expect(res.ok && again.written.join() == "index.html" && again.removed.sort().join() == "app.js,css/app.css,img/dot.png", "publishing again replaces the files", again);
+  expect((await (await get(`/d/${pub.id}/doc/index.html`)).text()).includes("Version two") && (await get(`/d/${pub.id}/doc/app.js`)).status == 404, "and the old ones are gone");
+  t = await tool("rename_document", { document: pub.id, slug: "v2" });
+  expect(t.status == 200 && t.data?.address == `/${login}/v2` && (await nameOf(pub.id)).slug == "v2", "rename_document", t);
+  // Someone else's document: nothing until it's shared; shared to edit, the agent edits, but still can't delete it.
+  const otherLogin = `wother${Date.now().toString(36)}`;
+  const other = await fetch(`${base}/auth/github?as=${otherLogin}&next=/new`, { redirect: "manual" });
+  const otherCookie = other.headers.getSetCookie().map((c) => c.split(";")[0]).find((c) => c.startsWith("erga_session="))!;
+  const theirs = (await fetch(`${base}/new`, { redirect: "manual", headers: { Cookie: otherCookie } })).headers.get("location")!;
+  const theirId = ((await (await fetch(`${base}${theirs}/api/name`, { headers: { Cookie: otherCookie } })).json()) as Name).id;
+  t = await tool("read", { document: theirs, path: "index.html" });
+  expect(t.status == 403, "an agent can't open a document not shared with its person", t);
+  const sharing = await fetch(`${base}/docs/share`, { method: "POST", headers: { Cookie: otherCookie, Origin: origin }, body: new URLSearchParams({ id: theirId, login, role: "editor" }) });
+  expect(sharing.ok, "its owner shares it", sharing.status);
+  t = await tool("read", { document: theirs, path: "index.html" });
+  expect(t.status == 200, "then the agent reads it", t);
+  t = await tool("delete_document", { document: theirs });
+  expect(t.status == 403 && /owner/.test(t.text), "only its owner may delete a document", t);
+  t = await tool("delete_document", { document: made.id });
+  expect(t.status == 200 && !(await exists(made.id)), "delete_document deletes yours", t);
+  ok("update, rename and delete over the API, with the person's own permissions");
+
+  // The share button's token is the same kind: the whole server, durable, the same until rotated.
+  const share = async (rotate: boolean) => ((await (await get(`/d/${pub.id}/api/share`, { method: "POST", headers: { "Content-Type": "application/json", Origin: origin }, body: JSON.stringify({ rotate }) })).json()) as { token: string }).token;
+  const shared = await share(false);
+  expect(shared.startsWith("erga_") && (await share(false)) == shared, "the share button gives one token, the same each time");
+  const whoShared = await fetch(`${base}/api/ext/tools/whoami`, { method: "POST", headers: { Authorization: `Bearer ${shared}` }, body: "{}" });
+  expect(whoShared.ok, "which works for the whole server");
+  expect((await share(true)) != shared && (await fetch(`${base}/api/ext/tools/whoami`, { method: "POST", headers: { Authorization: `Bearer ${shared}` }, body: "{}" })).status == 401, "New token turns it off");
+  ok("the share button's token is a server-wide agent token");
+
+  // Made at /tokens, shown once; revoked, it's off at once.
+  const tokensPage = await (await get("/tokens/new", { method: "POST", body: new URLSearchParams({ label: "Made by hand" }), headers: { Origin: origin } })).text();
+  const handMade = /<pre class="secret">(erga_[^<]+)<\/pre>/.exec(tokensPage)?.[1] ?? "";
+  expect(handMade && tokensPage.includes("claude mcp add --transport http erga"), "/tokens makes a token, shown with how to use it", tokensPage.slice(0, 400));
+  const ids = (await tool("list_tokens", {})).data as { id: string; label: string }[];
+  expect(ids.some((x) => x.label == "Made by hand") && ids.some((x) => x.label == "Share button"), "list_tokens lists them all", ids);
+  t = await tool("revoke_token", { id: ids.find((x) => x.label == "Made by hand")!.id });
+  expect(t.status == 200 && (await fetch(`${base}/api/ext/tools/whoami`, { method: "POST", headers: { Authorization: `Bearer ${handMade}` }, body: "{}" })).status == 401, "revoke_token turns one off", t);
+  const ownId = me.data.token.id as string;
+  expect((await get("/tokens/revoke", { method: "POST", body: new URLSearchParams({ id: ownId }), headers: { Origin: origin } })).status == 303 && (await tool("whoami", {})).status == 401, "revoking from /tokens ends the agent's access");
+  ok("tokens made at /tokens work until revoked, from /tokens or by the API");
+}
 
 try {
   expect((await docs()).includes("No documents yet"), "a new person's list is empty");
@@ -287,6 +420,8 @@ try {
     expect(res.headers.get("location") == "/", `sign-in won't go to ${JSON.stringify(next)}`, res.headers.get("location"));
   }
   ok("sign-in's next= stays on the site");
+
+  await serverApiScenario();
 
   // Deleting: only from this site's pages, and then it's gone, addresses and all.
   const form = (headers: Record<string, string>) => get("/docs/delete", { method: "POST", body: new URLSearchParams({ id: kept }), headers });

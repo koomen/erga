@@ -3,6 +3,7 @@
 
 import { parseDeployed } from "../config";
 import { Directory, type Param, type Sql } from "../directory";
+import { Tokens } from "../tokens";
 import type { Env } from "./env";
 
 const sqlOn = (db: D1Database): Sql => {
@@ -28,4 +29,9 @@ export const adminsOf = (env: Env): string[] =>
 export function directoryOf(env: Env): Directory {
   if (directory?.db !== env.DB) directory = { db: env.DB, dir: new Directory(sqlOn(env.DB), { admins: adminsOf(env), locked: parseDeployed(env.SERVER_CONFIG) }) };
   return directory.dir;
+}
+
+/** Agent tokens (tokens.ts), on the same database. */
+export function tokensOf(env: Env): Tokens {
+  return new Tokens(sqlOn(env.DB), env.SESSION_SECRET);
 }

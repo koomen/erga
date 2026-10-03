@@ -383,6 +383,19 @@ function namingTools(naming: Naming): AgentTool[] {
   ] as AgentTool[];
 }
 
+/**
+ * The document tools' names, descriptions and arguments (JSON Schema), with
+ * no document behind them: for the server's API (server-api.ts), which offers
+ * them for any document by adding a `document` argument and runs them in that
+ * document's host.
+ */
+export function documentToolSpecs(): ToolSpec[] {
+  const none = () => { throw new Error("no document"); };
+  const naming = { get: none, set: none } as unknown as Naming;
+  return makeTools(null as unknown as Workspace, { view: none, readAsset: none, edited: none, naming })
+    .map((t) => ({ name: t.name, description: t.description, parameters: JSON.parse(JSON.stringify(t.parameters)) }));
+}
+
 /** What a tool returns: text, and for read on an image or view_page, a picture. */
 export type ToolContent = { type: "text"; text: string } | { type: "image"; data: string; mimeType: string };
 /** A tool as an external agent sees it: its arguments as JSON Schema. */
@@ -615,6 +628,7 @@ const EXTERNAL_IDLE_MS = 8_000;
  * tools, what they are, and the same working rules the embedded agent follows.
  */
 export function externalGuide(o: { docName: string; kind: "html" | "md"; owner: string; base: string; tools: ToolSpec[] }): string {
+  const origin = /^https?:\/\/[^/]+/.exec(o.base)?.[0] ?? "";
   const tools = o.tools.map((t) => `### ${t.name}\n\n${t.description}\n\nArguments (JSON Schema):\n\n\`\`\`json\n${JSON.stringify(t.parameters, null, 2)}\n\`\`\``).join("\n\n");
   return `# Editing "${o.docName}" in Erga
 
@@ -663,6 +677,14 @@ error says what to fix), 401 (bad token) or 404 (no such tool).
   changes.
 - Follow the rules below whenever you create or change a page, so people can keep
   editing it by hand.
+
+## Beyond this document
+
+The same token works for all of Erga, as ${o.owner}: listing their documents,
+making new ones (publishing a folder of files as a site), renaming and deleting
+them, and these same tools on any document they may edit. The guide is at
+\`GET ${origin}/api/ext\` (send the token), and there's an MCP server at
+\`${origin}/mcp\`. Use them only when asked.
 
 ## Tools
 
