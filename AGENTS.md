@@ -7,8 +7,8 @@ tested (`./test.sh`). This file describes how agents take on work here.
 
 The task queue (`development/task-queue/`) is a local board at
 **http://localhost:4700** where the user watches work move through
-**Queued → Working → Ready to merge → Done**, live, and merges it with one
-click. It runs only on this machine.
+**Queued → Working → Ready to merge → Merging → Done**, live, and merges it
+with one click. It runs only on this machine.
 
 When the user asks for a change to this repo:
 
@@ -79,20 +79,26 @@ in the main agent's system prompt and gives it one tool,
 `task-queue:worker` subagent in the worktree with the prompt above built in.
 The worker reports with `task_log`, `task_preview`, `task_screenshot`,
 `task_done` and `task_fail`. `/tasks` opens a live pane with Open, Merge
-and Discard buttons, and `/tasks board` opens the browser board. The status
-line counts working and ready tasks, and toasts say when one is ready,
-merged or failed. With the mod loaded, use its tools instead of `tq`.
+and Discard buttons (no Merge or Discard while a task is merging), and
+`/tasks board` opens the browser board. The status line counts working, ready
+and merging tasks, and toasts say when one is ready, starts merging, is
+merged, fails to merge or fails. With the mod loaded, use its tools instead of `tq`.
 
 ## Merging
 
-The user merges from the board (the same as `tq merge <id>`; agents don't).
-The queue then merges `origin/main` and `main` into the task's branch, in its
+The user merges from the board (the same as `tq merge <id>`, or
+`tq merge <id> --wait` to wait for the outcome; agents don't). The task goes
+straight to **Merging** (status `merging`, its own column), and stays there
+while the queue works; merges run one at a time, in the order they were
+asked for, and a card waiting its turn says so. The queue merges `origin/main` and `main` into the task's branch, in its
 worktree; if that conflicts, it runs `claude -p` there to resolve the
 conflicts, run the tests and commit. Then it merges the branch into `main`
 (`--no-ff`, "Merge task/…: title"), pushes to `origin`, stops the preview and
-removes the worktree and branch. A merge that fails (uncommitted changes,
-unresolved conflicts, the main checkout not on `main`) goes back to Ready to
-merge with the reason on the card. Discard drops a task: preview stopped,
+removes the worktree and branch: the task is Done (`merged`). A merge that
+fails (uncommitted changes, unresolved conflicts, the main checkout not on
+`main`) goes back to Ready to merge (`complete`) with the reason on the card,
+as does one the queue was stopped in the middle of, when it starts again.
+Agents can't set `merging` or `merged`, nor change a merging task's status. Discard drops a task: preview stopped,
 worktree removed, branch deleted.
 
 ## The task queue's API
@@ -105,12 +111,12 @@ print the task as JSON.
 |---|---|
 | `POST /api/tasks {title, description}` | register (branch, worktree, port) |
 | `GET /api/tasks[?status=…]`, `GET /api/tasks/:id` | read |
-| `PATCH /api/tasks/:id {status, url, summary, error, message}` | update; `status` is `queued`, `working`, `complete` or `failed`; `message` goes on the log |
+| `PATCH /api/tasks/:id {status, url, summary, error, message}` | update; `status` is `queued`, `working`, `complete` or `failed` (`merging`, `merged` and `discarded` are the queue's); `message` goes on the log |
 | `POST /api/tasks/:id/log {message}` | a progress line |
 | `POST /api/tasks/:id/preview {command?, path?}` | run the preview (default `bun start --port $PORT --no-open`) in the worktree; sets `url` |
 | `DELETE /api/tasks/:id/preview` | stop it |
 | `POST /api/tasks/:id/screenshots` | an image body, or `{path}`, or `{url}` (headless Chrome), with `caption` |
-| `POST /api/tasks/:id/merge`, `POST /api/tasks/:id/discard` | the board's buttons |
+| `POST /api/tasks/:id/merge`, `POST /api/tasks/:id/discard` | the board's buttons; merge answers 202 with the task `merging` |
 | `GET /api/events` | server-sent events: every task, on each change |
 
 If the queue isn't running, any `tq` command starts it (or
