@@ -2,10 +2,8 @@
 // serving documents' pages on erga-pages.dev, one Durable Object per
 // document (worker/doc-host.ts), the directory of documents in D1
 // (directory.ts, its tables in migrations/), and the editor's own files as
-// static assets (built into .site/ by site.sh). The DocList Durable Objects
-// (worker/doc-list.ts), each person's list before the directory, are only
-// read now, to copy them in. In local development (`bun start`, dev.ts) the
-// same Worker runs under Vite.
+// static assets (built into .site/ by site.sh). In local development (`bun
+// start`, dev.ts) the same Worker runs under Vite.
 import { bindings, defineConfig, exports, triggers } from "cf/config";
 import * as entrypoint from "./worker/index.ts" with { type: "cf-worker" };
 
@@ -30,18 +28,20 @@ export default defineConfig(({ mode }) => ({
     assets: { htmlHandling: "none", notFoundHandling: "none", runWorkerFirst: true },
     exports: {
       DocHost: exports.durableObject({ storage: "sqlite" }),
-      DocList: exports.durableObject({ storage: "sqlite" }),
+      // Each person's list of documents before the directory: gone, with what it held.
+      DocList: exports.durableObject({ state: "deleted" }),
     },
     env: {
       DOCS: bindings.durableObject({ worker: "erga", exportName: "DocHost" }),
-      LISTS: bindings.durableObject({ worker: "erga", exportName: "DocList" }),
-      // The directory. `cf deploy` makes the database by name if there's none; its tables come
+      // The server's database: users, settings and the directory. `cf deploy` makes the database by name if there's none; its tables come
       // from migrations/, applied by migrate.ts (site.sh runs it on Workers Builds, before
       // the deploy). Locally (vite dev) it's a database of its own, at a fixed made-up id that
       // `bun run db:local` applies the migrations to.
       DB: bindings.d1({ name: "erga", ...(mode == "development" ? { id: LOCAL_DB } : {}) }),
       ASSETS: bindings.assets(),
-      ALLOWED_USERS: bindings.text("koomen,dsiroker"),
+      // The bootstrap admins: always admins, always allowed to sign in (users.ts). Admins let
+      // everyone else in (the users table). Locally DEV_LOGIN is one too (worker/d1.ts).
+      ADMINS: bindings.text("koomen,dsiroker"),
       GITHUB_CLIENT_ID: bindings.text("Ov23ctkY7oLarHcPA97b"),
       GITHUB_CLIENT_SECRET: bindings.secret(),
       SESSION_SECRET: bindings.secret(),

@@ -2,13 +2,16 @@
 //
 // The cookie holds the GitHub login and display name with an expiry, signed
 // with HMAC-SHA256 (SESSION_SECRET), so the Worker can trust it without a
-// session store. Only logins in ALLOWED_USERS may sign in.
+// session store. Only users may sign in (users.ts: a row in the users table,
+// or a login in ADMINS), and a session lasts only while its person still is
+// one (checked on every request, remembered for a few seconds).
 //
 // A signed-in person can also mint a test token (/tokens): it signs in
 // throwaway test people (Ada, Bo...) who can open only test documents
 // (ids starting "test"), so the test suite can run against erga.dev.
 
 import { confirmAction, fromElsewhere, page, safeNext, type Session } from "../front";
+import { directoryOf } from "./d1";
 import type { Env } from "./env";
 
 const COOKIE = "erga_session", STATE = "erga_oauth";
@@ -55,9 +58,13 @@ export async function sessionOf(env: Env, request: Request): Promise<Session | n
   const url = new URL(request.url);
   const dev = isDev(env, url);
   const as = dev ? url.searchParams.get("user")?.trim().slice(0, 40) : null;
-  if (as) return { login: loginOf(as), name: as, as };
-  return (await signedIn(env, request, dev)) ?? (dev ? { login: env.DEV_LOGIN!, name: env.DEV_LOGIN! } : null);
+  const session = as ? { login: loginOf(as), name: as, as } : (await signedIn(env, request, dev)) ?? (dev ? { login: env.DEV_LOGIN!, name: env.DEV_LOGIN! } : null);
+  // Locally everyone may sign in, and gets a user's row the first time (last seen, the next).
+  if (session && !session.test) await users(env).signedIn(session.login, dev ? session.name : null, { create: dev });
+  return session;
 }
+
+const users = (env: Env) => directoryOf(env).users;
 
 /** Whoever the session cookie names, if it's valid and unexpired. */
 async function signedIn(env: Env, request: Request, dev: boolean): Promise<Session | null> {
@@ -67,9 +74,9 @@ async function signedIn(env: Env, request: Request, dev: boolean): Promise<Sessi
   try {
     const s = JSON.parse(new TextDecoder().decode(unb64(value))) as Session & { exp: number };
     if (typeof s.login != "string" || !(s.exp > Date.now() / 1000)) return null;
-    // A test person's token was minted by someone allowed, who must still be.
-    if (s.test) return allowed(env, s.test.by) ? { login: s.login, name: s.name, test: { by: s.test.by } } : null;
-    return allowed(env, s.login) || dev ? { login: s.login, name: s.name } : null;
+    // A test person's token was minted by a user, who must still be one.
+    if (s.test) return (await users(env).allowed(s.test.by)) ? { login: s.login, name: s.name, test: { by: s.test.by } } : null;
+    return dev || (await users(env).allowed(s.login)) ? { login: s.login, name: s.name } : null;
   } catch { return null; }
 }
 
@@ -79,9 +86,6 @@ const loginOf = (name: string) =>
 
 /** Local development (DEV_LOGIN set, on localhost): sign-in without GitHub, for trying things and for the test suite. */
 export const isDev = (env: Env, url: URL) => !!env.DEV_LOGIN && (url.hostname == "localhost" || url.hostname == "127.0.0.1");
-
-export const allowed = (env: Env, login: string) =>
-  env.ALLOWED_USERS.split(",").map((u) => u.trim().toLowerCase()).includes(login.toLowerCase());
 
 async function signIn(env: Env, request: Request, session: Session, next: string, ttl = 30 * DAY): Promise<Response> {
   const value = b64(new TextEncoder().encode(JSON.stringify({ ...session, exp: Math.floor(Date.now() / 1000) + ttl })));
@@ -135,7 +139,8 @@ export async function finishSignIn(env: Env, request: Request): Promise<Response
     headers: { Authorization: `Bearer ${token.access_token}`, Accept: "application/vnd.github+json", "User-Agent": "erga.dev" },
   }).then((r) => r.json() as Promise<{ login?: string; name?: string | null }>);
   if (!user.login) return page("Sign-in failed", "GitHub didn't say who you are. <a href=\"/\">Try again</a>.", 400);
-  if (!allowed(env, user.login)) return page("Invite only", `Erga is invite-only for now, and <b>${escape(user.login)}</b> isn't on the list yet.`, 403);
+  // Their row says they're in (a bootstrap admin's is made now), with the name GitHub gives today.
+  if (!(await users(env).signedIn(user.login, user.name?.trim() || user.login))) return page("Invite only", `Erga is invite-only for now, and <b>${escape(user.login)}</b> isn't on the list yet.`, 403);
   return signIn(env, request, { login: user.login, name: user.name?.trim().split(/\s+/)[0] || user.login }, safeNext(next ?? null));
 }
 
@@ -158,7 +163,7 @@ async function readTestToken(env: Env, token: string): Promise<{ by: string; exp
   if (!value) return null;
   try {
     const t = JSON.parse(new TextDecoder().decode(unb64(value.slice("test-token:".length)))) as { by: string; exp: number };
-    return t.exp > Date.now() / 1000 && allowed(env, t.by) ? t : null;
+    return t.exp > Date.now() / 1000 && (await users(env).allowed(t.by)) ? t : null;
   } catch { return null; }
 }
 

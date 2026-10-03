@@ -6,10 +6,13 @@
 // it), and a deleted one is gone. Documents' addresses (/d/<id>,
 // /<owner>/<slug>, and the old ones that redirect), titles and slugs that
 // follow the page until they're set, renaming (by API, from /docs and by
-// the agent's tools over /api/ext), and open tabs following a rename. The
+// the agent's tools over /api/ext), and open tabs following a rename. Who
+// may: nobody but the owner until it's shared, then editors edit and
+// viewers only look (their edits go nowhere), and only the owner shares. The
 // server's API for agents (server-api.ts): agent tokens (made at /tokens,
 // by the share button, or asked for by an agent and approved), publishing a
-// folder as a document, every tool over HTTP and MCP, and revoking.
+// folder as a document, every tool over HTTP and MCP, with the person's own
+// permissions, and revoking.
 //
 //   bun tests/worker.ts [http://localhost:4400]
 //   bun tests/worker.ts --local        a dev server of its own (tests/host.ts)
@@ -56,6 +59,12 @@ async function make(query = ""): Promise<string> {
 function join(id: string, name = "Ada"): Promise<Participant> {
   const doc = { base: `${base}/d/${id}`, path: "index.html", roomUrl: `${base.replace(/^http/, "ws")}/d/${id}/api/room`, roomName: "doc", headersFor: () => ({ Cookie: cookie }) } as unknown as Doc;
   return Participant.join(doc, name);
+}
+
+/** Shares a document (as its owner) with someone ("*": anyone with the link); role "none" stops sharing it. */
+async function share(id: string, who: string, role: "editor" | "viewer" | "none", as?: string) {
+  const r = await get(`/docs/share${as ? `?user=${as}` : ""}`, { method: "POST", body: new URLSearchParams({ id, login: who, role }), headers: { Origin: origin } });
+  return { status: r.status, body: (await r.json()) as { permissions?: { login: string; role: string }[]; error?: string } };
 }
 
 /** Replaces the page's first heading's text. */
@@ -156,11 +165,19 @@ async function serverApiScenario() {
   expect((await (await get(`/d/${pub.id}/doc/index.html`)).text()).includes("Version two") && (await get(`/d/${pub.id}/doc/app.js`)).status == 404, "and the old ones are gone");
   t = await tool("rename_document", { document: pub.id, slug: "v2" });
   expect(t.status == 200 && t.data?.address == `/${login}/v2` && (await nameOf(pub.id)).slug == "v2", "rename_document", t);
-  // Someone else's document: open to edit (anyone signed in may), but not to delete.
-  const other = await fetch(`${base}/auth/github?as=wother${Date.now().toString(36)}&next=/new`, { redirect: "manual" });
+  // Someone else's document: nothing until it's shared; shared to edit, the agent edits, but still can't delete it.
+  const otherLogin = `wother${Date.now().toString(36)}`;
+  const other = await fetch(`${base}/auth/github?as=${otherLogin}&next=/new`, { redirect: "manual" });
   const otherCookie = other.headers.getSetCookie().map((c) => c.split(";")[0]).find((c) => c.startsWith("erga_session="))!;
-  const theirs = await fetch(`${base}/new`, { redirect: "manual", headers: { Cookie: otherCookie } });
-  t = await tool("delete_document", { document: theirs.headers.get("location") });
+  const theirs = (await fetch(`${base}/new`, { redirect: "manual", headers: { Cookie: otherCookie } })).headers.get("location")!;
+  const theirId = ((await (await fetch(`${base}${theirs}/api/name`, { headers: { Cookie: otherCookie } })).json()) as Name).id;
+  t = await tool("read", { document: theirs, path: "index.html" });
+  expect(t.status == 403, "an agent can't open a document not shared with its person", t);
+  const sharing = await fetch(`${base}/docs/share`, { method: "POST", headers: { Cookie: otherCookie, Origin: origin }, body: new URLSearchParams({ id: theirId, login, role: "editor" }) });
+  expect(sharing.ok, "its owner shares it", sharing.status);
+  t = await tool("read", { document: theirs, path: "index.html" });
+  expect(t.status == 200, "then the agent reads it", t);
+  t = await tool("delete_document", { document: theirs });
   expect(t.status == 403 && /owner/.test(t.text), "only its owner may delete a document", t);
   t = await tool("delete_document", { document: made.id });
   expect(t.status == 200 && !(await exists(made.id)), "delete_document deletes yours", t);
@@ -206,7 +223,7 @@ try {
 
   // Addresses: /d/<id>, /<you>/<id> and a differently cased owner all lead to the canonical one, which is the editor.
   expect(await location(`/d/${blank}`) == `/${login}/untitled`, "/d/<id> redirects to /<you>/<slug>", await location(`/d/${blank}`));
-  expect(await location(`/${login}/${blank}?user=Ada`) == `/${login}/untitled?user=Ada`, "/<you>/<id> redirects there, keeping the query");
+  expect(await location(`/${login}/${blank}?from=here`) == `/${login}/untitled?from=here`, "/<you>/<id> redirects there, keeping the query");
   expect(await location(`/${login.toUpperCase()}/untitled`) == `/${login}/untitled`, "so does a differently cased owner");
   const editorHtml = await (await get(`/${login}/untitled`)).text();
   expect(editorHtml.includes(`<meta name="erga-base" content="/d/${blank}">`) && editorHtml.includes("<title>Untitled</title>"), "the canonical address is the editor, which talks to /d/<id>", editorHtml.slice(0, 400));
@@ -219,8 +236,49 @@ try {
   expect((await nameOf(second)).slug == "untitled-2", "a second Untitled document is at /<you>/untitled-2");
   ok("an automatic slug that's taken gets -2");
 
+  // Nobody but its owner may open a document until it's shared; then editors edit, and viewers only look.
+  const as = (who: string, path: string, init?: RequestInit) => get(`${path}${path.includes("?") ? "&" : "?"}user=${who}`, init);
+  expect((await as("Ada", `/${login}/untitled-2`)).status == 403 && (await as("Ada", `/d/${second}/api/doc`)).status == 403, "someone it isn't shared with can't open it, nor reach its host");
+  expect((await (await as("Ada", `/${login}/untitled-2`)).text()).includes("hasn't been shared with"), "and is told why");
+  let shared = await share(second, "Ada", "viewer");
+  expect(shared.status == 200 && shared.body.permissions?.map((p) => `${p.login}:${p.role}`).join() == `${login}:owner,ada:viewer`, "the owner shares it with a viewer", shared);
+  expect((await as("Ada", `/${login}/untitled-2`)).status == 200 && (await as("Ada", `/d/${second}/doc/index.html`)).ok, "a viewer opens it");
+  const adaList = await (await as("Ada", "/docs")).text();
+  expect(adaList.includes(`href="/${login}/untitled-2?user=Ada"`) && adaList.includes(`${login} · view only`) && !adaList.includes(`value="${second}"`), "it's on their list, as shared with them, without a delete button", adaList.slice(adaList.indexOf("<ol>"), adaList.indexOf("</ol>")));
+  expect((await as("Ada", `/d/${second}/api/stored/index.html`, { method: "PUT", body: "<h1>Mine now</h1>" })).status == 403, "but can't publish to it");
+  expect(!(await as("Ada", `/d/${second}/api/name`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: "Viewer's title" }) })).ok, "nor rename it");
+  expect((await as("Ada", "/docs/delete", { method: "POST", body: new URLSearchParams({ id: second }), headers: { Origin: origin } })).status == 403, "nor delete it");
+  expect((await share(second, "Bo", "editor", "Ada")).status == 403, "nor share it");
+  // In the room, a viewer sees every edit, and theirs go nowhere.
+  const owner = await join(second, login), viewer = await join(second, "Ada");
+  viewer.insertAfter("<p>", "Viewer was here. ");
+  owner.insertAfter("<p>", "Owner was here. ");
+  await until(async () => viewer.text()?.toString().includes("Owner was here.") ?? false, 5000, "the viewer sees the owner's edit");
+  await sleep(1500);
+  expect(!owner.text()?.toString().includes("Viewer was here.") && !(await (await get(`/d/${second}/api/stored/index.html`)).text()).includes("Viewer was here."), "the viewer's edit reaches nobody, nor storage");
+  viewer.destroy();
+  // Made an editor, the same person's edits land.
+  await share(second, "Ada", "editor");
+  const editor = await join(second, "Ada");
+  editor.insertAfter("<p>", "Editor was here. ");
+  await until(async () => owner.text()?.toString().includes("Editor was here.") ?? false, 5000, "an editor's edit reaches the owner");
+  expect((await as("Ada", `/d/${second}/api/stored/notes.txt`, { method: "PUT", body: "hi" })).ok, "and an editor may publish");
+  editor.destroy();
+  owner.destroy();
+  // Anyone with the link, and taking it back.
+  expect((await as("Dee", `/${login}/untitled-2`)).status == 403, "someone else still can't open it");
+  await share(second, "*", "viewer");
+  expect((await as("Dee", `/${login}/untitled-2`)).status == 200, "shared with anyone who has the link, anyone signed in may open it");
+  expect((await as("Dee", `/d/${second}/api/stored/index.html`, { method: "PUT", body: "x" })).status == 403, "as a viewer");
+  await share(second, "*", "none");
+  await share(second, "Ada", "none");
+  expect((await as("Dee", `/${login}/untitled-2`)).status == 403 && (await as("Ada", `/${login}/untitled-2`)).status == 403, "unshared, they can't open it again");
+  expect((await share(second, login, "viewer")).status == 403, "and the owner's own permission can't be changed");
+  ok("only those a document is shared with may open it; viewers can't edit, publish, rename, delete or share; editors edit; only the owner shares");
+
   // Opening it, being in its room and moving a caret aren't edits.
   expect(await exists(blank), "the editor opens it");
+  for (const who of ["Ada", "Bo", "Cy"]) await share(blank, who, "editor");
   const ada = await join(blank);
   ada.setCursor(10);
   await sleep(1500);
@@ -306,6 +364,7 @@ try {
   expect(await tab.eval<boolean>(`window.__sameTab === true`), "without reloading");
   // A title following the heading moves the tab too.
   await rename(demo, { title: "", slug: "" });
+  await share(demo, "Bo", "editor");
   const bo = await join(demo, "Bo");
   const heading = /<h1[^>]*>([^<]*)<\/h1>/.exec(bo.text()?.toString() ?? "")?.[1] ?? "";
   bo.edit((y) => { const s = y.toString(), i = s.indexOf(heading, s.indexOf("<h1")); y.delete(i, heading.length); y.insert(i, "Heading moves tabs"); });
@@ -315,6 +374,8 @@ try {
 
   // Nobody edits it: it goes on time. One that's edited, or open, stays.
   const [gone, kept, open] = [await make("?unedited=2000"), await make("?unedited=2000"), await make("?unedited=2000")];
+  await share(kept, "Bo", "editor");
+  await share(open, "Cy", "editor");
   const bo2 = await join(kept, "Bo"), cy = await join(open, "Cy");
   bo2.insertAfter("<p>", "Bo was here. ");
   await sleep(4000);

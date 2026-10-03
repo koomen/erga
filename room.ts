@@ -198,9 +198,11 @@ export class Room {
   /**
    * A participant joins: `send` carries the room's messages to it. A tab
    * that already holds a history names its epoch; if it isn't this room's,
-   * it's refused (null) rather than merged.
+   * it's refused (null) rather than merged. A read-only one (someone who may
+   * only view the document) gets everything, and its own edits are dropped;
+   * its caret still shows.
    */
-  connect(send: (message: Uint8Array) => void, opts: { epoch?: string | null } = {}): Connection | null {
+  connect(send: (message: Uint8Array) => void, opts: { epoch?: string | null; readOnly?: boolean } = {}): Connection | null {
     if (opts.epoch && opts.epoch != this.epoch) return null;
     const key = {};
     this.conns.set(key, { send, clients: new Set() });
@@ -216,6 +218,8 @@ export class Room {
           const decoder = decoding.createDecoder(message);
           const type = decoding.readVarUint(decoder);
           if (type == MSG_SYNC) {
+            // Read-only: only its request for what it's missing (step 1); its updates are dropped.
+            if (opts.readOnly && decoding.peekVarUint(decoder) != sync.messageYjsSyncStep1) return true;
             const reply = encoding.createEncoder();
             encoding.writeVarUint(reply, MSG_SYNC);
             sync.readSyncMessage(decoder, reply, this.doc, key);

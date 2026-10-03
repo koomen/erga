@@ -99,6 +99,9 @@ export function ergaDev(opts: DevOptions): Plugin {
         next();
       });
 
+      /** The local database brought up to date (migrations/), which linking needs: set once the server's listening. */
+      let migrated: Promise<void> | null = null;
+
       /** /__erga/open: the form on /docs (or a test) links a path for the person asking, then goes there. */
       async function open(req: IncomingMessage, res: ServerResponse, url: URL) {
         // Only this site's own pages (and clients that aren't browsers, which send no Origin).
@@ -112,6 +115,9 @@ export function ergaDev(opts: DevOptions): Plugin {
           return reply(res, 400, (e as Error).message, user);
         }
         const headers: Record<string, string> = req.headers.cookie ? { Cookie: req.headers.cookie } : {};
+        // Asked for as soon as the server answers (a test): not before the database has its tables.
+        while (!migrated) await new Promise((r) => setTimeout(r, 20));
+        await migrated;
         const l = await link(target, { headers, user });
         log(`opened ${target.shown}: ${shown}/${l.owner}/${l.slug}`);
         res.writeHead(303, { Location: `/${l.owner}/${l.slug}${user ? `?user=${encodeURIComponent(user)}` : ""}` }).end();
@@ -121,11 +127,14 @@ export function ergaDev(opts: DevOptions): Plugin {
         const port = (server.httpServer!.address() as AddressInfo).port;
         base = `http://127.0.0.1:${port}`;
         shown = `http://localhost:${port}`;
-        (async () => {
+        migrated = (async () => {
           await workerReady(base);
           // The directory's tables, in the local D1, before anything is linked into it.
-          const migrated = await fetch(`${base}/__erga/migrate?link=${opts.secret}`, { method: "POST" });
-          if (!migrated.ok) throw new Error(`migrating the local database: ${migrated.status} ${await migrated.text()}`);
+          const r = await fetch(`${base}/__erga/migrate?link=${opts.secret}`, { method: "POST" });
+          if (!r.ok) throw new Error(`migrating the local database: ${r.status} ${await r.text()}`);
+        })();
+        (async () => {
+          await migrated;
           // Last run's links first, then whatever `bun start` was given.
           const kept = await readFile(linksFile, "utf8").then((t) => JSON.parse(t) as Link[], () => []);
           for (const l of kept) {

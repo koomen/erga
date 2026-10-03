@@ -237,8 +237,31 @@ export const agent: Test[] = [
   {
     name: "an agent whose person can only view can't edit",
     needs: ["scriptedAgent", "roles"],
-    async run() {
-      throw new Error("not written: needs a deployment with view-only roles");
+    async run(ctx) {
+      const d = await ctx.doc();
+      // Only those it's shared with: Bo may edit, Dee may only view.
+      await d.share!("*", null);
+      await d.share!("Bo", "editor");
+      await d.share!("Dee", "viewer");
+      const b = await Participant.join(d, "Bo");
+      ctx.defer(() => b.destroy());
+      const log = await runScript(d, "Dee", [edit(d.path, "<h1>Launch notes", "<h1>Dee's notes"), { text: "Tried." }]);
+      const failed = log.items.find((i) => i.kind == "tool" && i.name == "edit");
+      expect(failed?.status == "error" && /only view/.test(failed.detail ?? ""), "the viewer's agent's edit fails, saying why", failed);
+      // Nor do the viewer's own edits, in the room or as a publish, go anywhere.
+      const v = await Participant.join(d, "Dee");
+      ctx.defer(() => v.destroy());
+      v.insertAfter("<h1>", "Dee typed. ");
+      b.insertAfter("<h1>", "Bo typed. ");
+      await until(() => v.str().includes("Bo typed. "), 3000, "the viewer sees Bo's edit");
+      const push = await d.fetch(`/api/stored/${d.path}?user=Dee`, { method: "PUT", body: "<h1>Dee's page</h1>" }, "Dee");
+      expect(push.status == 403, "the viewer's publish is refused", push.status);
+      await sleep(d.writeDelay + 600);
+      expect(!b.str().includes("Dee") && !(await d.stored(d.path))!.text.includes("Dee"), "nothing of the viewer's reached Bo or storage", b.str().slice(0, 200));
+      // Made an editor, their agent edits.
+      await d.share!("Dee", "editor");
+      await runScript(d, "Dee", [edit(d.path, "<h1>Bo typed. Launch notes", "<h1>Dee's notes"), { text: "Done." }]);
+      await until(() => b.str().includes("<h1>Dee's notes"), 3000, "the editor's agent's edit reaches Bo");
     },
   },
 ];

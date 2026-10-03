@@ -6,25 +6,32 @@
 //
 //   /                          the demo, rendered, with an Edit button (and your documents, signed in)
 //   /new                       a blank document for you (signs you in first); /new?from=demo a copy of the demo
-//   /docs                      your documents, latest edit first; POST /docs/delete deletes one, /docs/rename renames one
-//   /<owner>/<slug>            the editor on that document (anyone signed in may edit): its canonical address
+//   /docs                      your documents, latest edit first; POST /docs/delete deletes one, /docs/rename renames one,
+//                              /docs/share shares one (or stops sharing it)
+//   /<owner>/<slug>            the editor on that document (for those it's shared with): its canonical address
 //   /<owner>/<id>, /<owner>/<old slug>, /d/<id>
 //                              redirect there
 //   /d/<id>/<rest>             the document's own host (host.ts): /api/..., /doc/..., the sockets; the
 //                              editor uses this address, which never changes. Under any of the
 //                              addresses above it works too (older tabs and share links use them).
 //
+// Who may open, edit, rename, delete or share a document is the directory's
+// to say (`Directory.may`, from the document's permissions); the front door
+// asks it for every request, and tells the document's host whether the
+// person may edit or only view (x-erga-access).
+//
 // The server's API for agents (/llms.txt, /api/..., /mcp) and /tokens are
 // server-api.ts's, which the Worker calls with `withTokens(platform)`.
 //
 // Anywhere, "Authorization: Bearer erga_..." (an agent token, tokens.ts)
-// signs in as the person it stands for, as their agent (Session.agent).
+// signs in as the person it stands for, as their agent (Session.agent), with
+// that person's permissions.
 //
 // Signing in, the editor's own files and the WebSockets stay with the
 // Worker. The rule for when an unedited document goes (`afterUnedited`) is
 // here; the document's alarm applies it.
 
-import { type Directory, type DocRow, type Route, type Who, UNTITLED } from "./directory.ts";
+import { type Directory, type DocRow, type Grant, type Role, type Route, type Who, NotAllowed, UNTITLED } from "./directory.ts";
 import type { AgentToken, Tokens } from "./tokens.ts";
 
 /** Who's signed in. */
@@ -54,6 +61,8 @@ export interface Listed {
   expires?: number;
   /** In local development, a document that's a file or folder on disk: where it is. Deleting it leaves the files be. */
   path?: string;
+  /** What the person whose list it is may do with it: their own document, or one shared with them. */
+  role: Role;
 }
 
 /** What the front door needs from the platform it runs on. */
@@ -64,8 +73,6 @@ export interface Platform {
   templates: Record<string, Record<string, string>>;
   /** The editor's page, served at each document's address. */
   editor(request: Request): Promise<Response>;
-  /** Whether a person may make documents (hosted: those in ALLOWED_USERS). */
-  mayCreate(session: Session, url: URL): boolean;
   /**
    * Local development: /new may name the document (?id=) and shorten its
    * unedited time (?unedited=<ms>), and /docs opens files from disk (the
@@ -79,7 +86,7 @@ export interface Platform {
   pagesDomain(url: URL): string;
   /** Signs the tokens that open a document's files on its pages origin. */
   secret: string;
-  /** Every document's address, title and members. */
+  /** Every document's address, title and permissions; the server's users and settings. */
   directory: Directory;
   /** Agent tokens (tokens.ts). */
   tokens: Tokens;
@@ -106,13 +113,9 @@ export interface Platform {
     list(owner: string): Promise<Listed[]>;
     /** Hands a request to the document's host, its path already the one inside the document. */
     fetch(doc: Route, request: Request): Promise<Response>;
-    /** A document made before the directory, at /<owner>/<id>, added to it now; null if there's none. */
-    adopt(owner: string, id: string): Promise<Route | null>;
   };
 }
 
-/** How long a new document lasts if nobody ever edits it. */
-export const UNEDITED_HOURS = 24;
 export const HOUR = 60 * 60 * 1000;
 
 /**
@@ -143,6 +146,7 @@ export async function frontDoor(request: Request, base: Platform): Promise<Respo
   if (path == "/docs") return listDocs(platform, request);
   if (path == "/docs/delete" && request.method == "POST") return deleteDoc(platform, request);
   if (path == "/docs/rename" && request.method == "POST") return renameDoc(platform, request);
+  if (path == "/docs/share" && request.method == "POST") return shareDoc(platform, request);
 
   const [, first, second, rest] = /^\/([^/]+)\/([^/]+)(\/.*)?$/.exec(path) ?? [];
   const nothing = () => page("Not found", "There's no document here. <a href=\"/\">Back to the start</a>.", 404);
@@ -174,10 +178,11 @@ export async function frontDoor(request: Request, base: Platform): Promise<Respo
       ? Response.json({ ok: false, error: "Missing or unknown token: send the one you were given as \"Authorization: Bearer <token>\". If it stopped working it was revoked: ask for a new one." }, { status: 401, headers: { "WWW-Authenticate": 'Bearer realm="erga"' } })
       : new Response("Sign in first", { status: 401 });
   }
-  if (!(await platform.directory.may(whoOf(session), "open", route))) return new Response("Not allowed", { status: 403 });
+  const access = await platform.directory.access(whoOf(session), route);
+  if (!access) return new Response("Not allowed", { status: 403 });
   // The share button's token is the front door's (tokens.ts), not the document's.
   if (rest == "/api/share" && request.method == "POST") return shareToken(platform, request, session);
-  return platform.docs.fetch(route, forwarded(request, url, rest, `${url.origin}/d/${route.id}`, session));
+  return platform.docs.fetch(route, forwarded(request, url, rest, `${url.origin}/d/${route.id}`, session, accessOf(access)));
 }
 
 /**
@@ -196,29 +201,31 @@ export function withTokens(platform: Platform, url: URL): Platform {
       if (!token) return null;
       // A test person's token opens only test documents, while whoever minted their test token may sign in.
       const session: Session = { login: token.login, name: token.name, agent: token, ...(token.testBy ? { test: { by: token.testBy } } : {}) };
-      return platform.mayCreate(token.testBy ? { login: token.testBy, name: token.testBy } : session, url) ? session : null;
+      const users = platform.directory.users;
+      if (token.testBy) return (await users.allowed(token.testBy)) ? session : null;
+      return platform.dev(url) || (await users.allowed(token.login)) ? session : null;
     },
   };
 }
 
+/** What a role lets someone do inside a document, as its host is told (x-erga-access). */
+export const accessOf = (role: Role | null): "edit" | "view" | null =>
+  role == "owner" || role == "editor" ? "edit" : role == "viewer" ? "view" : null;
+
 /** Who a session is, to the directory's `may`. */
-export const whoOf = (session: Session): Who => ({ login: session.login.toLowerCase(), test: !!session.test });
+export const whoOf = (session: Session): Who => ({ login: session.login.toLowerCase(), test: !!session.test, ...(session.test ? { by: session.test.by.toLowerCase() } : {}) });
 
 const refused = (session: Session) => session.test
   ? page("Test documents only", "Test people can open only test documents.", 403)
-  : page("Not allowed", "You can't open this document.", 403);
+  : page("Not shared with you", `This document hasn't been shared with <b>${esc(session.login)}</b>. Ask its owner to share it with you.`, 403);
 
 /**
  * The document at /<first>/<second> (/d/<id>, /<owner>/<slug>,
- * /<owner>/<id>, /<owner>/<an old slug>), with all it is. A document made
- * before the directory joins it the first time it's asked for by id.
+ * /<owner>/<id>, /<owner>/<an old slug>), with all it is.
  */
 async function documentAt(platform: Platform, first: string, second: string): Promise<DocRow | null> {
   if (first == "d") return ID.test(second) ? platform.directory.get(second) : null;
-  const found = await platform.directory.locate(first, second);
-  if (found) return found.doc;
-  const adopted = ID.test(second) ? await platform.docs.adopt(first.toLowerCase(), second) : null;
-  return adopted && platform.directory.get(adopted.id);
+  return (await platform.directory.locate(first, second))?.doc ?? null;
 }
 
 /**
@@ -226,7 +233,7 @@ async function documentAt(platform: Platform, first: string, second: string): Pr
  * it. By id it's remembered (an id is never another of the owner's slugs,
  * directory.ts), so a document's many subrequests rarely ask the database.
  */
-export async function documentRoute(platform: Pick<Platform, "directory" | "docs">, first: string, second: string): Promise<Route | null> {
+export async function documentRoute(platform: Pick<Platform, "directory">, first: string, second: string): Promise<Route | null> {
   if (first == "d") return ID.test(second) ? platform.directory.route(second) : null;
   if (!OWNER.test(first)) return null;
   const owner = first.toLowerCase();
@@ -235,8 +242,7 @@ export async function documentRoute(platform: Pick<Platform, "directory" | "docs
     if (byId?.owner == owner) return byId;
   }
   const found = await platform.directory.locate(owner, second);
-  if (found) return { id: found.doc.id, owner: found.doc.owner, doName: found.doc.doName, test: found.doc.test };
-  return ID.test(second) ? platform.docs.adopt(owner, second) : null;
+  return found && { id: found.doc.id, owner: found.doc.owner, test: found.doc.test };
 }
 
 // ---------------------------------------------------------------- pages
@@ -310,7 +316,7 @@ async function pagesDoor(request: Request, url: URL, doc: { owner: string; id: s
   if (!rest.startsWith("/doc/")) return notFound();
   const route = await platform.directory.route(doc.id);
   if (!route || route.owner != doc.owner.toLowerCase()) return notFound();
-  return platform.docs.fetch(route, forwarded(request, url, rest, `${shell}/d/${doc.id}`, null));
+  return platform.docs.fetch(route, forwarded(request, url, rest, `${shell}/d/${doc.id}`, null, null));
 }
 
 /** A link on this site, keeping the name a local tab gave (?user=) if it gave one. */
@@ -362,12 +368,11 @@ async function newDoc(platform: Platform, request: Request): Promise<Response> {
   if (session.test) {
     if (!wanted || !TEST_ID.test(wanted)) return page("Test documents only", "Name the test document: /new?id=test1234.", 400);
     const owner = session.test.by.toLowerCase();
-    const known = (await platform.directory.route(wanted)) ?? (await platform.docs.adopt(owner, wanted));
+    const known = await platform.directory.route(wanted);
     if (known && (known.owner != owner || !known.test)) return page("Taken", "That test document's id is someone else's: pick another.", 409);
     if (!known) await makeDoc(platform, owner, wanted, template, { test: true });
     return new Response(null, { status: 302, headers: { Location: `/${owner}/${wanted}` } });
   }
-  if (!platform.mayCreate(session, url)) return page("Invite only", "Erga is invite-only for now.", 403);
   // Local development may name the document (the test suite wants "test" in its address),
   // and say how soon it goes if nobody edits it (?unedited=<ms>, for tests/worker.ts).
   const dev = platform.dev(url);
@@ -388,7 +393,7 @@ async function newDoc(platform: Platform, request: Request): Promise<Response> {
 export async function makeDoc(platform: Platform, owner: string, id: string, files: Record<string, string | Uint8Array>, opts: MakeOptions): Promise<DocRow | null> {
   const created = Date.now();
   // A published one has been edited already (its files are someone's work): it never expires.
-  const expires = opts.test || opts.published ? null : created + (opts.unedited ?? UNEDITED_HOURS * HOUR);
+  const expires = opts.test || opts.published ? null : created + (opts.unedited ?? (await platform.directory.config.get("unedited_hours")) * HOUR);
   const index = opts.index ?? "index.html";
   const page = files[index];
   const pageText = typeof page == "string" ? page : page ? new TextDecoder().decode(page) : "";
@@ -396,12 +401,12 @@ export async function makeDoc(platform: Platform, owner: string, id: string, fil
     id, owner,
     ...(opts.title?.trim() ? { title: opts.title, titleSet: true } : { title: titleOf(pageText, index) ?? UNTITLED }),
     ...(opts.test ? { slug: id, slugSet: true } : opts.slug?.trim() ? { slug: opts.slug, slugSet: true } : {}),
-    doName: id, created, expires, test: opts.test,
+    created, expires, test: opts.test,
     ...(opts.published ? { modified: created } : {}),
   });
   if (!added) return null;
   if (await platform.docs.create(doc, files, index, { test: opts.test, expires, ...(opts.published ? { modified: created } : {}) })) return doc;
-  // A host by that name was there already (an id from before the directory): leave it, and try another id.
+  // A host by that name was there already (one whose row went): leave it, and try another id.
   await platform.directory.remove(id);
   return null;
 }
@@ -428,7 +433,8 @@ async function listDocs(platform: Platform, request: Request): Promise<Response>
   if (!session) return signInFirst("/docs");
   if (session.test) return page("Not for test people", "Test people have no documents of their own.", 403);
   const docs = await platform.docs.list(session.login);
-  return new Response(docsPage(session, docs, Date.now(), platform.dev(new URL(request.url))), { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
+  const hours = await platform.directory.config.get("unedited_hours");
+  return new Response(docsPage(session, docs, Date.now(), platform.dev(new URL(request.url)), hours), { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
 }
 
 /** POST /docs/delete (id=...): deletes one of the signed-in person's documents. */
@@ -467,10 +473,32 @@ async function renameDoc(platform: Platform, request: Request): Promise<Response
   headers.set("Content-Type", "application/json");
   headers.delete("Content-Length");
   const inner = new Request(new URL("/api/name", url), { method: "POST", headers, body: JSON.stringify(patch) });
-  const answer = await platform.docs.fetch(route, forwarded(inner, url, "/api/name", `${url.origin}/d/${id}`, session));
+  const answer = await platform.docs.fetch(route, forwarded(inner, url, "/api/name", `${url.origin}/d/${id}`, session, null));
   if (request.headers.get("accept")?.includes("application/json")) return new Response(answer.body, { status: answer.status, headers: { "Content-Type": "application/json" } });
   if (!answer.ok) return page("Couldn't rename", `${esc(((await answer.json().catch(() => ({}))) as { error?: string }).error ?? "Something went wrong.")} <a href="${esc(link("/docs", session))}">Back to your documents</a>.`, answer.status);
   return new Response(null, { status: 303, headers: { Location: link("/docs", session) } });
+}
+
+/**
+ * POST /docs/share (id, login, role): gives someone a role on one of your
+ * documents ("editor" or "viewer"; login "*" is anyone signed in who has the
+ * link), or takes it away (role "none" or empty). Only its owner may. Answers
+ * JSON: everyone's permissions now, or the error.
+ */
+async function shareDoc(platform: Platform, request: Request): Promise<Response> {
+  const session = await platform.sessionOf(request);
+  if (!session || session.test) return Response.json({ error: "Sign in first" }, { status: 401 });
+  if (request.headers.get("origin") != new URL(request.url).origin) return Response.json({ error: "Forbidden" }, { status: 403 });
+  const form = await request.formData();
+  const id = String(form.get("id") ?? ""), login = String(form.get("login") ?? ""), role = String(form.get("role") ?? "");
+  if (!ID.test(id) || !(await platform.directory.get(id))) return Response.json({ error: "No such document" }, { status: 404 });
+  try {
+    const permissions = await platform.directory.share(whoOf(session), id, login, role == "" || role == "none" ? null : role as Grant);
+    return Response.json({ permissions });
+  } catch (e) {
+    if (e instanceof NotAllowed) return Response.json({ error: e.message }, { status: 403 });
+    throw e;
+  }
 }
 
 export const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
@@ -489,18 +517,20 @@ function ago(t: number, now: number): string {
 }
 
 /** The documents view, in the editor's own type and colours (style.css), light or dark with the system. */
-function docsPage(session: Session, docs: Listed[], now: number, dev: boolean): string {
+function docsPage(session: Session, docs: Listed[], now: number, dev: boolean, hours: number): string {
   const rows = docs.map((d) => {
     const left = d.expires != null ? Math.max(1, Math.ceil((d.expires - now) / 3600000)) : null;
-    const note = d.path != null ? `<span class="note" title="${esc(d.path)}">On disk</span>`
-      : left != null ? `<span class="note" title="A document nobody edits is deleted ${UNEDITED_HOURS} hours after it's made">Unedited · deleted in ${left}h</span>` : "";
+    const mine = d.role == "owner";
+    const note = !mine ? `<span class="note" title="Shared with you by ${esc(d.owner)}">${esc(d.owner)} · ${d.role == "editor" ? "can edit" : "view only"}</span>`
+      : d.path != null ? `<span class="note" title="${esc(d.path)}">On disk</span>`
+      : left != null ? `<span class="note" title="A document nobody edits is deleted ${hours} hours after it's made">Unedited · deleted in ${left}h</span>` : "";
     const when = new Date(d.modified).toISOString();
     // One opened from disk only comes off the list: its files stay where they are.
     const [remove, label] = d.path != null ? ["Remove from the list", `Remove ${esc(d.title)} from the list`] : ["Delete", `Delete ${esc(d.title)}`];
     return `  <li>
     <a class="doc" href="${esc(link(`/${d.owner}/${d.slug}`, session))}"><span class="title">${esc(d.title)}</span>${note}<time datetime="${when}">${ago(d.modified, now)}</time></a>
-    <button type="button" class="act rename" aria-label="Rename ${esc(d.title)}" title="Rename" data-id="${esc(d.id)}" data-title="${esc(d.title)}" data-slug="${esc(d.slug)}"${d.titleSet ? " data-title-set" : ""}${d.slugSet ? " data-slug-set" : ""}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 19h3.5L18.25 9.25a2.47 2.47 0 0 0-3.5-3.5L5 15.5V19Z"/><path d="m13.5 7 3.5 3.5"/></svg></button>
-    <form method="post" action="${esc(link("/docs/delete", session))}" data-title="${esc(d.title)}"${d.path != null ? " data-disk" : ""}><input type="hidden" name="id" value="${esc(d.id)}"><button class="act delete" aria-label="${label}" title="${remove}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M10 7V5h4v2M7 7l1 12h8l1-12"/></svg></button></form>
+    ${mine ? `<button type="button" class="act rename" aria-label="Rename ${esc(d.title)}" title="Rename" data-id="${esc(d.id)}" data-title="${esc(d.title)}" data-slug="${esc(d.slug)}"${d.titleSet ? " data-title-set" : ""}${d.slugSet ? " data-slug-set" : ""}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 19h3.5L18.25 9.25a2.47 2.47 0 0 0-3.5-3.5L5 15.5V19Z"/><path d="m13.5 7 3.5 3.5"/></svg></button>
+    <form method="post" action="${esc(link("/docs/delete", session))}" data-title="${esc(d.title)}"${d.path != null ? " data-disk" : ""}><input type="hidden" name="id" value="${esc(d.id)}"><button class="act delete" aria-label="${label}" title="${remove}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M10 7V5h4v2M7 7l1 12h8l1-12"/></svg></button></form>` : ""}
   </li>`;
   }).join("\n");
   return `<!doctype html>
@@ -567,7 +597,7 @@ function docsPage(session: Session, docs: Listed[], now: number, dev: boolean): 
     <h1>Documents</h1>
     <a class="new" href="${esc(link("/new", session))}">New document</a>
   </header>
-  ${docs.length ? `<ol>\n${rows}\n  </ol>` : `<p class="empty">No documents yet. A new one starts blank, and goes away after ${UNEDITED_HOURS} hours if you never edit it.</p>`}
+  ${docs.length ? `<ol>\n${rows}\n  </ol>` : `<p class="empty">No documents yet. A new one starts blank, and goes away after ${hours} hours if you never edit it.</p>`}
   ${dev ? `<form class="open" method="post" action="${esc(link("/__erga/open", session))}" aria-label="Open from disk">
     <input name="path" required placeholder="A file or folder on this machine: ~/notes, ./site/index.md" aria-label="Path to a file or folder" autocomplete="off" spellcheck="false">
     <button>Open</button>
@@ -683,17 +713,20 @@ async function shareToken(platform: Platform, request: Request, session: Session
 
 /**
  * A request for the document's host: the path inside the document, its
- * public address, and who's asking (never what the browser claimed: those
- * headers are replaced), and whether it's an agent with a token.
+ * public address, who's asking and whether they may edit or only view
+ * (never what the browser claimed: those headers are replaced), and whether
+ * it's an agent with a token.
  */
-export function forwarded(request: Request, url: URL, rest: string, base: string, session: Session | null): Request {
+export function forwarded(request: Request, url: URL, rest: string, base: string, session: Session | null, access: "edit" | "view" | null): Request {
   const inner = new URL(rest + url.search, url.origin);
   const headers = new Headers(request.headers);
   headers.delete("x-erga-person");
+  headers.delete("x-erga-access");
   headers.delete("x-erga-agent");
   headers.delete("authorization");
   headers.set("x-erga-base", base);
   if (session) headers.set("x-erga-person", JSON.stringify({ id: session.login.toLowerCase(), name: session.name }));
+  if (session && access) headers.set("x-erga-access", access);
   // Only an agent token's request may call a document's external agent tools (host.ts).
   if (session?.agent) headers.set("x-erga-agent", session.agent.id);
   return new Request(inner, { method: request.method, headers, body: request.body, redirect: "manual" });

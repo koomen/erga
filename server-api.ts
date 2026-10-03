@@ -26,7 +26,7 @@
 
 import { documentToolSpecs, type ToolContent, type ToolSpec } from "./agent";
 import { type Action, type DocRow, type Route, nameOf } from "./directory";
-import { documentRoute, esc, forwarded, ID, makeDoc, newDocId, page, safeNext, type Platform, type Session, UNEDITED_HOURS, whoOf } from "./front";
+import { accessOf, documentRoute, esc, forwarded, ID, makeDoc, newDocId, page, safeNext, type Platform, type Session, whoOf } from "./front";
 import { cleanRel } from "./host";
 import { LABEL_MAX, normalCode, REQUEST_MINUTES, type AgentToken } from "./tokens";
 
@@ -83,7 +83,7 @@ export const TOOLS: ServerTool[] = [
   },
   {
     name: "create_document",
-    description: `Makes a new document and answers its URL. With files, it's those files (publishing a site or a page: a folder with index.html or index.md, plus its styles, scripts and images), and it stays. Without files it's a blank page (or a copy of the demo, template: "demo"), which goes after ${UNEDITED_HOURS} hours if nobody edits it. The title follows the page's first heading unless you give one; the address (/<owner>/<slug>) follows the title unless you give a slug.`,
+    description: `Makes a new document and answers its URL. With files, it's those files (publishing a site or a page: a folder with index.html or index.md, plus its styles, scripts and images), and it stays. Without files it's a blank page (or a copy of the demo, template: "demo"), which goes if nobody edits it in time (the server's unedited_hours setting; it says when). The title follows the page's first heading unless you give one; the address (/<owner>/<slug>) follows the title unless you give a slug.`,
     parameters: {
       type: "object",
       properties: {
@@ -95,8 +95,9 @@ export const TOOLS: ServerTool[] = [
       },
     },
     run: async (args, ctx) => {
-      const { session, platform, url } = ctx;
-      if (session.test || !platform.mayCreate(session, url)) throw new ToolError("You can't make documents on this server.", 403);
+      const { session, platform } = ctx;
+      // Anyone who may sign in may make documents (withTokens checked they still may); test people only test documents.
+      if (session.test) throw new ToolError("You can't make documents on this server.", 403);
       let files = decodeFiles(args.files);
       const published = Object.keys(files).length > 0;
       if (!published) files = { ...platform.templates[args.template == "demo" ? "demo" : "doc"] };
@@ -105,7 +106,7 @@ export const TOOLS: ServerTool[] = [
         const doc = await makeDoc(platform, session.login.toLowerCase(), newDocId(), files, {
           index, published, title: optString(args.title, "title"), slug: optString(args.slug, "slug"),
         });
-        if (doc) return { ...described(doc, ctx), page: index, files: Object.keys(files).sort(), ...(published ? {} : { expires: `in ${UNEDITED_HOURS} hours, unless someone edits it` }) };
+        if (doc) return { ...described(doc, ctx), page: index, files: Object.keys(files).sort(), ...(published || doc.expires == null ? {} : { expires: `${new Date(doc.expires).toISOString()}, unless someone edits it` }) };
       }
       throw new ToolError("Couldn't pick an address for it: try again.", 500);
     },
@@ -246,10 +247,11 @@ async function resolve(ctx: ToolContext, ref: unknown, action: Action): Promise<
   return doc;
 }
 
-/** A request to a document's own host, as the agent's person (front.ts, forwarded). */
-function callDoc(ctx: ToolContext, doc: Route, path: string, init: RequestInit): Promise<Response> {
+/** A request to a document's own host, as the agent's person, with what they may do there (front.ts, forwarded). */
+async function callDoc(ctx: ToolContext, doc: Route, path: string, init: RequestInit): Promise<Response> {
   const inner = new Request(new URL(path, ctx.origin), init);
-  return ctx.platform.docs.fetch(doc, forwarded(inner, new URL(path, ctx.origin), path, `${ctx.origin}/d/${doc.id}`, ctx.session));
+  const access = accessOf(await ctx.platform.directory.access(whoOf(ctx.session), doc));
+  return ctx.platform.docs.fetch(doc, forwarded(inner, new URL(path, ctx.origin), path, `${ctx.origin}/d/${doc.id}`, ctx.session, access));
 }
 
 const MAX_FILE = 2_000_000, MAX_TOTAL = 50_000_000, MAX_FILES = 2000;

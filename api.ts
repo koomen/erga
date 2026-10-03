@@ -90,6 +90,8 @@ export const DocInfo = Schema.Struct({
   /** Their picture, if they have one (their GitHub avatar). */
   avatar: Schema.optional(Schema.String),
   writeDelay: Schema.Number,
+  /** Whether they may edit it (false: they may only view it; their edits go nowhere). */
+  canEdit: Schema.optional(Schema.Boolean),
   /** Its title and address, where the platform keeps a directory (both hosts do). */
   docName: Schema.optional(DocName),
 });

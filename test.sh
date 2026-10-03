@@ -26,7 +26,7 @@ run() { # run NAME CMD...: in the background, output to a file
 }
 
 page_group() {
-  run unit bun test tests/
+  run unit bun test ./tests/
   run page bun tests/page.ts
   run isolation bun tests/isolation.ts
   run front bun tests/worker.ts --local
