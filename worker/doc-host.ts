@@ -8,14 +8,16 @@
 // The front door (worker/index.ts) has already checked who's asking: it
 // forwards each request with the path inside the document (/api/doc, not
 // /koomen/abc123/api/doc), the document's public address in x-erga-base,
-// and the signed-in person in x-erga-person. An external agent's requests
-// to /api/ext carry its share token instead, which this host checks.
+// the signed-in person in x-erga-person, and what they may do in
+// x-erga-access ("edit", or "view": their room connection is then read-only,
+// and so are their agent and publishes). An external agent's requests to
+// /api/ext carry its share token instead, which this host checks; it may do
+// what its person last could.
 //
 // It also keeps its row in the directory (directory.ts, D1) up to date: when
 // it was last edited, and the title that follows its first heading (at most
-// every DIRECTORY_EVERY_MS); a document made before the directory adds its
-// row the first time it opens. It deletes itself, row included, if nobody
-// edits it within UNEDITED_HOURS of being made.
+// every DIRECTORY_EVERY_MS). It deletes itself, row included, if nobody
+// edits it within its unedited time (the unedited_hours setting) of being made.
 //
 // In local development a document can be a file or folder on disk (`link`).
 // Its files then stay there: the room's storage is the folder itself, reached
@@ -32,7 +34,7 @@ import * as Redacted from "effect/Redacted";
 import * as Scope from "effect/Scope";
 import { agentConfigFrom } from "../agent";
 import { DIRECTORY_EVERY_MS, nameOf, namingFor, throttle, UNTITLED, type DocName, type DocRow } from "../directory";
-import { afterUnedited, titleOf, UNEDITED_HOURS } from "../front";
+import { afterUnedited, titleOf } from "../front";
 import { makeHost } from "../host";
 import { FileStore, Room, StateStore, StoreError } from "../room";
 import { assets, files as texts } from "../src/room/doc";
@@ -43,9 +45,8 @@ import type { Env } from "./env";
 /**
  * What a document is: its id, who made it, which file is its page, whether
  * it's a test document, and when a file last changed (never, if unset).
- * Documents made before ids were kept here have none (their object's name has it).
  */
-interface Meta { id?: string; owner: string; index: string; created: number; modified?: number; test?: boolean; disk?: OnDisk }
+interface Meta { id: string; owner: string; index: string; created: number; modified?: number; test?: boolean; disk?: OnDisk }
 
 /** A document that's a file or folder on disk (local development): where it is, its address there, and whether it's a single file. */
 interface OnDisk { path: string; slug: string; only?: boolean }
@@ -70,12 +71,18 @@ export class DocHost extends DurableObject<Env> {
   });
 
   private sync: (() => void) | null = null;
+  /**
+   * Who may edit, by person id, as the front door last said (x-erga-access):
+   * their agent, and an external agent acting for them, may do what they could
+   * at their latest request.
+   */
+  private editors = new Map<string, boolean>();
 
   /**
    * Creates the document, whose row the front door has just added to the
    * directory, from a template's files; false if it already exists. Unless
-   * someone edits it, it's deleted at `expires` (UNEDITED_HOURS after it's
-   * made, or sooner when local development asks, to test it).
+   * someone edits it, it's deleted at `expires` (the unedited_hours setting
+   * after it's made, or sooner when local development asks, to test it).
    */
   async create(owner: string, id: string, files: Record<string, string>, index: string, opts: { test?: boolean; expires: number | null }): Promise<boolean> {
     if (await this.ctx.storage.get<Meta>(META)) return false;
@@ -98,7 +105,7 @@ export class DocHost extends DurableObject<Env> {
     const meta = await this.ctx.storage.get<Meta>(META);
     await this.ctx.storage.put(META, meta ? { ...meta, index, disk } : { id, owner: owner.toLowerCase(), index, created: Date.now(), disk });
     await this.ctx.storage.deleteAlarm();
-    return (await this.register())!;
+    return (await this.addRow())!;
   }
 
   /** Deletes the document (the front door has asked the directory who may): everyone on it is disconnected. */
@@ -110,11 +117,11 @@ export class DocHost extends DurableObject<Env> {
   }
 
   /**
-   * Puts the document in the directory if it isn't there yet (one made
-   * before the directory), as it is now, keeping this object's name: its row.
-   * Null if there's no such document.
+   * Puts a document on disk in the directory if it isn't there yet, as it is
+   * now: its row. Anyone signed in may edit it (on this machine, that's
+   * whoever local development lets in). Null if there's no such document.
    */
-  async register(): Promise<DocRow | null> {
+  private async addRow(): Promise<DocRow | null> {
     const meta = await this.ctx.storage.get<Meta>(META);
     if (!meta) return null;
     const id = this.idOf(meta);
@@ -124,16 +131,16 @@ export class DocHost extends DurableObject<Env> {
       title: (text && titleOf(text, meta.index)) || UNTITLED,
       // A test document's address stays its id (the suite addresses it so); one on disk is its folder's or file's name.
       ...(meta.test ? { slug: id, slugSet: true } : meta.disk ? { slug: meta.disk.slug, slugSet: true } : {}),
-      doName: this.ctx.id.name ?? id,
       created: meta.created, modified: meta.modified ?? null,
       expires: meta.modified || meta.test || meta.disk ? null : (await this.ctx.storage.getAlarm()),
       test: meta.test,
+      ...(meta.disk ? { everyone: "editor" as const } : {}),
     });
     return doc;
   }
 
   /**
-   * UNEDITED_HOURS after it was made: a document nobody has edited goes.
+   * Its unedited time is up: a document nobody has edited goes.
    * One open somewhere waits an hour more, so it isn't pulled from under
    * someone about to type.
    */
@@ -147,7 +154,7 @@ export class DocHost extends DurableObject<Env> {
       await directoryOf(this.env).setExpires(this.idOf(meta), next).catch((e) => console.log(`couldn't update ${this.idOf(meta)}'s row: ${e}`));
       return;
     }
-    console.log(`deleting ${meta.owner}/${this.idOf(meta)}: not edited in ${UNEDITED_HOURS} hours`);
+    console.log(`deleting ${meta.owner}/${this.idOf(meta)}: never edited`);
     await this.destroy(meta);
   }
 
@@ -166,10 +173,9 @@ export class DocHost extends DurableObject<Env> {
     await directoryOf(this.env).remove(this.idOf(meta));
   }
 
-  /** Its id: in its meta, or (made before ids were kept there) in its name, "<owner>/<id>". */
+  /** Its id (also its object's name). */
   private idOf(meta: Meta): string {
-    const name = this.ctx.id.name;
-    return meta.id ?? (name?.includes("/") ? name.split("/")[1] : name) ?? this.ctx.id.toString();
+    return meta.id;
   }
 
   /**
@@ -241,8 +247,11 @@ export class DocHost extends DurableObject<Env> {
     // Not made yet: asked again next time, since it may be by then (made, or linked from disk).
     if (!opened) { this.open = null; return new Response("No such document", { status: 404 }); }
     const url = new URL(request.url);
+    const editing = request.headers.get("x-erga-access") == "edit";
+    if (request.headers.has("x-erga-person")) this.editors.set(personOf(request.headers).id, editing);
     if (request.headers.get("upgrade")?.toLowerCase() == "websocket") {
-      if (url.pathname.startsWith("/api/room")) return opened.roomSocket(url);
+      // Someone who may only view the document joins the room read-only: they see every edit, and theirs go nowhere.
+      if (url.pathname.startsWith("/api/room")) return opened.roomSocket(url, !editing);
       if (url.pathname == "/api/events") return opened.eventSocket(personOf(request.headers));
       return new Response("Not found", { status: 404 });
     }
@@ -267,8 +276,6 @@ export class DocHost extends DurableObject<Env> {
   private async load(): Promise<Opened | null> {
     const meta = await this.ctx.storage.get<Meta>(META);
     if (!meta) return null;
-    // Documents made before the directory join it when they open.
-    await this.register().catch((e) => console.log(`couldn't put ${this.idOf(meta)} in the directory: ${e}`));
     const storage = this.ctx.storage;
     const storeError = (e: unknown) => new StoreError({ message: e instanceof Error ? e.message : String(e) });
     const onDisk = meta.disk && this.disk.store(meta.disk.only ? meta.index : null);
@@ -303,6 +310,9 @@ export class DocHost extends DurableObject<Env> {
       doc: { name: meta.index, path: meta.index, kind: meta.index.endsWith(".md") ? "md" : "html", dir: meta.disk?.path ?? meta.owner },
       only: meta.disk?.only ? meta.index : undefined,
       personOf: (req) => personOf(new Headers(req.headers as Record<string, string>)),
+      // Their agent edits only if they may (and only while they may).
+      canEdit: (person) => this.editors.get(person.id) ?? false,
+      mayPublish: (req) => req.headers["x-erga-access"] == "edit",
       baseUrl: (req) => req.headers["x-erga-base"] ?? "",
       // People's ids are their GitHub logins, so GitHub serves their pictures.
       avatarOf: (person) => (person.id.startsWith("test-") ? undefined : `${AVATARS}/${encodeURIComponent(person.id)}?s=64`),
@@ -314,14 +324,14 @@ export class DocHost extends DurableObject<Env> {
     const opened: Opened = {
       handler: host.handler,
       renamed: host.renamed,
-      roomSocket: (url) => {
+      roomSocket: (url, readOnly) => {
         const [client, server] = Object.values(new WebSocketPair());
         server.accept();
         this.track(server);
         // Binary frames as ArrayBuffers: with this compatibility date they'd otherwise arrive as Blobs.
         server.binaryType = "arraybuffer";
         const send = (m: Uint8Array) => { try { server.send(m); } catch { /* already closed */ } };
-        const conn = room.connect(send, { epoch: url.searchParams.get("epoch") });
+        const conn = room.connect(send, { epoch: url.searchParams.get("epoch"), readOnly });
         // A tab holding another epoch's history is refused, never merged (room.ts).
         if (!conn) server.close(4409, "stale epoch");
         else {
@@ -367,7 +377,7 @@ export class DocHost extends DurableObject<Env> {
 
 interface Opened {
   handler: (request: Request) => Promise<Response>;
-  roomSocket: (url: URL) => Response;
+  roomSocket: (url: URL, readOnly: boolean) => Response;
   eventSocket: (person: Person) => Response;
   room: Room;
   catchUp: () => Promise<void>;

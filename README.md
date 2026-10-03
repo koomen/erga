@@ -33,17 +33,22 @@ more can be opened from `/docs` (see [Local development](#local-development)).
 
 The editor runs on Cloudflare. A front-door Worker (`worker/index.ts`)
 serves the app's routes (`front.ts`). It shows the demo read-only at `/` with an Edit button; Edit signs you in with
-GitHub (only the logins in `ALLOWED_USERS`, in `cloudflare.config.ts`) and
-makes you a copy of the demo at `/<you>/<slug>`, which anyone signed in can
-open and edit with you. `/new` makes a blank document instead (a copy of
-`templates/doc/`). Each document is a Durable Object (`worker/doc-host.ts`)
-that keeps its files and Yjs state in its own storage and serves the
+GitHub (only the server's users: see [Users, admins and
+settings](#users-admins-and-settings)) and makes you a copy of the demo at
+`/<you>/<slug>`, which only you can open until you share it. `/new` makes a
+blank document instead (a copy of `templates/doc/`). Each document is a
+Durable Object (`worker/doc-host.ts`), named by the document's id, that
+keeps its files and Yjs state in its own storage and serves the
 per-document host (`host.ts`), agent included.
 
+Everything else the server knows is in one D1 database (`DB`; its tables in
+`migrations/`, applied by `migrate.ts`): its users and admins, its settings,
+and the directory of documents with their permissions.
+
 **Addresses, titles and the directory.** Every document has a title and an
-address, kept in the directory (`directory.ts`): D1 on erga.dev
-(`worker/d1.ts`), a SQLite file locally, the same tables (`migrations/`)
-behind one small interface, so `front.ts` is the same on both. A document's
+address, kept in the directory (`directory.ts`): D1 (`worker/d1.ts`; locally
+the dev server's own D1), behind a three-method `Sql` interface, so the unit
+tests run the same code on bun:sqlite. A document's
 canonical address is `/<owner>/<slug>`; `/d/<id>` always works, and
 `/<owner>/<id>` (older links) and any slug it had before redirect to it. The
 title follows the page's first `<h1>` (else `<title>`, else "Untitled") until
@@ -54,19 +59,40 @@ by asking an agent (its `get_title` and `set_title` tools, for the embedded
 agent and external ones). Every open tab follows a rename: its title, and its
 address bar. The editor itself talks to its document at `/d/<id>`, which a
 rename never changes. Old slugs keep redirecting until another of the
-owner's documents takes that slug. The directory also has `members` (only
-the owner's row for now: sharing will add editors and viewers); every "may
-this person do this" goes through `Directory.may`.
+owner's documents takes that slug.
 
-`/docs` lists your documents, latest edit first, with a New document button
-and rename and delete buttons on each; the editor's top bar links to it.
-Each document keeps its row up to date (when it's edited, and the title that
-follows its heading, at most every two seconds). Documents made before the
-directory are copied in from each person's old list (`worker/doc-list.ts`,
-read once, the first time they open `/docs`), and any other joins when it's
-next opened; their Durable Objects keep their old names (`<owner>/<id>`, the
-row's `do_name`), while new ones are named by id. A document nobody edits is deleted `UNEDITED_HOURS` (24)
-after it's made, by an alarm set when it's made. An edit is a change to a
+**Who may do what with a document.** Each document has `permissions`: its
+owner (who made it, whose address it's under), and any editors and viewers
+it's shared with; a permission for `*` is one for anyone signed in who has
+the link. Nobody else may open it. Every "may this person do this" goes
+through `Directory.may`:
+
+| | owner | editor | viewer |
+|---|---|---|---|
+| open | ✓ | ✓ | ✓ |
+| edit, rename | ✓ | ✓ | |
+| delete, share | ✓ | | |
+
+The front door asks the directory on every request to a document (403 if
+they may not open it) and tells the document's host whether the person may
+edit or only view (`x-erga-access`). A viewer's room connection is
+read-only (they see every edit as it happens; theirs are dropped, carets
+aside), their publishes (`PUT /api/stored`) are refused, and their agent,
+and an external agent with their share token, can read but not edit (it
+says so). `/api/doc` says whether you may edit (`canEdit`). The owner
+shares with `POST /docs/share` (`id`, `login` or `*`, `role`: `editor`,
+`viewer`, or `none` to stop), which answers everyone's permissions; there's
+no sharing UI yet. Server admins get nothing on documents by being admins.
+Test people may open only test documents, as editors of those of whoever
+minted their token.
+
+`/docs` lists the documents you own or that are shared with you by name,
+latest edit first, with a New document button and rename and delete buttons
+on each; the editor's top bar links to it. Each document keeps its row up to
+date (when it's edited, and the title that follows its heading, at most
+every two seconds). A document nobody edits is deleted after the
+`unedited_hours` setting (24 by default) from when it's made, by an alarm set
+when it's made. An edit is a change to a
 file's text, from a person, an agent or a publish; opening the document,
 moving a caret or the room's own bookkeeping never are. One still open in
 a tab when its time comes gets another hour. Test documents are neither
@@ -82,7 +108,59 @@ which finds the D1 database `erga` by name (making it if it's new) and
 applies `migrations/` to it before the deploy. A migration lands just before
 the Worker that needs it, so it must keep working with the one still deployed
 (add tables and columns; don't rename or drop). New ones: `bunx cf d1
-migrations create <message>`.
+migrations create <message>`. `0001_erga.sql` is the exception: it started
+the database afresh (it drops whatever was there before, the first directory
+and its backfill included), so documents made before it, and the per-person
+`DocList` Durable Objects (deleted by the config, with what they held), are
+gone.
+
+### Users, admins and settings
+
+**Users.** A GitHub login with a row in `users` may sign in; nobody else
+may (`users.ts`). The row keeps their display name (from GitHub, at each
+sign-in), when they were added and by whom, and when they were last seen
+(to the nearest five minutes). A session lasts only while its person is
+still a user: every request checks (remembered for ten seconds), so removing
+someone signs them out everywhere. A test token works only while whoever
+minted it is a user.
+
+**Admins.** Each user's server role is `user` or `admin`. Admins may list
+and change the server's settings and its users (add, remove, make admin).
+The first admins come from the deploy: the logins in the `ADMINS` binding
+(`cloudflare.config.ts`) are always admins and may always sign in, and get
+their row the first time they do; they can't be demoted or removed except by
+taking them out of `ADMINS` and deploying. Every other admin is a row, made
+by an admin. Locally, `DEV_LOGIN` is a bootstrap admin too, and everyone
+signed in gets a row as they come. Until there's an admin UI, add a user on
+erga.dev with SQL (the database's id from `bunx cf d1 list --name erga`):
+
+    bunx cf d1 query <database id> --sql "INSERT INTO users (login, name, role, created, added_by) VALUES ('octocat', 'octocat', 'user', unixepoch() * 1000, 'koomen')"
+
+**Settings.** `server_config` holds the server's settings, a JSON value per
+key with who set it and when (`config.ts`). Only the keys declared in
+`SETTINGS` exist, each with a description, a default and a parser that
+refuses a bad value saying why; one never set has its default. Today there's
+`unedited_hours`. Anyone's request may read a setting (the server reads them
+to do its work); only admins list and change them. A setting can also be
+locked by the deploy: `new Directory(sql, { locked })` takes values that win
+over the table and that admins can see but not change.
+
+**The API**, for the admin UI and agents to build on: `directoryOf(env)`
+(`worker/d1.ts`) gives the `Directory`, and through it
+
+- documents and permissions: `dir.may(who, action, doc)`, `dir.access(who,
+  doc)` (the role that applies), `dir.permissions(id)`, `dir.share(who, id,
+  login, role | null)`, `dir.list(login)`;
+- users and roles: `dir.users.get(login)`, `allowed(login)`,
+  `isAdmin(who)`, `signedIn(login, name?)`, and, admins only, `list(by)`,
+  `add(by, login, { role })`, `setRole(by, login, role)`, `remove(by,
+  login)`;
+- settings: `dir.config.get(key)` (typed by `SETTINGS`), `entry(key)`,
+  `isLocked(key)`, and, admins only, `list(by)`, `set(by, key, value)`,
+  `reset(by, key)`.
+
+The admin-only calls throw `NotAllowed` (and a bad value `ConfigError`) with
+a message a person or an agent can act on.
 
 Secrets are set with `bunx cf workers secrets update`: `GITHUB_CLIENT_SECRET`
 (for the GitHub OAuth app whose client ID is in `cloudflare.config.ts`, with
@@ -105,17 +183,20 @@ The token signs in test people (Ada, Bo, ...) who can open only test documents
 
 `bun start` runs the Worker exactly as deployed, in workerd, with its
 Durable Objects' storage in `.cloudflare/state/` (delete it to start
-afresh). That includes the directory of documents (addresses, titles,
-members: what `/docs` lists), in the local D1, whose tables the dev server
+afresh). That includes the server's database (users, settings, and the
+directory of documents: addresses, titles, permissions), in the local D1, whose tables the dev server
 brings up to date with `migrations/` as it starts. What only local
 development has:
 
 - **Who you are**: `DEV_LOGIN` in `.dev.vars`, signed in without GitHub
-  (only on localhost: `worker/auth.ts`, `isDev`). Your documents are under
-  that login (`/<login>/<slug>`). `?user=Ada` makes a tab someone else (open
-  `http://localhost:4400/<login>/<slug>?user=Ada` in another window to be a
-  second person; the tab carries it on every request it makes), and
-  `/auth/github?as=Ada` signs the browser in as Ada until `/auth/logout`.
+  (only on localhost: `worker/auth.ts`, `isDev`), and an admin. Your
+  documents are under that login (`/<login>/<slug>`). `?user=Ada` makes a tab
+  someone else (open `http://localhost:4400/<login>/<slug>?user=Ada` in
+  another window to be a second person; the tab carries it on every request
+  it makes), and `/auth/github?as=Ada` signs the browser in as Ada until
+  `/auth/logout`. Anyone may sign in locally, but documents are as private
+  as on erga.dev: a blank one opens only for its owner until it's shared,
+  while one opened from disk is shared with anyone signed in (`*`, editor).
   `ERGA_AGENT_MODEL=script` swaps in the scripted agent.
 - **Files on disk** (`dev/plugin.ts`, a Vite plugin, and `worker/disk.ts`).
   A folder with an `index.html` or `index.md`, or a single `.html` or `.md`
@@ -443,7 +524,9 @@ they reach the open page without a reload and then the disk, that the agent
 shows up as a participant, and that its last change can be undone (it calls
 the API, so it isn't part of `./test.sh`).
 `bun tests/worker.ts --local` checks the app's own routes (`/new`, `/docs`,
-deleting, expiry, and the pages origin's token).
+sharing and what each role may do, deleting, expiry, and the pages origin's
+token). `tests/directory.test.ts` covers the directory, permissions, users
+and settings on bun:sqlite.
 `bun tests/isolation.ts` opens a page that tries to reach whoever views it
 (the shell's window, its cookies, erga.dev's API, forged messages) and checks
 it gets nothing. The browser tests reach the page through the frame's own
@@ -467,9 +550,10 @@ back, merging edits from disk, the agent's exact-match edits and attribution.
   scripts (the shell's, and the frame's that runs on each document's own origin)
 - `front.ts`: the app's own routes and pages (the demo, `/new`, `/docs`,
   delete, the unedited rule, titles)
-- `directory.ts`: the directory of documents (addresses, titles, members, who may do what), over
+- `directory.ts`: the directory of documents (addresses, titles, permissions, who may do what), over
   `Sql`; `worker/d1.ts` puts it on D1; its tables in `migrations/`, which `migrate.ts` applies to
   erga.dev's D1 (the dev server applies them locally)
+- `users.ts`, `config.ts`: the server's users and admins, and its settings, on the same database
 - `host.ts`: the per-document host (API, `/doc/`)
 - `worker/`: erga.dev on Cloudflare (front door, sign-in, Durable Objects,
   and `disk.ts`, a document's files on disk in local development)

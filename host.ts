@@ -42,8 +42,10 @@ export interface HostOptions {
   readonly baseUrl: (request: HttpServerRequest.HttpServerRequest) => string;
   /** A person's picture, if the platform knows one (hosted: their GitHub avatar). */
   readonly avatarOf?: (person: { id: string; name: string }) => string | undefined;
-  /** Whether a person may edit (locally everyone may; hosted, the project role would decide). */
+  /** Whether a person may edit, so their agent may (everyone, if not given; the directory's roles decide, worker/doc-host.ts). */
   readonly canEdit?: (person: { id: string; name: string }) => boolean;
+  /** Whether a request may publish a file (PUT /api/stored): everyone, if not given. */
+  readonly mayPublish?: (request: HttpServerRequest.HttpServerRequest) => boolean;
   /** A single file opened from disk: the document holds only it, and no other file can be made. */
   readonly only?: string;
   /** The document's title and address in the directory (directory.ts), read and changed as a person. */
@@ -183,7 +185,7 @@ export function makeHost(opts: HostOptions) {
   const docApi = HttpApiBuilder.group(Api, "doc", (h) => h
     .handle("info", () => Person.use((user) => Effect.gen(function* () {
       const docName = yield* Effect.promise(() => namingAs(user)?.get().catch(() => undefined) ?? Promise.resolve(undefined));
-      return { name: doc.name, path: doc.path, kind: doc.kind, dir: doc.dir, user: user.name, userId: user.id, avatar: opts.avatarOf?.(user), writeDelay: room.writeDelay, docName };
+      return { name: doc.name, path: doc.path, kind: doc.kind, dir: doc.dir, user: user.name, userId: user.id, avatar: opts.avatarOf?.(user), writeDelay: room.writeDelay, canEdit: opts.canEdit?.(user) ?? true, docName };
     })))
     .handle("name", () => Person.use((user) => {
       const n = namingAs(user);
@@ -266,6 +268,7 @@ export function makeHost(opts: HostOptions) {
       if (!rel) return badPath;
       if (opts.only != null && rel != opts.only) return HttpServerResponse.text(`This document is the single file ${opts.only}`, { status: 403 });
       const req = yield* HttpServerRequest.HttpServerRequest;
+      if (opts.mayPublish && !opts.mayPublish(req)) return HttpServerResponse.text("You can only view this document.", { status: 403 });
       const text = yield* req.text;
       const ifMatch = req.headers["if-match"]?.replace(/^W\//, "").replace(/"/g, "") ?? null;
       const r = yield* room.push(rel, text, ifMatch);

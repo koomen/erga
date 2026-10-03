@@ -1,18 +1,19 @@
 import type { DocHost } from "./doc-host";
-import type { DocList } from "./doc-list";
 
 /** The Worker's bindings (cloudflare.config.ts); secrets are set with `cf workers secrets update`. */
 export interface Env {
-  /** One Durable Object per document, named by its id (or "<owner>/<id>" if it was made before the directory: its row's do_name). */
+  /** One Durable Object per document, named by its id. */
   DOCS: DurableObjectNamespace<DocHost>;
-  /** Each person's list of their documents before the directory, named by their login (lowercase): read once, to copy it in. */
-  LISTS: DurableObjectNamespace<DocList>;
-  /** The directory of documents (directory.ts, migrations/). */
+  /** The server's database: users, settings and the directory of documents (directory.ts, users.ts, config.ts; migrations/). */
   DB: D1Database;
   /** The editor's own files (page.html as editor.html, page.js, style.css, fonts). */
   ASSETS: Fetcher;
-  /** GitHub logins allowed to sign in, comma-separated. */
-  ALLOWED_USERS: string;
+  /**
+   * The bootstrap admins, GitHub logins, comma-separated: always admins and
+   * always allowed to sign in (users.ts). Everyone else who may sign in is a
+   * row in the users table, added by an admin.
+   */
+  ADMINS: string;
   GITHUB_CLIENT_ID: string;
   GITHUB_CLIENT_SECRET: string;
   /** Signs session cookies. */

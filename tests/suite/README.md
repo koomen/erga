@@ -34,8 +34,9 @@ A failing randomised test prints its seed and the command that replays it.
 
 Every test gets a fresh document. Capabilities a target lacks skip the tests
 that need them, and say so: `restart`, `kill`, `disk` (local only),
-`scriptedAgent`, `liveAgent`, `browser`, `roles` (view-only access; the
-test for it is waiting on a deployment that has roles).
+`scriptedAgent`, `liveAgent`, `browser`, `roles` (view-only access: the
+target can share the document with a viewer; local only, since test people
+on a deployment are always editors of their test documents).
 
 ### The suite catches what it should
 
