@@ -1,8 +1,8 @@
 # Erga
 
-Erga is a page editor (`open.ts`, `page.html`, `src/page/`). It opens any HTML
-or Markdown page from disk and lets you edit its text in place, on the rendered
-page, with the page's own styles and scripts running around it. Its document model, undo history,
+Erga is a page editor (`page.html`, `src/page/`). It opens any HTML or
+Markdown page and lets you edit its text in place, on the rendered page, with
+the page's own styles and scripts running around it. Its document model, undo history,
 Markdown parser and source view are CodeMirror 6 (pinned in `package.json`;
 run `bun install` before building).
 
@@ -11,34 +11,34 @@ It is multiplayer: people and their agents edit one page together (see
 
 ## Getting started
 
-With [Bun](https://bun.sh) 1.4 or later:
+With [Bun](https://bun.sh) 1.4 or later (and Node, which runs Vite):
 
     bun install
-    bun start                       # erga.dev's app, locally: the demo, /new, your documents at /docs
+    bun start                       # erga.dev's app, locally: your documents at /docs, /new, the demo at /
     bun start ./path/to/site        # and any folder with index.html or index.md, edited in place
-    bun start ./notes/some.html     # or a single file
+    bun start ./notes/some.md       # or a single file
 
-`bun start` rebuilds `page.js` and `frame.js` and runs the local host (`bun open.ts`, which
-takes the same arguments; `bun open.ts --help` lists them). For the agent,
-copy `.env.example` to `.env` and add an `ANTHROPIC_API_KEY`.
+`bun start` (`dev.ts`; `--help` lists its options) builds the editor and runs
+the same Worker as erga.dev, under Vite and the Cloudflare plugin, at
+`http://localhost:4400`. The first time, it makes `.dev.vars` for you (see
+`.dev.vars.example`): you're signed in as `DEV_LOGIN`, and an
+`ANTHROPIC_API_KEY` there turns the agent on.
 
-Locally you get the same app as on erga.dev (below), with the same routes
-and pages: with nothing named, the browser opens on the demo, whose Edit
-button makes you a copy; `/new` makes a blank document (a copy of
-`templates/doc/`); `/docs` lists yours. A file or folder you name joins
-them, edited where it is (see [Local host](#local-host)).
+There's one server, and it's the hosted one (below), so what you see locally
+is what erga.dev does. With nothing named, the browser opens on your
+documents; a file or folder you name joins them, edited where it is, and
+more can be opened from `/docs` (see [Local development](#local-development)).
 
 ## Hosted: erga.dev
 
-The same editor runs on Cloudflare. A front-door Worker (`worker/index.ts`)
-serves the app's routes, which live in `front.ts` so the local host serves
-the very same ones. It shows the demo read-only at `/` with an Edit button; Edit signs you in with
+The editor runs on Cloudflare. A front-door Worker (`worker/index.ts`)
+serves the app's routes (`front.ts`). It shows the demo read-only at `/` with an Edit button; Edit signs you in with
 GitHub (only the logins in `ALLOWED_USERS`, in `cloudflare.config.ts`) and
 makes you a copy of the demo at `/<you>/<id>`, which anyone signed in can
 open and edit with you. `/new` makes a blank document instead (a copy of
 `templates/doc/`). Each document is a Durable Object (`worker/doc-host.ts`)
-that keeps its files and Yjs state in its own storage and serves the same
-per-document host as the local server (`host.ts`), agent included.
+that keeps its files and Yjs state in its own storage and serves the
+per-document host (`host.ts`), agent included.
 
 `/docs` lists your documents, latest edit first, titled by their first
 heading (or `<title>`), with a New document button and a delete button on
@@ -53,7 +53,6 @@ moving a caret or the room's own bookkeeping never are. One still open in
 a tab when its time comes gets another hour. Test documents are neither
 listed nor deleted.
 
-    bun run dev:worker              # the Worker locally (needs .dev.vars, below)
     bun run deploy                  # build and deploy with the cf CLI
 
 Pushes to `main` deploy on their own: Workers Builds runs `./site.sh` then
@@ -63,14 +62,11 @@ Pushes to `main` deploy on their own: Workers Builds runs `./site.sh` then
 Secrets are set with `bunx cf workers secrets update`: `GITHUB_CLIENT_SECRET`
 (for the GitHub OAuth app whose client ID is in `cloudflare.config.ts`, with
 the callback `https://erga.dev/auth/github/callback`), `SESSION_SECRET` (any long random
-string) and `ANTHROPIC_API_KEY`. Locally they come from `.dev.vars`, where
-`DEV_LOGIN=<login>` signs you in without GitHub (on localhost only) and
-`ERGA_AGENT_MODEL=script` swaps in the scripted agent. The multiplayer suite
-runs against it unchanged: see `tests/suite/README.md` for the remote target.
-`bun tests/worker.ts http://localhost:5173` checks the front door's own
-routes against it: `/new`, `/docs` and its titles, deleting, and expiry
-(locally, `/new?unedited=<ms>` shortens a document's time);
-`bun tests/worker.ts --local` checks the same against the local host.
+string) and `ANTHROPIC_API_KEY`. Locally they come from `.dev.vars`.
+`bun tests/worker.ts http://localhost:4400` checks the front door's own
+routes against a running dev server: `/new`, `/docs` and its titles,
+deleting, and expiry (locally, `/new?unedited=<ms>` shortens a document's
+time); `bun tests/worker.ts --local` starts one of its own.
 
 To run it against erga.dev itself, get a test token from
 https://erga.dev/tokens (it lasts a week) and:
@@ -80,48 +76,42 @@ https://erga.dev/tokens (it lasts a week) and:
 The token signs in test people (Ada, Bo, ...) who can open only test documents
 (`/<you>/test....`), where the scripted agent stands in for the model.
 
-## Local host
+## Local development
 
-The local host (`open.ts`, Effect on Bun) serves erga.dev's app at
-`http://127.0.0.1:4400/`: the same front door (`front.ts`: the demo at `/`,
-`/new`, `/docs`, delete, documents at `/<you>/<id>`) and the same
-per-document host under each document (`host.ts`). Where the Worker uses
-Cloudflare, it has local stand-ins:
+`bun start` runs the Worker exactly as deployed, in workerd, with its
+Durable Objects' storage in `.cloudflare/state/` (delete it to start
+afresh). What only local development has:
 
-- **Who you are**: there's no sign-in. You're the first name in your git
-  config (`$USER` without one), and your documents are under that name in
-  lowercase (`/peter/<id>`). `?user=Ada` makes a tab someone else (open
-  `http://127.0.0.1:4400/<you>/<id>?user=Ada` in another window to be a
-  second person); `/auth/github?as=Ada` signs the browser in as Ada (a
-  cookie, unchecked) and `/auth/logout` back out.
-- **Documents** (`docs.ts`, for the Durable Objects): folders in the data
-  directory, `~/.erga` unless `--data <dir>` or `ERGA_DATA_DIR` says
-  otherwise. `docs/<owner>/<id>/` holds `meta.json` (its page, owner, when
-  it was made, last edited and goes if unedited), `files/` (the document's
-  files, ordinary files: change them with anything and the open page
-  follows) and `state.yjs` (the room's Yjs state). They last across
-  restarts. `/docs` is read from these folders, so there's no list to keep.
-- **Expiry**: as hosted, a document nobody edits goes `UNEDITED_HOURS` (24)
-  after it's made (another hour if it's open), by a timer instead of an
-  alarm; the host sets them again when it starts, and deletes those whose
-  time came while it was stopped.
+- **Who you are**: `DEV_LOGIN` in `.dev.vars`, signed in without GitHub
+  (only on localhost: `worker/auth.ts`, `isDev`). Your documents are under
+  that login (`/<login>/<id>`). `?user=Ada` makes a tab someone else (open
+  `http://localhost:4400/<login>/<id>?user=Ada` in another window to be a
+  second person; the tab carries it on every request it makes), and
+  `/auth/github?as=Ada` signs the browser in as Ada until `/auth/logout`.
+  `ERGA_AGENT_MODEL=script` swaps in the scripted agent.
+- **Files on disk** (`dev/plugin.ts`, a Vite plugin, and `worker/disk.ts`).
+  A folder with an `index.html` or `index.md`, or a single `.html` or `.md`
+  file, named to `bun start` or typed into the Open box on `/docs` (a path
+  on this machine; `~` and paths relative to where `bun start` ran work),
+  becomes one of your documents, edited where it is. Its address comes
+  from its real path, so it's the same every time. Its files stay on disk:
+  the document's room reads and writes them there, through the dev server
+  (over a WebSocket, `/api/mirror`, that only the dev server can open), and
+  hears about changes made by anything else (another editor, git), which
+  show up in the page as they happen. Edits are written 400ms after the
+  last one. Only the room's Yjs state is kept in `.cloudflare/state/`.
+  Files over 10MB are left out (the room reads each whole when it opens).
+  A single file is synced on its own: nothing else in its folder is served,
+  and neither people nor agents can make other files beside it. A document
+  on disk never expires, and deleting it in `/docs` leaves its files as
+  they are. Links last across restarts (`.cloudflare/state/erga-links.json`).
+- **The editor's own files**: `page.js` and `frame.js` are built by
+  `build.sh` and served, with `page.html` and the fonts, from `.site/`
+  (`site.sh`). The dev server rebuilds them when `src/page/`, `page.html`,
+  `style.css` or `fonts/` change: reload the page to see it.
 
-A file or folder named on the command line becomes one of your documents
-too, edited in place: it gets an address of its own (`/<you>/<id>`, the id
-from its real path, so it's the same every time), joins `/docs` (marked
-"On disk") and the browser opens on it, while the rest of the app works
-alongside. Its `meta.json` and `state.yjs` are kept in the data directory,
-never in your folder. Edits are written to the file 400ms after the last
-one; edits made on disk by anything else (another editor, git) show up in
-the page as they happen. It never expires, and deleting it in `/docs` only
-takes it off the list: its files stay. Once listed it opens from `/docs`
-even in a later run that named something else. `--port N` and `--no-open`
-are accepted.
-
-The document's folder is served at `/<you>/<id>/doc/`, so its scripts,
-styles and images load as they would when published. Not mirrored locally:
-GitHub sign-in and `ALLOWED_USERS`, test tokens (`/tokens`, `/auth/test`)
-and GitHub avatars.
+Ctrl-C has every document on disk write what it holds before the server
+stops.
 
 ## Page editor
 
@@ -288,11 +278,8 @@ name in the panel's header is a menu that switches it to Claude Opus 5.5 in
 fast mode and back. The choice is per person (all their tabs follow, and a
 reload keeps it) and applies from the next message, so a running turn
 finishes on the model it started with. `ERGA_AGENT_MODEL=opus-fast`
-starts everyone on Opus instead. Set it up with
-
-    cp .env.example .env   # then add ANTHROPIC_API_KEY
-
-(`ANTHROPIC_API_KEY` in the environment works too). pi's model catalogue
+starts everyone on Opus instead. Set it up by adding `ANTHROPIC_API_KEY` to
+`.dev.vars` (locally; a secret on erga.dev). pi's model catalogue
 predates the 5.5 models, so `agent.ts` describes them itself (`MODELS`) and
 rewrites each request for adaptive thinking, effort and, on Opus fast,
 `speed: "fast"`.
@@ -413,7 +400,7 @@ and the editor's timers (how long notes stay up, how marks fade) run at a
 fraction of real time under test (`window.__ergaTimescale`, `ms` in
 `src/page/editor.ts`).
 
-    ./test.sh          # page editor, isolation, front door + multiplayer: ~15s
+    ./test.sh          # page editor, isolation, front door + multiplayer: ~25s
     bun run typecheck  # tsc over the host, the editor and the suite
 
 Each file also runs alone: `bun tests/page.ts` (~7s), `bun tests/suite/run.ts`
@@ -425,12 +412,14 @@ they reach the open page without a reload and then the disk, that the agent
 shows up as a participant, and that its last change can be undone (it calls
 the API, so it isn't part of `./test.sh`).
 `bun tests/worker.ts --local` checks the app's own routes (`/new`, `/docs`,
-deleting, expiry, and the pages origin's token) on the local host, as it does on the Worker.
+deleting, expiry, and the pages origin's token).
 `bun tests/isolation.ts` opens a page that tries to reach whoever views it
 (the shell's window, its cookies, erga.dev's API, forged messages) and checks
 it gets nothing. The browser tests reach the page through the frame's own
 DevTools session (`Page.frame` in `tests/cdp.ts`), as the shell can't. Tests start
-the local host with `tests/host.ts`, each with a scratch data directory.
+dev servers with `tests/host.ts` (`bun start`'s, each with its own state,
+settings and port), and edit scratch copies of the fixtures linked from disk;
+the suite shares one server, except for tests that restart or kill it.
 `bun tests/page.ts` runs the end-to-end check (headless Chrome, real clicks and
 keys, file read back from disk) on the fixtures in `tests/fixtures/`, and
 `bun tests/smoke.ts <path>` opens any document, types into it and screenshots.
@@ -443,17 +432,19 @@ back, merging edits from disk, the agent's exact-match edits and attribution.
 
 ## Files
 
-- `open.ts`, `page.html`, `page.js`, `frame.js`: the local host, the editor's shell and its built
+- `page.html`, `page.js`, `frame.js`: the editor's shell and its built
   scripts (the shell's, and the frame's that runs on each document's own origin)
 - `front.ts`: the app's own routes and pages (the demo, `/new`, `/docs`,
-  delete, the unedited rule, titles), shared by the Worker and the local host
-- `docs.ts`: the local host's documents (folders in the data directory)
-- `host.ts`: the per-document host (API, `/doc/`), the same in both
-- `worker/`: erga.dev on Cloudflare (front door, sign-in, Durable Objects)
+  delete, the unedited rule, titles)
+- `host.ts`: the per-document host (API, `/doc/`)
+- `worker/`: erga.dev on Cloudflare (front door, sign-in, Durable Objects,
+  and `disk.ts`, a document's files on disk in local development)
+- `dev.ts`, `dev/`, `vite.config.ts`: local development (`bun start`): the
+  Worker under Vite, and the plugin that links files on disk to documents
 - `api.ts`: the host's HTTP API (Effect's HttpApi): each endpoint's request,
   response and failures; the editor imports its types
 - `room.ts`: the document room (shared Yjs doc, sync, write-back, disk merges)
-- `agent.ts`, `workspace.ts`, `.env.example`: the per-person agent session, its
+- `agent.ts`, `workspace.ts`, `.dev.vars.example`: the per-person agent session, its
   tools over the shared doc, and its settings
 - `src/room/doc.ts`: the shared doc's shape and helpers, used by host and shell
 - `src/page/`: the page editor, on CodeMirror 6: `manuscript.ts` (HTML source

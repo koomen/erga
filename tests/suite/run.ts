@@ -1,9 +1,9 @@
 #!/usr/bin/env bun
 // The multiplayer suite: black-box tests of a document room and its agents,
 // through the deployment's public surface only, so the same run works
-// against the local host and a deployment. See tests/suite/README.md.
+// against a local dev server and a deployment. See tests/suite/README.md.
 //
-//   bun tests/suite/run.ts                      local host, every suite
+//   bun tests/suite/run.ts                      a local dev server, every suite
 //   bun tests/suite/run.ts --suite fuzz,agent   some suites
 //   bun tests/suite/run.ts --skip latency       all but some
 //   bun tests/suite/run.ts --grep "restart"     tests whose name matches

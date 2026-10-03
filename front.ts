@@ -1,8 +1,8 @@
-// The front door: the app around the documents, the same on erga.dev
-// (worker/index.ts) and the local host (open.ts). It's written against web
-// Requests and Responses, and the platform supplies the rest (`Platform`):
+// The front door: the app around the documents (worker/index.ts serves it,
+// on erga.dev and in local development alike). It's written against web
+// Requests and Responses, and the Worker supplies the rest (`Platform`):
 // who's signed in, the templates, and the documents themselves (Durable
-// Objects hosted, folders on disk locally, docs.ts).
+// Objects).
 //
 //   /                          the demo, rendered, with an Edit button (and your documents, signed in)
 //   /new                       a blank document for you (signs you in first); /new?from=demo a copy of the demo
@@ -10,10 +10,9 @@
 //   /<owner>/<id>              the editor on that document (anyone signed in may edit)
 //   /<owner>/<id>/<rest>       the document's own host (host.ts): /api/..., /doc/..., the sockets
 //
-// Signing in, the editor's own files and the WebSockets stay with each
-// platform. The rule for when an unedited document goes (`afterUnedited`)
-// is here; when to apply it is the platform's (an alarm hosted, a timer
-// locally).
+// Signing in, the editor's own files and the WebSockets stay with the
+// Worker. The rule for when an unedited document goes (`afterUnedited`) is
+// here; the document's alarm applies it.
 
 /** Who's signed in. */
 export interface Session {
@@ -21,7 +20,7 @@ export interface Session {
   name: string;
   /** A test person, signed in with a test token minted by `by` (hosted only). */
   test?: { by: string };
-  /** Locally, the name a tab gave in ?user=, carried along in the links it follows. */
+  /** In local development, the name a tab gave in ?user=, carried along in the links it follows. */
   as?: string;
 }
 
@@ -34,13 +33,13 @@ export interface Listed {
   modified: number;
   /** When it goes away if nobody edits it (only while it's never been edited). */
   expires?: number;
-  /** Locally, a document opened from disk: where its folder is. Deleting it only takes it off the list. */
+  /** In local development, a document that's a file or folder on disk: where it is. Deleting it leaves the files be. */
   path?: string;
 }
 
 /** What the front door needs from the platform it runs on. */
 export interface Platform {
-  /** Who's asking, if anyone is signed in (locally, someone always is). */
+  /** Who's asking, if anyone is signed in (in local development, someone always is). */
   sessionOf(request: Request): Promise<Session | null>;
   /** The templates' text files, by template then path ("demo" → { "index.html": "..." }). */
   templates: Record<string, Record<string, string>>;
@@ -48,7 +47,11 @@ export interface Platform {
   editor(request: Request): Promise<Response>;
   /** Whether a person may make documents (hosted: those in ALLOWED_USERS). */
   mayCreate(session: Session, url: URL): boolean;
-  /** Local development: /new may name the document (?id=) and shorten its unedited time (?unedited=<ms>). */
+  /**
+   * Local development: /new may name the document (?id=) and shorten its
+   * unedited time (?unedited=<ms>), and /docs opens files from disk (the
+   * dev server's /__erga/open, dev/plugin.ts).
+   */
   dev(url: URL): boolean;
   /**
    * Where documents' pages run (see pagesOrigin): "erga-pages.dev", or
@@ -265,7 +268,7 @@ async function listDocs(platform: Platform, request: Request): Promise<Response>
   if (!session) return signInFirst("/docs");
   if (session.test) return page("Not for test people", "Test people have no documents of their own.", 403);
   const docs = await platform.docs.list(session.login);
-  return new Response(docsPage(session, docs, Date.now()), { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
+  return new Response(docsPage(session, docs, Date.now(), platform.dev(new URL(request.url))), { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
 }
 
 /** POST /docs/delete (id=...): deletes one of the signed-in person's documents. */
@@ -297,7 +300,7 @@ function ago(t: number, now: number): string {
 }
 
 /** The documents view, in the editor's own type and colours (style.css), light or dark with the system. */
-function docsPage(session: Session, docs: Listed[], now: number): string {
+function docsPage(session: Session, docs: Listed[], now: number, dev: boolean): string {
   const rows = docs.map((d) => {
     const left = d.expires != null ? Math.max(1, Math.ceil((d.expires - now) / 3600000)) : null;
     const note = d.path != null ? `<span class="note" title="${esc(d.path)}">On disk</span>`
@@ -340,6 +343,12 @@ function docsPage(session: Session, docs: Listed[], now: number): string {
   .delete:hover { color: var(--chrome-hover); background: color-mix(in srgb, var(--chrome) 12%, transparent); }
   @media (hover: none) { .delete { opacity: 1; } }
   .empty { margin: 0; padding: 28px 2px; border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); color: var(--soft); }
+  .open { display: flex; gap: 8px; margin: 28px 0 0; }
+  .open input { flex: 1; min-width: 0; padding: 7px 12px; border: 1px solid var(--rule); border-radius: 999px; background: transparent; color: var(--fg-strong); font: inherit; font-size: 13.5px; }
+  .open input::placeholder { color: var(--soft); }
+  .open input:focus-visible { outline: 2px solid var(--caret); outline-offset: 1px; }
+  .open button { flex: none; padding: 7px 14px; border: 1px solid var(--rule); border-radius: 999px; background: transparent; color: var(--fg-strong); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+  .open button:hover { background: color-mix(in srgb, var(--chrome) 12%, transparent); }
   footer { padding-top: 40px; display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 13px; color: var(--chrome); }
   footer a { color: inherit; text-decoration: none; }
   footer a:hover { color: var(--chrome-hover); }
@@ -353,6 +362,10 @@ function docsPage(session: Session, docs: Listed[], now: number): string {
     <a class="new" href="${esc(link("/new", session))}">New document</a>
   </header>
   ${docs.length ? `<ol>\n${rows}\n  </ol>` : `<p class="empty">No documents yet. A new one starts blank, and goes away after ${UNEDITED_HOURS} hours if you never edit it.</p>`}
+  ${dev ? `<form class="open" method="post" action="${esc(link("/__erga/open", session))}" aria-label="Open from disk">
+    <input name="path" required placeholder="A file or folder on this machine: ~/notes, ./site/index.md" aria-label="Path to a file or folder" autocomplete="off" spellcheck="false">
+    <button>Open</button>
+  </form>` : ""}
   <footer><span>Signed in as ${esc(session.login)}</span><a href="${esc(link("/", session))}">The demo</a><a href="/auth/logout">Sign out</a></footer>
 </main>
 <script>

@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 // erga.dev's front door. It signs people in with GitHub and serves the
-// app's own routes (front.ts, shared with the local host): the demo
+// app's own routes (front.ts), the same in local development: the demo
 // read-only at /, new documents (blank, or a copy of the demo), each
 // person's list, and everything under a document's address forwarded to
 // that document's Durable Object (doc-host.ts):
@@ -14,8 +14,14 @@
 //   /tokens                    a test token, for running the test suite against erga.dev
 //   /auth/test?token=&as=      a test person (Ada, Bo...) signed in with one; they open only test documents
 //   /page.js, /style.css, ...  the editor's own files (static assets)
+//
+// In local development only, the dev server (dev/plugin.ts) links files on
+// disk to documents, proving itself with ERGA_LINK_SECRET:
+//
+//   POST /__erga/link              makes (or finds) the document for a file or folder, for whoever's signed in
+//   /<owner>/<id>/api/mirror       the WebSocket that keeps that document and the files on disk the same
 
-import { frontDoor, page, type Platform } from "../front";
+import { frontDoor, ID, OWNER, page, type Platform } from "../front";
 import { allowed, finishSignIn, isDev, mintTestToken, sessionOf, signOut, startSignIn, testSignIn } from "./auth";
 import type { Env } from "./env";
 
@@ -41,6 +47,7 @@ export default {
     if (path == "/auth/test") return testSignIn(env, request);
     if (path == "/tokens") return tokens(env, request);
     if (assets) return env.ASSETS.fetch(request);
+    if (path == "/__erga/link" || path.endsWith("/api/mirror")) return linked(env, request, url);
     return frontDoor(request, platform(env));
   },
 } satisfies ExportedHandler<Env>;
@@ -71,6 +78,26 @@ const platform = (env: Env): Platform => {
     },
   };
 };
+
+/**
+ * The dev server's routes, refused unless it's local development and the
+ * request carries the dev server's secret (?link=).
+ */
+async function linked(env: Env, request: Request, url: URL): Promise<Response> {
+  if (!isDev(env, url) || !env.ERGA_LINK_SECRET || url.searchParams.get("link") != env.ERGA_LINK_SECRET) return new Response("Not found", { status: 404 });
+  if (url.pathname == "/__erga/link" && request.method == "POST") {
+    const session = await sessionOf(env, request);
+    const body = await request.json() as { id?: string; index?: string; path?: string; only?: boolean; owner?: string };
+    // Whoever's signed in, unless the dev server names the owner (linking again what it linked last run).
+    const owner = body.owner ?? session?.login;
+    if (!owner || !OWNER.test(owner) || session?.test || !body.id || !ID.test(body.id) || !body.index || !body.path) return new Response("Bad link", { status: 400 });
+    await env.DOCS.getByName(`${owner.toLowerCase()}/${body.id}`).link(owner, body.id, body.index, { path: body.path, only: !!body.only });
+    return Response.json({ owner, id: body.id });
+  }
+  const [, owner, id] = /^\/([^/]+)\/([^/]+)\/api\/mirror$/.exec(url.pathname) ?? [];
+  if (!owner || !OWNER.test(owner) || !ID.test(id) || request.headers.get("upgrade")?.toLowerCase() != "websocket") return new Response("Not found", { status: 404 });
+  return env.DOCS.getByName(`${owner.toLowerCase()}/${id}`).fetch(new Request(new URL(`/api/mirror${url.search}`, url.origin), request));
+}
 
 /** /tokens: a fresh test token for the signed-in person, and how to use it. */
 async function tokens(env: Env, request: Request): Promise<Response> {

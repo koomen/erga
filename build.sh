@@ -5,9 +5,12 @@
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 cd "$here"
-bun build src/page/main.ts --format iife --minify --outfile page.js \
+# Each written beside its place and renamed into it, so a server never serves half of one.
+bun build src/page/main.ts --format iife --minify --outfile ".page.js.$$" \
   --banner "/* Built by build.sh from src/page/. Erga page editor. */"
+mv -f ".page.js.$$" page.js
 # The page editor's frame, on each document's own origin (src/page/bridge.ts).
-bun build src/page/frame.ts --format iife --minify --outfile frame.js \
+bun build src/page/frame.ts --format iife --minify --outfile ".frame.js.$$" \
   --banner "/* Built by build.sh from src/page/. Erga page editor, the frame. */"
+mv -f ".frame.js.$$" frame.js
 echo "built page.js ($(wc -c < page.js | tr -d " ") bytes), frame.js ($(wc -c < frame.js | tr -d " ") bytes)"

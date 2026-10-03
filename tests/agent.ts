@@ -3,7 +3,7 @@
 // the page, one to its stylesheet), and checks that they reach the open page
 // through the document room without a reload, and the disk after it, that
 // the agent shows up as a participant, and that its last change can be undone. Calls the real API, so it needs
-// ANTHROPIC_API_KEY (in .env or the environment) and costs a little.
+// ANTHROPIC_API_KEY (in .dev.vars or the environment) and costs a little.
 //   bun tests/agent.ts [--keep]
 
 import { Browser, MOD, ROOT } from "./cdp";
@@ -28,7 +28,10 @@ async function until(f: () => Promise<boolean> | boolean, ms: number) {
 const dir = mkdtempSync(join(tmpdir(), "erga-agent-"));
 cpSync(`${ROOT}tests/fixtures/page`, dir, { recursive: true });
 const file = join(dir, "index.html");
-const host = await startHost(dir);
+// The real key: the environment's, else the one in .dev.vars (the test server has settings of its own).
+const devVars = await Bun.file(`${ROOT}.dev.vars`).text().catch(() => "");
+const key = process.env.ANTHROPIC_API_KEY || /^ANTHROPIC_API_KEY=(.+)$/m.exec(devVars)?.[1] || "";
+const host = await startHost(dir, { env: { ANTHROPIC_API_KEY: key } });
 const browser = await Browser.launch();
 try {
   const info = await (await fetch(`${host.base}/api/agent`)).json() as { enabled: boolean; reason?: string; model?: string };

@@ -1,0 +1,18 @@
+# Local development's settings (bun start makes .dev.vars, gitignored, the
+# first time; on erga.dev they're the Worker's secrets).
+
+# Who you are locally: signed in as this login, without GitHub (localhost only).
+DEV_LOGIN=
+# Signs session cookies: any long random string.
+SESSION_SECRET=
+
+# The embedded agent (agent.ts). Without a key it's off.
+ANTHROPIC_API_KEY=
+# Optional: the model each person's agent starts on: sonnet (Claude Sonnet
+# 5.5, the default) or opus-fast (Claude Opus 5.5 in fast mode); each person
+# can switch from the agent panel. "script" is the free scripted model the
+# tests use.
+# ERGA_AGENT_MODEL=sonnet
+
+# Only for signing in with GitHub locally (DEV_LOGIN does without it).
+# GITHUB_CLIENT_SECRET=

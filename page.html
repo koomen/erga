@@ -287,6 +287,9 @@
     /* Who's here: you, then everyone else and their agents, in their colours. */
     .people { display: flex; align-items: center; gap: 4px; margin-right: 6px; }
     .people:empty { display: none; }
+    /* You, at the far right, apart from the others. */
+    .me-slot { display: flex; align-items: center; margin-left: 8px; }
+    .me-slot:empty { display: none; }
     .avatar {
       position: relative; width: 26px; height: 26px; border-radius: 50%; border: 0; padding: 0; cursor: pointer;
       display: grid; place-items: center; font: 600 12px/1 var(--font-text); color: #fff; background: var(--c);
@@ -410,6 +413,7 @@
     <button type="button" class="icon-btn" id="btn-help" aria-label="Keyboard shortcuts (⌘/)" data-tip="Shortcuts  ⌘/">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9.25 9.25a2.75 2.75 0 1 1 3.9 2.5c-.75.35-1.15.95-1.15 1.75v.5"/><circle cx="12" cy="17.25" r=".4" fill="currentColor"/></svg>
     </button>
+    <div class="me-slot" id="me" aria-label="You"></div>
   </header>
 
   <footer class="chrome chrome-bottom">

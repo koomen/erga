@@ -92,7 +92,7 @@ export interface Result {
 }
 
 /**
- * Runs the tests. Each has its own document (locally, its own server), so
+ * Runs the tests. Each has its own document, so
  * they run side by side, `jobs` at a time; tests marked `serial` (timing
  * measurements) run afterwards, alone. A target that hands every test the
  * same document (a deployment's scratch doc) runs everything one at a time.
@@ -120,7 +120,7 @@ export async function runTests(target: Target, suites: { name: string; tests: Te
       seed: opts.seed,
       rng: rng(opts.seed ^ hash(full)),
       long: opts.long,
-      doc: async (fixture = "page") => { const d = await target.newDoc(fixture); deferred.push(() => d.dispose()); return d; },
+      doc: async (fixture = "page") => { const d = await target.newDoc(fixture, t.needs); deferred.push(() => d.dispose()); return d; },
       metric: (name, value, unit = "ms") => metrics.push({ name, value, unit }),
       log: (line) => { if (opts.verbose) console.log(`     ${line}`); },
       defer: (f) => deferred.push(f),

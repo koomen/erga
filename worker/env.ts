@@ -20,4 +20,8 @@ export interface Env {
   DEV_LOGIN?: string;
   /** "script" for the test suite's scripted agent; unset on erga.dev. */
   ERGA_AGENT_MODEL?: string;
+  /** Local development only: what the dev server (dev/plugin.ts) proves itself with to link files on disk. */
+  ERGA_LINK_SECRET?: string;
+  /** Local development only: how long after an edit the room writes it (tests shorten it). */
+  ERGA_WRITE_DELAY_MS?: string;
 }

@@ -2,11 +2,13 @@
 // reached only through the deployment's public surface (the contract in
 // tests/suite/README.md): its shell, the room's WebSocket, the agent's HTTP
 // endpoints, what's served and what's stored. Nothing here peeks inside the
-// server, so the same tests run against the local host and a deployment.
+// server, so the same tests run against a local dev server and a deployment.
 //
-//   local    spawns open.ts on a scratch copy of a fixture (tests/host.ts),
-//            one host per document, with the scripted agent model. It can
-//            also restart or kill the host and edit files on disk.
+//   local    a dev server (tests/host.ts: the Worker under Vite, as `bun
+//            start` runs it) with the scripted agent model, and each
+//            document a scratch copy of a fixture linked from disk, so a
+//            test can edit its files there too. Tests share one server,
+//            except those that restart or kill it, which get their own.
 //   remote   a deployed document at ERGA_TARGET_DOC (its URL must
 //            contain "test": the suite rewrites it), with optional auth
 //            (ERGA_TARGET_COOKIE, ERGA_TARGET_HEADERS as JSON,
@@ -20,7 +22,7 @@
 import { cpSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync, mkdirSync, statSync } from "fs";
 import { tmpdir } from "os";
 import { dirname, join, relative } from "path";
-import { startHost } from "../host";
+import { startHost, type Host } from "../host";
 
 /**
  * What a target can do beyond the contract:
@@ -75,7 +77,8 @@ export interface Target {
   caps: Set<Capability>;
   /** Whether tests may run at once (each gets its own document). */
   parallel: boolean;
-  newDoc(fixture: string): Promise<Doc>;
+  /** A fresh document from a fixture; `needs` are the test's (a local target gives one that restarts a server of its own). */
+  newDoc(fixture: string, needs?: Capability[]): Promise<Doc>;
   close(): Promise<void>;
 }
 
@@ -132,37 +135,55 @@ export class LocalTarget implements Target {
   name = "local";
   parallel = true;
   caps: Set<Capability>;
+  private shared: Promise<Host> | null = null;
   constructor(private opts: { liveAgent?: boolean; browser?: boolean } = {}) {
     this.caps = new Set<Capability>(["restart", "kill", "disk", opts.liveAgent ? "liveAgent" : "scriptedAgent", ...(opts.browser === false ? [] : ["browser" as const])]);
   }
 
-  async newDoc(fixture: string): Promise<Doc> {
+  /**
+   * A short write delay: the suite waits on storage a lot, and aims at the
+   * delay where it matters. Not too short: tests share a server, and one
+   * that makes an edit "not yet stored" needs the next request in first.
+   */
+  private env(): Record<string, string> {
+    const env: Record<string, string> = { ERGA_WRITE_DELAY_MS: "200" };
+    if (this.opts.liveAgent) env.ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY ?? "";
+    else env.ERGA_AGENT_MODEL = "script";
+    return env;
+  }
+
+  async newDoc(fixture: string, needs: Capability[] = []): Promise<Doc> {
     const dir = mkdtempSync(join(tmpdir(), "erga-suite-"));
     cpSync(join(FIXTURES, fixture), dir, { recursive: true });
-    // A short write delay: the suite waits on storage a lot, and aims at the delay where it matters.
-    const env: Record<string, string> = { ERGA_AGENT_ENV_FILE: "/nonexistent/.env", ERGA_WRITE_DELAY_MS: "100" };
-    if (!this.opts.liveAgent) env.ERGA_AGENT_MODEL = "script";
+    const writeDisk = (p: string, data: string | Uint8Array) => { const full = join(dir, p); mkdirSync(dirname(full), { recursive: true }); writeFileSync(full, data); };
+    const own = needs.includes("restart") || needs.includes("kill");
     // The folder opens as a document of its own, edited in place, at an address that stays the same across restarts.
-    const host = await startHost(dir, { env });
-    const writeDelay = ((await (await fetch(`${host.base}/api/doc`)).json()) as { writeDelay?: number }).writeDelay ?? 400;
-    return makeDoc(host.base, {}, readFixture(fixture), {
+    const host = own ? await startHost(dir, { env: this.env() }) : await (this.shared ??= startHost(null, { env: this.env() }));
+    const base = own ? host.base : await host.open(dir);
+    const writeDelay = ((await (await fetch(`${base}/api/doc`)).json()) as { writeDelay?: number }).writeDelay ?? 400;
+    return makeDoc(base, {}, readFixture(fixture), {
       writeDelay,
-      writeDisk(p, data) { const full = join(dir, p); mkdirSync(dirname(full), { recursive: true }); writeFileSync(full, data); },
-      async restart(how, whileDown) {
-        await host.stop(how == "graceful" ? "SIGTERM" : "SIGKILL");
-        // The room's saved state goes with the host's data (its record of the folder is made again on start).
-        if (how == "lose-state") { rmSync(host.data, { recursive: true, force: true }); mkdirSync(host.data, { recursive: true }); }
-        await whileDown?.();
-        await host.start();
-      },
+      writeDisk,
+      ...(own ? {
+        async restart(how: "graceful" | "kill" | "lose-state", whileDown?: () => Promise<void>) {
+          await host.stop(how == "graceful" ? "SIGTERM" : "SIGKILL");
+          // The documents' storage goes, the room's saved state with it; the folder is linked afresh on start.
+          if (how == "lose-state") rmSync(join(host.state, "v3"), { recursive: true, force: true });
+          await whileDown?.();
+          await host.start();
+        },
+      } : {}),
       async dispose() {
-        await host.dispose();
+        if (own) await host.dispose();
+        else await host.forget(base);
         rmSync(dir, { recursive: true, force: true });
       },
     });
   }
 
-  async close() {}
+  async close() {
+    await (await this.shared)?.dispose();
+  }
 }
 
 // ------------------------------------------------------------ remote

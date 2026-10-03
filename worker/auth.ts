@@ -45,8 +45,22 @@ function cookies(request: Request): Map<string, string> {
 const cookie = (request: Request, name: string, value: string, maxAge: number) =>
   `${name}=${value}; Path=/; Max-Age=${maxAge}; HttpOnly; SameSite=Lax${new URL(request.url).protocol == "https:" ? "; Secure" : ""}`;
 
-/** The signed-in person, if the session cookie is valid and unexpired. */
+/**
+ * The signed-in person, if the session cookie is valid and unexpired. In
+ * local development someone always is: the person a tab names (?user=Ada,
+ * carried along in its links and requests, so a second window can be a
+ * second person), else whoever this browser signed in as, else DEV_LOGIN.
+ */
 export async function sessionOf(env: Env, request: Request): Promise<Session | null> {
+  const url = new URL(request.url);
+  const dev = isDev(env, url);
+  const as = dev ? url.searchParams.get("user")?.trim().slice(0, 40) : null;
+  if (as) return { login: loginOf(as), name: as, as };
+  return (await signedIn(env, request, dev)) ?? (dev ? { login: env.DEV_LOGIN!, name: env.DEV_LOGIN! } : null);
+}
+
+/** Whoever the session cookie names, if it's valid and unexpired. */
+async function signedIn(env: Env, request: Request, dev: boolean): Promise<Session | null> {
   const raw = cookies(request).get(COOKIE);
   const value = raw && await unsign(env, raw);
   if (!value) return null;
@@ -55,9 +69,13 @@ export async function sessionOf(env: Env, request: Request): Promise<Session | n
     if (typeof s.login != "string" || !(s.exp > Date.now() / 1000)) return null;
     // A test person's token was minted by someone allowed, who must still be.
     if (s.test) return allowed(env, s.test.by) ? { login: s.login, name: s.name, test: { by: s.test.by } } : null;
-    return allowed(env, s.login) || isDev(env, new URL(request.url)) ? { login: s.login, name: s.name } : null;
+    return allowed(env, s.login) || dev ? { login: s.login, name: s.name } : null;
   } catch { return null; }
 }
+
+/** A name as a login: letters and digits, the rest as dashes ("Ada Lovelace" → "ada-lovelace"). */
+const loginOf = (name: string) =>
+  name.normalize("NFKD").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 39) || "me";
 
 /** Local development (DEV_LOGIN set, on localhost): sign-in without GitHub, for trying things and for the test suite. */
 export const isDev = (env: Env, url: URL) => !!env.DEV_LOGIN && (url.hostname == "localhost" || url.hostname == "127.0.0.1");

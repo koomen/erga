@@ -11,12 +11,11 @@
 // attributed ("Pete's agent"), and its presence while it works: a labelled
 // cursor where it last edited, and whether it's busy, on awareness.
 //
-// This module is the Promise edge: pi's SDK is async, and open.ts wraps
+// This module is the Promise edge: pi's SDK is async, and host.ts wraps
 // what it exposes in Effect.
 //
-// Configuration comes from .env (see .env.example; ERGA_AGENT_ENV_FILE
-// points elsewhere), falling back to the environment. The key lives only here,
-// in the host:
+// Configuration comes from the Worker's bindings (in local development,
+// .dev.vars; see .dev.vars.example). The key lives only here, in the host:
 //   ANTHROPIC_API_KEY          required
 //   ERGA_AGENT_MODEL    the model a session starts on: sonnet (default,
 //                              Claude Sonnet 5.5) or opus-fast (Claude Opus 5.5
@@ -30,7 +29,6 @@
 import * as Config from "effect/Config";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
-import type * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Y from "yjs";
@@ -72,17 +70,7 @@ const settings = Config.all({
   effort: Config.withDefault(Config.Literals(EFFORTS, "ERGA_AGENT_EFFORT"), "medium"),
 });
 
-/** Reads the agent's settings from the given env file, falling back to the process env. */
-export const loadConfig = (envPath: string): Effect.Effect<AgentConfig | { missing: string }, never, FileSystem.FileSystem> => Effect.gen(function* () {
-  const env = ConfigProvider.fromEnv();
-  const provider = yield* ConfigProvider.fromDotEnv({ path: envPath }).pipe(
-    Effect.map((file) => ConfigProvider.orElse(file, env)),
-    Effect.orElseSucceed(() => env),
-  );
-  return yield* agentConfigFrom(provider);
-});
-
-/** Reads the agent's settings from a provider (hosted: the Worker's bindings). */
+/** Reads the agent's settings from a provider (the Worker's bindings). */
 export const agentConfigFrom = (provider: ConfigProvider.ConfigProvider): Effect.Effect<AgentConfig | { missing: string }> => Effect.gen(function* () {
   const read = yield* Effect.result(settings.parse(provider));
   if (read._tag == "Failure") {
@@ -92,7 +80,7 @@ export const agentConfigFrom = (provider: ConfigProvider.ConfigProvider): Effect
   }
   const { apiKey, model, effort } = read.success;
   if (model == "script") return { apiKey: Redacted.make(""), model, effort: "medium" } satisfies AgentConfig;
-  if (Option.isNone(apiKey) || !Redacted.value(apiKey.value)) return { missing: `ANTHROPIC_API_KEY is not set (copy .env.example to .env)` };
+  if (Option.isNone(apiKey) || !Redacted.value(apiKey.value)) return { missing: `ANTHROPIC_API_KEY is not set (locally, add it to .dev.vars)` };
   return { apiKey: apiKey.value, model, effort } satisfies AgentConfig;
 });
 
@@ -183,13 +171,16 @@ async function scriptStep(context: Context) {
  */
 const DOCUMENT_RULES = documentPrompt.trim();
 
-const systemPrompt = (docName: string, kind: "html" | "md", owner: string) => `
+const systemPrompt = (docName: string, kind: "html" | "md", owner: string, single = false) => `
 You are ${agentName(owner)}, embedded in Erga's page editor. ${owner} is looking at
 ${docName} (${kind == "md" ? "Markdown" : "HTML"}) rendered as a live page, and editing its text in
 place. Other people may have the same document open and be editing it too, each with
-their own agent; you work for ${owner} only. The document is a folder of files (the page,
+their own agent; you work for ${owner} only. ${single
+  ? `The document is that one file, opened from disk on its own: you may read and change it,
+but you can't make other files.`
+  : `The document is a folder of files (the page,
 its styles, scripts, images, other pages); your tools see that folder, and you may read
-and change any text file in it. Paths are relative to the folder.
+and change any text file in it. Paths are relative to the folder.`}
 
 - Your edits go straight into the shared document and show up in everyone's page as
   you make them, attributed to you. Prefer small, targeted edits (the edit tool) over
@@ -392,6 +383,8 @@ export interface SessionOptions {
   owner: { id: string; name: string };
   docName: string;
   kind: "html" | "md";
+  /** A document that's a single file opened from disk: its path (the agent can't make other files). */
+  only?: string;
   /** Whether the owner may edit (an agent acts with its user's permissions). */
   canEdit: () => boolean;
   /** Asks one of the owner's open tabs to render and capture the page. */
@@ -415,7 +408,7 @@ export async function startSession(opts: SessionOptions): Promise<AgentSession> 
 
   const origin = { agent: owner.id }, undoOrigin = { agentUndo: owner.id };
   const undo = new Y.UndoManager(files(doc), { trackedOrigins: new Set([origin]), captureTimeout: 0 });
-  const ws = new YjsWorkspace(doc, me, opts.canEdit, origin);
+  const ws = new YjsWorkspace(doc, me, opts.canEdit, origin, opts.only ?? null);
   let choice: ModelChoice | null = cfg == null || cfg.model == "script" ? null : cfg.model;
   const model = cfg == null ? null : choice == null ? scriptModel() : describeModel(choice);
 
@@ -455,7 +448,7 @@ export async function startSession(opts: SessionOptions): Promise<AgentSession> 
   });
 
   const agent = cfg && model ? new PiAgent({
-    initialState: { systemPrompt: systemPrompt(opts.docName, opts.kind, owner.name), model, thinkingLevel: "medium", tools },
+    initialState: { systemPrompt: systemPrompt(opts.docName, opts.kind, owner.name, opts.only != null), model, thinkingLevel: "medium", tools },
     getApiKey: () => Redacted.value(cfg.apiKey) || "none",
     onPayload: isScript(cfg) ? undefined : patchPayload(cfg, () => choice ?? DEFAULT_MODEL),
   }) : null;

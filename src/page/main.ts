@@ -1,5 +1,5 @@
-// The page editor's shell: joins the document's room on the local host
-// (open.ts) as one participant among others, renders the document in the
+// The page editor's shell: joins the document's room (its Durable Object,
+// worker/doc-host.ts) as one participant among others, renders the document in the
 // page editor, sends every edit to the room as you type and applies everyone
 // else's (people and their agents) as they land, shows who's here and where
 // their carets are, and offers the same quiet chrome as the Markdown editor:
@@ -125,37 +125,31 @@ declare global {
   // ---------------------------------------------------------------- load
 
   const frame = $("frame") as HTMLIFrameElement;
+  // Who this tab is: whoever's signed in. In local development a tab can be
+  // someone else, ?user=Ada (only the dev server honours it), so every
+  // request it makes says so. Tabs that are the same person share an agent
+  // and its conversation.
+  const asked = new URLSearchParams(location.search).get("user")?.trim();
+  const as = asked ? `?user=${encodeURIComponent(asked)}` : "";
   let info: DocInfo | null = null;
   try {
-    const res = await fetch(`${BASE}/api/doc`);
+    const res = await fetch(`${BASE}/api/doc${as}`);
     if (!res.ok) throw new Error(await res.text());
     info = (await res.json()) as DocInfo;
   } catch (e) {
     $("welcome").hidden = false;
-    $("welcome").innerHTML = `<div><p>Nothing to edit here.</p><p>Open a page with <code>bun open.ts ./path/to/site</code></p></div>`;
+    $("welcome").innerHTML = `<div><p>Nothing to edit here.</p><p>Open one from <a href="/docs">your documents</a>.</p></div>`;
     return;
   }
 
-  // Who this tab is. Locally a person is just a name: ?user=Ada names this
-  // tab (and is remembered for it), otherwise the name you last chose, or
-  // the person running the host. Tabs with the same name are the same
-  // person: they share an agent and its conversation.
-  const NAME_KEY = "erga:user:v1";
-  const asked = new URLSearchParams(location.search).get("user")?.trim();
-  if (asked) try { sessionStorage.setItem(NAME_KEY, asked); } catch {}
-  // Signed in (on erga.dev), you're who you signed in as: the host attributes
-  // your edits and your agent to that id, so the tab mustn't pick another.
-  const signedIn = info.signedIn;
-  const myName = signedIn ? info.user : (asked || (() => { try { return sessionStorage.getItem(NAME_KEY); } catch { return null; } })() || store.get(NAME_KEY) || info.user).slice(0, 40);
-  const myId = signedIn ? info.userId : myName.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-|-$/g, "") || "anon";
-  const me: Author = { user: myId, name: myName, color: colorFor(myId), kind: "person", ...(signedIn && info.avatar ? { avatar: info.avatar } : {}) };
+  // The host attributes your edits and your agent to who you are, so the tab takes that.
+  const me: Author = { user: info.userId, name: info.user, color: colorFor(info.userId), kind: "person", ...(info.avatar ? { avatar: info.avatar } : {}) };
   const self: MarkAuthor = { name: me.name, color: me.color };
-  // Your documents to go back to (test people have none). Locally, a tab
-  // that's someone else (?user=) goes to theirs.
-  $("nav-docs").hidden = myId.startsWith("test-");
-  if (!signedIn && myName != info.user) $("nav-docs").querySelector("a")!.href = `/docs?user=${encodeURIComponent(myName)}`;
-  /** The host's agent endpoints, as this person. */
-  const api = (path: string) => `${BASE}${path}?user=${encodeURIComponent(myName)}`;
+  // Your documents to go back to (test people have none), as whoever this tab is.
+  $("nav-docs").hidden = me.user.startsWith("test-");
+  $("nav-docs").querySelector("a")!.href = `/docs${as}`;
+  /** The host's endpoints, as this person. */
+  const api = (path: string) => `${BASE}${path}${as}`;
 
   // Join the room and wait for the document's text. Presence and connection
   // news before the shell is set up is picked up once it is (`started`).
@@ -174,13 +168,13 @@ declare global {
       w.innerHTML = `<div><p>This page is out of date: the editor's host restarted without its saved history, so edits from this tab can't be merged safely.</p><p><button type="button" id="stale-reload">Reload</button></p></div>`;
       $("stale-reload").addEventListener("click", () => location.reload());
     },
-  }, { user: myName });
+  }, asked ? { user: asked } : {});
   let initialText: string;
   try {
     initialText = await collab.ready();
   } catch (e) {
     $("welcome").hidden = false;
-    $("welcome").innerHTML = `<div><p>Couldn't join the document: ${(e as Error).message}.</p><p>Is <code>open.ts</code> still running?</p></div>`;
+    $("welcome").innerHTML = `<div><p>Couldn't join the document: ${(e as Error).message}.</p><p>Is the server still running?</p></div>`;
     return;
   }
   const markdownHead = `<link rel="stylesheet" href="/fonts/inter.css"><link rel="stylesheet" href="/style.css"><style>
@@ -410,9 +404,10 @@ declare global {
     });
   }
 
-  const people = $("people");
+  const people = $("people"), meSlot = $("me");
   function renderPeople() {
-    // One avatar per person, you first. A person's agent, once it has done
+    // One avatar per person: everyone else on the left of the controls, you
+    // at the far right. A person's agent, once it has done
     // something, is a small badge on their avatar that spins while it works.
     const persons = new Map<string, Presence>(), agents = new Map<string, Presence>();
     for (const p of collab.shown()) {
@@ -427,7 +422,7 @@ declare global {
     for (const [user, a] of agents) {
       if (user != me.user && !persons.has(user)) all.push({ p: { client: -2, user: { user, name: a.user.name.replace(/[’']s agent$/, ""), color: a.user.color, kind: "person" } } as Presence, here: false });
     }
-    people.textContent = "";
+    people.textContent = meSlot.textContent = "";
     for (const { p, here } of all) {
       const wrap = document.createElement("span");
       wrap.className = "person";
@@ -444,8 +439,8 @@ declare global {
         img.addEventListener("error", () => img.remove()); // the initial shows through
         b.append(img);
       }
-      b.dataset.tip = p.client == -1 ? (signedIn ? `You (${me.name})` : `You (${me.name}); click to change your name`) : here ? p.user.name : `${p.user.name} (not here)`;
-      if (p.client == -1 && !signedIn) b.addEventListener("click", rename);
+      b.dataset.tip = p.client == -1 ? `You (${me.name})` : here ? p.user.name : `${p.user.name} (not here)`;
+      if (p.client == -1) b.setAttribute("aria-disabled", "true");
       else if (here) revealOnClick(b, p, " (not in the text yet)");
       else b.setAttribute("aria-disabled", "true");
       b.setAttribute("aria-label", b.dataset.tip);
@@ -462,7 +457,7 @@ declare global {
         badge.setAttribute("aria-label", badge.dataset.tip);
         wrap.append(badge);
       }
-      people.append(wrap);
+      (p.client == -1 ? meSlot : people).append(wrap);
     }
   }
   /**
@@ -477,15 +472,6 @@ declare global {
     const at = collab.positions(p);
     if (at) b.addEventListener("click", () => { page.reveal(at.head ?? at.anchor); });
     else { b.setAttribute("aria-disabled", "true"); b.dataset.tip += none; }
-  }
-  function rename() {
-    const name = prompt("Your name, as others see it on your caret and edits:", me.name)?.trim();
-    if (!name || name == me.name) return;
-    store.set(NAME_KEY, name);
-    try { sessionStorage.setItem(NAME_KEY, name); } catch {}
-    const url = new URL(location.href);
-    url.searchParams.set("user", name);
-    location.href = url.toString();
   }
 
   // ---------------------------------------------------------------- chrome
@@ -537,7 +523,7 @@ declare global {
   }
 
   // Share with an external agent: a prompt carrying this page's API and a
-  // token that lets the agent call your agent's tools (open.ts, /api/ext).
+  // token that lets the agent call your agent's tools (host.ts, /api/ext).
   const share = $("share"), shareBtn = $("btn-share");
   const sharePrompt = $("share-prompt") as HTMLTextAreaElement, shareStatus = $("share-status");
   const shareCopy = $("share-copy"), shareRotate = $("share-rotate");
@@ -1325,7 +1311,7 @@ Once you've read it, await further instructions.`;
   }
   function loadAgent() {
     fetch(api("/api/agent")).then((r) => {
-      if (!r.ok) throw new Error(r.status == 404 ? "this host was started before the agent existed; restart open.ts" : `the host answered ${r.status}`);
+      if (!r.ok) throw new Error(r.status == 404 ? "this server doesn't have the agent" : `the host answered ${r.status}`);
       return r.json();
     }).then((a: AgentState) => {
       agentOff = a.enabled ? null : `The agent is off: ${a.reason ?? "the host did not start it"}.`;

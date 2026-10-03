@@ -2,10 +2,10 @@
 
 Black-box tests of a document room, its participants and their agents. They
 reach the server only through its public surface (the contract below), so
-the same run works against the local host today and against the Cloudflare
-deployment once there is one:
+the same run works against a local dev server and against the Cloudflare
+deployment:
 
-    bun tests/suite/run.ts                    # local: spawns open.ts per test
+    bun tests/suite/run.ts                    # local: a dev server (bun start's), each test a folder linked from disk
     bun tests/suite/run.ts --long             # bigger crowds, longer fuzzing, real 75s idle waits
     bun tests/suite/run.ts --repeat 10        # ten runs, ten seeds
     bun tests/suite/run.ts --suite fuzz --seed 4711     # replay one randomised run
@@ -57,7 +57,7 @@ Durable Objects): break each piece and see the suite go red.
 ## The contract
 
 Everything is relative to a document's base URL (`http://127.0.0.1:<port>/<you>/<id>`
-locally, the address the host prints for the folder it opened; whatever the
+locally, the address the dev server gives the folder it linked; whatever the
 hosted server gives a document).
 
 - `GET /` the shell. `GET /api/doc` → `{ name, path, kind }`.
@@ -82,9 +82,9 @@ hosted server gives a document).
   the guide (Markdown), `GET /api/ext/tools` the tools as JSON Schema, and
   `POST /api/ext/tools/<name>` a tool call with its arguments as JSON →
   `{ ok, content }` or `{ ok: false, error }` (400, 401, 404).
-- Locally a person is `?user=Name`; hosted, it's their session (and
-  `ERGA_TARGET_USERS` gives the suite one signed-in account per test
-  person).
+- Locally a person is `?user=Name` (the dev server honours it); hosted,
+  it's their session (and `ERGA_TARGET_USERS` gives the suite one
+  signed-in account per test person).
 
 ## Running it against production
 

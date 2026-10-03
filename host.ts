@@ -1,14 +1,12 @@
-// The host for one document, wherever it runs: the local Bun server
-// (open.ts) or a Durable Object on Cloudflare (worker/doc-host.ts). Given
-// the open room, its files and the agent's settings, it keeps each person's
-// agent session, their open tabs and their share tokens, and serves the
-// document's API (api.ts), what storage holds (/api/stored) and the
+// The host for one document, run by its Durable Object (worker/doc-host.ts).
+// Given the open room, its files and the agent's settings, it keeps each
+// person's agent session, their open tabs and their share tokens, and serves
+// the document's API (api.ts), what storage holds (/api/stored) and the
 // document's files (/doc/).
 //
-// What differs by platform stays with the caller: where files live, who a
-// request is from (?user= locally, the session cookie hosted), and the
-// WebSockets, which each platform accepts its own way and hands to
-// `room.connect` and `addTab`.
+// What's the Durable Object's stays with it: where files live, who a request
+// is from (the person the front door vouched for), and the WebSockets, which
+// it accepts its own way and hands to `room.connect` and `addTab`.
 
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -20,8 +18,9 @@ import * as Path from "effect/Path";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { HttpApiBuilder, HttpApiMiddleware } from "effect/http-api";
 import { MODELS, externalGuide, isModelChoice, startSession, type AgentConfig, type AgentSession } from "./agent";
-import { AgentOff, Api, BadRequest, ExplainBadRequests, ModelFixed, NoSuchModel, NoSuchTool, Person, PersonFromQuery, SessionFailed, ShareToken, ToolFailed, Unauthorized, type AgentState, type ModelState } from "./api";
+import { AgentOff, Api, BadRequest, ExplainBadRequests, ModelFixed, NoSuchModel, NoSuchTool, Person, PersonFromRequest, SessionFailed, ShareToken, ToolFailed, Unauthorized, type AgentState, type ModelState } from "./api";
 import { digest, type FileStore, type Room } from "./room";
+import { ignored } from "./src/room/doc";
 import type { ViewRequest, ViewResult } from "./src/page/agent-log";
 
 export interface HostOptions {
@@ -40,19 +39,16 @@ export interface HostOptions {
   readonly personOf: (request: HttpServerRequest.HttpServerRequest) => { id: string; name: string };
   /** The document's public address for a request, for the external agent's guide. */
   readonly baseUrl: (request: HttpServerRequest.HttpServerRequest) => string;
-  /** Hosted: people are who they signed in as, so a tab can't pick its own name (?user=). */
-  readonly signedIn?: boolean;
   /** A person's picture, if the platform knows one (hosted: their GitHub avatar). */
   readonly avatarOf?: (person: { id: string; name: string }) => string | undefined;
   /** Whether a person may edit (locally everyone may; hosted, the project role would decide). */
   readonly canEdit?: (person: { id: string; name: string }) => boolean;
+  /** A single file opened from disk: the document holds only it, and no other file can be made. */
+  readonly only?: string;
 }
 
 /** One of a person's open tabs: their agent's events and its view_page requests go only to them. */
 interface Tab { user: string; send: (msg: unknown) => void }
-
-/** Paths the host never serves or stores: dotfiles and node_modules. */
-export const ignored = (rel: string) => rel.split(/[\\/]/).some((seg) => seg.startsWith(".") || seg == "node_modules");
 
 /** A request's path inside the folder, or null if it would leave it (or is ignored). */
 export function cleanRel(raw: string | undefined): string | null {
@@ -114,7 +110,7 @@ export function makeHost(opts: HostOptions) {
     let s = sessions.get(user.id);
     if (!s) {
       s = startSession({
-        cfg: "missing" in agent ? null : agent, room, owner: user, docName: doc.name, kind: doc.kind,
+        cfg: "missing" in agent ? null : agent, room, owner: user, docName: doc.name, kind: doc.kind, only: opts.only,
         canEdit: () => opts.canEdit?.(user) ?? true,
         view: view(user.id),
         readAsset: (rel) => Effect.runPromise(Effect.orElseSucceed(files.read(rel), () => null)),
@@ -157,7 +153,7 @@ export function makeHost(opts: HostOptions) {
 
   // ---------------------------------------------------------- the API (api.ts)
 
-  const personFromQuery = Layer.succeed(PersonFromQuery, (handler) =>
+  const personFromRequest = Layer.succeed(PersonFromRequest, (handler) =>
     HttpServerRequest.HttpServerRequest.use((req) => Effect.provideService(handler, Person, opts.personOf(req))));
   const shareToken = Layer.succeed(ShareToken, {
     bearer: (handler, { credential }) => {
@@ -173,7 +169,7 @@ export function makeHost(opts: HostOptions) {
       : Effect.die(e));
 
   const docApi = HttpApiBuilder.group(Api, "doc", (h) => h
-    .handle("info", () => Person.useSync((user) => ({ name: doc.name, path: doc.path, kind: doc.kind, dir: doc.dir, user: user.name, userId: user.id, signedIn: opts.signedIn ?? false, avatar: opts.avatarOf?.(user), writeDelay: room.writeDelay }))));
+    .handle("info", () => Person.useSync((user) => ({ name: doc.name, path: doc.path, kind: doc.kind, dir: doc.dir, user: user.name, userId: user.id, avatar: opts.avatarOf?.(user), writeDelay: room.writeDelay }))));
 
   const agentApi = HttpApiBuilder.group(Api, "agent", (h) => h
     .handle("state", () => Person.use((user) => session(user).pipe(
@@ -223,8 +219,8 @@ export function makeHost(opts: HostOptions) {
     })));
 
   const api = HttpApiBuilder.layer(Api).pipe(Layer.provide([
-    docApi.pipe(Layer.provide([personFromQuery, explainBadRequests])),
-    agentApi.pipe(Layer.provide([personFromQuery, explainBadRequests])),
+    docApi.pipe(Layer.provide([personFromRequest, explainBadRequests])),
+    agentApi.pipe(Layer.provide([personFromRequest, explainBadRequests])),
     extApi.pipe(Layer.provide([shareToken, explainBadRequests])),
   ]));
 
@@ -245,6 +241,7 @@ export function makeHost(opts: HostOptions) {
     HttpRouter.route("PUT", "/api/stored/*", Effect.gen(function* () {
       const rel = cleanRel((yield* HttpRouter.params)["*"]);
       if (!rel) return badPath;
+      if (opts.only != null && rel != opts.only) return HttpServerResponse.text(`This document is the single file ${opts.only}`, { status: 403 });
       const req = yield* HttpServerRequest.HttpServerRequest;
       const text = yield* req.text;
       const ifMatch = req.headers["if-match"]?.replace(/^W\//, "").replace(/"/g, "") ?? null;

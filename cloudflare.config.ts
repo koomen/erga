@@ -2,7 +2,8 @@
 // serving documents' pages on erga-pages.dev, one
 // Durable Object per document (worker/doc-host.ts) and one per person
 // listing their documents (worker/doc-list.ts), and the editor's own
-// files as static assets (built into .site/ by `bun run site`).
+// files as static assets (built into .site/ by site.sh). In local development
+// (`bun start`, dev.ts) the same Worker runs under Vite.
 import { bindings, defineConfig, exports, triggers } from "cf/config";
 import * as entrypoint from "./worker/index.ts" with { type: "cf-worker" };
 
@@ -41,6 +42,10 @@ export default defineConfig(({ mode }) => ({
         DEV_LOGIN: bindings.secret(),
         // "script" swaps the agent's model for the free scripted one (agent.ts), for the test suite.
         ERGA_AGENT_MODEL: bindings.secret(),
+        // From the process that runs the dev server (dev.ts, dev/plugin.ts), not .dev.vars: the
+        // secret that lets it link files on disk to documents, and a shorter write delay for tests.
+        ERGA_LINK_SECRET: bindings.text(process.env.ERGA_LINK_SECRET ?? ""),
+        ERGA_WRITE_DELAY_MS: bindings.text(process.env.ERGA_WRITE_DELAY_MS ?? ""),
       } : {}),
     },
   },

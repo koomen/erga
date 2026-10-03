@@ -42,6 +42,9 @@ export const roomInfo = (doc: Y.Doc) => doc.getMap<string>("room");
 const TEXT = /\.(html?|md|markdown|css|js|mjs|cjs|ts|json|svg|txt|xml|csv|ya?ml|toml)$/i;
 export const isTextPath = (path: string) => TEXT.test(path);
 
+/** Paths a document never holds or serves: dotfiles and node_modules. */
+export const ignored = (rel: string) => rel.split(/[\\/]/).some((seg) => seg.startsWith(".") || seg == "node_modules");
+
 /**
  * Cursor and selection colours: saturated enough to read as a caret on a
  * white page, distinct enough to tell two people apart.

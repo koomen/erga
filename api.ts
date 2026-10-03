@@ -1,5 +1,5 @@
 // The host's HTTP API, declared once: what each endpoint takes, what it
-// answers and how it fails. open.ts implements it; the editor
+// answers and how it fails. host.ts implements it; the editor
 // (src/page/main.ts) imports its types only, so none of this lands in the
 // browser bundle.
 //
@@ -10,7 +10,7 @@
 //
 // Not here: the WebSockets (/api/room, /api/events), the files (the editor's
 // own, and the document's under /doc/), and /api/stored, which moves raw
-// bytes with ETags. Those stay plain routes in open.ts.
+// bytes with ETags. Those stay plain routes in host.ts and worker/doc-host.ts.
 
 import * as Context from "effect/Context";
 import * as Schema from "effect/Schema";
@@ -41,8 +41,8 @@ export class ToolFailed extends Schema.TaggedError<ToolFailed>()("ToolFailed", {
 /** The person a request acts for. */
 export class Person extends Context.Service<Person, { readonly id: string; readonly name: string }>()("erga/Person") {}
 
-/** Who a request is from: locally ?user= (the host's user by default); hosted, the session the Worker checked. */
-export class PersonFromQuery extends HttpApiMiddleware.Service<PersonFromQuery, { provides: Person }>()("erga/PersonFromQuery") {}
+/** Who a request is from: the person the front door vouched for (its session, or ?user= in local development). */
+export class PersonFromRequest extends HttpApiMiddleware.Service<PersonFromRequest, { provides: Person }>()("erga/PersonFromRequest") {}
 
 /** An external agent's bearer token, which stands for the person who shared it. */
 export class ShareToken extends HttpApiMiddleware.Service<ShareToken, { provides: Person }>()("erga/ShareToken", {
@@ -63,13 +63,11 @@ export const DocInfo = Schema.Struct({
   path: Schema.String,
   kind: Schema.Literals(["html", "md"]),
   dir: Schema.String,
-  /** Who's asking: the signed-in person hosted, the host's user locally (unless ?user= says). */
+  /** Who's asking: the signed-in person (in local development, ?user= may say someone else). */
   user: Schema.String,
   /** Their id: what their carets, edits and agent are attributed to. */
   userId: Schema.String,
-  /** Signed in (hosted): the name and id are theirs to keep, not chosen per tab. */
-  signedIn: Schema.Boolean,
-  /** Their picture, if they have one (their GitHub avatar, hosted). */
+  /** Their picture, if they have one (their GitHub avatar). */
   avatar: Schema.optional(Schema.String),
   writeDelay: Schema.Number,
 });
@@ -104,7 +102,7 @@ const ToolSpec = Schema.Struct({ name: Schema.String, description: Schema.String
 export const Api = HttpApi.make("erga")
   .add(HttpApiGroup.make("doc")
     .add(HttpApiEndpoint.get("info", "/api/doc", { success: DocInfo }))
-    .middleware(PersonFromQuery))
+    .middleware(PersonFromRequest))
   .add(HttpApiGroup.make("agent")
     .add(HttpApiEndpoint.get("state", "/api/agent", { success: AgentState }))
     /** A message for the person's agent; `after` is the sender's state vector, so its last keystrokes land first. */
@@ -141,7 +139,7 @@ export const Api = HttpApi.make("erga")
       payload: Schema.Struct({ rotate: Schema.optional(Schema.Boolean) }),
       success: Schema.Struct({ token: Schema.String }),
     }))
-    .middleware(PersonFromQuery))
+    .middleware(PersonFromRequest))
   .add(HttpApiGroup.make("ext")
     /** The external agent's guide: how to call the tools, and the document rules. */
     .add(HttpApiEndpoint.get("guide", "/api/ext", {

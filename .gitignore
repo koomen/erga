@@ -9,4 +9,5 @@ node_modules/
 # cf build output and local state
 .cloudflare/
 .site/
+.site.*/
 .dev.vars

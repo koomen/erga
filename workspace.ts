@@ -33,7 +33,7 @@ export interface Workspace {
 export interface EditResult { path: string; at: number; summary: string }
 
 export class WorkspaceError extends Schema.TaggedError<WorkspaceError>()("WorkspaceError", {
-  reason: Schema.Literals(["outside", "noPath", "binary", "missing", "noEdits", "emptyEdit", "notFound", "ambiguous", "overlap", "readOnly"]),
+  reason: Schema.Literals(["outside", "noPath", "binary", "missing", "noEdits", "emptyEdit", "notFound", "ambiguous", "overlap", "readOnly", "single"]),
   message: Schema.String,
 }) {}
 
@@ -62,6 +62,8 @@ export class YjsWorkspace implements Workspace {
     private canEdit: () => boolean,
     /** Transaction origin for the agent's edits (its undo manager tracks it). */
     private origin: object,
+    /** A document that's a single file: the one path it holds (no other files can be made). */
+    private only: string | null = null,
   ) {}
 
   private text(path: string): Effect.Effect<Y.Text, WorkspaceError> {
@@ -144,6 +146,7 @@ export class YjsWorkspace implements Workspace {
       path = yield* cleanPath(path);
       yield* self.mayEdit();
       if (assets(self.doc).has(path)) return yield* fail("binary", `${path} is a binary file; it can't be written as text`);
+      if (self.only != null && path != self.only) return yield* fail("single", `This document is the single file ${self.only}: you can't make other files in it.`);
       return self.merge(path, content);
     });
   }

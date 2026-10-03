@@ -21,7 +21,7 @@
 //
 // Platform-neutral on purpose: storage is the small `FileStore` and
 // `StateStore` services and connections are `send` callbacks, so the same
-// room can run in the local host (open.ts) or a Durable Object, and tests
+// room runs in a Durable Object (worker/doc-host.ts), and tests
 // give it storage in memory.
 //
 // A room is a scoped resource (`Room.make`): it writes on a fiber in its

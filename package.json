@@ -5,11 +5,10 @@
   "type": "module",
   "scripts": {
     "build": "./build.sh",
-    "start": "./build.sh && bun open.ts",
+    "start": "bun dev.ts",
     "test": "./test.sh",
     "typecheck": "tsc -p . && tsc -p worker",
     "site": "./site.sh",
-    "dev:worker": "./site.sh && vite dev",
     "deploy": "./site.sh && cf deploy",
     "test:prod": "bun tests/suite/prod.ts"
   },

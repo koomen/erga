@@ -324,7 +324,7 @@ async function backdropReloadScenario(browser: Browser) {
 /** Send never refuses silently: it always says why it can't send. */
 async function agentOffScenario(browser: Browser) {
   say("\nAgent off");
-  const s = await session(browser, "page", "index.html", { ANTHROPIC_API_KEY: "", ERGA_AGENT_ENV_FILE: "/nonexistent/.env" });
+  const s = await session(browser, "page", "index.html", { ANTHROPIC_API_KEY: "" });
   const { p } = s;
   await p.key("j", MOD.Meta);
   await until(() => p.eval<boolean>(`!document.getElementById("agent-hint").hidden`));
@@ -466,14 +466,13 @@ async function lightOnlyScenario(browser: Browser) {
 
 async function agentEmptyScenario(browser: Browser) {
   say("\nAgent, empty message");
-  const s = await session(browser, "page", "index.html", { ANTHROPIC_API_KEY: "sk-ant-test-not-used", ERGA_AGENT_ENV_FILE: "/nonexistent/.env" });
+  const s = await session(browser, "page", "index.html", { ANTHROPIC_API_KEY: "sk-ant-test-not-used" });
   const { p } = s;
   await p.key("j", MOD.Meta);
   await until(() => p.eval<boolean>(`/Type a message/.test(document.getElementById("agent-send").title)`));
   check("an empty message: Send says to type one", await p.eval<boolean>(`(() => { const b = document.getElementById("agent-send"); return b.getAttribute("aria-disabled") == "true" && /Type a message/.test(b.title); })()`));
   await p.key("Enter");
-  await Bun.sleep(100);
-  check("and pressing it says so in the panel", await p.eval<boolean>(`(() => { const h = document.getElementById("agent-hint"); return !h.hidden && /Type a message/.test(h.textContent); })()`));
+  check("and pressing it says so in the panel", await until(() => p.eval<boolean>(`(() => { const h = document.getElementById("agent-hint"); return !h.hidden && /Type a message/.test(h.textContent); })()`)));
   await p.type("x");
   await Bun.sleep(50);
   check("typing enables it and clears the hint", await p.eval<boolean>(`document.getElementById("agent-send").getAttribute("aria-disabled") == "false" && document.getElementById("agent-hint").hidden`));
@@ -586,7 +585,7 @@ async function noEditScenario(browser: Browser) {
 /** The model menu: Sonnet 5.5 by default, switchable to Opus 5.5 fast; the person's other tabs and a reload follow. */
 async function modelScenario(browser: Browser) {
   say("\nAgent model");
-  const s = await session(browser, "noedit", "index.html", { ANTHROPIC_API_KEY: "sk-ant-test-not-used", ERGA_AGENT_ENV_FILE: "/nonexistent/.env", ERGA_AGENT_MODEL: "" });
+  const s = await session(browser, "noedit", "index.html", { ANTHROPIC_API_KEY: "sk-ant-test-not-used", ERGA_AGENT_MODEL: "" });
   const { p } = s;
   const sel = (q: typeof p) => q.eval<{ value: string; text: string; options: string[] } | null>(`(() => { const s = document.getElementById("agent-model-select"); return s && { value: s.value, text: s.selectedOptions[0]?.text, options: [...s.options].map((o) => o.text) }; })()`);
   await until(async () => !!(await sel(p)));
@@ -626,7 +625,7 @@ async function shareScenario(browser: Browser) {
 /** A page with problems nobody asked about/** A page with problems nobody asked about: each is explained in turn, with a button to have the agent fix it. */
 async function brokenPageScenario(browser: Browser) {
   say("\nBroken page");
-  const s = await session(browser, "broken", "index.html", { ANTHROPIC_API_KEY: "", ERGA_AGENT_ENV_FILE: "/nonexistent/.env" });
+  const s = await session(browser, "broken", "index.html", { ANTHROPIC_API_KEY: "" });
   const { p } = s;
   const toast = () => p.eval<{ text: string; shown: boolean; fix: boolean; fixDisabled: string | null; fixTitle: string }>(`(() => { const t = document.getElementById("toast"), b = t.querySelector(".toast-fix"); return { text: t.querySelector(".toast-text")?.textContent ?? t.textContent, shown: t.classList.contains("show"), fix: !!b, fixDisabled: b?.getAttribute("aria-disabled") ?? null, fixTitle: b?.title ?? "" }; })()`);
   await until(async () => (await toast()).shown);
@@ -676,7 +675,7 @@ async function pauseScenario(browser: Browser) {
   check("no page errors", p.errors.length == 0, p.errors.join("\n"));
   await s.close();
 
-  const t = await session(browser, "noedit", "index.html", { ANTHROPIC_API_KEY: "", ERGA_AGENT_ENV_FILE: "/nonexistent/.env" });
+  const t = await session(browser, "noedit", "index.html", { ANTHROPIC_API_KEY: "" });
   const card = () => t.p.eval<{ shown: boolean; text: string; fixDisabled: string | null; fixTitle: string }>(`(() => { const c = document.getElementById("pause-card"), f = document.getElementById("pause-fix"); return { shown: !c.hidden, text: c.textContent, fixDisabled: f.getAttribute("aria-disabled"), fixTitle: f.title }; })()`);
   check("a page without it can't be paused", await t.p.eval<boolean>(`document.getElementById("btn-pause").getAttribute("aria-disabled") == "true"`));
   await t.p.eval(`document.getElementById("btn-pause").dispatchEvent(new PointerEvent("pointerenter", { pointerType: "mouse" }))`);
@@ -693,7 +692,7 @@ async function pauseScenario(browser: Browser) {
 /** Voice mode, against a stand-in for the browser's speech recognition: dictation fills the box and each pause sends it. */
 async function voiceScenario(browser: Browser) {
   say("\nAgent, voice mode");
-  const s = await session(browser, "page", "index.html", { ANTHROPIC_API_KEY: "sk-ant-test-not-used", ERGA_AGENT_ENV_FILE: "/nonexistent/.env" });
+  const s = await session(browser, "page", "index.html", { ANTHROPIC_API_KEY: "sk-ant-test-not-used" });
   const { p } = s;
   // The stand-in records each session in __recs; messages to the agent are caught in __sent, not sent.
   await p.send("Page.addScriptToEvaluateOnNewDocument", { source: `
@@ -701,7 +700,7 @@ async function voiceScenario(browser: Browser) {
     window.SpeechRecognition = class extends EventTarget { start() { this.running = true; __recs.push(this); } stop() { this.abort(); } abort() { if (!this.running) return; this.running = false; setTimeout(() => this.onend?.()); } };
     window.__hear = (...rs) => __recs.at(-1).onresult({ results: rs.map(([t, f]) => Object.assign([{ transcript: t }], { isFinal: f })) });
     const f = window.fetch;
-    window.fetch = (url, init) => String(url).includes("/api/agent?") && init?.method == "POST" ? (__sent.push(JSON.parse(init.body).text), Promise.resolve(new Response("{}"))) : f(url, init);
+    window.fetch = (url, init) => String(url).split("?")[0].endsWith("/api/agent") && init?.method == "POST" ? (__sent.push(JSON.parse(init.body).text), Promise.resolve(new Response("{}"))) : f(url, init);
   ` });
   await p.eval(`location.reload()`);
   await loaded(p);

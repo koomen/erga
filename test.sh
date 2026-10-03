@@ -4,14 +4,17 @@
 #
 #   ./test.sh         unit tests, tests/page.ts, a page trying to reach its
 #                     viewer (tests/isolation.ts), the front door's routes
-#                     (tests/worker.ts, on the local host) and the multiplayer suite
+#                     (tests/worker.ts) and the multiplayer suite, each
+#                     against dev servers of its own (tests/host.ts)
 #
 # Not here, run by hand: tests/agent.ts (the real model, costs a little)
 # and tests/suite/run.ts --long (bigger, slower, real idle-eviction waits).
 set -euo pipefail
 cd "$(dirname "$0")"
 start=$(date +%s)
-./build.sh >/dev/null
+# The editor's files, once, for every dev server the tests start.
+./site.sh >/dev/null
+export ERGA_BUILT=1
 
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
