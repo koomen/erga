@@ -9,7 +9,8 @@
 // The POSTs answer JSON ({ entry } or { user } or { ok }, or { error } with
 // the message the directory gave, for a person to act on) and come only from
 // this site's pages. The directory checks who's asking itself (NotAllowed);
-// this file only shows it. A setting the deploy locks is shown, read-only,
+// this file only shows it. An agent token (Session.agent) never gets in, even
+// an admin's. A setting the deploy locks is shown, read-only,
 // and so is a bootstrap admin (ADMINS), who can't be demoted or removed here.
 
 import { ConfigError, type ConfigEntry } from "./config.ts";
@@ -24,7 +25,8 @@ export async function adminDoor(platform: Platform, request: Request): Promise<R
     return new Response(null, { status: 302, headers: { Location: `/auth/github?next=${encodeURIComponent("/admin")}` } });
   }
   const who = session && whoOf(session);
-  const admin = !!who && (await platform.directory.users.isAdmin(who));
+  // Only the person themselves, in a browser: an agent with their token isn't an admin here.
+  const admin = !!who && !session?.agent && (await platform.directory.users.isAdmin(who));
   if (url.pathname == "/admin") {
     if (!admin || request.method != "GET") return notFound();
     return adminPage(platform, session!);

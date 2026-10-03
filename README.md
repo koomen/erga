@@ -80,15 +80,23 @@ read-only (they see every edit as it happens; theirs are dropped, carets
 aside), their publishes (`PUT /api/stored`) are refused, and their agent,
 and an external agent with their share token, can read but not edit (it
 says so). `/api/doc` says whether you may edit (`canEdit`). The owner
-shares with `POST /docs/share` (`id`, `login` or `*`, `role`: `editor`,
-`viewer`, or `none` to stop), which answers everyone's permissions; there's
-no sharing UI yet. Server admins get nothing on documents by being admins.
+shares from `/docs`: each of their documents has a Share button, whose
+dialog adds people by GitHub login (can edit or can view), changes or
+removes them, sets what anyone signed in with the link may do (no access,
+view, edit) and copies the link; someone shared with who isn't a user of
+the server yet is marked "can't sign in yet". Underneath it's `POST
+/docs/share` (`id`, `login` or `*`, `role`: `editor`, `viewer`, or `none` to
+stop), which answers everyone's permissions (and `notUsers`), and `GET
+/docs/share?id=`, which only reads them. Server admins get nothing on
+documents by being admins.
 Test people may open only test documents, as editors of those of whoever
 minted their token.
 
 `/docs` lists the documents you own or that are shared with you by name,
-latest edit first, with a New document button and rename and delete buttons
-on each; the editor's top bar links to it. Each document keeps its row up to
+latest edit first, with a New document button, share, rename and delete
+buttons on each of yours (one you've shared says so), and whose each shared
+one is and your role on it; the editor's top bar links to it, and its
+footer to `/tokens` and, for admins, `/admin`. Each document keeps its row up to
 date (when it's edited, and the title that follows its heading, at most
 every two seconds). A document nobody edits is deleted after the
 `unedited_hours` setting (24 by default) from when it's made, by an alarm set
@@ -97,6 +105,10 @@ file's text, from a person, an agent or a publish; opening the document,
 moving a caret or the room's own bookkeeping never are. One still open in
 a tab when its time comes gets another hour. Test documents are neither
 listed nor deleted.
+
+Agents can do all of this too, with an agent token: see [Agent tokens and
+the server's API](#agent-tokens-and-the-servers-api) (`/llms.txt`,
+`/tokens`).
 
     bun run deploy                  # build, migrate erga.dev's D1 and deploy with the cf CLI
 
@@ -131,10 +143,18 @@ The first admins come from the deploy: the logins in the `ADMINS` binding
 their row the first time they do; they can't be demoted or removed except by
 taking them out of `ADMINS` and deploying. Every other admin is a row, made
 by an admin. Locally, `DEV_LOGIN` is a bootstrap admin too, and everyone
-signed in gets a row as they come. Until there's an admin UI, add a user on
-erga.dev with SQL (the database's id from `bunx cf d1 list --name erga`):
+signed in gets a row as they come.
 
-    bunx cf d1 query <database id> --sql "INSERT INTO users (login, name, role, created, added_by) VALUES ('octocat', 'octocat', 'user', unixepoch() * 1000, 'koomen')"
+**The admin page.** `/admin` (`admin.ts`) is for admins only; anyone else,
+and an agent with an admin's token, gets a 404 there. It shows every
+setting (its description, its value, where that comes from: default, set by
+whom and when, or locked by the deploy, which is shown but can't be
+changed) with Save and Reset, and every user (last seen, who added them,
+a User/Admin role menu and a remove button; a bootstrap admin's are
+disabled), with a box to add one by GitHub login. Underneath it's `POST
+/admin/settings` (`key` and `value` as JSON, or `reset=1`) and `POST
+/admin/users` (`do=add|role|remove`, `login`, `role`), answering JSON, from
+this site's pages only.
 
 **Settings.** `server_config` holds the server's settings, a JSON value per
 key with who set it and when (`config.ts`). Only the keys declared in
@@ -424,7 +444,9 @@ agent's last change.
 
 The share button (top right) lets another agent, such as Claude Code or Codex
 on the same machine, edit the page as your agent. It shows a prompt to copy
-with the page's API (`/api/ext`) and a token that stands for you; paste it
+with the page's API (`/api/ext`) and your agent token (see [Agent
+tokens and the server's API](#agent-tokens-and-the-servers-api): the same
+token works for the whole server); paste it
 into the other agent, which reads the guide and waits, then say what to change. The agent reads the guide at
 `GET /api/ext` (how to call the tools, their JSON schemas, and
 [DOCUMENT_PROMPT.md](DOCUMENT_PROMPT.md)), then calls
@@ -435,8 +457,70 @@ run in your agent's session, so its edits are handled exactly like your
 agent's: attributed to "Pete's agent", marked in its colour, undoable from
 the agent panel, with its badge spinning while it works. Each call shows in
 your agent panel as "External agent: …". It works with the embedded agent
-off too (no API key needed). Tokens are held in memory: New token in the
-dialog turns the old one off, and so does restarting the host.
+off too (no API key needed). The share button's token is the same each time
+you open it (in any tab or browser), until New token in the dialog turns it
+off and makes another; `/tokens` lists and revokes it with the rest.
+
+### Agent tokens and the server's API
+
+An agent holding one of your agent tokens can do everything you can do in
+the app, as you: list your documents, make, rename and delete them, publish
+a folder of files (a static site, a page) as a document, and use every
+document's tools (read, edit, write, ... as above) on any document you may
+edit. It's one kind of token, the same mechanism as the share button's: the
+front door (`front.ts`, `withTokens`) treats `Authorization: Bearer erga_...`
+as signing in as its person (`Session.agent`), so it works on the server's
+API and on each document's `/api/ext` alike, with your own permissions
+(`Directory.may`).
+
+**Tokens** (`tokens.ts`, in D1: `migrations/0100_tokens.sql`) last until
+they're revoked. A token is an HMAC of its id with `SESSION_SECRET`, and only
+its SHA-256 is stored, so the database alone holds no working token. There
+are three ways to get one:
+
+- `/tokens`: make one (shown once, with what to tell the agent and the
+  `claude mcp add` line), see when each was last used, revoke any. (It also
+  still shows a test token for the test suite.)
+- The share button: your one "Share button" token, shown again each time
+  until it's rotated.
+- An agent asks, from the command line, with no sign-in of its own (a device
+  flow): `POST /api/auth/request {"label": "Claude Code"}` answers an
+  `approve_url` for you to open (signed in; it shows a code to compare) and a
+  `code` it polls `POST /api/auth/poll` with: 202 until you approve, then the
+  token, once. Requests last 15 minutes.
+
+**The API** (`server-api.ts`), discoverable from nothing:
+
+    GET  /llms.txt                the guide, for anyone: getting a token, calling the API, publishing, every tool
+    GET  /api, /api/ext           the same guide (personal, with a token)
+    GET  /api/ext/tools           the tools as JSON (name, description, JSON Schema)
+    POST /api/ext/tools/<name>    runs one: {"ok": true, "content": [...]} or {"ok": false, "error"}
+    POST /api/publish             a folder as a new document (multipart, each part named by its path; or JSON),
+                                  or into one (document=<id>): its files replaced, ones that are gone deleted
+    POST /mcp                     the same tools as a stateless MCP server (Streamable HTTP, JSON answers)
+
+So "publish this on erga.dev" works from a local project: the agent reads
+`https://erga.dev/llms.txt`, gets a token (or is given one), and posts the
+folder:
+
+    args=(); while IFS= read -r f; do args+=(-F "${f#./}=@$f"); done < <(find . -type f ! -path '*/.*')
+    curl -s -X POST https://erga.dev/api/publish -H "Authorization: Bearer $ERGA_TOKEN" -F "title=My app" "${args[@]}"
+
+which answers the document's `url`. A published document counts as edited,
+so it never expires; files can be at most 2MB each, 50MB in all. Publishing
+again (`update_files`, or `document=` to `/api/publish`) writes each file
+over the text as it is now, as an edit open tabs see at once
+(`DocHost.publish`). In Claude Code, as tools:
+
+    claude mcp add --transport http erga https://erga.dev/mcp --header "Authorization: Bearer $ERGA_TOKEN"
+
+The tools are a registry (`TOOLS` in `server-api.ts`): whoami,
+list_documents, create_document, update_files, rename_document,
+delete_document, list_tokens and revoke_token, then the document tools
+(`documentToolSpecs` in `agent.ts`) with a `document` argument (an address,
+URL, id or one of your slugs), run in that document's host as your agent. A
+new tool is one more entry (a name, a description, JSON Schema for its
+arguments and a `run`): the REST API, MCP and the guide all list it.
 
 ### Pages run on their own origin
 
@@ -524,9 +608,12 @@ they reach the open page without a reload and then the disk, that the agent
 shows up as a participant, and that its last change can be undone (it calls
 the API, so it isn't part of `./test.sh`).
 `bun tests/worker.ts --local` checks the app's own routes (`/new`, `/docs`,
-sharing and what each role may do, deleting, expiry, and the pages origin's
-token). `tests/directory.test.ts` covers the directory, permissions, users
-and settings on bun:sqlite.
+sharing (the share dialog too) and what each role may do, `/admin` (settings and users, only for admins), deleting, expiry, and the pages origin's
+token) and the server's API for agents: asking for a token and approving it,
+publishing a folder, the tools over HTTP and MCP (with the person's own
+permissions), the share button's token, and revoking.
+`tests/directory.test.ts` covers the directory, permissions, users and
+settings on bun:sqlite; `tests/tokens.test.ts` the tokens themselves.
 `bun tests/isolation.ts` opens a page that tries to reach whoever views it
 (the shell's window, its cookies, erga.dev's API, forged messages) and checks
 it gets nothing. The browser tests reach the page through the frame's own
@@ -548,12 +635,17 @@ back, merging edits from disk, the agent's exact-match edits and attribution.
 
 - `page.html`, `page.js`, `frame.js`: the editor's shell and its built
   scripts (the shell's, and the frame's that runs on each document's own origin)
-- `front.ts`: the app's own routes and pages (the demo, `/new`, `/docs`,
-  delete, the unedited rule, titles)
+- `front.ts`: the app's own routes and pages (the demo, `/new`, `/docs` and
+  its share dialog, delete, the unedited rule, titles)
+- `admin.ts`: `/admin`, the server's settings and users, for admins
 - `directory.ts`: the directory of documents (addresses, titles, permissions, who may do what), over
   `Sql`; `worker/d1.ts` puts it on D1; its tables in `migrations/`, which `migrate.ts` applies to
   erga.dev's D1 (the dev server applies them locally)
 - `users.ts`, `config.ts`: the server's users and admins, and its settings, on the same database
+- `tokens.ts`: agent tokens (one kind, standing for a person everywhere), in
+  D1 (`migrations/0100_tokens.sql`)
+- `server-api.ts`: the server's API for agents (`/llms.txt`, `/api/ext`,
+  `/api/publish`, `/api/auth/...`, `/mcp`), its tool registry, and `/tokens`
 - `host.ts`: the per-document host (API, `/doc/`)
 - `worker/`: erga.dev on Cloudflare (front door, sign-in, Durable Objects,
   and `disk.ts`, a document's files on disk in local development)
