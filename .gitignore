@@ -11,3 +11,7 @@ node_modules/
 .site/
 .site.*/
 .dev.vars
+
+# The task queue's state and its worktrees (development/task-queue)
+development/task-queue/data/
+.claude/worktrees/

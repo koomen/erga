@@ -1,0 +1,1 @@
+{ "name": "task-queue", "version": "0.1.0", "description": "Runs every change through the repo's task queue: a tool that registers a task and starts a worker in its worktree, and a live pane with Merge buttons", "types": "./types/index.d.ts" }

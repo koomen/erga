@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Task Queue</title>
+<style>
+  :root {
+    --bg: #f6f5f1; --panel: #ecebe5; --card: #ffffff; --ink: #1d1c1a; --muted: #6f6c64; --line: #dcd9d0;
+    --accent: #2f5bd3; --ok: #1f7a4d; --warn: #b26a00; --bad: #b3261e; --shadow: 0 1px 2px rgba(0,0,0,.06), 0 2px 8px rgba(0,0,0,.04);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #151514; --panel: #1d1d1b; --card: #252523; --ink: #ecebe6; --muted: #9a978e; --line: #34332f;
+      --accent: #7ea0ff; --ok: #4cc38a; --warn: #f0a742; --bad: #ff7b72; --shadow: 0 1px 2px rgba(0,0,0,.4); }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.45 ui-sans-serif, -apple-system, "Segoe UI", sans-serif; }
+  header { display: flex; align-items: baseline; gap: 14px; padding: 18px 24px 8px; }
+  h1 { font-size: 18px; margin: 0; letter-spacing: -.01em; }
+  .live { font-size: 12px; color: var(--muted); display: inline-flex; align-items: center; gap: 6px; }
+  .live::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--bad); }
+  .live.on::before { background: var(--ok); }
+  header a { margin-left: auto; color: var(--muted); font-size: 12px; }
+  main { display: grid; grid-template-columns: repeat(4, minmax(240px, 1fr)); gap: 14px; padding: 10px 24px 24px; align-items: start; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; padding: 10px 16px; } header { padding: 16px; } }
+  .col { background: var(--panel); border-radius: 10px; padding: 10px; min-height: 120px; }
+  .col h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 2px 4px 10px; display: flex; justify-content: space-between; }
+  .empty { color: var(--muted); font-size: 12px; padding: 8px 4px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; box-shadow: var(--shadow); cursor: pointer; }
+  .card:hover { border-color: var(--muted); }
+  .card.failed { border-left: 3px solid var(--bad); }
+  .card.merging { border-left: 3px solid var(--warn); }
+  .card.discarded { opacity: .55; }
+  .top { display: flex; gap: 8px; align-items: baseline; }
+  .id { color: var(--muted); font: 12px ui-monospace, monospace; }
+  .title { font-weight: 600; flex: 1; overflow-wrap: anywhere; }
+  .meta { color: var(--muted); font-size: 12px; margin-top: 4px; display: flex; flex-wrap: wrap; gap: 4px 10px; }
+  .meta code { font: 11px ui-monospace, monospace; }
+  .last { color: var(--muted); font-size: 12px; margin-top: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .err { color: var(--bad); font-size: 12px; margin-top: 6px; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 7.5em; overflow: hidden; }
+  .thumbs { display: flex; gap: 6px; margin-top: 8px; overflow: hidden; }
+  .thumbs img { height: 54px; border-radius: 4px; border: 1px solid var(--line); object-fit: cover; max-width: 96px; }
+  .actions { display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; }
+  button, .btn { font: inherit; font-size: 12px; border: 1px solid var(--line); background: var(--card); color: var(--ink); border-radius: 6px; padding: 4px 10px; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; gap: 5px; }
+  button:hover, .btn:hover { border-color: var(--muted); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.danger { color: var(--bad); }
+  button.confirm { background: var(--bad); border-color: var(--bad); color: #fff; }
+  button:disabled { opacity: .5; cursor: default; }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); display: inline-block; }
+  .dot.up { background: var(--ok); }
+  .spin { display: inline-block; width: 10px; height: 10px; border: 2px solid var(--warn); border-right-color: transparent; border-radius: 50%; animation: s .8s linear infinite; }
+  @keyframes s { to { transform: rotate(360deg); } }
+  dialog { border: 1px solid var(--line); border-radius: 12px; background: var(--card); color: var(--ink); width: min(900px, calc(100vw - 32px)); max-height: calc(100vh - 48px); padding: 0; }
+  dialog::backdrop { background: rgba(0,0,0,.35); }
+  .dlg { padding: 18px 22px 22px; }
+  .dlg h3 { margin: 0 0 4px; font-size: 18px; }
+  .dlg section { margin-top: 16px; }
+  .dlg h4 { margin: 0 0 6px; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+  .pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+  .shots { display: grid; gap: 12px; }
+  .shots figure { margin: 0; }
+  .shots img { width: 100%; border: 1px solid var(--line); border-radius: 6px; }
+  .shots figcaption { color: var(--muted); font-size: 12px; margin-top: 4px; }
+  .log { font: 12px/1.5 ui-monospace, monospace; max-height: 260px; overflow: auto; background: var(--panel); border-radius: 6px; padding: 8px 10px; }
+  .log div { white-space: pre-wrap; overflow-wrap: anywhere; }
+  .log time { color: var(--muted); margin-right: 8px; }
+  .close { float: right; }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Task Queue</h1>
+  <span class="live" id="live">connecting</span>
+  <a href="/api" target="_blank">API</a>
+</header>
+<main id="board"></main>
+<dialog id="dlg"></dialog>
+<script>
+const COLUMNS = [
+  { title: "Queued", statuses: ["queued"] },
+  { title: "Working", statuses: ["working", "failed"] },
+  { title: "Ready to merge", statuses: ["complete", "merging"] },
+  { title: "Done", statuses: ["merged", "discarded"] },
+];
+let tasks = [];
+let openId = null;
+const armed = new Set(); // discard buttons clicked once, waiting for the second click
+
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+const ago = (iso) => {
+  const s = (Date.now() - new Date(iso)) / 1000;
+  return s < 60 ? "just now" : s < 3600 ? `${Math.floor(s / 60)}m ago` : s < 86400 ? `${Math.floor(s / 3600)}h ago` : new Date(iso).toLocaleDateString();
+};
+
+function actions(t) {
+  const b = [];
+  if (t.url && !["merged", "discarded"].includes(t.status)) b.push(`<a class="btn" href="${esc(t.url)}" target="_blank" onclick="event.stopPropagation()"><span class="dot ${t.previewUp ? "up" : ""}" title="${t.previewUp ? "preview is up" : "preview is down"}"></span>Open</a>`);
+  if (t.port && t.worktree && !t.previewUp && ["working", "complete", "failed"].includes(t.status)) b.push(`<button data-act="preview" data-id="${t.id}">Start preview</button>`);
+  if (t.status == "complete") b.push(`<button class="primary" data-act="merge" data-id="${t.id}">Merge</button>`);
+  if (t.status == "merging") b.push(`<button disabled><span class="spin"></span> Merging…</button>`);
+  if (!["merging", "merged", "discarded"].includes(t.status))
+    b.push(armed.has(t.id) ? `<button class="confirm" data-act="discard" data-id="${t.id}">Discard branch?</button>` : `<button class="danger" data-act="arm" data-id="${t.id}">Discard</button>`);
+  return b.length ? `<div class="actions">${b.join("")}</div>` : "";
+}
+
+function card(t) {
+  const last = t.log[t.log.length - 1];
+  const thumbs = t.screenshots.slice(-3).map((s) => `<img src="/shots/${esc(s.file)}" alt="${esc(s.caption)}" loading="lazy">`).join("");
+  return `<div class="card ${t.status}" data-open="${t.id}">
+    <div class="top"><span class="id">#${t.id}</span><span class="title">${esc(t.title)}</span></div>
+    <div class="meta">${t.branch ? `<code>${esc(t.branch)}</code>` : ""}<span>${t.status == "merged" ? `merged ${ago(t.mergedAt)} · ${esc(t.commit)}` : ago(t.updatedAt)}</span>${t.status == "failed" ? "<span>failed</span>" : ""}${t.status == "discarded" ? "<span>discarded</span>" : ""}</div>
+    ${t.error ? `<div class="err">${esc(t.error)}</div>` : last && !["merged", "discarded"].includes(t.status) ? `<div class="last">${esc(last.message)}</div>` : ""}
+    ${thumbs && t.status != "discarded" ? `<div class="thumbs">${thumbs}</div>` : ""}
+    ${actions(t)}
+  </div>`;
+}
+
+function render() {
+  const board = document.getElementById("board");
+  board.innerHTML = COLUMNS.map((c) => {
+    let list = tasks.filter((t) => c.statuses.includes(t.status));
+    // Newest activity first; done things keep only the latest.
+    list.sort((a, b) => (b.mergedAt ?? b.updatedAt).localeCompare(a.mergedAt ?? a.updatedAt));
+    if (c.title == "Done") list = list.slice(0, 20);
+    return `<section class="col"><h2><span>${c.title}</span><span>${list.length}</span></h2>${list.map(card).join("") || `<div class="empty">Nothing here</div>`}</section>`;
+  }).join("");
+  if (openId != null) renderDialog();
+}
+
+function renderDialog() {
+  const t = tasks.find((x) => x.id == openId);
+  const dlg = document.getElementById("dlg");
+  if (!t) { dlg.close(); return; }
+  const log = dlg.querySelector(".log");
+  const atBottom = !log || log.scrollTop + log.clientHeight >= log.scrollHeight - 4;
+  const scroll = dlg.scrollTop;
+  dlg.innerHTML = `<div class="dlg">
+    <button class="close" data-act="close">Close</button>
+    <h3><span class="id">#${t.id}</span> ${esc(t.title)}</h3>
+    <div class="meta"><span>${esc(t.status)}</span>${t.branch ? `<code>${esc(t.branch)}</code>` : ""}${t.worktree ? `<code>${esc(t.worktree)}</code>` : ""}${t.port ? `<span>port ${t.port}</span>` : ""}${t.commit ? `<code>${esc(t.commit)}</code>` : ""}</div>
+    ${t.url ? `<section><h4>Where to look</h4><a href="${esc(t.url)}" target="_blank">${esc(t.url)}</a> ${t.previewUp ? "" : "<span class='meta'>(preview not running)</span>"}</section>` : ""}
+    ${actions(t)}
+    ${t.error ? `<section><h4>Error</h4><div class="err" style="max-height:none">${esc(t.error)}</div></section>` : ""}
+    ${t.summary ? `<section><h4>Summary</h4><div class="pre">${esc(t.summary)}</div></section>` : ""}
+    ${t.description ? `<section><h4>Ask</h4><div class="pre">${esc(t.description)}</div></section>` : ""}
+    ${t.screenshots.length ? `<section><h4>Screenshots</h4><div class="shots">${t.screenshots.map((s) => `<figure><a href="/shots/${esc(s.file)}" target="_blank"><img src="/shots/${esc(s.file)}" alt="${esc(s.caption)}"></a>${s.caption ? `<figcaption>${esc(s.caption)}</figcaption>` : ""}</figure>`).join("")}</div></section>` : ""}
+    <section><h4>Log</h4><div class="log">${t.log.map((l) => `<div><time>${new Date(l.at).toLocaleTimeString()}</time>${esc(l.message)}</div>`).join("")}</div></section>
+  </div>`;
+  const nl = dlg.querySelector(".log");
+  if (atBottom) nl.scrollTop = nl.scrollHeight;
+  if (!dlg.open) dlg.showModal();
+  dlg.scrollTop = scroll;
+}
+
+async function post(path, body) {
+  const res = await fetch(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body ?? {}) });
+  if (!res.ok) { const { error } = await res.json().catch(() => ({})); showError(error || res.statusText); }
+}
+function showError(msg) {
+  const el = document.getElementById("live");
+  el.textContent = msg; el.style.color = "var(--bad)";
+  setTimeout(() => { el.style.color = ""; el.textContent = "live"; }, 6000);
+}
+
+document.addEventListener("click", (e) => {
+  const btn = e.target.closest("[data-act]");
+  if (btn) {
+    e.stopPropagation();
+    const id = Number(btn.dataset.id);
+    const act = btn.dataset.act;
+    if (act == "close") { openId = null; document.getElementById("dlg").close(); }
+    if (act == "merge") { btn.disabled = true; post(`/api/tasks/${id}/merge`); }
+    if (act == "preview") { btn.disabled = true; post(`/api/tasks/${id}/preview`); }
+    if (act == "arm") { armed.add(id); render(); setTimeout(() => { armed.delete(id); render(); }, 4000); }
+    if (act == "discard") { armed.delete(id); btn.disabled = true; post(`/api/tasks/${id}/discard`); }
+    return;
+  }
+  const c = e.target.closest("[data-open]");
+  if (c) { openId = Number(c.dataset.open); renderDialog(); }
+});
+document.getElementById("dlg").addEventListener("close", () => { openId = null; });
+document.getElementById("dlg").addEventListener("click", (e) => { if (e.target.id == "dlg") e.target.close(); });
+
+function connect() {
+  const live = document.getElementById("live");
+  const es = new EventSource("/api/events");
+  es.addEventListener("tasks", (e) => { tasks = JSON.parse(e.data); render(); });
+  es.onopen = () => { live.textContent = "live"; live.classList.add("on"); };
+  es.onerror = () => { live.textContent = "reconnecting"; live.classList.remove("on"); };
+}
+connect();
+setInterval(render, 30000); // keep "5m ago" fresh
+</script>
+</body>
+</html>

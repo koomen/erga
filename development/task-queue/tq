@@ -1,0 +1,83 @@
+#!/usr/bin/env bun
+// tq: the task queue from the command line (development/task-queue/server.ts),
+// starting the server first if it isn't running. Prints the task as JSON.
+//
+//   tq add "title" ["description"]       register a task: branch, worktree, preview port
+//   tq start ID ["message"]              status: working
+//   tq log ID "message"                  a progress line on the card
+//   tq preview ID [path] [--cmd "..."]   run the task's app in its worktree on its port ($PORT)
+//   tq shot ID URL-or-FILE ["caption"]   attach a screenshot (a URL is taken with headless Chrome)
+//   tq url ID URL                        where the user should look
+//   tq done ID "summary" [URL]           status: complete, waiting for the user to merge
+//   tq fail ID "why"                     status: failed
+//   tq merge ID | tq discard ID          what the board's buttons do
+//   tq get ID | tq list [STATUS]         read
+//   tq serve                             just make sure the server is up; prints the board's address
+//
+// TASK_QUEUE_PORT picks the port (4700).
+
+import { spawn } from "node:child_process";
+import { existsSync, mkdirSync, openSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+
+const PORT = Number(process.env.TASK_QUEUE_PORT ?? 4700);
+const BASE = `http://127.0.0.1:${PORT}`;
+// The main checkout's copy, even when run from a task's worktree.
+const git = Bun.spawnSync(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"], { cwd: import.meta.dir });
+const MAIN_COPY = join(dirname(git.stdout.toString().trim()), "development/task-queue");
+const HERE = git.exitCode == 0 && existsSync(join(MAIN_COPY, "server.ts")) ? MAIN_COPY : import.meta.dir;
+
+async function up() {
+  try { return (await fetch(`${BASE}/api`, { signal: AbortSignal.timeout(1000) })).ok; } catch { return false; }
+}
+
+async function ensureServer() {
+  if (await up()) return;
+  const data = join(HERE, "data");
+  mkdirSync(data, { recursive: true });
+  const log = openSync(join(data, "server.log"), "a");
+  spawn("bun", [join(HERE, "server.ts")], { detached: true, stdio: ["ignore", log, log], env: process.env }).unref();
+  for (let i = 0; i < 100; i++) { if (await up()) return; await Bun.sleep(100); }
+  console.error(`task queue didn't start: see ${join(data, "server.log")}`);
+  process.exit(1);
+}
+
+async function call(method: string, path: string, body?: unknown) {
+  const res = await fetch(BASE + path, { method, headers: body ? { "content-type": "application/json" } : {}, body: body ? JSON.stringify(body) : undefined });
+  const data = await res.json();
+  if (!res.ok) { console.error(data.error ?? JSON.stringify(data)); process.exit(1); }
+  return data;
+}
+
+const [cmd, id, ...rest] = process.argv.slice(2);
+const flag = (name: string) => { const i = rest.indexOf(name); return i >= 0 ? rest.splice(i, 2)[1] : undefined; };
+const need = (v: unknown, usage: string) => { if (!v) { console.error(`usage: tq ${usage}`); process.exit(2); } };
+
+if (!cmd || cmd == "help" || cmd == "--help") {
+  console.log(require("node:fs").readFileSync(import.meta.path, "utf8").split("\n").slice(1).filter((l: string) => l.startsWith("//")).map((l: string) => l.slice(3)).join("\n"));
+  process.exit(0);
+}
+await ensureServer();
+let out: unknown;
+switch (cmd) {
+  case "serve": out = { board: `http://localhost:${PORT}/`, api: `http://localhost:${PORT}/api` }; break;
+  case "add": need(id, 'add "title" ["description"]'); out = await call("POST", "/api/tasks", { title: id, description: rest[0] ?? "" }); break;
+  case "start": need(id, "start ID"); out = await call("PATCH", `/api/tasks/${id}`, { status: "working", message: rest[0] ?? "Started" }); break;
+  case "log": need(id && rest[0], 'log ID "message"'); out = await call("POST", `/api/tasks/${id}/log`, { message: rest[0] }); break;
+  case "preview": { need(id, "preview ID [path] [--cmd ...]"); const command = flag("--cmd"); out = await call("POST", `/api/tasks/${id}/preview`, { path: rest[0], command }); break; }
+  case "url": need(id && rest[0], "url ID URL"); out = await call("PATCH", `/api/tasks/${id}`, { url: rest[0] }); break;
+  case "shot": {
+    need(id && rest[0], 'shot ID URL-or-FILE ["caption"]');
+    const [target, caption] = rest;
+    out = await call("POST", `/api/tasks/${id}/screenshots`, /^https?:/.test(target) ? { url: target, caption } : { path: resolve(target), caption });
+    break;
+  }
+  case "done": need(id && rest[0], 'done ID "summary" [URL]'); out = await call("PATCH", `/api/tasks/${id}`, { status: "complete", summary: rest[0], ...(rest[1] ? { url: rest[1] } : {}), message: "Complete: ready to merge" }); break;
+  case "fail": need(id && rest[0], 'fail ID "why"'); out = await call("PATCH", `/api/tasks/${id}`, { status: "failed", error: rest[0], message: `Failed: ${rest[0]}` }); break;
+  case "merge": need(id, "merge ID"); out = await call("POST", `/api/tasks/${id}/merge`); break;
+  case "discard": need(id, "discard ID"); out = await call("POST", `/api/tasks/${id}/discard`); break;
+  case "get": need(id, "get ID"); out = await call("GET", `/api/tasks/${id}`); break;
+  case "list": out = (await call("GET", `/api/tasks${id ? `?status=${id}` : ""}`)).map((t: any) => ({ id: t.id, status: t.status, title: t.title, url: t.url, branch: t.branch })); break;
+  default: console.error(`unknown command ${cmd}: tq help`); process.exit(2);
+}
+console.log(JSON.stringify(out, (k, v) => (k == "log" && Array.isArray(v) ? v.slice(-5) : v), 2));
