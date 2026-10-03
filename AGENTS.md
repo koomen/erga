@@ -10,6 +10,33 @@ The task queue (`development/task-queue/`) is a local board at
 **Queued → Working → Ready to merge → Merging → Done**, live, and merges it
 with one click. It runs only on this machine.
 
+### Watch the queue, always
+
+At the start of every session, before anything else, the outer agent starts
+watching the queue, and keeps watching for the whole session, so it hears
+when each task changes state without the user having to say so:
+
+    development/task-queue/tq watch --state /tmp/tq-watch-<a name for this session>.json
+
+Run it under Claude Code's **Monitor** tool (`timeout_ms` at the maximum,
+a description like "task queue status changes"). It starts the queue if it
+isn't running, then prints one line per task status change, and nothing
+else: `#3 working: title`, `#3 ready to merge: title`, `#3 merging: title`,
+`#3 merged: title`, `#4 failed: title: why`, `#5 merge failed, back to
+ready to merge: title: why`, `#6 discarded: title`. It rides out the server
+restarting (and starts it again if it stays down). When the Monitor
+expires, **re-arm it** with the same command: `--state` remembers what it
+had seen, so changes made in between are reported then.
+
+On each line, act without being asked:
+
+- **ready to merge** or **failed**: if its subagent hasn't already reported
+  it, relay it to the user in a sentence or two (`tq get <id>` has the
+  summary, URL or error).
+- **merged**: say so in a line, and start any task that was waiting on it
+  (its dependencies all merged): register and hand it off as below.
+- **merge failed**: tell the user why, and what would fix it.
+
 When the user asks for a change to this repo:
 
 1. **Register it, straight away**, before doing anything else:
@@ -82,7 +109,7 @@ The worker reports with `task_log`, `task_preview`, `task_screenshot`,
 and Discard buttons (no Merge or Discard while a task is merging), and
 `/tasks board` opens the browser board. The status line counts working, ready
 and merging tasks, and toasts say when one is ready, starts merging, is
-merged, fails to merge or fails. With the mod loaded, use its tools instead of `tq`.
+merged, fails to merge or fails. With the mod loaded, use its tools instead of `tq` (but still watch the queue with `tq watch` under Monitor, as above: the mod's toasts tell the user, not the agent; its system prompt says so too).
 
 ## Changing the database
 
