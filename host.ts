@@ -185,7 +185,7 @@ export function makeHost(opts: HostOptions) {
   const docApi = HttpApiBuilder.group(Api, "doc", (h) => h
     .handle("info", () => Person.use((user) => Effect.gen(function* () {
       const docName = yield* Effect.promise(() => namingAs(user)?.get().catch(() => undefined) ?? Promise.resolve(undefined));
-      return { name: doc.name, path: doc.path, kind: doc.kind, dir: doc.dir, user: user.name, userId: user.id, avatar: opts.avatarOf?.(user), writeDelay: room.writeDelay, docName };
+      return { name: doc.name, path: doc.path, kind: doc.kind, dir: doc.dir, user: user.name, userId: user.id, avatar: opts.avatarOf?.(user), writeDelay: room.writeDelay, canEdit: opts.canEdit?.(user) ?? true, docName };
     })))
     .handle("name", () => Person.use((user) => {
       const n = namingAs(user);

@@ -32,7 +32,7 @@ import { startHost, type Host } from "../host";
  *   scriptedAgent  the agent runs the scripted test model (agent.ts)
  *   liveAgent      the agent runs a real model (costs money)
  *   browser        a headless Chrome is available here to open the shell
- *   roles          people can have view-only access
+ *   roles          people can have view-only access (Doc.share)
  */
 export type Capability = "restart" | "kill" | "disk" | "scriptedAgent" | "liveAgent" | "browser" | "roles";
 
@@ -64,6 +64,11 @@ export interface Doc {
   served(path: string): Promise<string | null>;
   /** Behind the server's back (capability "disk"). */
   writeDisk?(path: string, data: string | Uint8Array): void;
+  /**
+   * Capability "roles": gives a person ("*": anyone signed in with the link)
+   * a role on the document, or takes theirs away (null), as its owner.
+   */
+  share?(user: string, role: "editor" | "viewer" | null): Promise<void>;
   /**
    * Capability "restart" / "kill". "lose-state" kills the server and
    * deletes the room's saved Yjs state, as if storage for it was lost.
@@ -137,7 +142,7 @@ export class LocalTarget implements Target {
   caps: Set<Capability>;
   private shared: Promise<Host> | null = null;
   constructor(private opts: { liveAgent?: boolean; browser?: boolean } = {}) {
-    this.caps = new Set<Capability>(["restart", "kill", "disk", opts.liveAgent ? "liveAgent" : "scriptedAgent", ...(opts.browser === false ? [] : ["browser" as const])]);
+    this.caps = new Set<Capability>(["restart", "kill", "disk", "roles", opts.liveAgent ? "liveAgent" : "scriptedAgent", ...(opts.browser === false ? [] : ["browser" as const])]);
   }
 
   /**
@@ -160,10 +165,16 @@ export class LocalTarget implements Target {
     // The folder opens as a document of its own, edited in place, at an address that stays the same across restarts.
     const host = own ? await startHost(dir, { env: this.env() }) : await (this.shared ??= startHost(null, { env: this.env() }));
     const base = own ? host.base : await host.open(dir);
-    const writeDelay = ((await (await fetch(`${base}/api/doc`)).json()) as { writeDelay?: number }).writeDelay ?? 400;
+    const info = (await (await fetch(`${base}/api/doc`)).json()) as { writeDelay?: number; docName?: { id: string } };
+    const writeDelay = info.writeDelay ?? 400;
     return makeDoc(base, {}, readFixture(fixture), {
       writeDelay,
       writeDisk,
+      // As the dev server's own person (DEV_LOGIN), who opened it from disk and owns it.
+      async share(user: string, role: "editor" | "viewer" | null) {
+        const r = await fetch(`${host.root}/docs/share`, { method: "POST", headers: { Origin: host.root }, body: new URLSearchParams({ id: info.docName!.id, login: user, role: role ?? "none" }) });
+        if (!r.ok) throw new Error(`sharing with ${user}: ${r.status} ${await r.text()}`);
+      },
       ...(own ? {
         async restart(how: "graceful" | "kill" | "lose-state", whileDown?: () => Promise<void>) {
           await host.stop(how == "graceful" ? "SIGTERM" : "SIGKILL");
