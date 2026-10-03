@@ -18,7 +18,7 @@ With [Bun](https://bun.sh) 1.4 or later:
     bun start ./path/to/site        # and any folder with index.html or index.md, edited in place
     bun start ./notes/some.html     # or a single file
 
-`bun start` rebuilds `page.js` and runs the local host (`bun open.ts`, which
+`bun start` rebuilds `page.js` and `frame.js` and runs the local host (`bun open.ts`, which
 takes the same arguments; `bun open.ts --help` lists them). For the agent,
 copy `.env.example` to `.env` and add an `ANTHROPIC_API_KEY`.
 
@@ -333,6 +333,36 @@ your agent panel as "External agent: …". It works with the embedded agent
 off too (no API key needed). Tokens are held in memory: New token in the
 dialog turns the old one off, and so does restarting the host.
 
+### Pages run on their own origin
+
+Anyone who can edit a document can put a script in its page, so a page
+never runs where it could act as the person viewing it. The editor's shell
+(`page.html`, `src/page/main.ts`) runs on erga.dev and holds everything that
+acts as you: the session, the room, your agent, the source view. The page,
+with the page editor next to it (`src/page/frame.ts`), runs in a frame on the
+document's own origin, `<id>-<owner>.erga-pages.dev`, which has no cookies and
+holds nothing but that document. Its scripts can't reach the shell, read your
+session or call erga.dev as you; the most a page can do is edit its own
+document, as whoever has it open. `tests/isolation.ts` has a page try.
+
+The two talk only by `postMessage` (`src/page/bridge.ts`), and the shell checks
+everything the frame sends (`src/page/remote.ts`). For the text, the shell is
+the authority: it numbers every change, the frame offers its own edits one at a
+time against the number it has seen, and one offered against an older number is
+refused and comes back rebased over what it missed (as `@codemirror/collab`
+does), so both always hold the same text; `tests/relay.test.ts` fuzzes it. The
+source view takes the frame's state, undo history included, and hands it back.
+
+The pages origin (`pagesDoor` in `front.ts`) serves the frame at `/t/<token>/`
+and the document's files under `/t/<token>/doc/`. The token, signed with
+`SESSION_SECRET`, opens that one document for a week, names the shell's origin
+(the only one allowed to embed the frame, by `frame-ancestors`, and the only
+one it takes orders from), and comes with the editor's own page, which only
+people who may open the document get. On Cloudflare that's a wildcard route
+on `*.erga-pages.dev/*` (`cloudflare.config.ts`) with a proxied wildcard DNS
+record. Locally the origin is `<id>-<owner>.localhost:<port>`, which browsers
+send to this machine, and the token's secret is kept in the data directory.
+
 ### How it works
 
 The design:
@@ -349,7 +379,7 @@ The design:
   source offset and typing is the smallest character change to the file. Tags
   and attributes stay byte for byte. Ids (`data-erga-id`) exist only in the
   browser.
-- **Two regimes.** The page renders in an iframe. Each unit is its own
+- **Two regimes.** The page renders in an iframe (inside the frame on its own origin, above). Each unit is its own
   contenteditable host: click into one and it is an editor (caret, selection,
   typing), and the arrow keys carry the caret into the neighbouring unit so the
   page still reads as one document. Everything else is an ordinary web page:
@@ -377,7 +407,7 @@ and the editor's timers (how long notes stay up, how marks fade) run at a
 fraction of real time under test (`window.__ergaTimescale`, `ms` in
 `src/page/editor.ts`).
 
-    ./test.sh          # page editor, front door + multiplayer: ~14s
+    ./test.sh          # page editor, isolation, front door + multiplayer: ~15s
     bun run typecheck  # tsc over the host, the editor and the suite
 
 Each file also runs alone: `bun tests/page.ts` (~7s), `bun tests/suite/run.ts`
@@ -389,7 +419,11 @@ they reach the open page without a reload and then the disk, that the agent
 shows up as a participant, and that its last change can be undone (it calls
 the API, so it isn't part of `./test.sh`).
 `bun tests/worker.ts --local` checks the app's own routes (`/new`, `/docs`,
-deleting, expiry) on the local host, as it does on the Worker. Tests start
+deleting, expiry, and the pages origin's token) on the local host, as it does on the Worker.
+`bun tests/isolation.ts` opens a page that tries to reach whoever views it
+(the shell's window, its cookies, erga.dev's API, forged messages) and checks
+it gets nothing. The browser tests reach the page through the frame's own
+DevTools session (`Page.frame` in `tests/cdp.ts`), as the shell can't. Tests start
 the local host with `tests/host.ts`, each with a scratch data directory.
 `bun tests/page.ts` runs the end-to-end check (headless Chrome, real clicks and
 keys, file read back from disk) on the fixtures in `tests/fixtures/`, and
@@ -403,7 +437,8 @@ back, merging edits from disk, the agent's exact-match edits and attribution.
 
 ## Files
 
-- `open.ts`, `page.html`, `page.js`: the local host, the editor's shell and built script
+- `open.ts`, `page.html`, `page.js`, `frame.js`: the local host, the editor's shell and its built
+  scripts (the shell's, and the frame's that runs on each document's own origin)
 - `front.ts`: the app's own routes and pages (the demo, `/new`, `/docs`,
   delete, the unedited rule, titles), shared by the Worker and the local host
 - `docs.ts`: the local host's documents (folders in the data directory)
@@ -418,7 +453,9 @@ back, merging edits from disk, the agent's exact-match edits and attribution.
 - `src/page/`: the page editor, on CodeMirror 6: `manuscript.ts` (HTML source
   analysis), `markdown.ts` (Markdown rendering with source ranges),
   `editor.ts` (the editing surface, marks and other people's carets),
-  `main.ts` (shell, presence, source view, agent panel), `collab.ts` (the
+  `main.ts` (shell, presence, source view, agent panel), `frame.ts` (the page
+  editor's frame, on the document's own origin), `bridge.ts` and `remote.ts`
+  (the messages between the two, and the shell's side of them), `collab.ts` (the
   room connection and its binding to the editor), `merge.ts` (word diffs and
   rebasing as change sets), `agent-log.ts` (the agent transcript, shared by
   host and shell)

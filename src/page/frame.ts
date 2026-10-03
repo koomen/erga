@@ -125,17 +125,20 @@ function sendSelection() {
 }
 
 /** What the shell's controls show, at most once a frame. */
-let snapshotQueued = false, renderedSince = false;
+let snapshotQueued = false, renderedSince = false, column = 0, remeasure = true;
 function queueSnapshot(rendered = false) {
   renderedSince ||= rendered;
+  remeasure ||= rendered;
   if (snapshotQueued) return;
   snapshotQueued = true;
   requestAnimationFrame(() => {
     snapshotQueued = false;
     if (!page) return;
     const rect = page.selectionRect();
+    if (remeasure) { column = measureColumn(); remeasure = false; }
     const snapshot: Snapshot = {
       title: page.title(),
+      column,
       canPause: page.canPause,
       paused: page.isPaused,
       fmt: {
@@ -155,7 +158,7 @@ function detach(id: number) {
   if (!page || !relay) return;
   if (!relay.idle) { setTimeout(() => detach(id), 10); return; }
   detached = true;
-  post({ type: "detached", id, state: stateJSON(page.state, historyField), version: relay.version, column: measureColumn() });
+  post({ type: "detached", id, state: stateJSON(page.state, historyField), version: relay.version });
 }
 
 /** The page's text column, so the source view can match it. */
@@ -181,7 +184,7 @@ function watchPage() {
   d.addEventListener("scroll", () => queueSnapshot(), { passive: true });
   d.addEventListener("selectionchange", () => queueSnapshot());
 }
-window.addEventListener("resize", () => queueSnapshot());
+window.addEventListener("resize", () => { remeasure = true; queueSnapshot(); });
 
 // The page's background, so the shell can paint its canvas to match: its
 // root's, or its body's when the root has none, as the browser would.

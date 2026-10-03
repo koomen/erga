@@ -6,7 +6,7 @@
 
 import { Browser, MOD, ROOT } from "./cdp";
 import { startHost } from "./host";
-import { tab } from "./tab";
+import { F, frameAt, tab } from "./tab";
 import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -32,7 +32,7 @@ const until = async (f: () => Promise<unknown> | unknown, ms = 3000) => { const 
 const TIMESCALE = 0.1;
 const T = (ms: number) => ms * TIMESCALE;
 /** After a (re)load: the shell is up, the page rendered, the agent's status in. */
-const loaded = (p: Awaited<ReturnType<Browser["page"]>>) => until(() => p.eval<boolean>(`!!window.ergaPage && !!document.getElementById("frame").contentDocument?.querySelector("[data-erga-id]") && !!document.getElementById("agent-model").textContent`), 10_000);
+const loaded = (p: Awaited<ReturnType<Browser["page"]>>) => until(async () => await p.eval<boolean>(`!!window.ergaPage && !!document.getElementById("agent-model").textContent`) && await p.frame<boolean>(`!!${F}?.querySelector("[data-erga-id]")`), 10_000);
 
 /** Starts a host on a scratch copy of a fixture and opens the editor on it. */
 async function session(browser: Browser, fixture: string, fileName: string, env: Record<string, string> = {}, query = "", timescale = TIMESCALE) {
@@ -42,9 +42,9 @@ async function session(browser: Browser, fixture: string, fileName: string, env:
   const host = await startHost(dir, { env });
   const p = await browser.page();
   await p.open(`${host.base}/${query}`, { clear: false, width: 1100, height: 800, timescale });
-  await until(() => p.eval<boolean>(`!!window.ergaPage && !!document.getElementById("frame").contentDocument?.querySelector("[data-erga-id]")`), 10_000);
+  await until(async () => await p.eval<boolean>(`!!window.ergaPage`) && await p.frame<boolean>(`!!${F}?.querySelector("[data-erga-id]")`), 10_000);
   // The page's own fonts too: text measured before they load moves when they do.
-  await p.eval(`document.getElementById("frame").contentDocument.fonts.ready.then(() => true)`);
+  await p.frame(`${F}.fonts.ready.then(() => true)`);
   await p.settle();
   const s = {
     ...tab(p),
@@ -70,18 +70,18 @@ async function htmlScenario(browser: Browser) {
   const s = await session(browser, "page", "index.html");
   const { p, F } = s;
   check("page rendered with units", (await s.count("[data-erga-id]")) >= 9);
-  await p.eval(`${F}.body.style.background = "rgb(243, 236, 220)"`);
+  await p.frame(`${F}.body.style.background = "rgb(243, 236, 220)"`);
   check("the shell's canvas follows the page's background", await until(async () => await p.eval<string>(`getComputedStyle(document.documentElement).backgroundColor`) == "rgb(243, 236, 220)" && await p.eval<boolean>(`document.documentElement.classList.contains("page-light")`)));
-  await p.eval(`${F}.body.style.background = ""`);
-  check("widget button is a plain button", await p.eval<boolean>(`!${F}.getElementById("bump").closest("[contenteditable]")`));
-  check("units are the editing hosts", await p.eval<boolean>(`${F}.body.getAttribute("contenteditable") == null && ${F}.querySelector("h1").getAttribute("contenteditable") == "true"`));
+  await p.frame(`${F}.body.style.background = ""`);
+  check("widget button is a plain button", await p.frame<boolean>(`!${F}.getElementById("bump").closest("[contenteditable]")`));
+  check("units are the editing hosts", await p.frame<boolean>(`${F}.body.getAttribute("contenteditable") == null && ${F}.querySelector("h1").getAttribute("contenteditable") == "true"`));
 
   // Clicking non-editable content places no caret and does not move the model's selection.
   const before = await p.eval<string>("JSON.stringify(ergaPage.state.selection.main)");
   const box = await s.rectOf("#stats", 0.9);
   await p.click(box.x, box.y);
   await Bun.sleep(100);
-  check("clicking a widget area focuses nothing", await p.eval<boolean>(`!${F}.activeElement || ${F}.activeElement == ${F}.body`));
+  check("clicking a widget area focuses nothing", await p.frame<boolean>(`!${F}.activeElement || ${F}.activeElement == ${F}.body`));
   check("and leaves the selection alone", (await p.eval<string>("JSON.stringify(ergaPage.state.selection.main)")) == before);
 
   await s.clickEnd("h1");
@@ -91,10 +91,10 @@ async function htmlScenario(browser: Browser) {
   // Arrow keys cross into the next unit.
   await p.key("ArrowRight");
   await Bun.sleep(60);
-  check("ArrowRight at the end enters the next paragraph", await p.eval<boolean>(`${F}.activeElement.matches("p.lede")`));
+  check("ArrowRight at the end enters the next paragraph", await p.frame<boolean>(`${F}.activeElement.matches("p.lede")`));
   await p.key("ArrowUp");
   await Bun.sleep(60);
-  check("ArrowUp returns to the heading", await p.eval<boolean>(`${F}.activeElement.matches("h1")`));
+  check("ArrowUp returns to the heading", await p.frame<boolean>(`${F}.activeElement.matches("h1")`));
   check("typing updates the source", (await s.source()).includes("<h1>Launch notes v2</h1>"));
   check("saved to disk", await waitFor(() => s.disk().includes("<h1>Launch notes v2</h1>")));
 
@@ -139,7 +139,7 @@ async function htmlScenario(browser: Browser) {
   await Bun.sleep(100);
   check("⌘B again unwraps", /<li>A <strong>new<\/strong> editor<\/li>/.test(await s.source()));
 
-  check("svg text is not editable", await p.eval<boolean>(`!${F}.querySelector("svg text").closest("[data-erga-id]")`));
+  check("svg text is not editable", await p.frame<boolean>(`!${F}.querySelector("svg text").closest("[data-erga-id]")`));
   await s.clickEnd("pre");
   await p.type(" // ok");
   await Bun.sleep(100);
@@ -150,7 +150,7 @@ async function htmlScenario(browser: Browser) {
   check("disk edits reach the page", await until(async () => (await s.textOf("figcaption")) == "Where the leads went."));
   const marks = s.marks;
   let m = await marks();
-  check("disk edits patch the page in place", (await s.count("[data-erga-id]")) >= 9 && !(await p.eval<boolean>(`!!${F}.querySelector("figcaption.erga-flash")`)));
+  check("disk edits patch the page in place", (await s.count("[data-erga-id]")) >= 9 && !(await p.frame<boolean>(`!!${F}.querySelector("figcaption.erga-flash")`)));
   check("the added word is highlighted, exactly", m.added.join("|") == "went", JSON.stringify(m));
   check("the removed word is marked where it was, and who removed it", m.gone.join("|") == "Edited on diskgo", JSON.stringify(m));
   check("marks don't touch the page's text", (await s.textOf("figcaption")) == "Where the leads went.");
@@ -197,19 +197,19 @@ async function htmlScenario(browser: Browser) {
 
   // A change outside the text (a new diagram) can't be patched in: the page renders again on its own.
   s.write(s.disk().replace("<h2>What changed</h2>", `<svg id="diagram" width="80" height="20"><rect width="80" height="20" fill="#c00"/></svg>\n    <h2>What changed</h2>`));
-  check("a diagram added on disk shows up without a reload", await until(() => p.eval<boolean>(`!!${F}.getElementById("diagram")`)));
-  await until(() => p.eval<boolean>(`!!${F}.querySelector("[data-erga-id]")`));
+  check("a diagram added on disk shows up without a reload", await until(() => p.frame<boolean>(`!!${F}.getElementById("diagram")`)));
+  await until(() => p.frame<boolean>(`!!${F}.querySelector("[data-erga-id]")`));
   check("and the page still edits", (await s.count("[data-erga-id]")) >= 9);
 
   // Another file in the folder changes: the page renders again and picks it up.
   const css = join(s.dir, "style.css");
   writeFileSync(css, readFileSync(css, "utf8") + "\nh1 { letter-spacing: 3px; }\n");
-  check("a stylesheet change reaches the page", await until(() => p.eval<boolean>(`getComputedStyle(${F}.querySelector("h1")).letterSpacing == "3px"`)));
+  check("a stylesheet change reaches the page", await until(() => p.frame<boolean>(`getComputedStyle(${F}.querySelector("h1")).letterSpacing == "3px"`)));
 
   await p.key("p", MOD.Meta | MOD.Shift);
   check("source view shows the file", await until(async () => await p.eval<boolean>(`document.body.classList.contains("source")`) && (await s.source()).includes("Where leads go now.")));
   await p.key("p", MOD.Meta | MOD.Shift);
-  await until(() => p.eval<boolean>(`!document.body.classList.contains("source") && !!${F}.querySelector("h1[data-erga-id]")`));
+  await until(() => p.frame<boolean>(`!document.body.classList.contains("source") && !!${F}.querySelector("h1[data-erga-id]")`));
   await s.clickEnd("h1");
   check("no page errors", p.errors.length == 0, p.errors.join("\n"));
   await s.close();
@@ -346,7 +346,8 @@ async function formatScenario(browser: Browser) {
   const s = await session(browser, "page", "index.html");
   const { p, F } = s;
   // Select from inside <strong>new</strong> into the plain text after it.
-  const r = await p.eval<{ a: number; b: number; y: number }>(`(() => { const d = ${F}; const li = [...d.querySelectorAll("li")][1]; const st = li.querySelector("strong").firstChild, t = st.parentNode.nextSibling; const rg = d.createRange(); rg.setStart(st, 1); rg.setEnd(t, 4); const rs = rg.getClientRects(); const f = document.getElementById("frame").getBoundingClientRect(); return { a: f.left + rs[0].left + 1, b: f.left + rs[rs.length - 1].right - 1, y: f.top + rs[0].top + rs[0].height / 2 }; })()`);
+  const f = await frameAt(p);
+  const r = await p.frame<{ a: number; b: number; y: number }>(`(() => { const d = ${F}; const li = [...d.querySelectorAll("li")][1]; const st = li.querySelector("strong").firstChild, t = st.parentNode.nextSibling; const rg = d.createRange(); rg.setStart(st, 1); rg.setEnd(t, 4); const rs = rg.getClientRects(); const f = ${JSON.stringify(f)}; return { a: f.x + rs[0].left + 1, b: f.x + rs[rs.length - 1].right - 1, y: f.y + rs[0].top + rs[0].height / 2 }; })()`);
   await p.drag(r.a, r.y, r.b, r.y);
   check("selecting text shows the style bar", await until(() => p.eval<boolean>(`!document.getElementById("fmt").hidden`)));
   await p.key("b", MOD.Meta);
@@ -367,7 +368,7 @@ async function formatScenario(browser: Browser) {
   check("⌘\\ takes every style off the selection", (await s.source()).includes('<p class="lede">Build cool things &amp; ship them. This paragraph has a link and code.</p>'), (await s.source()).match(/<p class="lede">.*<\/p>/)?.[0]);
   await p.key("z", MOD.Meta);
   await Bun.sleep(150);
-  const ew = await p.eval<{ a: number; b: number; y: number }>(`(() => { const d = ${F}; const t = [...d.querySelectorAll("li")][1].querySelector("strong").firstChild; const rg = d.createRange(); rg.setStart(t, 1); rg.setEnd(t, 3); const r = rg.getBoundingClientRect(); const f = document.getElementById("frame").getBoundingClientRect(); return { a: f.left + r.left + 1, b: f.left + r.right - 1, y: f.top + r.top + r.height / 2 }; })()`);
+  const ew = await p.frame<{ a: number; b: number; y: number }>(`(() => { const d = ${F}; const t = [...d.querySelectorAll("li")][1].querySelector("strong").firstChild; const rg = d.createRange(); rg.setStart(t, 1); rg.setEnd(t, 3); const r = rg.getBoundingClientRect(); const f = ${JSON.stringify(f)}; return { a: f.x + r.left + 1, b: f.x + r.right - 1, y: f.y + r.top + r.height / 2 }; })()`);
   await p.drag(ew.a, ew.y, ew.b, ew.y);
   await until(() => p.eval<boolean>(`!document.getElementById("fmt").hidden`));
   await p.eval(`document.querySelector("#fmt [data-act=clear]").click()`);
@@ -437,7 +438,8 @@ async function formatScenario(browser: Browser) {
   await p.eval(`document.querySelector("#mode [data-mode=md]").click()`);
   await until(() => p.eval<boolean>(`!!document.querySelector("#source .cm-content")`));
   await p.settle();
-  check("the Markdown view is as wide as the page's text column", await p.eval<boolean>(`(() => { const c = document.querySelector("#source .cm-content").getBoundingClientRect().width; const h = document.getElementById("frame").contentDocument.querySelector("h1").getBoundingClientRect().width; return Math.abs(c - h) < 4; })()`));
+  const h1Width = await p.frame<number>(`${F}.querySelector("h1").getBoundingClientRect().width`);
+  check("the Markdown view is as wide as the page's text column", await p.eval<boolean>(`Math.abs(document.querySelector("#source .cm-content").getBoundingClientRect().width - ${h1Width}) < 4`));
   check("an HTML file's Markdown view is read-only and says so", (await p.eval<string>(`document.querySelector("#source .cm-content").getAttribute("contenteditable")`)) == "false" && !(await p.eval<boolean>(`document.getElementById("mode-note").hidden`)) && (await p.eval<string>(`document.querySelector("#source .cm-content").textContent`)).includes("# Launch notes"));
   await p.eval(`document.querySelector("#mode [aria-checked=true]").click()`); await Bun.sleep(100);
   await p.eval(`document.querySelector("#mode [data-mode=html]").click()`); await until(() => p.eval<boolean>(`!!document.querySelector("#source .cm-content") && document.querySelector("#source .cm-content").getAttribute("contenteditable") == "true"`)); await p.settle();
@@ -456,7 +458,7 @@ async function lightOnlyScenario(browser: Browser) {
   const { p, F } = s;
   await p.send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-color-scheme", value: "dark" }] });
   await p.settle(); await p.settle();
-  check("the Markdown page stays light", (await p.eval<string>(`getComputedStyle(${F}.body).backgroundColor`)) == "rgb(255, 255, 255)");
+  check("the Markdown page stays light", (await p.frame<string>(`getComputedStyle(${F}.body).backgroundColor`)) == "rgb(255, 255, 255)");
   check("and so does the shell", (await p.eval<string>(`getComputedStyle(document.documentElement).backgroundColor`)) == "rgb(255, 255, 255)");
   check("there is no theme toggle", !(await p.eval<boolean>(`!!document.getElementById("btn-theme")`)));
   await s.close();
@@ -479,9 +481,9 @@ async function agentEmptyScenario(browser: Browser) {
   // A re-render (here, a stylesheet changing) doesn't pull focus out of the agent's input.
   await p.eval(`document.getElementById("agent-input").focus()`);
   writeFileSync(join(s.dir, "style.css"), readFileSync(join(s.dir, "style.css"), "utf8") + "\nh1 { color: rgb(1, 2, 3); }\n");
-  await until(() => p.eval<boolean>(`getComputedStyle(document.getElementById("frame").contentDocument.querySelector("h1")).color == "rgb(1, 2, 3)"`));
+  await until(() => p.frame<boolean>(`getComputedStyle(${F}.querySelector("h1")).color == "rgb(1, 2, 3)"`));
   await p.settle();
-  check("a page re-render leaves focus in the agent's input", (await p.eval<string>(`getComputedStyle(document.getElementById("frame").contentDocument.querySelector("h1")).color`)) == "rgb(1, 2, 3)" && (await p.eval<string>(`document.activeElement.id`)) == "agent-input");
+  check("a page re-render leaves focus in the agent's input", (await p.frame<string>(`getComputedStyle(${F}.querySelector("h1")).color`)) == "rgb(1, 2, 3)" && (await p.eval<string>(`document.activeElement.id`)) == "agent-input");
 
   // The box grows with its text, and the height eases rather than snapping.
   const grow = await p.eval<number[]>(`new Promise((res) => { const f = document.getElementById("agent-field"), t = document.getElementById("agent-input"); const out = [f.getBoundingClientRect().height]; t.value += "\\ntwo\\nthree"; t.dispatchEvent(new Event("input")); let n = 0; const tick = () => { out.push(f.getBoundingClientRect().height); if (++n < 20) requestAnimationFrame(tick); else res(out); }; requestAnimationFrame(tick); })`);
@@ -526,8 +528,8 @@ async function strayTagScenario(browser: Browser) {
   const TS = 0.4, T = (ms: number) => ms * TS;
   const s = await session(browser, "stray", "index.html", {}, "", TS);
   const { p, F } = s;
-  check("the malformed paragraph is locked", await p.eval<boolean>(`${F}.querySelector(".box p").classList.contains("erga-locked")`));
-  check("its neighbours aren't", await p.eval<boolean>(`!${F}.querySelector(".box h4").classList.contains("erga-locked") && !${F}.querySelector("body > p").classList.contains("erga-locked")`));
+  check("the malformed paragraph is locked", await p.frame<boolean>(`${F}.querySelector(".box p").classList.contains("erga-locked")`));
+  check("its neighbours aren't", await p.frame<boolean>(`!${F}.querySelector(".box h4").classList.contains("erga-locked") && !${F}.querySelector("body > p").classList.contains("erga-locked")`));
   const before = await s.source();
   const r = await s.rectOf(".box p", 0.3);
   await p.click(r.x, r.y);
@@ -563,8 +565,8 @@ async function noEditScenario(browser: Browser) {
   say("\nNo-edit parts");
   const s = await session(browser, "noedit", "index.html");
   const { p, F } = s;
-  check("a no-edit section has no editable text", await p.eval<boolean>(`[...${F}.querySelectorAll(".fixed h2, .fixed p")].every((e) => !e.hasAttribute("data-erga-id") && !e.isContentEditable)`));
-  check("a no-edit span inside a paragraph is fenced off", await p.eval<boolean>(`${F}.querySelector(".free").isContentEditable && !${F}.querySelector(".count").isContentEditable`));
+  check("a no-edit section has no editable text", await p.frame<boolean>(`[...${F}.querySelectorAll(".fixed h2, .fixed p")].every((e) => !e.hasAttribute("data-erga-id") && !e.isContentEditable)`));
+  check("a no-edit span inside a paragraph is fenced off", await p.frame<boolean>(`${F}.querySelector(".free").isContentEditable && !${F}.querySelector(".count").isContentEditable`));
   const before = await s.source();
   const r = await s.rectOf(".fixed p", 0.3);
   await p.click(r.x, r.y);
@@ -651,7 +653,7 @@ async function pauseScenario(browser: Browser) {
   const s = await session(browser, "pause", "index.html");
   const { p, F } = s;
   const btn = () => p.eval<{ disabled: string | null; pressed: string | null }>(`(() => { const b = document.getElementById("btn-pause"); return { disabled: b.getAttribute("aria-disabled"), pressed: b.getAttribute("aria-pressed") }; })()`);
-  const slide = () => p.eval<number>(`${F}.defaultView.slide`);
+  const slide = () => p.frame<number>(`${F}.defaultView.slide`);
   check("a page with window.ergaPause can be paused", (await btn()).disabled == "false", await btn());
   await s.clickEnd("h1");
   check("live, a click on its text drives the page", await until(async () => (await slide()) == 2), await slide());

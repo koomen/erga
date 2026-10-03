@@ -4,7 +4,7 @@
 // a tab riding out a restart, and a refused tab saying so.
 
 import { Browser, MOD, type Page } from "../../cdp";
-import { tab } from "../../tab";
+import { F, W, tab } from "../../tab";
 import { Participant } from "../client";
 import { expect, sleep, until, type Ctx, type Test } from "../harness";
 import type { Doc } from "../target";
@@ -30,15 +30,15 @@ async function open(ctx: Ctx, d: Doc, user: string) {
     await p.send("Network.setExtraHTTPHeaders", { headers });
   }
   await p.open(d.pageUrl(user), { clear: false, width: 1100, height: 800 });
-  await until(() => p.eval<boolean>(`!!window.ergaPage && !!document.getElementById("frame").contentDocument?.querySelector("[data-erga-id]")`), 10_000, `${user}'s page renders`);
-  await p.eval(`document.getElementById("frame").contentDocument.fonts.ready.then(() => true)`);
+  await until(async () => await p.eval<boolean>(`!!window.ergaPage`) && await p.frame<boolean>(`!!${F}?.querySelector("[data-erga-id]")`), 10_000, `${user}'s page renders`);
+  await p.frame(`${F}.fonts.ready.then(() => true)`);
   await p.settle();
   return tab(p);
 }
 
-const peerNames = (t: ReturnType<typeof tab>) => t.p.eval<string>(`[...${t.F}.querySelectorAll("erga-peer-name")].map((e) => e.textContent).join("|")`);
+const peerNames = (t: ReturnType<typeof tab>) => t.frame<string>(`[...${F}.querySelectorAll("erga-peer-name")].map((e) => e.textContent).join("|")`);
 /** Whether a caret drawn on the page sits in the element. */
-const caretIn = (t: ReturnType<typeof tab>, selector: string) => t.p.eval<boolean>(`(() => { const w = document.getElementById("frame").contentWindow, r = ${t.F}.querySelector(${JSON.stringify(selector)}).getBoundingClientRect(); return [...${t.F}.querySelectorAll("erga-peer")].some((c) => { const y = parseFloat(c.style.top) - w.scrollY; return y >= r.top - 2 && y < r.bottom; }); })()`);
+const caretIn = (t: ReturnType<typeof tab>, selector: string) => t.frame<boolean>(`(() => { const w = ${W}, r = ${F}.querySelector(${JSON.stringify(selector)}).getBoundingClientRect(); return [...${F}.querySelectorAll("erga-peer")].some((c) => { const y = parseFloat(c.style.top) - w.scrollY; return y >= r.top - 2 && y < r.bottom; }); })()`);
 const noErrors = (t: ReturnType<typeof tab>, who: string) => expect(t.p.errors.length == 0, `no page errors (${who})`, t.p.errors);
 
 export const browserTests: Test[] = [
@@ -50,11 +50,11 @@ export const browserTests: Test[] = [
       const [a, b] = [await open(ctx, d, "Ada"), await open(ctx, d, "Bo")];
       const tips = (t: typeof a) => t.p.eval<string[]>(`[...document.querySelectorAll("#people .avatar")].map((e) => e.dataset.tip)`);
       await until(async () => (await tips(a)).some((t) => t.startsWith("Bo")) && (await tips(b)).some((t) => t.startsWith("Ada")), 3000, "each sees the other at the top", async () => [await tips(a), await tips(b)]);
-      await b.p.eval(`document.getElementById("frame").contentWindow.__marker = 1`);
+      await b.frame(`${W}.__marker = 1`);
       await a.clickEnd("h1");
       await a.p.type(" (draft)");
       await until(async () => (await b.textOf("h1")) == (await a.textOf("h1")), 3000, "Bo's page shows Ada's typing");
-      expect(await b.p.eval<boolean>(`document.getElementById("frame").contentWindow.__marker == 1`), "without a reload");
+      expect(await b.frame<boolean>(`${W}.__marker == 1`), "without a reload");
       const m = await b.marks();
       expect(m.added.join("").includes("(draft)") && m.names.every((n) => /^erga-a\d+-/.test(n)), "marked in Ada's colour", m);
       await until(async () => (await peerNames(b)) == "Ada", 3000, "Ada's caret shows on Bo's page");
@@ -89,9 +89,10 @@ export const browserTests: Test[] = [
       await a.clickEnd("figcaption");
       await b.clickEnd("li:first-child");
       for (const [x, y] of [["1", "4"], ["2", "5"], ["3", "6"]]) { await a.p.type(x); await b.p.type(y); }
-      await until(async () => (await a.source()) == (await b.source()), 3000, "the tabs converge");
+      // A keystroke reaches the room a moment after it shows (bridge.ts: one offered against an older version goes round again), so wait for all of it.
+      const both = (t: string) => t.includes("go.123</figcaption>") && /<li>[^<]*456<\/li>/.test(t);
+      await until(async () => { const t = await a.source(); return both(t) && t == (await b.source()); }, 3000, "the tabs converge, with both people's typing", async () => (await a.source()).match(/<figcaption>.*?<\/figcaption>|<li>.*?<\/li>/g));
       const s = await a.source();
-      expect(s.includes("go.123</figcaption>") && /<li>[^<]*456<\/li>/.test(s), "both people's typing is there", s.match(/<figcaption>.*?<\/figcaption>|<li>.*?<\/li>/g));
       await until(async () => (await d.stored(d.path))?.text == s, 5000, "and stored");
       await b.p.key("z", MOD.Meta);
       await until(async () => !(await a.source()).includes("456"), 3000, "Bo's ⌘Z takes his typing back, for Ada too");
@@ -215,7 +216,7 @@ export const browserTests: Test[] = [
       const broken = s.text.replace("Where the leads go.", "Where the</h2> leads go.");
       expect(broken != s.text, "the fixture has the sentence");
       expect((await d.push(d.path, broken, s.etag)).ok, "the broken markup is published");
-      await until(() => a.p.eval<boolean>(`!!${a.F}.querySelector("figcaption.erga-locked")`), 5000, "the paragraph locks");
+      await until(() => a.frame<boolean>(`!!${F}.querySelector("figcaption.erga-locked")`), 5000, "the paragraph locks");
       const r = await a.rectOf("figcaption", 0.2);
       await a.p.click(r.x, r.y);
       await until(() => a.p.eval<boolean>(`!!document.querySelector("#toast.show .toast-fix")`), 2000, "the note offers a fix");

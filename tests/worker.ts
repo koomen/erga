@@ -69,7 +69,8 @@ try {
   // An edit does: the list takes its heading as the title, and it stays.
   ada.edit((t) => { const i = t.toString().indexOf("<h1>Untitled"); t.delete(i + 4, 8); t.insert(i + 4, "Field &amp; notes"); });
   await until(async () => (list = await docs()).includes(">Field &amp; notes<"), 5000, "the list shows the new title", () => list);
-  expect(!list.slice(list.indexOf(`/${login}/${blank}"`)).split("</li>")[0].includes("Unedited"), "an edited document isn't marked unedited");
+  // The title and the edit's time are recorded separately, so the mark can go a moment after the title changes.
+  await until(async () => !(list = await docs()).slice(list.indexOf(`/${login}/${blank}"`)).split("</li>")[0].includes("Unedited"), 5000, "an edited document isn't marked unedited", () => list);
   ok("an edit retitles the document in the list, and keeps it");
 
   // Nobody edits it: it goes on time. One that's edited, or open, stays.
@@ -84,6 +85,22 @@ try {
   expect(!list.includes(`/${login}/${gone}"`) && list.includes(`/${login}/${kept}"`), "the list follows", list);
   ok("an unedited document is deleted on time; edited or open ones stay");
   for (const p of [ada, bo, cy]) p.destroy();
+
+  // The page runs on the document's own origin: the editor names it, with a token that opens the document's files there.
+  // (Browsers send <anything>.localhost to this machine; Bun's fetch doesn't, so it's told the host instead.)
+  const pagesFetch = (u: string) => { const url = new URL(u); return url.hostname.endsWith(".localhost") ? fetch(u.replace(url.host, `localhost:${url.port}`), { headers: { Host: url.host } }) : fetch(u); };
+  const editorHtml = await (await get(`/${login}/${blank}`)).text();
+  const pagesUrl = /<meta name="erga-pages" content="([^"]+)">/.exec(editorHtml)?.[1] ?? "";
+  const pages = pagesUrl ? new URL(pagesUrl) : null;
+  expect(!!pages && pages.hostname.startsWith(`${blank}-${login}.`) && pages.origin != new URL(base).origin, "the editor names the document's own origin", pagesUrl);
+  const frameDoc = await pagesFetch(pagesUrl);
+  expect(frameDoc.status == 200 && (frameDoc.headers.get("content-security-policy") ?? "").includes(`frame-ancestors ${new URL(base).origin}`), "which serves the page editor's frame, only to this site", frameDoc.headers.get("content-security-policy"));
+  expect((await (await pagesFetch(`${pagesUrl}doc/index.html`)).text()) == (await (await get(`/${login}/${blank}/doc/index.html`)).text()), "and the document's files, without a cookie");
+  const forged = pagesUrl.replace(/\/t\/([^/.]+)\.[^/]+\//, "/t/$1.forged/");
+  expect((await pagesFetch(`${forged}doc/index.html`)).status == 403, "a forged token opens nothing");
+  expect((await pagesFetch(`${pages!.origin.replace(blank, "aaaaaaaa")}${pages!.pathname}doc/index.html`)).status == 403, "nor does a good one, at another document's origin");
+  expect((await pagesFetch(`${pages!.origin}/docs`)).status == 404, "and none of this site's own pages are there");
+  ok("a document's page runs on its own origin, whose files open only with the editor's token");
 
   // Another site can't make documents for you: its link gets a button instead, which posts from here.
   const before = await docs();

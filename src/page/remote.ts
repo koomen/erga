@@ -40,7 +40,7 @@ export interface RemotePageConfig {
   onStale: () => void;
 }
 
-const EMPTY: Snapshot = { title: "", canPause: false, paused: false, fmt: { rect: null, blocker: null, has: { strong: false, em: false, code: false }, link: null } };
+const EMPTY: Snapshot = { title: "", column: 0, canPause: false, paused: false, fmt: { rect: null, blocker: null, has: { strong: false, em: false, code: false }, link: null } };
 
 export class RemotePage {
   /** The text and the page's selection, as the shell (and the room) has them. */
@@ -167,14 +167,14 @@ export class RemotePage {
    * Hands the text to the source view: the frame's state, undo history and
    * all, once its edits are in. Until `attach`, the shell's text is the source view's.
    */
-  async detach(): Promise<{ state: EditorState; column: number }> {
+  async detach(): Promise<{ state: EditorState }> {
     const id = this.nextId++;
     const reply = await this.request<Extract<FromFrame, { type: "detached" }>>({ type: "detach", id }, 3000);
     this.detached = true;
     const fallback = () => EditorState.create({ doc: this.state.doc, selection: this.state.selection, extensions: this.config.extensions });
-    if (!reply) return { state: fallback(), column: 0 };
+    if (!reply) return { state: fallback() };
     let state: EditorState;
-    try { state = EditorState.fromJSON(reply.state, { extensions: this.config.extensions }, { history: historyField }); } catch { return { state: fallback(), column: 0 }; }
+    try { state = EditorState.fromJSON(reply.state, { extensions: this.config.extensions }, { history: historyField }); } catch { return { state: fallback() }; }
     // Anything the frame hadn't seen yet when it answered.
     const missed = typeof reply.version == "number" ? this.authority.since(reply.version) : null;
     if (missed) for (const changes of missed) {
@@ -185,7 +185,7 @@ export class RemotePage {
       // Out of step: keep the history if the text can be brought in line, else start from the shell's text.
       try { state = state.update({ changes: changesBetween(state.doc.toString(), this.state.doc.toString()), annotations: Transaction.addToHistory.of(false) }).state; } catch { state = fallback(); }
     }
-    return { state, column: Number.isFinite(reply.column) ? reply.column : 0 };
+    return { state };
   }
 
   /** Back from the source view: the page carries on from its state. */
@@ -210,6 +210,8 @@ export class RemotePage {
     return true;
   }
   title(): string { return this.snapshot.title; }
+  /** The width of the page's text column. */
+  get column(): number { return this.snapshot.column; }
   render(): void { this.post({ type: "render" }); }
   focus(): void { this.frame.focus(); this.post({ type: "focus" }); }
   reveal(pos: number): void { this.post({ type: "reveal", pos }); }
@@ -245,7 +247,7 @@ export class RemotePage {
 
 function isSnapshot(s: unknown): s is Snapshot {
   const v = s as Snapshot;
-  return !!v && typeof v.title == "string" && typeof v.canPause == "boolean" && typeof v.paused == "boolean" && !!v.fmt && typeof v.fmt.has == "object"
+  return !!v && typeof v.title == "string" && Number.isFinite(v.column) && typeof v.canPause == "boolean" && typeof v.paused == "boolean" && !!v.fmt && typeof v.fmt.has == "object"
     && (v.fmt.rect == null || ["left", "top", "width", "bottom"].every((k) => Number.isFinite((v.fmt.rect as Record<string, number>)[k])))
     && (v.fmt.blocker == null || typeof v.fmt.blocker == "string") && (v.fmt.link == null || typeof v.fmt.link == "string");
 }

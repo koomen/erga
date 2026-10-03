@@ -55,6 +55,8 @@ export interface Fmt {
 /** The page's state, as the shell shows it in its own controls. */
 export interface Snapshot {
   title: string;
+  /** The width of the page's text column, so the Markdown views can match it. */
+  column: number;
   canPause: boolean;
   paused: boolean;
   fmt: Fmt;
@@ -102,7 +104,7 @@ export type FromFrame =
   | { type: "key"; keys: Keys }
   | { type: "pointer"; kind: "move" | "down" | "up"; x: number; y: number }
   | { type: "activity"; kind: "focus" | "key" }
-  | { type: "detached"; id: number; state: unknown; version: number; column: number }
+  | { type: "detached"; id: number; state: unknown; version: number }
   | { type: "styled"; id: number; why: string | null }
   | { type: "captured"; id: number; result: ViewResult };
 

@@ -838,11 +838,8 @@ Once you've read it, await further instructions.`;
       page.attach(st);
     }
     let handed: EditorState | null = null;
-    if (next == info!.kind) {
-      const { state: st, column } = await page.detach();
-      handed = st;
-      if (column) setColumn(column);
-    }
+    if (next == info!.kind) handed = (await page.detach()).state;
+    if (next != "text") setColumn(page.column);
     mode = next;
     if (next == "text") {
       $("source").hidden = true;

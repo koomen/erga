@@ -2,6 +2,7 @@
 //   bun tests/multi-shot.ts
 import { Browser, ROOT, SHOTS } from "./cdp";
 import { startHost } from "./host";
+import { F, frameAt } from "./tab";
 import { cpSync, mkdirSync, mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -11,11 +12,11 @@ cpSync(`${ROOT}tests/fixtures/page`, dir, { recursive: true });
 const host = await startHost(dir);
 const browser = await Browser.launch();
 try {
-  const F = `document.getElementById("frame").contentDocument`;
   const open = async (user: string) => { const p = await browser.page(); await p.open(`${host.base}/?user=${user}`, { clear: false, width: 1100, height: 700 }); await Bun.sleep(600); return p; };
   const ada = await open("Ada"), bo = await open("Bo");
   const clickEnd = async (p: typeof ada, sel: string) => {
-    const r = await p.eval<{ x: number; y: number }>(`(() => { const r = ${F}.querySelector(${JSON.stringify(sel)}).getBoundingClientRect(); const f = document.getElementById("frame").getBoundingClientRect(); return { x: f.left + r.right - 2, y: f.top + r.top + r.height / 2 }; })()`);
+    const f = await frameAt(p);
+    const r = await p.frame<{ x: number; y: number }>(`(() => { const r = ${F}.querySelector(${JSON.stringify(sel)}).getBoundingClientRect(); return { x: ${f.x} + r.right - 2, y: ${f.y} + r.top + r.height / 2 }; })()`);
     await p.click(r.x, r.y);
     await Bun.sleep(80);
   };

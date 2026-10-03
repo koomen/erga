@@ -2,12 +2,12 @@
 # Runs the tests, as fast as they'll go: test files run at the same time, and
 # each prints its own block when it finishes.
 #
-#   ./test.sh         unit tests, tests/page.ts, the front door's routes
+#   ./test.sh         unit tests, tests/page.ts, a page trying to reach its
+#                     viewer (tests/isolation.ts), the front door's routes
 #                     (tests/worker.ts, on the local host) and the multiplayer suite
 #
-# Not here, run by hand: tests/agent.ts (the real model, costs a little),
-# tests/suite/run.ts --long (bigger, slower, real idle-eviction waits) and
-# tests/scripts-gate.ts (needs the Worker: bun run dev:worker).
+# Not here, run by hand: tests/agent.ts (the real model, costs a little)
+# and tests/suite/run.ts --long (bigger, slower, real idle-eviction waits).
 set -euo pipefail
 cd "$(dirname "$0")"
 start=$(date +%s)
@@ -25,6 +25,7 @@ run() { # run NAME CMD...: in the background, output to a file
 page_group() {
   run unit bun test tests/
   run page bun tests/page.ts
+  run isolation bun tests/isolation.ts
   run front bun tests/worker.ts --local
   # Latency is measured afterwards, alone: other tests running would skew it.
   run suite bun tests/suite/run.ts --skip latency

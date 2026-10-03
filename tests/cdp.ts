@@ -126,12 +126,24 @@ export class Page {
   onEvent(method: string, f: (params: any) => void) { this.listeners.set(method, [...(this.listeners.get(method) ?? []), f]); }
   errors: string[] = [];
   ready: Promise<void>;
+  /** Frames on other sites (each its own DevTools session), as auto-attached after `open`. */
+  private frames = new Set<string>();
+  /** The one among them that holds the page editor (frame.ts), once found. */
+  private editorFrame: string | null = null;
 
   constructor(url: string) {
     this.ws = new WebSocket(url);
     this.ws.onmessage = (m) => {
       const d = JSON.parse(m.data as string);
-      if (d.method) for (const f of this.listeners.get(d.method) ?? []) f(d.params);
+      // Events from a frame's session are only collected for errors, below; the page's own listeners don't see them.
+      if (d.method && !d.sessionId) for (const f of this.listeners.get(d.method) ?? []) f(d.params);
+      if (d.method == "Target.attachedToTarget" && d.params.targetInfo.type == "iframe") {
+        this.frames.add(d.params.sessionId);
+        this.send("Runtime.enable", {}, 10_000, d.params.sessionId).catch(() => {});
+      } else if (d.method == "Target.detachedFromTarget") {
+        this.frames.delete(d.params.sessionId);
+        if (this.editorFrame == d.params.sessionId) this.editorFrame = null;
+      }
       if (d.id && this.pending.has(d.id)) { this.pending.get(d.id)!(d); this.pending.delete(d.id); }
       else if (d.method == "Runtime.exceptionThrown") this.errors.push(d.params.exceptionDetails.exception?.description || d.params.exceptionDetails.text);
       else if (d.method == "Runtime.consoleAPICalled" && d.params.type == "error") this.errors.push("console.error: " + d.params.args.map((a: any) => a.value ?? a.description).join(" "));
@@ -140,24 +152,55 @@ export class Page {
   }
 
   /** A DevTools command; never waits forever (a stuck browser fails the test rather than hanging it). */
-  send(method: string, params: any = {}, timeoutMs = 30_000): Promise<any> {
+  send(method: string, params: any = {}, timeoutMs = 30_000, sessionId?: string): Promise<any> {
     return new Promise((resolve, reject) => {
       const i = ++this.id;
       const timer = setTimeout(() => { this.pending.delete(i); reject(new Error(`${method}: no answer from the browser in ${timeoutMs / 1000}s`)); }, timeoutMs);
       this.pending.set(i, (d) => { clearTimeout(timer); d.error ? reject(new Error(method + ": " + JSON.stringify(d.error))) : resolve(d.result); });
-      this.ws.send(JSON.stringify({ id: i, method, params }));
+      this.ws.send(JSON.stringify({ id: i, method, params, ...(sessionId ? { sessionId } : {}) }));
     });
   }
 
-  async eval<T = any>(expr: string): Promise<T> {
-    const r = await this.send("Runtime.evaluate", { expression: expr, returnByValue: true, awaitPromise: true });
+  async eval<T = any>(expr: string, sessionId?: string): Promise<T> {
+    const r = await this.send("Runtime.evaluate", { expression: expr, returnByValue: true, awaitPromise: true }, 30_000, sessionId);
     if (r.exceptionDetails) throw new Error("eval failed: " + (r.exceptionDetails.exception?.description || r.exceptionDetails.text) + "\n" + expr);
     return r.result.value;
+  }
+
+  /**
+   * Evaluates in the page editor's frame (frame.ts), which runs on the
+   * document's own origin, out of the shell's reach: `document` there is the
+   * frame's, and the page itself is `document.getElementById("page")`.
+   */
+  async frame<T = any>(expr: string): Promise<T> {
+    for (let tries = 0; ; tries++) {
+      const session = this.editorFrame ?? await this.findEditorFrame();
+      if (session) {
+        const r = await this.send("Runtime.evaluate", { expression: expr, returnByValue: true, awaitPromise: true }, 30_000, session).catch(() => null);
+        if (r) {
+          if (r.exceptionDetails) throw new Error("frame eval failed: " + (r.exceptionDetails.exception?.description || r.exceptionDetails.text) + "\n" + expr);
+          return r.result.value;
+        }
+        this.editorFrame = null; // gone (reloaded): look again
+      }
+      if (tries > 100) throw new Error("the page editor's frame never appeared");
+      await Bun.sleep(50);
+    }
+  }
+
+  private async findEditorFrame(): Promise<string | null> {
+    for (const s of this.frames) {
+      const ok = await this.eval<boolean>("!!window.ergaFrame", s).catch(() => false);
+      if (ok) return (this.editorFrame = s);
+    }
+    return null;
   }
 
   async open(url: string, opts: { width?: number; height?: number; dark?: boolean; clear?: boolean; doc?: string; scale?: number; timescale?: number } = {}) {
     await this.send("Runtime.enable");
     await this.send("Page.enable");
+    // The page editor's frame is on another site: its own session (see `frame`).
+    await this.send("Target.setAutoAttach", { autoAttach: true, waitForDebuggerOnStart: false, flatten: true });
     // The page editor's timers run this much faster (src/page/editor.ts, `ms`); kept across reloads.
     if (opts.timescale) await this.send("Page.addScriptToEvaluateOnNewDocument", { source: `window.__ergaTimescale = ${opts.timescale}` });
     await this.send("Emulation.setDeviceMetricsOverride", { width: opts.width ?? 1300, height: opts.height ?? 860, deviceScaleFactor: opts.scale ?? 1, mobile: false });
