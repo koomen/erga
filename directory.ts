@@ -1,8 +1,10 @@
-// The document directory: every document's address, title, owner and
-// members, in SQL (migrations/), on D1 (worker/d1.ts; locally, the dev
+// The directory: every document's address, title, owner and who may do what
+// with it, in SQL (migrations/), on D1 (worker/d1.ts; locally, the dev
 // server's D1). It sits behind the three-method `Sql` below, so the tests
 // run it on bun:sqlite. A document's content and live room stay with its own
-// host (a DocHost Durable Object).
+// host (a DocHost Durable Object, named by the document's id). The server's
+// users and admins (users.ts) and its settings (config.ts) are on the same
+// database, and reached through the directory: `dir.users`, `dir.config`.
 //
 // Addresses: /d/<id> always works. /<owner>/<slug> is the pretty, canonical
 // one; /<owner>/<id> and /<owner>/<an old slug> lead to it. A slug is unique
@@ -13,8 +15,23 @@
 // of the owner's documents takes that slug (as GitHub does with renamed
 // repositories).
 //
-// Whether someone may do something with a document is decided in one place,
-// `may`, so roles (members.role) can be enforced there later.
+// Permissions: a document has one owner (who made it, whose address it's
+// under), and may have editors and viewers; a permission for "*" is one for
+// anyone signed in who has the link. Whether someone may do something with
+// a document is decided in one place, `may`:
+//
+//   open           owner, editor, viewer
+//   edit, rename   owner, editor
+//   delete, share  owner
+//
+// Test people (signed in with a test token, hosted) may touch only test
+// documents, and those as editors of the documents of whoever minted their
+// token. Server admins get nothing on documents by being admins.
+
+import { ServerConfig } from "./config";
+import { NotAllowed, Users } from "./users";
+
+export { NotAllowed };
 
 /** What SQL a platform gives the directory (D1, bun:sqlite). Parameters are `?1`, `?2`... */
 export interface Sql {
@@ -36,8 +53,6 @@ export interface DocRow {
   titleSet: boolean;
   /** Someone set the slug: it no longer follows the title. */
   slugSet: boolean;
-  /** Its Durable Object's name (hosted): the id, or "<owner>/<id>" for documents made before the directory. */
-  doName: string;
   created: number;
   /** When a file last changed; null if never. */
   modified: number | null;
@@ -59,9 +74,23 @@ export interface DocName {
 }
 
 export type Role = "owner" | "editor" | "viewer";
-export type Action = "open" | "edit" | "rename" | "delete";
-/** Someone asking to do something: a login (lowercase), and whether they're a test person (who may touch only test documents). */
-export interface Who { login: string; test?: boolean }
+/** A role that can be given to someone (a document's owner is who made it, and stays so). */
+export type Grant = "editor" | "viewer";
+export type Action = "open" | "edit" | "rename" | "delete" | "share";
+/**
+ * Someone asking to do something: a login (lowercase), and whether they're a
+ * test person (who may touch only test documents), and if so whose test
+ * token signed them in (`by`, lowercase).
+ */
+export interface Who { login: string; test?: boolean; by?: string }
+/** The login a permission for anyone signed in (who has the link) is under. */
+export const ANYONE = "*";
+
+/** One person's (or anyone's, "*") permission on a document. */
+export interface Permission { login: string; role: Role; granted: number; grantedBy: string | null }
+
+const RANK: Record<Role, number> = { viewer: 1, editor: 2, owner: 3 };
+const ALLOWS: Record<Action, Role> = { open: "viewer", edit: "editor", rename: "editor", delete: "owner", share: "owner" };
 
 /** A rename that can't be done; the message says why, for a person or an agent to act on. */
 export class NameError extends Error {}
@@ -103,28 +132,40 @@ export interface NewDoc {
   slug?: string;
   titleSet?: boolean;
   slugSet?: boolean;
-  doName: string;
   created: number;
   modified?: number | null;
   expires?: number | null;
   test?: boolean;
+  /** A role for anyone signed in who has the link, from the start (local development's documents on disk). */
+  everyone?: Grant;
 }
 
-/** Where a request's document is: enough to reach its host and decide who may. None of it ever changes. */
-export interface Route { id: string; owner: string; doName: string; test: boolean }
+/** Where a request's document is: enough to reach its host (named by its id) and decide who may. None of it ever changes. */
+export interface Route { id: string; owner: string; test: boolean }
 
-interface Row { id: string; owner: string; slug: string; title: string; title_set: number; slug_set: number; do_name: string; created: number; modified: number | null; expires: number | null; test: number }
+interface Row { id: string; owner: string; slug: string; title: string; title_set: number; slug_set: number; created: number; modified: number | null; expires: number | null; test: number }
 const fromRow = (r: Row): DocRow => ({
   id: r.id, owner: r.owner, slug: r.slug, title: r.title, titleSet: !!r.title_set, slugSet: !!r.slug_set,
-  doName: r.do_name, created: Number(r.created), modified: r.modified == null ? null : Number(r.modified), expires: r.expires == null ? null : Number(r.expires), test: !!r.test,
+  created: Number(r.created), modified: r.modified == null ? null : Number(r.modified), expires: r.expires == null ? null : Number(r.expires), test: !!r.test,
 });
 const unique = (e: unknown) => /UNIQUE constraint failed|SQLITE_CONSTRAINT/i.test(String((e as Error)?.message ?? e));
 
 export class Directory {
   /** Routes by id (they never change), so a document's subrequests don't each ask the database. */
   private routes = new Map<string, Route>();
+  /** Who may sign in, and who's an admin. */
+  readonly users: Users;
+  /** The server's settings. */
+  readonly config: ServerConfig;
 
-  constructor(private sql: Sql) {}
+  /**
+   * `admins`: the deploy's bootstrap admins (users.ts). `locked`: settings
+   * the deploy fixes (config.ts).
+   */
+  constructor(private sql: Sql, opts: { admins?: Iterable<string>; locked?: Record<string, unknown> } = {}) {
+    this.users = new Users(sql, opts.admins);
+    this.config = new ServerConfig(sql, this.users, { locked: opts.locked });
+  }
 
   async get(id: string): Promise<DocRow | null> {
     const [row] = await this.sql.all<Row>("SELECT * FROM documents WHERE id = ?1", id);
@@ -137,7 +178,7 @@ export class Directory {
     if (known) return known;
     const doc = await this.get(id);
     if (!doc) return null;
-    const route = { id: doc.id, owner: doc.owner, doName: doc.doName, test: doc.test };
+    const route = { id: doc.id, owner: doc.owner, test: doc.test };
     if (this.routes.size > 10_000) this.routes.clear();
     this.routes.set(id, route);
     return route;
@@ -157,9 +198,8 @@ export class Directory {
   }
 
   /**
-   * Adds a document and its owner's membership. If one with that id is
-   * already there it's left as it is (so copying documents in twice is
-   * harmless), and `added` says so.
+   * Adds a document and its owner's permission. If one with that id is
+   * already there it's left as it is, and `added` says so.
    */
   async add(doc: NewDoc): Promise<{ doc: DocRow; added: boolean }> {
     const owner = doc.owner.toLowerCase();
@@ -173,10 +213,11 @@ export class Directory {
       try {
         await this.sql.batch([
           ["DELETE FROM slug_history WHERE owner = ?1 AND slug = ?2", owner, slug],
-          [`INSERT INTO documents (id, owner, slug, title, title_set, slug_set, do_name, created, modified, expires, test)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)`,
-            doc.id, owner, slug, title, doc.titleSet ? 1 : 0, doc.slugSet ? 1 : 0, doc.doName, doc.created, doc.modified ?? null, doc.expires ?? null, doc.test ? 1 : 0],
-          ["INSERT OR IGNORE INTO members (doc_id, user, role) VALUES (?1, ?2, 'owner')", doc.id, owner],
+          [`INSERT INTO documents (id, owner, slug, title, title_set, slug_set, created, modified, expires, test)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)`,
+            doc.id, owner, slug, title, doc.titleSet ? 1 : 0, doc.slugSet ? 1 : 0, doc.created, doc.modified ?? null, doc.expires ?? null, doc.test ? 1 : 0],
+          ["INSERT OR REPLACE INTO permissions (doc_id, login, role, granted, granted_by) VALUES (?1, ?2, 'owner', ?3, NULL)", doc.id, owner, Date.now()],
+          ...(doc.everyone ? [["INSERT OR REPLACE INTO permissions (doc_id, login, role, granted, granted_by) VALUES (?1, ?2, ?3, ?4, ?5)", doc.id, ANYONE, doc.everyone, Date.now(), owner] as Statement] : []),
         ]);
         return { doc: (await this.get(doc.id))!, added: true };
       } catch (e) {
@@ -284,45 +325,70 @@ export class Directory {
     this.routes.delete(id);
     await this.sql.batch([
       ["DELETE FROM slug_history WHERE doc_id = ?1", id],
-      ["DELETE FROM members WHERE doc_id = ?1", id],
+      ["DELETE FROM permissions WHERE doc_id = ?1", id],
       ["DELETE FROM documents WHERE id = ?1", id],
     ]);
   }
 
-  /** The documents someone is a member of (test documents aside), most recently edited first. */
-  async list(user: string): Promise<(DocRow & { role: Role })[]> {
+  /** The documents someone has a permission of their own on (test documents aside), most recently edited first. */
+  async list(login: string): Promise<(DocRow & { role: Role })[]> {
     const rows = await this.sql.all<Row & { role: Role }>(
-      `SELECT d.*, m.role FROM members m JOIN documents d ON d.id = m.doc_id
-       WHERE m.user = ?1 AND d.test = 0 ORDER BY COALESCE(d.modified, d.created) DESC`, user.toLowerCase());
+      `SELECT d.*, p.role FROM permissions p JOIN documents d ON d.id = p.doc_id
+       WHERE p.login = ?1 AND d.test = 0 ORDER BY COALESCE(d.modified, d.created) DESC`, login.toLowerCase());
     return rows.map((r) => ({ ...fromRow(r), role: r.role }));
   }
 
-  async role(id: string, user: string): Promise<Role | null> {
-    const [row] = await this.sql.all<{ role: Role }>("SELECT role FROM members WHERE doc_id = ?1 AND user = ?2", id, user.toLowerCase());
+  /** The role someone's own permission gives them ("*" for anyone's), not counting anyone's. */
+  async role(id: string, login: string): Promise<Role | null> {
+    const [row] = await this.sql.all<{ role: Role }>("SELECT role FROM permissions WHERE doc_id = ?1 AND login = ?2", id, login.toLowerCase());
     return row?.role ?? null;
   }
 
   /**
-   * Whether someone may do something with a document: every such decision
-   * comes here. For now anyone signed in who has the link may open, edit and
-   * rename a document (test people only test documents), and only its owner
-   * may delete it. Sharing will check members' roles here.
+   * What someone may do with a document, as a role: the better of their own
+   * permission and anyone's ("*"); a test person is an editor of their
+   * token's minter's test documents and nothing else. Null: nothing at all.
    */
-  async may(who: Who | null, action: Action, doc: { id: string; owner: string; test: boolean }): Promise<boolean> {
-    if (!who) return false;
-    if (who.test && !doc.test) return false;
-    switch (action) {
-      case "open": case "edit": case "rename": return true;
-      case "delete": return !who.test && ((await this.role(doc.id, who.login)) == "owner" || doc.owner == who.login.toLowerCase());
-    }
+  async access(who: Who | null, doc: { id: string; owner: string; test: boolean }): Promise<Role | null> {
+    if (!who) return null;
+    if (who.test) return doc.test && who.by != null && who.by.toLowerCase() == doc.owner ? "editor" : null;
+    const rows = await this.sql.all<{ role: Role }>("SELECT role FROM permissions WHERE doc_id = ?1 AND login IN (?2, ?3)", doc.id, who.login.toLowerCase(), ANYONE);
+    return rows.reduce<Role | null>((best, r) => (best && RANK[best] >= RANK[r.role] ? best : r.role), null);
   }
 
-  /** Whether `owner`'s old per-person list has been copied in (worker/index.ts). */
-  async backfilled(owner: string): Promise<boolean> {
-    return (await this.sql.all("SELECT 1 FROM backfills WHERE owner = ?1", owner.toLowerCase())).length > 0;
+  /** Whether someone may do something with a document: every such decision comes here (see the top of this file). */
+  async may(who: Who | null, action: Action, doc: { id: string; owner: string; test: boolean }): Promise<boolean> {
+    const role = await this.access(who, doc);
+    return role != null && RANK[role] >= RANK[ALLOWS[action]];
   }
-  async markBackfilled(owner: string): Promise<void> {
-    await this.sql.run("INSERT OR REPLACE INTO backfills (owner, at) VALUES (?1, ?2)", owner.toLowerCase(), Date.now());
+
+  /** Everyone with a permission on a document: its owner first, then by login ("*" first among the rest). */
+  async permissions(id: string): Promise<Permission[]> {
+    const rows = await this.sql.all<{ login: string; role: Role; granted: number; granted_by: string | null }>(
+      "SELECT login, role, granted, granted_by FROM permissions WHERE doc_id = ?1 ORDER BY role = 'owner' DESC, login", id);
+    return rows.map((r) => ({ login: r.login, role: r.role, granted: Number(r.granted), grantedBy: r.granted_by }));
+  }
+
+  /**
+   * Gives someone ("*": anyone signed in who has the link) a role on a
+   * document, or takes theirs away (null), as `who`, whom `may` must allow
+   * to share it. The owner's own permission can't be changed. Returns
+   * everyone's permissions now.
+   */
+  async share(who: Who, id: string, login: string, role: Grant | null): Promise<Permission[]> {
+    const doc = await this.get(id);
+    if (!doc) throw new NotAllowed("There's no such document.");
+    if (!(await this.may(who, "share", doc))) throw new NotAllowed("Only its owner can share a document.");
+    login = login.trim().toLowerCase();
+    if (login != ANYONE && !/^[a-z0-9][a-z0-9-]{0,38}$/.test(login)) throw new NotAllowed(`"${login}" isn't a login (or "*" for anyone with the link).`);
+    if (login == doc.owner) throw new NotAllowed("The owner's own permission can't be changed.");
+    if (role != null && role != "editor" && role != "viewer") throw new NotAllowed(`"${role}" isn't a role: editor or viewer.`);
+    if (role == null) await this.sql.run("DELETE FROM permissions WHERE doc_id = ?1 AND login = ?2", id, login);
+    else await this.sql.run(
+      `INSERT INTO permissions (doc_id, login, role, granted, granted_by) VALUES (?1, ?2, ?3, ?4, ?5)
+       ON CONFLICT (doc_id, login) DO UPDATE SET role = ?3, granted = ?4, granted_by = ?5`,
+      id, login, role, Date.now(), who.login.toLowerCase());
+    return this.permissions(id);
   }
 }
 

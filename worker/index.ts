@@ -7,8 +7,8 @@
 //
 //   /                          the demo, rendered, with an Edit button (and your documents, signed in)
 //   /new                       a blank document for you (signs you in first); /new?from=demo a copy of the demo
-//   /docs                      your documents (the directory, D1), latest edit first; POST /docs/delete, /docs/rename
-//   /<owner>/<slug>            the editor on that document (anyone signed in may edit); /d/<id>,
+//   /docs                      your documents (the directory, D1), latest edit first; POST /docs/delete, /docs/rename, /docs/share
+//   /<owner>/<slug>            the editor on that document (for those it's shared with); /d/<id>,
 //                              /<owner>/<id> and old slugs redirect here
 //   /d/<id>/<rest>             the document's own host: /api/..., /doc/..., the sockets (also under the other addresses)
 //   /auth/github[/callback]    signing in; /auth/logout signs out
@@ -23,14 +23,13 @@
 //   POST /__erga/link              makes (or finds) the document for a file or folder, for whoever's signed in
 //   /__erga/mirror/<id>            the WebSocket the document reaches its files on disk through
 
-import { idShaped, slugify, UNTITLED, type Directory, type Route } from "../directory";
+import { idShaped, slugify, type Route } from "../directory";
 import { frontDoor, OWNER, page, type Platform } from "../front";
-import { allowed, finishSignIn, isDev, mintTestToken, sessionOf, signOut, startSignIn, testSignIn } from "./auth";
+import { finishSignIn, isDev, mintTestToken, sessionOf, signOut, startSignIn, testSignIn } from "./auth";
 import { directoryOf } from "./d1";
 import type { Env } from "./env";
 
 export { DocHost } from "./doc-host";
-export { DocList } from "./doc-list";
 
 /** The templates' files, by template then path ("demo" → { "index.html": "..." }). Text files only. */
 const TEMPLATES: Record<string, Record<string, string>> = {};
@@ -59,18 +58,16 @@ export default {
 /**
  * The front door (front.ts) on Cloudflare: people sign in with GitHub, the
  * directory is in D1 (d1.ts), and a document is a Durable Object
- * (doc-host.ts) named by its id, or "<owner>/<id>" if it was made before the
- * directory (its row's do_name).
+ * (doc-host.ts) named by its id.
  */
 const platform = (env: Env): Platform => {
   const directory = directoryOf(env);
-  const host = (doc: Route) => env.DOCS.getByName(doc.doName);
+  const host = (doc: Route) => env.DOCS.getByName(doc.id);
   return {
     directory,
     sessionOf: (request) => sessionOf(env, request),
     templates: TEMPLATES,
     editor: (request) => env.ASSETS.fetch(new Request(new URL("/editor.html", request.url))),
-    mayCreate: (session, url) => allowed(env, session.login) || isDev(env, url),
     dev: (url) => isDev(env, url),
     // Locally (vite dev) each document's page runs on <id>-<owner>.localhost, which browsers send to this machine.
     pagesDomain: (url) => (url.hostname == "localhost" || url.hostname.endsWith(".localhost") || url.hostname == "127.0.0.1" ? "localhost" : "erga-pages.dev"),
@@ -80,10 +77,9 @@ const platform = (env: Env): Platform => {
       exists: (doc) => host(doc).exists(),
       delete: (doc) => host(doc).delete(),
       list: async (owner) => {
-        await backfill(env, directory, owner);
         return Promise.all((await directory.list(owner)).map(async (d) => {
           // In local development a document may be on disk: only it knows where.
-          const path = env.ERGA_LINK_SECRET ? await env.DOCS.getByName(d.doName).diskPath().catch(() => null) : null;
+          const path = env.ERGA_LINK_SECRET ? await env.DOCS.getByName(d.id).diskPath().catch(() => null) : null;
           return {
             id: d.id, owner: d.owner, slug: d.slug, title: d.title, titleSet: d.titleSet, slugSet: d.slugSet,
             created: d.created, modified: d.modified ?? d.created,
@@ -92,11 +88,6 @@ const platform = (env: Env): Platform => {
         }));
       },
       fetch: (doc, request) => host(doc).fetch(request),
-      // A document made before the directory is a Durable Object named "<owner>/<id>", which adds itself.
-      adopt: async (owner, id) => {
-        const doc = await env.DOCS.getByName(`${owner.toLowerCase()}/${id}`).register();
-        return doc && { id: doc.id, owner: doc.owner, doName: doc.doName, test: doc.test };
-      },
     },
   };
 };
@@ -118,14 +109,13 @@ async function linked(env: Env, request: Request, url: URL): Promise<Response> {
     // Whoever's signed in, unless the dev server names the owner (linking again what it linked last run).
     const owner = (body.owner ?? session?.login)?.toLowerCase();
     if (!owner || !OWNER.test(owner) || session?.test || !body.id || !idShaped(body.id) || !body.index || !body.path) return new Response("Bad link", { status: 400 });
-    const route = await directory.route(body.id);
-    const doc = await env.DOCS.getByName(route?.doName ?? body.id).link(owner, body.id, body.index, { path: body.path, slug: slugify(body.slug ?? "") || "untitled", only: !!body.only });
+    const doc = await env.DOCS.getByName(body.id).link(owner, body.id, body.index, { path: body.path, slug: slugify(body.slug ?? "") || "untitled", only: !!body.only });
     return Response.json({ owner: doc.owner, id: doc.id, slug: doc.slug });
   }
   const [, id] = /^\/__erga\/mirror\/([^/]+)$/.exec(url.pathname) ?? [];
   const route = id && idShaped(id) ? await directory.route(id) : null;
   if (!route || request.headers.get("upgrade")?.toLowerCase() != "websocket") return new Response("Not found", { status: 404 });
-  return env.DOCS.getByName(route.doName).fetch(new Request(new URL(`/api/mirror${url.search}`, url.origin), request));
+  return env.DOCS.getByName(route.id).fetch(new Request(new URL(`/api/mirror${url.search}`, url.origin), request));
 }
 
 /** The directory's migrations (migrations/), as `cf d1 migrations apply` would apply them. */
@@ -149,26 +139,6 @@ async function migrate(db: D1Database): Promise<string[]> {
     applied.push(name);
   }
   return applied;
-}
-
-/**
- * Copies a person's list from before the directory (their DocList Durable
- * Object) into it, once: each document's row as the list last saw it, its
- * Durable Object keeping its old name. Documents the list never knew about
- * (made before it, never opened since) join when they're next opened
- * (adopt, and DocHost.register). Running it again changes nothing.
- */
-async function backfill(env: Env, directory: Directory, owner: string): Promise<void> {
-  owner = owner.toLowerCase();
-  if (await directory.backfilled(owner)) return;
-  for (const entry of await env.LISTS.getByName(owner).list()) {
-    // The list kept a time to go only for documents never edited.
-    await directory.add({
-      id: entry.id, owner, title: entry.title == entry.id ? UNTITLED : entry.title, doName: `${owner}/${entry.id}`,
-      created: entry.created, modified: entry.expires != null ? null : entry.modified, expires: entry.expires ?? null,
-    });
-  }
-  await directory.markBackfilled(owner);
 }
 
 /** /tokens: a fresh test token for the signed-in person, and how to use it. */
