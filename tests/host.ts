@@ -85,7 +85,8 @@ export async function startHost(target: string | null, opts: { port?: number; en
       return root + at;
     },
     async forget(address) {
-      const id = address.split("/").pop()!;
+      const info = await (await fetch(`${address}/api/doc`)).json() as { docName?: { id: string } };
+      const id = info.docName?.id ?? address.split("/").pop()!;
       await fetch(`${root}/docs/delete`, { method: "POST", headers: { Origin: root }, body: new URLSearchParams({ id }), redirect: "manual" });
     },
     async start() {
@@ -95,7 +96,7 @@ export async function startHost(target: string | null, opts: { port?: number; en
       // Usually ~2s; the margin is for a machine busy running everything else at once.
       for (let i = 0; i < 1200; i++) {
         if (p.exitCode != null) break;
-        const at = target ? new RegExp(`editing .*: http://localhost:${port}(/[a-z0-9-]+/[a-z0-9]{8})`).exec(output)?.[1] : "";
+        const at = target ? new RegExp(`editing .*: http://localhost:${port}(/[a-z0-9-]+/[a-z0-9-]+)`).exec(output)?.[1] : "";
         try { if (at != null && (await fetch(target ? `${root}${at}/api/doc` : `${root}/style.css`)).ok) { host.base = root + at; return; } } catch { /* not up yet */ }
         await Bun.sleep(25);
       }

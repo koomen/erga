@@ -1,11 +1,16 @@
 // erga.dev on Cloudflare: the front door Worker (worker/index.ts), also
-// serving documents' pages on erga-pages.dev, one
-// Durable Object per document (worker/doc-host.ts) and one per person
-// listing their documents (worker/doc-list.ts), and the editor's own
-// files as static assets (built into .site/ by site.sh). In local development
-// (`bun start`, dev.ts) the same Worker runs under Vite.
+// serving documents' pages on erga-pages.dev, one Durable Object per
+// document (worker/doc-host.ts), the directory of documents in D1
+// (directory.ts, its tables in migrations/), and the editor's own files as
+// static assets (built into .site/ by site.sh). The DocList Durable Objects
+// (worker/doc-list.ts), each person's list before the directory, are only
+// read now, to copy them in. In local development (`bun start`, dev.ts) the
+// same Worker runs under Vite.
 import { bindings, defineConfig, exports, triggers } from "cf/config";
 import * as entrypoint from "./worker/index.ts" with { type: "cf-worker" };
+
+/** The local database's id (the dev server's D1): any UUID. Production's is found by name (migrate.ts). */
+const LOCAL_DB = "00000000-0000-4000-8000-00000000e29a";
 
 export default defineConfig(({ mode }) => ({
   worker: {
@@ -30,6 +35,11 @@ export default defineConfig(({ mode }) => ({
     env: {
       DOCS: bindings.durableObject({ worker: "erga", exportName: "DocHost" }),
       LISTS: bindings.durableObject({ worker: "erga", exportName: "DocList" }),
+      // The directory. `cf deploy` makes the database by name if there's none; its tables come
+      // from migrations/, applied by migrate.ts (site.sh runs it on Workers Builds, before
+      // the deploy). Locally (vite dev) it's a database of its own, at a fixed made-up id that
+      // `bun run db:local` applies the migrations to.
+      DB: bindings.d1({ name: "erga", ...(mode == "development" ? { id: LOCAL_DB } : {}) }),
       ASSETS: bindings.assets(),
       ALLOWED_USERS: bindings.text("koomen,dsiroker"),
       GITHUB_CLIENT_ID: bindings.text("Ov23ctkY7oLarHcPA97b"),

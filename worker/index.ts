@@ -7,9 +7,10 @@
 //
 //   /                          the demo, rendered, with an Edit button (and your documents, signed in)
 //   /new                       a blank document for you (signs you in first); /new?from=demo a copy of the demo
-//   /docs                      your documents (doc-list.ts), latest edit first; POST /docs/delete deletes one
-//   /<owner>/<id>              the editor on that document (anyone signed in may edit)
-//   /<owner>/<id>/<rest>       the document's own host: /api/..., /doc/..., the sockets
+//   /docs                      your documents (the directory, D1), latest edit first; POST /docs/delete, /docs/rename
+//   /<owner>/<slug>            the editor on that document (anyone signed in may edit); /d/<id>,
+//                              /<owner>/<id> and old slugs redirect here
+//   /d/<id>/<rest>             the document's own host: /api/..., /doc/..., the sockets (also under the other addresses)
 //   /auth/github[/callback]    signing in; /auth/logout signs out
 //   /tokens                    a test token, for running the test suite against erga.dev
 //   /auth/test?token=&as=      a test person (Ada, Bo...) signed in with one; they open only test documents
@@ -18,11 +19,14 @@
 // In local development only, the dev server (dev/plugin.ts) links files on
 // disk to documents, proving itself with ERGA_LINK_SECRET:
 //
+//   POST /__erga/migrate           brings the local D1 up to date with migrations/ (as it starts)
 //   POST /__erga/link              makes (or finds) the document for a file or folder, for whoever's signed in
-//   /<owner>/<id>/api/mirror       the WebSocket that keeps that document and the files on disk the same
+//   /__erga/mirror/<id>            the WebSocket the document reaches its files on disk through
 
-import { frontDoor, ID, OWNER, page, type Platform } from "../front";
+import { idShaped, slugify, UNTITLED, type Directory, type Route } from "../directory";
+import { frontDoor, OWNER, page, type Platform } from "../front";
 import { allowed, finishSignIn, isDev, mintTestToken, sessionOf, signOut, startSignIn, testSignIn } from "./auth";
+import { directoryOf } from "./d1";
 import type { Env } from "./env";
 
 export { DocHost } from "./doc-host";
@@ -47,19 +51,22 @@ export default {
     if (path == "/auth/test") return testSignIn(env, request);
     if (path == "/tokens") return tokens(env, request);
     if (assets) return env.ASSETS.fetch(request);
-    if (path == "/__erga/link" || path.endsWith("/api/mirror")) return linked(env, request, url);
+    if (path.startsWith("/__erga/")) return linked(env, request, url);
     return frontDoor(request, platform(env));
   },
 } satisfies ExportedHandler<Env>;
 
 /**
- * The front door (front.ts) on Cloudflare: people sign in with GitHub, a
- * document is a Durable Object named "<owner>/<id>" (doc-host.ts), and
- * each person's list is one named by their login (doc-list.ts).
+ * The front door (front.ts) on Cloudflare: people sign in with GitHub, the
+ * directory is in D1 (d1.ts), and a document is a Durable Object
+ * (doc-host.ts) named by its id, or "<owner>/<id>" if it was made before the
+ * directory (its row's do_name).
  */
 const platform = (env: Env): Platform => {
-  const doc = (owner: string, id: string) => env.DOCS.getByName(`${owner.toLowerCase()}/${id}`);
+  const directory = directoryOf(env);
+  const host = (doc: Route) => env.DOCS.getByName(doc.doName);
   return {
+    directory,
     sessionOf: (request) => sessionOf(env, request),
     templates: TEMPLATES,
     editor: (request) => env.ASSETS.fetch(new Request(new URL("/editor.html", request.url))),
@@ -69,12 +76,27 @@ const platform = (env: Env): Platform => {
     pagesDomain: (url) => (url.hostname == "localhost" || url.hostname.endsWith(".localhost") || url.hostname == "127.0.0.1" ? "localhost" : "erga-pages.dev"),
     secret: env.SESSION_SECRET,
     docs: {
-      create: (owner, id, files, index, opts) => doc(owner, id).create(owner, id, files, index, opts),
-      exists: (owner, id) => doc(owner, id).exists(),
-      delete: (owner, id) => doc(owner, id).delete(owner),
-      unlist: (owner, id) => env.LISTS.getByName(owner.toLowerCase()).remove(id),
-      list: (owner) => env.LISTS.getByName(owner.toLowerCase()).list(),
-      fetch: (owner, id, request) => doc(owner, id).fetch(request),
+      create: (doc, files, index, opts) => host(doc).create(doc.owner, doc.id, files, index, opts),
+      exists: (doc) => host(doc).exists(),
+      delete: (doc) => host(doc).delete(),
+      list: async (owner) => {
+        await backfill(env, directory, owner);
+        return Promise.all((await directory.list(owner)).map(async (d) => {
+          // In local development a document may be on disk: only it knows where.
+          const path = env.ERGA_LINK_SECRET ? await env.DOCS.getByName(d.doName).diskPath().catch(() => null) : null;
+          return {
+            id: d.id, owner: d.owner, slug: d.slug, title: d.title, titleSet: d.titleSet, slugSet: d.slugSet,
+            created: d.created, modified: d.modified ?? d.created,
+            ...(path != null ? { path } : d.modified == null && d.expires != null ? { expires: d.expires } : {}),
+          };
+        }));
+      },
+      fetch: (doc, request) => host(doc).fetch(request),
+      // A document made before the directory is a Durable Object named "<owner>/<id>", which adds itself.
+      adopt: async (owner, id) => {
+        const doc = await env.DOCS.getByName(`${owner.toLowerCase()}/${id}`).register();
+        return doc && { id: doc.id, owner: doc.owner, doName: doc.doName, test: doc.test };
+      },
     },
   };
 };
@@ -85,18 +107,68 @@ const platform = (env: Env): Platform => {
  */
 async function linked(env: Env, request: Request, url: URL): Promise<Response> {
   if (!isDev(env, url) || !env.ERGA_LINK_SECRET || url.searchParams.get("link") != env.ERGA_LINK_SECRET) return new Response("Not found", { status: 404 });
+  const directory = directoryOf(env);
+  if (url.pathname == "/__erga/migrate" && request.method == "POST") {
+    const applied = await migrate(env.DB);
+    return Response.json({ applied });
+  }
   if (url.pathname == "/__erga/link" && request.method == "POST") {
     const session = await sessionOf(env, request);
-    const body = await request.json() as { id?: string; index?: string; path?: string; only?: boolean; owner?: string };
+    const body = await request.json() as { id?: string; index?: string; path?: string; slug?: string; only?: boolean; owner?: string };
     // Whoever's signed in, unless the dev server names the owner (linking again what it linked last run).
-    const owner = body.owner ?? session?.login;
-    if (!owner || !OWNER.test(owner) || session?.test || !body.id || !ID.test(body.id) || !body.index || !body.path) return new Response("Bad link", { status: 400 });
-    await env.DOCS.getByName(`${owner.toLowerCase()}/${body.id}`).link(owner, body.id, body.index, { path: body.path, only: !!body.only });
-    return Response.json({ owner, id: body.id });
+    const owner = (body.owner ?? session?.login)?.toLowerCase();
+    if (!owner || !OWNER.test(owner) || session?.test || !body.id || !idShaped(body.id) || !body.index || !body.path) return new Response("Bad link", { status: 400 });
+    const route = await directory.route(body.id);
+    const doc = await env.DOCS.getByName(route?.doName ?? body.id).link(owner, body.id, body.index, { path: body.path, slug: slugify(body.slug ?? "") || "untitled", only: !!body.only });
+    return Response.json({ owner: doc.owner, id: doc.id, slug: doc.slug });
   }
-  const [, owner, id] = /^\/([^/]+)\/([^/]+)\/api\/mirror$/.exec(url.pathname) ?? [];
-  if (!owner || !OWNER.test(owner) || !ID.test(id) || request.headers.get("upgrade")?.toLowerCase() != "websocket") return new Response("Not found", { status: 404 });
-  return env.DOCS.getByName(`${owner.toLowerCase()}/${id}`).fetch(new Request(new URL(`/api/mirror${url.search}`, url.origin), request));
+  const [, id] = /^\/__erga\/mirror\/([^/]+)$/.exec(url.pathname) ?? [];
+  const route = id && idShaped(id) ? await directory.route(id) : null;
+  if (!route || request.headers.get("upgrade")?.toLowerCase() != "websocket") return new Response("Not found", { status: 404 });
+  return env.DOCS.getByName(route.doName).fetch(new Request(new URL(`/api/mirror${url.search}`, url.origin), request));
+}
+
+/** The directory's migrations (migrations/), as `cf d1 migrations apply` would apply them. */
+const MIGRATIONS = import.meta.glob("../migrations/*.sql", { query: "?raw", import: "default", eager: true }) as Record<string, string>;
+
+/**
+ * Local development: brings the local D1 up to date with migrations/ when
+ * the dev server starts, recording each in d1_migrations as the cf CLI does
+ * (erga.dev's is migrated before each deploy, migrate.ts). Returns what it applied.
+ */
+async function migrate(db: D1Database): Promise<string[]> {
+  await db.prepare("CREATE TABLE IF NOT EXISTS d1_migrations (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL)").run();
+  const done = new Set((await db.prepare("SELECT name FROM d1_migrations").all<{ name: string }>()).results.map((r) => r.name));
+  const applied: string[] = [];
+  for (const [path, sql] of Object.entries(MIGRATIONS).sort(([a], [b]) => a.localeCompare(b))) {
+    const name = path.split("/").pop()!;
+    if (done.has(name)) continue;
+    // One statement each (D1 prepares them one at a time), comments left out; all in one batch, which is a transaction.
+    const statements = sql.split("\n").filter((l) => !l.trim().startsWith("--")).join("\n").split(/;\s*(?:\n|$)/).map((q) => q.trim()).filter(Boolean);
+    await db.batch([...statements.map((q) => db.prepare(q)), db.prepare("INSERT INTO d1_migrations (name) VALUES (?1)").bind(name)]);
+    applied.push(name);
+  }
+  return applied;
+}
+
+/**
+ * Copies a person's list from before the directory (their DocList Durable
+ * Object) into it, once: each document's row as the list last saw it, its
+ * Durable Object keeping its old name. Documents the list never knew about
+ * (made before it, never opened since) join when they're next opened
+ * (adopt, and DocHost.register). Running it again changes nothing.
+ */
+async function backfill(env: Env, directory: Directory, owner: string): Promise<void> {
+  owner = owner.toLowerCase();
+  if (await directory.backfilled(owner)) return;
+  for (const entry of await env.LISTS.getByName(owner).list()) {
+    // The list kept a time to go only for documents never edited.
+    await directory.add({
+      id: entry.id, owner, title: entry.title == entry.id ? UNTITLED : entry.title, doName: `${owner}/${entry.id}`,
+      created: entry.created, modified: entry.expires != null ? null : entry.modified, expires: entry.expires ?? null,
+    });
+  }
+  await directory.markBackfilled(owner);
 }
 
 /** /tokens: a fresh test token for the signed-in person, and how to use it. */

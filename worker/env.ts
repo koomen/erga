@@ -3,10 +3,12 @@ import type { DocList } from "./doc-list";
 
 /** The Worker's bindings (cloudflare.config.ts); secrets are set with `cf workers secrets update`. */
 export interface Env {
-  /** One Durable Object per document, named "<owner>/<id>". */
+  /** One Durable Object per document, named by its id (or "<owner>/<id>" if it was made before the directory: its row's do_name). */
   DOCS: DurableObjectNamespace<DocHost>;
-  /** Each person's list of their documents, named by their login (lowercase). */
+  /** Each person's list of their documents before the directory, named by their login (lowercase): read once, to copy it in. */
   LISTS: DurableObjectNamespace<DocList>;
+  /** The directory of documents (directory.ts, migrations/). */
+  DB: D1Database;
   /** The editor's own files (page.html as editor.html, page.js, style.css, fonts). */
   ASSETS: Fetcher;
   /** GitHub logins allowed to sign in, comma-separated. */

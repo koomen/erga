@@ -11,5 +11,5 @@
     "skipLibCheck": true,
     "types": ["bun"]
   },
-  "include": ["text-imports.d.ts", "src", "dev.ts", "dev", "vite.config.ts", "front.ts", "host.ts", "agent.ts", "room.ts", "workspace.ts", "tests/suite", "tests/tab.ts", "tests/cdp.ts", "tests/worker.ts", "tests/host.ts"]
+  "include": ["text-imports.d.ts", "src", "dev.ts", "dev", "vite.config.ts", "front.ts", "host.ts", "migrate.ts", "agent.ts", "room.ts", "workspace.ts", "tests/suite", "tests/tab.ts", "tests/cdp.ts", "tests/worker.ts", "tests/host.ts"]
 }

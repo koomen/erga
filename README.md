@@ -34,30 +34,55 @@ more can be opened from `/docs` (see [Local development](#local-development)).
 The editor runs on Cloudflare. A front-door Worker (`worker/index.ts`)
 serves the app's routes (`front.ts`). It shows the demo read-only at `/` with an Edit button; Edit signs you in with
 GitHub (only the logins in `ALLOWED_USERS`, in `cloudflare.config.ts`) and
-makes you a copy of the demo at `/<you>/<id>`, which anyone signed in can
+makes you a copy of the demo at `/<you>/<slug>`, which anyone signed in can
 open and edit with you. `/new` makes a blank document instead (a copy of
 `templates/doc/`). Each document is a Durable Object (`worker/doc-host.ts`)
 that keeps its files and Yjs state in its own storage and serves the
 per-document host (`host.ts`), agent included.
 
-`/docs` lists your documents, latest edit first, titled by their first
-heading (or `<title>`), with a New document button and a delete button on
-each; the editor's top bar links to it. The list is a Durable Object per
-person (`worker/doc-list.ts`) that each document keeps up to date: when
-it's made, when one of its files changes, when it's deleted, and whenever
-it opens, so documents made before the list existed join it the first time
-they're opened. A document nobody edits is deleted `UNEDITED_HOURS` (24)
+**Addresses, titles and the directory.** Every document has a title and an
+address, kept in the directory (`directory.ts`): D1 on erga.dev
+(`worker/d1.ts`), a SQLite file locally, the same tables (`migrations/`)
+behind one small interface, so `front.ts` is the same on both. A document's
+canonical address is `/<owner>/<slug>`; `/d/<id>` always works, and
+`/<owner>/<id>` (older links) and any slug it had before redirect to it. The
+title follows the page's first `<h1>` (else `<title>`, else "Untitled") until
+someone sets it, and the slug follows the title (lowercase letters, digits
+and dashes, `-2`, `-3`... when taken) until someone sets it. Rename from the
+title next to the Documents link in the editor's top bar, from `/docs`, or
+by asking an agent (its `get_title` and `set_title` tools, for the embedded
+agent and external ones). Every open tab follows a rename: its title, and its
+address bar. The editor itself talks to its document at `/d/<id>`, which a
+rename never changes. Old slugs keep redirecting until another of the
+owner's documents takes that slug. The directory also has `members` (only
+the owner's row for now: sharing will add editors and viewers); every "may
+this person do this" goes through `Directory.may`.
+
+`/docs` lists your documents, latest edit first, with a New document button
+and rename and delete buttons on each; the editor's top bar links to it.
+Each document keeps its row up to date (when it's edited, and the title that
+follows its heading, at most every two seconds). Documents made before the
+directory are copied in from each person's old list (`worker/doc-list.ts`,
+read once, the first time they open `/docs`), and any other joins when it's
+next opened; their Durable Objects keep their old names (`<owner>/<id>`, the
+row's `do_name`), while new ones are named by id. A document nobody edits is deleted `UNEDITED_HOURS` (24)
 after it's made, by an alarm set when it's made. An edit is a change to a
 file's text, from a person, an agent or a publish; opening the document,
 moving a caret or the room's own bookkeeping never are. One still open in
 a tab when its time comes gets another hour. Test documents are neither
 listed nor deleted.
 
-    bun run deploy                  # build and deploy with the cf CLI
+    bun run deploy                  # build, migrate erga.dev's D1 and deploy with the cf CLI
 
 Pushes to `main` deploy on their own: Workers Builds runs `./site.sh` then
 `bunx cf deploy`, with `BUN_VERSION` set to match `.bun-version`
 (`cf builds workers get` and `cf builds triggers` show and change it).
+On Workers Builds (`WORKERS_CI` set), `site.sh` also runs `bun migrate.ts`,
+which finds the D1 database `erga` by name (making it if it's new) and
+applies `migrations/` to it before the deploy. A migration lands just before
+the Worker that needs it, so it must keep working with the one still deployed
+(add tables and columns; don't rename or drop). New ones: `bunx cf d1
+migrations create <message>`.
 
 Secrets are set with `bunx cf workers secrets update`: `GITHUB_CLIENT_SECRET`
 (for the GitHub OAuth app whose client ID is in `cloudflare.config.ts`, with
@@ -80,12 +105,15 @@ The token signs in test people (Ada, Bo, ...) who can open only test documents
 
 `bun start` runs the Worker exactly as deployed, in workerd, with its
 Durable Objects' storage in `.cloudflare/state/` (delete it to start
-afresh). What only local development has:
+afresh). That includes the directory of documents (addresses, titles,
+members: what `/docs` lists), in the local D1, whose tables the dev server
+brings up to date with `migrations/` as it starts. What only local
+development has:
 
 - **Who you are**: `DEV_LOGIN` in `.dev.vars`, signed in without GitHub
   (only on localhost: `worker/auth.ts`, `isDev`). Your documents are under
-  that login (`/<login>/<id>`). `?user=Ada` makes a tab someone else (open
-  `http://localhost:4400/<login>/<id>?user=Ada` in another window to be a
+  that login (`/<login>/<slug>`). `?user=Ada` makes a tab someone else (open
+  `http://localhost:4400/<login>/<slug>?user=Ada` in another window to be a
   second person; the tab carries it on every request it makes), and
   `/auth/github?as=Ada` signs the browser in as Ada until `/auth/logout`.
   `ERGA_AGENT_MODEL=script` swaps in the scripted agent.
@@ -93,8 +121,10 @@ afresh). What only local development has:
   A folder with an `index.html` or `index.md`, or a single `.html` or `.md`
   file, named to `bun start` or typed into the Open box on `/docs` (a path
   on this machine; `~` and paths relative to where `bun start` ran work),
-  becomes one of your documents, edited where it is. Its address comes
-  from its real path, so it's the same every time. Its files stay on disk:
+  becomes one of your documents, edited where it is, at
+  `/<login>/<folder name>` (or the file's name, for a single file: its slug
+  doesn't follow its title); its id comes from its real path, so it's the
+  same every time. Its files stay on disk:
   the document's room reads and writes them there, through the dev server
   (over a WebSocket, `/api/mirror`, that only the dev server can open), and
   hears about changes made by anything else (another editor, git), which
@@ -252,7 +282,7 @@ ask your agent for edits. Each person gets their own agent session in the host
 that person and that document (all their tabs show it live; nobody else ever
 sees it), it keeps running when the tab closes, and it edits through its own
 replica of the shared doc, as a participant in the room called "Ada's agent".
-Its tools (read, edit, write, ls, find, grep, view_page) are written against
+Its tools (read, edit, write, ls, find, grep, view_page; get_title and set_title rename the document) are written against
 a small workspace interface (`workspace.ts`), not the disk, so it can change
 the page and anything next to it (styles, scripts, other pages) and could run
 anywhere the interface does. There's no bash tool. `edit` finds its `oldText`
@@ -318,7 +348,8 @@ into the other agent, which reads the guide and waits, then say what to change. 
 `GET /api/ext` (how to call the tools, their JSON schemas, and
 [DOCUMENT_PROMPT.md](DOCUMENT_PROMPT.md)), then calls
 `POST /api/ext/tools/<name>` with the arguments as JSON. These are the
-embedded agent's own tools (read, edit, write, ls, find, grep, view_page),
+embedded agent's own tools (read, edit, write, ls, find, grep, view_page, and
+get_title and set_title for the document's title and address),
 run in your agent's session, so its edits are handled exactly like your
 agent's: attributed to "Pete's agent", marked in its colour, undoable from
 the agent panel, with its badge spinning while it works. Each call shows in
@@ -436,6 +467,9 @@ back, merging edits from disk, the agent's exact-match edits and attribution.
   scripts (the shell's, and the frame's that runs on each document's own origin)
 - `front.ts`: the app's own routes and pages (the demo, `/new`, `/docs`,
   delete, the unedited rule, titles)
+- `directory.ts`: the directory of documents (addresses, titles, members, who may do what), over
+  `Sql`; `worker/d1.ts` puts it on D1; its tables in `migrations/`, which `migrate.ts` applies to
+  erga.dev's D1 (the dev server applies them locally)
 - `host.ts`: the per-document host (API, `/doc/`)
 - `worker/`: erga.dev on Cloudflare (front door, sign-in, Durable Objects,
   and `disk.ts`, a document's files on disk in local development)

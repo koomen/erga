@@ -11,14 +11,18 @@
 // and the signed-in person in x-erga-person. An external agent's requests
 // to /api/ext carry its share token instead, which this host checks.
 //
-// It also keeps its entry in the owner's list (doc-list.ts) up to date, and
-// deletes itself if nobody edits it within UNEDITED_HOURS of being made.
+// It also keeps its row in the directory (directory.ts, D1) up to date: when
+// it was last edited, and the title that follows its first heading (at most
+// every DIRECTORY_EVERY_MS); a document made before the directory adds its
+// row the first time it opens. It deletes itself, row included, if nobody
+// edits it within UNEDITED_HOURS of being made.
 //
 // In local development a document can be a file or folder on disk (`link`).
 // Its files then stay there: the room's storage is the folder itself, reached
 // through the dev server over a WebSocket (/api/mirror, disk.ts), and only
-// the room's Yjs state is kept here. A single file on its own (`only`) is the
-// only file such a document holds: nobody can make another.
+// the room's Yjs state is kept here. Its address is the folder's (or the
+// file's) name. A single file on its own (`only`) is the only file such a
+// document holds: nobody can make another.
 
 import { DurableObject } from "cloudflare:workers";
 import * as ConfigProvider from "effect/ConfigProvider";
@@ -27,10 +31,12 @@ import * as Exit from "effect/Exit";
 import * as Redacted from "effect/Redacted";
 import * as Scope from "effect/Scope";
 import { agentConfigFrom } from "../agent";
-import { afterUnedited, HOUR, titleOf, UNEDITED_HOURS, type Listed } from "../front";
+import { DIRECTORY_EVERY_MS, nameOf, namingFor, throttle, UNTITLED, type DocName, type DocRow } from "../directory";
+import { afterUnedited, titleOf, UNEDITED_HOURS } from "../front";
 import { makeHost } from "../host";
 import { FileStore, Room, StateStore, StoreError } from "../room";
 import { assets, files as texts } from "../src/room/doc";
+import { directoryOf } from "./d1";
 import { DiskLink } from "./disk";
 import type { Env } from "./env";
 
@@ -41,8 +47,8 @@ import type { Env } from "./env";
  */
 interface Meta { id?: string; owner: string; index: string; created: number; modified?: number; test?: boolean; disk?: OnDisk }
 
-/** A document that's a file or folder on disk (local development): where it is, and whether it's a single file. */
-interface OnDisk { path: string; only?: boolean }
+/** A document that's a file or folder on disk (local development): where it is, its address there, and whether it's a single file. */
+interface OnDisk { path: string; slug: string; only?: boolean }
 
 interface Person { id: string; name: string }
 
@@ -63,42 +69,67 @@ export class DocHost extends DurableObject<Env> {
     flush: async () => { const o = await this.open; await new Promise((r) => setTimeout(r, 100)); if (o) await Effect.runPromise(o.room.flush); },
   });
 
+  private sync: (() => void) | null = null;
+
   /**
-   * Creates the document from a template's files; false if it already
-   * exists. Unless someone edits it, it's deleted UNEDITED_HOURS later
-   * (or `unedited` ms, which only local development asks for, to test it).
+   * Creates the document, whose row the front door has just added to the
+   * directory, from a template's files; false if it already exists. Unless
+   * someone edits it, it's deleted at `expires` (UNEDITED_HOURS after it's
+   * made, or sooner when local development asks, to test it).
    */
-  async create(owner: string, id: string, files: Record<string, string>, index: string, opts: { test?: boolean; unedited?: number } = {}): Promise<boolean> {
+  async create(owner: string, id: string, files: Record<string, string>, index: string, opts: { test?: boolean; expires: number | null }): Promise<boolean> {
     if (await this.ctx.storage.get<Meta>(META)) return false;
     const encoder = new TextEncoder();
     for (const [path, text] of Object.entries(files)) await this.ctx.storage.put(FILE + path, encoder.encode(text));
-    const meta: Meta = { id, owner, index, created: Date.now(), ...(opts.test ? { test: true } : {}) };
+    const meta: Meta = { id, owner: owner.toLowerCase(), index, created: Date.now(), ...(opts.test ? { test: true } : {}) };
     await this.ctx.storage.put(META, meta);
-    if (!meta.test) await this.ctx.storage.setAlarm(meta.created + (opts.unedited ?? UNEDITED_HOURS * HOUR));
-    await this.list(meta);
+    if (!meta.test && opts.expires != null) await this.ctx.storage.setAlarm(opts.expires);
     return true;
   }
 
   /**
    * Local development: the document for a file or folder on disk, made if
-   * it doesn't exist yet. Its files stay there (the dev server connects to
-   * /api/mirror to reach them); it never expires, and deleting it leaves
-   * them as they are.
+   * it doesn't exist yet, and its row in the directory (its address the
+   * folder's or file's name, `disk.slug`). Its files stay on disk (the dev
+   * server connects to /api/mirror to reach them); it never expires, and
+   * deleting it leaves them as they are.
    */
-  async link(owner: string, id: string, index: string, disk: OnDisk): Promise<void> {
+  async link(owner: string, id: string, index: string, disk: OnDisk): Promise<DocRow> {
     const meta = await this.ctx.storage.get<Meta>(META);
-    const next: Meta = meta ? { ...meta, index, disk } : { id, owner, index, created: Date.now(), disk };
-    await this.ctx.storage.put(META, next);
+    await this.ctx.storage.put(META, meta ? { ...meta, index, disk } : { id, owner: owner.toLowerCase(), index, created: Date.now(), disk });
     await this.ctx.storage.deleteAlarm();
-    await this.list(next);
+    return (await this.register())!;
   }
 
-  /** Deletes the document, if `owner` made it: everyone on it is disconnected. */
-  async delete(owner: string): Promise<boolean> {
+  /** Deletes the document (the front door has asked the directory who may): everyone on it is disconnected. */
+  async delete(): Promise<boolean> {
     const meta = await this.ctx.storage.get<Meta>(META);
-    if (!meta || meta.owner.toLowerCase() != owner.toLowerCase()) return false;
+    if (!meta) return false;
     await this.destroy(meta);
     return true;
+  }
+
+  /**
+   * Puts the document in the directory if it isn't there yet (one made
+   * before the directory), as it is now, keeping this object's name: its row.
+   * Null if there's no such document.
+   */
+  async register(): Promise<DocRow | null> {
+    const meta = await this.ctx.storage.get<Meta>(META);
+    if (!meta) return null;
+    const id = this.idOf(meta);
+    const text = await this.pageText(meta);
+    const { doc } = await directoryOf(this.env).add({
+      id, owner: meta.owner,
+      title: (text && titleOf(text, meta.index)) || UNTITLED,
+      // A test document's address stays its id (the suite addresses it so); one on disk is its folder's or file's name.
+      ...(meta.test ? { slug: id, slugSet: true } : meta.disk ? { slug: meta.disk.slug, slugSet: true } : {}),
+      doName: this.ctx.id.name ?? id,
+      created: meta.created, modified: meta.modified ?? null,
+      expires: meta.modified || meta.test || meta.disk ? null : (await this.ctx.storage.getAlarm()),
+      test: meta.test,
+    });
+    return doc;
   }
 
   /**
@@ -111,7 +142,11 @@ export class DocHost extends DurableObject<Env> {
     if (!meta) return;
     const next = afterUnedited(meta, this.sockets.size > 0, Date.now());
     if (next == "keep") return;
-    if (next != "delete") return this.ctx.storage.setAlarm(next);
+    if (next != "delete") {
+      await this.ctx.storage.setAlarm(next);
+      await directoryOf(this.env).setExpires(this.idOf(meta), next).catch((e) => console.log(`couldn't update ${this.idOf(meta)}'s row: ${e}`));
+      return;
+    }
     console.log(`deleting ${meta.owner}/${this.idOf(meta)}: not edited in ${UNEDITED_HOURS} hours`);
     await this.destroy(meta);
   }
@@ -128,28 +163,40 @@ export class DocHost extends DurableObject<Env> {
     await opened?.close();
     await this.ctx.storage.deleteAlarm();
     await this.ctx.storage.deleteAll();
-    if (!meta.test) await this.env.LISTS.getByName(meta.owner.toLowerCase()).remove(this.idOf(meta));
+    await directoryOf(this.env).remove(this.idOf(meta));
   }
 
+  /** Its id: in its meta, or (made before ids were kept there) in its name, "<owner>/<id>". */
   private idOf(meta: Meta): string {
-    return meta.id ?? this.ctx.id.name?.split("/")[1] ?? this.ctx.id.toString();
+    const name = this.ctx.id.name;
+    return meta.id ?? (name?.includes("/") ? name.split("/")[1] : name) ?? this.ctx.id.toString();
   }
 
-  /** Puts the document's entry, as it is now, in its owner's list (test documents aren't listed). */
-  private async list(meta: Meta): Promise<void> {
-    if (meta.test) return;
-    // A document on disk has its text in the room, once it's open (never waited for: opening waits for the dev server, which may be linking it).
-    const bytes = meta.disk ? null : await this.ctx.storage.get<Uint8Array>(FILE + meta.index);
-    const text = meta.disk ? this.opened?.room.text(meta.index) : bytes && new TextDecoder().decode(bytes);
-    const id = this.idOf(meta);
-    const entry: Listed = {
-      id,
-      title: (text && titleOf(text, meta.index)) || id,
-      created: meta.created,
-      modified: meta.modified ?? meta.created,
-      ...(meta.disk ? { path: meta.disk.path } : meta.modified ? {} : { expires: (await this.ctx.storage.getAlarm()) ?? undefined }),
-    };
-    await this.env.LISTS.getByName(meta.owner.toLowerCase()).put(entry);
+  /**
+   * Brings its row up to date after edits: when it was last edited, and the
+   * title, which follows its first heading until someone sets it (and the
+   * slug the title). Every open tab hears of a new title or address.
+   */
+  private async syncDirectory(): Promise<void> {
+    const meta = await this.ctx.storage.get<Meta>(META);
+    if (!meta) return;
+    const text = await this.pageText(meta);
+    const r = await directoryOf(this.env).edited(this.idOf(meta), {
+      modified: meta.modified ?? null,
+      pageTitle: text != null ? titleOf(text, meta.index) : null,
+    });
+    if (r?.renamed) (await this.open)?.renamed(nameOf(r.doc));
+  }
+
+  /**
+   * The page's text: from storage, or for a document on disk from its room
+   * (once it's open; never waited for, since opening waits for the dev
+   * server, which may be linking it just then).
+   */
+  private async pageText(meta: Meta): Promise<string | null> {
+    if (meta.disk) return this.opened?.room.text(meta.index) ?? null;
+    const bytes = await this.ctx.storage.get<Uint8Array>(FILE + meta.index);
+    return bytes ? new TextDecoder().decode(bytes) : null;
   }
 
   /**
@@ -165,14 +212,21 @@ export class DocHost extends DurableObject<Env> {
     await this.touch();
   }
 
-  /** A file changed: the document has been edited, so it stays (and its list entry says when). */
+  /** A file changed: the document has been edited, so it stays (and its row says when). */
   private async touch(): Promise<void> {
     const meta = await this.ctx.storage.get<Meta>(META);
     if (!meta) return;
     meta.modified = Date.now();
     await this.ctx.storage.put(META, meta);
     if (!meta.test) await this.ctx.storage.deleteAlarm();
-    this.list(meta).catch((e) => console.log(`couldn't update ${meta.owner}'s list: ${e}`));
+    // At most every DIRECTORY_EVERY_MS, however fast the edits come; the last always lands.
+    this.sync ??= throttle(() => this.syncDirectory().catch((e) => console.log(`couldn't update ${this.idOf(meta)}'s row: ${e}`)), DIRECTORY_EVERY_MS);
+    this.sync();
+  }
+
+  /** Where its files are, for a document on disk (local development); null for any other. */
+  async diskPath(): Promise<string | null> {
+    return (await this.ctx.storage.get<Meta>(META))?.disk?.path ?? null;
   }
 
   /** Whether the document exists. */
@@ -213,8 +267,8 @@ export class DocHost extends DurableObject<Env> {
   private async load(): Promise<Opened | null> {
     const meta = await this.ctx.storage.get<Meta>(META);
     if (!meta) return null;
-    // Documents made before there was a list join it when they open.
-    this.list(meta).catch((e) => console.log(`couldn't update ${meta.owner}'s list: ${e}`));
+    // Documents made before the directory join it when they open.
+    await this.register().catch((e) => console.log(`couldn't put ${this.idOf(meta)} in the directory: ${e}`));
     const storage = this.ctx.storage;
     const storeError = (e: unknown) => new StoreError({ message: e instanceof Error ? e.message : String(e) });
     const onDisk = meta.disk && this.disk.store(meta.disk.only ? meta.index : null);
@@ -252,10 +306,14 @@ export class DocHost extends DurableObject<Env> {
       baseUrl: (req) => req.headers["x-erga-base"] ?? "",
       // People's ids are their GitHub logins, so GitHub serves their pictures.
       avatarOf: (person) => (person.id.startsWith("test-") ? undefined : `${AVATARS}/${encodeURIComponent(person.id)}?s=64`),
+      // Its title and address, renamed as whoever asks (test people are "test-...": they may rename only test documents).
+      naming: (person) => naming({ login: person.id, test: person.id.startsWith("test-") }),
     });
+    const naming = namingFor(directoryOf(this.env), this.idOf(meta), () => titleOf(room.text(meta.index) ?? "", meta.index));
 
     const opened: Opened = {
       handler: host.handler,
+      renamed: host.renamed,
       roomSocket: (url) => {
         const [client, server] = Object.values(new WebSocketPair());
         server.accept();
@@ -295,7 +353,7 @@ export class DocHost extends DurableObject<Env> {
     };
     this.opened = opened;
     // Now with its title, for one on disk.
-    if (meta.disk) this.list(meta).catch((e) => console.log(`couldn't update ${meta.owner}'s list: ${e}`));
+    if (meta.disk) this.syncDirectory().catch((e) => console.log(`couldn't update ${this.idOf(meta)}'s row: ${e}`));
     return opened;
   }
 
@@ -313,6 +371,8 @@ interface Opened {
   eventSocket: (person: Person) => Response;
   room: Room;
   catchUp: () => Promise<void>;
+  /** Tells every open tab the document's new title and address. */
+  renamed: (name: DocName) => void;
   close: () => Promise<void>;
 }
 

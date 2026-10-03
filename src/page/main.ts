@@ -24,7 +24,7 @@ import { colorFor, type Author } from "../room/doc";
 import { analyzeMarkdown } from "./markdown";
 import TurndownService from "turndown";
 import { emptyLog, reduce, type Log, type LogEvent, type LogItem, type ViewRequest, type ViewResult } from "./agent-log";
-import type { AgentState, DocInfo, ModelState } from "../../api";
+import type { AgentState, DocInfo, DocName, ModelState } from "../../api";
 import { BASE } from "./base";
 
 const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
@@ -146,8 +146,8 @@ declare global {
   const me: Author = { user: info.userId, name: info.user, color: colorFor(info.userId), kind: "person", ...(info.avatar ? { avatar: info.avatar } : {}) };
   const self: MarkAuthor = { name: me.name, color: me.color };
   // Your documents to go back to (test people have none), as whoever this tab is.
-  $("nav-docs").hidden = me.user.startsWith("test-");
-  $("nav-docs").querySelector("a")!.href = `/docs${as}`;
+  $("nav-back").hidden = me.user.startsWith("test-");
+  ($("nav-back") as HTMLAnchorElement).href = `/docs${as}`;
   /** The host's endpoints, as this person. */
   const api = (path: string) => `${BASE}${path}${as}`;
 
@@ -245,7 +245,80 @@ declare global {
         if (u.docChanged || u.selectionSet) queueCursor();
       }),
   ];
-  document.title = info.name;
+  document.title = info.docName?.title ?? info.name;
+
+  // ---------------------------------------------------------------- title and address
+
+  // The document's title, top left after the Documents link, and its address
+  // in the address bar. Whoever renames it (anyone, any agent, or the title
+  // following its first heading), every tab hears of it on the event channel
+  // and follows: the title changes, and the address becomes the new one
+  // (replaceState: the old one still leads here). The editor itself talks to
+  // the host at /d/<id> (BASE), which a rename never changes.
+  let docName: DocName | null = null;
+  const titleBtn = $("doc-title"), naming = $("naming");
+  const namingForm = $("naming-form") as HTMLFormElement, namingStatus = $("naming-status");
+  const titleIn = $("naming-title") as HTMLInputElement, slugIn = $("naming-slug") as HTMLInputElement;
+  function showName(n: DocName) {
+    docName = n;
+    $("doc-title-text").textContent = n.title;
+    titleBtn.hidden = false;
+    titleBtn.setAttribute("aria-label", `${n.title}: rename, or change its address`);
+    titleBtn.title = `${location.host}${n.address}`;
+    document.title = n.title;
+    if (location.pathname != n.address) window.history.replaceState(window.history.state, "", n.address + location.search + location.hash);
+  }
+  if (info.docName) showName(info.docName);
+  /** Asks for the name again (when the event channel connects: a rename may have gone by while it was down). */
+  function refreshName() {
+    if (!docName) return;
+    fetch(api("/api/name")).then((r) => (r.ok ? r.json() : null)).then((n: DocName | null) => { if (n) showName(n); }, () => {});
+  }
+  const slugify = (s: string) => s.normalize("NFKD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/['’]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60).replace(/-+$/, "");
+  let slugTouched = false;
+  const sayNaming = (text: string, error = false) => { namingStatus.textContent = text; namingStatus.classList.toggle("error", error); };
+  const namingHint = () => sayNaming(!titleIn.value.trim() ? "Empty, the title follows the page's first heading."
+    : !slugIn.value.trim() ? "Empty, the address follows the title."
+    : !docName?.titleSet && titleIn.value.trim() == docName?.title ? "The title follows the page's first heading until you change it." : "");
+  function toggleNaming(force?: boolean) {
+    const open = typeof force == "boolean" ? force : naming.hidden;
+    if (open && !docName) return;
+    naming.hidden = !open;
+    titleBtn.setAttribute("aria-expanded", String(open));
+    if (!open) return;
+    showChrome();
+    toggleHelp(false);
+    toggleShare(false);
+    slugTouched = false;
+    $("naming-prefix").textContent = `/${docName!.owner}/`;
+    titleIn.value = docName!.title;
+    slugIn.value = docName!.slug;
+    namingHint();
+    titleIn.focus();
+    titleIn.select();
+  }
+  titleBtn.addEventListener("click", () => toggleNaming());
+  $("naming-cancel").addEventListener("click", () => toggleNaming(false));
+  // An address that follows the title follows it here too, until it's typed in.
+  titleIn.addEventListener("input", () => { if (!docName!.slugSet && !slugTouched) slugIn.value = slugify(titleIn.value) || docName!.slug; namingHint(); });
+  slugIn.addEventListener("input", () => { slugTouched = true; namingHint(); });
+  document.addEventListener("pointerdown", (e) => { if (!naming.hidden && !naming.contains(e.target as Node) && !titleBtn.contains(e.target as Node)) toggleNaming(false); });
+  namingForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    if (!docName) return;
+    // Only what changed: a title left as it was keeps following the heading, if it did.
+    const patch: { title?: string; slug?: string } = {};
+    if (titleIn.value.trim() != docName.title) patch.title = titleIn.value.trim();
+    if (slugTouched && slugIn.value.trim() != docName.slug) patch.slug = slugIn.value.trim();
+    if (!("title" in patch) && !("slug" in patch)) return toggleNaming(false);
+    sayNaming("Saving…");
+    const r = await fetch(api("/api/name"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch), signal: AbortSignal.timeout(10_000) })
+      .then(async (res) => (res.ok ? { name: (await res.json()) as DocName } : { error: ((await res.json().catch(() => ({}))) as { error?: string }).error ?? `the host answered ${res.status}` }))
+      .catch((err: Error) => ({ error: err.name == "TimeoutError" ? "the editor's host didn't answer" : err.message }));
+    if ("error" in r) return sayNaming(r.error ?? "Couldn't rename it.", true);
+    showName(r.name);
+    toggleNaming(false);
+  });
 
   // ---------------------------------------------------------------- the room
 
@@ -343,14 +416,16 @@ declare global {
   function listen() {
     const events = new WebSocket(`${location.protocol == "https:" ? "wss:" : "ws:"}//${location.host}${api("/api/events")}`);
     events.onmessage = (ev) => {
-      let msg: { type?: string; ev?: LogEvent; id?: string; req?: ViewRequest } = {};
+      let msg: { type?: string; ev?: LogEvent; id?: string; req?: ViewRequest; name?: DocName } = {};
       try { msg = JSON.parse(String(ev.data)); } catch { return; }
       if (msg.type == "agent" && msg.ev) agentEvent(msg.ev);
       else if (msg.type == "model") renderModel(msg as unknown as ModelState);
       else if (msg.type == "view" && msg.id) answerView(msg.id, msg.req ?? {});
+      else if (msg.type == "name" && msg.name) showName(msg.name);
     };
     // Events sent while the channel was down are gone; catch up from the transcript.
-    events.onopen = () => { if (opened) loadAgent(); opened = true; };
+    // A rename missed meanwhile (or before it first opened) is caught up the same way.
+    events.onopen = () => { if (opened) loadAgent(); opened = true; refreshName(); };
     events.onclose = () => setTimeout(listen, 1000);
   }
   let opened = false;
@@ -481,7 +556,7 @@ declare global {
   let anchor: { x: number; y: number; t: number } | null = null;
   let lastKeyAt = 0;
   function hideChrome() {
-    if (chromeHidden || !$("help").hidden || !$("share").hidden) return;
+    if (chromeHidden || !$("help").hidden || !$("share").hidden || !$("naming").hidden) return;
     chromeHidden = true;
     anchor = null;
     document.body.classList.add("chrome-hidden");
@@ -519,7 +594,7 @@ declare global {
   function toggleHelp(force?: boolean) {
     const open = typeof force == "boolean" ? force : help.hidden;
     help.hidden = !open;
-    if (open) { showChrome(); toggleShare(false); }
+    if (open) { showChrome(); toggleShare(false); toggleNaming(false); }
   }
 
   // Share with an external agent: a prompt carrying this page's API and a
@@ -569,6 +644,7 @@ Once you've read it, await further instructions.`;
     if (!open) return;
     showChrome();
     toggleHelp(false);
+    toggleNaming(false);
     if (!shareToken) loadShare(false);
   }
   shareBtn.addEventListener("click", () => toggleShare());
@@ -685,7 +761,7 @@ Once you've read it, await further instructions.`;
       if (rendered) {
         syncPause();
         const t = page.title().slice(0, 200);
-        document.title = t ? `${t} · ${info!.name}` : info!.name;
+        document.title = docName?.title ?? (t ? `${t} · ${info!.name}` : info!.name);
         if (!agentPanel.contains(document.activeElement) && mode == "text") page.focus();
         queuePeers();
       }
@@ -704,6 +780,7 @@ Once you've read it, await further instructions.`;
       pointerDown = true;
       hideFmt();
       if (!help.hidden) toggleHelp(false);
+      if (!naming.hidden) toggleNaming(false);
       if (!share.hidden) toggleShare(false);
       showPauseCard(false);
     },
@@ -1340,6 +1417,7 @@ Once you've read it, await further instructions.`;
     if (mod && !e.shiftKey && key == "s") { flash(connected ? "Saved: edits go to disk as you type" : "Offline: edits sync when the host is back", 2200); return true; }
     if (e.key == "Escape") {
       if (!help.hidden) toggleHelp(false);
+      else if (!naming.hidden) toggleNaming(false);
       else if (!share.hidden) toggleShare(false);
       else if (!$("pause-card").hidden) showPauseCard(false);
       else if (agentPanel.contains(document.activeElement)) toggleAgent(false);

@@ -37,8 +37,8 @@ const EDITOR = resolve(import.meta.dirname, "..");
 /** The largest file a document on disk takes: the room reads each whole when it opens, over a WebSocket. */
 const MAX_FILE = 10_000_000;
 
-/** A file or folder on disk, linked to one of `owner`'s documents. */
-interface Link { owner: string; id: string; folder: string; index: string; only: boolean }
+/** A file or folder on disk, linked to one of `owner`'s documents (at /<owner>/<slug>). */
+interface Link { owner: string; id: string; slug: string; folder: string; index: string; only: boolean }
 
 export interface DevOptions {
   /** The Worker's local state (Durable Objects' storage), where the links are kept too. */
@@ -75,12 +75,12 @@ export function ergaDev(opts: DevOptions): Plugin {
         const r = await fetch(`${base}/__erga/link?${query}`, {
           method: "POST",
           headers: { "Content-Type": "application/json", ...as.headers },
-          body: JSON.stringify({ id: target.id, index: target.index, path: target.shown, only: target.only, owner: as.owner }),
+          body: JSON.stringify({ id: target.id, index: target.index, path: target.shown, slug: target.slug, only: target.only, owner: as.owner }),
         });
         if (!r.ok) throw new Error(`linking ${target.shown}: ${r.status} ${await r.text()}`);
-        const { owner, id } = await r.json() as { owner: string; id: string };
-        const l: Link = { owner, id, folder: target.folder, index: target.index, only: target.only };
-        const key = `${owner.toLowerCase()}/${id}`;
+        const { owner, id, slug } = await r.json() as { owner: string; id: string; slug: string };
+        const l: Link = { owner, id, slug, folder: target.folder, index: target.index, only: target.only };
+        const key = id;
         if (!mirrors.has(key)) {
           const m = new Mirror(l, base, opts.secret, log, () => { mirrors.delete(key); saveLinks().catch(() => {}); });
           mirrors.set(key, m);
@@ -113,8 +113,8 @@ export function ergaDev(opts: DevOptions): Plugin {
         }
         const headers: Record<string, string> = req.headers.cookie ? { Cookie: req.headers.cookie } : {};
         const l = await link(target, { headers, user });
-        log(`opened ${target.shown}: ${shown}/${l.owner}/${l.id}`);
-        res.writeHead(303, { Location: `/${l.owner}/${l.id}${user ? `?user=${encodeURIComponent(user)}` : ""}` }).end();
+        log(`opened ${target.shown}: ${shown}/${l.owner}/${l.slug}`);
+        res.writeHead(303, { Location: `/${l.owner}/${l.slug}${user ? `?user=${encodeURIComponent(user)}` : ""}` }).end();
       }
 
       server.httpServer?.once("listening", () => {
@@ -123,6 +123,9 @@ export function ergaDev(opts: DevOptions): Plugin {
         shown = `http://localhost:${port}`;
         (async () => {
           await workerReady(base);
+          // The directory's tables, in the local D1, before anything is linked into it.
+          const migrated = await fetch(`${base}/__erga/migrate?link=${opts.secret}`, { method: "POST" });
+          if (!migrated.ok) throw new Error(`migrating the local database: ${migrated.status} ${await migrated.text()}`);
           // Last run's links first, then whatever `bun start` was given.
           const kept = await readFile(linksFile, "utf8").then((t) => JSON.parse(t) as Link[], () => []);
           for (const l of kept) {
@@ -133,7 +136,7 @@ export function ergaDev(opts: DevOptions): Plugin {
           if (opts.open) {
             const target = await resolveTarget(opts.open, opts.cwd);
             const l = await link(target, {});
-            const at = `${shown}/${l.owner}/${l.id}`;
+            const at = `${shown}/${l.owner}/${l.slug}`;
             log(`editing ${target.shown}${target.only ? "" : ` (${target.index})`}: ${at}`);
             if (opts.browser) openBrowser(at);
           } else if (opts.browser) openBrowser(`${shown}/docs`);
@@ -162,6 +165,8 @@ interface Resolved {
   only: boolean;
   /** The document's id: from its real path, so it's the same however it's named. */
   id: string;
+  /** Its address: the folder's name, or the file's without its extension. */
+  slug: string;
   /** Its path as /docs shows it (~ for your home). */
   shown: string;
 }
@@ -188,7 +193,8 @@ export async function resolveTarget(asked: string, cwd: string): Promise<Resolve
   const id = Array.from(hash.subarray(0, 8), (b) => ALPHABET[b % ALPHABET.length]).join("");
   const home = homedir();
   const shown = abs == home || abs.startsWith(home + sep) ? "~" + abs.slice(home.length) : abs;
-  return { folder, index, only, id, shown };
+  const slug = only ? basename(abs).replace(/\.[^.]+$/, "") : basename(abs);
+  return { folder, index, only, id, slug, shown };
 }
 
 // ------------------------------------------------------------ the mirror
@@ -243,8 +249,7 @@ class Mirror {
   }
 
   private connect(): Promise<void> {
-    const { owner, id } = this.link;
-    const ws = this.ws = new WebSocket(`${this.base.replace(/^http/, "ws")}/${owner}/${id}/api/mirror?link=${this.secret}`);
+    const ws = this.ws = new WebSocket(`${this.base.replace(/^http/, "ws")}/__erga/mirror/${this.link.id}?link=${this.secret}`);
     ws.onmessage = (e) => {
       const m = JSON.parse(String(e.data)) as ToDisk;
       if (m.t == "flushed") { this.flushed?.(); this.flushed = null; return; }

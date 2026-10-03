@@ -1,18 +1,24 @@
 // The front door: the app around the documents (worker/index.ts serves it,
 // on erga.dev and in local development alike). It's written against web
 // Requests and Responses, and the Worker supplies the rest (`Platform`):
-// who's signed in, the templates, and the documents themselves (Durable
-// Objects).
+// who's signed in, the templates, the directory of documents (directory.ts,
+// in D1) and the documents themselves (Durable Objects).
 //
 //   /                          the demo, rendered, with an Edit button (and your documents, signed in)
 //   /new                       a blank document for you (signs you in first); /new?from=demo a copy of the demo
-//   /docs                      your documents, latest edit first; POST /docs/delete deletes one
-//   /<owner>/<id>              the editor on that document (anyone signed in may edit)
-//   /<owner>/<id>/<rest>       the document's own host (host.ts): /api/..., /doc/..., the sockets
+//   /docs                      your documents, latest edit first; POST /docs/delete deletes one, /docs/rename renames one
+//   /<owner>/<slug>            the editor on that document (anyone signed in may edit): its canonical address
+//   /<owner>/<id>, /<owner>/<old slug>, /d/<id>
+//                              redirect there
+//   /d/<id>/<rest>             the document's own host (host.ts): /api/..., /doc/..., the sockets; the
+//                              editor uses this address, which never changes. Under any of the
+//                              addresses above it works too (older tabs and share links use them).
 //
 // Signing in, the editor's own files and the WebSockets stay with the
 // Worker. The rule for when an unedited document goes (`afterUnedited`) is
 // here; the document's alarm applies it.
+
+import { type Directory, type DocRow, type Route, type Who, UNTITLED } from "./directory";
 
 /** Who's signed in. */
 export interface Session {
@@ -27,7 +33,11 @@ export interface Session {
 /** A document as its owner's list shows it. */
 export interface Listed {
   id: string;
+  owner: string;
+  slug: string;
   title: string;
+  titleSet: boolean;
+  slugSet: boolean;
   created: number;
   /** When a file last changed (when it was made, if never). */
   modified: number;
@@ -60,18 +70,24 @@ export interface Platform {
   pagesDomain(url: URL): string;
   /** Signs the tokens that open a document's files on its pages origin. */
   secret: string;
+  /** Every document's address, title and members. */
+  directory: Directory;
   docs: {
-    /** Makes a document from a template's files; false if that address is taken. */
-    create(owner: string, id: string, files: Record<string, string>, index: string, opts: { test?: boolean; unedited?: number }): Promise<boolean>;
-    exists(owner: string, id: string): Promise<boolean>;
-    /** Deletes one of `owner`'s documents; false if they have none by that id. */
-    delete(owner: string, id: string): Promise<boolean>;
-    /** Drops a stale entry from `owner`'s list. */
-    unlist(owner: string, id: string): Promise<void>;
+    /**
+     * Makes the host of a document already in the directory, from a
+     * template's files; false if it already has one. Unless someone edits
+     * it, it goes at `expires`.
+     */
+    create(doc: Route, files: Record<string, string>, index: string, opts: { test?: boolean; expires: number | null }): Promise<boolean>;
+    exists(doc: Route): Promise<boolean>;
+    /** Deletes a document (its host takes it out of the directory too); false if it had no host. */
+    delete(doc: Route): Promise<boolean>;
     /** `owner`'s documents, most recently changed first. */
     list(owner: string): Promise<Listed[]>;
     /** Hands a request to the document's host, its path already the one inside the document. */
-    fetch(owner: string, id: string, request: Request): Promise<Response>;
+    fetch(doc: Route, request: Request): Promise<Response>;
+    /** A document made before the directory, at /<owner>/<id>, added to it now; null if there's none. */
+    adopt(owner: string, id: string): Promise<Route | null>;
   };
 }
 
@@ -105,24 +121,74 @@ export async function frontDoor(request: Request, platform: Platform): Promise<R
   if (path == "/new") return newDoc(platform, request);
   if (path == "/docs") return listDocs(platform, request);
   if (path == "/docs/delete" && request.method == "POST") return deleteDoc(platform, request);
+  if (path == "/docs/rename" && request.method == "POST") return renameDoc(platform, request);
 
-  const [, owner, id, rest] = /^\/([^/]+)\/([^/]+)(\/.*)?$/.exec(path) ?? [];
-  if (!owner || !OWNER.test(owner) || !ID.test(id)) return page("Not found", "There's nothing here. <a href=\"/\">Back to the start</a>.", 404);
+  const [, first, second, rest] = /^\/([^/]+)\/([^/]+)(\/.*)?$/.exec(path) ?? [];
+  const nothing = () => page("Not found", "There's no document here. <a href=\"/\">Back to the start</a>.", 404);
+  if (!first || (first != "d" && !OWNER.test(first))) return page("Not found", "There's nothing here. <a href=\"/\">Back to the start</a>.", 404);
   const session = await platform.sessionOf(request);
-  if (session?.test && !TEST_ID.test(id)) return page("Test documents only", "Test people can open only test documents.", 403);
 
-  // The editor itself: sign in first, then the page that joins the document.
+  // The editor itself: sign in first, then the page that joins the document, at its canonical address.
   if (!rest || rest == "/") {
-    if (!session) return signInFirst(path);
-    if (!(await platform.docs.exists(owner, id))) return page("Not found", "There's no document here. <a href=\"/\">Back to the start</a>.", 404);
+    if (!session) return signInFirst(path + url.search);
+    const doc = await documentAt(platform, first, second);
+    if (!doc) return nothing();
+    if (!(await platform.directory.may(whoOf(session), "open", doc))) return refused(session);
+    const canonical = `/${doc.owner}/${doc.slug}`;
+    if (path != canonical && path != `${canonical}/`) return new Response(null, { status: 302, headers: { Location: canonical + url.search } });
+    if (!(await platform.docs.exists(doc))) return nothing();
     // The page editor runs on the document's own origin, at an address that carries the token for its files.
-    const pagesUrl = `${pagesOrigin(owner, id, url, platform)}/t/${await pagesToken(platform.secret, owner, id, url.origin)}/`;
-    const editor = (await (await platform.editor(request)).text()).replace("</head>", `<meta name="erga-pages" content="${esc(pagesUrl)}"></head>`);
+    // The editor reaches its document's host at /d/<id>, which a rename never changes.
+    const pagesUrl = `${pagesOrigin(doc.owner, doc.id, url, platform)}/t/${await pagesToken(platform.secret, doc.owner, doc.id, url.origin)}/`;
+    const editor = (await (await platform.editor(request)).text())
+      .replace(/<title>[^<]*<\/title>/, `<title>${esc(doc.title)}</title>`)
+      .replace("</head>", `<meta name="erga-pages" content="${esc(pagesUrl)}"><meta name="erga-base" content="/d/${doc.id}"></head>`);
     return new Response(editor, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
   }
+  const route = await documentRoute(platform, first, second);
+  if (!route) return new Response("No such document", { status: 404 });
   // An external agent brings its share token, which the document checks; everyone else needs a session.
   if (!session && !rest.startsWith("/api/ext")) return new Response("Sign in first", { status: 401 });
-  return platform.docs.fetch(owner, id, forwarded(request, url, rest, `${url.origin}/${owner}/${id}`, session));
+  if (session && !(await platform.directory.may(whoOf(session), "open", route))) return new Response("Not allowed", { status: 403 });
+  return platform.docs.fetch(route, forwarded(request, url, rest, `${url.origin}/d/${route.id}`, session));
+}
+
+/** Who a session is, to the directory's `may`. */
+export const whoOf = (session: Session): Who => ({ login: session.login.toLowerCase(), test: !!session.test });
+
+const refused = (session: Session) => session.test
+  ? page("Test documents only", "Test people can open only test documents.", 403)
+  : page("Not allowed", "You can't open this document.", 403);
+
+/**
+ * The document at /<first>/<second> (/d/<id>, /<owner>/<slug>,
+ * /<owner>/<id>, /<owner>/<an old slug>), with all it is. A document made
+ * before the directory joins it the first time it's asked for by id.
+ */
+async function documentAt(platform: Platform, first: string, second: string): Promise<DocRow | null> {
+  if (first == "d") return ID.test(second) ? platform.directory.get(second) : null;
+  const found = await platform.directory.locate(first, second);
+  if (found) return found.doc;
+  const adopted = ID.test(second) ? await platform.docs.adopt(first.toLowerCase(), second) : null;
+  return adopted && platform.directory.get(adopted.id);
+}
+
+/**
+ * How to reach the document at /<first>/<second>, for the requests under
+ * it. By id it's remembered (an id is never another of the owner's slugs,
+ * directory.ts), so a document's many subrequests rarely ask the database.
+ */
+export async function documentRoute(platform: Pick<Platform, "directory" | "docs">, first: string, second: string): Promise<Route | null> {
+  if (first == "d") return ID.test(second) ? platform.directory.route(second) : null;
+  if (!OWNER.test(first)) return null;
+  const owner = first.toLowerCase();
+  if (ID.test(second)) {
+    const byId = await platform.directory.route(second);
+    if (byId?.owner == owner) return byId;
+  }
+  const found = await platform.directory.locate(owner, second);
+  if (found) return { id: found.doc.id, owner: found.doc.owner, doName: found.doc.doName, test: found.doc.test };
+  return ID.test(second) ? platform.docs.adopt(owner, second) : null;
 }
 
 // ---------------------------------------------------------------- pages
@@ -194,7 +260,9 @@ async function pagesDoor(request: Request, url: URL, doc: { owner: string; id: s
     });
   }
   if (!rest.startsWith("/doc/")) return notFound();
-  return platform.docs.fetch(doc.owner, doc.id, forwarded(request, url, rest, `${shell}/${doc.owner}/${doc.id}`, null));
+  const route = await platform.directory.route(doc.id);
+  if (!route || route.owner != doc.owner.toLowerCase()) return notFound();
+  return platform.docs.fetch(route, forwarded(request, url, rest, `${shell}/d/${doc.id}`, null));
 }
 
 /** A link on this site, keeping the name a local tab gave (?user=) if it gave one. */
@@ -242,10 +310,13 @@ async function newDoc(platform: Platform, request: Request): Promise<Response> {
   const from = params.get("from");
   const template = platform.templates[from && FROM.has(from) ? from : "doc"];
   // A test person makes (or reuses) a test document under the address of whoever minted their token.
+  // Its address is its id, which never follows the title (the suite addresses it by id).
   if (session.test) {
     if (!wanted || !TEST_ID.test(wanted)) return page("Test documents only", "Name the test document: /new?id=test1234.", 400);
-    const owner = session.test.by;
-    await platform.docs.create(owner, wanted, template, "index.html", { test: true });
+    const owner = session.test.by.toLowerCase();
+    const known = (await platform.directory.route(wanted)) ?? (await platform.docs.adopt(owner, wanted));
+    if (known && (known.owner != owner || !known.test)) return page("Taken", "That test document's id is someone else's: pick another.", 409);
+    if (!known) await makeDoc(platform, owner, wanted, template, { test: true });
     return new Response(null, { status: 302, headers: { Location: `/${owner}/${wanted}` } });
   }
   if (!platform.mayCreate(session, url)) return page("Invite only", "Erga is invite-only for now.", 403);
@@ -255,11 +326,30 @@ async function newDoc(platform: Platform, request: Request): Promise<Response> {
   const unedited = (dev && Number(params.get("unedited"))) || undefined;
   for (let tries = 0; tries < 5; tries++) {
     const id = wanted && dev && ID.test(wanted) ? wanted : newId();
-    if (await platform.docs.create(session.login, id, template, "index.html", { unedited })) {
-      return new Response(null, { status: 302, headers: { Location: link(`/${session.login}/${id}`, session) } });
-    }
+    const made = await makeDoc(platform, session.login.toLowerCase(), id, template, { unedited });
+    if (made) return new Response(null, { status: 302, headers: { Location: link(`/${made.owner}/${made.slug}`, session) } });
   }
   return page("Couldn't make a document", "Something went wrong picking an address. <a href=\"/new\">Try again</a>.", 500);
+}
+
+/**
+ * Makes a document from a template's files: its row in the directory (titled
+ * by the template's heading, its slug following that), then its host. Null
+ * if the id is taken.
+ */
+async function makeDoc(platform: Platform, owner: string, id: string, files: Record<string, string>, opts: { test?: boolean; unedited?: number }): Promise<DocRow | null> {
+  const created = Date.now();
+  const expires = opts.test ? null : created + (opts.unedited ?? UNEDITED_HOURS * HOUR);
+  const { doc, added } = await platform.directory.add({
+    id, owner, title: titleOf(files["index.html"] ?? "", "index.html") ?? UNTITLED,
+    ...(opts.test ? { slug: id, slugSet: true } : {}),
+    doName: id, created, expires, test: opts.test,
+  });
+  if (!added) return null;
+  if (await platform.docs.create(doc, files, "index.html", { test: opts.test, expires })) return doc;
+  // A host by that name was there already (an id from before the directory): leave it, and try another id.
+  await platform.directory.remove(id);
+  return null;
 }
 
 /** /docs: the signed-in person's documents, most recently edited first. */
@@ -278,9 +368,38 @@ async function deleteDoc(platform: Platform, request: Request): Promise<Response
   // Only from this site's own pages (the session cookie is SameSite=Lax already).
   if (request.headers.get("origin") != new URL(request.url).origin) return new Response("Forbidden", { status: 403 });
   const id = String((await request.formData()).get("id") ?? "");
-  if (!ID.test(id)) return new Response("No such document", { status: 404 });
+  const route = ID.test(id) ? await platform.directory.route(id) : null;
+  if (!route) return new Response("No such document", { status: 404 });
+  if (!(await platform.directory.may(whoOf(session), "delete", route))) return new Response("Only its owner can delete a document", { status: 403 });
   // Gone already (or never made): drop a stale entry all the same.
-  if (!(await platform.docs.delete(session.login, id))) await platform.docs.unlist(session.login, id);
+  if (!(await platform.docs.delete(route))) await platform.directory.remove(id);
+  return new Response(null, { status: 303, headers: { Location: link("/docs", session) } });
+}
+
+/**
+ * POST /docs/rename (id, title, slug): renames a document from the list. It
+ * goes through the document's host, as a rename in the editor does, so its
+ * open tabs follow. Answers JSON to the list's script, else goes back to the list.
+ */
+async function renameDoc(platform: Platform, request: Request): Promise<Response> {
+  const session = await platform.sessionOf(request);
+  if (!session || session.test) return new Response("Sign in first", { status: 401 });
+  const url = new URL(request.url);
+  if (request.headers.get("origin") != url.origin) return new Response("Forbidden", { status: 403 });
+  const form = await request.formData();
+  const id = String(form.get("id") ?? "");
+  const route = ID.test(id) ? await platform.directory.route(id) : null;
+  if (!route) return new Response("No such document", { status: 404 });
+  // Only what's given changes; an empty one goes back to following (directory.ts, rename).
+  const patch = { title: form.has("title") ? String(form.get("title")) : undefined, slug: form.has("slug") ? String(form.get("slug")) : undefined };
+  // As the person asking: their cookie (and locally ?user=) come along, as forwarded() passes them.
+  const headers = new Headers(request.headers);
+  headers.set("Content-Type", "application/json");
+  headers.delete("Content-Length");
+  const inner = new Request(new URL("/api/name", url), { method: "POST", headers, body: JSON.stringify(patch) });
+  const answer = await platform.docs.fetch(route, forwarded(inner, url, "/api/name", `${url.origin}/d/${id}`, session));
+  if (request.headers.get("accept")?.includes("application/json")) return new Response(answer.body, { status: answer.status, headers: { "Content-Type": "application/json" } });
+  if (!answer.ok) return page("Couldn't rename", `${esc(((await answer.json().catch(() => ({}))) as { error?: string }).error ?? "Something went wrong.")} <a href="${esc(link("/docs", session))}">Back to your documents</a>.`, answer.status);
   return new Response(null, { status: 303, headers: { Location: link("/docs", session) } });
 }
 
@@ -309,8 +428,9 @@ function docsPage(session: Session, docs: Listed[], now: number, dev: boolean): 
     // One opened from disk only comes off the list: its files stay where they are.
     const [remove, label] = d.path != null ? ["Remove from the list", `Remove ${esc(d.title)} from the list`] : ["Delete", `Delete ${esc(d.title)}`];
     return `  <li>
-    <a class="doc" href="${esc(link(`/${session.login}/${d.id}`, session))}"><span class="title">${esc(d.title)}</span>${note}<time datetime="${when}">${ago(d.modified, now)}</time></a>
-    <form method="post" action="${esc(link("/docs/delete", session))}" data-title="${esc(d.title)}"${d.path != null ? " data-disk" : ""}><input type="hidden" name="id" value="${esc(d.id)}"><button class="delete" aria-label="${label}" title="${remove}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M10 7V5h4v2M7 7l1 12h8l1-12"/></svg></button></form>
+    <a class="doc" href="${esc(link(`/${d.owner}/${d.slug}`, session))}"><span class="title">${esc(d.title)}</span>${note}<time datetime="${when}">${ago(d.modified, now)}</time></a>
+    <button type="button" class="act rename" aria-label="Rename ${esc(d.title)}" title="Rename" data-id="${esc(d.id)}" data-title="${esc(d.title)}" data-slug="${esc(d.slug)}"${d.titleSet ? " data-title-set" : ""}${d.slugSet ? " data-slug-set" : ""}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 19h3.5L18.25 9.25a2.47 2.47 0 0 0-3.5-3.5L5 15.5V19Z"/><path d="m13.5 7 3.5 3.5"/></svg></button>
+    <form method="post" action="${esc(link("/docs/delete", session))}" data-title="${esc(d.title)}"${d.path != null ? " data-disk" : ""}><input type="hidden" name="id" value="${esc(d.id)}"><button class="act delete" aria-label="${label}" title="${remove}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M10 7V5h4v2M7 7l1 12h8l1-12"/></svg></button></form>
   </li>`;
   }).join("\n");
   return `<!doctype html>
@@ -327,9 +447,9 @@ function docsPage(session: Session, docs: Listed[], now: number, dev: boolean): 
   h1 { margin: 0; font-size: 24px; font-weight: 650; letter-spacing: -0.015em; color: var(--fg-strong); }
   .new { flex: none; padding: 7px 14px; border-radius: 999px; background: var(--fg-strong); color: var(--bg); font-size: 13px; font-weight: 600; text-decoration: none; transition: opacity 150ms ease; }
   .new:hover { opacity: 0.85; }
-  :is(.new, .doc, .delete, footer a):focus-visible { outline: 2px solid var(--caret); outline-offset: 2px; border-radius: 6px; }
+  :is(.new, .doc, .act, footer a, dialog button):focus-visible { outline: 2px solid var(--caret); outline-offset: 2px; border-radius: 6px; }
   ol { list-style: none; margin: 0; padding: 0; }
-  li { display: flex; align-items: center; gap: 4px; border-bottom: 1px solid var(--rule); }
+  li { display: flex; align-items: center; gap: 2px; border-bottom: 1px solid var(--rule); }
   li:first-child { border-top: 1px solid var(--rule); }
   .doc { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 12px; padding: 13px 2px; color: inherit; text-decoration: none; }
   .title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; color: var(--fg-strong); }
@@ -337,11 +457,27 @@ function docsPage(session: Session, docs: Listed[], now: number, dev: boolean): 
   .note { flex: none; font-size: 12.5px; color: var(--chrome); }
   time { flex: none; margin-left: auto; font-size: 13px; color: var(--soft); font-feature-settings: "tnum"; white-space: nowrap; }
   form { margin: 0; }
-  .delete { display: grid; place-items: center; width: 30px; height: 30px; padding: 0; border: 0; border-radius: 8px; background: transparent; color: var(--chrome); cursor: pointer; opacity: 0; transition: opacity 150ms ease, color 150ms ease, background-color 150ms ease; }
-  .delete svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
-  li:hover .delete, .delete:focus-visible { opacity: 1; }
-  .delete:hover { color: var(--chrome-hover); background: color-mix(in srgb, var(--chrome) 12%, transparent); }
-  @media (hover: none) { .delete { opacity: 1; } }
+  .act { display: grid; place-items: center; width: 30px; height: 30px; padding: 0; border: 0; border-radius: 8px; background: transparent; color: var(--chrome); cursor: pointer; opacity: 0; transition: opacity 150ms ease, color 150ms ease, background-color 150ms ease; }
+  .act svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+  li:hover .act, .act:focus-visible { opacity: 1; }
+  .act:hover { color: var(--chrome-hover); background: color-mix(in srgb, var(--chrome) 12%, transparent); }
+  @media (hover: none) { .act { opacity: 1; } }
+  /* Renaming: a small card over the list. */
+  dialog { width: min(400px, calc(100vw - 32px)); box-sizing: border-box; padding: 18px; border: 1px solid var(--panel-border); border-radius: 14px; background: var(--bg); color: var(--fg); box-shadow: var(--shadow); font-size: 14px; }
+  dialog::backdrop { background: rgba(0, 0, 0, 0.18); }
+  dialog h2 { margin: 0 0 12px; font-size: 15px; font-weight: 600; color: var(--fg-strong); }
+  dialog label { display: block; margin: 0 0 4px; font-size: 12.5px; color: var(--soft); }
+  dialog .field { display: flex; align-items: center; margin-bottom: 12px; border: 1px solid var(--rule); border-radius: 9px; background: color-mix(in srgb, var(--chrome) 6%, transparent); padding: 0 10px; }
+  dialog .field:focus-within { border-color: var(--caret); }
+  dialog .field span { color: var(--soft); white-space: nowrap; }
+  dialog input { flex: 1; min-width: 0; padding: 8px 0; border: 0; outline: 0; background: transparent; color: var(--fg-strong); font: inherit; }
+  dialog .hint { margin: -6px 0 12px; font-size: 12px; color: var(--soft); min-height: 1em; }
+  dialog .hint:empty { display: none; }
+  dialog .hint.error { color: #c2410c; }
+  dialog .buttons { display: flex; justify-content: flex-end; gap: 8px; }
+  dialog button { font: 600 13px var(--font-text); padding: 7px 14px; border-radius: 999px; border: 1px solid var(--rule); background: transparent; color: var(--fg); cursor: pointer; }
+  dialog button.primary { border-color: var(--fg-strong); background: var(--fg-strong); color: var(--bg); }
+  @media (pointer: coarse) { dialog input { font-size: 16px; } }
   .empty { margin: 0; padding: 28px 2px; border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); color: var(--soft); }
   .open { display: flex; gap: 8px; margin: 28px 0 0; }
   .open input { flex: 1; min-width: 0; padding: 7px 12px; border: 1px solid var(--rule); border-radius: 999px; background: transparent; color: var(--fg-strong); font: inherit; font-size: 13.5px; }
@@ -354,7 +490,7 @@ function docsPage(session: Session, docs: Listed[], now: number, dev: boolean): 
   footer a:hover { color: var(--chrome-hover); }
   @media (max-width: 520px) { .note { display: none; } main { padding-top: 8vh; } }
   /* Touch: room for a finger. */
-  @media (pointer: coarse) { .new { padding: 10px 16px; } .delete { width: 40px; height: 40px; margin-right: -6px; } footer a { padding: 8px 0; margin: -8px 0; } }
+  @media (pointer: coarse) { .new { padding: 10px 16px; } .act { width: 40px; height: 40px; } .delete { margin-right: -6px; } footer a { padding: 8px 0; margin: -8px 0; } }
 </style>
 <main>
   <header>
@@ -368,6 +504,18 @@ function docsPage(session: Session, docs: Listed[], now: number, dev: boolean): 
   </form>` : ""}
   <footer><span>Signed in as ${esc(session.login)}</span><a href="${esc(link("/", session))}">The demo</a><a href="/auth/logout">Sign out</a></footer>
 </main>
+<dialog id="rename" aria-labelledby="rename-title">
+  <form method="post" action="${esc(link("/docs/rename", session))}">
+    <h2 id="rename-title">Rename</h2>
+    <input type="hidden" name="id">
+    <label for="rename-name">Title</label>
+    <div class="field"><input id="rename-name" name="title" autocomplete="off" spellcheck="false"></div>
+    <label for="rename-slug">Address</label>
+    <div class="field"><span>/${esc(session.login.toLowerCase())}/</span><input id="rename-slug" name="slug" autocomplete="off" autocapitalize="off" spellcheck="false"></div>
+    <p class="hint" id="rename-hint" role="status"></p>
+    <div class="buttons"><button type="button" value="cancel" formnovalidate>Cancel</button><button class="primary">Save</button></div>
+  </form>
+</dialog>
 <script>
   // Times in the reader's own language and zone, and a question before deleting.
   const rtf = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
@@ -384,6 +532,41 @@ function docsPage(session: Session, docs: Listed[], now: number, dev: boolean): 
     const q = "disk" in f.dataset ? "Take \\u201c" + f.dataset.title + "\\u201d off your list? Its files stay where they are." : "Delete \\u201c" + f.dataset.title + "\\u201d? This can't be undone.";
     f.addEventListener("submit", (e) => { if (!confirm(q)) e.preventDefault(); });
   }
+  // Renaming: the title, and the address, which follows the title until it's set.
+  // An empty field goes back to following (the title the page's first heading).
+  const dialog = document.getElementById("rename"), form = dialog.querySelector("form");
+  const nameIn = form.elements.title, slugIn = form.elements.slug, hint = document.getElementById("rename-hint");
+  const slugify = (s) => s.normalize("NFKD").replace(/[\\u0300-\\u036f]/g, "").toLowerCase().replace(/['\\u2019]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60).replace(/-+$/, "");
+  let was = null, slugTouched = false;
+  const say = (text, error) => { hint.textContent = text; hint.classList.toggle("error", !!error); };
+  const preview = () => say(!nameIn.value.trim() ? "Empty: the title follows the page's first heading."
+    : !slugIn.value.trim() ? "Empty: the address follows the title." : "");
+  for (const b of document.querySelectorAll("button.rename")) b.addEventListener("click", () => {
+    was = { id: b.dataset.id, title: b.dataset.title, slug: b.dataset.slug, slugSet: "slugSet" in b.dataset };
+    slugTouched = false;
+    form.elements.id.value = was.id;
+    nameIn.value = was.title;
+    slugIn.value = was.slug;
+    say("");
+    dialog.showModal();
+    nameIn.select();
+  });
+  // An address that follows the title follows it here too, until it's typed in.
+  nameIn.addEventListener("input", () => { if (!was.slugSet && !slugTouched) slugIn.value = slugify(nameIn.value) || was.slug; preview(); });
+  slugIn.addEventListener("input", () => { slugTouched = true; preview(); });
+  form.querySelector('[value="cancel"]').addEventListener("click", () => dialog.close());
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    // Only what was changed: a title left as it was keeps following the heading, if it did.
+    const body = new URLSearchParams({ id: was.id });
+    if (nameIn.value.trim() != was.title) body.set("title", nameIn.value.trim());
+    if (slugTouched && slugIn.value.trim() != was.slug) body.set("slug", slugIn.value.trim());
+    if ([...body.keys()].length == 1) return dialog.close();
+    say("Saving\\u2026");
+    const r = await fetch(form.action, { method: "POST", body, headers: { Accept: "application/json" } }).catch(() => null);
+    if (r && r.ok) return location.reload();
+    say((r && (await r.json().catch(() => ({}))).error) || "Couldn't rename it: try again.", true);
+  });
 </script>
 </html>`;
 }

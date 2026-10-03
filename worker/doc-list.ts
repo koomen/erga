@@ -1,27 +1,22 @@
 // One person's documents on erga.dev, as a Durable Object named by their
-// login (lowercase): the index /docs lists. Each document (doc-host.ts)
-// keeps its own entry up to date: it puts it when it's made, when it opens
-// (so documents made before there was an index turn up once opened) and
-// when one of its files changes, and removes it when it's deleted.
+// login (lowercase): the index /docs listed before the directory
+// (directory.ts, in D1). Nothing writes to it any more; the Worker reads it
+// once per person, to copy it into the directory (worker/index.ts,
+// backfill). Once everyone's has been copied, it and the LISTS binding can go
+// (a Durable Object class deletion migration), with the data in it.
 
 import { DurableObject } from "cloudflare:workers";
-import type { Listed } from "../front";
 import type { Env } from "./env";
+
+/** An entry as documents kept it: `expires` only while never edited; `title` its id if it had none. */
+export interface ListEntry { id: string; title: string; created: number; modified: number; expires?: number }
 
 const DOC = "doc:";
 
 export class DocList extends DurableObject<Env> {
-  async put(doc: Listed): Promise<void> {
-    await this.ctx.storage.put(DOC + doc.id, doc);
-  }
-
-  async remove(id: string): Promise<void> {
-    await this.ctx.storage.delete(DOC + id);
-  }
-
   /** Every document, most recently changed first. */
-  async list(): Promise<Listed[]> {
-    const docs = await this.ctx.storage.list<Listed>({ prefix: DOC });
+  async list(): Promise<ListEntry[]> {
+    const docs = await this.ctx.storage.list<ListEntry>({ prefix: DOC });
     return [...docs.values()].sort((a, b) => b.modified - a.modified);
   }
 }

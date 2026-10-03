@@ -35,6 +35,8 @@ export class SessionFailed extends Schema.TaggedError<SessionFailed>()("SessionF
 export class NoSuchTool extends Schema.TaggedError<NoSuchTool>()("NoSuchTool", { ...failed, error: Schema.String }, { httpApiStatus: 404 }) {}
 /** The tool ran and failed (bad arguments, an edit that didn't match): `error` is what the model would read. */
 export class ToolFailed extends Schema.TaggedError<ToolFailed>()("ToolFailed", { ...failed, error: Schema.String }, { httpApiStatus: 400 }) {}
+/** A rename that can't be done (the address is taken or reserved, or it isn't theirs to rename): `error` says which. */
+export class NameRefused extends Schema.TaggedError<NameRefused>()("NameRefused", { ...failed, error: Schema.String }, { httpApiStatus: 409 }) {}
 
 // ------------------------------------------------------------ who's asking
 
@@ -57,6 +59,19 @@ export class ExplainBadRequests extends HttpApiMiddleware.Service<ExplainBadRequ
 
 const Ok = Schema.Struct({ ok: Schema.Literal(true) });
 
+/** What the document is called (directory.ts): its title, and its address, /<owner>/<slug>. */
+export const DocName = Schema.Struct({
+  id: Schema.String,
+  owner: Schema.String,
+  title: Schema.String,
+  slug: Schema.String,
+  address: Schema.String,
+  /** Set by someone: the title no longer follows the page's first heading, or the slug the title. */
+  titleSet: Schema.Boolean,
+  slugSet: Schema.Boolean,
+});
+export type DocName = typeof DocName.Type;
+
 export const DocInfo = Schema.Struct({
   name: Schema.String,
   /** The document's path inside its folder. */
@@ -70,6 +85,8 @@ export const DocInfo = Schema.Struct({
   /** Their picture, if they have one (their GitHub avatar). */
   avatar: Schema.optional(Schema.String),
   writeDelay: Schema.Number,
+  /** Its title and address, where the platform keeps a directory (both hosts do). */
+  docName: Schema.optional(DocName),
 });
 export type DocInfo = typeof DocInfo.Type;
 
@@ -102,6 +119,18 @@ const ToolSpec = Schema.Struct({ name: Schema.String, description: Schema.String
 export const Api = HttpApi.make("erga")
   .add(HttpApiGroup.make("doc")
     .add(HttpApiEndpoint.get("info", "/api/doc", { success: DocInfo }))
+    /** Its title and address. */
+    .add(HttpApiEndpoint.get("name", "/api/name", { success: DocName, error: NameRefused }))
+    /**
+     * Renames it: a title, a slug, or both; an empty one (or null) goes back to
+     * following (the title the page's first heading, the slug the title).
+     * Every open tab hears of it ({ type: "name" } on /api/events).
+     */
+    .add(HttpApiEndpoint.post("rename", "/api/name", {
+      payload: Schema.Struct({ title: Schema.optional(Schema.NullOr(Schema.String)), slug: Schema.optional(Schema.NullOr(Schema.String)) }),
+      success: DocName,
+      error: NameRefused,
+    }))
     .middleware(PersonFromRequest))
   .add(HttpApiGroup.make("agent")
     .add(HttpApiEndpoint.get("state", "/api/agent", { success: AgentState }))

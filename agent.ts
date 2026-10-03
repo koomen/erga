@@ -40,6 +40,7 @@ import { emptyLog, reduce, type Log, type LogEvent } from "./src/page/agent-log"
 import type { ViewRequest, ViewResult } from "./src/page/agent-log";
 import { agentName, colorFor, files, introduce, stamp, stateVector, type Author } from "./src/room/doc";
 import { joinLocal, type Room } from "./room";
+import type { Naming } from "./directory";
 import { YjsWorkspace, WorkspaceError, cleanPath, globToRegExp, type Workspace } from "./workspace";
 import documentPrompt from "./DOCUMENT_PROMPT.md" with { type: "text" };
 
@@ -198,6 +199,11 @@ and change any text file in it. Paths are relative to the folder.`}
   errors). Use it to check visual work, like a diagram, layout or styling, before you
   say it's done. It renders your latest changes, including ones the page won't show
   until your turn ends. Pass a CSS selector to look closely at one element.
+- get_title and set_title read and change the document's title (shown in the list and
+  the browser tab) and its address, /<owner>/<slug>. Until someone sets them, the title
+  follows the page's first heading and the slug follows the title, so a new heading
+  usually renames the document by itself. Use set_title when asked to rename it or
+  change its address.
 - Keep replies short: say what you changed, not how. ${owner} can see the result.
 - Follow the rules below whenever you create or change a page, so people can keep
   editing it by hand. When you fix a page that breaks them, keep its text as it is.
@@ -214,6 +220,7 @@ function makeTools(ws: Workspace, opts: {
   view: (req: ViewRequest) => Promise<ViewResult>;
   readAsset: (path: string) => Promise<Uint8Array | null>;
   edited: (path: string, at: number) => void;
+  naming?: Naming;
 }): AgentTool[] {
   const text = (s: string) => ({ content: [{ type: "text" as const, text: s }], details: {} });
   /** Runs a workspace operation; its failure becomes the tool's error, which the model reads. */
@@ -340,6 +347,39 @@ function makeTools(ws: Workspace, opts: {
         return { content: [{ type: "image" as const, data: v.png, mimeType: "image/png" }, { type: "text" as const, text: lines.join("\n") }], details: {} };
       },
     },
+    ...(opts.naming ? namingTools(opts.naming) : []),
+  ] as AgentTool[];
+}
+
+/** get_title and set_title: the document's title and its address, kept in the directory (directory.ts), not in a file. */
+function namingTools(naming: Naming): AgentTool[] {
+  const describe = (n: Awaited<ReturnType<Naming["get"]>>) => [
+    `Title: ${n.title}${n.titleSet ? " (set by someone)" : " (follows the page's first heading)"}`,
+    `Address: ${n.address} (slug "${n.slug}"${n.slugSet ? ", set by someone" : ", follows the title"})`,
+    `Always reachable at /d/${n.id}.`,
+  ].join("\n");
+  const text = (s: string) => ({ content: [{ type: "text" as const, text: s }], details: {} });
+  return [
+    {
+      name: "get_title",
+      label: "Read the title",
+      description: "Read the document's title (shown in the document list and the browser tab) and its address, /<owner>/<slug>. Until someone sets them, the title follows the page's first heading and the slug follows the title.",
+      parameters: Type.Object({}),
+      execute: async () => text(describe(await naming.get())),
+    },
+    {
+      name: "set_title",
+      label: "Rename the document",
+      description: "Set the document's title, its address slug (the last part of /<owner>/<slug>), or both. The slug is made from what you give (\"Q3 plan\" becomes \"q3-plan\"); one already used by another of the owner's documents is refused. An empty string goes back to following: the title the page's first heading, the slug the title. Old addresses keep redirecting to the new one, and everyone's open editor moves to it. Only rename when asked to; this doesn't change the page's text (edit its heading for that).",
+      parameters: Type.Object({
+        title: Type.Optional(Type.String({ description: "The new title, or \"\" to follow the page's first heading again" })),
+        slug: Type.Optional(Type.String({ description: "The new slug (lowercase letters, digits, dashes), or \"\" to follow the title again" })),
+      }),
+      execute: async (_id, p: { title?: string; slug?: string }) => {
+        if (p.title === undefined && p.slug === undefined) throw new Error("Give a title, a slug, or both.");
+        return text(`Renamed.\n${describe(await naming.set(p))}`);
+      },
+    },
   ] as AgentTool[];
 }
 
@@ -390,9 +430,11 @@ export interface SessionOptions {
   /** Asks one of the owner's open tabs to render and capture the page. */
   view: (req: ViewRequest) => Promise<ViewResult>;
   readAsset: (path: string) => Promise<Uint8Array | null>;
+  /** The document's title and address, as the owner (get_title, set_title); without it those tools are left out. */
+  naming?: Naming;
 }
 
-const TOOL_ACTIVITY: Record<string, string> = { read: "reading", edit: "editing", write: "writing", ls: "looking around", find: "looking for files", grep: "searching", view_page: "looking at the page" };
+const TOOL_ACTIVITY: Record<string, string> = { read: "reading", edit: "editing", write: "writing", ls: "looking around", find: "looking for files", grep: "searching", view_page: "looking at the page", get_title: "reading the title", set_title: "renaming the document" };
 
 export async function startSession(opts: SessionOptions): Promise<AgentSession> {
   const { cfg, owner } = opts;
@@ -438,6 +480,7 @@ export async function startSession(opts: SessionOptions): Promise<AgentSession> 
   const tools = makeTools(ws, {
     view: (req) => opts.view({ ...req, after: stateVector(doc) }),
     readAsset: opts.readAsset,
+    naming: opts.naming,
     edited: (path, at) => {
       // One undo step per tool call, and the agent's cursor where it last wrote.
       undo.stopCapturing();
@@ -612,6 +655,12 @@ error says what to fix), 401 (bad token) or 404 (no such tool).
 - view_page shows you the page as ${o.owner} sees it, rendered in their browser (so it
   needs their editor open): a screenshot plus any script errors. Use it to check
   visual work before you say it's done.
+- get_title and set_title read and change the document's title (shown in the
+  document list and the browser tab) and its address, /<owner>/<slug>. Until
+  someone sets them, the title follows the page's first heading and the slug
+  follows the title. Use set_title when asked to rename the document or change
+  its address; old addresses keep redirecting, and the API address above never
+  changes.
 - Follow the rules below whenever you create or change a page, so people can keep
   editing it by hand.
 
