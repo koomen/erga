@@ -15,9 +15,14 @@
 //
 // As a Durable Object does, a document opens on its first request (its
 // room, room.ts; its host, host.ts; and a watcher that merges edits made to
-// its files by anything else) and stays open while the host runs. The list
-// /docs shows is read from the folders when it's asked for, so there's no
-// separate list to keep in step.
+// its files by anything else) and stays open while the host runs.
+//
+// The directory (directory.ts: addresses, titles, members, what /docs
+// lists) is a SQLite file beside them, erga.db (directory-sqlite.ts). Each
+// document keeps its row up to date as erga.dev's do; a folder without a
+// row (one from before the directory) gets one when the host starts. A
+// document opened from disk is its owner's, never expires, and its slug is
+// its folder's name (or its file's, for a single file), not its title.
 
 import { createHash } from "node:crypto";
 import { watch, type FSWatcher } from "node:fs";
@@ -29,7 +34,8 @@ import * as Exit from "effect/Exit";
 import * as Scope from "effect/Scope";
 import type { HttpServerRequest } from "effect/http";
 import type { AgentConfig } from "./agent";
-import { afterUnedited, ALPHABET, HOUR, titleOf, UNEDITED_HOURS, type Listed } from "./front";
+import { DIRECTORY_EVERY_MS, nameOf, namingFor, throttle, UNTITLED, type Directory, type DocRow, type Route } from "./directory";
+import { afterUnedited, ALPHABET, titleOf, UNEDITED_HOURS, type Listed } from "./front";
 import { ignored, makeHost } from "./host";
 import { FileStore, Room, StateStore, StoreError } from "./room";
 
@@ -45,6 +51,7 @@ export interface Opened {
 }
 
 export interface LocalDocsOptions {
+  readonly directory: Directory;
   readonly agent: AgentConfig | { readonly missing: string };
   /** Who a request is from (host.ts). */
   readonly personOf: (request: HttpServerRequest.HttpServerRequest) => { id: string; name: string };
@@ -57,8 +64,11 @@ export class LocalDocs {
   /** Each open document's sockets, by how to hang each up: someone has it open while there are any. */
   private sockets = new Map<string, Set<() => void>>();
   private alarms = new Map<string, ReturnType<typeof setTimeout>>();
+  /** Each document's throttled update of its row in the directory. */
+  private syncs = new Map<string, () => void>();
 
   constructor(readonly root: string, private opts: LocalDocsOptions) {}
+  private get directory() { return this.opts.directory; }
 
   private dir(owner: string, id: string) { return join(this.root, "docs", owner.toLowerCase(), id); }
   private key(owner: string, id: string) { return `${owner.toLowerCase()}/${id}`; }
@@ -73,26 +83,55 @@ export class LocalDocs {
   }
 
   /**
-   * Creates a document from a template's files; false if it already exists.
-   * Unless someone edits it, it's deleted UNEDITED_HOURS later (or `unedited` ms).
+   * Creates the document, whose row is already in the directory, from a
+   * template's files; false if it already exists. Unless someone edits it,
+   * it's deleted at `expires`.
    */
-  async create(owner: string, id: string, files: Record<string, string>, index: string, opts: { unedited?: number } = {}): Promise<boolean> {
+  async create(owner: string, id: string, files: Record<string, string>, index: string, opts: { expires: number | null }): Promise<boolean> {
     if (await this.meta(owner, id)) return false;
     for (const [path, text] of Object.entries(files)) await writeAtomic(join(this.dir(owner, id), "files", path), text);
-    const created = Date.now();
-    const meta: Meta = { id, owner, index, created, expires: created + (opts.unedited ?? UNEDITED_HOURS * HOUR) };
+    const meta: Meta = { id, owner: owner.toLowerCase(), index, created: Date.now(), ...(opts.expires != null ? { expires: opts.expires } : {}) };
     await this.saveMeta(meta);
     this.schedule(meta);
     return true;
   }
 
-  /** A folder on disk as one of `owner`'s documents, its page at `index` inside it: the document's id. */
-  async link(owner: string, folder: string, index: string): Promise<string> {
+  /**
+   * A folder on disk as one of `owner`'s documents, its page at `index`
+   * inside it: its row in the directory (made the first time; a rename since
+   * is kept).
+   */
+  async link(owner: string, folder: string, index: string): Promise<DocRow> {
     const hash = createHash("sha1").update(join(folder, index)).digest();
     const id = Array.from(hash.subarray(0, 8), (b) => ALPHABET[b % ALPHABET.length]).join("");
+    let meta = await this.meta(owner, id);
+    if (!meta || meta.path != folder || meta.index != index) await this.saveMeta(meta = { id, owner: owner.toLowerCase(), index, created: Date.now(), path: folder });
+    return this.register(meta);
+  }
+
+  /**
+   * Puts a document in the directory if it isn't there yet, as it is now:
+   * its row. One opened from disk is named after its folder (or its file, if
+   * it's a single file) rather than following its title.
+   */
+  private async register(meta: Meta): Promise<DocRow> {
+    const text = await readFile(join(this.folder(meta), meta.index), "utf8").catch(() => null);
+    const disk = meta.path ? (/^index\.(html?|md)$/i.test(basename(meta.index)) ? basename(meta.path) : basename(meta.index).replace(/\.[^.]+$/, "")) : null;
+    const { doc } = await this.directory.add({
+      id: meta.id, owner: meta.owner, title: (text && titleOf(text, meta.index)) || UNTITLED,
+      ...(disk != null ? { slug: disk, slugSet: true } : {}),
+      // Its folder, docs/<owner>/<id>, is how this host finds it; the name is the Durable Object's on erga.dev.
+      doName: `${meta.owner.toLowerCase()}/${meta.id}`,
+      created: meta.created, modified: meta.modified ?? null,
+      expires: meta.path || meta.modified ? null : meta.expires ?? null,
+    });
+    return doc;
+  }
+
+  /** A document from before the directory, at /<owner>/<id>, put in it now; null if there's none. */
+  async adopt(owner: string, id: string): Promise<DocRow | null> {
     const meta = await this.meta(owner, id);
-    if (!meta || meta.path != folder || meta.index != index) await this.saveMeta({ id, owner, index, created: Date.now(), path: folder });
-    return id;
+    return meta ? this.register(meta) : null;
   }
 
   async exists(owner: string, id: string): Promise<boolean> {
@@ -119,25 +158,21 @@ export class LocalDocs {
     clearTimeout(this.alarms.get(key));
     this.alarms.delete(key);
     await rm(this.dir(meta.owner, meta.id), { recursive: true, force: true });
+    await this.directory.remove(meta.id);
   }
 
-  /** `owner`'s documents, most recently edited first. */
+  /** `owner`'s documents, most recently edited first (from the directory; where each one opened from disk lives, from its meta). */
   async list(owner: string): Promise<Listed[]> {
-    const ids = await readdir(join(this.root, "docs", owner.toLowerCase())).catch(() => [] as string[]);
     const docs: Listed[] = [];
-    for (const id of ids) {
-      const meta = await this.meta(owner, id);
-      if (!meta) continue;
-      const text = await readFile(join(this.folder(meta), meta.index), "utf8").catch(() => null);
+    for (const d of await this.directory.list(owner)) {
+      const meta = await this.meta(d.owner, d.id);
       docs.push({
-        id,
-        title: (text && titleOf(text, meta.index)) || id,
-        created: meta.created,
-        modified: meta.modified ?? meta.created,
-        ...(meta.path ? { path: meta.path.replace(homedir(), "~") } : !meta.modified && meta.expires ? { expires: meta.expires } : {}),
+        id: d.id, owner: d.owner, slug: d.slug, title: d.title, titleSet: d.titleSet, slugSet: d.slugSet,
+        created: d.created, modified: d.modified ?? d.created,
+        ...(meta?.path ? { path: meta.path.replace(homedir(), "~") } : d.modified == null && d.expires != null ? { expires: d.expires } : {}),
       });
     }
-    return docs.sort((a, b) => b.modified - a.modified);
+    return docs;
   }
 
   /** Hands a request (its path the one inside the document) to the document's host. */
@@ -189,8 +224,10 @@ export class LocalDocs {
       room, files, agent: this.opts.agent,
       doc: { name: basename(meta.index), path: meta.index, kind: meta.index.endsWith(".md") ? "md" : "html", dir: folder },
       personOf: this.opts.personOf,
-      baseUrl: (req) => req.headers["x-erga-base"] ?? `http://${req.headers["host"]}/${owner}/${id}`,
+      baseUrl: (req) => req.headers["x-erga-base"] ?? `http://${req.headers["host"]}/d/${id}`,
+      naming: (person) => naming({ login: person.id }),
     });
+    const naming = namingFor(this.directory, id, () => titleOf(room.text(meta.index) ?? "", meta.index));
     const watcher = this.watch(folder, room);
     return {
       room, host,
@@ -223,7 +260,25 @@ export class LocalDocs {
     now.modified = Date.now();
     delete now.expires;
     await this.saveMeta(now);
-    clearTimeout(this.alarms.get(this.key(now.owner, now.id)));
+    const key = this.key(now.owner, now.id);
+    clearTimeout(this.alarms.get(key));
+    // Its row: at most every DIRECTORY_EVERY_MS, however fast the edits come; the last always lands.
+    let sync = this.syncs.get(key);
+    if (!sync) this.syncs.set(key, sync = throttle(() => this.syncDirectory(now.owner, now.id).catch((e) => this.opts.log(`  couldn't update ${key}'s row: ${(e as Error).message}`)), DIRECTORY_EVERY_MS));
+    sync();
+  }
+
+  /**
+   * Brings a document's row up to date after edits: when it was last edited,
+   * and the title, which follows its first heading until someone sets it
+   * (and the slug the title). Every open tab hears of a new title or address.
+   */
+  private async syncDirectory(owner: string, id: string): Promise<void> {
+    const meta = await this.meta(owner, id);
+    if (!meta) return;
+    const text = await readFile(join(this.folder(meta), meta.index), "utf8").catch(() => null);
+    const r = await this.directory.edited(id, { modified: meta.modified ?? null, pageTitle: text == null ? null : titleOf(text, meta.index) });
+    if (r?.renamed) (await this.opened.get(this.key(owner, id)))?.host.renamed(nameOf(r.doc));
   }
 
   /** Every change in the folder, subfolders included, goes to the room: it merges text edits it didn't make and notes changed assets. */
@@ -247,13 +302,19 @@ export class LocalDocs {
     return watcher;
   }
 
-  /** Starts the clock on every document nobody has edited yet (one whose time is up goes now). */
+  /**
+   * Puts every document in the directory that isn't there yet (folders from
+   * before it), and starts the clock on every one nobody has edited yet (one
+   * whose time is up goes now).
+   */
   async start(): Promise<void> {
     const root = join(this.root, "docs");
     for (const owner of await readdir(root).catch(() => [] as string[])) {
       for (const id of await readdir(join(root, owner)).catch(() => [] as string[])) {
         const meta = await this.meta(owner, id);
-        if (meta) this.schedule(meta);
+        if (!meta) continue;
+        await this.register(meta).catch((e) => this.opts.log(`  couldn't put ${owner}/${id} in the directory: ${(e as Error).message}`));
+        this.schedule(meta);
       }
     }
   }
@@ -277,6 +338,7 @@ export class LocalDocs {
     if (next != "delete") {
       meta.expires = next;
       await this.saveMeta(meta);
+      await this.directory.setExpires(id, next);
       return this.schedule(meta);
     }
     this.opts.log(`  deleting ${owner}/${id}: not edited in ${UNEDITED_HOURS} hours`);

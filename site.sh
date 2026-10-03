@@ -8,3 +8,7 @@ cd "$(dirname "$0")"
 rm -rf .site && mkdir -p .site
 cp page.html .site/editor.html
 cp -r page.js frame.js style.css fonts .site/
+# Workers Builds runs this, then `bunx cf deploy`: bring erga.dev's directory
+# database (D1) up to date with migrations/ first, making it if it's new.
+# Only there (WORKERS_CI is set on Workers Builds); `bun run deploy` does it itself.
+if [[ -n "${WORKERS_CI:-}" ]]; then bun migrate.ts; fi

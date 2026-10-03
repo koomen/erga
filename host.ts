@@ -20,7 +20,8 @@ import * as Path from "effect/Path";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { HttpApiBuilder, HttpApiMiddleware } from "effect/http-api";
 import { MODELS, externalGuide, isModelChoice, startSession, type AgentConfig, type AgentSession } from "./agent";
-import { AgentOff, Api, BadRequest, ExplainBadRequests, ModelFixed, NoSuchModel, NoSuchTool, Person, PersonFromQuery, SessionFailed, ShareToken, ToolFailed, Unauthorized, type AgentState, type ModelState } from "./api";
+import { AgentOff, Api, BadRequest, ExplainBadRequests, ModelFixed, NameRefused, NoSuchModel, NoSuchTool, Person, PersonFromQuery, SessionFailed, ShareToken, ToolFailed, Unauthorized, type AgentState, type ModelState } from "./api";
+import type { DocName, Naming } from "./directory";
 import { digest, type FileStore, type Room } from "./room";
 import type { ViewRequest, ViewResult } from "./src/page/agent-log";
 
@@ -46,6 +47,8 @@ export interface HostOptions {
   readonly avatarOf?: (person: { id: string; name: string }) => string | undefined;
   /** Whether a person may edit (locally everyone may; hosted, the project role would decide). */
   readonly canEdit?: (person: { id: string; name: string }) => boolean;
+  /** The document's title and address in the directory (directory.ts), read and changed as a person. */
+  readonly naming?: (person: { id: string; name: string }) => Naming;
 }
 
 /** One of a person's open tabs: their agent's events and its view_page requests go only to them. */
@@ -89,6 +92,14 @@ export function makeHost(opts: HostOptions) {
   const { room, files, doc, agent } = opts;
   const tabs = new Set<Tab>();
   const sendTo = (user: string, msg: unknown) => { for (const t of tabs) if (t.user == user) t.send(msg); };
+  /** Every open tab, whoever's: the document's new title and address, so they show it and move to it. */
+  const renamed = (name: DocName) => { for (const t of tabs) t.send({ type: "name", name }); };
+  /** The document's naming as a person; a rename (by them or their agent) reaches every tab. */
+  const namingAs = (user: { id: string; name: string }): Naming | undefined => {
+    const n = opts.naming?.(user);
+    return n && { get: n.get, set: async (patch) => { const name = await n.set(patch); renamed(name); return name; } };
+  };
+  const nameError = (e: unknown) => new NameRefused({ ok: false, error: e instanceof Error ? e.message : String(e) });
 
   // view_page: ask the owner's tabs; the first to answer wins. With none of
   // their tabs open there's nothing to look with (no server-side browser
@@ -117,6 +128,7 @@ export function makeHost(opts: HostOptions) {
         cfg: "missing" in agent ? null : agent, room, owner: user, docName: doc.name, kind: doc.kind,
         canEdit: () => opts.canEdit?.(user) ?? true,
         view: view(user.id),
+        naming: namingAs(user),
         readAsset: (rel) => Effect.runPromise(Effect.orElseSucceed(files.read(rel), () => null)),
       });
       s.then((session) => session.subscribe((ev) => sendTo(user.id, { type: "agent", ev })), () => sessions.delete(user.id));
@@ -173,7 +185,18 @@ export function makeHost(opts: HostOptions) {
       : Effect.die(e));
 
   const docApi = HttpApiBuilder.group(Api, "doc", (h) => h
-    .handle("info", () => Person.useSync((user) => ({ name: doc.name, path: doc.path, kind: doc.kind, dir: doc.dir, user: user.name, userId: user.id, signedIn: opts.signedIn ?? false, avatar: opts.avatarOf?.(user), writeDelay: room.writeDelay }))));
+    .handle("info", () => Person.use((user) => Effect.gen(function* () {
+      const docName = yield* Effect.promise(() => namingAs(user)?.get().catch(() => undefined) ?? Promise.resolve(undefined));
+      return { name: doc.name, path: doc.path, kind: doc.kind, dir: doc.dir, user: user.name, userId: user.id, signedIn: opts.signedIn ?? false, avatar: opts.avatarOf?.(user), writeDelay: room.writeDelay, docName };
+    })))
+    .handle("name", () => Person.use((user) => {
+      const n = namingAs(user);
+      return n ? Effect.tryPromise({ try: () => n.get(), catch: nameError }) : Effect.fail(nameError("This document has no name to read."));
+    }))
+    .handle("rename", ({ payload }) => Person.use((user) => {
+      const n = namingAs(user);
+      return n ? Effect.tryPromise({ try: () => n.set(payload), catch: nameError }) : Effect.fail(nameError("This document can't be renamed."));
+    })));
 
   const agentApi = HttpApiBuilder.group(Api, "agent", (h) => h
     .handle("state", () => Person.use((user) => session(user).pipe(
@@ -283,6 +306,8 @@ export function makeHost(opts: HostOptions) {
       tabs.add(tab);
       return () => { tabs.delete(tab); };
     },
+    /** The document was renamed some other way (its title following an edit): every tab hears of it. */
+    renamed,
     agentOff,
   };
 }

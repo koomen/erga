@@ -7,16 +7,19 @@
 //
 //   /                          the demo, rendered, with an Edit button (and your documents, signed in)
 //   /new                       a blank document for you (signs you in first); /new?from=demo a copy of the demo
-//   /docs                      your documents (doc-list.ts), latest edit first; POST /docs/delete deletes one
-//   /<owner>/<id>              the editor on that document (anyone signed in may edit)
-//   /<owner>/<id>/<rest>       the document's own host: /api/..., /doc/..., the sockets
+//   /docs                      your documents (the directory, D1), latest edit first; POST /docs/delete, /docs/rename
+//   /<owner>/<slug>            the editor on that document (anyone signed in may edit); /d/<id>,
+//                              /<owner>/<id> and old slugs redirect here
+//   /d/<id>/<rest>             the document's own host: /api/..., /doc/..., the sockets (also under the other addresses)
 //   /auth/github[/callback]    signing in; /auth/logout signs out
 //   /tokens                    a test token, for running the test suite against erga.dev
 //   /auth/test?token=&as=      a test person (Ada, Bo...) signed in with one; they open only test documents
 //   /page.js, /style.css, ...  the editor's own files (static assets)
 
+import { UNTITLED, type Directory, type Route } from "../directory";
 import { frontDoor, page, type Platform } from "../front";
 import { allowed, finishSignIn, isDev, mintTestToken, sessionOf, signOut, startSignIn, testSignIn } from "./auth";
+import { directoryOf } from "./d1";
 import type { Env } from "./env";
 
 export { DocHost } from "./doc-host";
@@ -46,13 +49,16 @@ export default {
 } satisfies ExportedHandler<Env>;
 
 /**
- * The front door (front.ts) on Cloudflare: people sign in with GitHub, a
- * document is a Durable Object named "<owner>/<id>" (doc-host.ts), and
- * each person's list is one named by their login (doc-list.ts).
+ * The front door (front.ts) on Cloudflare: people sign in with GitHub, the
+ * directory is in D1 (d1.ts), and a document is a Durable Object
+ * (doc-host.ts) named by its id, or "<owner>/<id>" if it was made before the
+ * directory (its row's do_name).
  */
 const platform = (env: Env): Platform => {
-  const doc = (owner: string, id: string) => env.DOCS.getByName(`${owner.toLowerCase()}/${id}`);
+  const directory = directoryOf(env);
+  const host = (doc: Route) => env.DOCS.getByName(doc.doName);
   return {
+    directory,
     sessionOf: (request) => sessionOf(env, request),
     templates: TEMPLATES,
     editor: (request) => env.ASSETS.fetch(new Request(new URL("/editor.html", request.url))),
@@ -62,15 +68,45 @@ const platform = (env: Env): Platform => {
     pagesDomain: (url) => (url.hostname == "localhost" || url.hostname.endsWith(".localhost") || url.hostname == "127.0.0.1" ? "localhost" : "erga-pages.dev"),
     secret: env.SESSION_SECRET,
     docs: {
-      create: (owner, id, files, index, opts) => doc(owner, id).create(owner, id, files, index, opts),
-      exists: (owner, id) => doc(owner, id).exists(),
-      delete: (owner, id) => doc(owner, id).delete(owner),
-      unlist: (owner, id) => env.LISTS.getByName(owner.toLowerCase()).remove(id),
-      list: (owner) => env.LISTS.getByName(owner.toLowerCase()).list(),
-      fetch: (owner, id, request) => doc(owner, id).fetch(request),
+      create: (doc, files, index, opts) => host(doc).create(doc.owner, doc.id, files, index, opts),
+      exists: (doc) => host(doc).exists(),
+      delete: (doc) => host(doc).delete(),
+      list: async (owner) => {
+        await backfill(env, directory, owner);
+        return (await directory.list(owner)).map((d) => ({
+          id: d.id, owner: d.owner, slug: d.slug, title: d.title, titleSet: d.titleSet, slugSet: d.slugSet,
+          created: d.created, modified: d.modified ?? d.created, ...(d.modified == null && d.expires != null ? { expires: d.expires } : {}),
+        }));
+      },
+      fetch: (doc, request) => host(doc).fetch(request),
+      // A document made before the directory is a Durable Object named "<owner>/<id>", which adds itself.
+      adopt: async (owner, id) => {
+        const doc = await env.DOCS.getByName(`${owner.toLowerCase()}/${id}`).register();
+        return doc && { id: doc.id, owner: doc.owner, doName: doc.doName, test: doc.test };
+      },
     },
   };
 };
+
+/**
+ * Copies a person's list from before the directory (their DocList Durable
+ * Object) into it, once: each document's row as the list last saw it, its
+ * Durable Object keeping its old name. Documents the list never knew about
+ * (made before it, never opened since) join when they're next opened
+ * (adopt, and DocHost.register). Running it again changes nothing.
+ */
+async function backfill(env: Env, directory: Directory, owner: string): Promise<void> {
+  owner = owner.toLowerCase();
+  if (await directory.backfilled(owner)) return;
+  for (const entry of await env.LISTS.getByName(owner).list()) {
+    // The list kept a time to go only for documents never edited.
+    await directory.add({
+      id: entry.id, owner, title: entry.title == entry.id ? UNTITLED : entry.title, doName: `${owner}/${entry.id}`,
+      created: entry.created, modified: entry.expires != null ? null : entry.modified, expires: entry.expires ?? null,
+    });
+  }
+  await directory.markBackfilled(owner);
+}
 
 /** /tokens: a fresh test token for the signed-in person, and how to use it. */
 async function tokens(env: Env, request: Request): Promise<Response> {

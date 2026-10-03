@@ -31,7 +31,7 @@
 // The share button gives a person a token for an external agent, which
 // calls the same tools in the same session over /api/ext.
 
-import { existsSync, readFileSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
@@ -48,8 +48,9 @@ import * as Config from "effect/Config";
 import * as Console from "effect/Console";
 import * as Option from "effect/Option";
 import { MODELS, loadConfig } from "./agent";
+import { openDirectory } from "./directory-sqlite";
 import { LocalDocs } from "./docs";
-import { frontDoor, ID, OWNER, safeNext, type Platform, type Session } from "./front";
+import { documentRoute, frontDoor, safeNext, type Platform, type Session } from "./front";
 import { failed, mimeOf } from "./host";
 import { version } from "./package.json";
 
@@ -171,7 +172,11 @@ const program = (args: { target: Option.Option<string>; port: number; open: bool
 
   const dataDir = path.resolve(Option.getOrElse(Option.orElse(args.data, () => env.dataDir), () => path.join(env.home, ".erga")));
   const cfg = yield* loadConfig(Option.getOrElse(env.agentEnvFile, () => path.join(EDITOR_DIR, ".env")));
+  mkdirSync(dataDir, { recursive: true });
+  // The directory: every document's address, title and members (directory.ts), in the data directory.
+  const { directory } = yield* Effect.acquireRelease(Effect.sync(() => openDirectory(path.join(dataDir, "erga.db"))), (d) => Effect.sync(() => d.close()));
   const docs = new LocalDocs(dataDir, {
+    directory,
     agent: cfg,
     personOf: (req) => personOf(urlOf(req), req.headers["cookie"]),
     writeDelay: Option.getOrUndefined(env.writeDelay),
@@ -187,13 +192,13 @@ const program = (args: { target: Option.Option<string>; port: number; open: bool
   if (Option.isSome(args.target)) {
     const doc = opened = yield* resolveDoc(args.target.value);
     const index = path.relative(doc.dir, doc.path).split(path.sep).join("/");
-    const id = yield* Effect.promise(() => docs.link(me, doc.dir, index));
-    const room = (yield* Effect.promise(() => docs.open(me, id)))?.room;
+    const row = yield* Effect.promise(() => docs.link(me, doc.dir, index));
+    const room = (yield* Effect.promise(() => docs.open(me, row.id)))?.room;
     if (room?.text(index) == null) {
-      yield* Effect.promise(() => docs.delete(me, id));
+      yield* Effect.promise(() => docs.delete(me, row.id));
       return yield* new UsageError({ message: `${doc.name}: not a UTF-8 text file` });
     }
-    start = `/${me}/${id}`;
+    start = `/${row.owner}/${row.slug}`;
   }
 
   const templates = yield* readTemplates;
@@ -214,21 +219,26 @@ const program = (args: { target: Option.Option<string>; port: number; open: bool
     // Each document's page on its own origin here too: <id>-<owner>.localhost, which browsers send to this machine.
     pagesDomain: () => "localhost",
     secret,
+    directory,
+    // A document's folder is docs/<owner>/<id> in the data directory, whatever its row's do_name.
     docs: {
-      create: (owner, id, files, index, opts) => docs.create(owner, id, files, index, opts),
-      exists: (owner, id) => docs.exists(owner, id),
-      delete: (owner, id) => docs.delete(owner, id),
-      // The list is read from the documents' folders, so there's no stale entry to drop.
-      unlist: async () => {},
+      create: (doc, files, index, opts) => docs.create(doc.owner, doc.id, files, index, opts),
+      exists: (doc) => docs.exists(doc.owner, doc.id),
+      delete: (doc) => docs.delete(doc.owner, doc.id),
       list: (owner) => docs.list(owner),
-      fetch: (owner, id, request) => docs.fetch(owner, id, request),
+      fetch: (doc, request) => docs.fetch(doc.owner, doc.id, request),
+      adopt: async (owner, id) => {
+        const doc = await docs.adopt(owner, id);
+        return doc && { id: doc.id, owner: doc.owner, doName: doc.doName, test: doc.test };
+      },
     },
   };
 
-  /** The document a socket is for, opened if need be. */
+  /** The document a socket is for (at any of its addresses, as front.ts finds it), opened if need be. */
   const docOf = Effect.gen(function* () {
-    const { owner, id } = yield* HttpRouter.params;
-    return owner && id && OWNER.test(owner) && ID.test(id) ? yield* Effect.promise(() => docs.open(owner, id)) : null;
+    const { first, second } = yield* HttpRouter.params;
+    const route = first && second ? yield* Effect.promise(() => documentRoute(platform, first, second)) : null;
+    return route ? yield* Effect.promise(() => docs.open(route.owner, route.id)) : null;
   });
   const notFound = HttpServerResponse.text("No such document", { status: 404 });
 
@@ -236,7 +246,7 @@ const program = (args: { target: Option.Option<string>; port: number; open: bool
   // files, signing in, and everything else to the front door.
   const routes: Array<HttpRouter.Route<unknown, FileSystem.FileSystem | Path.Path>> = [
     // The room: Yjs sync and awareness over a WebSocket (y-websocket's protocol).
-    HttpRouter.route("GET", "/:owner/:id/api/room/*", Effect.gen(function* () {
+    HttpRouter.route("GET", "/:first/:second/api/room/*", Effect.gen(function* () {
       const doc = yield* docOf;
       if (!doc) return notFound;
       const req = yield* HttpServerRequest.HttpServerRequest;
@@ -258,7 +268,7 @@ const program = (args: { target: Option.Option<string>; port: number; open: bool
     // browser allows only six HTTP/1.1 connections per host and every open
     // tab's event stream would hold one, leaving later requests (sending the
     // agent a message) queued forever. WebSockets don't count against that.
-    HttpRouter.route("GET", "/:owner/:id/api/events", Effect.gen(function* () {
+    HttpRouter.route("GET", "/:first/:second/api/events", Effect.gen(function* () {
       const doc = yield* docOf;
       if (!doc) return notFound;
       const req = yield* HttpServerRequest.HttpServerRequest;

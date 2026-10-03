@@ -41,7 +41,7 @@ export async function startHost(target: string | null, opts: { port?: number; en
       // Usually ~200ms; the margin is for a machine busy running everything else at once.
       for (let i = 0; i < 600; i++) {
         if (p.exitCode != null) break;
-        const at = target ? new RegExp(`http://127\\.0\\.0\\.1:${port}/[a-z0-9-]+/[a-z0-9]{8}`).exec(output)?.[0] : `http://127.0.0.1:${port}`;
+        const at = target ? new RegExp(`http://127\\.0\\.0\\.1:${port}/[a-z0-9-]+/[a-z0-9-]+`).exec(output)?.[0] : `http://127.0.0.1:${port}`;
         try { if (at && (await fetch(target ? `${at}/api/doc` : at)).ok) { host.base = at; return; } } catch { /* not up yet */ }
         await Bun.sleep(25);
       }

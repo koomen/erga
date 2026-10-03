@@ -9,8 +9,10 @@
     "test": "./test.sh",
     "typecheck": "tsc -p . && tsc -p worker",
     "site": "./site.sh",
-    "dev:worker": "./site.sh && vite dev",
-    "deploy": "./site.sh && cf deploy",
+    "dev:worker": "./site.sh && bun migrate.ts --local && vite dev",
+    "db:local": "bun migrate.ts --local",
+    "db:migrate": "bun migrate.ts",
+    "deploy": "./site.sh && bun migrate.ts && cf deploy",
     "test:prod": "bun tests/suite/prod.ts"
   },
   "dependencies": {

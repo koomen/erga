@@ -340,12 +340,44 @@
       max-height: calc(100% - var(--top-clear) - var(--kb, 0px) - max(16px, env(safe-area-inset-bottom))); overflow-y: auto; overscroll-behavior: contain;
     }
 
+    /* The document's title, after the Documents link like a breadcrumb; click
+       it to rename the document or change its address (the card below it). */
+    .nav-back + .nav-title::before { content: "/"; margin: 0 6px 0 -4px; color: var(--chrome); opacity: 0.55; font-weight: 400; }
+    .nav-title {
+      display: flex; align-items: center; height: 34px; min-width: 0; max-width: min(42vw, 420px); padding: 0 8px; border: 0; border-radius: 8px;
+      background: transparent; color: var(--fg); font: 500 13px/1 var(--font-text); cursor: pointer;
+      transition: color 150ms ease, background-color 150ms ease;
+    }
+    :is(.nav-back, .nav-title)[hidden] { display: none; }
+    .nav-title span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .nav-title:hover, .nav-title[aria-expanded="true"] { background: color-mix(in srgb, var(--chrome) 12%, transparent); }
+    .nav-title:focus-visible { outline: 2px solid var(--caret); outline-offset: 1px; }
+    .help.naming { right: auto; left: max(14px, var(--safe-l)); width: min(340px, calc(100vw - 28px)); transition: left var(--agent-ms) var(--agent-ease); }
+    .naming label { display: block; margin: 0 0 4px; font-size: 12px; color: var(--soft); }
+    .naming-input, .naming-addr {
+      display: flex; align-items: center; width: 100%; box-sizing: border-box; margin: 0 0 12px; border: 1px solid var(--panel-border);
+      border-radius: 8px; background: var(--code-bg); font: 13.5px/1.3 var(--font-text); color: var(--fg-strong, var(--fg));
+    }
+    .naming-input { padding: 7px 9px; }
+    .naming-addr { padding: 0 9px; }
+    .naming-addr span { color: var(--soft); white-space: nowrap; }
+    .naming-addr input { flex: 1; min-width: 0; padding: 7px 0; border: 0; outline: 0; background: transparent; font: inherit; color: inherit; }
+    .naming-input:focus, .naming-addr:focus-within { outline: 0; border-color: var(--caret); }
+    .naming-status { margin: -4px 0 0; min-height: 1.4em; font-size: 12px; color: var(--soft); }
+    .naming-status:empty { display: none; }
+    .naming-status.error { color: #c2410c; }
+    .naming .share-actions { margin-top: 6px; }
+    @media (min-width: 760px) { body.agent-open .help.naming { left: calc(var(--agent-left) + var(--agent-w) + var(--agent-inset) + 6px); } }
+
     /* Phones. The top row keeps to what fits beside the Documents link, which
        shrinks to its arrow: the shortcuts card goes (a phone has no keys for
        them), avatars overlap, and notes that would cover the row sit under it. */
     @media (max-width: 520px) {
       .nav-back { padding: 0 8px; }
       .nav-back span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+      .nav-back + .nav-title::before { display: none; }
+      .nav-back + .nav-title { margin-left: -6px; }
+      .nav-title { max-width: calc(100vw - 236px - var(--safe-l) - var(--safe-r)); padding: 0 6px; }
       #btn-help { display: none; }
       .people { gap: 0; }
       .people > * + * { margin-left: -5px; }
@@ -357,8 +389,9 @@
        their hit areas reach past it; and fields are 16px, so Safari doesn't
        zoom the page in when one is focused. */
     @media (pointer: coarse) {
-      .nav-back { position: relative; }
-      :is(.icon-btn, .nav-back)::before { content: ""; position: absolute; inset: -5px -1px; }
+      .nav-back, .nav-title { position: relative; }
+      :is(.icon-btn, .nav-back)::before, .nav-title::after { content: ""; position: absolute; inset: -5px -1px; }
+      .naming-input, .naming-addr { font-size: 16px; }
       .avatar::after { content: ""; position: absolute; inset: -8px -3px; }
       .fmt button { width: 38px; height: 36px; }
       .fmt input, .agent-compose textarea { font-size: 16px; }
@@ -383,11 +416,12 @@
     <span>Page changes will show when the agent finishes · <b>Refresh now</b></span>
   </button>
 
-  <nav class="chrome chrome-nav" id="nav-docs" aria-label="Documents" hidden>
-    <a class="nav-back" href="/docs">
+  <nav class="chrome chrome-nav" id="nav-docs" aria-label="Document">
+    <a class="nav-back" id="nav-back" href="/docs" hidden>
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.5 6 8.5 12l6 6"/></svg>
       <span>Documents</span>
     </a>
+    <button type="button" class="nav-title" id="doc-title" aria-haspopup="dialog" aria-expanded="false" aria-controls="naming" hidden><span id="doc-title-text"></span></button>
   </nav>
 
   <header class="chrome chrome-top" aria-label="Controls">
@@ -426,6 +460,20 @@
       <span id="share-status" class="share-status" role="status" aria-live="polite"></span>
     </div>
     <p class="share-note">Anyone with this token can edit the document as your agent. New token turns the old one off; restarting the editor does too.</p>
+  </div>
+
+  <div id="naming" class="help naming" hidden role="dialog" aria-label="Title and address">
+    <form id="naming-form" autocomplete="off">
+      <label for="naming-title">Title</label>
+      <input id="naming-title" class="naming-input" spellcheck="false" maxlength="200">
+      <label for="naming-slug">Address</label>
+      <div class="naming-addr"><span id="naming-prefix"></span><input id="naming-slug" spellcheck="false" autocapitalize="off" maxlength="80"></div>
+      <p id="naming-status" class="naming-status" role="status" aria-live="polite"></p>
+      <div class="share-actions">
+        <button type="submit" class="share-primary">Save</button>
+        <button type="button" id="naming-cancel">Cancel</button>
+      </div>
+    </form>
   </div>
 
   <div id="pause-card" class="help pause-card" hidden role="dialog" aria-labelledby="pause-title">
