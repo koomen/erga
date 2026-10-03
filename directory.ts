@@ -28,8 +28,8 @@
 // documents, and those as editors of the documents of whoever minted their
 // token. Server admins get nothing on documents by being admins.
 
-import { ServerConfig } from "./config";
-import { NotAllowed, Users } from "./users";
+import { ServerConfig } from "./config.ts";
+import { NotAllowed, Users } from "./users.ts";
 
 export { NotAllowed };
 

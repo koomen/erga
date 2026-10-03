@@ -11,8 +11,8 @@
 // wins over the table, and an admin can see it but not change it. To add a
 // setting, add it to SETTINGS; nothing in the database changes.
 
-import type { Sql } from "./directory";
-import { NotAllowed, type Actor, type Users } from "./users";
+import type { Sql } from "./directory.ts";
+import { NotAllowed, type Actor, type Users } from "./users.ts";
 
 /** A value a setting won't take; the message says why. */
 export class ConfigError extends Error {}

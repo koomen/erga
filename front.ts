@@ -148,10 +148,11 @@ export async function frontDoor(request: Request, platform: Platform): Promise<R
   }
   const route = await documentRoute(platform, first, second);
   if (!route) return new Response("No such document", { status: 404 });
-  // An external agent brings its share token, which the document checks; everyone else needs a session.
-  if (!session && !rest.startsWith("/api/ext")) return new Response("Sign in first", { status: 401 });
-  const access = session ? await platform.directory.access(whoOf(session), route) : null;
-  if (session && !access) return new Response("Not allowed", { status: 403 });
+  // An external agent brings its share token, which the document checks (whatever cookie comes along); everyone else needs a session.
+  if (rest.startsWith("/api/ext") && request.headers.has("authorization")) return platform.docs.fetch(route, forwarded(request, url, rest, `${url.origin}/d/${route.id}`, null, null));
+  if (!session) return new Response("Sign in first", { status: 401 });
+  const access = await platform.directory.access(whoOf(session), route);
+  if (!access) return new Response("Not allowed", { status: 403 });
   return platform.docs.fetch(route, forwarded(request, url, rest, `${url.origin}/d/${route.id}`, session, access == "owner" || access == "editor" ? "edit" : "view"));
 }
 

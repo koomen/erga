@@ -15,7 +15,7 @@
 // requests don't each ask the database; a change made through this object
 // is seen at once.
 
-import type { Sql } from "./directory";
+import type { Sql } from "./directory.ts";
 
 export type ServerRole = "user" | "admin";
 
