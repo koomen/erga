@@ -10,6 +10,7 @@ import type { Task } from '../types'
 //   - the worker agent type, its instructions built in
 //   - the workflow rule in the main agent's system prompt
 //   - a Tasks pane (/tasks) with Open / Merge / Discard, a status entry, toasts
+//     (ready to merge, merging, merged, merge failed, failed)
 // It does nothing in a repo without development/task-queue/server.ts.
 
 const QUEUE = 'http://127.0.0.1:4700'
@@ -125,6 +126,7 @@ const say = (text: string) => ({ result: text })
 let root: string | null = null
 let lastStart = 0
 const seen = new Map<number, string>()
+let hasPolled = false
 
 async function startServer($: EngineInterface) {
   if (!root) return
@@ -146,11 +148,13 @@ async function poll($: EngineInterface) {
   await update($, isOnline, () => true)
   await update($, tasks, () => list)
   // Toasts for what changed since the last poll (none for what was already there).
-  const isFirst = seen.size === 0
+  const isFirst = !hasPolled
+  hasPolled = true
   for (const t of list) {
     const before = seen.get(t.id)
     seen.set(t.id, t.status)
     if (isFirst || before === t.status) continue
+    if (t.status === 'merging') $.ui.toast(`Task #${t.id} merging: ${t.title}`)
     if (t.status === 'complete' && before !== 'merging') $.ui.toast(`Task #${t.id} ready to merge: ${t.title}`)
     if (t.status === 'complete' && before === 'merging') $.ui.toast(`Task #${t.id} merge failed: ${t.error ?? ''}`.slice(0, 200))
     if (t.status === 'merged') $.ui.toast(`Task #${t.id} merged and pushed (${t.commit})`)
@@ -159,12 +163,20 @@ async function poll($: EngineInterface) {
   const count = (s: Task['status'][]) => list.filter(t => s.includes(t.status)).length
   const parts = [
     [count(['queued', 'working']), 'working'],
-    [count(['complete', 'merging']), 'ready'],
+    [count(['complete']), 'ready'],
+    [count(['merging']), 'merging'],
     [count(['failed']), 'failed'],
   ].filter(([n]) => n).map(([n, label]) => `${n} ${label}`)
   $.ui.status(parts.length ? `tasks: ${parts.join(' · ')}` : undefined)
 }
 
+/** The pane's Merge: the task is merging at once (its Merge gone), then the poll follows it to merged or back. */
+async function merge($: EngineInterface, id: number) {
+  const r = await api($, 'POST', `/api/tasks/${id}/merge`)
+  if (r.ok) await update($, tasks, list => list.map(t => (t.id === id ? brief(r.data) : t)))
+  else $.ui.toast(`Task #${id} didn't start merging: ${r.error}`.slice(0, 200))
+  await poll($)
+}
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
@@ -278,7 +290,8 @@ export const register: Register = on => {
     const open = (url: string) => () => { void $.process.run(['open', url]) }
     const groups: [string, Task['status'][]][] = [
       ['Working', ['queued', 'working', 'failed']],
-      ['Ready to merge', ['complete', 'merging']],
+      ['Ready to merge', ['complete']],
+      ['Merging', ['merging']],
       ['Done', ['merged']],
     ]
 
@@ -297,14 +310,14 @@ export const register: Register = on => {
               {rows.map(t => (
                 <Box key={`t${t.id}`} flexDirection="column">
                   <Text color={t.status === 'failed' ? 'red' : undefined}>
-                    #{t.id} {t.title}{t.status === 'failed' ? ' (failed)' : ''}{t.status === 'merging' ? ' (merging…)' : ''}{t.status === 'merged' ? ` · ${t.commit ?? ''}` : ''}
+                    #{t.id} {t.title}{t.status === 'failed' ? ' (failed)' : ''}{t.status === 'merged' ? ` · ${t.commit ?? ''}` : ''}
                   </Text>
                   {t.status !== 'merged' && (t.error || t.last) && <Text dimColor>  {(t.error ?? t.last ?? '').split('\n')[0]?.slice(0, 100)}</Text>}
                   {t.status !== 'merged' && (
                     <Box key={`a${t.id}`}>
                       <Text>  </Text>
                       {t.url && <Button key={`open${t.id}`} label={t.previewUp ? 'Open ●' : 'Open ○'} onPress={open(t.url)} />}
-                      {t.status === 'complete' && <Button key={`merge${t.id}`} label="Merge" onPress={() => { void api($, 'POST', `/api/tasks/${t.id}/merge`).then(() => poll($)) }} />}
+                      {t.status === 'complete' && <Button key={`merge${t.id}`} label="Merge" onPress={() => merge($, t.id)} />}
                       {t.status !== 'merging' && (armedId === t.id
                         ? <Button key={`discard${t.id}`} label="Discard branch?" onPress={() => { void update($, armed, () => null); void api($, 'POST', `/api/tasks/${t.id}/discard`).then(() => poll($)) }} />
                         : <Button key={`arm${t.id}`} label="Discard" onPress={() => { void update($, armed, () => t.id) }} />)}

@@ -21,7 +21,8 @@
   .live::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--bad); }
   .live.on::before { background: var(--ok); }
   header a { margin-left: auto; color: var(--muted); font-size: 12px; }
-  main { display: grid; grid-template-columns: repeat(4, minmax(240px, 1fr)); gap: 14px; padding: 10px 24px 24px; align-items: start; }
+  main { display: grid; grid-template-columns: repeat(5, minmax(200px, 1fr)); gap: 14px; padding: 10px 24px 24px; align-items: start; }
+  @media (max-width: 1150px) { main { grid-template-columns: repeat(3, minmax(220px, 1fr)); } }
   @media (max-width: 900px) { main { grid-template-columns: 1fr; padding: 10px 16px; } header { padding: 16px; } }
   .col { background: var(--panel); border-radius: 10px; padding: 10px; min-height: 120px; }
   .col h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 2px 4px 10px; display: flex; justify-content: space-between; }
@@ -30,6 +31,9 @@
   .card:hover { border-color: var(--muted); }
   .card.failed { border-left: 3px solid var(--bad); }
   .card.merging { border-left: 3px solid var(--warn); }
+  .col.merging h2 .n.busy { color: var(--warn); }
+  .col.merging h2 .n.busy::before { content: ""; display: inline-block; vertical-align: -1px; margin-right: 6px; width: 8px; height: 8px; border: 2px solid var(--warn); border-right-color: transparent; border-radius: 50%; animation: s .8s linear infinite; }
+  .card.merging .last { color: var(--warn); }
   .card.discarded { opacity: .55; }
   .top { display: flex; gap: 8px; align-items: baseline; }
   .id { color: var(--muted); font: 12px ui-monospace, monospace; }
@@ -81,7 +85,8 @@
 const COLUMNS = [
   { title: "Queued", statuses: ["queued"] },
   { title: "Working", statuses: ["working", "failed"] },
-  { title: "Ready to merge", statuses: ["complete", "merging"] },
+  { title: "Ready to merge", statuses: ["complete"] },
+  { title: "Merging", statuses: ["merging"] },
   { title: "Done", statuses: ["merged", "discarded"] },
 ];
 let tasks = [];
@@ -99,7 +104,7 @@ function actions(t) {
   if (t.url && !["merged", "discarded"].includes(t.status)) b.push(`<a class="btn" href="${esc(t.url)}" target="_blank" onclick="event.stopPropagation()"><span class="dot ${t.previewUp ? "up" : ""}" title="${t.previewUp ? "preview is up" : "preview is down"}"></span>Open</a>`);
   if (t.port && t.worktree && !t.previewUp && ["working", "complete", "failed"].includes(t.status)) b.push(`<button data-act="preview" data-id="${t.id}">Start preview</button>`);
   if (t.status == "complete") b.push(`<button class="primary" data-act="merge" data-id="${t.id}">Merge</button>`);
-  if (t.status == "merging") b.push(`<button disabled><span class="spin"></span> Merging…</button>`);
+  if (t.status == "merging") b.push(`<button disabled><span class="spin"></span> ${t.log.at(-1)?.message.startsWith("Merge requested: waiting") ? "Waiting to merge…" : "Merging…"}</button>`);
   if (!["merging", "merged", "discarded"].includes(t.status))
     b.push(armed.has(t.id) ? `<button class="confirm" data-act="discard" data-id="${t.id}">Discard branch?</button>` : `<button class="danger" data-act="arm" data-id="${t.id}">Discard</button>`);
   return b.length ? `<div class="actions">${b.join("")}</div>` : "";
@@ -110,21 +115,26 @@ function card(t) {
   const thumbs = t.screenshots.slice(-3).map((s) => `<img src="/shots/${esc(s.file)}" alt="${esc(s.caption)}" loading="lazy">`).join("");
   return `<div class="card ${t.status}" data-open="${t.id}">
     <div class="top"><span class="id">#${t.id}</span><span class="title">${esc(t.title)}</span></div>
-    <div class="meta">${t.branch ? `<code>${esc(t.branch)}</code>` : ""}<span>${t.status == "merged" ? `merged ${ago(t.mergedAt)} · ${esc(t.commit)}` : ago(t.updatedAt)}</span>${t.status == "failed" ? "<span>failed</span>" : ""}${t.status == "discarded" ? "<span>discarded</span>" : ""}</div>
+    <div class="meta">${t.branch ? `<code>${esc(t.branch)}</code>` : ""}<span>${t.status == "merged" ? `merged ${ago(t.mergedAt)} · ${esc(t.commit)}` : t.status == "merging" ? `merging · ${ago(t.updatedAt)}` : ago(t.updatedAt)}</span>${t.status == "failed" ? "<span>failed</span>" : ""}${t.status == "discarded" ? "<span>discarded</span>" : ""}</div>
     ${t.error ? `<div class="err">${esc(t.error)}</div>` : last && !["merged", "discarded"].includes(t.status) ? `<div class="last">${esc(last.message)}</div>` : ""}
     ${thumbs && t.status != "discarded" ? `<div class="thumbs">${thumbs}</div>` : ""}
     ${actions(t)}
   </div>`;
 }
 
+/** When a merging task's merge was asked for: they run one at a time, in that order. */
+const requested = (t) => t.log.findLast((l) => l.message.startsWith("Merge requested"))?.at ?? t.updatedAt;
+
 function render() {
   const board = document.getElementById("board");
   board.innerHTML = COLUMNS.map((c) => {
     let list = tasks.filter((t) => c.statuses.includes(t.status));
-    // Newest activity first; done things keep only the latest.
-    list.sort((a, b) => (b.mergedAt ?? b.updatedAt).localeCompare(a.mergedAt ?? a.updatedAt));
+    // Newest activity first; done things keep only the latest. Merges go in the order they were asked for (one at a time).
+    if (c.title == "Merging") list.sort((a, b) => requested(a).localeCompare(requested(b)) || a.id - b.id);
+    else list.sort((a, b) => (b.mergedAt ?? b.updatedAt).localeCompare(a.mergedAt ?? a.updatedAt));
     if (c.title == "Done") list = list.slice(0, 20);
-    return `<section class="col"><h2><span>${c.title}</span><span>${list.length}</span></h2>${list.map(card).join("") || `<div class="empty">Nothing here</div>`}</section>`;
+    const slug = c.title.toLowerCase().replace(/\W+/g, "-");
+    return `<section class="col ${slug}" data-col="${slug}"><h2><span>${c.title}</span><span class="n ${c.title == "Merging" && list.length ? "busy" : ""}">${list.length}</span></h2>${list.map(card).join("") || `<div class="empty">Nothing here</div>`}</section>`;
   }).join("");
   if (openId != null) renderDialog();
 }

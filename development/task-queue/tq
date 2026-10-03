@@ -10,9 +10,14 @@
 //   tq url ID URL                        where the user should look
 //   tq done ID "summary" [URL]           status: complete, waiting for the user to merge
 //   tq fail ID "why"                     status: failed
-//   tq merge ID | tq discard ID          what the board's buttons do
+//   tq merge ID [--wait]                 what the board's Merge does: status merging, then merged (or back
+//                                        to complete, with the reason); --wait waits and exits 1 if it failed
+//   tq discard ID                        what the board's Discard does
 //   tq get ID | tq list [STATUS]         read
 //   tq serve                             just make sure the server is up; prints the board's address
+//
+// Statuses: queued → working → complete (Ready to merge) → merging → merged (Done);
+// also failed and discarded. Agents set queued, working, complete and failed.
 //
 // TASK_QUEUE_PORT picks the port (4700).
 
@@ -51,10 +56,12 @@ async function call(method: string, path: string, body?: unknown) {
 
 const [cmd, id, ...rest] = process.argv.slice(2);
 const flag = (name: string) => { const i = rest.indexOf(name); return i >= 0 ? rest.splice(i, 2)[1] : undefined; };
+const has = (name: string) => { const i = rest.indexOf(name); return i >= 0 && !!rest.splice(i, 1); };
 const need = (v: unknown, usage: string) => { if (!v) { console.error(`usage: tq ${usage}`); process.exit(2); } };
 
 if (!cmd || cmd == "help" || cmd == "--help") {
-  console.log(require("node:fs").readFileSync(import.meta.path, "utf8").split("\n").slice(1).filter((l: string) => l.startsWith("//")).map((l: string) => l.slice(3)).join("\n"));
+  const lines = require("node:fs").readFileSync(import.meta.path, "utf8").split("\n").slice(1);
+  console.log(lines.slice(0, lines.findIndex((l: string) => !l.startsWith("//"))).map((l: string) => l.slice(3)).join("\n"));
   process.exit(0);
 }
 await ensureServer();
@@ -74,7 +81,16 @@ switch (cmd) {
   }
   case "done": need(id && rest[0], 'done ID "summary" [URL]'); out = await call("PATCH", `/api/tasks/${id}`, { status: "complete", summary: rest[0], ...(rest[1] ? { url: rest[1] } : {}), message: "Complete: ready to merge" }); break;
   case "fail": need(id && rest[0], 'fail ID "why"'); out = await call("PATCH", `/api/tasks/${id}`, { status: "failed", error: rest[0], message: `Failed: ${rest[0]}` }); break;
-  case "merge": need(id, "merge ID"); out = await call("POST", `/api/tasks/${id}/merge`); break;
+  case "merge": {
+    need(id, "merge ID [--wait]");
+    out = await call("POST", `/api/tasks/${id}/merge`);
+    if (!has("--wait")) break;
+    let t: any = out;
+    while (t.status == "merging") { await Bun.sleep(500); t = await call("GET", `/api/tasks/${id}`); }
+    out = t;
+    if (t.status != "merged") { console.log(JSON.stringify(t, (k, v) => (k == "log" && Array.isArray(v) ? v.slice(-5) : v), 2)); console.error(`merge failed: ${t.error ?? t.status}`); process.exit(1); }
+    break;
+  }
   case "discard": need(id, "discard ID"); out = await call("POST", `/api/tasks/${id}/discard`); break;
   case "get": need(id, "get ID"); out = await call("GET", `/api/tasks/${id}`); break;
   case "list": out = (await call("GET", `/api/tasks${id ? `?status=${id}` : ""}`)).map((t: any) => ({ id: t.id, status: t.status, title: t.title, url: t.url, branch: t.branch })); break;
