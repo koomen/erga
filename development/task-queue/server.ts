@@ -6,10 +6,11 @@
 // Each task gets its own branch and worktree (.claude/worktrees/task-<id>),
 // a port for its preview server, and a card on the board at
 // http://localhost:4700 that moves Queued → Working → Ready to merge →
-// Merged as the agent doing it reports in. Merge (on the board, or
-// POST /api/tasks/:id/merge) merges main into the task's branch, has
-// `claude -p` resolve any conflicts there, merges the branch into main and
-// pushes. GET /api describes the whole API; AGENTS.md says how to use it.
+// Merging → Done as the agent doing it reports in and the user merges it.
+// Merge (on the board, or POST /api/tasks/:id/merge) puts the task in
+// Merging while it merges main into the task's branch, has `claude -p`
+// resolve any conflicts there, merges the branch into main and pushes; then
+// it's Done (merged), or back in Ready to merge with the reason if it failed. GET /api describes the whole API; AGENTS.md says how to use it.
 //
 // Its state is data/tasks.json (and data/screenshots/, data/logs/), beside
 // this file in the main checkout, whichever worktree it's started from.
@@ -38,7 +39,7 @@ const CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 for (const dir of [SHOTS, LOGS]) mkdirSync(dir, { recursive: true });
 
 type Status = "queued" | "working" | "complete" | "merging" | "merged" | "failed" | "discarded";
-/** What an agent may set; the rest the queue sets itself (merge, discard). */
+/** What an agent may set; the rest the queue sets itself (merging and merged on merge, discarded on discard). */
 const AGENT_STATUSES: Status[] = ["queued", "working", "complete", "failed"];
 
 interface Task {
@@ -86,6 +87,14 @@ function touch(task: Task, changes: Partial<Task> = {}, message?: string) {
 }
 
 const find = (id: number) => store.tasks.find((t) => t.id == id);
+
+// A merge that was running when the queue stopped will never finish: put it
+// back in Ready to merge, its worktree out of the half-done merge.
+for (const t of store.tasks.filter((t) => t.status == "merging")) {
+  if (t.worktree && existsSync(join(t.worktree, ".git"))) Bun.spawnSync(["git", "merge", "--abort"], { cwd: t.worktree, stderr: "ignore" });
+  const error = "The task queue stopped while this was merging; merge it again.";
+  touch(t, { status: "complete", error }, `Merge interrupted: ${error}`);
+}
 
 // ---- git and processes ----------------------------------------------------
 
@@ -265,7 +274,7 @@ async function mergeInto(task: Task, ref: string) {
 }
 
 async function merge(task: Task) {
-  touch(task, { status: "merging", error: undefined }, "Merge requested");
+  touch(task, {}, "Merging");
   try {
     const wt = task.worktree;
     if (!wt || !existsSync(wt)) throw new Error("the task's worktree is gone");
@@ -304,9 +313,18 @@ async function cleanUp(task: Task, force: boolean) {
 
 const API = {
   about: "Local task queue for agents working in this repo. Every task gets a branch, a worktree and a preview port; the board at / updates live.",
-  board: `http://localhost:${PORT}/`,
   cli: "development/task-queue/tq (run it with no arguments for its commands); it starts this server when it isn't running",
-  statuses: { queued: "registered, not started", working: "an agent is on it", complete: "done and tested, waiting for the user to merge", merging: "being merged", merged: "in main and pushed", failed: "the agent couldn't finish (see error)", discarded: "dropped by the user" },
+  statuses: {
+    queued: "registered, not started",
+    working: "an agent is on it",
+    complete: "done and tested, waiting for the user to merge (also where a failed merge lands, with error)",
+    merging: "being merged: main into the branch (claude -p settling conflicts), then the branch into main, pushed and cleaned up; set by POST /api/tasks/:id/merge, ends merged or back at complete with error",
+    merged: "in main and pushed",
+    failed: "the agent couldn't finish (see error)",
+    discarded: "dropped by the user",
+  },
+  board: `http://localhost:${PORT}/`,
+  columns: { Queued: ["queued"], Working: ["working", "failed"], "Ready to merge": ["complete"], Merging: ["merging"], Done: ["merged", "discarded"] },
   endpoints: {
     "GET /api": "this description",
     "GET /api/tasks[?status=complete]": "all tasks, oldest first",
@@ -317,7 +335,7 @@ const API = {
     "POST /api/tasks/:id/preview {command?, path?}": `start the task's preview server in its worktree with $PORT set (default command: ${PREVIEW}); it outlives the agent and is stopped on merge. Sets url to http://localhost:<port><path> unless url is already set.`,
     "DELETE /api/tasks/:id/preview": "stop the preview server",
     "POST /api/tasks/:id/screenshots": "attach a screenshot: a raw image body (Content-Type image/png, ?caption=...), or JSON {path, caption?} (a file on disk), or JSON {url, caption?, width?, height?, wait?: ms after load, fullPage?} (the queue takes it with headless Chrome)",
-    "POST /api/tasks/:id/merge": "merge main into the branch (claude -p resolves conflicts), merge the branch into main, push, then remove the worktree and branch. Runs in the background; watch the task.",
+    "POST /api/tasks/:id/merge": "for a complete (or failed) task: status merging at once (202), then, in the background and one merge at a time, merge main into the branch (claude -p resolves conflicts), merge the branch into main, push, and remove the worktree and branch: status merged. A failed merge goes back to complete with error. Watch the task.",
     "POST /api/tasks/:id/discard": "drop the task: stops its preview, removes its worktree and deletes its branch",
     "GET /api/events": "server-sent events: a `tasks` event with every task, on connect and on each change",
   },
@@ -376,7 +394,7 @@ async function handle(req: Request): Promise<Response> {
   if (task && !action && req.method == "GET") return json(task);
   if (task && !action && req.method == "PATCH") {
     const b = await body();
-    if (b.status && !AGENT_STATUSES.includes(b.status)) return fail(400, `status must be one of ${AGENT_STATUSES.join(", ")} (merge and discard have their own endpoints)`);
+    if (b.status && !AGENT_STATUSES.includes(b.status)) return fail(400, `status must be one of ${AGENT_STATUSES.join(", ")} (merging, merged and discarded come from POST /api/tasks/:id/merge and /discard)`);
     if (["merging", "merged", "discarded"].includes(task.status) && b.status) return fail(409, `task ${task.id} is ${task.status}`);
     const changes: Partial<Task> = {};
     for (const k of ["status", "url", "summary", "error", "title", "description"] as const) if (k in b) (changes as any)[k] = b[k] ?? undefined;
@@ -422,10 +440,12 @@ async function handle(req: Request): Promise<Response> {
     return json(task);
   }
   if (task && action == "merge" && req.method == "POST") {
+    if (task.status == "merging") return fail(409, `task ${task.id} is already merging`);
     if (!["complete", "failed"].includes(task.status) && !(task.status == "working" && url.searchParams.has("force"))) return fail(409, `task ${task.id} is ${task.status}, not complete`);
     if (!task.branch) return fail(409, "task has no branch");
+    const ahead = store.tasks.filter((t) => t.status == "merging").map((t) => `#${t.id}`);
+    touch(task, { status: "merging", error: undefined }, ahead.length ? `Merge requested: waiting for ${ahead.join(", ")} to merge first` : "Merge requested");
     mergeLock = mergeLock.then(() => merge(task));
-    task.status = "merging"; save();
     return json(task, 202);
   }
   if (task && action == "discard" && req.method == "POST") {
