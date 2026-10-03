@@ -209,7 +209,7 @@ async function htmlScenario(browser: Browser) {
   await p.key("p", MOD.Meta | MOD.Shift);
   check("source view shows the file", await until(async () => await p.eval<boolean>(`document.body.classList.contains("source")`) && (await s.source()).includes("Where leads go now.")));
   await p.key("p", MOD.Meta | MOD.Shift);
-  await until(() => p.frame<boolean>(`!document.body.classList.contains("source") && !!${F}.querySelector("h1[data-erga-id]")`));
+  await until(async () => !(await p.eval<boolean>(`document.body.classList.contains("source")`)) && await p.frame<boolean>(`!!${F}.querySelector("h1[data-erga-id]")`));
   await s.clickEnd("h1");
   check("no page errors", p.errors.length == 0, p.errors.join("\n"));
   await s.close();

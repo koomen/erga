@@ -185,6 +185,12 @@ function watchPage() {
   d.addEventListener("selectionchange", () => queueSnapshot());
 }
 window.addEventListener("resize", () => { remeasure = true; queueSnapshot(); });
+// While the page renders afresh, keys land on this frame's own document: the shell's shortcuts still reach it.
+window.addEventListener("keydown", (e) => {
+  if (!isAppShortcut(e, isMac)) return;
+  e.preventDefault();
+  post({ type: "key", keys: { key: e.key, metaKey: e.metaKey, ctrlKey: e.ctrlKey, shiftKey: e.shiftKey, altKey: e.altKey } });
+});
 
 // The page's background, so the shell can paint its canvas to match: its
 // root's, or its body's when the root has none, as the browser would.
