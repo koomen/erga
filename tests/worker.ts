@@ -110,6 +110,8 @@ try {
   let shared = await share(second, "Ada", "viewer");
   expect(shared.status == 200 && shared.body.permissions?.map((p) => `${p.login}:${p.role}`).join() == `${login}:owner,ada:viewer`, "the owner shares it with a viewer", shared);
   expect((await as("Ada", `/${login}/untitled-2`)).status == 200 && (await as("Ada", `/d/${second}/doc/index.html`)).ok, "a viewer opens it");
+  const adaList = await (await as("Ada", "/docs")).text();
+  expect(adaList.includes(`href="/${login}/untitled-2?user=Ada"`) && adaList.includes(`${login} · view only`) && !adaList.includes(`value="${second}"`), "it's on their list, as shared with them, without a delete button", adaList.slice(adaList.indexOf("<ol>"), adaList.indexOf("</ol>")));
   expect((await as("Ada", `/d/${second}/api/stored/index.html`, { method: "PUT", body: "<h1>Mine now</h1>" })).status == 403, "but can't publish to it");
   expect(!(await as("Ada", `/d/${second}/api/name`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: "Viewer's title" }) })).ok, "nor rename it");
   expect((await as("Ada", "/docs/delete", { method: "POST", body: new URLSearchParams({ id: second }), headers: { Origin: origin } })).status == 403, "nor delete it");

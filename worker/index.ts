@@ -82,7 +82,7 @@ const platform = (env: Env): Platform => {
           const path = env.ERGA_LINK_SECRET ? await env.DOCS.getByName(d.id).diskPath().catch(() => null) : null;
           return {
             id: d.id, owner: d.owner, slug: d.slug, title: d.title, titleSet: d.titleSet, slugSet: d.slugSet,
-            created: d.created, modified: d.modified ?? d.created,
+            created: d.created, modified: d.modified ?? d.created, role: d.role,
             ...(path != null ? { path } : d.modified == null && d.expires != null ? { expires: d.expires } : {}),
           };
         }));

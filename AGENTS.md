@@ -84,6 +84,16 @@ and Discard buttons (no Merge or Discard while a task is merging), and
 and merging tasks, and toasts say when one is ready, starts merging, is
 merged, fails to merge or fails. With the mod loaded, use its tools instead of `tq`.
 
+## Changing the database
+
+The server's database (D1: users, settings, documents and their
+permissions) is described in README.md (Users, admins and settings). Change
+its tables with a new migration file in `migrations/` (`0002_...sql` and
+on), never by editing one that's there: erga.dev has applied those, and
+other tasks may be adding their own at the same time. Reach the data
+through `Directory` (`directory.ts`, with `dir.users` and `dir.config`),
+whose admin-only calls check who's asking themselves.
+
 ## Merging
 
 The user merges from the board (the same as `tq merge <id>`, or

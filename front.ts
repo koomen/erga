@@ -24,7 +24,7 @@
 // Worker. The rule for when an unedited document goes (`afterUnedited`) is
 // here; the document's alarm applies it.
 
-import { type Directory, type DocRow, type Grant, type Route, type Who, NotAllowed, UNTITLED } from "./directory.ts";
+import { type Directory, type DocRow, type Grant, type Role, type Route, type Who, NotAllowed, UNTITLED } from "./directory.ts";
 
 /** Who's signed in. */
 export interface Session {
@@ -51,6 +51,8 @@ export interface Listed {
   expires?: number;
   /** In local development, a document that's a file or folder on disk: where it is. Deleting it leaves the files be. */
   path?: string;
+  /** What the person whose list it is may do with it: their own document, or one shared with them. */
+  role: Role;
 }
 
 /** What the front door needs from the platform it runs on. */
@@ -442,15 +444,17 @@ function ago(t: number, now: number): string {
 function docsPage(session: Session, docs: Listed[], now: number, dev: boolean, hours: number): string {
   const rows = docs.map((d) => {
     const left = d.expires != null ? Math.max(1, Math.ceil((d.expires - now) / 3600000)) : null;
-    const note = d.path != null ? `<span class="note" title="${esc(d.path)}">On disk</span>`
+    const mine = d.role == "owner";
+    const note = !mine ? `<span class="note" title="Shared with you by ${esc(d.owner)}">${esc(d.owner)} · ${d.role == "editor" ? "can edit" : "view only"}</span>`
+      : d.path != null ? `<span class="note" title="${esc(d.path)}">On disk</span>`
       : left != null ? `<span class="note" title="A document nobody edits is deleted ${hours} hours after it's made">Unedited · deleted in ${left}h</span>` : "";
     const when = new Date(d.modified).toISOString();
     // One opened from disk only comes off the list: its files stay where they are.
     const [remove, label] = d.path != null ? ["Remove from the list", `Remove ${esc(d.title)} from the list`] : ["Delete", `Delete ${esc(d.title)}`];
     return `  <li>
     <a class="doc" href="${esc(link(`/${d.owner}/${d.slug}`, session))}"><span class="title">${esc(d.title)}</span>${note}<time datetime="${when}">${ago(d.modified, now)}</time></a>
-    <button type="button" class="act rename" aria-label="Rename ${esc(d.title)}" title="Rename" data-id="${esc(d.id)}" data-title="${esc(d.title)}" data-slug="${esc(d.slug)}"${d.titleSet ? " data-title-set" : ""}${d.slugSet ? " data-slug-set" : ""}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 19h3.5L18.25 9.25a2.47 2.47 0 0 0-3.5-3.5L5 15.5V19Z"/><path d="m13.5 7 3.5 3.5"/></svg></button>
-    <form method="post" action="${esc(link("/docs/delete", session))}" data-title="${esc(d.title)}"${d.path != null ? " data-disk" : ""}><input type="hidden" name="id" value="${esc(d.id)}"><button class="act delete" aria-label="${label}" title="${remove}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M10 7V5h4v2M7 7l1 12h8l1-12"/></svg></button></form>
+    ${mine ? `<button type="button" class="act rename" aria-label="Rename ${esc(d.title)}" title="Rename" data-id="${esc(d.id)}" data-title="${esc(d.title)}" data-slug="${esc(d.slug)}"${d.titleSet ? " data-title-set" : ""}${d.slugSet ? " data-slug-set" : ""}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 19h3.5L18.25 9.25a2.47 2.47 0 0 0-3.5-3.5L5 15.5V19Z"/><path d="m13.5 7 3.5 3.5"/></svg></button>
+    <form method="post" action="${esc(link("/docs/delete", session))}" data-title="${esc(d.title)}"${d.path != null ? " data-disk" : ""}><input type="hidden" name="id" value="${esc(d.id)}"><button class="act delete" aria-label="${label}" title="${remove}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M10 7V5h4v2M7 7l1 12h8l1-12"/></svg></button></form>` : ""}
   </li>`;
   }).join("\n");
   return `<!doctype html>
