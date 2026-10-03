@@ -55,6 +55,10 @@ test("the share button's token is shown again until it's rotated", async () => {
   expect(await tokens.verify(first.token)).toBeNull();
   expect((await tokens.verify(next.token))?.kind).toBe("share");
   expect((await tokens.list("ada")).length).toBe(1);
+  // A test person's token remembers who minted their test token.
+  const t = await tokens.share({ login: "test-bo", name: "Bo", testBy: "Koomen" }, false);
+  expect((await tokens.verify(t.token))?.testBy).toBe("koomen");
+  expect((await tokens.verify(next.token))?.testBy).toBeNull();
 });
 
 test("an agent asks for a token, the person approves, the agent collects it once", async () => {

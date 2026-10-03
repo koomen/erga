@@ -25,9 +25,14 @@ export interface AgentToken {
   label: string;
   /** "share": the editor's share button's (one per person, shown again until rotated); "agent": any other. */
   kind: "agent" | "share";
+  /** A test person's token: who minted their test token (front.ts, Session.test). */
+  testBy: string | null;
   created: number;
   lastUsed: number | null;
 }
+
+/** Whom a token is for: a login and name, and for a test person, who minted their test token. */
+export interface Who { login: string; name: string; testBy?: string }
 
 export const TOKEN_PREFIX = "erga_";
 export const LABEL_MAX = 80;
@@ -46,10 +51,10 @@ async function sha256(s: string): Promise<string> {
 }
 const clipLabel = (s: string | null | undefined, fallback: string) => (s ?? "").replace(/\s+/g, " ").trim().slice(0, LABEL_MAX) || fallback;
 
-interface Row { id: string; login: string; name: string; label: string; kind: string; created: number; last_used: number | null }
-const COLUMNS = "id, login, name, label, kind, created, last_used";
+interface Row { id: string; login: string; name: string; label: string; kind: string; test_by: string | null; created: number; last_used: number | null }
+const COLUMNS = "id, login, name, label, kind, test_by, created, last_used";
 const fromRow = (r: Row): AgentToken => ({
-  id: r.id, login: r.login, name: r.name, label: r.label, kind: r.kind == "share" ? "share" : "agent",
+  id: r.id, login: r.login, name: r.name, label: r.label, kind: r.kind == "share" ? "share" : "agent", testBy: r.test_by ?? null,
   created: Number(r.created), lastUsed: r.last_used == null ? null : Number(r.last_used),
 });
 
@@ -63,11 +68,14 @@ export class Tokens {
   }
 
   /** A new token for someone: the token (show it once) and its entry. */
-  async mint(who: { login: string; name: string }, label: string, kind: "agent" | "share" = "agent"): Promise<{ token: string; info: AgentToken }> {
-    const info: AgentToken = { id: random(12, ID_ALPHABET), login: who.login.toLowerCase(), name: who.name || who.login, label: clipLabel(label, "Agent"), kind, created: Date.now(), lastUsed: null };
+  async mint(who: Who, label: string, kind: "agent" | "share" = "agent"): Promise<{ token: string; info: AgentToken }> {
+    const info: AgentToken = {
+      id: random(12, ID_ALPHABET), login: who.login.toLowerCase(), name: who.name || who.login, label: clipLabel(label, "Agent"), kind,
+      testBy: who.testBy?.toLowerCase() ?? null, created: Date.now(), lastUsed: null,
+    };
     const token = await this.tokenFor(info.id);
-    await this.sql.run("INSERT INTO agent_tokens (id, hash, login, name, label, kind, created, last_used) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL)",
-      info.id, await sha256(token), info.login, info.name, info.label, info.kind, info.created);
+    await this.sql.run("INSERT INTO agent_tokens (id, hash, login, name, label, kind, test_by, created, last_used) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, NULL)",
+      info.id, await sha256(token), info.login, info.name, info.label, info.kind, info.testBy, info.created);
     return { token, info };
   }
 
@@ -75,7 +83,7 @@ export class Tokens {
    * The share button's token for someone: the one they have, or a new one
    * (and with `rotate`, a new one in place of the old, which stops working).
    */
-  async share(who: { login: string; name: string }, rotate: boolean): Promise<{ token: string; info: AgentToken }> {
+  async share(who: Who, rotate: boolean): Promise<{ token: string; info: AgentToken }> {
     const [row] = await this.sql.all<Row>(`SELECT ${COLUMNS} FROM agent_tokens WHERE login = ?1 AND kind = 'share' ORDER BY created DESC LIMIT 1`, who.login.toLowerCase());
     if (row && !rotate) return { token: await this.tokenFor(row.id), info: fromRow(row) };
     if (row) await this.sql.run("DELETE FROM agent_tokens WHERE login = ?1 AND kind = 'share'", who.login.toLowerCase());

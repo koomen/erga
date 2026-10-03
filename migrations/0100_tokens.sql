@@ -11,6 +11,8 @@
 -- in lists and to revoke it. `kind` is 'share' for the one the editor's share
 -- button shows (shown again each time it's asked for, until it's rotated) and
 -- 'agent' for those made at /tokens or asked for by an agent (shown once).
+-- A test person's token (their share button's) has `test_by`, who minted
+-- their test token: it opens only test documents, as they do.
 -- Times are milliseconds since the epoch; `last_used` is updated at most
 -- every few minutes.
 CREATE TABLE agent_tokens (
@@ -20,6 +22,7 @@ CREATE TABLE agent_tokens (
   name TEXT NOT NULL,
   label TEXT NOT NULL,
   kind TEXT NOT NULL DEFAULT 'agent' CHECK (kind IN ('agent', 'share')),
+  test_by TEXT,
   created INTEGER NOT NULL,
   last_used INTEGER
 );

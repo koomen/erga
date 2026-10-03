@@ -96,7 +96,7 @@ export const TOOLS: ServerTool[] = [
     },
     run: async (args, ctx) => {
       const { session, platform, url } = ctx;
-      if (!platform.mayCreate(session, url)) throw new ToolError("You can't make documents on this server.", 403);
+      if (session.test || !platform.mayCreate(session, url)) throw new ToolError("You can't make documents on this server.", 403);
       let files = decodeFiles(args.files);
       const published = Object.keys(files).length > 0;
       if (!published) files = { ...platform.templates[args.template == "demo" ? "demo" : "doc"] };
@@ -112,7 +112,7 @@ export const TOOLS: ServerTool[] = [
   },
   {
     name: "update_files",
-    description: "Publishes files into an existing document: each is written and merged into it as an edit (open editors show it at once; text people are typing merges). replace: true also deletes every file not given (the page itself stays), for publishing a site again. delete removes the files named.",
+    description: "Publishes files into an existing document: each replaces the file as it is now, as an edit (open editors show it at once, and anyone's undo history stays). replace: true also deletes every file not given (the page itself stays), for publishing a site again. delete removes the files named.",
     parameters: {
       type: "object",
       properties: {

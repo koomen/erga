@@ -104,8 +104,9 @@ export class DocHost extends DurableObject<Env> {
 
   /**
    * Files arriving whole (a publish, from the server's API): each written and
-   * taken into the room as an edit "on disk", so open tabs see it at once and
-   * edits people are making merge with it. Text files go through the room's
+   * taken into the room as an edit "on disk", so open tabs see it at once.
+   * What the room holds is written first, so a file replaces the text as it
+   * is now (only edits made while it arrives merge with it). Text files go through the room's
    * push; others (images) are stored and the room told. `remove` deletes
    * files. Says what it did with each.
    */
@@ -115,6 +116,8 @@ export class DocHost extends DurableObject<Env> {
     const meta = (await this.ctx.storage.get<Meta>(META))!;
     const out = { written: [] as string[], removed: [] as string[], refused: [] as { path: string; why: string }[] };
     const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false });
+    // Edits not yet written land first, so a published file replaces what's there now rather than merging with it.
+    await Effect.runPromise(opened.room.flush);
     for (const [path, data] of Object.entries(files)) {
       if (meta.disk?.only && path != meta.index) { out.refused.push({ path, why: `this document is the single file ${meta.index}` }); continue; }
       let text: string | null = null;

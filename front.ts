@@ -194,8 +194,9 @@ export function withTokens(platform: Platform, url: URL): Platform {
       if (!bearer) return platform.sessionOf(request);
       const token = await platform.tokens.verify(bearer).catch(() => null);
       if (!token) return null;
-      const session: Session = { login: token.login, name: token.name, agent: token };
-      return platform.mayCreate(session, url) ? session : null;
+      // A test person's token opens only test documents, while whoever minted their test token may sign in.
+      const session: Session = { login: token.login, name: token.name, agent: token, ...(token.testBy ? { test: { by: token.testBy } } : {}) };
+      return platform.mayCreate(token.testBy ? { login: token.testBy, name: token.testBy } : session, url) ? session : null;
     },
   };
 }
@@ -673,11 +674,10 @@ const signInFirst = (next: string) => new Response(null, { status: 302, headers:
 async function shareToken(platform: Platform, request: Request, session: Session): Promise<Response> {
   const refuse = (error: string) => Response.json({ ok: false, error }, { status: 403 });
   if (session.agent) return refuse("An agent can't make tokens.");
-  if (session.test) return refuse("Test people can't share documents with agents.");
   const origin = request.headers.get("origin");
   if (origin && origin != new URL(request.url).origin) return refuse("Forbidden");
   const body = (await request.json().catch(() => ({}))) as { rotate?: unknown };
-  const { token } = await platform.tokens.share({ login: session.login, name: session.name }, body?.rotate === true);
+  const { token } = await platform.tokens.share({ login: session.login, name: session.name, testBy: session.test?.by }, body?.rotate === true);
   return Response.json({ token }, { headers: { "Cache-Control": "no-store" } });
 }
 
