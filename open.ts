@@ -31,6 +31,7 @@
 // The share button gives a person a token for an external agent, which
 // calls the same tools in the same session over /api/ext.
 
+import { existsSync, readFileSync, writeFileSync } from "fs";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
@@ -197,12 +198,22 @@ const program = (args: { target: Option.Option<string>; port: number; open: bool
 
   const templates = yield* readTemplates;
   const editorFile = path.join(EDITOR_DIR, "page.html");
+  // Signs the tokens that open a document's files on its pages origin; kept, so open tabs ride out a restart.
+  const secretFile = path.join(dataDir, ".pages-secret");
+  const secret = existsSync(secretFile) ? readFileSync(secretFile, "utf8").trim() : (() => {
+    const fresh = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("hex");
+    writeFileSync(secretFile, fresh, { mode: 0o600 });
+    return fresh;
+  })();
   const platform: Platform = {
     sessionOf: async (request) => sessionOf(request),
     templates,
     editor: async () => new Response(Bun.file(editorFile)),
     mayCreate: () => true,
     dev: () => true,
+    // Each document's page on its own origin here too: <id>-<owner>.localhost, which browsers send to this machine.
+    pagesDomain: () => "localhost",
+    secret,
     docs: {
       create: (owner, id, files, index, opts) => docs.create(owner, id, files, index, opts),
       exists: (owner, id) => docs.exists(owner, id),
@@ -264,6 +275,7 @@ const program = (args: { target: Option.Option<string>; port: number; open: bool
       return HttpServerResponse.empty();
     }).pipe(Effect.scoped)),
     HttpRouter.route("GET", "/page.js", serveFile(EDITOR_DIR, "page.js", "no-cache")),
+    HttpRouter.route("GET", "/frame.js", serveFile(EDITOR_DIR, "frame.js", "no-cache")),
     HttpRouter.route("GET", "/style.css", serveFile(EDITOR_DIR, "style.css", "no-cache")),
     HttpRouter.route("GET", "/fonts/*", HttpRouter.params.pipe(Effect.flatMap((p) => serveFile(path.join(EDITOR_DIR, "fonts"), p["*"] ?? "", "no-cache")))),
     // Signing in: nothing to check locally. ?as= names who this browser is

@@ -50,6 +50,13 @@ export interface Platform {
   mayCreate(session: Session, url: URL): boolean;
   /** Local development: /new may name the document (?id=) and shorten its unedited time (?unedited=<ms>). */
   dev(url: URL): boolean;
+  /**
+   * Where documents' pages run (see pagesOrigin): "erga-pages.dev", or
+   * "localhost" for a request that came to this machine.
+   */
+  pagesDomain(url: URL): string;
+  /** Signs the tokens that open a document's files on its pages origin. */
+  secret: string;
   docs: {
     /** Makes a document from a template's files; false if that address is taken. */
     create(owner: string, id: string, files: Record<string, string>, index: string, opts: { test?: boolean; unedited?: number }): Promise<boolean>;
@@ -89,6 +96,8 @@ const newId = () => Array.from(crypto.getRandomValues(new Uint8Array(8)), (b) =>
 export async function frontDoor(request: Request, platform: Platform): Promise<Response> {
   const url = new URL(request.url);
   const path = url.pathname;
+  const pages = pagesHost(url, platform);
+  if (pages) return pagesDoor(request, url, pages, platform);
   if (path == "/") return viewDemo(platform, await platform.sessionOf(request));
   if (path == "/new") return newDoc(platform, request);
   if (path == "/docs") return listDocs(platform, request);
@@ -103,12 +112,86 @@ export async function frontDoor(request: Request, platform: Platform): Promise<R
   if (!rest || rest == "/") {
     if (!session) return signInFirst(path);
     if (!(await platform.docs.exists(owner, id))) return page("Not found", "There's no document here. <a href=\"/\">Back to the start</a>.", 404);
-    const editor = await platform.editor(request);
-    return new Response(editor.body, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
+    // The page editor runs on the document's own origin, at an address that carries the token for its files.
+    const pagesUrl = `${pagesOrigin(owner, id, url, platform)}/t/${await pagesToken(platform.secret, owner, id, url.origin)}/`;
+    const editor = (await (await platform.editor(request)).text()).replace("</head>", `<meta name="erga-pages" content="${esc(pagesUrl)}"></head>`);
+    return new Response(editor, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
   }
   // An external agent brings its share token, which the document checks; everyone else needs a session.
   if (!session && !rest.startsWith("/api/ext")) return new Response("Sign in first", { status: 401 });
   return platform.docs.fetch(owner, id, forwarded(request, url, rest, `${url.origin}/${owner}/${id}`, session));
+}
+
+// ---------------------------------------------------------------- pages
+
+// A document's page runs on an origin of its own, <id>-<owner>.erga-pages.dev
+// (or <id>-<owner>.localhost:<port> on this machine), never this site's: its
+// scripts, whoever wrote them, can't act as the person viewing it (see
+// src/page/bridge.ts). That origin has no cookies. It serves the page
+// editor's frame and the document's files under a token, signed here, that
+// opens this one document for a week; the editor's address on this site hands
+// it out to whoever may open the document.
+
+const PAGES_LABEL = /^([a-z0-9]{8})-([a-z0-9-]{1,39})$/;
+const WEEK = 7 * 24 * 60 * 60;
+
+/** The origin a document's page runs on. */
+export function pagesOrigin(owner: string, id: string, url: URL, platform: Platform): string {
+  const domain = platform.pagesDomain(url);
+  return domain == "localhost" ? `${url.protocol}//${id}-${owner.toLowerCase()}.localhost${url.port ? `:${url.port}` : ""}` : `https://${id}-${owner.toLowerCase()}.${domain}`;
+}
+
+/** The document a pages origin is for, if the request came to one. */
+function pagesHost(url: URL, platform: Platform): { owner: string; id: string } | null {
+  const domain = platform.pagesDomain(url);
+  if (!url.hostname.endsWith(`.${domain}`)) return null;
+  const m = PAGES_LABEL.exec(url.hostname.slice(0, -domain.length - 1));
+  return m && OWNER.test(m[2]) && ID.test(m[1]) ? { owner: m[2], id: m[1] } : null;
+}
+
+const hmac = async (secret: string, value: string) => {
+  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(`erga-pages:${secret}`), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  return b64url(new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(value))));
+};
+const b64url = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+
+/** A token that opens one document's files on its pages origin, for a week, for the editor at `shell` (whose origin it names). */
+export async function pagesToken(secret: string, owner: string, id: string, shell: string, now = Date.now()): Promise<string> {
+  const claims = b64url(new TextEncoder().encode(JSON.stringify({ d: `${owner.toLowerCase()}/${id}`, e: Math.floor(now / 1000) + WEEK, s: shell })));
+  return `${claims}.${await hmac(secret, claims)}`;
+}
+
+/** The editor's origin, if `token` is good for this document and current. */
+export async function readPagesToken(secret: string, token: string, owner: string, id: string, now = Date.now()): Promise<string | null> {
+  const [claims, mac, extra] = token.split(".");
+  if (!claims || !mac || extra != null || mac != (await hmac(secret, claims))) return null;
+  try {
+    const c = JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(claims.replace(/-/g, "+").replace(/_/g, "/")), (ch) => ch.charCodeAt(0)))) as { d?: string; e?: number; s?: string };
+    if (c.d != `${owner.toLowerCase()}/${id}` || !(Number(c.e) > now / 1000) || typeof c.s != "string") return null;
+    return new URL(c.s).origin == c.s ? c.s : null;
+  } catch { return null; }
+}
+
+/**
+ * A request to a document's pages origin: /t/<token>/ is the page editor's
+ * frame, which only the editor on this site may embed, and /t/<token>/doc/...
+ * are the document's files.
+ */
+async function pagesDoor(request: Request, url: URL, doc: { owner: string; id: string }, platform: Platform): Promise<Response> {
+  const notFound = () => new Response("Not found", { status: 404, headers: { "Content-Type": "text/plain; charset=utf-8" } });
+  const [, token, rest] = /^\/t\/([^/]+)(\/.*)$/.exec(url.pathname) ?? [];
+  if (!token || (request.method != "GET" && request.method != "HEAD")) return notFound();
+  const shell = await readPagesToken(platform.secret, token, doc.owner, doc.id);
+  if (!shell) return new Response("This link has expired: reload the editor.", { status: 403, headers: { "Content-Type": "text/plain; charset=utf-8" } });
+  if (rest == "/") {
+    return new Response(`<!doctype html><html><head><meta charset="utf-8"><meta name="erga-shell" content="${esc(shell)}"><title>Erga page</title>
+<style>html,body{margin:0;height:100%;overflow:hidden;background:transparent}#page{position:fixed;inset:0;width:100%;height:100%;border:0;background:transparent}</style>
+</head><body><script src="/frame.js"></script></body></html>`, {
+      headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "Content-Security-Policy": `frame-ancestors ${shell}`, "Referrer-Policy": "no-referrer" },
+    });
+  }
+  if (!rest.startsWith("/doc/")) return notFound();
+  return platform.docs.fetch(doc.owner, doc.id, forwarded(request, url, rest, `${shell}/${doc.owner}/${doc.id}`, null));
 }
 
 /** A link on this site, keeping the name a local tab gave (?user=) if it gave one. */

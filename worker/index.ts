@@ -31,13 +31,16 @@ for (const [path, text] of Object.entries(import.meta.glob("../templates/*/**", 
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
-    const path = new URL(request.url).pathname;
+    const url = new URL(request.url), path = url.pathname;
+    const assets = path == "/page.js" || path == "/frame.js" || path == "/style.css" || path.startsWith("/fonts/");
+    // A document's pages origin (front.ts, pagesDoor) serves its frame and files, and nothing of this site's.
+    if (url.hostname.endsWith(".erga-pages.dev") || url.hostname.endsWith(".localhost")) return assets ? env.ASSETS.fetch(request) : frontDoor(request, platform(env));
     if (path == "/auth/github") return startSignIn(env, request);
     if (path == "/auth/github/callback") return finishSignIn(env, request);
     if (path == "/auth/logout") return signOut(request);
     if (path == "/auth/test") return testSignIn(env, request);
     if (path == "/tokens") return tokens(env, request);
-    if (path == "/page.js" || path == "/style.css" || path.startsWith("/fonts/")) return env.ASSETS.fetch(request);
+    if (assets) return env.ASSETS.fetch(request);
     return frontDoor(request, platform(env));
   },
 } satisfies ExportedHandler<Env>;
@@ -55,6 +58,9 @@ const platform = (env: Env): Platform => {
     editor: (request) => env.ASSETS.fetch(new Request(new URL("/editor.html", request.url))),
     mayCreate: (session, url) => allowed(env, session.login) || isDev(env, url),
     dev: (url) => isDev(env, url),
+    // Locally (vite dev) each document's page runs on <id>-<owner>.localhost, which browsers send to this machine.
+    pagesDomain: (url) => (url.hostname == "localhost" || url.hostname.endsWith(".localhost") || url.hostname == "127.0.0.1" ? "localhost" : "erga-pages.dev"),
+    secret: env.SESSION_SECRET,
     docs: {
       create: (owner, id, files, index, opts) => doc(owner, id).create(owner, id, files, index, opts),
       exists: (owner, id) => doc(owner, id).exists(),

@@ -15,14 +15,15 @@ import { syntaxHighlighting, HighlightStyle } from "@codemirror/language";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { html } from "@codemirror/lang-html";
 import { tags as t } from "@lezer/highlight";
-import { PageEditor, ms, type InlineStyle, type MarkAuthor, type Peer } from "./editor";
+import { ms, type InlineStyle, type MarkAuthor, type Peer } from "./editor";
+import { RemotePage } from "./remote";
+import type { Backdrop, Keys } from "./bridge";
 import { changesBetween } from "./merge";
 import { Collab, type Presence } from "./collab";
 import { colorFor, type Author } from "../room/doc";
 import { analyzeMarkdown } from "./markdown";
 import TurndownService from "turndown";
 import { emptyLog, reduce, type Log, type LogEvent, type LogItem, type ViewRequest, type ViewResult } from "./agent-log";
-import { domToPng } from "modern-screenshot";
 import type { AgentState, DocInfo, ModelState } from "../../api";
 import { BASE } from "./base";
 
@@ -104,31 +105,22 @@ declare global {
   // floating UI to match (see page.html), so opening the agent never reveals
   // a strip of a different colour. The page's background is its root's, or
   // its body's when the root has none, as the browser itself would paint it.
-  let backdropObserver: MutationObserver | null = null;
-  function syncBackdrop() {
-    const d = frame.contentDocument, win = frame.contentWindow;
-    if (!d?.documentElement || !win || !info) return;
-    const transparent = (cs: CSSStyleDeclaration) => cs.backgroundImage == "none" && /^(transparent|rgba\([^)]*,\s*0\))$/.test(cs.backgroundColor);
-    let cs = win.getComputedStyle(d.documentElement);
-    if (transparent(cs) && d.body) cs = win.getComputedStyle(d.body);
+  // The page reports its background (frame.ts). Only colours and gradients
+  // are taken: an image would be fetched from here, as you.
+  function applyBackdrop(b: Backdrop) {
+    if (!info) return;
+    const color = b.color && CSS.supports("color", b.color) ? b.color : info.kind == "md" ? "" : "#ffffff";
+    const image = b.image && !/url\(|image-set\(|image\(|element\(/i.test(b.image) && CSS.supports("background-image", b.image) ? b.image : "";
     const root = document.documentElement.style;
-    const fallback = info.kind == "md" ? "" : "#ffffff";
-    const color = transparent(cs) ? fallback : cs.backgroundColor;
     if (color) root.setProperty("--page-bg", color); else root.removeProperty("--page-bg");
-    if (cs.backgroundImage != "none") root.setProperty("--page-bg-image", cs.backgroundImage); else root.removeProperty("--page-bg-image");
+    if (image) root.setProperty("--page-bg-image", image); else root.removeProperty("--page-bg-image");
     const rgb = (color || getComputedStyle(document.documentElement).getPropertyValue("--bg")).match(/[\d.]+/g)?.map(Number);
     const dark = !!rgb && rgb.length >= 3 && (0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2]) / 255 < 0.45;
     document.documentElement.classList.toggle("page-dark", !!color && dark);
     document.documentElement.classList.toggle("page-light", !!color && !dark);
     // Remembered so the next load paints it before the page arrives (see page.html), not white first.
-    store.set("erga:backdrop:v1", JSON.stringify({ bg: color, image: cs.backgroundImage != "none" ? cs.backgroundImage : "", tone: color ? (dark ? "page-dark" : "page-light") : "" }));
-    // Follow the page if its own script switches themes.
-    if (!backdropObserver) backdropObserver = new MutationObserver(() => syncBackdrop());
-    backdropObserver.disconnect();
-    backdropObserver.observe(d.documentElement, { attributes: true, attributeFilter: ["class", "style", "data-theme"] });
-    if (d.body) backdropObserver.observe(d.body, { attributes: true, attributeFilter: ["class", "style", "data-theme"] });
+    store.set("erga:backdrop:v1", JSON.stringify({ bg: color, image, tone: color ? (dark ? "page-dark" : "page-light") : "" }));
   }
-
 
   // ---------------------------------------------------------------- load
 
@@ -162,12 +154,6 @@ declare global {
   // that's someone else (?user=) goes to theirs.
   $("nav-docs").hidden = myId.startsWith("test-");
   if (!signedIn && myName != info.user) $("nav-docs").querySelector("a")!.href = `/docs?user=${encodeURIComponent(myName)}`;
-  // Someone else's page on erga.dev could act as you while its scripts run
-  // (it's served from this origin), so they stay off until you say so, for
-  // this tab. Locally, every page is from your own disk.
-  const owner = BASE.split("/")[1]?.toLowerCase() ?? "";
-  const scriptsKey = `erga:scripts:${BASE}`;
-  const trusted = !signedIn || owner == myId || (() => { try { return sessionStorage.getItem(scriptsKey) == "on"; } catch { return false; } })();
   /** The host's agent endpoints, as this person. */
   const api = (path: string) => `${BASE}${path}?user=${encodeURIComponent(myName)}`;
 
@@ -229,15 +215,8 @@ declare global {
     ".cm-content": { paddingRight: "24px" },
   })];
   const look = new Compartment();
-  /** The page's text column, so the Markdown view can match it. */
-  function measureColumn() {
-    const d = frame.contentDocument, win = frame.contentWindow;
-    let left = Infinity, right = -Infinity;
-    for (const el of d?.querySelectorAll("[data-erga-id]") ?? []) {
-      const r = el.getBoundingClientRect();
-      if (r.width > 0 && r.width < (win?.innerWidth ?? 1e9)) { left = Math.min(left, r.left); right = Math.max(right, r.right); }
-    }
-    const w = right - left;
+  /** The page's text column (as the frame measured it), so the Markdown view can match it. */
+  function setColumn(w: number) {
     $("source").style.setProperty("--md-col", w > 200 ? `${Math.round(w)}px` : "40rem");
   }
   const sourceHighlight = HighlightStyle.define([
@@ -250,9 +229,9 @@ declare global {
     { tag: t.monospace, color: "var(--fg)", fontFamily: "var(--font-mono)", fontSize: "0.88em" },
     { tag: t.comment, color: "var(--mark)", fontStyle: "italic" },
   ]);
-  let state = EditorState.create({
-    doc: initialText,
-    extensions: [
+  // The source view's state: the frame hands over its own (undo history and
+  // all) when the view opens, and takes it back when it closes.
+  const sourceExtensions: Extension = [
       peersField,
       history(),
       info.kind == "md" ? markdown({ base: markdownLanguage }) : html(),
@@ -271,8 +250,7 @@ declare global {
         }
         if (u.docChanged || u.selectionSet) queueCursor();
       }),
-    ],
-  });
+  ];
   document.title = info.name;
 
   // ---------------------------------------------------------------- the room
@@ -306,16 +284,17 @@ declare global {
     if (sourceView) {
       sourceView.dispatch({ changes, annotations: Transaction.addToHistory.of(false), userEvent: "external" });
       page.recordAuthorship(changes, markAuthor(author));
-    } else page.applyExternal(changes, markAuthor(author));
+    }
+    // The shell's copy of the text takes it either way; the page does when it isn't set aside for the source view.
+    page.applyExternal(changes, markAuthor(author));
     refreshDerived();
-    if (!sourceView && page.stale) needRefresh();
     // The editor and the room must agree; if they ever don't, the room wins.
     const want = collab.current(), have = currentState().doc.toString();
     if (want != have) {
       console.warn("page editor: out of step with the room; resyncing");
       const fix = changesBetween(have, want);
       if (sourceView) sourceView.dispatch({ changes: fix, annotations: Transaction.addToHistory.of(false), userEvent: "external" });
-      else page.applyExternal(fix, null);
+      page.applyExternal(fix, null);
     }
     queuePeers();
   }
@@ -327,7 +306,6 @@ declare global {
   // Otherwise it happens straight away.
   // Either way the scroll position is kept.
   let reloadTimer = 0;
-  let restoreScroll: number | null = null;
   // Whether any agent in the room (yours or anyone's) is mid-turn: a
   // structural re-render waits for it, so half-built changes never render.
   let agentIsBusy = false;
@@ -340,7 +318,6 @@ declare global {
     clearTimeout(reloadTimer);
     reloadTimer = window.setTimeout(() => {
       if (mode != "text") return; // the page renders afresh on the way back
-      restoreScroll = frame.contentWindow?.scrollY ?? 0;
       page.render();
     }, 120);
   }
@@ -661,8 +638,8 @@ Once you've read it, await further instructions.`;
     const next = problemQueue.shift();
     if (next) toastTimer = window.setTimeout(() => explain(next.text, next.fix, next.key), 250);
   }
-  function dismissExplanation(e: Event) {
-    if (!explaining || toast.contains(e.target as Node)) return;
+  function dismissExplanation(e: Event | null) {
+    if (!explaining || (e && toast.contains(e.target as Node))) return;
     const left = EXPLAIN_MS - (performance.now() - explaining);
     clearTimeout(toastTimer);
     if (left > 0) { const shownAt = explaining; toastTimer = window.setTimeout(() => { if (explaining == shownAt) hideExplanation(); }, left); }
@@ -675,66 +652,69 @@ Once you've read it, await further instructions.`;
   }
   // Capture phase, before whatever the click or key does (which may explain something new).
   for (const type of ["pointerdown", "keydown"]) window.addEventListener(type, dismissExplanation, true);
-  frame.addEventListener("load", () => {
-    for (const type of ["pointerdown", "keydown"]) frame.contentDocument?.addEventListener(type, dismissExplanation, true);
-  });
   // Focusing or using this tab makes it the one you're shown by. Focus
   // lands on the frame's window when the caret is in the page.
   const activate = () => collab.activate();
   for (const type of ["focus", "pointerdown", "keydown"]) window.addEventListener(type, activate, true);
-  frame.addEventListener("load", () => {
-    for (const type of ["focus", "pointerdown", "keydown"]) frame.contentWindow?.addEventListener(type, activate, true);
-  });
 
   // ---------------------------------------------------------------- the page editor
 
   const currentState = () => (sourceView ? sourceView.state : page.state);
 
-  const page = new PageEditor({
+  // The page editor runs on the document's own origin (bridge.ts): the
+  // address the front door gave this page (with the token that opens the
+  // document's files there), in the frame.
+  const pagesUrl = document.querySelector<HTMLMetaElement>('meta[name="erga-pages"]')?.content ?? "";
+  const page = new RemotePage({
     frame,
+    origin: new URL(pagesUrl, location.href).origin,
     kind: info.kind,
-    state,
-    base: `${BASE}/doc/`,
+    text: initialText,
     markdownHead,
     self,
-    scripts: trusted,
-    onUpdate(u) {
-      if (u.changes && !u.remote) {
-        collab.push(u.changes);
-        hideChrome();
-      }
-      if (u.docChanged || u.selectionSet) { queueCursor(); queuePeers(); }
-      if (u.rendered) {
-        syncBackdrop();
+    tracking: settings.track,
+    extensions: sourceExtensions,
+    onLocal(changes) {
+      collab.push(changes);
+      hideChrome();
+      queueCursor();
+      queuePeers();
+    },
+    onSelection() { queueCursor(); queuePeers(); queueFmt(); },
+    onUpdate(rendered) {
+      if (rendered) {
         syncPause();
-        syncScriptsPill();
-        const t = page.title();
+        const t = page.title().slice(0, 200);
         document.title = t ? `${t} · ${info!.name}` : info!.name;
-        if (restoreScroll != null) { frame.contentWindow?.scrollTo(0, restoreScroll); restoreScroll = null; }
-        if (!agentPanel.contains(document.activeElement)) page.focus();
+        if (!agentPanel.contains(document.activeElement) && mode == "text") page.focus();
         queuePeers();
       }
       queueFmt();
     },
-    onKey: (e) => appShortcut(e),
+    onKey: (keys) => { appShortcut(keys); },
     onNotice: (m, fix) => explain(m, fix),
     // Each problem once, until someone asks the agent to fix it (if it's still broken after, it says so again).
     onProblem: (p) => { if (shownProblems.has(p.key)) return; shownProblems.add(p.key); reportProblem(p.message, p.fix, p.key); },
-    onPointer: (e) => {
-      const r = frame.getBoundingClientRect();
-      pointerMoved(new MouseEvent("mousemove", { clientX: e.clientX + r.left, clientY: e.clientY + r.top }));
+    onPointer: (kind, x, y) => {
+      if (kind == "move") { pointerMoved(new MouseEvent("mousemove", { clientX: x, clientY: y })); return; }
+      if (kind == "up") { pointerDown = false; queueFmt(); return; }
+      // A click on the page: as one anywhere else in the shell would.
+      dismissExplanation(null);
+      activate();
+      pointerDown = true;
+      hideFmt();
+      if (!help.hidden) toggleHelp(false);
+      if (!share.hidden) toggleShare(false);
+      showPauseCard(false);
     },
+    onActivity: (kind) => {
+      activate();
+      if (kind == "key") { lastKeyAt = performance.now(); dismissExplanation(null); }
+    },
+    onBackdrop: (b) => applyBackdrop(b),
+    onStale: () => needRefresh(),
   });
-
-  // With scripts off, a page that has any says so, and offers to run them.
-  const scriptsPill = $("scripts-pill");
-  const hasScripts = () => /<script\b|<iframe\b|\son[a-z]+\s*=|javascript:/i.test(page.state.doc.toString());
-  const syncScriptsPill = () => { scriptsPill.hidden = page.scriptsOn || mode != "text" || !hasScripts(); };
-  scriptsPill.addEventListener("click", () => {
-    try { sessionStorage.setItem(scriptsKey, "on"); } catch {}
-    scriptsPill.hidden = true;
-    page.setScripts(true);
-  });
+  frame.src = pagesUrl;
 
   // ---------------------------------------------------------------- style bar
 
@@ -788,16 +768,9 @@ Once you've read it, await further instructions.`;
     const b = (e.target as Element).closest("button");
     if (!b) return;
     if (b.dataset.why) { explain(b.dataset.why); return; }
-    if (b.dataset.style) {
-      const why = page.toggleStyle(b.dataset.style as InlineStyle);
-      if (why) explain(why);
-      queueFmt();
-    } else if (b.dataset.act == "link") openLink();
-    else if (b.dataset.act == "clear") {
-      const why = page.clearStyles();
-      if (why) explain(why);
-      queueFmt();
-    }
+    if (b.dataset.style) page.toggleStyle(b.dataset.style as InlineStyle).then((why) => { if (why) explain(why); queueFmt(); });
+    else if (b.dataset.act == "link") openLink();
+    else if (b.dataset.act == "clear") page.clearStyles().then((why) => { if (why) explain(why); queueFmt(); });
   });
   fmtLink.addEventListener("keydown", (e) => {
     if (e.key == "Enter") {
@@ -805,9 +778,7 @@ Once you've read it, await further instructions.`;
       fmt.classList.remove("linking");
       fmtLink.hidden = true;
       page.focus();
-      const why = page.setLink(fmtLink.value.trim());
-      if (why) explain(why);
-      queueFmt();
+      page.setLink(fmtLink.value.trim()).then((why) => { if (why) explain(why); queueFmt(); });
     } else if (e.key == "Escape") {
       e.preventDefault();
       e.stopPropagation();
@@ -818,14 +789,6 @@ Once you've read it, await further instructions.`;
     }
   });
   fmtLink.addEventListener("blur", () => { if (fmt.classList.contains("linking")) { fmt.classList.remove("linking"); fmtLink.hidden = true; queueFmt(); } });
-  frame.addEventListener("load", () => {
-    const d = frame.contentDocument;
-    if (!d) return;
-    d.addEventListener("mousedown", () => { pointerDown = true; hideFmt(); }, true);
-    d.addEventListener("mouseup", () => { pointerDown = false; queueFmt(); }, true);
-    d.addEventListener("scroll", () => queueFmt(), { passive: true });
-    d.addEventListener("selectionchange", () => queueFmt());
-  });
   window.addEventListener("resize", () => queueFmt());
 
   // ---------------------------------------------------------------- views
@@ -858,18 +821,28 @@ Once you've read it, await further instructions.`;
   }
   const derivedText = (m: Mode) => (m == "md" ? htmlToMarkdown(page.state.doc.toString()) : markdownToHtml(page.state.doc.toString()));
 
+  // Opening the source view waits for the page to hand over its state; a switch asked for meanwhile waits its turn.
+  let switching: Promise<void> = Promise.resolve();
   function setMode(next: Mode) {
     closeModeMenu();
+    switching = switching.then(() => switchMode(next));
+  }
+  async function switchMode(next: Mode) {
     if (next == mode) return;
-    // Leave the current view; the page's state is the one truth.
+    // Leave the current view; the source view hands the state back to the page.
     if (derivedView) { derivedView.destroy(); derivedView = null; modeNote.hidden = true; }
     if (sourceView) {
       const st = sourceView.state;
       sourceView.destroy();
       sourceView = null;
-      page.setState(st);
+      page.attach(st);
     }
-    if (mode == "text") measureColumn();
+    let handed: EditorState | null = null;
+    if (next == info!.kind) {
+      const { state: st, column } = await page.detach();
+      handed = st;
+      if (column) setColumn(column);
+    }
     mode = next;
     if (next == "text") {
       $("source").hidden = true;
@@ -877,7 +850,7 @@ Once you've read it, await further instructions.`;
       page.focus();
       queuePeers();
     } else if (next == info!.kind) {
-      sourceView = new EditorView({ parent: $("source"), state: page.state });
+      sourceView = new EditorView({ parent: $("source"), state: handed! });
       $("source").hidden = false;
       document.body.classList.add("source");
       sourceView.focus();
@@ -898,7 +871,6 @@ Once you've read it, await further instructions.`;
       modeNote.hidden = false;
     }
     renderMode();
-    syncScriptsPill();
     queueFmt();
   }
   /** Keeps a read-only conversion up to date when the file changes underneath it. */
@@ -929,55 +901,14 @@ Once you've read it, await further instructions.`;
 
   // ---------------------------------------------------------------- view_page
 
-  // The agent asks to see the page. This tab renders the latest version
-  // (edits still waiting for the end of the agent's turn included) in a
-  // hidden frame and draws it to an image, which the browser renders itself
-  // (modern-screenshot: the DOM through an SVG foreignObject), then sends it
-  // back with any errors the page's scripts threw. No server-side browser:
-  // whoever has the editor open is the agent's eyes.
-  const CATCH_ERRORS = `<script>window.__ergaErrors=[];addEventListener("error",function(e){__ergaErrors.push(String(e.message))});addEventListener("unhandledrejection",function(e){__ergaErrors.push("Unhandled rejection: "+String(e.reason&&e.reason.message||e.reason))});(function(){var ce=console.error;console.error=function(){__ergaErrors.push("console.error: "+[].map.call(arguments,String).join(" "));return ce.apply(console,arguments)}})()</script>`;
-  const MAX_SHOT = 4000;
-  async function captureView(req: ViewRequest): Promise<ViewResult> {
-    const width = Math.round(Math.max(320, Math.min(2400, req.width ?? (frame.clientWidth || 1280))));
-    const viewport = frame.clientHeight || 800;
-    const shot = document.createElement("iframe");
-    shot.setAttribute("sandbox", page.scriptsOn ? "allow-scripts allow-same-origin" : "allow-same-origin");
-    shot.setAttribute("aria-hidden", "true");
-    shot.style.cssText = `position:fixed;left:-100000px;top:0;width:${width}px;height:${viewport}px;border:0;`;
-    const html = page.renderedHtml();
-    shot.srcdoc = /<head(\s[^>]*)?>/i.test(html) ? html.replace(/<head(\s[^>]*)?>/i, (m) => m + CATCH_ERRORS) : CATCH_ERRORS + html;
-    document.body.append(shot);
-    try {
-      await new Promise<void>((resolve, reject) => { shot.onload = () => resolve(); setTimeout(() => reject(new Error("the page took too long to load")), 10_000); });
-      const d = shot.contentDocument!, win = shot.contentWindow as (Window & { __ergaErrors?: string[] }) | null;
-      await d.fonts?.ready;
-      await new Promise((r) => setTimeout(r, 600)); // let the page's own scripts draw
-      const bg = getComputedStyle(document.documentElement).getPropertyValue("--page-bg").trim() || "#ffffff";
-      let target: Element = d.documentElement, w = width, h = viewport, note: string | undefined;
-      if (req.selector) {
-        let el: Element | null = null;
-        try { el = d.querySelector(req.selector); } catch { return { width: 0, height: 0, errors: [], error: `${req.selector} isn't a valid CSS selector` }; }
-        if (!el) return { width: 0, height: 0, errors: win?.__ergaErrors ?? [], error: `Nothing on the page matches ${req.selector}` };
-        const r = el.getBoundingClientRect();
-        if (r.width < 1 || r.height < 1) return { width: 0, height: 0, errors: win?.__ergaErrors ?? [], error: `${req.selector} has no size (${Math.round(r.width)}×${Math.round(r.height)}); it may not have rendered` };
-        target = el; w = Math.ceil(r.width); h = Math.min(MAX_SHOT, Math.ceil(r.height));
-        if (r.height > MAX_SHOT) note = `${req.selector} is ${Math.round(r.height)}px tall; this shows the top ${MAX_SHOT}px.`;
-      } else if (req.fullPage) {
-        const full = Math.max(d.documentElement.scrollHeight, d.body?.scrollHeight ?? 0);
-        h = Math.min(MAX_SHOT, full);
-        if (full > MAX_SHOT) note = `The page is ${full}px tall; this shows the top ${MAX_SHOT}px.`;
-      }
-      // An element is drawn at its own size, without the margins around it (they'd shift it inside the image).
-      const url = await domToPng(target, target == d.documentElement ? { width: w, height: h, backgroundColor: bg, scale: 1 } : { backgroundColor: bg, scale: 1, style: { margin: "0" } });
-      return { png: url.slice(url.indexOf(",") + 1), width: w, height: h, errors: win?.__ergaErrors ?? [], note };
-    } finally {
-      shot.remove();
-    }
-  }
+  // The agent asks to see the page: the page editor's frame draws it
+  // (frame.ts), with the latest edits, and the picture goes back to the agent.
+  // No server-side browser: whoever has the editor open is the agent's eyes.
+  const captureView = (req: ViewRequest) => page.capture(req);
   async function answerView(id: string, req: ViewRequest) {
     // Render only once this tab has every edit the agent had made when it asked.
     if (req.after) await collab.waitFor(req.after);
-    const result = await captureView(req).catch((e: Error): ViewResult => ({ width: 0, height: 0, errors: [], error: `Couldn't capture the page: ${e.message}` }));
+    const result = await captureView(req);
     await fetch(api("/api/agent/view"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id, ...result }) }).catch(() => {});
   }
 
@@ -1399,7 +1330,7 @@ Once you've read it, await further instructions.`;
 
   // ---------------------------------------------------------------- shortcuts & wiring
 
-  function appShortcut(e: KeyboardEvent): boolean {
+  function appShortcut(e: Keys): boolean {
     const mod = isMac ? e.metaKey : e.ctrlKey;
     const key = e.key.toLowerCase();
     if (mod && e.shiftKey && key == "p") { toggleSource(); return true; }
@@ -1495,9 +1426,6 @@ Once you've read it, await further instructions.`;
     if (!help.hidden && !help.contains(e.target as Node) && !$("btn-help").contains(e.target as Node)) toggleHelp(false);
     if (!share.hidden && !share.contains(e.target as Node) && !shareBtn.contains(e.target as Node)) toggleShare(false);
     if (!$("pause-card").hidden && !$("pause-card").contains(e.target as Node) && !$("btn-pause").contains(e.target as Node)) showPauseCard(false);
-  });
-  frame.addEventListener("load", () => {
-    frame.contentDocument?.addEventListener("mousedown", () => { if (!help.hidden) toggleHelp(false); if (!share.hidden) toggleShare(false); showPauseCard(false); });
   });
 
   started = true;

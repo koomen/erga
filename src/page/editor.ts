@@ -95,16 +95,7 @@ export interface PageEditorConfig {
   onProblem?: (problem: PageProblem) => void;
   /** Whoever is using this editor, for the marks on their own edits while tracking. */
   self?: MarkAuthor;
-  /** Whether the page's own scripts run (default true); see `setScripts`. */
-  scripts?: boolean;
 }
-
-/**
- * The frame's sandbox. With scripts off the page is inert, and so is
- * anything it opens or frames (the flags carry down): no scripts, no forms,
- * no modals, while the editor still reaches into it (allow-same-origin).
- */
-export const sandboxFor = (scripts: boolean) => scripts ? "allow-scripts allow-same-origin allow-forms allow-modals allow-popups" : "allow-same-origin allow-popups";
 
 /** Inline styles the editor can apply to a selection. */
 export type InlineStyle = "strong" | "em" | "code";
@@ -350,8 +341,6 @@ export class PageEditor {
   private staleSince: string | null = null;
   /** Whether the page's own scripts are paused (see setPaused); kept across renders. */
   private paused = false;
-  /** Whether the page's own scripts run at all (see setScripts). */
-  private scripts: boolean;
   /** Reports a problem with the page as the page's own watcher would (set once it renders). */
   private reportRaw: ((raw: RawProblem) => void) | null = null;
   /** Why each locked unit (see `verify`) can't be edited, for when someone clicks it. */
@@ -362,7 +351,6 @@ export class PageEditor {
     this.state = config.state;
     this.kind = config.kind;
     this.frame = config.frame;
-    this.scripts = config.scripts ?? true;
     if (config.onUpdate) this.listeners.push(config.onUpdate);
     this.render();
   }
@@ -398,8 +386,8 @@ export class PageEditor {
     return `<head>${inject}</head>` + html;
   }
 
-  /** The whole page as it renders now, latest edits included (for view_page's capture). */
-  renderedHtml(): string { return this.analyze(this.state.doc.toString()).html; }
+  /** The whole page as it renders now, latest edits included, or as `src` would (for view_page's capture). */
+  renderedHtml(src = this.state.doc.toString()): string { return this.analyze(src).html; }
 
   /** The page's title: its <title>, else its first heading. */
   title(): string {
@@ -458,8 +446,6 @@ export class PageEditor {
       this.paintMarks();
     };
     this.frame.addEventListener("load", onLoad);
-    // The sandbox applies from the next load on, so it's set before every one.
-    this.frame.setAttribute("sandbox", sandboxFor(this.scripts));
     this.frame.srcdoc = a.html;
   }
 
@@ -477,17 +463,6 @@ export class PageEditor {
     win.__ergaReport = report;
     this.reportRaw = report;
     for (const raw of win.__ergaProblems ?? []) report(raw);
-  }
-
-  // ------------------------------------------------------------ scripts
-
-  get scriptsOn(): boolean { return this.scripts; }
-
-  /** Lets the page's own scripts run, or stops them: the page renders again either way. */
-  setScripts(on: boolean): void {
-    if (on == this.scripts) return;
-    this.scripts = on;
-    this.render();
   }
 
   // ------------------------------------------------------------ pausing

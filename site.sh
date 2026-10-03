@@ -7,4 +7,4 @@ cd "$(dirname "$0")"
 ./build.sh
 rm -rf .site && mkdir -p .site
 cp page.html .site/editor.html
-cp -r page.js style.css fonts .site/
+cp -r page.js frame.js style.css fonts .site/
