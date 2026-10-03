@@ -1,6 +1,7 @@
 // The directory (directory.ts), with the server's users (users.ts) and
 // settings (config.ts), on D1, through D1's API. A batch is one transaction.
 
+import { parseDeployed } from "../config";
 import { Directory, type Param, type Sql } from "../directory";
 import type { Env } from "./env";
 
@@ -23,8 +24,8 @@ let directory: { db: D1Database; dir: Directory } | null = null;
 export const adminsOf = (env: Env): string[] =>
   [...(env.ADMINS ?? "").split(","), ...(env.DEV_LOGIN ? [env.DEV_LOGIN] : [])].map((l) => l.trim().toLowerCase()).filter(Boolean);
 
-/** The directory, on this Worker's database. */
+/** The directory, on this Worker's database, with the settings the deploy locks (SERVER_CONFIG). */
 export function directoryOf(env: Env): Directory {
-  if (directory?.db !== env.DB) directory = { db: env.DB, dir: new Directory(sqlOn(env.DB), { admins: adminsOf(env) }) };
+  if (directory?.db !== env.DB) directory = { db: env.DB, dir: new Directory(sqlOn(env.DB), { admins: adminsOf(env), locked: parseDeployed(env.SERVER_CONFIG) }) };
   return directory.dir;
 }

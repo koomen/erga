@@ -6,6 +6,9 @@
 // start`, dev.ts) the same Worker runs under Vite.
 import { bindings, defineConfig, exports, triggers } from "cf/config";
 import * as entrypoint from "./worker/index.ts" with { type: "cf-worker" };
+// The server settings the deploy fixes (locks): server.config.ts, with ERGA_SERVER_CONFIG
+// (JSON, from the environment) over them. site.sh and dev.ts check them first (`bun server.config.ts`).
+import { deployed } from "./server.config.ts";
 
 /** The local database's id (the dev server's D1): any UUID. Production's is found by name (migrate.ts). */
 const LOCAL_DB = "00000000-0000-4000-8000-00000000e29a";
@@ -42,6 +45,8 @@ export default defineConfig(({ mode }) => ({
       // The bootstrap admins: always admins, always allowed to sign in (users.ts). Admins let
       // everyone else in (the users table). Locally DEV_LOGIN is one too (worker/d1.ts).
       ADMINS: bindings.text("koomen,dsiroker"),
+      // The settings the deploy fixes, as JSON (server.config.ts; config.ts). Admins set the rest.
+      SERVER_CONFIG: bindings.text(JSON.stringify(deployed())),
       GITHUB_CLIENT_ID: bindings.text("Ov23ctkY7oLarHcPA97b"),
       GITHUB_CLIENT_SECRET: bindings.secret(),
       SESSION_SECRET: bindings.secret(),

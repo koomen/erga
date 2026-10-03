@@ -14,13 +14,16 @@
 // opens on your documents.
 //
 // It builds the editor first, makes .dev.vars if there isn't one (you're
-// DEV_LOGIN, signed in without GitHub), and on the way out has every linked
+// DEV_LOGIN, signed in without GitHub), checks the settings the deploy fixes
+// (server.config.ts), and on the way out has every linked
 // document write what it holds to disk before the server stops.
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { join } from "node:path";
+import { deployedSettings } from "./config";
 import { resolveTarget } from "./dev/plugin";
+import { deployed } from "./server.config";
 
 const EDITOR = import.meta.dir;
 const args = process.argv.slice(2);
@@ -35,6 +38,8 @@ const target = args.find((a) => !a.startsWith("--"));
 
 // Fail fast on a target that won't open, before anything starts.
 if (target) await resolveTarget(target, process.cwd()).catch((e) => { console.error((e as Error).message); process.exit(2); });
+// The settings the deploy fixes (server.config.ts, ERGA_SERVER_CONFIG): a bad one stops here, saying why.
+try { deployedSettings(deployed()); } catch (e) { console.error(`server.config.ts: ${(e as Error).message}`); process.exit(2); }
 // The server listens on 127.0.0.1, but browsers try localhost's IPv6 address first: another server there would answer instead.
 for (const hostname of ["127.0.0.1", "::1"]) {
   try { Bun.listen({ hostname, port, socket: { data() {} } }).stop(true); } catch (e) {

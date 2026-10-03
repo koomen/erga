@@ -141,9 +141,31 @@ key with who set it and when (`config.ts`). Only the keys declared in
 `SETTINGS` exist, each with a description, a default and a parser that
 refuses a bad value saying why; one never set has its default. Today there's
 `unedited_hours`. Anyone's request may read a setting (the server reads them
-to do its work); only admins list and change them. A setting can also be
-locked by the deploy: `new Directory(sql, { locked })` takes values that win
-over the table and that admins can see but not change.
+to do its work); only admins list and change them.
+
+**Settings the deploy fixes.** A setting can also be fixed in the repo, in
+`server.config.ts`:
+
+    export default { unedited_hours: 72 };
+
+A key there is locked: the deployed value wins over whatever the table holds,
+and nobody can change it, from the admin page, the API or an agent (`set` and
+`reset` refuse with `NotAllowed`, saying it's fixed by the deploy and what it
+stays). Admins still see it, read-only, with its value. A key left out is the
+admins' to set, in `server_config`. Taking a key out and deploying hands it
+back: what an admin set before it was locked counts again. So the precedence
+is: the deploy's value, else the one an admin set, else the default.
+
+`ERGA_SERVER_CONFIG`, a JSON object in the environment of the deploy (or of
+`bun start`), adds to `server.config.ts` or overrides it, for one deploy or
+one dev server: `ERGA_SERVER_CONFIG='{"unedited_hours":3}' bun start`.
+`cloudflare.config.ts` hands the two, merged, to the Worker as the
+`SERVER_CONFIG` binding (JSON), which `directoryOf(env)` (`worker/d1.ts`)
+passes to the `Directory` as its locked settings. `bun server.config.ts`
+checks them against `SETTINGS` and prints them: `site.sh` runs it before
+every deploy and `bun start` before it starts, so a key that isn't a setting,
+or a value it won't take, stops there, saying why. Locally the same file
+applies, so local development is locked the same way as erga.dev.
 
 **The API**, for the admin UI and agents to build on: `directoryOf(env)`
 (`worker/d1.ts`) gives the `Directory`, and through it
@@ -157,7 +179,10 @@ over the table and that admins can see but not change.
   login)`;
 - settings: `dir.config.get(key)` (typed by `SETTINGS`), `entry(key)`,
   `isLocked(key)`, and, admins only, `list(by)`, `set(by, key, value)`,
-  `reset(by, key)`.
+  `reset(by, key)`. An entry (`ConfigEntry`) has the key, its description,
+  `value` (what applies now), `default`, `source` (`default`, `set` or
+  `locked`), `locked` (true when the deploy fixes it: show it read-only),
+  `deployed` (the deploy's value, only when locked) and who set it and when.
 
 The admin-only calls throw `NotAllowed` (and a bad value `ConfigError`) with
 a message a person or an agent can act on.
