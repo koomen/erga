@@ -15,6 +15,11 @@
 //   tq discard ID                        what the board's Discard does
 //   tq get ID | tq list [STATUS]         read
 //   tq serve                             just make sure the server is up; prints the board's address
+//   tq watch [--state FILE]              stay running, printing one line per task status change
+//                                        ("#3 merged: title", "#4 failed: title: why"), and nothing else;
+//                                        reconnects (restarting the queue if need be) when the server goes away.
+//                                        --state keeps what it has seen in FILE, so a new watch (say, re-armed
+//                                        after a Monitor timeout) reports what changed in between
 //
 // Statuses: queued → working → complete (Ready to merge) → merging → merged (Done);
 // also failed and discarded. Agents set queued, working, complete and failed.
@@ -65,6 +70,7 @@ if (!cmd || cmd == "help" || cmd == "--help") {
   process.exit(0);
 }
 await ensureServer();
+if (cmd == "watch") await watch(flag("--state") ?? (id == "--state" ? rest.shift() : undefined));
 let out: unknown;
 switch (cmd) {
   case "serve": out = { board: `http://localhost:${PORT}/`, api: `http://localhost:${PORT}/api` }; break;
@@ -97,3 +103,55 @@ switch (cmd) {
   default: console.error(`unknown command ${cmd}: tq help`); process.exit(2);
 }
 console.log(JSON.stringify(out, (k, v) => (k == "log" && Array.isArray(v) ? v.slice(-5) : v), 2));
+
+/** tq watch: follows GET /api/events, printing one line per task whose status changed (new tasks too). */
+async function watch(stateFile?: string): Promise<never> {
+  const fs = require("node:fs");
+  let seen: Map<number, string> | undefined;
+  if (stateFile) try { seen = new Map(Object.entries(JSON.parse(fs.readFileSync(stateFile, "utf8"))).map(([k, v]) => [Number(k), String(v)])); } catch {}
+  const say = (line: string) => fs.writeSync(1, line + "\n"); // unbuffered: each line goes out at once
+  const label: Record<string, string> = { complete: "ready to merge" };
+  const changed = (tasks: any[]) => {
+    const first = !seen;
+    const before = seen ?? new Map();
+    seen = new Map(tasks.map((t) => [t.id, t.status]));
+    if (stateFile) try { fs.writeFileSync(stateFile, JSON.stringify(Object.fromEntries(seen))); } catch {}
+    if (first) return; // the first snapshot is the baseline
+    for (const t of tasks) {
+      const was = before.get(t.id);
+      if (was == t.status) continue;
+      const why = t.status == "failed" || (t.status == "complete" && was == "merging") ? t.error : undefined;
+      const what = t.status == "complete" && was == "merging" ? "merge failed, back to ready to merge" : label[t.status] ?? t.status;
+      say(`#${t.id} ${what}: ${t.title}${why ? `: ${String(why).replace(/\s+/g, " ").slice(0, 300)}` : ""}`);
+    }
+  };
+  for (let misses = 0; ; ) {
+    const ctrl = new AbortController();
+    let quiet: Timer | undefined;
+    const idle = () => { clearTimeout(quiet); quiet = setTimeout(() => ctrl.abort(), 40000); }; // the server beats every 15s
+    try {
+      idle();
+      const res = await fetch(`${BASE}/api/events`, { signal: ctrl.signal });
+      if (!res.ok || !res.body) throw new Error(String(res.status));
+      misses = 0;
+      const reader = res.body.getReader(), dec = new TextDecoder();
+      let buf = "";
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        idle();
+        buf += dec.decode(value, { stream: true });
+        let i;
+        while ((i = buf.indexOf("\n\n")) >= 0) {
+          const chunk = buf.slice(0, i); buf = buf.slice(i + 2);
+          const data = chunk.split("\n").filter((l) => l.startsWith("data: ")).map((l) => l.slice(6)).join("\n");
+          if (data && /^event: tasks$/m.test(chunk)) changed(JSON.parse(data));
+        }
+      }
+    } catch {}
+    clearTimeout(quiet);
+    // The server went away (restarting, most likely): try again, and start it ourselves if it stays down.
+    await Bun.sleep(1000);
+    if (++misses >= 5) { await ensureServer(); misses = 0; }
+  }
+}
