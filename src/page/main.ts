@@ -421,6 +421,8 @@ type TreeModule = { mountTree: typeof mountTree };
     clearTimeout(treeTimer);
     treeTimer = window.setTimeout(() => { if (treeStale) tree?.refresh(); else tree?.retitle(); treeStale = false; }, treeStale ? 150 : 600);
   });
+  // ?pages opens it straight away (a link to "this document's pages").
+  if (new URLSearchParams(location.search).has("pages") && editing()) requestAnimationFrame(() => togglePages(true));
   pagesCard.addEventListener("keydown", (e) => { if (e.key == "Escape" && !e.defaultPrevented) { e.preventDefault(); togglePages(false); titleBtn.focus(); } });
 
   // ---------------------------------------------------------------- the room
