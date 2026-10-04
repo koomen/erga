@@ -328,7 +328,7 @@ describe("branches deploy themselves", () => {
     expect(new Set(log.lines.map((l) => l.step).filter(Boolean))).toEqual(new Set(["build", ...ALL_STEPS.map((x) => x.id)]));
     expect(log.lines.every((l, i) => typeof l.at == "number" && (i == 0 || l.at >= log.lines[i - 1].at))).toBe(true);
     expect(log.lines.at(-1)!.text).toContain(`deployed ${SHA2.slice(0, 12)}`);
-    expect(server.logs.map((e) => e.deployId)).toEqual(server.logs.map(() => log.deployId));
+    expect(server.logs.map((e) => e.deployId)).toEqual(server.logs.map(() => log.deployId as string));
     expect(server.logs.length).toBeGreaterThan(5);
     expect(server.logs.flatMap((e) => e.lines)).toEqual(log.lines);
     // Production, as the status says it: another server's.
