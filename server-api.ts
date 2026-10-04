@@ -9,6 +9,7 @@
 //   GET  /api/ext/tools            the tools, as JSON (name, description, JSON Schema)
 //   POST /api/ext/tools/<name>     runs one, the body its arguments: {"ok": true, "content": [...]}
 //   POST /api/publish              a folder of files as a document (multipart or JSON), or into one
+//   GET  /api/docs/<id>/versions   a document's versions and what's published; POST .../publish sets it (versions.ts)
 //   POST /api/auth/request         an agent asks for a token: a link for its person to approve
 //   POST /api/auth/poll            ... and collects the token once they have
 //   POST /mcp                      the same tools as a stateless MCP server (Streamable HTTP, JSON answers)
@@ -29,7 +30,8 @@
 
 import { validateToolArguments } from "@mariozechner/pi-ai";
 import { documentToolSpecs, type ToolContent, type ToolSpec } from "./agent";
-import { type Action, type DocRow, type Route, nameOf } from "./directory";
+import { type Action, type DocRow, type Route, nameOf, roleMay } from "./directory";
+import type { PublishRequest } from "./versions";
 import { accessOf, appPage, brand, esc, forwarded, ICON, makeDoc, newDocId, page, safeNext, startingFiles, TIMES_SCRIPT, type Platform, type Session, whoOf } from "./front";
 import { findDocument, runServerTool, SERVER_TOOLS, ToolError, type ToolWho } from "./server-tools";
 import { cleanRel } from "./host";
@@ -355,6 +357,9 @@ export async function serverApi(request: Request, platform: Platform): Promise<R
     return json({ ok: true, tools: (await toolsFor(ctx)).map(specOf) });
   }
   if (path == "/api/auth/request" && method == "POST") return askForToken(request, platform, origin);
+  // A document's versions and publishing: for the person signed in (the settings UI) or an agent token alike.
+  const [, docId, what] = /^\/api\/docs\/([^/]+)\/(versions|publish)$/.exec(path) ?? [];
+  if (docId) return versionsApi(request, platform, session, decodeURIComponent(docId), what as "versions" | "publish");
   if (path == "/api/auth/poll" && method == "POST") return pollForToken(request, platform);
 
   const [, name] = /^\/api\/ext\/tools\/([^/]+)$/.exec(path) ?? [];
@@ -377,6 +382,37 @@ export async function serverApi(request: Request, platform: Platform): Promise<R
     }
   }
   return failure(`There's nothing at ${method} ${path}. The guide: GET ${origin}/api/ext`, 404);
+}
+
+/**
+ * GET /api/docs/<id>/versions[?before=<versionId>&limit=<n>]: its versions,
+ * newest first, the current one and the published one, and whether the
+ * person may publish (canEdit). POST /api/docs/<id>/publish {mode: "latest"}
+ * or {mode: "manual", versionId}: editors only. For anyone who may open the
+ * document, signed in or with an agent token; a POST from a browser only from
+ * this site's own pages.
+ */
+async function versionsApi(request: Request, platform: Platform, session: Session | null, ref: string, what: "versions" | "publish"): Promise<Response> {
+  const url = new URL(request.url);
+  const fail = (error: string, status: number) => json({ error }, status);
+  if (!session) return fail("Sign in first, or send an agent token as \"Authorization: Bearer <token>\".", 401);
+  const doc = /^[a-z0-9]{8}$/.test(ref) ? await platform.directory.get(ref) : null;
+  const role = doc ? await platform.directory.access(whoOf(session), doc) : null;
+  if (!doc || !role) return fail("There's no such document, or it isn't shared with you.", 404);
+  const canEdit = roleMay(role, "edit");
+  if (what == "versions") {
+    if (request.method != "GET" && request.method != "HEAD") return fail("GET this.", 405);
+    const limit = Number(url.searchParams.get("limit") ?? "") || undefined;
+    const state = await platform.docs.versions(doc, { before: url.searchParams.get("before"), limit });
+    return state ? json({ ...state, canEdit }) : fail("There's no such document.", 404);
+  }
+  if (request.method != "POST") return fail("POST {\"mode\": \"latest\"} or {\"mode\": \"manual\", \"versionId\": \"v3\"}.", 405);
+  if (!session.agent && request.headers.get("origin") != url.origin) return fail("Only this site's own pages may publish.", 403);
+  if (!canEdit) return fail("You may only view this document, so you can't publish it.", 403);
+  const body = (await request.json().catch(() => null)) as PublishRequest | null;
+  if (!body || typeof body != "object") return fail("Send JSON: {\"mode\": \"latest\"} or {\"mode\": \"manual\", \"versionId\": \"v3\"}.", 400);
+  const r = await platform.docs.setPublished(doc, body);
+  return r.ok ? json({ published: r.published }) : fail(r.error, r.status);
 }
 
 /**
@@ -731,6 +767,20 @@ live in everyone's editor, attributed to your person's agent, and your person
 can undo them one call at a time. edit matches text exactly as it is right
 now: read a file right before editing it, and read again if an edit fails
 because someone changed the text meanwhile.
+
+## Versions and publishing
+
+Each document keeps versions: snapshots of all its files, cut after each burst
+of edits and each agent turn, with a five-word description. What its viewers
+see is either "latest" (the document as it is) or one version ("manual"). The
+document tools list_versions, read_version and publish_version handle them; so
+does plain HTTP:
+
+    curl -s ${origin}/api/docs/<id>/versions -H "Authorization: Bearer $ERGA_TOKEN"
+    curl -s -X POST ${origin}/api/docs/<id>/publish -H "Authorization: Bearer $ERGA_TOKEN" -H "Content-Type: application/json" -d '{"mode": "manual", "versionId": "v3"}'
+
+Only someone who may edit a document may publish it. Publish only when your
+person asks.
 
 ## The server's tools
 

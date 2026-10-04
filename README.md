@@ -298,6 +298,92 @@ applies, so local development is locked the same way as erga.dev.
 The admin-only calls throw `NotAllowed` (and a bad value `ConfigError`) with
 a message a person or an agent can act on.
 
+### Versions and publishing
+
+A document keeps **versions** (`versions.ts`): snapshots of its whole file
+set (every page, style, script and image), numbered 1, 2, 3... A version is
+cut after a burst of edits, not on every keystroke. The rule
+(`noteEdit` in `worker/doc-host.ts`):
+
+- edits pause for 30 seconds;
+- a burst has gone on for 5 minutes since its first edit (long typing still
+  gets versions);
+- an agent's turn ends (the embedded agent's, or an external agent's calls, 8
+  seconds after its last): one version per agent turn, since while any agent
+  works the two rules above wait for it;
+- the last person who may edit leaves (their room connection closes);
+- before a publish;
+- when the document's room opens, if what it holds isn't the latest version
+  (edits whose timers didn't run, because the object was evicted).
+
+A cut that finds nothing changed makes no version. A new document's first
+version is the files it starts from. Each version says when it was cut, who
+edited since the one before (logins, and agents: "koomen’s agent"), and a
+five-word description: in the background, the document sends a compact diff
+(files added, removed and changed, and the changed lines with one line of
+context, about 6KB at most) to Claude Sonnet 5.5 (`DESCRIBE_MODEL`) with the
+server's `ANTHROPIC_API_KEY`, and stores its answer. With no key, under the
+scripted test model, on test documents, or if the model fails, it's a
+fallback made from the file names ("Edited index.html and style.css").
+Editing never waits for any of it.
+
+**Storage.** In the document's own Durable Object, beside its files: each
+file's bytes once, content-addressed (`b:<sha-256>`), shared by every version
+that has them, so a version that changes one file stores one new blob; a
+version (`v:<n>`) is a manifest (path → digest) with its details. No other
+database is asked, a version is served by the object that holds the document,
+and deleting the document deletes its versions. Versions are kept for as long
+as the document is.
+
+**Publishing.** What viewers see is the published version, by mode:
+**latest** (the default), the document as it is now, up to the keystroke, as
+before: the viewer never waits for a version; or **manual**, one chosen
+version, until someone publishes another. Editors always edit the current
+state. The viewer shows the page from the document's `pub/` (the frame's host
+page links it: `/t/<token>/pub/<page>`), which in "latest" mode is `doc/`
+exactly (no extra call: the mode is in the object's memory) and in "manual"
+mode the published version's files, the page's own relative links included.
+Someone who may only view the document (or nobody signed in, on the front
+page) gets a pages token that serves the published version for `doc/` too, so
+every file they can reach is the published one, and their Clone copies it.
+
+The API (also for the settings UI, and with an agent token):
+
+    GET  /api/docs/<id>/versions[?before=<versionId>&limit=<n>]
+      → { current: Version, published: { mode: "latest" | "manual", version: Version },
+          versions: Version[] (newest first, 10 by default), total, canEdit, pending }
+      Version = { id: "v3", n: 3, at: ISO time, authors: string[], description: string | null }
+    POST /api/docs/<id>/publish     editors only; from a browser only from this site's pages
+      { mode: "latest" } | { mode: "manual", versionId: "v3" }   (no versionId: the current state)
+      → { published } | 4xx { error }
+
+`description` is null until the model has answered; `pending` says there are
+edits since the current version. Everyone with the document open hears
+`{ type: "versions" }` on its event channel (`/api/events`) when a version is
+cut, a description arrives, or the published version changes. In "latest"
+mode, `published.version` is the current version.
+
+The agents (the editor's and external ones, over `/api/ext`, the server's
+API and MCP) have `list_versions`, `read_version` (a version's files, or one
+file as it was) and `publish_version` (`latest`, or `manual` with a version;
+editors only), so an agent can do what the person can, and bring an old
+version back by reading its files and writing them.
+
+**In process, for the homepage's deploy** (`versions.ts`):
+`onPublished(docId | "*", cb)` calls `cb({ docId, published, files() })`
+whenever that document's published version changes (a publish, going back to
+"latest", or a new version in "latest" mode); it's fired in the document's
+Durable Object, so subscribe from code that runs there. `publishedFiles(env,
+docId)` answers `{ published, index, files: Map<path, bytes> }` from
+anywhere with the Worker's environment: the published version's files in
+"manual" mode, the files as they are now in "latest" mode (the Durable
+Object's `publishedFiles()` method underneath).
+
+Locally, `ERGA_VERSION_IDLE_MS` and `ERGA_VERSION_MAX_MS` shorten the pause
+and the longest burst (the tests do). `bun tests/versions.ts` tests all of
+this against a dev server of its own, and `tests/versions.test.ts` the
+storage.
+
 ### Agents configure the server
 
 An admin's agents can do what an admin can: the editor's own agent and an
@@ -949,6 +1035,11 @@ fresh server the first `/` (several at once) makes one, its owner edits it in
 the editor, someone else sees it without Edit, `/new?from=landing` copies it,
 a deleted one is made again, and an admin's choice is kept;
 `tests/landing.test.ts` races separate isolates on one database.
+`bun tests/versions.ts` checks versions and publishing: a burst of edits is
+one version, an agent's turn is one, leaving cuts one, events and
+descriptions arrive, "latest" and "manual" in the viewer (headless Chrome),
+who may publish, and the agents' tools; `tests/versions.test.ts` covers their
+storage (unchanged files stored once).
 `tests/directory.test.ts` covers the directory, permissions, users and
 settings on bun:sqlite; `tests/tokens.test.ts` the tokens themselves.
 `bun tests/isolation.ts` opens a page that tries to reach whoever views it
@@ -989,6 +1080,9 @@ back, merging edits from disk, the agent's exact-match edits and attribution.
   D1 (`migrations/0100_tokens.sql`)
 - `server-api.ts`: the server's API for agents (`/llms.txt`, `/api/ext`,
   `/api/publish`, `/api/auth/...`, `/mcp`), its tool registry, and `/tokens`
+- `versions.ts`: a document's versions (content-addressed snapshots of its
+  files, in its Durable Object), their descriptions, and the hooks for the
+  homepage's deploy (`onPublished`, `publishedFiles`)
 - `server-tools.ts`: the tools both the editor's agent and a token's agent
   have: sharing, and the server's settings and users for an admin
 - `host.ts`: the per-document host (API, `/doc/`)

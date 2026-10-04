@@ -39,6 +39,7 @@ import { OWN_ACCOUNT } from "./account.ts";
 import { adminDoor } from "./admin.ts";
 import { type Directory, type DocRow, type Grant, type Permission, type Role, type Route, type Who, NotAllowed, roleMay, UNTITLED } from "./directory.ts";
 import type { AgentToken, Tokens } from "./tokens.ts";
+import type { PublishRequest, PublishResult, VersionsState } from "./versions.ts";
 
 /** Who's signed in. */
 export interface Session {
@@ -133,7 +134,11 @@ export interface Platform {
     /** A document's page (index.html, index.md...), or null if it has no host. */
     index(doc: Route): Promise<string | null>;
     /** A document's files as they are now, and its page: what a copy starts from. Null if it has no host. */
-    snapshot(doc: Route): Promise<{ index: string; files: Record<string, string | Uint8Array> } | null>;
+    snapshot(doc: Route, opts?: { published?: boolean }): Promise<{ index: string; files: Record<string, string | Uint8Array> } | null>;
+    /** A document's versions, the current one and the published one (versions.ts); null if it has no host. */
+    versions(doc: Route, opts: { before?: string | null; limit?: number }): Promise<VersionsState | null>;
+    /** Sets what a document's viewers see: "latest", or one version ("manual"). The caller checks the person may edit. */
+    setPublished(doc: Route, req: PublishRequest): Promise<PublishResult>;
     exists(doc: Route): Promise<boolean>;
     /** Deletes a document (its host takes it out of the directory too); false if it had no host. */
     delete(doc: Route): Promise<boolean>;
@@ -330,19 +335,25 @@ const b64url = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes)).replac
  * Its expiry is rounded up to the next whole day, so the token, and with it the address of every file of the page, stays the
  * same all day: the browser's cache can answer for them (they're checked by ETag, front.ts's pagesDoor and host.ts's docFile).
  */
-export async function pagesToken(secret: string, owner: string, id: string, shell: string, now = Date.now()): Promise<string> {
-  const claims = b64url(new TextEncoder().encode(JSON.stringify({ d: `${owner.toLowerCase()}/${id}`, e: Math.ceil((now / 1000 + WEEK) / DAY) * DAY, s: shell })));
+export async function pagesToken(secret: string, owner: string, id: string, shell: string, now = Date.now(), opts: { published?: boolean } = {}): Promise<string> {
+  // published: for someone who may only view it, whose every file is the published version's (versions.ts), doc/ as pub/.
+  const claims = b64url(new TextEncoder().encode(JSON.stringify({ d: `${owner.toLowerCase()}/${id}`, e: Math.ceil((now / 1000 + WEEK) / DAY) * DAY, s: shell, ...(opts.published ? { p: 1 } : {}) })));
   return `${claims}.${await hmac(secret, claims)}`;
 }
 
 /** The editor's origin, if `token` is good for this document and current. */
 export async function readPagesToken(secret: string, token: string, owner: string, id: string, now = Date.now()): Promise<string | null> {
+  return (await readPagesClaims(secret, token, owner, id, now))?.shell ?? null;
+}
+
+/** What a good, current token for this document says: the editor's origin, and whether it opens only the published version. */
+export async function readPagesClaims(secret: string, token: string, owner: string, id: string, now = Date.now()): Promise<{ shell: string; published: boolean } | null> {
   const [claims, mac, extra] = token.split(".");
   if (!claims || !mac || extra != null || mac != (await hmac(secret, claims))) return null;
   try {
-    const c = JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(claims.replace(/-/g, "+").replace(/_/g, "/")), (ch) => ch.charCodeAt(0)))) as { d?: string; e?: number; s?: string };
+    const c = JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(claims.replace(/-/g, "+").replace(/_/g, "/")), (ch) => ch.charCodeAt(0)))) as { d?: string; e?: number; s?: string; p?: number };
     if (c.d != `${owner.toLowerCase()}/${id}` || !(Number(c.e) > now / 1000) || typeof c.s != "string") return null;
-    return new URL(c.s).origin == c.s ? c.s : null;
+    return new URL(c.s).origin == c.s ? { shell: c.s, published: c.p == 1 } : null;
   } catch { return null; }
 }
 
@@ -353,16 +364,19 @@ export async function readPagesToken(secret: string, token: string, owner: strin
  */
 async function pagesDoor(request: Request, url: URL, doc: { owner: string; id: string }, platform: Platform): Promise<Response> {
   const notFound = () => new Response("Not found", { status: 404, headers: { "Content-Type": "text/plain; charset=utf-8" } });
-  const [, token, rest] = /^\/t\/([^/]+)(\/.*)$/.exec(url.pathname) ?? [];
+  let [, token, rest] = /^\/t\/([^/]+)(\/.*)$/.exec(url.pathname) ?? [];
   if (!token || (request.method != "GET" && request.method != "HEAD")) return notFound();
-  const shell = await readPagesToken(platform.secret, token, doc.owner, doc.id);
-  if (!shell) return new Response("This link has expired: reload the editor.", { status: 403, headers: { "Content-Type": "text/plain; charset=utf-8" } });
+  const claims = await readPagesClaims(platform.secret, token, doc.owner, doc.id);
+  const shell = claims?.shell;
+  if (!claims || !shell) return new Response("This link has expired: reload the editor.", { status: 403, headers: { "Content-Type": "text/plain; charset=utf-8" } });
   if (rest == "/") {
     // ?view=<file>: the page to show straight away, as it renders (the viewer's, and the editor's until it has its own).
     // ?view= (empty): the document's page, whatever its name (its host answers doc/ with it).
     const view = url.searchParams.get("view");
     const files = `/t/${token}/doc/`;
-    const src = view == "" ? files : view && !/^\/|(^|\/)\.\.(\/|$)/.test(view) ? `${files}${view.split("/").map(encodeURIComponent).join("/")}` : "";
+    // The page as it renders is what viewers see (pub/: the published version, or the files as they are now; versions.ts).
+    const shown = `/t/${token}/${VIEW_FILES}/`;
+    const src = view == "" ? shown : view && !/^\/|(^|\/)\.\.(\/|$)/.test(view) ? `${shown}${view.split("/").map(encodeURIComponent).join("/")}` : "";
     // Its base is the document's folder: the editable page (frame.js renders it as srcdoc, which takes this page's base) then
     // resolves the document's files there from the start, even in Chrome's preload scanner, which otherwise asks for them here too.
     const html = `<!doctype html><html><head><meta charset="utf-8"><base href="${esc(files)}"><meta name="erga-shell" content="${esc(shell)}"><title>Erga page</title>
@@ -377,7 +391,9 @@ async function pagesDoor(request: Request, url: URL, doc: { owner: string; id: s
     if (request.headers.get("if-none-match")?.split(",").some((t) => t.trim().replace(/^W\//, "") == etag)) return new Response(null, { status: 304, headers });
     return new Response(html, { headers });
   }
-  if (!rest.startsWith("/doc/")) return notFound();
+  if (!rest.startsWith("/doc/") && !rest.startsWith("/pub/")) return notFound();
+  // Someone who may only view the document gets the published version's files, whichever they ask for.
+  if (claims.published && rest.startsWith("/doc/")) rest = "/pub/" + rest.slice("/doc/".length);
   // The token names the document; the directory confirms it's still its owner's (remembered, so usually without asking the
   // database). Both at once: a file is only read, so asking the document before the answer comes costs nothing if it's no.
   const asked = { id: doc.id, owner: doc.owner.toLowerCase(), test: false };
@@ -454,7 +470,9 @@ const HOST_SCRIPT = `(function () {
   if (/[?&]edit=1(&|$)/.test(location.search)) { want = "edit"; loading = true; var s = document.createElement("script"); s.src = "/frame.js"; document.body.append(s); }
   parent.postMessage({ type: "erga-host" }, SHELL);
 })();`;
-const HOST_VERSION = versionOf(HOST_STYLE + PAGE_SANDBOX + HOST_SCRIPT);
+/** Where the frame's host page shows the page as it renders from: what viewers see (versions.ts), which the document serves at pub/. */
+const VIEW_FILES = "pub";
+const HOST_VERSION = versionOf(HOST_STYLE + PAGE_SANDBOX + HOST_SCRIPT + VIEW_FILES);
 
 /** A link on this site, keeping the name a local tab gave (?user=) if it gave one. */
 export const link = (path: string, session: Session | null) =>
@@ -568,7 +586,8 @@ async function viewDocument(platform: Platform, request: Request, opened: { doc:
   // What the editor needs to know, for whoever may go into it: where its document's host and frame are, and the links on its avatar.
   const editable = editing || canEdit;
   const [token, account] = await Promise.all([
-    pagesToken(platform.secret, doc.owner, doc.id, url.origin),
+    // Someone who may not edit it sees only its published version, in every file the frame asks for.
+    pagesToken(platform.secret, doc.owner, doc.id, url.origin, undefined, { published: !canEdit }),
     editable && session ? accountMeta(platform, session) : "",
   ]);
   const host = `${origin}/t/${token}/`;
@@ -765,7 +784,9 @@ export async function startingFiles(platform: Platform, from: string | null, who
   if (!from) return { files: { ...platform.templates.doc }, index: "index.html" };
   const doc = from == "landing" ? await landingDocument(platform) : ID.test(from) && who ? await platform.directory.get(from) : null;
   if (!doc || (from != "landing" && !(await platform.directory.may(who!, "open", doc)))) return null;
-  return platform.docs.snapshot(doc);
+  // A copy of what they may see: someone who may not edit it copies its published version (the same in "latest" mode).
+  const editor = !!who && (await platform.directory.may(who, "edit", doc));
+  return platform.docs.snapshot(doc, { published: !editor });
 }
 
 /** A new document for the signed-in person, at /<login>/<id>: blank (templates/doc), or a copy of the front page's (?from=landing). */
