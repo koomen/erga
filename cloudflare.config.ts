@@ -18,7 +18,7 @@ import { readFileSync } from "node:fs";
 const TARGETS = JSON.parse(readFileSync(decodeURIComponent(new URL("./deploy/targets.json", import.meta.url).pathname), "utf8"));
 const PROD = { ...TARGETS.targets.production, vars: { ADMINS: TARGETS.admins, ...TARGETS.targets.production.vars } };
 
-/** The local database's id (the dev server's D1): any UUID. Production's is found by name (migrate.ts). */
+/** The local database's id (the dev server's D1): any UUID. Production's is found by name (the deploy pipeline). */
 const LOCAL_DB = "00000000-0000-4000-8000-00000000e29a";
 
 export default defineConfig(({ mode }) => ({
@@ -68,9 +68,8 @@ export default defineConfig(({ mode }) => ({
       } : {}),
       HOME: bindings.durableObject({ worker: PROD.worker, exportName: "Home" }),
       FACTORY: bindings.durableObject({ worker: PROD.worker, exportName: "Factory" }),
-      // The server's database: users, settings and the directory. `cf deploy` makes the database by name if there's none; its tables come
-      // from migrations/, applied by migrate.ts (site.sh runs it on Workers Builds, before
-      // the deploy). Locally (vite dev) it's a database of its own, at a fixed made-up id that
+      // The server's database: users, settings and the directory. The deploy pipeline (deploy/cloudflare.ts) finds it by name, or
+      // makes it, and applies migrations/ before each deploy. Locally (vite dev) it's a database of its own, at a fixed made-up id that
       // `bun run db:local` applies the migrations to.
       DB: bindings.d1({ name: PROD.database, ...(mode == "development" ? { id: LOCAL_DB } : {}) }),
       ASSETS: bindings.assets(),
