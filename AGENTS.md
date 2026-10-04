@@ -115,14 +115,11 @@ Fill in the brackets:
 >    takes it), or `tq shot [id] /path/to/file.png "caption"` for ones you
 >    took yourself (e.g. after interacting, with tests/cdp.ts).
 > 6. Commit everything (the queue won't merge uncommitted work), then
->    `tq done [id] "summary" [url]`: what changed, how you tested it, and
->    what the user should look at. If you can't finish,
+>    `tq done [id] "summary" [url]`. Write the summary, and your final
+>    reply, in ASD-STE100 (Simplified Technical English), as AGENTS.md
+>    ("Task summaries") shows: what changed for the user, results, limits,
+>    tests, and what the user must do. If you can't finish,
 >    `tq fail [id] "why"` instead.
->
-> Write summaries (here and in your final reply) for the user, in plain
-> language: what you built or changed, how to use it, how you tested it,
-> what to look at. Short and clear; no implementation trivia, strings of
-> internal names or arrow chains.
 >
 > Don't merge or push: the user merges from the board. Finish by replying
 > with the task's URL and a two-line summary.
@@ -178,7 +175,8 @@ watching. Step by step:
 
 5. **Finish when the user says so**: test as in task mode (the tests that
    cover what changed; `./test.sh` when the app changed), attach screenshots
-   (`tq shot`), commit everything, then `tq done <id> "summary" <url>`. The
+   (`tq shot`), commit everything, then `tq done <id> "summary" <url>` (the summary in
+   ASD-STE100, as in "Task summaries"). The
    user merges from the board as usual: a live task merges like any other,
    and merging or discarding it stops its dev server and closes its window.
    If the user drops it instead, `tq fail <id> "why"` (or they discard it).
@@ -205,6 +203,55 @@ and Discard buttons (no Merge or Discard while a task is merging), and
 `/tasks board` opens the browser board. The status line counts working, ready
 and merging tasks, and toasts say when one is ready, starts merging, is
 merged, fails to merge or fails. With the mod loaded, use its tools instead of `tq` (but still watch the queue with `tq watch` under Monitor, as above: the mod's toasts tell the user, not the agent; its system prompt says so too). Live mode has no tool of its own: use `tq add --live`, `tq live` and `tq look`, as above (the mod's system prompt says so).
+
+## Task summaries
+
+Every task summary (`tq done`, `task_done`, a `tq fail` reason, and the
+worker's final reply) is written in **ASD-STE100**, Simplified Technical
+English. The user reads it cold, on the board, and must understand it on
+one read. The rules that matter most:
+
+- Short sentences: at most 20 words in an instruction, 25 in a description.
+- One idea in each sentence.
+- Active voice: "The server sends the file", not "The file is sent".
+- Simple tenses only: present, past, future.
+- No -ing forms as nouns or adjectives ("the loading spinner" becomes
+  "the spinner that shows during load").
+- Keep the articles: "the", "a".
+- Common, approved words, and one word for one meaning: if it is a "page",
+  it is always a "page".
+- Technical names (file names, commands, settings, keys) stay as they are.
+- Numbered steps for procedures; lists for results.
+- No implementation trivia, strings of internal names or arrow chains.
+
+The shape, with only the parts that apply:
+
+1. One sentence: what the task changes for the user.
+2. Results, with numbers (before and after) where there are any.
+3. Changes: a numbered list, one change in each item.
+4. Limits: what does not work, or what is different, and the risk.
+5. Tests: what you tested and the result.
+6. What the user must do: where to look, and anything before the merge.
+
+For example:
+
+    This task makes documents open faster for readers.
+
+    Results (desktop, first visit):
+    - Time until the document shows: 517 ms before, 193 ms after.
+
+    Changes:
+    1. The server reads the database one time for each page. Before, it
+       read the database four times.
+    2. The browser keeps a copy of the document files.
+
+    Limits:
+    - If the server stops in the 400 ms after an edit, readers can see
+      the old version. The edit is not lost.
+
+    Tests: All tests pass. A new test measures the time to open a document.
+
+    To see it: open http://localhost:4712/demo and reload the page.
 
 ## Changing the database
 
