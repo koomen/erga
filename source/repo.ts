@@ -1,9 +1,15 @@
 // Erga's own repository: the canonical copy is a Cloudflare Artifacts repo
 // (one repo, "erga", two branches, staging and main), and this is Erga's side
 // of it. Every push and merge comes through here, so Erga can hold the line
-// Artifacts doesn't (only those two branches, main only fast-forward), and
-// knows each time a branch moves (an event for the Source page, the deploy
-// hook, the GitHub mirror).
+// Artifacts doesn't, and knows each time a branch moves (an event for the
+// Source page, the deploy hook, the GitHub mirror).
+//
+// The model is strict: only two branches, ever; staging is always at or
+// ahead of main; main only follows staging. A push to main must be one of
+// staging's commits (and forward of main); a push to staging must keep every
+// commit main has. Merging is moving main forward to staging's head, or to
+// one of staging's commits. So the two never diverge, and there are no merge
+// commits or conflicts between them.
 //
 // A push is staged before it lands: its objects go to Artifacts under a
 // quarantine branch (refs/heads/erga-incoming/...), Erga reads the new
@@ -12,8 +18,8 @@
 // so two pushes at once can't lose one), and drops the quarantine branches.
 //
 // Erga keeps an index of the commits (their parents, subjects, authors and
-// times) so it can answer "is this a fast-forward", "where do these two
-// branches meet" and "the last 25 commits" without asking Artifacts each
+// times) so it can answer "is this a fast-forward", "is this on staging"
+// and "the last 25 commits" without asking Artifacts each
 // time. Commits never change, so the index is a cache that's always right;
 // whatever's missing is fetched from Artifacts when it's needed.
 //
@@ -22,10 +28,9 @@
 // are smart HTTP remotes (source/remote.ts).
 
 import {
-  commitBytes, concat, emptyPack, FLUSH, hashObject, isSha, isTreeMode, parseCommit, parseTree, pkt, readPack, readPkts, subjectOf, text,
-  toSideBand, utf8, writePack, ZERO, type Commit, type GitObject,
+  concat, emptyPack, FLUSH, isSha, isTreeMode, parseCommit, parseTree, pkt, readPack, readPkts, subjectOf, text,
+  toSideBand, utf8, ZERO, type Commit,
 } from "./git.ts";
-import { MergeConflict, mergeTrees } from "./merge.ts";
 import { fetchPack, lsRefs, receiveAdvert, receivePack, RemoteError, type RefUpdate, type Remote } from "./remote.ts";
 
 export const BRANCHES = ["staging", "main"] as const;
@@ -174,41 +179,6 @@ export class SourceRepo {
     return false;
   }
 
-  /** Where `a` and `b` meet: their best common ancestor (one that isn't an ancestor of another), or null. */
-  mergeBase(a: string, b: string): string | null {
-    const ofA = this.ancestors(a), nodes = this.nodes();
-    const found = new Set<string>(), seen = new Set<string>(), todo = [b];
-    while (todo.length) {
-      const s = todo.shift()!;
-      if (seen.has(s)) continue;
-      seen.add(s);
-      if (ofA.has(s)) { found.add(s); continue; }
-      for (const p of nodes.get(s)?.parents ?? []) todo.push(p);
-    }
-    const best = [...found].filter((c) => ![...found].some((d) => d != c && this.isAncestor(c, d)));
-    best.sort((x, y) => (nodes.get(y)?.committed ?? 0) - (nodes.get(x)?.committed ?? 0));
-    return best[0] ?? null;
-  }
-
-  /** How many commits deep `ancestor` is from `tip` (along any parent): what a fetch must deepen to reach it. */
-  private depth(tip: string, ancestor: string): number {
-    const nodes = this.nodes();
-    let level = [tip], d = 1;
-    const seen = new Set<string>();
-    while (level.length) {
-      if (level.includes(ancestor)) return d;
-      const next: string[] = [];
-      for (const s of level) {
-        if (seen.has(s)) continue;
-        seen.add(s);
-        next.push(...(nodes.get(s)?.parents ?? []));
-      }
-      level = next;
-      d++;
-    }
-    return d;
-  }
-
   /** The newest `limit` commits behind `tip`, newest first (by commit time, as `git log` lists them). */
   log(tip: string, limit = LOG): Row[] {
     const nodes = this.nodes(), seen = new Set<string>([tip]), frontier = [tip], order: string[] = [];
@@ -315,13 +285,7 @@ export class SourceRepo {
             return said == "ok";
           });
           await this.sync(remote, landed.map((c) => c.new));
-          const moving = landed.filter((c) => {
-            if (c.branch == "main" && c.old != ZERO && !this.isAncestor(c.old, c.new)) {
-              statuses.set(c.ref, "non-fast-forward: main takes fast-forward pushes only. Pull, merge, and push again (or push to staging and merge)");
-              return false;
-            }
-            return true;
-          });
+          const moving = this.allowed(landed, refs, statuses);
           const drop = [...staged.filter((c) => first.refs.get(c.quarantine) == "ok").map((c) => ({ ref: c.quarantine, old: c.new, new: ZERO })), ...leftovers];
           const final = await receivePack(remote, [...moving.map(({ ref, old, new: sha }) => ({ ref, old, new: sha })), ...drop], moving.length ? await emptyPack() : null);
           for (const c of moving) {
@@ -359,55 +323,57 @@ export class SourceRepo {
     this.deps.background(this.mirror().catch(() => {}));
   }
 
-  // ---- Merging (the Source page's button, POST /api/source/merge) --------------------
+  /**
+   * The strict model: two branches, staging always at or ahead of main, main
+   * only following staging. Of these updates (whose commits are indexed),
+   * the ones that keep it; the others get the reason in `statuses`.
+   */
+  private allowed<T extends RefUpdate & { branch: Branch }>(updates: T[], refs: Map<string, string>, statuses: Map<string, string>): T[] {
+    let ok = [...updates];
+    for (let round = 0; round < 3; round++) {
+      const after = (b: Branch) => ok.find((u) => u.branch == b)?.new ?? refs.get(REF(b)) ?? ZERO;
+      const next = ok.filter((u) => {
+        if (u.branch == "main") {
+          if (u.old != ZERO && !this.isAncestor(u.old, u.new)) return refuse(u, "main only moves forward (fast-forward): it follows staging");
+          const staging = after("staging");
+          if (staging == ZERO || !this.isAncestor(u.new, staging)) return refuse(u, "main only follows staging: push the commit to staging first (git push erga HEAD:staging), then merge it on the Source page, or push both at once (git push erga HEAD:staging HEAD:main)");
+          return true;
+        }
+        const main = after("main");
+        if (main != ZERO && !this.isAncestor(main, u.new)) return refuse(u, "staging is always at or ahead of main, and this would drop commits main has: rebase onto main and push again");
+        return true;
+      });
+      if (next.length == ok.length) return ok;
+      ok = next;
+    }
+    return ok;
+    function refuse(u: T, why: string) { statuses.set(u.ref, why); return false; }
+  }
+
+  // ---- Merging (the Source page, POST /api/source/merge) ------------------------------
 
   /**
-   * Merges `from` into `to`: a fast-forward when `to` is behind, else a merge
-   * commit made here (a three-way merge, source/merge.ts), refused on a
-   * conflict. Returns the commit `to` is at now.
+   * Moves main forward to staging's head, or to `commit`, one of staging's
+   * commits that main doesn't have yet: always a fast-forward, since main
+   * only follows staging. Returns where main is now.
    */
-  async merge(from: Branch, to: Branch, who: Actor): Promise<{ commit: string; fastForward: boolean; upToDate: boolean }> {
-    if (from == to || !BRANCHES.includes(from) || !BRANCHES.includes(to)) throw new SourceError("Merge one of staging and main into the other.");
+  async merge(who: Actor, commit?: string): Promise<{ commit: string; fastForward: boolean; upToDate: boolean }> {
+    if (commit != null && !isSha(commit)) throw new SourceError("Name the commit by its full id (40 hex digits).");
     return this.locked(async () => {
       const remote = await this.deps.artifacts();
       const { refs } = await lsRefs(remote);
-      const theirs = refs.get(REF(from)), ours = refs.get(REF(to));
-      if (!theirs) throw new SourceError(`${from} has no commits yet.`, 409);
-      await this.sync(remote, [theirs, ...(ours ? [ours] : [])]);
-      if (ours && this.isAncestor(theirs, ours)) return { commit: ours, fastForward: false, upToDate: true };
-      const move = async (commit: string, pack: Uint8Array, fastForward: boolean) => {
-        const r = await receivePack(remote, [{ ref: REF(to), old: ours ?? ZERO, new: commit }], pack);
-        const said = r.unpack != "ok" ? r.unpack : r.refs.get(REF(to)) ?? "no answer";
-        if (said != "ok") throw new SourceError(/stale|lock|old/i.test(said) ? `${to} moved while merging: try again.` : `Artifacts refused it: ${said}`, 409);
-        this.recordMove({ branch: to, old: ours ?? ZERO, new: commit, how: "merge", by: who.login, at: this.now() });
-        return { commit, fastForward, upToDate: false };
-      };
-      if (!ours || this.isAncestor(ours, theirs)) return move(theirs, await emptyPack(), true);
-      const base = this.mergeBase(ours, theirs);
-      if (!base) throw new SourceError(`${from} and ${to} have no history in common.`, 409);
-      // Both trees, and the base's: the commits down to the base, with their files.
-      const deepen = Math.max(this.depth(ours, base), this.depth(theirs, base)) + 1;
-      const objects = await readPack(await fetchPack(remote, { wants: [ours, theirs], deepen }));
-      const get = (sha: string) => {
-        const o = objects.get(sha);
-        if (!o) throw new SourceError(`Artifacts didn't send object ${sha.slice(0, 7)}`, 502);
-        return o;
-      };
-      const treeOf = (sha: string) => parseCommit(get(sha).data).tree;
-      let merged: { tree: string; objects: GitObject[] };
-      try { merged = await mergeTrees(get, treeOf(base), treeOf(ours), treeOf(theirs)); } catch (e) {
-        if (e instanceof MergeConflict) {
-          throw new SourceError(`Can't merge ${from} into ${to}: ${e.message}. Merge them by hand: pull both, merge ${from} into ${to}, resolve, and push ${to}.`, 409);
-        }
-        throw e;
-      }
-      const me = { name: who.name || who.login, email: `${who.login}@users.noreply.github.com`, time: Math.floor(this.now() / 1000), tz: "+0000" };
-      const commit: Commit = { tree: merged.tree, parents: [ours, theirs], author: me, committer: me, message: `Merge ${from} into ${to}\n` };
-      const data = commitBytes(commit), sha = await hashObject({ type: "commit", data });
-      const pack = await writePack([...merged.objects, { type: "commit", data }]);
-      const done = await move(sha, pack, false);
-      this.index(sha, commit);
-      return done;
+      const staging = refs.get(REF("staging")), main = refs.get(REF("main"));
+      if (!staging) throw new SourceError("staging has no commits yet.", 409);
+      await this.sync(remote, [staging, ...(main ? [main] : [])]);
+      const target = commit ?? staging;
+      if (!this.isAncestor(target, staging)) throw new SourceError(`${target.slice(0, 7)} isn't one of staging's commits.`, 409);
+      if (main && this.isAncestor(target, main)) return { commit: main, fastForward: false, upToDate: true };
+      if (main && !this.isAncestor(main, target)) throw new SourceError("main has commits staging doesn't: that shouldn't happen. Push main's commits to staging first.", 409);
+      const r = await receivePack(remote, [{ ref: REF("main"), old: main ?? ZERO, new: target }], await emptyPack());
+      const said = r.unpack != "ok" ? r.unpack : r.refs.get(REF("main")) ?? "no answer";
+      if (said != "ok") throw new SourceError(/stale|lock|old/i.test(said) ? "main moved while merging: try again." : `Artifacts refused it: ${said}`, 409);
+      this.recordMove({ branch: "main", old: main ?? ZERO, new: target, how: "merge", by: who.login, at: this.now() });
+      return { commit: target, fastForward: true, upToDate: false };
     });
   }
 

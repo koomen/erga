@@ -663,9 +663,13 @@ it).
 Erga's canonical repository is hosted by Erga itself, in Cloudflare
 Artifacts ("versioned storage that speaks Git": each repository a Durable
 Object running a Git server). One repository, `erga`, with two branches:
-**staging** and **main**. GitHub (github.com/koomen/erga) stays, as a
-mirror. Edits are pushed to Erga; deploys build from Erga (the deploy
-pipeline's `deployHook`, below).
+**staging** and **main**, and never any other. Staging is always at or
+ahead of main, and main only follows staging: edits are pushed to staging,
+which deploys to staging.erga.dev; then main moves forward to staging (or to
+one of its commits), which deploys to erga.dev. So the two never diverge:
+there are no merge commits or conflicts between them. GitHub
+(github.com/koomen/erga) stays, as a mirror. Deploys build from Erga (the
+deploy pipeline's `deployHook`, below).
 
 **How Erga uses Artifacts.** Through the Worker's Artifacts binding
 (`ARTIFACTS`), for two things only: the repository's Git remote
@@ -698,9 +702,13 @@ one at a time): Erga advertises only staging and main; a push to anything
 else, or a delete, is refused; the objects go to Artifacts under a
 quarantine branch (`refs/heads/erga-incoming/<id>-<branch>`); Erga reads
 the new commits back and checks them (main takes fast-forwards only, even
-`--force`; staging takes anything); then it moves each branch from where it
+`--force`); then it moves each branch from where it
 was (Artifacts refuses a move whose old value is stale, so two pushes at
-once can't lose one) and drops the quarantine branches. `git push` shows
+once can't lose one) and drops the quarantine branches. The checks: a push
+to main must be one of staging's commits (staging's new head counts, when the
+same push moves both: `git push erga HEAD:staging HEAD:main`) and forward of
+main; a push to staging, even `--force`, must keep every commit main has
+(rewriting what's only on staging is fine). `git push` shows
 what happened (`remote: Erga: main is now 1a2b3c4 (3 new commits).`).
 
 Erga keeps an index of the commits (parents, subject, author, times) in
@@ -709,16 +717,11 @@ branches meet" and "the last 25 commits" never ask Artifacts. Commits never
 change, so it's a cache that's always right; anything missing (a push made
 straight to Artifacts) is fetched from Artifacts when it's needed.
 
-**Merging**, `POST /api/source/merge { from: "staging", to: "main" }`
-(admins; the Source page's button): a fast-forward when main is behind,
-else a merge commit made by Erga ("Merge staging into main", both parents,
-by the admin who asked). The merge is three-way against the branches' merge
-base, path by path (`source/merge.ts`): a path one side changed takes that
-side; a text file both changed merges line by line (diff3); changes to the
-same or touching lines, a file deleted on one side and edited on the other,
-or a binary file both changed is a conflict, and the merge is refused (409)
-naming the files, to merge by hand (pull, merge, push). Answers `{ commit,
-fastForward, upToDate }` or `{ error }`.
+**Merging**, `POST /api/source/merge { from: "staging", to: "main", commit? }`
+(admins; the Source page's Merge button, and a commit's Merge to here):
+main moves forward to staging's head, or to `commit`, one of staging's
+commits it doesn't have yet. Always a fast-forward; `from` and `to` can only
+be staging and main. Answers `{ commit, fastForward, upToDate }` or `{ error }`.
 
 **The GitHub mirror.** After each branch move, in the background, Erga
 pushes staging and main to GitHub (`GITHUB_MIRROR_URL`, github.com/koomen/erga
@@ -731,17 +734,29 @@ on. With no token there's no mirror (the page says so). `POST
 /api/source/mirror` runs it now.
 
 **The Source page**, `/source` (`source/page.ts`, admins; breadcrumbs Erga ›
-Source): two lanes, staging and main, each with its last 25 commits as dots
-on a line, as the task queue board draws main. On staging, a filled dot is a
-commit only on staging; a hollow one main has too; a diamond is a merge.
-Each lane shows its branch's deploy (from `GET /api/deploys`; "not set up
-yet" until the pipeline is there), the page shows how many commits Merge
-would bring, the mirror's status (with Push now), the last moves, and the
-`git remote add` lines. It updates by itself: `GET /api/events` (server-sent
-events for admins' pages, `worker/events.ts`, one Durable Object,
-`EventHub`) sends `{ "type": "source" }` when a branch moves or the mirror's
-status changes, and `{ "type": "deploys" }` for deploys; anything in the
-Worker publishes with `publishEvent(env, event)`.
+Source): the one place to manage the source and its deploys (the deploy
+pipeline's own page redirects here). One list, staging's last 25 commits,
+newest first, with two dot columns beside it, as the task queue board's
+Branches column draws them: staging's (a hollow orange circle for a commit
+only on staging, a solid green circle for one main has too) and main's (a
+solid green circle where main has it). Circles only, no other shapes. Then
+two deploy columns, staging and production: a "live" mark on the commit each
+target has live ("building", "deploying" or "failed" on one in progress),
+and each target's status in the column's head, from `GET /api/deploys`;
+clicking it opens that deploy's log, live (`GET /api/deploys/<name>/log`,
+then `{ "type": "deploy-log" }` events). Merge moves main to staging's head;
+hovering a commit only on staging offers Merge to here. Also the mirror's
+status (with Push now), the last moves, and the `git remote add` lines. It
+updates by itself: `GET /api/events` (server-sent events for admins' pages,
+`worker/events.ts`, one Durable Object, `EventHub`) sends `{ "type":
+"source" }` when a branch moves or the mirror's status changes, `{ "type":
+"deploys" }` and `{ "type": "deploy-log", target, deployId, lines }` for
+deploys; anything in the Worker publishes with `publishEvent(env, event)`.
+
+Until the deploy pipeline lands, `worker/deploys-stub.ts` stands in for its
+`GET /api/deploys` (no targets) and `GET /api/deploys/<name>/log`; local
+development's tests set what it answers (`POST /__erga/deploys`, with the dev
+server's secret), and the pipeline replaces it.
 
 `GET /api/source/branches` → `{ branches: [ { name, commit, commits: [ {
 sha, subject, author, email, at, parents, inMain } ], ahead } ], mirror: {
@@ -769,11 +784,12 @@ reaches the real Artifacts or GitHub. Seed it from your checkout:
 
     ERGA_TOKEN=erga_... bun source/import.ts http://localhost:4400 --from .
 
-`bun test tests/source.test.ts` tests the Git formats, pushes, merges and
-the mirror against real git without a Worker; `bun tests/source.ts` tests
+`bun test tests/source.test.ts` tests the Git formats, pushes and the
+branch model, merges and the mirror against real git without a Worker; `bun tests/source.ts` tests
 it end to end on a dev server (auth, `git clone`, `git push` and `git pull`,
-merges and a conflict, the mirror, and the Source page in headless Chrome,
-live, light, dark and a phone; `--keep` leaves it running).
+the branch model, merges, the mirror, and the Source page in headless
+Chrome: the dots' shapes and colours, the deploy columns, the live log,
+Merge to here, light, dark and a phone; `--keep` leaves it running).
 
 **Setting it up on erga.dev**, once:
 
@@ -793,8 +809,7 @@ live, light, dark and a phone; `--keep` leaves it running).
 5. Point your checkouts at it (`git remote add erga https://erga.dev/git/erga.git`)
    and push there. GitHub follows.
 
-Limits: a push is read whole into memory (at most 100MB); conflicts are
-never written out with markers; a clone during a push can briefly see the
+Limits: a push is read whole into memory (at most 100MB); a clone during a push can briefly see the
 quarantine branch; the commit index loads every commit's parents, which is
 fine for Erga's thousands but not for millions.
 

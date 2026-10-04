@@ -34,6 +34,7 @@ import { serverApi, tokensDoor } from "../server-api";
 import { finishSignIn, isDev, mintTestToken, sessionOf, signOut, startSignIn, testSignIn } from "./auth";
 import { directoryOf, tokensOf } from "./d1";
 import { deployDoor } from "./deploy";
+import { setDeploysStub } from "./deploys-stub";
 import { sourceApi, sourceDoor, sourceGit } from "./source";
 import { forgetHome, serveHome, serveHomeFile, serveHomeRoot } from "./home";
 import { homeApi } from "../home";
@@ -131,7 +132,7 @@ async function route(request: Request, env: Env, url: URL, ctx: ExecutionContext
   // Erga's own source: the Git endpoint, its page and API, and admins' live events (worker/source.ts).
   if (path == "/git/erga.git" || path.startsWith("/git/erga.git/")) return sourceGit(request, env, url);
   if (path == "/source") return sourceDoor(request, env, platform(env), url);
-  if (path == "/api/events" || path.startsWith("/api/source/")) return sourceApi(request, env, platform(env), url);
+  if (path == "/api/events" || path.startsWith("/api/source/") || path == "/api/deploys" || path.startsWith("/api/deploys/")) return sourceApi(request, env, platform(env), url);
   const read = request.method == "GET" || request.method == "HEAD";
   // The homepage, served directly from its last deploy (worker/home.ts); the viewer on it (front.ts) until there's one.
   if (path == "/" && read) {
@@ -224,6 +225,7 @@ async function linked(env: Env, request: Request, url: URL): Promise<Response> {
     const applied = await migrate(env.DB);
     return Response.json({ applied });
   }
+  if (url.pathname == "/__erga/deploys" && request.method == "POST") return setDeploysStub(request, env);
   if (url.pathname == "/__erga/link" && request.method == "POST") {
     const session = await sessionOf(env, request);
     const body = await request.json() as { id?: string; index?: string; path?: string; slug?: string; only?: boolean; owner?: string };

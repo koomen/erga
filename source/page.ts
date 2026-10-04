@@ -1,10 +1,18 @@
-// The Source page, /source (worker/source.ts), for admins: Erga's own
-// repository at a glance. Two lanes, staging and main, each with its last
-// 25 commits as dots on a line (as the task queue board's Branches column
-// draws main), which of staging's commits main has, each branch's deploy
-// (GET /api/deploys), the GitHub mirror, the Merge button, and how to clone
-// and push. It updates by itself (/api/events) and follows the system's
-// light or dark.
+// The Source page, /source (worker/source.ts), for admins: the one place to
+// manage Erga's own source and its deploys.
+//
+// One list: staging's history, newest first (staging is always at or ahead
+// of main, so it holds every commit main has). Beside it, two dot columns,
+// as the task queue board's Branches column draws them: staging (a hollow
+// orange circle for a commit only on staging, a solid green one for a commit
+// main has too) and main (a solid green circle where main has the commit).
+// Then two deploy columns, staging and production: which commit each has
+// live, and each target's status (GET /api/deploys) in the column's head,
+// which opens that deploy's live log (GET /api/deploys/<name>/log, then
+// { type: "deploy-log" } events). Merge moves main forward to staging's
+// head, or to the commit a row's "Merge to here" names. Also the GitHub
+// mirror and how to clone and push. It updates by itself (/api/events) and
+// follows the system's light or dark.
 
 import { appPage, esc, type Session } from "../front";
 
@@ -18,60 +26,72 @@ export interface SourcePageConfig {
 }
 
 const STYLE = `
-  main { max-width: 1080px; }
+  main { max-width: 1120px; }
   .crumbs { position: absolute; top: max(14px, env(safe-area-inset-top)); left: max(20px, env(safe-area-inset-left)); height: 30px; display: flex; align-items: center; gap: 0; }
   .crumbs .brand { position: static; }
   .crumbs .here { display: flex; align-items: center; font-size: 13.5px; font-weight: 500; color: var(--fg); }
   .crumbs .here::before { content: "›"; margin: 0 9px 0 10px; color: var(--chrome); opacity: 0.55; font-weight: 400; }
-  :root { --lane-main: #1f7a4d; --lane-staging: #b26a00; --bad: #c2410c; --row: 30px; }
-  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --lane-main: #4cc38a; --lane-staging: #f0a742; --bad: #ff8a65; } }
-  :root[data-theme="dark"] { --lane-main: #4cc38a; --lane-staging: #f0a742; --bad: #ff8a65; }
-  header { align-items: center; margin-bottom: 28px; }
+  :root { --on-main: #1f7a4d; --only-staging: #c26a00; --bad: #c2410c; --row: 32px; }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --on-main: #4cc38a; --only-staging: #f0a742; --bad: #ff8a65; } }
+  :root[data-theme="dark"] { --on-main: #4cc38a; --only-staging: #f0a742; --bad: #ff8a65; }
+  header { align-items: center; margin-bottom: 24px; }
   .merge-row { display: flex; align-items: center; gap: 10px; }
   .merge-row .count { font-size: 13px; color: var(--soft); white-space: nowrap; }
-  #merge-hint { margin: -16px 0 18px; font-size: 13.5px; text-align: right; }
+  #merge-hint { margin: -12px 0 14px; font-size: 13.5px; text-align: right; }
   #merge-hint.error { color: var(--bad); }
   @media (max-width: 640px) { header { flex-direction: column; align-items: stretch; gap: 14px; } .merge-row { justify-content: space-between; } .merge-row .count { white-space: normal; flex: 1; min-width: 0; } #merge-hint { margin-top: -6px; text-align: left; } }
-  .lanes { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
-  @media (max-width: 760px) { .lanes { grid-template-columns: 1fr; } }
-  .card { border: 1px solid var(--rule); border-radius: 12px; padding: 14px 14px 10px; min-width: 0; background: var(--bg); }
-  .card > h2 { display: flex; align-items: center; gap: 10px; margin: 0 2px 4px; font-size: 15px; font-weight: 650; color: var(--fg-strong); }
-  .card > h2 .swatch { width: 10px; height: 10px; border-radius: 50%; background: var(--lane); flex: none; }
-  .card > h2 code { margin-left: auto; font: 12px var(--font-mono); color: var(--soft); font-weight: 400; }
-  .card[data-branch=main] { --lane: var(--lane-main); }
-  .card[data-branch=staging] { --lane: var(--lane-staging); }
-  .deploy { display: flex; align-items: center; gap: 7px; margin: 0 2px 10px; min-height: 20px; font-size: 12.5px; color: var(--soft); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-  .deploy .dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--chrome); }
-  .deploy.deployed .dot { background: var(--lane-main); }
-  .deploy.failed { color: var(--bad); }
-  .deploy.failed .dot { background: var(--bad); }
-  .deploy.building .dot, .deploy.deploying .dot { background: transparent; border: 2px solid var(--lane-staging); border-right-color: transparent; width: 6px; height: 6px; animation: spin .8s linear infinite; }
-  .deploy a { color: inherit; }
+  .card { border: 1px solid var(--rule); border-radius: 12px; padding: 6px 10px 10px; min-width: 0; background: var(--bg); }
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 6px 4px 6px; font-size: 12px; color: var(--soft); }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  /* The dots: circles only. Hollow orange, only on staging; solid green, on main. */
+  .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; box-sizing: border-box; flex: none; }
+  .dot.staging-only { background: var(--bg); border: 2px solid var(--only-staging); }
+  .dot.on-main { background: var(--on-main); border: 2px solid var(--on-main); }
+  .grid { display: grid; grid-template-columns: 22px 22px minmax(0, 1fr) auto auto 70px 116px 116px; align-items: center; }
+  .grid > .head { position: sticky; top: 0; z-index: 2; background: var(--bg); height: 44px; display: flex; align-items: flex-end; padding-bottom: 6px; box-sizing: border-box; border-bottom: 1px solid var(--rule);
+    font-size: 11.5px; font-weight: 600; letter-spacing: .02em; color: var(--soft); white-space: nowrap; }
+  .grid > .head.lane { justify-content: center; writing-mode: vertical-rl; transform: rotate(180deg); align-items: center; padding: 4px 0; height: 44px; font-size: 10.5px; }
+  .grid > .head.deploy { justify-content: center; }
+  .target { display: inline-flex; flex-direction: column; align-items: center; gap: 2px; max-width: 112px; border: 0; background: transparent; color: inherit; font: inherit; padding: 2px 6px; border-radius: 6px; cursor: pointer; }
+  .target:hover { background: color-mix(in srgb, var(--chrome) 12%, transparent); }
+  .target b { font-weight: 650; color: var(--fg-strong); font-size: 11.5px; }
+  .target .st { display: inline-flex; align-items: center; gap: 5px; font-weight: 500; font-size: 11.5px; }
+  .target .st i { width: 7px; height: 7px; border-radius: 50%; background: var(--chrome); }
+  .target.deployed .st i { background: var(--on-main); }
+  .target.failed .st { color: var(--bad); }
+  .target.failed .st i { background: var(--bad); }
+  .target.building .st i, .target.deploying .st i { background: transparent; border: 2px solid var(--only-staging); border-right-color: transparent; width: 5px; height: 5px; animation: spin .8s linear infinite; }
+  .target[disabled] { cursor: default; }
+  .target[disabled]:hover { background: transparent; }
   @keyframes spin { to { transform: rotate(360deg); } }
-  .legend { display: flex; gap: 14px; margin: 0 2px 8px; font-size: 11.5px; color: var(--soft); }
-  .legend span { display: inline-flex; align-items: center; gap: 5px; }
-  .legend i { width: 7px; height: 7px; border-radius: 50%; display: inline-block; background: var(--lane-main); }
-  .legend i.s { background: var(--lane-staging); }
-  ol.graph { list-style: none; margin: 0; padding: 0; -webkit-mask-image: linear-gradient(#000 calc(100% - 4 * var(--row)), transparent); mask-image: linear-gradient(#000 calc(100% - 4 * var(--row)), transparent); }
-  ol.graph li { display: flex; align-items: center; gap: 2px; height: var(--row); border-radius: 6px; overflow: hidden; transition: height .35s ease, opacity .35s ease, background-color .15s; }
-  ol.graph li.enter, ol.graph li.leave { height: 0; opacity: 0; }
-  ol.graph li:hover { background: color-mix(in srgb, var(--chrome) 10%, transparent); }
-  .rail { position: relative; width: 18px; height: 100%; flex: none; }
-  .rail::before, .rail::after { content: ""; position: absolute; left: 8px; width: 2px; height: 50%; background: var(--lane); opacity: .35; display: none; }
+  .row { display: contents; }
+  .row > * { height: var(--row); display: flex; align-items: center; transition: background-color .15s; }
+  .row:hover > * { background: color-mix(in srgb, var(--chrome) 8%, transparent); }
+  .rail { position: relative; justify-content: center; }
+  .rail::before, .rail::after { content: ""; position: absolute; left: calc(50% - 1px); width: 2px; height: 50%; display: none; opacity: .4; }
   .rail::before { top: 0; } .rail::after { bottom: 0; }
+  .rail.s::before, .rail.s::after { background: var(--only-staging); }
+  .rail.m::before, .rail.m::after { background: var(--on-main); }
+  .rail.on-main::before, .rail.on-main::after { background: var(--on-main); }
   .rail.up::before, .rail.down::after { display: block; }
-  .rail i { position: absolute; left: 4px; top: calc(50% - 5px); width: 10px; height: 10px; border-radius: 50%; background: var(--lane); z-index: 1; box-sizing: border-box; }
-  li.in-main .rail i { background: var(--lane-main); }
-  .card[data-branch=staging] li.in-main .rail i { background: var(--bg); box-shadow: inset 0 0 0 2px var(--lane-main); }
-  li.merge .rail i { border-radius: 3px; transform: rotate(45deg) scale(.85); }
-  .subj { flex: 1; min-width: 0; padding: 0 8px 0 4px; font-size: 13.5px; color: var(--fg-strong); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .card[data-branch=staging] li.in-main .subj { color: var(--soft); }
-  .who { flex: none; font-size: 12px; color: var(--soft); max-width: 90px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  ol.graph code { flex: none; font: 11.5px var(--font-mono); color: var(--chrome); padding: 0 6px; }
-  ol.graph time { flex: none; margin: 0; width: 64px; text-align: right; font-size: 12px; color: var(--soft); }
-  .none { padding: 18px 4px; font-size: 13.5px; color: var(--soft); }
+  .rail .dot { position: relative; z-index: 1; }
+  .subj { min-width: 0; padding: 0 8px 0 6px; gap: 8px; }
+  .subj span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13.5px; color: var(--fg-strong); }
+  .row.on-main .subj span { color: var(--fg); }
+  .subj .here { flex: none; display: none; height: 22px; padding: 0 8px; border: 1px solid var(--rule); border-radius: 6px; background: var(--bg); color: var(--fg-strong); font: 550 12px var(--font-text); cursor: pointer; }
+  .row.staging-only:hover .subj .here, .subj .here:focus-visible { display: inline-flex; align-items: center; }
+  .who { padding: 0 8px; font-size: 12px; color: var(--soft); max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sha { padding: 0 6px; font: 11.5px var(--font-mono); color: var(--chrome); }
+  .row time { margin: 0; justify-content: flex-end; padding-right: 8px; font-size: 12px; color: var(--soft); }
+  .live { justify-content: center; }
+  .pill-live { display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: 999px; font-size: 11.5px; font-weight: 600; color: var(--bg); background: var(--on-main); white-space: nowrap; }
+  .pill-live.busy { color: var(--only-staging); background: transparent; box-shadow: inset 0 0 0 1.5px var(--only-staging); }
+  .pill-live.failed { color: var(--bad); background: transparent; box-shadow: inset 0 0 0 1.5px var(--bad); }
+  .none { padding: 18px 4px; font-size: 13.5px; color: var(--soft); grid-column: 1 / -1; }
+  .older { grid-column: 1 / -1; padding: 8px 4px 0; font-size: 12px; color: var(--soft); }
+  @media (max-width: 760px) { .grid { grid-template-columns: 22px 22px minmax(0, 1fr) auto 64px 64px; } .who, .grid > .head.who-h, .row time, .grid > .head.time-h { display: none; } .target { max-width: 62px; } .target b { font-size: 10.5px; } .target .st span { display: none; } .pill-live { padding: 0 6px; font-size: 10.5px; } }
   .boxes { display: grid; grid-template-columns: 1fr 1.3fr; gap: 18px; margin-top: 18px; }
-  @media (max-width: 760px) { .boxes { grid-template-columns: 1fr; } .who { display: none; } }
+  @media (max-width: 760px) { .boxes { grid-template-columns: 1fr; } }
   .box { border: 1px solid var(--rule); border-radius: 12px; padding: 14px 16px; min-width: 0; }
   .box h2 { display: flex; align-items: center; gap: 8px; margin: 0 0 6px; font-size: 14px; font-weight: 600; color: var(--fg-strong); }
   .box h2 .pill { margin-left: auto; height: 28px; font-size: 12.5px; padding: 0 10px; }
@@ -79,16 +99,24 @@ const STYLE = `
   .box p.error { color: var(--bad); }
   .box a { color: inherit; }
   .state { display: inline-flex; align-items: center; gap: 6px; font-size: 13.5px; color: var(--fg); }
-  .state .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--lane-main); }
-  .state.error .dot { background: var(--bad); }
-  .state.off .dot { background: var(--chrome); }
-  .state.pushing .dot { background: transparent; border: 2px solid var(--lane-main); border-right-color: transparent; width: 6px; height: 6px; animation: spin .8s linear infinite; }
+  .state i { width: 7px; height: 7px; border-radius: 50%; background: var(--on-main); }
+  .state.error i { background: var(--bad); }
+  .state.off i { background: var(--chrome); }
+  .state.pushing i { background: transparent; border: 2px solid var(--on-main); border-right-color: transparent; width: 5px; height: 5px; animation: spin .8s linear infinite; }
   pre { margin: 6px 0 8px; padding: 10px 12px; border-radius: 8px; background: var(--code-bg); color: var(--fg-strong); font: 12.5px/1.6 var(--font-mono); overflow-x: auto; white-space: pre; }
-  .moves { margin: 22px 2px 0; font-size: 12.5px; color: var(--soft); }
+  .moves { margin: 18px 2px 0; font-size: 12.5px; color: var(--soft); }
   .moves b { font-weight: 600; color: var(--fg); }
   .setup ol { margin: 8px 0 0; padding-left: 20px; font-size: 14px; color: var(--fg); }
   .setup li { margin: 4px 0; }
   .setup code, .box code { font: 12.5px var(--font-mono); }
+  dialog#log { width: min(820px, calc(100vw - 32px)); padding: 0; }
+  #log .top { display: flex; align-items: center; gap: 10px; padding: 14px 16px 10px; border-bottom: 1px solid var(--rule); }
+  #log h2 { margin: 0; font-size: 15px; }
+  #log .meta { font-size: 12.5px; color: var(--soft); }
+  #log .close { margin-left: auto; height: 30px; }
+  #log pre { margin: 0; border-radius: 0 0 12px 12px; height: min(60vh, 520px); overflow: auto; font-size: 12px; line-height: 1.55; white-space: pre-wrap; }
+  #log pre .t { color: var(--chrome); }
+  #log pre .s { color: var(--soft); }
 `;
 
 export function sourcePage(c: SourcePageConfig): Response {
@@ -96,29 +124,31 @@ export function sourcePage(c: SourcePageConfig): Response {
   const html = (body: string, status = 200) => new Response(appPage("Source", STYLE, `${crumbs}<main>${body}</main>`), { status, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
   if (!c.admin) return html(`<p class="empty">There's nothing here. <a href="/">Back to the start</a>.</p>`, 404);
   if (!c.ready) {
-    return html(`<header><div><h1>Source</h1><p class="sub">Erga's own repository, hosted by Erga.</p></div></header>
+    return html(`<header><div><h1>Source</h1><p class="sub">Erga's own repository and its deploys.</p></div></header>
   <div class="box setup"><h2>Not set up on this server</h2><p>The repository lives in Cloudflare Artifacts, which this server isn't bound to yet. README.md (Erga's own source) has the steps:</p>
-  <ol><li>Make the Artifacts namespace <code>erga</code> and the repo <code>erga</code> in it.</li><li>Deploy with <code>ERGA_ARTIFACTS_NAMESPACE=erga</code>, which adds the binding.</li><li>Push the history in: <code>bun source/import.ts</code>.</li></ol></div>`);
+  <ol><li>Make the Artifacts repo <code>erga</code> in the namespace <code>erga</code>.</li><li>Deploy with <code>ERGA_ARTIFACTS_NAMESPACE=erga</code>, which adds the binding.</li><li>Push the history in: <code>bun source/import.ts</code>.</li></ol></div>`);
   }
   const remote = `${c.origin}/git/erga.git`;
+  const target = (name: string, label: string) => `<div class="head deploy"><button class="target" type="button" id="target-${name}" data-target="${name}" disabled title="Deploys aren't set up yet"><b>${label}</b><span class="st"><i></i><span>not set up</span></span></button></div>`;
   return html(`
   <header>
-    <div><h1>Source</h1><p class="sub">Erga's own repository, hosted by Erga on Cloudflare Artifacts. Push to staging, try it there, then merge it into main.</p></div>
+    <div><h1>Source</h1><p class="sub">Erga's own repository and its deploys. Push to staging; staging deploys itself. Then move main up to it: main deploys to production.</p></div>
     <div class="merge-row"><span class="count" id="ahead"></span><button class="new" id="merge" disabled>Merge staging into main</button></div>
   </header>
   <p class="hint" id="merge-hint" role="status"></p>
-  <section class="lanes" aria-label="Branches">
-    ${["staging", "main"].map((b) => `<article class="card" data-branch="${b}">
-      <h2><span class="swatch"></span>${b}<code class="head"></code></h2>
-      <div class="deploy" id="deploy-${b}"><span class="dot"></span><span class="what">Deploys: not set up yet</span></div>
-      ${b == "staging" ? `<div class="legend"><span><i class="s"></i>only on staging</span><span><i></i>on main too</span></div>` : `<div class="legend"><span><i></i>on main</span></div>`}
-      <ol class="graph"><li class="none">Loading…</li></ol>
-    </article>`).join("")}
+  <section class="card" aria-label="Commits">
+    <div class="legend"><span><i class="dot staging-only"></i>only on staging</span><span><i class="dot on-main"></i>on main</span></div>
+    <div class="grid" id="grid">
+      <div class="head lane" title="staging">staging</div><div class="head lane" title="main">main</div>
+      <div class="head" style="padding-left:6px">Commit</div><div class="head who-h"></div><div class="head"></div><div class="head time-h"></div>
+      ${target("staging", "staging")}${target("production", "production")}
+      <div class="none" id="loading">Loading…</div>
+    </div>
   </section>
   <section class="boxes">
     <div class="box" id="mirror">
       <h2>GitHub mirror <button class="pill" id="mirror-now" type="button" hidden>Push now</button></h2>
-      <p><span class="state off" id="mirror-state"><span class="dot"></span><span class="what">Loading…</span></span></p>
+      <p><span class="state off" id="mirror-state"><i></i><span class="what">Loading…</span></span></p>
       <p id="mirror-url">${esc(c.mirrorUrl)}</p>
       <p class="error" id="mirror-error" hidden></p>
     </div>
@@ -127,10 +157,14 @@ export function sourcePage(c: SourcePageConfig): Response {
       <pre><code>git remote add erga ${esc(remote)}
 git fetch erga
 git push erga HEAD:staging</code></pre>
-      <p>Git asks for a username and password: any username, and an agent token from <a href="/settings">Settings</a> as the password (admins only). main takes fast-forward pushes only; merge staging into main here.</p>
+      <p>Git asks for a username and password: any username, and an agent token from <a href="/settings">Settings</a> as the password (admins only). main only follows staging: merge here, or push one of staging's commits to main.</p>
     </div>
   </section>
   <p class="moves" id="moves"></p>
+  <dialog id="log" aria-labelledby="log-title">
+    <div class="top"><h2 id="log-title">Deploy log</h2><span class="meta" id="log-meta"></span><button class="pill close" type="button" id="log-close">Close</button></div>
+    <pre id="log-lines"></pre>
+  </dialog>
 <script>
 (() => {
   const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[ch]);
@@ -144,43 +178,58 @@ git push erga HEAD:staging</code></pre>
     if (s > -30 * 86400) return rtf.format(Math.round(s / 86400), "day");
     return new Date(t).toLocaleDateString(undefined, { month: "short", day: "numeric" });
   };
-  let view = null, deploys = null, drawn = { staging: false, main: false }, busy = false;
+  const TARGETS = ["staging", "production"];
+  let view = null, deploys = null, busy = false, drawn = false;
+  const grid = document.getElementById("grid");
 
-  function lane(b) {
-    const card = document.querySelector('.card[data-branch="' + b.name + '"]');
-    card.querySelector(".head").textContent = b.commit ? b.commit.slice(0, 7) : "";
-    const graph = card.querySelector("ol.graph");
-    if (!b.commits.length) { graph.innerHTML = '<li class="none">No commits yet. Push one: git push erga HEAD:' + b.name + '</li>'; drawn[b.name] = false; return; }
-    graph.querySelectorAll("li.none").forEach((li) => li.remove());
-    // One row per commit, kept: a new commit slides in at the top, the oldest fades out at the bottom.
-    const rows = new Map([...graph.children].filter((li) => !li.classList.contains("leave")).map((li) => [li.dataset.sha, li]));
-    const want = new Set(b.commits.map((x) => x.sha));
-    for (const [sha, li] of rows) if (!want.has(sha)) {
-      if (!drawn[b.name]) { li.remove(); continue; }
-      li.classList.add("leave"); setTimeout(() => li.remove(), 400);
-    }
-    let prev = null;
-    b.commits.forEach((x, i) => {
-      let li = rows.get(x.sha);
-      const fresh = !li;
-      if (fresh) { li = document.createElement("li"); li.dataset.sha = x.sha; if (drawn[b.name]) li.classList.add("enter"); }
-      li.className = [li.classList.contains("enter") ? "enter" : "", x.inMain ? "in-main" : "", x.parents.length > 1 ? "merge" : ""].filter(Boolean).join(" ");
-      li.title = x.subject + "\\n" + x.sha.slice(0, 10) + " · " + x.author + " · " + new Date(x.at).toLocaleString() + (b.name == "staging" ? (x.inMain ? " · on main" : " · only on staging") : "");
-      li.innerHTML = '<span class="rail ' + (i > 0 ? "up " : "") + (i < b.commits.length - 1 || x.parents.length ? "down" : "") + '"><i></i></span><span class="subj">' + esc(x.subject) + '</span><span class="who">' + esc(x.author) + '</span><code>' + x.sha.slice(0, 7) + '</code><time datetime="' + new Date(x.at).toISOString() + '">' + ago(x.at) + '</time>';
-      graph.insertBefore(li, prev ? prev.nextSibling : graph.firstChild);
-      if (fresh && drawn[b.name]) { li.offsetHeight; li.classList.remove("enter"); }
-      prev = li;
-    });
-    drawn[b.name] = true;
+  /** What a target shows on a commit's row: live, deploying, failed, or nothing. */
+  function liveCell(t, sha) {
+    if (!t) return "";
+    const live = t.deployed ?? (t.state == "deployed" ? t.commit : null);
+    if ((t.state == "building" || t.state == "deploying") && t.commit == sha) return '<span class="pill-live busy">' + t.state + "</span>";
+    if (t.state == "failed" && t.commit == sha && live != sha) return '<span class="pill-live failed">failed</span>';
+    return live == sha ? '<span class="pill-live" title="Live on ' + esc(t.host) + '">live</span>' : "";
   }
+  const targetOf = (name) => deploys?.targets?.find((t) => t.name == name) ?? null;
 
   function render() {
     if (!view) return;
-    view.branches.forEach(lane);
-    const staging = view.branches.find((b) => b.name == "staging"), ahead = staging?.ahead ?? 0;
-    const merge = document.getElementById("merge");
-    if (!busy) merge.disabled = !ahead;
-    document.getElementById("ahead").textContent = !staging?.commit ? "" : ahead ? ahead + " commit" + (ahead == 1 ? "" : "s") + " to merge" : "main has everything on staging";
+    const staging = view.branches.find((b) => b.name == "staging"), main = view.branches.find((b) => b.name == "main");
+    const commits = staging?.commits ?? [];
+    document.getElementById("loading")?.remove();
+    // One row per commit, kept: a new commit fades in at the top, the oldest goes at the bottom.
+    const rows = new Map([...grid.querySelectorAll(".row")].map((r) => [r.dataset.sha, r]));
+    const want = new Set(commits.map((x) => x.sha));
+    for (const [sha, r] of rows) if (!want.has(sha)) r.remove();
+    grid.querySelector(".none.empty")?.remove();
+    grid.querySelector(".older")?.remove();
+    if (!commits.length) { grid.insertAdjacentHTML("beforeend", '<div class="none empty">No commits yet. Push one: git push erga HEAD:staging</div>'); }
+    let prev = null;
+    commits.forEach((x, i) => {
+      let r = rows.get(x.sha);
+      if (!r) { r = document.createElement("div"); r.dataset.sha = x.sha; }
+      const kind = x.inMain ? "on-main" : "staging-only";
+      r.className = "row " + kind;
+      const next = commits[i + 1], prevC = commits[i - 1];
+      const sUp = i > 0, sDown = !!next || x.parents.length > 0;
+      const mUp = x.inMain && prevC?.inMain, mDown = x.inMain && (next ? next.inMain : x.parents.length > 0);
+      const title = x.subject + "\\n" + x.sha.slice(0, 10) + " · " + x.author + " · " + new Date(x.at).toLocaleString() + (x.inMain ? " · on main" : " · only on staging");
+      r.innerHTML =
+        '<span class="rail s ' + (sUp ? "up " : "") + (sDown ? "down " : "") + (x.inMain ? "on-main" : "") + '"><i class="dot ' + kind + '" data-lane="staging"></i></span>' +
+        '<span class="rail m ' + (mUp ? "up " : "") + (mDown ? "down" : "") + '">' + (x.inMain ? '<i class="dot on-main" data-lane="main"></i>' : "") + "</span>" +
+        '<span class="subj" title="' + esc(title) + '"><span>' + esc(x.subject) + "</span>" + (x.inMain ? "" : '<button class="here" type="button" data-merge="' + x.sha + '" title="Move main forward to this commit">Merge to here</button>') + "</span>" +
+        '<span class="who">' + esc(x.author) + '</span><code class="sha">' + x.sha.slice(0, 7) + '</code><time datetime="' + new Date(x.at).toISOString() + '">' + ago(x.at) + "</time>" +
+        TARGETS.map((n) => '<span class="live" data-target="' + n + '">' + liveCell(targetOf(n), x.sha) + "</span>").join("");
+      grid.insertBefore(r, prev ? prev.nextSibling : document.getElementById("target-production").parentElement.nextSibling);
+      prev = r;
+    });
+    // A target live on a commit older than the list shows.
+    const older = TARGETS.map((n) => targetOf(n)).filter((t) => t && (t.deployed ?? t.commit) && !want.has(t.deployed ?? t.commit));
+    if (older.length && commits.length) grid.insertAdjacentHTML("beforeend", '<div class="older">' + older.map((t) => esc(t.name) + " is live on " + esc((t.deployed ?? t.commit).slice(0, 7)) + ", further down").join(" · ") + "</div>");
+    drawn = true;
+    const ahead = staging?.ahead ?? 0, mergeBtn = document.getElementById("merge");
+    if (!busy) mergeBtn.disabled = !ahead;
+    document.getElementById("ahead").textContent = !staging?.commit ? "" : ahead ? ahead + " commit" + (ahead == 1 ? "" : "s") + " to merge" : "main is at staging";
     const m = view.mirror, st = document.getElementById("mirror-state"), err = document.getElementById("mirror-error");
     st.className = "state " + (m.state == "off" ? "off" : m.state == "pushing" ? "pushing" : m.error ? "error" : "ok");
     st.querySelector(".what").textContent = m.state == "off" ? "Off: the server has no GITHUB_MIRROR_TOKEN" : m.state == "pushing" ? "Pushing…" : m.error ? "Behind" + (m.lastPushAt ? " · last pushed " + ago(m.lastPushAt) : "") : m.lastPushAt ? "Up to date · pushed " + ago(m.lastPushAt) : "Not pushed yet";
@@ -190,15 +239,16 @@ git push erga HEAD:staging</code></pre>
     document.getElementById("moves").innerHTML = view.moves.slice(0, 3).map((mv) => "<b>" + esc(mv.branch) + "</b> moved to " + mv.new.slice(0, 7) + " by " + esc(mv.by) + " (" + (mv.how == "merge" ? "merge" : "push") + ") " + ago(mv.at)).join(" · ");
   }
 
-  function renderDeploys() {
-    for (const b of ["staging", "main"]) {
-      const el = document.getElementById("deploy-" + b), t = deploys?.targets?.find((x) => x.branch == b);
-      el.className = "deploy " + (t ? t.state : "");
-      if (!t) { el.querySelector(".what").textContent = "Deploys: not set up yet"; el.title = ""; continue; }
-      const what = { idle: "not deployed yet", building: "building", deploying: "deploying", deployed: "deployed", failed: "failed" }[t.state] || t.state;
-      el.querySelector(".what").innerHTML = '<a href="https://' + esc(t.host) + '">' + esc(t.host) + "</a> · " + esc(what) + (t.commit ? " " + t.commit.slice(0, 7) : "") + (t.at ? " · " + ago(t.at) : "");
-      el.title = t.error || (t.log || []).slice(-3).join("\\n");
+  function renderTargets() {
+    for (const n of TARGETS) {
+      const b = document.getElementById("target-" + n), t = targetOf(n);
+      b.className = "target " + (t ? t.state : "");
+      b.disabled = !t;
+      b.title = t ? (t.host + ": " + t.state + (t.error ? " (" + t.error + ")" : "") + ". Click for the log.") : "Deploys aren't set up yet";
+      const what = !t ? "not set up" : { idle: "idle", building: "building", deploying: "deploying", deployed: "live", failed: "failed" }[t.state] || t.state;
+      b.querySelector(".st span").textContent = what + (t?.at ? " · " + ago(t.at) : "");
     }
+    render();
   }
 
   async function load() {
@@ -208,27 +258,58 @@ git push erga HEAD:staging</code></pre>
       if (!r.ok) throw new Error(body.error || "HTTP " + r.status);
       view = body; render();
     } catch (e) {
-      for (const g of document.querySelectorAll("ol.graph")) if (!g.querySelector("li[data-sha]")) g.innerHTML = '<li class="none">' + esc(e.message) + "</li>";
+      const l = document.getElementById("loading");
+      if (l) l.textContent = e.message;
     }
   }
   async function loadDeploys() {
     const r = await fetch("/api/deploys", { headers: { Accept: "application/json" } }).catch(() => null);
     deploys = r && r.ok ? await r.json().catch(() => null) : null;
-    renderDeploys();
+    renderTargets();
   }
 
+  // The deploy log, live.
+  const dlg = document.getElementById("log"), pre = document.getElementById("log-lines");
+  let open = null; // { target, deployId }
+  const line = (l) => '<span class="t">' + esc(new Date(l.at).toLocaleTimeString()) + "</span> " + (l.step ? '<span class="s">[' + esc(l.step) + "]</span> " : "") + esc(l.text) + "\\n";
+  function append(lines) {
+    const atEnd = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 8;
+    pre.insertAdjacentHTML("beforeend", lines.map(line).join(""));
+    if (atEnd) pre.scrollTop = pre.scrollHeight;
+  }
+  async function openLog(name) {
+    const t = targetOf(name);
+    document.getElementById("log-title").textContent = (t?.host ?? name) + " deploy log";
+    pre.textContent = "Loading…";
+    open = { target: name, deployId: null };
+    if (!dlg.open) dlg.showModal();
+    const r = await fetch("/api/deploys/" + name + "/log").catch(() => null);
+    const log = r && r.ok ? await r.json() : null;
+    if (!log) { pre.textContent = "No deploy log yet."; document.getElementById("log-meta").textContent = ""; return; }
+    open.deployId = log.deployId;
+    document.getElementById("log-meta").textContent = [log.commit ? log.commit.slice(0, 7) : "", log.state].filter(Boolean).join(" · ");
+    pre.textContent = "";
+    append(log.lines || []);
+    pre.scrollTop = pre.scrollHeight;
+  }
+  for (const n of TARGETS) document.getElementById("target-" + n).addEventListener("click", () => openLog(n));
+  document.getElementById("log-close").addEventListener("click", () => dlg.close());
+  dlg.addEventListener("close", () => { open = null; });
+
   const hint = document.getElementById("merge-hint"), mergeBtn = document.getElementById("merge");
-  mergeBtn.addEventListener("click", async () => {
+  async function merge(commit) {
     busy = true; mergeBtn.disabled = true; hint.className = "hint"; hint.textContent = "Merging…";
     try {
-      const r = await fetch("/api/source/merge", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ from: "staging", to: "main" }) });
+      const r = await fetch("/api/source/merge", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ from: "staging", to: "main", ...(commit ? { commit } : {}) }) });
       const body = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(body.error || "The merge failed (HTTP " + r.status + ").");
-      hint.textContent = body.upToDate ? "Nothing to merge: main has everything on staging." : "Merged: main is now " + body.commit.slice(0, 7) + (body.fastForward ? " (a fast-forward)." : " (a merge commit).");
+      hint.textContent = body.upToDate ? "Nothing to merge: main is there already." : "Merged: main is now " + body.commit.slice(0, 7) + ".";
     } catch (e) { hint.className = "hint error"; hint.textContent = e.message; }
     busy = false;
     await load();
-  });
+  }
+  mergeBtn.addEventListener("click", () => merge(null));
+  grid.addEventListener("click", (e) => { const b = e.target.closest("button[data-merge]"); if (b) merge(b.dataset.merge); });
   document.getElementById("mirror-now").addEventListener("click", async (e) => {
     e.target.disabled = true;
     await fetch("/api/source/mirror", { method: "POST" }).catch(() => {});
@@ -243,9 +324,13 @@ git push erga HEAD:staging</code></pre>
     let ev; try { ev = JSON.parse(e.data); } catch { return; }
     if (ev.type == "source") load();
     if (ev.type == "deploys") loadDeploys();
+    if (ev.type == "deploy-log" && open && ev.target == open.target) {
+      if (open.deployId && ev.deployId != open.deployId) openLog(open.target);
+      else append(ev.lines || []);
+    }
   };
   load(); loadDeploys();
-  setInterval(() => { for (const t of document.querySelectorAll("ol.graph time")) t.textContent = ago(Date.parse(t.dateTime)); render(); renderDeploys(); }, 30000);
+  setInterval(() => { render(); renderTargets(); }, 30000);
 })();
 </script>`);
 }

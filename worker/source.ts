@@ -4,7 +4,8 @@
 //   /git/erga.git/...           Git smart HTTP: clone, fetch, pull and push. HTTP Basic with any username and
 //                               an Erga agent token as the password; admins only. main takes fast-forwards only.
 //   GET  /api/source/branches   staging and main: each head and its last 25 commits, and the mirror's status
-//   POST /api/source/merge      { from: "staging", to: "main" }: { commit } or 4xx { error } (admins)
+//   POST /api/source/merge      { from: "staging", to: "main", commit? }: main fast-forwards to staging's head (or to
+//                               that staging commit): { commit } or 4xx { error } (admins)
 //   POST /api/source/mirror     brings the GitHub mirror up to date now (admins)
 //   GET  /api/events            server-sent events for admins' pages ({ type: "source" }, { type: "deploys" })
 //   /source                     the Source page (admins)
@@ -17,11 +18,12 @@ import type { Platform } from "../front";
 import { whoOf, withTokens } from "../front";
 import { tar } from "../source/git";
 import { gitHttp } from "../source/http";
-import type { Actor, Branch } from "../source/repo";
+import type { Actor } from "../source/repo";
 import { sourcePage } from "../source/page";
 import { artifactsRemote, githubUrl, hasSource } from "./artifacts";
 import { directoryOf, tokensOf } from "./d1";
 import type { Env } from "./env";
+import { deploysStub } from "./deploys-stub";
 import { eventStream } from "./events";
 
 const host = (env: Env) => env.SOURCE.getByName("erga");
@@ -69,6 +71,8 @@ export async function sourceApi(request: Request, env: Env, platform: Platform, 
   const who = await adminOf(request, env, platform, url);
   if (who instanceof Response) return who;
   if (url.pathname == "/api/events" && request.method == "GET") return eventStream(env, request);
+  // The deploy pipeline's status and logs: a stand-in until the pipeline (task #40) serves them.
+  if (url.pathname == "/api/deploys" || url.pathname.startsWith("/api/deploys/")) return deploysStub(request, env, url);
   if (!hasSource(env)) return json({ error: notSetUp }, 503);
   if (request.method == "POST" && !who.bearer && request.headers.get("origin") != url.origin) return json({ error: "Forbidden" }, 403);
   try {
@@ -77,9 +81,9 @@ export async function sourceApi(request: Request, env: Env, platform: Platform, 
       return json({ ...view, mirror: { ...view.mirror, url: view.mirror.url ?? githubUrl(env) }, remote: `${url.origin}/git/erga.git` });
     }
     if (url.pathname == "/api/source/merge" && request.method == "POST") {
-      const body = (await request.json().catch(() => ({}))) as { from?: string; to?: string };
-      const from = (body.from ?? "staging") as Branch, to = (body.to ?? "main") as Branch;
-      const r = await host(env).merge(url.origin, from, to, who.actor);
+      const body = (await request.json().catch(() => ({}))) as { from?: string; to?: string; commit?: string };
+      if ((body.from ?? "staging") != "staging" || (body.to ?? "main") != "main") return json({ error: "main only follows staging: merge from staging to main." }, 400);
+      const r = await host(env).merge(url.origin, who.actor, body.commit);
       return "error" in r ? json({ error: r.error }, r.status) : json(r);
     }
     if (url.pathname == "/api/source/mirror" && request.method == "POST") return json({ mirror: await host(env).mirrorNow(url.origin) });

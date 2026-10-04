@@ -5,6 +5,7 @@
 //
 //   { type: "source" }    a branch of Erga's repository moved, or the mirror's status changed (source/)
 //   { type: "deploys" }   a deploy target changed (the deploy pipeline)
+//   { type: "deploy-log", target, deployId, lines }   new lines of a deploy's log
 //
 // Each event is a JSON object on a `data:` line. A page refetches what the
 // event names; EventSource reconnects by itself, after which the page
@@ -37,6 +38,10 @@ export class EventHub extends DurableObject<Env> {
     for (const w of this.clients) this.send(w, line);
     return this.clients.size;
   }
+
+  /** A little JSON kept for a stand-in (worker/deploys-stub.ts). */
+  async stored(key: string): Promise<unknown> { return (await this.ctx.storage.get(key)) ?? null; }
+  async store(key: string, value: unknown): Promise<void> { await this.ctx.storage.put(key, value); }
 
   private send(w: WritableStreamDefaultWriter<Uint8Array>, s: string) {
     w.write(enc.encode(s)).catch(() => { this.clients.delete(w); w.abort().catch(() => {}); });

@@ -8,7 +8,7 @@
 
 import { DurableObject } from "cloudflare:workers";
 import { deployHook } from "../deploy/index";
-import { SourceError, SourceRepo, type Actor, type Branch } from "../source/repo";
+import { SourceError, SourceRepo, type Actor } from "../source/repo";
 import { artifactsRemote, githubRemote } from "./artifacts";
 import type { Env } from "./env";
 import { publishEvent } from "./events";
@@ -57,8 +57,8 @@ export class SourceHost extends DurableObject<Env> {
   files(origin: string, commit: string) { return this.at(origin).files(commit); }
 
   /** A merge, as POST /api/source/merge asks: { commit } or { error, status }. */
-  async merge(origin: string, from: Branch, to: Branch, who: Actor): Promise<{ commit: string; fastForward: boolean; upToDate: boolean } | { error: string; status: number }> {
-    try { return await this.at(origin).merge(from, to, who); } catch (e) {
+  async merge(origin: string, who: Actor, commit?: string): Promise<{ commit: string; fastForward: boolean; upToDate: boolean } | { error: string; status: number }> {
+    try { return await this.at(origin).merge(who, commit); } catch (e) {
       if (e instanceof SourceError) return { error: e.message, status: e.status };
       return { error: `The merge failed: ${(e as Error).message}`, status: 502 };
     }

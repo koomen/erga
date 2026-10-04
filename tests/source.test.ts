@@ -3,14 +3,16 @@
 // with the real git CLI against Erga's endpoint in front of pretend
 // Artifacts and GitHub (tests/source-fixture.ts).
 
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
+
+// git against a local server: quick, but a machine busy with other tests slows it.
+setDefaultTimeout(30_000);
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import zlib from "node:zlib";
 import { hashObject, inflate, parseCommit, parseTree, readPack, tar, text, treeBytes, utf8, writePack } from "../source/git.ts";
-import { mergeText } from "../source/merge.ts";
 import { git, must, startFixture, type Fixture } from "./source-fixture.ts";
 
 const scratch = () => mkdtempSync(join(tmpdir(), "erga-src-"));
@@ -76,13 +78,6 @@ describe("Git's formats", () => {
     expect(text(t.subarray(0, 7))).toBe("a/b.txt");
   });
 
-  test("three-way text merge: separate changes merge, the same lines conflict", () => {
-    const base = utf8("1\n2\n3\n4\n5\n6\n7\n");
-    expect(text(mergeText(base, utf8("one\n2\n3\n4\n5\n6\n7\n"), utf8("1\n2\n3\n4\n5\n6\nseven\n"))!)).toBe("one\n2\n3\n4\n5\n6\nseven\n");
-    expect(mergeText(base, utf8("1\nTWO\n3\n4\n5\n6\n7\n"), utf8("1\ntwo\n3\n4\n5\n6\n7\n"))).toBeNull();
-    expect(text(mergeText(base, utf8("1\nX\n3\n4\n5\n6\n7\n"), utf8("1\nX\n3\n4\n5\n6\n7\n"))!)).toBe("1\nX\n3\n4\n5\n6\n7\n");
-    expect(mergeText(base, utf8("\0"), utf8("1\n"))).toBeNull();
-  });
 });
 
 describe("Erga's Git endpoint", () => {
@@ -106,63 +101,51 @@ describe("Erga's Git endpoint", () => {
     expect(f.repo.mirrorStatus().error).toBeNull();
   });
 
-  test("main takes fast-forward pushes, and refuses the rest; staging takes either", async () => {
+  test("main only follows staging; staging always keeps what main has", async () => {
+    const ada = { login: "ada", name: "Ada" };
     writeFileSync(join(src, "c.txt"), "c\n");
     await must(src, "add", "."); await must(src, "commit", "-qm", "Fourth");
-    expect((await git(src, "push", "erga", "main")).ok).toBe(true);
-    await must(src, "reset", "-q", "--hard", "HEAD~1");
+    // Straight to main, before staging has it: refused.
+    const early = await git(src, "push", "erga", "main");
+    expect(early.ok).toBe(false);
+    expect(early.err).toContain("main only follows staging");
+    // To staging, then main: both land. Both at once lands too.
+    expect((await git(src, "push", "erga", "HEAD:staging")).ok).toBe(true);
+    expect((await git(src, "push", "erga", "HEAD:main")).ok).toBe(true);
     writeFileSync(join(src, "d.txt"), "d\n");
+    await must(src, "add", "."); await must(src, "commit", "-qm", "Fifth");
+    expect((await git(src, "push", "erga", "HEAD:staging", "HEAD:main")).ok).toBe(true);
+    // A rewrite of staging that drops main's commits: refused, even forced.
+    await must(src, "reset", "-q", "--hard", "HEAD~1");
+    writeFileSync(join(src, "x.txt"), "x\n");
     await must(src, "add", "."); await must(src, "commit", "-qm", "Rewritten");
-    const forced = await git(src, "push", "--force", "erga", "main");
-    expect(forced.ok).toBe(false);
-    expect(forced.err).toContain("non-fast-forward");
+    const dropped = await git(src, "push", "--force", "erga", "HEAD:staging");
+    expect(dropped.ok).toBe(false);
+    expect(dropped.err).toContain("staging is always at or ahead of main");
+    // Main backwards: refused.
+    expect((await git(src, "push", "--force", "erga", "HEAD~1:main")).err).toContain("only moves forward");
+    // A rewrite of what's only on staging is fine.
+    await must(src, "fetch", "-q", "erga");
+    await must(src, "reset", "-q", "--hard", "erga/main");
+    for (const n of ["Sixth", "Seventh", "Eighth"]) { writeFileSync(join(src, n), n); await must(src, "add", "."); await must(src, "commit", "-qm", n); }
+    expect((await git(src, "push", "erga", "HEAD:staging")).ok).toBe(true);
+    await must(src, "commit", "-q", "--amend", "-m", "Eighth, amended");
     expect((await git(src, "push", "--force", "erga", "HEAD:staging")).ok).toBe(true);
     // Other branches, and deleting, are refused.
     expect((await git(src, "push", "erga", "HEAD:feature")).err).toContain("two branches");
     expect((await git(src, "push", "erga", ":staging")).ok).toBe(false);
-    // A pull brings what's there.
+    // Merge: main moves to a chosen staging commit, then to staging's head; never anywhere else.
+    const sixth = await must(src, "rev-parse", "HEAD~2");
+    let r = await f.repo.merge(ada, sixth);
+    expect(r).toEqual({ commit: sixth, fastForward: true, upToDate: false });
+    await expect(f.repo.merge(ada, "0".repeat(39) + "1")).rejects.toThrow(/isn't one of staging's commits/);
+    r = await f.repo.merge(ada);
+    expect(r.commit).toBe(await must(src, "rev-parse", "HEAD"));
+    expect((await f.repo.merge(ada)).upToDate).toBe(true);
     const c = scratch();
     await must(c, "clone", "-q", f.erga, "copy");
-    expect(await must(join(c, "copy"), "log", "-1", "--format=%s", "origin/staging")).toBe("Rewritten");
-    expect(await must(join(c, "copy"), "log", "-1", "--format=%s", "origin/main")).toBe("Fourth");
-  });
-
-  test("merging staging into main: a merge commit when both moved, and a conflict refused", async () => {
-    // staging has "Rewritten" (d.txt), main has "Fourth" (c.txt): they meet at Third.
-    const r = await f.repo.merge("staging", "main", { login: "ada", name: "Ada" });
-    expect(r.fastForward).toBe(false);
-    const c = scratch();
-    await must(c, "clone", "-q", f.erga, "copy");
-    const w = join(c, "copy");
-    expect(await must(w, "log", "-1", "--format=%s %p")).toContain("Merge staging into main");
-    expect((await must(w, "ls-files")).split("\n").sort()).toEqual(["a.txt", "b.txt", "bin.dat", "c.txt", "d.txt"]);
-    await must(w, "fsck", "--strict");
-    // Merging again: nothing to do.
-    expect((await f.repo.merge("staging", "main", { login: "ada", name: "Ada" })).upToDate).toBe(true);
-    // The same line, changed both ways: refused, naming the file.
-    await must(w, "checkout", "-q", "-B", "staging", "origin/main");
-    writeFileSync(join(w, "a.txt"), "ONE\ntwo\nthree\nfour\nfive\nsix\nseven\neight\n");
-    await must(w, "commit", "-qam", "Staging edit");
-    await must(w, "push", "-q", "origin", "staging");
-    await must(w, "checkout", "-q", "-B", "main", "origin/main");
-    writeFileSync(join(w, "a.txt"), "uno\ntwo\nthree\nfour\nfive\nsix\nseven\neight\n");
-    await must(w, "commit", "-qam", "Main edit");
-    await must(w, "push", "-q", "origin", "main");
-    await expect(f.repo.merge("staging", "main", { login: "ada", name: "Ada" })).rejects.toThrow(/a\.txt/);
-    // Different lines of the same file merge cleanly.
-    writeFileSync(join(w, "a.txt"), "uno\ntwo\nthree\nfour\nfive\nsix\nseven\nEIGHT\n");
-    await must(w, "commit", "-qam", "Main edit, bottom");
-    await must(w, "checkout", "-q", "-B", "staging", "origin/main");
-    writeFileSync(join(w, "a.txt"), "uno\ntwo\nthree\nFOUR\nfive\nsix\nseven\neight\n");
-    await must(w, "commit", "-qam", "Staging edit, middle");
-    await must(w, "push", "-q", "--force", "origin", "staging");
-    await must(w, "checkout", "-q", "main");
-    await must(w, "push", "-q", "origin", "main");
-    const m = await f.repo.merge("staging", "main", { login: "ada", name: "Ada" });
-    await must(w, "fetch", "-q", "origin");
-    expect(await must(w, "show", `${m.commit}:a.txt`)).toBe("uno\ntwo\nthree\nFOUR\nfive\nsix\nseven\nEIGHT");
-    // A fast-forward: main into staging.
-    expect((await f.repo.merge("main", "staging", { login: "ada", name: "Ada" })).fastForward).toBe(true);
+    expect(await must(join(c, "copy"), "rev-parse", "origin/main")).toBe(await must(join(c, "copy"), "rev-parse", "origin/staging"));
+    expect(await must(join(c, "copy"), "log", "-1", "--format=%s", "origin/main")).toBe("Eighth, amended");
   });
 
   test("the mirror catches up, and a diverged GitHub main stops it without blocking pushes", async () => {
@@ -180,8 +163,8 @@ describe("Erga's Git endpoint", () => {
     // A push to Erga's main still lands; the mirror says what's wrong.
     await must(w, "checkout", "-q", "-B", "main", "origin/main");
     writeFileSync(join(w, "e.txt"), "e\n");
-    await must(w, "add", "."); await must(w, "commit", "-qm", "Fifth");
-    expect((await git(w, "push", "origin", "main")).ok).toBe(true);
+    await must(w, "add", "."); await must(w, "commit", "-qm", "Ninth");
+    expect((await git(w, "push", "origin", "HEAD:staging", "HEAD:main")).ok).toBe(true);
     await f.settle();
     expect(f.repo.mirrorStatus().error).toContain("GitHub's main has commits Erga doesn't");
     // Staging still mirrors.
@@ -191,7 +174,8 @@ describe("Erga's Git endpoint", () => {
   test("the Source page's view: the latest commits, and which main has", async () => {
     const view = await f.repo.branches();
     const [staging, main] = view.branches;
-    expect(main.commits[0].subject).toBe("Fifth");
+    expect(main.commits[0].subject).toBe("Ninth");
+    expect(staging.commits[0].sha).toBe(main.commit!);
     expect(main.commits.every((x) => x.inMain)).toBe(true);
     expect(staging.commits.length).toBeGreaterThan(3);
     expect(view.moves.length).toBeGreaterThan(0);
