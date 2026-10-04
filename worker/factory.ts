@@ -8,13 +8,18 @@
 //   /admin/factory                         the board (factory/page.ts)
 //   GET  /api/factory                      { enabled, vms, claude: { signedIn, at, by } }
 //   GET  /api/factory/tasks[/<id>]         the tasks, each with its log and screenshots
-//   POST /api/factory/tasks                { title, description }: a new task (its branch, then its VM)
-//   POST /api/factory/tasks/<id>/merge     into staging (one merge at a time), then the branch is deleted
+//   POST /api/factory/tasks                { title, description, startAfter?, mergeAfter? }: a new task (its branch,
+//                                          then its VM, unless it waits for a startAfter task to merge)
+//   PATCH /api/factory/tasks/<id>          { startAfter?, mergeAfter? }: changes its dependencies (lists of ids, or null)
+//   POST /api/factory/tasks/<id>/start     a queued task's VM; 409 while a startAfter task isn't merged
+//   POST /api/factory/tasks/<id>/merge     into staging (one merge at a time), then the branch is deleted; 409 while
+//                                          a dependency isn't merged (or merging ahead of it)
 //   POST /api/factory/tasks/<id>/discard   the branch deleted, the VM stopped
 //   POST /api/factory/tasks/<id>/revise    { instructions }: Claude Code works on the task again
 //   PUT  /api/factory/claude               { token }: the Claude plan's token (claude setup-token), stored encrypted
 //   DELETE /api/factory/claude             forgets it
-//   GET  /api/factory/events               server-sent events: { type: "task", task } on each change
+//   GET  /api/factory/events               server-sent events: { type: "task", task } on each change, and
+//                                          { type: "unblocked" | "blocked", id, title, why } for a task's dependencies
 //   GET  /api/factory/shots/<file>         a screenshot
 //   GET  /api/factory/tasks/<id>/open      to the task's preview (on Cloudflare, with a ticket for its host)
 //
@@ -28,6 +33,12 @@
 //   POST  /api/factory/tasks/<id>/screenshots   a PNG body, ?caption=&replace=1
 //   PATCH /api/factory/tasks/<id>               { status: "complete" | "failed", summary, error, commit }
 //
+// Dependencies between tasks are the local task queue's (development/task-queue/deps.ts,
+// README, The factory): startAfter and mergeAfter, a computed blockedBy, a
+// blocked start or merge refused (409), the merge checked again when its turn
+// comes. With no outer agent here, the factory starts a queued task itself as
+// soon as nothing blocks it.
+//
 // All the state is in one Durable Object, "factory" (SQLite): tasks, their
 // logs and screenshots, and the Claude token, encrypted (AES-GCM) with
 // FACTORY_KEY. Where the VMs run is a VmHost: locally the dev server's
@@ -36,6 +47,7 @@
 
 import { DurableObject } from "cloudflare:workers";
 import { deployHook } from "../deploy";
+import { type Blocked, dependents, depRules, depsNote, type DepTask, ids } from "../development/task-queue/deps";
 import { containersHost } from "../factory/cloudflare";
 import { factoryPage } from "../factory/page";
 import { branchName, taskPrompt } from "../factory/prompt";
@@ -54,6 +66,14 @@ export interface Task {
   vm: string | null; by: string; createdAt: string; updatedAt: string; mergedAt: string | null; mergeCommit: string | null;
   log: { at: string; message: string }[];
   screenshots: { file: string; caption: string; at: string }[];
+  /** Don't start until these tasks are merged. */
+  startAfter: number[];
+  /** Don't merge until these tasks are merged (the startAfter ones too). */
+  mergeAfter: number[];
+  /** Computed on every read (not stored): what the task waits for, if anything. */
+  blockedBy?: Blocked;
+  /** Its VM is being started (a queued task, between Start and the VM). */
+  starting?: boolean;
 }
 
 const enc = new TextEncoder();
@@ -171,7 +191,12 @@ type Row = {
   id: number; title: string; description: string; status: Status; branch: string; base: string | null; commit_sha: string | null;
   summary: string | null; error: string | null; preview_origin: string | null; preview_path: string | null; vm: string | null;
   origin: string; by_login: string; created: string; updated: string; merged_at: string | null; merge_commit: string | null; instructions: string | null;
+  /** JSON lists of task ids, or null. */
+  start_after: string | null; merge_after: string | null;
 };
+
+const list = (json: string | null): number[] => { try { const v = JSON.parse(json ?? "[]"); return Array.isArray(v) ? v.map(Number) : []; } catch { return []; } };
+const depOf = (r: Row): DepTask => ({ id: r.id, status: r.status, startAfter: list(r.start_after), mergeAfter: list(r.merge_after) });
 
 export class Factory extends DurableObject<Env> {
   private sql: SqlStorage;
@@ -179,6 +204,10 @@ export class Factory extends DurableObject<Env> {
   private beat: ReturnType<typeof setInterval> | null = null;
   /** Merges run one at a time, in the order they were asked for. */
   private merges: Promise<void> = Promise.resolve();
+  /** Queued tasks whose VM is being started (so a second Start doesn't start another). */
+  private starting = new Set<number>();
+  /** The dependency rules (development/task-queue/deps.ts), over this object's tasks. */
+  private deps = depRules((id) => { const r = this.row(id); return r && depOf(r); });
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -189,6 +218,9 @@ export class Factory extends DurableObject<Env> {
     this.sql.exec(`CREATE TABLE IF NOT EXISTS logs (n INTEGER PRIMARY KEY AUTOINCREMENT, task INTEGER NOT NULL, at TEXT NOT NULL, message TEXT NOT NULL)`);
     this.sql.exec(`CREATE TABLE IF NOT EXISTS shots (n INTEGER PRIMARY KEY AUTOINCREMENT, task INTEGER NOT NULL, file TEXT NOT NULL UNIQUE, caption TEXT NOT NULL, at TEXT NOT NULL, data BLOB NOT NULL)`);
     this.sql.exec(`CREATE TABLE IF NOT EXISTS secrets (name TEXT PRIMARY KEY, iv BLOB NOT NULL, data BLOB NOT NULL, by_login TEXT NOT NULL, at TEXT NOT NULL)`);
+    // Dependencies (#49), on a table made before them.
+    const cols = this.sql.exec<{ name: string }>("PRAGMA table_info(tasks)").toArray().map((c) => c.name);
+    for (const c of ["start_after", "merge_after"]) if (!cols.includes(c)) this.sql.exec(`ALTER TABLE tasks ADD COLUMN ${c} TEXT`);
     // A merge the object was stopped in the middle of goes back to ready to merge, saying so.
     for (const r of this.sql.exec<Row>("SELECT * FROM tasks WHERE status = 'merging'").toArray()) {
       this.update(r.id, { status: "complete", error: "The merge was stopped in the middle (the factory restarted). Merge again." });
@@ -206,6 +238,9 @@ export class Factory extends DurableObject<Env> {
       id: r.id, title: r.title, description: r.description, status: r.status, branch: r.branch, base: r.base, commit: r.commit_sha,
       summary: r.summary, error: r.error, url: r.preview_origin && r.preview_path != null ? r.preview_origin + r.preview_path : null,
       vm: r.vm, by: r.by_login, createdAt: r.created, updatedAt: r.updated, mergedAt: r.merged_at, mergeCommit: r.merge_commit, log, screenshots,
+      startAfter: list(r.start_after), mergeAfter: list(r.merge_after),
+      ...(this.deps.blocked(depOf(r)) ? { blockedBy: this.deps.blocked(depOf(r)) } : {}),
+      ...(this.starting.has(r.id) ? { starting: true } : {}),
     };
   }
 
@@ -232,23 +267,87 @@ export class Factory extends DurableObject<Env> {
     this.changed(id);
   }
 
-  async add(input: { title: string; description: string; by: string; origin: string }): Promise<Task> {
+  async add(input: { title: string; description: string; by: string; origin: string; startAfter?: unknown; mergeAfter?: unknown }): Promise<Task> {
     const title = input.title.trim().slice(0, 200), description = input.description.trim().slice(0, 20000);
     if (!title) throw new Error("A task needs a title.");
+    // A new task can't be in a cycle: nothing waits for it yet.
+    const deps = this.deps.depChanges(Object.fromEntries(Object.entries({ startAfter: input.startAfter, mergeAfter: input.mergeAfter }).filter(([, v]) => v !== undefined)));
+    if (typeof deps == "string") throw new Error(deps);
     const at = now();
-    const id = this.sql.exec<{ id: number }>(`INSERT INTO tasks (title, description, status, branch, origin, by_login, created, updated) VALUES (?, ?, 'queued', '', ?, ?, ?, ?) RETURNING id`,
-      title, description || title, input.origin, input.by, at, at).one().id;
+    const id = this.sql.exec<{ id: number }>(`INSERT INTO tasks (title, description, status, branch, origin, by_login, created, updated, start_after, merge_after) VALUES (?, ?, 'queued', '', ?, ?, ?, ?, ?, ?) RETURNING id`,
+      title, description || title, input.origin, input.by, at, at, deps.startAfter ? JSON.stringify(deps.startAfter) : null, deps.mergeAfter ? JSON.stringify(deps.mergeAfter) : null).one().id;
     this.sql.exec("UPDATE tasks SET branch = ? WHERE id = ?", branchName(id, title), id);
-    this.note(id, `Added by ${input.by}`);
-    this.ctx.waitUntil(this.launch(id, "work"));
+    this.note(id, `Added by ${input.by}${depsNote(deps)}`);
+    const waiting = this.deps.unmetStart(depOf(this.row(id)!));
+    if (waiting.length) this.note(id, `Queued: waiting for ${ids(waiting)} to merge (no VM until then)`);
+    else this.begin(id);
     return this.view(this.row(id)!);
+  }
+
+  /** Starts a queued task's VM and job, once (the caller checked that nothing blocks it). */
+  private begin(id: number) {
+    if (this.starting.has(id)) return;
+    this.starting.add(id);
+    this.ctx.waitUntil(this.launch(id, "work").finally(() => { this.starting.delete(id); this.changed(id); }));
+  }
+
+  /** Start, for a queued task: refused while a startAfter task isn't merged (no VM starts). */
+  async start(id: number, by: string, origin?: string): Promise<{ ok: boolean; error?: string }> {
+    if (origin) this.sql.exec("UPDATE tasks SET origin = ? WHERE id = ?", origin, id);
+    const r = this.row(id);
+    if (!r) return { ok: false, error: "no such task" };
+    if (r.status != "queued") return { ok: false, error: `task #${id} is ${r.status}: only a queued task can be started` };
+    const why = this.deps.startRefusal(depOf(r));
+    if (why) return { ok: false, error: why };
+    if (!this.starting.has(id)) this.note(id, `Started by ${by}`);
+    this.begin(id);
+    return { ok: true };
+  }
+
+  /** Changes a task's dependencies (startAfter, mergeAfter: lists of ids; null or [] clears one). */
+  async setDeps(id: number, body: Record<string, unknown>, by: string, origin?: string): Promise<{ ok: boolean; error?: string; status?: number }> {
+    if (origin) this.sql.exec("UPDATE tasks SET origin = ? WHERE id = ?", origin, id);
+    const r = this.row(id);
+    if (!r) return { ok: false, error: "no such task", status: 404 };
+    if (!("startAfter" in body) && !("mergeAfter" in body)) return { ok: false, error: "send startAfter or mergeAfter", status: 400 };
+    if (["merging", "merged", "discarded"].includes(r.status)) return { ok: false, error: `task #${id} is ${r.status}: its dependencies can't change`, status: 409 };
+    const deps = this.deps.depChanges(body, depOf(r));
+    if (typeof deps == "string") return { ok: false, error: deps, status: 400 };
+    const next = { startAfter: "startAfter" in deps ? deps.startAfter : list(r.start_after), mergeAfter: "mergeAfter" in deps ? deps.mergeAfter : list(r.merge_after) };
+    const fields: Partial<Record<keyof Row, string | null>> = {};
+    if ("startAfter" in deps) fields.start_after = deps.startAfter ? JSON.stringify(deps.startAfter) : null;
+    if ("mergeAfter" in deps) fields.merge_after = deps.mergeAfter ? JSON.stringify(deps.mergeAfter) : null;
+    this.update(id, fields, `Dependencies (${by}): ${depsNote(next).replace(/^ \(|\)$/g, "") || "none"}`);
+    this.startUnblocked([id]);
+    return { ok: true };
+  }
+
+  /** Starts each of these tasks that is queued and no longer waits for anything (the factory has no outer agent to do it). */
+  private startUnblocked(ids: number[]) {
+    for (const id of ids) {
+      const r = this.row(id);
+      if (r?.status == "queued" && !r.vm && !this.deps.unmetStart(depOf(r)).length) this.begin(id);
+    }
+  }
+
+  /** A dependency's news (merged, discarded, failed): on each dependent's log, as an event, and the unblocked queued ones started. */
+  private tellDependents(id: number) {
+    const dep = this.row(id);
+    if (!dep) return;
+    const waiting = dependents(this.sql.exec<Row>("SELECT * FROM tasks WHERE status NOT IN ('merged', 'discarded')").toArray().map(depOf), id);
+    for (const t of waiting) {
+      const news = this.deps.dependentNews(depOf(dep), t);
+      this.note(t.id, news.message);
+      if (news.change) this.event({ type: news.change, id: t.id, title: this.row(t.id)!.title, why: news.message });
+    }
+    if (dep.status == "merged") this.startUnblocked(waiting.map((t) => t.id));
   }
 
   /** A VM for the task (a new one unless it has one that's up), then the job. */
   private async launch(id: number, job: "work" | "revise") {
     const r = this.row(id)!;
     const host = vmHost(this.env, r.origin);
-    if (typeof host == "string") return this.update(id, { status: "failed", error: host });
+    if (typeof host == "string") { this.update(id, { status: "failed", error: host }); return this.tellDependents(id); }
     try {
       let vm = r.vm;
       if (!vm || !(await host.alive(vm).catch(() => false))) {
@@ -261,6 +360,7 @@ export class Factory extends DurableObject<Env> {
       await host.job(vm, "run.ts", [job], await this.jobEnv(id, "task"), false);
     } catch (e) {
       this.update(id, { status: "failed", error: `The VM didn't start: ${(e as Error).message}` });
+      this.tellDependents(id);
     }
   }
 
@@ -294,7 +394,7 @@ export class Factory extends DurableObject<Env> {
       case "status": {
         if (r.status == "merging") return { ok: false, error: "the task is merging" };
         if (body.status == "complete") this.update(id, { status: "complete", summary: String(body.summary ?? ""), commit_sha: body.commit ? String(body.commit) : r.commit_sha, error: null }, "Ready to merge");
-        else if (body.status == "failed") this.update(id, { status: "failed", error: String(body.error ?? "failed") }, "Failed");
+        else if (body.status == "failed") { this.update(id, { status: "failed", error: String(body.error ?? "failed") }, "Failed"); if (r.status != "failed") this.tellDependents(id); }
         else return { ok: false, error: "status: complete or failed" };
       }
     }
@@ -318,6 +418,8 @@ export class Factory extends DurableObject<Env> {
     if (!r) return { ok: false, error: "no such task" };
     if (!["complete", "failed"].includes(r.status)) return { ok: false, error: `task #${id} is ${r.status}: it takes instructions when it's ready to merge or failed` };
     if (!instructions.trim()) return { ok: false, error: "Say what to change." };
+    const why = this.deps.startRefusal(depOf(r));
+    if (why) return { ok: false, error: why };
     this.update(id, { instructions: instructions.trim().slice(0, 20000), status: "working", error: null }, `${by} asked: ${instructions.trim().slice(0, 500)}`);
     this.ctx.waitUntil(this.launch(id, "revise"));
     return { ok: true };
@@ -329,6 +431,9 @@ export class Factory extends DurableObject<Env> {
     const r = this.row(id);
     if (!r) return { ok: false, error: "no such task" };
     if (r.status != "complete") return { ok: false, error: `task #${id} is ${r.status}: only a task that's ready to merge can be merged` };
+    // Its dependencies merged, or merging now (ahead of it: checked again when its turn comes).
+    const why = this.deps.mergeRefusal(depOf(r));
+    if (why) return { ok: false, error: why };
     const waiting = this.sql.exec<{ n: number }>("SELECT count(*) AS n FROM tasks WHERE status = 'merging'").one().n;
     this.update(id, { status: "merging", error: null }, waiting ? `Merge requested by ${by}: waiting for ${waiting} merge${waiting > 1 ? "s" : ""} first` : `Merge requested by ${by}`);
     const run = this.merges.then(() => this.doMerge(id));
@@ -341,6 +446,9 @@ export class Factory extends DurableObject<Env> {
     const r = this.row(id)!;
     const host = vmHost(this.env, r.origin);
     if (typeof host == "string") return this.update(id, { status: "complete", error: host });
+    // A dependency that hasn't merged (its merge, queued ahead of this one, failed; or one added meanwhile).
+    const waiting = this.deps.mergeTimeRefusal(depOf(r));
+    if (waiting) return this.update(id, { status: "complete", error: waiting }, `Merge failed: ${waiting}`);
     try {
       this.note(id, `Merging ${r.branch} into staging`);
       const vm = await this.vmFor(id, host);
@@ -349,6 +457,7 @@ export class Factory extends DurableObject<Env> {
       if (!res.ok) return this.update(id, { status: "complete", error: `The merge failed: ${res.error}` }, "Merge failed: back to ready to merge");
       await host.stop(vm).catch(() => {});
       this.update(id, { status: "merged", merged_at: now(), merge_commit: String(res.commit), vm: null, preview_origin: null }, `Merged into staging as ${String(res.commit).slice(0, 10)}; ${r.branch} deleted; VM stopped`);
+      this.tellDependents(id);
       // Staging moved: its deploy (#40) builds and deploys staging.erga.dev. Locally the repository is the dev server's own, which no deploy reads.
       if (host.kind == "local") this.note(id, "Staging moved (the local repository: nothing deploys it)");
       else {
@@ -366,6 +475,9 @@ export class Factory extends DurableObject<Env> {
     if (!r) return { ok: false, error: "no such task" };
     if (["merging", "merged", "discarded"].includes(r.status)) return { ok: false, error: `task #${id} is ${r.status}` };
     this.update(id, { status: "discarded", preview_origin: null }, `Discarded by ${by}`);
+    this.tellDependents(id);
+    // A queued task that never started has no VM and no branch to delete.
+    if (r.status == "queued" && !r.vm && !this.starting.has(id)) return { ok: true };
     this.ctx.waitUntil((async () => {
       const host = vmHost(this.env, r.origin);
       if (typeof host == "string") return;
@@ -428,10 +540,16 @@ export class Factory extends DurableObject<Env> {
     return new Response(readable, { headers: { "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-store", "X-Accel-Buffering": "no" } });
   }
 
+  /** Sends the task to the board, and the tasks that depend on it (their blockedBy may have changed with it). */
   private changed(id: number) {
     const r = this.row(id);
     if (!r) return;
-    const line = enc.encode(`data: ${JSON.stringify({ type: "task", task: this.view(r) })}\n\n`);
+    const rows = [r, ...this.sql.exec<Row>("SELECT * FROM tasks WHERE status NOT IN ('merged', 'discarded') AND id != ?", id).toArray().filter((t) => list(t.start_after).includes(id) || list(t.merge_after).includes(id))];
+    for (const t of rows) this.event({ type: "task", task: this.view(t) });
+  }
+
+  private event(data: Record<string, unknown>) {
+    const line = enc.encode(`data: ${JSON.stringify(data)}\n\n`);
     for (const c of this.clients) this.send(c, line);
   }
 
@@ -473,7 +591,7 @@ export async function factoryDoor(request: Request, env: Env, url: URL): Promise
 /** /api/factory/... */
 export async function factoryApi(request: Request, env: Env, url: URL): Promise<Response> {
   const path = url.pathname.replace(/\/$/, "");
-  const m = /^\/api\/factory\/tasks\/(\d+)(?:\/(brief|log|branch|preview|screenshots|merge|discard|revise|open))?$/.exec(path);
+  const m = /^\/api\/factory\/tasks\/(\d+)(?:\/(brief|log|branch|preview|screenshots|merge|discard|revise|open|start))?$/.exec(path);
   const id = m ? Number(m[1]) : null, action = m?.[2] ?? "";
 
   // A VM, with its task's token.
@@ -529,13 +647,20 @@ export async function factoryApi(request: Request, env: Env, url: URL): Promise<
   // Everything that changes something needs the factory on.
   if (!on) return json({ error: "The factory is off: an admin turns it on with the factory setting (/admin)." }, 409);
   if (path == "/api/factory/tasks" && request.method == "POST") {
-    const body = await request.json().catch(() => ({})) as { title?: string; description?: string };
-    try { return json(await f.add({ title: String(body.title ?? ""), description: String(body.description ?? ""), by: admin.login, origin: url.origin }), 201); }
+    const body = await request.json().catch(() => ({})) as { title?: string; description?: string; startAfter?: unknown; mergeAfter?: unknown };
+    try { return json(await f.add({ title: String(body.title ?? ""), description: String(body.description ?? ""), by: admin.login, origin: url.origin, startAfter: body.startAfter, mergeAfter: body.mergeAfter }), 201); }
     catch (e) { return json({ error: (e as Error).message }, 400); }
   }
-  if (id != null && request.method == "POST" && ["merge", "discard", "revise"].includes(action)) {
+  if (id != null && !action && request.method == "PATCH") {
+    const body = await request.json().catch(() => null);
+    if (!body || typeof body != "object" || Array.isArray(body)) return json({ error: "send JSON: { startAfter, mergeAfter }" }, 400);
+    const r = await f.setDeps(id, body as Record<string, unknown>, admin.login, url.origin);
+    return r.ok ? json(await f.task(id)) : json({ error: r.error }, r.status ?? 409);
+  }
+  if (id != null && request.method == "POST" && ["merge", "discard", "revise", "start"].includes(action)) {
     const body = action == "revise" ? await request.json().catch(() => ({})) as { instructions?: string } : {};
-    const r = action == "merge" ? await f.merge(id, admin.login, url.origin) : action == "discard" ? await f.discard(id, admin.login, url.origin) : await f.revise(id, String(body.instructions ?? ""), admin.login, url.origin);
+    const r = action == "merge" ? await f.merge(id, admin.login, url.origin) : action == "discard" ? await f.discard(id, admin.login, url.origin)
+      : action == "start" ? await f.start(id, admin.login, url.origin) : await f.revise(id, String(body.instructions ?? ""), admin.login, url.origin);
     return r.ok ? json(await f.task(id), action == "merge" ? 202 : 200) : json(r, 409);
   }
   return json({ error: "Not found" }, 404);

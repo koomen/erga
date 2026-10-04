@@ -53,6 +53,7 @@ import { copyFileSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSyn
 import { tmpdir } from "node:os";
 import { basename, dirname, extname, join, resolve } from "node:path";
 import * as chrome from "./chrome.ts";
+import { type Blocked, dependents as dependentsIn, depRules, depsNote, ids } from "./deps.ts";
 
 const HERE = import.meta.dir;
 const PORT = Number(process.env.TASK_QUEUE_PORT ?? 4700);
@@ -120,18 +121,6 @@ interface Task {
   blockedBy?: Blocked;
 }
 
-/** What a task waits for: dependencies (by id) that aren't merged yet. */
-interface Blocked {
-  /** A queued task's startAfter tasks not merged yet: it can't start. */
-  start: number[];
-  /** Its startAfter and mergeAfter tasks not merged yet: it can't merge. */
-  merge: number[];
-  /** Those of them that won't merge as things stand (discarded or failed): someone must remove or change the dependency. */
-  stuck: number[];
-  /** In words: "waiting for #12 to merge", "can't merge until #12 merges", "#12 was discarded: ...". */
-  reason: string;
-}
-
 // ---- state ----------------------------------------------------------------
 
 const STORE = join(DATA, "tasks.json");
@@ -160,109 +149,20 @@ function touch(task: Task, changes: Partial<Task> = {}, message?: string) {
 const find = (id: number) => store.tasks.find((t) => t.id == id);
 
 // ---- dependencies ---------------------------------------------------------
+// The model and its rules are shared with the factory inside Erga: deps.ts.
 
-const DONE: Status[] = ["merged", "discarded"];
-/** "#12", "#12 and #13", "#12, #13 and #14". */
-const ids = (list: number[]) => list.map((id) => `#${id}`).join(", ").replace(/, ([^,]*)$/, " and $1");
-const unmerged = (list?: number[]) => (list ?? []).filter((id) => find(id)?.status != "merged");
-/** The startAfter tasks not merged yet: the task can't start. */
-const unmetStart = (t: Task) => unmerged(t.startAfter);
-/** The startAfter and mergeAfter tasks not merged yet: the task can't merge. */
-const unmetMerge = (t: Task) => [...new Set([...unmerged(t.startAfter), ...unmerged(t.mergeAfter)])];
-
-function blocked(t: Task): Blocked | undefined {
-  if (DONE.includes(t.status)) return undefined;
-  const merge = unmetMerge(t);
-  if (!merge.length) return undefined;
-  const start = t.status == "queued" ? unmetStart(t) : [];
-  const stuck = merge.filter((id) => ["discarded", "failed"].includes(find(id)?.status ?? "discarded"));
-  const reason = stuck.length
-    ? `blocked: ${stuck.map((id) => `#${id} ${find(id)?.status == "failed" ? "failed" : "was discarded"}`).join(", ")}; remove or change the dependency${stuck.some((id) => find(id)?.status == "failed") ? " (or fix and merge it)" : ""}`
-    : start.length ? `waiting for ${ids(start)} to merge` : `can't merge until ${ids(merge)} merge${merge.length == 1 ? "s" : ""}`;
-  return { start, merge, stuck, reason };
-}
+const { unmetStart, blocked, depChanges, startRefusal, mergeRefusal, mergeTimeRefusal, dependentNews } = depRules(find);
 
 function computeBlocked() {
   for (const t of store.tasks) { const b = blocked(t); if (b) t.blockedBy = b; else delete t.blockedBy; }
 }
 
-/**
- * Reads a dependency list from a request: an array of ids (or a "12,13" string); null or [] clears it.
- * Each must be another task that exists and isn't discarded. Returns the ids, or an error.
- */
-function parseDeps(v: unknown, self?: number): number[] | string {
-  if (v == null || v === "") return [];
-  const raw = Array.isArray(v) ? v : typeof v == "string" || typeof v == "number" ? String(v).split(",") : undefined;
-  if (!raw) return "dependencies are a list of task ids";
-  const list: number[] = [];
-  for (const x of raw) {
-    const s = String(x).trim().replace(/^#/, "");
-    if (!s) continue;
-    if (!/^\d+$/.test(s)) return `${JSON.stringify(x)} isn't a task id`;
-    const id = Number(s);
-    if (id == self) return `task ${id} can't depend on itself`;
-    const t = find(id);
-    if (!t) return `no task ${id}`;
-    if (t.status == "discarded") return `task ${id} is discarded`;
-    if (!list.includes(id)) list.push(id);
-  }
-  return list;
-}
-
-/** A chain of dependencies from one of `deps` back to `id` (so `id` waiting on them is a cycle), as ids from `id`. */
-function cycle(id: number, deps: number[]): number[] | undefined {
-  const seen = new Set<number>();
-  const walk = (n: number, path: number[]): number[] | undefined => {
-    if (n == id) return path;
-    if (seen.has(n)) return undefined;
-    seen.add(n);
-    const t = find(n);
-    for (const d of [...(t?.startAfter ?? []), ...(t?.mergeAfter ?? [])]) { const p = walk(d, [...path, d]); if (p) return p; }
-    return undefined;
-  };
-  for (const d of deps) { const p = walk(d, [id, d]); if (p) return p; }
-  return undefined;
-}
-
-/**
- * The dependency changes a POST or PATCH body asks for (startAfter, mergeAfter), checked: ids, and no cycle.
- * Returns the changes (only the keys given), or an error.
- */
-function depChanges(b: Record<string, any>, task?: Task): Pick<Task, "startAfter" | "mergeAfter"> | string {
-  const out: Pick<Task, "startAfter" | "mergeAfter"> = {};
-  for (const k of ["startAfter", "mergeAfter"] as const) {
-    if (!(k in b)) continue;
-    const list = parseDeps(b[k], task?.id);
-    if (typeof list == "string") return `${k}: ${list}`;
-    out[k] = list.length ? list : undefined;
-  }
-  if (task) {
-    const all = [...new Set([...(("startAfter" in out ? out.startAfter : task.startAfter) ?? []), ...(("mergeAfter" in out ? out.mergeAfter : task.mergeAfter) ?? [])])];
-    const loop = cycle(task.id, all);
-    if (loop) return `that makes a cycle: ${loop.map((id) => `#${id}`).join(" waits for ")}`;
-  }
-  return out;
-}
-
-/** " (starts after #12; merges after #14)", or nothing. */
-const depsNote = (t: Pick<Task, "startAfter" | "mergeAfter">) => {
-  const parts = [t.startAfter?.length ? `starts after ${ids(t.startAfter)}` : "", t.mergeAfter?.length ? `merges after ${ids(t.mergeAfter)}` : ""].filter(Boolean);
-  return parts.length ? ` (${parts.join("; ")})` : "";
-};
-
 /** The tasks still to do that wait on this one. */
-const dependents = (id: number) => store.tasks.filter((t) => !DONE.includes(t.status) && (t.startAfter?.includes(id) || t.mergeAfter?.includes(id)));
+const dependents = (id: number) => dependentsIn(store.tasks, id);
 
 /** Notes on each dependent's log what happened to a dependency (merged, discarded, failed), and what that means for it. */
 function tellDependents(dep: Task) {
-  for (const t of dependents(dep.id)) {
-    const b = blocked(t);
-    const what = dep.status == "merged" ? `#${dep.id} merged` : `#${dep.id} ${dep.status == "failed" ? "failed" : "was discarded"}`;
-    const now = dep.status != "merged" ? `this task is blocked until the dependency is removed or changed`
-      : !b ? (t.status == "queued" ? "unblocked: it can start now" : "unblocked: it can merge now")
-      : t.status == "queued" && !b.start.length ? "unblocked: it can start now" : b.reason;
-    touch(t, {}, `${what}: ${now}`);
-  }
+  for (const t of dependents(dep.id)) touch(t, {}, dependentNews(dep, t).message);
 }
 
 computeBlocked();
@@ -572,8 +472,8 @@ async function merge(task: Task) {
   touch(task, {}, "Merging");
   try {
     // A dependency that hasn't merged (its merge, queued ahead of this one, failed; or one added meanwhile).
-    const waiting = unmetMerge(task);
-    if (waiting.length) throw new Error(`Can't merge until ${ids(waiting)} merge${waiting.length == 1 ? "s" : ""} (${waiting.map((id) => `#${id} is ${find(id)?.status ?? "gone"}`).join(", ")}). Merge it again when they have, or remove the dependency.`);
+    const waiting = mergeTimeRefusal(task);
+    if (waiting) throw new Error(waiting);
     const wt = task.worktree;
     if (!wt || !existsSync(wt)) throw new Error("the task's worktree is gone");
     if (await git(wt, "status", "--porcelain", "--untracked-files=no")) throw new Error(`${wt} has uncommitted changes: commit them (or ask the task's agent to) and merge again`);
@@ -764,8 +664,8 @@ async function handle(req: Request): Promise<Response> {
     const deps = depChanges(b, task);
     if (typeof deps == "string") return fail(400, deps);
     if (b.status == "working" && task.status != "working") {
-      const waiting = unmerged("startAfter" in deps ? deps.startAfter : task.startAfter);
-      if (waiting.length) return fail(409, `task ${task.id} can't start: waiting for ${ids(waiting)} to merge (${waiting.map((id) => `#${id} is ${find(id)?.status}`).join(", ")})`);
+      const why = startRefusal(task, "startAfter" in deps ? deps.startAfter : task.startAfter);
+      if (why) return fail(409, why);
     }
     const changes: Partial<Task> = { ...deps };
     for (const k of ["status", "url", "summary", "error", "title", "description"] as const) if (k in b) (changes as any)[k] = b[k] ?? undefined;
@@ -848,8 +748,8 @@ async function handle(req: Request): Promise<Response> {
     if (!["complete", "failed"].includes(task.status) && !(task.status == "working" && url.searchParams.has("force"))) return fail(409, `task ${task.id} is ${task.status}, not complete`);
     if (!task.branch) return fail(409, "task has no branch");
     // Its dependencies merged, or merging now (queued ahead of it, checked again when its turn comes).
-    const notYet = unmetMerge(task).filter((id) => find(id)?.status != "merging");
-    if (notYet.length) return fail(409, `task ${task.id} can't merge until ${ids(notYet)} merge${notYet.length == 1 ? "s" : ""}${task.blockedBy?.stuck.length ? ` (${task.blockedBy.reason})` : ""}`);
+    const why = mergeRefusal(task);
+    if (why) return fail(409, why);
     const ahead = store.tasks.filter((t) => t.status == "merging").map((t) => `#${t.id}`);
     touch(task, { status: "merging", error: undefined }, ahead.length ? `Merge requested: waiting for ${ahead.join(", ")} to merge first` : "Merge requested");
     mergeLock = mergeLock.then(() => merge(task)).then(restartIfWanted);

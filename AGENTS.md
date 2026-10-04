@@ -107,6 +107,10 @@ by a "connect it to the real thing" task: make the task wait (`--after`), or
 write the contract and use `--merge-after`. A dependency that is discarded or
 fails blocks its dependents until someone removes or changes it.
 
+The factory inside Erga (`/admin/factory`) has the same dependencies, with
+the same rules (`development/task-queue/deps.ts`: change them there, for
+both), but starts an unblocked task itself (README, The factory).
+
 Questions about the code, explanations and other asks that change nothing
 in the repo are answered directly, without a task. Work on the task queue
 itself goes through the queue like anything else.
