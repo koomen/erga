@@ -62,7 +62,10 @@ serves the app's routes (`front.ts`). Its pages:
   `blog.html`, else `blog/index.html`), each with its editor at `#edit` after
   it (see [Documents with many pages](#documents-with-many-pages)).
 - **Settings**, `/settings`: your agent tokens (`/tokens` redirects there).
-- **Admin settings**, `/admin`: the server's settings and users, for admins.
+- **Admin settings**, `/admin`: the server's settings and users, for admins
+  who have unlocked admin access with their SSH key.
+- **Admin keys**, `/admin/keys`: an admin's SSH keys, and unlocking admin
+  access with them (see [Admin SSH keys](#admin-ssh-keys)).
 - **Deploy your own**, `/deploy`: anyone signed in, by default (see
   [Deploy your own](#deploy-your-own)).
 - **Source**, `/source`: Erga's own repository, for admins (see [Erga's own
@@ -361,12 +364,15 @@ The first admins come from the deploy: the logins in the `ADMINS` binding
 their row the first time they do; they can't be demoted or removed except by
 taking them out of `ADMINS` and deploying. Every other admin is a row, made
 by an admin. Locally, `DEV_LOGIN` is a bootstrap admin too, and everyone
-signed in gets a row as they come. An admin's agent does all of it for them
-too (see [Agents configure the server](#agents-configure-the-server)): ask
-the agent in the editor, or Claude Code with their token, to add a user.
+signed in gets a row as they come. Being an admin says who *may* administer
+the server; doing it also needs admin access unlocked with an SSH key the
+admin added themselves (see [Admin SSH keys](#admin-ssh-keys)). An admin's
+agent can do it all for them with an admin token (see [Agents configure the
+server](#agents-configure-the-server)): ask Claude Code, with one, to add a user.
 
 **The admin page.** `/admin` (`admin.ts`) is for admins only; anyone else,
-and an agent with an admin's token, gets a 404 there. It shows every
+and an agent with an admin's token, gets a 404 there. An admin who hasn't
+unlocked admin access goes to `/admin/keys` first, and comes back. It shows every
 setting compactly (its key, a one-line description, its value with Save
 and Reset; a small "set by whom" note, with when and the default on hover, or a
 "Locked" badge for one the deploy fixes, whose value is shown read-only), and every user (last seen, who added them,
@@ -531,9 +537,11 @@ storage.
 
 ### Agents configure the server
 
-An admin's agents can do what an admin can: the editor's own agent and an
-external one with their token have the same tools, defined once in
-`server-tools.ts` (`SERVER_TOOLS`):
+An admin's agent can do what an admin can, with an admin token (see [Admin
+SSH keys](#admin-ssh-keys)). The editor's own agent and an external one
+with a token have the same tools, defined once in `server-tools.ts`
+(`SERVER_TOOLS`), but the admin ones only ever reach an external agent with
+an admin token:
 
 - `document_access`, `share_document`: who a document is shared with, and
   sharing it (its owner only; the editor's agent may leave out `document`
@@ -546,13 +554,14 @@ external one with their token have the same tools, defined once in
 They need only the directory and who's asking, so they run in a document's
 host for the editor's agent (`agentToolsFor`, given to the session by
 `worker/doc-host.ts`) and in the Worker for the server's API (`server-api.ts`
-adds them to its registry). The admin ones are offered only to an admin: the
-editor's agent gets them (and a line in its system prompt) only if its
-person is one, looked up again before each new prompt; a token's tool list
+adds them to its registry). The admin ones are offered only to an admin
+with admin access unlocked (`Users.isUnlocked`): a token's tool list
 (`/api/ext/tools`, MCP `tools/list`, the personal guide) has them only for
-an admin's token, and `/llms.txt` lists them as admins only. Every call is
-checked again by the directory (`Users.mustAdmin`), so a stale list can't do
-anything. A new tool both agents should have is one more entry in
+an admin token (an admin's plain agent token gets a line saying how to make
+one), and `/llms.txt` lists them as admins only. The editor's agent never
+has them: a document's host carries no unlock, and the document's own text
+can steer its agent. Every call is checked again by the directory
+(`Users.mustAdmin`), so a stale list can't do anything. A new tool both agents should have is one more entry in
 `SERVER_TOOLS`.
 
 Secrets are set with `bunx cf workers secrets update`: `GITHUB_CLIENT_SECRET`
@@ -572,6 +581,130 @@ https://erga.dev/settings (it lasts a week) and:
 
 The token signs in test people (Ada, Bo, ...) who can open only test documents
 (`/<you>/test....`), where the scripted agent stands in for the model.
+
+### Admin SSH keys
+
+Everything that administers, edits or deploys the server itself needs more
+than a GitHub sign-in: an admin must also have **unlocked admin access**, by
+signing a one-time challenge from the server with an SSH key they added
+themselves. An unlock lasts an hour. Ordinary documents (reading, editing,
+sharing, publishing them) don't need it.
+
+**What needs an unlock** (the audit; each refuses a locked admin with 403
+and `{ error, locked: true }`, or sends them to unlock first):
+
+| surface | where |
+|---|---|
+| `/admin`, `POST /admin/settings`, `POST /admin/users` | `admin.ts` |
+| the admin tools (`list_settings`, `set_setting`, `reset_setting`, `list_users`, `add_user`, `set_user_role`, `remove_user`) over `/api/ext/tools`, `/mcp` and the editor's agent | `server-tools.ts`, `server-api.ts` |
+| `dir.config.list/set/reset`, `dir.users.list/add/setRole/remove`, whatever calls them | `Users.mustAdmin` (`users.ts`, `config.ts`) |
+| `/admin/factory`, `/api/factory/...` (not the VMs' own task tokens) | `worker/factory.ts` |
+| `/source`, `GET /api/source/branches`, `POST /api/source/merge`, `POST /api/source/mirror` | `worker/source.ts` |
+| `/git/erga.git` (clone, fetch, push) | `worker/source.ts` |
+| `GET /api/deploys`, `POST /api/deploys/<name>` (redeploy), `/log`, `/history`, `GET /api/events` | `worker/deploys.ts` |
+| `POST /api/docs/<id>/home` (choosing the homepage), `POST /api/docs/<id>/home/deploy` | `home.ts` |
+| editing the homepage document (its room, publishing, agents): its scripts run on this site itself, as whoever views it | `Directory.homeLimit` |
+| adding and revoking admin keys | `admin-access.ts` |
+
+Not covered, on purpose: `/api/deploys/<name>/hook` and `/api/snapshot/...`
+(server to server, with `DEPLOY_HOOK_SECRET` and `SNAPSHOT_TOKEN`); the
+factory VMs' `fct…` and `fgt…` tokens (one task, one branch, minted by the
+factory for a task an unlocked admin started); `/deploy` (it deploys a copy
+to the person's own Cloudflare account, and changes nothing here); `/__erga/...`
+(local development only, with the dev server's secret).
+
+**How it works** (`sshsig.ts`, `admin-keys.ts`, `admin-access.ts`; tables
+in `migrations/0110_admin_keys.sql`):
+
+- *Keys.* An admin adds public keys on `/admin/keys`. A key belongs to the
+  admin who added it, and only they can unlock with it; one key can't be
+  two admins'. Adding one needs proof of holding it: a challenge naming
+  the key's fingerprint, signed with it. ed25519, ECDSA (P-256/384/521),
+  RSA (2048 bits or more, `rsa-sha2-256`/`512` signatures, never SHA-1) and
+  security keys (`sk-ssh-ed25519`, `sk-ecdsa-sha2-nistp256`, a touch
+  required) work; the private key never leaves the admin's computer.
+- *Signatures* are OpenSSH's own (`ssh-keygen -Y sign -n erga-admin`),
+  verified in the Worker with WebCrypto. The namespace `erga-admin` means
+  a signature made for anything else (a git commit, a file) never counts.
+- *Challenges* are made by the server for one admin, one purpose (`unlock`
+  or `add-key`) and this server's host (so staging's can't be used on
+  erga.dev), with a random nonce: `erga-admin unlock host=erga.dev
+  login=ada nonce=… expires=…`. Each works once (deleted as it's checked,
+  whatever the answer) and for five minutes: no replay.
+- *Unlocks.* A signed unlock challenge gives a browser the `erga_admin`
+  cookie (HttpOnly, SameSite=Strict, Secure, an hour), valid only with the
+  session of the same person; or, with an agent token, an **admin token**
+  (`erga_admin_…`, an hour by default, 12 at most) for an agent, a script
+  or Git. Both are HMACs with `SESSION_SECRET` (apart from sessions' and
+  agent tokens'), name the key that made them, and are checked on every
+  request: the key must still be there and still its admin's (remembered
+  ten seconds; at once in the isolate that revoked it). Lock now clears the
+  cookie; signing out does too. A session carries the unlock as
+  `Session.unlocked`, `whoOf` passes it on, and the directory's admin-only
+  calls check it (`Users.mustAdmin`, `isUnlocked`).
+- *Agents and scripts.* `ERGA_TOKEN=<agent token> bun admin-login.ts
+  https://erga.dev [--key ~/.ssh/id_ed25519] [--hours 1]` asks for a
+  challenge, signs it with `ssh-keygen` and prints an admin token. So an
+  admin token needs both an agent token (a GitHub sign-in made it) and the
+  key. An admin token can't make another.
+- *The first key (bootstrap).* An admin with no key may add one without an
+  unlock, but only a key listed on their GitHub account
+  (`github.com/<login>.keys`), which only they can put there; adding it also
+  unlocks the browser. After that, a new key needs an unlock with one they
+  already have. Locally (`bun start`) GitHub isn't asked.
+- *Revocation.* An unlocked admin revokes their own keys, or any other
+  admin's (a lost laptop, a leak). It ends every unlock and admin token made
+  with the key at once. Someone made a user or removed loses their keys too.
+  Revoked keys stay listed, with who revoked them. `/admin/keys` also shows
+  a log: keys added and revoked, unlocks, admin tokens, failed tries.
+- *Lockout recovery.* Lost one key: unlock with another and revoke it. Lost
+  them all: another admin revokes them, and you add a first key from GitHub
+  again. The only admin, with none left: whoever holds the Cloudflare account
+  revokes them in D1, then you start again from GitHub:
+  `bunx cf d1 execute erga --remote --command "UPDATE admin_keys SET revoked = unixepoch() * 1000, revoked_by = 'recovery' WHERE login = '<you>' AND revoked IS NULL"`.
+- *Local development.* `ERGA_ADMIN_UNLOCKED=1` counts every admin as
+  unlocked, on localhost only (`isDev`); `tests/host.ts` sets it for the
+  tests that aren't about this, and `bun start` leaves it off.
+
+**Threat model.** What it stops: someone with a stolen Erga session cookie
+or agent token (an XSS elsewhere, a leaked `.env`, a token pasted into the
+wrong agent) can no longer change settings or users, push or merge code,
+deploy, use the factory, or edit the homepage; they also need an admin's SSH
+private key, and a fresh signature each hour. A prompt injection in a
+document can't make the editor's agent use admin tools. A signature can't be
+replayed (one-time nonces), moved to another server (the host is signed) or
+borrowed from git (the namespace). A database leak gives no working unlock
+(it holds only public keys; cookies and tokens need `SESSION_SECRET`).
+
+**What's still weak.**
+
+1. *GitHub is the root for a first key.* Someone who controls an admin's
+   GitHub account before the admin adds a key (or after another admin
+   revokes all of theirs) can sign in, add their own key to GitHub and
+   bootstrap. Add a key soon after becoming an admin.
+2. *Pushes to GitHub still deploy erga.dev* until production deploys itself
+   (Deploys, the runbook's step 7): Workers Builds deploys `main` from
+   github.com/koomen/erga, which no Erga key protects. So do `bun run deploy`
+   and `wrangler` from a machine with Cloudflare credentials, and the
+   Cloudflare dashboard. The Cloudflare account, `SESSION_SECRET` and the
+   GitHub repository remain roots of trust outside this scheme.
+3. *An unlock is a bearer credential for its hour.* A stolen session cookie
+   together with its `erga_admin` cookie, or a stolen admin token, works
+   until it ends or its key is revoked. Revoking the key is the only way to
+   end an admin token early; there's no per-token revocation.
+4. *The homepage runs on this site.* An unlocked admin who views a homepage
+   with hostile script gives that script their admin power for the rest of the
+   unlock (same origin). Only unlocked admins may edit it, which narrows but
+   doesn't close this. An editor tab opened while unlocked keeps its room
+   connection writable after the unlock ends, until it reconnects.
+5. *Revocation takes up to ten seconds* to reach other isolates (as with
+   removing a user).
+6. *The `/deploy` page, server-to-server secrets and the factory's VM tokens*
+   are outside this scheme (above). The VMs run code an admin asked for, with
+   the branch's push token: the merge is the review.
+7. *No second factor beyond the key.* A key with no passphrase on a stolen
+   laptop is enough (with the session or an agent token). Security keys
+   (`ed25519-sk`), which need a touch, are the better choice.
 
 ### Deploys: staging and production
 
@@ -711,7 +844,7 @@ can't be limited to one database, so it could write production's D1. The
 code only ever exports it, and the tests check every call (nothing but the
 export reaches production's database, and nothing reaches its Worker).
 
-**Status.** `GET /api/deploys` (admins, also with an admin's agent token)
+**Status.** `GET /api/deploys` (admins with admin access unlocked: the browser's, or an admin token)
 answers `{targets: [{name, host, branch, state, commit, deployId,
 liveDeploy, at, error, log, deployed, pending, steps, self}]}`: `state` is
 `idle`, `building`, `deploying`, `deployed`, `failed` or `cancelled`; `log`
@@ -803,8 +936,8 @@ change, and `--dry-run` shows the plan without doing anything.
    #39 is in, https://staging.erga.dev/source), and erga.dev is unchanged.
 6. **Staging deploys itself.** Once #39's source is in Artifacts with a
    `staging` branch, push a commit to it (`git push
-   https://staging.erga.dev/git/erga.git staging`, an admin's agent token as
-   the password). Watch https://staging.erga.dev/source (or
+   https://staging.erga.dev/git/erga.git staging`, an admin token from
+   `bun admin-login.ts https://staging.erga.dev` as the password). Watch https://staging.erga.dev/source (or
    `/api/deploys/staging/log`): the builder builds it, the pipeline
    deploys it, the server restarts into the new version and finishes, and
    `https://staging.erga.dev/api/deploys/version` says the new commit.
@@ -936,9 +1069,11 @@ it can tell the Source page, the deploy pipeline and the mirror.
 
 **The Git endpoint**, `https://<server>/git/erga.git` (`worker/source.ts`,
 `source/http.ts`): clone, fetch, pull and push, over Git's smart HTTP. Git
-asks for a username and password: any username, and one of your agent
-tokens (Settings) as the password; admins only (no token, or one that isn't:
-401, which makes git ask; a user who isn't an admin: 403).
+asks for a username and password: any username, and an admin token as the
+password (`ERGA_TOKEN=<agent token> bun admin-login.ts https://erga.dev`,
+see [Admin SSH keys](#admin-ssh-keys)); admins only (no token, an agent
+token, or one that ended or whose key was revoked: 401, which makes git ask;
+a user who isn't an admin: 403).
 
     git remote add erga https://erga.dev/git/erga.git
     git fetch erga
@@ -1008,8 +1143,8 @@ server), so while a deploy runs and no events arrive, the open log asks for
 `GET /api/source/branches` → `{ branches: [ { name, commit, commits: [ {
 sha, subject, author, email, at, parents, inMain } ], ahead } ], mirror: {
 url, lastPushAt, error, state, refs }, moves, remote }`. The API takes the
-app's session or an admin's agent token (Bearer); a POST with the session
-alone must come from this site's pages.
+app's session or an admin token (Bearer), with admin access unlocked either
+way; a POST with the session alone must come from this site's pages.
 
 **For the deploy pipeline.** After every push or merge that moves a branch,
 the repository calls the pipeline's `deployHook(branch, commit, env)`
@@ -1052,8 +1187,8 @@ Merge to here, light, dark and a phone; `--keep` leaves it running).
 3. Set `ERGA_ARTIFACTS_NAMESPACE=erga` in the deploy's environment (Workers
    Builds' build variables) and deploy: `cloudflare.config.ts` then binds
    `ARTIFACTS` and the mirror.
-4. Seed it with the whole history, through Erga: `ERGA_TOKEN=<an admin's
-   agent token> bun source/import.ts https://erga.dev` (from GitHub's main).
+4. Seed it with the whole history, through Erga: `ERGA_TOKEN=<an admin
+   token> bun source/import.ts https://erga.dev` (from GitHub's main).
    It refuses if main is already there.
 5. Point your checkouts at it (`git remote add erga https://erga.dev/git/erga.git`)
    and push there. GitHub follows.
@@ -1747,7 +1882,7 @@ over the text as it is now, as an edit open tabs see at once
 The tools are a registry (`TOOLS` in `server-api.ts`): whoami,
 list_documents, create_document, update_files, rename_document,
 delete_document, list_tokens and revoke_token, then those the editor's agent
-has too (`SERVER_TOOLS` in `server-tools.ts`: sharing, and for an admin's
+has too (`SERVER_TOOLS` in `server-tools.ts`: sharing, and for an admin
 token the server's settings and users; see [Agents configure the
 server](#agents-configure-the-server)), then the document tools
 (`documentToolSpecs` in `agent.ts`) with a `document` argument (an address,
@@ -2110,6 +2245,13 @@ restoring, and the agents' tools; `tests/versions.test.ts` covers their
 storage (unchanged files stored once).
 `tests/directory.test.ts` covers the directory, permissions, users and
 settings on bun:sqlite; `tests/tokens.test.ts` the tokens themselves.
+`bun tests/admin-keys.ts` checks admin SSH keys on a dev server without
+the shortcut: every admin, source, deploy, factory and homepage surface
+refusing a locked admin, the first key, Lock now, unlocking once (a replay
+refused), `admin-login.ts`'s admin token for the tools and Git, revoking,
+and the page in headless Chrome; `tests/admin-keys.test.ts` the keys,
+challenges and unlocks on bun:sqlite, and `tests/sshsig.test.ts` the
+signatures, against every kind of key ssh-keygen makes.
 `bun tests/settings.ts` checks document settings (the popover, Latest and
 Manual, the published-version menu's windows, live updates, the homepage's
 deploy states, errors, read-only, a phone and a dark page), and
@@ -2166,6 +2308,9 @@ back, merging edits from disk, the agent's exact-match edits and attribution.
 - `front.ts`: the app's own routes and pages (the front page, `/new`, `/docs` and
   its share dialog, delete, the unedited rule, titles)
 - `admin.ts`: `/admin`, the server's settings and users, for admins
+- `sshsig.ts`, `admin-keys.ts`, `admin-access.ts`, `admin-login.ts`: admin SSH keys: OpenSSH
+  signatures verified with WebCrypto; keys, challenges and unlocks (in D1:
+  `migrations/0110_admin_keys.sql`); `/admin/keys` and `/api/admin/...`; the command line's admin token
 - `source/`, `worker/source.ts`, `worker/source-host.ts`, `worker/artifacts.ts`: Erga's own source in
   Cloudflare Artifacts (Git's formats, the smart HTTP client and endpoint, pushes, the branch model, the
   GitHub mirror, the Source page, the import script); `dev/git-server.ts`, local development's stand-ins
