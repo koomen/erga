@@ -2,6 +2,7 @@ import type { Deployer } from "./deployer";
 import type { DocHost } from "./doc-host";
 import type { FactoryVm } from "../factory/cloudflare";
 import type { Factory } from "./factory";
+import type { Pipeline } from "./pipeline";
 import type { Home } from "./home";
 
 /** The Worker's bindings (cloudflare.config.ts); secrets are set with `cf workers secrets update`. */
@@ -59,7 +60,29 @@ export interface Env {
    */
   PAGES_DOMAIN?: string;
   PAGES_HOST?: string;
-  /** Local development only: "1" has /deploy talk to a pretend Cloudflare (deploy/mock.ts), never the real one. */
+  /** Branch deploys (deploy/branches.ts, worker/pipeline.ts): one object, "deploys", per server. */
+  PIPELINE: DurableObjectNamespace<Pipeline>;
+  /**
+   * Which of Erga's own deploy targets this server is (deploy/targets.ts):
+   * "production" on erga.dev, "staging" on staging.erga.dev, empty on any
+   * other (a /deploy server, local development unless ERGA_DEPLOY_TARGET).
+   */
+  DEPLOY_TARGET?: string;
+  /** The release this server runs (the commit, 12 characters; the pipeline sets it). GET /api/deploys/version answers it. */
+  ERGA_VERSION?: string;
+  /** The Cloudflare account the server is in (the pipeline sets it): where it deploys itself. */
+  CLOUDFLARE_ACCOUNT_ID?: string;
+  /** A secret: the API token the server deploys itself with. Branch deploys run only when it's set (deploy/setup.ts). */
+  CLOUDFLARE_DEPLOY_TOKEN?: string;
+  /** A secret, the same on production and staging: production's read-only snapshot endpoint takes it, and staging's import (deploy/snapshot.ts). */
+  SNAPSHOT_TOKEN?: string;
+  /** "1" on staging: the server takes snapshots in (never on production). */
+  SNAPSHOT_IMPORT?: string;
+  /** A secret, the same on the servers that tell each other of branch moves (production tells staging). */
+  DEPLOY_HOOK_SECRET?: string;
+  /** The builder Worker (deploy/builder/), bound by the pipeline on the targets it deploys. */
+  BUILDER?: Fetcher;
+  /** Local development only: "1" has /deploy and the branch deploys talk to a pretend Cloudflare (deploy/mock.ts), never the real one. */
   ERGA_DEPLOY_MOCK?: string;
   /** Local development only: sign in as this login without GitHub (honoured only on localhost). */
   DEV_LOGIN?: string;

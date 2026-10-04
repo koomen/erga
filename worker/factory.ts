@@ -35,6 +35,7 @@
 // (factory/cloudflare.ts), once set up.
 
 import { DurableObject } from "cloudflare:workers";
+import { deployHook } from "../deploy";
 import { containersHost } from "../factory/cloudflare";
 import { factoryPage } from "../factory/page";
 import { branchName, taskPrompt } from "../factory/prompt";
@@ -344,8 +345,11 @@ export class Factory extends DurableObject<Env> {
       if (!res.ok) return this.update(id, { status: "complete", error: `The merge failed: ${res.error}` }, "Merge failed: back to ready to merge");
       await host.stop(vm).catch(() => {});
       this.update(id, { status: "merged", merged_at: now(), merge_commit: String(res.commit), vm: null, preview_origin: null }, `Merged into staging as ${String(res.commit).slice(0, 10)}; ${r.branch} deleted; VM stopped`);
-      // Staging moved: with Erga's own source (#39) and its deploys (#40), staging.erga.dev deploys it (README, The factory).
-      this.note(id, "Staging moved: its deploy would start here (deployHook, once #39 and #40 are in)");
+      // Staging moved: its deploy (#40) builds and deploys staging.erga.dev. Locally the repository is the dev server's own, which no deploy reads.
+      if (host.kind == "local") this.note(id, "Staging moved (the local repository: nothing deploys it)");
+      else {
+        await deployHook("staging", String(res.commit), this.env).then(() => this.note(id, "Staging's deploy is asked for (/admin/deploys)"), (e) => this.note(id, `Staging's deploy wasn't asked for: ${(e as Error).message}`));
+      }
     } catch (e) {
       this.update(id, { status: "complete", error: `The merge failed: ${(e as Error).message}` }, "Merge failed: back to ready to merge");
     }

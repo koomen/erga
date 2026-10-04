@@ -1,0 +1,17 @@
+// The builder Worker's own config (deploy/builder/worker.ts). It isn't the
+// app: it's deployed once, apart, with `bunx wrangler deploy` from this
+// folder (deploy/setup.ts does it, after asking). Its container image is
+// Dockerfile here.
+{
+  "name": "erga-builder",
+  "main": "worker.ts",
+  "compatibility_date": "2026-09-30",
+  "workers_dev": false,
+  "preview_urls": false,
+  "containers": [
+    { "class_name": "Builder", "image": "./Dockerfile", "instance_type": "standard-2", "max_instances": 1 }
+  ],
+  "durable_objects": { "bindings": [{ "name": "BUILDS", "class_name": "Builder" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Builder"] }],
+  "observability": { "enabled": true, "logs": { "enabled": true } }
+}

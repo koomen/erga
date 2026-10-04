@@ -110,8 +110,9 @@ type TreeModule = { mountTree: typeof mountTree };
   // its body's when the root has none, as the browser itself would paint it.
   // The page reports its background (frame.ts). Only colours and gradients
   // are taken: an image would be fetched from here, as you.
-  // The first one lands at once, not faded in from the editor's white (page.html's transition): it's
-  // what the agent's opening uncovers on the way into the editor (openAgentOnEntry), so that waits for it.
+  // The first one is what the agent's opening uncovers on the way into the editor (openAgentOnEntry), so that waits for it.
+  // It lands at once, as every later one does: the band above the page (front.ts, BAND_STYLE) shows it too, and must keep
+  // up with the page.
   let backdropKnown!: () => void;
   const backdropReady = new Promise<void>((done) => (backdropKnown = done));
   let backdropSeen = false;
@@ -119,7 +120,6 @@ type TreeModule = { mountTree: typeof mountTree };
     if (!info) return;
     const first = !backdropSeen;
     backdropSeen = true;
-    if (first) document.documentElement.style.transition = "none";
     const color = b.color && CSS.supports("color", b.color) ? b.color : info.kind == "md" ? "" : "#ffffff";
     const image = b.image && !/url\(|image-set\(|image\(|element\(/i.test(b.image) && CSS.supports("background-image", b.image) ? b.image : "";
     const root = document.documentElement.style;
@@ -131,11 +131,7 @@ type TreeModule = { mountTree: typeof mountTree };
     document.documentElement.classList.toggle("page-light", !!color && !dark);
     // Remembered so the next load paints it before the page arrives (see page.html), not white first.
     store.set("erga:backdrop:v1", JSON.stringify({ bg: color, image, tone: color ? (dark ? "page-dark" : "page-light") : "" }));
-    if (first) {
-      void getComputedStyle(document.documentElement).backgroundColor;
-      document.documentElement.style.transition = "";
-      backdropKnown();
-    }
+    if (first) backdropKnown();
   }
 
   // ---------------------------------------------------------------- load
@@ -174,8 +170,22 @@ type TreeModule = { mountTree: typeof mountTree };
     const at = path == null ? doc : isPage(path) ? pageUrl(doc, path) : `${doc}/${path.replace(/^\/+|\/+$/g, "").split("/").map(encodeURIComponent).join("/")}`;
     return at.replace(/\/$/, "") + as + (editing() ? "#edit" : "");
   };
+  /**
+   * Goes to an address, once: the tree (after its own move or delete), the "tree" event and the catch-up on
+   * reconnecting (stillHere) may all ask for the same one at once, and a second navigation would cut the first short.
+   */
+  let goingTo: string | null = null;
+  const goTo = (url: string, replace = false) => {
+    if (goingTo == url) return;
+    goingTo = url;
+    // Following this page to where it moved (or went), with the tree open: it stays open there.
+    if (replace && !$("pages").hidden) { try { sessionStorage.setItem("erga:pages-open", BASE); } catch { /* private mode */ } }
+    // (A navigation that doesn't unload this page, only its hash changing, can be asked for again later.)
+    setTimeout(() => { if (goingTo == url) goingTo = null; }, 2000);
+    if (replace) location.replace(url); else location.assign(url);
+  };
   /** Goes to another of the document's pages: its address, in the editor while editing. */
-  const openPage = (path: string) => { location.assign(addressOf(path)); };
+  const openPage = (path: string) => goTo(addressOf(path));
 
   // The host attributes your edits and your agent to who you are, so the tab takes that.
   const me: Author = { user: info.userId, name: info.user, color: colorFor(info.userId), kind: "person", ...(info.avatar ? { avatar: info.avatar } : {}) };
@@ -431,9 +441,9 @@ type TreeModule = { mountTree: typeof mountTree };
       if (tree || !docName) return;
       slot.replaceChildren();
       tree = t.mountTree(slot, {
-        id: docName.id, base: docName.address, editing: true, query: as, showRoot: true, label: "Documents",
+        id: docName.id, base: docName.address, editing: true, query: as, showRoot: true, label: "Pages",
         rootTitle: docName.title, titleOf: pageTitle, current: info!.path, hasRelativeLinks,
-        onRenameRoot: () => toggleNaming(true),
+        onRenameRoot: () => toggleNaming(true), navigate: (url, o) => goTo(url, o.replace),
       });
       if (!pagesCard.hidden) tree.focus();
     }, (e: Error) => {
@@ -451,10 +461,12 @@ type TreeModule = { mountTree: typeof mountTree };
     if (!tree || pagesCard.hidden) return;
     treeStale ||= events.some((ev) => ev.target == files(collab.doc) && [...ev.changes.keys.values()].some((c) => c.action != "update"));
     clearTimeout(treeTimer);
-    treeTimer = window.setTimeout(() => { if (treeStale) tree?.refresh(); else tree?.retitle(); treeStale = false; }, treeStale ? 150 : 600);
+    treeTimer = window.setTimeout(() => { if (treeStale) tree?.refresh({ quiet: true }); else tree?.retitle(); treeStale = false; }, treeStale ? 150 : 600);
   });
-  // ?pages opens it straight away (a link to "this document's pages").
-  if (new URLSearchParams(location.search).has("pages") && editing()) requestAnimationFrame(() => togglePages(true));
+  // ?pages opens it straight away (a link to "this document's pages"), as does following this page to where it moved
+  // while it was open (goTo): it stays open across the move.
+  const reopen = (() => { try { const v = sessionStorage.getItem("erga:pages-open"); sessionStorage.removeItem("erga:pages-open"); return v == BASE; } catch { return false; } })();
+  if ((reopen || new URLSearchParams(location.search).has("pages")) && editing()) requestAnimationFrame(() => togglePages(true));
   pagesCard.addEventListener("keydown", (e) => { if (e.key == "Escape" && !e.defaultPrevented) { e.preventDefault(); togglePages(false); titleBtn.focus(); } });
 
   // ---------------------------------------------------------------- the room
@@ -553,14 +565,16 @@ type TreeModule = { mountTree: typeof mountTree };
   function listen() {
     const events = new WebSocket(`${location.protocol == "https:" ? "wss:" : "ws:"}//${location.host}${api("/api/events")}`);
     events.onmessage = (ev) => {
-      let msg: { type?: string; ev?: LogEvent; id?: string; req?: ViewRequest; name?: DocName; moved?: { from: string; to: string }; deleted?: string } = {};
+      let msg: { type?: string; ev?: LogEvent; id?: string; req?: ViewRequest; name?: DocName; moved?: { from: string; to: string }; deleted?: string; path?: string } = {};
       try { msg = JSON.parse(String(ev.data)); } catch { return; }
       if (msg.type == "agent" && msg.ev) agentEvent(msg.ev);
       else if (msg.type == "model") renderModel(msg as unknown as ModelState);
       else if (msg.type == "view" && msg.id) answerView(msg.id, msg.req ?? {});
       else if (msg.type == "name" && msg.name) showName(msg.name);
       else if (msg.type == "versions" || msg.type == "home") docSettings?.event(msg.type);
-      else if (msg.type == "tree") { treeChanged(msg); tree?.refresh(); }
+      else if (msg.type == "tree") treeChanged(msg);
+      // Your agent (or an external one, as you) opened another page: go there (open_page).
+      else if (msg.type == "open" && msg.path && msg.path != info!.path) openPage(msg.path);
     };
     // Events sent while the channel was down are gone; catch up from the transcript.
     // A rename missed meanwhile (or before it first opened) is caught up the same way.
@@ -572,12 +586,12 @@ type TreeModule = { mountTree: typeof mountTree };
 
   // The document's file tree changed (anyone's doing: tree.ts). Whatever shows the tree hears it as an
   // "erga-tree" event on window (the event's detail is the message: { type: "tree", moved?, deleted? }) and
-  // fetches it again (GET <BASE>/api/tree). This page, moved, goes to where it went; deleted, to the document's own.
+  // fetches it again (the tree, tree.ts, does both). This page, moved, goes to where it went; deleted, to the document's own.
   function treeChanged(msg: { moved?: { from: string; to: string }; deleted?: string }) {
     window.dispatchEvent(new CustomEvent("erga-tree", { detail: { type: "tree", ...msg } }));
     const under = (p: string) => pagePath == p || pagePath.startsWith(`${p}/`);
-    if (msg.moved && under(msg.moved.from)) location.replace(addressOf(msg.moved.to + pagePath.slice(msg.moved.from.length)));
-    else if (msg.deleted && under(msg.deleted)) location.replace(addressOf(null));
+    if (msg.moved && under(msg.moved.from)) goTo(addressOf(msg.moved.to + pagePath.slice(msg.moved.from.length)), true);
+    else if (msg.deleted && under(msg.deleted)) goTo(addressOf(null), true);
   }
   /**
    * Whether this page is still there, once the event channel is up (a move or delete may have gone by while
@@ -588,7 +602,7 @@ type TreeModule = { mountTree: typeof mountTree };
     if (!t || t.entries.some((e) => e.path == pagePath)) return;
     let at = pagePath;
     for (const m of t.moved ?? []) if (at == m.from || at.startsWith(`${m.from}/`)) at = m.to + at.slice(m.from.length);
-    location.replace(addressOf(t.entries.some((e) => e.path == at) ? at : null));
+    goTo(addressOf(t.entries.some((e) => e.path == at) ? at : null), true);
   }
 
   // ---------------------------------------------------------------- presence
@@ -1443,6 +1457,10 @@ Once you've read the guide, await further instructions.`;
 
   /** Where the user is in the document, so "this" and "here" mean something to the agent. */
   function editorContext(): string {
+    const at = addressOf(info!.path).replace(/[?#].*$/, "");
+    return `The user has the page ${info!.path} open (${at}).\n${caretContext()}`;
+  }
+  function caretContext(): string {
     const s = currentState();
     const sel = s.selection.main;
     const line = s.doc.lineAt(sel.from);

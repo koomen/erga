@@ -432,7 +432,7 @@ async function pagesDoor(request: Request, url: URL, doc: { owner: string; id: s
   return answer;
 }
 
-const HOST_STYLE = "html,body{margin:0;height:100%;overflow:hidden;overscroll-behavior:none;background:transparent}iframe{position:fixed;inset:0;width:100%;height:100%;border:0;background:transparent;visibility:hidden}iframe.on{visibility:visible}";
+const HOST_STYLE = "html,body{margin:0;height:100%;overflow:hidden;overscroll-behavior:none;background:transparent}iframe{position:fixed;inset:0;width:100%;height:100%;border:0;background:transparent;visibility:hidden}iframe.on{visibility:visible}html.wait iframe{visibility:hidden}";
 
 /** The frame's host page's version: a digest of its code (FNV-1a), which changes whenever that does. */
 const versionOf = (text: string) => {
@@ -478,6 +478,43 @@ const HOST_SCRIPT = `(function () {
     } catch (e) {}
   }
   if (view) view.addEventListener("load", function () { still(view); moved(view); });
+  // The band above the page (the document's page, viewDocument) takes the page's background: this tells the shell what it is,
+  // on every frame it changes (a page of a multi-page document, a theme switch), as a solid colour (a gradient's first one).
+  // The first time this page sees the document (nothing remembered here), the page waits out of sight until the shell has
+  // painted that colour, so a dark page never shows under a white band; later, the shell remembers it too, so it shows at once.
+  var band = null, known = null;
+  try { known = localStorage.getItem("erga:band"); } catch (e) {}
+  function reveal() { document.documentElement.classList.remove("wait"); }
+  if (known == null) { document.documentElement.classList.add("wait"); setTimeout(reveal, 500); }
+  function solid(cs) {
+    var img = cs.backgroundImage, stops = img && img != "none" && /gradient/.test(img) ? img.match(/rgba?\\([^)]*\\)/g) : null;
+    if (stops) return /^linear-gradient\\((to top|0deg|360deg)[,)]/.test(img) ? stops[stops.length - 1] : stops[0];
+    var c = cs.backgroundColor;
+    return /^(transparent|rgba\\([^)]*,\\s*0\\))$/.test(c) ? "" : c;
+  }
+  function colourOf(f) {
+    var d = f.contentDocument, w = f.contentWindow;
+    if (!d || !w || !d.documentElement || d.URL == "about:blank" || (!d.body && d.readyState == "loading")) return null;
+    var c = solid(w.getComputedStyle(d.documentElement));
+    if (!c && d.body) c = solid(w.getComputedStyle(d.body));
+    return c;
+  }
+  // A new page in a colour of its own (a link to another of the document's pages) waits out of sight in the same way, so
+  // it never shows under the last page's band; a page that changes its own colour (a theme switch) stays in sight.
+  var shown = null;
+  (function watch() {
+    try {
+      var f = document.querySelector("iframe.on"), c = f ? colourOf(f) : null;
+      if (c != null && c !== band) {
+        if (band != null && shown && f.contentDocument != shown) { document.documentElement.classList.add("wait"); setTimeout(reveal, 300); }
+        band = c;
+        try { localStorage.setItem("erga:band", c); } catch (e) {}
+        parent.postMessage({ type: "erga-band", color: c }, SHELL);
+      }
+      if (c != null) shown = f.contentDocument;
+    } catch (e) {}
+    requestAnimationFrame(watch);
+  })();
   function show(to) {
     var from = document.querySelector("iframe.on");
     if (from == to) return;
@@ -491,7 +528,8 @@ const HOST_SCRIPT = `(function () {
   addEventListener("message", function (e) {
     if (e.source != parent || e.origin != SHELL || !e.data) return;
     var type = e.data.type;
-    if (type == "erga-edit") {
+    if (type == "erga-band-ok") reveal();
+    else if (type == "erga-edit") {
       want = "edit";
       if (!loading) { loading = true; var s = document.createElement("script"); s.src = "/frame.js"; document.body.append(s); }
       else if (page() && page().dataset.ready) show(page());
@@ -648,18 +686,22 @@ async function viewDocument(platform: Platform, request: Request, opened: { doc:
   // Opened with #edit (which only the browser sees), for whoever may edit: the page is the editor's from its first moment
   // (EDITING_HEAD, EDITING_BODY), the frame starts on its half of the editor at once (&edit=1), and the editor's files are
   // fetched as the page parses, rather than one after another once its script runs (EDIT_BOOT).
-  const opening = editable ? `<script>${EDITING_HEAD}</script><style>html.erga-opening { background: var(--page-bg, #fff); }</style>` : "";
+  const opening = editable ? `<script>${EDITING_HEAD}</script>` : "";
   const frame = `<iframe id="frame" class="erga-view" ${editable ? "data-src" : "src"}="${esc(src)}" title="${esc(doc.title)}" sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups"></iframe>`;
+  // The band above the document (and, editing, the room the agent opens) takes the page's background: remembered from this
+  // document's last visit, before anything has loaded, then as the frame tells it (BAND_BOOT).
+  const backdrop = `<script>${BAND_HEAD}ergaBand(${JSON.stringify(doc.id)});</script>`;
   return new Response(`<!doctype html>
 <html lang="en">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <title>${esc(doc.title)}</title>
+<meta name="erga-doc" content="${esc(doc.id)}">
 <link rel="preconnect" href="${esc(origin)}">
-${meta}${opening}<style>html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: none; } #frame { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; display: block; background: transparent; }</style>
+${meta}${backdrop}${opening}<style>${BAND_STYLE}</style>
 <body>${editable ? `<script>${EDITING_BODY}</script>` : ""}
 ${frame}${editable ? `<script>${FRAME_SRC}</script>` : ""}
-<div class="erga-view-buttons">${clone}${edit}</div>${VIEW_STYLE}<script>${NAV_SCRIPT}</script>${editable ? `<script>${EDIT_BOOT}</script>` : ""}
+<div class="erga-view-buttons">${clone}${edit}</div>${VIEW_STYLE}<script>${NAV_SCRIPT}</script><script>${BAND_BOOT}</script>${editable ? `<script>${EDIT_BOOT}</script>` : ""}
 </body>
 </html>`, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "Referrer-Policy": "no-referrer", Link: `<${origin}>; rel=preconnect` } });
 }
@@ -671,18 +713,15 @@ export const editButton = (href: string, editing: boolean) => `<a href="${esc(hr
 
 /**
  * For whoever may edit, at the top of a document's page: opened with #edit, it
- * fetches the editor's files at once, and takes the page's background
- * (remembered from last time, main.ts) before the page has loaded, as the
- * editor's own canvas does.
+ * fetches the editor's files at once. (The page's background, remembered
+ * from last time, is BAND_HEAD's.)
  */
 const EDITING_HEAD = `if (location.hash == "#edit") {
-  document.documentElement.classList.add("erga-opening");
   for (const [href, as] of [["/editor.html", "fetch"], ["/page.js", "script"], ["/style.css", "style"], ["/fonts/inter.css", "style"]]) {
     const l = Object.assign(document.createElement("link"), { rel: "preload", href, as });
     if (as == "fetch") l.crossOrigin = "anonymous";
     document.head.append(l);
   }
-  try { const b = JSON.parse(localStorage.getItem("erga:backdrop:v1") || "null"); if (b?.bg) document.documentElement.style.setProperty("--page-bg", b.bg); } catch {}
 }`;
 /** ... and as its body starts: editing, from the first frame. */
 const EDITING_BODY = `if (location.hash == "#edit") document.body.classList.add("erga-editing");`;
@@ -720,6 +759,50 @@ const NAV_SCRIPT = `(() => {
     const here = ergaPageAddress();
     if (location.pathname != here) history.replaceState(history.state, "", here + location.search + location.hash);
     document.querySelector(".erga-view-buttons a[aria-pressed]")?.setAttribute("href", here + location.search + "#edit");
+  });
+})();`;
+
+/**
+ * The band at the top of a document's page (viewDocument), where the
+ * controls are: the document's frame starts below it, so they never cover
+ * the document, and it takes the document's own background, as a solid
+ * colour, so it reads as part of the page. --band-h is the controls' row
+ * (34px, at max(12px, the notch)) and a 10px gap; the editor's page.html
+ * keeps the frame there too. Until the frame says (BAND_BOOT), the colour
+ * is the one this document had last time on this browser, and the
+ * controls' tone (light or dark text) with it.
+ */
+const BAND_STYLE = `:root { --band-h: calc(max(12px, env(safe-area-inset-top)) + 44px); }
+html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: none; }
+html { background: var(--page-bg, var(--band, #fff)); }
+#frame { position: fixed; left: 0; top: var(--band-h); width: 100%; height: calc(100% - var(--band-h)); border: 0; display: block; background: transparent; }`;
+
+/** Sets the band's colour (ergaBand(id, colour)), or the one remembered for document `id` (ergaBand(id)); and the controls' tone to suit. Answers the tone. */
+const BAND_HEAD = `window.ergaBand = function (id, color) {
+  var key = "erga:band:v1:" + id, root = document.documentElement, tone = "";
+  try {
+    if (color === undefined) { var b = JSON.parse(localStorage.getItem(key) || "null"); color = b && typeof b.bg == "string" ? b.bg : ""; }
+  } catch (e) { color = ""; }
+  if (color && !(window.CSS && CSS.supports("color", color))) color = "";
+  var rgb = color.match(/[\\d.]+/g);
+  if (color && /^rgba?\\(/.test(color) && rgb && rgb.length >= 3) tone = (0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2]) / 255 < 0.45 ? "page-dark" : "page-light";
+  if (color) root.style.setProperty("--band", color); else root.style.removeProperty("--band");
+  root.classList.toggle("page-dark", tone == "page-dark");
+  root.classList.toggle("page-light", tone == "page-light");
+  if (arguments.length > 1) try { localStorage.setItem(key, JSON.stringify({ bg: color, tone: tone })); } catch (e) {}
+  return tone;
+};`;
+
+/** The band's colour, as the frame's host page tells it (pagesDoor, HOST_SCRIPT); answered once painted, so a first visit's page shows only under its own colour. */
+const BAND_BOOT = `(() => {
+  const frame = document.getElementById("frame"), pages = new URL(frame.src || frame.dataset.src, location.href).origin;
+  const id = document.querySelector('meta[name="erga-doc"]').content;
+  addEventListener("message", (e) => {
+    if (e.source != frame.contentWindow || e.origin != pages || e.data?.type != "erga-band") return;
+    const c = e.data.color;
+    if (typeof c != "string" || c.length > 200 || /url\\(/i.test(c)) return;
+    window.ergaBand(id, c);
+    requestAnimationFrame(() => frame.contentWindow.postMessage({ type: "erga-band-ok" }, pages));
   });
 })();`;
 
@@ -854,6 +937,11 @@ export const VIEW_STYLE = `
     position: fixed; top: max(12px, env(safe-area-inset-top)); z-index: 1000; display: flex; align-items: center;
     font: 500 13px/1 "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
   .erga-view-buttons { right: max(56px, calc(env(safe-area-inset-right) + 40px)); gap: 2px; }
+  /* On the band (BAND_STYLE), in the document's own colour: light or dark text to suit it, whatever the system's mode. */
+  html.page-dark .erga-view-buttons { --chrome: #8a8a94; --chrome-hover: #e4e4e9; --fg: #ececf1; --soft: #a1a1aa; }
+  html.page-light .erga-account { --acc-bg: #fff; --acc-fg: #1c1c1f; --acc-soft: #6b6b73; --acc-chrome: #a1a1a9; --acc-ring: #e6e6ea; --acc-hover: rgba(161, 161, 169, .14); }
+  html.page-dark .erga-account { --acc-bg: #1f1f23; --acc-fg: #ececf1; --acc-soft: #8f8f99; --acc-chrome: #8a8a94; --acc-ring: #2f2f35; --acc-hover: rgba(161, 161, 169, .16); }
+  html:is(.page-dark, .page-light) .erga-account-btn:not(.erga-account-out) { box-shadow: 0 0 0 2px var(--band, var(--acc-bg)); }
   .erga-view-button { position: relative; display: grid; place-items: center; width: 34px; height: 34px; border-radius: 8px; color: var(--chrome);
     transition: color 150ms ease, background-color 150ms ease; }
   .erga-view-button:hover { color: var(--chrome-hover); background: color-mix(in srgb, var(--chrome) 12%, transparent); }
@@ -1385,6 +1473,11 @@ function docsPage(session: Session, docs: Listed[], now: number, hours: number |
     b.addEventListener("click", () => showPages(b, b.getAttribute("aria-expanded") != "true"));
     if (opened.has(b.dataset.id)) showPages(b, true);
   }
+  // Changes made elsewhere (another tab, an agent) show here too: the open trees are read again when the tab comes back,
+  // and every few seconds while it's in view. Quietly: never while someone is naming, moving or deleting something in one.
+  const refreshOpen = () => { for (const [id, t] of trees) if (!document.getElementById("pages-" + id)?.hidden) t.refresh({ quiet: true }); };
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState == "visible") refreshOpen(); });
+  setInterval(() => { if (document.visibilityState == "visible") refreshOpen(); }, 4000);
 </script>`);
 }
 
