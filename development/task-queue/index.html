@@ -21,8 +21,9 @@
   .live::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--bad); }
   .live.on::before { background: var(--ok); }
   header a { margin-left: auto; color: var(--muted); font-size: 12px; }
-  main { display: grid; grid-template-columns: repeat(5, minmax(200px, 1fr)); gap: 14px; padding: 10px 24px 24px; align-items: start; }
-  @media (max-width: 1150px) { main { grid-template-columns: repeat(3, minmax(220px, 1fr)); } }
+  main { display: grid; grid-template-columns: repeat(5, minmax(190px, 1fr)) minmax(200px, .9fr); gap: 14px; padding: 10px 24px 24px; align-items: start; }
+  #cols { display: contents; }
+  @media (max-width: 1250px) { main { grid-template-columns: repeat(3, minmax(220px, 1fr)); } }
   @media (max-width: 900px) { main { grid-template-columns: 1fr; padding: 10px 16px; } header { padding: 16px; } }
   .col { background: var(--panel); border-radius: 10px; padding: 10px; min-height: 120px; }
   .col h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 2px 4px 10px; display: flex; justify-content: space-between; }
@@ -71,6 +72,47 @@
   .log time { color: var(--muted); margin-right: 8px; }
   .close { float: right; }
   a { color: var(--accent); }
+
+  /* Branches: main's latest commits, one dot each, newest at the top. The left lane is local main
+     (every commit), the right one origin/main: a filled dot where it has the commit, a hollow one where
+     it doesn't yet. A done card's commit badge repeats its two dots; hover either to see the pair. */
+  :root { --lane-local: var(--ink); --lane-origin: var(--ok); --row: 24px; --hl: rgba(47,91,211,.10); }
+  @media (prefers-color-scheme: dark) { :root { --hl: rgba(126,160,255,.14); } }
+  .col.branches h2 .n.unpushed { color: var(--warn); }
+  .legend { display: flex; gap: 12px; font-size: 11px; color: var(--muted); margin: -4px 4px 8px; }
+  .legend span { display: inline-flex; align-items: center; gap: 5px; }
+  .legend i, .pair i { width: 7px; height: 7px; border-radius: 50%; display: inline-block; background: var(--lane-local); }
+  .legend i.o, .pair i.o { background: var(--lane-origin); }
+  .pair i.o.no { background: none; box-shadow: inset 0 0 0 1.5px var(--warn); }
+  .graph { list-style: none; margin: 0; padding: 0; -webkit-mask-image: linear-gradient(#000 calc(100% - 5 * var(--row)), transparent); mask-image: linear-gradient(#000 calc(100% - 5 * var(--row)), transparent); }
+  .graph li { display: flex; align-items: center; height: var(--row); border-radius: 5px; overflow: hidden; transition: height .35s ease, opacity .35s ease, background-color .15s; }
+  .graph li.enter, .graph li.leave { height: 0; opacity: 0; }
+  .graph li.task { cursor: pointer; }
+  .graph li.hl { background: var(--hl); }
+  .lane { position: relative; width: 16px; height: 100%; flex: none; }
+  .lane::before, .lane::after { content: ""; position: absolute; left: 7px; width: 2px; height: 50%; background: var(--lane-local); opacity: .35; display: none; }
+  .lane::before { top: 0; } .lane::after { bottom: 0; }
+  .lane.up::before, .lane.down::after { display: block; }
+  .lane.o::before, .lane.o::after { background: var(--lane-origin); opacity: .5; }
+  .lane i { position: absolute; left: 4px; top: calc(50% - 4px); width: 8px; height: 8px; border-radius: 50%; background: var(--lane-local); z-index: 1; transition: background-color .4s, box-shadow .4s, transform .15s; }
+  .lane.o i { background: var(--lane-origin); }
+  .lane.o.no i { background: var(--panel); box-shadow: inset 0 0 0 1.5px var(--warn); }
+  .graph li.hl .lane.l i { box-shadow: 0 0 0 3px var(--accent); transform: scale(1.1); }
+  .graph .sub { flex: 1; min-width: 0; padding: 0 6px 0 4px; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--muted); }
+  .graph li.task .sub { color: var(--ink); }
+  .graph .sub b { font: 600 11px ui-monospace, monospace; color: var(--muted); margin-right: 4px; }
+  .graph li.hl .sub b { color: var(--accent); }
+  .commit { display: inline-flex; align-items: center; gap: 5px; }
+  .commit .pair { display: inline-flex; gap: 2px; }
+  .commit .where { color: var(--warn); }
+  .card.hl { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent), var(--shadow); }
+  #wire { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 5; overflow: visible; }
+  #wire path { fill: none; stroke: var(--accent); stroke-width: 1.5; }
+  #wire circle { fill: var(--accent); }
+  #tip { position: fixed; z-index: 6; pointer-events: none; max-width: 340px; background: var(--card); color: var(--ink); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,.14); padding: 7px 10px; font-size: 12px; display: none; }
+  #tip .s { font-weight: 600; overflow-wrap: anywhere; }
+  #tip .m { color: var(--muted); margin-top: 2px; font-size: 11px; }
+  #tip code { font: 11px ui-monospace, monospace; }
 </style>
 </head>
 <body>
@@ -79,7 +121,9 @@
   <span class="live" id="live">connecting</span>
   <a href="/api" target="_blank">API</a>
 </header>
-<main id="board"></main>
+<main id="board"><div id="cols"></div><section class="col branches" data-col="branches"><h2><span>Branches</span><span class="n" id="branches-n"></span></h2><div class="legend"><span><i></i>main</span><span><i class="o"></i>origin/main</span></div><ol class="graph" id="graph"></ol></section></main>
+<svg id="wire"></svg>
+<div id="tip"></div>
 <dialog id="dlg"></dialog>
 <script>
 const COLUMNS = [
@@ -90,6 +134,7 @@ const COLUMNS = [
   { title: "Done", statuses: ["merged", "discarded"] },
 ];
 let tasks = [];
+let history = { commits: [], tasks: {}, unpushed: 0, behind: 0, origin: false };
 let openId = null;
 const armed = new Set(); // discard buttons clicked once, waiting for the second click
 
@@ -113,31 +158,117 @@ function actions(t) {
 function card(t) {
   const last = t.log[t.log.length - 1];
   const thumbs = t.screenshots.slice(-3).map((s) => `<img src="/shots/${esc(s.file)}" alt="${esc(s.caption)}" loading="lazy">`).join("");
-  return `<div class="card ${t.status}" data-open="${t.id}">
+  const merge = history.tasks[t.id];
+  return `<div class="card ${t.status}" data-open="${t.id}"${merge ? ` data-sha="${merge.sha}"` : ""}>
     <div class="top"><span class="id">#${t.id}</span><span class="title">${esc(t.title)}</span></div>
-    <div class="meta">${t.branch ? `<code>${esc(t.branch)}</code>` : ""}<span>${t.status == "merged" ? `merged ${ago(t.mergedAt)} · ${esc(t.commit)}` : t.status == "merging" ? `merging · ${ago(t.updatedAt)}` : ago(t.updatedAt)}</span>${t.status == "failed" ? "<span>failed</span>" : ""}${t.status == "discarded" ? "<span>discarded</span>" : ""}</div>
+    <div class="meta">${t.branch ? `<code>${esc(t.branch)}</code>` : ""}<span>${t.status == "merged" ? `merged ${ago(t.mergedAt)}` : t.status == "merging" ? `merging · ${ago(t.updatedAt)}` : ago(t.updatedAt)}</span>${t.status == "failed" ? "<span>failed</span>" : ""}${t.status == "discarded" ? "<span>discarded</span>" : ""}${t.status == "merged" ? commitBadge(t) : ""}</div>
     ${t.error ? `<div class="err">${esc(t.error)}</div>` : last && !["merged", "discarded"].includes(t.status) ? `<div class="last">${esc(last.message)}</div>` : ""}
     ${thumbs && t.status != "discarded" ? `<div class="thumbs">${thumbs}</div>` : ""}
     ${actions(t)}
   </div>`;
 }
 
+/** A done task's merge commit, with the same two dots as its row in Branches: on local main, on origin/main. */
+function commitBadge(t) {
+  const m = history.tasks[t.id];
+  if (!m) return t.commit ? `<span class="commit" title="Not among main's latest commits"><code>${esc(t.commit)}</code></span>` : "";
+  return `<span class="commit" title="${m.remote ? "In local main and origin/main" : "In local main, not pushed to origin yet"}"><span class="pair"><i></i><i class="o ${m.remote ? "" : "no"}"></i></span><code>${esc(m.short)}</code>${m.remote ? "" : `<span class="where">not pushed</span>`}</span>`;
+}
+
 /** When a merging task's merge was asked for: they run one at a time, in that order. */
 const requested = (t) => t.log.findLast((l) => l.message.startsWith("Merge requested"))?.at ?? t.updatedAt;
 
 function render() {
-  const board = document.getElementById("board");
-  board.innerHTML = COLUMNS.map((c) => {
+  document.getElementById("cols").innerHTML = COLUMNS.map((c) => {
     let list = tasks.filter((t) => c.statuses.includes(t.status));
     // Newest activity first; done things keep only the latest. Merges go in the order they were asked for (one at a time).
     if (c.title == "Merging") list.sort((a, b) => requested(a).localeCompare(requested(b)) || a.id - b.id);
+    // Done: in the order of their merge commits on main (as in Branches), then the rest by time.
+    else if (c.title == "Done") list.sort((a, b) => (history.tasks[a.id]?.index ?? Infinity) - (history.tasks[b.id]?.index ?? Infinity) || (b.mergedAt ?? b.updatedAt).localeCompare(a.mergedAt ?? a.updatedAt));
     else list.sort((a, b) => (b.mergedAt ?? b.updatedAt).localeCompare(a.mergedAt ?? a.updatedAt));
     if (c.title == "Done") list = list.slice(0, 20);
     const slug = c.title.toLowerCase().replace(/\W+/g, "-");
     return `<section class="col ${slug}" data-col="${slug}"><h2><span>${c.title}</span><span class="n ${c.title == "Merging" && list.length ? "busy" : ""}">${list.length}</span></h2>${list.map(card).join("") || `<div class="empty">Nothing here</div>`}</section>`;
   }).join("");
   if (openId != null) renderDialog();
+  highlight(hovered);
 }
+
+// ---- Branches ----------------------------------------------------------------
+
+let drawn = false; // the first draw doesn't animate
+
+/** Keeps one row per commit, so a new commit slides in at the top and the oldest fades out at the bottom. */
+function renderBranches() {
+  const graph = document.getElementById("graph");
+  const rows = new Map([...graph.children].filter((li) => !li.classList.contains("leave")).map((li) => [li.dataset.sha, li]));
+  const want = new Set(history.commits.map((c) => c.sha));
+  for (const [sha, li] of rows) if (!want.has(sha)) {
+    if (!drawn) { li.remove(); continue; }
+    li.classList.add("leave");
+    setTimeout(() => li.remove(), 400);
+  }
+  let prev = null;
+  const cs = history.commits;
+  cs.forEach((c, i) => {
+    let li = rows.get(c.sha);
+    const fresh = !li;
+    if (fresh) { li = document.createElement("li"); li.dataset.sha = c.sha; if (drawn) li.classList.add("enter"); }
+    const t = c.task != null ? tasks.find((x) => x.id == c.task) : null;
+    const label = c.task != null ? `<b>#${c.task}</b>${esc(t?.title ?? c.subject.replace(/^Merge [^:]*:\s*/, ""))}` : esc(c.subject);
+    const up = i > 0, oUp = c.remote && cs[i - 1]?.remote, oDown = c.remote && (cs[i + 1]?.remote ?? true);
+    li.innerHTML = `<span class="lane l ${up ? "up" : ""} down"><i></i></span><span class="lane o ${c.remote ? "" : "no"} ${oUp ? "up" : ""} ${oDown ? "down" : ""}"><i></i></span><span class="sub">${label}</span>`;
+    li.classList.toggle("task", c.task != null);
+    li.classList.toggle("remote", c.remote);
+    if (c.task != null) li.dataset.open = c.task; else delete li.dataset.open;
+    graph.insertBefore(li, prev ? prev.nextSibling : graph.firstChild);
+    if (fresh && drawn) { li.offsetHeight; li.classList.remove("enter"); }
+    prev = li;
+  });
+  drawn = true;
+  const n = document.getElementById("branches-n");
+  n.textContent = !history.origin ? "no origin" : [history.unpushed ? `${history.unpushed} not pushed` : "pushed", history.behind ? `origin +${history.behind}` : ""].filter(Boolean).join(" · ");
+  n.classList.toggle("unpushed", !!history.unpushed);
+  highlight(hovered);
+}
+
+// Hovering a done card or a commit lights up both, and draws a line from the card to its dot.
+let hovered = null;
+function highlight(sha) {
+  hovered = sha;
+  for (const el of document.querySelectorAll(".hl")) if (el.dataset.sha != sha) el.classList.remove("hl");
+  const wire = document.getElementById("wire");
+  wire.innerHTML = "";
+  if (!sha) return;
+  const els = document.querySelectorAll(`[data-sha="${CSS.escape(sha)}"]`);
+  for (const el of els) el.classList.add("hl");
+  const card = [...els].find((el) => el.classList.contains("card"));
+  const dot = document.querySelector(`#graph li[data-sha="${CSS.escape(sha)}"]:not(.leave) .lane.l i`);
+  if (!card || !dot) return;
+  const a = card.querySelector(".commit") ?? card, cr = card.getBoundingClientRect(), ar = a.getBoundingClientRect(), dr = dot.getBoundingClientRect();
+  const x1 = cr.right, y1 = ar.top + ar.height / 2, x2 = dr.left - 3, y2 = dr.top + dr.height / 2;
+  if (x2 < x1 + 4) return; // Branches isn't beside Done (a narrow window)
+  const mid = (x1 + x2) / 2;
+  wire.innerHTML = `<circle cx="${x1}" cy="${y1}" r="2.5"/><path d="M${x1} ${y1} C${mid} ${y1} ${mid} ${y2} ${x2} ${y2}"/>`;
+}
+
+const tip = document.getElementById("tip");
+function showTip(li) {
+  const c = history.commits.find((x) => x.sha == li?.dataset.sha);
+  if (!c) { tip.style.display = "none"; return; }
+  tip.innerHTML = `<div class="s">${esc(c.subject)}</div><div class="m"><code>${esc(c.short)}</code> · ${ago(c.at)} · ${c.remote ? "on origin/main" : "local only, not pushed yet"}</div>`;
+  tip.style.display = "block";
+  const r = li.getBoundingClientRect(), w = tip.offsetWidth;
+  tip.style.left = `${Math.max(8, Math.min(r.left, innerWidth - w - 8))}px`;
+  tip.style.top = `${r.bottom + 4}px`;
+}
+document.addEventListener("mouseover", (e) => {
+  const el = e.target.closest?.("[data-sha]");
+  if ((el?.dataset.sha ?? null) != hovered) highlight(el?.dataset.sha ?? null);
+  showTip(e.target.closest?.("#graph li"));
+});
+document.addEventListener("scroll", () => highlight(hovered), true);
+addEventListener("resize", () => highlight(hovered));
 
 function renderDialog() {
   const t = tasks.find((x) => x.id == openId);
@@ -196,7 +327,8 @@ document.getElementById("dlg").addEventListener("click", (e) => { if (e.target.i
 function connect() {
   const live = document.getElementById("live");
   const es = new EventSource("/api/events");
-  es.addEventListener("tasks", (e) => { tasks = JSON.parse(e.data); render(); });
+  es.addEventListener("tasks", (e) => { tasks = JSON.parse(e.data); render(); renderBranches(); });
+  es.addEventListener("history", (e) => { history = JSON.parse(e.data); render(); renderBranches(); });
   es.onopen = () => { live.textContent = "live"; live.classList.add("on"); };
   es.onerror = () => { live.textContent = "reconnecting"; live.classList.remove("on"); };
 }
