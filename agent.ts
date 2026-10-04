@@ -43,6 +43,7 @@ import { agentName, colorFor, files, hasSeen, introduce, stamp, stateVector, typ
 import type { TreeOp } from "./tree";
 import { joinLocal, type Room } from "./room";
 import type { Naming } from "./directory";
+import type { PublishRequest, PublishResult, Published, Version, VersionsState } from "./versions";
 import { SERVER_TOOL_ACTIVITY } from "./server-tools";
 import { YjsWorkspace, WorkspaceError, cleanPath, globToRegExp, type Workspace } from "./workspace";
 import documentPrompt from "./DOCUMENT_PROMPT.md" with { type: "text" };
@@ -226,7 +227,12 @@ text file in it. ${PAGES_PROMPT}`}
   the browser tab) and its address, /<owner>/<slug>. Until someone sets them, the title
   follows the page's first heading and the slug follows the title, so a new heading
   usually renames the document by itself. Use set_title when asked to rename it or
-  change its address.${beyondPrompt(owner, beyond)}
+  change its address.
+- The document keeps versions (a snapshot of every file after each burst of edits, and
+  after each of your turns). list_versions and read_version show them; to bring an old
+  version back, use restore_version. publish_version chooses what viewers
+  see: "latest" (the document as it is, the default) or one version. Only publish when
+  asked.${beyondPrompt(owner, beyond)}
 - Keep replies short: say what you changed, not how. ${owner} can see the result.
 - Follow the rules below whenever you create or change a page, so people can keep
   editing it by hand. When you fix a page that breaks them, keep its text as it is.
@@ -255,6 +261,10 @@ function makeTools(ws: Workspace, opts: {
   readAsset: (path: string) => Promise<Uint8Array | null>;
   edited: (path: string, at: number) => void;
   naming?: Naming;
+  versions?: VersionsAccess;
+  canEdit?: () => boolean;
+  /** Who the agent's restores are by (its person's agent). */
+  by?: string;
   /** The document's file tree: new pages and folders, moves, deletes (host.ts, runTreeOp); resolves once the agent's replica has the result. */
   tree?: (op: TreeOp) => Promise<void>;
 }): AgentTool[] {
@@ -388,6 +398,96 @@ function makeTools(ws: Workspace, opts: {
     },
     ...(opts.tree ? treeTools(opts.tree) : []),
     ...(opts.naming ? namingTools(opts.naming) : []),
+    ...(opts.versions ? versionTools(opts.versions, opts.canEdit ?? (() => true), opts.by ?? "agent") : []),
+  ] as AgentTool[];
+}
+
+/** The document's versions and publishing, as the agents' tools reach them (worker/doc-host.ts; versions.ts). */
+export interface VersionsAccess {
+  state(opts: { before?: string | number | null; limit?: number }): Promise<VersionsState>;
+  version(ref: string | number): Promise<(Version & { files: string[]; index: string }) | null>;
+  file(ref: string | number, path: string): Promise<Uint8Array | null>;
+  publish(req: PublishRequest): Promise<PublishResult>;
+  /** Brings a version back as a new current version, by `by` (a login). */
+  restore(ref: string | number, by: string): Promise<{ ok: true; current: Version } | { ok: false; status: number; error: string }>;
+}
+
+/** list_versions, read_version and publish_version: what the person can do with versions and publishing, their agent can. */
+function versionTools(versions: VersionsAccess, canEdit: () => boolean, by: string): AgentTool[] {
+  const text = (s: string) => ({ content: [{ type: "text" as const, text: s }], details: {} });
+  const line = (v: Version) => `${v.id}  ${v.at}  ${v.authors.join(", ") || "(unknown)"}  ${v.description ?? "(description coming)"}`;
+  const published = (p: Published) => p.mode == "latest" ? `Published: latest (viewers see the document as it is, up to the keystroke; that's ${p.version.id} plus any edits since)` : `Published: manual, ${p.version.id} (viewers see that version until someone publishes another)`;
+  return [
+    {
+      name: "list_versions",
+      label: "List versions",
+      description: "List the document's versions, newest first: each one's id (v1, v2...), when it was cut, who edited, and a short description. A version is a snapshot of every file, cut after a burst of edits (when edits pause, when an agent's turn ends, when the last editor leaves). Also says which version viewers see (published: \"latest\" or one chosen version).",
+      parameters: Type.Object({
+        before: Type.Optional(Type.String({ description: "Only versions older than this one (its id, e.g. \"v12\"), to page back" })),
+        limit: Type.Optional(Type.Number({ description: "How many (default 10, at most 100)" })),
+      }),
+      execute: async (_id, p: { before?: string; limit?: number }) => {
+        const s = await versions.state({ before: p.before ?? null, limit: p.limit });
+        const more = s.versions.length && s.versions[s.versions.length - 1].n > 1 ? `\n[Older versions: before=${s.versions[s.versions.length - 1].id}]` : "";
+        return text(`${published(s.published)}\nCurrent: ${s.current.id}${s.pending ? " (with edits since, not yet a version)" : ""}; ${s.total} version(s).\n\n${s.versions.map(line).join("\n")}${more}`);
+      },
+    },
+    {
+      name: "read_version",
+      label: "Read a version",
+      description: `Read an old version of the document. Without path: its files and details. With path: that file's text as it was in that version (cut to ${MAX_LINES} lines or ${MAX_BYTES / 1024}KB; use offset/limit), or the picture for an image. To bring a whole old version back, use restore_version.`,
+      parameters: Type.Object({
+        version: Type.String({ description: "The version's id (\"v3\") or number" }),
+        path: Type.Optional(Type.String({ description: "A file in it, relative to the document's folder" })),
+        offset: Type.Optional(Type.Number({ description: "Line number to start reading from (1-indexed)" })),
+        limit: Type.Optional(Type.Number({ description: "Maximum number of lines to read" })),
+      }),
+      execute: async (_id, p: { version: string; path?: string; offset?: number; limit?: number }) => {
+        const v = await versions.version(p.version);
+        if (!v) throw new Error(`There's no version "${p.version}": list_versions shows them.`);
+        if (!p.path) return text(`${line(v)}\nPage: ${v.index}\nFiles:\n${v.files.join("\n")}`);
+        const path = p.path.replace(/^\.?\//, "");
+        const bytes = await versions.file(v.id, path);
+        if (!bytes) throw new Error(`${v.id} has no file ${path}. Its files: ${v.files.slice(0, 50).join(", ")}`);
+        if (IMAGE.test(path)) return { content: [{ type: "image" as const, data: Buffer.from(bytes).toString("base64"), mimeType: MIME[path.split(".").pop()!.toLowerCase()] }], details: {} };
+        let body: string;
+        try { body = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(bytes); } catch { return text(`${path} in ${v.id} is a binary file of ${bytes.length} bytes.`); }
+        const lines = body.split("\n");
+        const start = Math.max(0, (p.offset ?? 1) - 1);
+        let end = Math.min(lines.length, start + (p.limit ?? MAX_LINES));
+        let out = lines.slice(start, end).join("\n");
+        while (out.length > MAX_BYTES && end > start + 1) { end = start + Math.max(1, Math.floor((end - start) / 2)); out = lines.slice(start, end).join("\n"); }
+        if (end < lines.length) out += `\n\n[Showing lines ${start + 1}-${end} of ${lines.length}. Use offset=${end + 1} to continue.]`;
+        return text(out);
+      },
+    },
+    {
+      name: "restore_version",
+      label: "Restore a version",
+      description: "Bring an old version back: its files are written over the document as it is now (files it didn't have are deleted), which everyone editing sees at once, and that becomes a new version, the current one. Nothing is lost: edits not yet in a version become one first, and every version stays. What's published in \"manual\" mode stays as it is. Only someone who may edit the document may; only do it when asked.",
+      parameters: Type.Object({ version: Type.String({ description: "The version's id (\"v3\") or number" }) }),
+      execute: async (_id, p: { version: string }) => {
+        if (!canEdit()) throw new Error("You may only view this document, so you can't restore a version.");
+        const r = await versions.restore(p.version, by);
+        if (!r.ok) throw new Error(r.error);
+        return text(`Restored. The current version is now ${r.current.id} (${r.current.description}).`);
+      },
+    },
+    {
+      name: "publish_version",
+      label: "Publish",
+      description: "Choose what the document's viewers see. mode \"latest\": the document as it is, always, up to the keystroke (the default). mode \"manual\": one version, until someone publishes another (version: its id; without it, the current state, which becomes a version first). Editors always edit the current state. Only someone who may edit the document may publish; only do it when asked.",
+      parameters: Type.Object({
+        mode: Type.Union([Type.Literal("latest"), Type.Literal("manual")], { description: "\"latest\" or \"manual\"" }),
+        version: Type.Optional(Type.String({ description: "With mode \"manual\": the version's id (\"v3\"); default the current state" })),
+      }),
+      execute: async (_id, p: { mode: "latest" | "manual"; version?: string }) => {
+        if (!canEdit()) throw new Error("You may only view this document, so you can't publish it.");
+        const r = await versions.publish(p.mode == "latest" ? { mode: "latest" } : { mode: "manual", ...(p.version ? { versionId: p.version } : {}) });
+        if (!r.ok) throw new Error(r.error);
+        return text(`Done. ${published(r.published)}.`);
+      },
+    },
   ] as AgentTool[];
 }
 
@@ -473,7 +573,8 @@ function namingTools(naming: Naming): AgentTool[] {
 export function documentToolSpecs(): ToolSpec[] {
   const none = () => { throw new Error("no document"); };
   const naming = { get: none, set: none } as unknown as Naming;
-  return makeTools(null as unknown as Workspace, { view: none, readAsset: none, edited: none, naming, tree: none })
+  const versions = { state: none, version: none, file: none, publish: none, restore: none } as unknown as VersionsAccess;
+  return makeTools(null as unknown as Workspace, { view: none, readAsset: none, edited: none, naming, tree: none, versions })
     .map((t) => ({ name: t.name, description: t.description, parameters: JSON.parse(JSON.stringify(t.parameters)) }));
 }
 
@@ -534,9 +635,13 @@ export interface SessionOptions {
    * before each new prompt, so becoming (or stopping being) an admin shows.
    */
   serverTools?: () => Promise<AgentTool[]>;
+  /** The agent's turn ended (or an external agent's run of calls did): the document cuts a version. */
+  turnEnded?: () => void;
+  /** The document's versions and publishing; without it those tools are left out. */
+  versions?: VersionsAccess;
 }
 
-const TOOL_ACTIVITY: Record<string, string> = { ...SERVER_TOOL_ACTIVITY, new_page: "making a page", mkdir: "making a folder", mv: "moving", rm: "deleting", read: "reading", edit: "editing", write: "writing", ls: "looking around", find: "looking for files", grep: "searching", view_page: "looking at the page", get_title: "reading the title", set_title: "renaming the document" };
+const TOOL_ACTIVITY: Record<string, string> = { ...SERVER_TOOL_ACTIVITY, new_page: "making a page", mkdir: "making a folder", mv: "moving", rm: "deleting", read: "reading", edit: "editing", write: "writing", ls: "looking around", find: "looking for files", grep: "searching", view_page: "looking at the page", get_title: "reading the title", set_title: "renaming the document", list_versions: "looking at versions", read_version: "reading an old version", restore_version: "restoring a version", publish_version: "publishing" };
 
 export async function startSession(opts: SessionOptions): Promise<AgentSession> {
   const { cfg, owner } = opts;
@@ -573,8 +678,12 @@ export async function startSession(opts: SessionOptions): Promise<AgentSession> 
   // calling tools: during a call, and for a while after the last one, since
   // it's thinking between calls and nothing says when it's done.
   const busy = { agent: false, ext: 0, extTimer: null as ReturnType<typeof setTimeout> | null };
+  let wasBusy = false;
   const syncBusy = (activity?: string | null) => {
     const on = busy.agent || busy.ext > 0 || busy.extTimer != null;
+    // A turn just ended: the document cuts a version of it.
+    if (wasBusy && !on) opts.turnEnded?.();
+    wasBusy = on;
     presence({ busy: on, activity: on ? activity ?? (awareness.getLocalState()?.activity as string | null) ?? "working" : null });
   };
   const undoable = () => emit({ t: "undoable", count: undo.undoStack.length });
@@ -588,6 +697,9 @@ export async function startSession(opts: SessionOptions): Promise<AgentSession> 
     view: (req) => opts.view({ ...req, after: stateVector(doc) }),
     readAsset: opts.readAsset,
     naming: opts.naming,
+    versions: opts.versions,
+    canEdit: opts.canEdit,
+    by: agentName(owner.id),
     tree: opts.tree && (async (op) => {
       if (!opts.canEdit()) throw new Error("Your user can only view this document, so you can't change it.");
       await opts.tree!(op);
@@ -788,6 +900,11 @@ error says what to fix), 401 (bad token) or 404 (no such tool).
   follows the title. Use set_title when asked to rename the document or change
   its address; old addresses keep redirecting, and the API address above never
   changes.
+- The document keeps versions (a snapshot of every file after each burst of
+  edits, and after each run of your calls). list_versions and read_version show
+  them, and restore_version brings one back as a new version; publish_version
+  chooses what viewers see: "latest" (the document as it is, the default) or one
+  version. Only restore or publish when asked.
 - Follow the rules below whenever you create or change a page, so people can keep
   editing it by hand.
 

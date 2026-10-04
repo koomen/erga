@@ -9,6 +9,7 @@
 #                     who you are in every page's corner (tests/account.ts),
 #                     a document's pages tree (tests/tree.ts),
 #                     the first switch into editing on a slow network (tests/switch.ts),
+#                     versions and publishing (tests/versions.ts),
 #                     document settings (tests/settings.ts),
 #                     live reload (tests/reload.ts, in a copy of the checkout)
 #                     and the multiplayer suite, each
@@ -43,6 +44,7 @@ page_group() {
   run account bun tests/account.ts
   run tree bun tests/tree.ts
   run switch bun tests/switch.ts
+  run versions bun tests/versions.ts
   run settings bun tests/settings.ts
   # Latency is measured afterwards, alone: other tests running would skew it.
   run suite bun tests/suite/run.ts --skip latency

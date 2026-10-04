@@ -34,13 +34,16 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Redacted from "effect/Redacted";
 import * as Scope from "effect/Scope";
-import { agentConfigFrom } from "../agent";
+import { agentConfigFrom, type AgentConfig } from "../agent";
 import { DIRECTORY_EVERY_MS, nameOf, namingFor, throttle, UNTITLED, type DocName, type DocRow } from "../directory";
 import { afterUnedited, titleOf } from "../front";
-import { cleanRel, docFile, makeHost } from "../host";
+import { cleanRel, docFile, makeHost, relativeUrl } from "../host";
+import { resolvePage } from "../tree";
 import { agentToolsFor } from "../server-tools";
 import { FileStore, Room, StateStore, StoreError } from "../room";
-import { assets, isTextPath, files as texts } from "../src/room/doc";
+import { agentName, assets, authorOf, files as texts, folders, isTextPath, type Author } from "../src/room/doc";
+import { describeChange, fallbackDescription, firePublished, publicVersion, versionNumber, Versions, type KV, type Published, type PublishRequest, type PublishResult, type StoredVersion, type Version, type VersionsState } from "../versions";
+import * as Y from "yjs";
 import { directoryOf } from "./d1";
 import { DiskLink } from "./disk";
 import type { Env } from "./env";
@@ -49,7 +52,7 @@ import type { Env } from "./env";
  * What a document is: its id, who made it, which file is its page, whether
  * it's a test document, and when a file last changed (never, if unset).
  */
-interface Meta { id: string; owner: string; index: string; created: number; modified?: number; test?: boolean; disk?: OnDisk }
+interface Meta { id: string; owner: string; index: string; created: number; modified?: number; test?: boolean; disk?: OnDisk; published?: { n: number } }
 
 /** A document that's a file or folder on disk (local development): where it is, its address there, and whether it's a single file. */
 interface OnDisk { path: string; slug: string; only?: boolean }
@@ -78,6 +81,22 @@ export class DocHost extends DurableObject<Env> {
   });
 
   private sync: (() => void) | null = null;
+
+  /** Its versions (versions.ts), in its own storage. */
+  private versions = new Versions(kvOf(this.ctx.storage));
+  /**
+   * Edits not yet in a version: since when, by whom, and the timers that cut
+   * one (see `noteEdit` for the rule).
+   */
+  private pending = { dirty: false, since: 0, authors: new Set<string>(), idle: null as ReturnType<typeof setTimeout> | null, max: null as ReturnType<typeof setTimeout> | null };
+  /** Cuts, one at a time. */
+  private cutting: Promise<unknown> = Promise.resolve();
+  /** Room connections that may edit: when the last one goes, a version is cut. */
+  private editing = 0;
+  /** The published version's number in "manual" mode, null in "latest" (undefined: not read yet). */
+  private pub: number | null | undefined = undefined;
+  private get idleMs() { return Number(this.env.ERGA_VERSION_IDLE_MS) || 30_000; }
+  private get maxMs() { return Number(this.env.ERGA_VERSION_MAX_MS) || 5 * 60_000; }
   /**
    * Who may edit, by person id, as the front door last said (x-erga-access):
    * their agent, and an external agent acting for them, may do what they could
@@ -98,6 +117,9 @@ export class DocHost extends DurableObject<Env> {
     const meta: Meta = { id, owner: owner.toLowerCase(), index, created: Date.now(), ...(opts.modified ? { modified: opts.modified } : {}), ...(opts.test ? { test: true } : {}) };
     await this.ctx.storage.put(META, meta);
     if (!meta.test && opts.expires != null) await this.ctx.storage.setAlarm(opts.expires);
+    // Its first version: the files it starts from.
+    const first = new Map(Object.entries(files).map(([path, data]) => [path, typeof data == "string" ? encoder.encode(data) : data]));
+    await this.versions.cut(first, index, [meta.owner], "First version");
     return true;
   }
 
@@ -175,8 +197,11 @@ export class DocHost extends DurableObject<Env> {
    * latest edits are in it), and its page: what a copy of it starts from.
    * Null if there's no such document.
    */
-  async snapshot(): Promise<{ index: string; files: Record<string, string | Uint8Array> } | null> {
+  async snapshot(opts: { published?: boolean } = {}): Promise<{ index: string; files: Record<string, string | Uint8Array> } | null> {
     const meta = await this.ctx.storage.get<Meta>(META);
+    // Someone who may only view it, in "manual" mode, copies what they see: the published version.
+    const v = opts.published && meta?.published ? await this.versions.get(meta.published.n) : null;
+    if (v) return { index: v.index, files: Object.fromEntries(await this.versions.files(v)) };
     const opened = meta && await (this.open ??= this.load());
     if (!meta || !opened) { if (!opened) this.open = null; return null; }
     const files: Record<string, string | Uint8Array> = {};
@@ -247,6 +272,7 @@ export class DocHost extends DurableObject<Env> {
     if (meta.disk && this.opened) await Effect.runPromise(this.opened.room.flush);
     for (const socket of this.sockets) { try { socket.close(4404, "document deleted"); } catch { /* already closed */ } }
     this.sockets.clear();
+    this.clearPending();
     // The room writes what it holds as it closes, so it closes before storage is cleared.
     const opened = await this.open;
     this.open = null;
@@ -254,6 +280,8 @@ export class DocHost extends DurableObject<Env> {
     await opened?.close();
     await this.ctx.storage.deleteAlarm();
     await this.ctx.storage.deleteAll();
+    this.versions = new Versions(kvOf(this.ctx.storage));
+    this.pub = undefined;
     await directoryOf(this.env).remove(this.idOf(meta));
   }
 
@@ -327,6 +355,14 @@ export class DocHost extends DurableObject<Env> {
   async fetch(request: Request): Promise<Response> {
     // The dev server, bringing the files of a document on disk: before the room opens, which waits for them.
     if (new URL(request.url).pathname == "/api/mirror") return this.mirror(request);
+    // What viewers see (pub/): in "manual" mode the published version's files; in "latest" the files as they are now, as doc/.
+    const asked = new URL(request.url);
+    if (asked.pathname.startsWith("/pub/")) {
+      const served = await this.publishedFile(request, asked);
+      if (served) return served;
+      asked.pathname = "/doc/" + asked.pathname.slice("/pub/".length);
+      request = new Request(asked, request);
+    }
     // Someone viewing it: its files straight from storage while the room isn't open, without opening it.
     const stored = this.opened || this.open ? null : await this.storedFile(request);
     if (stored) return stored;
@@ -364,6 +400,243 @@ export class DocHost extends DurableObject<Env> {
     if (!bytes) return new Response("Not found", { status: 404, headers: { "Content-Type": "text/plain; charset=utf-8" } });
     const r = docFile(rel, bytes, request.headers.get("if-none-match"));
     return new Response(request.method == "HEAD" ? null : r.body, { status: r.status, headers: { "Content-Type": r.type, ...r.headers, "Server-Timing": 'doc;desc="stored"' } });
+  }
+
+  /**
+   * A GET of one of the published version's files (pub/...), in "manual"
+   * mode; null in "latest" mode (the caller serves the files as they are now),
+   * which costs no more than reading the document's meta, kept in memory.
+   */
+  private async publishedFile(request: Request, url: URL): Promise<Response | null> {
+    if (request.method != "GET" && request.method != "HEAD") return null;
+    const n = await this.publishedNumber();
+    const v = n != null ? await this.versions.get(n) : null;
+    if (!v) return null;
+    const notFound = () => new Response("Not found", { status: 404, headers: { "Content-Type": "text/plain; charset=utf-8" } });
+    const raw = url.pathname.slice("/pub/".length);
+    const rel = raw ? cleanRel(raw) : v.index;
+    // A page by its address (blog for blog.html or blog/index.html), as doc/ does (host.ts): sent to its file, relatively.
+    if (!rel || !(rel in v.files)) {
+      const found = resolvePage((p) => p in v.files, raw, v.index);
+      if (!found || found.file == rel) return notFound();
+      let from = raw;
+      try { from = decodeURIComponent(raw); } catch { /* resolvePage refused it already */ }
+      return new Response(null, { status: 302, headers: { Location: relativeUrl(from, found.file), "Cache-Control": "no-store" } });
+    }
+    const bytes = await this.versions.file(v, rel);
+    if (!bytes) return notFound();
+    const r = docFile(rel, bytes, request.headers.get("if-none-match"));
+    return new Response(request.method == "HEAD" ? null : r.body, { status: r.status, headers: { "Content-Type": r.type, ...r.headers, "Server-Timing": `doc;desc="version ${n}"` } });
+  }
+
+  /** The published version's number in "manual" mode; null in "latest". */
+  private async publishedNumber(): Promise<number | null> {
+    if (this.pub === undefined) this.pub = (await this.ctx.storage.get<Meta>(META))?.published?.n ?? null;
+    return this.pub;
+  }
+
+  // ---------------------------------------------------------------- versions
+
+  /**
+   * An edit reached the room (a file's text, or another file, changed), by
+   * `author`. When to cut a version, so that a burst of edits is one version:
+   *
+   * - edits pause for `idleMs` (30 seconds);
+   * - a burst has gone on for `maxMs` (5 minutes) since its first edit;
+   * - an agent's turn ends (the embedded agent's, or an external agent's
+   *   calls, 8 seconds after its last), so an agent's turn is one version:
+   *   while any agent works, the two rules above wait for it;
+   * - the last person who may edit leaves (their room connection closes);
+   * - before a publish, so what's published can be the latest edit;
+   * - when the room opens, if what it holds isn't the latest version (edits
+   *   made while timers couldn't run: the object was evicted).
+   *
+   * A cut that finds nothing changed since the latest version makes none.
+   */
+  private noteEdit(author: string | null): void {
+    const p = this.pending;
+    p.dirty = true;
+    if (author) p.authors.add(author);
+    if (!p.since) {
+      p.since = Date.now();
+      const burst = () => { p.max = this.agentWorking() ? setTimeout(burst, this.idleMs) : null; if (!p.max) void this.cutSoon("burst"); };
+      p.max = setTimeout(burst, this.maxMs);
+    }
+    if (p.idle) clearTimeout(p.idle);
+    const idle = () => { p.idle = this.agentWorking() ? setTimeout(idle, this.idleMs) : null; if (!p.idle) void this.cutSoon("idle"); };
+    p.idle = setTimeout(idle, this.idleMs);
+  }
+
+  /** Whether any agent in the room is in the middle of a turn (its busy flag, on awareness). */
+  private agentWorking(): boolean {
+    const room = this.opened?.room;
+    if (!room) return false;
+    for (const state of room.awareness.getStates().values()) {
+      const s = state as { busy?: boolean; user?: Author } | null;
+      if (s?.busy && s.user?.kind == "agent") return true;
+    }
+    return false;
+  }
+
+  private clearPending(): { authors: string[]; dirty: boolean } {
+    const p = this.pending;
+    if (p.idle) clearTimeout(p.idle);
+    if (p.max) clearTimeout(p.max);
+    const out = { authors: [...p.authors], dirty: p.dirty };
+    this.pending = { dirty: false, since: 0, authors: new Set(), idle: null, max: null };
+    return out;
+  }
+
+  /** Cuts a version of what the document holds now (after any cut under way); the new version, or null if nothing changed. */
+  private cutSoon(reason: string, as?: { authors: string[]; description: string }): Promise<StoredVersion | null> {
+    const run = this.cutting.then(() => this.cutNow(reason, as));
+    this.cutting = run.catch((e) => console.log(`couldn't cut a version (${reason}): ${e instanceof Error ? e.stack : e}`));
+    return run;
+  }
+
+  private async cutNow(_reason: string, as?: { authors: string[]; description: string }): Promise<StoredVersion | null> {
+    // Edits from in-process peers (agents) sync on microtasks: they've reached the room by the next macrotask.
+    await new Promise((r) => setTimeout(r, 0));
+    const opened = this.opened;
+    const meta = await this.ctx.storage.get<Meta>(META);
+    if (!opened || !meta) return null;
+    const { authors } = this.clearPending();
+    const r = await this.versions.cut(await opened.current(), meta.index, as?.authors ?? authors, as?.description ?? ((await this.versions.head()) == 0 ? "First version" : null), opened.room.folderPaths());
+    if (!r) return null;
+    opened.broadcast({ type: "versions" });
+    if (!meta.published) this.firePublished(meta);
+    if (r.previous && !as) this.ctx.waitUntil(this.describe(r.version, r.previous, meta).catch((e) => console.log(`couldn't describe version ${r.version.n}: ${e}`)));
+    return r.version;
+  }
+
+  /** Writes a version's description in the background: the model's five words, or the fallback. Never in the way of editing. */
+  private async describe(version: StoredVersion, previous: StoredVersion, meta: Meta): Promise<void> {
+    const changes = await this.versions.changes(previous, version);
+    const cfg = this.opened?.agent;
+    const key = !meta.test && cfg && !("missing" in cfg) && cfg.model != "script" ? Redacted.value(cfg.apiKey) : "";
+    const text = (key ? await describeChange(key, changes) : null) ?? fallbackDescription(changes);
+    await this.versions.describe(version.n, text);
+    this.opened?.broadcast({ type: "versions" });
+  }
+
+  private async publishedNow(meta: Meta): Promise<Published> {
+    const latest = (await this.versions.latest())!;
+    const v = meta.published ? await this.versions.get(meta.published.n) : null;
+    return v ? { mode: "manual", version: publicVersion(v) } : { mode: "latest", version: publicVersion(latest) };
+  }
+
+  private firePublished(meta: Meta): void {
+    const docId = this.idOf(meta);
+    this.publishedNow(meta).then((published) => firePublished({ docId, published, files: async () => (await this.publishedFiles())?.files ?? new Map() }))
+      .catch((e) => console.log(`couldn't tell of ${docId}'s published version: ${e}`));
+  }
+
+  /** Opens the document and waits for any cut under way (the first, when it opens, makes sure there is a version). */
+  private async ready(): Promise<{ opened: Opened; meta: Meta } | null> {
+    const opened = await (this.open ??= this.load());
+    if (!opened) { this.open = null; return null; }
+    await this.cutting;
+    if ((await this.versions.head()) == 0) await this.cutSoon("first");
+    const meta = await this.ctx.storage.get<Meta>(META);
+    return meta ? { opened, meta } : null;
+  }
+
+  /** Its versions, newest first (`limit`, before version `before`), the current one and the published one. Null if there's no such document. */
+  async versionsState(opts: { before?: string | number | null; limit?: number } = {}): Promise<VersionsState | null> {
+    const r = await this.ready();
+    if (!r) return null;
+    const before = opts.before != null ? versionNumber(opts.before) : null;
+    const { versions, total } = await this.versions.list({ before, limit: opts.limit });
+    const latest = (await this.versions.latest())!;
+    return { current: publicVersion(latest), published: await this.publishedNow(r.meta), versions: versions.map(publicVersion), total, pending: this.pending.dirty };
+  }
+
+  /** One version (by id or number), with its files' paths; null if there's none. */
+  async version(ref: string | number): Promise<(Version & { files: string[]; index: string }) | null> {
+    const n = versionNumber(ref);
+    if (!(await this.ready()) || n == null) return null;
+    const v = await this.versions.get(n);
+    return v && { ...publicVersion(v), index: v.index, files: Object.keys(v.files) };
+  }
+
+  /** One file of a version; null if there's no such version or file. */
+  async versionFile(ref: string | number, path: string): Promise<Uint8Array | null> {
+    const n = versionNumber(ref);
+    if (!(await this.ready()) || n == null) return null;
+    const v = await this.versions.get(n);
+    return v ? this.versions.file(v, path) : null;
+  }
+
+  /**
+   * Sets what viewers see (the front door has checked the person may edit):
+   * "latest", the document as it is, up to the keystroke, or "manual", one
+   * version (by default the current one). Edits not yet in a version become
+   * one first. Every open tab hears of it ({ type: "versions" }).
+   */
+  async setPublished(req: PublishRequest): Promise<PublishResult> {
+    const r = await this.ready();
+    if (!r) return { ok: false, status: 404, error: "There's no such document." };
+    if (req?.mode != "latest" && req?.mode != "manual") return { ok: false, status: 400, error: 'Send {"mode": "latest"} or {"mode": "manual", "versionId": "v3"}.' };
+    // Edits not yet in a version become one: publishing the current version means up to the keystroke.
+    const before = await this.versions.head();
+    await this.cutSoon("publish");
+    const meta = (await this.ctx.storage.get<Meta>(META))!;
+    if (req.mode == "latest") delete meta.published;
+    else {
+      const head = await this.versions.head();
+      const asked = req.versionId == null ? head : versionNumber(req.versionId);
+      // The version that was current when the person asked is the current state, now cut.
+      const n = asked == before ? head : asked;
+      if (n == null || n > head || !(await this.versions.get(n))) return { ok: false, status: 404, error: `There's no version ${req.versionId} of this document: its versions are v1 to v${head}.` };
+      meta.published = { n };
+    }
+    await this.ctx.storage.put(META, meta);
+    this.pub = meta.published?.n ?? null;
+    r.opened.broadcast({ type: "versions" });
+    this.firePublished(meta);
+    return { ok: true, published: await this.publishedNow(meta) };
+  }
+
+  /**
+   * Brings a version back: its files are written over the document as it
+   * is now (every file: those it didn't have are deleted), as an edit open
+   * editors see live, and that becomes a new version, the current one, by
+   * `by`, "Restored version <n>". Edits not yet in a version become one
+   * first, so nothing is lost. In "latest" mode viewers then see it; in
+   * "manual" mode what's published stays.
+   */
+  async restore(ref: string | number, by: string): Promise<{ ok: true; current: Version } | { ok: false; status: number; error: string }> {
+    const r = await this.ready();
+    if (!r) return { ok: false, status: 404, error: "There's no such document." };
+    const n = versionNumber(ref);
+    const v = n != null ? await this.versions.get(n) : null;
+    if (!v) return { ok: false, status: 404, error: `There's no version ${ref} of this document: its versions are v1 to v${await this.versions.head()}.` };
+    await this.cutSoon("restore");
+    const files = await this.versions.files(v);
+    const room = r.opened.room;
+    // Folders it didn't have go (unless something of it is inside); then its files over the current ones; then its folders.
+    const keep = [...files.keys(), ...(v.folders ?? [])];
+    for (const d of room.folderPaths()) if (!keep.some((p) => p == d || p.startsWith(`${d}/`)) && room.exists(d) == "folder") await Effect.runPromise(room.remove(d)).catch(() => {});
+    const now = new Set((await r.opened.current()).keys());
+    const out = await this.publish(Object.fromEntries(files), [...now].filter((p) => !files.has(p)));
+    for (const d of v.folders ?? []) if (room.exists(d) != "folder") await Effect.runPromise(room.mkdir(d)).catch(() => {});
+    if (out.refused.length) console.log(`restoring ${v.id}: ${out.refused.map((x) => `${x.path} (${x.why})`).join(", ")}`);
+    const made = await this.cutSoon("restored", { authors: [by], description: `Restored version ${v.n}` });
+    return { ok: true, current: publicVersion(made ?? (await this.versions.latest())!) };
+  }
+
+  /**
+   * The files viewers see, and which version that is: the published
+   * version's in "manual" mode; in "latest" mode the document as it is now
+   * (up to the keystroke), with the current version. For the homepage's
+   * deploy (versions.ts, publishedFiles).
+   */
+  async publishedFiles(): Promise<{ published: Published; index: string; files: Map<string, Uint8Array> } | null> {
+    const r = await this.ready();
+    if (!r) return null;
+    const published = await this.publishedNow(r.meta);
+    const v = r.meta.published ? await this.versions.get(r.meta.published.n) : null;
+    return v ? { published, index: v.index, files: await this.versions.files(v) } : { published, index: r.meta.index, files: await r.opened.current() };
   }
 
   /** The dev server's socket to the files of a document on disk (the front door checked its secret; so does this). */
@@ -451,12 +724,40 @@ export class DocHost extends DurableObject<Env> {
       naming: (person) => naming({ login: person.id, test: person.id.startsWith("test-") }),
       // Sharing this document (or another), and for an admin the server's settings and users, as the person.
       serverTools: (person) => agentToolsFor({ dir: directoryOf(this.env), who: { login: person.id, test: person.id.startsWith("test-") }, here: this.idOf(meta) }),
+      // An agent's turn is one version.
+      turnEnded: () => { void this.cutSoon("agent turn"); },
+      versions: {
+        state: (opts) => this.versionsState(opts).then((s) => s!),
+        version: (ref) => this.version(ref),
+        file: (ref, path) => this.versionFile(ref, path),
+        publish: (req) => this.setPublished(req),
+        restore: (ref, by) => this.restore(ref, by),
+      },
       // A new page in its file tree starts as a new document does.
       newPage: TEMPLATE ? (path) => (path.endsWith(".md") ? plainMarkdown : TEMPLATE) : undefined,
+    });
+    // Every edit to the files, and who made it: a version is cut once a burst of them ends (noteEdit).
+    room.doc.on("afterTransaction", (tr: Y.Transaction) => {
+      if (!touchesFiles(room.doc, tr)) return;
+      const a = authorOf(room.doc, tr);
+      this.noteEdit(a ? (a.kind == "agent" ? agentName(a.user) : a.kind == "disk" ? (meta.disk ? "on disk" : "files published") : a.user) : null);
     });
     const naming = namingFor(directoryOf(this.env), this.idOf(meta), () => titleOf(room.text(meta.index) ?? "", meta.index));
 
     const opened: Opened = {
+      agent,
+      broadcast: host.broadcast,
+      // Every file as it is now: text from the room (the latest keystroke), the rest from storage.
+      current: async () => {
+        const out = new Map<string, Uint8Array>();
+        const encoder = new TextEncoder();
+        for (const path of new Set([...texts(room.doc).keys(), ...assets(room.doc).keys()])) {
+          const text = room.text(path);
+          const bytes = text != null ? encoder.encode(text) : await Effect.runPromise(Effect.orElseSucceed(files.read(path), () => null));
+          if (bytes) out.set(path, bytes);
+        }
+        return out;
+      },
       handler: host.handler,
       renamed: host.renamed,
       roomSocket: (url, readOnly) => {
@@ -467,6 +768,14 @@ export class DocHost extends DurableObject<Env> {
         server.binaryType = "arraybuffer";
         const send = (m: Uint8Array) => { try { server.send(m); } catch { /* already closed */ } };
         const conn = room.connect(send, { epoch: url.searchParams.get("epoch"), readOnly });
+        // When the last person who may edit leaves, what they did is a version.
+        if (conn && !readOnly) {
+          this.editing++;
+          let gone = false;
+          const left = () => { if (gone) return; gone = true; if (--this.editing == 0) void this.cutSoon("left"); };
+          server.addEventListener("close", left);
+          server.addEventListener("error", left);
+        }
         // A tab holding another epoch's history is refused, never merged (room.ts).
         if (!conn) server.close(4409, "stale epoch");
         else {
@@ -498,6 +807,8 @@ export class DocHost extends DurableObject<Env> {
       close: () => Effect.runPromise(Scope.close(scope, Exit.void)).then(host.dispose),
     };
     this.opened = opened;
+    // A version of what it holds, if that isn't the latest one (or there's none yet).
+    void this.cutSoon("open");
     // Now with its title, for one on disk.
     if (meta.disk) this.syncDirectory().catch((e) => console.log(`couldn't update ${this.idOf(meta)}'s row: ${e}`));
     return opened;
@@ -512,6 +823,12 @@ export class DocHost extends DurableObject<Env> {
 }
 
 interface Opened {
+  /** The agent's settings: its key also writes versions' descriptions. */
+  agent: AgentConfig | { missing: string };
+  /** Tells every open tab, whoever's. */
+  broadcast: (msg: unknown) => void;
+  /** Every file the document holds as it is now. */
+  current: () => Promise<Map<string, Uint8Array>>;
   handler: (request: Request) => Promise<Response>;
   roomSocket: (url: URL, readOnly: boolean) => Response;
   eventSocket: (person: Person) => Response;
@@ -520,6 +837,24 @@ interface Opened {
   /** Tells every open tab the document's new title and address. */
   renamed: (name: DocName) => void;
   close: () => Promise<void>;
+}
+
+/** Durable Object storage as versions.ts's KV. */
+function kvOf(storage: DurableObjectStorage): KV {
+  return {
+    get: ((k: string | string[]) => storage.get(k as string)) as KV["get"],
+    put: (entries) => storage.put(entries),
+  };
+}
+
+/** Whether a transaction changed a file: a text's content, or the list of files or other files (images). */
+function touchesFiles(doc: Y.Doc, tr: Y.Transaction): boolean {
+  const fileMap = texts(doc) as Y.AbstractType<any>, assetMap = assets(doc) as Y.AbstractType<any>, folderMap = folders(doc) as Y.AbstractType<any>;
+  for (const type of tr.changed.keys()) {
+    if (type === fileMap || type === assetMap || type === folderMap) return true;
+    if (type._item?.parent === fileMap) return true;
+  }
+  return false;
 }
 
 /** A new Markdown page (a document whose page is index.md). */
