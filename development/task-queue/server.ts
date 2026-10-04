@@ -6,7 +6,8 @@
 // Each task gets its own branch and worktree (.claude/worktrees/task-<id>),
 // a port for its preview server, and a card on the board at
 // http://localhost:4700 that moves Queued → Working → Ready to merge →
-// Merging → Done as the agent doing it reports in and the user merges it.
+// Merging as the agent doing it reports in and the user merges it, and then
+// shows on its merge commit in Branches (main's latest commits).
 // Merge (on the board, or POST /api/tasks/:id/merge) puts the task in
 // Merging while it merges main into the task's branch, has `claude -p`
 // resolve any conflicts there, merges the branch into main and pushes; then
@@ -19,7 +20,9 @@
 // this file is in), TASK_QUEUE_DATA, TASK_QUEUE_PREVIEW (the default preview
 // command), TASK_QUEUE_RESOLVER (a shell command that resolves a conflicted
 // merge in its cwd, given the instructions in $PROMPT; `claude -p` if unset),
-// TASK_QUEUE_INSTALL=0 (don't set up node_modules in new worktrees).
+// TASK_QUEUE_INSTALL=0 (don't set up node_modules in new worktrees),
+// TASK_QUEUE_FETCH (seconds between `git fetch origin main`, for the Branches
+// column's view of origin/main; 60, 0 for never).
 
 import { spawn as spawnDetached } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
@@ -36,6 +39,7 @@ const LOGS = join(DATA, "logs");
 const WORKTREES = join(REPO, ".claude/worktrees");
 const PREVIEW = process.env.TASK_QUEUE_PREVIEW ?? "bun start --port $PORT --no-open";
 const CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
+const FETCH_EVERY = Number(process.env.TASK_QUEUE_FETCH ?? 60);
 for (const dir of [SHOTS, LOGS]) mkdirSync(dir, { recursive: true });
 
 type Status = "queued" | "working" | "complete" | "merging" | "merged" | "failed" | "discarded";
@@ -76,7 +80,11 @@ const encoder = new TextEncoder();
 function save() {
   writeFileSync(STORE + ".tmp", JSON.stringify(store, null, 2));
   renameSync(STORE + ".tmp", STORE);
-  const msg = encoder.encode(`event: tasks\ndata: ${JSON.stringify(store.tasks)}\n\n`);
+  broadcast("tasks", store.tasks);
+}
+
+function broadcast(event: string, data: unknown) {
+  const msg = encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
   for (const c of clients) try { c.enqueue(msg); } catch { clients.delete(c); }
 }
 
@@ -179,6 +187,69 @@ async function checkPreviews() {
   }
 }
 setInterval(checkPreviews, 4000);
+
+// ---- main's history: the board's Branches column --------------------------
+
+/** How many of main's latest commits the board shows, and how far back done tasks are matched to their merge commits. */
+const SHOWN = 25, MATCHED = 200;
+
+interface Commit { sha: string; short: string; subject: string; at: string; task?: number; remote: boolean }
+interface History {
+  /** The latest SHOWN commits on main's first-parent line (its merges and direct commits), newest first. */
+  commits: Commit[];
+  /** Each done task's merge commit among main's latest MATCHED: its place (0 = newest) and whether origin/main has it. */
+  tasks: Record<number, { sha: string; short: string; index: number; remote: boolean }>;
+  /** Commits on main that origin/main doesn't have yet, and the other way round. */
+  unpushed: number;
+  behind: number;
+  origin: boolean;
+  main?: string;
+  originMain?: string;
+}
+
+let history: History = { commits: [], tasks: {}, unpushed: 0, behind: 0, origin: false };
+let historyKey = "";
+
+const ref = async (name: string) => (await run(["git", "rev-parse", "-q", "--verify", name], REPO)).out || undefined;
+
+/** Reads main and origin/main again when either moved, and sends the board the new history. */
+async function refreshHistory() {
+  const [main, originMain] = await Promise.all([ref(`refs/heads/${MAIN}`), ref(`refs/remotes/origin/${MAIN}`)]);
+  const key = `${main} ${originMain}`;
+  if (key == historyKey) return;
+  const log = main ? (await run(["git", "log", "--first-parent", `-n${MATCHED}`, "--format=%H%x1f%h%x1f%cI%x1f%s", main], REPO)).out : "";
+  const unpushed = new Set(originMain && main ? (await run(["git", "rev-list", "--first-parent", `${originMain}..${main}`], REPO)).out.split("\n").filter(Boolean) : []);
+  const behind = originMain && main ? Number((await run(["git", "rev-list", "--first-parent", "--count", `${main}..${originMain}`], REPO)).out) || 0 : 0;
+  const commits: Commit[] = log.split("\n").filter(Boolean).map((line) => {
+    const [sha, short, at, subject] = line.split("\x1f");
+    // The queue's merges say whose they are ("Merge task/7-...: title"); else the commit the queue recorded.
+    const id = subject.match(/^Merge (?:branch ')?task\/(\d+)-/)?.[1];
+    const task = id ? Number(id) : store.tasks.find((t) => t.commit && sha.startsWith(t.commit))?.id;
+    return { sha, short, at, subject, task, remote: !!originMain && !unpushed.has(sha) };
+  });
+  const tasks: History["tasks"] = {};
+  commits.forEach((c, index) => { if (c.task != null && !(c.task in tasks)) tasks[c.task] = { sha: c.sha, short: c.short, index, remote: c.remote }; });
+  historyKey = key;
+  history = { commits: commits.slice(0, SHOWN), tasks, unpushed: originMain ? unpushed.size : commits.length, behind, origin: !!originMain, main, originMain };
+  broadcast("history", history);
+}
+
+// One read at a time, each after the last: a refresh asked for after a merge reads the merge, never an older read's answer.
+let reading = Promise.resolve(), pending = 0;
+const refresh = () => { pending++; return (reading = reading.then(refreshHistory).catch(() => {}).finally(() => pending--)); };
+refresh();
+setInterval(() => { if (!pending) refresh(); }, 1500);
+
+/** origin/main only moves on a fetch or a push: fetch now and then (between merges, which fetch and push themselves). */
+async function fetchOrigin() {
+  if (!(await run(["git", "remote", "get-url", "origin"], REPO)).ok) return;
+  const p = Bun.spawn(["git", "fetch", "-q", "origin", MAIN], { cwd: REPO, env: { ...process.env, GIT_TERMINAL_PROMPT: "0" }, stdout: "ignore", stderr: "ignore" });
+  const timer = setTimeout(() => p.kill(), 30_000);
+  await p.exited;
+  clearTimeout(timer);
+  await refresh();
+}
+if (FETCH_EVERY > 0) setInterval(() => { mergeLock = mergeLock.then(fetchOrigin); }, FETCH_EVERY * 1000);
 
 // ---- screenshots ----------------------------------------------------------
 
@@ -288,8 +359,10 @@ async function merge(task: Task) {
     // ...so merging the branch into main can't conflict, and pushing it is a fast-forward.
     await git(REPO, "merge", "--no-ff", "-m", `Merge ${task.branch}: ${task.title}\n\nTask ${task.id} from the task queue.`, task.branch!);
     const commit = await git(REPO, "rev-parse", "--short", "HEAD");
+    await refresh(); // on the board at once, as not pushed yet
     if (origin) await git(REPO, "push", "origin", MAIN);
     touch(task, { status: "merged", commit, mergedAt: new Date().toISOString() }, `Merged into ${MAIN} as ${commit}${origin ? " and pushed" : ""}`);
+    await refresh();
     await cleanUp(task, false);
   } catch (e) {
     touch(task, { status: "complete", error: (e as Error).message }, `Merge failed: ${(e as Error).message}`);
@@ -319,12 +392,12 @@ const API = {
     working: "an agent is on it",
     complete: "done and tested, waiting for the user to merge (also where a failed merge lands, with error)",
     merging: "being merged: main into the branch (claude -p settling conflicts), then the branch into main, pushed and cleaned up; set by POST /api/tasks/:id/merge, ends merged or back at complete with error",
-    merged: "in main and pushed",
+    merged: "in main and pushed (on its merge commit in the board's Branches column)",
     failed: "the agent couldn't finish (see error)",
     discarded: "dropped by the user",
   },
   board: `http://localhost:${PORT}/`,
-  columns: { Queued: ["queued"], Working: ["working", "failed"], "Ready to merge": ["complete"], Merging: ["merging"], Done: ["merged", "discarded"] },
+  columns: { Queued: ["queued"], Working: ["working", "failed"], "Ready to merge": ["complete"], Merging: ["merging"], Branches: "main's latest commits (GET /api/history): a merged task shows on its merge commit; older merged tasks and discarded ones aren't shown" },
   endpoints: {
     "GET /api": "this description",
     "GET /api/tasks[?status=complete]": "all tasks, oldest first",
@@ -337,7 +410,8 @@ const API = {
     "POST /api/tasks/:id/screenshots": "attach a screenshot: a raw image body (Content-Type image/png, ?caption=...), or JSON {path, caption?} (a file on disk), or JSON {url, caption?, width?, height?, wait?: ms after load, fullPage?} (the queue takes it with headless Chrome)",
     "POST /api/tasks/:id/merge": "for a complete (or failed) task: status merging at once (202), then, in the background and one merge at a time, merge main into the branch (claude -p resolves conflicts), merge the branch into main, push, and remove the worktree and branch: status merged. A failed merge goes back to complete with error. Watch the task.",
     "POST /api/tasks/:id/discard": "drop the task: stops its preview, removes its worktree and deletes its branch",
-    "GET /api/events": "server-sent events: a `tasks` event with every task, on connect and on each change",
+    "GET /api/history": `main's history, for the board's Branches column: {commits: the latest ${SHOWN} on main's first-parent line, newest first, each {sha, short, subject, at, task?: the task whose merge it is, remote: whether origin/main has it}, tasks: {id: {sha, short, index, remote}} for tasks merged in main's latest ${MATCHED}, unpushed, behind, origin}. origin/main is fetched every ${FETCH_EVERY || "(never)"}s (TASK_QUEUE_FETCH).`,
+    "GET /api/events": "server-sent events: a `tasks` event with every task and a `history` event with GET /api/history, on connect and on each change",
   },
 };
 
@@ -356,6 +430,7 @@ async function handle(req: Request): Promise<Response> {
 
   if (path == "/" && req.method == "GET") return new Response(Bun.file(join(HERE, "index.html")), { headers: { "content-type": "text/html; charset=utf-8" } });
   if (path == "/api" && req.method == "GET") return json(API);
+  if (path == "/api/history" && req.method == "GET") { await refresh(); return json(history); }
   if (path.startsWith("/shots/") && req.method == "GET") {
     const file = join(SHOTS, basename(path));
     return existsSync(file) ? new Response(Bun.file(file)) : fail(404, "no such screenshot");
@@ -366,7 +441,7 @@ async function handle(req: Request): Promise<Response> {
     return new Response(new ReadableStream({
       start(c) {
         ctrl = c; clients.add(c);
-        c.enqueue(encoder.encode(`retry: 1000\nevent: tasks\ndata: ${JSON.stringify(store.tasks)}\n\n`));
+        c.enqueue(encoder.encode(`retry: 1000\nevent: tasks\ndata: ${JSON.stringify(store.tasks)}\n\nevent: history\ndata: ${JSON.stringify(history)}\n\n`));
         beat = setInterval(() => { try { c.enqueue(encoder.encode(": beat\n\n")); } catch { clearInterval(beat); } }, 15000);
       },
       cancel() { clients.delete(ctrl); clearInterval(beat); },

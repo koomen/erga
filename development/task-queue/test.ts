@@ -9,10 +9,15 @@
 // merging status), merges a conflicting task with a stand-in resolver, fails
 // a merge back to complete (with tq merge --wait), recovers a merge cut off by
 // a restart, and discards one; tq watch follows it all, through the restart.
+// Then main's history (the Branches column):
+// its order, which commits are only local, done tasks matched to their merge
+// commits, live updates on a commit, a push, a fetch and a merge, and the
+// board (Branches in place of a Done column) in headless Chrome.
 
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Browser } from "../../tests/cdp.ts";
 
 const tmp = mkdtempSync(join(tmpdir(), "tq-test-"));
 const repo = join(tmp, "repo"), origin = join(tmp, "origin.git"), data = join(tmp, "data");
@@ -28,7 +33,7 @@ const port = 4790 + Math.floor(Math.random() * 9);
 const base = `http://127.0.0.1:${port}`;
 // The stand-in for claude -p: keeps both sides of every conflict (taking a moment, so the merge is seen merging).
 const resolver = `sleep 1; for f in $(git diff --name-only --diff-filter=U); do grep -v -e '^<<<<<<<' -e '^=======' -e '^>>>>>>>' "$f" > "$f.x" && mv "$f.x" "$f" && git add "$f"; done; git commit -q --no-edit`;
-const env = { ...process.env, TASK_QUEUE_PORT: String(port), TASK_QUEUE_REPO: repo, TASK_QUEUE_DATA: data, TASK_QUEUE_RESOLVER: resolver, TASK_QUEUE_INSTALL: "0" };
+const env = { ...process.env, TASK_QUEUE_PORT: String(port), TASK_QUEUE_REPO: repo, TASK_QUEUE_DATA: data, TASK_QUEUE_RESOLVER: resolver, TASK_QUEUE_INSTALL: "0", TASK_QUEUE_FETCH: "2" };
 const startServer = () => Bun.spawn(["bun", join(import.meta.dir, "server.ts")], { env, stdout: "pipe", stderr: "inherit" });
 const waitUp = async () => { for (let i = 0; i < 50; i++) { try { await fetch(base + "/api"); return; } catch { await Bun.sleep(100); } } };
 let server = startServer();
@@ -64,7 +69,7 @@ try {
     for (;;) {
       const { value, done } = await reader.read(); if (done) break;
       buf += new TextDecoder().decode(value);
-      let i; while ((i = buf.indexOf("\n\n")) >= 0) { const chunk = buf.slice(0, i); buf = buf.slice(i + 2); const d = chunk.split("\n").find((l) => l.startsWith("data: ")); if (d) events.push(JSON.parse(d.slice(6))); }
+      let i; while ((i = buf.indexOf("\n\n")) >= 0) { const chunk = buf.slice(0, i); buf = buf.slice(i + 2); const d = chunk.split("\n").find((l) => l.startsWith("data: ")); if (d) { const v = JSON.parse(d.slice(6)); if (Array.isArray(v)) events.push(v); } }
     }
     } catch {} // the server restarting, below
   })();
@@ -112,6 +117,7 @@ try {
   check(seen1.join(" ").endsWith("complete merging merged"), `the event stream shows complete → merging → merged (${seen1.join(" → ")})`);
   check(m1.log.some((l: any) => l.message == "Merge requested") && m1.log.some((l: any) => l.message == "Merging"), "the log says when the merge was asked for and when it began");
   check(sh(`git --git-dir=${origin} show main:hello.txt`) == "hello", "the merge is pushed to origin");
+  for (let i = 0; i < 30 && (existsSync(t1.worktree) || sh("git branch --list task/1-*")); i++) await Bun.sleep(100); // cleaned up just after it's marked merged
   check(!existsSync(t1.worktree) && !sh("git branch --list task/1-*"), "the worktree and branch are cleaned up");
   await Bun.sleep(5500);
   check(!(await fetch(`http://localhost:${t1.port}/`).then(() => true, () => false)), "the preview is stopped");
@@ -174,6 +180,90 @@ try {
   await api("POST", `/api/tasks/${t5.id}/discard`);
 
   check(JSON.parse(readFileSync(join(data, "tasks.json"), "utf8")).tasks.length == 5, "tasks are saved to disk");
+
+  // Main's history: the Branches column.
+  const histories: any[] = [];
+  const hs = await fetch(base + "/api/events");
+  (async () => {
+    try {
+      const reader = hs.body!.getReader(); let buf = "";
+      for (;;) {
+        const { value, done } = await reader.read(); if (done) break;
+        buf += new TextDecoder().decode(value);
+        let i; while ((i = buf.indexOf("\n\n")) >= 0) {
+          const lines = buf.slice(0, i).split("\n"); buf = buf.slice(i + 2);
+          const d = lines.find((l) => l.startsWith("data: "));
+          if (lines.includes("event: history") && d) histories.push(JSON.parse(d.slice(6)));
+        }
+      }
+    } catch {}
+  })();
+  const seen = async (pred: (h: any) => boolean) => { for (let i = 0; i < 100; i++) { if (histories.length && pred(histories.at(-1))) return histories.at(-1); await Bun.sleep(100); } return histories.at(-1) ?? {}; };
+  const h0 = await api("GET", "/api/history");
+  check(h0.commits.map((c: any) => c.task ?? c.subject).join(",") == "3,2,1,init", `history is main's first-parent line, newest first, merges matched to tasks (${h0.commits.map((c: any) => c.task ?? c.subject)})`);
+  check(h0.commits.every((c: any) => c.remote) && h0.unpushed == 0 && h0.behind == 0 && h0.origin, "everything merged is on origin/main");
+  check(h0.tasks[1]?.sha.startsWith(m1.commit) && h0.tasks[3]?.index == 0 && h0.tasks[2]?.index == 1 && !h0.tasks[4], "done tasks map to their merge commits and places; a discarded one has none");
+  check((await seen((h) => h.commits?.length == 4)).commits?.length == 4, "the event stream sends the history on connect");
+
+  sh(`echo local >> notes.txt && git commit -qam "A local commit"`);
+  const h1 = await seen((h) => h.commits[0].subject == "A local commit");
+  check(h1.commits?.[0].subject == "A local commit" && !h1.commits[0].remote && h1.commits.slice(1).every((c: any) => c.remote) && h1.unpushed == 1, "a new commit on main arrives live, local only (not on origin)");
+  sh("git push -q origin main");
+  const h2 = await seen((h) => h.unpushed == 0);
+  check(h2.unpushed == 0 && h2.commits?.[0].remote, "after a push it's on origin/main, live");
+
+  // Someone else pushes: origin/main gets ahead, seen at the next periodic fetch.
+  const other = join(tmp, "other");
+  sh(`git clone -q ${origin} ${other} && cd ${other} && git config user.email o@o && git config user.name o && git commit -q --allow-empty -m elsewhere && git push -q origin main`, tmp);
+  const h3 = await seen((h) => h.behind == 1);
+  check(h3.behind == 1 && h3.unpushed == 0, "the periodic fetch sees origin/main ahead of main");
+  sh("git pull -q --ff-only origin main");
+
+  // Only the latest 25 show; older merges still match their tasks.
+  sh(`for i in $(seq 1 26); do git commit -q --allow-empty -m "filler $i"; done`);
+  const h4 = await seen((h) => h.commits[0].subject == "filler 26");
+  check(h4.commits?.length == 25 && h4.unpushed == 26 && h4.tasks?.[1]?.index == 30 && h4.tasks[1].remote, `25 commits shown, the 26 unpushed counted, older task merges still matched (${h4.commits?.length}, ${h4.unpushed}, ${h4.tasks?.[1]?.index})`);
+
+  // The board: no Done column; Branches after Merging, a row per commit, live, a task's row opening it.
+  const browser = await Browser.launch();
+  try {
+    const page = await browser.page();
+    for (const dark of [false, true]) {
+      await page.open(base + "/", { width: 1600, height: 900, dark, clear: false });
+      await Bun.sleep(500);
+      const b = await page.eval(`({ rows: document.querySelectorAll("#graph li").length, unpushed: document.querySelectorAll("#graph .lane.o.no").length,
+        cols: [...document.querySelectorAll("main section")].map((c) => c.dataset.col).join(","), n: document.getElementById("branches-n").textContent })`);
+      check(b.cols == "queued,working,ready-to-merge,merging,branches", `${dark ? "dark" : "light"}: no Done column; Branches comes after Merging (${b.cols})`);
+      check(b.rows == 25 && b.unpushed == 25 && b.n.startsWith("26 not pushed"), `${dark ? "dark" : "light"}: Branches shows 25 commits, all 25 hollow on origin (${b.rows}, ${b.unpushed}, ${b.n})`);
+    }
+    sh("git push -q origin main");
+    await Bun.sleep(2500);
+    check(await page.eval(`document.querySelectorAll("#graph .lane.o.no").length == 0 && document.getElementById("branches-n").textContent == "pushed"`), "after a push the board fills in origin's dots, live");
+    // Bring the task merges back into the 25, then open task 3 from its commit.
+    sh(`git reset -q --hard HEAD~26 && git push -q -f origin main`);
+    await Bun.sleep(2500);
+    const pt = await page.eval(`(() => { const r = document.querySelector('#graph li[data-open="3"]').getBoundingClientRect(); return { x: r.left + 60, y: r.top + r.height / 2 }; })()`);
+    await page.click(pt.x, pt.y);
+    await page.settle();
+    check(await page.eval(`document.getElementById("dlg").open && document.querySelector("#dlg h3").textContent.includes("#3")`), "clicking a task's commit opens the task");
+    await page.eval(`document.getElementById("dlg").close(), true`);
+
+    // A task merging now shows on top as soon as it's merged.
+    const t6 = await api("POST", "/api/tasks", { title: "Fresh merge" });
+    sh(`echo fresh > fresh.txt && git add . && git commit -qm fresh`, t6.worktree);
+    await api("PATCH", `/api/tasks/${t6.id}`, { status: "complete" });
+    await api("POST", `/api/tasks/${t6.id}/merge`);
+    const m6 = await until(t6.id, (t) => t.status != "merging");
+    check(m6.status == "merged" && (await api("GET", "/api/history")).commits[0].task == t6.id, "a just-merged task's commit is already at the top of the history");
+    await page.settle();
+    check(await page.eval(`document.querySelector("#graph li:not(.leave) b")?.textContent`) == `#${t6.id}`, "and at the top of the board's Branches");
+
+    sh(`git commit -q --allow-empty -m "One more"`);
+    await Bun.sleep(2500);
+    const top = await page.eval(`[...document.querySelectorAll("#graph li:not(.leave)")].slice(0, 2).map((li) => li.textContent + (li.querySelector(".lane.o.no") ? " (local)" : ""))`);
+    check(top[0] == "One more (local)" && top[1] == `#${t6.id}Fresh merge`, `a new commit appears at the top of the board, live (${top})`);
+    check(page.errors.length == 0, `no errors on the board (${page.errors})`);
+  } finally { browser.close(); }
 } finally {
   server.kill();
   try { watcher?.kill(); } catch {}
