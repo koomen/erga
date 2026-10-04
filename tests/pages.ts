@@ -110,7 +110,6 @@ const paths = (entries: Entry[] = []) => entries.map((e) => `${e.path}${e.type =
     [{ op: "new_page", path: "blog/post.html" }, 409, /already a file/],
     [{ op: "new_folder", path: "blog" }, 409, /already a folder/],
     [{ op: "new_folder", path: "api" }, 400, /own addresses/],
-    [{ op: "new_page", path: "blog/edit.html" }, 400, /editor/],
     [{ op: "new_page", path: "notes.txt" }, 400, /\.html or \.md/],
     [{ op: "new_page", path: "a<b>.html" }, 400, /can't contain/],
     [{ op: "delete", path: "index.html" }, 400, /own page/],
@@ -156,14 +155,12 @@ await write("about.html", PAGE("About", `<nav data-erga-noedit><a href="index.ht
     [`${address}/blog/`, 200, null, "blog/index.html"],
     [`${address}/blog/post`, 200, null, "blog/post.html"],
     [`${address}/about`, 200, null, "about.html"],
-    [`${address}/blog/edit`, 200, null, "blog/index.html"],
-    [`${address}/blog/post/edit`, 200, null, "blog/post.html"],
     [`${address}/about.html`, 302, `${address}/about`, null],
     [`${address}/blog/index`, 302, `${address}/blog`, null],
-    [`${address}/blog/post.html/edit`, 302, `${address}/blog/post/edit`, null],
     [`/d/${doc.id}/blog/post`, 302, `${address}/blog/post`, null],
     [`${address}/nope`, 404, null, null],
-    [`${address}/blog/nope/edit`, 404, null, null],
+    [`${address}/edit`, 404, null, null],
+    [`${address}/blog/edit`, 404, null, null],
     [`${address}/style`, 404, null, null],
   ];
   for (const [path, status, location, page] of cases) {
@@ -179,7 +176,13 @@ await write("about.html", PAGE("About", `<nav data-erga-noedit><a href="index.ht
   expect((await at(`${address}/blog/post`)).page == "blog/post.html", "and blog/post is still blog/post.html");
   await treeOp({ op: "delete", path: "blog.html" });
   expect((await at(`${address}/blog`)).page == "blog/index.html", "with blog.html gone, blog is blog/index.html again");
-  ok("addresses: /blog is blog.html, else blog/index.html; no slash added; file names redirect to the address; missing pages are 404s");
+  // An address always means a page: one called edit is a page like any other (the editor is #edit, which the server never sees).
+  expect((await treeOp({ op: "new_page", path: "edit.html" })).status == 200 && (await treeOp({ op: "new_folder", path: "blog/edit" })).status == 200 && (await treeOp({ op: "new_page", path: "blog/edit/index.html" })).status == 200, "pages and folders may be called edit");
+  expect((await at(`${address}/edit`)).page == "edit.html" && (await at(`${address}/blog/edit`)).page == "blog/edit/index.html", "/edit and /blog/edit are those pages, not the editor");
+  await treeOp({ op: "delete", path: "edit.html" });
+  await treeOp({ op: "delete", path: "blog/edit" });
+  expect((await at(`${address}/edit`)).status == 404, "and with them gone, there's nothing there: no /edit route");
+  ok("addresses: /blog is blog.html, else blog/index.html; no slash added; file names redirect to the address; missing pages are 404s; a page may be called edit");
 
   // The pages origin: an address-like path goes to its file, relatively (so the page's own relative links resolve).
   const viewer = await (await get(`${address}/blog`)).text();
@@ -266,11 +269,11 @@ await write("about.html", PAGE("About", `<nav data-erga-noedit><a href="index.ht
 
   const blank = await get("/new");
   const at = blank.headers.get("location") ?? "";
-  expect(blank.status == 302 && at.endsWith("/edit"), "/new makes a single-page document", at);
-  const id = ((await (await get(`${at.replace(/\/edit$/, "")}/api/name`)).json()) as { id: string }).id;
+  expect(blank.status == 302 && at.endsWith("#edit"), "/new makes a single-page document, and opens its editor (#edit)", at);
+  const id = ((await (await get(`${at.replace(/#edit$/, "")}/api/name`)).json()) as { id: string }).id;
   const single = await (await get(`/api/docs/${id}/tree`)).json() as { entries: Entry[] };
   expect(paths(single.entries) == "index.html", "its tree is its one page", single);
-  expect((await get(at.replace(/\/edit$/, ""))).status == 200 && (await get(at)).status == 200, "its viewer and editor work as before");
+  expect((await get(at.replace(/#edit$/, ""))).status == 200, "its page works as before");
   ok("folders last across a restart; a single-page document works as before");
 }
 
@@ -293,9 +296,11 @@ try {
   expect(await p.eval<boolean>("window.__same === true"), "without reloading the viewer");
   ok("the viewer shows nested pages, their relative links and assets resolving, and its address follows links (no slash added)");
 
-  // Into the editor from there: that page's editor, at /blog/edit.
+  // Into the editor from there: that page's editor, at /blog#edit.
+  const where = () => p.eval<string>("location.pathname + location.hash").catch(() => "");
+  const ready = () => p.eval<boolean>(`document.body.classList.contains("erga-editor-ready") && document.body.classList.contains("erga-editing")`).catch(() => false);
   await p.eval(`document.querySelector(".erga-edit-button").click()`);
-  await until(async () => (await p.eval<string>("location.pathname")) == `${address}/blog/edit` && await p.eval<boolean>(`document.body.classList.contains("erga-editor-ready")`), 15_000, "the pencil opens the editor on the page shown", async () => p.eval("location.pathname"));
+  await until(async () => (await where()) == `${address}/blog#edit` && await ready(), 15_000, "the pencil opens the editor on the page shown, at /blog#edit", where);
   const editedPage = () => p.frame<{ h1: string; color: string } | null>(`(() => { const h = document.getElementById("page")?.contentDocument?.querySelector("h1"); return h ? { h1: h.textContent, color: getComputedStyle(h).color } : null; })()`);
   await until(async () => (await editedPage())?.h1 == "Blog", 10_000, "the editor renders the page", editedPage);
   const editing = (await editedPage())!;
@@ -312,17 +317,37 @@ try {
 
   // A link to another page, outside the text: that page's editor.
   await p.frame(`document.getElementById("page").contentDocument.querySelector('nav a[href="post.html"]').click()`);
-  await until(async () => (await p.eval<string>("location.pathname")) == `${address}/blog/post/edit` && await p.eval<boolean>(`document.body.classList.contains("erga-editor-ready")`), 15_000, "following a link in the editor opens that page's editor", async () => p.eval("location.pathname"));
+  await until(async () => (await where()) == `${address}/blog/post#edit` && await ready(), 15_000, "following a link in the editor opens that page's editor", where);
   expect(await p.eval<string>(`window.ergaPage.pagePath`) == "blog/post.html", "editing blog/post.html");
   // Someone moves the page being edited: the editor follows it.
   await treeOp({ op: "move", from: "blog/post.html", to: "blog/hello.html" });
-  await until(async () => (await p.eval<string>("location.pathname").catch(() => "")) == `${address}/blog/hello/edit`, 15_000, "moved, the open editor goes to its new address", async () => p.eval("location.pathname"));
+  await until(async () => (await where()) == `${address}/blog/hello#edit`, 15_000, "moved, the open editor goes to its new address", where);
   await until(async () => (await p.eval<string>(`window.ergaPage?.pagePath ?? ""`).catch(() => "")) == "blog/hello.html", 15_000, "and edits it there");
   await treeOp({ op: "move", from: "blog/hello.html", to: "blog/post.html" });
-  await until(async () => (await p.eval<string>("location.pathname").catch(() => "")) == `${address}/blog/post/edit`, 15_000, "and back");
-  await until(() => p.eval<boolean>(`document.body.classList.contains("erga-editor-ready")`).catch(() => false), 15_000, "ready again");
+  await until(async () => (await where()) == `${address}/blog/post#edit`, 15_000, "and back", where);
+  await until(ready, 15_000, "ready again");
   await p.screenshot(join(SHOTS, "pages-editor-post.png"));
   ok("in the editor, links to other pages open their editor, and a page moved under an open editor takes it along");
+
+  // #edit is the editor: taking it off the address views, putting it back edits, Back and Forward follow; all without a reload.
+  await p.eval(`window.__same = true`);
+  await p.eval(`location.hash = ""`);
+  await until(async () => (await where()) == `${address}/blog/post#` || (await where()) == `${address}/blog/post`, 5000, "the hash taken off", where);
+  await until(async () => !(await p.eval<boolean>(`document.body.classList.contains("erga-editing")`)), 5000, "without #edit, the page is viewed");
+  await p.eval(`location.hash = "edit"`);
+  await until(ready, 5000, "with #edit again, it's the editor");
+  await p.send("Runtime.evaluate", { expression: "history.back()" });
+  await until(async () => !(await p.eval<boolean>(`document.body.classList.contains("erga-editing")`)), 5000, "Back views again");
+  await p.send("Runtime.evaluate", { expression: "history.forward()" });
+  await until(ready, 5000, "Forward edits again");
+  expect(await p.eval<boolean>("window.__same === true"), "and none of it reloaded the page");
+  // Opened with #edit, a page loads straight into the editor; without, it's viewed.
+  await p.navigate(`${base}${address}/about?user=tester#edit`);
+  await until(async () => (await where()) == `${address}/about#edit` && await ready() && await p.eval<string>("window.ergaPage?.pagePath") == "about.html", 15_000, "an address with #edit opens that page in the editor", where);
+  await p.navigate(`${base}${address}/about?user=tester`);
+  await until(async () => (await styled())?.h1 == "About", 10_000, "and without it, the viewer");
+  expect(!(await p.eval<boolean>(`document.body.classList.contains("erga-editing")`)), "not editing");
+  ok("#edit opens the editor, on load and on a hash change; Back and Forward follow it, without a reload");
   expect(!p.errors.length, "no errors in the browser", p.errors);
 } finally {
   browser.close();

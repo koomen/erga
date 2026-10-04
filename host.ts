@@ -23,7 +23,7 @@ import type { AgentTool } from "@mariozechner/pi-agent-core";
 import { digest, StoreError, type FileStore, type Room } from "./room";
 import { titleOf } from "./front";
 import { checkNewName, cleanTreePath, isPage, parentsOf, resolvePage, TreeError, treeEntries, type TreeOp } from "./tree";
-import { ignored } from "./src/room/doc";
+import { ignored, isTextPath as isTextFile } from "./src/room/doc";
 import type { ViewRequest, ViewResult } from "./src/page/agent-log";
 
 export interface HostOptions {
@@ -88,6 +88,22 @@ export const MIME: Record<string, string> = {
   ".txt": "text/plain; charset=utf-8", ".wasm": "application/wasm", ".mp4": "video/mp4", ".webm": "video/webm", ".mp3": "audio/mpeg",
 };
 export const mimeOf = (path: string) => MIME[/\.[^./]+$/.exec(path.toLowerCase())?.[0] ?? ""];
+
+/**
+ * A document's file as served under /doc/: always checked with the server
+ * before it's used (no-cache), so a page always loads the latest version, but
+ * by its digest (ETag), so a file that hasn't changed since the browser last
+ * had it comes back as a 304 with no body. Shared by the host's route and the
+ * Durable Object's own (worker/doc-host.ts, which serves stored files before
+ * the room is open).
+ */
+export function docFile(rel: string, bytes: Uint8Array, ifNoneMatch?: string | null): { status: number; type: string; headers: Record<string, string>; body: Uint8Array | null } {
+  const etag = `"${digest(bytes)}"`;
+  const type = mimeOf(rel) ?? (isTextFile(rel) ? "text/plain; charset=utf-8" : "application/octet-stream");
+  const headers = { "Cache-Control": "no-cache", ETag: etag };
+  const fresh = !!ifNoneMatch && ifNoneMatch.split(",").some((t) => t.trim().replace(/^W\//, "") == etag);
+  return fresh ? { status: 304, type, headers, body: null } : { status: 200, type, headers, body: bytes };
+}
 
 /** HttpApi's platform needs, none of which a document served from storage uses. */
 const fromStorage = Layer.mergeAll(
@@ -316,24 +332,27 @@ export function makeHost(opts: HostOptions) {
     // loads the latest shared version, and everything else from storage.
     HttpRouter.route("GET", "/doc/*", Effect.gen(function* () {
       // The path as asked for, a slash at the end included (the router's parameter drops it).
-      const asked = new URL((yield* HttpServerRequest.HttpServerRequest).url, "http://doc").pathname;
+      const req = yield* HttpServerRequest.HttpServerRequest;
+      const asked = new URL(req.url, "http://doc").pathname;
       const raw = asked.startsWith("/doc/") ? asked.slice("/doc/".length) : (yield* HttpRouter.params)["*"] ?? "";
-      const rel = cleanRel(raw);
-      // A page by its address (blog for blog.html or blog/index.html; the root page for none): sent to its
-      // file, relatively, so the frame's address is the file's and the page's own relative links resolve.
+      // A page by its address (blog for blog.html or blog/index.html): sent to its file, relatively, so the
+      // frame's address is the file's and the page's own relative links resolve. doc/ itself is the document's
+      // page, served as it is (the frame asks for it so, front.ts; its links resolve from the root either way).
       const page = () => {
         const found = resolvePage((p) => room.exists(p) == "file", raw, doc.path);
-        if (!found || found.file == rel) return null;
+        if (!found || found.file == cleanRel(raw)) return null;
         let from = raw;
         try { from = decodeURIComponent(raw); } catch { /* resolvePage refused it already */ }
         return HttpServerResponse.empty({ status: 302, headers: { Location: relativeUrl(from, found.file), "Cache-Control": "no-store" } });
       };
+      const rel = raw ? cleanRel(raw) : doc.path;
       if (!rel) return page() ?? HttpServerResponse.text("Not found", { status: 404 });
-      if (room.exists(rel) != "file") { const to = page(); if (to) return to; }
+      if (raw && room.exists(rel) != "file") { const to = page(); if (to) return to; }
       const text = room.text(rel);
-      if (text != null) return HttpServerResponse.text(text, { contentType: mimeOf(rel) ?? "text/plain; charset=utf-8", headers: { "Cache-Control": "no-store" } });
-      const bytes = yield* files.read(rel);
-      return bytes ? HttpServerResponse.uint8Array(bytes, { contentType: mimeOf(rel) ?? "application/octet-stream", headers: { "Cache-Control": "no-store" } }) : HttpServerResponse.text("Not found", { status: 404 });
+      const bytes = text != null ? new TextEncoder().encode(text) : yield* files.read(rel);
+      if (!bytes) return HttpServerResponse.text("Not found", { status: 404 });
+      const r = docFile(rel, bytes, req.headers["if-none-match"]);
+      return HttpServerResponse.uint8Array(r.body ?? new Uint8Array(), { status: r.status, contentType: r.type, headers: r.headers });
     })),
   ];
 

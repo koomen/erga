@@ -71,7 +71,7 @@ const peersField = StateField.define<DecorationSet>({
 });
 
 declare global {
-  interface Window { ergaPage?: unknown; ergaShell?: { ready(): void; loadedEditing?: boolean } }
+  interface Window { ergaPage?: unknown; ergaShell?: { ready(): void; loadedEditing?: boolean }; ergaDocInfo?: { url: string; response: Promise<Response> } }
 }
 
 
@@ -145,7 +145,11 @@ declare global {
   const as = asked ? `?user=${encodeURIComponent(asked)}` : "";
   let info: DocInfo | null = null;
   try {
-    const res = await fetch(`${BASE}/api/doc${as}`);
+    // The page asked for it already, as editing started (front.ts, EDIT_BOOT), if it's for this same address.
+    const early = window.ergaDocInfo;
+    window.ergaDocInfo = undefined;
+    const url = `${BASE}/api/doc${as}`;
+    const res = early?.url == url ? await early.response : await fetch(url);
     if (!res.ok) throw new Error(await res.text());
     info = (await res.json()) as DocInfo;
   } catch (e) {
@@ -164,7 +168,7 @@ declare global {
     const doc = docName?.address ?? document.querySelector<HTMLMetaElement>('meta[name="erga-address"]')?.content ?? "";
     // A path that isn't a page file ("blog/", a folder) is an address as it is: the front door finds its page.
     const at = path == null ? doc : isPage(path) ? pageUrl(doc, path) : `${doc}/${path.replace(/^\/+|\/+$/g, "").split("/").map(encodeURIComponent).join("/")}`;
-    return at.replace(/\/$/, "") + (editing() ? "/edit" : "") + as;
+    return at.replace(/\/$/, "") + as + (editing() ? "#edit" : "");
   };
   /** Goes to another of the document's pages: its address, in the editor while editing. */
   const openPage = (path: string) => { location.assign(addressOf(path)); };
@@ -294,15 +298,15 @@ declare global {
     titleBtn.setAttribute("aria-label", `${n.title}: rename, or change its address`);
     titleBtn.title = `${location.host}${n.address}`;
     document.title = n.title;
-    // The editor's own address is the document's, then /edit (the document's alone is its viewer, which the pencil, blue while editing, goes back to).
+    // The editor's own address is the page's, with #edit (without, it's the viewer, which the pencil, blue while editing, goes back to).
     if (!n.address) return;
     const view = $("btn-edit") as HTMLAnchorElement;
     const at = pageUrl(n.address, pagePath);
     view.href = at + as;
     view.hidden = false;
     document.querySelector<HTMLMetaElement>('meta[name="erga-address"]')?.setAttribute("content", n.address);
-    // Viewing at the front page's address (/), it stays there.
-    const here = editing() ? `${at}/edit` : location.pathname == "/" ? "/" : at;
+    // At the front page's address (/), it stays there.
+    const here = location.pathname == "/" ? "/" : at;
     if (location.pathname != here) window.history.replaceState(window.history.state, "", here + location.search + location.hash);
   }
   if (info.docName) showName(info.docName);
@@ -825,7 +829,7 @@ Once you've read the guide, await further instructions.`;
   });
   sharingAnyone.addEventListener("change", () => changeSharing("*", sharingAnyone.value));
   $("sharing-copy").addEventListener("click", async () => {
-    const url = location.origin + (docName?.address ?? location.pathname.replace(/\/edit\/?$/, ""));
+    const url = location.origin + (docName?.address ?? location.pathname);
     tellSharing(await navigator.clipboard.writeText(url).then(() => `Link copied: ${url}`, () => url));
   });
   if (!isMac) {
@@ -1724,7 +1728,7 @@ Once you've read the guide, await further instructions.`;
   // Loaded in the editor: a reload (or back/forward) keeps things as they
   // were, the pane put back as it was left, unanimated; arriving here from
   // elsewhere is coming into the editor, and the agent grows out as above.
-  // Only a page opened at /edit is "loaded in the editor": one opened viewing (by a reload or not) and
+  // Only a page opened with #edit is "loaded in the editor": one opened viewing (by a reload or not) and
   // switched into it is coming into the editor (front.ts says which, ergaShell.loadedEditing).
   if (!editing()) setEditing(false);
   else if (window.ergaShell?.loadedEditing !== false && ["reload", "back_forward"].includes((performance.getEntriesByType("navigation")[0] as PerformanceNavigationTiming | undefined)?.type ?? "")) {

@@ -52,8 +52,8 @@ async function make(query = ""): Promise<string> {
   const r = await get(`/new${query}`);
   const at = r.headers.get("location") ?? "";
   expect(r.status == 302 && at.startsWith(`/${login}/`), `/new${query} makes a document under /${login}/`, { status: r.status, at });
-  const name = (await (await get(`${at.replace(/\/edit$/, "")}/api/name`)).json()) as Name;
-  expect(`${name.address}/edit` == at, "/new sends you to its editor, at its canonical address", { at, name });
+  const name = (await (await get(`${at.replace(/#edit$/, "")}/api/name`)).json()) as Name;
+  expect(`${name.address}#edit` == at, "/new sends you to its editor, at its canonical address (#edit)", { at, name });
   return name.id;
 }
 
@@ -128,7 +128,7 @@ async function serverApiScenario() {
   expect(new Uint8Array(await (await get(`/d/${pub.id}/doc/img/dot.png`)).arrayBuffer()).join() == png.join(), "images arrive byte for byte");
   expect((await (await get(`/d/${pub.id}/doc/css/app.css`)).text()).includes("rebeccapurple"), "and styles as text");
   const list = await docs();
-  expect(list.includes(`href="/${login}/published-app/edit"`) && !list.slice(list.indexOf(`/${login}/published-app/edit"`)).split("</li>")[0].includes("Unedited"), "a published document is listed, and doesn't expire", list);
+  expect(list.includes(`href="/${login}/published-app#edit"`) && !list.slice(list.indexOf(`/${login}/published-app#edit"`)).split("</li>")[0].includes("Unedited"), "a published document is listed, and doesn't expire", list);
   ok("POST /api/publish puts a folder of files on the server as a document, which stays");
 
   // The document tools, for any document: a `document` argument.
@@ -173,7 +173,7 @@ async function serverApiScenario() {
   const otherLogin = `wother${Date.now().toString(36)}`;
   const other = await fetch(`${base}/auth/github?as=${otherLogin}&next=/new`, { redirect: "manual" });
   const otherCookie = other.headers.getSetCookie().map((c) => c.split(";")[0]).find((c) => c.startsWith("erga_session="))!;
-  const theirs = (await fetch(`${base}/new`, { redirect: "manual", headers: { Cookie: otherCookie } })).headers.get("location")!.replace(/\/edit$/, "");
+  const theirs = (await fetch(`${base}/new`, { redirect: "manual", headers: { Cookie: otherCookie } })).headers.get("location")!.replace(/#edit$/, "");
   const theirId = ((await (await fetch(`${base}${theirs}/api/name`, { headers: { Cookie: otherCookie } })).json()) as Name).id;
   t = await tool("read", { document: theirs, path: "index.html" });
   expect(t.status == 403, "an agent can't open a document not shared with its person", t);
@@ -265,7 +265,7 @@ async function adminScenario() {
   t = await admin.call("set_setting", { key: "delete_docs_after_hours", value: 0 });
   expect(t.status == 400 && /whole number/.test(t.text), "a bad value says what's wrong", t);
   // The new value is what the server uses: a new blank document lasts 36 hours.
-  const blank = await (await fetch(`${base}/new`, { redirect: "manual", headers: { Cookie: admin.cookie } })).headers.get("location")?.replace(/\/edit$/, "");
+  const blank = await (await fetch(`${base}/new`, { redirect: "manual", headers: { Cookie: admin.cookie } })).headers.get("location")?.replace(/#edit$/, "");
   const listed = (await admin.call("list_documents")).data.find((d: { address: string }) => d.address == blank);
   const lasts = (Date.parse(listed.expires) - Date.now()) / 3_600_000;
   expect(lasts > 35 && lasts <= 36, "and the server goes by it", { blank, listed, lasts });
@@ -288,7 +288,7 @@ async function adminScenario() {
   ok("an admin's agent adds users, makes and unmakes admins, and removes users");
 
   // Sharing, over the API.
-  const mine = (await (await fetch(`${base}/new`, { redirect: "manual", headers: { Cookie: person.cookie } })).headers.get("location"))!.replace(/\/edit$/, "");
+  const mine = (await (await fetch(`${base}/new`, { redirect: "manual", headers: { Cookie: person.cookie } })).headers.get("location"))!.replace(/#edit$/, "");
   t = await person.call("share_document", { document: mine, login: "Ada", role: "viewer" });
   expect(t.status == 200 && t.data.permissions.some((p: { login: string; role: string }) => p.login == "ada" && p.role == "viewer"), "share_document shares", t);
   expect((await get(`${mine}?user=Ada`)).status == 200, "and Ada can open it");
@@ -322,30 +322,31 @@ try {
   expect(name.title == "Untitled" && name.slug == "untitled" && !name.titleSet && !name.slugSet, "a blank document is Untitled, at /<you>/untitled", name);
   expect((await (await get(`/${login}/untitled/doc/index.html`)).text()) == template("doc"), "/new is a copy of templates/doc");
   let list = await docs();
-  expect(list.includes(`href="/${login}/untitled/edit"`) && list.includes(">Untitled<") && list.includes("Unedited"), "the list shows it, untitled and unedited", list);
+  expect(list.includes(`href="/${login}/untitled#edit"`) && list.includes(">Untitled<") && list.includes("Unedited"), "the list shows it, untitled and unedited", list);
   ok("/new makes a blank document at /<you>/untitled, listed as unedited");
   if (local) {
     // A fresh test server has no landing document until something asks for it: then the server makes it from landing/ (tests/landing.ts).
     const copy = await get("/new?from=landing");
-    expect(copy.status == 302 && (copy.headers.get("location") ?? "").endsWith("/edit"), "/new?from=landing on a fresh server copies the landing page the server makes", copy.status);
+    expect(copy.status == 302 && (copy.headers.get("location") ?? "").endsWith("#edit"), "/new?from=landing on a fresh server copies the landing page the server makes", copy.status);
     const front = await (await get("/")).text();
     expect(front.includes('class="erga-view"') && front.includes('href="/new?from=landing"'), "and / shows it", front.slice(0, 1500));
     ok("on a fresh server, / and /new?from=landing have the landing page the server makes");
   }
 
-  // Addresses: /d/<id>, /<you>/<id> and a differently cased owner all lead to the canonical one, the viewer; /edit under it is the editor.
+  // Addresses: /d/<id>, /<you>/<id> and a differently cased owner all lead to the canonical one, the viewer; with #edit it's the editor.
   expect(await location(`/d/${blank}`) == `/${login}/untitled`, "/d/<id> redirects to /<you>/<slug>", await location(`/d/${blank}`));
   expect(await location(`/${login}/${blank}?from=here`) == `/${login}/untitled?from=here`, "/<you>/<id> redirects there, keeping the query");
   expect(await location(`/${login.toUpperCase()}/untitled`) == `/${login}/untitled`, "so does a differently cased owner");
   const viewerHtml = await (await get(`/${login}/untitled`)).text();
-  expect(viewerHtml.includes('<iframe id="frame" class="erga-view"') && viewerHtml.includes(`href="/${login}/untitled/edit"`) && viewerHtml.includes(`href="/new?from=${blank}"`) && viewerHtml.includes('href="/docs"'), "the canonical address is the viewer: the page, Edit, Clone, and breadcrumbs back to Documents", viewerHtml.slice(-1500));
-  expect(await location(`/d/${blank}/edit`) == `/${login}/untitled/edit` && await location(`/${login}/${blank}/edit`) == `/${login}/untitled/edit`, "/edit under any of its addresses redirects to the canonical editor");
-  const editorHtml = await (await get(`/${login}/untitled/edit`)).text();
-  expect(editorHtml.includes(`<meta name="erga-base" content="/d/${blank}">`) && editorHtml.includes("<title>Untitled</title>"), "/<you>/<slug>/edit is the editor, which talks to /d/<id>", editorHtml.slice(0, 400));
-  expect(editorHtml.includes('<body class="erga-editing">') && editorHtml.includes('<iframe id="frame" class="erga-view"') && !editorHtml.includes("/page.js\"></script>"), "it's the viewer's page, going into the editor as it loads (the editor's code isn't in it)", editorHtml.slice(0, 1500));
+  expect(viewerHtml.includes('<iframe id="frame" class="erga-view"') && viewerHtml.includes(`href="/${login}/untitled#edit"`) && viewerHtml.includes(`href="/new?from=${blank}"`) && viewerHtml.includes('href="/docs"'), "the canonical address is the viewer: the page, Edit, Clone, and breadcrumbs back to Documents", viewerHtml.slice(-1500));
+  // No /edit route: an address is always a document's page (a page may be called edit), and #edit never reaches the server.
+  expect((await get(`/${login}/untitled/edit`)).status == 404 && await location(`/d/${blank}/edit`) == `(404)`, "/edit after an address is a page called edit, not the editor (none here: a 404)");
+  const editorHtml = viewerHtml;
+  expect(editorHtml.includes(`<meta name="erga-base" content="/d/${blank}">`) && editorHtml.includes("<title>Untitled</title>"), "for its editor, the page names the host it talks to, /d/<id>", editorHtml.slice(0, 400));
+  expect(editorHtml.includes('if (location.hash == "#edit") document.body.classList.add("erga-editing")') && editorHtml.includes('<iframe id="frame" class="erga-view"') && !editorHtml.includes("/page.js\"></script>"), "with #edit, the viewer's page goes into the editor as it loads (the editor's code isn't in it)", editorHtml.slice(0, 1500));
   expect((await get(`/${login}/nothing-here`)).status == 404 && (await get(`/d/zzzzzzzz`)).status == 404, "an address with no document is a 404");
   for (const sub of [`/d/${blank}/api/doc`, `/${login}/untitled/api/doc`, `/${login}/${blank}/api/doc`]) expect((await get(sub)).ok, `the document's host answers under ${sub}`);
-  ok("/d/<id>, /<you>/<id> and the canonical /<you>/<slug> all reach the document: the viewer there, the editor under /edit");
+  ok("/d/<id>, /<you>/<id> and the canonical /<you>/<slug> all reach the document: the viewer there, the editor with #edit; no /edit route");
 
   // A second blank document can't have the same slug: it gets the next free one.
   const second = await make();
@@ -360,7 +361,7 @@ try {
   expect(shared.status == 200 && shared.body.permissions?.map((p) => `${p.login}:${p.role}`).join() == `${login}:owner,ada:viewer`, "the owner shares it with a viewer", shared);
   expect((await as("Ada", `/${login}/untitled-2`)).status == 200 && (await as("Ada", `/d/${second}/doc/index.html`)).ok, "a viewer opens it");
   const adaList = await (await as("Ada", "/docs")).text();
-  expect(adaList.includes(`href="/${login}/untitled-2/edit?user=Ada"`) && adaList.includes(`${login} · view only`) && !adaList.includes(`value="${second}"`), "it's on their list, as shared with them, without a delete button", adaList.slice(adaList.indexOf("<ol>"), adaList.indexOf("</ol>")));
+  expect(adaList.includes(`href="/${login}/untitled-2?user=Ada#edit"`) && adaList.includes(`${login} · view only`) && !adaList.includes(`value="${second}"`), "it's on their list, as shared with them, without a delete button", adaList.slice(adaList.indexOf("<ol>"), adaList.indexOf("</ol>")));
   expect((await as("Ada", `/d/${second}/api/stored/index.html`, { method: "PUT", body: "<h1>Mine now</h1>" })).status == 403, "but can't publish to it");
   expect(!(await as("Ada", `/d/${second}/api/name`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: "Viewer's title" }) })).ok, "nor rename it");
   expect((await as("Ada", "/docs/delete", { method: "POST", body: new URLSearchParams({ id: second }), headers: { Origin: origin } })).status == 403, "nor delete it");
@@ -415,7 +416,7 @@ try {
   retitle(ada, "Untitled", "Field &amp; notes");
   await until(async () => (list = await docs()).includes(">Field &amp; notes<"), 5000, "the list shows the new title", () => list);
   await until(async () => (await nameOf(blank)).slug == "field-notes", 5000, "the slug follows the title");
-  expect(list.includes(`href="/${login}/field-notes/edit"`), "the list links to the new address", list);
+  expect(list.includes(`href="/${login}/field-notes#edit"`), "the list links to the new address", list);
   // The title and the edit's time are recorded separately, so the mark can go a moment after the title changes.
   await until(async () => !(list = await docs()).slice(list.indexOf(`/${login}/field-notes"`)).split("</li>")[0].includes("Unedited"), 5000, "an edited document isn't marked unedited", () => list);
   expect(await location(`/${login}/untitled`) == `/${login}/field-notes`, "the old slug redirects to the new one", await location(`/${login}/untitled`));
@@ -455,7 +456,7 @@ try {
   // The list shows a document by its current address.
   const demo = await make();
   r = await rename(demo, { title: "Demo copy", slug: "my-demo" });
-  expect(r.ok && (await docs()).includes(`href="/${login}/my-demo/edit"`), "the list shows a renamed document at its new address");
+  expect(r.ok && (await docs()).includes(`href="/${login}/my-demo#edit"`), "the list shows a renamed document at its new address");
 
   // The agent's tools, as an external agent calls them: get_title and set_title.
   const { token } = (await (await get(`/d/${demo}/api/share`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" })).json()) as { token: string };
@@ -479,11 +480,12 @@ try {
 
   // Open tabs follow a rename: the title, and the address bar (replaceState, no reload).
   const tab = await browser.page();
-  await tab.open(`${base}/auth/github?as=${login}&next=${encodeURIComponent(`/${login}/agents-pick/edit`)}`);
+  // (The fragment survives the redirects: the browser keeps it.)
+  await tab.open(`${base}/auth/github?as=${login}&next=${encodeURIComponent(`/${login}/agents-pick`)}#edit`);
   await until(async () => (await tab.eval<string>(`document.getElementById("doc-title-text")?.textContent ?? ""`)) == "Agent's pick", 10_000, "the editor shows the title");
   await tab.eval(`window.__sameTab = true`);
   await rename(demo, { title: "Renamed elsewhere" });
-  await until(async () => (await tab.eval<string>(`location.pathname`)) == `/${login}/renamed-elsewhere/edit`, 5000, "the tab's address follows the rename", async () => tab.eval(`location.pathname`));
+  await until(async () => (await tab.eval<string>(`location.pathname`)) == `/${login}/renamed-elsewhere`, 5000, "the tab's address follows the rename", async () => tab.eval(`location.pathname`));
   expect((await tab.eval<string>(`document.title`)) == "Renamed elsewhere" && (await tab.eval<string>(`document.getElementById("doc-title-text").textContent`)) == "Renamed elsewhere", "and its title");
   expect(await tab.eval<boolean>(`window.__sameTab === true`), "without reloading");
   // A title following the heading moves the tab too.
@@ -492,7 +494,7 @@ try {
   const bo = await join(demo, "Bo");
   const heading = /<h1[^>]*>([^<]*)<\/h1>/.exec(bo.text()?.toString() ?? "")?.[1] ?? "";
   bo.edit((y) => { const s = y.toString(), i = s.indexOf(heading, s.indexOf("<h1")); y.delete(i, heading.length); y.insert(i, "Heading moves tabs"); });
-  await until(async () => (await tab.eval<string>(`location.pathname`)) == `/${login}/heading-moves-tabs/edit`, 6000, "the tab follows a title that follows the heading", async () => tab.eval(`location.pathname`));
+  await until(async () => (await tab.eval<string>(`location.pathname`)) == `/${login}/heading-moves-tabs`, 6000, "the tab follows a title that follows the heading", async () => tab.eval(`location.pathname`));
   bo.destroy();
   ok("open tabs follow a rename, by anyone or by an edit to the heading, without reloading");
 
@@ -508,14 +510,14 @@ try {
   expect(await exists(open), "the one someone has open stays (for now)");
   list = await docs();
   const keptName = await nameOf(kept);
-  expect(!list.includes(`value="${gone}"`) && list.includes(`href="${keptName.address}/edit"`), "the list follows", list);
+  expect(!list.includes(`value="${gone}"`) && list.includes(`href="${keptName.address}#edit"`), "the list follows", list);
   ok("an unedited document is deleted on time; edited or open ones stay");
   for (const p of [ada, bo2, cy]) p.destroy();
 
   // The page runs on the document's own origin: the editor names it, with a token that opens the document's files there.
   // (Browsers send <anything>.localhost to this machine; Bun's fetch doesn't, so it's told the host instead.)
-  const pagesFetch = (u: string) => { const url = new URL(u); return url.hostname.endsWith(".localhost") ? fetch(u.replace(url.host, `localhost:${url.port}`), { headers: { Host: url.host } }) : fetch(u); };
-  const editorAt = await (await get(`${(await nameOf(second)).address}/edit`)).text();
+  const pagesFetch = (u: string, headers: Record<string, string> = {}) => { const url = new URL(u); return url.hostname.endsWith(".localhost") ? fetch(u.replace(url.host, `localhost:${url.port}`), { headers: { ...headers, Host: url.host } }) : fetch(u, { headers }); };
+  const editorAt = await (await get(`${(await nameOf(second)).address}`)).text();
   const pagesUrl = /<meta name="erga-pages" content="([^"]+)">/.exec(editorAt)?.[1] ?? "";
   const pages = pagesUrl ? new URL(pagesUrl) : null;
   expect(!!pages && pages.hostname.startsWith(`${second}-${login}.`) && pages.origin != origin, "the editor names the document's own origin", pagesUrl);
@@ -527,6 +529,21 @@ try {
   expect((await pagesFetch(`${pages!.origin.replace(second, "aaaaaaaa")}${pages!.pathname}doc/index.html`)).status == 403, "nor does a good one, at another document's origin");
   expect((await pagesFetch(`${pages!.origin}/docs`)).status == 404, "and none of this site's own pages are there");
   ok("a document's page runs on its own origin, whose files open only with the editor's token");
+
+  // Loading fast (README, "Loading fast"): the frame asks for doc/, which is the page; files are kept by the browser and checked by ETag.
+  const pageFile = await pagesFetch(`${pagesUrl}doc/index.html`);
+  const etag = pageFile.headers.get("etag");
+  expect((await (await pagesFetch(`${pagesUrl}doc/`)).text()) == (await pageFile.text()), "doc/ is the document's page");
+  expect(!!etag && pageFile.headers.get("cache-control") == "no-cache", "a file has an ETag and is checked each time", Object.fromEntries(pageFile.headers));
+  const again = await pagesFetch(`${pagesUrl}doc/index.html`, { "If-None-Match": etag! });
+  expect(again.status == 304 && !(await again.text()), "unchanged since, it's a 304 with no body", again.status);
+  const frameSrc = /<iframe id="frame"[^>]* src="([^"]+)"/.exec(editorAt)?.[1]?.replace(/&amp;/g, "&") ?? "";
+  expect(/[?&]v=[a-z0-9]+/.test(frameSrc) && /[?&]edit=1/.test(frameSrc), "the editor's frame has the host page's version in its address, and starts on the editor", frameSrc);
+  const hostPage = await pagesFetch(frameSrc);
+  expect(/max-age=\d+/.test(hostPage.headers.get("cache-control") ?? "") && (await hostPage.text()).includes(`<base href="${pages!.pathname}doc/">`), "which the browser may keep, its base the document's folder", hostPage.headers.get("cache-control"));
+  expect((await pagesFetch(frameSrc.replace(/([?&])v=[^&]+/, "$1v=old"))).headers.get("cache-control") == "no-cache", "another version is checked each time");
+  expect((editorAt.match(/<link rel="preload"/g) ?? []).length >= 2 && (frameDoc.headers.get("server-timing") ?? "").includes("worker;dur="), "the editor's page preloads its files; responses say where their time went");
+  ok("the page's files are cached and checked by ETag; the frame's host page is kept by version");
 
   // Another site can't make documents for you: its link gets a button instead, which posts from here.
   const before = await docs();
@@ -635,7 +652,7 @@ try {
   // The share dialog, in a browser: add someone, change anyone-with-the-link, and the list follows.
   const st = await browser.page();
   await st.open(`${base}/auth/github?as=${login}&next=/docs`);
-  await st.eval(`document.querySelector('li a[href="${(await nameOf(second)).address}/edit"]').closest('li').querySelector('button.share').click()`);
+  await st.eval(`document.querySelector('li a[href="${(await nameOf(second)).address}#edit"]').closest('li').querySelector('button.share').click()`);
   await until(async () => at2(st, `document.querySelectorAll('#share .people li').length == 1`), 5000, "the share dialog lists the owner");
   await st.eval(`(() => { const f = document.querySelector('#share form.add'); f.elements.login.value = "Bo"; f.elements.role.value = "viewer"; f.requestSubmit(); })()`);
   await until(async () => at2(st, `document.querySelectorAll('#share .people li').length == 2`), 5000, "adding someone lists them");

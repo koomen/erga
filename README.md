@@ -53,10 +53,11 @@ serves the app's routes (`front.ts`). Its pages:
 - **The front page**, `/`: the viewer on the landing document (see [The front
   page](#the-front-page)), for anyone, signed in or not.
 - **Documents**, `/docs`: home for anyone signed in, and under it **the
-  editor**, `/<owner>/<slug>/edit`, whose breadcrumbs (Documents › its
-  title) lead back.
+  editor**, `/<owner>/<slug>#edit`, whose breadcrumbs (Documents › its
+  title) lead back. A document's address always means the document: `#edit`
+  (which never reaches the server) opens it in the editor, on the same page.
 - **A document's other pages**, `/<owner>/<slug>/<page>` (`/blog` is
-  `blog.html`, else `blog/index.html`), each with its editor at `/edit` after
+  `blog.html`, else `blog/index.html`), each with its editor at `#edit` after
   it (see [Documents with many pages](#documents-with-many-pages)).
 - **Settings**, `/settings`: your agent tokens (`/tokens` redirects there).
 - **Admin settings**, `/admin`: the server's settings and users, for admins.
@@ -81,9 +82,10 @@ and the directory of documents with their permissions.
 address, kept in the directory (`directory.ts`): D1 (`worker/d1.ts`; locally
 the dev server's own D1), behind a three-method `Sql` interface, so the unit
 tests run the same code on bun:sqlite. A document's
-canonical address is `/<owner>/<slug>` (the viewer; its editor is that, then
-`/edit`); `/d/<id>` always works, and `/<owner>/<id>` (older links) and any
-slug it had before redirect to it (and `/edit` under them to the editor). The
+canonical address is `/<owner>/<slug>` (the viewer; its editor is that with
+`#edit`); `/d/<id>` always works, and `/<owner>/<id>` (older links) and any
+slug it had before redirect to it (pages under them too). There is no `/edit`
+route: `/<owner>/<slug>/edit` is a page called edit, if the document has one. The
 title follows the page's first `<h1>` (else `<title>`, else "Untitled") until
 someone sets it, and the slug follows the title (lowercase letters, digits
 and dashes, `-2`, `-3`... when taken) until someone sets it. Rename from the
@@ -568,7 +570,9 @@ back 400ms after its last edit, and merges edits that arrive as files (the
 word diff and rebase in `src/page/merge.ts`, from the last version both sides
 agreed on) as ordinary edits, attributed "on disk". `/doc/` serves text files
 from the room, so a page always loads the latest shared version, even before
-it's on disk. The room is platform-neutral (storage is a four-method
+it's on disk; while the room isn't open (nobody editing), it serves them
+straight from storage, which then holds the latest text, so viewing never
+waits for a room to open. The room is platform-neutral (storage is a four-method
 `FileStore`, connections are `send` callbacks) so it can move into a Durable
 Object as is.
 
@@ -792,10 +796,11 @@ An address resolves to `<path>.html`, then `<path>.md`, then
 `blog/index.html`. No address gets a slash added (`/blog/` is the same page,
 left as it is); a page's file name (`/blog/post.html`, `/blog/index`)
 redirects to its address; anything else is a 404 page. The editor for a page
-is its address then `/edit`, the same page in edit mode, exactly as for the
-first page. Under a document's address `/api/...` and `/doc/...` are its host
-and `/edit` the editor, so no page or folder may be called `api` or `doc` at
-the top, nor `edit` anywhere.
+is its address with `#edit`, the same page in edit mode, exactly as for the
+first page; so a page may be called `edit` like any other. Under a document's
+address `/api/...` and `/doc/...` are its host (its API, sockets and files,
+which older tabs and share links reach under any of its addresses), so no
+page or folder may be called `api` or `doc` at the top of a document.
 
 **Relative links and assets.** The viewer and the editor both render a page
 at its own file's path on the pages origin (`/t/<token>/doc/blog/post.html`;
@@ -905,26 +910,27 @@ source view takes the frame's state, undo history included, and hands it back.
 ### One page, viewing or editing
 
 A document's page (`viewDocument` in `front.ts`) is the same at
-`/<owner>/<slug>` and at `/edit` under it, and small (about 4KB compressed):
+`/<owner>/<slug>` and with `#edit` after it (the server never sees the fragment, so it serves one page; the page decides from `location.hash`, as it loads and whenever it changes), and small (about 4KB compressed):
 the controls, floating over the top corners, and a frame filling the window
-with the frame's host page in it (`/t/<token>/?view=<index>`), which shows
+with the frame's host page in it (`/t/<token>/?view=`), which shows
 the document's page straight away, as it renders. All the rest of the weight
 is the document's own. Editing is loaded on top, only for those who may edit
-and only when they go into it (the pencil, or opening `/edit`): the page adds
+and only when they go into it (the pencil, or opening it with `#edit`, or adding `#edit` to the address): the page adds
 the editor's controls and styles (`page.html`, served as `/editor.html`) and
 its code (`page.js`, which joins the room), and asks the frame for its half
 (`frame.js`). That renders the editable page out of sight and puts it in the
 plain page's place, scrolled to the same spot; then the editor's controls
-fade in over the viewer's. The pencil again and the browser's Back go the other way:
+fade in over the viewer's. The pencil again, taking `#edit` off the address, and the browser's Back go the other way:
 the plain page loads again behind and takes its place, the viewer's controls
 fade back, and the editor carries on unseen, so going back in is immediate.
-Viewing, the page fetches the editor's files while the browser is idle, or
-sooner when the pointer or focus comes to the pencil. The first time in, the
+Viewing, the page fetches the editor's files (and wakes the document's room)
+once the document has loaded and the browser is idle, or sooner when the
+pointer or focus comes to the pencil. The first time in, the
 viewer stays as it is while they arrive (the pencil breathes if that takes a
 moment); then the editor's controls show and the agent grows out of its
 button as on any later switch, once the page has said what its background is,
 so the room the page slides over to make is its colour, never a white block.
-Only a page opened at `/edit` and reloaded puts the agent back unanimated.
+Only a page opened with `#edit` and reloaded puts the agent back unanimated.
 `tests/account.ts` switches both ways and checks that the document stays put;
 `tests/switch.ts` records the first switch frame by frame on a slow network,
 light and dark, and checks no frame shows white or loses the document, and
@@ -939,6 +945,60 @@ people who may open the document get. On Cloudflare that's a wildcard route
 on `*.erga-pages.dev/*` (`cloudflare.config.ts`) with a proxied wildcard DNS
 record. Locally the origin is `<id>-<owner>.localhost:<port>`, which browsers
 send to this machine, and the token's secret is kept in the data directory.
+
+### Loading fast
+
+What happens between asking for a document and seeing it, and what keeps it short:
+
+- **The page itself** asks the database once (`Directory.openAs`: the
+  document at that address and your role on it, in one query) and doesn't wait
+  on the document's Durable Object at all: its frame asks for `doc/`, which
+  the document answers with its page, whatever its name. The front page asks
+  the setting's document and its host at the same time. Who you are is worked
+  out once per request (`sessionOf`), the corner included.
+- **The frame's host page** has its code's version in its address (`&v=`),
+  so the browser keeps it for the day (`max-age`; without the version it's
+  checked by ETag), and the token in its address stays the same all day (its
+  expiry rounds up to a whole day), so the addresses of the document's files
+  do too. Its base is the document's folder, so the editable page (a srcdoc,
+  which takes it) asks for the document's files there from the start.
+- **A file of the document** is asked of its Durable Object at the same time
+  as the directory confirms the token's document is still its owner's.
+- **The document's files** (`docFile` in `host.ts`) carry an ETag, their
+  digest, with `no-cache`: the browser keeps them and asks each time whether
+  they changed, getting a 304 and no body when they haven't, so an edit shows
+  at once and a repeat visit (or the editor's re-render) downloads nothing it
+  has. While the room isn't open they come straight from storage
+  (`DocHost.storedFile`).
+- **Viewing**, nothing of the editor loads until the document has (above).
+- **Editing**, a page opened with `#edit` fetches the editor's files as it
+  parses (preloads, added by an inline check of `location.hash` at the top of
+  the page, for those who may edit), its frame starts on `frame.js` at once
+  (`?edit=1`, added to the frame's address by the same check), and
+  the document's details (`/api/doc`, which opens its room) are asked for
+  alongside the editor's code rather than after it (`window.ergaDocInfo`).
+  `frame.js` leaves out the HTML language (and its CSS and JavaScript), which
+  the frame never used (`docExtensions`, `bridge.ts`): a third smaller.
+- Every response says where its time went (`Server-Timing`, `worker/timing.ts`):
+  the Worker's time, and how many calls to the database and to documents it
+  made and how long they took; a file served from storage says so
+  (`doc;desc="stored"`).
+
+`bun tests/bench.ts` measures it in headless Chrome: the front page, a
+document in the viewer, the same in the editor, and the switch with the
+pencil, each cold (nothing cached, the document's room not yet open) and warm,
+on a desktop and on a throttled phone (Slow 4G, 4x slower CPU): time to first
+byte, first contentful paint, when the document is visible (its frame's first
+paint), LCP, load, when the editor is ready, requests and bytes. `--prod` runs
+it against the Worker built as deployed (`vite build`, then `vite preview`)
+rather than the dev server; either way it puts a gzipping proxy in front, as
+Cloudflare compresses what erga.dev sends. `--waterfall` prints each case's
+requests with their server timings; `--runs`, `--profile`, `--only` and
+`--json` are the rest (its header says more). Locally there's no distance
+to the database or the Durable Object, so `--latency 50` has every call to
+them wait 50ms first (`ERGA_REMOTE_LATENCY_MS`, local development only), as a
+Worker far from them would on erga.dev: that's where the round trips the page
+saves (above) show.
 
 ### How it works
 

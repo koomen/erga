@@ -19,13 +19,21 @@
 
 import { ChangeSet, EditorSelection, type EditorState, type Extension } from "@codemirror/state";
 import { history } from "@codemirror/commands";
-import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
-import { html } from "@codemirror/lang-html";
+import { markdownLanguage } from "@codemirror/lang-markdown";
+import { LanguageSupport } from "@codemirror/language";
 import type { InlineStyle, Kind, MarkAuthor, Peer } from "./editor";
 import type { ViewRequest, ViewResult } from "./agent-log";
 
-/** What the frame's editor state needs: the history (undo, shared with the source view) and the language (the Markdown commands read its tree). */
-export const docExtensions = (kind: Kind): Extension[] => [history(), kind == "md" ? markdown({ base: markdownLanguage }) : html()];
+/**
+ * What the frame's editor state needs: the history (undo, shared with the
+ * source view) and, for a Markdown file, the Markdown language, whose tree its
+ * commands read (Enter and Backspace in lists and quotes). Nothing else of the
+ * languages: the frame has no CodeMirror view to highlight, and an HTML file's
+ * page is parsed by the page editor itself (manuscript.ts), so leaving out the
+ * HTML language (with its CSS and JavaScript) keeps frame.js a third smaller
+ * and spares a parse on every edit. The source view, in the shell, has both.
+ */
+export const docExtensions = (kind: Kind): Extension[] => [history(), kind == "md" ? new LanguageSupport(markdownLanguage) : []];
 
 /** The parts of a keydown the shell's shortcuts look at. */
 export interface Keys { key: string; metaKey: boolean; ctrlKey: boolean; shiftKey: boolean; altKey: boolean }

@@ -671,8 +671,11 @@ export function guide(origin: string, session: ToolContext["session"] | null, ad
 
 > Erga (${origin}) is a multiplayer page editor: people and their agents edit
 > HTML and Markdown documents together, in place, on the rendered page. Each
-> document is a folder of files (a page, its styles, scripts, images), at
-> ${origin}/<owner>/<slug>. This API lets an agent do everything a person can
+> document is a folder of files (its pages, styles, scripts, images), at
+> ${origin}/<owner>/<slug>: index.html is that address, and every other page
+> is at its path without .html (blog/post.html at /<owner>/<slug>/blog/post,
+> blog/index.html at /<owner>/<slug>/blog). Any of these with #edit opens it in
+> the editor. This API lets an agent do everything a person can
 > do in the app, as that person: list, make, rename, share and delete their
 > documents, publish a folder of files (a static site, a page) as a document,
 > read and edit any document they may edit, and, for a server admin, configure

@@ -82,8 +82,8 @@ test("names: inside the document, sensible, and not the document's own addresses
   }
   expect(() => checkNewName("api", "folder")).toThrow(/own addresses/);
   expect(() => checkNewName("doc.html", "page")).toThrow(/own addresses/);
-  expect(() => checkNewName("edit.html", "page")).toThrow(/editor/);
-  expect(() => checkNewName("blog/edit", "folder")).toThrow(/editor/);
+  expect(() => checkNewName("edit.html", "page")).not.toThrow();
+  expect(() => checkNewName("blog/edit", "folder")).not.toThrow();
   expect(() => checkNewName("blog/api", "folder")).not.toThrow();
   expect(() => checkNewName("api.json", "file")).not.toThrow();
   expect(() => checkNewName("docs", "folder")).not.toThrow();
@@ -165,7 +165,6 @@ test("tree operations change storage and the room together, and everyone hears",
     await refused({ op: "new_page", path: "notes.txt" }, 400, /\.html or \.md/);
     await refused({ op: "new_page", path: "../up.html" }, 400, /leaves the document/);
     await refused({ op: "new_folder", path: "api" }, 400, /own addresses/);
-    await refused({ op: "new_page", path: "blog/edit" }, 400, /editor/);
     await refused({ op: "delete", path: "index.html" }, 400, /own page/);
     await refused({ op: "move", from: "index.html", to: "home.html" }, 400, /own page/);
     await refused({ op: "move", from: "blog", to: "blog/inner" }, 400, /inside itself/);

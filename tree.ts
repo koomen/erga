@@ -12,7 +12,8 @@
 // for each), so blog.html wins over blog/index.html. No address ends in a
 // slash, and none is added: the page renders in a frame at its file's own
 // path, so its relative links and assets resolve as they would on disk.
-// The editor for a page is its address, then /edit.
+// The editor for a page is its address with #edit, which only the browser
+// sees: an address always means a page, so a page may be called edit too.
 //
 // Shared by the host (host.ts: the tree's API and its operations), the front
 // door (front.ts: which page an address is) and the browser (the editor and
@@ -42,9 +43,10 @@ const ignoredSeg = (seg: string) => seg.startsWith(".") || seg == "node_modules"
 
 /**
  * Names that would collide with the document's own addresses: under
- * /<owner>/<slug>, /api/... and /doc/... are the document's host, and /edit
- * at the end of an address is the editor. So no page or folder may be
- * called api or doc at the top, nor edit anywhere.
+ * /<owner>/<slug>, /api/... and /doc/... are the document's host (its API,
+ * its sockets and its files, which older tabs and share links reach under
+ * any of its addresses). So no page or folder may be called api or doc at
+ * the top of a document.
  */
 const RESERVED_TOP = new Set(["api", "doc"]);
 
@@ -77,7 +79,6 @@ export function checkNewName(path: string, type: "page" | "folder" | "file"): vo
   if (parts.length == 1 && (type != "file" || !last.includes(".")) && [...RESERVED_TOP].some(named)) {
     throw new TreeError(`"${last}" can't be a page or folder at the top of a document: /api and /doc are the document's own addresses. Pick another name.`);
   }
-  if (type != "file" && named("edit")) throw new TreeError(`"${last}" can't be a page or folder's name: /edit at the end of an address opens the editor. Pick another name.`);
 }
 
 /** Every folder a path is in ("a/b/c.html" → ["a", "a/b"]). */

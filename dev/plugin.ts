@@ -134,7 +134,7 @@ export function ergaDev(opts: DevOptions): Plugin {
         await migrated;
         const l = await link(target, { headers, user });
         log(`opened ${target.shown}: ${shown}/${l.owner}/${l.slug}`);
-        res.writeHead(303, { Location: `/${l.owner}/${l.slug}/edit${user ? `?user=${encodeURIComponent(user)}` : ""}` }).end();
+        res.writeHead(303, { Location: `/${l.owner}/${l.slug}${user ? `?user=${encodeURIComponent(user)}` : ""}#edit` }).end();
       }
 
       server.httpServer?.once("listening", () => {
@@ -159,7 +159,7 @@ export function ergaDev(opts: DevOptions): Plugin {
           if (opts.open) {
             const target = await resolveTarget(opts.open, opts.cwd);
             const l = await link(target, {});
-            const at = `${shown}/${l.owner}/${l.slug}/edit`;
+            const at = `${shown}/${l.owner}/${l.slug}#edit`;
             log(`editing ${target.shown}${target.only ? "" : ` (${target.index})`}: ${at}`);
             if (opts.browser) openBrowser(at);
           } else if (opts.browser) openBrowser(`${shown}/docs`);
