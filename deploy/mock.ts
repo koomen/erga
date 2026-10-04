@@ -508,9 +508,9 @@ function seedFleet(state: MockState) {
  * A pretend builder (deploy/builder/ is the real one): it "builds" a commit
  * by handing back `release` stamped with the commit, saying what the real
  * one would run. `failNext` fails the next build once, and so does any commit
- * starting 0bad; `built` lists what it built.
+ * starting 0bad, or that `fails` says should; `built` lists what it built.
  */
-export function mockBuilder(release: () => Promise<Release>, o: { delayMs?: number } = {}): Builder & { built: string[]; stopped: string[]; failNext: string | null } {
+export function mockBuilder(release: () => Promise<Release>, o: { delayMs?: number; fails?: (commit: string) => Promise<boolean> } = {}): Builder & { built: string[]; stopped: string[]; failNext: string | null } {
   const b = {
     built: [] as string[],
     failNext: null as string | null,
@@ -526,7 +526,7 @@ export function mockBuilder(release: () => Promise<Release>, o: { delayMs?: numb
       }
       if (b.failNext) { const why = b.failNext; b.failNext = null; throw new Error(why); }
       // A commit starting 0bad fails to build (the dev server's mock, where failNext can't be reached).
-      if (commit.startsWith("0bad")) throw new Error("bun install --frozen-lockfile failed (exit 1): lockfile had changes, but lockfile is frozen");
+      if (commit.startsWith("0bad") || await o.fails?.(commit)) throw new Error("bun install --frozen-lockfile failed (exit 1): lockfile had changes, but lockfile is frozen");
       b.built.push(commit);
       return { ...(await release()), version: commit.slice(0, 12) };
     },

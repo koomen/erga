@@ -55,6 +55,12 @@ export class Pipeline extends DurableObject<Env> {
       const view = await env.SOURCE.getByName("erga").branches(env.ERGA_DEV_ORIGIN ?? "");
       return view.branches.find((b: { name: string }) => b.name == branch)?.commit ?? null;
     };
+    // The mock builder fails a commit whose subject says "[mock-fail]" (a real commit's id can't be chosen to start 0bad).
+    const mockFails = async (commit: string) => {
+      if (!hasSource(env)) return false;
+      const view = await env.SOURCE.getByName("erga").branches(env.ERGA_DEV_ORIGIN ?? "").catch(() => null);
+      return !!view?.branches.some((b: { commits: { sha: string; subject: string }[] }) => b.commits.some((c) => c.sha == commit && c.subject.includes("[mock-fail]")));
+    };
     const self = env.DEPLOY_TARGET?.trim() ?? "";
     const peerName: TargetName | null = mock && isTargetName(self) ? targetNames.find((n) => n != self) ?? null : null;
     const fleet = mock ? mockCloudflare({ fleet: true, stagingSecrets: true, delayMs: 25, sites: (req, script) => this.peerSite(req, script, peerName) }) : null;
@@ -62,7 +68,7 @@ export class Pipeline extends DurableObject<Env> {
       storage: { get: (k) => ctx.storage.get(prefix + k), put: (k, v) => ctx.storage.put(prefix + k, v), delete: (k) => ctx.storage.delete(prefix + k) },
       env: { ...deployEnv, DEPLOY_TARGET: target },
       net: fleet ? fleet.fetch : globalThis.fetch.bind(globalThis),
-      builder: mock ? mockBuilder(release, { delayMs: 200 }) : env.BUILDER ? containerBuilder(env.BUILDER) : null,
+      builder: mock ? mockBuilder(release, { delayMs: 200, fails: mockFails }) : env.BUILDER ? containerBuilder(env.BUILDER) : null,
       schedule: async (ms) => {
         const at = Date.now() + ms;
         const now = await ctx.storage.getAlarm();

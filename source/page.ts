@@ -2,13 +2,15 @@
 // manage Erga's own source and its deploys.
 //
 // One list: staging's history, newest first (staging is always at or ahead
-// of main, so it holds every commit main has). Beside it, two dot columns,
-// as the task queue board's Branches column draws them: staging (a hollow
-// orange circle for a commit only on staging, a solid green one for a commit
-// main has too) and main (a solid green circle where main has the commit).
-// Then two deploy columns, staging and production: which commit each has
-// live, and each target's status (GET /api/deploys) in the column's head,
-// which opens that deploy's live log (GET /api/deploys/<name>/log, then
+// of main, so it holds every commit main has). Beside it, one dot column,
+// with no header: every commit listed is on staging; a solid green circle is
+// on main too, a hollow orange circle only on staging. Then two deploy
+// columns, staging and production: each target's deploys (GET
+// /api/deploys?history=100), beside the commit each deployed, with a badge
+// for its state (live, deployed, failed, cancelled, or running) and when; a
+// commit deployed more than once shows its latest, with a count that opens
+// the rest. Each target's status is in its column's head. Any deploy opens
+// its log, past or live (GET /api/deploys/<name>/log?deploy=<id>, then
 // { type: "deploy-log" } events). Merge moves main forward to staging's
 // head, or to the commit a row's "Merge to here" names. Also the GitHub
 // mirror and how to clone and push. It updates by itself (/api/events) and
@@ -47,12 +49,11 @@ const STYLE = `
   .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; box-sizing: border-box; flex: none; }
   .dot.staging-only { background: var(--bg); border: 2px solid var(--only-staging); }
   .dot.on-main { background: var(--on-main); border: 2px solid var(--on-main); }
-  .grid { display: grid; grid-template-columns: 22px 22px minmax(0, 1fr) auto auto 70px 116px 116px; align-items: center; }
+  .grid { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto auto 70px 148px 148px; align-items: center; }
   .grid > .head { position: sticky; top: 0; z-index: 2; background: var(--bg); height: 44px; display: flex; align-items: flex-end; padding-bottom: 6px; box-sizing: border-box; border-bottom: 1px solid var(--rule);
     font-size: 11.5px; font-weight: 600; letter-spacing: .02em; color: var(--soft); white-space: nowrap; }
-  .grid > .head.lane { justify-content: center; writing-mode: vertical-rl; transform: rotate(180deg); align-items: center; padding: 4px 0; height: 44px; font-size: 10.5px; }
-  .grid > .head.deploy { justify-content: center; }
-  .target { display: inline-flex; flex-direction: column; align-items: center; gap: 2px; max-width: 112px; border: 0; background: transparent; color: inherit; font: inherit; padding: 2px 6px; border-radius: 6px; cursor: pointer; }
+  .grid > .head.deploy { justify-content: flex-start; padding-left: 4px; }
+  .target { display: inline-flex; flex-direction: column; align-items: flex-start; gap: 2px; max-width: 144px; border: 0; background: transparent; color: inherit; font: inherit; padding: 2px 6px; border-radius: 6px; cursor: pointer; }
   .target:hover { background: color-mix(in srgb, var(--chrome) 12%, transparent); }
   .target b { font-weight: 650; color: var(--fg-strong); font-size: 11.5px; }
   .target .st { display: inline-flex; align-items: center; gap: 5px; font-weight: 500; font-size: 11.5px; }
@@ -60,6 +61,7 @@ const STYLE = `
   .target.deployed .st i { background: var(--on-main); }
   .target.failed .st { color: var(--bad); }
   .target.failed .st i { background: var(--bad); }
+  .target.cancelled .st i { background: transparent; border: 1.5px dashed var(--chrome); width: 4px; height: 4px; }
   .target.building .st i, .target.deploying .st i { background: transparent; border: 2px solid var(--only-staging); border-right-color: transparent; width: 5px; height: 5px; animation: spin .8s linear infinite; }
   .target[disabled] { cursor: default; }
   .target[disabled]:hover { background: transparent; }
@@ -70,8 +72,7 @@ const STYLE = `
   .rail { position: relative; justify-content: center; }
   .rail::before, .rail::after { content: ""; position: absolute; left: calc(50% - 1px); width: 2px; height: 50%; display: none; opacity: .4; }
   .rail::before { top: 0; } .rail::after { bottom: 0; }
-  .rail.s::before, .rail.s::after { background: var(--only-staging); }
-  .rail.m::before, .rail.m::after { background: var(--on-main); }
+  .rail::before, .rail::after { background: var(--only-staging); }
   .rail.on-main::before, .rail.on-main::after { background: var(--on-main); }
   .rail.up::before, .rail.down::after { display: block; }
   .rail .dot { position: relative; z-index: 1; }
@@ -83,13 +84,38 @@ const STYLE = `
   .who { padding: 0 8px; font-size: 12px; color: var(--soft); max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .sha { padding: 0 6px; font: 11.5px var(--font-mono); color: var(--chrome); }
   .row time { margin: 0; justify-content: flex-end; padding-right: 8px; font-size: 12px; color: var(--soft); }
-  .live { justify-content: center; }
-  .pill-live { display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: 999px; font-size: 11.5px; font-weight: 600; color: var(--bg); background: var(--on-main); white-space: nowrap; }
-  .pill-live.busy { color: var(--only-staging); background: transparent; box-shadow: inset 0 0 0 1.5px var(--only-staging); }
-  .pill-live.failed { color: var(--bad); background: transparent; box-shadow: inset 0 0 0 1.5px var(--bad); }
+  .live { justify-content: flex-start; gap: 4px; padding-left: 10px; }
+  /* A deploy: its state as a badge, and when. Live: solid green. Deployed before: green outline. Running: orange, turning.
+     Failed: red outline. Cancelled: grey, dashed, struck through. */
+  .dep { display: inline-flex; align-items: center; gap: 5px; height: 20px; padding: 0 7px; border: 0; border-radius: 999px; font: 600 11px var(--font-text); white-space: nowrap; cursor: pointer;
+    color: var(--on-main); background: transparent; box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--on-main) 70%, transparent); }
+  .dep:hover { filter: brightness(1.08); background: color-mix(in srgb, var(--chrome) 10%, transparent); }
+  .dep:focus-visible { outline: 2px solid var(--caret); outline-offset: 1px; }
+  .dep.live { color: var(--bg); background: var(--on-main); box-shadow: none; }
+  .dep.live:hover { background: var(--on-main); }
+  .dep.failed { color: var(--bad); box-shadow: inset 0 0 0 1.5px var(--bad); }
+  .dep.cancelled { color: var(--soft); box-shadow: none; border: 1.5px dashed var(--chrome); height: 20px; box-sizing: border-box; padding: 0 6px; }
+  .dep.cancelled .w { text-decoration: line-through; text-decoration-thickness: 1px; }
+  .dep.building, .dep.deploying { color: var(--only-staging); box-shadow: inset 0 0 0 1.5px var(--only-staging); }
+  .dep.building::before, .dep.deploying::before { content: ""; width: 5px; height: 5px; border-radius: 50%; border: 2px solid var(--only-staging); border-right-color: transparent; animation: spin .8s linear infinite; }
+  .dep-at { font-size: 11px; color: var(--soft); white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .more { height: 18px; min-width: 22px; padding: 0 5px; border: 1px solid var(--rule); border-radius: 999px; background: var(--bg); color: var(--soft); font: 600 10.5px var(--font-text); cursor: pointer; }
+  .more:hover, .more[aria-expanded="true"] { color: var(--fg-strong); border-color: color-mix(in srgb, var(--chrome) 55%, var(--rule)); }
+  .live-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--on-main); flex: none; }
+  .sub { display: contents; }
+  .sub > * { padding: 2px 0 8px; }
+  .sub .stack { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; padding-left: 10px; }
+  .sub .stack > span { display: inline-flex; align-items: center; gap: 4px; }
+  .legend .dep { cursor: default; height: 18px; font-size: 10.5px; }
+  .legend .dep.cancelled { height: 18px; }
+  .legend .sep { width: 1px; height: 14px; background: var(--rule); }
   .none { padding: 18px 4px; font-size: 13.5px; color: var(--soft); grid-column: 1 / -1; }
-  .older { grid-column: 1 / -1; padding: 8px 4px 0; font-size: 12px; color: var(--soft); }
-  @media (max-width: 760px) { .grid { grid-template-columns: 22px 22px minmax(0, 1fr) auto 64px 64px; } .who, .grid > .head.who-h, .row time, .grid > .head.time-h { display: none; } .target { max-width: 62px; } .target b { font-size: 10.5px; } .target .st span { display: none; } .pill-live { padding: 0 6px; font-size: 10.5px; } }
+  .older { grid-column: 1 / -1; padding: 8px 4px 0; font-size: 12px; color: var(--soft); display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; }
+  .older span { display: inline-flex; align-items: center; gap: 6px; }
+  @media (max-width: 760px) { .grid { grid-template-columns: 22px minmax(0, 1fr) auto 84px 84px; } .who, .grid > .head.who-h, .row time, .grid > .head.time-h { display: none; } .target { max-width: 82px; } .target b { font-size: 10.5px; } .target .st span { display: none; }
+    .dep { padding: 0 6px; font-size: 10.5px; gap: 4px; } .dep-at { display: none; } .legend .dep { display: none; } .legend .sep { display: none; }
+    /* Short words on a phone: live, ok, failed, run, stop. */
+    .grid .dep[data-s] .w { display: none; } .grid .dep[data-s]::after { content: attr(data-s); } .grid .dep.cancelled[data-s]::after { text-decoration: line-through; } .live { padding-left: 6px; } }
   .boxes { display: grid; grid-template-columns: 1fr 1.3fr; gap: 18px; margin-top: 18px; }
   @media (max-width: 760px) { .boxes { grid-template-columns: 1fr; } }
   .box { border: 1px solid var(--rule); border-radius: 12px; padding: 14px 16px; min-width: 0; }
@@ -112,7 +138,10 @@ const STYLE = `
   dialog#log { width: min(820px, calc(100vw - 32px)); padding: 0; }
   #log .top { display: flex; align-items: center; gap: 10px; padding: 14px 16px 10px; border-bottom: 1px solid var(--rule); }
   #log h2 { margin: 0; font-size: 15px; }
-  #log .meta { font-size: 12.5px; color: var(--soft); }
+  #log .meta { font-size: 12.5px; color: var(--soft); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #log .meta b { font-weight: 600; }
+  #log .meta .live-on { color: var(--on-main); }
+  #log .meta .bad { color: var(--bad); }
   #log .close { margin-left: auto; height: 30px; }
   #log pre { margin: 0; border-radius: 0 0 12px 12px; height: min(60vh, 520px); overflow: auto; font-size: 12px; line-height: 1.55; white-space: pre-wrap; }
   #log pre .t { color: var(--chrome); }
@@ -137,9 +166,10 @@ export function sourcePage(c: SourcePageConfig): Response {
   </header>
   <p class="hint" id="merge-hint" role="status"></p>
   <section class="card" aria-label="Commits">
-    <div class="legend"><span><i class="dot staging-only"></i>only on staging</span><span><i class="dot on-main"></i>on main</span></div>
+    <div class="legend"><span><i class="dot staging-only"></i>only on staging</span><span><i class="dot on-main"></i>on main too</span><i class="sep"></i>
+      <span class="dep live"><span class="w">live</span></span><span class="dep deployed"><span class="w">deployed</span></span><span class="dep deploying"><span class="w">running</span></span><span class="dep failed"><span class="w">failed</span></span><span class="dep cancelled"><span class="w">cancelled</span></span></div>
     <div class="grid" id="grid">
-      <div class="head lane" title="staging">staging</div><div class="head lane" title="main">main</div>
+      <div class="head"></div>
       <div class="head" style="padding-left:6px">Commit</div><div class="head who-h"></div><div class="head"></div><div class="head time-h"></div>
       ${target("staging", "staging")}${target("production", "production")}
       <div class="none" id="loading">Loading…</div>
@@ -181,26 +211,60 @@ git push erga HEAD:staging</code></pre>
   const TARGETS = ["staging", "production"];
   let view = null, deploys = null, busy = false, drawn = false;
   const grid = document.getElementById("grid");
-
-  /** What a target shows on a commit's row: live, deploying, failed, or nothing. */
-  function liveCell(t, sha) {
+  /** Commits whose older deploys are shown (the count opened). */
+  const expanded = new Set();
+  const running = (state) => state == "building" || state == "deploying";
+  const short = (t) => {
     if (!t) return "";
-    const live = t.deployed ?? (t.state == "deployed" ? t.commit : null);
-    if ((t.state == "building" || t.state == "deploying") && t.commit == sha) return '<span class="pill-live busy">' + t.state + "</span>";
-    if (t.state == "failed" && t.commit == sha && live != sha) return '<span class="pill-live failed">failed</span>';
-    return live == sha ? '<span class="pill-live" title="Live on ' + esc(t.host) + '">live</span>' : "";
-  }
+    const s = Math.max(0, (Date.now() - t) / 1000);
+    if (s < 60) return "now";
+    if (s < 3600) return Math.round(s / 60) + "m";
+    if (s < 86400) return Math.round(s / 3600) + "h";
+    if (s < 30 * 86400) return Math.round(s / 86400) + "d";
+    return new Date(t).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  };
+  const took = (r) => { const ms = (r.ended ?? Date.now()) - r.started; return ms < 60000 ? Math.round(ms / 1000) + "s" : Math.floor(ms / 60000) + "m " + Math.round((ms % 60000) / 1000) + "s"; };
   const targetOf = (name) => deploys?.targets?.find((t) => t.name == name) ?? null;
+  /** A target's deploys by commit, newest first. */
+  function byCommit(name) {
+    const m = new Map();
+    for (const r of targetOf(name)?.history ?? []) { if (!m.has(r.commit)) m.set(r.commit, []); m.get(r.commit).push(r); }
+    return m;
+  }
+  const word = (r) => r.live ? "live" : r.state;
+  function badge(name, r) {
+    const t = targetOf(name);
+    const tip = (r.live ? "Live on " + (t?.host ?? name) + ". " : "") + r.state[0].toUpperCase() + r.state.slice(1) + " · " + r.commit.slice(0, 7) + " · " + r.trigger + "\\n" +
+      "Started " + new Date(r.started).toLocaleString() + (r.ended ? ", took " + took(r) : ", running for " + took(r)) + (r.error ? "\\n" + r.error : "") + "\\nClick for its log.";
+    return '<button class="dep ' + esc(r.state) + (r.live ? " live" : "") + '" type="button" data-target="' + name + '" data-deploy="' + esc(r.id) + '" data-s="' + ({ live: "live", deployed: "ok", failed: "failed", cancelled: "stop", building: "run", deploying: "run" })[word(r)] + '" title="' + esc(tip) + '"><span class="w">' + esc(word(r)) + "</span></button>";
+  }
+  /** What a target shows on a commit's row: its latest deploy of it (and that the live one is among the rest), and how many more. */
+  function deployCell(name, sha, groups) {
+    const list = groups.get(sha);
+    if (!list) {
+      // A server without the history: whether the commit is live, as before.
+      const t = targetOf(name);
+      if (t && !t.history && (t.deployed ?? (t.state == "deployed" ? t.commit : null)) == sha) return '<span class="dep live" title="Live on ' + esc(t.host) + '"><span class="w">live</span></span>';
+      return "";
+    }
+    const [latest, ...rest] = list;
+    const liveRest = rest.some((r) => r.live);
+    return (liveRest ? '<i class="live-dot" title="An older deploy of this commit is live: open the count"></i>' : "") + badge(name, latest) +
+      '<span class="dep-at">' + short(latest.started) + "</span>" +
+      (rest.length ? '<button class="more" type="button" data-more="' + sha + '" aria-expanded="' + expanded.has(sha) + '" title="' + rest.length + " more deploy" + (rest.length == 1 ? "" : "s") + ' of this commit">+' + rest.length + "</button>" : "");
+  }
 
   function render() {
     if (!view) return;
     const staging = view.branches.find((b) => b.name == "staging"), main = view.branches.find((b) => b.name == "main");
     const commits = staging?.commits ?? [];
     document.getElementById("loading")?.remove();
+    const groups = Object.fromEntries(TARGETS.map((n) => [n, byCommit(n)]));
     // One row per commit, kept: a new commit fades in at the top, the oldest goes at the bottom.
     const rows = new Map([...grid.querySelectorAll(".row")].map((r) => [r.dataset.sha, r]));
     const want = new Set(commits.map((x) => x.sha));
     for (const [sha, r] of rows) if (!want.has(sha)) r.remove();
+    grid.querySelectorAll(".sub").forEach((x) => x.remove());
     grid.querySelector(".none.empty")?.remove();
     grid.querySelector(".older")?.remove();
     if (!commits.length) { grid.insertAdjacentHTML("beforeend", '<div class="none empty">No commits yet. Push one: git push erga HEAD:staging</div>'); }
@@ -210,22 +274,35 @@ git push erga HEAD:staging</code></pre>
       if (!r) { r = document.createElement("div"); r.dataset.sha = x.sha; }
       const kind = x.inMain ? "on-main" : "staging-only";
       r.className = "row " + kind;
-      const next = commits[i + 1], prevC = commits[i - 1];
-      const sUp = i > 0, sDown = !!next || x.parents.length > 0;
-      const mUp = x.inMain && prevC?.inMain, mDown = x.inMain && (next ? next.inMain : x.parents.length > 0);
+      const next = commits[i + 1];
+      const up = i > 0, down = !!next || x.parents.length > 0;
       const title = x.subject + "\\n" + x.sha.slice(0, 10) + " · " + x.author + " · " + new Date(x.at).toLocaleString() + (x.inMain ? " · on main" : " · only on staging");
       r.innerHTML =
-        '<span class="rail s ' + (sUp ? "up " : "") + (sDown ? "down " : "") + (x.inMain ? "on-main" : "") + '"><i class="dot ' + kind + '" data-lane="staging"></i></span>' +
-        '<span class="rail m ' + (mUp ? "up " : "") + (mDown ? "down" : "") + '">' + (x.inMain ? '<i class="dot on-main" data-lane="main"></i>' : "") + "</span>" +
+        '<span class="rail ' + (up ? "up " : "") + (down ? "down " : "") + (x.inMain ? "on-main" : "") + '"><i class="dot ' + kind + '" title="' + (x.inMain ? "On main (and staging)" : "Only on staging") + '"></i></span>' +
         '<span class="subj" title="' + esc(title) + '"><span>' + esc(x.subject) + "</span>" + (x.inMain ? "" : '<button class="here" type="button" data-merge="' + x.sha + '" title="Move main forward to this commit">Merge to here</button>') + "</span>" +
         '<span class="who">' + esc(x.author) + '</span><code class="sha">' + x.sha.slice(0, 7) + '</code><time datetime="' + new Date(x.at).toISOString() + '">' + ago(x.at) + "</time>" +
-        TARGETS.map((n) => '<span class="live" data-target="' + n + '">' + liveCell(targetOf(n), x.sha) + "</span>").join("");
+        TARGETS.map((n) => '<span class="live" data-target="' + n + '">' + deployCell(n, x.sha, groups[n]) + "</span>").join("");
       grid.insertBefore(r, prev ? prev.nextSibling : document.getElementById("target-production").parentElement.nextSibling);
       prev = r;
+      // The count opened: the commit's older deploys, under it, in each target's column.
+      if (expanded.has(x.sha) && TARGETS.some((n) => (groups[n].get(x.sha)?.length ?? 0) > 1)) {
+        const sub = document.createElement("div");
+        sub.className = "sub"; sub.dataset.sub = x.sha;
+        sub.innerHTML = '<span class="rail ' + (down ? "up down " : "") + (next?.inMain ? "on-main" : "") + '"></span><span></span><span class="who"></span><span></span><time></time>' + TARGETS.map((n) => '<span class="stack" data-target="' + n + '">' +
+          (groups[n].get(x.sha) ?? []).slice(1).map((d) => "<span>" + badge(n, d) + '<span class="dep-at">' + short(d.started) + "</span></span>").join("") + "</span>").join("");
+        grid.insertBefore(sub, r.nextSibling);
+        prev = sub;
+      }
     });
-    // A target live on a commit older than the list shows.
-    const older = TARGETS.map((n) => targetOf(n)).filter((t) => t && (t.deployed ?? t.commit) && !want.has(t.deployed ?? t.commit));
-    if (older.length && commits.length) grid.insertAdjacentHTML("beforeend", '<div class="older">' + older.map((t) => esc(t.name) + " is live on " + esc((t.deployed ?? t.commit).slice(0, 7)) + ", further down").join(" · ") + "</div>");
+    // Deploys of commits further down than the list goes, and where a target is live if it's there.
+    const older = TARGETS.map((n) => {
+      const t = targetOf(n), away = [...groups[n].entries()].filter(([sha]) => !want.has(sha));
+      if (!t) return "";
+      if (away.length) return '<span><b>' + esc(n) + "</b> " + away.length + " older commit" + (away.length == 1 ? "" : "s") + " deployed, latest " + badge(n, away[0][1][0]) + "</span>";
+      const live = t.deployed ?? (t.state == "deployed" ? t.commit : null);
+      return live && !want.has(live) && !t.history ? "<span>" + esc(n) + " is live on " + esc(live.slice(0, 7)) + ", further down</span>" : "";
+    }).filter(Boolean);
+    if (older.length && commits.length) grid.insertAdjacentHTML("beforeend", '<div class="older">' + older.join("") + "</div>");
     drawn = true;
     const ahead = staging?.ahead ?? 0, mergeBtn = document.getElementById("merge");
     if (!busy) mergeBtn.disabled = !ahead;
@@ -244,8 +321,8 @@ git push erga HEAD:staging</code></pre>
       const b = document.getElementById("target-" + n), t = targetOf(n);
       b.className = "target " + (t ? t.state : "");
       b.disabled = !t;
-      b.title = t ? (t.host + ": " + t.state + (t.error ? " (" + t.error + ")" : "") + ". Click for the log.") : "Deploys aren't set up yet";
-      const what = !t ? "not set up" : { idle: "idle", building: "building", deploying: "deploying", deployed: "live", failed: "failed" }[t.state] || t.state;
+      b.title = t ? (t.host + ": " + t.state + (t.deployed ? ", live on " + t.deployed.slice(0, 7) : "") + (t.error ? " (" + t.error + ")" : "") + ". Click for the latest deploy's log.") : "Deploys aren't set up yet";
+      const what = !t ? "not set up" : { idle: "idle", building: "building", deploying: "deploying", deployed: "live", failed: "failed", cancelled: "cancelled" }[t.state] || t.state;
       b.querySelector(".st span").textContent = what + (t?.at ? " · " + ago(t.at) : "");
     }
     render();
@@ -262,57 +339,77 @@ git push erga HEAD:staging</code></pre>
       if (l) l.textContent = e.message;
     }
   }
+  // Each change is an event, many while a deploy runs: the status and history are asked for at most every half second.
+  let asking = null, again = false;
   async function loadDeploys() {
-    const r = await fetch("/api/deploys", { headers: { Accept: "application/json" } }).catch(() => null);
-    deploys = r && r.ok ? await r.json().catch(() => null) : null;
-    renderTargets();
+    if (asking) { again = true; return asking; }
+    asking = (async () => {
+      const r = await fetch("/api/deploys?history=100", { headers: { Accept: "application/json" } }).catch(() => null);
+      deploys = r && r.ok ? await r.json().catch(() => null) : null;
+      renderTargets();
+      if (open && !open.pinned) { const t = targetOf(open.target); if (t?.deployId && t.deployId != open.deployId) refreshLog(false); }
+      await new Promise((ok) => setTimeout(ok, 500));
+    })();
+    await asking;
+    asking = null;
+    if (again) { again = false; loadDeploys(); }
   }
 
-  // The deploy log, live.
+  // A deploy's log: the latest one's from a column's head (it follows the next deploy), or any one's from its badge.
   const dlg = document.getElementById("log"), pre = document.getElementById("log-lines");
-  let open = null; // { target, deployId, shown: lines shown, state, heard: when an event last came }
+  let open = null; // { target, deployId, pinned: a chosen deploy, shown: lines shown, state, heard: when an event last came }
   const line = (l) => '<span class="t">' + esc(new Date(l.at).toLocaleTimeString()) + "</span> " + (l.step ? '<span class="s">[' + esc(l.step) + "]</span> " : "") + esc(l.text) + "\\n";
   function append(lines) {
     const atEnd = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 8;
     pre.insertAdjacentHTML("beforeend", lines.map(line).join(""));
     if (atEnd) pre.scrollTop = pre.scrollHeight;
   }
-  async function openLog(name) {
+  async function openLog(name, deployId) {
     const t = targetOf(name);
     document.getElementById("log-title").textContent = (t?.host ?? name) + " deploy log";
+    document.getElementById("log-meta").textContent = "";
     pre.textContent = "Loading…";
-    open = { target: name, deployId: null, shown: 0, state: null, heard: 0 };
+    open = { target: name, deployId: deployId ?? null, pinned: !!deployId, shown: 0, state: null, heard: 0 };
     if (!dlg.open) dlg.showModal();
     await refreshLog(true);
   }
-  const running = (state) => state == "building" || state == "deploying";
   /** The log as the server has it now: what's new since what's shown (or all of it, for another deploy). */
   async function refreshLog(first) {
     if (!open) return;
-    const name = open.target;
-    const r = await fetch("/api/deploys/" + name + "/log").catch(() => null);
+    const name = open.target, want = open.pinned ? open.deployId : null;
+    const r = await fetch("/api/deploys/" + name + "/log" + (want ? "?deploy=" + encodeURIComponent(want) : "")).catch(() => null);
     const log = r && r.ok ? await r.json().catch(() => null) : null;
     if (!open || open.target != name) return;
-    if (!log) { if (first) { pre.textContent = "No deploy log yet."; document.getElementById("log-meta").textContent = ""; } return; }
+    if (!log || !log.deployId) { if (first) { pre.textContent = r && r.status == 404 ? "This deploy isn't in the history any more." : "No deploy log yet."; } return; }
     const lines = log.lines || [];
     if (first || log.deployId != open.deployId) { pre.textContent = ""; open.shown = 0; }
     open.deployId = log.deployId; open.state = log.state;
-    document.getElementById("log-meta").textContent = [log.commit ? log.commit.slice(0, 7) : "", log.state].filter(Boolean).join(" · ");
+    const meta = document.getElementById("log-meta");
+    meta.innerHTML = [log.commit ? "<b>" + esc(log.commit.slice(0, 7)) + "</b>" : "",
+      log.live ? '<span class="live-on">live</span>' : '<span class="' + (log.state == "failed" ? "bad" : "") + '">' + esc(log.state) + "</span>",
+      log.trigger ? esc(log.trigger) : "", log.started ? esc(new Date(log.started).toLocaleString()) + (log.ended ? " · took " + took(log) : "") : ""].filter(Boolean).join(" · ");
+    meta.title = log.error || "";
     if (lines.length > open.shown) { append(lines.slice(open.shown)); open.shown = lines.length; }
     if (first) pre.scrollTop = pre.scrollHeight;
   }
   // Live lines come as events only from the server running the deploy (staging's runs on staging's own server):
-  // while a deploy runs and no events arrive, ask for the log every two seconds.
+  // while the deploy shown runs and no events arrive, ask for the log every two seconds.
   setInterval(() => {
     if (!open || !dlg.open) return;
     const t = targetOf(open.target);
-    if (!(running(open.state) || running(t?.state))) return;
+    if (!(running(open.state) || (!open.pinned && running(t?.state)))) return;
     if (Date.now() - open.heard < 2500) return;
     refreshLog(false);
   }, 2000);
   for (const n of TARGETS) document.getElementById("target-" + n).addEventListener("click", () => openLog(n));
   document.getElementById("log-close").addEventListener("click", () => dlg.close());
   dlg.addEventListener("close", () => { open = null; });
+  grid.addEventListener("click", (e) => {
+    const d = e.target.closest("button[data-deploy]");
+    if (d) { openLog(d.dataset.target, d.dataset.deploy); return; }
+    const more = e.target.closest("button[data-more]");
+    if (more) { const sha = more.dataset.more; expanded.has(sha) ? expanded.delete(sha) : expanded.add(sha); render(); grid.querySelector('button[data-more="' + sha + '"]')?.focus(); }
+  });
 
   const hint = document.getElementById("merge-hint"), mergeBtn = document.getElementById("merge");
   async function merge(commit) {
@@ -343,9 +440,8 @@ git push erga HEAD:staging</code></pre>
     if (ev.type == "source") load();
     if (ev.type == "deploys") loadDeploys();
     if (ev.type == "deploy-log" && open && ev.target == open.target) {
-      open.heard = Date.now();
-      if (open.deployId && ev.deployId != open.deployId) refreshLog(false);
-      else { append(ev.lines || []); open.shown += (ev.lines || []).length; }
+      if (ev.deployId == open.deployId) { open.heard = Date.now(); append(ev.lines || []); open.shown += (ev.lines || []).length; }
+      else if (!open.pinned) { open.heard = Date.now(); refreshLog(false); }
     }
   };
   load(); loadDeploys();
