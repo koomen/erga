@@ -70,8 +70,6 @@ export async function startHost(target: string | null, opts: { port?: number; en
   writeFileSync(join(envDir, ".dev.vars"), Object.entries(vars).filter(([k, v]) => DEV_VARS.has(k) && v).map(([k, v]) => `${k}=${v}\n`).join(""));
   const env: Record<string, string> = {
     ...process.env as Record<string, string>,
-    // No landing project unless a test asks for one (ERGA_LANDING: a folder), so a test's documents are only its own.
-    ERGA_LANDING: "",
     // The agent's key only from .dev.vars above, not whatever this shell has (dev/agent-key.ts would take it), unless `processEnv` gives one.
     ANTHROPIC_API_KEY: "",
     ...Object.fromEntries(Object.entries(opts.env ?? {}).filter(([k]) => !DEV_VARS.has(k))),

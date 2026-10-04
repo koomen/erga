@@ -22,7 +22,7 @@ import { expect, until } from "./suite/harness";
 const checks: string[] = [];
 const ok = (what: string) => { checks.push(what); console.log(`ok   ${what}`); };
 
-const host = await startHost(null, { env: { ERGA_LANDING: "landing" } });
+const host = await startHost(null);
 const root = host.root;
 const browser = await Browser.launch();
 const get = (path: string, init: RequestInit = {}) => fetch(root + path, { redirect: "manual", ...init });
@@ -43,8 +43,6 @@ const clickOn = async (p: Page, selector: string) => {
 };
 
 try {
-  await until(() => /landing_document is now \/tester\/landing/.test(host.output()), 30_000, "the dev server publishes the landing project", () => host.output().slice(-3000));
-
   // The markup, on every page of the site's own, and nowhere in a document.
   for (const path of ["/", "/docs", "/admin", "/settings", "/nobody-here"]) {
     const html = await (await get(path)).text();

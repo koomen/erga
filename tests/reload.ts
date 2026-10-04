@@ -34,7 +34,7 @@ const edit = (file: string, from: string, to: string) => {
 
 /** `bun start` in the copy, with its own state, settings and cache; the editor built and watched (no ERGA_BUILT). */
 async function start(port: number, reload: boolean) {
-  const env: Record<string, string> = { ...process.env as Record<string, string>, ERGA_STATE_DIR: join(scratch, `state-${port}`), ERGA_ENV_DIR: join(scratch, "env"), ERGA_VITE_CACHE: join(scratch, `vite-${port}`), ERGA_INSPECTOR: "0", ERGA_LANDING: "", ANTHROPIC_API_KEY: "" };
+  const env: Record<string, string> = { ...process.env as Record<string, string>, ERGA_STATE_DIR: join(scratch, `state-${port}`), ERGA_ENV_DIR: join(scratch, "env"), ERGA_VITE_CACHE: join(scratch, `vite-${port}`), ERGA_INSPECTOR: "0", ANTHROPIC_API_KEY: "" };
   delete env.ERGA_BUILT;
   let output = "";
   const proc = Bun.spawn(["bun", join(copy, "dev.ts"), "--port", String(port), "--no-open", ...(reload ? ["--reload"] : [])], { cwd: copy, env, stdout: "pipe", stderr: "pipe", detached: true });
