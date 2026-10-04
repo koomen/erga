@@ -41,28 +41,30 @@ test("admin tools are offered to admins only, and refused to anyone else", async
   expect((await agentToolsFor({ dir, who: { login: "bo" } })).map((t) => t.name)).toEqual(["document_access", "share_document"]);
   const forRoot = await agentToolsFor({ dir, who: { login: "root" } });
   const out = await forRoot.find((t) => t.name == "list_settings")!.execute("x", {});
-  expect(JSON.parse((out.content[0] as { text: string }).text).map((e: { key: string }) => e.key)).toContain("unedited_hours");
+  expect(JSON.parse((out.content[0] as { text: string }).text).map((e: { key: string }) => e.key)).toContain("delete_docs_after_hours");
 });
 
 test("settings: set, a number given as a string, bad values explained, reset, locked ones refused", async () => {
   const dir = fresh({ admins: ["root"] });
   const root = { dir, who: { login: "root" } };
-  expect((await run(root, "set_setting", { key: "unedited_hours", value: 48 })).value).toBe(48);
-  const set = await run(root, "set_setting", { key: "unedited_hours", value: "12" });
+  expect((await run(root, "set_setting", { key: "delete_docs_after_hours", value: 48 })).value).toBe(48);
+  const set = await run(root, "set_setting", { key: "delete_docs_after_hours", value: "12" });
   expect([set.value, set.source, set.updatedBy, set.locked]).toEqual([12, "set", "root", false]);
-  let e = await failure(run(root, "set_setting", { key: "unedited_hours", value: -1 }));
+  let e = await failure(run(root, "set_setting", { key: "delete_docs_after_hours", value: -1 }));
   expect([e.status, /whole number/.test(e.message)]).toEqual([400, true]);
   e = await failure(run(root, "set_setting", { key: "nope", value: 1 }));
-  expect([e.status, e.message.includes("unedited_hours")]).toEqual([400, true]);
-  expect((await run(root, "reset_setting", { key: "unedited_hours" })).source).toBe("default");
+  expect([e.status, e.message.includes("delete_docs_after_hours")]).toEqual([400, true]);
+  // Never: null, or "null" / "never" as a model may send it.
+  for (const value of [null, "null", "never"]) expect((await run(root, "set_setting", { key: "delete_docs_after_hours", value })).value).toBeNull();
+  expect((await run(root, "reset_setting", { key: "delete_docs_after_hours" })).source).toBe("default");
 
-  const locked = fresh({ admins: ["root"], locked: { unedited_hours: 6 } });
+  const locked = fresh({ admins: ["root"], locked: { delete_docs_after_hours: 6 } });
   const lroot = { dir: locked, who: { login: "root" } };
-  const entry = (await run(lroot, "list_settings")).find((e: { key: string }) => e.key == "unedited_hours");
+  const entry = (await run(lroot, "list_settings")).find((e: { key: string }) => e.key == "delete_docs_after_hours");
   expect([entry.value, entry.source, entry.locked]).toEqual([6, "locked", true]);
-  e = await failure(run(lroot, "set_setting", { key: "unedited_hours", value: 10 }));
+  e = await failure(run(lroot, "set_setting", { key: "delete_docs_after_hours", value: 10 }));
   expect([e.status, /fixed by the deploy/.test(e.message)]).toEqual([403, true]);
-  e = await failure(run(lroot, "reset_setting", { key: "unedited_hours" }));
+  e = await failure(run(lroot, "reset_setting", { key: "delete_docs_after_hours" }));
   expect(e.status).toBe(403);
 });
 

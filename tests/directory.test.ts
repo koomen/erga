@@ -167,52 +167,78 @@ test("server config: defaults, admins set and reset, the deploy locks", async ()
   const dir = fresh({ admins: ["root"] });
   const admin = { login: "root" }, user = { login: "bo" };
   const { config } = dir;
-  expect(await config.get("unedited_hours")).toBe(24);
-  expect(await config.entry("unedited_hours")).toMatchObject({ value: 24, default: 24, source: "default", updated: null });
+  expect(await config.get("delete_docs_after_hours")).toBe(24);
+  expect(await config.entry("delete_docs_after_hours")).toMatchObject({ value: 24, default: 24, source: "default", updated: null });
   // Only admins list or change it, and only to a value it takes.
   await expect(config.list(user)).rejects.toBeInstanceOf(NotAllowed);
-  await expect(config.set(user, "unedited_hours", 48)).rejects.toBeInstanceOf(NotAllowed);
-  await expect(config.set(admin, "unedited_hours", "soon")).rejects.toBeInstanceOf(ConfigError);
-  await expect(config.set(admin, "unedited_hours", 0)).rejects.toBeInstanceOf(ConfigError);
-  await expect(config.set(admin, "no_such_key", 1)).rejects.toThrow(/no setting "no_such_key".*unedited_hours/);
-  const set = await config.set(admin, "unedited_hours", 48);
+  await expect(config.set(user, "delete_docs_after_hours", 48)).rejects.toBeInstanceOf(NotAllowed);
+  await expect(config.set(admin, "delete_docs_after_hours", "soon")).rejects.toBeInstanceOf(ConfigError);
+  await expect(config.set(admin, "delete_docs_after_hours", 0)).rejects.toBeInstanceOf(ConfigError);
+  await expect(config.set(admin, "no_such_key", 1)).rejects.toThrow(/no setting "no_such_key".*delete_docs_after_hours/);
+  const set = await config.set(admin, "delete_docs_after_hours", 48);
   expect(set).toMatchObject({ value: 48, source: "set", updatedBy: "root" });
   expect(set.updated).toBeGreaterThan(0);
-  expect(await config.get("unedited_hours")).toBe(48);
-  expect((await config.list(admin)).map((e) => [e.key, e.value])).toContainEqual(["unedited_hours", 48]);
-  expect(await config.reset(admin, "unedited_hours")).toMatchObject({ value: 24, source: "default" });
+  expect(await config.get("delete_docs_after_hours")).toBe(48);
+  expect((await config.list(admin)).map((e) => [e.key, e.value])).toContainEqual(["delete_docs_after_hours", 48]);
+  expect(await config.reset(admin, "delete_docs_after_hours")).toMatchObject({ value: 24, source: "default" });
   // Locked by the deploy: its value wins, and it can't be changed here.
-  const locked = fresh({ admins: ["root"], locked: { unedited_hours: 2 } });
-  expect(await locked.config.entry("unedited_hours")).toMatchObject({ value: 2, source: "locked" });
-  await expect(locked.config.set(admin, "unedited_hours", 5)).rejects.toBeInstanceOf(NotAllowed);
-  expect(() => fresh({ locked: { unedited_hours: -1 } })).toThrow(ConfigError);
+  const locked = fresh({ admins: ["root"], locked: { delete_docs_after_hours: 2 } });
+  expect(await locked.config.entry("delete_docs_after_hours")).toMatchObject({ value: 2, source: "locked" });
+  await expect(locked.config.set(admin, "delete_docs_after_hours", 5)).rejects.toBeInstanceOf(NotAllowed);
+  expect(() => fresh({ locked: { delete_docs_after_hours: -1 } })).toThrow(ConfigError);
   expect(() => fresh({ locked: { nope: 1 } })).toThrow(ConfigError);
+});
+
+test("server config: delete_docs_after_hours can be never (null)", async () => {
+  const admin = { login: "root" };
+  const { config } = fresh({ admins: ["root"] });
+  expect(await config.set(admin, "delete_docs_after_hours", null)).toMatchObject({ value: null, source: "set", default: 24 });
+  expect(await config.get("delete_docs_after_hours")).toBeNull();
+  // "never" (as an agent might put it) is the same; other words aren't.
+  await config.set(admin, "delete_docs_after_hours", 5);
+  expect(await config.set(admin, "delete_docs_after_hours", " Never ")).toMatchObject({ value: null });
+  await expect(config.set(admin, "delete_docs_after_hours", "off")).rejects.toThrow(/whole number from 1 to 8760 \(hours\), or null for never/);
+  expect(await config.reset(admin, "delete_docs_after_hours")).toMatchObject({ value: 24, source: "default" });
+  // The deploy can lock it to never, too.
+  const locked = fresh({ admins: ["root"], locked: { delete_docs_after_hours: null } }).config;
+  expect(await locked.entry("delete_docs_after_hours")).toMatchObject({ value: null, source: "locked", locked: true, deployed: null });
+  expect(parseDeployed('{"delete_docs_after_hours": null}')).toEqual({ delete_docs_after_hours: null });
+  expect(parseDeployed('{"delete_docs_after_hours": "never"}')).toEqual({ delete_docs_after_hours: null });
+});
+
+test("server config: a value under the old unedited_hours key is dropped by the migrations", async () => {
+  // The migrations run in order on a fresh database, so a row put there by hand before the last one stands for an old deploy's.
+  const sql = memory();
+  await sql.run("INSERT INTO server_config (key, value, updated, updated_by) VALUES ('unedited_hours', '48', 1, 'root')");
+  const drop = await Bun.file(MIGRATIONS + "0002_delete_docs_after_hours.sql").text();
+  for (const q of drop.split(";").map((q) => q.replace(/--.*$/gm, "").trim()).filter(Boolean)) await sql.run(q);
+  expect(await sql.all("SELECT key FROM server_config")).toEqual([]);
 });
 
 test("server config: what the deploy fixes is locked, with its deployed value", async () => {
   const admin = { login: "root" };
   const sql = memory();
   // Before the deploy locks it, an admin sets it.
-  await fresh({ admins: ["root"] }, sql).config.set(admin, "unedited_hours", 48);
+  await fresh({ admins: ["root"] }, sql).config.set(admin, "delete_docs_after_hours", 48);
   // Deployed with it fixed: the deployed value wins over the table, everywhere it's read.
-  const { config } = fresh({ admins: ["root"], locked: { unedited_hours: 72 } }, sql);
-  expect(config.isLocked("unedited_hours")).toBe(true);
-  expect(await config.get("unedited_hours")).toBe(72);
-  expect(await config.entry("unedited_hours")).toEqual({
-    key: "unedited_hours", description: SETTINGS.unedited_hours.description, default: 24,
+  const { config } = fresh({ admins: ["root"], locked: { delete_docs_after_hours: 72 } }, sql);
+  expect(config.isLocked("delete_docs_after_hours")).toBe(true);
+  expect(await config.get("delete_docs_after_hours")).toBe(72);
+  expect(await config.entry("delete_docs_after_hours")).toEqual({
+    key: "delete_docs_after_hours", description: SETTINGS.delete_docs_after_hours.description, default: 24,
     value: 72, source: "locked", locked: true, deployed: 72, updated: null, updatedBy: null,
   });
-  expect((await config.list(admin)).map((e) => [e.key, e.locked, e.value])).toContainEqual(["unedited_hours", true, 72]);
+  expect((await config.list(admin)).map((e) => [e.key, e.locked, e.value])).toContainEqual(["delete_docs_after_hours", true, 72]);
   // Nobody changes it here, admin or not, and saying why (for a person or an agent).
-  await expect(config.set(admin, "unedited_hours", 5)).rejects.toThrow(/unedited_hours is fixed by the deploy.*stays 72/);
-  await expect(config.reset(admin, "unedited_hours")).rejects.toThrow(/fixed by the deploy/);
-  await expect(config.set({ login: "bo" }, "unedited_hours", 5)).rejects.toThrow(/admin/i);
-  expect(await config.get("unedited_hours")).toBe(72);
+  await expect(config.set(admin, "delete_docs_after_hours", 5)).rejects.toThrow(/delete_docs_after_hours is fixed by the deploy.*stays 72/);
+  await expect(config.reset(admin, "delete_docs_after_hours")).rejects.toThrow(/fixed by the deploy/);
+  await expect(config.set({ login: "bo" }, "delete_docs_after_hours", 5)).rejects.toThrow(/admin/i);
+  expect(await config.get("delete_docs_after_hours")).toBe(72);
   // Unlocked by a later deploy: what the admin set counts again, and it's theirs to change.
   const after = fresh({ admins: ["root"] }, sql).config;
-  expect(await after.entry("unedited_hours")).toMatchObject({ value: 48, source: "set", locked: false, updatedBy: "root" });
-  expect((await after.entry("unedited_hours")).deployed).toBeUndefined();
-  expect(await after.reset(admin, "unedited_hours")).toMatchObject({ value: 24, source: "default", locked: false });
+  expect(await after.entry("delete_docs_after_hours")).toMatchObject({ value: 48, source: "set", locked: false, updatedBy: "root" });
+  expect((await after.entry("delete_docs_after_hours")).deployed).toBeUndefined();
+  expect(await after.reset(admin, "delete_docs_after_hours")).toMatchObject({ value: 24, source: "default", locked: false });
 });
 
 test("server config: the deploy's values, from server.config.ts and SERVER_CONFIG", () => {
@@ -221,11 +247,11 @@ test("server config: the deploy's values, from server.config.ts and SERVER_CONFI
   // The binding is JSON; empty or missing locks nothing.
   expect(parseDeployed(undefined)).toEqual({});
   expect(parseDeployed("")).toEqual({});
-  expect(parseDeployed('{"unedited_hours": 6}')).toEqual({ unedited_hours: 6 });
+  expect(parseDeployed('{"delete_docs_after_hours": 6}')).toEqual({ delete_docs_after_hours: 6 });
   expect(() => parseDeployed("{nope")).toThrow(/isn't JSON/);
   expect(() => parseDeployed("[1]")).toThrow(/must be an object/);
-  expect(() => parseDeployed('{"landing": "x"}')).toThrow(/"landing", which isn't a setting.*unedited_hours/);
-  expect(() => parseDeployed('{"unedited_hours": "soon"}')).toThrow(/unedited_hours to "soon", but it must be a whole number/);
+  expect(() => parseDeployed('{"landing": "x"}')).toThrow(/"landing", which isn't a setting.*delete_docs_after_hours/);
+  expect(() => parseDeployed('{"delete_docs_after_hours": "soon"}')).toThrow(/delete_docs_after_hours to "soon", but it must be a whole number/);
 });
 
 test("landing_document: only the document's owner may choose it, by address, URL or id; kept by id", async () => {

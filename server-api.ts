@@ -87,7 +87,7 @@ export const TOOLS: ServerTool[] = [
   },
   {
     name: "create_document",
-    description: `Makes a new document and answers its URL. With files, it's those files (publishing a site or a page: a folder with index.html or index.md, plus its styles, scripts and images), and it stays. Without files it's a blank page (or a copy of the server's front page, template: "landing"), which goes if nobody edits it in time (the server's unedited_hours setting; it says when). The title follows the page's first heading unless you give one; the address (/<owner>/<slug>) follows the title unless you give a slug.`,
+    description: `Makes a new document and answers its URL. With files, it's those files (publishing a site or a page: a folder with index.html or index.md, plus its styles, scripts and images), and it stays. Without files it's a blank page (or a copy of the server's front page, template: "landing"), which goes if nobody edits it in time (the server's delete_docs_after_hours setting, unless that's never; it says when). The title follows the page's first heading unless you give one; the address (/<owner>/<slug>) follows the title unless you give a slug.`,
     parameters: {
       type: "object",
       properties: {

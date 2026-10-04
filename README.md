@@ -101,8 +101,10 @@ one is and your role on it; the editor's top bar links to it, and its
 footer to `/tokens` and, for admins, `/admin`. Each document keeps its row up to
 date (when it's edited, and the title that follows its heading, at most
 every two seconds). A document nobody edits is deleted after the
-`unedited_hours` setting (24 by default) from when it's made, by an alarm set
-when it's made. An edit is a change to a
+`delete_docs_after_hours` setting (24 by default) from when it's made, by an
+alarm set when it's made. Set to never (`null`), new documents don't expire,
+`/docs` doesn't say they will, and one whose alarm comes up after the switch
+stays. An edit is a change to a
 file's text, from a person, an agent or a publish; opening the document,
 moving a caret or the room's own bookkeeping never are. One still open in
 a tab when its time comes gets another hour. Test documents are neither
@@ -206,15 +208,18 @@ this site's pages only.
 key with who set it and when (`config.ts`). Only the keys declared in
 `SETTINGS` exist, each with a description, a default and a parser that
 refuses a bad value saying why; one never set has its default. Today there's
-`unedited_hours` and `landing_document` ([The front page](#the-front-page)).
+`delete_docs_after_hours` and `landing_document` ([The front page](#the-front-page)).
 A setting may name a document (`kind: "document"`): the admin page takes and
-shows it by address, and the directory checks who may set it (`checks`). Anyone's request may read a setting (the server reads them
+shows it by address, and the directory checks who may set it (`checks`).
+`delete_docs_after_hours` is a whole number of hours, or `null` (also
+`"never"`) for never; the admin page offers it as "After [n] hours" or
+"Never". Anyone's request may read a setting (the server reads them
 to do its work); only admins list and change them.
 
 **Settings the deploy fixes.** A setting can also be fixed in the repo, in
 `server.config.ts`:
 
-    export default { unedited_hours: 72 };
+    export default { delete_docs_after_hours: 72 };   // or null: never delete
 
 A key there is locked: the deployed value wins over whatever the table holds,
 and nobody can change it, from the admin page, the API or an agent (`set` and
@@ -226,7 +231,7 @@ is: the deploy's value, else the one an admin set, else the default.
 
 `ERGA_SERVER_CONFIG`, a JSON object in the environment of the deploy (or of
 `bun start`), adds to `server.config.ts` or overrides it, for one deploy or
-one dev server: `ERGA_SERVER_CONFIG='{"unedited_hours":3}' bun start`.
+one dev server: `ERGA_SERVER_CONFIG='{"delete_docs_after_hours":3}' bun start`.
 `cloudflare.config.ts` hands the two, merged, to the Worker as the
 `SERVER_CONFIG` binding (JSON), which `directoryOf(env)` (`worker/d1.ts`)
 passes to the `Directory` as its locked settings. `bun server.config.ts`

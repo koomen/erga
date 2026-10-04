@@ -53,10 +53,15 @@ const setting = <T>(s: Setting<T>) => s;
 
 /** Every setting the server has. */
 export const SETTINGS = {
-  unedited_hours: setting({
-    description: "How many hours a new document lasts if nobody edits it.",
+  delete_docs_after_hours: setting<number | null>({
+    description: "How many hours a new document lasts if nobody edits it, before it's deleted; never (null) keeps unedited documents for good.",
     default: 24,
-    parse: integer(1, 24 * 365),
+    // null, or "never" (as an agent or a deploy might say it), is never.
+    parse: (v) => {
+      if (v === null || (typeof v == "string" && v.trim().toLowerCase() == "never")) return null;
+      if (typeof v != "number" || !Number.isInteger(v) || v < 1 || v > 24 * 365) throw new ConfigError(`must be a whole number from 1 to ${24 * 365} (hours), or null for never`);
+      return v;
+    },
   }),
   landing_document: setting<string | null>({
     description: "The document everyone sees at the server's front page (/), signed in or not: its address (/<owner>/<slug>), URL or id. Only its owner can choose it, and anyone can then view it there. Empty: a plain start page. A deploy whose repo has a landing project (server.config.ts, landing) publishes it and sets this.",

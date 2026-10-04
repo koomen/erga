@@ -156,6 +156,7 @@ function render() {
   if (openId != null) renderDialog();
 }
 
+let dlgError = null; // {id, msg}: a Merge or Discard request from the detail view that failed
 const STATUS = { queued: "Queued", working: "Working", complete: "Ready to merge", merging: "Merging", merged: "Merged", failed: "Failed", discarded: "Discarded" };
 const expanded = new Set(); // "<id>:ask" / "<id>:summary" texts shown in full
 /** The ask or the summary: a few lines, with "Show all" when it runs longer. */
@@ -195,6 +196,7 @@ function renderDialog() {
     ${t.branch ? `<div class="branch" title="${esc(t.branch)}">${esc(t.branch)}</div>` : ""}
     ${links.length ? `<div class="links">${links.join("")}</div>` : ""}
     ${actions(t, true)}
+    ${dlgError?.id == t.id ? `<div class="err" style="max-height:none">${esc(dlgError.msg)}</div>` : ""}
     ${t.error ? `<section><h4>Error</h4><div class="err" style="max-height:none">${esc(t.error)}</div></section>` : ""}
     ${t.description ? textSection(t, "ask", "Ask", t.description) : ""}
     ${t.summary ? textSection(t, "summary", "Summary", t.summary) : ""}
@@ -207,9 +209,15 @@ function renderDialog() {
   dlg.scrollTop = scroll;
 }
 
+/** POSTs; on failure shows the error and returns it (null when it went through). */
 async function post(path, body) {
-  const res = await fetch(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body ?? {}) });
-  if (!res.ok) { const { error } = await res.json().catch(() => ({})); showError(error || res.statusText); }
+  let msg = null;
+  try {
+    const res = await fetch(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body ?? {}) });
+    if (!res.ok) { const { error } = await res.json().catch(() => ({})); msg = error || res.statusText || `HTTP ${res.status}`; }
+  } catch (e) { msg = `Request failed: ${e.message}`; }
+  if (msg) showError(msg);
+  return msg;
 }
 function showError(msg) {
   const el = document.getElementById("live");
@@ -226,16 +234,23 @@ document.addEventListener("click", (e) => {
     if (act == "copy") { copy(btn.dataset.text).then((ok) => { btn.textContent = ok ? "copied" : "couldn't copy"; btn.classList.add("copied"); setTimeout(() => { btn.textContent = "worktree"; btn.classList.remove("copied"); }, 1500); }); }
     if (act == "more") { const k = btn.dataset.key; expanded.has(k) ? expanded.delete(k) : expanded.add(k); renderDialog(); }
     if (act == "close") { openId = null; document.getElementById("dlg").close(); }
-    if (act == "merge") { btn.disabled = true; post(`/api/tasks/${id}/merge`); }
     if (act == "preview") { btn.disabled = true; post(`/api/tasks/${id}/preview`); }
     if (act == "arm") { armed.add(id); render(); setTimeout(() => { armed.delete(id); render(); }, 4000); }
-    if (act == "discard") { armed.delete(id); btn.disabled = true; post(`/api/tasks/${id}/discard`); }
+    if (act == "merge" || act == "discard") {
+      // From the detail view: close it once the request goes through (the board shows the rest), or keep it open with the error.
+      const inDialog = !!btn.closest("#dlg");
+      armed.delete(id); btn.disabled = true;
+      post(`/api/tasks/${id}/${act}`).then((msg) => {
+        if (!inDialog || openId != id) return;
+        if (msg) { dlgError = { id, msg }; renderDialog(); } else { openId = null; document.getElementById("dlg").close(); } // openId first: an update before the close event would reopen it
+      });
+    }
     return;
   }
   const c = e.target.closest("[data-open]");
   if (c) { openId = Number(c.dataset.open); renderDialog(); }
 });
-document.getElementById("dlg").addEventListener("close", () => { openId = null; });
+document.getElementById("dlg").addEventListener("close", () => { openId = null; dlgError = null; });
 document.getElementById("dlg").addEventListener("click", (e) => { if (e.target.id == "dlg") e.target.close(); });
 
 function connect() {

@@ -7,7 +7,8 @@
 // ERGA_SERVER_CONFIG, a JSON object in the environment of the deploy (or of
 // `bun start`), adds to these or overrides them, e.g.
 //
-//     ERGA_SERVER_CONFIG='{"unedited_hours":72}' bun start
+//     ERGA_SERVER_CONFIG='{"delete_docs_after_hours":72}' bun start
+//     ERGA_SERVER_CONFIG='{"delete_docs_after_hours":null}' bun start   (never delete unedited documents)
 //
 // cloudflare.config.ts hands them to the Worker as the SERVER_CONFIG
 // binding. `bun server.config.ts` checks them against SETTINGS (a key that
@@ -33,7 +34,7 @@ import type { SETTINGS } from "./config.ts";
 type Values = { [K in keyof typeof SETTINGS]?: ReturnType<(typeof SETTINGS)[K]["parse"]> };
 
 const settings: Values = {
-  // unedited_hours: 24,
+  // delete_docs_after_hours: 24,    // hours an unedited document lasts; null never deletes them
 };
 export default settings;
 

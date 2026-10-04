@@ -453,7 +453,9 @@ async function newDoc(platform: Platform, request: Request): Promise<Response> {
 export async function makeDoc(platform: Platform, owner: string, id: string, files: Record<string, string | Uint8Array>, opts: MakeOptions): Promise<DocRow | null> {
   const created = Date.now();
   // A published one has been edited already (its files are someone's work): it never expires.
-  const expires = opts.test || opts.published ? null : created + (opts.unedited ?? (await platform.directory.config.get("unedited_hours")) * HOUR);
+  // Nor does any when the server's delete_docs_after_hours is never (null).
+  const hours = opts.test || opts.published || opts.unedited ? null : await platform.directory.config.get("delete_docs_after_hours");
+  const expires = opts.test || opts.published ? null : opts.unedited ? created + opts.unedited : hours == null ? null : created + hours * HOUR;
   const index = opts.index ?? "index.html";
   const page = files[index];
   const pageText = typeof page == "string" ? page : page ? new TextDecoder().decode(page) : "";
@@ -492,7 +494,7 @@ async function listDocs(platform: Platform, request: Request): Promise<Response>
   const session = await platform.sessionOf(request);
   if (!session) return signInFirst("/docs");
   if (session.test) return page("Not for test people", "Test people have no documents of their own.", 403);
-  const [docs, hours, admin] = await Promise.all([platform.docs.list(session.login), platform.directory.config.get("unedited_hours"), platform.directory.users.isAdmin(whoOf(session))]);
+  const [docs, hours, admin] = await Promise.all([platform.docs.list(session.login), platform.directory.config.get("delete_docs_after_hours"), platform.directory.users.isAdmin(whoOf(session))]);
   return new Response(docsPage(session, docs, Date.now(), platform.dev(new URL(request.url)), hours, admin), { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
 }
 
@@ -695,13 +697,13 @@ function sharedNote(d: Listed): string {
 }
 
 /** The documents view: yours and those shared with you, with new, open, share, rename and delete. */
-function docsPage(session: Session, docs: Listed[], now: number, dev: boolean, hours: number, admin: boolean): string {
+function docsPage(session: Session, docs: Listed[], now: number, dev: boolean, hours: number | null, admin: boolean): string {
   const rows = docs.map((d) => {
     const left = d.expires != null ? Math.max(1, Math.ceil((d.expires - now) / 3600000)) : null;
     const mine = d.role == "owner";
     const note = !mine ? `<span class="note" title="Shared with you by ${esc(d.owner)}">${esc(d.owner)} · ${d.role == "editor" ? "can edit" : "view only"}</span>`
       : d.path != null ? `<span class="note" title="${esc(d.path)}">On disk</span>`
-      : left != null ? `<span class="note" title="A document nobody edits is deleted ${hours} hours after it's made">Unedited · deleted in ${left}h</span>` : "";
+      : left != null ? `<span class="note" title="${hours == null ? "Made when unedited documents were deleted: it still goes unless someone edits it" : `A document nobody edits is deleted ${hours} hours after it's made`}">Unedited · deleted in ${left}h</span>` : "";
     const when = new Date(d.modified).toISOString();
     // One opened from disk only comes off the list: its files stay where they are.
     const [remove, label] = d.path != null ? ["Remove from the list", `Remove ${esc(d.title)} from the list`] : ["Delete", `Delete ${esc(d.title)}`];
@@ -744,7 +746,7 @@ function docsPage(session: Session, docs: Listed[], now: number, dev: boolean, h
     <h1>Documents</h1>
     <a class="new" href="${esc(link("/new", session))}">New document</a>
   </header>
-  ${docs.length ? `<ol class="rows">\n${rows}\n  </ol>` : `<p class="empty">No documents yet. A new one starts blank, and goes away after ${hours} hours if you never edit it.</p>`}
+  ${docs.length ? `<ol class="rows">\n${rows}\n  </ol>` : `<p class="empty">No documents yet. A new one starts blank${hours == null ? "." : `, and goes away after ${hours} hour${hours == 1 ? "" : "s"} if you never edit it.`}</p>`}
   ${dev ? `<form class="open" method="post" action="${esc(link("/__erga/open", session))}" aria-label="Open from disk">
     <input class="input" name="path" required placeholder="A file or folder on this machine: ~/notes, ./site/index.md" aria-label="Path to a file or folder" autocomplete="off" spellcheck="false">
     <button class="pill">Open</button>
