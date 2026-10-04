@@ -71,7 +71,7 @@ const peersField = StateField.define<DecorationSet>({
 });
 
 declare global {
-  interface Window { ergaPage?: unknown; ergaShell?: { ready(): void; loadedEditing?: boolean } }
+  interface Window { ergaPage?: unknown; ergaShell?: { ready(): void; loadedEditing?: boolean }; ergaDocInfo?: { url: string; response: Promise<Response> } }
 }
 /** tree.js, once loaded (it sets window.ergaTree). */
 type TreeModule = { mountTree: typeof mountTree };
@@ -147,7 +147,11 @@ type TreeModule = { mountTree: typeof mountTree };
   const as = asked ? `?user=${encodeURIComponent(asked)}` : "";
   let info: DocInfo | null = null;
   try {
-    const res = await fetch(`${BASE}/api/doc${as}`);
+    // The page asked for it already, as editing started (front.ts, EDIT_BOOT), if it's for this same address.
+    const early = window.ergaDocInfo;
+    window.ergaDocInfo = undefined;
+    const url = `${BASE}/api/doc${as}`;
+    const res = early?.url == url ? await early.response : await fetch(url);
     if (!res.ok) throw new Error(await res.text());
     info = (await res.json()) as DocInfo;
   } catch (e) {

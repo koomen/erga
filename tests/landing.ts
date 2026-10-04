@@ -17,7 +17,7 @@
 //
 //   bun tests/landing.ts
 
-import { readFileSync } from "fs";
+import { readdirSync, readFileSync } from "fs";
 import { join } from "path";
 import { Browser, SHOTS } from "./cdp";
 import { startHost } from "./host";
@@ -48,10 +48,15 @@ try {
   expect((list.match(/href="\/tester\/landing(-\d+)?\/edit"/g) ?? []).length == 1, "one landing document in its owner's list", list.slice(0, 2000));
   expect(front.includes("<title>Erga</title>") && front.includes('href="/new?from=landing"') && front.includes('href="/tester/landing/edit"'), "titled by it, with Clone and, for its editor, Edit", front.slice(0, 1500));
   expect((await (await get(`/d/${id}/doc/index.html`)).text()) == landingHtml, "the repo's landing/index.html");
+  // Its fonts and images too, byte for byte (landing/ isn't only text).
+  for (const rel of readdirSync(join(ROOT, "landing"), { recursive: true }).map(String).filter((f) => /\.(woff2|png|jpe?g|webp|avif|gif)$/.test(f))) {
+    const res = await get(`/d/${id}/doc/${rel}`);
+    expect(res.ok && Buffer.from(await res.arrayBuffer()).equals(readFileSync(join(ROOT, "landing", rel))), `landing/${rel} arrives byte for byte`, res.status);
+  }
   expect((await landingSetting()) == "/tester/landing", "landing_document names it", await landingSetting());
   const shared = await (await get(`/docs/share?id=${id}`)).json() as { permissions: { login: string; role: string }[] };
   expect(shared.permissions.some((p) => p.login == "koomen" && p.role == "editor"), "the other bootstrap admins may edit it", shared);
-  ok("on a fresh server, the first / (eight at once) makes one landing document, /tester/landing, from landing/");
+  ok("on a fresh server, the first / (eight at once) makes one landing document, /tester/landing, from landing/ (its fonts too)");
 
   // In a real browser: the front page shows the document, with Edit and Clone over it.
   const p = await browser.page(await browser.context());
