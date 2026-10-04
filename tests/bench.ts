@@ -63,9 +63,72 @@ let stopPreview: (() => void) | null = null;
 let root = opt("--url")?.replace(/\/$/, "");
 if (!root && args.includes("--prod")) root = await startPreview();
 if (!root) { host = await startHost(null); root = host.root; }
+// Compressed, as Cloudflare compresses what erga.dev sends (the dev server and vite preview don't): a proxy in front.
+const upstream = root;
+if (!args.includes("--no-gzip") && !opt("--url")) root = compressing(upstream);
 
-/** A document to load: a page with a stylesheet, a script and a few screens of text, stored as any made on erga.dev is. */
+/**
+ * A proxy that gzips text on its way to the browser, when the browser takes
+ * it, as Cloudflare's edge does (brotli there, a little smaller still), and
+ * passes WebSockets through. The Host header goes through as the browser sent
+ * it, so the Worker's addresses (the pages origins included) point here.
+ */
+function compressing(target: string): string {
+  const port = freePort();
+  const to = new URL(target);
+  Bun.serve<{ url: string; protocols: string | null }, {}>({
+    hostname: "127.0.0.1", port,
+    async fetch(req, server) {
+      const url = new URL(req.url);
+      const there = `${to.protocol}//${to.host}${url.pathname}${url.search}`;
+      if (req.headers.get("upgrade")?.toLowerCase() == "websocket") {
+        return server.upgrade(req, { data: { url: there.replace(/^http/, "ws"), protocols: req.headers.get("sec-websocket-protocol") } }) ? undefined : new Response("no upgrade", { status: 400 });
+      }
+      const headers = new Headers(req.headers);
+      headers.set("x-forwarded-host", url.host);
+      const res = await fetch(there, { method: req.method, headers, body: req.method == "GET" || req.method == "HEAD" ? undefined : await req.arrayBuffer(), redirect: "manual", decompress: true } as RequestInit);
+      const out = new Headers(res.headers);
+      out.delete("content-encoding");
+      const type = out.get("content-type") ?? "";
+      const gzip = res.body && res.status == 200 && /gzip/.test(req.headers.get("accept-encoding") ?? "") && /^(text\/|application\/(javascript|json)|image\/svg)/.test(type);
+      if (!gzip) return new Response(res.body, { status: res.status, statusText: res.statusText, headers: out });
+      out.delete("content-length");
+      out.set("content-encoding", "gzip");
+      return new Response(Bun.gzipSync(new Uint8Array(await res.arrayBuffer()), { level: 6 }), { status: res.status, statusText: res.statusText, headers: out });
+    },
+    websocket: {
+      open(ws) {
+        const up = new WebSocket(ws.data.url, ws.data.protocols ? ws.data.protocols.split(",").map((p) => p.trim()) : undefined);
+        up.binaryType = "arraybuffer";
+        const queue: (string | ArrayBuffer | Uint8Array)[] = [];
+        (ws.data as any).up = up; (ws.data as any).queue = queue;
+        up.onopen = () => { for (const m of queue.splice(0)) up.send(m); };
+        up.onmessage = (e) => ws.send(e.data as any);
+        up.onclose = (e) => ws.close(e.code >= 4000 || e.code == 1000 ? e.code : 1000, e.reason);
+      },
+      message(ws, m) { const up = (ws.data as any).up as WebSocket; if (up.readyState == 1) up.send(m as any); else (ws.data as any).queue.push(m); },
+      close(ws) { try { ((ws.data as any).up as WebSocket).close(); } catch {} },
+    },
+  });
+  return `http://127.0.0.1:${port}`;
+}
+
+/**
+ * A document to load, new each time: a copy of the bench's own (makeSource),
+ * made as /new?from= makes any, so its Durable Object holds its files but
+ * hasn't opened its room, as one woken after a while on erga.dev hasn't.
+ */
+let source: Promise<string> | null = null;
 async function makeDoc(): Promise<string> {
+  const id = await (source ??= makeSource());
+  const made = await fetch(`${root}/new?from=${id}`, { method: "POST", headers: { Origin: root! }, redirect: "manual" });
+  const at = made.headers.get("location");
+  if (made.status != 302 || !at) throw new Error(`/new?from= answered ${made.status}: ${await made.text()}`);
+  return at.replace(/\/edit(?=\?|$)/, "");
+}
+
+/** The bench's document: a page with a stylesheet, a script and a few screens of text. Its id. */
+async function makeSource(): Promise<string> {
   const made = await fetch(`${root}/new`, { method: "POST", headers: { Origin: root! }, redirect: "manual" });
   const at = made.headers.get("location");
   if (made.status != 302 || !at) throw new Error(`/new answered ${made.status}: ${await made.text()}`);
@@ -80,7 +143,7 @@ async function makeDoc(): Promise<string> {
   await put("style.css", STYLE);
   await put("widget.js", SCRIPT);
   await put("index.html", PAGE);
-  return address;
+  return base.split("/").pop()!;
 }
 
 const STYLE = `body { font: 17px/1.6 Georgia, serif; max-width: 42rem; margin: 3rem auto; padding: 0 1.25rem; color: #222; }
@@ -155,14 +218,16 @@ async function measure(page: Page, url: string | null, profile: Profile, opts: {
   };
   page.onAny = (d) => {
     const p = d.params;
-    const key = (id: string) => `${d.sessionId ?? ""}:${id}`;
+    // By request id alone: a frame's navigation is reported to its parent's session, and its end to the frame's own.
+    const key = (id: string) => id;
     if (d.method == "Target.attachedToTarget") {
       const session = p.sessionId;
       sessions.push(session);
       setUp(session).catch(() => {}).finally(() => page.send("Runtime.runIfWaitingForDebugger", {}, 10_000, session).catch(() => {}));
     } else if (d.method == "Network.requestWillBeSent") {
-      if (!t0mono && p.type == "Document") { t0mono = p.timestamp; t0wall = p.wallTime; }
-      requests.set(key(p.requestId), { url: p.request.url, start: p.timestamp, bytes: 0, type: p.type });
+      if (!t0mono && p.type == "Document" && p.request.url == url) { t0mono = p.timestamp; t0wall = p.wallTime; }
+      // The same request can be announced again (a redirect, or a frame's navigation to its own session): the first counts.
+      if (!requests.has(key(p.requestId))) requests.set(key(p.requestId), { url: p.request.url, start: p.timestamp, bytes: 0, type: p.type });
     } else if (d.method == "Network.responseReceived") {
       const r = requests.get(key(p.requestId));
       if (r) {
@@ -206,7 +271,8 @@ async function measure(page: Page, url: string | null, profile: Profile, opts: {
   }
   // Everything has settled: the load event, the editor if wanted, then no request for half a second.
   const deadline = Date.now() + 60_000;
-  const settled = () => [...requests.values()].every((r) => r.end != null || r.type == "WebSocket" || r.status == null && Date.now() - deadline > -55_000);
+  // Every request done (one still going after 10s, a long poll or a stream, doesn't count).
+  const settled = () => [...requests.values()].every((r) => r.end != null || r.type == "WebSocket" || Date.now() - deadline > -50_000);
   let quietSince = 0;
   while (Date.now() < deadline) {
     await Bun.sleep(50);
@@ -231,7 +297,8 @@ async function measure(page: Page, url: string | null, profile: Profile, opts: {
   };
   const reqs = [...requests.values()].filter((r) => !opts.act || r.start >= 0);
   const topDoc = reqs.find((r) => r.type == "Document");
-  const lcpWall = Math.max(...lcps.map((l) => l.wall), 0);
+  // This navigation's (enabling the timeline again replays earlier ones), the document's frames' and the shell's.
+  const lcpWall = Math.max(...lcps.filter((l) => l.wall >= t0wall && (docFrames.includes(l.frame) || l.frame == top)).map((l) => l.wall), 0);
   const run: Run = {
     ttfb: opts.act ? NaN : topDoc?.ttfb ? sinceMono(topDoc.ttfb) : NaN,
     fcp: opts.act ? NaN : sinceMono(first([top], "firstContentfulPaint")),

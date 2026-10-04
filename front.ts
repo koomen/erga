@@ -361,13 +361,19 @@ async function pagesDoor(request: Request, url: URL, doc: { owner: string; id: s
     // ?view=<file>: the page to show straight away, as it renders (the viewer's, and the editor's until it has its own).
     // ?view= (empty): the document's page, whatever its name (its host answers doc/ with it).
     const view = url.searchParams.get("view");
-    const src = view == "" ? "doc/" : view && !/^\/|(^|\/)\.\.(\/|$)/.test(view) ? `doc/${view.split("/").map(encodeURIComponent).join("/")}` : "";
-    const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="erga-shell" content="${esc(shell)}"><title>Erga page</title>
-<style>html,body{margin:0;height:100%;overflow:hidden;overscroll-behavior:none;background:transparent}iframe{position:fixed;inset:0;width:100%;height:100%;border:0;background:transparent;visibility:hidden}iframe.on{visibility:visible}</style>
+    const files = `/t/${token}/doc/`;
+    const src = view == "" ? files : view && !/^\/|(^|\/)\.\.(\/|$)/.test(view) ? `${files}${view.split("/").map(encodeURIComponent).join("/")}` : "";
+    // Its base is the document's folder: the editable page (frame.js renders it as srcdoc, which takes this page's base) then
+    // resolves the document's files there from the start, even in Chrome's preload scanner, which otherwise asks for them here too.
+    const html = `<!doctype html><html><head><meta charset="utf-8"><base href="${esc(files)}"><meta name="erga-shell" content="${esc(shell)}"><title>Erga page</title>
+<style>${HOST_STYLE}</style>
 </head><body>${src ? `<iframe id="view" class="on" src="${esc(src)}" title="Document" sandbox="${PAGE_SANDBOX}"></iframe>` : ""}<script>${HOST_SCRIPT}</script></body></html>`;
-    // The same for a given address (until the editor's code changes): checked with the server each time, answered 304 when unchanged.
+    // Everything in it comes from its address (the token names the shell) and this code: with this code's version in the
+    // address (?v=, as the document's page links it), the browser may keep it for the day the token stays the same; without,
+    // it's checked with the server each time (answered 304 when unchanged).
     const etag = `"${b64url(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(html)))).slice(0, 22)}"`;
-    const headers = { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-cache", ETag: etag, "Content-Security-Policy": `frame-ancestors ${shell}`, "Referrer-Policy": "no-referrer" };
+    const cache = url.searchParams.get("v") == HOST_VERSION ? `private, max-age=${DAY}` : "no-cache";
+    const headers = { "Content-Type": "text/html; charset=utf-8", "Cache-Control": cache, ETag: etag, "Content-Security-Policy": `frame-ancestors ${shell}`, "Referrer-Policy": "no-referrer" };
     if (request.headers.get("if-none-match")?.split(",").some((t) => t.trim().replace(/^W\//, "") == etag)) return new Response(null, { status: 304, headers });
     return new Response(html, { headers });
   }
@@ -376,6 +382,15 @@ async function pagesDoor(request: Request, url: URL, doc: { owner: string; id: s
   if (!route || route.owner != doc.owner.toLowerCase()) return notFound();
   return platform.docs.fetch(route, forwarded(request, url, rest, `${shell}/d/${doc.id}`, null, null));
 }
+
+const HOST_STYLE = "html,body{margin:0;height:100%;overflow:hidden;overscroll-behavior:none;background:transparent}iframe{position:fixed;inset:0;width:100%;height:100%;border:0;background:transparent;visibility:hidden}iframe.on{visibility:visible}";
+
+/** The frame's host page's version: a digest of its code (FNV-1a), which changes whenever that does. */
+const versionOf = (text: string) => {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) h = Math.imul(h ^ text.charCodeAt(i), 0x01000193);
+  return (h >>> 0).toString(36);
+};
 
 /** What a document's page may do in its frame, in the viewer and the editor alike (frame.ts makes the editor's the same). */
 const PAGE_SANDBOX = "allow-scripts allow-same-origin allow-forms allow-modals allow-popups";
@@ -433,6 +448,7 @@ const HOST_SCRIPT = `(function () {
   if (/[?&]edit=1(&|$)/.test(location.search)) { want = "edit"; loading = true; var s = document.createElement("script"); s.src = "/frame.js"; document.body.append(s); }
   parent.postMessage({ type: "erga-host" }, SHELL);
 })();`;
+const HOST_VERSION = versionOf(HOST_STYLE + PAGE_SANDBOX + HOST_SCRIPT);
 
 /** A link on this site, keeping the name a local tab gave (?user=) if it gave one. */
 export const link = (path: string, session: Session | null) =>
@@ -561,7 +577,7 @@ async function viewDocument(platform: Platform, request: Request, opened: { doc:
   // Opened at /edit, the frame starts on its half of the editor (frame.js) at once, and the page fetches the editor's files as it
   // parses, rather than one after another once its script runs (EDIT_BOOT).
   // Its page by name when it's known (the front page's), else the folder (doc/), which its host answers with its page.
-  const src = `${host}?view=${index ? encodeURIComponent(index) : ""}${editing ? "&edit=1" : ""}`;
+  const src = `${host}?view=${index ? encodeURIComponent(index) : ""}${editing ? "&edit=1" : ""}&v=${HOST_VERSION}`;
   const preload = editing
     ? `<link rel="preload" href="/editor.html" as="fetch" crossorigin><link rel="preload" href="/page.js" as="script"><link rel="preload" href="/style.css" as="style"><link rel="preload" href="/fonts/inter.css" as="style">`
     : "";

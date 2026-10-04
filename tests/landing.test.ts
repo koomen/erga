@@ -37,6 +37,7 @@ function platformOn(sql: Sql, hosts: Map<string, Record<string, string | Uint8Ar
     docs: {
       create: async (doc: Route, files: Record<string, string | Uint8Array>) => { if (hosts.has(doc.id)) return false; hosts.set(doc.id, files); return true; },
       exists: async (doc: Route) => hosts.has(doc.id),
+      index: async (doc: Route) => (hosts.has(doc.id) ? "index.html" : null),
       delete: async (doc: Route) => { if (!hosts.delete(doc.id)) return false; await directory.remove(doc.id); return true; },
     },
   } as unknown as Platform;
