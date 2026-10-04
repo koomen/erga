@@ -171,6 +171,38 @@ try {
   await until(async () => (await p.eval<string>("location.pathname")) == at.replace(/\/edit$/, "") && await visible(".erga-view-buttons"), 5000, "Back goes to the viewer too");
   ok("the pencil switches between viewing and editing without a reload, the document staying put");
 
+  // The editor's breadcrumbs: Documents and the title on one baseline, the title's descenders (g, y, p) not clipped, light and dark;
+  // a long title still ends in an ellipsis. (A zero-size inline-block's bottom sits on its line's baseline.)
+  const crumbs = () => p.eval<{ docs: number; title: number; room: number; descent: number; scrollH: number; clientH: number; ellipsis: boolean }>(`(() => {
+    const base = (el) => { const i = document.createElement("i"); i.style.cssText = "display:inline-block;width:0;height:0"; el.appendChild(i); const y = i.getBoundingClientRect().bottom; i.remove(); return y; };
+    const docs = document.querySelector("#nav-back span"), title = document.getElementById("doc-title-text");
+    const ctx = document.createElement("canvas").getContext("2d"); ctx.font = getComputedStyle(title).font;
+    const t = base(title);
+    return { docs: base(docs), title: t, room: title.getBoundingClientRect().bottom - t, descent: ctx.measureText(title.textContent).actualBoundingBoxDescent,
+      scrollH: title.scrollHeight, clientH: title.clientHeight, ellipsis: title.scrollWidth > title.clientWidth };
+  })()`);
+  const crumbsAt = (await get("/new")).headers.get("location")!;
+  const crumbsId = ((await (await get(`${crumbsAt.replace(/\/edit$/, "")}/api/name`)).json()) as { id: string }).id;
+  const retitle = async (title: string) => {
+    const r = await get(`/d/${crumbsId}/api/name`, { method: "POST", headers: { "Content-Type": "application/json", Origin: root }, body: JSON.stringify({ title, slug: "gyp" }) });
+    expect(r.ok, `renamed to ${title}`, await r.text());
+  };
+  await retitle("Gyp jogging plan");
+  for (const dark of [false, true]) {
+    await p.open(`${root}/tester/gyp/edit`, { width: 1100, height: 720, scale: 2, dark, clear: false });
+    await until(() => p.eval<boolean>(`document.getElementById("doc-title-text").textContent == "Gyp jogging plan"`), 15_000, "the editor shows the title");
+    const m = await crumbs();
+    expect(Math.abs(m.docs - m.title) < 0.5, `Documents and the title share a baseline (${dark ? "dark" : "light"})`, m);
+    expect(m.scrollH <= m.clientH && m.room >= m.descent, `the title's descenders aren't clipped (${dark ? "dark" : "light"})`, m);
+    await p.screenshot(join(SHOTS, `account-crumbs-${dark ? "dark" : "light"}.png`));
+  }
+  await retitle("A long gypsy jogging plan title that keeps going on past any reasonable width for a breadcrumb");
+  await until(() => p.eval<boolean>(`document.getElementById("doc-title-text").textContent.startsWith("A long")`), 10_000, "the editor follows the rename");
+  const long = await crumbs();
+  expect(long.ellipsis && Math.abs(long.docs - long.title) < 0.5 && long.room >= long.descent, "a long title is cut short with an ellipsis, on the same baseline, descenders whole", long);
+  expect((await p.eval<string>(`getComputedStyle(document.getElementById("doc-title-text")).textOverflow`)) == "ellipsis", "with an ellipsis");
+  ok("the editor's breadcrumbs share a baseline and show the title's descenders, light and dark; a long title ends in an ellipsis");
+
   // Sign out: nobody (locally too), and the corner offers to sign in, coming back here.
   await p.open(`${root}/docs`, { width: 1100, height: 720, scale: 2, clear: false });
   await clickOn(p, "[data-erga-account] button");

@@ -112,6 +112,9 @@
     /* Back to your documents, top left (hidden for test people, who have none). */
     .chrome-nav { top: max(12px, env(safe-area-inset-top)); left: max(14px, var(--safe-l)); transition: opacity var(--show-ms) var(--ease), left var(--agent-ms) var(--agent-ease); }
     .chrome-nav[hidden] { display: none; }
+    /* Documents, its arrow and the title sit on one baseline: each text fills its 34px box as its line, so descenders (g, y) aren't clipped. */
+    .chrome-nav, .nav-back, .nav-title { align-items: baseline; }
+    :is(.nav-back, .nav-title) span { line-height: 34px; }
     .nav-back {
       display: flex; align-items: center; gap: 2px; height: 34px; padding: 0 10px; border-radius: 8px;
       color: var(--chrome); font: 500 13px/1 var(--font-text); text-decoration: none;
@@ -407,6 +410,7 @@
        shrinks to its arrow: avatars overlap, and notes that would cover the row sit under it. */
     @media (max-width: 520px) {
       .nav-back { padding: 0 8px 0 4px; }
+      .chrome-nav, .nav-back { align-items: center; } /* only the arrow left of Documents: no text to share a baseline with */
       .nav-back svg { display: block; }
       .nav-back span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
       .nav-back::after { display: none; }
