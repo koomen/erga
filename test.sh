@@ -4,7 +4,7 @@
 #
 #   ./test.sh         unit tests, tests/page.ts, a page trying to reach its
 #                     viewer (tests/isolation.ts), the front door's routes
-#                     (tests/worker.ts), the front page the server makes (tests/landing.ts),
+#                     (tests/worker.ts), documents with many pages (tests/pages.ts), the front page the server makes (tests/landing.ts),
 #                     the deploy page against a pretend Cloudflare (tests/deploy.ts),
 #                     who you are in every page's corner (tests/account.ts),
 #                     the first switch into editing on a slow network (tests/switch.ts),
@@ -35,6 +35,7 @@ page_group() {
   run page bun tests/page.ts
   run isolation bun tests/isolation.ts
   run front bun tests/worker.ts --local
+  run pages bun tests/pages.ts
   run deployed bun tests/server-config.ts
   run landing bun tests/landing.ts
   run account bun tests/account.ts

@@ -18,7 +18,7 @@
 //
 //   front    /, the front page (the landing document; its fonts come from Google, so it varies with the network)
 //   viewer   /<owner>/<slug>, a document of its own (a page with a stylesheet, a script and some text)
-//   editor   /<owner>/<slug>/edit, the same document opened in the editor
+//   editor   /<owner>/<slug>#edit, the same document opened in the editor
 //   switch   the viewer, then the pencil: how long until the editor is ready after the click
 //
 // What it measures, in ms from the start of the navigation:
@@ -128,7 +128,7 @@ async function makeDoc(): Promise<string> {
   const made = await fetch(`${root}/new?from=${id}`, { method: "POST", headers: { Origin: root! }, redirect: "manual" });
   const at = made.headers.get("location");
   if (made.status != 302 || !at) throw new Error(`/new?from= answered ${made.status}: ${await made.text()}`);
-  return at.replace(/\/edit(?=\?|$)/, "");
+  return at.replace(/#edit$/, "");
 }
 
 /** The bench's document: a page with a stylesheet, a script and a few screens of text. Its id. */
@@ -136,7 +136,7 @@ async function makeSource(): Promise<string> {
   const made = await fetch(`${root}/new`, { method: "POST", headers: { Origin: root! }, redirect: "manual" });
   const at = made.headers.get("location");
   if (made.status != 302 || !at) throw new Error(`/new answered ${made.status}: ${await made.text()}`);
-  const address = at.replace(/\/edit(?=\?|$)/, "");
+  const address = at.replace(/#edit$/, "");
   const page = await fetch(`${root}${address}`);
   const base = /<meta name="erga-base" content="([^"]+)"/.exec(await page.text())?.[1];
   if (!base) throw new Error(`no erga-base at ${address}`);
@@ -347,7 +347,7 @@ async function coldWarm(browser: Browser, profile: Profile, url: string, editabl
 const CASES: Case[] = [
   { name: "front", run: (b, p) => coldWarm(b, p, `${root}/`, false) },
   { name: "viewer", run: async (b, p) => coldWarm(b, p, `${root}${await makeDoc()}`, false) },
-  { name: "editor", run: async (b, p) => coldWarm(b, p, `${root}${await makeDoc()}/edit`, true) },
+  { name: "editor", run: async (b, p) => coldWarm(b, p, `${root}${await makeDoc()}#edit`, true) },
   {
     name: "switch", run: async (browser, profile) => {
       // The viewer, then the pencil: cold (the editor's files fetched while idle, or not yet) and warm (back out and in again).
