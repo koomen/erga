@@ -19,7 +19,7 @@
 // the tree's UI), so it holds only plain functions and the operations' shape.
 
 /** One entry in the tree: a page (.html or .md), any other file, or a folder. */
-export interface TreeEntry { path: string; type: "page" | "file" | "folder" }
+export interface TreeEntry { path: string; type: "page" | "file" | "folder"; /** A page's title, when it has one (the API adds it). */ title?: string }
 
 /** What can be done to the tree (POST /api/docs/<id>/tree): rename is a move. */
 export type TreeOp =

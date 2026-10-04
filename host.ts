@@ -21,6 +21,7 @@ import { AgentOff, Api, BadRequest, ExplainBadRequests, ModelFixed, NameRefused,
 import type { DocName, Naming } from "./directory";
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import { digest, StoreError, type FileStore, type Room } from "./room";
+import { titleOf } from "./front";
 import { checkNewName, cleanTreePath, isPage, parentsOf, resolvePage, TreeError, treeEntries, type TreeOp } from "./tree";
 import { ignored } from "./src/room/doc";
 import type { ViewRequest, ViewResult } from "./src/page/agent-log";
@@ -265,7 +266,12 @@ export function makeHost(opts: HostOptions) {
   // ---------------------------------------------------------- storage and files
 
   const badPath = HttpServerResponse.text("Bad path", { status: 400 });
-  const entries = () => treeEntries(room.paths(), room.folderPaths());
+  /** The tree, each page with its title (its first heading, else its <title>) when it has one. */
+  const entries = () => treeEntries(room.paths(), room.folderPaths()).map((e) => {
+    const text = e.type == "page" ? room.text(e.path) : null;
+    const title = text != null ? titleOf(text, e.path) : null;
+    return title ? { ...e, title } : e;
+  });
   const routes: Array<HttpRouter.Route<unknown>> = [
     // The document's file tree (tree.ts): its pages, other files and folders.
     HttpRouter.route("GET", "/api/tree", Effect.gen(function* () {

@@ -35,7 +35,12 @@ const cookie = await signIn(null);
 const get = (path: string, init: RequestInit = {}, c: string | null = cookie) => fetch(base + path, { redirect: "manual", ...init, headers: { ...(c ? { Cookie: c } : {}), ...(init.headers as Record<string, string>) } });
 
 // An agent token, for the API's tools.
-const tokenPage = await (await get("/tokens/new", { method: "POST", headers: { Origin: origin }, body: new URLSearchParams({ label: "Pages test" }) })).text();
+// (Tried again if the dev server answers its own error page: a busy machine's first requests can.)
+let tokenPage = "";
+for (let tries = 0; tries < 5 && !tokenPage.includes('class="secret"'); tries++) {
+  if (tries) await Bun.sleep(1000);
+  tokenPage = await (await get("/tokens/new", { method: "POST", headers: { Origin: origin }, body: new URLSearchParams({ label: "Pages test" }) })).text();
+}
 const token = /<pre class="secret">(erga_[^<]+)<\/pre>/.exec(tokenPage)?.[1] ?? "";
 expect(token, "an agent token", tokenPage.slice(0, 200));
 const auth = { Authorization: `Bearer ${token}` };
@@ -80,6 +85,7 @@ const paths = (entries: Entry[] = []) => entries.map((e) => `${e.path}${e.type =
 {
   const t = await readTree();
   expect(t.status == 200 && t.body.canEdit === true && paths(t.body.entries) == "index.html style.css*", "a new document's tree: its page and its stylesheet", t);
+  expect((t.body.entries?.[0] as Entry & { title?: string }).title == "Home", "each page with its title", t.body.entries);
   // Live events: an editor's event channel hears every change to the tree.
   const events: { type: string; moved?: unknown; deleted?: string }[] = [];
   const ws = new WebSocket(`${base.replace(/^http/, "ws")}/d/${doc.id}/api/events`, { headers: { Cookie: cookie } } as never);

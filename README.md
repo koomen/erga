@@ -836,8 +836,8 @@ taking back a file it made) is deleted from storage too.
 agent token, and at `/d/<id>/api/tree` for the editor):
 
     GET  /api/docs/<id>/tree
-      → 200 { entries: [ { path: "index.html", type: "page" }, { path: "blog", type: "folder" },
-                         { path: "blog/index.html", type: "page" }, { path: "style.css", type: "file" } ],
+      → 200 { entries: [ { path: "index.html", type: "page", title: "Home" }, { path: "blog", type: "folder" },
+                         { path: "blog/index.html", type: "page", title: "Blog" }, { path: "style.css", type: "file" } ],
               canEdit: boolean,
               moved: [ { from, to } ] }        (the latest moves, for a tab that missed one)
     POST /api/docs/<id>/tree   (JSON; editors only)
@@ -852,7 +852,9 @@ agent token, and at `/d/<id>/api/tree` for the editor):
 
 Paths are relative to the document's root, "/"-separated, with no leading or
 trailing slash; every folder is listed (empty ones too), folders first at each
-level; `page` is `.html` or `.md`, `file` anything else. Refused: `..`, hidden
+level; `page` is `.html` or `.md`, `file` anything else; a page has a `title`
+when it has one (its first heading, else its `<title>`, as a document's title
+follows its page). Refused: `..`, hidden
 names and `node_modules`, control characters and `< > : " | ? * # %`, names
 ending in a space or dot, anything already at the destination (409), a path
 inside a file, a folder into itself, the reserved names above, and moving or
