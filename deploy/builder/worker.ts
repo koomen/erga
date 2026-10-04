@@ -18,6 +18,8 @@ interface Env { BUILDS: DurableObjectNamespace<Builder> }
 export class Builder extends DurableObject<Env> {
   async fetch(request: Request): Promise<Response> {
     const container = (this.ctx as unknown as { container: ContainerApi }).container;
+    // A cancel with no container up: there's no build to stop (and none is started for it).
+    if (new URL(request.url).pathname == "/cancel" && !container.running) return Response.json({ stopped: false });
     if (!container.running) container.start({ enableInternet: true, env: { PORT: "8080" } });
     const port = container.getTcpPort(8080);
     // Up when its server answers (it's a few seconds from a cold start).
@@ -26,7 +28,7 @@ export class Builder extends DurableObject<Env> {
       if (i > 120) return Response.json({ error: "The build container didn't start." }, { status: 503 });
       await new Promise((r) => setTimeout(r, 500));
     }
-    return port.fetch(new Request("http://container/build", request));
+    return port.fetch(new Request(`http://container${new URL(request.url).pathname}`, request));
   }
 }
 
@@ -38,7 +40,8 @@ interface ContainerApi {
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
-    if (new URL(request.url).pathname != "/build" || request.method != "POST") return new Response("Not found", { status: 404 });
+    const path = new URL(request.url).pathname;
+    if ((path != "/build" && path != "/cancel") || request.method != "POST") return new Response("Not found", { status: 404 });
     // One builder: builds wait their turn (the container answers 409 while busy, and the pipeline tries again).
     return env.BUILDS.getByName("builder").fetch(request);
   },

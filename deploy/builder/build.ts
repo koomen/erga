@@ -18,11 +18,14 @@ import { join, relative } from "node:path";
 export interface Source { cloneUrl: string; token?: string }
 export type Log = (line: string) => void;
 /** Runs a command in `cwd`, each line it prints to `log`; throws if it fails. */
-export type Runner = (cmd: string[], o: { cwd: string; env?: Record<string, string>; log: Log; secret?: string }) => Promise<void>;
+export type Runner = (cmd: string[], o: { cwd: string; env?: Record<string, string>; log: Log; secret?: string; signal?: AbortSignal }) => Promise<void>;
 
 /** Builds `commit` from `source` in `dir` (emptied first): the release bundle's bytes. */
-export async function buildCommit(o: { source: Source; commit: string; branch?: string; dir: string; log: Log; run?: Runner }): Promise<Uint8Array> {
-  const run = o.run ?? spawnRunner;
+export async function buildCommit(o: { source: Source; commit: string; branch?: string; dir: string; log: Log; run?: Runner; signal?: AbortSignal }): Promise<Uint8Array> {
+  const signal = o.signal;
+  const base = o.run ?? spawnRunner;
+  // Cancelled (signal): the command running is killed, and no other starts.
+  const run: Runner = (cmd, x) => { signal?.throwIfAborted(); return base(cmd, { ...x, signal }); };
   if (!/^[0-9a-f]{7,40}$/.test(o.commit)) throw new Error(`Not a commit: ${o.commit}`);
   rmSync(o.dir, { recursive: true, force: true });
   mkdirSync(o.dir, { recursive: true });
@@ -68,6 +71,8 @@ export function packRelease(dir: string): Uint8Array {
 /** Bun.spawn, with every line it prints logged (a secret in it replaced by ***). */
 export const spawnRunner: Runner = async (cmd, o) => {
   const proc = Bun.spawn(cmd, { cwd: o.cwd, env: { ...process.env, CI: "1", NO_COLOR: "1", CF_QUIET: "1", ...o.env }, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+  const kill = () => proc.kill();
+  o.signal?.addEventListener("abort", kill, { once: true });
   const tail: string[] = [];
   const pump = async (stream: ReadableStream<Uint8Array>) => {
     const decoder = new TextDecoder();
@@ -89,5 +94,7 @@ export const spawnRunner: Runner = async (cmd, o) => {
   };
   await Promise.all([pump(proc.stdout as ReadableStream<Uint8Array>), pump(proc.stderr as ReadableStream<Uint8Array>)]);
   const code = await proc.exited;
+  o.signal?.removeEventListener("abort", kill);
+  o.signal?.throwIfAborted();
   if (code != 0) throw new Error(`${cmd.join(" ")} failed (exit ${code})${tail.length ? `:\n${tail.slice(-8).join("\n")}` : ""}`);
 };

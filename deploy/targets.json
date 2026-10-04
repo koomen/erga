@@ -39,7 +39,10 @@
         "GITHUB_CLIENT_ID": "",
         "CLOUDFLARE_OAUTH_CLIENT_ID": ""
       },
-      "snapshotFrom": "production"
+      "snapshotFrom": "production",
+      "notifies": [
+        "production"
+      ]
     }
   }
 }

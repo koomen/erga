@@ -7,7 +7,7 @@
 // GET /api/deploys and {type: "deploys"} on /api/events.
 //
 //   import { deployHook, publishEvent } from "./deploy";
-//   await deployHook("staging", "3f2a…");            // env from cloudflare:workers, or pass it
+//   await deployHook("staging", "3f2a…", env, "push by ada");   // env from cloudflare:workers, or pass it; what moved it, for the history
 //   publishEvent({ type: "source" });               // an event on /api/events (admins)
 
 import type { Env } from "../worker/env";
@@ -20,9 +20,9 @@ async function envOf(env?: Env): Promise<Env> {
 }
 
 /** A branch moved to `commit`: deploy it where it goes. Never throws for a deploy that fails (that's in the status). */
-export async function deployHook(branch: string, commit: string, env?: Env): Promise<void> {
+export async function deployHook(branch: string, commit: string, env?: Env, trigger?: string): Promise<void> {
   const e = await envOf(env);
-  await e.PIPELINE.getByName("deploys").hook(branch, commit);
+  await e.PIPELINE.getByName("deploys").hook(branch, commit, trigger);
 }
 
 /** An event to every admin listening on /api/events ({type: "source"} when a branch moves, for one). */

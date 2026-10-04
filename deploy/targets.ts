@@ -47,7 +47,12 @@ export interface TargetSpec {
   vars: Record<string, string>;
   /** Copy another target's data in on each deploy (staging: production's). */
   snapshotFrom?: TargetName;
-  /** Branch moves this target's server hears of for other targets go on to them (production tells staging). */
+  /**
+   * Branch moves this target's server hears of for other targets go on to
+   * them (production tells staging of staging's, staging tells production of
+   * main's). Production deploys main's head as its own repository has it,
+   * never the commit another server names (deploy/branches.ts, remoteHook).
+   */
   notifies?: TargetName[];
 }
 
