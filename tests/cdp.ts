@@ -124,6 +124,8 @@ export class Page {
   private pending = new Map<number, (v: any) => void>();
   private listeners = new Map<string, ((params: any) => void)[]>();
   onEvent(method: string, f: (params: any) => void) { this.listeners.set(method, [...(this.listeners.get(method) ?? []), f]); }
+  /** Every event, frames' sessions' included (the benchmark, tests/bench.ts, follows requests and paints in all of them). */
+  onAny: ((event: { method: string; params: any; sessionId?: string }) => void) | null = null;
   errors: string[] = [];
   ready: Promise<void>;
   /** Frames on other sites (each its own DevTools session), as auto-attached after `open`. */
@@ -136,6 +138,7 @@ export class Page {
     this.ws.onmessage = (m) => {
       const d = JSON.parse(m.data as string);
       // Events from a frame's session are only collected for errors, below; the page's own listeners don't see them.
+      if (d.method && this.onAny) this.onAny(d);
       if (d.method && !d.sessionId) for (const f of this.listeners.get(d.method) ?? []) f(d.params);
       if (d.method == "Target.attachedToTarget" && d.params.targetInfo.type == "iframe") {
         this.frames.add(d.params.sessionId);
@@ -210,12 +213,18 @@ export class Page {
     return null;
   }
 
-  async open(url: string, opts: { width?: number; height?: number; dark?: boolean; clear?: boolean; doc?: string; scale?: number; timescale?: number } = {}) {
+  /**
+   * `agent: false` starts the tab as someone who keeps the agent pane closed
+   * (it opens by itself on coming into the editor otherwise, sliding the page
+   * over): set once, if nothing is set yet, so the tab can still open it.
+   */
+  async open(url: string, opts: { width?: number; height?: number; dark?: boolean; clear?: boolean; doc?: string; scale?: number; timescale?: number; agent?: boolean } = {}) {
     await this.send("Runtime.enable");
     await this.send("Page.enable");
     // The page editor's frame is on another site: its own session (see `frame`).
     await this.send("Target.setAutoAttach", { autoAttach: true, waitForDebuggerOnStart: false, flatten: true });
     // The page editor's timers run this much faster (src/page/editor.ts, `ms`); kept across reloads.
+    if (opts.agent === false) await this.send("Page.addScriptToEvaluateOnNewDocument", { source: `try { if (!sessionStorage.getItem("erga-test:agent-seeded")) { sessionStorage.setItem("erga-test:agent-seeded", "1"); if (!localStorage.getItem("erga:settings:v1")) localStorage.setItem("erga:settings:v1", '{"agent":false}'); } } catch {}` });
     if (opts.timescale) await this.send("Page.addScriptToEvaluateOnNewDocument", { source: `window.__ergaTimescale = ${opts.timescale}` });
     await this.send("Emulation.setDeviceMetricsOverride", { width: opts.width ?? 1300, height: opts.height ?? 860, deviceScaleFactor: opts.scale ?? 1, mobile: false });
     await this.send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-color-scheme", value: opts.dark ? "dark" : "light" }] });
@@ -248,6 +257,17 @@ export class Page {
    */
   async settle() {
     await this.eval(`new Promise((r) => { const t = setTimeout(r, 100); requestAnimationFrame(() => requestAnimationFrame(() => { clearTimeout(t); r(true); })); })`);
+  }
+
+  /**
+   * The agent pane open, its input focused. It opens by itself on coming into
+   * the editor (unless kept closed): this waits a moment for that, then opens it.
+   */
+  async openAgent() {
+    const open = () => this.eval<boolean>(`document.body.classList.contains("agent-open")`);
+    for (let i = 0; i < 40 && !(await open()); i++) await Bun.sleep(25);
+    await this.eval(`document.body.classList.contains("agent-open") ? document.getElementById("agent-input").focus() : document.getElementById("agent-fab").click()`);
+    await this.settle();
   }
 
   async key(key: string, modifiers = 0) {

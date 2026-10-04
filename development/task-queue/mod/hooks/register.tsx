@@ -30,7 +30,7 @@ wall of text (the board shows it as the ask). That registers the task, makes its
 worktree, and starts a background worker that does, tests and reports the work. Then tell the user in one line that
 it's task #<id> on the board, and stay free for their next instruction: don't implement, test or merge it yourself,
 and don't wait on the worker. Several tasks may run at once. When a worker reports back, relay its URL and summary in
-a sentence or two. The user merges from the board or the Tasks pane (/tasks).
+a sentence or two, in ASD-STE100 (Simplified Technical English). The user merges from the board or the Tasks pane (/tasks).
 
 Watch the queue for the whole session, so you hear when each task changes state without the user telling you: at the
 start of the session, run \`development/task-queue/tq watch --state /tmp/tq-watch-<a name for this session>.json\` under
@@ -48,7 +48,8 @@ window of its own (its own profile and DevTools port, recorded on the task; neve
 Before acting on anything the user says, run \`tq look <id>\` (the tab in front: URL, title, selected text, console
 errors; --shot saves a screenshot to read, --console all messages), so "this" means what they're looking at. Edit in
 the worktree yourself (absolute paths, no worker); open pages reload by themselves. Commit as you go, test before
-finishing, and finish with \`tq done <id> "summary" <url>\` when the user says it's done: they merge from the board,
+finishing, and finish with \`tq done <id> "summary" <url>\` (the summary in ASD-STE100, as AGENTS.md
+("Task summaries") shows) when the user says it's done: they merge from the board,
 which stops the dev server and closes the window. Meanwhile keep the queue watch armed and relay what it says, and
 send any unrelated change the user asks for through task_create as usual. AGENTS.md ("Live mode") has the details.
 
@@ -68,11 +69,15 @@ worktree, and report on the board as you go. Your first message names the task, 
   already set up, so the user only has to open it.
 - Attach screenshots where the change has a visible side: mcp__task-queue__task_screenshot with a URL (headless
   Chrome takes it) or a PNG you took yourself (e.g. after interacting, with tests/cdp.ts).
-- Commit everything (uncommitted work can't be merged), then mcp__task-queue__task_done with a summary: what changed,
-  how you tested it, what to look at. If you can't finish, mcp__task-queue__task_fail with why.
-- Write summaries (in task_done and your final reply) for the user, in plain language: what you built or changed, how
-  to use it, how you tested it, what to look at. Short and clear; no implementation trivia, strings of internal names
-  or arrow chains.
+- Commit everything (uncommitted work can't be merged), then mcp__task-queue__task_done with a summary. If you can't
+  finish, mcp__task-queue__task_fail with why.
+- Write every summary (task_done, task_fail and your final reply) in ASD-STE100, Simplified Technical English; AGENTS.md
+  ("Task summaries") has the rules and an example. In short: at most 20 words in an instruction and 25 in a
+  description; one idea in each sentence; active voice; simple tenses (present, past, future); no -ing forms as nouns
+  or adjectives; keep "the" and "a"; common words, one word for one meaning; technical names (files, commands,
+  settings) as they are; numbered steps for procedures, lists for results; no implementation trivia, strings of
+  internal names or arrow chains. Shape: one sentence on what the task changes for the user, then results (with
+  numbers), changes, limits, tests, and what the user must do.
 - Never merge or push: the user merges from the board.
 
 If the task-queue tools are missing, development/task-queue/tq in the worktree does the same from Bash (tq help).
@@ -117,7 +122,7 @@ const TOOLS = [
   {
     name: 'task_done',
     description: 'Mark a task complete (ready for the user to merge): everything committed, tested, previewed.',
-    inputSchema: { type: 'object', properties: { id: { type: 'number' }, summary: { type: 'string', description: 'For the user, in plain language: what changed, how to use it, how it was tested, what to look at' }, url: { type: 'string', description: 'Where to look, if not the preview URL already set' } }, required: ['id', 'summary'] },
+    inputSchema: { type: 'object', properties: { id: { type: 'number' }, summary: { type: 'string', description: 'For the user, in ASD-STE100 (Simplified Technical English, see AGENTS.md "Task summaries"): what changed for the user, results, changes, limits, tests, what the user must do' }, url: { type: 'string', description: 'Where to look, if not the preview URL already set' } }, required: ['id', 'summary'] },
   },
   { name: 'task_fail', description: "Mark a task failed, with why.", inputSchema: { type: 'object', properties: { id: { type: 'number' }, reason: { type: 'string' } }, required: ['id', 'reason'] } },
   { name: 'task_list', description: 'List the tasks in the queue that are not done.', inputSchema: { type: 'object', properties: {} } },

@@ -70,7 +70,7 @@ const peersField = StateField.define<DecorationSet>({
 });
 
 declare global {
-  interface Window { ergaPage?: unknown; ergaShell?: { ready(): void } }
+  interface Window { ergaPage?: unknown; ergaShell?: { ready(): void; loadedEditing?: boolean }; ergaDocInfo?: { url: string; response: Promise<Response> } }
 }
 
 
@@ -83,22 +83,15 @@ declare global {
     set(key: string, value: string) { try { localStorage.setItem(key, value); return true; } catch { return false; } },
     json(key: string) { try { return JSON.parse(store.get(key) || "null"); } catch { return null; } },
   };
-  const settings: { track: boolean; agent: boolean } = { track: false, agent: false, ...store.json(KEYS.settings) };
+  // `agent`: whether the agent pane is open while editing. It starts open, and
+  // stays as the user last left it: closed, it stays closed on the way in.
+  const settings: { track: boolean; agent: boolean } = { track: false, agent: true, ...store.json(KEYS.settings) };
   const saveSettings = () => store.set(KEYS.settings, JSON.stringify(settings));
 
   // The page this runs in is the document's page (front.ts), viewing or
   // editing: the editor runs either way once loaded, its controls shown only
   // while editing (setEditing, below).
   const editing = () => document.body.classList.contains("erga-editing");
-
-  // An agent pane left open stays open across reloads: put it back before
-  // the first paint, without the open animation.
-  if (settings.agent && editing()) {
-    document.body.classList.add("no-motion", "agent-open");
-    ($("agent") as HTMLElement).inert = false;
-    $("agent-fab").setAttribute("aria-expanded", "true");
-    requestAnimationFrame(() => requestAnimationFrame(() => document.body.classList.remove("no-motion")));
-  }
 
   // ---------------------------------------------------------------- colours
 
@@ -112,8 +105,16 @@ declare global {
   // its body's when the root has none, as the browser itself would paint it.
   // The page reports its background (frame.ts). Only colours and gradients
   // are taken: an image would be fetched from here, as you.
+  // The first one lands at once, not faded in from the editor's white (page.html's transition): it's
+  // what the agent's opening uncovers on the way into the editor (openAgentOnEntry), so that waits for it.
+  let backdropKnown!: () => void;
+  const backdropReady = new Promise<void>((done) => (backdropKnown = done));
+  let backdropSeen = false;
   function applyBackdrop(b: Backdrop) {
     if (!info) return;
+    const first = !backdropSeen;
+    backdropSeen = true;
+    if (first) document.documentElement.style.transition = "none";
     const color = b.color && CSS.supports("color", b.color) ? b.color : info.kind == "md" ? "" : "#ffffff";
     const image = b.image && !/url\(|image-set\(|image\(|element\(/i.test(b.image) && CSS.supports("background-image", b.image) ? b.image : "";
     const root = document.documentElement.style;
@@ -125,6 +126,11 @@ declare global {
     document.documentElement.classList.toggle("page-light", !!color && !dark);
     // Remembered so the next load paints it before the page arrives (see page.html), not white first.
     store.set("erga:backdrop:v1", JSON.stringify({ bg: color, image, tone: color ? (dark ? "page-dark" : "page-light") : "" }));
+    if (first) {
+      void getComputedStyle(document.documentElement).backgroundColor;
+      document.documentElement.style.transition = "";
+      backdropKnown();
+    }
   }
 
   // ---------------------------------------------------------------- load
@@ -138,7 +144,11 @@ declare global {
   const as = asked ? `?user=${encodeURIComponent(asked)}` : "";
   let info: DocInfo | null = null;
   try {
-    const res = await fetch(`${BASE}/api/doc${as}`);
+    // The page asked for it already, as editing started (front.ts, EDIT_BOOT), if it's for this same address.
+    const early = window.ergaDocInfo;
+    window.ergaDocInfo = undefined;
+    const url = `${BASE}/api/doc${as}`;
+    const res = early?.url == url ? await early.response : await fetch(url);
     if (!res.ok) throw new Error(await res.text());
     info = (await res.json()) as DocInfo;
   } catch (e) {
@@ -1438,11 +1448,15 @@ Once you've read the guide, await further instructions.`;
     if (!fieldSized) { agentField.style.transition = "none"; agentField.style.height = h + "px"; void agentField.offsetHeight; agentField.style.transition = ""; fieldSized = true; }
     else agentField.style.height = h + "px";
   }).observe(agentInput);
-  function toggleAgent(force?: boolean) {
-    const open = typeof force == "boolean" ? force : !document.body.classList.contains("agent-open");
+  /** Opens or closes the pane, animated, without remembering it (toggleAgent remembers). */
+  function showAgent(open: boolean) {
     agentPanel.inert = !open;
     document.body.classList.toggle("agent-open", open);
     $("agent-fab").setAttribute("aria-expanded", String(open));
+  }
+  function toggleAgent(force?: boolean) {
+    const open = typeof force == "boolean" ? force : !document.body.classList.contains("agent-open");
+    showAgent(open);
     settings.agent = open;
     saveSettings();
     if (!open) stopVoice(); // the mic never listens behind a closed panel
@@ -1645,22 +1659,45 @@ Once you've read the guide, await further instructions.`;
 
   // Out of the editor and back in (front.ts), without leaving the page: the
   // controls go out of sight, with anything open among them, and come back as they were.
+  // Into the editor (or loading in it), the editor shows first, then the agent
+  // grows out of its button, unless the user keeps it closed. The first time,
+  // that's once the editor is ready (this runs before main.ts calls
+  // ergaShell.ready) and the page has said what its background is, so the
+  // room the page slides over to make is its colour, never the editor's white
+  // (applyBackdrop); a page that never says gives up waiting after a moment.
+  let entering = 0;
+  function openAgentOnEntry() {
+    if (!settings.agent) return;
+    const mine = ++entering;
+    void Promise.race([backdropReady, new Promise((r) => setTimeout(r, 2000))]).then(() =>
+      requestAnimationFrame(() => requestAnimationFrame(() => { if (mine == entering && editing()) showAgent(true); })));
+  }
   function setEditing(on: boolean) {
     if (on) {
-      document.body.classList.toggle("agent-open", settings.agent);
-      agentPanel.inert = !settings.agent;
       page.focus();
+      openAgentOnEntry();
       return;
     }
     if (mode != "text") setMode("text");
     toggleHelp(false); toggleShare(false); toggleSharing(false); toggleNaming(false); toggleAccount(false); showPauseCard(false);
     hideFmt();
-    document.body.classList.remove("agent-open");
-    agentPanel.inert = true;
+    showAgent(false);
     stopVoice();
     showChrome();
   }
+  // Loaded in the editor: a reload (or back/forward) keeps things as they
+  // were, the pane put back as it was left, unanimated; arriving here from
+  // elsewhere is coming into the editor, and the agent grows out as above.
+  // Only a page opened at /edit is "loaded in the editor": one opened viewing (by a reload or not) and
+  // switched into it is coming into the editor (front.ts says which, ergaShell.loadedEditing).
   if (!editing()) setEditing(false);
+  else if (window.ergaShell?.loadedEditing !== false && ["reload", "back_forward"].includes((performance.getEntriesByType("navigation")[0] as PerformanceNavigationTiming | undefined)?.type ?? "")) {
+    if (settings.agent) {
+      document.body.classList.add("no-motion");
+      showAgent(true);
+      requestAnimationFrame(() => requestAnimationFrame(() => document.body.classList.remove("no-motion")));
+    }
+  } else openAgentOnEntry();
 
   started = true;
   presenceChanged();

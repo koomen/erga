@@ -92,6 +92,9 @@ export interface Permission { login: string; role: Role; granted: number; grante
 const RANK: Record<Role, number> = { viewer: 1, editor: 2, owner: 3 };
 const ALLOWS: Record<Action, Role> = { open: "viewer", edit: "editor", rename: "editor", delete: "owner", share: "owner" };
 
+/** Whether a role (from `Directory.access`) allows an action: what `may` decides, for a caller that already has the role. */
+export const roleMay = (role: Role | null, action: Action): boolean => role != null && RANK[role] >= RANK[ALLOWS[action]];
+
 /** A rename that can't be done; the message says why, for a person or an agent to act on. */
 export class NameError extends Error {}
 
@@ -227,6 +230,33 @@ export class Directory {
        UNION ALL SELECT d.*, 2 AS via FROM slug_history h JOIN documents d ON d.id = h.doc_id WHERE h.owner = ?1 AND h.slug = ?2
        ORDER BY via LIMIT 1`, owner.toLowerCase(), segment.toLowerCase());
     return row ? { doc: fromRow(row), via: row.via == 0 ? "slug" : row.via == 1 ? "id" : "history" } : null;
+  }
+
+  /**
+   * The document at /<owner>/<segment>, as `locate` finds it (or by id, given
+   * `owner` "d"), and the role `who` has on it, as `access` decides: in one
+   * query, since a document's page needs both before it can answer.
+   */
+  async openAs(who: Who, owner: string, segment: string): Promise<{ doc: DocRow; role: Role | null } | null> {
+    // A test person's role follows from the document alone (access asks nothing more of the database).
+    if (who.test) {
+      const doc = owner == "d" ? await this.get(segment) : (await this.locate(owner, segment))?.doc ?? null;
+      return doc && { doc, role: await this.access(who, doc) };
+    }
+    const found = owner == "d"
+      ? "SELECT d.*, 0 AS via FROM documents d WHERE d.id = ?2"
+      : `SELECT d.*, 0 AS via FROM documents d WHERE d.owner = ?1 AND d.slug = ?2
+         UNION ALL SELECT d.*, 1 AS via FROM documents d WHERE d.owner = ?1 AND d.id = ?2
+         UNION ALL SELECT d.*, 2 AS via FROM slug_history h JOIN documents d ON d.id = h.doc_id WHERE h.owner = ?1 AND h.slug = ?2
+         ORDER BY via LIMIT 1`;
+    const [row] = await this.sql.all<Row & { via: number; rank: number | null }>(
+      `SELECT x.*, (SELECT MAX(CASE p.role WHEN 'owner' THEN 3 WHEN 'editor' THEN 2 WHEN 'viewer' THEN 1 END)
+         FROM permissions p WHERE p.doc_id = x.id AND p.login IN (?3, ?4)) AS rank
+       FROM (${found}) x`,
+      owner.toLowerCase(), owner == "d" ? segment : segment.toLowerCase(), who.login.toLowerCase(), ANYONE);
+    if (!row) return null;
+    const role = (Object.keys(RANK) as Role[]).find((r) => RANK[r] == Number(row.rank)) ?? null;
+    return { doc: fromRow(row), role };
   }
 
   /**
@@ -395,8 +425,7 @@ export class Directory {
 
   /** Whether someone may do something with a document: every such decision comes here (see the top of this file). */
   async may(who: Who | null, action: Action, doc: { id: string; owner: string; test: boolean }): Promise<boolean> {
-    const role = await this.access(who, doc);
-    return role != null && RANK[role] >= RANK[ALLOWS[action]];
+    return roleMay(await this.access(who, doc), action);
   }
 
   /** Everyone with a permission on a document: its owner first, then by login ("*" first among the rest). */

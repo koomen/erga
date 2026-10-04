@@ -14,6 +14,7 @@
 //   /auth/github[/callback]    signing in; /auth/logout signs out
 //   /llms.txt, /api/..., /mcp  the server's API for agents, with an agent token (server-api.ts, tokens.ts)
 //   /settings, /tokens/...     your settings: agent tokens, and a test token for running the test suite against erga.dev
+//   /deploy                    deploy Erga to your own Cloudflare account (worker/deploy.ts; the deploy_page setting)
 //   /auth/test?token=&as=      a test person (Ada, Bo...) signed in with one; they open only test documents
 //   /page.js, /style.css, ...  the editor's own files (static assets)
 //
@@ -30,8 +31,11 @@ import { frontDoor, OWNER, whoOf, withTokens, type Platform } from "../front";
 import { serverApi, tokensDoor } from "../server-api";
 import { finishSignIn, isDev, mintTestToken, sessionOf, signOut, startSignIn, testSignIn } from "./auth";
 import { directoryOf, tokensOf } from "./d1";
+import { deployDoor } from "./deploy";
 import type { Env } from "./env";
+import { counted, simulateLatency, tallied } from "./timing";
 
+export { Deployer } from "./deployer";
 export { DocHost } from "./doc-host";
 
 /** The templates' files, by template then path ("doc" → { "index.html": "..." }). Text files only. */
@@ -60,15 +64,38 @@ for (const [path, url] of Object.entries(import.meta.glob("../landing/**/*.{woff
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
-    const response = await route(request, env, url);
-    // Every page of the site's own has who you are in its upper right (account.ts); a document's pages origin never does.
-    if (pagesSite(url) || response.status == 101) return response;
-    return withAccount(response, async () => {
-      const session = await sessionOf(env, request);
-      return accountOf(session, !!session && !session.test && (await directoryOf(env).users.isAdmin(whoOf(session))));
-    }, url.pathname + url.search);
+    const started = Date.now();
+    if (env.ERGA_REMOTE_LATENCY_MS) simulateLatency(Number(env.ERGA_REMOTE_LATENCY_MS));
+    const { value: answer, timing } = await tallied(async () => {
+      const response = await route(request, env, url);
+      // Every page of the site's own has who you are in its upper right (account.ts); a document's pages origin never does.
+      if (response.status == 101 || pagesSite(env, url)) return response;
+      return withAccount(response, async () => {
+        const session = await sessionOf(env, request);
+        return accountOf(session, !!session && !session.test && (await directoryOf(env).users.isAdmin(whoOf(session))));
+      }, url.pathname + url.search);
+    });
+    if (answer.status == 101) return answer;
+    return timed(answer, [`worker;dur=${Date.now() - started}`, ...timing]);
   },
 } satisfies ExportedHandler<Env>;
+
+/**
+ * How long the Worker took over a response (Server-Timing, which the browser's
+ * network panel and tests/bench.ts show): time waiting on the database, a
+ * document's Durable Object and the like (a Worker's clock moves only across I/O).
+ */
+function timed(response: Response, entries: string[]): Response {
+  try {
+    for (const e of entries) response.headers.append("Server-Timing", e);
+    return response;
+  } catch {
+    // Immutable headers (a fetched response passed through): a copy.
+    const headers = new Headers(response.headers);
+    for (const e of entries) headers.append("Server-Timing", e);
+    return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+  }
+}
 
 /** Whose the front page is when the server makes it: locally DEV_LOGIN, else the first of ADMINS; the rest of ADMINS may edit it. */
 const landingOf = (env: Env): NonNullable<Platform["landing"]> => {
@@ -78,13 +105,15 @@ const landingOf = (env: Env): NonNullable<Platform["landing"]> => {
   return { files: LANDING, owner, editors: admins.filter((l) => l != owner) };
 };
 
-const pagesSite = (url: URL) => url.hostname.endsWith(".erga-pages.dev") || url.hostname.endsWith(".localhost");
+/** Where documents' pages run (front.ts, pagesOrigin): an origin each under PAGES_DOMAIN (erga-pages.dev), or the one PAGES_HOST. */
+const pagesDomainOf = (env: Env) => env.PAGES_DOMAIN?.trim() || "erga-pages.dev";
+const pagesSite = (env: Env, url: URL) => url.hostname.endsWith(`.${pagesDomainOf(env)}`) || (!!env.PAGES_HOST && url.hostname == env.PAGES_HOST.trim()) || url.hostname.endsWith(".localhost");
 
 async function route(request: Request, env: Env, url: URL): Promise<Response> {
   const path = url.pathname;
   const assets = path == "/page.js" || path == "/frame.js" || path == "/style.css" || path.startsWith("/fonts/");
   // A document's pages origin (front.ts, pagesDoor) serves its frame and files, and nothing of this site's.
-  if (pagesSite(url)) return assets ? env.ASSETS.fetch(request) : frontDoor(request, platform(env));
+  if (pagesSite(env, url)) return assets ? env.ASSETS.fetch(request) : frontDoor(request, platform(env));
   if (path == "/auth/github") return startSignIn(env, request);
   if (path == "/auth/github/callback") return finishSignIn(env, request);
   if (path == "/auth/logout") return signOut(env, request);
@@ -95,6 +124,8 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
   if (path == "/llms.txt" || path == "/mcp" || path == "/api" || path.startsWith("/api/")) return serverApi(request, withTokens(platform(env), url));
   if (path == "/settings" || path == "/tokens" || path.startsWith("/tokens/")) return tokensDoor(request, withTokens(platform(env), url));
   if (path.startsWith("/__erga/")) return linked(env, request, url);
+  // Deploying Erga to your own Cloudflare account (worker/deploy.ts).
+  if (path == "/deploy" || path.startsWith("/deploy/")) return deployDoor(request, env, platform(env));
   return frontDoor(request, platform(env));
 }
 
@@ -103,6 +134,7 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
  * directory is in D1 (d1.ts), and a document is a Durable Object
  * (doc-host.ts) named by its id.
  */
+const local = (url: URL) => url.hostname == "localhost" || url.hostname.endsWith(".localhost") || url.hostname == "127.0.0.1";
 const platform = (env: Env): Platform => {
   const directory = directoryOf(env);
   const host = (doc: Route) => env.DOCS.getByName(doc.id);
@@ -114,18 +146,19 @@ const platform = (env: Env): Platform => {
     editor: (request) => env.ASSETS.fetch(new Request(new URL("/editor.html", request.url))),
     dev: (url) => isDev(env, url),
     // Locally (vite dev) each document's page runs on <id>-<owner>.localhost, which browsers send to this machine.
-    pagesDomain: (url) => (url.hostname == "localhost" || url.hostname.endsWith(".localhost") || url.hostname == "127.0.0.1" ? "localhost" : "erga-pages.dev"),
+    pagesDomain: (url) => (local(url) ? "localhost" : pagesDomainOf(env)),
+    pagesShared: (url) => (local(url) ? null : env.PAGES_HOST?.trim() || null),
     secret: env.SESSION_SECRET,
     tokens: tokensOf(env),
     testToken: (login) => mintTestToken(env, login),
     docs: {
-      create: (doc, files, index, opts) => host(doc).create(doc.owner, doc.id, files, index, opts),
-      publish: (doc, files, remove) => host(doc).publish(files, remove),
-      paths: (doc) => host(doc).paths(),
-      index: (doc) => host(doc).index(),
-      snapshot: (doc) => host(doc).snapshot(),
-      exists: (doc) => host(doc).exists(),
-      delete: (doc) => host(doc).delete(),
+      create: (doc, files, index, opts) => counted("doc", () => host(doc).create(doc.owner, doc.id, files, index, opts)),
+      publish: (doc, files, remove) => counted("doc", () => host(doc).publish(files, remove)),
+      paths: (doc) => counted("doc", () => host(doc).paths()),
+      index: (doc) => counted("doc", () => host(doc).index()),
+      snapshot: (doc) => counted("doc", () => host(doc).snapshot()),
+      exists: (doc) => counted("doc", () => host(doc).exists()),
+      delete: (doc) => counted("doc", () => host(doc).delete()),
       list: async (owner) => {
         return Promise.all((await directory.list(owner)).map(async (d) => {
           // In local development a document may be on disk: only it knows where.
@@ -137,7 +170,7 @@ const platform = (env: Env): Platform => {
           };
         }));
       },
-      fetch: (doc, request) => host(doc).fetch(request),
+      fetch: (doc, request) => counted("doc", () => host(doc).fetch(request)),
     },
   };
 };

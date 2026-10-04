@@ -5,7 +5,9 @@
 #   ./test.sh         unit tests, tests/page.ts, a page trying to reach its
 #                     viewer (tests/isolation.ts), the front door's routes
 #                     (tests/worker.ts), the front page the server makes (tests/landing.ts),
+#                     the deploy page against a pretend Cloudflare (tests/deploy.ts),
 #                     who you are in every page's corner (tests/account.ts),
+#                     the first switch into editing on a slow network (tests/switch.ts),
 #                     live reload (tests/reload.ts, in a copy of the checkout)
 #                     and the multiplayer suite, each
 #                     against dev servers of its own (tests/host.ts)
@@ -36,10 +38,14 @@ page_group() {
   run deployed bun tests/server-config.ts
   run landing bun tests/landing.ts
   run account bun tests/account.ts
+  run switch bun tests/switch.ts
   # Latency is measured afterwards, alone: other tests running would skew it.
   run suite bun tests/suite/run.ts --skip latency
   collect
   run latency bun tests/suite/run.ts --suite latency
+  collect
+  # The deploy page after the rest: the first group is as much as the multiplayer suite's timings bear.
+  run deploy bun tests/deploy.ts
   collect
   # Live reload last, alone too: it edits files and waits on rebuilds, which a busy machine slows.
   run reload bun tests/reload.ts
