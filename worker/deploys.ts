@@ -26,6 +26,7 @@ import { snapshotDoor } from "../deploy/snapshot";
 import { PRODUCTION } from "../deploy/targets";
 import { whoOf, withTokens, type Platform } from "../front";
 import type { Env } from "./env";
+import { LOCKED } from "../users";
 
 /** Whether this path is one of these routes. */
 export const isDeploysPath = (path: string) =>
@@ -88,7 +89,9 @@ export async function deploysDoor(request: Request, env: Env, base: Platform): P
   const platform = withTokens(base, url);
   const session = await platform.sessionOf(request);
   const admin = !!session && !session.test && (await platform.directory.users.isAdmin(whoOf(session)));
-  if (!admin) return Response.json({ error: session ? "Only an admin can do that." : "Sign in as an admin, or use an admin's agent token." }, { status: session ? 403 : 401 });
+  if (!admin) return Response.json({ error: session ? "Only an admin can do that." : "Sign in as an admin, or use an admin token (admin-login.ts)." }, { status: session ? 403 : 401 });
+  // Admin access unlocked with the admin's SSH key (admin-keys.ts): the browser's, or an admin token's.
+  if (!(await platform.directory.users.isUnlocked(whoOf(session!)))) return Response.json({ error: LOCKED, locked: true }, { status: 403 });
   if (path == "/api/events" && method == "GET") return stub().fetch(new Request(url, request));
   if (path == "/api/deploys" && method == "GET") return Response.json(await stub().status(Number(url.searchParams.get("history") ?? 0) || 0), noStore);
   if (logOf && method == "GET") return logAnswer(logOf);

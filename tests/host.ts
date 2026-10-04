@@ -72,6 +72,9 @@ export async function startHost(target: string | null, opts: { port?: number; en
     ...process.env as Record<string, string>,
     // The agent's key only from .dev.vars above, not whatever this shell has (dev/agent-key.ts would take it), unless `processEnv` gives one.
     ANTHROPIC_API_KEY: "",
+    // Every admin counts as having unlocked admin access with an SSH key (admin-keys.ts), for the tests that aren't about
+    // it; tests/admin-keys.ts passes ERGA_ADMIN_UNLOCKED: "" to do it for real.
+    ERGA_ADMIN_UNLOCKED: "1",
     ...Object.fromEntries(Object.entries(opts.env ?? {}).filter(([k]) => !DEV_VARS.has(k))),
     ...opts.processEnv,
     ERGA_STATE_DIR: state, ERGA_ENV_DIR: envDir, ERGA_VITE_CACHE: join(scratch, "vite"), ERGA_INSPECTOR: "0", ERGA_BUILT: "1",

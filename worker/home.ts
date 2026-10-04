@@ -354,10 +354,15 @@ export async function serveHome(request: Request, env: Env, ctx: ExecutionContex
     // Only admins may edit the homepage (directory.ts, homeLimit): their role is asked of the database only if they are one
     // (whether someone is, the isolate remembers for a few seconds), so for anyone else, signed out above all, nothing is.
     const admin = !!who && !session.test && !session.agent && (await dir.users.isAdmin(who));
-    const role = admin ? await dir.access(who, { id: page.docId, owner: page.address.split("/")[1], test: false }) : null;
+    const doc = { id: page.docId, owner: page.address.split("/")[1], test: false };
+    const role = admin ? await dir.access(who, doc) : null;
+    // Editing the homepage needs admin access unlocked with an SSH key (directory.ts, homeLimit): an admin who could edit it
+    // once they unlock gets Edit all the same, by way of unlocking (/admin/keys, which comes back here).
+    const unlockToEdit = admin && !roleMay(role, "edit") && !(await dir.users.isUnlocked(who)) && roleMay(await dir.access({ ...who, unlocked: { key: "probe", until: Infinity } }, doc), "edit");
     return homeHeader({
       clone: link("/new?from=landing", session),
-      edit: session && !session.agent && roleMay(role, "edit") ? `${link(page.address, session)}#edit` : null,
+      edit: session && !session.agent && roleMay(role, "edit") ? `${link(page.address, session)}#edit`
+        : unlockToEdit ? link(`/admin/keys?next=${encodeURIComponent(`${page.address}#edit`)}`, session) : null,
       account: accountOf(session, admin),
       here: url.pathname + url.search,
       doc: page.docId,

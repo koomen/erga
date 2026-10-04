@@ -9,6 +9,8 @@ import { readdirSync, readFileSync } from "node:fs";
 import { expect, test } from "bun:test";
 import { Directory, type Param, type Route, type Sql } from "../directory";
 import { landingDocument, type Platform } from "../front";
+/** An unlock of admin access (admin-keys.ts), as the front door gives an admin who signed a challenge with their SSH key. */
+const U = { key: "test", until: Infinity };
 
 const MIGRATIONS = new URL("../migrations/", import.meta.url).pathname;
 const LANDING = { "index.html": "<!doctype html><title>Erga</title><h1>Erga</h1>" };
@@ -58,8 +60,11 @@ test("a fresh database: the first requests make one landing document, even from 
   const p = isolates[0];
   expect(await p.directory.config.get("landing_document")).toBe(doc.id);
   // Its owner may edit it, and so may the other bootstrap admins; anyone else only sees it on /.
-  expect(await p.directory.may({ login: "root" }, "edit", doc)).toBe(true);
-  expect(await p.directory.may({ login: "second" }, "edit", doc)).toBe(true);
+  expect(await p.directory.may({ login: "root", unlocked: U }, "edit", doc)).toBe(true);
+  expect(await p.directory.may({ login: "second", unlocked: U }, "edit", doc)).toBe(true);
+  // Only while they've unlocked admin access with their SSH key (admin-keys.ts): the front page's scripts run on the site itself.
+  expect(await p.directory.may({ login: "second" }, "edit", doc)).toBe(false);
+  expect(await p.directory.may({ login: "second" }, "open", doc)).toBe(true);
   expect(await p.directory.may({ login: "ada" }, "edit", doc)).toBe(false);
   // Asked again, it's the same one.
   expect((await landingDocument(platformOn(sql, hosts)))?.id).toBe(doc.id);
@@ -78,13 +83,13 @@ test("a deleted landing document is made again; an admin's choice stays", async 
   // root chooses another of theirs: it's the front page, and nothing is made.
   await p.directory.add({ id: "chosen01", owner: "root", title: "Mine", created: 1 });
   hosts.set("chosen01", { "index.html": "<h1>Mine</h1>" });
-  await p.directory.config.set({ login: "root" }, "landing_document", "/root/mine");
+  await p.directory.config.set({ login: "root", unlocked: U }, "landing_document", "/root/mine");
   const q = platformOn(sql, hosts);
   expect((await landingDocument(q))?.id).toBe("chosen01");
   expect(hosts.size).toBe(2);
 
   // Reset (unset), it's made again: a fresh copy of landing/.
-  await q.directory.config.reset({ login: "root" }, "landing_document");
+  await q.directory.config.reset({ login: "root", unlocked: U }, "landing_document");
   const third = (await landingDocument(platformOn(sql, hosts)))!;
   expect(third.id).not.toBe(second.id);
   expect(hosts.get(third.id)).toEqual(LANDING);

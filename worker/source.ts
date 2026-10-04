@@ -2,16 +2,17 @@
 // source/repo.ts, in its Durable Object, worker/source-host.ts).
 //
 //   /git/erga.git/...           Git smart HTTP: clone, fetch, pull and push. HTTP Basic with any username and
-//                               an Erga agent token as the password; admins only. main takes fast-forwards only.
+//                               an admin token (admin-keys.ts, admin-login.ts) as the password. main takes fast-forwards only.
 //   GET  /api/source/branches   staging and main: each head and its last 25 commits, and the mirror's status
 //   POST /api/source/merge      { from: "staging", to: "main", commit? }: main fast-forwards to staging's head (or to
 //                               that staging commit): { commit } or 4xx { error } (admins)
 //   POST /api/source/mirror     brings the GitHub mirror up to date now (admins)
 //   /source                     the Source page (admins)
 //
-// The API takes the app's session or an agent token ("Authorization:
-// Bearer erga_..."), an admin's either way. A POST with the session alone
-// must come from this site's own pages.
+// The API takes the app's session or an admin token ("Authorization:
+// Bearer erga_admin_..."), an admin's either way, with admin access unlocked
+// by their SSH key (admin-keys.ts). A POST with the session alone must come
+// from this site's own pages.
 
 import type { Platform } from "../front";
 import { whoOf, withTokens } from "../front";
@@ -20,7 +21,10 @@ import { gitHttp } from "../source/http";
 import type { Actor } from "../source/repo";
 import { sourcePage } from "../source/page";
 import { artifactsRemote, githubUrl, hasSource } from "./artifacts";
-import { directoryOf, tokensOf } from "./d1";
+import { adminKeysOf, directoryOf, tokensOf } from "./d1";
+import { devUnlocked } from "./auth";
+import { unlockFirst } from "../admin-access";
+import { LOCKED } from "../users";
 import type { Env } from "./env";
 
 const host = (env: Env) => env.SOURCE.getByName("erga");
@@ -35,15 +39,23 @@ export async function sourceGit(request: Request, env: Env, url: URL): Promise<R
   let secret = /^Bearer\s+(\S+)$/i.exec(auth)?.[1] ?? null;
   if (basic) { try { const d = atob(basic); secret = d.slice(d.indexOf(":") + 1); } catch { secret = null; } }
   const challenge = (why: string) => new Response(`${why}\n`, { status: 401, headers: { "WWW-Authenticate": 'Basic realm="Erga", charset="UTF-8"', "Content-Type": "text/plain" } });
-  if (!secret) return challenge("Erga's Git endpoint needs an agent token: any username, and the token (from Settings) as the password.");
-  const token = await tokensOf(env).verify(secret).catch(() => null);
-  if (!token || token.testBy) return challenge("That token isn't one of this server's agent tokens (or it was revoked): make one in Settings.");
+  const howTo = "Erga's Git endpoint needs an admin token, made by signing a challenge with your admin SSH key: `ERGA_TOKEN=<agent token> bun admin-login.ts " + url.origin + "` prints one. Then any username, and the admin token as the password.";
+  if (!secret) return challenge(howTo);
+  // An admin token (admin-keys.ts): admin access unlocked with the admin's own SSH key. Local development's shortcut
+  // (ERGA_ADMIN_UNLOCKED=1) takes an admin's agent token as it is.
+  const admin = await adminKeysOf(env).readToken(secret).catch(() => null);
+  const token = admin ? null : devUnlocked(env, url) ? await tokensOf(env).verify(secret).catch(() => null) : null;
+  const who = admin ? { login: admin.login, name: admin.name } : token && !token.testBy ? { login: token.login, name: token.name } : null;
+  if (!who) {
+    const agent = !admin && (await tokensOf(env).verify(secret).catch(() => null));
+    return challenge(agent ? `That's an agent token, which no longer reaches Erga's repository. ${howTo}` : `That isn't a working admin token (it may have ended, or its key was revoked). ${howTo}`);
+  }
   const dir = directoryOf(env);
-  if (!(await dir.users.allowed(token.login)) || !(await dir.users.isAdmin({ login: token.login, test: false }))) {
-    return new Response(`Only admins can reach Erga's repository, and ${token.login} isn't one.\n`, { status: 403, headers: { "Content-Type": "text/plain" } });
+  if (!(await dir.users.allowed(who.login)) || !(await dir.users.isAdmin({ login: who.login, test: false }))) {
+    return new Response(`Only admins can reach Erga's repository, and ${who.login} isn't one.\n`, { status: 403, headers: { "Content-Type": "text/plain" } });
   }
   if (!hasSource(env)) return new Response(`${notSetUp}\n`, { status: 503 });
-  const actor: Actor = { login: token.login, name: token.name };
+  const actor: Actor = { login: who.login, name: who.name };
   return gitHttp(request, rest, {
     upstream: async () => (await artifactsRemote(env, "read", url.origin))!,
     advertise: () => host(env).advertise(url.origin),
@@ -58,8 +70,10 @@ export async function sourceGit(request: Request, env: Env, url: URL): Promise<R
 /** Who's asking the API, if an admin (by session or agent token). */
 async function adminOf(request: Request, env: Env, platform: Platform, url: URL): Promise<{ actor: Actor; bearer: boolean } | Response> {
   const session = await withTokens(platform, url).sessionOf(request);
-  if (!session) return json({ error: "Sign in first, or send an admin's agent token as \"Authorization: Bearer <token>\"." }, 401);
-  if (session.test || !(await directoryOf(env).users.isAdmin(whoOf(session)))) return json({ error: "Only admins can do that." }, 403);
+  if (!session) return json({ error: "Sign in first, or send an admin token (admin-login.ts) as \"Authorization: Bearer <token>\"." }, 401);
+  const users = directoryOf(env).users;
+  if (session.test || !(await users.isAdmin(whoOf(session)))) return json({ error: "Only admins can do that." }, 403);
+  if (!(await users.isUnlocked(whoOf(session)))) return json({ error: LOCKED, locked: true }, 403);
   return { actor: { login: session.login.toLowerCase(), name: session.name }, bearer: !!session.agent };
 }
 
@@ -91,7 +105,9 @@ export async function sourceApi(request: Request, env: Env, platform: Platform, 
 export async function sourceDoor(request: Request, env: Env, platform: Platform, url: URL): Promise<Response> {
   const session = await platform.sessionOf(request);
   if (!session) return new Response(null, { status: 302, headers: { Location: `/auth/github?next=${encodeURIComponent("/source")}` } });
-  const admin = !session.test && (await directoryOf(env).users.isAdmin(whoOf(session)));
+  const users = directoryOf(env).users;
+  const admin = !session.test && (await users.isAdmin(whoOf(session)));
+  if (admin && !(await users.isUnlocked(whoOf(session)))) return unlockFirst("/source", session);
   return sourcePage({ session, admin, ready: hasSource(env), origin: url.origin, mirrorUrl: githubUrl(env) });
 }
 

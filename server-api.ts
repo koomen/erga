@@ -39,6 +39,7 @@ import { accessOf, appPage, brand, esc, forwarded, fromElsewhere, ICON, ID, make
 import { findDocument, runServerTool, SERVER_TOOLS, ToolError, type ToolWho } from "./server-tools";
 import { cleanRel } from "./host";
 import { LABEL_MAX, normalCode, REQUEST_MINUTES, type AgentToken } from "./tokens";
+import { LOCKED } from "./users";
 
 // ---------------------------------------------------------------- the registry
 
@@ -233,7 +234,7 @@ export const allTools = (): ServerTool[] => [...TOOLS, ...sharedTools, ...docume
 
 /** The tools someone may use (all of them, admin ones marked so, for no one in particular). */
 export async function toolsFor(ctx: ToolContext | null): Promise<ServerTool[]> {
-  const admin = ctx ? await ctx.platform.directory.users.isAdmin(whoOf(ctx.session)) : true;
+  const admin = ctx ? await ctx.platform.directory.users.isUnlocked(whoOf(ctx.session)) : true;
   return allTools().filter((t) => admin || !t.admin);
 }
 const specOf = (t: ServerTool): ToolSpec => ({ name: t.name, description: t.description, parameters: t.parameters });
@@ -242,7 +243,9 @@ const specOf = (t: ServerTool): ToolSpec => ({ name: t.name, description: t.desc
 async function runTool(name: string, args: unknown, ctx: ToolContext): Promise<ToolContent[]> {
   const tool = allTools().find((t) => t.name == name);
   if (!tool) throw new ToolError(`There's no tool named "${name}". The tools are: ${(await toolsFor(ctx)).map((t) => t.name).join(", ")}.`, 404);
-  if (tool.admin && !(await ctx.platform.directory.users.isAdmin(whoOf(ctx.session)))) throw new ToolError(`${name} is for the server's admins only, and ${ctx.session.login} isn't one.`, 403);
+  if (tool.admin && !(await ctx.platform.directory.users.isUnlocked(whoOf(ctx.session)))) {
+    throw new ToolError((await ctx.platform.directory.users.isAdmin(whoOf(ctx.session))) ? `${name} needs an admin token: ${LOCKED}` : `${name} is for the server's admins only, and ${ctx.session.login} isn't one.`, 403);
+  }
   if (args == null) args = {};
   if (typeof args != "object" || Array.isArray(args)) throw new ToolError("The arguments must be a JSON object.");
   const a = args as Record<string, unknown>;
@@ -351,7 +354,7 @@ export async function serverApi(request: Request, platform: Platform): Promise<R
   if (path == "/llms.txt" && (method == "GET" || method == "HEAD")) return new Response(guide(origin, null, true), { headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-cache" } });
   if ((path == "/api" || path == "/api/ext") && (method == "GET" || method == "HEAD")) {
     if (request.headers.get("authorization") && !agent) return failure(NO_TOKEN(origin), 401);
-    return new Response(guide(origin, agent, agent ? await platform.directory.users.isAdmin(whoOf(agent)) : true), { headers: { "Content-Type": "text/markdown; charset=utf-8", "Cache-Control": "no-store" } });
+    return new Response(guide(origin, agent, agent ? await adminStatus(platform, agent) : true), { headers: { "Content-Type": "text/markdown; charset=utf-8", "Cache-Control": "no-store" } });
   }
   if (path == "/mcp") return mcp(request, ctx, origin);
   if (path == "/api/ext/tools" && method == "GET") {
@@ -530,7 +533,7 @@ async function rpc(m: RpcMessage, ctx: ToolContext): Promise<object | null> {
         protocolVersion: MCP_VERSIONS.includes(asked) ? asked : MCP_VERSIONS[0],
         capabilities: { tools: { listChanged: false } },
         serverInfo: { name: "erga", title: "Erga", version: "1.0.0" },
-        instructions: `Erga (${ctx.origin}) as ${ctx.session.name} (${ctx.session.login}): list, make (publish files as a site), rename, share and delete their documents, read and edit any document they may edit (name it with "document")${(await ctx.platform.directory.users.isAdmin(whoOf(ctx.session))) ? ", and, as they're an admin, read and change the server's settings and users" : ""}. The full guide: ${ctx.origin}/api/ext.`,
+        instructions: `Erga (${ctx.origin}) as ${ctx.session.name} (${ctx.session.login}): list, make (publish files as a site), rename, share and delete their documents, read and edit any document they may edit (name it with "document")${(await ctx.platform.directory.users.isUnlocked(whoOf(ctx.session))) ? ", and, as they're an admin with an admin token, read and change the server's settings and users" : ""}. The full guide: ${ctx.origin}/api/ext.`,
       });
     }
     case "ping": return ok({});
@@ -704,11 +707,21 @@ async function tokensPage(platform: Platform, session: Session, url: URL, o: { n
 
 // ---------------------------------------------------------------- the guide
 
-/** The guide (/llms.txt for anyone; /api/ext, personal, with a token): enough for an agent to start from nothing. */
-export function guide(origin: string, session: ToolContext["session"] | null, admin: boolean): string {
+/** Whether a token's person may use the admin tools now (an admin token), is an admin without one ("locked"), or neither. */
+async function adminStatus(platform: Platform, session: Session): Promise<boolean | "locked"> {
+  const users = platform.directory.users, who = whoOf(session);
+  return (await users.isUnlocked(who)) ? true : (await users.isAdmin(who)) ? "locked" : false;
+}
+
+/**
+ * The guide (/llms.txt for anyone; /api/ext, personal, with a token): enough for an agent to start from nothing.
+ * `admin`: the admin tools work for this token (an admin token), or "locked": its person is an admin, but this isn't an admin token.
+ */
+export function guide(origin: string, session: ToolContext["session"] | null, adminOrLocked: boolean | "locked"): string {
+  const admin = adminOrLocked === true, locked = adminOrLocked == "locked";
   const toolDocs = (tools: ServerTool[]) => tools.map((t) => `### ${t.name}\n\n${t.description}\n\n\`\`\`json\n${JSON.stringify(t.parameters)}\n\`\`\``).join("\n\n");
   const you = session
-    ? `You're signed in as **${session.name}** (${session.login}), with the token "${session.agent.label}". Everything below acts as them.${admin ? " They're an admin of this server, so the admin tools are yours too." : ""}`
+    ? `You're signed in as **${session.name}** (${session.login}), with the token "${session.agent.label}". Everything below acts as them.${admin ? " They're an admin of this server, and this is an admin token, so the admin tools are yours too until it ends." : locked ? " They're an admin of this server, but the admin tools need an admin token (below)." : ""}`
     : `Nothing here works without a token: get one first (below).`;
   return `# Erga
 
@@ -831,7 +844,13 @@ ${toolDocs([...TOOLS, ...sharedTools.filter((t) => !t.admin)])}
 
 ## Admin tools
 
-For the server's admins only: ${session ? (admin ? "you are one, so these are listed for you and work." : `${session.login} isn't one, so these aren't listed for your token and are refused.`) : "they work only with an admin's token."}
+For the server's admins only, with an admin token: ${session ? (admin ? "yours is one, so these are listed for you and work until it ends." : locked ? `${session.login} is an admin, but this is an agent token, so these aren't listed for it and are refused.` : `${session.login} isn't one, so these aren't listed for your token and are refused.`) : "they work only with an admin token."}
+An admin token stands for an admin who has unlocked admin access with their
+own SSH key, for an hour (at most 12). Your person makes one on their computer,
+with their key and an agent token: \`ERGA_TOKEN=<agent token> bun admin-login.ts ${origin}\`
+(from Erga's repository), which signs a one-time challenge with \`ssh-keygen -Y sign\`
+(\`POST ${origin}/api/admin/challenge\`, then \`POST ${origin}/api/admin/unlock\`).
+Never ask for their private key.
 The settings are the server's own (list_settings says what each does); one the
 deploy locks shows as \`"locked": true\` and can't be changed here. Users are
 everyone who may sign in; an admin by the deploy (\`"bootstrap": true\`) can't

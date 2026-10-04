@@ -18,7 +18,8 @@
 //   /admin/factory, /api/factory/...   the factory (experimental): tasks done by Claude Code in VMs (worker/factory.ts)
 //   /api/deploys, /api/events  branch deploys' status and events, and deploy logs (worker/deploys.ts)
 //   /auth/test?token=&as=      a test person (Ada, Bo...) signed in with one; they open only test documents
-//   /git/erga.git/...          Erga's own repository, over Git smart HTTP (worker/source.ts; admins' agent tokens)
+//   /git/erga.git/...          Erga's own repository, over Git smart HTTP (worker/source.ts; admin tokens)
+//   /admin/keys, /api/admin/...  admins' SSH keys, and unlocking admin access with them (admin-access.ts)
 //   /source, /api/source/...   its Source page (the dashboard of source and deploys) and API
 //   /page.js, /style.css, ...  the editor's own files (static assets)
 //
@@ -33,8 +34,9 @@ import { accountOf, withAccount } from "../account";
 import { idShaped, slugify, type Route } from "../directory";
 import { frontDoor, OWNER, whoOf, withTokens, type Platform } from "../front";
 import { serverApi, tokensDoor } from "../server-api";
-import { finishSignIn, isDev, mintTestToken, sessionOf, signOut, startSignIn, testSignIn } from "./auth";
-import { directoryOf, tokensOf } from "./d1";
+import { devUnlocked, finishSignIn, isDev, lockCookie, mintTestToken, sessionOf, signOut, startSignIn, testSignIn, unlockCookie } from "./auth";
+import { adminKeysOf, directoryOf, tokensOf } from "./d1";
+import { adminAccess, isAdminAccessPath } from "../admin-access";
 import { deployDoor } from "./deploy";
 import { factoryApi, factoryDoor, previewTicketOk } from "./factory";
 import { previewDoor } from "../factory/cloudflare";
@@ -164,6 +166,12 @@ async function route(request: Request, env: Env, url: URL, ctx: ExecutionContext
     const file = await serveHomeRoot(request, env, ctx);
     if (file) return file;
   }
+  // Admins' SSH keys and unlocking admin access with them (admin-access.ts): before the server's API, which has the rest of /api/.
+  if (isAdminAccessPath(path)) return adminAccess(request, withTokens(platform(env), url), {
+    unlockCookie: (login, unlock) => unlockCookie(env, request, login, unlock),
+    lockCookie: () => lockCookie(request),
+    local: isDev(env, url),
+  });
   // The factory (experimental): its board and API, admins only (worker/factory.ts).
   if (path == "/admin/factory") return factoryDoor(request, env, url);
   if (path == "/api/factory" || path.startsWith("/api/factory/")) return factoryApi(request, env, url);
@@ -201,6 +209,8 @@ const platform = (env: Env): Platform => {
     pagesShared: (url) => (local(url) ? null : env.PAGES_HOST?.trim() || null),
     secret: env.SESSION_SECRET,
     tokens: tokensOf(env),
+    adminKeys: adminKeysOf(env),
+    devUnlocked: (url) => devUnlocked(env, url),
     testToken: (login) => mintTestToken(env, login),
     docs: {
       create: (doc, files, index, opts) => counted("doc", () => host(doc).create(doc.owner, doc.id, files, index, opts)),

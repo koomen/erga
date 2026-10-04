@@ -15,6 +15,7 @@
 // requests don't each ask the database; a change made through this object
 // is seen at once.
 
+import type { Unlock } from "./admin-keys.ts";
 import type { Sql } from "./directory.ts";
 
 export type ServerRole = "user" | "admin";
@@ -35,11 +36,19 @@ export interface User {
   lastSeen: number | null;
 }
 
-/** Someone acting, to a guarded call: a login (lowercase), and whether they're a test person (never an admin). */
-export interface Actor { login: string; test?: boolean }
+/**
+ * Someone acting, to a guarded call: a login (lowercase), whether they're a
+ * test person (never an admin), and whether they've unlocked admin access
+ * with one of their SSH keys (admin-keys.ts), which every admin-only call
+ * needs. The front door sets `unlocked` only after checking the unlock.
+ */
+export interface Actor { login: string; test?: boolean; unlocked?: Unlock | null }
 
 /** What an admin-only call says to someone who isn't one, or a change it can't make (the message says why). */
 export class NotAllowed extends Error {}
+
+/** What an admin who hasn't unlocked admin access is told, wherever they try. */
+export const LOCKED = "Admin access is locked: unlock it with your admin SSH key first (/admin/keys; for an agent, an admin token from admin-login.ts).";
 
 const LOGIN = /^[a-z0-9](?:[a-z0-9-]{0,38})$/;
 /** How long a looked-up user is trusted before asking again. */
@@ -86,6 +95,16 @@ export class Users {
     const actor = typeof who == "string" ? { login: who } : who;
     if (actor.test) return false;
     return (await this.get(actor.login))?.role == "admin";
+  }
+
+  /**
+   * Whether `who` may use admin power now: an admin who has unlocked admin
+   * access with one of their SSH keys (the unlock unexpired). Being an
+   * admin (isAdmin) only says who may unlock.
+   */
+  async isUnlocked(who: Actor | string): Promise<boolean> {
+    if (typeof who == "string" || !who.unlocked || !(who.unlocked.until > Date.now())) return false;
+    return this.isAdmin(who);
   }
 
   /**
@@ -146,6 +165,7 @@ export class Users {
     if (role != "admin" && this.isBootstrapAdmin(login)) throw new NotAllowed(`${login} is an admin by the deploy (ADMINS): change it there.`);
     if (!(await this.get(login))) throw new NotAllowed(`${login} isn't a user: add them first.`);
     await this.sql.run("UPDATE users SET role = ?2 WHERE login = ?1", login, role);
+    if (role != "admin") await this.revokeKeys(by, login);
     this.known.delete(login);
     return (await this.get(login))!;
   }
@@ -156,12 +176,20 @@ export class Users {
     login = login.toLowerCase();
     if (this.isBootstrapAdmin(login)) throw new NotAllowed(`${login} is an admin by the deploy (ADMINS): take them out there.`);
     await this.sql.run("DELETE FROM users WHERE login = ?1", login);
+    await this.revokeKeys(by, login);
     this.known.delete(login);
   }
 
-  /** Throws NotAllowed unless `by` is an admin. */
+  /** Someone who stops being an admin loses their admin SSH keys (admin-keys.ts): made an admin again, they add keys again. */
+  private async revokeKeys(by: Actor, login: string): Promise<void> {
+    await this.sql.run("UPDATE admin_keys SET revoked = ?2, revoked_by = ?3 WHERE login = ?1 AND revoked IS NULL", login, Date.now(), by.login.toLowerCase());
+  }
+
+  /** Throws NotAllowed unless `by` is an admin who has unlocked admin access (isUnlocked). */
   async mustAdmin(by: Actor): Promise<void> {
-    if (!(await this.isAdmin(by))) throw new NotAllowed("Only an admin can do that.");
+    if (await this.isUnlocked(by)) return;
+    if (await this.isAdmin(by)) throw new NotAllowed(LOCKED);
+    throw new NotAllowed("Only an admin can do that.");
   }
 
   private fromRow(r: Row): User {
