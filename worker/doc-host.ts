@@ -46,6 +46,7 @@ import { describeChange, fallbackDescription, firePublished, publicVersion, vers
 import * as Y from "yjs";
 import { directoryOf } from "./d1";
 import { DiskLink } from "./disk";
+import { publishedChanged } from "./published";
 import type { Env } from "./env";
 
 /**
@@ -283,6 +284,8 @@ export class DocHost extends DurableObject<Env> {
     this.versions = new Versions(kvOf(this.ctx.storage));
     this.pub = undefined;
     await directoryOf(this.env).remove(this.idOf(meta));
+    // If it was the homepage, its snapshot goes too (the next / makes another).
+    await this.env.HOME?.getByName("home").forget(this.idOf(meta)).catch((e) => console.log(`couldn't tell the homepage: ${e}`));
   }
 
   /** Its id (also its object's name). */
@@ -304,6 +307,11 @@ export class DocHost extends DurableObject<Env> {
       pageTitle: text != null ? titleOf(text, meta.index) : null,
     });
     if (r?.renamed) (await this.open)?.renamed(nameOf(r.doc));
+  }
+
+  /** A message for everyone who has the document open (the homepage's deploy status: worker/home.ts). Opens nothing. */
+  async notify(msg: unknown): Promise<void> {
+    this.opened?.notify(msg);
   }
 
   /**
@@ -529,6 +537,9 @@ export class DocHost extends DurableObject<Env> {
     const docId = this.idOf(meta);
     this.publishedNow(meta).then((published) => firePublished({ docId, published, files: async () => (await this.publishedFiles())?.files ?? new Map() }))
       .catch((e) => console.log(`couldn't tell of ${docId}'s published version: ${e}`));
+    // If it's the homepage, its next deploy is scheduled (published.ts).
+    this.ctx.waitUntil(directoryOf(this.env).homeId().then((home) => home == docId ? publishedChanged(this.env, docId) : undefined)
+      .catch((e) => console.log(`couldn't schedule the homepage's deploy: ${e}`)));
   }
 
   /** Opens the document and waits for any cut under way (the first, when it opens, makes sure there is a version). */
@@ -760,6 +771,7 @@ export class DocHost extends DurableObject<Env> {
       },
       handler: host.handler,
       renamed: host.renamed,
+      notify: host.notify,
       roomSocket: (url, readOnly) => {
         const [client, server] = Object.values(new WebSocketPair());
         server.accept();
@@ -836,6 +848,8 @@ interface Opened {
   catchUp: () => Promise<void>;
   /** Tells every open tab the document's new title and address. */
   renamed: (name: DocName) => void;
+  /** A message for every open tab. */
+  notify: (msg: unknown) => void;
   close: () => Promise<void>;
 }
 

@@ -329,7 +329,8 @@ try {
     const copy = await get("/new?from=landing");
     expect(copy.status == 302 && (copy.headers.get("location") ?? "").endsWith("#edit"), "/new?from=landing on a fresh server copies the landing page the server makes", copy.status);
     const front = await (await get("/")).text();
-    expect(front.includes('class="erga-view"') && front.includes('href="/new?from=landing"'), "and / shows it", front.slice(0, 1500));
+    // The viewer on it until its first deploy is done, then the page itself (worker/home.ts).
+    expect((front.includes('class="erga-view"') || front.includes("<erga-controls")) && front.includes('href="/new?from=landing"'), "and / shows it", front.slice(0, 1500));
     ok("on a fresh server, / and /new?from=landing have the landing page the server makes");
   }
 

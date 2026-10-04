@@ -633,10 +633,10 @@ async function viewDocument(platform: Platform, request: Request, opened: { doc:
   ]);
   const host = `${origin}/t/${token}/`;
   const address = `/${doc.owner}/${doc.slug}`;
-  const clone = `<a href="${esc(link(`/new?from=${landing ? "landing" : doc.id}`, session))}" class="erga-view-button erga-clone-button" aria-label="Clone: make your own copy" data-tip="Clone"><svg viewBox="0 0 24 24" aria-hidden="true"><g transform="translate(0 1.25)"><rect x="8.75" y="8.75" width="10.5" height="10.5" rx="2"/><path d="M15.25 8.75V6.5a1.75 1.75 0 0 0-1.75-1.75H6.5A1.75 1.75 0 0 0 4.75 6.5v7c0 .97.78 1.75 1.75 1.75h2.25"/></g></svg></a>`;
+  const clone = cloneButton(link(`/new?from=${landing ? "landing" : doc.id}`, session));
   // This page's address (one of the document's other pages, or the document's own).
   const here = index && pageAddress(index) ? `${address}/${pageAddress(index).split("/").map(encodeURIComponent).join("/")}` : address;
-  const edit = canEdit ? `<a href="${esc(link(here, session))}#edit" class="erga-view-button erga-edit-button" aria-label="Edit" aria-pressed="false" data-tip="Edit"><svg viewBox="0 0 24 24" aria-hidden="true"><g transform="translate(0 1.25)"><path d="M4.75 19.25l1-4L15.6 5.4a1.4 1.4 0 0 1 2 0l1 1a1.4 1.4 0 0 1 0 2L8.75 18.25zM13.75 7.25l3 3"/></g></svg></a>` : "";
+  const edit = canEdit ? editButton(`${link(here, session)}#edit`, false) : "";
   // Its owner shares it with people from the editor too (/docs/share).
   const canShare = editable && !!session && !session.agent && !session.test && roleMay(role, "share");
   // The document's address and which of its pages this is, for everyone: the address bar follows the page shown (NAV_SCRIPT).
@@ -663,6 +663,11 @@ ${frame}${editable ? `<script>${FRAME_SRC}</script>` : ""}
 </body>
 </html>`, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "Referrer-Policy": "no-referrer", Link: `<${origin}>; rel=preconnect` } });
 }
+
+/** The viewer's Clone button (a copy of your own, at `href`): also the homepage's (home.ts). */
+export const cloneButton = (href: string) => `<a href="${esc(href)}" class="erga-view-button erga-clone-button" aria-label="Clone: make your own copy" data-tip="Clone"><svg viewBox="0 0 24 24" aria-hidden="true"><g transform="translate(0 1.25)"><rect x="8.75" y="8.75" width="10.5" height="10.5" rx="2"/><path d="M15.25 8.75V6.5a1.75 1.75 0 0 0-1.75-1.75H6.5A1.75 1.75 0 0 0 4.75 6.5v7c0 .97.78 1.75 1.75 1.75h2.25"/></g></svg></a>`;
+/** The viewer's pencil (Edit, the editor at `href`), blue while editing: also the homepage's (home.ts). */
+export const editButton = (href: string, editing: boolean) => `<a href="${esc(href)}" class="erga-view-button erga-edit-button" aria-label="Edit" aria-pressed="${editing}" data-tip="Edit"><svg viewBox="0 0 24 24" aria-hidden="true"><g transform="translate(0 1.25)"><path d="M4.75 19.25l1-4L15.6 5.4a1.4 1.4 0 0 1 2 0l1 1a1.4 1.4 0 0 1 0 2L8.75 18.25zM13.75 7.25l3 3"/></g></svg></a>`;
 
 /**
  * For whoever may edit, at the top of a document's page: opened with #edit, it
@@ -842,7 +847,7 @@ async function startPage(platform: Platform, session: Session | null): Promise<R
 </main>`), { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
 }
 
-const VIEW_STYLE = `
+export const VIEW_STYLE = `
 <style>
   /* The editor's look (style.css, .icon-btn): small icons. Right of them is who you are (account.ts). No breadcrumbs: viewing, there's only the document. */
   .erga-view-buttons { --chrome: #a1a1a9; --chrome-hover: #3f3f46; --fg: #1c1c1f; --soft: #6b6b73;

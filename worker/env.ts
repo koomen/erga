@@ -1,10 +1,13 @@
 import type { Deployer } from "./deployer";
 import type { DocHost } from "./doc-host";
+import type { Home } from "./home";
 
 /** The Worker's bindings (cloudflare.config.ts); secrets are set with `cf workers secrets update`. */
 export interface Env {
   /** One Durable Object per document, named by its id. */
   DOCS: DurableObjectNamespace<DocHost>;
+  /** The homepage's deploys and its served snapshot: one Durable Object, named "home" (worker/home.ts). */
+  HOME: DurableObjectNamespace<Home>;
   /** The server's database: users, settings and the directory of documents (directory.ts, users.ts, config.ts; migrations/). */
   DB: D1Database;
   /** The editor's own files (page.html as editor.html, page.js, style.css, fonts). */
@@ -53,6 +56,10 @@ export interface Env {
   ERGA_LINK_SECRET?: string;
   /** Local development only: a wait before every call to the database or a document, standing in for erga.dev's distances (tests/bench.ts --latency; worker/timing.ts). */
   ERGA_REMOTE_LATENCY_MS?: string;
+  /** Local development only: how long after the homepage changes its next deploy runs (5 minutes by default; tests shorten it). */
+  ERGA_HOME_DELAY_MS?: string;
+  /** Local development only: how often the Worker checks for a newer homepage deploy (5 seconds by default; tests shorten it). */
+  ERGA_HOME_RECHECK_MS?: string;
   /** Local development only: how long after an edit the room writes it (tests shorten it). */
   ERGA_WRITE_DELAY_MS?: string;
   /** Local development only: how long edits pause before a version is cut, and the longest burst of edits one version holds (tests shorten them; versions.ts). */

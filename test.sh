@@ -5,6 +5,7 @@
 #   ./test.sh         unit tests, tests/page.ts, a page trying to reach its
 #                     viewer (tests/isolation.ts), the front door's routes
 #                     (tests/worker.ts), documents with many pages (tests/pages.ts), the front page the server makes (tests/landing.ts),
+#                     the homepage served directly and its deploys (tests/home.ts),
 #                     the deploy page against a pretend Cloudflare (tests/deploy.ts),
 #                     who you are in every page's corner (tests/account.ts),
 #                     a document's pages tree (tests/tree.ts),
@@ -53,6 +54,8 @@ page_group() {
   collect
   # The deploy page after the rest: the first group is as much as the multiplayer suite's timings bear.
   run deploy bun tests/deploy.ts
+  # The homepage compares pictures and waits on its deploys' timers: with the deploy page, after the busiest group.
+  run home bun tests/home.ts
   collect
   # Live reload last, alone too: it edits files and waits on rebuilds, which a busy machine slows.
   run reload bun tests/reload.ts
