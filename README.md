@@ -990,7 +990,9 @@ Done on erga.dev's account (2026-10-04, task #2): the Artifacts repo
 `erga/erga`, the builder, staging's secrets, SNAPSHOT_TOKEN and
 DEPLOY_HOOK_SECRET on production, `erga-staging` with its own D1 copy of
 production's data, staging.erga.dev and the `*.staging.erga-pages.dev`
-route and DNS record. Still to do are the steps marked *(you)*.
+route and DNS record, staging's deploy token (made with a short-lived token
+maker, then deleted), and staging deploying itself on a push to its branch.
+Still to do are the steps marked *(you)*.
 
 1. **Merge this to `main`.** Workers Builds deploys erga.dev from GitHub as
    before; branch deploys stay off there (no `CLOUDFLARE_DEPLOY_TOKEN`).
