@@ -1092,6 +1092,7 @@ Once you've read the guide, await further instructions.`;
       const ro = m != "text" && m != info?.kind;
       b.dataset.tip = `${MODE_NAMES[m]}${ro ? " (read-only)" : ""}${m == "text" || m == info?.kind ? (isMac ? "  ⌘⇧P" : "  Ctrl+Shift+P") : ""}`;
       b.setAttribute("aria-label", b.dataset.tip);
+      b.dataset.tipClosed = `View: ${MODE_NAMES[mode]}${mode == "text" || mode == info?.kind ? (isMac ? "  ⌘⇧P" : "  Ctrl+Shift+P") : ""}`;
     }
   }
   function openModeMenu() { modeEl.classList.add("open"); showChrome(); }

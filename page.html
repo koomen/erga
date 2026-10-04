@@ -79,6 +79,9 @@
     /* Open, a view's tooltip may reach past its button (style.css); not while the buttons are still opening out. */
     .mode.open button { overflow: visible; transition: max-width 220ms var(--agent-ease), padding 220ms var(--agent-ease), opacity 160ms ease, color 120ms ease, background-color 120ms ease, overflow 0s 220ms; transition-behavior: allow-discrete; }
     .mode button { position: relative; }
+    /* Closed, the view you're in shows (and its tooltip may reach past it); its tooltip says what it is: the views, and which. */
+    .mode:not(.open) button[aria-checked="true"] { overflow: visible; }
+    .mode:not(.open) button[data-tip-closed]::after { content: attr(data-tip-closed); }
     .mode button[data-mode="text"] { font-family: var(--font-text); font-size: 14px; }
     .mode button:hover { color: var(--chrome-hover); }
     .mode:not(.open) button:not([aria-checked="true"]) { max-width: 0; padding: 0; opacity: 0; pointer-events: none; }
