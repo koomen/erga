@@ -1,12 +1,32 @@
-// The deploy pipeline's door for the source repo (source/repo.ts): after a
-// push or a merge moves staging or main, the repository calls
-// deployHook(branch, commit) in the Worker, and the pipeline deploys that
-// branch's target (staging: staging.erga.dev, main: erga.dev).
+// What the rest of the server calls to deploy: task #39 (the source repo
+// in Cloudflare Artifacts) calls deployHook after any push or merge that
+// moves "staging" or "main", in the Worker. It hands the move to this
+// server's branch deploys (worker/pipeline.ts, deploy/branches.ts), which
+// build and deploy it if this server is that branch's target, and answers at
+// once: the deploy runs on in the background, and its progress is
+// GET /api/deploys and {type: "deploys"} on /api/events.
 //
-// Until the pipeline lands (task #40), this is a stand-in that only logs.
-// The pipeline replaces this file; the call and its arguments stay.
+//   import { deployHook, publishEvent } from "./deploy";
+//   await deployHook("staging", "3f2a…");            // env from cloudflare:workers, or pass it
+//   publishEvent({ type: "source" });               // an event on /api/events (admins)
 
-export async function deployHook(branch: string, commit: string, ctx?: { env: unknown }): Promise<void> {
-  void ctx;
-  console.log(`deploy hook: ${branch} is now ${commit.slice(0, 7)} (no deploy pipeline yet)`);
+import type { Env } from "../worker/env";
+
+/** The Worker's env: given, or the running Worker's own (cloudflare:workers). */
+async function envOf(env?: Env): Promise<Env> {
+  if (env) return env;
+  const mod = (await import("cloudflare:workers")) as unknown as { env: Env };
+  return mod.env;
+}
+
+/** A branch moved to `commit`: deploy it where it goes. Never throws for a deploy that fails (that's in the status). */
+export async function deployHook(branch: string, commit: string, env?: Env): Promise<void> {
+  const e = await envOf(env);
+  await e.PIPELINE.getByName("deploys").hook(branch, commit);
+}
+
+/** An event to every admin listening on /api/events ({type: "source"} when a branch moves, for one). */
+export async function publishEvent(event: { type: string } & Record<string, unknown>, env?: Env): Promise<void> {
+  const e = await envOf(env);
+  await e.PIPELINE.getByName("deploys").publish(event);
 }

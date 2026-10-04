@@ -7,7 +7,6 @@
 //   POST /api/source/merge      { from: "staging", to: "main", commit? }: main fast-forwards to staging's head (or to
 //                               that staging commit): { commit } or 4xx { error } (admins)
 //   POST /api/source/mirror     brings the GitHub mirror up to date now (admins)
-//   GET  /api/events            server-sent events for admins' pages ({ type: "source" }, { type: "deploys" })
 //   /source                     the Source page (admins)
 //
 // The API takes the app's session or an agent token ("Authorization:
@@ -23,8 +22,6 @@ import { sourcePage } from "../source/page";
 import { artifactsRemote, githubUrl, hasSource } from "./artifacts";
 import { directoryOf, tokensOf } from "./d1";
 import type { Env } from "./env";
-import { deploysStub } from "./deploys-stub";
-import { eventStream } from "./events";
 
 const host = (env: Env) => env.SOURCE.getByName("erga");
 const json = (body: unknown, status = 200) => Response.json(body, { status, headers: { "Cache-Control": "no-store" } });
@@ -66,13 +63,10 @@ async function adminOf(request: Request, env: Env, platform: Platform, url: URL)
   return { actor: { login: session.login.toLowerCase(), name: session.name }, bearer: !!session.agent };
 }
 
-/** /api/source/... and /api/events. */
+/** /api/source/... (the events, /api/events, are the deploy pipeline's hub: worker/deploys.ts). */
 export async function sourceApi(request: Request, env: Env, platform: Platform, url: URL): Promise<Response> {
   const who = await adminOf(request, env, platform, url);
   if (who instanceof Response) return who;
-  if (url.pathname == "/api/events" && request.method == "GET") return eventStream(env, request);
-  // The deploy pipeline's status and logs: a stand-in until the pipeline (task #40) serves them.
-  if (url.pathname == "/api/deploys" || url.pathname.startsWith("/api/deploys/")) return deploysStub(request, env, url);
   if (!hasSource(env)) return json({ error: notSetUp }, 503);
   if (request.method == "POST" && !who.bearer && request.headers.get("origin") != url.origin) return json({ error: "Forbidden" }, 403);
   try {

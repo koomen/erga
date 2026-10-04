@@ -203,8 +203,8 @@ ${users.map((u) => userRow(u, session)).join("\n")}
     </ol>
   </section>
   <section aria-labelledby="source-title">
-    <h2 id="source-title">Source</h2>
-    <p class="lede">Erga's own repository, hosted here: its branches, merging staging into main, and the GitHub mirror, on <a href="${esc(link("/source", session))}">the Source page</a>.</p>
+    <h2 id="source-title">Source and deploys</h2>
+    <p class="lede">Erga's own repository, hosted here, and its branches deploying themselves: staging to staging.erga.dev, main to erga.dev. Commits, merging, deploys and their logs, and the GitHub mirror: <a href="${esc(link("/source", session))}">Source</a>.</p>
   </section>
   ${deployOn ? `<section aria-labelledby="deploy-title">
     <h2 id="deploy-title">Deploy your own</h2>

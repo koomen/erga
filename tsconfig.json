@@ -11,5 +11,6 @@
     "skipLibCheck": true,
     "types": ["bun"]
   },
-  "include": ["text-imports.d.ts", "src", "dev.ts", "dev", "vite.config.ts", "front.ts", "host.ts", "migrate.ts", "agent.ts", "room.ts", "workspace.ts", "tests/suite", "tests/tab.ts", "tests/cdp.ts", "tests/worker.ts", "tests/host.ts", "deploy", "landing-publish.ts", "tests/deploy.ts", "tests/deploy.test.ts", "source", "tests/source.test.ts", "tests/source-fixture.ts"]
+  "include": ["text-imports.d.ts", "src", "dev.ts", "dev", "vite.config.ts", "front.ts", "host.ts", "migrate.ts", "agent.ts", "room.ts", "workspace.ts", "tests/suite", "tests/tab.ts", "tests/cdp.ts", "tests/worker.ts", "tests/host.ts", "deploy", "landing-publish.ts", "tests/deploy.ts", "tests/deploy.test.ts", "tests/pipeline.test.ts", "tests/deploys.ts", "source", "tests/source.test.ts", "tests/source-fixture.ts"],
+  "exclude": ["deploy/builder/worker.ts", "deploy/index.ts"]
 }

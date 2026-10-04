@@ -7,11 +7,10 @@
 // development's stand-ins for Artifacts and GitHub live at.
 
 import { DurableObject } from "cloudflare:workers";
-import { deployHook } from "../deploy/index";
+import { deployHook, publishEvent } from "../deploy/index";
 import { SourceError, SourceRepo, type Actor } from "../source/repo";
 import { artifactsRemote, githubRemote } from "./artifacts";
 import type { Env } from "./env";
-import { publishEvent } from "./events";
 
 export class SourceHost extends DurableObject<Env> {
   private origin = "";
@@ -29,10 +28,10 @@ export class SourceHost extends DurableObject<Env> {
       },
       github: () => githubRemote(env, this.origin),
       moved: (m) => {
-        ctx.waitUntil(publishEvent(env, { type: "source", branch: m.branch, commit: m.new }));
-        ctx.waitUntil(deployHook(m.branch, m.new, { env }).catch((e) => console.error(`deploy hook (${m.branch}):`, e)));
+        ctx.waitUntil(publishEvent({ type: "source", branch: m.branch, commit: m.new }, env).catch(() => {}));
+        ctx.waitUntil(deployHook(m.branch, m.new, env).catch((e) => console.error(`deploy hook (${m.branch}):`, e)));
       },
-      changed: () => ctx.waitUntil(publishEvent(env, { type: "source" })),
+      changed: () => ctx.waitUntil(publishEvent({ type: "source" }, env).catch(() => {})),
       background: (work) => ctx.waitUntil(work),
     });
   }

@@ -8,9 +8,11 @@
 #                     the homepage served directly and its deploys (tests/home.ts),
 #                     the deploy page against a pretend Cloudflare (tests/deploy.ts),
 #                     Erga's own source: the Git endpoint, merges, the mirror and the Source page (tests/source.ts),
+#                     branches deploying themselves, in the Worker (tests/deploys.ts),
 #                     who you are in every page's corner (tests/account.ts),
 #                     a document's pages tree (tests/tree.ts),
 #                     the first switch into editing on a slow network (tests/switch.ts),
+#                     the band the top controls sit on (tests/band.ts),
 #                     versions and publishing (tests/versions.ts),
 #                     document settings (tests/settings.ts),
 #                     live reload (tests/reload.ts, in a copy of the checkout)
@@ -47,6 +49,7 @@ page_group() {
   run account bun tests/account.ts
   run tree bun tests/tree.ts
   run switch bun tests/switch.ts
+  run band bun tests/band.ts
   run versions bun tests/versions.ts
   run settings bun tests/settings.ts
   # Latency is measured afterwards, alone: other tests running would skew it.
@@ -56,6 +59,7 @@ page_group() {
   collect
   # The deploy page after the rest: the first group is as much as the multiplayer suite's timings bear.
   run deploy bun tests/deploy.ts
+  run deploys bun tests/deploys.ts
   # The homepage compares pictures and waits on its deploys' timers: with the deploy page, after the busiest group.
   run home bun tests/home.ts
   collect

@@ -20,7 +20,7 @@
 //   bun tests/source.ts [--keep]     (--keep leaves the server running, seeded)
 
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Browser, ROOT, SHOTS, type Page } from "./cdp";
@@ -29,9 +29,14 @@ import { expect, until } from "./suite/harness";
 
 const ok = (what: string) => console.log(`ok   ${what}`);
 const keep = process.argv.includes("--keep");
-/** The dev server's secret, so the test can drive the deploys stand-in (worker/deploys-stub.ts). */
-const LINK = crypto.randomUUID();
-const host = await startHost(null, { processEnv: { ERGA_LINK_SECRET: LINK } });
+// The release the mock builder stands in with (deploy/release.ts), made if this checkout has none.
+if (!existsSync(join(ROOT, ".site/release/release.json"))) {
+  const made = Bun.spawnSync(["bun", join(ROOT, "deploy/release.ts")], { cwd: ROOT });
+  expect(made.exitCode == 0, "the release builds", made.stderr.toString());
+}
+// The dev server plays staging, deploying itself against the mock Cloudflare (deploy/mock.ts, worker/pipeline.ts):
+// a push to staging through the Git endpoint deploys, for real in the Worker, and nothing real is touched.
+const host = await startHost(null, { env: { ERGA_DEPLOY_MOCK: "1", ERGA_DEPLOY_TARGET: "staging" } });
 const root = host.root, origin = root;
 const get = (path: string, init: RequestInit = {}) => fetch(root + path, { redirect: "manual", ...init });
 
@@ -146,17 +151,14 @@ try {
   expect(view.mirror.error == null && view.mirror.lastPushAt, "the mirror is up to date", view.mirror);
   ok("the mirror pushes each move to (a pretend) GitHub");
 
-  // ---- Deploys (a stand-in for the pipeline's API until it lands) ------------------------------
+  // ---- Deploys (the pipeline, task #40, on the mock Cloudflare) ---------------------------------------
+  // Each move of staging went to the pipeline's deployHook: staging (this server) deploys staging's head.
   const head = view.branches[0].commit;
-  const setDeploys = (body: unknown) => fetch(`${root}/__erga/deploys?link=${LINK}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-  expect((await (await api("/api/deploys")).json()).targets.length == 0, "no deploy targets until there are some");
-  const targets = (stagingState: string, stagingCommit: string) => ({ targets: [
-    { name: "staging", host: "staging.erga.dev", branch: "staging", state: stagingState, commit: stagingCommit, deployed: stagingState == "deployed" ? stagingCommit : head, at: Date.now(), error: null, log: [] },
-    { name: "production", host: "erga.dev", branch: "main", state: "deployed", commit: fourth, deployed: fourth, at: Date.now() - 600_000, error: null, log: [] },
-  ] });
-  await setDeploys(targets("deployed", head));
-  await setDeploys({ log: { target: "staging", deployId: "d1", commit: head, state: "deployed", lines: [{ at: Date.now(), text: "Building 1a2b3c4", step: "build" }, { at: Date.now(), text: "Deployed", step: "deploy" }] } });
-  expect((await (await api("/api/deploys/staging/log")).json()).lines.length == 2, "GET /api/deploys/<name>/log answers the latest deploy's log");
+  const stagingTarget = async () => ((await (await api("/api/deploys")).json()).targets as { name: string; state: string; commit: string | null; deployed: string | null }[]).find((t) => t.name == "staging")!;
+  await until(async () => { const t = await stagingTarget(); return t.state == "deployed" && t.deployed == head; }, 60_000, "a push to staging deploys staging's head (deployHook)", stagingTarget);
+  const log = await (await api("/api/deploys/staging/log")).json() as { commit: string; lines: { text: string }[] };
+  expect(log.commit == head && log.lines.length > 3, "and its log is there", log);
+  ok("each move of staging reaches the deploy pipeline (deployHook), which deploys it");
 
   // ---- The Source page ------------------------------------------------------------------------------
   expect((await get("/source?user=Bo")).status == 404, "the Source page is for admins only");
@@ -184,49 +186,61 @@ try {
   expect(s.rows.map((x) => x.subject).join() == "Fifth,Fourth,Third,Second,First" && s.title.startsWith("Source") && !s.merge && s.ahead.includes("main is at staging"), "one list: staging's commits, newest first; nothing to merge", s);
   expect(s.heads.join() == "staging,main", "two dot columns, staging and main", s.heads);
   expect(await p.eval(`document.querySelector(".crumbs .brand").textContent == "Erga" && document.querySelector(".crumbs .here").textContent == "Source" && !!document.querySelector("[data-erga-account]")`), "breadcrumbs (Erga › Source) and the avatar");
-  expect(s.targets[0].startsWith("staging") && s.targets[0].includes("live") && s.targets[1].startsWith("production") && s.targets[1].includes("live"), "the deploy columns' heads: each target's status", s.targets);
-  expect(s.rows[0].live.join() == "live," && s.rows[1].live.join() == ",live", "each deploy column marks the commit its target has live", s.rows.map((x) => x.live));
-  // Someone pushes to staging: the page shows it without a reload, and staging starts deploying it.
+  expect(s.targets.length == 2 && s.targets[0].startsWith("staging") && s.targets[0].includes("live") && s.targets[1].startsWith("production"), "the deploy columns' heads: each target's status", s.targets);
+  expect(s.rows[0].live[0] == "live", "staging's column marks the commit it has live", s.rows.map((x) => x.live));
+  // Someone pushes to staging: the page shows it without a reload, and staging deploys it, live.
   must(b, "checkout", "-q", "-B", "staging", "origin/staging");
   commit(b, "app.ts", "export const x = 6;\n", "Staging only, live");
   must(b, "push", "-q", "origin", "staging");
   const sixth = must(b, "rev-parse", "HEAD");
   await until(async () => (await state()).rows[0]?.subject == "Staging only, live", 10_000, "the push shows up by itself", state);
-  await setDeploys(targets("building", sixth));
-  await until(async () => (await state()).rows[0].live[0] == "building", 10_000, "the deploy columns follow { type: \"deploys\" }", state);
   s = await state();
   expect(s.merge && s.ahead.startsWith("1 commit"), "and Merge lights up", s);
   // The dots: circles only; hollow orange for only on staging, solid green for on main.
   const [top, below] = s.rows;
   const [, , topBg, topBorder] = top.staging.split("|"), [, , belowBg, belowBorder] = below.staging.split("|");
-  const green = belowBg;
-  expect([top.staging, below.staging, below.main].every((d) => d.startsWith("circle|")) && s.rows.every((x) => x.staging.startsWith("circle|") && (x.main == "none" || x.main.startsWith("circle|"))), "every dot is a circle, untransformed", s.rows);
+  expect(s.rows.every((x) => x.staging.startsWith("circle|") && (x.main == "none" || x.main.startsWith("circle|"))), "every dot is a circle, untransformed", s.rows);
   expect(topBorder != topBg && /rgb\((19[0-9]|2\d\d), (9\d|1[0-2]\d|1[5-9]\d), \d{1,2}\)/.test(topBorder) && top.main == "none", "a commit only on staging: a hollow orange circle, and no dot in main's column", top);
-  expect(belowBg == belowBorder && /rgb\(\d{1,2}, 1[0-4]\d, \d{2}\)/.test(green) && below.main.split("|")[2] == green, "a commit on main: a solid green circle, in both columns", below);
-  await p.screenshot(join(SHOTS, "source-light.png"));
-  // The live log: clicking staging's status opens it; new lines arrive as the deploy runs.
-  await setDeploys({ log: { target: "staging", deployId: "d2", commit: sixth, state: "building", lines: [{ at: Date.now(), text: "Cloning " + sixth.slice(0, 7), step: "build" }] } });
+  expect(belowBg == belowBorder && /rgb\(\d{1,2}, 1[0-4]\d, \d{2}\)/.test(belowBg) && below.main.split("|")[2] == belowBg, "a commit on main: a solid green circle, in both columns", below);
+  // The live log: clicking staging's status opens it; its lines arrive as the deploy runs ({ type: "deploy-log" }).
   const click = async (sel: string) => {
     const at = await p.eval<{ x: number; y: number }>(`(() => { const r = document.querySelector(${JSON.stringify(sel)}).getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })()`);
     await p.click(at.x, at.y);
   };
+  await until(async () => (await state()).targets[0].match(/building|deploying/), 20_000, "staging's column shows the deploy running", state);
   await click("#target-staging");
   const logText = () => p.eval<string>(`document.getElementById("log").open ? document.getElementById("log-lines").textContent : "(closed)"`);
-  await until(async () => (await logText()).includes("Cloning"), 10_000, "the log opens with the deploy's lines", logText);
-  await setDeploys({ append: { target: "staging", lines: [{ at: Date.now(), text: "Bundling the Worker", step: "build" }] } });
-  await until(async () => (await logText()).includes("Bundling the Worker"), 10_000, "a new line shows up in the open log by itself ({ type: \"deploy-log\" })", logText);
-  // A deploy running on another server sends no events here: the open log asks for new lines itself.
-  await setDeploys({ append: { target: "staging", quiet: true, lines: [{ at: Date.now(), text: "Uploading assets (heard by asking)", step: "deploy" }] } });
-  await until(async () => (await logText()).includes("heard by asking"), 10_000, "with no events, the open log polls and shows new lines", logText);
+  await until(async () => (await logText()).includes(sixth.slice(0, 12)), 10_000, "the log opens on the running deploy", logText);
+  const opened = (await logText()).split("\n").length;
+  await until(async () => (await logText()).split("\n").length > opened + 2, 30_000, "new lines show up in the open log by themselves", logText);
+  await until(async () => (await state()).rows[0].live[0] == "live", 60_000, "and the column marks the new commit live when it's done", state);
   await p.screenshot(join(SHOTS, "source-log.png"));
   await click("#log-close");
+  await p.screenshot(join(SHOTS, "source-light.png"));
+  // With no events (a deploy run by another server), the open log polls: a page whose /api/events is blocked still follows.
+  const q: Page = await browser.page(await browser.context());
+  await q.send("Network.enable");
+  await q.send("Network.setBlockedURLs", { urls: ["*/api/events*"] });
+  await q.open(`${root}/source`, { width: 1280, height: 900, clear: false });
+  await until(async () => q.eval(`document.querySelectorAll("#grid .row").length > 0 && !document.getElementById("target-staging").disabled`), 10_000, "the page loads without events");
+  must(b, "commit", "-q", "--allow-empty", "-m", "Polled");
+  must(b, "push", "-q", "origin", "staging");
+  const polled = must(b, "rev-parse", "HEAD");
+  await until(async () => (await (await api("/api/deploys/staging/log")).json()).commit == polled, 20_000, "the next deploy starts");
+  const qat = await q.eval<{ x: number; y: number }>(`(() => { const r = document.getElementById("target-staging").getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })()`);
+  await q.click(qat.x, qat.y);
+  const qlog = () => q.eval<string>(`document.getElementById("log-lines").textContent`);
+  await until(async () => (await qlog()).includes(polled.slice(0, 12)), 10_000, "its log opens", qlog);
+  const at0 = (await qlog()).split("\n").length;
+  await until(async () => (await qlog()).split("\n").length > at0 || (await qlog()).includes("deployed"), 30_000, "and polls for new lines", qlog);
+  await until(async () => (await stagingTarget()).deployed == polled, 60_000, "that deploy finishes");
   // Merge to a chosen commit from the page: hover the row, click "Merge to here".
   const rowAt = await p.eval<{ x: number; y: number }>(`(() => { const r = document.querySelector("#grid .row .subj").getBoundingClientRect(); return { x: r.x + 40, y: r.y + r.height / 2 }; })()`);
   await p.mouse("mouseMoved", rowAt.x, rowAt.y);
   await until(async () => p.eval(`getComputedStyle(document.querySelector("#grid .row button.here")).display != "none"`), 5_000, "hovering a staging-only commit offers Merge to here");
   await click("#grid .row button.here");
-  await until(async () => (await state()).rows[0].main != "none", 10_000, "Merge to here moves main to that commit", state);
-  expect((await p.eval<string>(`document.getElementById("merge-hint").textContent`)).includes("Merged: main is now " + sixth.slice(0, 7)), "and says so");
+  await until(async () => (await state()).rows.find((x) => x.subject == "Staging only, live")?.main != "none", 10_000, "Merge to here moves main to that commit", state);
+  expect((await p.eval<string>(`document.getElementById("merge-hint").textContent`)).includes("Merged: main is now"), "and says so");
   await until(async () => (await state()).mirror.includes("Up to date"), 10_000, "the mirror catches up", state);
   await p.open(`${root}/source`, { width: 1280, height: 900, scale: 2, clear: false, dark: true });
   await until(async () => (await state()).rows.length > 0, 10_000, "the list draws (dark)");

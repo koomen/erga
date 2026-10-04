@@ -155,21 +155,26 @@ Agents can do all of this too, with an agent token: see [Agent tokens and
 the server's API](#agent-tokens-and-the-servers-api) (`/llms.txt`,
 `/settings`).
 
-    bun run deploy                  # build, migrate erga.dev's D1 and deploy with the cf CLI
+    bun run deploy                  # erga.dev from this machine, through the one deploy pipeline (asks first)
+    bun run deploy:staging          # staging.erga.dev the same way
+    bun run setup:staging           # the one-time setup of staging, and its first deploy (asks at each step)
 
-Pushes to `main` deploy on their own: Workers Builds runs `./site.sh` then
-`bunx cf deploy`, with `BUN_VERSION` set to match `.bun-version`
-(`cf builds workers get` and `cf builds triggers` show and change it).
-On Workers Builds (`WORKERS_CI` set), `site.sh` also runs `bun migrate.ts`,
-which finds the D1 database `erga` by name (making it if it's new) and
-applies `migrations/` to it before the deploy. A migration lands just before
-the Worker that needs it, so it must keep working with the one still deployed
-(add tables and columns; don't rename or drop). New ones: `bunx cf d1
-migrations create <message>`. `0001_erga.sql` is the exception: it started
-the database afresh (it drops whatever was there before, the first directory
-and its backfill included), so documents made before it, and the per-person
-`DocList` Durable Objects (deleted by the config, with what they held), are
-gone.
+How erga.dev and staging.erga.dev are deployed, and how a branch deploys
+itself, is [Deploys: staging and production](#deploys-staging-and-production).
+Until production is switched over to deploying itself (the runbook's last
+step), pushes of `main` to GitHub still deploy erga.dev the old way: Workers
+Builds runs `./site.sh` then `bunx cf deploy`, with `BUN_VERSION` set to
+match `.bun-version`. On Workers Builds (`WORKERS_CI` set), `site.sh` also
+runs `bun migrate.ts`, which finds the D1 database `erga` by name and applies
+`migrations/` to it before the deploy.
+
+A migration lands just before the Worker that needs it (in either way of
+deploying), so it must keep working with the one still deployed (add tables
+and columns; don't rename or drop). New ones: `bunx cf d1 migrations create
+<message>`. `0001_erga.sql` is the exception: it started the database afresh
+(it drops whatever was there before, the first directory and its backfill
+included), so documents made before it, and the per-person `DocList` Durable
+Objects (deleted by the config, with what they held), are gone.
 
 **Who you are, on every page.** The upper right of every page erga.dev
 serves (`account.ts`) shows your avatar (your GitHub picture, or your
@@ -568,6 +573,220 @@ https://erga.dev/settings (it lasts a week) and:
 The token signs in test people (Ada, Bo, ...) who can open only test documents
 (`/<you>/test....`), where the scripted agent stands in for the model.
 
+### Deploys: staging and production
+
+Erga's source has two branches, `staging` and `main` (task #39 hosts it in
+Cloudflare Artifacts). The latest `staging` is always deployed to
+**staging.erga.dev**, and the latest `main` to **erga.dev**. Each server
+deploys itself: when its branch moves, it builds the new head and deploys
+it onto its own Worker. Staging is where that is tried first: its own
+pipeline builds and deploys its own commit, the same code that will deploy
+erga.dev. It shares nothing writable with production, and gets a fresh copy
+of production's data on every deploy.
+
+**One pipeline.** Every deploy of Erga goes through `runPipeline`
+(`deploy/cloudflare.ts`): /deploy's (a copy on someone else's account),
+staging's and production's. Its input is a *target* (an account, a Worker,
+a D1 database, the app's domain, the pages' domain, text settings, secrets,
+service bindings, and maybe a snapshot to copy in) and a *release* (the
+Worker as `cf build` builds it from `cloudflare.config.ts`, the editor's
+files and `migrations/`: `deploy/release.ts`). Its output is a live server,
+each step reported as it goes. `cloudflare.config.ts` stays the one place
+bindings and Durable Objects are declared; each target changes only what's
+its own. The targets are `deploy/targets.json` (typed by `deploy/targets.ts`),
+which `cloudflare.config.ts` reads for production's names too:
+
+| | production | staging |
+|---|---|---|
+| branch | `main` | `staging` |
+| app | erga.dev | staging.erga.dev |
+| Worker (so its Durable Objects) | `erga` | `erga-staging` |
+| D1 | `erga` | `erga-staging`, made afresh from production's on each deploy |
+| documents' pages | `<id>-<owner>.erga-pages.dev` | `<id>-<owner>.staging.erga-pages.dev` |
+| secrets | its own, kept | its own (SESSION_SECRET, its own GitHub app, its own deploy token), kept |
+
+Both are in the same account. Staging's pages origin is a wildcard one level
+down on erga-pages.dev: a route `*.staging.erga-pages.dev/*` to
+`erga-staging` (more specific than production's `*.erga-pages.dev/*`, so it
+wins), a proxied `*.staging` AAAA `100::` record (the pipeline makes both),
+and an advanced certificate for `*.staging.erga-pages.dev`, since Universal
+SSL covers only one level (`deploy/setup.ts` orders it after asking; it needs
+Advanced Certificate Manager). staging.erga.dev is a Workers custom domain,
+whose DNS record and certificate Cloudflare makes. A deploy to anything but
+production that would use production's Worker, database or addresses stops
+before it calls Cloudflare (`guardTarget`), and a snapshot never goes into
+its own source.
+
+The steps: check the account; find or make the database (for staging:
+delete its old copy and make a new one); copy production's database in
+(staging); apply `migrations/`; upload the editor's files; upload the Worker
+with its bindings (its database, `DEPLOY_TARGET`, `ERGA_VERSION` = the
+commit, `CLOUDFLARE_ACCOUNT_ID`, the `BUILDER` service; secrets kept with
+`keep_bindings`, as `cf deploy` keeps them) and its Durable Objects as
+declarative exports; its address; its pages' address; wait until the new
+release answers at `/api/deploys/version`; copy production's documents in
+(staging).
+
+**Building.** A Worker can't run `bun install` or Vite, so a commit is built
+in a **Cloudflare Container**: the builder Worker `erga-builder`
+(`deploy/builder/`: `worker.ts`, its `wrangler.jsonc`, a `Dockerfile` with
+Bun 1.4.2, Node and Git, and `server.ts`), which the servers reach over a
+service binding (`BUILDER`) and which has no public address. The pipeline asks
+Artifacts for the repo's remote and a 15-minute read-only token
+(`deploy/source.ts`; the one place to plug in #39's own way to read a
+commit), and the container fetches the commit, runs `bun install
+--frozen-lockfile`, `./site.sh` and `bun deploy/release.ts`
+(`deploy/builder/build.ts`), and streams its output back, then the release
+(`deploy/bundle.ts`). GitHub is not involved. Why this: Workers Builds connects
+only GitHub and GitLab repos, and Artifacts' own build-on-push guide runs a
+Workflow whose steps are container sandboxes (`@cloudflare/ci`), which is the
+same thing with more parts; the builder can move there later without the
+pipeline changing. A machine builds the same way (`deploy/run.ts`, in a
+scratch worktree, with the checkout's packages linked).
+
+**Branches deploy themselves** (`deploy/branches.ts`, in one Durable Object
+per server, `Pipeline`, named "deploys": `worker/pipeline.ts`). #39 calls
+`deployHook(branch, commit)` (`deploy/index.ts`) after any push or merge
+that moves `staging` or `main`. The server whose target is that branch
+(`DEPLOY_TARGET`) queues the commit and deploys it in its alarm: build, then
+the pipeline on its own Worker. A push while a deploy runs waits, and only
+the newest waiting one is deployed after it. Production passes a push of
+`staging` it hears on to staging (`POST /api/deploys/staging/hook`, with
+`DEPLOY_HOOK_SECRET`); staging never makes production deploy. A server
+deploys itself only with `CLOUDFLARE_DEPLOY_TOKEN` set: until then a push is
+noted in its log and nothing is deployed, so merging this changes nothing on
+erga.dev by itself.
+
+A server deploying itself is restarted by its own new version part way
+through: Cloudflare resets a Worker's Durable Objects when a version goes
+up. So each step's end is kept in storage, an alarm is set just before the
+Worker's upload, and the new version picks the deploy up where the old one
+stopped (it checks the Worker's `ERGA_VERSION` to know the upload went
+through): the address, the pages, waiting for the new release, copying the
+documents. A deploy stopped before the upload is marked failed
+("interrupted"), and Redeploy runs it again from the top. Every step is safe
+to repeat.
+
+**Staging's snapshot of production.** On each staging deploy:
+
+- **D1:** staging's database is deleted and made anew, production's is
+  exported with D1's export API (read-only on it; D1 holds production's
+  writes for the moment it takes) and loaded with D1's import API, then the
+  commit's own migrations run on it, as they will on production.
+- **Durable Objects:** each document's storage (its files, folders, meta,
+  the room's Yjs state, and its expiry alarm) is read from production's
+  read-only endpoint, `POST /api/snapshot/docs` (`DocHost.exportStorage`:
+  `storage.list` and `getAlarm` only, nothing opened or written), and written
+  into staging's through staging's import endpoint (only where
+  `SNAPSHOT_IMPORT` is 1, and never on production, whatever its settings
+  say), ten at a time, behind the shared `SNAPSHOT_TOKEN`
+  (`deploy/snapshot.ts`). Documents staging had that production doesn't are
+  emptied. Old staging data isn't kept.
+- **Secrets** aren't copied: staging has its own.
+
+What isn't copied, or doesn't carry over: sign-ins (sessions are signed
+with production's SESSION_SECRET: people sign in to staging again, with its
+own GitHub app); agent tokens (their rows are copied, but a token is an HMAC
+with the server's secret, so production's don't work on staging; make new
+ones there); edits a room still holds in memory and hasn't written yet (a
+few seconds' worth); documents made after the database's copy (not in its
+directory) or deleted before the documents step (listed, but empty); /deploy
+sessions; staging's own deploy record (kept); the homepage's deployed
+snapshot (the `Home` object: staging makes its own from the same document). The source repo is shared, not
+copied. Before production runs this version with `SNAPSHOT_TOKEN` set, the
+documents step is skipped, and says so.
+
+The token staging deploys itself with is account-wide: Cloudflare tokens
+can't be limited to one database, so it could write production's D1. The
+code only ever exports it, and the tests check every call (nothing but the
+export reaches production's database, and nothing reaches its Worker).
+
+**Status.** `GET /api/deploys` (admins, also with an admin's agent token)
+answers `{targets: [{name, host, branch, state, commit, at, error, log,
+deployed, pending, steps, self}]}`: `state` is `idle`, `building`,
+`deploying`, `deployed` or `failed`; `log` the last lines. Another server's
+target is that server's own answer when it gives one (`remote`).
+`POST /api/deploys/<name>` redeploys that target's branch head now (on
+production, `staging` is passed on). `GET /api/deploys/<name>/log` (admins)
+is the latest deploy's whole log, `{deployId, commit, state, lines: [{at,
+text, step?}]}`: each line with its time (ms) and its step (`build`, or one
+of the pipeline's), the first and last 2,500 lines if it's longer. It's kept
+in storage as it grows, so one deploy's log runs on across the restart its
+own upload causes; another server's target's log comes from that server.
+`/api/events` (admins) is server-sent events: `{type: "deploys"}` on each
+change, `{type: "deploy-log", target, deployId, lines}` with each deploy's
+new lines as they arrive (for a live log), and others put there with
+`publishEvent` in `deploy/index.ts` (#39's `{type: "source"}`).
+`GET /api/deploys/version` (anyone) is the release the server runs. The
+dashboard is task #39's **/source**: the commits, with the branches and each
+target's deploys beside them, and a deploy's log in a modal;
+`/admin/deploys` redirects there.
+
+**The branch model.** There are only two branches, and `staging` is always
+at or ahead of `main`: `main` only fast-forwards to a commit of `staging`
+(#39 refuses anything else). The pipeline relies on nothing more than that a
+branch's head is a commit on that branch: the builder fetches the branch and
+checks the commit out, which a fast-forward keeps reachable; production
+builds the commit itself (it doesn't take staging's build), and a push to
+`main` never makes staging deploy.
+
+Locally, `ERGA_DEPLOY_MOCK=1 ERGA_DEPLOY_TARGET=staging bun start` makes the
+dev server staging, deploying into the mock Cloudflare's copy of Erga's
+account (`deploy/mock.ts`, `fleet`) with a mock builder; a push is
+`curl -X POST -H "Authorization: Bearer mock-hook-secret-0123456789abcdef"
+-d '{"branch":"staging","commit":"<40 hex>"}' localhost:4400/api/deploys/staging/hook`
+(a commit starting `0bad` fails to build).
+
+#### Runbook: the first real staging deploy
+
+Each step is yours to run or approve; `deploy/setup.ts` asks before each
+change, and `--dry-run` shows the plan without doing anything.
+
+1. **Merge this to `main`.** Workers Builds deploys erga.dev from GitHub as
+   before. It gains the `Pipeline` Durable Object and the read-only routes;
+   branch deploys stay off (no `CLOUDFLARE_DEPLOY_TOKEN`). Check
+   `https://erga.dev/api/deploys/version` answers.
+2. **Staging's GitHub OAuth app.** At github.com/settings/applications/new:
+   homepage `https://staging.erga.dev`, callback
+   `https://staging.erga.dev/auth/github/callback`. Put its Client ID in
+   `deploy/targets.json` (`targets.staging.vars.GITHUB_CLIENT_ID`) and
+   commit. Keep its client secret for step 4.
+3. **Two Cloudflare API tokens** for the account, each with Workers Scripts
+   edit, D1 edit, Workers Routes edit, DNS edit, Zone read, Artifacts read
+   and Account Settings read: one for you to run the setup (add SSL and
+   Certificates edit for step 4's certificate), and one for staging to
+   deploy itself with.
+4. **Run the setup:**
+   `CLOUDFLARE_API_TOKEN=<yours> CLOUDFLARE_ACCOUNT_ID=<id> bun deploy/setup.ts`.
+   It checks the account and zones; orders the advanced certificate for
+   `*.staging.erga-pages.dev` (paid: say no to skip, and staging's pages
+   won't load over HTTPS); deploys the builder (`bunx wrangler deploy` in
+   `deploy/builder`, with Docker running); asks for staging's GitHub client
+   secret, its deploy token (step 3's second) and an Anthropic key
+   (optional), and makes SESSION_SECRET, SNAPSHOT_TOKEN and
+   DEPLOY_HOOK_SECRET; sets SNAPSHOT_TOKEN and DEPLOY_HOOK_SECRET on
+   production's Worker (a new version of the same code); then builds HEAD
+   here and deploys staging: `erga-staging`, `erga-staging` D1 with
+   production's data, staging.erga.dev and `*.staging.erga-pages.dev`
+   (DNS records and routes made by the deploy).
+5. **Verify it.** Open https://staging.erga.dev and sign in (with staging's
+   GitHub app): your documents are there, with production's contents; open
+   one, and its page loads from `<id>-<owner>.staging.erga-pages.dev`.
+   https://staging.erga.dev/api/deploys shows staging deployed (and, once
+   #39 is in, https://staging.erga.dev/source), and erga.dev is unchanged.
+6. **Staging deploys itself.** Once #39's source is in Artifacts with a
+   `staging` branch, push a commit to it (`git push
+   https://staging.erga.dev/git/erga.git staging`, an admin's agent token as
+   the password). Watch https://staging.erga.dev/source (or
+   `/api/deploys/staging/log`): the builder builds it, the pipeline
+   deploys it, the server restarts into the new version and finishes, and
+   `https://staging.erga.dev/api/deploys/version` says the new commit.
+7. **Later, production** (not part of this): set `CLOUDFLARE_DEPLOY_TOKEN`
+   on `erga`, deploy it once from a machine (`bun run deploy`: it adds the
+   `BUILDER` binding), then turn off Workers Builds' trigger for `erga` and
+   remove `migrate.ts` and the `WORKERS_CI` lines in `site.sh`. From then on
+   `main` deploys itself.
+
 ### Deploy your own
 
 `/deploy` puts a copy of the server on someone's own Cloudflare account,
@@ -621,12 +840,15 @@ The page goes in four steps:
    deploy again from the top: every step is safe to repeat.
 
 The deploy runs in the session's Durable Object, calling the Cloudflare API
-directly (`deploy/cloudflare.ts`): no CLI, no container. It deploys a
+directly through the one deploy pipeline (`deploy/cloudflare.ts`,
+`runPipeline`, with the plan as a target in their account: see [Deploys:
+staging and production](#deploys-staging-and-production)): no CLI, no
+container. It deploys a
 *release*: this server's own Worker as `cf build` builds it (its modules,
 static assets and `worker.config.json`, so the bindings and Durable Objects
 follow `cloudflare.config.ts`; the landing project is built into it) and the
 migrations, made by `bun deploy/release.ts` into `.site/release/` (site.sh does it on Workers
-Builds, `bun run deploy` too; the Worker reads it from its assets, and
+Builds, and the builder for every branch deploy; the Worker reads it from its assets, and
 nothing serves it to browsers). The requests follow Cloudflare's OpenAPI
 schema (github.com/cloudflare/api-schemas) and how workers-sdk's deploy makes
 them. The steps: check the account (a Worker called `erga` that isn't Erga
@@ -747,16 +969,14 @@ clicking it opens that deploy's log, live (`GET /api/deploys/<name>/log`,
 then `{ "type": "deploy-log" }` events). Merge moves main to staging's head;
 hovering a commit only on staging offers Merge to here. Also the mirror's
 status (with Push now), the last moves, and the `git remote add` lines. It
-updates by itself: `GET /api/events` (server-sent events for admins' pages,
-`worker/events.ts`, one Durable Object, `EventHub`) sends `{ "type":
-"source" }` when a branch moves or the mirror's status changes, `{ "type":
-"deploys" }` and `{ "type": "deploy-log", target, deployId, lines }` for
-deploys; anything in the Worker publishes with `publishEvent(env, event)`.
-
-Until the deploy pipeline lands, `worker/deploys-stub.ts` stands in for its
-`GET /api/deploys` (no targets) and `GET /api/deploys/<name>/log`; local
-development's tests set what it answers (`POST /__erga/deploys`, with the dev
-server's secret), and the pipeline replaces it.
+updates by itself, on the deploy pipeline's event stream, `GET /api/events`
+(one hub for admins' pages, `worker/deploys.ts`): `{ "type": "source" }` when
+a branch moves or the mirror's status changes (`publishEvent` in
+`deploy/index.ts`), `{ "type": "deploys" }`, and `{ "type": "deploy-log",
+target, deployId, lines }` for an open log. Live log lines come as events
+only from the server running the deploy (staging's runs on staging's own
+server), so while a deploy runs and no events arrive, the open log asks for
+`GET /api/deploys/<name>/log` every two seconds.
 
 `GET /api/source/branches` → `{ branches: [ { name, commit, commits: [ {
 sha, subject, author, email, at, parents, inMain } ], ahead } ], mirror: {
@@ -765,9 +985,11 @@ app's session or an admin's agent token (Bearer); a POST with the session
 alone must come from this site's pages.
 
 **For the deploy pipeline.** After every push or merge that moves a branch,
-the repository calls `deployHook(branch, commit, { env })` (`deploy/index.ts`;
-a stand-in that logs until the pipeline replaces it). To read a commit for
-a build, `sourceForBuild(env, commit)` (`worker/source.ts`) answers the
+the repository calls the pipeline's `deployHook(branch, commit, env)`
+(`deploy/index.ts`). To read a commit for a build, the pipeline asks
+`sourceForBuild(env, commit)` (`worker/source.ts`, through the Artifacts
+binding; the REST API, `deploy/source.ts`, only on a server without one): it
+answers the
 repository's Git remote with a read token (an hour; Bearer, or HTTP Basic
 with any username), for `git clone` in a build environment, and
 `archive()`, the commit's files as a tar, read through Erga. The commit
@@ -917,7 +1139,8 @@ on-screen keyboard, and keep clear of a notch.
 
 There's no dark mode: pages are shown as their authors made them, and most
 don't support one. The editor's own controls take their colours from the page
-under them instead.
+instead, on a band in the page's colour above it (see "One page, viewing or
+editing").
 
 ### Document settings
 
@@ -994,14 +1217,22 @@ of that. What the server refuses shows where it happened, in its words. Keys:
 ↑ ↓ ← → Home End move and open folders, Enter opens, F2 renames, Delete
 deletes, Shift-F10 opens a row's menu, Esc cancels or closes.
 
-It talks to `GET /api/docs/<id>/tree` (`{ entries: [{ path, type: "page" |
-"folder" | "file", title? }], canEdit }`) and `POST` there (`new_page`,
-`new_folder`, `move`, `delete`), and reads it again on a `{ type: "tree" }`
-event on the editor's event channel, or when a file comes or goes in the room.
-That's the server's own tree API (below). `bun tests/tree.ts` checks the tree
-in headless Chrome, against `dev/tree-stub.ts` (`ERGA_TREE_STUB=1`: an
-in-memory stand-in for the API that changes no files, so the test can set
-any tree and make changes fail).
+It talks to the server's tree API (below): `GET /api/docs/<id>/tree` (`{
+entries: [{ path, type: "page" | "folder" | "file", title? }], canEdit }`,
+each page with its title) and `POST` there (`new_page`, `new_folder`, `move`,
+`delete`). It reads the tree again on a `{ type: "tree", moved?, deleted? }`
+event on the editor's event channel (which `main.ts` passes on as an
+`erga-tree` event on `window`), or when a file comes or goes in the room;
+on Documents, which has no event channel, an open tree is read again every
+few seconds while the tab is in view, and when you come back to it. Changes
+from elsewhere wait while you're naming, moving or deleting something, so
+the rows never shift under you. A folder that moved stays open where it went,
+and when the page you're editing moves (anyone's doing: another tab, an
+agent), the editor goes to its new address with the tree still open, marking
+it there. `bun tests/tree.ts` checks all of it in headless Chrome against a
+real server, on `tests/fixtures/multi` linked from disk: every operation,
+two tabs, an agent over the token API, a viewer, and a page two folders down
+that uses the stylesheet, image and font from the folders above it.
 
 ### When the page is broken
 
@@ -1373,8 +1604,8 @@ source view takes the frame's state, undo history included, and hands it back.
 
 A document's page (`viewDocument` in `front.ts`) is the same at
 `/<owner>/<slug>` and with `#edit` after it (the server never sees the fragment, so it serves one page; the page decides from `location.hash`, as it loads and whenever it changes), and small (about 4KB compressed):
-the controls, floating over the top corners, and a frame filling the window
-with the frame's host page in it (`/t/<token>/?view=`), which shows
+the controls, on a band across the top, and a frame filling the window
+below the band, with the frame's host page in it (`/t/<token>/?view=`), which shows
 the document's page straight away, as it renders. All the rest of the weight
 is the document's own. Editing is loaded on top, only for those who may edit
 and only when they go into it (the pencil, or opening it with `#edit`, or adding `#edit` to the address): the page adds
@@ -1397,6 +1628,25 @@ Only a page opened with `#edit` and reloaded puts the agent back unanimated.
 `tests/switch.ts` records the first switch frame by frame on a slow network,
 light and dark, and checks no frame shows white or loses the document, and
 that the page never jumps.
+
+The document starts below the band, so the controls never cover its first
+line, at any width. The band takes the document's own background, as a solid
+colour (a gradient's colour at the top edge), and the controls turn light on
+a dark page. The frame's host page reads the background of the page it shows
+on every frame and tells the document's page (`HOST_SCRIPT`, `BAND_BOOT` in
+`front.ts`), so the band follows a theme switch or another page of the
+document. The page remembers each document's colour (`erga:band:v1:<id>`)
+and paints it before anything loads, so a reload, viewing or editing, shows
+no white. On a first visit nothing is remembered: the host page keeps the
+document out of sight until the band has its colour (half a second at most),
+so a dark page never shows under a white band; the window is white only
+before the document shows at all. A link to another of the document's pages,
+in a colour of its own, waits in the same way, a frame or two. The band is the same height viewing and
+editing, so the document doesn't move between them. `tests/band.ts` checks
+that no control covers the text of pages whose first line is at their top
+edge (light, dark, a gradient; desktop and phone), compares the band's
+pixels with the page's, and records a first visit, a hard reload and the
+switch into the editor and back frame by frame on a slow network.
 
 The pages origin (`pagesDoor` in `front.ts`) serves the frame at `/t/<token>/`
 and the document's files under `/t/<token>/doc/`. The token, signed with
@@ -1560,6 +1810,18 @@ Chrome, nested pages in the viewer and editor with their relative assets, the
 address following links, and an open editor following its page when it's
 moved (`--keep` leaves the server running with the sample document);
 `tests/tree.test.ts` covers `tree.ts` and the room's tree operations.
+`tests/pipeline.test.ts` runs the one pipeline on production and staging
+against the mock Cloudflare's copy of Erga's account: staging's own Worker,
+database, Durable Objects, secrets and pages origin, a fresh copy of
+production's database and documents each time, nothing written to
+production (every call checked), the guards, failure and retry, branch
+pushes (the queue, passing a push on, the status, the deploy log and its
+events), staging deploying itself across the restart its own upload causes
+(one log across it), the builder's stream, and
+`deploy/setup.ts` run end to end. `bun tests/deploys.ts` does it in the real
+Worker: a push to a dev server playing staging, its status and events, the
+deploy's log whole and live, Redeploy, a failed build, the redirect from
+/admin/deploys to /source, and who may.
 `bun tests/isolation.ts` opens a page that tries to reach whoever views it
 (the shell's window, its cookies, erga.dev's API, forged messages) and checks
 it gets nothing. The browser tests reach the page through the frame's own
@@ -1589,14 +1851,22 @@ back, merging edits from disk, the agent's exact-match edits and attribution.
 - `front.ts`: the app's own routes and pages (the front page, `/new`, `/docs` and
   its share dialog, delete, the unedited rule, titles)
 - `admin.ts`: `/admin`, the server's settings and users, for admins
-- `source/`, `worker/source.ts`, `worker/source-host.ts`, `worker/artifacts.ts`,
-  `worker/events.ts`: Erga's own source in Cloudflare Artifacts (Git's formats,
-  the smart HTTP client and endpoint, pushes, merges, the GitHub mirror, the
-  Source page, the import script), and live events for admins' pages;
-  `dev/git-server.ts`, local development's stand-ins for Artifacts and GitHub
-- `deploy/`, `worker/deploy.ts`, `worker/deployer.ts`: `/deploy`, deploying
-  Erga to your own Cloudflare account (the API steps, the release, the
-  pretend Cloudflare the tests use, the page)
+- `source/`, `worker/source.ts`, `worker/source-host.ts`, `worker/artifacts.ts`: Erga's own source in
+  Cloudflare Artifacts (Git's formats, the smart HTTP client and endpoint, pushes, the branch model, the
+  GitHub mirror, the Source page, the import script); `dev/git-server.ts`, local development's stand-ins
+  for Artifacts and GitHub
+- `deploy/cloudflare.ts`: the one deploy pipeline (`runPipeline`: targets, steps, D1's export and import)
+- `deploy/targets.json`, `deploy/targets.ts`: Erga's own targets, production and staging (cloudflare.config.ts reads production's names there)
+- `deploy/branches.ts`, `deploy/index.ts`, `worker/pipeline.ts`, `worker/deploys.ts`: branches deploying
+  themselves (the hook, the queue, carrying on after the restart), their status, logs, events and routes
+- `deploy/snapshot.ts`: copying documents' Durable Objects from production into staging
+- `deploy/builder/`: the builder Worker and its container (building a commit: `build.ts`), and the
+  pipeline's side of it (`client.ts`); `deploy/bundle.ts`, a release as one file; `deploy/source.ts`, the
+  source repo in Artifacts
+- `deploy/run.ts`, `deploy/setup.ts`: a deploy from a machine, and staging's one-time setup
+- `deploy/page.ts`, `deploy/release.ts`, `deploy/mock.ts`, `deploy/seal.ts`, `worker/deploy.ts`,
+  `worker/deployer.ts`: `/deploy`, deploying Erga to your own Cloudflare account (the page, the
+  release, the pretend Cloudflare the tests use, Erga's own account included)
 - `account.ts`: who you are in the upper right of every page (avatar and menu, or sign in)
 - `directory.ts`: the directory of documents (addresses, titles, permissions, who may do what), over
   `Sql`; `worker/d1.ts` puts it on D1; its tables in `migrations/`, which `migrate.ts` applies to
