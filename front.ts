@@ -378,9 +378,15 @@ async function pagesDoor(request: Request, url: URL, doc: { owner: string; id: s
     return new Response(html, { headers });
   }
   if (!rest.startsWith("/doc/")) return notFound();
-  const route = await platform.directory.route(doc.id);
-  if (!route || route.owner != doc.owner.toLowerCase()) return notFound();
-  return platform.docs.fetch(route, forwarded(request, url, rest, `${shell}/d/${doc.id}`, null, null));
+  // The token names the document; the directory confirms it's still its owner's (remembered, so usually without asking the
+  // database). Both at once: a file is only read, so asking the document before the answer comes costs nothing if it's no.
+  const asked = { id: doc.id, owner: doc.owner.toLowerCase(), test: false };
+  const [route, answer] = await Promise.all([
+    platform.directory.route(doc.id),
+    platform.docs.fetch(asked, forwarded(request, url, rest, `${shell}/d/${doc.id}`, null, null)),
+  ]);
+  if (!route || route.owner != asked.owner) { await answer.body?.cancel(); return notFound(); }
+  return answer;
 }
 
 const HOST_STYLE = "html,body{margin:0;height:100%;overflow:hidden;overscroll-behavior:none;background:transparent}iframe{position:fixed;inset:0;width:100%;height:100%;border:0;background:transparent;visibility:hidden}iframe.on{visibility:visible}";

@@ -9,6 +9,8 @@
 //     --only viewer       cases whose name contains this (front, viewer, editor, switch)
 //     --waterfall         prints each case's requests, from its last run
 //     --json out.json     writes every run's numbers
+//     --latency 50        each call to the database or a document's Durable Object waits 50ms first, as if the
+//                         Worker were that far from them (on erga.dev it often is): what the page's round trips cost
 //
 // The cases, each cold (a fresh browser profile: nothing cached; and a
 // document just made, so its Durable Object has not opened its room yet) and
@@ -45,6 +47,8 @@ const PROFILES = (opt("--profile") ?? "both") == "both" ? ["desktop", "mobile"] 
 const ONLY = opt("--only");
 const WATERFALL = args.includes("--waterfall");
 const JSON_OUT = opt("--json");
+/** Each call to the database or a document's Durable Object waits this long first (worker/timing.ts): erga.dev's distances, roughly. */
+const LATENCY = opt("--latency") ?? "";
 
 interface Profile { width: number; height: number; mobile: boolean; scale: number; cpu: number; net: { latency: number; downloadThroughput: number; uploadThroughput: number } | null }
 const PROFILE: Record<string, Profile> = {
@@ -62,7 +66,7 @@ let host: Host | null = null;
 let stopPreview: (() => void) | null = null;
 let root = opt("--url")?.replace(/\/$/, "");
 if (!root && args.includes("--prod")) root = await startPreview();
-if (!root) { host = await startHost(null); root = host.root; }
+if (!root) { host = await startHost(null, { processEnv: LATENCY ? { ERGA_REMOTE_LATENCY_MS: LATENCY } : {} }); root = host.root; }
 // Compressed, as Cloudflare compresses what erga.dev sends (the dev server and vite preview don't): a proxy in front.
 const upstream = root;
 if (!args.includes("--no-gzip") && !opt("--url")) root = compressing(upstream);
@@ -174,7 +178,7 @@ async function startPreview(): Promise<string> {
   const envDir = join(scratch, "env");
   Bun.spawnSync(["mkdir", "-p", envDir]);
   writeFileSync(join(envDir, ".dev.vars"), `DEV_LOGIN=tester\nSESSION_SECRET=${crypto.randomUUID()}\n`);
-  const env = { ...process.env, ERGA_STATE_DIR: join(scratch, "state"), ERGA_ENV_DIR: envDir, ERGA_VITE_CACHE: join(scratch, "vite"), ERGA_INSPECTOR: "0", ANTHROPIC_API_KEY: "", ERGA_LINK_SECRET: crypto.randomUUID() } as Record<string, string>;
+  const env = { ...process.env, ERGA_STATE_DIR: join(scratch, "state"), ERGA_ENV_DIR: envDir, ERGA_VITE_CACHE: join(scratch, "vite"), ERGA_INSPECTOR: "0", ANTHROPIC_API_KEY: "", ERGA_LINK_SECRET: crypto.randomUUID(), ERGA_REMOTE_LATENCY_MS: LATENCY } as Record<string, string>;
   const site = Bun.spawnSync([join(ROOT, "site.sh")], { cwd: ROOT, stdout: "ignore", stderr: "inherit" });
   if (site.exitCode) throw new Error("site.sh failed");
   const vite = join(ROOT, "node_modules/vite/bin/vite.js");
@@ -394,7 +398,7 @@ try {
 }
 
 const pad = (s: string, n: number) => s.padStart(n);
-console.log(`\n${root}  ${host ? "dev server (vite dev)" : args.includes("--prod") ? "production build (vite build + vite preview)" : "given server"}  medians of ${RUNS}\n`);
+console.log(`\n${root}  ${host ? "dev server (vite dev)" : args.includes("--prod") ? "production build (vite build + vite preview)" : "given server"}  medians of ${RUNS}${LATENCY ? `  ${LATENCY}ms to the database and documents` : ""}\n`);
 console.log(pad("", 22) + METRICS.map((m) => pad(m, 9)).join(""));
 for (const [name, runs] of Object.entries(all)) {
   console.log(name.padEnd(22) + METRICS.map((m) => {

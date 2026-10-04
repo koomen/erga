@@ -33,7 +33,7 @@ import { finishSignIn, isDev, mintTestToken, sessionOf, signOut, startSignIn, te
 import { directoryOf, tokensOf } from "./d1";
 import { deployDoor } from "./deploy";
 import type { Env } from "./env";
-import { counted, tallied } from "./timing";
+import { counted, simulateLatency, tallied } from "./timing";
 
 export { Deployer } from "./deployer";
 export { DocHost } from "./doc-host";
@@ -56,6 +56,7 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
     const started = Date.now();
+    if (env.ERGA_REMOTE_LATENCY_MS) simulateLatency(Number(env.ERGA_REMOTE_LATENCY_MS));
     const { value: answer, timing } = await tallied(async () => {
       const response = await route(request, env, url);
       // Every page of the site's own has who you are in its upper right (account.ts); a document's pages origin never does.

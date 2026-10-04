@@ -840,9 +840,14 @@ What happens between asking for a document and seeing it, and what keeps it shor
   the document answers with its page, whatever its name. The front page asks
   the setting's document and its host at the same time. Who you are is worked
   out once per request (`sessionOf`), the corner included.
-- **The frame's host page** is checked by ETag (`no-cache`), and the token in
-  its address stays the same all day (its expiry rounds up to a whole day), so
-  the addresses of the document's files do too.
+- **The frame's host page** has its code's version in its address (`&v=`),
+  so the browser keeps it for the day (`max-age`; without the version it's
+  checked by ETag), and the token in its address stays the same all day (its
+  expiry rounds up to a whole day), so the addresses of the document's files
+  do too. Its base is the document's folder, so the editable page (a srcdoc,
+  which takes it) asks for the document's files there from the start.
+- **A file of the document** is asked of its Durable Object at the same time
+  as the directory confirms the token's document is still its owner's.
 - **The document's files** (`docFile` in `host.ts`) carry an ETag, their
   digest, with `no-cache`: the browser keeps them and asks each time whether
   they changed, getting a 304 and no body when they haven't, so an edit shows
@@ -854,8 +859,12 @@ What happens between asking for a document and seeing it, and what keeps it shor
   parses (preloads), its frame starts on `frame.js` at once (`?edit=1`), and
   the document's details (`/api/doc`, which opens its room) are asked for
   alongside the editor's code rather than after it (`window.ergaDocInfo`).
-- Every response says how long the Worker took (`Server-Timing: worker`), and
-  a file served from storage says so (`doc;desc="stored"`).
+  `frame.js` leaves out the HTML language (and its CSS and JavaScript), which
+  the frame never used (`docExtensions`, `bridge.ts`): a third smaller.
+- Every response says where its time went (`Server-Timing`, `worker/timing.ts`):
+  the Worker's time, and how many calls to the database and to documents it
+  made and how long they took; a file served from storage says so
+  (`doc;desc="stored"`).
 
 `bun tests/bench.ts` measures it in headless Chrome: the front page, a
 document in the viewer, the same in the editor, and the switch with the
@@ -868,9 +877,10 @@ rather than the dev server; either way it puts a gzipping proxy in front, as
 Cloudflare compresses what erga.dev sends. `--waterfall` prints each case's
 requests with their server timings; `--runs`, `--profile`, `--only` and
 `--json` are the rest (its header says more). Locally there's no distance
-to the database or the Durable Object, so it shows the browser's side of the
-work (the waterfall, bytes, the editor's code) more than the network's; on
-erga.dev the round trips the page saves (above) count for more.
+to the database or the Durable Object, so `--latency 50` has every call to
+them wait 50ms first (`ERGA_REMOTE_LATENCY_MS`, local development only), as a
+Worker far from them would on erga.dev: that's where the round trips the page
+saves (above) show.
 
 ### How it works
 
