@@ -22,8 +22,13 @@ With [Bun](https://bun.sh) 1.4 or later (and Node, which runs Vite):
 `bun start` (`dev.ts`; `--help` lists its options) builds the editor and runs
 the same Worker as erga.dev, under Vite and the Cloudflare plugin, at
 `http://localhost:4400`. The first time, it makes `.dev.vars` for you (see
-`.dev.vars.example`): you're signed in as `DEV_LOGIN`, and an
-`ANTHROPIC_API_KEY` there turns the agent on.
+`.dev.vars.example`): you're signed in as `DEV_LOGIN`. An `ANTHROPIC_API_KEY`
+turns the agent on: exported in the shell that runs `bun start` (and so task
+previews and live mode, which inherit the task queue's environment), or in
+`.dev.vars`. A real key in `.dev.vars` wins; a placeholder there (empty, short,
+not `sk-…`) counts as none, so the exported one is used. It reaches the Worker
+as a binding (`dev/agent-key.ts`, `cloudflare.config.ts`), never written to
+`.dev.vars`.
 
 There's one server, and it's the hosted one (below), so what you see locally
 is what erga.dev does. With nothing named, the browser opens on your
@@ -323,7 +328,8 @@ anything. A new tool both agents should have is one more entry in
 Secrets are set with `bunx cf workers secrets update`: `GITHUB_CLIENT_SECRET`
 (for the GitHub OAuth app whose client ID is in `cloudflare.config.ts`, with
 the callback `https://erga.dev/auth/github/callback`), `SESSION_SECRET` (any long random
-string) and `ANTHROPIC_API_KEY`. Locally they come from `.dev.vars`.
+string) and `ANTHROPIC_API_KEY`. Locally they come from `.dev.vars` (the
+agent's key from the environment too, above).
 `bun tests/worker.ts http://localhost:4400` checks the front door's own
 routes against a running dev server: `/new`, `/docs` and its titles,
 deleting, and expiry (locally, `/new?unedited=<ms>` shortens a document's
@@ -558,8 +564,8 @@ name in the panel's header is a menu that switches it to Claude Opus 5.5 in
 fast mode and back. The choice is per person (all their tabs follow, and a
 reload keeps it) and applies from the next message, so a running turn
 finishes on the model it started with. `ERGA_AGENT_MODEL=opus-fast`
-starts everyone on Opus instead. Set it up by adding `ANTHROPIC_API_KEY` to
-`.dev.vars` (locally; a secret on erga.dev). pi's model catalogue
+starts everyone on Opus instead. Set it up with `ANTHROPIC_API_KEY`: locally
+exported before `bun start` or in `.dev.vars`; a secret on erga.dev. pi's model catalogue
 predates the 5.5 models, so `agent.ts` describes them itself (`MODELS`) and
 rewrites each request for adaptive thinking, effort and, on Opus fast,
 `speed: "fast"`.
@@ -837,7 +843,8 @@ back, merging edits from disk, the agent's exact-match edits and attribution.
   response and failures; the editor imports its types
 - `room.ts`: the document room (shared Yjs doc, sync, write-back, disk merges)
 - `agent.ts`, `workspace.ts`, `.dev.vars.example`: the per-person agent session, its
-  tools over the shared doc, and its settings
+  tools over the shared doc, and its settings; `dev/agent-key.ts` picks its key
+  locally (`.dev.vars` or the environment)
 - `src/room/doc.ts`: the shared doc's shape and helpers, used by host and shell
 - `src/page/`: the page editor, on CodeMirror 6: `manuscript.ts` (HTML source
   analysis), `markdown.ts` (Markdown rendering with source ranges),

@@ -6,7 +6,9 @@ DEV_LOGIN=
 # Signs session cookies: any long random string.
 SESSION_SECRET=
 
-# The embedded agent (agent.ts). Without a key it's off.
+# The embedded agent (agent.ts). Without a key it's off. Or leave it out and
+# export ANTHROPIC_API_KEY in the shell that runs bun start: a real key here
+# wins, a placeholder doesn't (dev/agent-key.ts).
 ANTHROPIC_API_KEY=
 # Optional: the model each person's agent starts on: sonnet (Claude Sonnet
 # 5.5, the default) or opus-fast (Claude Opus 5.5 in fast mode); each person

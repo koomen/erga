@@ -9,6 +9,7 @@ import * as entrypoint from "./worker/index.ts" with { type: "cf-worker" };
 // The server settings the deploy fixes (locks): server.config.ts, with ERGA_SERVER_CONFIG
 // (JSON, from the environment) over them. site.sh and dev.ts check them first (`bun server.config.ts`).
 import { deployed } from "./server.config.ts";
+import { localAgentKey } from "./dev/agent-key.ts";
 
 /** The local database's id (the dev server's D1): any UUID. Production's is found by name (migrate.ts). */
 const LOCAL_DB = "00000000-0000-4000-8000-00000000e29a";
@@ -61,6 +62,9 @@ export default defineConfig(({ mode }) => ({
         // secret that lets it link files on disk to documents, and a shorter write delay for tests.
         ERGA_LINK_SECRET: bindings.text(process.env.ERGA_LINK_SECRET ?? ""),
         ERGA_WRITE_DELAY_MS: bindings.text(process.env.ERGA_WRITE_DELAY_MS ?? ""),
+        // The agent's key: a real one in .dev.vars, else the environment's (dev/agent-key.ts), so a
+        // placeholder in .dev.vars doesn't hide the key you exported. Never written to .dev.vars.
+        ANTHROPIC_API_KEY: bindings.text(localAgentKey(process.env.ERGA_ENV_DIR || process.cwd())),
       } : {}),
     },
   },
