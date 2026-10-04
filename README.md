@@ -1173,10 +1173,11 @@ line saying why. Its code (`src/page/settings.ts`, built as `settings.js`)
 loads only when the gear is hovered, focused or clicked.
 
 It talks to the server's `/api/docs/<id>/versions`, `/versions/<versionId>/restore`,
-`/publish`, `/home` and `/home/deploy`. Until those are in, `ERGA_STUB_SETTINGS=1 bun start` answers
-them with a stand-in (`dev/settings-stub.ts`, local development only), whose
-`POST /__erga/stub/settings` sets up any state (how many versions, which is
-published, a deploy that fails…); `tests/settings.ts` uses it.
+`/publish`, `/home` and `/home/deploy` (see "Versions and publishing" and
+"The homepage"). When the document can't be made the homepage (someone who
+isn't an admin may edit it), the homepage section says why (`blocked`).
+`tests/settings.ts` sets up its state on a real server: documents with many
+versions, cut by edits, Manual mode, the homepage and its deploys.
 
 ### A document's pages
 
@@ -1919,8 +1920,7 @@ back, merging edits from disk, the agent's exact-match edits and attribution.
   rebasing as change sets), `agent-log.ts` (the agent transcript, shared by
   host and shell)
 - `src/page/settings.ts`, `src/page/versions.ts`: document settings (the gear's
-  popover: publishing, the homepage, versions), built on its own as `settings.js`;
-  `dev/settings-stub.ts` stands in for their server side (`ERGA_STUB_SETTINGS=1`)
+  popover: publishing, the homepage, versions), built on its own as `settings.js`
 - `package.json`: the pinned CodeMirror and Yjs packages the page editor bundles, and pi
 - `src/page/tree.ts`: a document's pages as a tree (built as `pages-tree.js`, loaded on demand), in the editor and on `/docs`
 - `style.css`: theme colours, typography and the editor's styling

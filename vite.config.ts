@@ -3,8 +3,6 @@ import { resolve, sep } from "node:path";
 import { cloudflare } from "@cloudflare/vite-plugin";
 import { defineConfig, type Plugin } from "vite";
 import { ergaDev } from "./dev/plugin.ts";
-// A stand-in for the versions and homepage backends (tasks #33, #34), only with ERGA_STUB_SETTINGS=1: delete once they land.
-import { settingsStub } from "./dev/settings-stub.ts";
 
 /** Markdown imported as text (`with { type: "text" }`), as Bun does natively. */
 const markdownAsText: Plugin = {
@@ -37,7 +35,6 @@ export default defineConfig({
       cwd: process.env.ERGA_CWD || process.cwd(),
       reload: process.env.ERGA_RELOAD == "1",
     }),
-    ...(process.env.ERGA_STUB_SETTINGS == "1" ? [settingsStub(stateDir)] : []),
     cloudflare({ persistState: { path: stateDir }, ...(process.env.ERGA_INSPECTOR == "0" ? { inspectorPort: false } : {}) }),
   ],
 });
