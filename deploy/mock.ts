@@ -157,7 +157,7 @@ export function mockCloudflare(opts: {
       const script = /^\/workers\/scripts\/([^/]+)/.exec(rest);
       if (script) return workers.includes(scriptTag(script[1])) && state.scripts[script[1]] ? null : no();
       if (rest == "/d1/database" || rest.startsWith("/d1/")) return d1 ? null : no();
-      if (rest == "/workers/domains" && m == "GET") return zoneIds("Workers Routes Read").length ? null : no();
+      // The account's custom domains: no per-zone read reaches them (as on Cloudflare: a 403 for a scoped token).
       return no();
     }
     if (path.startsWith("/zones?")) return zones.length ? null : no();

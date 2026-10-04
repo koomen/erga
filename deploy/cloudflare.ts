@@ -490,7 +490,14 @@ export async function runPipeline(cf: Cloudflare, release: Release | null, targe
       } else {
         const app = target.app;
         const zoneId = app.zoneId ?? (await zoneIdOf(cf, target.accountId, app.zoneName));
-        // There already (Erga's own targets: the setup made it), nothing to change: a deploy token needs only to read it.
+        // There already (Erga's own targets: the setup made it), nothing to change. The address itself says so: it
+        // answers as this target (a deploy token can't read the account's custom domains: Cloudflare has no per-zone
+        // read for them).
+        if (target.checkVersion && target.vars.DEPLOY_TARGET) {
+          const r = await site(`https://${app.hostname}/api/deploys/version`).catch(() => null);
+          const said = r?.ok ? ((await r.json().catch(() => null)) as { target?: string } | null)?.target : null;
+          if (said == target.vars.DEPLOY_TARGET) return `https://${host} (already its address)`;
+        }
         const there = await cf.call<{ hostname: string; service: string }[]>("GET", `${acc}/workers/domains?hostname=${encodeURIComponent(app.hostname)}`, `read ${app.hostname}'s custom domain`).catch(() => null);
         const mine = there?.find((d) => d.hostname == app.hostname);
         if (mine && mine.service != target.workerName) throw new DeployError(`${app.hostname} is already the address of another Worker (${mine.service}). Remove it there, or pick another address.`);

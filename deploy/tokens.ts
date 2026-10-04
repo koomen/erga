@@ -157,16 +157,22 @@ export async function olderTokens(cf: Cloudflare, accountId: string, p: TokenPla
  * (with the setup's credential): exactly the plan's. Answers what's wrong
  * (nothing: []).
  */
-export async function checkToken(o: { net: Fetch; admin: Cloudflare; accountId: string; plan: TokenPlan; id: string; value: string; policies: Policy[]; api?: string; tokens?: Cloudflare }): Promise<string[]> {
+export async function checkToken(o: { net: Fetch; admin: Cloudflare; accountId: string; plan: TokenPlan; id: string; value: string; policies: Policy[]; api?: string; tokens?: Cloudflare; sleep?: (ms: number) => Promise<void> }): Promise<string[]> {
   const api = o.api ?? "https://api.cloudflare.com/client/v4";
   const acc = `/accounts/${o.accountId}`;
   const as = async (method: string, path: string, body?: unknown) => {
-    const r = await o.net(`${api}${path}`, { method, headers: { Authorization: `Bearer ${o.value}`, ...(body ? { "Content-Type": "application/json" } : {}) }, body: body ? JSON.stringify(body) : undefined });
+    const form = body instanceof FormData;
+    const r = await o.net(`${api}${path}`, { method, headers: { Authorization: `Bearer ${o.value}`, ...(body && !form ? { "Content-Type": "application/json" } : {}) }, body: form ? body : body ? JSON.stringify(body) : undefined });
     await r.body?.cancel().catch(() => {});
     return r.status;
   };
   const wrong: string[] = [];
-  const must = async (what: string, method: string, path: string) => { const s = await as(method, path); if (s != 200) wrong.push(`it can't ${what} (${s})`); };
+  // A new token's permissions reach every service within a few seconds (D1's last, ~5 s): a refusal is asked again for up to 30 s.
+  const must = async (what: string, method: string, path: string) => {
+    let s = 0;
+    for (let i = 0; i < 10 && (s = await as(method, path)) != 200; i++) await (o.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms))))(3000);
+    if (s != 200) wrong.push(`it can't ${what} (${s})`);
+  };
   const mustNot = async (what: string, method: string, path: string, body?: unknown) => { const s = await as(method, path, body); if (s != 403 && s != 401 && s != 404) wrong.push(`it can ${what} (${s}), which it mustn't`); };
 
   const verify = await o.net(`${api}${acc}/tokens/verify`, { headers: { Authorization: `Bearer ${o.value}` } }).then((r) => r.json() as Promise<{ result?: { status?: string } }>).catch(() => null);
@@ -184,7 +190,10 @@ export async function checkToken(o: { net: Fetch; admin: Cloudflare; accountId: 
     await mustNot(`read ${w}'s settings`, "GET", `${acc}/workers/scripts/${w}/settings`);
     await mustNot(`write ${w}'s secrets`, "PUT", `${acc}/workers/scripts/${w}/secrets`, {});
   }
-  await mustNot("make a Worker", "PUT", `${acc}/workers/scripts/erga-token-check-${o.plan.target}`, {});
+  // An upload's form with empty metadata: refused before anything is made (a 403 without the permission, a 400 with it).
+  const form = new FormData();
+  form.set("metadata", "{}");
+  await mustNot("make a Worker", "PUT", `${acc}/workers/scripts/erga-token-check-${o.plan.target}`, form);
 
   // Its policies, read back: exactly the plan's permission groups on exactly its resources.
   const back = await (o.tokens ?? o.admin).call<{ policies?: Policy[] }>("GET", `${acc}/tokens/${o.id}`, `read the token ${o.plan.name} back`).catch(() => null);
