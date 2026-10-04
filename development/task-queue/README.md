@@ -24,3 +24,12 @@ discarded ones, aren't shown (GET /api/tasks still has them). The server
 re-reads main and origin/main every 1.5s and right after a merge, fetches
 origin every 60s (`TASK_QUEUE_FETCH`), and sends changes to the board
 (`GET /api/history`, and a `history` event on `/api/events`).
+
+After a merge that changes the queue's own code (not docs, `mod/`, or the
+tests), the server restarts itself once nothing else is merging: it spawns
+a fresh, detached `server.ts` (logging to `data/server.log`) and exits; the
+new one waits for the old one to be gone, then reads `data/` and listens.
+Previews run in their own process groups and carry on. The board's event
+stream sends its version first, so an open board reloads when `index.html`
+changed. If it doesn't restart, kill whatever listens on 4700 and run any
+`tq` command.

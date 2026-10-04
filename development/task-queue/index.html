@@ -335,9 +335,12 @@ document.addEventListener("click", (e) => {
 document.getElementById("dlg").addEventListener("close", () => { openId = null; dlgError = null; });
 document.getElementById("dlg").addEventListener("click", (e) => { if (e.target.id == "dlg") e.target.close(); });
 
+let boardVersion = null;
 function connect() {
   const live = document.getElementById("live");
   const es = new EventSource("/api/events");
+  // The queue restarted with a new board: load it.
+  es.addEventListener("version", (e) => { const v = JSON.parse(e.data); if (boardVersion && v != boardVersion) location.reload(); boardVersion = v; });
   es.addEventListener("tasks", (e) => { tasks = JSON.parse(e.data); render(); renderBranches(); });
   es.addEventListener("history", (e) => { history = JSON.parse(e.data); render(); renderBranches(); });
   es.onopen = () => { live.textContent = "live"; live.classList.add("on"); };
