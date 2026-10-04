@@ -22,7 +22,16 @@
 // merge in its cwd, given the instructions in $PROMPT; `claude -p` if unset),
 // TASK_QUEUE_INSTALL=0 (don't set up node_modules in new worktrees),
 // TASK_QUEUE_FETCH (seconds between `git fetch origin main`, for the Branches
-// column's view of origin/main; 60, 0 for never).
+// column's view of origin/main; 60, 0 for never), TASK_QUEUE_LIVE (live mode's
+// dev server command), TASK_QUEUE_CHROME and TASK_QUEUE_CHROME_HEADLESS (live
+// mode's Chrome window: chrome.ts).
+//
+// Live tasks (live: true) are worked on by the user and an agent together, in
+// a session, not by a background worker: POST /api/tasks/:id/live runs the
+// dev server with live reload in the task's worktree and opens (or brings
+// back) a Chrome window of its own on it, recorded on the task (chrome);
+// GET /api/tasks/:id/look says what that window shows. Merging or discarding
+// the task stops the dev server and closes the window.
 //
 // After a merge that changes the queue's own code (in this directory: not
 // docs, mod/ or its tests), the queue restarts itself, so it runs the new
@@ -35,6 +44,7 @@ import { spawn as spawnDetached } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, extname, join, resolve } from "node:path";
+import * as chrome from "./chrome.ts";
 
 const HERE = import.meta.dir;
 const PORT = Number(process.env.TASK_QUEUE_PORT ?? 4700);
@@ -45,9 +55,12 @@ const SHOTS = join(DATA, "screenshots");
 const LOGS = join(DATA, "logs");
 const WORKTREES = join(REPO, ".claude/worktrees");
 const PREVIEW = process.env.TASK_QUEUE_PREVIEW ?? "bun start --port $PORT --no-open";
+/** Live mode's dev server: tabs reload by themselves on every edit (dev/reload.ts). */
+const LIVE = process.env.TASK_QUEUE_LIVE ?? "bun start --port $PORT --no-open --reload";
 const CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 const FETCH_EVERY = Number(process.env.TASK_QUEUE_FETCH ?? 60);
-for (const dir of [SHOTS, LOGS]) mkdirSync(dir, { recursive: true });
+const LOOKS = join(DATA, "looks");
+for (const dir of [SHOTS, LOGS, LOOKS]) mkdirSync(dir, { recursive: true });
 
 // Started by a self-restart: wait for the old server to save, exit and let go of the port, then read the state.
 const restartedFrom = Number(process.env.TASK_QUEUE_RESTARTED_FROM) || 0;
@@ -81,6 +94,11 @@ interface Task {
   log: { at: string; message: string }[];
   preview?: { pid: number; command: string };
   previewUp?: boolean;
+  /** Worked on live, in a session with the user, not by a background worker (AGENTS.md, "Live mode"). */
+  live?: boolean;
+  /** A live task's Chrome window: its own profile and DevTools port, and the tab it opened. */
+  chrome?: chrome.LiveChrome;
+  chromeUp?: boolean;
   error?: string;
   commit?: string;
   createdAt: string;
@@ -200,12 +218,57 @@ async function startPreview(task: Task, command = PREVIEW, path = "/") {
   touch(task, { preview: { pid: child.pid!, command }, url: task.url ?? url }, `Preview started: ${command} (pid ${child.pid}, log data/logs/task-${task.id}-preview.log)`);
 }
 
+/** Is anything answering on the task's port (within `ms`)? */
+async function answers(port: number, ms: number) {
+  for (const end = Date.now() + ms; ; await Bun.sleep(250)) {
+    if (await fetch(`http://127.0.0.1:${port}/`, { redirect: "manual", signal: AbortSignal.timeout(1500) }).then(() => true, () => false)) return true;
+    if (Date.now() > end) return false;
+  }
+}
+
+/**
+ * Live mode, in one step: the task marked live (and working), its dev server running with live reload (started
+ * unless one with that command already runs), and its Chrome window open on it: launched, or brought back to the
+ * front on the dev server if it's still open. Records the window on the task.
+ */
+async function goLive(task: Task, path = "/", command = LIVE) {
+  if (!task.worktree || !task.port) throw new Error("task has no worktree or port");
+  if (!task.live || task.status == "queued") touch(task, { live: true, ...(task.status == "queued" ? { status: "working" as Status } : {}) }, "Live: worked on in a session with the user");
+  const page = `http://localhost:${task.port}${path.startsWith("/") ? path : "/" + path}`;
+  const gone = (pid: number) => { try { process.kill(-pid, 0); return false; } catch { return true; } };
+  if (task.preview && (task.preview.command != command || gone(task.preview.pid))) {
+    stopPreview(task);
+    for (let i = 0; i < 40 && !(await portFree(task.port)); i++) await Bun.sleep(250); // the old one letting go
+  }
+  if (!task.preview) {
+    if (await answers(task.port, 0)) touch(task, {}, `Something already answers on ${task.port}: using it as the dev server`);
+    else await startPreview(task, command, path);
+  }
+  if (!(await answers(task.port, 120_000))) throw new Error(`the dev server didn't answer on ${task.port} (log: data/logs/task-${task.id}-preview.log)`);
+  touch(task, { previewUp: true, url: page });
+  if (await chrome.alive(task.chrome)) {
+    const target = await chrome.reattach(task.chrome!, page);
+    touch(task, { chrome: { ...task.chrome!, target }, chromeUp: true }, `Chrome window brought back (DevTools port ${task.chrome!.port})`);
+  } else {
+    const c = await chrome.launch(join(DATA, "chrome", `task-${task.id}`), page);
+    touch(task, { chrome: c, chromeUp: true }, `Chrome window opened on ${page} (pid ${c.pid}, DevTools port ${c.port})`);
+  }
+}
+
+/** Closes a live task's Chrome window. */
+async function closeChrome(task: Task) {
+  if (!task.chrome) return;
+  await chrome.close(task.chrome);
+  touch(task, { chromeUp: false }, "Chrome window closed");
+}
+
 /** Is anything answering on each live task's port? Shown on the board. */
 async function checkPreviews() {
   for (const t of store.tasks) {
     if (!t.port || ["merged", "discarded"].includes(t.status)) continue;
     const up = await fetch(`http://localhost:${t.port}/`, { redirect: "manual", signal: AbortSignal.timeout(1500) }).then(() => true, () => false);
     if (up != !!t.previewUp) { t.previewUp = up; save(); }
+    if (t.chrome) { const open = await chrome.alive(t.chrome); if (open != !!t.chromeUp) { t.chromeUp = open; save(); } }
   }
 }
 setInterval(checkPreviews, 4000);
@@ -434,6 +497,7 @@ async function restartIfWanted() {
 /** Stops the preview and removes the worktree and branch (force: even unmerged, for a discarded task). */
 async function cleanUp(task: Task, force: boolean) {
   stopPreview(task);
+  await closeChrome(task);
   if (task.worktree && existsSync(task.worktree)) {
     const r = await run(["git", "worktree", "remove", "--force", task.worktree], REPO);
     touch(task, {}, r.ok ? "Worktree removed" : `Couldn't remove worktree: ${r.all}`);
@@ -460,20 +524,23 @@ const API = {
   },
   board: `http://localhost:${PORT}/`,
   pid: process.pid,
+  live: "a live task (live: true) is worked on in a session with the user, not by a background worker: POST /api/tasks/:id/live runs its dev server with live reload and opens a Chrome window of its own on it (chrome: {pid, port, profile, target}); GET /api/tasks/:id/look says what that window shows; merge and discard stop both",
   restart: "after a merge that changes the queue's own code, it restarts itself (new pid) once nothing else is merging; tasks and previews carry on",
   columns: { Queued: ["queued"], Working: ["working", "failed"], "Ready to merge": ["complete"], Merging: ["merging"], Branches: "main's latest commits (GET /api/history): a merged task shows on its merge commit; older merged tasks and discarded ones aren't shown" },
   endpoints: {
     "GET /api": "this description",
     "GET /api/tasks[?status=complete]": "all tasks, oldest first",
     "GET /api/tasks/:id": "one task",
-    "POST /api/tasks {title, description?, worktree?: true}": "register a task: makes branch task/<id>-<slug> and worktree .claude/worktrees/task-<id> from main (node_modules cloned from the main checkout) and assigns a preview port. Returns the task.",
-    "PATCH /api/tasks/:id {status?, url?, summary?, error?, title?, description?, message?}": `update a task; status is one of ${AGENT_STATUSES.join(", ")}; message is appended to its log`,
+    "POST /api/tasks {title, description?, worktree?: true, live?: false}": "register a task: makes branch task/<id>-<slug> and worktree .claude/worktrees/task-<id> from main (node_modules cloned from the main checkout) and assigns a preview port. live marks it a live task. Returns the task.",
+    "PATCH /api/tasks/:id {status?, url?, summary?, error?, title?, description?, live?, message?}": `update a task; status is one of ${AGENT_STATUSES.join(", ")}; message is appended to its log`,
     "POST /api/tasks/:id/log {message}": "append a progress line to the task's log",
     "POST /api/tasks/:id/preview {command?, path?}": `start the task's preview server in its worktree with $PORT set (default command: ${PREVIEW}); it outlives the agent and is stopped on merge. Sets url to http://localhost:<port><path> unless url is already set.`,
     "DELETE /api/tasks/:id/preview": "stop the preview server",
+    "POST /api/tasks/:id/live {path?, command?}": `live mode: marks the task live (and working), runs its dev server with live reload (default command: ${LIVE}) unless that already runs, waits for it to answer, and opens a Chrome window of its own (own profile and DevTools port) on http://localhost:<port><path>, or brings the open one back to the front. Records it as chrome {pid, port, profile, target}. Returns the task.`,
+    "GET /api/tasks/:id/look[?shot=1][&console=1]": "what the live task's Chrome window shows: {url, title, target, tabs, selection?, console? (errors and warnings; everything with console=1), screenshot?: a PNG's path (with shot=1)}",
     "POST /api/tasks/:id/screenshots": "attach a screenshot: a raw image body (Content-Type image/png, ?caption=...), or JSON {path, caption?} (a file on disk), or JSON {url, caption?, width?, height?, wait?: ms after load, fullPage?} (the queue takes it with headless Chrome)",
     "POST /api/tasks/:id/merge": "for a complete (or failed) task: status merging at once (202), then, in the background and one merge at a time, merge main into the branch (claude -p resolves conflicts), merge the branch into main, push, and remove the worktree and branch: status merged. A failed merge goes back to complete with error. Watch the task.",
-    "POST /api/tasks/:id/discard": "drop the task: stops its preview, removes its worktree and deletes its branch",
+    "POST /api/tasks/:id/discard": "drop the task: stops its preview (and a live task's Chrome window), removes its worktree and deletes its branch",
     "GET /api/history": `main's history, for the board's Branches column: {commits: the latest ${SHOWN} on main's first-parent line, newest first, each {sha, short, subject, at, task?: the task whose merge it is, remote: whether origin/main has it}, tasks: {id: {sha, short, index, remote}} for tasks merged in main's latest ${MATCHED}, unpushed, behind, origin}. origin/main is fetched every ${FETCH_EVERY || "(never)"}s (TASK_QUEUE_FETCH).`,
     "GET /api/events": "server-sent events: a `version` event (the board's own, which reloads when it changes), a `tasks` event with every task and a `history` event with GET /api/history, on connect and on each change",
   },
@@ -521,7 +588,7 @@ async function handle(req: Request): Promise<Response> {
     const b = await body();
     if (!b.title || typeof b.title != "string") return fail(400, "title is required");
     const now = new Date().toISOString();
-    const t: Task = { id: store.nextId++, title: b.title.trim(), description: String(b.description ?? "").trim(), status: "queued", screenshots: [], log: [], createdAt: now, updatedAt: now };
+    const t: Task = { id: store.nextId++, title: b.title.trim(), description: String(b.description ?? "").trim(), status: "queued", screenshots: [], log: [], createdAt: now, updatedAt: now, ...(b.live ? { live: true } : {}) };
     store.tasks.push(t);
     touch(t, {}, "Registered");
     if (b.worktree !== false) {
@@ -539,6 +606,7 @@ async function handle(req: Request): Promise<Response> {
     if (["merging", "merged", "discarded"].includes(task.status) && b.status) return fail(409, `task ${task.id} is ${task.status}`);
     const changes: Partial<Task> = {};
     for (const k of ["status", "url", "summary", "error", "title", "description"] as const) if (k in b) (changes as any)[k] = b[k] ?? undefined;
+    if ("live" in b) changes.live = !!b.live || undefined;
     if (b.status && b.status != "failed" && !("error" in b)) changes.error = undefined;
     touch(task, changes, b.message ?? (b.status && b.status != task.status ? `Status: ${b.status}` : undefined));
     return json(task);
@@ -555,6 +623,17 @@ async function handle(req: Request): Promise<Response> {
     return json(task);
   }
   if (task && action == "preview" && req.method == "DELETE") { stopPreview(task); return json(task); }
+  if (task && action == "live" && req.method == "POST") {
+    if (["merging", "merged", "discarded"].includes(task.status)) return fail(409, `task ${task.id} is ${task.status}`);
+    const b = await body();
+    try { await goLive(task, b.path || "/", b.command || LIVE); } catch (e) { touch(task, {}, `Live mode: ${(e as Error).message}`); return fail(500, (e as Error).message); }
+    return json(task);
+  }
+  if (task && action == "look" && req.method == "GET") {
+    if (!(await chrome.alive(task.chrome))) return fail(409, `task ${task.id} has no Chrome window open: tq live ${task.id} opens one`);
+    const shot = url.searchParams.get("shot") ? join(LOOKS, `task-${task.id}-${Date.now().toString(36)}.png`) : undefined;
+    try { return json(await chrome.look(task.chrome!, { shot, console: !!url.searchParams.get("console") })); } catch (e) { return fail(500, (e as Error).message); }
+  }
   if (task && action == "screenshots" && req.method == "POST") {
     const type = req.headers.get("content-type") ?? "";
     let file: string, caption: string | undefined;

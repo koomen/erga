@@ -8,10 +8,11 @@
   :root {
     --bg: #f6f5f1; --panel: #ecebe5; --card: #ffffff; --ink: #1d1c1a; --muted: #6f6c64; --line: #dcd9d0;
     --accent: #2f5bd3; --ok: #1f7a4d; --warn: #b26a00; --bad: #b3261e; --shadow: 0 1px 2px rgba(0,0,0,.06), 0 2px 8px rgba(0,0,0,.04);
+    --live-task: #c2255c;
   }
   @media (prefers-color-scheme: dark) {
     :root { --bg: #151514; --panel: #1d1d1b; --card: #252523; --ink: #ecebe6; --muted: #9a978e; --line: #34332f;
-      --accent: #7ea0ff; --ok: #4cc38a; --warn: #f0a742; --bad: #ff7b72; --shadow: 0 1px 2px rgba(0,0,0,.4); }
+      --accent: #7ea0ff; --ok: #4cc38a; --warn: #f0a742; --bad: #ff7b72; --shadow: 0 1px 2px rgba(0,0,0,.4); --live-task: #f06595; }
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.45 ui-sans-serif, -apple-system, "Segoe UI", sans-serif; }
@@ -36,6 +37,12 @@
   .col.merging h2 .n.busy::before { content: ""; display: inline-block; vertical-align: -1px; margin-right: 6px; width: 8px; height: 8px; border: 2px solid var(--warn); border-right-color: transparent; border-radius: 50%; animation: s .8s linear infinite; }
   .card.merging .last { color: var(--warn); }
   .card.discarded { opacity: .55; }
+  /* A live task: worked on in a session with the user (its own dev server and Chrome window), not by a background worker. */
+  .card.is-live { border-left: 3px solid var(--live-task); }
+  .badge-live { flex: none; align-self: center; font: 700 10px/1 ui-sans-serif, -apple-system, sans-serif; letter-spacing: .06em; text-transform: uppercase; color: var(--live-task); border: 1px solid currentColor; border-radius: 999px; padding: 3px 7px 3px 6px; display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+  .badge-live::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+  .badge-live.on::before { animation: pulse 1.6s ease-in-out infinite; }
+  @keyframes pulse { 50% { opacity: .25; } }
   .top { display: flex; gap: 8px; align-items: baseline; }
   .id { color: var(--muted); font: 12px ui-monospace, monospace; }
   .title { font-weight: 600; flex: 1; overflow-wrap: anywhere; }
@@ -153,7 +160,8 @@ const ago = (iso) => {
 function actions(t, inDialog = false) {
   const b = [];
   if (t.url && !inDialog && !["merged", "discarded"].includes(t.status)) b.push(`<a class="btn" href="${esc(t.url)}" target="_blank" onclick="event.stopPropagation()"><span class="dot ${t.previewUp ? "up" : ""}" title="${t.previewUp ? "preview is up" : "preview is down"}"></span>Open</a>`);
-  if (t.port && t.worktree && !t.previewUp && ["working", "complete", "failed"].includes(t.status)) b.push(`<button data-act="preview" data-id="${t.id}">Start preview</button>`);
+  if (t.live && t.port && t.worktree && !(t.previewUp && t.chromeUp) && ["queued", "working", "complete", "failed"].includes(t.status)) b.push(`<button data-act="live" data-id="${t.id}" title="Run its dev server and open its Chrome window">Open live window</button>`);
+  else if (t.port && t.worktree && !t.previewUp && ["working", "complete", "failed"].includes(t.status)) b.push(`<button data-act="preview" data-id="${t.id}">Start preview</button>`);
   if (t.status == "complete") b.push(`<button class="primary" data-act="merge" data-id="${t.id}">Merge</button>`);
   if (t.status == "merging") b.push(`<button disabled><span class="spin"></span> ${t.log.at(-1)?.message.startsWith("Merge requested: waiting") ? "Waiting to merge…" : "Merging…"}</button>`);
   if (!["merging", "merged", "discarded"].includes(t.status))
@@ -164,14 +172,17 @@ function actions(t, inDialog = false) {
 function card(t) {
   const last = t.log[t.log.length - 1];
   const thumbs = t.screenshots.slice(-3).map((s) => `<img src="/shots/${esc(s.file)}" alt="${esc(s.caption)}" loading="lazy">`).join("");
-  return `<div class="card ${t.status}" data-open="${t.id}">
-    <div class="top"><span class="id">#${t.id}</span><span class="title">${esc(t.title)}</span></div>
+  return `<div class="card ${t.status} ${t.live ? "is-live" : ""}" data-open="${t.id}">
+    <div class="top"><span class="id">#${t.id}</span><span class="title">${esc(t.title)}</span>${liveBadge(t)}</div>
     <div class="meta">${t.branch ? `<code>${esc(t.branch)}</code>` : ""}<span>${t.status == "merged" ? `merged ${ago(t.mergedAt)}` : t.status == "merging" ? `merging · ${ago(t.updatedAt)}` : ago(t.updatedAt)}</span>${t.status == "failed" ? "<span>failed</span>" : ""}${t.status == "discarded" ? "<span>discarded</span>" : ""}</div>
     ${t.error ? `<div class="err">${esc(t.error)}</div>` : last && !["merged", "discarded"].includes(t.status) ? `<div class="last">${esc(last.message)}</div>` : ""}
     ${thumbs && t.status != "discarded" ? `<div class="thumbs">${thumbs}</div>` : ""}
     ${actions(t)}
   </div>`;
 }
+
+/** A live task's badge: pulsing while its dev server and Chrome window are up. */
+const liveBadge = (t) => t.live ? `<span class="badge-live ${t.previewUp && t.chromeUp && !["merged", "discarded"].includes(t.status) ? "on" : ""}" title="Live: worked on in a session with you, with its own dev server and Chrome window">Live</span>` : "";
 
 /** When a merging task's merge was asked for: they run one at a time, in that order. */
 const requested = (t) => t.log.findLast((l) => l.message.startsWith("Merge requested"))?.at ?? t.updatedAt;
@@ -268,11 +279,12 @@ function renderDialog() {
   const links = [
     t.worktree && live ? `<button class="link" data-act="copy" data-text="${esc(t.worktree)}" title="Copy ${esc(t.worktree)}">worktree</button>` : "",
     t.url && live ? `<a href="${esc(t.url)}" target="_blank" title="${esc(t.url)}"><span class="dot ${t.previewUp ? "up" : ""}"></span>preview</a>${t.previewUp ? "" : ` <span class="muted">(not running)</span>`}` : "",
+    t.chrome && live ? `<span class="muted" title="Its own profile: ${esc(t.chrome.profile)}"><span class="dot ${t.chromeUp ? "up" : ""}"></span> Chrome window ${t.chromeUp ? `open · DevTools port ${esc(t.chrome.port)}` : "closed"}</span>` : "",
     t.commit ? `<code>${esc(t.commit)}</code>` : "",
   ].filter(Boolean);
   dlg.innerHTML = `<div class="dlg">
     <div class="dlg-head">
-      <h3><span><span class="id">#${t.id}</span> ${esc(t.title)}</span><span class="status ${t.status}">${STATUS[t.status] ?? esc(t.status)}</span></h3>
+      <h3><span><span class="id">#${t.id}</span> ${esc(t.title)}</span><span class="status ${t.status}">${STATUS[t.status] ?? esc(t.status)}</span>${liveBadge(t)}</h3>
       <button class="close" data-act="close">Close</button>
     </div>
     ${t.branch ? `<div class="branch" title="${esc(t.branch)}">${esc(t.branch)}</div>` : ""}
@@ -317,6 +329,7 @@ document.addEventListener("click", (e) => {
     if (act == "more") { const k = btn.dataset.key; expanded.has(k) ? expanded.delete(k) : expanded.add(k); renderDialog(); }
     if (act == "close") { openId = null; document.getElementById("dlg").close(); }
     if (act == "preview") { btn.disabled = true; post(`/api/tasks/${id}/preview`); }
+    if (act == "live") { btn.disabled = true; btn.innerHTML = `<span class="spin"></span> Opening…`; post(`/api/tasks/${id}/live`); }
     if (act == "arm") { armed.add(id); render(); setTimeout(() => { armed.delete(id); render(); }, 4000); }
     if (act == "merge" || act == "discard") {
       // From the detail view: close it once the request goes through (the board shows the rest), or keep it open with the error.

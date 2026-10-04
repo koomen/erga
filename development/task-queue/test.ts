@@ -17,11 +17,15 @@
 // change to that code restarts it with the new code (after the merge queued
 // behind, once), keeping tasks, previews and a board connected in headless
 // Chrome (which loads the new board); other merges don't restart it.
+// And live mode: tq add --live, tq live (the dev server, and a Chrome window of
+// its own, launched headless here, reattached, relaunched when closed), tq look
+// (url, title, selection, console, a screenshot), the board's live badge, and
+// the window and dev server stopped on discard and on merge.
 
 import { existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Browser } from "../../tests/cdp.ts";
+import { Browser, Page } from "../../tests/cdp.ts";
 
 const tmp = mkdtempSync(join(tmpdir(), "tq-test-"));
 const repo = join(tmp, "repo"), origin = join(tmp, "origin.git"), data = join(tmp, "data");
@@ -37,7 +41,7 @@ const port = 4790 + Math.floor(Math.random() * 9);
 const base = `http://127.0.0.1:${port}`;
 // The stand-in for claude -p: keeps both sides of every conflict (taking a moment, so the merge is seen merging).
 const resolver = `sleep 1; for f in $(git diff --name-only --diff-filter=U); do grep -v -e '^<<<<<<<' -e '^=======' -e '^>>>>>>>' "$f" > "$f.x" && mv "$f.x" "$f" && git add "$f"; done; git commit -q --no-edit`;
-const env = { ...process.env, TASK_QUEUE_PORT: String(port), TASK_QUEUE_REPO: repo, TASK_QUEUE_DATA: data, TASK_QUEUE_RESOLVER: resolver, TASK_QUEUE_INSTALL: "0", TASK_QUEUE_FETCH: "2" };
+const env = { ...process.env, TASK_QUEUE_PORT: String(port), TASK_QUEUE_REPO: repo, TASK_QUEUE_DATA: data, TASK_QUEUE_RESOLVER: resolver, TASK_QUEUE_INSTALL: "0", TASK_QUEUE_FETCH: "2", TASK_QUEUE_CHROME_HEADLESS: "1" };
 const startServer = () => Bun.spawn(["bun", join(import.meta.dir, "server.ts")], { env, stdout: "pipe", stderr: "inherit" });
 const waitUp = async () => { for (let i = 0; i < 50; i++) { try { await fetch(base + "/api"); return; } catch { await Bun.sleep(100); } } };
 let server = startServer();
@@ -58,6 +62,8 @@ const until = async (id: number, pred: (t: any) => boolean) => {
 };
 
 let watcher: ReturnType<typeof Bun.spawn> | undefined;
+/** Live mode's windows and dev servers, killed at the end if the test stops before the queue does. */
+const leftovers: number[] = [];
 let selfPid = 0;
 try {
   await waitUp();
@@ -270,11 +276,100 @@ try {
     check(page.errors.length == 0, `no errors on the board (${page.errors})`);
   } finally { browser.close(); }
 
+  // ---- Live mode -------------------------------------------------------------
+  const running = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+  const gone = async (pid: number) => { for (let i = 0; i < 100 && running(pid); i++) await Bun.sleep(100); return !running(pid); };
+  // A stand-in dev server: the page is page.html in the worktree, read on every request.
+  const devServer = `bun -e 'Bun.serve({port: Number(process.env.PORT), fetch: async () => new Response(await Bun.file("page.html").text(), {headers: {"content-type": "text/html"}})})'`;
+  const added = tq("add", "--live", "Tweak the docs list", "Live: tighten the spacing");
+  const l1 = JSON.parse(added.out);
+  check(added.code == 0 && l1.live === true && l1.status == "queued" && l1.worktree, `tq add --live registers a live task (${added.err})`);
+  check((await api("PATCH", `/api/tasks/${l1.id}`, { live: false })).live === undefined && (await api("PATCH", `/api/tasks/${l1.id}`, { live: true })).live === true, "PATCH sets and clears live");
+  check((await api("POST", "/api/tasks", { title: "Not live" })).live === undefined, "tasks aren't live unless asked");
+  writeFileSync(join(l1.worktree, "page.html"), "<title>Docs</title><h1>The docs list</h1>");
+  const went = tq("live", String(l1.id), "/docs", "--cmd", devServer);
+  const l2 = JSON.parse(went.out || "{}");
+  leftovers.push(l2.chrome?.pid, -l2.preview?.pid);
+  check(went.code == 0 && l2.status == "working" && l2.previewUp && l2.preview?.command == devServer && l2.url == `http://localhost:${l1.port}/docs`, `tq live starts it, runs the dev server and waits for it (${went.err})`);
+  check(l2.chrome?.pid && l2.chrome.port && l2.chrome.profile?.startsWith(join(data, "chrome")) && l2.chrome.target && l2.chromeUp, "and opens a Chrome window of its own, recorded on the task");
+  const tabs = await (await fetch(`http://127.0.0.1:${l2.chrome.port}/json/list`)).json();
+  check(tabs.some((t: any) => t.id == l2.chrome.target && t.url == `http://localhost:${l1.port}/docs`), "the window shows the dev server's page");
+  // The user selects something, and the page logs an error.
+  const tab = new Page(tabs.find((t: any) => t.id == l2.chrome.target).webSocketDebuggerUrl);
+  await tab.ready;
+  for (let i = 0; i < 100 && !(await tab.eval(`!!document.querySelector("h1")`)); i++) await Bun.sleep(100);
+  await tab.eval(`getSelection().selectAllChildren(document.querySelector("h1")), console.error("boom"), console.log("hello"), true`);
+  const shotFile = join(tmp, "look.png");
+  const looked = tq("look", String(l1.id), "--shot", shotFile);
+  const lk = JSON.parse(looked.out || "{}");
+  check(looked.code == 0 && lk.url == `http://localhost:${l1.port}/docs` && lk.title == "Docs" && lk.target == l2.chrome.target && lk.tabs?.length == 1, `tq look says what the window shows (${looked.err || JSON.stringify(lk)})`);
+  check(lk.selection == "The docs list", `and what's selected in it (${lk.selection})`);
+  check(lk.console?.some((m: string) => m == "error: boom") && !lk.console.some((m: string) => m.includes("hello")), `and its console errors (${lk.console})`);
+  check(lk.screenshot == shotFile && existsSync(shotFile) && readFileSync(shotFile).subarray(1, 4).toString() == "PNG", "--shot saves a screenshot");
+  const all = JSON.parse(tq("look", String(l1.id), "--console").out || "{}");
+  check(all.console?.some((m: string) => m == "log: hello") && !all.screenshot, "--console has every message");
+  tab.close?.();
+  // An edit in the worktree shows on the next load.
+  writeFileSync(join(l1.worktree, "page.html"), "<title>Docs, tighter</title><h1>The docs list</h1>");
+  const again1 = JSON.parse(tq("live", String(l1.id), "/docs", "--cmd", devServer).out || "{}");
+  check(again1.chrome?.pid == l2.chrome.pid && again1.preview?.pid == l2.preview.pid && again1.log.at(-1).message.startsWith("Chrome window brought back"), "tq live again reattaches to the same window and dev server");
+  // Every tab closed: tq live opens one again, in the same window.
+  for (const t of await (await fetch(`http://127.0.0.1:${l2.chrome.port}/json/list`)).json()) if (t.type == "page") await fetch(`http://127.0.0.1:${l2.chrome.port}/json/close/${t.id}`);
+  await Bun.sleep(300);
+  const again2 = JSON.parse(tq("live", String(l1.id), "/docs", "--cmd", devServer).out || "{}");
+  const tabs2 = await (await fetch(`http://127.0.0.1:${l2.chrome.port}/json/list`)).json().catch(() => []);
+  check(again2.chrome?.pid == l2.chrome.pid && tabs2.some((t: any) => t.id == again2.chrome.target && t.url.startsWith(`http://localhost:${l1.port}/`)), "with its tabs closed, tq live opens the page again in the same window");
+  check(JSON.parse(tq("look", String(l1.id)).out || "{}").title == "Docs, tighter", "showing the worktree's latest");
+  // The window closed (by the user, say): the board sees it, and tq live opens a new one.
+  process.kill(l2.chrome.pid, "SIGKILL");
+  await gone(l2.chrome.pid);
+  check(!(await until(l1.id, (t) => !t.chromeUp)).chromeUp, "the board sees the window closed");
+  check(tq("look", String(l1.id)).code != 0, "tq look says when there's no window");
+  const l3 = JSON.parse(tq("live", String(l1.id), "/docs", "--cmd", devServer).out || "{}");
+  leftovers.push(l3.chrome?.pid);
+  check(l3.chrome?.pid && l3.chrome.pid != l2.chrome.pid && l3.chromeUp && (await fetch(`http://127.0.0.1:${l3.chrome.port}/json/version`)).ok, "tq live opens a new window when the old one is gone");
+
+  // The board: a live badge on the card and in the detail view, and the window in the detail view.
+  const browser3 = await Browser.launch();
+  try {
+    const page = await browser3.page();
+    await page.open(base + "/", { width: 1400, height: 900, clear: false });
+    await Bun.sleep(600);
+    const b = await page.eval(`(() => { const card = document.querySelector('.card[data-open="${l1.id}"]'); return { badge: !!card?.querySelector(".badge-live"), on: !!card?.querySelector(".badge-live.on"), live: card?.classList.contains("is-live"), others: document.querySelectorAll(".card .badge-live").length }; })()`);
+    check(b.badge && b.on && b.live && b.others == 1, `the live task's card has a live badge, and no other card does (${JSON.stringify(b)})`);
+    await page.eval(`document.querySelector('.card[data-open="${l1.id}"] .title').click(), true`);
+    await page.settle();
+    const d = await page.eval(`({ badge: !!document.querySelector("#dlg h3 .badge-live"), chrome: document.querySelector("#dlg .links")?.textContent ?? "" })`);
+    check(d.badge && d.chrome.includes(`Chrome window open · DevTools port ${l3.chrome.port}`), `the detail view shows the badge and the window (${d.chrome})`);
+    await page.screenshot(join(tmp, "board-live.png"));
+    check(page.errors.length == 0, `no errors on the board (${page.errors})`);
+  } finally { browser3.close(); }
+
+  // Discarded: the dev server stops and the window closes.
+  await api("POST", `/api/tasks/${l1.id}/discard`);
+  check(await gone(l3.chrome.pid), "discarding a live task closes its Chrome window");
+  await Bun.sleep(5500);
+  check(!(await fetch(`http://localhost:${l1.port}/`).then(() => true, () => false)), "and stops its dev server");
+
+  // Merged: the same.
+  const lm = JSON.parse(tq("add", "--live", "Live and merged").out);
+  writeFileSync(join(lm.worktree, "page.html"), "<h1>merged</h1>");
+  sh(`git add page.html && git commit -qm "Live page"`, lm.worktree);
+  const lm2 = JSON.parse(tq("live", String(lm.id), "--cmd", devServer).out || "{}");
+  leftovers.push(lm2.chrome?.pid, -lm2.preview?.pid);
+  check(lm2.chromeUp && running(lm2.chrome.pid), "a second live task has its window");
+  tq("done", String(lm.id), "Live work done");
+  const merged = JSON.parse(tq("merge", String(lm.id), "--wait").out || "{}");
+  check(merged.status == "merged", `a live task merges like any other (${merged.error ?? merged.status})`);
+  check(await gone(lm2.chrome.pid), "and merging it closes its Chrome window");
+  await Bun.sleep(5500);
+  check(!(await fetch(`http://localhost:${lm.port}/`).then(() => true, () => false)), "and stops its dev server");
+
   // ---- Restarting itself after a merge of its own code ----------------------
   // A second throwaway repo carrying the queue's code, run from there, as the real one runs from the main checkout.
   const repo2 = join(tmp, "repo2"), origin2 = join(tmp, "origin2.git"), data2 = join(tmp, "data2"), code2 = join(repo2, "development/task-queue");
   sh(`git init -q --bare -b main ${origin2}`, tmp);
-  sh(`git init -q -b main ${repo2} && cd ${repo2} && git config user.email t@t && git config user.name t && mkdir -p ${code2} && cp ${join(import.meta.dir, "server.ts")} ${join(import.meta.dir, "index.html")} ${join(import.meta.dir, "tq")} ${join(import.meta.dir, "README.md")} ${code2}/ && echo app > app.txt && git add . && git commit -qm init && git remote add origin ${origin2} && git push -q origin main`, tmp);
+  sh(`git init -q -b main ${repo2} && cd ${repo2} && git config user.email t@t && git config user.name t && mkdir -p ${code2} && cp ${join(import.meta.dir, "server.ts")} ${join(import.meta.dir, "chrome.ts")} ${join(import.meta.dir, "index.html")} ${join(import.meta.dir, "tq")} ${join(import.meta.dir, "README.md")} ${code2}/ && echo app > app.txt && git add . && git commit -qm init && git remote add origin ${origin2} && git push -q origin main`, tmp);
   const port2 = port == 4798 ? 4790 : port + 1, base2 = `http://127.0.0.1:${port2}`;
   const env2 = { ...env, TASK_QUEUE_PORT: String(port2), TASK_QUEUE_REPO: repo2, TASK_QUEUE_DATA: data2 };
   const api2 = async (method: string, path: string, body?: unknown) => {
@@ -359,6 +454,7 @@ try {
   await api2("POST", `/api/tasks/${k.id}/discard`);
 } finally {
   server.kill();
+  for (const pid of leftovers) if (pid) try { process.kill(pid, "SIGKILL"); } catch {}
   if (selfPid) try { process.kill(selfPid); } catch {}
   try { watcher?.kill(); } catch {}
   rmSync(tmp, { recursive: true, force: true });
