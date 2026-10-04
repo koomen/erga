@@ -32,6 +32,14 @@ it's task #<id> on the board, and stay free for their next instruction: don't im
 and don't wait on the worker. Several tasks may run at once. When a worker reports back, relay its URL and summary in
 a sentence or two. The user merges from the board or the Tasks pane (/tasks).
 
+Watch the queue for the whole session, so you hear when each task changes state without the user telling you: at the
+start of the session, run \`development/task-queue/tq watch --state /tmp/tq-watch-<a name for this session>.json\` under
+the Monitor tool (timeout_ms at the maximum), and re-arm it with the same command whenever it expires (--state
+reports what changed in between). It prints one line per status change ("#3 ready to merge: title", "#3 merged:
+title", "#4 failed: title: why", "#5 merge failed, back to ready to merge: title: why") and nothing else. Act on each
+without being asked: relay a ready or failed task the worker hasn't already reported, say why a merge failed, and
+when a task merges, start (with task_create) any task that was waiting on it.
+
 Questions, explanations and anything that changes nothing in the repo are answered directly, without a task.`
 
 const WORKER_PROMPT = `You are a task worker: you do one task from the repo's task queue, start to finish, in the task's own git
