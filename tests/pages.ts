@@ -150,7 +150,7 @@ await write("about.html", PAGE("About", `<nav data-erga-noedit><a href="index.ht
 {
   const at = async (path: string) => { const r = await get(path); return { status: r.status, location: r.headers.get("location"), page: /<meta name="erga-page" content="([^"]*)"/.exec(await r.text())?.[1] ?? null }; };
   const cases: [string, number, string | null, string | null][] = [
-    [address, 200, null, "index.html"],
+    [address, 200, null, null], // (the document's own page, which its frame asks for as doc/)
     [`${address}/blog`, 200, null, "blog/index.html"],
     [`${address}/blog/`, 200, null, "blog/index.html"],
     [`${address}/blog/post`, 200, null, "blog/post.html"],
@@ -186,15 +186,17 @@ await write("about.html", PAGE("About", `<nav data-erga-noedit><a href="index.ht
 
   // The pages origin: an address-like path goes to its file, relatively (so the page's own relative links resolve).
   const viewer = await (await get(`${address}/blog`)).text();
-  const frameSrc = /<iframe id="frame"[^>]* src="([^"]+)"/.exec(viewer)?.[1]?.replace(/&amp;/g, "&") ?? "";
+  const frameSrc = /<iframe id="frame"[^>]* (?:data-)?src="([^"]+)"/.exec(viewer)?.[1]?.replace(/&amp;/g, "&") ?? "";
   const frameUrl = new URL(frameSrc);
   expect(frameUrl.searchParams.get("view") == "blog/index.html", "the viewer's frame shows the page's file", frameSrc);
   const onPages = (path: string) => fetch(`${base}${frameUrl.pathname}${path}`, { redirect: "manual", headers: { Host: frameUrl.host } });
-  const redirects: [string, string][] = [["doc/blog", "blog/index.html"], ["doc/blog/", "index.html"], ["doc/", "index.html"], ["doc/blog/post", "post.html"]];
+  const redirects: [string, string][] = [["doc/blog", "blog/index.html"], ["doc/blog/", "index.html"], ["doc/blog/post", "post.html"]];
   for (const [path, location] of redirects) {
     const r = await onPages(path);
     expect(r.status == 302 && r.headers.get("location") == location, `pages origin: ${path} goes to ${location}`, { status: r.status, location: r.headers.get("location") });
   }
+  const root = await onPages("doc/");
+  expect(root.status == 200 && (await root.text()).includes("<h1>Home</h1>"), "doc/ itself is the document's own page, served as it is");
   expect((await onPages("doc/blog/blog.css")).status == 200 && (await onPages("doc/nope")).status == 404, "files are served as they are, and nothing else");
   ok("on the pages origin, a page's address goes to its file (relatively), so relative links and assets resolve");
 }
