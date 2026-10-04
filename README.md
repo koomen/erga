@@ -760,7 +760,8 @@ on-screen keyboard, and keep clear of a notch.
 
 There's no dark mode: pages are shown as their authors made them, and most
 don't support one. The editor's own controls take their colours from the page
-under them instead.
+instead, on a band in the page's colour above it (see "One page, viewing or
+editing").
 
 ### Document settings
 
@@ -1216,8 +1217,8 @@ source view takes the frame's state, undo history included, and hands it back.
 
 A document's page (`viewDocument` in `front.ts`) is the same at
 `/<owner>/<slug>` and with `#edit` after it (the server never sees the fragment, so it serves one page; the page decides from `location.hash`, as it loads and whenever it changes), and small (about 4KB compressed):
-the controls, floating over the top corners, and a frame filling the window
-with the frame's host page in it (`/t/<token>/?view=`), which shows
+the controls, on a band across the top, and a frame filling the window
+below the band, with the frame's host page in it (`/t/<token>/?view=`), which shows
 the document's page straight away, as it renders. All the rest of the weight
 is the document's own. Editing is loaded on top, only for those who may edit
 and only when they go into it (the pencil, or opening it with `#edit`, or adding `#edit` to the address): the page adds
@@ -1240,6 +1241,25 @@ Only a page opened with `#edit` and reloaded puts the agent back unanimated.
 `tests/switch.ts` records the first switch frame by frame on a slow network,
 light and dark, and checks no frame shows white or loses the document, and
 that the page never jumps.
+
+The document starts below the band, so the controls never cover its first
+line, at any width. The band takes the document's own background, as a solid
+colour (a gradient's colour at the top edge), and the controls turn light on
+a dark page. The frame's host page reads the background of the page it shows
+on every frame and tells the document's page (`HOST_SCRIPT`, `BAND_BOOT` in
+`front.ts`), so the band follows a theme switch or another page of the
+document. The page remembers each document's colour (`erga:band:v1:<id>`)
+and paints it before anything loads, so a reload, viewing or editing, shows
+no white. On a first visit nothing is remembered: the host page keeps the
+document out of sight until the band has its colour (half a second at most),
+so a dark page never shows under a white band; the window is white only
+before the document shows at all. A link to another of the document's pages,
+in a colour of its own, waits in the same way, a frame or two. The band is the same height viewing and
+editing, so the document doesn't move between them. `tests/band.ts` checks
+that no control covers the text of pages whose first line is at their top
+edge (light, dark, a gradient; desktop and phone), compares the band's
+pixels with the page's, and records a first visit, a hard reload and the
+switch into the editor and back frame by frame on a slow network.
 
 The pages origin (`pagesDoor` in `front.ts`) serves the frame at `/t/<token>/`
 and the document's files under `/t/<token>/doc/`. The token, signed with
