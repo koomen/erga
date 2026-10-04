@@ -14,6 +14,12 @@ export interface Env {
    * row in the users table, added by an admin.
    */
   ADMINS: string;
+  /**
+   * The server settings the deploy fixes, a JSON object by key
+   * (server.config.ts and ERGA_SERVER_CONFIG, via cloudflare.config.ts):
+   * locked, so admins see them but can't change them (config.ts).
+   */
+  SERVER_CONFIG?: string;
   GITHUB_CLIENT_ID: string;
   GITHUB_CLIENT_SECRET: string;
   /** Signs session cookies. */
