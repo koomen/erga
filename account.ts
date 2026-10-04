@@ -1,8 +1,8 @@
 // Who you are, in the upper right of every page erga.dev serves: your
 // avatar (your GitHub picture, or your initial on your colour if it doesn't
-// load), which opens a small menu (your name, your documents, the admin page
-// for admins, sign out); or, signed out, a person in a circle that offers to
-// sign in with GitHub and come back to the same page.
+// load), which opens a small menu (your name, My Documents, Settings, Admin
+// settings for admins, Sign out); or, signed out, a person in a circle whose
+// menu has only Sign in (with GitHub, coming back to the same page).
 //
 // The Worker adds it to each of the site's HTML pages (`withAccount`,
 // worker/index.ts), so every page has it without each building it. The
@@ -49,8 +49,7 @@ export function accountHtml(account: Account | null, here: string): string {
     return `<div class="erga-account" data-erga-account="out">
 <button type="button" class="erga-account-btn erga-account-out" aria-label="Sign in" title="Sign in" aria-haspopup="true" aria-expanded="false" aria-controls="${id}">${PERSON}</button>
 <div class="erga-account-menu" id="${id}" hidden>
-<p class="erga-account-who">You're not signed in.</p>
-<a class="erga-account-github" href="${esc(signInUrl(here))}">${GITHUB}<span>Sign in with GitHub</span></a>
+<a class="erga-account-github" href="${esc(signInUrl(here))}">${GITHUB}<span>Sign in</span></a>
 </div>
 </div>${ACCOUNT_STYLE}${ACCOUNT_SCRIPT}`;
   }
@@ -62,8 +61,9 @@ export function accountHtml(account: Account | null, here: string): string {
 </button>
 <div class="erga-account-menu" id="${id}" hidden>
 <p class="erga-account-who"><b>${esc(account.name)}</b>${account.name.toLowerCase() != account.login.toLowerCase() ? `<span>${esc(account.login)}</span>` : ""}</p>
-<a href="${esc(link("/docs", s))}">Your documents</a>
-${account.admin ? `<a href="${esc(link("/admin", s))}">Admin</a>` : ""}
+<a href="${esc(link("/docs", s))}">My Documents</a>
+<a href="${esc(link("/settings", s))}">Settings</a>
+${account.admin ? `<a href="${esc(link("/admin", s))}">Admin settings</a>` : ""}
 <a href="/auth/logout">Sign out</a>
 </div>
 </div>${ACCOUNT_STYLE}${ACCOUNT_SCRIPT}`;

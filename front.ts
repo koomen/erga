@@ -4,13 +4,16 @@
 // who's signed in, the templates, the directory of documents (directory.ts,
 // in D1) and the documents themselves (Durable Objects).
 //
-//   /                          the front page: the landing document (a setting), read-only, with an Edit button
-//   /new                       a blank document for you (signs you in first); /new?from=landing a copy of the front page's
+//   /                          the front page: the viewer on the landing document (a setting), for anyone
+//   /new                       a blank document for you, in the editor (signs you in first); /new?from=landing a copy
+//                              of the front page's, /new?from=<id> of another you may open (the viewer's Clone)
 //   /docs                      your documents, latest edit first; POST /docs/delete deletes one, /docs/rename renames one,
 //                              /docs/share shares one (or stops sharing it), GET /docs/share?id= says with whom
 //   /admin                     the server's settings and users, for admins (admin.ts); POST /admin/settings, /admin/users
-//   /<owner>/<slug>            the editor on that document (for those it's shared with): its canonical address
-//   /<owner>/<id>, /<owner>/<old slug>, /d/<id>
+//   /<owner>/<slug>            the viewer on that document (for those it's shared with): its canonical address;
+//                              Clone, and Edit for those who may edit it
+//   /<owner>/<slug>/edit       the editor on it, under My Documents (its breadcrumbs)
+//   /<owner>/<id>, /<owner>/<old slug>, /d/<id> (and /edit under them)
 //                              redirect there
 //   /d/<id>/<rest>             the document's own host (host.ts): /api/..., /doc/..., the sockets; the
 //                              editor uses this address, which never changes. Under any of the
@@ -163,15 +166,17 @@ export async function frontDoor(request: Request, base: Platform): Promise<Respo
   if (!first || (first != "d" && !OWNER.test(first))) return page("Not found", "There's nothing here. <a href=\"/\">Back to the start</a>.", 404);
   const session = await platform.sessionOf(request);
 
-  // The editor itself: sign in first, then the page that joins the document, at its canonical address.
-  if (!rest || rest == "/") {
+  // The viewer (/<owner>/<slug>) and the editor (/<owner>/<slug>/edit): sign in first, then the page, at its canonical address.
+  const editing = rest == "/edit" || rest == "/edit/";
+  if (!rest || rest == "/" || editing) {
     if (!session) return signInFirst(path + url.search);
     const doc = await documentAt(platform, first, second);
     if (!doc) return nothing();
     if (!(await platform.directory.may(whoOf(session), "open", doc))) return refused(session);
-    const canonical = `/${doc.owner}/${doc.slug}`;
+    const canonical = `/${doc.owner}/${doc.slug}${editing ? "/edit" : ""}`;
     if (path != canonical && path != `${canonical}/`) return new Response(null, { status: 302, headers: { Location: canonical + url.search } });
     if (!(await platform.docs.exists(doc))) return nothing();
+    if (!editing) return viewDocument(platform, request, doc, session, false);
     // The page editor runs on the document's own origin, at an address that carries the token for its files.
     // The editor reaches its document's host at /d/<id>, which a rename never changes.
     const pagesUrl = `${pagesOrigin(doc.owner, doc.id, url, platform)}/t/${await pagesToken(platform.secret, doc.owner, doc.id, url.origin)}/`;
@@ -204,7 +209,7 @@ export async function frontDoor(request: Request, base: Platform): Promise<Respo
 /** What the editor's menu on your avatar needs to know that the document doesn't (account.ts): the links it offers. */
 async function accountMeta(platform: Platform, session: Session): Promise<string> {
   const admin = !session.test && !session.agent && (await platform.directory.users.isAdmin(whoOf(session)));
-  const links = { docs: link("/docs", session), ...(admin ? { admin: link("/admin", session) } : {}), signOut: "/auth/logout" };
+  const links = { docs: link("/docs", session), settings: link("/settings", session), ...(admin ? { admin: link("/admin", session) } : {}), signOut: "/auth/logout" };
   return `<meta name="erga-account" content="${esc(JSON.stringify(links))}">`;
 }
 
@@ -346,30 +351,39 @@ async function pagesDoor(request: Request, url: URL, doc: { owner: string; id: s
 export const link = (path: string, session: Session | null) =>
   session?.as ? `${path}${path.includes("?") ? "&" : "?"}user=${encodeURIComponent(session.as)}` : path;
 
-/**
- * The front page: the landing document (the landing_document setting) as
- * anyone sees it, signed in or not, with an Edit button that makes you a copy
- * of it (and, signed in, a way to your documents). It runs on its own pages
- * origin, in a frame filling the window, like any document's page: whoever
- * edits it can't act as the people who view it. With none set (or it's
- * gone), a plain start page.
- */
+/** The front page: the viewer on the landing document (the landing_document setting), for anyone, signed in or not. With none set (or it's gone), a plain start page. */
 async function viewLanding(platform: Platform, request: Request, session: Session | null): Promise<Response> {
-  const url = new URL(request.url);
   const doc = await platform.directory.landing();
-  const index = doc && await platform.docs.index(doc);
-  const docs = session && !session.test ? `<nav class="erga-docs-nav" aria-label="Documents"><a href="${esc(link("/docs", session))}" class="erga-edit-button erga-docs-button">‹ Documents</a></nav>` : "";
-  if (!doc || !index) return startPage(platform, session);
+  if (!doc || !(await platform.docs.index(doc))) return startPage(platform, session);
+  return viewDocument(platform, request, doc, session, true);
+}
+
+/**
+ * The viewer: a document as it renders, read-only, on its own pages origin,
+ * in a frame filling the window, as the editor shows any page (whoever edits
+ * it can't act as the people who view it). Over it, Clone (a copy of your
+ * own, in the editor) for anyone who may see it, and Edit (its editor) for
+ * those who may edit it. The front page is this, on the landing document.
+ */
+async function viewDocument(platform: Platform, request: Request, doc: DocRow, session: Session | null, landing: boolean): Promise<Response> {
+  const url = new URL(request.url);
+  const index = await platform.docs.index(doc);
+  if (!index) return page("Not found", "There's no document here. <a href=\"/\">Back to the start</a>.", 404);
   const pages = `${pagesOrigin(doc.owner, doc.id, url, platform)}/t/${await pagesToken(platform.secret, doc.owner, doc.id, url.origin)}/doc/${index.split("/").map(encodeURIComponent).join("/")}`;
-  const edit = `<a href="${esc(link("/new?from=landing", session))}" class="erga-edit-button">Edit</a>`;
+  const canEdit = !!session && !session.agent && (await platform.directory.may(whoOf(session), "edit", doc));
+  const clone = `<a href="${esc(link(`/new?from=${landing ? "landing" : doc.id}`, session))}" class="erga-view-button erga-clone-button">Clone</a>`;
+  const edit = canEdit ? `<a href="${esc(link(`/${doc.owner}/${doc.slug}/edit`, session))}" class="erga-view-button erga-edit-button">Edit</a>` : "";
+  const crumbs = !landing && session && !session.test
+    ? `<nav class="erga-crumbs" aria-label="Breadcrumbs"><a href="${esc(link("/docs", session))}">My Documents</a><span aria-hidden="true">›</span><span aria-current="page">${esc(doc.title)}</span></nav>`
+    : "";
   return new Response(`<!doctype html>
 <html lang="en">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${esc(doc.title)}</title>
-<style>html, body { margin: 0; height: 100%; } .erga-landing { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; display: block; }</style>
-<iframe class="erga-landing" src="${esc(pages)}" title="${esc(doc.title)}"></iframe>
-${docs}${edit}${EDIT_BUTTON_STYLE}
+<style>html, body { margin: 0; height: 100%; } .erga-view { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; display: block; }</style>
+<iframe class="erga-view" src="${esc(pages)}" title="${esc(doc.title)}"></iframe>
+${crumbs}<div class="erga-view-buttons">${edit}${clone}</div>${VIEW_STYLE}
 </html>`, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" } });
 }
 
@@ -396,32 +410,44 @@ async function startPage(platform: Platform, session: Session | null): Promise<R
 </main>`), { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
 }
 
-const EDIT_BUTTON_STYLE = `
+const VIEW_STYLE = `
 <style>
-  /* Right of it is who you are (account.ts): your avatar, or a way to sign in. */
-  .erga-edit-button { position: fixed; top: 14px; right: 58px; z-index: 1000; padding: 7px 16px; border-radius: 999px;
-    font: 600 14px/1.2 system-ui, -apple-system, sans-serif; text-decoration: none; color: #fff; background: #1b2330;
-    box-shadow: 0 2px 10px rgba(20, 28, 40, .2); }
+  /* Right of them is who you are (account.ts): your avatar, or a way to sign in. */
+  .erga-view-buttons { position: fixed; top: 14px; right: 58px; z-index: 1000; display: flex; gap: 8px; }
+  .erga-view-button { padding: 7px 16px; border-radius: 999px; font: 600 14px/1.2 system-ui, -apple-system, sans-serif; text-decoration: none;
+    color: #1b2330; background: #fff; box-shadow: 0 2px 10px rgba(20, 28, 40, .2); }
+  .erga-view-button:hover { background: #eef1f5; }
+  .erga-edit-button { color: #fff; background: #1b2330; }
   .erga-edit-button:hover { background: #2f3b4d; }
-  .erga-docs-button { right: auto; left: 16px; color: #1b2330; background: #fff; }
-  .erga-docs-button:hover { background: #eef1f5; }
+  .erga-crumbs { position: fixed; top: 14px; left: 16px; z-index: 1000; display: flex; align-items: center; gap: 8px; max-width: calc(100vw - 260px);
+    padding: 7px 14px; border-radius: 999px; background: #fff; box-shadow: 0 2px 10px rgba(20, 28, 40, .2);
+    font: 500 14px/1.2 system-ui, -apple-system, sans-serif; color: #5b6676; }
+  .erga-crumbs a { color: #1b2330; font-weight: 600; text-decoration: none; white-space: nowrap; }
+  .erga-crumbs a:hover { text-decoration: underline; }
+  .erga-crumbs [aria-current] { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   /* On a phone they'd sit over the text the whole way down: they stay at the top instead, and are bigger to tap. */
-  @media (max-width: 640px), (max-height: 480px) { .erga-edit-button { position: absolute; padding: 10px 18px; } }
+  @media (max-width: 640px), (max-height: 480px) {
+    .erga-view-buttons, .erga-crumbs { position: absolute; }
+    .erga-view-button { padding: 10px 18px; }
+    .erga-crumbs [aria-current], .erga-crumbs [aria-hidden] { display: none; }
+  }
   @media (prefers-color-scheme: dark) {
+    .erga-view-button, .erga-crumbs { color: #e4e8ee; background: #1a2029; } .erga-view-button:hover { background: #232a35; }
+    .erga-crumbs a { color: #e4e8ee; } .erga-crumbs { color: #9aa5b4; }
     .erga-edit-button { color: #12161d; background: #e4e8ee; } .erga-edit-button:hover { background: #fff; }
-    .erga-docs-button { color: #e4e8ee; background: #1a2029; } .erga-docs-button:hover { background: #232a35; }
   }
 </style>`;
 
 /**
  * What a new document starts from: a copy of the front page's document
- * (`landing`), or a blank page (templates/doc). Null if there's no landing
- * document to copy.
+ * (`landing`), of another document by id (one `who` may open), or a blank
+ * page (templates/doc). Null if there's nothing there to copy.
  */
-export async function startingFiles(platform: Platform, from: string | null): Promise<{ files: Record<string, string | Uint8Array>; index: string } | null> {
-  if (from != "landing") return { files: { ...platform.templates.doc }, index: "index.html" };
-  const doc = await platform.directory.landing();
-  return doc && platform.docs.snapshot(doc);
+export async function startingFiles(platform: Platform, from: string | null, who?: Who): Promise<{ files: Record<string, string | Uint8Array>; index: string } | null> {
+  if (!from) return { files: { ...platform.templates.doc }, index: "index.html" };
+  const doc = from == "landing" ? await platform.directory.landing() : ID.test(from) && who ? await platform.directory.get(from) : null;
+  if (!doc || (from != "landing" && !(await platform.directory.may(who!, "open", doc)))) return null;
+  return platform.docs.snapshot(doc);
 }
 
 /** A new document for the signed-in person, at /<login>/<id>: blank (templates/doc), or a copy of the front page's (?from=landing). */
@@ -432,11 +458,12 @@ async function newDoc(platform: Platform, request: Request): Promise<Response> {
   if (!session) return signInFirst(`/new${params.size ? `?${params}` : ""}`);
   // Another site may not make documents for you (nor an unconfirmed sign-in on the way back from GitHub).
   if (request.method == "POST" ? request.headers.get("origin") != url.origin : fromElsewhere(request)) {
-    return confirmAction("New document", params.get("from") == "landing" ? "Make your copy of this page" : "Make a new document", `/new${url.search}`);
+    return confirmAction("New document", params.get("from") ? "Make your copy of this page" : "Make a new document", `/new${url.search}`);
   }
   const wanted = params.get("id");
-  const start = await startingFiles(platform, params.get("from"));
-  if (!start) return page("Nothing to copy", "This server has no front page to copy. <a href=\"/new\">Make a blank document</a>.", 404);
+  const from = params.get("from");
+  const start = await startingFiles(platform, from, whoOf(session));
+  if (!start) return page("Nothing to copy", from == "landing" ? "This server has no front page to copy. <a href=\"/new\">Make a blank document</a>." : "There's no document here you can copy. <a href=\"/new\">Make a blank document</a>.", 404);
   const template = start.files, index = start.index;
   // A test person makes (or reuses) a test document under the address of whoever minted their token.
   // Its address is its id, which never follows the title (the suite addresses it by id).
@@ -446,7 +473,7 @@ async function newDoc(platform: Platform, request: Request): Promise<Response> {
     const known = await platform.directory.route(wanted);
     if (known && (known.owner != owner || !known.test)) return page("Taken", "That test document's id is someone else's: pick another.", 409);
     if (!known) await makeDoc(platform, owner, wanted, template, { test: true, index });
-    return new Response(null, { status: 302, headers: { Location: `/${owner}/${wanted}` } });
+    return new Response(null, { status: 302, headers: { Location: `/${owner}/${wanted}/edit` } });
   }
   // Local development may name the document (the test suite wants "test" in its address),
   // and say how soon it goes if nobody edits it (?unedited=<ms>, for tests/worker.ts).
@@ -455,7 +482,7 @@ async function newDoc(platform: Platform, request: Request): Promise<Response> {
   for (let tries = 0; tries < 5; tries++) {
     const id = wanted && dev && ID.test(wanted) ? wanted : newId();
     const made = await makeDoc(platform, session.login.toLowerCase(), id, template, { unedited, index });
-    if (made) return new Response(null, { status: 302, headers: { Location: link(`/${made.owner}/${made.slug}`, session) } });
+    if (made) return new Response(null, { status: 302, headers: { Location: link(`/${made.owner}/${made.slug}/edit`, session) } });
   }
   return page("Couldn't make a document", "Something went wrong picking an address. <a href=\"/new\">Try again</a>.", 500);
 }
@@ -509,8 +536,8 @@ async function listDocs(platform: Platform, request: Request): Promise<Response>
   const session = await platform.sessionOf(request);
   if (!session) return signInFirst("/docs");
   if (session.test) return page("Not for test people", "Test people have no documents of their own.", 403);
-  const [docs, hours, admin] = await Promise.all([platform.docs.list(session.login), platform.directory.config.get("delete_docs_after_hours"), platform.directory.users.isAdmin(whoOf(session))]);
-  return new Response(docsPage(session, docs, Date.now(), platform.dev(new URL(request.url)), hours, admin), { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
+  const [docs, hours] = await Promise.all([platform.docs.list(session.login), platform.directory.config.get("delete_docs_after_hours")]);
+  return new Response(docsPage(session, docs, Date.now(), platform.dev(new URL(request.url)), hours), { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
 }
 
 /** POST /docs/delete (id=...): deletes one of the signed-in person's documents. */
@@ -712,7 +739,7 @@ function sharedNote(d: Listed): string {
 }
 
 /** The documents view: yours and those shared with you, with new, open, share, rename and delete. */
-function docsPage(session: Session, docs: Listed[], now: number, dev: boolean, hours: number | null, admin: boolean): string {
+function docsPage(session: Session, docs: Listed[], now: number, dev: boolean, hours: number | null): string {
   const rows = docs.map((d) => {
     const left = d.expires != null ? Math.max(1, Math.ceil((d.expires - now) / 3600000)) : null;
     const mine = d.role == "owner";
@@ -723,7 +750,7 @@ function docsPage(session: Session, docs: Listed[], now: number, dev: boolean, h
     // One opened from disk only comes off the list: its files stay where they are.
     const [remove, label] = d.path != null ? ["Remove from the list", `Remove ${esc(d.title)} from the list`] : ["Delete", `Delete ${esc(d.title)}`];
     return `  <li>
-    <a class="doc" href="${esc(link(`/${d.owner}/${d.slug}`, session))}"><span class="title">${esc(d.title)}</span>${note}${mine ? sharedNote(d) : ""}<time datetime="${when}">${ago(d.modified, now)}</time></a>
+    <a class="doc" href="${esc(link(`/${d.owner}/${d.slug}/edit`, session))}"><span class="title">${esc(d.title)}</span>${note}${mine ? sharedNote(d) : ""}<time datetime="${when}">${ago(d.modified, now)}</time></a>
     <div class="acts">${mine ? `<button type="button" class="act share" aria-label="Share ${esc(d.title)}" title="Share" data-id="${esc(d.id)}" data-title="${esc(d.title)}" data-address="/${esc(d.owner)}/${esc(d.slug)}">${ICON.share}</button>
     <button type="button" class="act rename" aria-label="Rename ${esc(d.title)}" title="Rename" data-id="${esc(d.id)}" data-title="${esc(d.title)}" data-slug="${esc(d.slug)}"${d.titleSet ? " data-title-set" : ""}${d.slugSet ? " data-slug-set" : ""}>${ICON.rename}</button>
     <form method="post" action="${esc(link("/docs/delete", session))}" data-title="${esc(d.title)}"${d.path != null ? " data-disk" : ""}><input type="hidden" name="id" value="${esc(d.id)}"><button class="act delete" aria-label="${label}" title="${remove}">${ICON.delete}</button></form>` : ""}</div>
@@ -756,9 +783,9 @@ function docsPage(session: Session, docs: Listed[], now: number, dev: boolean, h
   .anyone .who small { display: block; font-size: 12px; color: var(--soft); }
   #share .buttons { justify-content: space-between; }
 `;
-  return appPage("Documents", style, `<main>
+  return appPage("My Documents", style, `<main>
   <header>
-    <h1>Documents</h1>
+    <h1>My Documents</h1>
     <a class="new" href="${esc(link("/new", session))}">New document</a>
   </header>
   ${docs.length ? `<ol class="rows">\n${rows}\n  </ol>` : `<p class="empty">No documents yet. A new one starts blank${hours == null ? "." : `, and goes away after ${hours} hour${hours == 1 ? "" : "s"} if you never edit it.`}</p>`}
@@ -766,7 +793,6 @@ function docsPage(session: Session, docs: Listed[], now: number, dev: boolean, h
     <input class="input" name="path" required placeholder="A file or folder on this machine: ~/notes, ./site/index.md" aria-label="Path to a file or folder" autocomplete="off" spellcheck="false">
     <button class="pill">Open</button>
   </form>` : ""}
-  <footer><span>Signed in as ${esc(session.login)}</span><a href="${esc(link("/", session))}">Front page</a><a href="${esc(link("/tokens", session))}">Agent tokens</a>${admin ? `<a href="${esc(link("/admin", session))}">Admin</a>` : ""}<a href="/auth/logout">Sign out</a></footer>
 </main>
 <dialog id="rename" aria-labelledby="rename-title">
   <form method="post" action="${esc(link("/docs/rename", session))}">

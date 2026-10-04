@@ -13,7 +13,7 @@
 //   /d/<id>/<rest>             the document's own host: /api/..., /doc/..., the sockets (also under the other addresses)
 //   /auth/github[/callback]    signing in; /auth/logout signs out
 //   /llms.txt, /api/..., /mcp  the server's API for agents, with an agent token (server-api.ts, tokens.ts)
-//   /tokens                    your agent tokens, and a test token for running the test suite against erga.dev
+//   /settings, /tokens/...     your settings: agent tokens, and a test token for running the test suite against erga.dev
 //   /auth/test?token=&as=      a test person (Ada, Bo...) signed in with one; they open only test documents
 //   /page.js, /style.css, ...  the editor's own files (static assets)
 //
@@ -69,7 +69,7 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
   if (assets) return env.ASSETS.fetch(request);
   // The server's API for agents, and people's agent tokens (server-api.ts).
   if (path == "/llms.txt" || path == "/mcp" || path == "/api" || path.startsWith("/api/")) return serverApi(request, withTokens(platform(env), url));
-  if (path == "/tokens" || path.startsWith("/tokens/")) return tokensDoor(request, withTokens(platform(env), url));
+  if (path == "/settings" || path == "/tokens" || path.startsWith("/tokens/")) return tokensDoor(request, withTokens(platform(env), url));
   if (path.startsWith("/__erga/")) return linked(env, request, url);
   return frontDoor(request, platform(env));
 }

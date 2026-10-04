@@ -266,7 +266,9 @@ declare global {
     titleBtn.setAttribute("aria-label", `${n.title}: rename, or change its address`);
     titleBtn.title = `${location.host}${n.address}`;
     document.title = n.title;
-    if (location.pathname != n.address) window.history.replaceState(window.history.state, "", n.address + location.search + location.hash);
+    // The editor's own address is the document's, then /edit (the document's alone is its viewer).
+    const here = `${n.address}/edit`;
+    if (n.address && location.pathname != here) window.history.replaceState(window.history.state, "", here + location.search + location.hash);
   }
   if (info.docName) showName(info.docName);
   /** Asks for the name again (when the event channel connects: a rename may have gone by while it was down). */
@@ -536,12 +538,12 @@ declare global {
       (p.client == -1 ? meSlot : people).append(wrap);
     }
   }
-  // Your avatar opens a small menu: who you are, your documents, the admin
-  // page if you're an admin, sign out (the same as every other page's upper
+  // Your avatar opens a small menu: who you are, My Documents, Settings,
+  // Admin settings if you're an admin, Sign out (the same as every other page's upper
   // right, account.ts). The front door says which links (meta erga-account).
   const account = $("account");
   const accountLinks = (() => {
-    try { return JSON.parse(document.querySelector<HTMLMetaElement>('meta[name="erga-account"]')?.content ?? "") as { docs?: string; admin?: string; signOut?: string }; } catch { return null; }
+    try { return JSON.parse(document.querySelector<HTMLMetaElement>('meta[name="erga-account"]')?.content ?? "") as { docs?: string; settings?: string; admin?: string; signOut?: string }; } catch { return null; }
   })();
   let accountBtn: HTMLElement | null = null;
   function accountButton(b: HTMLElement) {
@@ -563,6 +565,7 @@ declare global {
     $("account-login").textContent = me.name.toLowerCase() == me.user ? "" : me.user;
     const set = (id: string, href: string | undefined) => { const a = $(id) as HTMLAnchorElement; a.hidden = !href; if (href) a.href = href; };
     set("account-docs", me.user.startsWith("test-") ? undefined : accountLinks!.docs);
+    set("account-settings", me.user.startsWith("test-") ? undefined : accountLinks!.settings);
     set("account-admin", accountLinks!.admin);
     set("account-out", accountLinks!.signOut);
   }

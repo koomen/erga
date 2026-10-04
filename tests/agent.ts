@@ -40,7 +40,7 @@ try {
   console.log(`     model: ${info.model}`);
 
   const p = await browser.page();
-  await p.open(`${host.base}/`, { clear: false, width: 1280, height: 800 });
+  await p.open(`${host.base}/edit`, { clear: false, width: 1280, height: 800 });
   await Bun.sleep(500);
   await p.frame(`${W}.__marker = 1`);
 

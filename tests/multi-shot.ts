@@ -12,7 +12,7 @@ cpSync(`${ROOT}tests/fixtures/page`, dir, { recursive: true });
 const host = await startHost(dir);
 const browser = await Browser.launch();
 try {
-  const open = async (user: string) => { const p = await browser.page(); await p.open(`${host.base}/?user=${user}`, { clear: false, width: 1100, height: 700 }); await Bun.sleep(600); return p; };
+  const open = async (user: string) => { const p = await browser.page(); await p.open(`${host.base}/edit?user=${user}`, { clear: false, width: 1100, height: 700 }); await Bun.sleep(600); return p; };
   const ada = await open("Ada"), bo = await open("Bo");
   const clickEnd = async (p: typeof ada, sel: string) => {
     const f = await frameAt(p);

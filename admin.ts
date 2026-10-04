@@ -201,7 +201,6 @@ ${settings.map((e) => settingRow(e, session, takesNever(e.key))).join("\n")}
 ${users.map((u) => userRow(u, session)).join("\n")}
     </ol>
   </section>
-  <footer><span>Signed in as ${esc(session.login)}</span><a href="${esc(link("/docs", session))}">Documents</a><a href="/auth/logout">Sign out</a></footer>
 </main>
 <script>
   ${TIMES_SCRIPT}

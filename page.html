@@ -103,13 +103,13 @@
     .chrome-nav { top: max(12px, env(safe-area-inset-top)); left: max(14px, var(--safe-l)); transition: opacity var(--show-ms) var(--ease), left var(--agent-ms) var(--agent-ease); }
     .chrome-nav[hidden] { display: none; }
     .nav-back {
-      display: flex; align-items: center; gap: 2px; height: 34px; padding: 0 10px 0 4px; border-radius: 8px;
+      display: flex; align-items: center; gap: 2px; height: 34px; padding: 0 10px; border-radius: 8px;
       color: var(--chrome); font: 500 13px/1 var(--font-text); text-decoration: none;
       transition: color 150ms ease, background-color 150ms ease;
     }
     .nav-back:hover { color: var(--chrome-hover); background: color-mix(in srgb, var(--chrome) 12%, transparent); }
     .nav-back:focus-visible { outline: 2px solid var(--caret); outline-offset: 1px; }
-    .nav-back svg { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+    .nav-back svg { display: none; width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
     /* A mode that's on stays in sight while the rest of the controls hide. */
     body.chrome-hidden .chrome-top:has(:is(#btn-track, #btn-pause)[aria-pressed="true"]) { opacity: 1; }
     body.chrome-hidden .chrome-top:has(:is(#btn-track, #btn-pause)[aria-pressed="true"]) > :not([aria-pressed="true"]) { opacity: 0; pointer-events: none; }
@@ -354,9 +354,9 @@
       max-height: calc(100% - var(--top-clear) - var(--kb, 0px) - max(16px, env(safe-area-inset-bottom))); overflow-y: auto; overscroll-behavior: contain;
     }
 
-    /* The document's title, after the Documents link like a breadcrumb; click
+    /* The document's title, after My Documents as a breadcrumb; click
        it to rename the document or change its address (the card below it). */
-    .nav-back + .nav-title::before { content: "/"; margin: 0 6px 0 -4px; color: var(--chrome); opacity: 0.55; font-weight: 400; }
+    .nav-back + .nav-title::before { content: "›"; margin: 0 8px 0 -6px; color: var(--chrome); opacity: 0.55; font-weight: 400; }
     .nav-title {
       display: flex; align-items: center; height: 34px; min-width: 0; max-width: min(42vw, 420px); padding: 0 8px; border: 0; border-radius: 8px;
       background: transparent; color: var(--fg); font: 500 13px/1 var(--font-text); cursor: pointer;
@@ -383,11 +383,12 @@
     .naming .share-actions { margin-top: 6px; }
     @media (min-width: 760px) { body.agent-open .help.naming { left: calc(var(--agent-left) + var(--agent-w) + var(--agent-inset) + 6px); } }
 
-    /* Phones. The top row keeps to what fits beside the Documents link, which
+    /* Phones. The top row keeps to what fits beside the My Documents link, which
        shrinks to its arrow: the shortcuts card goes (a phone has no keys for
        them), avatars overlap, and notes that would cover the row sit under it. */
     @media (max-width: 520px) {
-      .nav-back { padding: 0 8px; }
+      .nav-back { padding: 0 8px 0 4px; }
+      .nav-back svg { display: block; }
       .nav-back span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
       .nav-back + .nav-title::before { display: none; }
       .nav-back + .nav-title { margin-left: -6px; }
@@ -433,7 +434,7 @@
   <nav class="chrome chrome-nav" id="nav-docs" aria-label="Document">
     <a class="nav-back" id="nav-back" href="/docs" hidden>
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.5 6 8.5 12l6 6"/></svg>
-      <span>Documents</span>
+      <span>My Documents</span>
     </a>
     <button type="button" class="nav-title" id="doc-title" aria-haspopup="dialog" aria-expanded="false" aria-controls="naming" hidden><span id="doc-title-text"></span></button>
   </nav>
@@ -467,8 +468,9 @@
 
   <div id="account" class="help account" hidden role="menu" aria-label="You">
     <p class="account-who"><b id="account-name"></b><span id="account-login"></span></p>
-    <a role="menuitem" id="account-docs" href="/docs">Your documents</a>
-    <a role="menuitem" id="account-admin" href="/admin" hidden>Admin</a>
+    <a role="menuitem" id="account-docs" href="/docs">My Documents</a>
+    <a role="menuitem" id="account-settings" href="/settings">Settings</a>
+    <a role="menuitem" id="account-admin" href="/admin" hidden>Admin settings</a>
     <a role="menuitem" id="account-out" href="/auth/logout">Sign out</a>
   </div>
 
@@ -481,7 +483,7 @@
       <button type="button" id="share-rotate">New token</button>
       <span id="share-status" class="share-status" role="status" aria-live="polite"></span>
     </div>
-    <p class="share-note">Anyone with this token can act as you on Erga: edit this document as your agent, and your other documents too. New token turns the old one off; <a href="/tokens" target="_blank">your tokens</a> lists and revokes them all.</p>
+    <p class="share-note">Anyone with this token can act as you on Erga: edit this document as your agent, and your other documents too. New token turns the old one off; <a href="/settings" target="_blank">your settings</a> lists and revokes them all.</p>
   </div>
 
   <div id="naming" class="help naming" hidden role="dialog" aria-label="Title and address">
