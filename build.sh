@@ -13,4 +13,9 @@ mv -f ".page.js.$$" page.js
 bun build src/page/frame.ts --format iife --minify --outfile ".frame.js.$$" \
   --banner "/* Built by build.sh from src/page/. Erga page editor, the frame. */"
 mv -f ".frame.js.$$" frame.js
+# Document settings (src/page/settings.ts): loaded by page.js only when the gear is reached for.
+bun build src/page/settings.ts --format iife --minify --outfile ".settings.js.$$" \
+  --banner "/* Built by build.sh from src/page/. Erga page editor, document settings. */"
+mv -f ".settings.js.$$" settings.js
+echo "built settings.js ($(wc -c < settings.js | tr -d " ") bytes)"
 echo "built page.js ($(wc -c < page.js | tr -d " ") bytes), frame.js ($(wc -c < frame.js | tr -d " ") bytes)"

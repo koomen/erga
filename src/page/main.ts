@@ -26,6 +26,7 @@ import TurndownService from "turndown";
 import { emptyLog, reduce, type Log, type LogEvent, type LogItem, type ViewRequest, type ViewResult } from "./agent-log";
 import type { AgentState, DocInfo, DocName, ModelState } from "../../api";
 import { BASE } from "./base";
+import type { Settings } from "./settings";
 
 const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 
@@ -166,6 +167,8 @@ declare global {
   ($("nav-back") as HTMLAnchorElement).href = `/docs${as}`;
   /** The host's endpoints, as this person. */
   const api = (path: string) => `${BASE}${path}${as}`;
+  /** The document's settings, once the gear has loaded them (loadSettings). */
+  let docSettings: Settings | null = null;
 
   // Join the room and wait for the document's text. Presence and connection
   // news before the shell is set up is picked up once it is (`started`).
@@ -316,6 +319,7 @@ declare global {
     toggleShare(false);
     toggleSharing(false);
     toggleAccount(false);
+    docSettings?.toggle(false);
     slugTouched = false;
     $("naming-prefix").textContent = `/${docName!.owner}/`;
     titleIn.value = docName!.title;
@@ -449,10 +453,11 @@ declare global {
       else if (msg.type == "model") renderModel(msg as unknown as ModelState);
       else if (msg.type == "view" && msg.id) answerView(msg.id, msg.req ?? {});
       else if (msg.type == "name" && msg.name) showName(msg.name);
+      else if (msg.type == "versions" || msg.type == "home") docSettings?.event(msg.type);
     };
     // Events sent while the channel was down are gone; catch up from the transcript.
     // A rename missed meanwhile (or before it first opened) is caught up the same way.
-    events.onopen = () => { if (opened) loadAgent(); opened = true; refreshName(); };
+    events.onopen = () => { if (opened) { loadAgent(); docSettings?.event("versions"); docSettings?.event("home"); } opened = true; refreshName(); };
     events.onclose = () => setTimeout(listen, 1000);
   }
   let opened = false;
@@ -584,7 +589,7 @@ declare global {
     account.hidden = !open;
     accountBtn?.setAttribute("aria-expanded", String(open));
     if (!open) return;
-    showChrome(); toggleHelp(false); toggleShare(false); toggleSharing(false); toggleNaming(false);
+    showChrome(); toggleHelp(false); toggleShare(false); toggleSharing(false); toggleNaming(false); docSettings?.toggle(false);
     $("account-name").textContent = me.name;
     $("account-login").textContent = me.name.toLowerCase() == me.user ? "" : me.user;
     const set = (id: string, href: string | undefined) => { const a = $(id) as HTMLAnchorElement; a.hidden = !href; if (href) a.href = href; };
@@ -614,7 +619,7 @@ declare global {
   let anchor: { x: number; y: number; t: number } | null = null;
   let lastKeyAt = 0;
   function hideChrome() {
-    if (chromeHidden || !$("help").hidden || !$("share").hidden || !$("sharing").hidden || !$("naming").hidden || !$("account").hidden) return;
+    if (chromeHidden || docSettings?.isOpen() || !$("help").hidden || !$("share").hidden || !$("sharing").hidden || !$("naming").hidden || !$("account").hidden) return;
     chromeHidden = true;
     anchor = null;
     document.body.classList.add("chrome-hidden");
@@ -652,7 +657,7 @@ declare global {
   function toggleHelp(force?: boolean) {
     const open = typeof force == "boolean" ? force : help.hidden;
     help.hidden = !open;
-    if (open) { showChrome(); toggleShare(false); toggleSharing(false); toggleNaming(false); toggleAccount(false); }
+    if (open) { showChrome(); toggleShare(false); toggleSharing(false); toggleNaming(false); toggleAccount(false); docSettings?.toggle(false); }
   }
 
   // Share with an external agent: a prompt carrying this page's API and your
@@ -709,6 +714,7 @@ Once you've read the guide, await further instructions.`;
     toggleSharing(false);
     toggleNaming(false);
     toggleAccount(false);
+    docSettings?.toggle(false);
     if (!shareToken) loadShare(false);
   }
   shareBtn.addEventListener("click", () => toggleShare());
@@ -776,7 +782,7 @@ Once you've read the guide, await further instructions.`;
     sharing.hidden = !open;
     peopleBtn.setAttribute("aria-expanded", String(open));
     if (!open) return;
-    showChrome(); toggleHelp(false); toggleShare(false); toggleNaming(false); toggleAccount(false);
+    showChrome(); toggleHelp(false); toggleShare(false); toggleNaming(false); toggleAccount(false); docSettings?.toggle(false);
     sharingAdd.reset();
     tellSharing("Loading…");
     (sharingAdd.elements.namedItem("login") as HTMLInputElement).focus();
@@ -793,6 +799,31 @@ Once you've read the guide, await further instructions.`;
   $("sharing-copy").addEventListener("click", async () => {
     const url = location.origin + (docName?.address ?? location.pathname.replace(/\/edit\/?$/, ""));
     tellSharing(await navigator.clipboard.writeText(url).then(() => `Link copied: ${url}`, () => url));
+  });
+  // Document settings (publishing, versions, the homepage): the gear opens
+  // them, a popover under it. Their code (src/page/settings.ts, settings.js)
+  // loads only when the gear is reached for: hovered, focused or clicked.
+  const settingsBtn = $("btn-settings");
+  let settingsLoading: Promise<Settings | null> | null = null;
+  function loadSettings(): Promise<Settings | null> {
+    return settingsLoading ??= new Promise((resolve) => {
+      const s = Object.assign(document.createElement("script"), { src: "/settings.js" });
+      s.onload = () => {
+        docSettings = window.ergaSettings?.mount({
+          docId, query: as, anchor: settingsBtn, admin: !!accountLinks?.admin,
+          onToggle: (open) => { if (open) { showChrome(); toggleHelp(false); toggleShare(false); toggleSharing(false); toggleNaming(false); toggleAccount(false); } },
+        }) ?? null;
+        resolve(docSettings);
+      };
+      s.onerror = () => { settingsLoading = null; s.remove(); resolve(null); };
+      document.head.append(s);
+    });
+  }
+  for (const type of ["pointerenter", "focus"]) settingsBtn.addEventListener(type, () => void loadSettings(), { once: true });
+  settingsBtn.addEventListener("click", async () => {
+    const s = await loadSettings();
+    if (s) s.toggle();
+    else explain("Couldn't load the document's settings. Check your connection and try again.");
   });
   if (!isMac) {
     for (const k of help.querySelectorAll("kbd")) {
@@ -1563,7 +1594,8 @@ Once you've read the guide, await further instructions.`;
     if (mod && !e.shiftKey && (key == "/" || key == "?")) { toggleHelp(); return true; }
     if (mod && !e.shiftKey && key == "s") { flash(connected ? "Saved: edits go to disk as you type" : "Offline: edits sync when the host is back", 2200); return true; }
     if (e.key == "Escape") {
-      if (!account.hidden) { toggleAccount(false); accountBtn?.focus(); }
+      if (docSettings?.escape()) { /* its menu, or itself, closed */ }
+      else if (!account.hidden) { toggleAccount(false); accountBtn?.focus(); }
       else if (!help.hidden) toggleHelp(false);
       else if (!naming.hidden) toggleNaming(false);
       else if (!share.hidden) toggleShare(false);

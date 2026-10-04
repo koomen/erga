@@ -45,13 +45,13 @@
     /* The floating UI takes its colours from the page under it rather than
        the editor's own: a card lifted from the page's own colour, with light
        or dark text to suit it. */
-    html.page-light body:not(.source) :is(.agent, .agent-fab, .chrome, .fmt, .refresh-pill) {
+    html.page-light body:not(.source) :is(.agent, .agent-fab, .chrome, .fmt, .refresh-pill, .ds, .ds-menu) {
       --fg: #1c1c1f; --fg-strong: #0d0d0f; --soft: #6b6b73; --chrome: #9a9aa2; --chrome-hover: #3f3f46;
       --rule: rgba(0, 0, 0, 0.08); --code-bg: rgba(0, 0, 0, 0.05); --caret: #3b7cf0; --panel-border: rgba(0, 0, 0, 0.07);
       --bg: color-mix(in srgb, var(--page-bg) 45%, #fff);
       --panel-bg: var(--bg);
     }
-    html.page-dark body:not(.source) :is(.agent, .agent-fab, .chrome, .fmt, .refresh-pill) {
+    html.page-dark body:not(.source) :is(.agent, .agent-fab, .chrome, .fmt, .refresh-pill, .ds, .ds-menu) {
       --fg: #cacad2; --fg-strong: #ececf1; --soft: #9a9aa4; --chrome: #74747d; --chrome-hover: #dcdce2;
       --rule: rgba(255, 255, 255, 0.08); --code-bg: rgba(255, 255, 255, 0.07); --caret: #6aa1ff; --panel-border: rgba(255, 255, 255, 0.08);
       --bg: color-mix(in srgb, var(--page-bg) 90%, #fff);
@@ -476,6 +476,9 @@
     </button>
     <button type="button" class="icon-btn" id="btn-people" aria-label="Share with people" data-tip="Share with people" aria-expanded="false" aria-controls="sharing" hidden>
       <svg viewBox="0 0 24 24" aria-hidden="true"><g transform="translate(0 1.5)"><circle cx="9.5" cy="8.5" r="3.5"/><path d="M3.5 19c.6-3.2 3-5 6-5s5.4 1.8 6 5"/><path d="M18.5 8v6M15.5 11h6"/></g></svg>
+    </button>
+    <button type="button" class="icon-btn" id="btn-settings" aria-label="Document settings" data-tip="Document settings" aria-haspopup="dialog" aria-expanded="false" aria-controls="doc-settings">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12.22 2.75h-.44a1.75 1.75 0 0 0-1.75 1.75v.16a1.75 1.75 0 0 1-.88 1.51l-.38.22a1.75 1.75 0 0 1-1.75 0l-.13-.07a1.75 1.75 0 0 0-2.39.64l-.22.38a1.75 1.75 0 0 0 .64 2.39l.13.09a1.75 1.75 0 0 1 .88 1.5v.45a1.75 1.75 0 0 1-.88 1.52l-.13.08a1.75 1.75 0 0 0-.64 2.39l.22.38a1.75 1.75 0 0 0 2.39.64l.13-.07a1.75 1.75 0 0 1 1.75 0l.38.22a1.75 1.75 0 0 1 .88 1.51v.16a1.75 1.75 0 0 0 1.75 1.75h.44a1.75 1.75 0 0 0 1.75-1.75v-.16a1.75 1.75 0 0 1 .88-1.51l.38-.22a1.75 1.75 0 0 1 1.75 0l.13.07a1.75 1.75 0 0 0 2.39-.64l.22-.39a1.75 1.75 0 0 0-.64-2.39l-.13-.07a1.75 1.75 0 0 1-.88-1.52v-.44a1.75 1.75 0 0 1 .88-1.52l.13-.08a1.75 1.75 0 0 0 .64-2.39l-.22-.38a1.75 1.75 0 0 0-2.39-.64l-.13.07a1.75 1.75 0 0 1-1.75 0l-.38-.22a1.75 1.75 0 0 1-.88-1.51V4.5a1.75 1.75 0 0 0-1.75-1.75Z"/><circle cx="12" cy="12" r="2.75"/></svg>
     </button>
     <div class="mode" id="mode" role="radiogroup" aria-label="View">
       <button type="button" role="radio" data-mode="text" aria-checked="true">T</button>
