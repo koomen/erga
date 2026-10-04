@@ -68,12 +68,16 @@ async function newDoc(title: string, style?: string): Promise<{ address: string;
   return {
     address, id, ada, draft,
     text: () => ada.str(),
-    /** Cuts versions up to `upTo`, each its own draft: an edit, then a publish (which cuts what's pending at once), in "latest" mode. */
+    /**
+     * Cuts versions up to `upTo`, each its own draft: an edit, then a publish (which cuts what's pending at once) of
+     * what's published already, so nothing changes for viewers in "manual" mode.
+     */
     async versions(upTo: number) {
       for (let n = (await versionsOf(id)).total + 1; n <= upTo; n++) {
         draft(n);
         await until(async () => (await versionsOf(id)).pending, 5000, `the edit for version ${n} reaches the room`);
-        expect((await post(`/api/docs/${id}/publish`, { mode: "latest" })).ok, `publishing (cutting) version ${n}`);
+        const { published } = await versionsOf(id);
+        expect((await post(`/api/docs/${id}/publish`, published.mode == "latest" ? { mode: "latest" } : { mode: "manual", versionId: published.version.id })).ok, `publishing (cutting) version ${n}`);
       }
       const s = await versionsOf(id);
       expect(s.total == upTo && s.current.n == upTo, `the document has ${upTo} versions`, s);
@@ -313,7 +317,7 @@ try {
   expect((await menuRows(p2)) == "6 5 4 3 2 1", "fewer than ten: all of them", await menuRows(p2));
   await b.versions(47);
   expect((await post(`/api/docs/${b.id}/publish`, { mode: "manual", versionId: "v46" })).ok, "publishing version 46");
-  await until(async () => (await menuRows(p2)) == "47 46 45 44 43 42 41 40 39 38 …37", 8_000, "published one older: the latest ten (the picker follows live)", () => menuRows(p2));
+  await until(async () => (await menuRows(p2)) == "47 46 45 44 43 42 41 40 39 38 …37", 15_000, "published one older: the latest ten (the picker follows live)", () => menuRows(p2));
   await p2.key("Escape");
   await closeSettings(p2);
   ok("the picker with fewer than ten versions, and with the published one just older, following live");

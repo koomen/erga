@@ -264,7 +264,7 @@ function mount(host: SettingsHost): Settings {
       if (seq != loadSeq) return;
       // What was loaded before stays (more rows opened in the picker), with the fresh copies over it.
       // A different published version starts afresh: its neighbours, not the last one's.
-      if (data && (d.total < data.total || d.published.version.id != data.published.version.id)) fresh();
+      if (data && (d.total < data.total || d.published.version.id != data.published.version.id || d.published.mode != data.published.mode)) fresh();
       add(d.versions); add([d.current, d.published.version]);
       data = d;
       loadError = null;
