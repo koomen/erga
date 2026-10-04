@@ -277,8 +277,8 @@ async function permissionsOf(dir: Directory, id: string) {
 const iso = (t: number | null) => (t ? new Date(t).toISOString() : null);
 
 function entryOf(e: ConfigEntry) {
-  const locked = e.source == "locked";
-  return { key: e.key, description: e.description, value: e.value, default: e.default, source: e.source, locked, ...(locked ? { note: "Locked by the deploy: it can't be changed here." } : {}), updated: iso(e.updated), updatedBy: e.updatedBy };
+  const locked = e.locked;
+  return { key: e.key, description: e.description, value: e.value, default: e.default, source: e.source, locked, ...(locked ? { deployed: e.deployed, note: "Locked by the deploy (server.config.ts): it can't be changed here." } : {}), updated: iso(e.updated), updatedBy: e.updatedBy };
 }
 
 function userOf(u: User) {

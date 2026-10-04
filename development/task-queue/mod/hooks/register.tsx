@@ -24,8 +24,9 @@ const armed = atom({ plugin: 'task-queue', key: 'armed' } as const, null)
 const WORKFLOW = `# The task queue
 
 This repo tracks work in a task queue (board: http://localhost:4700). When the user asks for a change to the repo,
-your first and only step is to call mcp__task-queue__task_create with a short imperative title and the user's ask in
-full (with any context from the conversation the worker will need). That registers the task, makes its branch and
+your first and only step is to call mcp__task-queue__task_create with a short imperative title and a short, clear description
+of the ask: a few plain sentences on what the user wants, plus only the context the worker can't find itself, not a
+wall of text (the board shows it as the ask). That registers the task, makes its branch and
 worktree, and starts a background worker that does, tests and reports the work. Then tell the user in one line that
 it's task #<id> on the board, and stay free for their next instruction: don't implement, test or merge it yourself,
 and don't wait on the worker. Several tasks may run at once. When a worker reports back, relay its URL and summary in
@@ -77,7 +78,7 @@ const TOOLS = [
       type: 'object',
       properties: {
         title: { type: 'string', description: 'Short imperative title, e.g. "Add a dark mode toggle"' },
-        ask: { type: 'string', description: "The user's ask in full, with any context from the conversation the worker needs" },
+        ask: { type: 'string', description: "A short, clear description of the ask: a few plain sentences on what the user wants, plus only the context the worker can't find itself" },
       },
       required: ['title', 'ask'],
     },
