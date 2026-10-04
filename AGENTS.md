@@ -41,7 +41,11 @@ When the user asks for a change to this repo:
 
 1. **Register it, straight away**, before doing anything else:
 
-       development/task-queue/tq add "Short imperative title" "The user's ask, in full, with any context you have"
+       development/task-queue/tq add "Short imperative title" "A short, clear description of the ask"
+
+   The description is what the board shows as the ask, and the worker's
+   brief: a few plain sentences saying what the user wants, plus only the
+   context the worker can't find itself. Not a wall of text.
 
    This starts the queue if it isn't running, and gives the task a branch
    (`task/<id>-<slug>`), its own worktree (`.claude/worktrees/task-<id>`,
@@ -61,6 +65,10 @@ When the user asks for a change to this repo:
 Questions about the code, explanations and other asks that change nothing
 in the repo are answered directly, without a task. Work on the task queue
 itself goes through the queue like anything else.
+
+When the user gives a new rule or standing instruction ("always…",
+"from now on…"), add it to AGENTS.md, through the queue like any other
+change, not to Claude's local memory: that way every agent sees it.
 
 ### The subagent's prompt
 
@@ -93,6 +101,11 @@ Fill in the brackets:
 >    `tq done [id] "summary" [url]`: what changed, how you tested it, and
 >    what the user should look at. If you can't finish,
 >    `tq fail [id] "why"` instead.
+>
+> Write summaries (here and in your final reply) for the user, in plain
+> language: what you built or changed, how to use it, how you tested it,
+> what to look at. Short and clear; no implementation trivia, strings of
+> internal names or arrow chains.
 >
 > Don't merge or push: the user merges from the board. Finish by replying
 > with the task's URL and a two-line summary.

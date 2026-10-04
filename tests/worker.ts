@@ -12,7 +12,9 @@
 // server's API for agents (server-api.ts): agent tokens (made at /tokens,
 // by the share button, or asked for by an agent and approved), publishing a
 // folder as a document, every tool over HTTP and MCP, with the person's own
-// permissions, and revoking.
+// permissions, and revoking. Admins configure the server (settings, users)
+// and owners share documents through the same tools, over the API and in
+// the editor's agent (server-tools.ts).
 //
 //   bun tests/worker.ts [http://localhost:4400]
 //   bun tests/worker.ts --local        a dev server of its own (tests/host.ts)
@@ -70,6 +72,8 @@ async function share(id: string, who: string, role: "editor" | "viewer" | "none"
 /** Replaces the page's first heading's text. */
 const retitle = (p: Participant, from: string, to: string) => p.edit((t) => { const i = t.toString().indexOf(`<h1>${from}`); t.delete(i + 4, from.length); t.insert(i + 4, to); });
 
+/** Whether an expression is true in a tab. */
+const at2 = (tab: { eval<T>(e: string): Promise<T> }, expr: string) => tab.eval<boolean>(expr);
 const exists = async (id: string) => [200, 302].includes((await get(`/d/${id}`)).status);
 const location = async (path: string) => { const r = await get(path); return r.status == 302 ? r.headers.get("location") : `(${r.status})`; };
 const checks: string[] = [];
@@ -205,6 +209,109 @@ async function serverApiScenario() {
   ok("tokens made at /tokens work until revoked, from /tokens or by the API");
 }
 
+/** Signs in (no `as`: the dev server's DEV_LOGIN, an admin), mints an agent token there, and returns a tool caller. */
+async function tokenFor(as: string | null) {
+  const r = await fetch(`${base}/auth/github?${as ? `as=${as}&` : ""}next=/docs`, { redirect: "manual" });
+  const c = r.headers.getSetCookie().map((x) => x.split(";")[0]).find((x) => x.startsWith("erga_session="))!;
+  const page = await (await fetch(`${base}/tokens/new`, { method: "POST", headers: { Cookie: c, Origin: origin }, body: new URLSearchParams({ label: "Admin test" }) })).text();
+  const token = /<pre class="secret">(erga_[^<]+)<\/pre>/.exec(page)?.[1] ?? "";
+  expect(token, `a token for ${as ?? "DEV_LOGIN"}`, page.slice(0, 300));
+  const auth = { Authorization: `Bearer ${token}` };
+  const call = async (name: string, args: unknown = {}) => {
+    const res = await fetch(`${base}/api/ext/tools/${name}`, { method: "POST", headers: { ...auth, "Content-Type": "application/json" }, body: JSON.stringify(args) });
+    const body = (await res.json()) as { ok: boolean; content?: { text?: string }[]; error?: string };
+    let data: any = null;
+    try { data = JSON.parse(body.content?.[0]?.text ?? ""); } catch { /* text */ }
+    return { status: res.status, data, text: body.content?.[0]?.text ?? body.error ?? "" };
+  };
+  const names = async () => ((await (await fetch(`${base}/api/ext/tools`, { headers: auth })).json()) as { tools: { name: string }[] }).tools.map((t) => t.name);
+  const mcpNames = async () => ((await (await fetch(`${base}/mcp`, { method: "POST", headers: { ...auth, "Content-Type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }) })).json()) as any).result.tools.map((t: { name: string }) => t.name) as string[];
+  const guide = async () => (await fetch(`${base}/api/ext`, { headers: auth })).text();
+  return { cookie: c, call, names, mcpNames, guide };
+}
+
+/** The editor's agent's log, and running a script in it (the scripted model plays tool calls). */
+async function agentRun(id: string, cookie: string, steps: unknown[]) {
+  const log = async () => ((await (await fetch(`${base}/d/${id}/api/agent`, { headers: { Cookie: cookie } })).json()) as { log: { busy: boolean; items: { kind: string; name?: string; status?: string; detail?: string }[] } }).log;
+  const before = (await log()).items.length;
+  const r = await fetch(`${base}/d/${id}/api/agent`, { method: "POST", headers: { Cookie: cookie, "Content-Type": "application/json" }, body: JSON.stringify({ text: `Test @script ${JSON.stringify(steps)}` }) });
+  expect(r.ok, "the prompt is accepted", r.status);
+  let now = await log();
+  await until(async () => { now = await log(); return !now.busy && now.items.length > before + 1; }, 20_000, "the agent finishes", () => now);
+  return now.items.slice(before).filter((i) => i.kind == "tool");
+}
+
+/** Admins configure the server, and owners share documents, through the API and the editor's agent alike (server-tools.ts). */
+async function adminScenario() {
+  const admin = await tokenFor(null), person = await tokenFor(login);
+  const adminLogin = (await admin.call("whoami")).data.login as string;
+  expect(adminLogin != login, "DEV_LOGIN is someone else", adminLogin);
+  // Gated: listed and allowed for an admin only, over HTTP, MCP and the guide.
+  expect((await admin.names()).includes("set_setting") && (await admin.mcpNames()).includes("list_users"), "an admin's token lists the admin tools");
+  expect(!(await person.names()).includes("set_setting") && !(await person.mcpNames()).includes("list_users") && (await person.names()).includes("share_document"), "a user's doesn't, but has sharing");
+  expect((await admin.guide()).includes("### set_setting") && !(await person.guide()).includes("### set_setting"), "the guide documents them for an admin only");
+  let t = await person.call("list_settings");
+  expect(t.status == 403 && /admin/.test(t.text), "a user's agent can't read the settings", t);
+  t = await person.call("add_user", { login: "sneaky" });
+  expect(t.status == 403, "nor add users", t);
+  ok("the admin tools are listed for, and work for, an admin's token only");
+
+  // Settings.
+  t = await admin.call("list_settings");
+  const hours = t.data?.find((e: { key: string }) => e.key == "unedited_hours");
+  expect(t.status == 200 && hours && typeof hours.locked == "boolean", "list_settings lists them, saying which are locked", t);
+  t = await admin.call("set_setting", { key: "unedited_hours", value: 36 });
+  expect(t.status == 200 && t.data.value == 36 && t.data.source == "set" && t.data.updatedBy == adminLogin, "set_setting sets one", t);
+  t = await admin.call("set_setting", { key: "unedited_hours", value: 0 });
+  expect(t.status == 400 && /whole number/.test(t.text), "a bad value says what's wrong", t);
+  // The new value is what the server uses: a new blank document lasts 36 hours.
+  const blank = await (await fetch(`${base}/new`, { redirect: "manual", headers: { Cookie: admin.cookie } })).headers.get("location");
+  const listed = (await admin.call("list_documents")).data.find((d: { address: string }) => d.address == blank);
+  const lasts = (Date.parse(listed.expires) - Date.now()) / 3_600_000;
+  expect(lasts > 35 && lasts <= 36, "and the server goes by it", { blank, listed, lasts });
+  ok("an admin's agent reads and changes the server's settings, and the server goes by them");
+
+  // Users.
+  const newcomer = `wnew${Date.now().toString(36)}`;
+  t = await admin.call("add_user", { login: newcomer });
+  expect(t.status == 200 && t.data.role == "user" && t.data.addedBy == adminLogin, "add_user", t);
+  t = await admin.call("set_user_role", { login: login, role: "admin" });
+  expect(t.status == 200 && t.data.role == "admin" && (await person.names()).includes("set_setting"), "set_user_role makes someone an admin, and their token gets the tools", t);
+  t = await person.call("set_user_role", { login: login, role: "user" });
+  expect(t.status == 200 && !(await person.names()).includes("set_setting"), "and back", t);
+  t = await admin.call("list_users");
+  expect(t.data.some((u: { login: string; bootstrap: boolean }) => u.login == adminLogin && u.bootstrap) && t.data.some((u: { login: string }) => u.login == newcomer), "list_users", t.text.slice(0, 300));
+  t = await admin.call("set_user_role", { login: adminLogin, role: "user" });
+  expect(t.status == 403 && /deploy/.test(t.text), "a bootstrap admin stays one", t);
+  t = await admin.call("remove_user", { login: newcomer });
+  expect(t.status == 200 && !(await admin.call("list_users")).data.some((u: { login: string }) => u.login == newcomer), "remove_user", t);
+  ok("an admin's agent adds users, makes and unmakes admins, and removes users");
+
+  // Sharing, over the API.
+  const mine = (await (await fetch(`${base}/new`, { redirect: "manual", headers: { Cookie: person.cookie } })).headers.get("location"))!;
+  t = await person.call("share_document", { document: mine, login: "Ada", role: "viewer" });
+  expect(t.status == 200 && t.data.permissions.some((p: { login: string; role: string }) => p.login == "ada" && p.role == "viewer"), "share_document shares", t);
+  expect((await get(`${mine}?user=Ada`)).status == 200, "and Ada can open it");
+  t = await admin.call("share_document", { document: mine, login: adminLogin, role: "editor" });
+  expect(t.status == 403 && /owner/.test(t.text), "only the owner shares (being an admin gives nothing on documents)", t);
+  t = await person.call("document_access", { document: mine });
+  expect(t.status == 200 && t.data.permissions.length == 2, "document_access", t);
+  ok("an owner's agent shares a document over the API; nobody else's can");
+
+  // The editor's own agent, with the same tools.
+  const adminDoc = ((await (await fetch(`${base}${blank}/api/name`, { headers: { Cookie: admin.cookie } })).json()) as Name).id;
+  let tools = await agentRun(adminDoc, admin.cookie, [{ tool: "set_setting", args: { key: "unedited_hours", value: 30 } }, { tool: "add_user", args: { login: newcomer, role: "admin" } }, { text: "Done." }]);
+  expect(tools.every((x) => x.status == "done") && tools.length == 2, "an admin's agent in the editor runs the admin tools", tools);
+  expect((await admin.call("list_settings")).data.find((e: { key: string }) => e.key == "unedited_hours").value == 30 && (await admin.call("list_users")).data.some((u: { login: string; role: string }) => u.login == newcomer && u.role == "admin"), "and they land");
+  await admin.call("reset_setting", { key: "unedited_hours" });
+  await admin.call("remove_user", { login: newcomer });
+  const mineId = ((await (await get(`${mine}/api/name`)).json()) as Name).id;
+  tools = await agentRun(mineId, person.cookie, [{ tool: "list_settings", args: {} }, { tool: "share_document", args: { login: "Bo", role: "editor" } }, { text: "Done." }]);
+  expect(tools[0]?.status == "error" && tools[1]?.status == "done", "a user's agent has no admin tools, but shares the document it's in", tools);
+  expect((await person.call("document_access", { document: mineId })).data.permissions.some((p: { login: string; role: string }) => p.login == "bo" && p.role == "editor"), "Bo is an editor now");
+  ok("the editor's agent has the same tools: an admin's configures the server, an owner's shares the document");
+}
+
 try {
   expect((await docs()).includes("No documents yet"), "a new person's list is empty");
   ok("a new person's list is empty");
@@ -275,6 +382,16 @@ try {
   expect((await as("Dee", `/${login}/untitled-2`)).status == 403 && (await as("Ada", `/${login}/untitled-2`)).status == 403, "unshared, they can't open it again");
   expect((await share(second, login, "viewer")).status == 403, "and the owner's own permission can't be changed");
   ok("only those a document is shared with may open it; viewers can't edit, publish, rename, delete or share; editors edit; only the owner shares");
+
+  // The list's share dialog: GET /docs/share says with whom (owner only), and the list marks a shared document.
+  await share(second, "Ada", "viewer");
+  const sharedWith = (await (await get(`/docs/share?id=${second}`)).json()) as { permissions: { login: string; role: string }[]; notUsers: string[] };
+  expect(sharedWith.permissions.map((p) => `${p.login}:${p.role}`).join() == `${login}:owner,ada:viewer` && Array.isArray(sharedWith.notUsers), "GET /docs/share answers who it's shared with", sharedWith);
+  expect((await as("Ada", `/docs/share?id=${second}`)).status == 403, "only to its owner");
+  const listed = (await docs()).split("<li>").find((li) => li.includes(`/${login}/untitled-2"`)) ?? "";
+  expect(listed.includes(">Shared<") && listed.includes(`class="act share"`), "the list marks it shared, with a share button", listed);
+  await share(second, "Ada", "none");
+  ok("GET /docs/share says who a document is shared with, for its owner; the list marks shared documents");
 
   // Opening it, being in its room and moving a caret aren't edits.
   expect(await exists(blank), "the editor opens it");
@@ -421,7 +538,82 @@ try {
   }
   ok("sign-in's next= stays on the site");
 
+  // Admin: only admins see /admin (DEV_LOGIN, "tester" for a test host, is one by the deploy); everyone else gets a 404.
+  const adminName = local ? "tester" : null;
+  expect((await get("/admin")).status == 404 && (await as("Ada", "/admin")).status == 404, "/admin isn't there for someone who isn't an admin");
+  expect(!(await docs()).includes(`>Admin</a>`), "nor linked from their list");
+  const adminPost = (path: string, fields: Record<string, string>, who = adminName) =>
+    get(`${path}${who ? `?user=${who}` : ""}`, { method: "POST", body: new URLSearchParams(fields), headers: { Origin: origin, Accept: "application/json" } });
+  expect((await adminPost("/admin/settings", { key: "unedited_hours", value: "48" }, null)).status == 403, "nor can they change a setting");
+  if (adminName) {
+    const adminPage = await (await as(adminName, "/admin")).text();
+    expect(adminPage.includes("unedited_hours") && adminPage.includes(`data-login="${adminName}"`) && adminPage.includes(`data-login="${login}"`), "an admin sees the settings and the users", adminPage.slice(0, 300));
+    expect((await (await as(adminName, "/docs")).text()).includes(`>Admin</a>`), "and their list links to it");
+    // Settings: set, refused with the reason, reset.
+    let res = await adminPost("/admin/settings", { key: "unedited_hours", value: "48" });
+    let body = (await res.json()) as { entry?: { value: unknown; source: string; updatedBy: string }; error?: string };
+    expect(res.ok && body.entry?.value == 48 && body.entry.source == "set" && body.entry.updatedBy == adminName, "an admin sets a setting", body);
+    expect((await docs()).includes("goes away after 48 hours") || (await docs()).includes("deleted 48 hours"), "and the server uses it");
+    res = await adminPost("/admin/settings", { key: "unedited_hours", value: "0" });
+    body = await res.json();
+    expect(res.status == 400 && (body.error ?? "").includes("whole number from 1"), "a bad value is refused, saying why", body);
+    res = await adminPost("/admin/settings", { key: "nope", value: "1" });
+    expect(res.status == 400, "so is a setting there isn't");
+    expect((await adminPost("/admin/settings", { key: "unedited_hours", value: "12" }, null)).status == 403 && (await get(`/admin/settings?user=${adminName}`, { method: "POST", body: new URLSearchParams({ key: "unedited_hours", value: "12" }) })).status == 403, "only from an admin, on this site's pages");
+    body = await (await adminPost("/admin/settings", { key: "unedited_hours", reset: "1" })).json();
+    expect(body.entry?.value == 24 && body.entry.source == "default", "reset puts it back to its default", body);
+    ok("admins see /admin and set and reset settings (a bad value is refused, saying why); nobody else can see it or change them");
+
+    // Users: add, make admin (who then sees /admin), make user again, remove; a bootstrap admin can't be demoted or removed.
+    const newcomer = `new${Date.now().toString(36)}`;
+    let u = await (await adminPost("/admin/users", { do: "add", login: newcomer, role: "user" })).json() as { user?: { login: string; role: string; addedBy: string }; error?: string };
+    expect(u.user?.login == newcomer && u.user.role == "user" && u.user.addedBy == adminName, "an admin adds a user", u);
+    expect((await adminPost("/admin/users", { do: "add", login: newcomer })).status == 403, "not twice");
+    expect((await adminPost("/admin/users", { do: "add", login: "not a login!" })).status == 403, "nor something that isn't a login");
+    u = await (await adminPost("/admin/users", { do: "role", login, role: "admin" })).json();
+    expect(u.user?.role == "admin", "makes someone an admin", u);
+    expect((await get("/admin")).status == 200 && (await docs()).includes(`>Admin</a>`), "who then sees /admin, linked from their list");
+    u = await (await adminPost("/admin/users", { do: "role", login, role: "user" })).json();
+    expect(u.user?.role == "user" && (await get("/admin")).status == 404, "and back, and they don't");
+    let r2 = await adminPost("/admin/users", { do: "role", login: adminName, role: "user" });
+    expect(r2.status == 403 && ((await r2.json()) as { error: string }).error.includes("ADMINS"), "a bootstrap admin can't be demoted");
+    expect((await adminPost("/admin/users", { do: "remove", login: adminName })).status == 403, "nor removed");
+    r2 = await adminPost("/admin/users", { do: "remove", login: newcomer });
+    expect(r2.ok && !(await (await as(adminName, "/admin")).text()).includes(`data-login="${newcomer}"`), "removing a user takes them off the list");
+    expect((await adminPost("/admin/users", { do: "role", login: newcomer, role: "admin" }, null)).status == 403, "and someone who isn't an admin can't change users");
+    ok("admins add and remove users and make them admins or not; a bootstrap admin can't be demoted or removed");
+
+    // In a browser: the admin page's own controls.
+    const at = await browser.page();
+    await at.open(`${base}/admin?user=${adminName}`);
+    await at.eval(`(() => { const i = document.querySelector('li.setting input[name=value]'); i.value = "36"; i.dispatchEvent(new Event("input", { bubbles: true })); document.querySelector('li.setting .save').click(); })()`);
+    await until(async () => (await at.eval<string>(`document.readyState == "complete" ? document.querySelector('li.setting .meta')?.textContent ?? "" : ""`)).includes(`Set by ${adminName}`), 5000, "saving a setting from the page shows who set it");
+    expect((await at.eval<string>(`document.querySelector('li.setting input[name=value]').value`)) == "36", "with its new value");
+    await at.eval(`document.querySelector('li.setting .reset').click()`);
+    await until(async () => (await at.eval<string>(`document.readyState == "complete" ? document.querySelector('li.setting .meta')?.textContent ?? "" : ""`)).includes("Default"), 5000, "reset from the page");
+    await at.eval(`(() => { const f = document.querySelector('form.add-user'); f.elements.login.value = "pagebie"; f.requestSubmit(); })()`);
+    await until(async () => at.eval<boolean>(`!!document.querySelector('li[data-login="pagebie"]')`), 5000, "adding a user from the page lists them");
+    at.close?.();
+    await adminPost("/admin/users", { do: "remove", login: "pagebie" });
+    ok("the admin page saves and resets a setting and adds a user, in a browser");
+  }
+
+  // The share dialog, in a browser: add someone, change anyone-with-the-link, and the list follows.
+  const st = await browser.page();
+  await st.open(`${base}/auth/github?as=${login}&next=/docs`);
+  await st.eval(`document.querySelector('li a[href="${(await nameOf(second)).address}"]').parentElement.querySelector('button.share').click()`);
+  await until(async () => at2(st, `document.querySelectorAll('#share .people li').length == 1`), 5000, "the share dialog lists the owner");
+  await st.eval(`(() => { const f = document.querySelector('#share form.add'); f.elements.login.value = "Bo"; f.elements.role.value = "viewer"; f.requestSubmit(); })()`);
+  await until(async () => at2(st, `document.querySelectorAll('#share .people li').length == 2`), 5000, "adding someone lists them");
+  await st.eval(`(() => { const s = document.getElementById("share-anyone"); s.value = "editor"; s.dispatchEvent(new Event("change")); })()`);
+  await until(async () => ((await (await get(`/docs/share?id=${second}`)).json()) as { permissions: { login: string; role: string }[] }).permissions.map((p) => `${p.login}:${p.role}`).join() == `${login}:owner,*:editor,bo:viewer`, 5000, "the dialog's changes are saved");
+  await st.eval(`document.querySelector('#share .people li:last-child button.act').click()`);
+  await until(async () => at2(st, `document.querySelectorAll('#share .people li').length == 1`), 5000, "stopping sharing with someone takes them off");
+  await share(second, "*", "none");
+  ok("the share dialog on /docs adds people, sets anyone-with-the-link and stops sharing");
+
   await serverApiScenario();
+  await adminScenario();
 
   // Deleting: only from this site's pages, and then it's gone, addresses and all.
   const form = (headers: Record<string, string>) => get("/docs/delete", { method: "POST", body: new URLSearchParams({ id: kept }), headers });

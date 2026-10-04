@@ -19,6 +19,7 @@ import { HttpApiBuilder, HttpApiMiddleware } from "effect/http-api";
 import { MODELS, externalGuide, isModelChoice, startSession, type AgentConfig, type AgentSession } from "./agent";
 import { AgentOff, Api, BadRequest, ExplainBadRequests, ModelFixed, NameRefused, NoSuchModel, NoSuchTool, Person, PersonFromRequest, SessionFailed, ExternalAgent, ToolFailed, Unauthorized, type AgentState, type ModelState } from "./api";
 import type { DocName, Naming } from "./directory";
+import type { AgentTool } from "@mariozechner/pi-agent-core";
 import { digest, type FileStore, type Room } from "./room";
 import { ignored } from "./src/room/doc";
 import type { ViewRequest, ViewResult } from "./src/page/agent-log";
@@ -54,6 +55,8 @@ export interface HostOptions {
   readonly only?: string;
   /** The document's title and address in the directory (directory.ts), read and changed as a person. */
   readonly naming?: (person: { id: string; name: string }) => Naming;
+  /** The tools beyond the document a person's agent may use now (server-tools.ts: sharing; settings and users for an admin). */
+  readonly serverTools?: (person: { id: string; name: string }) => Promise<AgentTool[]>;
 }
 
 /** One of a person's open tabs: their agent's events and its view_page requests go only to them. */
@@ -131,6 +134,7 @@ export function makeHost(opts: HostOptions) {
         canEdit: () => opts.canEdit?.(user) ?? true,
         view: view(user.id),
         naming: namingAs(user),
+        serverTools: opts.serverTools && (() => opts.serverTools!(user)),
         readAsset: (rel) => Effect.runPromise(Effect.orElseSucceed(files.read(rel), () => null)),
       });
       s.then((session) => session.subscribe((ev) => sendTo(user.id, { type: "agent", ev })), () => sessions.delete(user.id));

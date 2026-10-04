@@ -5,13 +5,14 @@
 import { Database } from "bun:sqlite";
 import { readdirSync, readFileSync } from "node:fs";
 import { expect, test } from "bun:test";
-import { ConfigError } from "../config";
+import { ConfigError, deployedSettings, parseDeployed, SETTINGS } from "../config";
+import serverConfig from "../server.config";
 import { Directory, NameError, NotAllowed, slugify, type Param, type Sql } from "../directory";
 
 const MIGRATIONS = new URL("../migrations/", import.meta.url).pathname;
 
-/** A directory on a fresh in-memory database, its tables made by migrations/, as D1's are. */
-function fresh(opts: ConstructorParameters<typeof Directory>[1] = {}): Directory {
+/** A fresh in-memory database, its tables made by migrations/, as D1's are. */
+function memory(): Sql {
   const db = new Database(":memory:", { strict: true });
   db.exec("PRAGMA foreign_keys = ON");
   for (const name of readdirSync(MIGRATIONS).filter((n) => n.endsWith(".sql")).sort()) db.exec(readFileSync(MIGRATIONS + name, "utf8"));
@@ -21,8 +22,10 @@ function fresh(opts: ConstructorParameters<typeof Directory>[1] = {}): Directory
     run: async (q, ...params) => { db.query(q).run(...bind(params)); },
     batch: async (statements) => { db.transaction(() => { for (const [q, ...params] of statements) db.query(q).run(...bind(params)); })(); },
   };
-  return new Directory(sql, opts);
+  return sql;
 }
+/** A directory on a fresh in-memory database. */
+const fresh = (opts: ConstructorParameters<typeof Directory>[1] = {}, sql = memory()) => new Directory(sql, opts);
 const doc = (id: string, title: string, extra = {}) => ({ id, owner: "Ada", title, created: 1, expires: 100, ...extra });
 
 test("slugify", () => {
@@ -94,6 +97,8 @@ test("sharing: editors, viewers and anyone with the link", async () => {
   expect(await dir.access({ login: "dee" }, one)).toBeNull();
   // Shared documents are on the list of whoever they're shared with, with their role.
   expect((await dir.list("bo")).map((d) => [d.id, d.role])).toEqual([["aaaaaaaa", "editor"]]);
+  // And each listed document says how many it's shared with, besides its owner.
+  expect((await dir.list("ada")).map((d) => d.shared)).toEqual([2]);
   // Only the owner may share, and the owner's own permission can't change.
   await expect(dir.share({ login: "bo" }, one.id, "dee", "editor")).rejects.toBeInstanceOf(NotAllowed);
   await expect(dir.share({ login: "ada" }, one.id, "ada", "viewer")).rejects.toBeInstanceOf(NotAllowed);
@@ -182,4 +187,43 @@ test("server config: defaults, admins set and reset, the deploy locks", async ()
   await expect(locked.config.set(admin, "unedited_hours", 5)).rejects.toBeInstanceOf(NotAllowed);
   expect(() => fresh({ locked: { unedited_hours: -1 } })).toThrow(ConfigError);
   expect(() => fresh({ locked: { nope: 1 } })).toThrow(ConfigError);
+});
+
+test("server config: what the deploy fixes is locked, with its deployed value", async () => {
+  const admin = { login: "root" };
+  const sql = memory();
+  // Before the deploy locks it, an admin sets it.
+  await fresh({ admins: ["root"] }, sql).config.set(admin, "unedited_hours", 48);
+  // Deployed with it fixed: the deployed value wins over the table, everywhere it's read.
+  const { config } = fresh({ admins: ["root"], locked: { unedited_hours: 72 } }, sql);
+  expect(config.isLocked("unedited_hours")).toBe(true);
+  expect(await config.get("unedited_hours")).toBe(72);
+  expect(await config.entry("unedited_hours")).toEqual({
+    key: "unedited_hours", description: SETTINGS.unedited_hours.description, default: 24,
+    value: 72, source: "locked", locked: true, deployed: 72, updated: null, updatedBy: null,
+  });
+  expect((await config.list(admin)).map((e) => [e.key, e.locked, e.value])).toEqual([["unedited_hours", true, 72]]);
+  // Nobody changes it here, admin or not, and saying why (for a person or an agent).
+  await expect(config.set(admin, "unedited_hours", 5)).rejects.toThrow(/unedited_hours is fixed by the deploy.*stays 72/);
+  await expect(config.reset(admin, "unedited_hours")).rejects.toThrow(/fixed by the deploy/);
+  await expect(config.set({ login: "bo" }, "unedited_hours", 5)).rejects.toThrow(/admin/i);
+  expect(await config.get("unedited_hours")).toBe(72);
+  // Unlocked by a later deploy: what the admin set counts again, and it's theirs to change.
+  const after = fresh({ admins: ["root"] }, sql).config;
+  expect(await after.entry("unedited_hours")).toMatchObject({ value: 48, source: "set", locked: false, updatedBy: "root" });
+  expect((await after.entry("unedited_hours")).deployed).toBeUndefined();
+  expect(await after.reset(admin, "unedited_hours")).toMatchObject({ value: 24, source: "default", locked: false });
+});
+
+test("server config: the deploy's values, from server.config.ts and SERVER_CONFIG", () => {
+  // The repo's own file is a config the deploy takes.
+  expect(() => deployedSettings(serverConfig)).not.toThrow();
+  // The binding is JSON; empty or missing locks nothing.
+  expect(parseDeployed(undefined)).toEqual({});
+  expect(parseDeployed("")).toEqual({});
+  expect(parseDeployed('{"unedited_hours": 6}')).toEqual({ unedited_hours: 6 });
+  expect(() => parseDeployed("{nope")).toThrow(/isn't JSON/);
+  expect(() => parseDeployed("[1]")).toThrow(/must be an object/);
+  expect(() => parseDeployed('{"landing": "x"}')).toThrow(/"landing", which isn't a setting.*unedited_hours/);
+  expect(() => parseDeployed('{"unedited_hours": "soon"}')).toThrow(/unedited_hours to "soon", but it must be a whole number/);
 });

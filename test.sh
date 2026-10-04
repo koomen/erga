@@ -30,6 +30,7 @@ page_group() {
   run page bun tests/page.ts
   run isolation bun tests/isolation.ts
   run front bun tests/worker.ts --local
+  run deployed bun tests/server-config.ts
   # Latency is measured afterwards, alone: other tests running would skew it.
   run suite bun tests/suite/run.ts --skip latency
   collect
