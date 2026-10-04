@@ -17,3 +17,6 @@ for f in page.js frame.js style.css fonts/*; do put "$f" "$f"; done
 # database (D1) up to date with migrations/ first, making it if it's new.
 # Only there (WORKERS_CI is set on Workers Builds); `bun run deploy` does it itself.
 if [[ -n "${WORKERS_CI:-}" ]]; then bun migrate.ts; fi
+# The release the deploy page (/deploy) deploys to other people's accounts: this build, into .site/release/
+# (deploy/release.ts). Only for a deploy; one that fails leaves /deploy saying there's none, and the deploy goes on.
+if [[ -n "${WORKERS_CI:-}" ]]; then bun deploy/release.ts || echo "site.sh: no release for /deploy (deploy/release.ts failed)" >&2; fi

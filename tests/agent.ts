@@ -6,7 +6,7 @@
 // ANTHROPIC_API_KEY (in the environment or .dev.vars) and costs a little.
 //   bun tests/agent.ts [--keep]
 
-import { Browser, MOD, ROOT } from "./cdp";
+import { Browser, ROOT } from "./cdp";
 import { startHost } from "./host";
 import { localAgentKey } from "../dev/agent-key";
 import { F, W } from "./tab";
@@ -44,9 +44,8 @@ try {
   await Bun.sleep(500);
   await p.frame(`${W}.__marker = 1`);
 
-  await p.key("j", MOD.Meta);
-  await Bun.sleep(200);
-  check("⌘J opens the panel with the input focused", await p.eval<boolean>(`document.body.classList.contains("agent-open") && document.activeElement.id == "agent-input"`));
+  await p.openAgent();
+  check("the panel is open with the input focused", await p.eval<boolean>(`document.body.classList.contains("agent-open") && document.activeElement.id == "agent-input"`));
 
   const ask = async (text: string) => {
     await p.type(text);

@@ -101,6 +101,13 @@ export interface Platform {
    * "localhost" for a request that came to this machine.
    */
   pagesDomain(url: URL): string;
+  /**
+   * One host every document's pages share, instead of an origin each under
+   * pagesDomain: for a server with no wildcard domain (on workers.dev, which
+   * has none; PAGES_HOST). Pages stay off the app's origin, but not off each
+   * other's. Null or absent: an origin each.
+   */
+  pagesShared?(url: URL): string | null;
   /** Signs the tokens that open a document's files on its pages origin. */
   secret: string;
   /** Every document's address, title and permissions; the server's users and settings. */
@@ -281,12 +288,24 @@ const DAY = 24 * 60 * 60, WEEK = 7 * DAY;
 
 /** The origin a document's page runs on. */
 export function pagesOrigin(owner: string, id: string, url: URL, platform: Platform): string {
+  const shared = platform.pagesShared?.(url);
+  if (shared) return `https://${shared}`;
   const domain = platform.pagesDomain(url);
   return domain == "localhost" ? `${url.protocol}//${id}-${owner.toLowerCase()}.localhost${url.port ? `:${url.port}` : ""}` : `https://${id}-${owner.toLowerCase()}.${domain}`;
 }
 
 /** The document a pages origin is for, if the request came to one. */
-function pagesHost(url: URL, platform: Platform): { owner: string; id: string } | null {
+export function pagesHost(url: URL, platform: Platform): { owner: string; id: string } | null {
+  // On a shared host the document is the one its token names (pagesDoor checks the token itself).
+  const shared = platform.pagesShared?.(url);
+  if (shared && url.hostname == shared) {
+    const claims = /^\/t\/([^/.]+)\./.exec(url.pathname)?.[1];
+    try {
+      const d = claims && (JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(claims.replace(/-/g, "+").replace(/_/g, "/")), (ch) => ch.charCodeAt(0)))) as { d?: unknown }).d;
+      const [owner, id] = typeof d == "string" ? d.split("/") : [];
+      return owner && id && OWNER.test(owner) && ID.test(id) ? { owner, id } : null;
+    } catch { return null; }
+  }
   const domain = platform.pagesDomain(url);
   if (!url.hostname.endsWith(`.${domain}`)) return null;
   const m = PAGES_LABEL.exec(url.hostname.slice(0, -domain.length - 1));
@@ -630,7 +649,9 @@ const EDIT_BOOT = `(() => {
     sync();
     if (edit) load();
   }
-  window.ergaShell = { ready() { ready = true; sync(); } };
+  // Whether the page was opened in the editor (at /edit), rather than switched into it: main.ts restores
+  // the agent as it was left only then, and otherwise opens it the way it does on any later switch.
+  window.ergaShell = { ready() { ready = true; sync(); }, loadedEditing: editing() };
   document.addEventListener("click", (e) => {
     const a = e.target.closest?.(".erga-edit-button, #btn-edit");
     if (!a || e.button || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
@@ -638,16 +659,20 @@ const EDIT_BOOT = `(() => {
     go(a.id != "btn-edit", true);
   });
   addEventListener("popstate", () => go(/\\/edit\\/?$/.test(location.pathname), false));
+  // Viewing, the editor's files are fetched ahead, at low priority, and its room woken (its details asked for): sooner when the
+  // pointer or focus comes to the pencil, else once the document has loaded (its frame and everything in it) and the browser is
+  // idle, so it never competes with the document itself.
+  let fetched = false;
+  const prefetch = () => {
+    if (fetched || editor) return;
+    fetched = true;
+    for (const href of ["/editor.html", "/page.js", "/style.css", "/fonts/inter.css"]) document.head.append(Object.assign(document.createElement("link"), { rel: "prefetch", href }));
+    if (hostUp) toFrame("erga-prefetch"); else wanted ??= "erga-prefetch";
+    info().response.catch(() => {});
+  };
+  for (const type of ["pointerover", "focusin"]) document.addEventListener(type, (e) => { if (e.target.closest?.(".erga-edit-button")) prefetch(); });
   if (editing()) go(true, null);
   else {
-    // Viewing, only once the document has loaded (its frame and everything in it) and the browser is idle, so it never
-    // competes with the document: the editor's files, and its room woken (its details asked for), for a quick switch.
-    const prefetch = () => {
-      if (editor) return;
-      for (const href of ["/editor.html", "/page.js", "/style.css", "/fonts/inter.css"]) document.head.append(Object.assign(document.createElement("link"), { rel: "prefetch", href }));
-      if (hostUp) toFrame("erga-prefetch");
-      info().response.catch(() => {});
-    };
     const idle = () => (window.requestIdleCallback ?? setTimeout)(prefetch);
     if (document.readyState == "complete") idle(); else addEventListener("load", idle, { once: true });
   }
@@ -688,6 +713,10 @@ const VIEW_STYLE = `
   .erga-view-button:hover { color: var(--chrome-hover); background: color-mix(in srgb, var(--chrome) 12%, transparent); }
   /* Editing (or on the way into it), the pencil is blue, as the editor's own is. */
   .erga-view-button[aria-pressed="true"], .erga-view-button[aria-pressed="true"]:hover { color: #3b7cf0; background: transparent; }
+  /* On the way into the editor the first time, while its code arrives, the pencil breathes (only if that takes a moment). */
+  body.erga-editing:not(.erga-editor-ready) .erga-view-button[aria-pressed] svg { animation: erga-edit-wait 700ms ease-in-out 250ms infinite alternate; }
+  @keyframes erga-edit-wait { to { opacity: 0.35; } }
+  @media (prefers-reduced-motion: reduce) { body.erga-editing:not(.erga-editor-ready) .erga-view-button[aria-pressed] svg { animation: none; opacity: 0.6; } }
   .erga-view-button svg { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
   .erga-view-button::after { content: attr(data-tip); position: absolute; left: var(--tip-x, 100%); top: var(--tip-y, calc(100% + 6px)); transform: translateX(-100%); white-space: pre; font-size: 12px;
     font-weight: 400; line-height: 1.3; letter-spacing: .01em; color: var(--soft); opacity: 0; pointer-events: none; }
