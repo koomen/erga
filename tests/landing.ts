@@ -1,29 +1,27 @@
 #!/usr/bin/env bun
 // The front page is a document like any other (the landing_document
-// setting), and the repo's landing project gets there one way: published
-// through the server's API (landing.ts), by the dev server as it starts and
-// by the deploy afterwards.
+// setting), and the server makes it itself (front.ts, seedLanding): on a
+// fresh database, the first request for / makes it from the repo's
+// landing/ (built into the Worker), with no deploy step.
 //
-//   - A dev server with a landing project (ERGA_LANDING=landing) publishes it
-//     as DEV_LOGIN's /tester/landing, and / shows it, in a frame on the
-//     document's own pages origin, with Edit and Clone; /new?from=landing
-//     copies it. Restarted, it publishes into the same document.
-//   - `bun landing.ts <server>`, the deploy's step, with an admin's token
-//     (ERGA_DEPLOY_TOKEN) republishes a changed project into that document,
-//     and / shows the change; without a token, or with a non-admin's, it
-//     stops and says why.
-//   - Only a document's owner may make it the front page; /admin shows the
-//     setting with the document's address.
+//   - On a fresh dev server, the first requests for /, all at once, make one
+//     landing document, DEV_LOGIN's /tester/landing, and / shows it in a
+//     frame on the document's own pages origin, with Edit and Clone; the
+//     other bootstrap admins may edit it too; /new?from=landing copies it.
+//   - Its owner edits it in the editor (headless Chrome), and / shows the edit.
+//   - Someone who isn't an admin sees it without Edit.
+//   - Deleted, the next / makes it again from landing/.
+//   - A document an admin chooses is the front page, and nothing is made.
 //
-// Screenshots of / and /admin land in tests/cdp.ts's SHOTS.
+// Screenshots of / and the editor land in tests/cdp.ts's SHOTS.
 //
 //   bun tests/landing.ts
 
-import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
-import { tmpdir } from "os";
+import { readFileSync } from "fs";
 import { join } from "path";
 import { Browser, SHOTS } from "./cdp";
 import { startHost } from "./host";
+import { F, frameAt } from "./tab";
 import { expect, until } from "./suite/harness";
 
 const ROOT = new URL("../", import.meta.url).pathname;
@@ -31,111 +29,86 @@ const checks: string[] = [];
 const ok = (what: string) => { checks.push(what); console.log(`ok   ${what}`); };
 const landingHtml = readFileSync(join(ROOT, "landing/index.html"), "utf8");
 
-const host = await startHost(null, { env: { ERGA_LANDING: "landing" } });
+const host = await startHost(null);
 const root = host.root;
-const scratch = mkdtempSync(join(tmpdir(), "erga-landing-"));
 const browser = await Browser.launch();
+const get = (path: string, init: RequestInit = {}) => fetch(root + path, { redirect: "manual", ...init });
+/** The id of the document / frames, from its pages origin. */
+const frameOf = (html: string) => /<iframe id="frame" class="erga-view" src="http:\/\/([a-z0-9]{8})-([a-z0-9-]+)\.localhost/.exec(html);
+const landingSetting = async () => (await (await get("/admin")).text()).match(/data-key="landing_document"[\s\S]*?name="value"[^>]*value="([^"]*)"/)?.[1] ?? "";
 try {
-  // As the dev server starts, it publishes the landing project and makes it the front page.
-  await until(() => /landing page: landing_document is now \/tester\/landing/.test(host.output()), 30_000, "the dev server publishes the landing project", () => host.output().slice(-3000));
-  const get = (path: string, init: RequestInit = {}) => fetch(root + path, { redirect: "manual", ...init });
-  const front = await (await get("/")).text();
-  const frameSrc = /<iframe id="frame" class="erga-view" src="([^"]+)"/.exec(front)?.[1]?.replaceAll("&amp;", "&");
-  expect(frameSrc && /^http:\/\/[a-z0-9]{8}-tester\.localhost:\d+\/t\/[^/]+\/\?view=index\.html$/.test(frameSrc), "/ frames the landing document on its own pages origin", front.slice(0, 1500));
-  // The frame's host page shows the document's page, its index, straight away.
-  const hostPage = await (await fetch(frameSrc.replace(/^http:\/\/[^/]+/, root), { headers: { Host: new URL(frameSrc).host } })).text();
-  expect(hostPage.includes('<iframe id="view" class="on" src="doc/index.html"'), "whose host page shows its index straight away", hostPage.slice(0, 800));
-  const src = frameSrc.replace(/\?view=index\.html$/, "doc/index.html");
-  expect(front.includes("<title>Erga</title>") && front.includes('href="/new?from=landing"') && front.includes('href="/tester/landing/edit"'), "titled by it, with Clone (a copy) and, for its editor, Edit");
-  const id = /^http:\/\/([a-z0-9]{8})-/.exec(src)![1];
-  const served = await (await fetch(src.replace(/^http:\/\/[^/]+/, root), { headers: { Host: new URL(src).host } })).text();
-  expect(served == landingHtml, "the frame serves the published landing/index.html", served.slice(0, 300));
-  ok("the dev server publishes landing/ as /tester/landing, and / shows it on its own origin");
+  // A fresh database: nothing's set, and the first requests for /, at once, make one document.
+  const fronts = await Promise.all(Array.from({ length: 8 }, () => get("/").then((r) => r.text())));
+  const ids = new Set(fronts.map((f) => frameOf(f)?.[1]));
+  expect(ids.size == 1 && !ids.has(undefined), "concurrent first requests for / all show one document", [...ids]);
+  const front = fronts[0];
+  const id = frameOf(front)![1];
+  expect(frameOf(front)![2] == "tester", "DEV_LOGIN's document", front.slice(0, 800));
+  const list = await (await get("/docs")).text();
+  expect((list.match(/href="\/tester\/landing(-\d+)?\/edit"/g) ?? []).length == 1, "one landing document in its owner's list", list.slice(0, 2000));
+  expect(front.includes("<title>Erga</title>") && front.includes('href="/new?from=landing"') && front.includes('href="/tester/landing/edit"'), "titled by it, with Clone and, for its editor, Edit", front.slice(0, 1500));
+  expect((await (await get(`/d/${id}/doc/index.html`)).text()) == landingHtml, "the repo's landing/index.html");
+  expect((await landingSetting()) == "/tester/landing", "landing_document names it", await landingSetting());
+  const shared = await (await get(`/docs/share?id=${id}`)).json() as { permissions: { login: string; role: string }[] };
+  expect(shared.permissions.some((p) => p.login == "koomen" && p.role == "editor"), "the other bootstrap admins may edit it", shared);
+  ok("on a fresh server, the first / (eight at once) makes one landing document, /tester/landing, from landing/");
 
-  // The setting names it (by id); /admin shows it with its address.
+  // In a real browser: the front page shows the document, with Edit and Clone over it.
   const p = await browser.page(await browser.context());
-  await p.open(`${root}/admin`, { width: 1100, height: 760, scale: 2 });
-  const row = await p.eval<{ value: string; meta: string; link: string }>(`(() => { const li = document.querySelector('li.setting[data-key="landing_document"]'); return { value: li.querySelector("[name=value]").value, meta: li.querySelector(".meta").textContent, link: li.querySelector("a.open-doc")?.getAttribute("href") ?? "" }; })()`);
-  expect(row.value == "/tester/landing" && row.link == "/tester/landing" && row.meta.includes("set by tester"), "/admin shows landing_document as the document's address, set by the deploying admin", row);
-  await p.screenshot(join(SHOTS, "landing-admin.png"));
-  ok("/admin shows the landing document by its address");
-
-  // In a real browser: the front page shows the document, its own page in the frame.
-  await p.open(`${root}/`, { width: 1100, height: 760, scale: 2 });
+  await p.open(`${root}/`, { width: 1200, height: 800, scale: 2 });
   await until(async () => (await p.inPage<string>(`document.querySelector("h1")?.textContent ?? ""`)).some((t) => t == "Erga"), 15_000, "the landing page renders in its frame");
   expect(await p.eval<boolean>(`!!document.querySelector("a.erga-clone-button[href='/new?from=landing']") && !!document.querySelector("a.erga-edit-button[href='/tester/landing/edit']")`), "with Edit and Clone over it");
   await p.screenshot(join(SHOTS, "landing-front.png"));
   ok("in headless Chrome, / renders the landing document with Edit and Clone");
 
-  // Clone makes your own copy of it, in the editor.
+  // Its owner edits it in the editor, and / shows the edit.
+  await p.open(`${root}/tester/landing/edit`, { width: 1200, height: 800, scale: 2, clear: false });
+  await until(() => p.eval<boolean>(`document.body.classList.contains("erga-editor-ready")`), 20_000, "the editor is ready");
+  await until(() => p.frame<boolean>(`${F}.querySelector("h1")?.getAttribute("contenteditable") == "true"`), 20_000, "the editor makes the heading editable");
+  const f = await frameAt(p);
+  const at = await p.frame<{ x: number; y: number }>(`(() => { const r = ${F}.querySelector("h1").getBoundingClientRect(); return { x: ${f.x} + r.right - 2, y: ${f.y} + r.top + r.height / 2 }; })()`);
+  await p.click(at.x, at.y);
+  await Bun.sleep(100);
+  await p.type(" home");
+  await until(async () => (await (await get(`/d/${id}/doc/index.html`)).text()).includes("<h1>Erga home</h1>"), 10_000, "the edit is saved");
+  await p.screenshot(join(SHOTS, "landing-editor.png"));
+  let after = "";
+  await until(async () => (after = await (await get("/")).text()).includes("<title>Erga home</title>"), 10_000, "/ follows the edit", () => after.slice(0, 600));
+  expect(frameOf(after)?.[1] == id, "the same document");
+  ok("its owner edits it in the editor, and / shows the edit");
+
+  // Someone who isn't an admin sees it, without Edit.
+  const ada = await (await get("/?user=Ada")).text();
+  expect(frameOf(ada)?.[1] == id && !ada.includes("erga-edit-button") && ada.includes("erga-clone-button"), "Ada sees it with Clone, without Edit", ada.slice(0, 1500));
+  ok("someone who isn't an admin sees it, without Edit");
+
+  // Clone makes your own copy of it.
   const made = await get("/new?from=landing");
-  const at = made.headers.get("location") ?? "";
-  expect(made.status == 302 && at.startsWith("/tester/") && at.endsWith("/edit"), "/new?from=landing makes a document, and opens its editor", { status: made.status, at });
-  const copyId = ((await (await get(`${at.replace(/\/edit$/, "")}/api/name`)).json()) as { id: string }).id;
-  expect(copyId != id && (await (await get(`/d/${copyId}/doc/index.html`)).text()) == landingHtml, "a copy of the landing document");
-  ok("/new?from=landing copies the landing document");
+  const to = made.headers.get("location") ?? "";
+  expect(made.status == 302 && to.startsWith("/tester/") && to.endsWith("/edit"), "/new?from=landing makes a document, and opens its editor", { status: made.status, to });
+  ok("/new?from=landing copies it");
 
-  // The deploy's step: a token of the admin's, and a changed project, republished into the same document.
-  const minted = await (await get("/tokens/new", { method: "POST", body: new URLSearchParams({ label: "Deploy" }), headers: { Origin: root } })).text();
-  const token = /<pre class="secret">(erga_[^<]+)<\/pre>/.exec(minted)?.[1];
-  expect(token, "an admin's token, made at /tokens", minted.slice(0, 300));
-  const project = join(scratch, "landing");
-  cpSync(join(ROOT, "landing"), project, { recursive: true });
-  writeFileSync(join(project, "index.html"), landingHtml.replace("<h1>Erga</h1>", "<h1>Erga, deployed</h1>"));
-  writeFileSync(join(project, "extra.css"), "body { outline: 0; }\n");
-  const deploy = (env: Record<string, string>) => {
-    const r = Bun.spawnSync(["bun", join(ROOT, "landing.ts"), root], { env: { ...process.env, ERGA_LANDING: project, ...env } as Record<string, string>, stdout: "pipe", stderr: "pipe" });
-    return { code: r.exitCode, out: r.stdout.toString() + r.stderr.toString() };
-  };
-  let run = deploy({ ERGA_DEPLOY_TOKEN: token! });
-  expect(run.code == 0 && run.out.includes("republished") && run.out.includes("/tester/landing"), "bun landing.ts republishes the project", run.out);
-  let again = "";
-  await until(async () => (again = await (await get("/")).text()).includes("<title>Erga, deployed</title>"), 10_000, "/ shows the republished page (its title follows the heading)", () => again.slice(0, 800));
-  expect(again.includes(`${id}-tester.localhost`), "into the same document", again.slice(0, 800));
-  expect((await (await get(`/d/${id}/doc/extra.css`)).text()).includes("outline"), "with its new files");
-  ok("bun landing.ts (the deploy's step) republishes a changed project into the same document");
+  // Deleted, the next / makes it again from landing/.
+  const del = await get("/docs/delete", { method: "POST", headers: { Origin: root }, body: new URLSearchParams({ id }) });
+  expect(del.status == 303, "its owner deletes it", del.status);
+  const again = await (await get("/")).text();
+  const id2 = frameOf(again)?.[1];
+  expect(id2 && id2 != id && again.includes('href="/tester/landing/edit"'), "/ makes a new one at /tester/landing", again.slice(0, 800));
+  expect((await (await get(`/d/${id2}/doc/index.html`)).text()) == landingHtml, "a fresh copy of landing/");
+  ok("deleted, the landing document is made again on the next /");
 
-  // Without a token, or with someone's who isn't an admin, it stops and says why.
-  run = deploy({ ERGA_DEPLOY_TOKEN: "" });
-  expect(run.code == 1 && run.out.includes("ERGA_DEPLOY_TOKEN"), "without a token it says what it needs", run.out);
-  const ada = await fetch(`${root}/auth/github?as=Ada&next=/docs`, { redirect: "manual" });
-  const adaCookie = ada.headers.getSetCookie().map((c) => c.split(";")[0]).find((c) => c.startsWith("erga_session="))!;
-  const adaMinted = await (await get("/tokens/new", { method: "POST", body: new URLSearchParams({ label: "Not an admin" }), headers: { Origin: root, Cookie: adaCookie } })).text();
-  const adaToken = /<pre class="secret">(erga_[^<]+)<\/pre>/.exec(adaMinted)?.[1];
-  run = deploy({ ERGA_DEPLOY_TOKEN: adaToken! });
-  expect(run.code == 1 && run.out.includes("admin's agent token"), "a non-admin's token is refused, saying it needs an admin's", run.out);
-  ok("without a token, or with a non-admin's, the deploy's step stops and says why");
-
-  // Only its owner may make a document the front page: an admin who isn't refused.
-  const tool = async (t: string, name: string, args: unknown) => {
-    const r = await fetch(`${root}/api/ext/tools/${name}`, { method: "POST", headers: { Authorization: `Bearer ${t}`, "Content-Type": "application/json" }, body: JSON.stringify(args) });
-    return { status: r.status, body: await r.json() as { ok: boolean; error?: string } };
-  };
-  const adaDoc = JSON.parse(((await tool(adaToken!, "create_document", { files: { "index.html": "<h1>Ada's page</h1>" } })).body as unknown as { content: { text: string }[] }).content[0].text) as { id: string; address: string };
-  const refused = await tool(token!, "set_setting", { key: "landing_document", value: adaDoc.address });
-  expect(!refused.body.ok && /Only its owner \(ada\)/.test(refused.body.error ?? ""), "an admin can't make someone else's document the front page", refused);
-  ok("only a document's owner may make it the front page");
-
-  // Restarted, the dev server publishes into the same document again.
-  await host.stop();
-  await host.start();
-  await until(() => /landing page: republished/.test(host.output()), 30_000, "the dev server republishes on restart", () => host.output().slice(-3000));
-  let restarted = "";
-  await until(async () => (restarted = await (await get("/")).text()).includes("<title>Erga</title>"), 10_000, "back to the repo's landing/", () => restarted.slice(0, 800));
-  expect(restarted.includes(`${id}-tester.localhost`), "into the same document", restarted.slice(0, 800));
-  ok("restarted, the dev server republishes landing/ into the same document");
-
-  // Unset, the front page is a plain start page (with a hint for admins).
-  const reset = await fetch(`${root}/admin/settings`, { method: "POST", headers: { Origin: root }, body: new URLSearchParams({ key: "landing_document", reset: "1" }) });
-  expect(reset.ok, "an admin resets landing_document", await reset.text());
-  const plain = await (await get("/")).text();
-  expect(plain.includes("<h1>Erga</h1>") && plain.includes("landing_document") && !plain.includes("erga-view"), "unset, / is a plain start page, telling an admin how to set one", plain.slice(0, 1500));
-  await p.open(`${root}/`, { width: 1100, height: 760, scale: 2 });
-  await p.screenshot(join(SHOTS, "landing-unset.png"));
-  ok("unset, / is a plain start page");
+  // An admin's choice: one of their documents is the front page, and nothing is made.
+  const mine = await (await get("/new")).headers.get("location")!;
+  const mineId = ((await (await get(`${mine.replace(/\/edit$/, "")}/api/name`)).json()) as { id: string }).id;
+  const set = await get("/admin/settings", { method: "POST", headers: { Origin: root }, body: new URLSearchParams({ key: "landing_document", value: JSON.stringify(mine.replace(/\/edit$/, "")) }) });
+  expect(set.ok, "the admin sets landing_document to one of theirs", await set.text());
+  const chosen = await (await get("/")).text();
+  expect(frameOf(chosen)?.[1] == mineId, "/ shows the admin's choice", chosen.slice(0, 800));
+  const docsNow = await (await get("/docs")).text();
+  expect((docsNow.match(/href="\/tester\/landing(-\d+)?\/edit"/g) ?? []).length == 1, "and nothing more is made", docsNow.slice(0, 2000));
+  ok("a landing document an admin chose is respected");
 } finally {
   browser.close();
   await host.dispose();
-  rmSync(scratch, { recursive: true, force: true });
 }
 console.log(`\n${checks.length} checks passed (screenshots in ${SHOTS})`);

@@ -4,7 +4,7 @@
 #
 #   ./test.sh         unit tests, tests/page.ts, a page trying to reach its
 #                     viewer (tests/isolation.ts), the front door's routes
-#                     (tests/worker.ts), the landing page (tests/landing.ts),
+#                     (tests/worker.ts), the front page the server makes (tests/landing.ts),
 #                     who you are in every page's corner (tests/account.ts),
 #                     live reload (tests/reload.ts, in a copy of the checkout)
 #                     and the multiplayer suite, each
