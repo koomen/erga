@@ -147,6 +147,7 @@ export class ServerConfig<S extends Settings = typeof SETTINGS> {
   readonly settings: S;
   private locked: Record<string, unknown>;
   private checks: Checks;
+  private changed: (key: string) => Promise<void>;
   private rows: { at: number; byKey: Map<string, Row> } | null = null;
 
   /**
@@ -154,11 +155,19 @@ export class ServerConfig<S extends Settings = typeof SETTINGS> {
    * deploy, by key; each must be a key there is, and a value it takes.
    * `checks`: by key, what else a value set by someone must pass, beyond its
    * parser (the directory's: a landing document must be the setter's own).
+   * `changed`: told of every change to a key (set, reset or claimed), once
+   * it's written (the Worker tells the homepage's deploys: worker/home.ts).
    */
-  constructor(private sql: Sql, private users: Users, opts: { settings?: S; locked?: Record<string, unknown>; checks?: Checks } = {}) {
+  constructor(private sql: Sql, private users: Users, opts: { settings?: S; locked?: Record<string, unknown>; checks?: Checks; changed?: (key: string) => Promise<void> } = {}) {
     this.settings = opts.settings ?? (SETTINGS as unknown as S);
     this.locked = deployedSettings(opts.locked ?? {}, this.settings);
     this.checks = opts.checks ?? {};
+    this.changed = opts.changed ?? (async () => {});
+  }
+
+  /** Tells `changed`; a failure there is logged, never the setter's. */
+  private async tell(key: string): Promise<void> {
+    try { await this.changed(key); } catch (e) { console.log(`couldn't pass on the change to ${key}: ${e}`); }
   }
 
   /** Whether the deploy fixes this key's value. */
@@ -206,6 +215,7 @@ export class ServerConfig<S extends Settings = typeof SETTINGS> {
        ON CONFLICT (key) DO UPDATE SET value = ?2, updated = ?3, updated_by = ?4`,
       key, JSON.stringify(parsed), Date.now(), by.login.toLowerCase());
     this.rows = null;
+    await this.tell(key);
     return this.entry(key);
   }
 
@@ -224,7 +234,9 @@ export class ServerConfig<S extends Settings = typeof SETTINGS> {
       await this.sql.run("UPDATE server_config SET value = ?2, updated = ?3, updated_by = ?4 WHERE key = ?1 AND value = ?5", key, json, Date.now(), by.toLowerCase(), expected);
     }
     this.rows = null;
-    return (await this.stored(key)) == json;
+    const won = (await this.stored(key)) == json;
+    if (won) await this.tell(key);
+    return won;
   }
 
   /** A setting's row as stored now (its JSON), read afresh; null if it has none. */
@@ -240,6 +252,7 @@ export class ServerConfig<S extends Settings = typeof SETTINGS> {
     if (this.isLocked(key)) throw new NotAllowed(`${key} is fixed by the deploy (server.config.ts), so it can't be changed here: it stays ${JSON.stringify(this.locked[key])}.`);
     await this.sql.run("DELETE FROM server_config WHERE key = ?1", key);
     this.rows = null;
+    await this.tell(key);
     return this.entry(key);
   }
 

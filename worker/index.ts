@@ -32,11 +32,14 @@ import { serverApi, tokensDoor } from "../server-api";
 import { finishSignIn, isDev, mintTestToken, sessionOf, signOut, startSignIn, testSignIn } from "./auth";
 import { directoryOf, tokensOf } from "./d1";
 import { deployDoor } from "./deploy";
+import { forgetHome, serveHome, serveHomeFile, serveHomeRoot } from "./home";
+import { homeApi } from "../home";
 import type { Env } from "./env";
 import { counted, simulateLatency, tallied } from "./timing";
 
 export { Deployer } from "./deployer";
 export { DocHost } from "./doc-host";
+export { Home } from "./home";
 
 /** The templates' files, by template then path ("doc" → { "index.html": "..." }). Text files only. */
 const TEMPLATES: Record<string, Record<string, string>> = {};
@@ -53,12 +56,12 @@ for (const [path, text] of Object.entries(import.meta.glob("../landing/**", { qu
 }
 
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
     const started = Date.now();
     if (env.ERGA_REMOTE_LATENCY_MS) simulateLatency(Number(env.ERGA_REMOTE_LATENCY_MS));
     const { value: answer, timing } = await tallied(async () => {
-      const response = await route(request, env, url);
+      const response = await route(request, env, url, ctx);
       // Every page of the site's own has who you are in its upper right (account.ts); a document's pages origin never does.
       if (response.status == 101 || pagesSite(env, url)) return response;
       return withAccount(response, async () => {
@@ -100,7 +103,7 @@ const landingOf = (env: Env): NonNullable<Platform["landing"]> => {
 const pagesDomainOf = (env: Env) => env.PAGES_DOMAIN?.trim() || "erga-pages.dev";
 const pagesSite = (env: Env, url: URL) => url.hostname.endsWith(`.${pagesDomainOf(env)}`) || (!!env.PAGES_HOST && url.hostname == env.PAGES_HOST.trim()) || url.hostname.endsWith(".localhost");
 
-async function route(request: Request, env: Env, url: URL): Promise<Response> {
+async function route(request: Request, env: Env, url: URL, ctx: ExecutionContext): Promise<Response> {
   const path = url.pathname;
   const assets = path == "/page.js" || path == "/frame.js" || path == "/style.css" || path.startsWith("/fonts/");
   // A document's pages origin (front.ts, pagesDoor) serves its frame and files, and nothing of this site's.
@@ -111,6 +114,25 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
   if (path == "/auth/test") return testSignIn(env, request);
   // The editor's controls and styles, which a document's page adds to itself to go into the editor (front.ts).
   if (assets || path == "/editor.html") return env.ASSETS.fetch(request);
+  const read = request.method == "GET" || request.method == "HEAD";
+  // The homepage, served directly from its last deploy (worker/home.ts); the viewer on it (front.ts) until there's one.
+  if (path == "/" && read) {
+    const home = await serveHome(request, env, ctx, withTokens(platform(env), url));
+    if (home) return home;
+  }
+  if (path.startsWith("/_home/")) return serveHomeFile(request, env, ctx);
+  // Whether a document is the homepage, setting it, and its deploys (home.ts).
+  const [, homeId, homeAction] = /^\/api\/docs\/([a-z0-9]{8})\/home(?:\/(deploy))?\/?$/.exec(path) ?? [];
+  if (homeId) {
+    const home = env.HOME.getByName("home");
+    return homeApi(request, withTokens(platform(env), url), { status: () => home.status(), deploy: () => home.deploy() }, homeId, (homeAction ?? "") as "" | "deploy", () => { ctx.waitUntil(forgetHome(url)); });
+  }
+  // The homepage's own files at the root (its other pages, files its script asks for by a relative URL): a file's name,
+  // at the top or one folder down, and not one of the app's addresses (which never have a dot there).
+  if (read && isHomeFilePath(path)) {
+    const file = await serveHomeRoot(request, env, ctx);
+    if (file) return file;
+  }
   // The server's API for agents, and people's agent tokens (server-api.ts).
   if (path == "/llms.txt" || path == "/mcp" || path == "/api" || path.startsWith("/api/")) return serverApi(request, withTokens(platform(env), url));
   if (path == "/settings" || path == "/tokens" || path.startsWith("/tokens/")) return tokensDoor(request, withTokens(platform(env), url));
@@ -119,6 +141,10 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
   if (path == "/deploy" || path.startsWith("/deploy/")) return deployDoor(request, env, platform(env));
   return frontDoor(request, platform(env));
 }
+
+/** A path that may be one of the homepage's files at the root: /<name>.<ext> or /<folder>/<name>.<ext>, but none of the app's own. */
+const APP_FILES = new Set(["/page.js", "/frame.js", "/style.css", "/editor.html", "/llms.txt"]);
+const isHomeFilePath = (path: string) => !APP_FILES.has(path) && !path.startsWith("/fonts/") && !path.startsWith("/d/") && /^\/(?:[^/]+\/)?[^/]*\.[^/]+$/.test(path);
 
 /**
  * The front door (front.ts) on Cloudflare: people sign in with GitHub, the

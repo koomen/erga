@@ -43,6 +43,7 @@ import { FileStore, Room, StateStore, StoreError } from "../room";
 import { assets, isTextPath, files as texts } from "../src/room/doc";
 import { directoryOf } from "./d1";
 import { DiskLink } from "./disk";
+import { publishedChanged } from "./published";
 import type { Env } from "./env";
 
 /**
@@ -251,6 +252,8 @@ export class DocHost extends DurableObject<Env> {
     await this.ctx.storage.deleteAlarm();
     await this.ctx.storage.deleteAll();
     await directoryOf(this.env).remove(this.idOf(meta));
+    // If it was the homepage, its snapshot goes too (the next / makes another).
+    await this.env.HOME?.getByName("home").forget(this.idOf(meta)).catch((e) => console.log(`couldn't tell the homepage: ${e}`));
   }
 
   /** Its id (also its object's name). */
@@ -272,6 +275,14 @@ export class DocHost extends DurableObject<Env> {
       pageTitle: text != null ? titleOf(text, meta.index) : null,
     });
     if (r?.renamed) (await this.open)?.renamed(nameOf(r.doc));
+    // The homepage's published version is its files, for now (published.ts): its next deploy is scheduled.
+    const id = this.idOf(meta);
+    if (meta.modified && (await directoryOf(this.env).homeId().catch(() => null)) == id) await publishedChanged(this.env, id).catch((e) => console.log(`couldn't schedule the homepage's deploy: ${e}`));
+  }
+
+  /** A message for everyone who has the document open (the homepage's deploy status: worker/home.ts). Opens nothing. */
+  async notify(msg: unknown): Promise<void> {
+    this.opened?.notify(msg);
   }
 
   /**
@@ -432,6 +443,7 @@ export class DocHost extends DurableObject<Env> {
     const opened: Opened = {
       handler: host.handler,
       renamed: host.renamed,
+      notify: host.notify,
       roomSocket: (url, readOnly) => {
         const [client, server] = Object.values(new WebSocketPair());
         server.accept();
@@ -491,6 +503,8 @@ interface Opened {
   catchUp: () => Promise<void>;
   /** Tells every open tab the document's new title and address. */
   renamed: (name: DocName) => void;
+  /** A message for every open tab. */
+  notify: (msg: unknown) => void;
   close: () => Promise<void>;
 }
 
