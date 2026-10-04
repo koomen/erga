@@ -67,7 +67,8 @@ export async function buildHere(commit: string, log: (line: string) => void, moc
   const add = Bun.spawnSync(["git", "worktree", "add", "--detach", dir, commit], { cwd: ROOT });
   if (add.exitCode != 0) throw new Error(`git worktree add failed: ${add.stderr.toString()}`);
   try {
-    const bytes = await buildIn({ dir, commit, log: (l) => log(`build: ${l}`) });
+    // This checkout's packages, linked (a commit whose lockfile differs needs `bun install` here first).
+    const bytes = await buildIn({ dir, commit, log: (l) => log(`build: ${l}`), nodeModules: existsSync(join(ROOT, "node_modules")) ? join(ROOT, "node_modules") : undefined });
     return unpackRelease(bytes, commit.slice(0, 12));
   } finally {
     Bun.spawnSync(["git", "worktree", "remove", "--force", dir], { cwd: ROOT });

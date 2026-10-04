@@ -66,7 +66,7 @@ export interface Env {
   DEPLOY_HOOK_SECRET?: string;
   /** The builder Worker (deploy/builder/), bound by the pipeline on the targets it deploys. */
   BUILDER?: Fetcher;
-  /** Local development only: "1" has /deploy talk to a pretend Cloudflare (deploy/mock.ts), never the real one. */
+  /** Local development only: "1" has /deploy and the branch deploys talk to a pretend Cloudflare (deploy/mock.ts), never the real one. */
   ERGA_DEPLOY_MOCK?: string;
   /** Local development only: sign in as this login without GitHub (honoured only on localhost). */
   DEV_LOGIN?: string;

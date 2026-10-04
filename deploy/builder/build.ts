@@ -12,7 +12,7 @@
 // Self-contained (no imports from the rest of the repo), so the container
 // image needs only this file and server.ts.
 
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync } from "node:fs";
 import { join, relative } from "node:path";
 
 export interface Source { cloneUrl: string; token?: string }
@@ -37,9 +37,11 @@ export async function buildCommit(o: { source: Source; commit: string; branch?: 
 }
 
 /** Steps 2 to 5 in a checkout of `commit` at `dir`: the release bundle's bytes. */
-export async function buildIn(o: { dir: string; commit: string; log: Log; run?: Runner }): Promise<Uint8Array> {
+export async function buildIn(o: { dir: string; commit: string; log: Log; run?: Runner; nodeModules?: string }): Promise<Uint8Array> {
   const run = o.run ?? spawnRunner;
-  await run(["bun", "install", "--frozen-lockfile"], { cwd: o.dir, log: o.log });
+  // On a developer's machine, its checkout's packages (deploy/run.ts); in the container, installed from the lockfile.
+  if (o.nodeModules) { symlinkSync(o.nodeModules, join(o.dir, "node_modules"), "dir"); o.log(`node_modules: ${o.nodeModules}`); }
+  else await run(["bun", "install", "--frozen-lockfile"], { cwd: o.dir, log: o.log });
   await run(["./site.sh"], { cwd: o.dir, log: o.log, env: { WORKERS_CI: "" } });
   await run(["bun", "deploy/release.ts"], { cwd: o.dir, log: o.log, env: { WORKERS_CI_COMMIT_SHA: o.commit } });
   const bundle = packRelease(join(o.dir, ".site/release"));
