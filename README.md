@@ -840,8 +840,17 @@ plain page's place, scrolled to the same spot; then the editor's controls
 fade in over the viewer's. The pencil again and the browser's Back go the other way:
 the plain page loads again behind and takes its place, the viewer's controls
 fade back, and the editor carries on unseen, so going back in is immediate.
-Viewing, the page fetches the editor's files while the browser is idle.
-`tests/account.ts` switches both ways and checks that the document stays put.
+Viewing, the page fetches the editor's files while the browser is idle, or
+sooner when the pointer or focus comes to the pencil. The first time in, the
+viewer stays as it is while they arrive (the pencil breathes if that takes a
+moment); then the editor's controls show and the agent grows out of its
+button as on any later switch, once the page has said what its background is,
+so the room the page slides over to make is its colour, never a white block.
+Only a page opened at `/edit` and reloaded puts the agent back unanimated.
+`tests/account.ts` switches both ways and checks that the document stays put;
+`tests/switch.ts` records the first switch frame by frame on a slow network,
+light and dark, and checks no frame shows white or loses the document, and
+that the page never jumps.
 
 The pages origin (`pagesDoor` in `front.ts`) serves the frame at `/t/<token>/`
 and the document's files under `/t/<token>/doc/`. The token, signed with
