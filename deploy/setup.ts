@@ -122,7 +122,7 @@ try {
   const version = await (await net(`https://${STAGING.host}/api/deploys/version`)).json().catch(() => null) as { version?: string; target?: string } | null;
   const status = await net(`https://${STAGING.host}/api/deploys/status`, { headers: { Authorization: `Bearer ${shared.DEPLOY_HOOK_SECRET}` } }).then((r) => r.status).catch(() => 0);
   console.log(`   https://${STAGING.host} runs ${version?.version ?? "(no answer)"}; it says it's ${version?.target ?? "?"}${status == 200 ? ", and answers production's status requests" : ""}.`);
-  console.log(`\nDone. Next: push the staging branch (git push <erga>/git/erga.git staging) and watch https://${STAGING.host}/admin/deploys.`);
+  console.log(`\nDone. Next: push the staging branch (git push <erga>/git/erga.git staging) and watch https://${STAGING.host}/source (or /api/deploys/staging/log).`);
 } catch (e) {
   console.error(`\nStopped: ${(e as Error).message}`);
   process.exit(1);

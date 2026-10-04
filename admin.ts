@@ -204,7 +204,7 @@ ${users.map((u) => userRow(u, session)).join("\n")}
   </section>
   <section aria-labelledby="deploys-title">
     <h2 id="deploys-title">Deploys</h2>
-    <p class="lede">Erga's own branches deploy themselves: staging to staging.erga.dev, main to erga.dev. Their status and logs: <a href="${esc(link("/admin/deploys", session))}">Deploys</a>.</p>
+    <p class="lede">Erga's own branches deploy themselves: staging to staging.erga.dev, main to erga.dev. Their commits, deploys and logs: <a href="${esc(link("/source", session))}">Source</a>.</p>
   </section>
   ${deployOn ? `<section aria-labelledby="deploy-title">
     <h2 id="deploy-title">Deploy your own</h2>

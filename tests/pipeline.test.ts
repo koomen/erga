@@ -17,7 +17,7 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "fs";
 import { join } from "path";
-import { BranchDeploys, RESUME_MS, targetOf, type DeployEnv, type TargetStatus } from "../deploy/branches";
+import { BranchDeploys, RESUME_MS, targetOf, type DeployEnv, type LogLine, type TargetStatus } from "../deploy/branches";
 import { unpackRelease } from "../deploy/bundle";
 import { packRelease } from "../deploy/builder/build";
 import { handle as builderServer } from "../deploy/builder/server";
@@ -247,6 +247,8 @@ class Server {
   instance!: BranchDeploys;
   alive = { on: true };
   events = 0;
+  /** The {type: "deploy-log"} events it sent. */
+  logs: { deployId: string; lines: LogLine[] }[] = [];
   scheduled: number[] = [];
   constructor(readonly mock: ReturnType<typeof mockCloudflare>, readonly builder: ReturnType<typeof mockBuilder>, readonly script: string, readonly fixedEnv?: DeployEnv) { this.start(); }
   /** Its settings and secrets as the mock has them for its Worker (what the last deploy gave it), unless fixed. */
@@ -268,6 +270,7 @@ class Server {
       builder: this.builder,
       schedule: (ms) => { if (alive.on) this.scheduled.push(ms); },
       changed: () => { if (alive.on) this.events++; },
+      logged: (e) => { if (alive.on) this.logs.push({ deployId: e.deployId, lines: e.lines }); },
       ...quick,
     });
   }
@@ -318,6 +321,16 @@ describe("branches deploy themselves", () => {
     expect(builder.built).toEqual([SHA2]);
     expect(server.version()).toBe(SHA2.slice(0, 12));
     expect(server.events).toBeGreaterThan(5);
+    // The deploy's whole log: each line with its time and step, and the same lines as they came, in events.
+    const log = (await server.instance.logOf("staging"))!;
+    expect(log).toMatchObject({ commit: SHA2, state: "deployed", deployId: expect.stringContaining(SHA2.slice(0, 7)) });
+    expect(log.lines.some((l) => l.step == "build" && l.text == "$ bun install --frozen-lockfile")).toBe(true);
+    expect(new Set(log.lines.map((l) => l.step).filter(Boolean))).toEqual(new Set(["build", ...ALL_STEPS.map((x) => x.id)]));
+    expect(log.lines.every((l, i) => typeof l.at == "number" && (i == 0 || l.at >= log.lines[i - 1].at))).toBe(true);
+    expect(log.lines.at(-1)!.text).toContain(`deployed ${SHA2.slice(0, 12)}`);
+    expect(server.logs.map((e) => e.deployId)).toEqual(server.logs.map(() => log.deployId));
+    expect(server.logs.length).toBeGreaterThan(5);
+    expect(server.logs.flatMap((e) => e.lines)).toEqual(log.lines);
     // Production, as the status says it: another server's.
     expect((await server.instance.status({ remote: false })).targets.map((x) => [x.name, x.self])).toEqual([["production", false], ["staging", true]]);
 
@@ -326,6 +339,11 @@ describe("branches deploy themselves", () => {
     await server.instance.hook("staging", SHA3);
     await server.settle();
     expect(await server.status("staging")).toMatchObject({ state: "failed", commit: SHA3, deployed: SHA2, error: "Stopped at “Build the commit”. Something went wrong: bun install: lockfile changed" });
+    // The log is the latest deploy's: the failed one now, with the failure on the build step.
+    const failedLog = (await server.instance.logOf("staging"))!;
+    expect(failedLog).toMatchObject({ commit: SHA3, state: "failed" });
+    expect(failedLog.deployId).not.toBe(log.deployId);
+    expect(failedLog.lines.at(-1)).toMatchObject({ step: "build", text: expect.stringContaining("failed: Something went wrong: bun install: lockfile changed") });
     expect(server.version()).toBe(SHA2.slice(0, 12));
     const again = await server.instance.redeploy("staging");
     expect(again.ok).toBe(true);
@@ -376,15 +394,31 @@ describe("branches deploy themselves", () => {
       expect(mid.status.state).toBe("deploying");
       expect(mid.run.cursor).toBe("worker");
       expect(server.version()).toBe(sha.slice(0, 12));
+      // Its log so far is kept, up to the upload.
+      const kept = server.storage.get("log:staging") as any;
+      expect(kept.deployId).toBe(mid.run.deployId);
+      expect(["assets", "worker"]).toContain(kept.lines.at(-1).step);
+      const before = kept.lines.length;
 
       // The new version (its settings from the Worker the old one uploaded) wakes up, sees its upload went up, and finishes the deploy.
       server.start();
       server.scheduled = [];
+      server.logs = [];
       await server.instance.alarm();
       const t = await server.status("staging");
       expect(t).toMatchObject({ state: "deployed", commit: sha, deployed: sha, error: null });
       expect(t.log.some((l) => l.includes("the new version is up and running this"))).toBe(true);
       expect(t.steps.map((x) => x.status)).toEqual(Array(ALL_STEPS.length + 1).fill("done"));
+      // One log across the restart: the old version's lines, then the new one's, under the same deploy; the new one's go out as events too.
+      const log = (await server.instance.logOf("staging"))!;
+      expect(log).toMatchObject({ deployId: mid.run.deployId, commit: sha, state: "deployed" });
+      expect(log.lines.slice(0, before)).toEqual(kept.lines);
+      const after = log.lines.slice(before).map((l) => l.step ?? "-");
+      expect(after.slice(0, 2)).toEqual(["worker", "-"]);
+      expect(["address", "pages", "live", "documents"].every((id) => after.includes(id))).toBe(true);
+      expect(server.logs.length).toBeGreaterThan(0);
+      expect(server.logs.every((e) => e.deployId == mid.run.deployId)).toBe(true);
+      expect(server.logs.flatMap((e) => e.lines)).toEqual(log.lines.slice(before));
       expect([...mock.state.docs["erga-staging"].docs.keys()].sort()).toEqual([...PROD_DOCS].sort());
       expect(mock.state.versions["erga-staging"]).toBe(2 + i);
     }
@@ -423,6 +457,7 @@ describe("branches deploy themselves", () => {
         if (script != "erga-staging" || !url.pathname.startsWith("/api/deploys/") || url.pathname == "/api/deploys/version") return null;
         if (req.headers.get("authorization") != `Bearer ${MOCK_HOOK_SECRET}`) return new Response("no", { status: 404 });
         if (url.pathname == "/api/deploys/status") return Response.json({ target: await staging.instance.own() });
+        if (url.pathname == "/api/deploys/staging/log") return Response.json(await staging.instance.logOf("staging"));
         const r = await staging.instance.remoteHook("staging", await req.json() as any);
         return Response.json(r, { status: r.ok ? 200 : 400 });
       },
@@ -442,6 +477,9 @@ describe("branches deploy themselves", () => {
     const seen = (await production.instance.status()).targets.find((t) => t.name == "staging")!;
     expect(seen).toMatchObject({ state: "deployed", deployed: SHA2, remote: true, self: false });
     expect((await production.status("staging")).log.at(-1)).toContain("passed on to staging.erga.dev");
+    // And staging's log, from staging.
+    expect(await production.instance.logOf("staging")).toEqual(await staging.instance.logOf("staging"));
+    expect((await production.instance.logOf("staging"))!.lines.length).toBeGreaterThan(10);
     // A redeploy of staging asked on production goes to staging too.
     expect((await production.instance.redeploy("staging")).ok).toBe(true);
     expect(staging.scheduled).toEqual([0]);

@@ -3,15 +3,16 @@
 // a Durable Object has: storage that outlives a restart, an alarm (each
 // deploy runs in one, and the alarm set before the Worker's upload lets the
 // new version finish a deploy its upload interrupted), and the server's
-// event stream (/api/events: {type: "deploys"} on each change, and whatever
-// else is published here, e.g. task #39's {type: "source"}).
+// event stream (/api/events: {type: "deploys"} on each change, {type:
+// "deploy-log"} with each deploy's new log lines, and whatever else is
+// published here, e.g. task #39's {type: "source"}).
 //
 // In local development with ERGA_DEPLOY_MOCK=1 it deploys to the mock
 // Cloudflare's Erga account (deploy/mock.ts, fleet) with the mock builder,
 // which "builds" a commit by stamping the server's own release with it.
 
 import { DurableObject } from "cloudflare:workers";
-import { BranchDeploys, type DeployEnv, type TargetStatus } from "../deploy/branches";
+import { BranchDeploys, type DeployEnv, type DeployLog, type TargetStatus } from "../deploy/branches";
 import { containerBuilder } from "../deploy/builder/client";
 import { loadRelease, type Release } from "../deploy/cloudflare";
 import { FLEET_ACCOUNT, MOCK_HOOK_SECRET, MOCK_SNAPSHOT_TOKEN, mockBuilder, mockCloudflare } from "../deploy/mock";
@@ -47,12 +48,14 @@ export class Pipeline extends DurableObject<Env> {
         if (now == null || now > at) await ctx.storage.setAlarm(at);
       },
       changed: () => this.publish({ type: "deploys" }),
+      logged: (event) => this.publish(event),
       ...(mock ? { waitMs: 5000, sleep: (ms: number) => new Promise<void>((r) => setTimeout(r, Math.min(ms, 50))) } : {}),
     });
   }
 
   status(): Promise<{ targets: TargetStatus[] }> { return this.deploys.status(); }
   own(): Promise<TargetStatus | null> { return this.deploys.own(); }
+  logOf(name: string): Promise<DeployLog | null> { return this.deploys.logOf(name); }
   hook(branch: string, commit: string): Promise<void> { return this.deploys.hook(branch, commit); }
   redeploy(name: string) { return this.deploys.redeploy(name); }
   remoteHook(name: string, body: { branch?: string; commit?: string; redeploy?: boolean }) { return this.deploys.remoteHook(name, body); }

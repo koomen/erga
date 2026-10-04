@@ -689,7 +689,8 @@ with the server's secret, so production's don't work on staging; make new
 ones there); edits a room still holds in memory and hasn't written yet (a
 few seconds' worth); documents made after the database's copy (not in its
 directory) or deleted before the documents step (listed, but empty); /deploy
-sessions; staging's own deploy record (kept). The source repo is shared, not
+sessions; staging's own deploy record (kept); the homepage's deployed
+snapshot (the `Home` object: staging makes its own from the same document). The source repo is shared, not
 copied. Before production runs this version with `SNAPSHOT_TOKEN` set, the
 documents step is skipped, and says so.
 
@@ -704,12 +705,28 @@ deployed, pending, steps, self}]}`: `state` is `idle`, `building`,
 `deploying`, `deployed` or `failed`; `log` the last lines. Another server's
 target is that server's own answer when it gives one (`remote`).
 `POST /api/deploys/<name>` redeploys that target's branch head now (on
-production, `staging` is passed on). `/api/events` (admins) is server-sent
-events: `{type: "deploys"}` on each change; `publishEvent` in
-`deploy/index.ts` puts others there (#39's `{type: "source"}`).
-`GET /api/deploys/version` (anyone) is the release the server runs.
-**/admin/deploys** shows the targets live, with their steps and logs, and
-Redeploy (linked from /admin).
+production, `staging` is passed on). `GET /api/deploys/<name>/log` (admins)
+is the latest deploy's whole log, `{deployId, commit, state, lines: [{at,
+text, step?}]}`: each line with its time (ms) and its step (`build`, or one
+of the pipeline's), the first and last 2,500 lines if it's longer. It's kept
+in storage as it grows, so one deploy's log runs on across the restart its
+own upload causes; another server's target's log comes from that server.
+`/api/events` (admins) is server-sent events: `{type: "deploys"}` on each
+change, `{type: "deploy-log", target, deployId, lines}` with each deploy's
+new lines as they arrive (for a live log), and others put there with
+`publishEvent` in `deploy/index.ts` (#39's `{type: "source"}`).
+`GET /api/deploys/version` (anyone) is the release the server runs. The
+dashboard is task #39's **/source**: the commits, with the branches and each
+target's deploys beside them, and a deploy's log in a modal;
+`/admin/deploys` redirects there.
+
+**The branch model.** There are only two branches, and `staging` is always
+at or ahead of `main`: `main` only fast-forwards to a commit of `staging`
+(#39 refuses anything else). The pipeline relies on nothing more than that a
+branch's head is a commit on that branch: the builder fetches the branch and
+checks the commit out, which a fast-forward keeps reachable; production
+builds the commit itself (it doesn't take staging's build), and a push to
+`main` never makes staging deploy.
 
 Locally, `ERGA_DEPLOY_MOCK=1 ERGA_DEPLOY_TARGET=staging bun start` makes the
 dev server staging, deploying into the mock Cloudflare's copy of Erga's
@@ -753,12 +770,13 @@ change, and `--dry-run` shows the plan without doing anything.
 5. **Verify it.** Open https://staging.erga.dev and sign in (with staging's
    GitHub app): your documents are there, with production's contents; open
    one, and its page loads from `<id>-<owner>.staging.erga-pages.dev`.
-   https://staging.erga.dev/admin/deploys shows staging, and erga.dev is
-   unchanged.
+   https://staging.erga.dev/api/deploys shows staging deployed (and, once
+   #39 is in, https://staging.erga.dev/source), and erga.dev is unchanged.
 6. **Staging deploys itself.** Once #39's source is in Artifacts with a
    `staging` branch, push a commit to it (`git push
    https://staging.erga.dev/git/erga.git staging`, an admin's agent token as
-   the password). Watch /admin/deploys: the builder builds it, the pipeline
+   the password). Watch https://staging.erga.dev/source (or
+   `/api/deploys/staging/log`): the builder builds it, the pipeline
    deploys it, the server restarts into the new version and finishes, and
    `https://staging.erga.dev/api/deploys/version` says the new commit.
 7. **Later, production** (not part of this): set `CLOUDFLARE_DEPLOY_TOKEN`
@@ -1612,11 +1630,13 @@ against the mock Cloudflare's copy of Erga's account: staging's own Worker,
 database, Durable Objects, secrets and pages origin, a fresh copy of
 production's database and documents each time, nothing written to
 production (every call checked), the guards, failure and retry, branch
-pushes (the queue, passing a push on, the status), staging deploying itself
-across the restart its own upload causes, the builder's stream, and
+pushes (the queue, passing a push on, the status, the deploy log and its
+events), staging deploying itself across the restart its own upload causes
+(one log across it), the builder's stream, and
 `deploy/setup.ts` run end to end. `bun tests/deploys.ts` does it in the real
-Worker: a push to a dev server playing staging, its status and events, and
-/admin/deploys in headless Chrome (Redeploy, a failed build, who may).
+Worker: a push to a dev server playing staging, its status and events, the
+deploy's log whole and live, Redeploy, a failed build, the redirect from
+/admin/deploys to /source, and who may.
 `bun tests/isolation.ts` opens a page that tries to reach whoever views it
 (the shell's window, its cookies, erga.dev's API, forged messages) and checks
 it gets nothing. The browser tests reach the page through the frame's own
@@ -1649,8 +1669,7 @@ back, merging edits from disk, the agent's exact-match edits and attribution.
 - `deploy/cloudflare.ts`: the one deploy pipeline (`runPipeline`: targets, steps, D1's export and import)
 - `deploy/targets.json`, `deploy/targets.ts`: Erga's own targets, production and staging (cloudflare.config.ts reads production's names there)
 - `deploy/branches.ts`, `deploy/index.ts`, `worker/pipeline.ts`, `worker/deploys.ts`: branches deploying
-  themselves (the hook, the queue, carrying on after the restart), their status, events and routes, and
-  `deploy/status-page.ts`, /admin/deploys
+  themselves (the hook, the queue, carrying on after the restart), their status, logs, events and routes
 - `deploy/snapshot.ts`: copying documents' Durable Objects from production into staging
 - `deploy/builder/`: the builder Worker and its container (building a commit: `build.ts`), and the
   pipeline's side of it (`client.ts`); `deploy/bundle.ts`, a release as one file; `deploy/source.ts`, the

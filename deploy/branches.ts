@@ -88,12 +88,22 @@ export interface Deps {
   schedule(ms: number): Promise<void> | void;
   /** Something in the status changed (an event to whoever listens). */
   changed(): void;
+  /** New lines of a deploy's log ({type: "deploy-log"} on /api/events). */
+  logged?(event: { type: "deploy-log"; target: TargetName; deployId: string; lines: LogLine[] }): void;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
   waitMs?: number;
 }
 
-interface Run { commit: string; started: number; cursor: StepId | null; carry: Carry }
+interface Run { deployId: string; commit: string; started: number; cursor: StepId | null; carry: Carry }
+
+/** One line of a deploy's log: when (ms since the epoch), what, and which step it belongs to. */
+export interface LogLine { at: number; text: string; step?: StepId | "build" }
+/** A deploy's whole log, as GET /api/deploys/<name>/log answers it (the latest deploy's). */
+export interface DeployLog { deployId: string | null; commit: string | null; state: DeployState; lines: LogLine[] }
+interface StoredLog { deployId: string; commit: string; lines: LogLine[] }
+/** At most this many lines are kept of one deploy's log (the first and the latest, with a line saying how many went between). */
+const LOG_KEEP = 5000;
 interface Stored { status: TargetStatus; run: Run | null; oldDocs: string[] }
 /** The branch's head and what's waiting, kept apart from the run's record (a hook can come while a deploy runs and saves its own). */
 interface Queue { head: string | null; pending: string | null }
@@ -103,9 +113,12 @@ const LOG_LINES = 200;
 export const RESUME_MS = 20_000;
 const key = (name: TargetName) => `target:${name}`;
 const queueKey = (name: TargetName) => `queue:${name}`;
+const logKey = (name: TargetName) => `log:${name}`;
 
 export class BranchDeploys {
   private running: TargetName | null = null;
+  /** The running deploy's log, kept here as it grows (and written whole on each save), and the lines no event has carried yet. */
+  private log: { name: TargetName; stored: StoredLog; unsent: LogLine[] } | null = null;
   private now: () => number;
 
   constructor(private deps: Deps) { this.now = deps.now ?? Date.now; }
@@ -151,12 +164,57 @@ export class BranchDeploys {
     s.status.pending = (await this.queue(s.status.name)).pending;
     if (s.status.log.length > LOG_LINES) s.status.log = s.status.log.slice(-LOG_LINES);
     await this.deps.storage.put(key(s.status.name), s);
+    await this.flushLog();
     this.deps.changed();
   }
 
-  private line(s: Stored, text: string) {
-    const t = new Date(this.now()).toISOString().slice(11, 19);
-    for (const l of text.split("\n")) s.status.log.push(`${t} ${l}`);
+  /** The deploy's log so far into storage, and its new lines out as an event. */
+  private async flushLog(): Promise<void> {
+    const log = this.log;
+    if (!log || !log.unsent.length) return;
+    const lines = log.unsent.splice(0);
+    const all = log.stored.lines;
+    if (all.length > LOG_KEEP) all.splice(LOG_KEEP / 2, all.length - LOG_KEEP + 1, { at: lines[0].at, text: `(${all.length - LOG_KEEP + 1} lines left out)` });
+    await this.deps.storage.put(logKey(log.name), log.stored);
+    this.deps.logged?.({ type: "deploy-log", target: log.name, deployId: log.stored.deployId, lines });
+  }
+
+  /** The run's log: a new one for a new deploy, or (after a restart) the one storage kept. */
+  private async openLog(name: TargetName, run: Run, fresh: boolean): Promise<void> {
+    const kept = fresh ? null : await this.deps.storage.get<StoredLog>(logKey(name));
+    this.log = { name, stored: kept?.deployId == run.deployId ? kept : { deployId: run.deployId, commit: run.commit, lines: [] }, unsent: [] };
+    if (fresh) await this.deps.storage.put(logKey(name), this.log.stored);
+  }
+
+  /** The latest deploy's whole log (GET /api/deploys/<name>/log): this server's own, or another's from that server. */
+  async logOf(name: string): Promise<DeployLog | null> {
+    if (!isTargetName(name)) return null;
+    const state = (await this.load(name)).status.state;
+    if (name != this.self) {
+      const secret = this.deps.env.DEPLOY_HOOK_SECRET?.trim();
+      if (secret) {
+        try {
+          const r = await this.deps.net(`https://${TARGETS[name].host}/api/deploys/${name}/log`, { headers: { Authorization: `Bearer ${secret}` } });
+          if (r.ok) return (await r.json()) as DeployLog;
+        } catch { /* not answering: what's here */ }
+      }
+    }
+    const kept = this.log?.name == name ? this.log.stored : await this.deps.storage.get<StoredLog>(logKey(name));
+    return { deployId: kept?.deployId ?? null, commit: kept?.commit ?? null, state, lines: kept?.lines ?? [] };
+  }
+
+  private line(s: Stored, text: string, step?: LogLine["step"]) {
+    const at = this.now();
+    const t = new Date(at).toISOString().slice(11, 19);
+    for (const l of text.split("\n")) {
+      s.status.log.push(`${t} ${step == "build" ? "build: " : ""}${l}`);
+      // A deploy's own lines go in its full log too (GET /api/deploys/<name>/log).
+      if (s.run && this.log?.name == s.status.name && this.log.stored.deployId == s.run.deployId) {
+        const line: LogLine = { at, text: l, ...(step ? { step } : {}) };
+        this.log.stored.lines.push(line);
+        this.log.unsent.push(line);
+      }
+    }
   }
 
   /** Every target, as GET /api/deploys answers it: this server's own from here, another's from that server if it answers. */
@@ -282,15 +340,17 @@ export class BranchDeploys {
     const steps: StepStatus[] = [{ id: "build", title: "Build the commit", status: "running" }, ...stepsFor(targetOf(spec, this.deps.env)).map((x) => ({ id: x.id, title: x.title, status: "pending" as const }))];
     if ((await this.queue(name)).pending == commit) await this.setQueue(name, { pending: null });
     s.status = { ...s.status, state: "building", commit, at: this.now(), error: null, pending: (await this.queue(name)).pending, steps };
-    s.run = { commit, started: this.now(), cursor: null, carry: { oldDocs: s.oldDocs } };
+    s.run = { deployId: `${this.now().toString(36)}-${commit.slice(0, 7)}`, commit, started: this.now(), cursor: null, carry: { oldDocs: s.oldDocs } };
+    await this.openLog(name, s.run, true);
     this.line(s, `deploying ${commit.slice(0, 12)} (${spec.branch}) to ${spec.host}`);
     await this.save(s);
     try {
       const cf = new Cloudflare(this.deps.env.CLOUDFLARE_DEPLOY_TOKEN!.trim(), this.deps.net);
       const accountId = this.deps.env.CLOUDFLARE_ACCOUNT_ID!.trim();
       const source = await sourceFor(cf, accountId);
-      const release = await this.deps.builder!.build({ commit, branch: spec.branch, source }, (l) => { this.line(s, `build: ${l}`); void this.save(s); });
+      const release = await this.deps.builder!.build({ commit, branch: spec.branch, source }, (l) => { this.line(s, l, "build"); void this.save(s); });
       step(s, "build", "done", `release ${release.version}`);
+      this.line(s, `built release ${release.version}`, "build");
       s.status.state = "deploying";
       s.status.at = this.now();
       await this.save(s);
@@ -307,12 +367,13 @@ export class BranchDeploys {
   /** A run the restart interrupted: picked up after the Worker's upload, or marked failed if it stopped before. */
   private async resume(s: Stored): Promise<void> {
     const run = s.run!;
+    await this.openLog(s.status.name, run, false);
     const order = ALL_STEPS.map((x) => x.id) as StepId[];
     // Stopped at the upload itself: done if the Worker there is this run's release (the restart came before its end was kept).
     if (run.cursor == "worker" && run.carry.version) {
       const target = targetOf(TARGETS[s.status.name], this.deps.env);
       const there = await workerVersion(new Cloudflare(this.deps.env.CLOUDFLARE_DEPLOY_TOKEN!.trim(), this.deps.net), target.accountId, target.workerName).catch(() => null);
-      if (there == run.carry.version) { step(s, "worker", "done", `${target.workerName}, release ${there}`); run.cursor = "address"; }
+      if (there == run.carry.version) { step(s, "worker", "done", `${target.workerName}, release ${there}`); this.line(s, `Upload the Worker, with its settings and secrets: done (release ${there} is up)`, "worker"); run.cursor = "address"; }
     }
     const past = run.cursor != null && order.indexOf(run.cursor) > order.indexOf("worker");
     if (!past) {
@@ -336,7 +397,7 @@ export class BranchDeploys {
       from: from ?? undefined, carry: run.carry,
       report: (id, status, detail) => {
         step(s, id, status, detail);
-        this.line(s, `${ALL_STEPS.find((x) => x.id == id)?.title}${status == "running" ? "…" : `: ${status}${detail ? `, ${detail}` : ""}`}`);
+        this.line(s, `${ALL_STEPS.find((x) => x.id == id)?.title}${status == "running" ? "…" : `: ${status}${detail ? `, ${detail}` : ""}`}`, id);
         void this.save(s);
       },
       checkpoint: async (done, carry) => {
@@ -349,9 +410,9 @@ export class BranchDeploys {
       },
     });
     s.status = { ...s.status, state: "deployed", at: this.now(), error: null, deployed: run.commit };
+    this.line(s, `deployed ${run.commit.slice(0, 12)}: https://${TARGETS[s.status.name].host}`);
     s.run = null;
     s.oldDocs = [];
-    this.line(s, `deployed ${run.commit.slice(0, 12)}: https://${TARGETS[s.status.name].host}`);
     await this.save(s);
   }
 
@@ -361,8 +422,8 @@ export class BranchDeploys {
     if (running) running.status = "failed";
     s.status = { ...s.status, state: "failed", at: this.now(), error: `${running ? `Stopped at “${running.title}”. ` : ""}${message}` };
     s.oldDocs = s.run?.carry.oldDocs ?? s.oldDocs;
+    this.line(s, `failed: ${message}`, running?.id);
     s.run = null;
-    this.line(s, `failed: ${message}`);
     await this.save(s);
   }
 }

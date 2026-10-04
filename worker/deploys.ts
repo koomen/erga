@@ -4,20 +4,22 @@
 //
 //   GET  /api/deploys                   admins: every target's status {targets: [...]}
 //   POST /api/deploys/<name>            admins: redeploy that target's branch head now
-//   GET  /api/events                    admins: server-sent events, {type: "deploys"} on each change ({type: "source"} from #39)
+//   GET  /api/deploys/<name>/log        admins (or another of Erga's servers): the latest deploy's whole log
+//                                       {deployId, commit, state, lines: [{at, text, step?}]}
+//   GET  /api/events                    admins: server-sent events, {type: "deploys"} on each change, {type: "deploy-log",
+//                                       target, deployId, lines} as a deploy's lines arrive ({type: "source"} from #39)
 //   GET  /api/deploys/version           anyone: {version}, the release this server runs (the pipeline waits for it)
 //   GET  /api/deploys/status            another of Erga's servers (DEPLOY_HOOK_SECRET): this server's own target
 //   POST /api/deploys/<name>/hook       another of Erga's servers (DEPLOY_HOOK_SECRET): {branch, commit} or {redeploy}
 //   POST /api/snapshot/docs[/import]    SNAPSHOT_TOKEN: read documents' storage (any server), write it (staging only)
-//   GET  /admin/deploys                 admins: the page that shows the targets, live, with Redeploy
+//   GET  /admin/deploys                 redirects to /source: the dashboard of source and deploys (task #39's page)
 //
 // "Admins" are the server's admins signed in, in a browser or with an agent
 // token; a test person never.
 
-import { deploysPage } from "../deploy/status-page";
 import { snapshotDoor } from "../deploy/snapshot";
 import { PRODUCTION } from "../deploy/targets";
-import { page, whoOf, withTokens, type Platform } from "../front";
+import { whoOf, withTokens, type Platform } from "../front";
 import type { Env } from "./env";
 
 /** Whether this path is one of these routes. */
@@ -46,6 +48,16 @@ export async function deploysDoor(request: Request, env: Env, base: Platform): P
     })) ?? Response.json({ error: "Not found" }, { status: 404 });
   }
 
+  // The deploys' page is the source dashboard's now (task #39's /source).
+  if (path == "/admin/deploys") return new Response(null, { status: 302, headers: { Location: "/source" } });
+
+  // A deploy's log: for admins, and for another of Erga's servers (production's dashboard shows staging's).
+  const [, logOf] = /^\/api\/deploys\/([a-z]+)\/log$/.exec(path) ?? [];
+  if (logOf && method == "GET" && peer(request, env)) {
+    const log = await stub().logOf(logOf);
+    return log ? Response.json(log, { headers: { "Cache-Control": "no-store" } }) : Response.json({ error: `There's no deploy target called ${logOf}.` }, { status: 404 });
+  }
+
   // Server to server: another of Erga's servers, with the shared secret.
   const [, hookOf] = /^\/api\/deploys\/([a-z]+)\/hook$/.exec(path) ?? [];
   if (path == "/api/deploys/status" || hookOf) {
@@ -63,14 +75,13 @@ export async function deploysDoor(request: Request, env: Env, base: Platform): P
   const platform = withTokens(base, url);
   const session = await platform.sessionOf(request);
   const admin = !!session && !session.test && (await platform.directory.users.isAdmin(whoOf(session)));
-  if (path == "/admin/deploys") {
-    if (!session && method == "GET") return new Response(null, { status: 302, headers: { Location: `/auth/github?next=${encodeURIComponent("/admin/deploys")}` } });
-    if (!admin || method != "GET") return page("Not found", "There's nothing here. <a href=\"/\">Back to the start</a>.", 404);
-    return new Response(deploysPage(session!, env.DEPLOY_TARGET || null), { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
-  }
   if (!admin) return Response.json({ error: session ? "Only an admin can do that." : "Sign in as an admin, or use an admin's agent token." }, { status: session ? 403 : 401 });
   if (path == "/api/events" && method == "GET") return stub().fetch(new Request(url, request));
   if (path == "/api/deploys" && method == "GET") return Response.json(await stub().status(), { headers: { "Cache-Control": "no-store" } });
+  if (logOf && method == "GET") {
+    const log = await stub().logOf(logOf);
+    return log ? Response.json(log, { headers: { "Cache-Control": "no-store" } }) : Response.json({ error: `There's no deploy target called ${logOf}.` }, { status: 404 });
+  }
   const [, name] = /^\/api\/deploys\/([a-z]+)$/.exec(path) ?? [];
   if (name && method == "POST") {
     // From this site's pages, or an agent's token: never another site's form.
