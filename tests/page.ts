@@ -41,7 +41,7 @@ async function session(browser: Browser, fixture: string, fileName: string, env:
   const file = join(dir, fileName);
   const host = await startHost(dir, { env });
   const p = await browser.page();
-  await p.open(`${host.base}/edit${query}`, { clear: false, width: 1100, height: 800, timescale });
+  await p.open(`${host.base}/edit${query}`, { clear: false, width: 1100, height: 800, timescale, agent: false });
   await until(async () => await p.eval<boolean>(`!!window.ergaPage`) && await p.frame<boolean>(`!!${F}?.querySelector("[data-erga-id]")`), 10_000);
   // The page's own fonts too: text measured before they load moves when they do.
   await p.frame(`${F}.fonts.ready.then(() => true)`);
@@ -326,7 +326,7 @@ async function agentOffScenario(browser: Browser) {
   say("\nAgent off");
   const s = await session(browser, "page", "index.html", { ANTHROPIC_API_KEY: "" });
   const { p } = s;
-  await p.key("j", MOD.Meta);
+  await p.openAgent();
   await until(() => p.eval<boolean>(`!document.getElementById("agent-hint").hidden`));
   const state = () => p.eval<{ hint: string; hidden: boolean; disabled: string | null; title: string }>(`(() => { const h = document.getElementById("agent-hint"), b = document.getElementById("agent-send"); return { hint: h.textContent, hidden: h.hidden, disabled: b.getAttribute("aria-disabled"), title: b.title }; })()`);
   let st = await state();
@@ -481,7 +481,7 @@ async function agentEmptyScenario(browser: Browser) {
   say("\nAgent, empty message");
   const s = await session(browser, "page", "index.html", { ANTHROPIC_API_KEY: "sk-ant-test-not-used" });
   const { p } = s;
-  await p.key("j", MOD.Meta);
+  await p.openAgent();
   await until(() => p.eval<boolean>(`/Type a message/.test(document.getElementById("agent-send").title)`));
   check("an empty message: Send says to type one", await p.eval<boolean>(`(() => { const b = document.getElementById("agent-send"); return b.getAttribute("aria-disabled") == "true" && /Type a message/.test(b.title); })()`));
   await p.key("Enter");
@@ -529,6 +529,22 @@ async function agentEmptyScenario(browser: Browser) {
   await Bun.sleep(50);
   await loaded(p);
   check("a collapsed pane stays collapsed after a reload", !(await paneOpen()) && (await p.eval<string>(`document.getElementById("agent-fab").getAttribute("aria-expanded")`)) == "false");
+
+  // Out of the editor the pane collapses; back in, it grows out again only if it was left open.
+  const toggleEditing = async () => { await p.eval(`(document.querySelector("body.erga-editing #btn-edit") ?? document.querySelector(".erga-edit-button")).click()`); await Bun.sleep(700); };
+  await toggleEditing(); await toggleEditing();
+  check("left collapsed, it stays collapsed on the way back into the editor", !(await paneOpen()));
+  await p.key("j", MOD.Meta);
+  await p.settle();
+  await toggleEditing();
+  check("leaving the editor collapses the pane", !(await paneOpen()));
+  await toggleEditing();
+  check("and left open, it opens again on the way back in", await paneOpen());
+  // Someone who's never closed it finds it open, coming into the editor.
+  await p.eval(`localStorage.removeItem("erga:settings:v1")`);
+  await p.navigate(`${s.base}/edit?again`); // a new address: the same one would count as a reload
+  await loaded(p);
+  check("coming into the editor for the first time, the pane opens by itself", await until(paneOpen, 2000));
   await s.close();
 }
 
@@ -718,7 +734,7 @@ async function voiceScenario(browser: Browser) {
   ` });
   await p.eval(`location.reload()`);
   await loaded(p);
-  await p.key("j", MOD.Meta);
+  await p.openAgent();
   await until(() => p.eval<boolean>(`/Type a message/.test(document.getElementById("agent-send").title)`), 10_000);
   // `before` runs in the same evaluation as the read: the pause timer is a tenth of real time under test, shorter than a round trip on a busy machine.
   const st = (before = "") => p.eval<{ on: string | null; input: string; readOnly: boolean; send: string | null; title: string; sent: string[]; recs: number }>(`(() => { ${before}; const v = document.getElementById("agent-voice"), i = document.getElementById("agent-input"), b = document.getElementById("agent-send"); return { on: v.getAttribute("aria-pressed"), input: i.value, readOnly: i.readOnly, send: b.getAttribute("aria-disabled"), title: b.title, sent: [...__sent], recs: __recs.length }; })()`);

@@ -29,7 +29,7 @@ async function open(ctx: Ctx, d: Doc, user: string) {
     await p.send("Network.enable");
     await p.send("Network.setExtraHTTPHeaders", { headers });
   }
-  await p.open(d.pageUrl(user), { clear: false, width: 1100, height: 800 });
+  await p.open(d.pageUrl(user), { clear: false, width: 1100, height: 800, agent: false });
   await until(async () => await p.eval<boolean>(`!!window.ergaPage`) && await p.frame<boolean>(`!!${F}?.querySelector("[data-erga-id]")`), 10_000, `${user}'s page renders`);
   await p.frame(`${F}.fonts.ready.then(() => true)`);
   await p.settle();
@@ -137,8 +137,7 @@ export const browserTests: Test[] = [
     async run(ctx) {
       const d = await ctx.doc();
       const [a, b] = [await open(ctx, d, "Ada"), await open(ctx, d, "Bo")];
-      await a.p.key("j", MOD.Meta);
-      await sleep(300);
+      await a.p.openAgent();
       const script = JSON.stringify([{ tool: "edit", args: { path: d.path, edits: [{ oldText: "<h1>Launch notes", newText: "<h1>Launch notes by agent" }] } }, { tool: "view_page", args: { selector: "h1" } }, { text: "Looked." }]);
       await a.p.eval(`(() => { const i = document.getElementById("agent-input"); i.value = ${JSON.stringify("Check it @script " + script)}; i.dispatchEvent(new Event("input")); })()`);
       await a.p.key("Enter");
@@ -160,7 +159,7 @@ export const browserTests: Test[] = [
       const d = await ctx.doc();
       const a = await open(ctx, d, "Ada");
       const p = a.p;
-      await p.key("j", MOD.Meta);
+      await p.openAgent();
       await until(() => p.eval<boolean>(`document.body.classList.contains("agent-open") && !!document.getElementById("agent-model").textContent`), 3000, "the panel opens");
       const pane = () => p.eval<{ top: number; max: number; jump: boolean }>(`(() => { const l = document.getElementById("agent-log"); return { top: l.scrollTop, max: l.scrollHeight - l.clientHeight, jump: !document.getElementById("agent-jump").hidden }; })()`);
       const atBottom = async () => { const s = await pane(); return s.max - s.top <= 8; };
@@ -212,6 +211,8 @@ export const browserTests: Test[] = [
     async run(ctx) {
       const d = await ctx.doc();
       const a = await open(ctx, d, "Ada");
+      await a.p.openAgent();
+      await a.p.eval(`document.getElementById("agent-close").click()`);
       const s = (await d.stored(d.path))!;
       const broken = s.text.replace("Where the leads go.", "Where the</h2> leads go.");
       expect(broken != s.text, "the fixture has the sentence");
@@ -222,7 +223,7 @@ export const browserTests: Test[] = [
       await until(() => a.p.eval<boolean>(`!!document.querySelector("#toast.show .toast-fix")`), 2000, "the note offers a fix");
       const note = await a.p.eval<string>(`document.querySelector("#toast .toast-text").textContent`);
       expect(/stray <\/h2>/.test(note) && !/HTML view|⌘⇧P/.test(note), "it names the stray tag and doesn't send you to the HTML", note);
-      expect(!(await a.p.eval<boolean>(`document.body.classList.contains("agent-open")`)), "the agent panel starts closed");
+      expect(!(await a.p.eval<boolean>(`document.body.classList.contains("agent-open")`)), "the agent panel is closed");
       // Watch the note frame by frame as it goes: it fades as it is, nothing jumps.
       await a.p.eval(`window.__frames = []; (function tick(n) { const t = document.getElementById("toast"); const r = t.getBoundingClientRect(); __frames.push({ op: +getComputedStyle(t).opacity, btn: !!t.querySelector(".toast-fix"), w: Math.round(r.width), h: Math.round(r.height) }); if (n < 40) requestAnimationFrame(() => tick(n + 1)); })(0)`);
       const clicked = performance.now();
@@ -247,8 +248,7 @@ export const browserTests: Test[] = [
     async run(ctx) {
       const d = await ctx.doc();
       const a = await open(ctx, d, "Ada");
-      await a.p.key("j", MOD.Meta);
-      await sleep(300);
+      await a.p.openAgent();
       // The host stops answering the agent's endpoint for a moment.
       await a.p.eval(`window.__realFetch = window.fetch; window.fetch = (u, o) => String(u).includes("/api/agent?") && o?.method == "POST" ? Promise.reject(new TypeError("Failed to fetch")) : window.__realFetch(u, o)`);
       await a.p.eval(`(() => { const i = document.getElementById("agent-input"); i.value = "hello there"; i.dispatchEvent(new Event("input")); })()`);
