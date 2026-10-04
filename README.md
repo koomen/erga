@@ -982,7 +982,8 @@ on-screen keyboard, and keep clear of a notch.
 
 There's no dark mode: pages are shown as their authors made them, and most
 don't support one. The editor's own controls take their colours from the page
-under them instead.
+instead, on a band in the page's colour above it (see "One page, viewing or
+editing").
 
 ### Document settings
 
@@ -1059,14 +1060,22 @@ of that. What the server refuses shows where it happened, in its words. Keys:
 ↑ ↓ ← → Home End move and open folders, Enter opens, F2 renames, Delete
 deletes, Shift-F10 opens a row's menu, Esc cancels or closes.
 
-It talks to `GET /api/docs/<id>/tree` (`{ entries: [{ path, type: "page" |
-"folder" | "file", title? }], canEdit }`) and `POST` there (`new_page`,
-`new_folder`, `move`, `delete`), and reads it again on a `{ type: "tree" }`
-event on the editor's event channel, or when a file comes or goes in the room.
-That's the server's own tree API (below). `bun tests/tree.ts` checks the tree
-in headless Chrome, against `dev/tree-stub.ts` (`ERGA_TREE_STUB=1`: an
-in-memory stand-in for the API that changes no files, so the test can set
-any tree and make changes fail).
+It talks to the server's tree API (below): `GET /api/docs/<id>/tree` (`{
+entries: [{ path, type: "page" | "folder" | "file", title? }], canEdit }`,
+each page with its title) and `POST` there (`new_page`, `new_folder`, `move`,
+`delete`). It reads the tree again on a `{ type: "tree", moved?, deleted? }`
+event on the editor's event channel (which `main.ts` passes on as an
+`erga-tree` event on `window`), or when a file comes or goes in the room;
+on Documents, which has no event channel, an open tree is read again every
+few seconds while the tab is in view, and when you come back to it. Changes
+from elsewhere wait while you're naming, moving or deleting something, so
+the rows never shift under you. A folder that moved stays open where it went,
+and when the page you're editing moves (anyone's doing: another tab, an
+agent), the editor goes to its new address with the tree still open, marking
+it there. `bun tests/tree.ts` checks all of it in headless Chrome against a
+real server, on `tests/fixtures/multi` linked from disk: every operation,
+two tabs, an agent over the token API, a viewer, and a page two folders down
+that uses the stylesheet, image and font from the folders above it.
 
 ### When the page is broken
 
@@ -1438,8 +1447,8 @@ source view takes the frame's state, undo history included, and hands it back.
 
 A document's page (`viewDocument` in `front.ts`) is the same at
 `/<owner>/<slug>` and with `#edit` after it (the server never sees the fragment, so it serves one page; the page decides from `location.hash`, as it loads and whenever it changes), and small (about 4KB compressed):
-the controls, floating over the top corners, and a frame filling the window
-with the frame's host page in it (`/t/<token>/?view=`), which shows
+the controls, on a band across the top, and a frame filling the window
+below the band, with the frame's host page in it (`/t/<token>/?view=`), which shows
 the document's page straight away, as it renders. All the rest of the weight
 is the document's own. Editing is loaded on top, only for those who may edit
 and only when they go into it (the pencil, or opening it with `#edit`, or adding `#edit` to the address): the page adds
@@ -1462,6 +1471,25 @@ Only a page opened with `#edit` and reloaded puts the agent back unanimated.
 `tests/switch.ts` records the first switch frame by frame on a slow network,
 light and dark, and checks no frame shows white or loses the document, and
 that the page never jumps.
+
+The document starts below the band, so the controls never cover its first
+line, at any width. The band takes the document's own background, as a solid
+colour (a gradient's colour at the top edge), and the controls turn light on
+a dark page. The frame's host page reads the background of the page it shows
+on every frame and tells the document's page (`HOST_SCRIPT`, `BAND_BOOT` in
+`front.ts`), so the band follows a theme switch or another page of the
+document. The page remembers each document's colour (`erga:band:v1:<id>`)
+and paints it before anything loads, so a reload, viewing or editing, shows
+no white. On a first visit nothing is remembered: the host page keeps the
+document out of sight until the band has its colour (half a second at most),
+so a dark page never shows under a white band; the window is white only
+before the document shows at all. A link to another of the document's pages,
+in a colour of its own, waits in the same way, a frame or two. The band is the same height viewing and
+editing, so the document doesn't move between them. `tests/band.ts` checks
+that no control covers the text of pages whose first line is at their top
+edge (light, dark, a gradient; desktop and phone), compares the band's
+pixels with the page's, and records a first visit, a hard reload and the
+switch into the editor and back frame by frame on a slow network.
 
 The pages origin (`pagesDoor` in `front.ts`) serves the frame at `/t/<token>/`
 and the document's files under `/t/<token>/doc/`. The token, signed with
