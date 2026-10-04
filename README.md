@@ -876,6 +876,16 @@ staging and production, staging's may deploy staging only.
 | D1 Write | the account | the account | staging's database deleted and made afresh from production's export; migrations |
 | Zone Read, Workers Routes Read, DNS Read | erga.dev, erga-pages.dev | erga.dev, erga-pages.dev | find the zones; check the custom domain, the pages' route and DNS record are there and point at the Worker |
 
+**Writing Erga's source (the factory).** No token carries an Artifacts
+permission, on purpose: each server writes Erga's Artifacts repository
+through its own **Artifacts binding** (`ARTIFACTS`, namespace `erga` only:
+`worker/artifacts.ts` mints one-hour tokens for the one repo), and the
+factory's VMs, pushes and merges all go through the server's Git endpoint
+(`/git/erga.git`), which holds Erga's rules. An Artifacts API token would
+reach every repository in the account's namespaces and bypass those rules.
+The pipeline keeps the binding on every deploy of Erga's own targets
+(`Target.artifacts`), and `deploy/setup.ts` checks staging has it.
+
 Nothing else: no account read, no Workers Scripts on the account, nothing on
 the builder (a service binding needs no permission on the Worker it binds),
 no Artifacts (the servers read and write Erga's source through their
@@ -1003,10 +1013,16 @@ route and DNS record. Still to do are the steps marked *(you)*.
    `*.staging.erga-pages.dev`); then makes **staging's deploy token**,
    checks it and stores it on `erga-staging` (above). It orders the paid
    certificate only with `--certificate`.
-4. **Staging's deploy token** *(you, if step 3 stopped there)*: the token is
-   made with your credential, which must be allowed to make account API
-   tokens. With the cf CLI: `bunx cf auth login --force` (approve it in the
-   browser), then `CLOUDFLARE_ACCOUNT_ID=<id> bun deploy/setup.ts --tokens`.
+4. **Staging's deploy token** *(you, if step 3 stopped there)*. The cf
+   CLI's OAuth login can't make API tokens (Cloudflare doesn't grant it that
+   scope), so make a short-lived **token maker** on the dashboard: Manage
+   Account › Account API Tokens › Create Token › Custom, one permission,
+   Account › Account API Tokens › Edit, a TTL of today. Then
+   `CLOUDFLARE_ACCOUNT_ID=<id> CLOUDFLARE_TOKEN_MAKER="$(pbpaste)" bun deploy/setup.ts --tokens`.
+   The setup checks the maker first (an account-owned token, active, allowed
+   to make tokens; otherwise it says which of these is wrong), uses it only to
+   make, read back and delete tokens, and uses your cf login for the rest.
+   Delete the maker afterwards.
 5. **Seed the source** (once): the repo is empty until the history is in.
    Push `main` and `staging` through a server's Git endpoint
    (`ERGA_TOKEN=<admin token> bun source/import.ts https://staging.erga.dev`,

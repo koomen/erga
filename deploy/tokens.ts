@@ -35,7 +35,7 @@
 // deploy staging and production, staging's may deploy staging only.
 
 import { DeployError, zoneIdOf, type Cloudflare, type Fetch } from "./cloudflare";
-import { TARGETS, type TargetName } from "./targets";
+import { SOURCE, TARGETS, type TargetName } from "./targets";
 
 /** Cloudflare's names for the permission groups (GET /accounts/{id}/tokens/permission_groups). */
 export const PERMISSION = {
@@ -91,6 +91,7 @@ export function describePlan(p: TokenPlan): string[] {
     `${PERMISSION.workerEditor}: ${p.workers.join(", ")} (nothing else)`,
     `${PERMISSION.d1Write}: the account's D1 databases (Cloudflare has no narrower scope for D1)`,
     `${PERMISSION.zoneRead}, ${PERMISSION.routesRead}, ${PERMISSION.dnsRead}: ${p.zones.join(", ")} (read only)`,
+    `Artifacts: none in the token. ${p.storedOn}'s own Artifacts binding (namespace ${SOURCE.namespace} only) reads and writes Erga's source; the factory and pushes write through its Git endpoint (/git/erga.git)`,
   ];
 }
 
@@ -150,7 +151,7 @@ export async function olderTokens(cf: Cloudflare, accountId: string, p: TokenPla
  * (with the setup's credential): exactly the plan's. Answers what's wrong
  * (nothing: []).
  */
-export async function checkToken(o: { net: Fetch; admin: Cloudflare; accountId: string; plan: TokenPlan; id: string; value: string; policies: Policy[]; api?: string }): Promise<string[]> {
+export async function checkToken(o: { net: Fetch; admin: Cloudflare; accountId: string; plan: TokenPlan; id: string; value: string; policies: Policy[]; api?: string; tokens?: Cloudflare }): Promise<string[]> {
   const api = o.api ?? "https://api.cloudflare.com/client/v4";
   const acc = `/accounts/${o.accountId}`;
   const as = async (method: string, path: string, body?: unknown) => {
@@ -180,11 +181,48 @@ export async function checkToken(o: { net: Fetch; admin: Cloudflare; accountId: 
   await mustNot("make a Worker", "PUT", `${acc}/workers/scripts/erga-token-check-${o.plan.target}`, {});
 
   // Its policies, read back: exactly the plan's permission groups on exactly its resources.
-  const back = await o.admin.call<{ policies?: Policy[] }>("GET", `${acc}/tokens/${o.id}`, `read the token ${o.plan.name} back`).catch(() => null);
+  const back = await (o.tokens ?? o.admin).call<{ policies?: Policy[] }>("GET", `${acc}/tokens/${o.id}`, `read the token ${o.plan.name} back`).catch(() => null);
   if (!back?.policies) wrong.push("its policies couldn't be read back");
   else {
     const flat = (ps: Policy[]) => ps.flatMap((p) => p.permission_groups.flatMap((g) => Object.keys(p.resources).map((r) => `${g.id} ${r}`))).sort().join("\n");
     if (flat(back.policies) != flat(o.policies)) wrong.push("its policies aren't the plan's");
   }
   return wrong;
+}
+
+/**
+ * What the credential that makes the tokens is (CLOUDFLARE_TOKEN_MAKER, or
+ * the setup's own): an account-owned API token that's active and may make
+ * account API tokens, or what's wrong with it, in words. `ok` false stops the
+ * setup before it tries.
+ */
+export async function diagnoseMaker(o: { net: Fetch; accountId: string; value: string; api?: string }): Promise<{ ok: boolean; said: string[] }> {
+  const api = o.api ?? "https://api.cloudflare.com/client/v4";
+  const said: string[] = [];
+  const v = o.value;
+  if (/\s/.test(v) || v.length < 30 || v.length > 200) return { ok: false, said: [`It doesn't look like an API token (${v.length} characters${/\s/.test(v) ? ", with spaces or line breaks" : ""}): is the clipboard holding something else?`] };
+  const get = async (path: string) => {
+    const r = await o.net(`${api}${path}`, { headers: { Authorization: `Bearer ${v}` } }).catch(() => null);
+    const j = (await r?.json().catch(() => null)) as { success?: boolean; result?: any; errors?: { code: number; message: string }[] } | null;
+    return { status: r?.status ?? 0, ok: !!r?.ok && j?.success !== false, result: j?.result, errors: j?.errors ?? [] };
+  };
+  const acc = await get(`/accounts/${o.accountId}/tokens/verify`);
+  if (!acc.ok) {
+    const user = await get("/user/tokens/verify");
+    if (user.ok) return { ok: false, said: [`It's a user API token (My Profile › API Tokens), not an account-owned one. Make it under Manage Account › Account API Tokens, with Account API Tokens Edit.`] };
+    return { ok: false, said: [`Cloudflare doesn't know this token, for this account or as a user token (${acc.status}${acc.errors[0] ? `: ${acc.errors[0].message}` : ""}). It may be mistyped, deleted, or for another account.`] };
+  }
+  const status = acc.result?.status, expires = acc.result?.expires_on;
+  if (status != "active") return { ok: false, said: [`It's an account token, but it isn't active (${status ?? "no status"}${expires ? `, expires ${expires}` : ""}).`] };
+  said.push(`An account-owned token, active${expires ? ` until ${expires}` : ""}.`);
+  const groups = await get(`/accounts/${o.accountId}/tokens/permission_groups`);
+  const self = acc.result?.id ? await get(`/accounts/${o.accountId}/tokens/${acc.result.id}`) : null;
+  const names = (self?.result?.policies as Policy[] | undefined)?.flatMap((p) => p.permission_groups.map((g) => g.name ?? g.id));
+  if (names?.length) said.push(`Its permissions: ${[...new Set(names)].join(", ")}.`);
+  const canMake = names ? names.some((n) => /^Account API Tokens (Write|Edit)$/i.test(n)) : groups.ok;
+  if (!canMake) {
+    said.push(`It can't make account API tokens${names ? "" : ` (it can't even list the permission groups: ${groups.status})`}: give it the permission Account › Account API Tokens › Edit.`);
+    return { ok: false, said };
+  }
+  return { ok: true, said };
 }

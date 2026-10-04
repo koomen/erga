@@ -15,11 +15,14 @@
 //   --no-deploy                            (skip staging's deploy from this machine)
 //
 // The credential is yours, never a server's: CLOUDFLARE_API_TOKEN if set,
-// else the cf CLI's login (deploy/credential.ts). Making the deploy tokens
-// needs one that may make account API tokens (the cf CLI asks for that when
-// you log in: `bunx cf auth login --force` if your login is older; or an API
-// token with Account API Tokens Write). The rest needs Workers, D1, Workers
-// Routes, DNS, Zone read and Artifacts (the cf CLI's login has them).
+// else the cf CLI's login (deploy/credential.ts). It needs Workers, D1,
+// Workers Routes, DNS, Zone read and Artifacts (the cf CLI's login has
+// them). Making the deploy tokens needs a credential that may make account
+// API tokens, which the cf CLI's OAuth login can't (Cloudflare doesn't grant
+// that scope to it): set CLOUDFLARE_TOKEN_MAKER to an account-owned API
+// token with only Account › Account API Tokens › Edit (Manage Account ›
+// Account API Tokens; a short TTL; delete it after). The setup checks it
+// first and says what's wrong with it, if anything.
 //
 // The tokens (deploy/tokens.ts): staging's may deploy erga-staging only;
 // production's may deploy erga and erga-staging. Each also has D1 Write
@@ -35,7 +38,7 @@ import { machineCredential } from "./credential";
 import { MOCK_HOOK_SECRET, mockCloudflare } from "./mock";
 import { ask, deployFromMachine } from "./run";
 import { BUILDER, SOURCE, TARGETS } from "./targets";
-import { checkToken, createToken, describePlan, olderTokens, permissionIds, policiesFor, tokenPlan, type TokenPlan } from "./tokens";
+import { checkToken, createToken, describePlan, diagnoseMaker, olderTokens, permissionIds, policiesFor, tokenPlan, type TokenPlan } from "./tokens";
 
 const args = process.argv.slice(2);
 const flag = (f: string) => args.includes(f);
@@ -80,25 +83,34 @@ const net: Fetch = mock ? mockCloudflare({ fleet: true }).fetch : globalThis.fet
 const cf = new Cloudflare(token, net);
 const acc = `/accounts/${accountId}`;
 const step = (n: number) => console.log(`\n${n}. ${PLAN[n - 1]}`);
+// Who makes the tokens: CLOUDFLARE_TOKEN_MAKER if set (an account-owned API token with Account API Tokens Edit,
+// for when your own credential can't make tokens: the cf CLI's OAuth login can't, today), else the same credential.
+const makerValue = mock ? "" : process.env.CLOUDFLARE_TOKEN_MAKER?.trim() ?? "";
+const maker = makerValue ? new Cloudflare(makerValue, net) : cf;
 const putSecret = (worker: string, name: string, text: string) => cf.call("PUT", `${acc}/workers/scripts/${worker}/secrets`, `set ${name} on ${worker}`, { name, text, type: "secret_text" });
 
 /** Makes a deploy token, checks it with itself, stores it on its Worker, and deletes older ones by the same name. */
 async function makeToken(plan: TokenPlan): Promise<boolean> {
   for (const l of describePlan(plan)) console.log(`   - ${l}`);
   if (!ask(`   Make ${plan.name} and store it on ${plan.storedOn}?`, yes)) { console.log("   Skipped."); return false; }
-  const ids = await permissionIds(cf, accountId);
+  if (!mock) {
+    const d = await diagnoseMaker({ net, accountId, value: makerValue || token });
+    for (const l of d.said) console.log(`   The token maker (${makerValue ? "CLOUDFLARE_TOKEN_MAKER" : cred!.from}): ${l}`);
+    if (!d.ok) throw new DeployError(makerValue ? "CLOUDFLARE_TOKEN_MAKER can't make the tokens (above)." : `${cred!.from} can't make account API tokens. Make an account-owned API token with Account › Account API Tokens › Edit (Manage Account › Account API Tokens), and run this again with CLOUDFLARE_TOKEN_MAKER set to it.`);
+  }
+  const ids = await permissionIds(maker, accountId);
   const policies = await policiesFor(cf, accountId, plan, ids);
-  const made = await createToken(cf, accountId, plan, policies);
-  const wrong = await checkToken({ net, admin: cf, accountId, plan, id: made.id, value: made.value, policies });
+  const made = await createToken(maker, accountId, plan, policies);
+  const wrong = await checkToken({ net, admin: cf, tokens: maker, accountId, plan, id: made.id, value: made.value, policies });
   if (wrong.length) {
-    await cf.call("DELETE", `${acc}/tokens/${made.id}`, `delete the token ${plan.name}`).catch(() => {});
+    await maker.call("DELETE", `${acc}/tokens/${made.id}`, `delete the token ${plan.name}`).catch(() => {});
     throw new DeployError(`The new token ${plan.name} isn't right, so it was deleted and not stored: ${wrong.join("; ")}.`);
   }
   console.log(`   Made and checked: it deploys ${plan.workers.join(" and ")}, reads ${plan.zones.join(" and ")}, and can't reach ${plan.notWorkers.join(", ") || "any other Worker"} or write DNS and routes.`);
   await putSecret(plan.storedOn, "CLOUDFLARE_DEPLOY_TOKEN", made.value);
   console.log(`   Stored on ${plan.storedOn} as CLOUDFLARE_DEPLOY_TOKEN (not printed).`);
-  for (const old of await olderTokens(cf, accountId, plan, made.id)) {
-    await cf.call("DELETE", `${acc}/tokens/${old}`, `delete an older ${plan.name}`).then(() => console.log(`   Deleted an older ${plan.name}.`)).catch((e) => console.log(`   Couldn't delete an older ${plan.name} (${(e as Error).message}): delete it on the dashboard.`));
+  for (const old of await olderTokens(maker, accountId, plan, made.id)) {
+    await maker.call("DELETE", `${acc}/tokens/${old}`, `delete an older ${plan.name}`).then(() => console.log(`   Deleted an older ${plan.name}.`)).catch((e) => console.log(`   Couldn't delete an older ${plan.name} (${(e as Error).message}): delete it on the dashboard.`));
   }
   return true;
 }
@@ -197,6 +209,8 @@ try {
   step(11);
   const version = await (await net(`https://${STAGING.host}/api/deploys/version`)).json().catch(() => null) as { version?: string; target?: string } | null;
   console.log(`   https://${STAGING.host} runs ${version?.version ?? "(no answer)"}; it says it's ${version?.target ?? "?"}.`);
+  const bound = ((await cf.call<{ bindings?: { name: string; type: string; namespace?: string }[] }>("GET", `${acc}/workers/scripts/${STAGING.worker}/settings`, `read ${STAGING.worker}'s settings`).catch(() => null))?.bindings ?? []).find((b) => b.type == "artifacts");
+  console.log(bound ? `   ${STAGING.worker} has the Artifacts binding (${bound.name}, namespace ${bound.namespace}): its Git endpoint, and so the factory, can write Erga's source.` : `   ${STAGING.worker} has no Artifacts binding: it has no Git endpoint, and the factory can't push. Deploy it again from a build that binds it.`);
   console.log(`\nDone. Next: push the staging branch (git push https://${STAGING.host}/git/erga.git staging) and watch https://${STAGING.host}/source (or /api/deploys/staging/log).`);
 } catch (e) {
   console.error(`\nStopped: ${(e as Error).message}`);

@@ -14,7 +14,7 @@ import { artifactsNamespace } from "../deploy/builder/build";
 import { Cloudflare, loadRelease, runPipeline, targetOfPlan, workerMetadata, type Release } from "../deploy/cloudflare";
 import { FLEET_ACCOUNT, MOCK_HOOK_SECRET, MOCK_SNAPSHOT_TOKEN, mockBuilder, mockCloudflare } from "../deploy/mock";
 import { TARGETS } from "../deploy/targets";
-import { checkToken, createToken, permissionIds, policiesFor, tokenPlan } from "../deploy/tokens";
+import { checkToken, createToken, diagnoseMaker, permissionIds, policiesFor, tokenPlan } from "../deploy/tokens";
 
 const ROOT = new URL("..", import.meta.url).pathname;
 let release: Release;
@@ -200,5 +200,36 @@ describe("Erga's source on its own servers", () => {
   test("a branch build binds the namespace the commit's own deploy/targets.json names", () => {
     expect(artifactsNamespace(ROOT)).toBe("erga");
     expect(artifactsNamespace("/nonexistent")).toBeNull();
+  });
+});
+
+describe("the token maker (CLOUDFLARE_TOKEN_MAKER), checked before it's used", () => {
+  const A = FLEET_ACCOUNT, T = "t".repeat(40);
+  /** A pretend Cloudflare answering the maker's verify, its own token and the permission groups. */
+  const cfWith = (o: { account?: { status: string; expires_on?: string } | null; user?: boolean; perms?: string[] }) => (async (input: RequestInfo | URL) => {
+    const path = new URL(String(input)).pathname.replace("/client/v4", "");
+    const ok = (result: unknown) => Response.json({ success: true, result });
+    if (path == `/accounts/${A}/tokens/verify`) return o.account ? ok({ id: "maker1", ...o.account }) : Response.json({ success: false, errors: [{ code: 1000, message: "Invalid API Token" }] }, { status: 401 });
+    if (path == "/user/tokens/verify") return o.user ? ok({ id: "u1", status: "active" }) : Response.json({ success: false, errors: [] }, { status: 401 });
+    if (path == `/accounts/${A}/tokens/maker1`) return o.perms ? ok({ policies: [{ effect: "allow", resources: {}, permission_groups: o.perms.map((name) => ({ id: name, name })) }] }) : Response.json({ success: false }, { status: 403 });
+    if (path == `/accounts/${A}/tokens/permission_groups`) return o.perms ? ok([]) : Response.json({ success: false }, { status: 403 });
+    return new Response("?", { status: 404 });
+  }) as typeof fetch;
+  const run = (value: string, o: Parameters<typeof cfWith>[0]) => diagnoseMaker({ net: cfWith(o), accountId: A, value });
+
+  test("the clipboard holding something else", async () => {
+    expect((await run("some text\nfrom the clipboard", {})).said[0]).toContain("doesn't look like an API token");
+  });
+  test("a user token, an unknown one, an expired one", async () => {
+    expect((await run(T, { account: null, user: true })).said[0]).toContain("user API token");
+    expect((await run(T, { account: null })).said[0]).toContain("doesn't know this token");
+    expect(await run(T, { account: { status: "expired", expires_on: "2026-10-04T00:00:00Z" } })).toMatchObject({ ok: false, said: [expect.stringContaining("isn't active (expired")] });
+  });
+  test("one without Account API Tokens Edit, and one with it", async () => {
+    const no = await run(T, { account: { status: "active" }, perms: ["Zone Read"] });
+    expect(no.ok).toBe(false);
+    expect(no.said.join(" ")).toContain("Account API Tokens › Edit");
+    const yes = await run(T, { account: { status: "active", expires_on: "2026-10-05T00:00:00Z" }, perms: ["Account API Tokens Write"] });
+    expect(yes).toEqual({ ok: true, said: ["An account-owned token, active until 2026-10-05T00:00:00Z.", "Its permissions: Account API Tokens Write."] });
   });
 });
