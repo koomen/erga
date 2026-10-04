@@ -82,7 +82,9 @@ describe("the deploy tokens' plans", () => {
     expect(wrong).toEqual([]);
     const groups = policies.map((p) => p.permission_groups.map((g) => g.id).sort().join(","));
     expect(groups).toEqual(["7e79ec33834341f28dd431ab73884400", "09b2857d1c31407795e75e3fed8617a1", ["2072033d694d415a936eaeb94e6405b8", "82e64a83756745bbbb1c9c2701bf816b", "c8fed203ed3043cba015a93ad1616f1f"].sort().join(",")]);
-    expect(Object.keys(policies[0].resources)).toEqual([expect.stringMatching(/^com\.cloudflare\.edge\.worker\.script\.[0-9a-f]{32}$/)]);
+    // The Worker's key sits under the account's (on its own, Cloudflare refuses the token: code 1004).
+    expect(Object.keys(policies[0].resources)).toEqual([`com.cloudflare.api.account.${FLEET_ACCOUNT}`]);
+    expect(Object.keys(policies[0].resources[`com.cloudflare.api.account.${FLEET_ACCOUNT}`])).toEqual([expect.stringMatching(/^com\.cloudflare\.edge\.worker\.script\.[0-9a-f]{32}$/)]);
     expect(Object.keys(policies[1].resources)).toEqual([`com.cloudflare.api.account.${FLEET_ACCOUNT}`]);
     expect(Object.keys(policies[2].resources)).toHaveLength(2);
   });

@@ -78,7 +78,9 @@ export interface MockState {
   tokens: { id: string; name: string; policies: TokenPolicy[] }[];
 }
 
-interface TokenPolicy { effect: string; permission_groups: { id: string; name?: string }[]; resources: Record<string, string> }
+interface TokenPolicy { effect: string; permission_groups: { id: string; name?: string }[]; resources: Record<string, string | Record<string, string>> }
+/** A policy's resource keys, a Worker's nested under its account. */
+const keysOf = (p: TokenPolicy) => Object.entries(p.resources ?? {}).flatMap(([k, v]) => (typeof v == "string" ? [k] : Object.keys(v)));
 
 /** The permission groups the mock knows, by id (Cloudflare's ids: deploy/tokens.ts KNOWN_IDS). */
 const GROUPS: Record<string, string> = {
@@ -143,7 +145,7 @@ export function mockCloudflare(opts: {
     const t = tokenOf(value);
     if (!t) return fail(401, 1000, "Invalid API Token");
     const no = () => fail(403, 10000, "Authentication error");
-    const grants = (group: string) => t.policies.filter((p) => p.permission_groups.some((g) => GROUPS[g.id] == group)).flatMap((p) => Object.keys(p.resources));
+    const grants = (group: string) => t.policies.filter((p) => p.permission_groups.some((g) => GROUPS[g.id] == group)).flatMap(keysOf);
     const workers = grants("Individual Workers Editor").map((k) => k.split(".").pop()!);
     const d1 = grants("D1 Write").includes(`com.cloudflare.api.account.${ACCOUNT_ID}`);
     const zoneIds = (group: string) => grants(group).map((k) => /zone\.(\w+)$/.exec(k)?.[1]).filter(Boolean) as string[];
@@ -201,7 +203,9 @@ export function mockCloudflare(opts: {
           if (!b?.name || !Array.isArray(b.policies) || !b.policies.length) return fail(400, 400, "name and policies are required");
           for (const pol of b.policies as TokenPolicy[]) {
             for (const g of pol.permission_groups ?? []) if (!GROUPS[g.id]) return fail(400, 400, `unknown permission group ${g.id}`);
-            for (const key of Object.keys(pol.resources ?? {})) {
+            // A Worker's key on its own is refused, as Cloudflare does (code 1004): it must sit under its account's.
+            if (Object.keys(pol.resources ?? {}).some((k) => k.startsWith("com.cloudflare.edge.worker.script."))) return fail(500, 1004, "server error when creating the token");
+            for (const key of keysOf(pol)) {
               const w = /^com\.cloudflare\.edge\.worker\.script\.([0-9a-f]{32})$/.exec(key), z = /^com\.cloudflare\.api\.account\.zone\.(\w+)$/.exec(key), a = /^com\.cloudflare\.api\.account\.(\w+)$/.exec(key);
               if (w && !Object.keys(state.scripts).some((n) => scriptTag(n) == w[1])) return fail(400, 400, `no Worker with the tag ${w[1]}`);
               if (z && !state.zones.some((x) => x.id == z[1])) return fail(400, 400, `no zone ${z[1]}`);
@@ -412,7 +416,7 @@ export function mockCloudflare(opts: {
     if (m == "GET" && path.startsWith("/zones?")) {
       const name = new URLSearchParams(path.split("?")[1]).get("name");
       const t = token.startsWith("mock-scoped-") ? tokenOf(token) : null;
-      const readable = (id: string) => !t || t.policies.some((p) => p.permission_groups.some((g) => GROUPS[g.id] == "Zone Read") && `com.cloudflare.api.account.zone.${id}` in p.resources);
+      const readable = (id: string) => !t || t.policies.some((p) => p.permission_groups.some((g) => GROUPS[g.id] == "Zone Read") && keysOf(p).includes(`com.cloudflare.api.account.zone.${id}`));
       return ok(state.zones.filter((z) => (!name || z.name == name) && readable(z.id)));
     }
     if ((r = /^\/zones\/([^/?]+)(\/[^?]*)(?:\?(.*))?$/.exec(path))) {

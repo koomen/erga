@@ -100,7 +100,12 @@ export const workerResource = (tag: string) => `com.cloudflare.edge.worker.scrip
 export const zoneResource = (id: string) => `com.cloudflare.api.account.zone.${id}`;
 export const accountResource = (id: string) => `com.cloudflare.api.account.${id}`;
 
-interface Policy { effect: "allow"; permission_groups: { id: string; name?: string }[]; resources: Record<string, string> }
+/** A token policy. A Worker's resource sits under its account's (Cloudflare refuses it on its own, with a 1004). */
+export interface Policy { effect: "allow"; permission_groups: { id: string; name?: string }[]; resources: Record<string, string | Record<string, string>> }
+
+/** A policy's resource keys, nested ones (a Worker under its account) included. */
+export const resourceKeys = (p: Pick<Policy, "resources">): string[] =>
+  Object.entries(p.resources).flatMap(([k, v]) => (typeof v == "string" ? [k] : Object.keys(v)));
 
 /** The permission groups' ids by name: the account's list, else the known ids. */
 export async function permissionIds(cf: Cloudflare, accountId: string): Promise<Record<string, string>> {
@@ -121,7 +126,8 @@ export async function policiesFor(cf: Cloudflare, accountId: string, p: TokenPla
   const zones = await Promise.all(p.zones.map((z) => zoneIdOf(cf, accountId, z)));
   const group = (name: string) => ({ id: ids[name] });
   return [
-    { effect: "allow", permission_groups: [group(PERMISSION.workerEditor)], resources: Object.fromEntries(tags.map((t) => [workerResource(t), "*"])) },
+    // Nested under the account: a Worker's key on its own is refused (code 1004, "server error when creating the token").
+    { effect: "allow", permission_groups: [group(PERMISSION.workerEditor)], resources: { [accountResource(accountId)]: Object.fromEntries(tags.map((t) => [workerResource(t), "*"])) } },
     { effect: "allow", permission_groups: [group(PERMISSION.d1Write)], resources: { [accountResource(accountId)]: "*" } },
     { effect: "allow", permission_groups: [group(PERMISSION.zoneRead), group(PERMISSION.routesRead), group(PERMISSION.dnsRead)], resources: Object.fromEntries(zones.map((z) => [zoneResource(z), "*"])) },
   ];
@@ -184,7 +190,7 @@ export async function checkToken(o: { net: Fetch; admin: Cloudflare; accountId: 
   const back = await (o.tokens ?? o.admin).call<{ policies?: Policy[] }>("GET", `${acc}/tokens/${o.id}`, `read the token ${o.plan.name} back`).catch(() => null);
   if (!back?.policies) wrong.push("its policies couldn't be read back");
   else {
-    const flat = (ps: Policy[]) => ps.flatMap((p) => p.permission_groups.flatMap((g) => Object.keys(p.resources).map((r) => `${g.id} ${r}`))).sort().join("\n");
+    const flat = (ps: Policy[]) => ps.flatMap((p) => p.permission_groups.flatMap((g) => resourceKeys(p).map((r) => `${g.id} ${r}`))).sort().join("\n");
     if (flat(back.policies) != flat(o.policies)) wrong.push("its policies aren't the plan's");
   }
   return wrong;
