@@ -613,7 +613,7 @@ const NAV_SCRIPT = `(() => {
     if (location.pathname == "/" && !suffix(path)) return;
     const here = ergaPageAddress() + (document.body.classList.contains("erga-editing") ? "/edit" : "");
     if (location.pathname != here) history.replaceState(history.state, "", here + location.search + location.hash);
-    document.querySelector(".erga-edit-button")?.setAttribute("href", ergaPageAddress() + "/edit" + location.search);
+    document.querySelector(".erga-view-buttons a[aria-pressed]")?.setAttribute("href", ergaPageAddress() + "/edit" + location.search);
   });
 })();`;
 
