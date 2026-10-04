@@ -44,7 +44,7 @@ const publish = (id: string, body: unknown, who = get, headers: Record<string, s
 try {
   // A document of the owner's.
   const r = await get("/new");
-  const at = r.headers.get("location")!.replace(/\/edit$/, "");
+  const at = r.headers.get("location")!.replace(/(\/edit|#edit)$/, "");
   const id = ((await (await get(`${at}/api/name`)).json()) as { id: string }).id;
 
   let s = await state(id);
@@ -130,7 +130,7 @@ try {
   // The viewer's frame and its files, as the viewer's page links them.
   const viewer = async (who: typeof get) => {
     const html = await (await who(`/d/${id}`, { redirect: "follow" })).text();
-    const frame = /<iframe id="frame"[^>]* src="([^"]+)"/.exec(html)![1].replace(/&amp;/g, "&");
+    const frame = /<iframe id="frame"[^>]* (?:data-)?src="([^"]+)"/.exec(html)![1].replace(/&amp;/g, "&");
     const hostPage = await (await pagesFetch(frame)).text();
     const shown = new URL(/<iframe id="view"[^>]* src="([^"]+)"/.exec(hostPage)![1], frame).href;
     return { frame, shown, docUrl: shown.replace("/pub/", "/doc/") };
@@ -146,7 +146,7 @@ try {
   expect((await get(`/api/docs/${id}/versions`).then((x) => x.json()) as State).published.version.id == "v2", "the API says v2 is published");
   // A viewer's copy is of what they see.
   const clone = await getBo(`/new?from=${id}`);
-  const copyAt = clone.headers.get("location")!.replace(/\/edit$/, "");
+  const copyAt = clone.headers.get("location")!.replace(/(\/edit|#edit)$/, "");
   const copyText = await (await getBo(`${copyAt}/doc/index.html`)).text();
   expect(!copyText.includes("unpublished-draft") && copyText.includes("burst5"), "a viewer's Clone copies the published version", copyText.slice(0, 300));
   ok("manual: viewers see the published version in every file (and copy it); editors edit the draft");
