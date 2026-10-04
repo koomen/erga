@@ -1,0 +1,45 @@
+{
+  "admins": "koomen,dsiroker",
+  "source": {
+    "namespace": "erga",
+    "repo": "erga"
+  },
+  "builder": "erga-builder",
+  "targets": {
+    "production": {
+      "name": "production",
+      "branch": "main",
+      "worker": "erga",
+      "database": "erga",
+      "host": "erga.dev",
+      "zone": "erga.dev",
+      "pages": {
+        "zone": "erga-pages.dev",
+        "domain": "erga-pages.dev"
+      },
+      "vars": {
+        "GITHUB_CLIENT_ID": "Ov23ctkY7oLarHcPA97b"
+      },
+      "notifies": [
+        "staging"
+      ]
+    },
+    "staging": {
+      "name": "staging",
+      "branch": "staging",
+      "worker": "erga-staging",
+      "database": "erga-staging",
+      "host": "staging.erga.dev",
+      "zone": "erga.dev",
+      "pages": {
+        "zone": "erga-pages.dev",
+        "domain": "staging.erga-pages.dev"
+      },
+      "vars": {
+        "GITHUB_CLIENT_ID": "",
+        "CLOUDFLARE_OAUTH_CLIENT_ID": ""
+      },
+      "snapshotFrom": "production"
+    }
+  }
+}
