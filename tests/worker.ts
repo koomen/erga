@@ -592,11 +592,11 @@ try {
     // In a browser: the admin page's own controls.
     const at = await browser.page();
     await at.open(`${base}/admin?user=${adminName}`);
-    await at.eval(`(() => { const i = document.querySelector('li.setting input[name=value]'); i.value = "36"; i.dispatchEvent(new Event("input", { bubbles: true })); document.querySelector('li.setting .save').click(); })()`);
-    await until(async () => (await at.eval<string>(`document.readyState == "complete" ? document.querySelector('li.setting .meta')?.textContent ?? "" : ""`)).includes(`Set by ${adminName}`), 5000, "saving a setting from the page shows who set it");
-    expect((await at.eval<string>(`document.querySelector('li.setting input[name=value]').value`)) == "36", "with its new value");
-    await at.eval(`document.querySelector('li.setting .reset').click()`);
-    await until(async () => (await at.eval<string>(`document.readyState == "complete" ? document.querySelector('li.setting .meta')?.textContent ?? "" : ""`)).includes("Default"), 5000, "reset from the page");
+    await at.eval(`(() => { const i = document.querySelector('li.setting[data-key=unedited_hours] input[name=value]'); i.value = "36"; i.dispatchEvent(new Event("input", { bubbles: true })); document.querySelector('li.setting[data-key=unedited_hours] .save').click(); })()`);
+    await until(async () => (await at.eval<string>(`document.readyState == "complete" ? document.querySelector('li.setting[data-key=unedited_hours] .meta')?.textContent ?? "" : ""`)).includes(`Set by ${adminName}`), 5000, "saving a setting from the page shows who set it");
+    expect((await at.eval<string>(`document.querySelector('li.setting[data-key=unedited_hours] input[name=value]').value`)) == "36", "with its new value");
+    await at.eval(`document.querySelector('li.setting[data-key=unedited_hours] .reset').click()`);
+    await until(async () => (await at.eval<string>(`document.readyState == "complete" ? document.querySelector('li.setting[data-key=unedited_hours] .meta')?.textContent ?? "" : ""`)).includes("Default"), 5000, "reset from the page");
     await at.eval(`(() => { const f = document.querySelector('form.add-user'); f.elements.login.value = "pagebie"; f.requestSubmit(); })()`);
     await until(async () => at.eval<boolean>(`!!document.querySelector('li[data-login="pagebie"]')`), 5000, "adding a user from the page lists them");
     at.close?.();
