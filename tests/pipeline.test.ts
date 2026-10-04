@@ -413,7 +413,7 @@ describe("branches deploy themselves", () => {
       const log = (await server.instance.logOf("staging"))!;
       expect(log).toMatchObject({ deployId: mid.run.deployId, commit: sha, state: "deployed" });
       expect(log.lines.slice(0, before)).toEqual(kept.lines);
-      const after = log.lines.slice(before).map((l) => l.step ?? "-");
+      const after: string[] = log.lines.slice(before).map((l) => l.step ?? "-");
       expect(after.slice(0, 2)).toEqual(["worker", "-"]);
       expect(["address", "pages", "live", "documents"].every((id) => after.includes(id))).toBe(true);
       expect(server.logs.length).toBeGreaterThan(0);
