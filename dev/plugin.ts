@@ -75,6 +75,8 @@ export function ergaDev(opts: DevOptions): Plugin {
       const log = (line: string) => server.config.logger.info(line, { timestamp: true });
       // First, so it sees every page the Worker sends.
       live = opts.reload ? liveReload(server, log) : undefined;
+      // A change Vite restarts the server for (its config, or a file the config imports): the restarted server reloads the tabs.
+      if (live) server.watcher.on("change", (file) => { if (server.config.configFileDependencies.includes(file)) live?.restarting(); });
       const linksFile = join(opts.stateDir, "erga-links.json");
       const mirrors = new Map<string, Mirror>();
       // Where the Worker answers (for us), and the address people use.

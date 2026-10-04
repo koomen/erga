@@ -15,21 +15,28 @@ import type { ViteDevServer } from "vite";
 
 const PATH = "/__erga/reload";
 
-/** The script: reloads when told to, or when it reconnects to a server that isn't the one it first met. */
-const script = (boot: string) => `<script>(()=>{let seen;const es=new EventSource(${JSON.stringify(PATH)});` +
-  `es.addEventListener("hello",(e)=>{if(seen&&seen!==e.data)location.reload();seen=e.data});` +
-  `es.addEventListener("reload",()=>location.reload())})()/*erga live reload ${boot}*/</script>`;
+/**
+ * The script: reloads when told to, or when it reconnects to a server that isn't the one it first met; either way
+ * only once the page answers, so a server still coming back never leaves the tab on an error page.
+ */
+const script = (boot: string) => `<script>(()=>{let seen,going;` +
+  `const go=async()=>{if(going)return;going=true;for(let i=0;i<240;i++){try{const r=await fetch(location.href,{cache:"no-store"});if(r.status<500)break}catch{}await new Promise((f)=>setTimeout(f,250))}location.reload()};` +
+  `const es=new EventSource(${JSON.stringify(PATH)});` +
+  `es.addEventListener("hello",(e)=>{if(seen&&seen!==e.data)go();seen=e.data});` +
+  `es.addEventListener("reload",go)})()/*erga live reload ${boot}*/</script>`;
 
 export interface LiveReload {
   /** Tells every open tab to reload (debounced: a burst of changes is one reload). */
   reload(why: string): void;
+  /** The server is about to restart: no more reloads from this one (the tabs reload when they reconnect to the next). */
+  restarting(): void;
   stop(): void;
 }
 
 export function liveReload(server: ViteDevServer, log: (line: string) => void): LiveReload {
   const boot = Date.now().toString(36);
   const tabs = new Set<ServerResponse>();
-  let timer: ReturnType<typeof setTimeout> | undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined, quiet = false;
   const beat = setInterval(() => { for (const t of tabs) t.write(": beat\n\n"); }, 15000);
   beat.unref?.();
 
@@ -49,12 +56,18 @@ export function liveReload(server: ViteDevServer, log: (line: string) => void): 
   return {
     reload(why) {
       clearTimeout(timer);
+      if (quiet) return;
       timer = setTimeout(() => {
         if (tabs.size) log(`${why}: reloading ${tabs.size} tab${tabs.size == 1 ? "" : "s"}`);
         for (const t of tabs) t.write("event: reload\ndata: 1\n\n");
       }, 150);
     },
+    restarting() {
+      quiet = true;
+      clearTimeout(timer);
+    },
     stop() {
+      quiet = true;
       clearTimeout(timer);
       clearInterval(beat);
       for (const t of tabs) t.end();

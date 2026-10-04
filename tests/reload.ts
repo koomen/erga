@@ -78,6 +78,12 @@ try {
     () => edit("style.css", "\n", "\n.erga-reload-test { color: red; }\n"),
     `true`);
   check((await (await fetch(`${root}/style.css`)).text()).includes(".erga-reload-test"), "and the rebuilt files are what's served");
+  // Both at once, as an agent's edit often is: the restart and the rebuild end in one good page, never an error page.
+  await reloads("the front door and the editor's files change together: the page comes back, with both",
+    () => { edit("front.ts", "· Erga, edited</title>", "· Erga, edited twice</title>"); edit("style.css", ".erga-reload-test {", ".erga-reload-test-2 {}\n.erga-reload-test {"); },
+    `document.title == "Documents · Erga, edited twice"`);
+  await Bun.sleep(1500);
+  check(await page.eval(`document.title`) == "Documents · Erga, edited twice", "and stays there", await page.eval(`document.title`));
 
   // The page editor itself, on a new document: it reloads when its code changes (src/page/), on the same document.
   await page.navigate(`${root}/new`);
