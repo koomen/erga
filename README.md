@@ -82,10 +82,10 @@ slug it had before redirect to it (and `/edit` under them to the editor). The
 title follows the page's first `<h1>` (else `<title>`, else "Untitled") until
 someone sets it, and the slug follows the title (lowercase letters, digits
 and dashes, `-2`, `-3`... when taken) until someone sets it. Rename from the
-title after Documents in the editor's breadcrumbs, from `/docs`, or
-by asking an agent (its `get_title` and `set_title` tools, for the embedded
-agent and external ones). Every open tab follows a rename: its title, and its
-address bar. The editor itself talks to its document at `/d/<id>`, which a
+title after Documents in the editor's breadcrumbs, or by asking an agent
+(its `get_title` and `set_title` tools, for the embedded agent and external
+ones). Every open tab follows a rename: its title, and its address bar. The
+editor itself talks to its document at `/d/<id>`, which a
 rename never changes. Old slugs keep redirecting until another of the
 owner's documents takes that slug.
 
@@ -366,7 +366,7 @@ development has:
   `ERGA_AGENT_MODEL=script` swaps in the scripted agent.
 - **Files on disk** (`dev/plugin.ts`, a Vite plugin, and `worker/disk.ts`).
   A folder with an `index.html` or `index.md`, or a single `.html` or `.md`
-  file, named to `bun start` or typed into the Open box on `/docs` (a path
+  file, named to `bun start` or posted to `/__erga/open` (a path
   on this machine; `~` and paths relative to where `bun start` ran work),
   becomes one of your documents, edited where it is, at
   `/<login>/<folder name>` (or the file's name, for a single file: its slug

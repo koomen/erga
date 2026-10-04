@@ -7,7 +7,7 @@
 //   /                          the front page: the viewer on the landing document (a setting), for anyone
 //   /new                       a blank document for you, in the editor (signs you in first); /new?from=landing a copy
 //                              of the front page's, /new?from=<id> of another you may open (the viewer's Clone)
-//   /docs                      your documents, latest edit first; POST /docs/delete deletes one, /docs/rename renames one,
+//   /docs                      your documents, latest edit first; POST /docs/delete deletes one,
 //                              /docs/share shares one (or stops sharing it), GET /docs/share?id= says with whom
 //   /admin                     the server's settings and users, for admins (admin.ts); POST /admin/settings, /admin/users
 //   /<owner>/<slug>            the viewer on that document (for those it's shared with): its canonical address;
@@ -83,8 +83,8 @@ export interface Platform {
   editor(request: Request): Promise<Response>;
   /**
    * Local development: /new may name the document (?id=) and shorten its
-   * unedited time (?unedited=<ms>), and /docs opens files from disk (the
-   * dev server's /__erga/open, dev/plugin.ts).
+   * unedited time (?unedited=<ms>). Files open from disk through the
+   * dev server's /__erga/open (dev/plugin.ts).
    */
   dev(url: URL): boolean;
   /**
@@ -157,7 +157,6 @@ export async function frontDoor(request: Request, base: Platform): Promise<Respo
   if (path == "/new") return newDoc(platform, request);
   if (path == "/docs") return listDocs(platform, request);
   if (path == "/docs/delete" && request.method == "POST") return deleteDoc(platform, request);
-  if (path == "/docs/rename" && request.method == "POST") return renameDoc(platform, request);
   if (path == "/docs/share") return shareDoc(platform, request);
   if (path == "/admin" || path == "/admin/settings" || path == "/admin/users") return adminDoor(platform, request);
 
@@ -680,7 +679,7 @@ async function listDocs(platform: Platform, request: Request): Promise<Response>
   if (!session) return signInFirst("/docs");
   if (session.test) return page("Not for test people", "Test people have no documents of their own.", 403);
   const [docs, hours] = await Promise.all([platform.docs.list(session.login), platform.directory.config.get("delete_docs_after_hours")]);
-  return new Response(docsPage(session, docs, Date.now(), platform.dev(new URL(request.url)), hours), { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
+  return new Response(docsPage(session, docs, Date.now(), hours), { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
 }
 
 /** POST /docs/delete (id=...): deletes one of the signed-in person's documents. */
@@ -695,33 +694,6 @@ async function deleteDoc(platform: Platform, request: Request): Promise<Response
   if (!(await platform.directory.may(whoOf(session), "delete", route))) return new Response("Only its owner can delete a document", { status: 403 });
   // Gone already (or never made): drop a stale entry all the same.
   if (!(await platform.docs.delete(route))) await platform.directory.remove(id);
-  return new Response(null, { status: 303, headers: { Location: link("/docs", session) } });
-}
-
-/**
- * POST /docs/rename (id, title, slug): renames a document from the list. It
- * goes through the document's host, as a rename in the editor does, so its
- * open tabs follow. Answers JSON to the list's script, else goes back to the list.
- */
-async function renameDoc(platform: Platform, request: Request): Promise<Response> {
-  const session = await platform.sessionOf(request);
-  if (!session || session.test) return new Response("Sign in first", { status: 401 });
-  const url = new URL(request.url);
-  if (request.headers.get("origin") != url.origin) return new Response("Forbidden", { status: 403 });
-  const form = await request.formData();
-  const id = String(form.get("id") ?? "");
-  const route = ID.test(id) ? await platform.directory.route(id) : null;
-  if (!route) return new Response("No such document", { status: 404 });
-  // Only what's given changes; an empty one goes back to following (directory.ts, rename).
-  const patch = { title: form.has("title") ? String(form.get("title")) : undefined, slug: form.has("slug") ? String(form.get("slug")) : undefined };
-  // As the person asking: their cookie (and locally ?user=) come along, as forwarded() passes them.
-  const headers = new Headers(request.headers);
-  headers.set("Content-Type", "application/json");
-  headers.delete("Content-Length");
-  const inner = new Request(new URL("/api/name", url), { method: "POST", headers, body: JSON.stringify(patch) });
-  const answer = await platform.docs.fetch(route, forwarded(inner, url, "/api/name", `${url.origin}/d/${id}`, session, null));
-  if (request.headers.get("accept")?.includes("application/json")) return new Response(answer.body, { status: answer.status, headers: { "Content-Type": "application/json" } });
-  if (!answer.ok) return page("Couldn't rename", `${esc(((await answer.json().catch(() => ({}))) as { error?: string }).error ?? "Something went wrong.")} <a href="${esc(link("/docs", session))}">Back to your documents</a>.`, answer.status);
   return new Response(null, { status: 303, headers: { Location: link("/docs", session) } });
 }
 
@@ -782,46 +754,58 @@ function ago(t: number, now: number): string {
  * icon buttons that show on hover, and dialogs as small cards.
  */
 export const APP_STYLE = `
-  body { font-size: 15px; line-height: 1.5; }
-  main { max-width: var(--column); margin: 0 auto; padding: 14vh 20px 40px; display: flex; flex-direction: column; }
-  header { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 22px; }
-  h1 { margin: 0; font-size: 24px; font-weight: 650; letter-spacing: -0.015em; color: var(--fg-strong); }
-  .new { flex: none; padding: 7px 14px; border: 0; border-radius: 999px; background: var(--fg-strong); color: var(--bg); font: inherit; font-size: 13px; font-weight: 600; text-decoration: none; cursor: pointer; transition: opacity 150ms ease; }
-  .new:hover { opacity: 0.85; }
-  :is(.new, .doc, .act, footer a, dialog button, .pill, select):focus-visible { outline: 2px solid var(--caret); outline-offset: 2px; border-radius: 6px; }
+  body { font-size: 15px; line-height: 1.5; background: var(--bg); -webkit-font-smoothing: antialiased; }
+  /* The page fills the window, so the footer (siteFooter) sits at its foot. */
+  body { min-height: 100vh; margin: 0; display: flex; flex-direction: column; }
+  .site-foot { padding: 24px 16px 32px; text-align: center; font-size: 12.5px; color: var(--chrome); }
+  main { flex: 1; width: 100%; min-height: 0; box-sizing: border-box; max-width: 1080px; margin: 0 auto; padding: 120px 24px 96px; display: flex; flex-direction: column; }
+  /* The wordmark, upper left, on the same line as the account corner upper right (account.ts). */
+  .brand { position: absolute; top: max(14px, env(safe-area-inset-top)); left: max(20px, env(safe-area-inset-left)); height: 30px; display: flex; align-items: center;
+    font-size: 15px; font-weight: 650; letter-spacing: -0.02em; color: var(--fg-strong); text-decoration: none; }
+  .brand:hover { opacity: 0.7; }
+  header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 36px; }
+  h1 { margin: 0; font-size: 30px; line-height: 1.15; font-weight: 650; letter-spacing: -0.025em; color: var(--fg-strong); }
+  .sub { margin: 6px 0 0; font-size: 14px; color: var(--soft); }
+  .new, .pill { flex: none; box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 34px; padding: 0 14px; border-radius: 8px;
+    font: inherit; font-size: 13.5px; font-weight: 550; line-height: 1; text-decoration: none; white-space: nowrap; cursor: pointer;
+    transition: background-color 150ms ease, border-color 150ms ease, opacity 150ms ease; }
+  .new { border: 1px solid var(--fg-strong); background: var(--fg-strong); color: var(--bg); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1); }
+  .new:hover { opacity: 0.86; }
+  .new svg, .pill svg { width: 15px; height: 15px; margin-left: -3px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
+  .pill { border: 1px solid var(--rule); background: var(--bg); color: var(--fg-strong); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04); }
+  .pill:hover:not(:disabled) { border-color: color-mix(in srgb, var(--chrome) 55%, var(--rule)); }
+  .pill:disabled { color: var(--chrome); cursor: default; box-shadow: none; }
+  :is(.new, .doc, .act, .brand, dialog button, .pill, select):focus-visible { outline: 2px solid var(--caret); outline-offset: 2px; border-radius: 8px; }
   ol.rows { list-style: none; margin: 0; padding: 0; }
   ol.rows > li { display: flex; align-items: center; gap: 2px; border-bottom: 1px solid var(--rule); }
   ol.rows > li:first-child { border-top: 1px solid var(--rule); }
-  .doc { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 12px; padding: 13px 2px; color: inherit; text-decoration: none; }
+  .doc { flex: 1; min-width: 0; display: flex; align-items: center; gap: 12px; padding: 13px 4px; color: inherit; text-decoration: none; }
   .title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; color: var(--fg-strong); }
-  a.doc:hover .title { text-decoration: underline; text-decoration-color: var(--mark); text-decoration-thickness: 1px; text-underline-offset: 0.2em; }
   .note { flex: none; font-size: 12.5px; color: var(--chrome); }
   time { flex: none; margin-left: auto; font-size: 13px; color: var(--soft); font-feature-settings: "tnum"; white-space: nowrap; }
   form { margin: 0; }
-  .act { flex: none; display: grid; place-items: center; width: 30px; height: 30px; padding: 0; border: 0; border-radius: 8px; background: transparent; color: var(--chrome); cursor: pointer; opacity: 0; transition: opacity 150ms ease, color 150ms ease, background-color 150ms ease; }
+  .act { flex: none; display: grid; place-items: center; width: 30px; height: 30px; padding: 0; border: 0; border-radius: 7px; background: transparent; color: var(--chrome); cursor: pointer; opacity: 0; transition: opacity 150ms ease, color 150ms ease, background-color 150ms ease; }
   .act svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
   li:hover .act, .act:focus-visible, .act.on { opacity: 1; }
-  .act:hover { color: var(--chrome-hover); background: color-mix(in srgb, var(--chrome) 12%, transparent); }
+  .act:hover { color: var(--chrome-hover); background: color-mix(in srgb, var(--chrome) 16%, transparent); }
   .act:disabled { cursor: default; opacity: 0 !important; }
   @media (hover: none) { .act { opacity: 1; } }
-  .pill { flex: none; padding: 7px 14px; border: 1px solid var(--rule); border-radius: 999px; background: transparent; color: var(--fg-strong); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
-  .pill:hover:not(:disabled) { background: color-mix(in srgb, var(--chrome) 12%, transparent); }
-  .pill:disabled { color: var(--chrome); cursor: default; }
-  .input { min-width: 0; padding: 7px 12px; border: 1px solid var(--rule); border-radius: 999px; background: transparent; color: var(--fg-strong); font: inherit; font-size: 13.5px; }
-  .input::placeholder { color: var(--soft); }
-  .input:focus-visible { outline: 2px solid var(--caret); outline-offset: 1px; }
+  .input { box-sizing: border-box; min-width: 0; height: 34px; padding: 0 12px; border: 1px solid var(--rule); border-radius: 8px; background: var(--bg); color: var(--fg-strong); font: inherit; font-size: 14px; transition: border-color 150ms ease; }
+  .input::placeholder { color: var(--chrome); }
+  .input:hover:not(:disabled) { border-color: color-mix(in srgb, var(--chrome) 55%, var(--rule)); }
+  .input:focus-visible { outline: 2px solid color-mix(in srgb, var(--caret) 35%, transparent); outline-offset: 0; border-color: var(--caret); }
   .input:disabled { color: var(--soft); background: color-mix(in srgb, var(--chrome) 6%, transparent); }
-  select { padding: 5px 26px 5px 10px; border: 1px solid var(--rule); border-radius: 999px; color: var(--fg); font: inherit; font-size: 13px; cursor: pointer; appearance: none;
+  select { padding: 5px 26px 5px 10px; border: 1px solid var(--rule); border-radius: 7px; color: var(--fg); font: inherit; font-size: 13px; cursor: pointer; appearance: none;
     background: transparent url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23a1a1a9' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m7 10 5 5 5-5'/%3E%3C/svg%3E") no-repeat right 7px center / 14px; }
   select:disabled { color: var(--soft); cursor: default; background-image: none; padding-right: 10px; }
   select option { color: initial; }
   .badge { flex: none; padding: 1px 8px; border-radius: 999px; font-size: 11.5px; font-weight: 600; color: var(--soft); background: color-mix(in srgb, var(--chrome) 14%, transparent); }
   .badge.strong { color: var(--bg); background: var(--fg-strong); }
-  dialog { width: min(420px, calc(100vw - 32px)); box-sizing: border-box; padding: 18px; border: 1px solid var(--panel-border); border-radius: 14px; background: var(--bg); color: var(--fg); box-shadow: var(--shadow); font-size: 14px; }
+  dialog { width: min(420px, calc(100vw - 32px)); box-sizing: border-box; padding: 20px; border: 1px solid var(--panel-border); border-radius: 12px; background: var(--bg); color: var(--fg); box-shadow: var(--shadow); font-size: 14px; }
   dialog::backdrop { background: rgba(0, 0, 0, 0.18); }
-  dialog h2 { margin: 0 0 12px; font-size: 15px; font-weight: 600; color: var(--fg-strong); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  dialog h2 { margin: 0 0 14px; font-size: 15px; font-weight: 600; color: var(--fg-strong); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   dialog label { display: block; margin: 0 0 4px; font-size: 12.5px; color: var(--soft); }
-  dialog .field { display: flex; align-items: center; margin-bottom: 12px; border: 1px solid var(--rule); border-radius: 9px; background: color-mix(in srgb, var(--chrome) 6%, transparent); padding: 0 10px; }
+  dialog .field { display: flex; align-items: center; margin-bottom: 12px; border: 1px solid var(--rule); border-radius: 8px; background: color-mix(in srgb, var(--chrome) 6%, transparent); padding: 0 10px; }
   dialog .field:focus-within { border-color: var(--caret); }
   dialog .field span { color: var(--soft); white-space: nowrap; }
   dialog input { flex: 1; min-width: 0; padding: 8px 0; border: 0; outline: 0; background: transparent; color: var(--fg-strong); font: inherit; }
@@ -829,18 +813,21 @@ export const APP_STYLE = `
   .hint:empty { display: none; }
   .hint.error { color: #c2410c; }
   dialog .buttons { display: flex; justify-content: flex-end; gap: 8px; }
-  dialog button { font: 600 13px var(--font-text); padding: 7px 14px; border-radius: 999px; border: 1px solid var(--rule); background: transparent; color: var(--fg); cursor: pointer; }
+  dialog button { font: 550 13px var(--font-text); height: 32px; padding: 0 14px; border-radius: 8px; border: 1px solid var(--rule); background: transparent; color: var(--fg); cursor: pointer; }
   dialog button.primary { border-color: var(--fg-strong); background: var(--fg-strong); color: var(--bg); }
-  dialog button.act { padding: 0; border: 0; }
+  dialog button.act { height: 30px; padding: 0; border: 0; }
   @media (pointer: coarse) { dialog input, .input { font-size: 16px; } }
-  .empty { margin: 0; padding: 28px 2px; border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); color: var(--soft); }
-  footer { padding-top: 40px; display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 13px; color: var(--chrome); }
-  footer a { color: inherit; text-decoration: none; }
-  footer a:hover { color: var(--chrome-hover); }
-  @media (max-width: 520px) { .note { display: none; } main { padding-top: 8vh; } }
+  .empty { margin: 0; padding: 48px 24px; border: 1px dashed var(--rule); border-radius: 12px; text-align: center; color: var(--soft); }
+  @media (max-width: 520px) { .note { display: none; } main { padding: 88px 16px 64px; } h1 { font-size: 26px; } }
   /* Touch: room for a finger. */
-  @media (pointer: coarse) { .new, .pill { padding: 10px 16px; } .act { width: 40px; height: 40px; } footer a { padding: 8px 0; margin: -8px 0; } }
+  @media (pointer: coarse) { .new, .pill, .input { height: 40px; } .act { width: 40px; height: 40px; } }
 `;
+
+/** The footer at the foot of Erga's own pages (not the editor's, nor a document's): the copyright, this year. */
+export const siteFooter = () => `<footer class="site-foot">© ${new Date().getUTCFullYear()} Erga</footer>`;
+
+/** The wordmark in the upper left of the app's own pages: back to the front page. */
+export const brand = (session: Session | null) => `<a class="brand" href="${esc(link("/", session))}">Erga</a>`;
 
 /** Every <time datetime> in the reader's own language and zone: "5 minutes ago", "yesterday", the date. */
 export const TIMES_SCRIPT = `
@@ -857,10 +844,10 @@ export const TIMES_SCRIPT = `
 `;
 
 export const ICON = {
-  rename: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 19h3.5L18.25 9.25a2.47 2.47 0 0 0-3.5-3.5L5 15.5V19Z"/><path d="m13.5 7 3.5 3.5"/></svg>`,
   delete: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M10 7V5h4v2M7 7l1 12h8l1-12"/></svg>`,
   share: `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9.5" cy="8.5" r="3.5"/><path d="M3.5 19c.6-3.2 3-5 6-5s5.4 1.8 6 5"/><path d="M18.5 8v6M15.5 11h6"/></svg>`,
   close: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7 7 17"/></svg>`,
+  plus: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>`,
 };
 
 /** The page around a view (/docs, /admin): its title, the shared look and the view's own style. */
@@ -873,6 +860,7 @@ export const appPage = (title: string, style: string, body: string) => `<!doctyp
 <link rel="stylesheet" href="/style.css">
 <style>${APP_STYLE}${style}</style>
 ${body}
+${siteFooter()}
 </html>`;
 
 /** Who a document is shared with, as its row in the list says it (the owner's own view). */
@@ -881,8 +869,8 @@ function sharedNote(d: Listed): string {
   return `<span class="note shared" title="Shared with ${d.shared} besides you">Shared</span>`;
 }
 
-/** The documents view: yours and those shared with you, with new, open, share, rename and delete. */
-function docsPage(session: Session, docs: Listed[], now: number, dev: boolean, hours: number | null): string {
+/** The documents view: yours and those shared with you, with new, open, share and delete. */
+function docsPage(session: Session, docs: Listed[], now: number, hours: number | null): string {
   const rows = docs.map((d) => {
     const left = d.expires != null ? Math.max(1, Math.ceil((d.expires - now) / 3600000)) : null;
     const mine = d.role == "owner";
@@ -892,20 +880,40 @@ function docsPage(session: Session, docs: Listed[], now: number, dev: boolean, h
     const when = new Date(d.modified).toISOString();
     // One opened from disk only comes off the list: its files stay where they are.
     const [remove, label] = d.path != null ? ["Remove from the list", `Remove ${esc(d.title)} from the list`] : ["Delete", `Delete ${esc(d.title)}`];
+    // The whole row opens the document (the link stretches over it); its buttons sit on top.
     return `  <li>
-    <a class="doc" href="${esc(link(`/${d.owner}/${d.slug}/edit`, session))}"><span class="title">${esc(d.title)}</span>${note}${mine ? sharedNote(d) : ""}<time datetime="${when}">${ago(d.modified, now)}</time></a>
-    <div class="acts">${mine ? `<button type="button" class="act share" aria-label="Share ${esc(d.title)}" title="Share" data-id="${esc(d.id)}" data-title="${esc(d.title)}" data-address="/${esc(d.owner)}/${esc(d.slug)}">${ICON.share}</button>
-    <button type="button" class="act rename" aria-label="Rename ${esc(d.title)}" title="Rename" data-id="${esc(d.id)}" data-title="${esc(d.title)}" data-slug="${esc(d.slug)}"${d.titleSet ? " data-title-set" : ""}${d.slugSet ? " data-slug-set" : ""}>${ICON.rename}</button>
-    <form method="post" action="${esc(link("/docs/delete", session))}" data-title="${esc(d.title)}"${d.path != null ? " data-disk" : ""}><input type="hidden" name="id" value="${esc(d.id)}"><button class="act delete" aria-label="${label}" title="${remove}">${ICON.delete}</button></form>` : ""}</div>
+    <div class="name"><a class="doc" href="${esc(link(`/${d.owner}/${d.slug}/edit`, session))}"><span class="title">${esc(d.title)}</span></a>${note}${mine ? sharedNote(d) : ""}</div>
+    <time datetime="${when}">${ago(d.modified, now)}</time>
+    <div class="acts">${mine ? `<button type="button" class="act share" aria-label="Share ${esc(d.title)}" data-tip="Share" data-id="${esc(d.id)}" data-title="${esc(d.title)}" data-address="/${esc(d.owner)}/${esc(d.slug)}">${ICON.share}</button>
+    <form method="post" action="${esc(link("/docs/delete", session))}" data-title="${esc(d.title)}"${d.path != null ? " data-disk" : ""}><input type="hidden" name="id" value="${esc(d.id)}"><button class="act delete" aria-label="${label}" data-tip="${remove}">${ICON.delete}</button></form>` : ""}</div>
   </li>`;
   }).join("\n");
   const style = `
-  .shared { color: var(--soft); }
+  /* Rows, and the labels over them, in three columns: the name (its title and what's special about it), when it was edited, its buttons. */
+  .labels, ol.rows > li { display: grid; grid-template-columns: minmax(0, 1fr) 10rem 64px; align-items: center; column-gap: 16px; }
+  .labels { padding-bottom: 8px; border-bottom: 1px solid var(--rule); font-size: 12px; font-weight: 500; color: var(--chrome); }
+  ol.rows > li { position: relative; }
+  /* No rules between documents: only the one under the labels. */
+  ol.rows > li, ol.rows > li:first-child { border: 0; }
+  ol.rows { padding-top: 6px; }
+  .name { min-width: 0; display: flex; align-items: center; gap: 6px; padding: 11px 0; }
+  .doc { flex: 0 1 auto; padding: 0; }
+  .doc::after { content: ""; position: absolute; inset: 0; }
+  .acts { position: relative; z-index: 1; }
+  .name { gap: 12px; }
+  .title { transition: color 120ms ease; }
+  li:hover .title { color: var(--link); }
+  .note, .shared { padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 500; color: var(--soft); background: color-mix(in srgb, var(--chrome) 13%, transparent); }
+  time { margin: 0; text-align: left; }
   /* The buttons (only on your own documents) take the same room on every row, so the times line up. */
-  .acts { flex: none; display: flex; justify-content: flex-end; gap: 2px; width: 94px; }
-  @media (pointer: coarse) { .acts { width: 124px; } }
-  .open { display: flex; gap: 8px; margin: 28px 0 0; }
-  .open .input { flex: 1; }
+  .acts { display: flex; justify-content: flex-end; gap: 2px; }
+  /* Help text on the buttons, as the editor's (style.css): plain, under the pointer, following it (account.ts moves it). */
+  .acts .act { position: relative; }
+  .acts .act[data-tip]::after { content: attr(data-tip); position: absolute; left: var(--tip-x, 100%); top: var(--tip-y, calc(100% + 6px)); transform: translateX(-100%); z-index: 40;
+    white-space: pre; font: 400 12px/1.3 var(--font-text); letter-spacing: 0.01em; color: var(--soft); opacity: 0; pointer-events: none; }
+  @media (hover: hover) { .acts .act[data-tip]:hover::after { opacity: 1; } }
+  @media (pointer: coarse) { .labels, ol.rows > li { grid-template-columns: minmax(0, 1fr) 8rem 84px; } }
+  @media (max-width: 520px) { .labels { display: none; } .labels, ol.rows > li { grid-template-columns: minmax(0, 1fr) auto 64px; } }
   @media (pointer: coarse) { .delete { margin-right: -6px; } }
   /* Sharing: who has it, anyone with the link, and adding someone. */
   #share { width: min(460px, calc(100vw - 32px)); }
@@ -926,29 +934,15 @@ function docsPage(session: Session, docs: Listed[], now: number, dev: boolean, h
   .anyone .who small { display: block; font-size: 12px; color: var(--soft); }
   #share .buttons { justify-content: space-between; }
 `;
-  return appPage("Documents", style, `<main>
+  const count = `${docs.length} document${docs.length == 1 ? "" : "s"}`;
+  return appPage("Documents", style, `${brand(session)}<main>
   <header>
-    <h1>Documents</h1>
-    <a class="new" href="${esc(link("/new", session))}">New document</a>
+    <div><h1>Documents</h1>${docs.length ? `<p class="sub">${count}</p>` : ""}</div>
+    <a class="pill" href="${esc(link("/new", session))}" title="New document" aria-label="New document">${ICON.plus}New</a>
   </header>
-  ${docs.length ? `<ol class="rows">\n${rows}\n  </ol>` : `<p class="empty">No documents yet. A new one starts blank${hours == null ? "." : `, and goes away after ${hours} hour${hours == 1 ? "" : "s"} if you never edit it.`}</p>`}
-  ${dev ? `<form class="open" method="post" action="${esc(link("/__erga/open", session))}" aria-label="Open from disk">
-    <input class="input" name="path" required placeholder="A file or folder on this machine: ~/notes, ./site/index.md" aria-label="Path to a file or folder" autocomplete="off" spellcheck="false">
-    <button class="pill">Open</button>
-  </form>` : ""}
+  ${docs.length ? `<div class="labels" aria-hidden="true"><span>Name</span><span>Edited</span><span></span></div>
+  <ol class="rows">\n${rows}\n  </ol>` : `<p class="empty">No documents yet. A new one starts blank${hours == null ? "." : `, and goes away after ${hours} hour${hours == 1 ? "" : "s"} if you never edit it.`}</p>`}
 </main>
-<dialog id="rename" aria-labelledby="rename-title">
-  <form method="post" action="${esc(link("/docs/rename", session))}">
-    <h2 id="rename-title">Rename</h2>
-    <input type="hidden" name="id">
-    <label for="rename-name">Title</label>
-    <div class="field"><input id="rename-name" name="title" autocomplete="off" spellcheck="false"></div>
-    <label for="rename-slug">Address</label>
-    <div class="field"><span>/${esc(session.login.toLowerCase())}/</span><input id="rename-slug" name="slug" autocomplete="off" autocapitalize="off" spellcheck="false"></div>
-    <p class="hint" id="rename-hint" role="status"></p>
-    <div class="buttons"><button type="button" value="cancel" formnovalidate>Cancel</button><button class="primary">Save</button></div>
-  </form>
-</dialog>
 <dialog id="share" aria-labelledby="share-title" data-action="${esc(link("/docs/share", session))}" data-me="${esc(session.login.toLowerCase())}">
   <h2 id="share-title">Share</h2>
   <form class="add">
@@ -972,42 +966,6 @@ function docsPage(session: Session, docs: Listed[], now: number, dev: boolean, h
     const q = "disk" in f.dataset ? "Take “" + f.dataset.title + "” off your list? Its files stay where they are." : "Delete “" + f.dataset.title + "”? This can't be undone.";
     f.addEventListener("submit", (e) => { if (!confirm(q)) e.preventDefault(); });
   }
-  // Renaming: the title, and the address, which follows the title until it's set.
-  // An empty field goes back to following (the title the page's first heading).
-  const dialog = document.getElementById("rename"), form = dialog.querySelector("form");
-  const nameIn = form.elements.title, slugIn = form.elements.slug, hint = document.getElementById("rename-hint");
-  const slugify = (s) => s.normalize("NFKD").replace(/[\\u0300-\\u036f]/g, "").toLowerCase().replace(/['\\u2019]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60).replace(/-+$/, "");
-  let was = null, slugTouched = false;
-  const say = (text, error) => { hint.textContent = text; hint.classList.toggle("error", !!error); };
-  const preview = () => say(!nameIn.value.trim() ? "Empty: the title follows the page's first heading."
-    : !slugIn.value.trim() ? "Empty: the address follows the title." : "");
-  for (const b of document.querySelectorAll("button.rename")) b.addEventListener("click", () => {
-    was = { id: b.dataset.id, title: b.dataset.title, slug: b.dataset.slug, slugSet: "slugSet" in b.dataset };
-    slugTouched = false;
-    form.elements.id.value = was.id;
-    nameIn.value = was.title;
-    slugIn.value = was.slug;
-    say("");
-    dialog.showModal();
-    nameIn.select();
-  });
-  // An address that follows the title follows it here too, until it's typed in.
-  nameIn.addEventListener("input", () => { if (!was.slugSet && !slugTouched) slugIn.value = slugify(nameIn.value) || was.slug; preview(); });
-  slugIn.addEventListener("input", () => { slugTouched = true; preview(); });
-  form.querySelector('[value="cancel"]').addEventListener("click", () => dialog.close());
-  form.addEventListener("submit", async (e) => {
-    e.preventDefault();
-    // Only what was changed: a title left as it was keeps following the heading, if it did.
-    const body = new URLSearchParams({ id: was.id });
-    if (nameIn.value.trim() != was.title) body.set("title", nameIn.value.trim());
-    if (slugTouched && slugIn.value.trim() != was.slug) body.set("slug", slugIn.value.trim());
-    if ([...body.keys()].length == 1) return dialog.close();
-    say("Saving…");
-    const r = await fetch(form.action, { method: "POST", body, headers: { Accept: "application/json" } }).catch(() => null);
-    if (r && r.ok) return location.reload();
-    say((r && (await r.json().catch(() => ({}))).error) || "Couldn't rename it: try again.", true);
-  });
-
   // Sharing: each change is saved as it's made (POST /docs/share), and the list follows when the dialog closes.
   const share = document.getElementById("share"), action = share.dataset.action, me = share.dataset.me;
   const people = share.querySelector(".people"), adder = share.querySelector("form.add"), anyone = document.getElementById("share-anyone");
@@ -1162,5 +1120,6 @@ const decodeEntities = (s: string) => s.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi,
 export function page(title: string, html: string, status: number): Response {
   return new Response(`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${title} · Erga</title>
 <style>body{font:17px/1.6 system-ui,sans-serif;max-width:32rem;margin:20vh auto;padding:0 16px;color:#1b2330;background:#f7f8fa}h1{font-size:1.4rem}a{color:#1f5f8b}
-@media(prefers-color-scheme:dark){body{color:#e4e8ee;background:#12161d}a{color:#7fb6e0}}</style><h1>${title}</h1><p>${html}</p>`, { status, headers: { "Content-Type": "text/html; charset=utf-8" } });
+.site-foot{position:fixed;left:0;right:0;bottom:24px;text-align:center;font-size:13px;color:#8a93a1}
+@media(prefers-color-scheme:dark){body{color:#e4e8ee;background:#12161d}a{color:#7fb6e0}}</style><h1>${title}</h1><p>${html}</p>${siteFooter()}`, { status, headers: { "Content-Type": "text/html; charset=utf-8" } });
 }

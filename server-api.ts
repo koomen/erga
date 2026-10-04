@@ -30,7 +30,7 @@
 import { validateToolArguments } from "@mariozechner/pi-ai";
 import { documentToolSpecs, type ToolContent, type ToolSpec } from "./agent";
 import { type Action, type DocRow, type Route, nameOf } from "./directory";
-import { accessOf, esc, forwarded, makeDoc, newDocId, page, safeNext, startingFiles, type Platform, type Session, whoOf } from "./front";
+import { accessOf, esc, forwarded, makeDoc, newDocId, page, safeNext, siteFooter, startingFiles, type Platform, type Session, whoOf } from "./front";
 import { findDocument, runServerTool, SERVER_TOOLS, ToolError, type ToolWho } from "./server-tools";
 import { cleanRel } from "./host";
 import { LABEL_MAX, normalCode, REQUEST_MINUTES, type AgentToken } from "./tokens";
@@ -611,6 +611,10 @@ async function tokensPage(platform: Platform, session: Session, url: URL, o: { n
   h1 { margin-bottom: 28px; }
   .part { font-size: 17px; }
   .lede { font-size: 14px; }
+  /* The page fills the window, so the footer sits at its foot. */
+  body { min-height: 100vh; margin: 0; display: flex; flex-direction: column; }
+  main { flex: 1; box-sizing: border-box; width: 100%; min-height: 0; }
+  .site-foot { padding: 24px 16px 32px; text-align: center; font-size: 12.5px; color: var(--chrome); }
   @media (max-width: 520px) { li { flex-wrap: wrap; } .meta { flex-basis: 100%; order: 3; } main { padding-top: 6vh; } }
 </style>
 <main>
@@ -624,6 +628,7 @@ async function tokensPage(platform: Platform, session: Session, url: URL, o: { n
   <div style="height:28px"></div>
   ${testBlock}
 </main>
+${siteFooter()}
 <script>
   for (const f of document.querySelectorAll("form[data-label]")) f.addEventListener("submit", (e) => { if (!confirm("Revoke \\u201c" + f.dataset.label + "\\u201d? Agents using it lose access at once.")) e.preventDefault(); });
   for (const t of document.querySelectorAll("time")) { const d = new Date(t.dateTime); t.title = d.toLocaleString(); t.textContent = d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }); }

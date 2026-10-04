@@ -452,13 +452,10 @@ try {
   expect(r.ok && (await location(`/${login}/field-notes`)) == `(200)`, "another document can take a slug that's only in the history");
   ok("a taken or reserved slug is refused; an old one can be taken over");
 
-  // From /docs: the list's rename posts to /docs/rename, through the document's host.
+  // The list shows a document by its current address.
   const demo = await make();
-  r = await get("/docs/rename", { method: "POST", body: new URLSearchParams({ id: demo, title: "Demo copy", slug: "my-demo" }), headers: { Origin: origin, Accept: "application/json" } });
-  expect(r.ok && (await nameOf(demo)).address == `/${login}/my-demo`, "renaming from the list works", await r.text());
-  expect((await get("/docs/rename", { method: "POST", body: new URLSearchParams({ id: demo, title: "x" }) })).status == 403, "but only from this site's pages");
-  expect((await docs()).includes(`href="/${login}/my-demo/edit"`), "and the list shows it");
-  ok("renaming from /docs works");
+  r = await rename(demo, { title: "Demo copy", slug: "my-demo" });
+  expect(r.ok && (await docs()).includes(`href="/${login}/my-demo/edit"`), "the list shows a renamed document at its new address");
 
   // The agent's tools, as an external agent calls them: get_title and set_title.
   const { token } = (await (await get(`/d/${demo}/api/share`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" })).json()) as { token: string };
@@ -638,7 +635,7 @@ try {
   // The share dialog, in a browser: add someone, change anyone-with-the-link, and the list follows.
   const st = await browser.page();
   await st.open(`${base}/auth/github?as=${login}&next=/docs`);
-  await st.eval(`document.querySelector('li a[href="${(await nameOf(second)).address}/edit"]').parentElement.querySelector('button.share').click()`);
+  await st.eval(`document.querySelector('li a[href="${(await nameOf(second)).address}/edit"]').closest('li').querySelector('button.share').click()`);
   await until(async () => at2(st, `document.querySelectorAll('#share .people li').length == 1`), 5000, "the share dialog lists the owner");
   await st.eval(`(() => { const f = document.querySelector('#share form.add'); f.elements.login.value = "Bo"; f.elements.role.value = "viewer"; f.requestSubmit(); })()`);
   await until(async () => at2(st, `document.querySelectorAll('#share .people li').length == 2`), 5000, "adding someone lists them");
