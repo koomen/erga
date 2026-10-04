@@ -714,10 +714,12 @@ function docsPage(session: Session, docs: Listed[], now: number, hours: number |
   const style = `
   /* Rows, and the labels over them, in three columns: the name (its title and what's special about it), when it was edited, its buttons. */
   .labels, ol.rows > li { display: grid; grid-template-columns: minmax(0, 1fr) 10rem 64px; align-items: center; column-gap: 16px; }
-  .labels { padding-bottom: 8px; font-size: 12px; font-weight: 500; color: var(--chrome); }
+  .labels { padding-bottom: 8px; border-bottom: 1px solid var(--rule); font-size: 12px; font-weight: 500; color: var(--chrome); }
   ol.rows > li { position: relative; }
-  ol.rows > li:last-child { border-bottom: 0; }
-  .name { min-width: 0; display: flex; align-items: center; gap: 6px; padding: 14px 0; }
+  /* No rules between documents: only the one under the labels. */
+  ol.rows > li, ol.rows > li:first-child { border: 0; }
+  ol.rows { padding-top: 6px; }
+  .name { min-width: 0; display: flex; align-items: center; gap: 6px; padding: 11px 0; }
   .doc { flex: 0 1 auto; padding: 0; }
   .doc::after { content: ""; position: absolute; inset: 0; }
   .acts { position: relative; z-index: 1; }
