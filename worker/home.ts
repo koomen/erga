@@ -351,15 +351,16 @@ export async function serveHome(request: Request, env: Env, ctx: ExecutionContex
     const session = await platform.sessionOf(request);
     const who = session && whoOf(session);
     const dir = platform.directory;
-    const [role, admin] = await Promise.all([
-      who && !session.agent ? dir.access(who, { id: page.docId, owner: page.address.split("/")[1], test: false }) : null,
-      who && !session.test && !session.agent ? dir.users.isAdmin(who) : false,
-    ]);
+    // Only admins may edit the homepage (directory.ts, homeLimit): their role is asked of the database only if they are one
+    // (whether someone is, the isolate remembers for a few seconds), so for anyone else, signed out above all, nothing is.
+    const admin = !!who && !session.test && !session.agent && (await dir.users.isAdmin(who));
+    const role = admin ? await dir.access(who, { id: page.docId, owner: page.address.split("/")[1], test: false }) : null;
     return homeHeader({
       clone: link("/new?from=landing", session),
       edit: session && !session.agent && roleMay(role, "edit") ? `${link(page.address, session)}#edit` : null,
       account: accountOf(session, admin),
       here: url.pathname + url.search,
+      doc: page.docId,
     });
   })();
   const headers = {

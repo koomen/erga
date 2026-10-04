@@ -2,7 +2,9 @@
 // The front page is a document like any other (the landing_document
 // setting), and the server makes it itself (front.ts, seedLanding): on a
 // fresh database, the first request for / makes it from the repo's
-// landing/ (built into the Worker), with no deploy step.
+// landing/ (built into the Worker), with no deploy step. / is the viewer on
+// it until its first deploy is done, then the page itself (worker/home.ts;
+// tests/home.ts tests that path).
 //
 //   - On a fresh dev server, the first requests for /, all at once, make one
 //     landing document, DEV_LOGIN's /tester/landing, and / shows it in a
@@ -29,12 +31,15 @@ const checks: string[] = [];
 const ok = (what: string) => { checks.push(what); console.log(`ok   ${what}`); };
 const landingHtml = readFileSync(join(ROOT, "landing/index.html"), "utf8");
 
-const host = await startHost(null);
+// The homepage deploys half a second after a change, and / always asks for the latest deploy.
+const host = await startHost(null, { env: { ERGA_HOME_DELAY_MS: "500", ERGA_HOME_RECHECK_MS: "0" } });
 const root = host.root;
 const browser = await Browser.launch();
 const get = (path: string, init: RequestInit = {}) => fetch(root + path, { redirect: "manual", ...init });
 /** The id of the document / frames, from its pages origin. */
 const frameOf = (html: string) => /<iframe id="frame" class="erga-view" src="http:\/\/([a-z0-9]{8})-([a-z0-9-]+)\.localhost/.exec(html);
+/** The document / shows: in the viewer's frame, or served directly (its controls name it). */
+const docOf = (html: string) => frameOf(html)?.[1] ?? /<erga-controls data-doc="([a-z0-9]{8})"/.exec(html)?.[1];
 const landingSetting = async () => (await (await get("/admin")).text()).match(/data-key="landing_document"[\s\S]*?name="value"[^>]*value="([^"]*)"/)?.[1] ?? "";
 try {
   // A fresh database: nothing's set, and the first requests for /, at once, make one document.
@@ -53,13 +58,14 @@ try {
   expect(shared.permissions.some((p) => p.login == "koomen" && p.role == "editor"), "the other bootstrap admins may edit it", shared);
   ok("on a fresh server, the first / (eight at once) makes one landing document, /tester/landing, from landing/");
 
-  // In a real browser: the front page shows the document, with Edit and Clone over it.
+  // In a real browser: once its first deploy is done (the first / started it), / is the page itself, with Edit and Clone over it
+  // (in their own shadow root). Before that it's the viewer, in a frame (the HTML above).
   const p = await browser.page(await browser.context());
+  await until(async () => (await (await get("/")).text()).includes("<erga-controls"), 15_000, "the first deploy");
   await p.open(`${root}/`, { width: 1200, height: 800, scale: 2 });
-  await until(async () => (await p.inPage<string>(`document.querySelector("h1")?.textContent ?? ""`)).some((t) => t == "Erga"), 15_000, "the landing page renders in its frame");
-  expect(await p.eval<boolean>(`!!document.querySelector("a.erga-clone-button[href='/new?from=landing']") && !!document.querySelector("a.erga-edit-button[href='/tester/landing/edit']")`), "with Edit and Clone over it");
+  expect(await p.eval<boolean>(`document.querySelector("h1")?.textContent == "Erga" && !document.querySelector("iframe#frame") && !!document.querySelector("erga-controls").shadowRoot.querySelector("a.erga-clone-button[href='/new?from=landing']") && !!document.querySelector("erga-controls").shadowRoot.querySelector("a.erga-edit-button[href='/tester/landing#edit']")`), "/ is the page itself, with Edit and Clone over it");
   await p.screenshot(join(SHOTS, "landing-front.png"));
-  ok("in headless Chrome, / renders the landing document with Edit and Clone");
+  ok("in headless Chrome, / renders the landing document itself (once deployed) with Edit and Clone");
 
   // Its owner edits it in the editor, and / shows the edit.
   await p.open(`${root}/tester/landing/edit`, { width: 1200, height: 800, scale: 2, clear: false, agent: false });
@@ -74,12 +80,12 @@ try {
   await p.screenshot(join(SHOTS, "landing-editor.png"));
   let after = "";
   await until(async () => (after = await (await get("/")).text()).includes("<title>Erga home</title>"), 10_000, "/ follows the edit", () => after.slice(0, 600));
-  expect(frameOf(after)?.[1] == id, "the same document");
+  expect(docOf(after) == id, "the same document");
   ok("its owner edits it in the editor, and / shows the edit");
 
   // Someone who isn't an admin sees it, without Edit.
   const ada = await (await get("/?user=Ada")).text();
-  expect(frameOf(ada)?.[1] == id && !ada.includes("erga-edit-button") && ada.includes("erga-clone-button"), "Ada sees it with Clone, without Edit", ada.slice(0, 1500));
+  expect(docOf(ada) == id && !ada.includes("erga-edit-button") && ada.includes("erga-clone-button"), "Ada sees it with Clone, without Edit", ada.slice(0, 1500));
   ok("someone who isn't an admin sees it, without Edit");
 
   // Clone makes your own copy of it.
@@ -92,8 +98,8 @@ try {
   const del = await get("/docs/delete", { method: "POST", headers: { Origin: root }, body: new URLSearchParams({ id }) });
   expect(del.status == 303, "its owner deletes it", del.status);
   const again = await (await get("/")).text();
-  const id2 = frameOf(again)?.[1];
-  expect(id2 && id2 != id && again.includes('href="/tester/landing/edit"'), "/ makes a new one at /tester/landing", again.slice(0, 800));
+  const id2 = docOf(again);
+  expect(id2 && id2 != id && (again.includes('href="/tester/landing/edit"') || again.includes('href="/tester/landing#edit"')), "/ makes a new one at /tester/landing", again.slice(0, 800));
   expect((await (await get(`/d/${id2}/doc/index.html`)).text()) == landingHtml, "a fresh copy of landing/");
   ok("deleted, the landing document is made again on the next /");
 
@@ -103,7 +109,7 @@ try {
   const set = await get("/admin/settings", { method: "POST", headers: { Origin: root }, body: new URLSearchParams({ key: "landing_document", value: JSON.stringify(mine.replace(/\/edit$/, "")) }) });
   expect(set.ok, "the admin sets landing_document to one of theirs", await set.text());
   const chosen = await (await get("/")).text();
-  expect(frameOf(chosen)?.[1] == mineId, "/ shows the admin's choice", chosen.slice(0, 800));
+  expect(docOf(chosen) == mineId, "/ shows the admin's choice", chosen.slice(0, 800));
   const docsNow = await (await get("/docs")).text();
   expect((docsNow.match(/href="\/tester\/landing(-\d+)?\/edit"/g) ?? []).length == 1, "and nothing more is made", docsNow.slice(0, 2000));
   ok("a landing document an admin chose is respected");

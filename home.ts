@@ -161,9 +161,9 @@ export async function renderHome(opts: { index: string; files: Record<string, st
  * page's <body> (so nothing the page does to its body moves it) and runs the
  * account menu and the tooltips.
  */
-export function homeHeader(o: { clone: string; edit: string | null; account: Account | null; here: string }): string {
+export function homeHeader(o: { clone: string; edit: string | null; account: Account | null; here: string; doc?: string }): string {
   const buttons = `<div class="erga-view-buttons">${cloneButton(o.clone)}${o.edit ? editButton(o.edit, false) : ""}</div>`;
-  return `<erga-controls><template shadowrootmode="open"><style>${HOST_STYLE}</style>${buttons}${accountMarkup(o.account, o.here)}${VIEW_STYLE}${ACCOUNT_STYLE}</template></erga-controls><script>${HEADER_SCRIPT}</script>`;
+  return `<erga-controls${o.doc ? ` data-doc="${esc(o.doc)}"` : ""}><template shadowrootmode="open"><style>${HOST_STYLE}</style>${buttons}${accountMarkup(o.account, o.here)}${VIEW_STYLE}${ACCOUNT_STYLE}</template></erga-controls><script>${HEADER_SCRIPT}</script>`;
 }
 
 // The host: nothing of the page's applies to it (its own !important rules win over the page's, from inside the shadow root).
