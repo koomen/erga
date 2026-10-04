@@ -780,7 +780,7 @@ release answers at `/api/deploys/version`; copy production's documents in
 **Building.** A Worker can't run `bun install` or Vite, so a commit is built
 in a **Cloudflare Container**: the builder Worker `erga-builder`
 (`deploy/builder/`: `worker.ts`, its `wrangler.jsonc`, a `Dockerfile` with
-Bun 1.4.2, Node and Git, and `server.ts`), which the servers reach over a
+Bun 1.4.2, Node 22 and Git, and `server.ts`), which the servers reach over a
 service binding (`BUILDER`) and which has no public address. The pipeline asks
 Artifacts for the repo's remote and a 15-minute read-only token
 (through the server's own Artifacts binding, `worker/source.ts`; the REST
