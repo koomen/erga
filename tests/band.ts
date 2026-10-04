@@ -58,7 +58,7 @@ async function layout(doc: string, mode: "view" | "edit", width: number, height:
   const name = `${doc}, ${mode === "view" ? "viewing" : "editing"}, ${width}px`;
   const ctx = await browser.context();
   const p = await browser.page(ctx);
-  await p.open(`${host.root}${address[doc]}${mode === "edit" ? "/edit" : ""}`, { width, height, agent: false });
+  await p.open(`${host.root}${address[doc]}${mode === "edit" ? "#edit" : ""}`, { width, height, agent: false });
   await visibleDoc(p);
   if (mode === "edit") await until(() => p.eval<boolean>(`document.body.classList.contains("erga-editor-ready")`), 15_000, "the editor is ready");
   await Bun.sleep(400);

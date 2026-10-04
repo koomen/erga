@@ -75,7 +75,7 @@ export interface Backdrop { color: string; image: string }
 
 /** Shell → frame. */
 export type ToFrame =
-  | { type: "init"; kind: Kind; state: unknown; version: number; markdownHead: string; self: MarkAuthor; tracking: boolean; timescale?: number }
+  | { type: "init"; kind: Kind; dir?: string; state: unknown; version: number; markdownHead: string; self: MarkAuthor; tracking: boolean; timescale?: number }
   | { type: "external"; changes: unknown; author: MarkAuthor | null; length: number }
   | { type: "ack" }
   | { type: "reject" }
@@ -114,7 +114,9 @@ export type FromFrame =
   | { type: "activity"; kind: "focus" | "key" }
   | { type: "detached"; id: number; state: unknown; version: number }
   | { type: "styled"; id: number; why: string | null }
-  | { type: "captured"; id: number; result: ViewResult };
+  | { type: "captured"; id: number; result: ViewResult }
+  /** A link to another of the document's pages, followed on the page: the shell goes to it. */
+  | { type: "open"; path: string };
 
 /** A state as it crosses: text, selection and undo history. */
 export const stateJSON = (state: EditorState, historyField: unknown) => state.toJSON({ history: historyField as never });

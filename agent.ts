@@ -39,7 +39,8 @@ import { Agent as PiAgent, type AgentEvent, type AgentTool } from "@mariozechner
 import { Type } from "typebox";
 import { emptyLog, reduce, type Log, type LogEvent } from "./src/page/agent-log";
 import type { ViewRequest, ViewResult } from "./src/page/agent-log";
-import { agentName, colorFor, files, introduce, stamp, stateVector, type Author } from "./src/room/doc";
+import { agentName, colorFor, files, hasSeen, introduce, stamp, stateVector, type Author } from "./src/room/doc";
+import type { TreeOp } from "./tree";
 import { joinLocal, type Room } from "./room";
 import type { Naming } from "./directory";
 import { SERVER_TOOL_ACTIVITY } from "./server-tools";
@@ -198,9 +199,9 @@ place. Other people may have the same document open and be editing it too, each 
 their own agent; you work for ${owner} only. ${single
   ? `The document is that one file, opened from disk on its own: you may read and change it,
 but you can't make other files.`
-  : `The document is a folder of files (the page,
-its styles, scripts, images, other pages); your tools see that folder, and you may read
-and change any text file in it. Paths are relative to the folder.`}
+  : `The document is a folder of files, and it can have many pages; your tools
+see it as a file system (paths relative to its root), and you may read and change any
+text file in it. ${PAGES_PROMPT}`}
 
 - Your edits go straight into the shared document and show up in everyone's page as
   you make them, attributed to you. Prefer small, targeted edits (the edit tool) over
@@ -214,6 +215,9 @@ and change any text file in it. Paths are relative to the folder.`}
 - Edits to the text show up in the page as you make them. Changes to anything else
   (the page's structure, scripts, styles, other files) show up when you finish your
   turn.
+- ls, find and grep look around; new_page makes a page from the template, mkdir a folder,
+  mv moves or renames a file or folder, rm deletes one. ${owner} has the same powers in the
+  editor's file tree, and sees your changes to it at once.
 - view_page shows you the page as ${owner} sees it (a screenshot, plus any script
   errors). Use it to check visual work, like a diagram, layout or styling, before you
   say it's done. It renders your latest changes, including ones the page won't show
@@ -230,6 +234,17 @@ and change any text file in it. Paths are relative to the folder.`}
 ${DOCUMENT_RULES}
 `.trim();
 
+/** How a document's pages and addresses go together (tree.ts), for both agents' prompts. */
+const PAGES_PROMPT = `index.html at the root (or index.md) is the document's own page, at
+/<owner>/<slug>; every other .html or .md file is a page of its own, at its path without
+the extension: about.html is /<owner>/<slug>/about, blog/post.html is
+/<owner>/<slug>/blog/post, and blog/index.html is /<owner>/<slug>/blog (blog.html, if
+there is one, wins over blog/index.html). Link pages to each other with relative links
+("post.html", "../about.html", "blog/"), never ones starting with /: each page renders
+at its own file's path, so relative links and assets resolve as they would on disk.
+Styles and scripts the pages share can live in one file they all link to. A page's
+address with #edit opens it in the editor (/<owner>/<slug>/blog#edit).`;
+
 const MAX_LINES = 2000, MAX_BYTES = 50 * 1024;
 const IMAGE = /\.(png|jpe?g|gif|webp)$/i;
 const MIME: Record<string, string> = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp" };
@@ -240,6 +255,8 @@ function makeTools(ws: Workspace, opts: {
   readAsset: (path: string) => Promise<Uint8Array | null>;
   edited: (path: string, at: number) => void;
   naming?: Naming;
+  /** The document's file tree: new pages and folders, moves, deletes (host.ts, runTreeOp); resolves once the agent's replica has the result. */
+  tree?: (op: TreeOp) => Promise<void>;
 }): AgentTool[] {
   const text = (s: string) => ({ content: [{ type: "text" as const, text: s }], details: {} });
   /** Runs a workspace operation; its failure becomes the tool's error, which the model reads. */
@@ -305,13 +322,16 @@ function makeTools(ws: Workspace, opts: {
     {
       name: "ls",
       label: "List",
-      description: "List the files and folders directly inside a folder of the document (default: its root).",
+      description: "List the files and folders directly inside a folder of the document (default: its root). Folders end in /.",
       parameters: Type.Object({ path: Type.Optional(Type.String({ description: "Folder to list" })) }),
       execute: async (_id, p: { path?: string }) => {
         const dir = p.path && p.path.replace(/^[./]+$/, "") ? run(cleanPath(p.path!)) + "/" : "";
         const entries = new Set<string>();
-        for (const f of ws.paths()) if (f.startsWith(dir)) { const rest = f.slice(dir.length); entries.add(rest.includes("/") ? rest.slice(0, rest.indexOf("/") + 1) : rest); }
-        if (!entries.size) throw new Error(`${p.path} is empty or doesn't exist`);
+        for (const f of [...ws.paths(), ...ws.folders().map((d) => d + "/")]) if (f.startsWith(dir) && f != dir) { const rest = f.slice(dir.length); entries.add(rest.includes("/") ? rest.slice(0, rest.indexOf("/") + 1) : rest); }
+        if (!entries.size) {
+          if (dir && ws.folders().includes(dir.slice(0, -1))) return text(`${dir} is an empty folder.`);
+          throw new Error(`${p.path} is empty or doesn't exist`);
+        }
         return text([...entries].sort().join("\n"));
       },
     },
@@ -366,7 +386,49 @@ function makeTools(ws: Workspace, opts: {
         return { content: [{ type: "image" as const, data: v.png, mimeType: "image/png" }, { type: "text" as const, text: lines.join("\n") }], details: {} };
       },
     },
+    ...(opts.tree ? treeTools(opts.tree) : []),
     ...(opts.naming ? namingTools(opts.naming) : []),
+  ] as AgentTool[];
+}
+
+/**
+ * new_page, mkdir, mv and rm: the document's file tree, with the same powers
+ * a person has in the editor's file tree (host.ts, runTreeOp, checks each).
+ */
+function treeTools(tree: (op: TreeOp) => Promise<void>): AgentTool[] {
+  const text = (s: string) => ({ content: [{ type: "text" as const, text: s }], details: {} });
+  return [
+    {
+      name: "new_page",
+      label: "New page",
+      description: "Make a new page from the new-document template, at a path like \"blog/post.html\" (folders it's in are made too; without an extension it's .html). Each page has its own address: blog/post.html is /<owner>/<slug>/blog/post, blog/index.html is /<owner>/<slug>/blog. Then edit it like any file. (write also makes a page, from your own text.)",
+      parameters: Type.Object({ path: Type.String({ description: "Path of the new page, e.g. \"about.html\" or \"blog/index.html\"" }) }),
+      execute: async (_id, p: { path: string }) => { await tree({ op: "new_page", path: p.path }); return text(`Made ${p.path}${/\.(html|md)$/i.test(p.path) ? "" : " (.html)"} from the template.`); },
+    },
+    {
+      name: "mkdir",
+      label: "New folder",
+      description: "Make a folder (and any it's in). Empty folders stay until deleted.",
+      parameters: Type.Object({ path: Type.String({ description: "Path of the folder, e.g. \"blog/drafts\"" }) }),
+      execute: async (_id, p: { path: string }) => { await tree({ op: "new_folder", path: p.path }); return text(`Made the folder ${p.path}.`); },
+    },
+    {
+      name: "mv",
+      label: "Move",
+      description: "Move or rename a file or a folder (with everything in it). Nothing may be at the destination already. The document's own page (index.html at its root) can't be moved. Moving a page changes its address: fix links to it in other pages.",
+      parameters: Type.Object({
+        from: Type.String({ description: "Path of the file or folder now" }),
+        to: Type.String({ description: "Its new path" }),
+      }),
+      execute: async (_id, p: { from: string; to: string }) => { await tree({ op: "move", from: p.from, to: p.to }); return text(`Moved ${p.from} to ${p.to}.`); },
+    },
+    {
+      name: "rm",
+      label: "Delete",
+      description: "Delete a file, or a folder with everything in it. The document's own page (index.html at its root) can't be deleted. Only delete what you were asked to.",
+      parameters: Type.Object({ path: Type.String({ description: "Path of the file or folder" }) }),
+      execute: async (_id, p: { path: string }) => { await tree({ op: "delete", path: p.path }); return text(`Deleted ${p.path}.`); },
+    },
   ] as AgentTool[];
 }
 
@@ -411,7 +473,7 @@ function namingTools(naming: Naming): AgentTool[] {
 export function documentToolSpecs(): ToolSpec[] {
   const none = () => { throw new Error("no document"); };
   const naming = { get: none, set: none } as unknown as Naming;
-  return makeTools(null as unknown as Workspace, { view: none, readAsset: none, edited: none, naming })
+  return makeTools(null as unknown as Workspace, { view: none, readAsset: none, edited: none, naming, tree: none })
     .map((t) => ({ name: t.name, description: t.description, parameters: JSON.parse(JSON.stringify(t.parameters)) }));
 }
 
@@ -464,6 +526,8 @@ export interface SessionOptions {
   readAsset: (path: string) => Promise<Uint8Array | null>;
   /** The document's title and address, as the owner (get_title, set_title); without it those tools are left out. */
   naming?: Naming;
+  /** Does a tree operation in the room (host.ts, runTreeOp): new_page, mkdir, mv and rm; without it those tools are left out. */
+  tree?: (op: TreeOp) => Promise<void>;
   /**
    * The tools beyond the document the owner may use now (server-tools.ts:
    * sharing; the server's settings and users for an admin). Asked for again
@@ -472,7 +536,7 @@ export interface SessionOptions {
   serverTools?: () => Promise<AgentTool[]>;
 }
 
-const TOOL_ACTIVITY: Record<string, string> = { ...SERVER_TOOL_ACTIVITY, read: "reading", edit: "editing", write: "writing", ls: "looking around", find: "looking for files", grep: "searching", view_page: "looking at the page", get_title: "reading the title", set_title: "renaming the document" };
+const TOOL_ACTIVITY: Record<string, string> = { ...SERVER_TOOL_ACTIVITY, new_page: "making a page", mkdir: "making a folder", mv: "moving", rm: "deleting", read: "reading", edit: "editing", write: "writing", ls: "looking around", find: "looking for files", grep: "searching", view_page: "looking at the page", get_title: "reading the title", set_title: "renaming the document" };
 
 export async function startSession(opts: SessionOptions): Promise<AgentSession> {
   const { cfg, owner } = opts;
@@ -515,10 +579,20 @@ export async function startSession(opts: SessionOptions): Promise<AgentSession> 
   };
   const undoable = () => emit({ t: "undoable", count: undo.undoStack.length });
 
+  /** Done in the room: the replica has it once it has seen everything the room has (a few microtasks). */
+  const caughtUp = async () => {
+    const want = stateVector(opts.room.doc);
+    for (let i = 0; i < 200 && !hasSeen(doc, want); i++) await new Promise((r) => setTimeout(r, 0));
+  };
   const tools = makeTools(ws, {
     view: (req) => opts.view({ ...req, after: stateVector(doc) }),
     readAsset: opts.readAsset,
     naming: opts.naming,
+    tree: opts.tree && (async (op) => {
+      if (!opts.canEdit()) throw new Error("Your user can only view this document, so you can't change it.");
+      await opts.tree!(op);
+      await caughtUp();
+    }),
     edited: (path, at) => {
       // One undo step per tool call, and the agent's cursor where it last wrote.
       undo.stopCapturing();
@@ -672,9 +746,10 @@ export function externalGuide(o: { docName: string; kind: "html" | "md"; owner: 
 
 ${o.owner} has ${o.docName} (${o.kind == "md" ? "Markdown" : "HTML"}) open in Erga's page editor and
 has given you access to edit it as their agent, ${agentName(o.owner)}. The document
-is a folder of files (the page, its styles, scripts, images, other pages); the
-tools below see that folder, and you may read and change any text file in it.
-Paths are relative to the folder.
+is a folder of files, and it can have many pages; the tools below see it as a
+file system (paths relative to its root: ls, find, grep, read, edit, write,
+new_page, mkdir, mv, rm), and you may read and change any text file in it.
+${PAGES_PROMPT}
 
 ## Calling the tools
 
@@ -734,8 +809,8 @@ ${DOCUMENT_RULES.replace(/^(#+) /gm, "#$1 ")}
 }
 
 function toolPath(args: unknown): string | null {
-  const a = args as { path?: unknown } | null;
-  return typeof a?.path == "string" ? a.path : null;
+  const a = args as { path?: unknown; from?: unknown } | null;
+  return typeof a?.path == "string" ? a.path : typeof a?.from == "string" ? a.from : null;
 }
 
 /** A tool result's image (view_page's screenshot), as a data URL for the panel. */

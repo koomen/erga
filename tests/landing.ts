@@ -34,7 +34,7 @@ const root = host.root;
 const browser = await Browser.launch();
 const get = (path: string, init: RequestInit = {}) => fetch(root + path, { redirect: "manual", ...init });
 /** The id of the document / frames, from its pages origin. */
-const frameOf = (html: string) => /<iframe id="frame" class="erga-view" src="http:\/\/([a-z0-9]{8})-([a-z0-9-]+)\.localhost/.exec(html);
+const frameOf = (html: string) => /<iframe id="frame" class="erga-view" (?:data-)?src="http:\/\/([a-z0-9]{8})-([a-z0-9-]+)\.localhost/.exec(html);
 const landingSetting = async () => (await (await get("/admin")).text()).match(/data-key="landing_document"[\s\S]*?name="value"[^>]*value="([^"]*)"/)?.[1] ?? "";
 try {
   // A fresh database: nothing's set, and the first requests for /, at once, make one document.
@@ -45,8 +45,8 @@ try {
   const id = frameOf(front)![1];
   expect(frameOf(front)![2] == "tester", "DEV_LOGIN's document", front.slice(0, 800));
   const list = await (await get("/docs")).text();
-  expect((list.match(/href="\/tester\/landing(-\d+)?\/edit"/g) ?? []).length == 1, "one landing document in its owner's list", list.slice(0, 2000));
-  expect(front.includes("<title>Erga</title>") && front.includes('href="/new?from=landing"') && front.includes('href="/tester/landing/edit"'), "titled by it, with Clone and, for its editor, Edit", front.slice(0, 1500));
+  expect((list.match(/href="\/tester\/landing(-\d+)?\#edit"/g) ?? []).length == 1, "one landing document in its owner's list", list.slice(0, 2000));
+  expect(front.includes("<title>Erga</title>") && front.includes('href="/new?from=landing"') && front.includes('href="/tester/landing#edit"'), "titled by it, with Clone and, for its editor, Edit", front.slice(0, 1500));
   expect((await (await get(`/d/${id}/doc/index.html`)).text()) == landingHtml, "the repo's landing/index.html");
   // Its fonts and images too, byte for byte (landing/ isn't only text).
   for (const rel of readdirSync(join(ROOT, "landing"), { recursive: true }).map(String).filter((f) => /\.(woff2|png|jpe?g|webp|avif|gif)$/.test(f))) {
@@ -62,12 +62,12 @@ try {
   const p = await browser.page(await browser.context());
   await p.open(`${root}/`, { width: 1200, height: 800, scale: 2 });
   await until(async () => (await p.inPage<string>(`document.querySelector("h1")?.textContent ?? ""`)).some((t) => t == "Erga"), 15_000, "the landing page renders in its frame");
-  expect(await p.eval<boolean>(`!!document.querySelector("a.erga-clone-button[href='/new?from=landing']") && !!document.querySelector("a.erga-edit-button[href='/tester/landing/edit']")`), "with Edit and Clone over it");
+  expect(await p.eval<boolean>(`!!document.querySelector("a.erga-clone-button[href='/new?from=landing']") && !!document.querySelector("a.erga-edit-button[href='/tester/landing#edit']")`), "with Edit and Clone over it");
   await p.screenshot(join(SHOTS, "landing-front.png"));
   ok("in headless Chrome, / renders the landing document with Edit and Clone");
 
   // Its owner edits it in the editor, and / shows the edit.
-  await p.open(`${root}/tester/landing/edit`, { width: 1200, height: 800, scale: 2, clear: false, agent: false });
+  await p.open(`${root}/tester/landing#edit`, { width: 1200, height: 800, scale: 2, clear: false, agent: false });
   await until(() => p.eval<boolean>(`document.body.classList.contains("erga-editor-ready")`), 20_000, "the editor is ready");
   await until(() => p.frame<boolean>(`${F}.querySelector("h1")?.getAttribute("contenteditable") == "true"`), 20_000, "the editor makes the heading editable");
   const f = await frameAt(p);
@@ -90,7 +90,7 @@ try {
   // Clone makes your own copy of it.
   const made = await get("/new?from=landing");
   const to = made.headers.get("location") ?? "";
-  expect(made.status == 302 && to.startsWith("/tester/") && to.endsWith("/edit"), "/new?from=landing makes a document, and opens its editor", { status: made.status, to });
+  expect(made.status == 302 && to.startsWith("/tester/") && to.endsWith("#edit"), "/new?from=landing makes a document, and opens its editor", { status: made.status, to });
   ok("/new?from=landing copies it");
 
   // Deleted, the next / makes it again from landing/.
@@ -98,19 +98,19 @@ try {
   expect(del.status == 303, "its owner deletes it", del.status);
   const again = await (await get("/")).text();
   const id2 = frameOf(again)?.[1];
-  expect(id2 && id2 != id && again.includes('href="/tester/landing/edit"'), "/ makes a new one at /tester/landing", again.slice(0, 800));
+  expect(id2 && id2 != id && again.includes('href="/tester/landing#edit"'), "/ makes a new one at /tester/landing", again.slice(0, 800));
   expect((await (await get(`/d/${id2}/doc/index.html`)).text()) == landingHtml, "a fresh copy of landing/");
   ok("deleted, the landing document is made again on the next /");
 
   // An admin's choice: one of their documents is the front page, and nothing is made.
   const mine = await (await get("/new")).headers.get("location")!;
-  const mineId = ((await (await get(`${mine.replace(/\/edit$/, "")}/api/name`)).json()) as { id: string }).id;
-  const set = await get("/admin/settings", { method: "POST", headers: { Origin: root }, body: new URLSearchParams({ key: "landing_document", value: JSON.stringify(mine.replace(/\/edit$/, "")) }) });
+  const mineId = ((await (await get(`${mine.replace(/#edit$/, "")}/api/name`)).json()) as { id: string }).id;
+  const set = await get("/admin/settings", { method: "POST", headers: { Origin: root }, body: new URLSearchParams({ key: "landing_document", value: JSON.stringify(mine.replace(/#edit$/, "")) }) });
   expect(set.ok, "the admin sets landing_document to one of theirs", await set.text());
   const chosen = await (await get("/")).text();
   expect(frameOf(chosen)?.[1] == mineId, "/ shows the admin's choice", chosen.slice(0, 800));
   const docsNow = await (await get("/docs")).text();
-  expect((docsNow.match(/href="\/tester\/landing(-\d+)?\/edit"/g) ?? []).length == 1, "and nothing more is made", docsNow.slice(0, 2000));
+  expect((docsNow.match(/href="\/tester\/landing(-\d+)?\#edit"/g) ?? []).length == 1, "and nothing more is made", docsNow.slice(0, 2000));
   ok("a landing document an admin chose is respected");
 } finally {
   browser.close();

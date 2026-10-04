@@ -41,7 +41,7 @@ async function session(browser: Browser, fixture: string, fileName: string, env:
   const file = join(dir, fileName);
   const host = await startHost(dir, { env });
   const p = await browser.page();
-  await p.open(`${host.base}/edit${query}`, { clear: false, width: 1100, height: 800, timescale, agent: false });
+  await p.open(`${host.base}${query}#edit`, { clear: false, width: 1100, height: 800, timescale, agent: false });
   await until(async () => await p.eval<boolean>(`!!window.ergaPage`) && await p.frame<boolean>(`!!${F}?.querySelector("[data-erga-id]")`), 10_000);
   // The page's own fonts too: text measured before they load moves when they do.
   await p.frame(`${F}.fonts.ready.then(() => true)`);
@@ -542,7 +542,7 @@ async function agentEmptyScenario(browser: Browser) {
   check("and left open, it opens again on the way back in", await paneOpen());
   // Someone who's never closed it finds it open, coming into the editor.
   await p.eval(`localStorage.removeItem("erga:settings:v1")`);
-  await p.navigate(`${s.base}/edit?again`); // a new address: the same one would count as a reload
+  await p.navigate(`${s.base}?again#edit`); // a new address: the same one would count as a reload
   await loaded(p);
   check("coming into the editor for the first time, the pane opens by itself", await until(paneOpen, 2000));
   await s.close();
@@ -621,7 +621,7 @@ async function modelScenario(browser: Browser) {
   const first = await sel(p);
   check("the agent starts on Sonnet 5.5, with Opus 5.5 fast to pick", first?.value == "sonnet" && first.options.join("|") == "Sonnet 5.5|Opus 5.5 fast", first);
   const q = await browser.page();
-  await q.open(`${s.base}/edit`, { clear: false, width: 900, height: 700 });
+  await q.open(`${s.base}#edit`, { clear: false, width: 900, height: 700 });
   await until(async () => (await sel(q))?.value == "sonnet");
   await p.eval(`(() => { const s = document.getElementById("agent-model-select"); s.value = "opus-fast"; s.dispatchEvent(new Event("change")); })()`);
   check("picking Opus 5.5 fast switches it", await until(async () => (await (await fetch(`${s.base}/api/agent`)).json() as { choice: string }).choice == "opus-fast"));
