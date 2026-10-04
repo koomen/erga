@@ -5,7 +5,8 @@
 //   bun development/task-queue/test.ts
 //
 // Registers tasks, commits in their worktrees, runs a preview, attaches
-// screenshots (one taken by headless Chrome), merges and pushes (through the
+// screenshots (one taken by headless Chrome), removes them (one, all, tq shot
+// --replace; not while merging; the board's ×), merges and pushes (through the
 // merging status), merges a conflicting task with a stand-in resolver, fails
 // a merge back to complete (with tq merge --wait), recovers a merge cut off by
 // a restart, and discards one; tq watch follows it all, through the restart.
@@ -119,6 +120,30 @@ try {
   const raw = await fetch(`${base}/api/tasks/1/screenshots?caption=raw`, { method: "POST", headers: { "content-type": "image/png" }, body: png });
   check(raw.ok && (await raw.json()).screenshots.length == 2, "a raw image body is attached");
 
+  // Removing screenshots: one by index or file name, all, and tq shot --replace; each file goes from disk.
+  const shotsDir = join(data, "screenshots"), pngFile = join(tmp, "shot.png");
+  writeFileSync(pngFile, Buffer.from(png));
+  tq("shot", "1", pngFile, "third");
+  const three = (await api("GET", "/api/tasks/1")).screenshots;
+  const u1 = tq("unshot", "1", "2");
+  const after1 = JSON.parse(u1.out || "{}").screenshots ?? [];
+  check(u1.code == 0 && after1.map((s: any) => s.caption).join(",") == "The greeting,third" && !existsSync(join(shotsDir, three[1].file)), "tq unshot ID INDEX removes that screenshot and its file");
+  const u2 = await api("DELETE", `/api/tasks/1/screenshots/${three[2].file}`);
+  check(u2.code == 200 && u2.screenshots.length == 1 && !existsSync(join(shotsDir, three[2].file)) && u2.log.at(-1).message == "Screenshot removed: third", "DELETE .../screenshots/:file removes it by file name, and logs it");
+  check((await api("DELETE", "/api/tasks/1/screenshots/9")).code == 404 && tq("unshot", "1", "nope.png").code == 1, "removing a screenshot that isn't there is a 404");
+  tq("shot", "1", pngFile, "second");
+  const kept = (await api("GET", "/api/tasks/1")).screenshots.map((s: any) => s.file);
+  const r1 = tq("shot", "1", pngFile, "fresh", "--replace");
+  const fresh = JSON.parse(r1.out || "{}").screenshots ?? [];
+  check(r1.code == 0 && fresh.length == 1 && fresh[0].caption == "fresh" && kept.every((f: string) => !existsSync(join(shotsDir, f))), "tq shot --replace removes the old screenshots (and files) before it attaches the new one");
+  tq("shot", "1", pngFile, "another");
+  const cleared = tq("unshot", "1", "--all");
+  check(cleared.code == 0 && JSON.parse(cleared.out).screenshots.length == 0 && !existsSync(join(shotsDir, fresh[0].file)), "tq unshot ID --all removes them all");
+  check(tq("help").out.includes("tq unshot ID FILE|INDEX") && tq("help").out.includes("--replace"), "tq help lists unshot and --replace");
+  const about2 = await api("GET", "/api");
+  check(about2.endpoints?.["DELETE /api/tasks/:id/screenshots/:file"] && about2.endpoints?.["DELETE /api/tasks/:id/screenshots"] && about2.cli.includes("tq unshot"), "GET /api lists the DELETE endpoints and tq unshot");
+  await fetch(`${base}/api/tasks/1/screenshots?caption=raw`, { method: "POST", headers: { "content-type": "image/png" }, body: png });
+
   await api("PATCH", "/api/tasks/1", { status: "complete", summary: "Added hello.txt" });
   const started = await api("POST", "/api/tasks/1/merge");
   check(started.code == 202 && started.status == "merging", "merge starts, and the task is merging");
@@ -148,6 +173,7 @@ try {
   check((await api("POST", `/api/tasks/${t3.id}/merge`)).code == 409, "a merging task can't be merged again");
   check((await api("PATCH", `/api/tasks/${t3.id}`, { status: "complete" })).code == 409, "an agent can't change a merging task's status");
   check((await api("POST", `/api/tasks/${t3.id}/discard`)).code == 409, "a merging task can't be discarded");
+  check((await api("DELETE", `/api/tasks/${t3.id}/screenshots`)).code == 409 && tq("unshot", String(t3.id), "1").code == 1, "a merging task's screenshots can't be removed");
   const m3 = await until(t3.id, (t) => t.status != "merging" && t.status != "complete");
   check(m3.status == "merged", `the conflicting task merged (${m3.error ?? m3.commit})`);
   check(m3.log.some((l: any) => l.message.startsWith("Conflicts merging")), "the conflict went to the resolver");
@@ -257,7 +283,32 @@ try {
     await page.click(pt.x, pt.y);
     await page.settle();
     check(await page.eval(`document.getElementById("dlg").open && document.querySelector("#dlg h3").textContent.includes("#3")`), "clicking a task's commit opens the task");
-    await page.eval(`document.getElementById("dlg").close(), true`);
+    await page.eval(`document.querySelector('#dlg [data-act="close"]').click(), true`); // as the user does: dlg.close() alone lets a task update reopen it
+
+    // The detail view's ×: shown on hover, removes that one screenshot, no confirmation.
+    const ts = await api("POST", "/api/tasks", { title: "Shots", worktree: false });
+    for (const caption of ["old", "new"]) await fetch(`${base}/api/tasks/${ts.id}/screenshots?caption=${caption}`, { method: "POST", headers: { "content-type": "image/png" }, body: png });
+    await page.settle();
+    await Bun.sleep(500);
+    const card = await page.eval(`(() => { const c = document.querySelector('.card[data-open="${ts.id}"]'); c.scrollIntoView({ block: "center" }); const r = c.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + 14 }; })()`);
+    await page.click(card.x, card.y);
+    await page.settle();
+    check(await page.eval(`document.getElementById("dlg").open && document.querySelectorAll("#dlg .shots figure").length == 2`), "the task's detail view shows its two screenshots");
+    const fig = await page.eval(`(() => { const r = document.querySelector("#dlg .shots figure").getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + 40 }; })()`);
+    const hidden = await page.eval(`getComputedStyle(document.querySelector("#dlg .unshot")).opacity`);
+    await page.mouse("mouseMoved", fig.x, fig.y);
+    await Bun.sleep(300);
+    const x = await page.eval(`(() => { const b = document.querySelector("#dlg .unshot"), r = b.getBoundingClientRect(); return { o: getComputedStyle(b).opacity, n: document.querySelectorAll("#dlg .unshot").length, x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`);
+    check(hidden == "0" && x.o == "1" && x.n == 2, `each screenshot has a ×, hidden until hover (${hidden} → ${x.o}, ${x.n})`);
+    const oldFile = (await api("GET", `/api/tasks/${ts.id}`)).screenshots[0].file;
+    await page.click(x.x, x.y);
+    await until(ts.id, (t) => t.screenshots.length == 1);
+    await page.settle();
+    const left = await page.eval(`({ open: document.getElementById("dlg").open, caps: [...document.querySelectorAll("#dlg .shots figcaption")].map((c) => c.textContent).join(",") })`);
+    const tsAfter = await api("GET", `/api/tasks/${ts.id}`);
+    check(left.open && left.caps == "new" && tsAfter.screenshots.length == 1 && !existsSync(join(data, "screenshots", oldFile)), `clicking × removes that screenshot at once, file too, and the view stays open (${left.caps})`);
+    await page.eval(`document.querySelector('#dlg [data-act="close"]').click(), true`);
+    await api("POST", `/api/tasks/${ts.id}/discard`);
 
     // A task merging now shows on top as soon as it's merged.
     const t6 = await api("POST", "/api/tasks", { title: "Fresh merge" });
