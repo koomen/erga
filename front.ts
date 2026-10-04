@@ -204,7 +204,7 @@ export async function frontDoor(request: Request, base: Platform): Promise<Respo
 /** What the editor's menu on your avatar needs to know that the document doesn't (account.ts): the links it offers. */
 async function accountMeta(platform: Platform, session: Session): Promise<string> {
   const admin = !session.test && !session.agent && (await platform.directory.users.isAdmin(whoOf(session)));
-  const links = { docs: link("/docs", session), ...(admin ? { admin: link("/admin", session) } : {}), signOut: "/auth/logout" };
+  const links = { docs: link("/docs", session), tokens: link("/tokens", session), ...(admin ? { admin: link("/admin", session) } : {}), signOut: "/auth/logout" };
   return `<meta name="erga-account" content="${esc(JSON.stringify(links))}">`;
 }
 
@@ -509,8 +509,8 @@ async function listDocs(platform: Platform, request: Request): Promise<Response>
   const session = await platform.sessionOf(request);
   if (!session) return signInFirst("/docs");
   if (session.test) return page("Not for test people", "Test people have no documents of their own.", 403);
-  const [docs, hours, admin] = await Promise.all([platform.docs.list(session.login), platform.directory.config.get("delete_docs_after_hours"), platform.directory.users.isAdmin(whoOf(session))]);
-  return new Response(docsPage(session, docs, Date.now(), platform.dev(new URL(request.url)), hours, admin), { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
+  const [docs, hours] = await Promise.all([platform.docs.list(session.login), platform.directory.config.get("delete_docs_after_hours")]);
+  return new Response(docsPage(session, docs, Date.now(), platform.dev(new URL(request.url)), hours), { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
 }
 
 /** POST /docs/delete (id=...): deletes one of the signed-in person's documents. */
@@ -612,46 +612,55 @@ function ago(t: number, now: number): string {
  * icon buttons that show on hover, and dialogs as small cards.
  */
 export const APP_STYLE = `
-  body { font-size: 15px; line-height: 1.5; }
-  main { max-width: var(--column); margin: 0 auto; padding: 14vh 20px 40px; display: flex; flex-direction: column; }
-  header { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 22px; }
-  h1 { margin: 0; font-size: 24px; font-weight: 650; letter-spacing: -0.015em; color: var(--fg-strong); }
-  .new { flex: none; padding: 7px 14px; border: 0; border-radius: 999px; background: var(--fg-strong); color: var(--bg); font: inherit; font-size: 13px; font-weight: 600; text-decoration: none; cursor: pointer; transition: opacity 150ms ease; }
-  .new:hover { opacity: 0.85; }
-  :is(.new, .doc, .act, footer a, dialog button, .pill, select):focus-visible { outline: 2px solid var(--caret); outline-offset: 2px; border-radius: 6px; }
+  body { font-size: 15px; line-height: 1.5; background: var(--bg); -webkit-font-smoothing: antialiased; }
+  main { box-sizing: border-box; max-width: 760px; margin: 0 auto; padding: 120px 24px 96px; display: flex; flex-direction: column; }
+  /* The wordmark, upper left, on the same line as the account corner upper right (account.ts). */
+  .brand { position: absolute; top: max(14px, env(safe-area-inset-top)); left: max(20px, env(safe-area-inset-left)); height: 30px; display: flex; align-items: center;
+    font-size: 15px; font-weight: 650; letter-spacing: -0.02em; color: var(--fg-strong); text-decoration: none; }
+  .brand:hover { opacity: 0.7; }
+  header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 36px; }
+  h1 { margin: 0; font-size: 30px; line-height: 1.15; font-weight: 650; letter-spacing: -0.025em; color: var(--fg-strong); }
+  .sub { margin: 6px 0 0; font-size: 14px; color: var(--soft); }
+  .new, .pill { flex: none; box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 34px; padding: 0 14px; border-radius: 8px;
+    font: inherit; font-size: 13.5px; font-weight: 550; line-height: 1; text-decoration: none; white-space: nowrap; cursor: pointer;
+    transition: background-color 150ms ease, border-color 150ms ease, opacity 150ms ease; }
+  .new { border: 1px solid var(--fg-strong); background: var(--fg-strong); color: var(--bg); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1); }
+  .new:hover { opacity: 0.86; }
+  .new svg, .pill svg { width: 15px; height: 15px; margin-left: -3px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
+  .pill { border: 1px solid var(--rule); background: var(--bg); color: var(--fg-strong); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04); }
+  .pill:hover:not(:disabled) { border-color: color-mix(in srgb, var(--chrome) 55%, var(--rule)); }
+  .pill:disabled { color: var(--chrome); cursor: default; box-shadow: none; }
+  :is(.new, .doc, .act, .brand, dialog button, .pill, select):focus-visible { outline: 2px solid var(--caret); outline-offset: 2px; border-radius: 8px; }
   ol.rows { list-style: none; margin: 0; padding: 0; }
   ol.rows > li { display: flex; align-items: center; gap: 2px; border-bottom: 1px solid var(--rule); }
   ol.rows > li:first-child { border-top: 1px solid var(--rule); }
-  .doc { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 12px; padding: 13px 2px; color: inherit; text-decoration: none; }
+  .doc { flex: 1; min-width: 0; display: flex; align-items: center; gap: 12px; padding: 13px 4px; color: inherit; text-decoration: none; }
   .title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; color: var(--fg-strong); }
-  a.doc:hover .title { text-decoration: underline; text-decoration-color: var(--mark); text-decoration-thickness: 1px; text-underline-offset: 0.2em; }
   .note { flex: none; font-size: 12.5px; color: var(--chrome); }
   time { flex: none; margin-left: auto; font-size: 13px; color: var(--soft); font-feature-settings: "tnum"; white-space: nowrap; }
   form { margin: 0; }
-  .act { flex: none; display: grid; place-items: center; width: 30px; height: 30px; padding: 0; border: 0; border-radius: 8px; background: transparent; color: var(--chrome); cursor: pointer; opacity: 0; transition: opacity 150ms ease, color 150ms ease, background-color 150ms ease; }
+  .act { flex: none; display: grid; place-items: center; width: 30px; height: 30px; padding: 0; border: 0; border-radius: 7px; background: transparent; color: var(--chrome); cursor: pointer; opacity: 0; transition: opacity 150ms ease, color 150ms ease, background-color 150ms ease; }
   .act svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
   li:hover .act, .act:focus-visible, .act.on { opacity: 1; }
-  .act:hover { color: var(--chrome-hover); background: color-mix(in srgb, var(--chrome) 12%, transparent); }
+  .act:hover { color: var(--chrome-hover); background: color-mix(in srgb, var(--chrome) 16%, transparent); }
   .act:disabled { cursor: default; opacity: 0 !important; }
   @media (hover: none) { .act { opacity: 1; } }
-  .pill { flex: none; padding: 7px 14px; border: 1px solid var(--rule); border-radius: 999px; background: transparent; color: var(--fg-strong); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
-  .pill:hover:not(:disabled) { background: color-mix(in srgb, var(--chrome) 12%, transparent); }
-  .pill:disabled { color: var(--chrome); cursor: default; }
-  .input { min-width: 0; padding: 7px 12px; border: 1px solid var(--rule); border-radius: 999px; background: transparent; color: var(--fg-strong); font: inherit; font-size: 13.5px; }
-  .input::placeholder { color: var(--soft); }
-  .input:focus-visible { outline: 2px solid var(--caret); outline-offset: 1px; }
+  .input { box-sizing: border-box; min-width: 0; height: 34px; padding: 0 12px; border: 1px solid var(--rule); border-radius: 8px; background: var(--bg); color: var(--fg-strong); font: inherit; font-size: 14px; transition: border-color 150ms ease; }
+  .input::placeholder { color: var(--chrome); }
+  .input:hover:not(:disabled) { border-color: color-mix(in srgb, var(--chrome) 55%, var(--rule)); }
+  .input:focus-visible { outline: 2px solid color-mix(in srgb, var(--caret) 35%, transparent); outline-offset: 0; border-color: var(--caret); }
   .input:disabled { color: var(--soft); background: color-mix(in srgb, var(--chrome) 6%, transparent); }
-  select { padding: 5px 26px 5px 10px; border: 1px solid var(--rule); border-radius: 999px; color: var(--fg); font: inherit; font-size: 13px; cursor: pointer; appearance: none;
+  select { padding: 5px 26px 5px 10px; border: 1px solid var(--rule); border-radius: 7px; color: var(--fg); font: inherit; font-size: 13px; cursor: pointer; appearance: none;
     background: transparent url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23a1a1a9' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m7 10 5 5 5-5'/%3E%3C/svg%3E") no-repeat right 7px center / 14px; }
   select:disabled { color: var(--soft); cursor: default; background-image: none; padding-right: 10px; }
   select option { color: initial; }
   .badge { flex: none; padding: 1px 8px; border-radius: 999px; font-size: 11.5px; font-weight: 600; color: var(--soft); background: color-mix(in srgb, var(--chrome) 14%, transparent); }
   .badge.strong { color: var(--bg); background: var(--fg-strong); }
-  dialog { width: min(420px, calc(100vw - 32px)); box-sizing: border-box; padding: 18px; border: 1px solid var(--panel-border); border-radius: 14px; background: var(--bg); color: var(--fg); box-shadow: var(--shadow); font-size: 14px; }
+  dialog { width: min(420px, calc(100vw - 32px)); box-sizing: border-box; padding: 20px; border: 1px solid var(--panel-border); border-radius: 12px; background: var(--bg); color: var(--fg); box-shadow: var(--shadow); font-size: 14px; }
   dialog::backdrop { background: rgba(0, 0, 0, 0.18); }
-  dialog h2 { margin: 0 0 12px; font-size: 15px; font-weight: 600; color: var(--fg-strong); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  dialog h2 { margin: 0 0 14px; font-size: 15px; font-weight: 600; color: var(--fg-strong); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   dialog label { display: block; margin: 0 0 4px; font-size: 12.5px; color: var(--soft); }
-  dialog .field { display: flex; align-items: center; margin-bottom: 12px; border: 1px solid var(--rule); border-radius: 9px; background: color-mix(in srgb, var(--chrome) 6%, transparent); padding: 0 10px; }
+  dialog .field { display: flex; align-items: center; margin-bottom: 12px; border: 1px solid var(--rule); border-radius: 8px; background: color-mix(in srgb, var(--chrome) 6%, transparent); padding: 0 10px; }
   dialog .field:focus-within { border-color: var(--caret); }
   dialog .field span { color: var(--soft); white-space: nowrap; }
   dialog input { flex: 1; min-width: 0; padding: 8px 0; border: 0; outline: 0; background: transparent; color: var(--fg-strong); font: inherit; }
@@ -659,18 +668,18 @@ export const APP_STYLE = `
   .hint:empty { display: none; }
   .hint.error { color: #c2410c; }
   dialog .buttons { display: flex; justify-content: flex-end; gap: 8px; }
-  dialog button { font: 600 13px var(--font-text); padding: 7px 14px; border-radius: 999px; border: 1px solid var(--rule); background: transparent; color: var(--fg); cursor: pointer; }
+  dialog button { font: 550 13px var(--font-text); height: 32px; padding: 0 14px; border-radius: 8px; border: 1px solid var(--rule); background: transparent; color: var(--fg); cursor: pointer; }
   dialog button.primary { border-color: var(--fg-strong); background: var(--fg-strong); color: var(--bg); }
-  dialog button.act { padding: 0; border: 0; }
+  dialog button.act { height: 30px; padding: 0; border: 0; }
   @media (pointer: coarse) { dialog input, .input { font-size: 16px; } }
-  .empty { margin: 0; padding: 28px 2px; border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); color: var(--soft); }
-  footer { padding-top: 40px; display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 13px; color: var(--chrome); }
-  footer a { color: inherit; text-decoration: none; }
-  footer a:hover { color: var(--chrome-hover); }
-  @media (max-width: 520px) { .note { display: none; } main { padding-top: 8vh; } }
+  .empty { margin: 0; padding: 48px 24px; border: 1px dashed var(--rule); border-radius: 12px; text-align: center; color: var(--soft); }
+  @media (max-width: 520px) { .note { display: none; } main { padding: 88px 16px 64px; } h1 { font-size: 26px; } }
   /* Touch: room for a finger. */
-  @media (pointer: coarse) { .new, .pill { padding: 10px 16px; } .act { width: 40px; height: 40px; } footer a { padding: 8px 0; margin: -8px 0; } }
+  @media (pointer: coarse) { .new, .pill, .input { height: 40px; } .act { width: 40px; height: 40px; } }
 `;
+
+/** The wordmark in the upper left of the app's own pages: back to the front page. */
+export const brand = (session: Session | null) => `<a class="brand" href="${esc(link("/", session))}">Erga</a>`;
 
 /** Every <time datetime> in the reader's own language and zone: "5 minutes ago", "yesterday", the date. */
 export const TIMES_SCRIPT = `
@@ -691,6 +700,9 @@ export const ICON = {
   delete: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M10 7V5h4v2M7 7l1 12h8l1-12"/></svg>`,
   share: `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9.5" cy="8.5" r="3.5"/><path d="M3.5 19c.6-3.2 3-5 6-5s5.4 1.8 6 5"/><path d="M18.5 8v6M15.5 11h6"/></svg>`,
   close: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7 7 17"/></svg>`,
+  plus: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>`,
+  page: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3.5h6.5L18 8v11.5a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1v-15a1 1 0 0 1 1-1Z"/><path d="M13.5 3.5V8H18"/></svg>`,
+  folder: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 7.5a1 1 0 0 1 1-1h4.6l2 2h8.4a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1h-15a1 1 0 0 1-1-1v-10Z"/></svg>`,
 };
 
 /** The page around a view (/docs, /admin): its title, the shared look and the view's own style. */
@@ -712,7 +724,7 @@ function sharedNote(d: Listed): string {
 }
 
 /** The documents view: yours and those shared with you, with new, open, share, rename and delete. */
-function docsPage(session: Session, docs: Listed[], now: number, dev: boolean, hours: number | null, admin: boolean): string {
+function docsPage(session: Session, docs: Listed[], now: number, dev: boolean, hours: number | null): string {
   const rows = docs.map((d) => {
     const left = d.expires != null ? Math.max(1, Math.ceil((d.expires - now) / 3600000)) : null;
     const mine = d.role == "owner";
@@ -723,20 +735,39 @@ function docsPage(session: Session, docs: Listed[], now: number, dev: boolean, h
     // One opened from disk only comes off the list: its files stay where they are.
     const [remove, label] = d.path != null ? ["Remove from the list", `Remove ${esc(d.title)} from the list`] : ["Delete", `Delete ${esc(d.title)}`];
     return `  <li>
-    <a class="doc" href="${esc(link(`/${d.owner}/${d.slug}`, session))}"><span class="title">${esc(d.title)}</span>${note}${mine ? sharedNote(d) : ""}<time datetime="${when}">${ago(d.modified, now)}</time></a>
+    <a class="doc" href="${esc(link(`/${d.owner}/${d.slug}`, session))}"><span class="icon">${d.path != null ? ICON.folder : ICON.page}</span><span class="title">${esc(d.title)}</span>${note}${mine ? sharedNote(d) : ""}<time datetime="${when}">${ago(d.modified, now)}</time></a>
     <div class="acts">${mine ? `<button type="button" class="act share" aria-label="Share ${esc(d.title)}" title="Share" data-id="${esc(d.id)}" data-title="${esc(d.title)}" data-address="/${esc(d.owner)}/${esc(d.slug)}">${ICON.share}</button>
     <button type="button" class="act rename" aria-label="Rename ${esc(d.title)}" title="Rename" data-id="${esc(d.id)}" data-title="${esc(d.title)}" data-slug="${esc(d.slug)}"${d.titleSet ? " data-title-set" : ""}${d.slugSet ? " data-slug-set" : ""}>${ICON.rename}</button>
     <form method="post" action="${esc(link("/docs/delete", session))}" data-title="${esc(d.title)}"${d.path != null ? " data-disk" : ""}><input type="hidden" name="id" value="${esc(d.id)}"><button class="act delete" aria-label="${label}" title="${remove}">${ICON.delete}</button></form>` : ""}</div>
   </li>`;
   }).join("\n");
   const style = `
-  .shared { color: var(--soft); }
+  /* Rows: a page's icon, its title and what's special about it; when it was edited, in a column; its buttons on hover. */
+  .labels { display: flex; padding: 0 106px 8px 42px; font-size: 12px; font-weight: 500; color: var(--chrome); }
+  .labels span:last-child { margin-left: auto; }
+  ol.rows > li { padding-right: 6px; border-radius: 0; transition: background-color 120ms ease; }
+  ol.rows > li:hover { background: color-mix(in srgb, var(--chrome) 7%, transparent); }
+  .doc { padding: 12px 6px 12px 12px; }
+  .doc .icon { flex: none; display: grid; place-items: center; width: 18px; height: 18px; color: var(--chrome); }
+  .doc .icon svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linejoin: round; }
+  a.doc:hover .icon { color: var(--soft); }
+  .note, .shared { padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 500; color: var(--soft); background: color-mix(in srgb, var(--chrome) 13%, transparent); }
+  time { min-width: 6.5em; text-align: right; }
   /* The buttons (only on your own documents) take the same room on every row, so the times line up. */
   .acts { flex: none; display: flex; justify-content: flex-end; gap: 2px; width: 94px; }
-  @media (pointer: coarse) { .acts { width: 124px; } }
-  .open { display: flex; gap: 8px; margin: 28px 0 0; }
-  .open .input { flex: 1; }
-  @media (pointer: coarse) { .delete { margin-right: -6px; } }
+  @media (pointer: coarse) { .acts { width: 124px; } .labels { padding-right: 136px; } }
+  @media (max-width: 520px) { .labels { display: none; } }
+  /* Open from disk (dev only): one field, its button inside. */
+  .disk { margin-top: 56px; }
+  .disk h2 { margin: 0 0 10px; font-size: 13px; font-weight: 600; color: var(--fg-strong); }
+  .open { display: flex; align-items: center; gap: 8px; height: 42px; box-sizing: border-box; padding: 0 4px 0 12px; border: 1px solid var(--rule); border-radius: 10px; background: var(--bg); transition: border-color 150ms ease, box-shadow 150ms ease; }
+  .open:hover { border-color: color-mix(in srgb, var(--chrome) 55%, var(--rule)); }
+  .open:focus-within { border-color: var(--caret); box-shadow: 0 0 0 3px color-mix(in srgb, var(--caret) 18%, transparent); }
+  .open > svg { flex: none; width: 18px; height: 18px; fill: none; stroke: var(--chrome); stroke-width: 1.5; stroke-linejoin: round; }
+  .open .input { flex: 1; height: 100%; padding: 0; border: 0; outline: 0; box-shadow: none; background: transparent; font-family: var(--font-mono); font-size: 13px; }
+  .open .pill { height: 32px; box-shadow: none; }
+  .disk .sub { margin-top: 8px; font-size: 12.5px; color: var(--chrome); }
+  @media (pointer: coarse) { .delete { margin-right: -6px; } .open { height: 48px; } }
   /* Sharing: who has it, anyone with the link, and adding someone. */
   #share { width: min(460px, calc(100vw - 32px)); }
   #share .add { display: flex; gap: 8px; align-items: center; margin-bottom: 14px; }
@@ -756,17 +787,22 @@ function docsPage(session: Session, docs: Listed[], now: number, dev: boolean, h
   .anyone .who small { display: block; font-size: 12px; color: var(--soft); }
   #share .buttons { justify-content: space-between; }
 `;
-  return appPage("Documents", style, `<main>
+  const count = `${docs.length} document${docs.length == 1 ? "" : "s"}`;
+  return appPage("Documents", style, `${brand(session)}<main>
   <header>
-    <h1>Documents</h1>
-    <a class="new" href="${esc(link("/new", session))}">New document</a>
+    <div><h1>Documents</h1>${docs.length ? `<p class="sub">${count}</p>` : ""}</div>
+    <a class="new" href="${esc(link("/new", session))}">${ICON.plus}New document</a>
   </header>
-  ${docs.length ? `<ol class="rows">\n${rows}\n  </ol>` : `<p class="empty">No documents yet. A new one starts blank${hours == null ? "." : `, and goes away after ${hours} hour${hours == 1 ? "" : "s"} if you never edit it.`}</p>`}
-  ${dev ? `<form class="open" method="post" action="${esc(link("/__erga/open", session))}" aria-label="Open from disk">
-    <input class="input" name="path" required placeholder="A file or folder on this machine: ~/notes, ./site/index.md" aria-label="Path to a file or folder" autocomplete="off" spellcheck="false">
-    <button class="pill">Open</button>
-  </form>` : ""}
-  <footer><span>Signed in as ${esc(session.login)}</span><a href="${esc(link("/", session))}">Front page</a><a href="${esc(link("/tokens", session))}">Agent tokens</a>${admin ? `<a href="${esc(link("/admin", session))}">Admin</a>` : ""}<a href="/auth/logout">Sign out</a></footer>
+  ${docs.length ? `<div class="labels" aria-hidden="true"><span>Name</span><span>Edited</span></div>
+  <ol class="rows">\n${rows}\n  </ol>` : `<p class="empty">No documents yet. A new one starts blank${hours == null ? "." : `, and goes away after ${hours} hour${hours == 1 ? "" : "s"} if you never edit it.`}</p>`}
+  ${dev ? `<section class="disk">
+    <h2>Open from this machine</h2>
+    <form class="open" method="post" action="${esc(link("/__erga/open", session))}" aria-label="Open from disk">
+      ${ICON.folder}<input class="input" name="path" required placeholder="~/notes or ./site/index.md" aria-label="Path to a file or folder" autocomplete="off" spellcheck="false">
+      <button class="pill">Open</button>
+    </form>
+    <p class="sub">A Markdown file, or a folder of pages. Edits are saved back to its files.</p>
+  </section>` : ""}
 </main>
 <dialog id="rename" aria-labelledby="rename-title">
   <form method="post" action="${esc(link("/docs/rename", session))}">

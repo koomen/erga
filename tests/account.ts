@@ -74,7 +74,7 @@ try {
   expect(c.state == "in" && c.initial == "T" && c.rect && c.rect.x + c.rect.w > 1100 - 24 && c.rect.y < 24, "your avatar is in the upper right", c);
   await clickOn(p, "[data-erga-account] button");
   c = await corner(p);
-  expect(c.open && c.who.includes("tester") && c.links.map((l) => l.text).join() == "Your documents,Admin,Sign out", "clicking it opens your menu", c);
+  expect(c.open && c.who.includes("tester") && c.links.map((l) => l.text).join() == "Your documents,Agent tokens,Admin,Sign out", "clicking it opens your menu", c);
   await p.screenshot(join(SHOTS, "account-docs.png"));
   await p.key("Escape");
   expect(!(await corner(p)).open, "Escape closes it");

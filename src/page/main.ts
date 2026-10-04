@@ -537,11 +537,11 @@ declare global {
     }
   }
   // Your avatar opens a small menu: who you are, your documents, the admin
-  // page if you're an admin, sign out (the same as every other page's upper
+  // page if you're an admin, your agent tokens, sign out (the same as every other page's upper
   // right, account.ts). The front door says which links (meta erga-account).
   const account = $("account");
   const accountLinks = (() => {
-    try { return JSON.parse(document.querySelector<HTMLMetaElement>('meta[name="erga-account"]')?.content ?? "") as { docs?: string; admin?: string; signOut?: string }; } catch { return null; }
+    try { return JSON.parse(document.querySelector<HTMLMetaElement>('meta[name="erga-account"]')?.content ?? "") as { docs?: string; tokens?: string; admin?: string; signOut?: string }; } catch { return null; }
   })();
   let accountBtn: HTMLElement | null = null;
   function accountButton(b: HTMLElement) {
@@ -563,6 +563,7 @@ declare global {
     $("account-login").textContent = me.name.toLowerCase() == me.user ? "" : me.user;
     const set = (id: string, href: string | undefined) => { const a = $(id) as HTMLAnchorElement; a.hidden = !href; if (href) a.href = href; };
     set("account-docs", me.user.startsWith("test-") ? undefined : accountLinks!.docs);
+    set("account-tokens", me.user.startsWith("test-") ? undefined : accountLinks!.tokens);
     set("account-admin", accountLinks!.admin);
     set("account-out", accountLinks!.signOut);
   }

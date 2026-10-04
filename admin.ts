@@ -14,7 +14,7 @@
 // and so is a bootstrap admin (ADMINS), who can't be demoted or removed here.
 
 import { ConfigError, type ConfigEntry, type Settings } from "./config.ts";
-import { appPage, esc, ICON, link, page, type Platform, type Session, TIMES_SCRIPT, whoOf } from "./front.ts";
+import { appPage, brand, esc, ICON, link, page, type Platform, type Session, TIMES_SCRIPT, whoOf } from "./front.ts";
 import { NotAllowed, type ServerRole, type User } from "./users.ts";
 
 /** /admin and its POSTs. */
@@ -176,7 +176,7 @@ async function adminPage(platform: Platform, session: Session): Promise<Response
   .role { margin-left: 8px; }
   @media (max-width: 520px) { ol.rows > li.setting { grid-template-columns: 1fr; } .setting .value { justify-content: flex-end; } }
 `;
-  return new Response(appPage("Admin", style, `<main>
+  return new Response(appPage("Admin", style, `${brand(session)}<main>
   <header>
     <h1>Admin</h1>
     <a class="back" href="${esc(link("/docs", session))}">‹ Documents</a>
@@ -201,7 +201,6 @@ ${settings.map((e) => settingRow(e, session, takesNever(e.key))).join("\n")}
 ${users.map((u) => userRow(u, session)).join("\n")}
     </ol>
   </section>
-  <footer><span>Signed in as ${esc(session.login)}</span><a href="${esc(link("/docs", session))}">Documents</a><a href="/auth/logout">Sign out</a></footer>
 </main>
 <script>
   ${TIMES_SCRIPT}

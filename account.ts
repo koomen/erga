@@ -63,6 +63,7 @@ export function accountHtml(account: Account | null, here: string): string {
 <div class="erga-account-menu" id="${id}" hidden>
 <p class="erga-account-who"><b>${esc(account.name)}</b>${account.name.toLowerCase() != account.login.toLowerCase() ? `<span>${esc(account.login)}</span>` : ""}</p>
 <a href="${esc(link("/docs", s))}">Your documents</a>
+${s.test ? "" : `<a href="${esc(link("/tokens", s))}">Agent tokens</a>`}
 ${account.admin ? `<a href="${esc(link("/admin", s))}">Admin</a>` : ""}
 <a href="/auth/logout">Sign out</a>
 </div>
