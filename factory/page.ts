@@ -34,7 +34,7 @@ const STYLE = `
   .notice a { color: var(--accent); }
   main { display: grid; grid-template-columns: repeat(5, minmax(180px, 1fr)); gap: 14px; padding: 8px 24px 24px; align-items: start; }
   @media (max-width: 1150px) { main { grid-template-columns: repeat(3, minmax(200px, 1fr)); } }
-  @media (max-width: 760px) { main { grid-template-columns: 1fr; padding: 8px 16px 16px; } header { padding: 12px 64px 8px 16px; } .notice { margin: 4px 16px 8px; } }
+  @media (max-width: 760px) { main { grid-template-columns: 1fr; padding: 8px 16px 16px; } header { padding: 12px 64px 8px 16px; } .pills { margin-left: 0; } .notice { margin: 4px 16px 8px; } }
   .col { background: var(--panel); border-radius: 10px; padding: 10px; min-height: 120px; }
   .col h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 2px 4px 10px; min-height: 26px; display: flex; justify-content: space-between; align-items: center; }
   .col h2 button { text-transform: none; letter-spacing: 0; }
