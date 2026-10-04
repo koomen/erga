@@ -16,7 +16,7 @@
 //   tq get ID | tq list [STATUS]         read
 //   tq serve                             just make sure the server is up; prints the board's address
 //
-// Statuses: queued → working → complete (Ready to merge) → merging → merged (Done);
+// Statuses: queued → working → complete (Ready to merge) → merging → merged (on its commit in Branches);
 // also failed and discarded. Agents set queued, working, complete and failed.
 //
 // TASK_QUEUE_PORT picks the port (4700).

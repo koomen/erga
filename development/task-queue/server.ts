@@ -6,7 +6,8 @@
 // Each task gets its own branch and worktree (.claude/worktrees/task-<id>),
 // a port for its preview server, and a card on the board at
 // http://localhost:4700 that moves Queued → Working → Ready to merge →
-// Merging → Done as the agent doing it reports in and the user merges it.
+// Merging as the agent doing it reports in and the user merges it, and then
+// shows on its merge commit in Branches (main's latest commits).
 // Merge (on the board, or POST /api/tasks/:id/merge) puts the task in
 // Merging while it merges main into the task's branch, has `claude -p`
 // resolve any conflicts there, merges the branch into main and pushes; then
@@ -233,10 +234,11 @@ async function refreshHistory() {
   broadcast("history", history);
 }
 
-let refreshing: Promise<void> | undefined;
-const refresh = () => (refreshing ??= refreshHistory().catch(() => {}).finally(() => (refreshing = undefined)));
+// One read at a time, each after the last: a refresh asked for after a merge reads the merge, never an older read's answer.
+let reading = Promise.resolve(), pending = 0;
+const refresh = () => { pending++; return (reading = reading.then(refreshHistory).catch(() => {}).finally(() => pending--)); };
 refresh();
-setInterval(refresh, 1500);
+setInterval(() => { if (!pending) refresh(); }, 1500);
 
 /** origin/main only moves on a fetch or a push: fetch now and then (between merges, which fetch and push themselves). */
 async function fetchOrigin() {
@@ -357,6 +359,7 @@ async function merge(task: Task) {
     // ...so merging the branch into main can't conflict, and pushing it is a fast-forward.
     await git(REPO, "merge", "--no-ff", "-m", `Merge ${task.branch}: ${task.title}\n\nTask ${task.id} from the task queue.`, task.branch!);
     const commit = await git(REPO, "rev-parse", "--short", "HEAD");
+    await refresh(); // on the board at once, as not pushed yet
     if (origin) await git(REPO, "push", "origin", MAIN);
     touch(task, { status: "merged", commit, mergedAt: new Date().toISOString() }, `Merged into ${MAIN} as ${commit}${origin ? " and pushed" : ""}`);
     await refresh();
@@ -389,12 +392,12 @@ const API = {
     working: "an agent is on it",
     complete: "done and tested, waiting for the user to merge (also where a failed merge lands, with error)",
     merging: "being merged: main into the branch (claude -p settling conflicts), then the branch into main, pushed and cleaned up; set by POST /api/tasks/:id/merge, ends merged or back at complete with error",
-    merged: "in main and pushed",
+    merged: "in main and pushed (on its merge commit in the board's Branches column)",
     failed: "the agent couldn't finish (see error)",
     discarded: "dropped by the user",
   },
   board: `http://localhost:${PORT}/`,
-  columns: { Queued: ["queued"], Working: ["working", "failed"], "Ready to merge": ["complete"], Merging: ["merging"], Done: ["merged", "discarded"] },
+  columns: { Queued: ["queued"], Working: ["working", "failed"], "Ready to merge": ["complete"], Merging: ["merging"], Branches: "main's latest commits (GET /api/history): a merged task shows on its merge commit; older merged tasks and discarded ones aren't shown" },
   endpoints: {
     "GET /api": "this description",
     "GET /api/tasks[?status=complete]": "all tasks, oldest first",

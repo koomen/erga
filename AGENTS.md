@@ -7,7 +7,8 @@ tested (`./test.sh`). This file describes how agents take on work here.
 
 The task queue (`development/task-queue/`) is a local board at
 **http://localhost:4700** where the user watches work move through
-**Queued → Working → Ready to merge → Merging → Done**, live, and merges it
+**Queued → Working → Ready to merge → Merging → Branches** (main's latest
+commits, where merged tasks show), live, and merges it
 with one click. It runs only on this machine.
 
 When the user asks for a change to this repo:

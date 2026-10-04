@@ -10,8 +10,8 @@
 // a merge back to complete (with tq merge --wait), recovers a merge cut off by
 // a restart, and discards one. Then main's history (the Branches column):
 // its order, which commits are only local, done tasks matched to their merge
-// commits, live updates on a commit, a push and a fetch, and the board
-// showing it all in headless Chrome.
+// commits, live updates on a commit, a push, a fetch and a merge, and the
+// board (Branches in place of a Done column) in headless Chrome.
 
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -103,6 +103,7 @@ try {
   check(seen1.join(" ").endsWith("complete merging merged"), `the event stream shows complete → merging → merged (${seen1.join(" → ")})`);
   check(m1.log.some((l: any) => l.message == "Merge requested") && m1.log.some((l: any) => l.message == "Merging"), "the log says when the merge was asked for and when it began");
   check(sh(`git --git-dir=${origin} show main:hello.txt`) == "hello", "the merge is pushed to origin");
+  for (let i = 0; i < 30 && (existsSync(t1.worktree) || sh("git branch --list task/1-*")); i++) await Bun.sleep(100); // cleaned up just after it's marked merged
   check(!existsSync(t1.worktree) && !sh("git branch --list task/1-*"), "the worktree and branch are cleaned up");
   await Bun.sleep(5500);
   check(!(await fetch(`http://localhost:${t1.port}/`).then(() => true, () => false)), "the preview is stopped");
@@ -191,7 +192,7 @@ try {
   const h4 = await seen((h) => h.commits[0].subject == "filler 26");
   check(h4.commits?.length == 25 && h4.unpushed == 26 && h4.tasks?.[1]?.index == 30 && h4.tasks[1].remote, `25 commits shown, the 26 unpushed counted, older task merges still matched (${h4.commits?.length}, ${h4.unpushed}, ${h4.tasks?.[1]?.index})`);
 
-  // The board: Done in merge order, a Branches row per commit, hover links a card to its dot, live.
+  // The board: no Done column; Branches after Merging, a row per commit, live, a task's row opening it.
   const browser = await Browser.launch();
   try {
     const page = await browser.page();
@@ -199,26 +200,36 @@ try {
       await page.open(base + "/", { width: 1600, height: 900, dark, clear: false });
       await Bun.sleep(500);
       const b = await page.eval(`({ rows: document.querySelectorAll("#graph li").length, unpushed: document.querySelectorAll("#graph .lane.o.no").length,
-        done: [...document.querySelectorAll('[data-col="done"] .card')].map((c) => +c.dataset.open), n: document.getElementById("branches-n").textContent,
-        bg: getComputedStyle(document.body).backgroundColor })`);
+        cols: [...document.querySelectorAll("main section")].map((c) => c.dataset.col).join(","), n: document.getElementById("branches-n").textContent })`);
+      check(b.cols == "queued,working,ready-to-merge,merging,branches", `${dark ? "dark" : "light"}: no Done column; Branches comes after Merging (${b.cols})`);
       check(b.rows == 25 && b.unpushed == 25 && b.n.startsWith("26 not pushed"), `${dark ? "dark" : "light"}: Branches shows 25 commits, all 25 hollow on origin (${b.rows}, ${b.unpushed}, ${b.n})`);
-      check(b.done.join(",") == "3,2,1,4", `${dark ? "dark" : "light"}: Done is in merge-commit order (${b.done})`);
     }
     sh("git push -q origin main");
     await Bun.sleep(2500);
-    check(await page.eval(`document.querySelectorAll("#graph .lane.o.no").length == 0 && document.querySelector('[data-col="done"] .card .commit .where') == null`), "after a push the board fills in origin's dots and drops \"not pushed\", live");
-    // Push task 3's merge back into view, then hover its card.
+    check(await page.eval(`document.querySelectorAll("#graph .lane.o.no").length == 0 && document.getElementById("branches-n").textContent == "pushed"`), "after a push the board fills in origin's dots, live");
+    // Bring the task merges back into the 25, then open task 3 from its commit.
     sh(`git reset -q --hard HEAD~26 && git push -q -f origin main`);
     await Bun.sleep(2500);
-    const pt = await page.eval(`(() => { const r = document.querySelector('[data-col="done"] .card[data-open="3"]').getBoundingClientRect(); return { x: r.left + 20, y: r.top + 10 }; })()`);
-    await page.mouse("mouseMoved", pt.x, pt.y);
+    const pt = await page.eval(`(() => { const r = document.querySelector('#graph li[data-open="3"]').getBoundingClientRect(); return { x: r.left + 60, y: r.top + r.height / 2 }; })()`);
+    await page.click(pt.x, pt.y);
     await page.settle();
-    const hl = await page.eval(`({ row: document.querySelector("#graph li.hl b")?.textContent, wire: !!document.querySelector("#wire path") })`);
-    check(hl.row == "#3" && hl.wire, `hovering a done card highlights its commit and draws the connector (${JSON.stringify(hl)})`);
+    check(await page.eval(`document.getElementById("dlg").open && document.querySelector("#dlg h3").textContent.includes("#3")`), "clicking a task's commit opens the task");
+    await page.eval(`document.getElementById("dlg").close(), true`);
+
+    // A task merging now shows on top as soon as it's merged.
+    const t5 = await api("POST", "/api/tasks", { title: "Fresh merge" });
+    sh(`echo fresh > fresh.txt && git add . && git commit -qm fresh`, t5.worktree);
+    await api("PATCH", `/api/tasks/${t5.id}`, { status: "complete" });
+    await api("POST", `/api/tasks/${t5.id}/merge`);
+    const m5 = await until(t5.id, (t) => t.status != "merging");
+    check(m5.status == "merged" && (await api("GET", "/api/history")).commits[0].task == t5.id, "a just-merged task's commit is already at the top of the history");
+    await page.settle();
+    check(await page.eval(`document.querySelector("#graph li:not(.leave) b")?.textContent`) == `#${t5.id}`, "and at the top of the board's Branches");
+
     sh(`git commit -q --allow-empty -m "One more"`);
     await Bun.sleep(2500);
     const top = await page.eval(`[...document.querySelectorAll("#graph li:not(.leave)")].slice(0, 2).map((li) => li.textContent + (li.querySelector(".lane.o.no") ? " (local)" : ""))`);
-    check(top[0] == "One more (local)" && top[1] == "elsewhere", `a new commit appears at the top of the board, live (${top})`);
+    check(top[0] == "One more (local)" && top[1] == `#${t5.id}Fresh merge`, `a new commit appears at the top of the board, live (${top})`);
     check(page.errors.length == 0, `no errors on the board (${page.errors})`);
   } finally { browser.close(); }
 } finally {
