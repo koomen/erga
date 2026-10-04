@@ -25,8 +25,9 @@
 //   POST /__erga/token             an agent token for DEV_LOGIN, to publish the landing project with (landing.ts)
 //   /__erga/mirror/<id>            the WebSocket the document reaches its files on disk through
 
+import { accountOf, withAccount } from "../account";
 import { idShaped, slugify, type Route } from "../directory";
-import { frontDoor, OWNER, withTokens, type Platform } from "../front";
+import { frontDoor, OWNER, whoOf, withTokens, type Platform } from "../front";
 import { serverApi, tokensDoor } from "../server-api";
 import { finishSignIn, isDev, mintTestToken, sessionOf, signOut, startSignIn, testSignIn } from "./auth";
 import { directoryOf, tokensOf } from "./d1";
@@ -43,22 +44,35 @@ for (const [path, text] of Object.entries(import.meta.glob("../templates/*/**", 
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
-    const url = new URL(request.url), path = url.pathname;
-    const assets = path == "/page.js" || path == "/frame.js" || path == "/style.css" || path.startsWith("/fonts/");
-    // A document's pages origin (front.ts, pagesDoor) serves its frame and files, and nothing of this site's.
-    if (url.hostname.endsWith(".erga-pages.dev") || url.hostname.endsWith(".localhost")) return assets ? env.ASSETS.fetch(request) : frontDoor(request, platform(env));
-    if (path == "/auth/github") return startSignIn(env, request);
-    if (path == "/auth/github/callback") return finishSignIn(env, request);
-    if (path == "/auth/logout") return signOut(request);
-    if (path == "/auth/test") return testSignIn(env, request);
-    if (assets) return env.ASSETS.fetch(request);
-    // The server's API for agents, and people's agent tokens (server-api.ts).
-    if (path == "/llms.txt" || path == "/mcp" || path == "/api" || path.startsWith("/api/")) return serverApi(request, withTokens(platform(env), url));
-    if (path == "/tokens" || path.startsWith("/tokens/")) return tokensDoor(request, withTokens(platform(env), url));
-    if (path.startsWith("/__erga/")) return linked(env, request, url);
-    return frontDoor(request, platform(env));
+    const url = new URL(request.url);
+    const response = await route(request, env, url);
+    // Every page of the site's own has who you are in its upper right (account.ts); a document's pages origin never does.
+    if (pagesSite(url) || response.status == 101) return response;
+    return withAccount(response, async () => {
+      const session = await sessionOf(env, request);
+      return accountOf(session, !!session && !session.test && (await directoryOf(env).users.isAdmin(whoOf(session))));
+    }, url.pathname + url.search);
   },
 } satisfies ExportedHandler<Env>;
+
+const pagesSite = (url: URL) => url.hostname.endsWith(".erga-pages.dev") || url.hostname.endsWith(".localhost");
+
+async function route(request: Request, env: Env, url: URL): Promise<Response> {
+  const path = url.pathname;
+  const assets = path == "/page.js" || path == "/frame.js" || path == "/style.css" || path.startsWith("/fonts/");
+  // A document's pages origin (front.ts, pagesDoor) serves its frame and files, and nothing of this site's.
+  if (pagesSite(url)) return assets ? env.ASSETS.fetch(request) : frontDoor(request, platform(env));
+  if (path == "/auth/github") return startSignIn(env, request);
+  if (path == "/auth/github/callback") return finishSignIn(env, request);
+  if (path == "/auth/logout") return signOut(env, request);
+  if (path == "/auth/test") return testSignIn(env, request);
+  if (assets) return env.ASSETS.fetch(request);
+  // The server's API for agents, and people's agent tokens (server-api.ts).
+  if (path == "/llms.txt" || path == "/mcp" || path == "/api" || path.startsWith("/api/")) return serverApi(request, withTokens(platform(env), url));
+  if (path == "/tokens" || path.startsWith("/tokens/")) return tokensDoor(request, withTokens(platform(env), url));
+  if (path.startsWith("/__erga/")) return linked(env, request, url);
+  return frontDoor(request, platform(env));
+}
 
 /**
  * The front door (front.ts) on Cloudflare: people sign in with GitHub, the

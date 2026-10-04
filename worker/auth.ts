@@ -15,6 +15,8 @@ import { directoryOf } from "./d1";
 import type { Env } from "./env";
 
 const COOKIE = "erga_session", STATE = "erga_oauth";
+/** Local development: this browser signed out, so it's nobody (not DEV_LOGIN) until it signs in again. */
+const SIGNED_OUT = "erga_signed_out";
 const DAY = 24 * 60 * 60;
 
 const b64 = (bytes: ArrayBuffer | Uint8Array) => btoa(String.fromCharCode(...new Uint8Array(bytes))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
@@ -52,13 +54,15 @@ const cookie = (request: Request, name: string, value: string, maxAge: number) =
  * The signed-in person, if the session cookie is valid and unexpired. In
  * local development someone always is: the person a tab names (?user=Ada,
  * carried along in its links and requests, so a second window can be a
- * second person), else whoever this browser signed in as, else DEV_LOGIN.
+ * second person), else whoever this browser signed in as, else DEV_LOGIN,
+ * unless it signed out (then nobody, until it signs in again: /auth/github).
  */
 export async function sessionOf(env: Env, request: Request): Promise<Session | null> {
   const url = new URL(request.url);
   const dev = isDev(env, url);
   const as = dev ? url.searchParams.get("user")?.trim().slice(0, 40) : null;
-  const session = as ? { login: loginOf(as), name: as, as } : (await signedIn(env, request, dev)) ?? (dev ? { login: env.DEV_LOGIN!, name: env.DEV_LOGIN! } : null);
+  const session = as ? { login: loginOf(as), name: as, as }
+    : (await signedIn(env, request, dev)) ?? (dev && !cookies(request).has(SIGNED_OUT) ? { login: env.DEV_LOGIN!, name: env.DEV_LOGIN! } : null);
   // Locally everyone may sign in, and gets a user's row the first time (last seen, the next).
   if (session && !session.test) await users(env).signedIn(session.login, dev ? session.name : null, { create: dev });
   return session;
@@ -92,6 +96,7 @@ async function signIn(env: Env, request: Request, session: Session, next: string
   const headers = new Headers({ Location: next });
   headers.append("Set-Cookie", cookie(request, COOKIE, await sign(env, value), ttl));
   headers.append("Set-Cookie", cookie(request, STATE, "", 0));
+  if (cookies(request).has(SIGNED_OUT)) headers.append("Set-Cookie", cookie(request, SIGNED_OUT, "", 0));
   return new Response(null, { status: 302, headers });
 }
 
@@ -178,10 +183,14 @@ export async function testSignIn(env: Env, request: Request): Promise<Response> 
 }
 
 /** /auth/logout (another site's link to it asks first) */
-export function signOut(request: Request): Response {
+export function signOut(env: Env, request: Request): Response {
   const url = new URL(request.url);
   if (request.method == "POST" ? request.headers.get("origin") != url.origin : fromElsewhere(request)) return confirmAction("Sign out", "Sign out of Erga", "/auth/logout");
-  return new Response(null, { status: 302, headers: { Location: "/", "Set-Cookie": cookie(request, COOKIE, "", 0) } });
+  const headers = new Headers({ Location: "/" });
+  headers.append("Set-Cookie", cookie(request, COOKIE, "", 0));
+  // Locally someone is always signed in (DEV_LOGIN), unless the browser signs out: then nobody, as on erga.dev.
+  if (isDev(env, url)) headers.append("Set-Cookie", cookie(request, SIGNED_OUT, "1", 30 * DAY));
+  return new Response(null, { status: 302, headers });
 }
 
 const escape = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
