@@ -430,7 +430,7 @@ try {
   // A second throwaway repo carrying the queue's code, run from there, as the real one runs from the main checkout.
   const repo2 = join(tmp, "repo2"), origin2 = join(tmp, "origin2.git"), data2 = join(tmp, "data2"), code2 = join(repo2, "development/task-queue");
   sh(`git init -q --bare -b main ${origin2}`, tmp);
-  sh(`git init -q -b main ${repo2} && cd ${repo2} && git config user.email t@t && git config user.name t && mkdir -p ${code2} && cp ${join(import.meta.dir, "server.ts")} ${join(import.meta.dir, "chrome.ts")} ${join(import.meta.dir, "index.html")} ${join(import.meta.dir, "tq")} ${join(import.meta.dir, "README.md")} ${code2}/ && echo app > app.txt && git add . && git commit -qm init && git remote add origin ${origin2} && git push -q origin main`, tmp);
+  sh(`git init -q -b main ${repo2} && cd ${repo2} && git config user.email t@t && git config user.name t && mkdir -p ${code2} && cp ${join(import.meta.dir, "server.ts")} ${join(import.meta.dir, "chrome.ts")} ${join(import.meta.dir, "deps.ts")} ${join(import.meta.dir, "index.html")} ${join(import.meta.dir, "tq")} ${join(import.meta.dir, "README.md")} ${code2}/ && echo app > app.txt && git add . && git commit -qm init && git remote add origin ${origin2} && git push -q origin main`, tmp);
   const port2 = port == 4798 ? 4790 : port + 1, base2 = `http://127.0.0.1:${port2}`;
   const env2 = { ...env, TASK_QUEUE_PORT: String(port2), TASK_QUEUE_REPO: repo2, TASK_QUEUE_DATA: data2 };
   const api2 = async (method: string, path: string, body?: unknown) => {

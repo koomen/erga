@@ -16,10 +16,15 @@
 // 5. More instructions on a finished task: it works again, on the same branch.
 // 6. Tokens: a VM's token reaches its own task only; a task's git token can't push staging.
 // 7. The Claude sign-in: stored, never shown, signed out again.
+// 8. Dependencies (development/task-queue/deps.ts): bad ids and cycles refused; one added on the
+//    board; a task that starts after another stays queued with no VM, and Start is refused; a blocked
+//    merge is refused and Merge is off on the board; a merge queued behind a dependency's merge that
+//    fails is refused when its turn comes; a discarded dependency blocks; when a dependency merges,
+//    the task waiting for it starts by itself, and the board hears it.
 // Screenshots land in tests/cdp.ts's SHOTS (factory-*.png).
 
 import { spawnSync } from "node:child_process";
-import { mkdtempSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { branches, dockerLabel, mintGitToken } from "../dev/factory";
@@ -159,6 +164,103 @@ try {
   expect(!(await p.eval<string>(`document.documentElement.outerHTML`)).includes(fake.slice(14)), "the page never shows it");
   expect((await api("/claude", { method: "DELETE" })).body.signedIn == false, "signed out");
   ok("the Claude sign-in: a bad token refused, a good one stored and never shown, then signed out");
+
+  // ---------------------------------------------------------------- 8. dependencies
+  // Now: #1 merged, #2 discarded, #3 ready to merge (made from staging before #1 merged, so it conflicts with it).
+  const vmsOf = (id: number) => { const dir = join(host.state, "factory", "vms"); return existsSync(dir) ? readdirSync(dir).filter((n) => n.startsWith(`task-${id}-`)) : []; };
+  const add = (json: Record<string, unknown>) => api("/tasks", { json });
+  for (const [deps, why] of [[{ startAfter: [999] }, "no task 999"], [{ startAfter: [2] }, "task 2 is discarded"], [{ mergeAfter: "abc" }, "isn't a task id"]] as const) {
+    const r = await add({ title: "Bad dependency", ...deps });
+    expect(r.status == 400 && r.body.error.includes(why), `a dependency on ${JSON.stringify(deps)} is refused`, r);
+  }
+  const t4 = await add({ title: "Build on the hello", description: "Change the hello note." });
+  expect(t4.status == 201 && !t4.body.blockedBy, "#4, with no dependencies, starts", t4);
+  // A dependency added in the detail view: #4 merges after #3.
+  await p.navigate(`${root}/admin/factory`);
+  await until(() => p.eval(`!!document.querySelector('[data-open="4"]')`), 10_000, "#4's card");
+  await click(p, '[data-open="4"]');
+  await until(() => p.eval(`!!document.getElementById("dep-kind")`), 5000, "the Dependencies section, with Add");
+  await p.eval(`(() => { document.getElementById("dep-kind").value = "mergeAfter"; document.getElementById("dep-id").value = "3"; return true; })()`);
+  await click(p, '#dlg [data-act="dep"]');
+  await until(async () => JSON.stringify((await task(4)).mergeAfter) == "[3]", 5000, "#4 merges after #3");
+  await until(async () => (await p.eval<string>(`document.getElementById("dlg").innerText`)).includes("Merges after"), 5000, "the detail lists the dependency");
+  await click(p, '[data-act="close"]');
+  const self = await api("/tasks/3", { method: "PATCH", json: { startAfter: [3] } });
+  expect(self.status == 400 && self.body.error.includes("can't depend on itself"), "a task can't depend on itself", self);
+  const loop = await api("/tasks/3", { method: "PATCH", json: { mergeAfter: [4] } });
+  expect(loop.status == 400 && loop.body.error.includes("cycle") && loop.body.error.includes("#3 waits for #4 waits for #3"), "a cycle is refused", loop);
+  ok("dependencies: unknown, discarded and malformed ids, a task on itself and a cycle are refused; one added on the board");
+
+  // #5 starts after #4, added on the board's form: queued, no VM, Start refused.
+  await click(p, "#new");
+  await until(() => p.eval(`!!document.getElementById("t-start")`), 3000, "the form asks for dependencies");
+  await fill(p, "#t-title", "Follow the hello");
+  await fill(p, "#t-desc", "After #4: change the note again.");
+  await p.eval(`(() => { document.getElementById("t-start").value = "4"; return true; })()`);
+  await click(p, "#create");
+  await until(async () => (await task(5))?.status == "queued", 5000, "#5 is queued");
+  await new Promise((r) => setTimeout(r, 1500));
+  const t5 = await task(5);
+  expect(JSON.stringify(t5.startAfter) == "[4]" && JSON.stringify(t5.blockedBy?.start) == "[4]" && t5.blockedBy.reason == "waiting for #4 to merge", "#5 waits for #4", t5);
+  expect(t5.status == "queued" && !t5.vm && !t5.log.some((l: any) => l.message.includes("Starting a VM")) && !vmsOf(5).length, "no VM started for #5", { t5, vms: vmsOf(5) });
+  const start5 = await api("/tasks/5/start", { method: "POST" });
+  expect(start5.status == 409 && start5.body.error.includes("can't start: waiting for #4"), "Start is refused while #4 isn't merged", start5);
+  expect(!vmsOf(5).length && !(await task(5)).vm, "still no VM for #5");
+  await until(() => p.eval(`(() => { const c = document.querySelector('[data-col="queued"] [data-open="5"]'); return !!c && c.classList.contains("blocked") && c.innerText.includes("waiting for #4") && !!c.querySelector("button[disabled]"); })()`), 5000, "#5's card: blocked, 'waiting for #4', Start off");
+  ok("a task that starts after another: queued with no VM, Start refused (409), the card says what it waits for");
+
+  // A blocked merge: #4 is ready, but #3 isn't merged.
+  await until(async () => (await task(4)).status == "complete", STEP, "#4 is ready to merge");
+  const merge4 = await api("/tasks/4/merge", { method: "POST" });
+  expect(merge4.status == 409 && merge4.body.error.includes("can't merge until #3 merges"), "merging #4 is refused while #3 isn't merged", merge4);
+  await until(() => p.eval(`(() => { const c = document.querySelector('[data-col="ready-to-merge"] [data-open="4"]'); const b = c && [...c.querySelectorAll("button")].find((x) => x.textContent == "Merge"); return !!b && b.disabled && c.innerText.includes("Can't merge until #3 merges") && c.innerText.includes("merges after #3"); })()`), 5000, "#4's Merge is off, with the reason");
+  await p.settle();
+  await p.screenshot(join(SHOTS, "factory-deps-board.png"));
+  ok("a blocked merge: refused (409), and Merge is off on the board with the reason");
+
+  // The race: #4's merge is asked for while #3 merges ahead of it; #3's fails (it conflicts with #1), so #4's is refused when its turn comes.
+  expect((await api("/tasks/3/merge", { method: "POST" })).status == 202, "#3's merge starts");
+  const queued4 = await api("/tasks/4/merge", { method: "POST" });
+  expect(queued4.status == 202 && queued4.body.status == "merging", "#4's merge may be asked for while #3 merges ahead of it", queued4);
+  await until(async () => (await task(3)).status == "complete" && (await task(4)).status == "complete", STEP, "both merges end", async () => [await task(3), await task(4)].map((t) => ({ s: t.status, e: t.error })));
+  const [r3, r4] = [await task(3), await task(4)];
+  expect(r3.error?.includes("conflicts with staging"), "#3's merge failed (a conflict, no Claude plan to resolve it)", r3.error);
+  expect(r4.error?.includes("Can't merge until #3 merges") && r4.error.includes("#3 is complete"), "#4's merge was refused when its turn came", r4.error);
+  expect(!branches(host.state).staging || branches(host.state).staging == merged.mergeCommit, "staging didn't move");
+  ok("a merge queued behind its dependency's: checked again when it runs, and refused when the dependency didn't merge");
+
+  // A discarded dependency blocks: #6 starts after #3; #3 is discarded.
+  const t6 = await add({ title: "After the conflict", startAfter: [3] });
+  expect(t6.status == 201 && t6.body.status == "queued" && t6.body.blockedBy?.start[0] == 3, "#6 waits for #3", t6);
+  expect((await api("/tasks/3/discard", { method: "POST" })).status == 200, "#3 is discarded");
+  const [s4, s6] = [await task(4), await task(6)];
+  expect(JSON.stringify(s6.blockedBy?.stuck) == "[3]" && s6.blockedBy.reason.startsWith("blocked: #3 was discarded"), "#6 is blocked by the discarded #3", s6.blockedBy);
+  expect(JSON.stringify(s4.blockedBy?.stuck) == "[3]", "#4 too (it merges after #3)", s4.blockedBy);
+  expect(s6.log.some((l: any) => l.message.includes("#3 was discarded: this task is blocked")), "#6's log says so");
+  expect((await api("/tasks/6/start", { method: "POST" })).status == 409 && !vmsOf(6).length, "#6 can't start, and has no VM");
+  expect((await add({ title: "After a discarded one", startAfter: [3] })).status == 400, "a new dependency on a discarded task is refused");
+  await until(() => p.eval(`(() => { const c = document.querySelector('[data-open="6"]'); return !!c && c.innerText.includes("blocked by #3"); })()`), 5000, "#6's card: 'blocked by #3'");
+  ok("a discarded dependency blocks its dependents (start and merge) until it's removed");
+
+  // Unblocking: the dependency removed on the board, #4 merges, and #5 (waiting for #4) starts by itself.
+  await p.eval(`(() => { window.__toasts = []; const t = document.getElementById("toast"); new MutationObserver(() => window.__toasts.push(t.textContent)).observe(t, { childList: true, characterData: true, subtree: true }); return true; })()`);
+  await click(p, '[data-open="4"]');
+  await until(() => p.eval(`!!document.querySelector('#dlg [data-act="undep"][data-dep="3"]')`), 5000, "#4's dependency has a ×");
+  await click(p, '#dlg [data-act="undep"][data-dep="3"]');
+  await until(async () => !(await task(4)).mergeAfter.length && !(await task(4)).blockedBy, 5000, "#4's dependency is removed");
+  await click(p, '[data-act="close"]');
+  expect((await api("/tasks/4/merge", { method: "POST" })).status == 202, "#4 merges now");
+  await until(async () => (await task(4)).status == "merged", STEP, "#4 is merged", async () => (await task(4)).log.slice(-4));
+  await until(async () => ["working", "complete"].includes((await task(5)).status) && !!(await task(5)).vm, 15_000, "#5 starts by itself", async () => task(5));
+  const u5 = await task(5);
+  expect(u5.log.some((l: any) => l.message == "#4 merged: unblocked: it can start now") && !u5.blockedBy, "#5's log says why it started", u5.log);
+  await until(() => p.eval(`window.__toasts.some((t) => t.includes("#5 unblocked: Follow the hello"))`), 5000, "the board hears #5 is unblocked", () => p.eval(`window.__toasts`));
+  // And #6, once its discarded dependency is removed.
+  const clear6 = await api("/tasks/6", { method: "PATCH", json: { startAfter: null } });
+  expect(clear6.status == 200 && !clear6.body.blockedBy, "#6's dependency is removed", clear6);
+  await until(async () => !!(await task(6)).vm, 15_000, "#6 starts by itself");
+  await until(async () => (await task(5)).status == "complete" && (await task(6)).status == "complete", STEP, "#5 and #6 are ready");
+  ok("unblocking: a dependency removed on the board; when one merges, the task waiting for it starts by itself, and the board hears it");
 
   console.log("all factory checks pass");
 } finally {

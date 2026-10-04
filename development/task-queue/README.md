@@ -13,7 +13,8 @@ repo's root.
     bun development/task-queue/sample.ts      # a sample board on :4507 (a throwaway repo; --tick N for live commits)
 
 `server.ts` is the server and API, `index.html` the board, `tq` the CLI,
-`chrome.ts` live mode's Chrome window (launch, reattach, look, close), and
+`chrome.ts` live mode's Chrome window (launch, reattach, look, close),
+`deps.ts` the dependency rules (shared with the factory inside Erga), and
 `mod/` a Claude Code mod that drives it from inside a session
 (`claude --plugin-dir development/task-queue/mod`; see AGENTS.md).
 
@@ -52,8 +53,10 @@ and reads it over DevTools; screenshots go to `data/looks/`.
 Dependencies between tasks (AGENTS.md, "Dependencies between tasks") are
 two lists of task ids on a task, kept in `data/tasks.json`: `startAfter`
 (don't start until they're merged) and `mergeAfter` (don't merge until
-they're merged; `startAfter` counts too). The model is meant to carry over
-as it is to the in-app factory:
+they're merged; `startAfter` counts too). `deps.ts` holds the rules (pure:
+validation, cycles, `blockedBy`, the refusals and what a dependency's news
+means for a dependent), and the factory inside Erga (`worker/factory.ts`,
+README, The factory) uses the same file:
 
 - Only `merged` satisfies a dependency. Ids must name other tasks, not
   discarded ones, and a cycle (through either list) is refused.

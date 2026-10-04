@@ -1064,6 +1064,26 @@ deploys staging.erga.dev. **Discard** deletes the branch and stops the VM.
 Branches live only as long as their task, and the Source page (task #39)
 shows only staging and main, so they never appear there.
 
+**Dependencies between tasks** are the local queue's (task #49; the rules
+are one file, `development/task-queue/deps.ts`, that both use). A task has
+`startAfter` (no VM until those tasks are merged) and `mergeAfter` (it works
+now, but doesn't merge until they're merged; `startAfter` counts too): set
+on the New task form or `POST /api/factory/tasks`, changed in the detail
+view's Dependencies section or `PATCH /api/factory/tasks/<id>`. Ids must
+name other tasks, not discarded ones, and a cycle is refused (400). Each
+task carries a computed `blockedBy` (`start`, `merge`, `stuck`, `reason`).
+Start (`POST .../start`) and Merge answer 409 while blocked; a merge asked
+for while its dependency merges ahead of it is allowed, and checked again
+when its turn comes (if the dependency didn't merge, it goes back to Ready to
+merge, saying why). A discarded or failed dependency blocks its dependents
+until someone removes or changes it. The factory has no outer agent, so when
+a dependency merges (or is removed) it starts each queued task that no longer
+waits, itself; dependents' logs say what happened, and the event stream
+sends `{ type: "unblocked" | "blocked" }` (a toast on the board). On the
+board: a chip on the card ("waiting for #12", "merges after #12", "blocked by
+#12"), waiting tasks at the bottom of Queued with Start off, and Merge off
+with the reason.
+
 Without a signed-in Claude plan, a scripted stand-in (`factory/vm/fake-claude.ts`)
 does each task the same way, with a change known in advance (a note under
 the front page's heading), so all of it can be tried and tested for free.
@@ -1094,7 +1114,9 @@ it. Measured on a Mac (M-series, OrbStack), with the stand-in:
 `./test.sh`), and `bun tests/factory.ts --docker` with real containers: off
 by default, a task added on the board (branch, VM, change, preview,
 screenshot, push), merge, discard, more instructions, the tokens' limits,
-and the Claude sign-in. `tests/factory.test.ts` tests the branch names and
+the Claude sign-in, and dependencies (bad ids and cycles, a blocked start
+with no VM, a blocked merge, the merge-time check, a discarded dependency,
+the automatic start on unblock). `tests/factory.test.ts` tests the branch names and
 the git tokens' rules.
 
 **How it fits together.**
