@@ -754,7 +754,10 @@ function docsPage(session: Session, docs: Listed[], now: number, hours: number |
   .name .note, .name .shared { margin-left: 6px; }
   .title { transition: color 120ms ease; }
   li:hover .title { color: var(--link); }
-  .rename { width: 26px; height: 26px; }
+  /* Rename takes no room until it shows, so what's special about a document sits right after its title. */
+  .rename { width: 0; height: 26px; margin-right: -6px; overflow: hidden; }
+  li:hover .rename, .rename:focus-visible { width: 26px; margin-right: 0; }
+  @media (hover: none) { .rename { width: 26px; margin-right: 0; } }
   .rename svg { width: 16px; height: 16px; }
   .note, .shared { padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 500; color: var(--soft); background: color-mix(in srgb, var(--chrome) 13%, transparent); }
   time { margin: 0; text-align: left; }
