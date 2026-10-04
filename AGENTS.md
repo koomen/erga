@@ -152,6 +152,21 @@ as does one the queue was stopped in the middle of, when it starts again.
 Agents can't set `merging` or `merged`, nor change a merging task's status. Discard drops a task: preview stopped,
 worktree removed, branch deleted.
 
+### The queue restarts itself after merging its own code
+
+When a merge changes the queue's own code (files under
+`development/task-queue/` that the server, the board or `tq` run; not docs,
+`mod/` or its tests), the queue restarts itself so it runs the new code. It
+waits until nothing else is merging and that merge's bookkeeping is done
+(merged, pushed, worktree removed), then starts a fresh server and exits
+(the new pid is in `GET /api`). Tasks are kept, previews carry on, and boards
+and `tq watch` reconnect (a board reloads if the board itself changed).
+
+If it ever doesn't (`curl -s localhost:4700/api` still answers with the old
+code), the outer agent restarts it by hand: kill the server listening on 4700
+(`kill $(lsof -ti tcp:4700 -sTCP:LISTEN)`), then any `tq` command starts it
+again.
+
 ## The task queue's API
 
 Discover it with `curl -s localhost:4700/api`: every endpoint, the statuses
