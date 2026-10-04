@@ -325,12 +325,12 @@ try {
   expect(list.includes(`href="/${login}/untitled/edit"`) && list.includes(">Untitled<") && list.includes("Unedited"), "the list shows it, untitled and unedited", list);
   ok("/new makes a blank document at /<you>/untitled, listed as unedited");
   if (local) {
-    // With no landing document (a test server has none), there's nothing to copy; tests/landing.ts copies one.
-    const nothing = await get("/new?from=landing");
-    expect(nothing.status == 404 && (await nothing.text()).includes("no front page to copy"), "/new?from=landing with no landing document says so", nothing.status);
+    // A fresh test server has no landing document until something asks for it: then the server makes it from landing/ (tests/landing.ts).
+    const copy = await get("/new?from=landing");
+    expect(copy.status == 302 && (copy.headers.get("location") ?? "").endsWith("/edit"), "/new?from=landing on a fresh server copies the landing page the server makes", copy.status);
     const front = await (await get("/")).text();
-    expect(front.includes("<h1>Erga</h1>") && front.includes('href="/docs"') && !front.includes("landing_document"), "with none, / is a plain start page (the hint how to set one is for admins)", front.slice(0, 1500));
-    ok("with no landing document, / is a plain start page and /new?from=landing has nothing to copy");
+    expect(front.includes('class="erga-view"') && front.includes('href="/new?from=landing"'), "and / shows it", front.slice(0, 1500));
+    ok("on a fresh server, / and /new?from=landing have the landing page the server makes");
   }
 
   // Addresses: /d/<id>, /<you>/<id> and a differently cased owner all lead to the canonical one, the viewer; /edit under it is the editor.

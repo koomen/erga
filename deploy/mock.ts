@@ -1,7 +1,7 @@
 // A pretend Cloudflare, for testing the deploy page without a real account:
 // the API calls the deploy makes (deploy/cloudflare.ts), Cloudflare's OAuth
 // token endpoint, Registrar, and the new server itself once it's "deployed"
-// (enough of Erga's API for publishing the front page). It keeps what it was
+// (it answers, nothing more). It keeps what it was
 // asked to do in `state`, which the tests read (and the page shows, at
 // /deploy/api/mock, in local development with ERGA_DEPLOY_MOCK=1).
 //
@@ -22,15 +22,13 @@ export interface MockState {
   account: { id: string; name: string };
   subdomain: string | null;
   zones: { id: string; name: string; status: string }[];
-  databases: { uuid: string; name: string; statements: string[]; migrations: string[]; tokens: { id: string; hash: string; login: string }[] }[];
+  databases: { uuid: string; name: string; statements: string[]; migrations: string[] }[];
   scripts: Record<string, { metadata: Record<string, any>; modules: string[]; workersDev: boolean; migrationTag?: string }>;
   assets: { manifest: Record<string, { hash: string; size: number }>; uploaded: string[] };
   domains: { hostname: string; service: string; zone_id: string }[];
   routes: Record<string, { pattern: string; script: string }[]>;
   dns: Record<string, { type: string; name: string; content: string; proxied: boolean }[]>;
   registrations: { domain: string; price?: string }[];
-  /** The front page as published to the "new server": its path and the documents published there. */
-  published: { slug: string; files: string[]; landing: boolean }[];
   /** Every call, "METHOD path" (tokens never). */
   calls: string[];
   revoked: number;
@@ -43,7 +41,7 @@ export function mockCloudflare(opts: { delayMs?: number } = {}): { fetch: Fetch;
     account: { id: ACCOUNT_ID, name: "Ada's account" },
     subdomain: "ada-mock",
     zones: [{ id: "zone0000000000000000000000000001", name: "ada-example.com", status: "active" }, { id: "zone0000000000000000000000000002", name: "ada-pages.net", status: "active" }],
-    databases: [], scripts: {}, assets: { manifest: {}, uploaded: [] }, domains: [], routes: {}, dns: {}, registrations: [], published: [], calls: [], revoked: 0,
+    databases: [], scripts: {}, assets: { manifest: {}, uploaded: [] }, domains: [], routes: {}, dns: {}, registrations: [], calls: [], revoked: 0,
   };
   let subFor: string | null = null;
   const ok = (result: unknown, status = 200) => Response.json({ success: true, errors: [], messages: [], result }, { status });
@@ -78,7 +76,7 @@ export function mockCloudflare(opts: { delayMs?: number } = {}): { fetch: Fetch;
         }
         if (m == "POST" && rest == "/d1/database") {
           const { name } = await body();
-          const db = { uuid: `${hex(4)}-${hex(2)}-${hex(2)}-${hex(2)}-${hex(6)}`, name, statements: [], migrations: [], tokens: [] };
+          const db = { uuid: `${hex(4)}-${hex(2)}-${hex(2)}-${hex(2)}-${hex(6)}`, name, statements: [], migrations: [] };
           state.databases.push(db);
           return ok({ uuid: db.uuid, name });
         }
@@ -175,37 +173,20 @@ export function mockCloudflare(opts: { delayMs?: number } = {}): { fetch: Fetch;
   }
 
   /** The few statements the deploy runs, understood well enough to answer them. */
-  function d1Query(db: MockState["databases"][number], { sql, params = [] }: { sql: string; params?: unknown[] }): Record<string, unknown>[] {
+  function d1Query(db: MockState["databases"][number], { sql }: { sql: string; params?: unknown[] }): Record<string, unknown>[] {
     db.statements.push(sql.slice(0, 200));
     if (/^SELECT name FROM d1_migrations/i.test(sql.trim())) return db.migrations.map((name) => ({ name }));
     for (const m of sql.matchAll(/INSERT INTO d1_migrations \(name\) VALUES \('([^']+)'\)/g)) db.migrations.push(m[1]);
-    if (/^INSERT INTO agent_tokens/i.test(sql.trim())) db.tokens.push({ id: String(params[0]), hash: String(params[1]), login: String(params[2]) });
-    if (/^DELETE FROM agent_tokens/i.test(sql.trim())) db.tokens = db.tokens.filter((t) => !params.includes(t.id));
     return [];
   }
 
-  /** The new server, once deployed: its files, and enough of Erga's API to publish the front page. */
-  async function site(req: Request, url: URL): Promise<Response | null> {
+  /** The new server, once deployed: it answers. */
+  async function site(_req: Request, url: URL): Promise<Response | null> {
     const host = url.hostname;
     const script = Object.entries(state.scripts).find(([name, s]) =>
       (s.workersDev && state.subdomain && host == `${name}.${state.subdomain}.workers.dev`) || state.domains.some((d) => d.hostname == host && d.service == name));
     if (!script || script[0].endsWith("-pages")) return null;
     if (url.pathname == "/style.css") return new Response("/* mock */", { headers: { "Content-Type": "text/css" } });
-    const db = state.databases.find((d) => d.uuid == script[1].metadata.bindings?.find((b: any) => b.type == "d1")?.id);
-    const bearer = /^Bearer (\S+)$/.exec(req.headers.get("authorization") ?? "")?.[1] ?? "";
-    const hash = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(bearer))), (b) => b.toString(16).padStart(2, "0")).join("");
-    const who = db?.tokens.find((t) => t.hash == hash);
-    if (!who) return Response.json({ ok: false, error: "Missing or unknown token" }, { status: 401 });
-    const tool = (v: unknown) => Response.json({ ok: true, content: [{ type: "text", text: JSON.stringify(v) }] });
-    const body = await req.json().catch(() => ({})) as any;
-    if (url.pathname == "/api/ext/tools/list_settings") return tool([{ key: "landing_document", value: state.published.find((p) => p.landing) ? "mockdoc1" : null, locked: false }]);
-    if (url.pathname == "/api/ext/tools/whoami") return tool({ login: who.login });
-    if (url.pathname == "/api/ext/tools/set_setting") { const p = state.published.at(-1); if (p) p.landing = body.value == "mockdoc1"; return tool({ ok: true }); }
-    if (url.pathname == "/api/publish") {
-      if (body.document) return Response.json({ ok: false, error: "No such document" }, { status: 404 });
-      state.published.push({ slug: body.slug, files: Object.keys(body.files ?? {}), landing: false });
-      return Response.json({ ok: true, id: "mockdoc1", url: `${url.origin}/${who.login}/${body.slug}`, address: `/${who.login}/${body.slug}` });
-    }
     return new Response("Not found", { status: 404 });
   }
 

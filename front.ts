@@ -79,6 +79,15 @@ export interface Platform {
   sessionOf(request: Request): Promise<Session | null>;
   /** The templates' text files, by template then path ("doc" → { "index.html": "..." }): templates/doc is a blank document. */
   templates: Record<string, Record<string, string>>;
+  /**
+   * The repo's landing project (landing/, built into the Worker), which the
+   * server makes the front page by itself when landing_document is unset or
+   * names a document that's gone (seedLanding): its text files by path, whose
+   * document it becomes (locally DEV_LOGIN, else the deploy's first bootstrap
+   * admin), and who else may edit it (the other bootstrap admins). No owner
+   * (no ADMINS, no DEV_LOGIN): nobody to make it for, and / is a plain start page.
+   */
+  landing?: { files: Record<string, string>; owner: string | null; editors: string[] };
   /** The editor's page, served at each document's address. */
   editor(request: Request): Promise<Response>;
   /**
@@ -419,11 +428,76 @@ const HOST_SCRIPT = `(function () {
 export const link = (path: string, session: Session | null) =>
   session?.as ? `${path}${path.includes("?") ? "&" : "?"}user=${encodeURIComponent(session.as)}` : path;
 
-/** The front page: the viewer on the landing document (the landing_document setting), for anyone, signed in or not. With none set (or it's gone), a plain start page. */
+/** The front page: the viewer on the landing document (the landing_document setting), for anyone, signed in or not. Made from the repo's landing/ if there's none (seedLanding). */
 async function viewLanding(platform: Platform, request: Request, session: Session | null): Promise<Response> {
-  const doc = await platform.directory.landing();
-  if (!doc || !(await platform.docs.index(doc))) return startPage(platform, session);
+  const doc = await landingDocument(platform);
+  if (!doc) return startPage(platform, session);
   return viewDocument(platform, request, doc, session, true);
+}
+
+/**
+ * The front page's document: the one landing_document names, else (unset,
+ * or naming a document that's gone) a new one made from the repo's landing/
+ * (seedLanding). Null only when the deploy locks the setting to a document
+ * that isn't there, or there's nobody to own one.
+ */
+export async function landingDocument(platform: Platform): Promise<DocRow | null> {
+  const doc = await platform.directory.landing();
+  if (doc && (await platform.docs.exists(doc))) return doc;
+  return seedLanding(platform);
+}
+
+/** Seeds under way, by directory (one per database), so a burst of first requests in one isolate makes one document. */
+const seeding = new WeakMap<object, Promise<DocRow | null>>();
+
+/**
+ * Makes the front page from the repo's landing/ (built into the Worker) the
+ * first time anyone asks for it, and again when the one it named was deleted
+ * or an admin reset the setting: a document of the landing owner's at
+ * /<owner>/landing, which the other bootstrap admins may edit too, and sets
+ * landing_document to it. No deploy step does this; the server does.
+ * Requests at once in one isolate share one seed; across isolates the setting
+ * is claimed compare-and-set (ServerConfig.claim), and a seed that loses
+ * deletes its document and takes the winner's. A setting an admin chose (a
+ * document that's there) is never touched, nor one the deploy locks.
+ */
+export function seedLanding(platform: Platform): Promise<DocRow | null> {
+  const key = platform.directory;
+  const running = seeding.get(key);
+  if (running) return running;
+  const run = (async () => {
+    const config = platform.directory.config;
+    const project = platform.landing;
+    if (config.isLocked("landing_document") || !project?.owner) return null;
+    const index = project.files["index.html"] != null ? "index.html" : project.files["index.md"] != null ? "index.md" : null;
+    if (!index) return null;
+    // Read afresh (settings are remembered a few seconds): another isolate may have seeded it just now.
+    const live = async (stored: string | null) => {
+      let ref: unknown = null;
+      try { ref = stored == null ? null : JSON.parse(stored); } catch { /* not JSON: dangling */ }
+      const doc = typeof ref == "string" && ref ? await platform.directory.find(ref) : null;
+      return doc && !doc.test && (await platform.docs.exists(doc)) ? doc : null;
+    };
+    const stored = await config.stored("landing_document");
+    const there = await live(stored);
+    if (there) return there;
+    const owner = project.owner.toLowerCase();
+    let made: DocRow | null = null;
+    for (let tries = 0; !made && tries < 5; tries++) made = await makeDoc(platform, owner, newId(), { ...project.files }, { index, slug: "landing", published: true });
+    if (!made) return null;
+    if (!(await config.claim("landing_document", stored, made.id, owner))) {
+      // Another seed won: theirs is the front page, and this one goes.
+      if (!(await platform.docs.delete(made))) await platform.directory.remove(made.id);
+      return live(await config.stored("landing_document"));
+    }
+    for (const login of project.editors) {
+      if (login.toLowerCase() == owner) continue;
+      await platform.directory.share({ login: owner, test: false }, made.id, login, "editor").catch(() => {});
+    }
+    return made;
+  })().finally(() => seeding.delete(key));
+  seeding.set(key, run);
+  return run;
 }
 
 /**
@@ -547,7 +621,7 @@ const EDIT_BOOT = `(() => {
   });
 })();`;
 
-/** The front page when no landing document is set: what Erga is, and the way in. */
+/** The front page when there's no landing document and none can be made (seedLanding): what Erga is, and the way in. */
 async function startPage(platform: Platform, session: Session | null): Promise<Response> {
   const admin = !!session && !session.agent && (await platform.directory.users.isAdmin(whoOf(session)));
   const signedIn = session && !session.test;
@@ -566,7 +640,7 @@ async function startPage(platform: Platform, session: Session | null): Promise<R
   <header><h1>Erga</h1></header>
   <p>Pages you edit where they're rendered, together with your agents.</p>
   <div class="actions">${actions}</div>
-  ${admin ? `<p class="hint">There's no front page yet: choose one of your documents as <code>landing_document</code> on <a href="${esc(link("/admin", session))}">the admin page</a>, or deploy a repo with a landing project (<code>server.config.ts</code>).</p>` : ""}
+  ${admin ? `<p class="hint">There's no front page: the deploy locks <code>landing_document</code> to a document that isn't there, or has no admins (<code>ADMINS</code>) to make the repo's demo page for. Choose one of your documents as <code>landing_document</code> on <a href="${esc(link("/admin", session))}">the admin page</a>.</p>` : ""}
 </main>`), { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
 }
 
@@ -606,7 +680,7 @@ const VIEW_STYLE = `
  */
 export async function startingFiles(platform: Platform, from: string | null, who?: Who): Promise<{ files: Record<string, string | Uint8Array>; index: string } | null> {
   if (!from) return { files: { ...platform.templates.doc }, index: "index.html" };
-  const doc = from == "landing" ? await platform.directory.landing() : ID.test(from) && who ? await platform.directory.get(from) : null;
+  const doc = from == "landing" ? await landingDocument(platform) : ID.test(from) && who ? await platform.directory.get(from) : null;
   if (!doc || (from != "landing" && !(await platform.directory.may(who!, "open", doc)))) return null;
   return platform.docs.snapshot(doc);
 }

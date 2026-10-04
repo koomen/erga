@@ -117,7 +117,7 @@ try {
   await until(() => p.eval(`document.querySelectorAll("#progress li.done").length >= 2 && !!document.querySelector("#progress li.running, #progress li.pending")`), 20_000, "the steps show as they go", () => text(p, "#s-deploy"));
   await shot(p, "8-deploying", "#s-deploy");
   await until(() => p.eval(`!document.getElementById("live").hidden`), 60_000, "the deploy finishes", () => text(p, "#run-box"));
-  expect(await p.eval(`document.querySelectorAll("#progress li.done").length == 9`), "every step done", await text(p, "#progress"));
+  expect(await p.eval(`document.querySelectorAll("#progress li.done").length == 8`), "every step done", await text(p, "#progress"));
   const live = await text(p, "#live");
   expect(live.includes("write.myerga.com") && live.includes("given it back to Cloudflare"), "it says where it's live, and that the access was given back", live);
   await shot(p, "9-live", "#s-deploy");
@@ -126,11 +126,10 @@ try {
   expect(b.ADMINS.text == "tester" && b.PAGES_DOMAIN.text == "ada-pages.net" && b.GITHUB_CLIENT_ID.text == "Ov23liMockClientId", "the Worker's settings are the new server's own", b);
   expect(!JSON.stringify(state).includes("0123456789abcdef0123456789abcdef01234567"), "no secret is kept in the clear");
   expect(state.domains.some((d: any) => d.hostname == "write.myerga.com") && state.routes[Object.keys(state.routes)[0]][0].pattern == "*.ada-pages.net/*", "the custom domain and the pages route", state);
-  expect(state.published.length == 1 && state.published[0].landing, "the front page published", state.published);
   expect(state.revoked == 1, "the OAuth token revoked at the end", state.revoked);
   const after = await p.eval<any>(`fetch("/deploy/api/session").then((r) => r.json())`);
   expect(after.connected == false && after.run.status == "done", "the token forgotten, the run kept", after);
-  ok("deployed: every step, the new server's settings, its domains, its front page, and the token gone");
+  ok("deployed: every step, the new server's settings, its domains, and the token gone");
 
   // ---------------------------------------------------------------- a pasted token, workers.dev, a failure
   const q = await browser.page(await browser.context());

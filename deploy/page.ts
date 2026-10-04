@@ -172,7 +172,6 @@ export function deployPage(c: DeployPageConfig): string {
       <div class="body">
         <div id="review-box">
           <dl class="review" id="review"></dl>
-          <label class="muted"><input type="checkbox" id="landing" checked> Publish the landing page as its front page (as erga.dev does)</label>
           <p class="error" id="deploy-error"></p>
           <p class="row"><button class="new" id="go"${c.release ? "" : " disabled"}>Deploy to Cloudflare</button></p>
         </div>
@@ -398,7 +397,7 @@ $("github-next").addEventListener("click", () => {
 
 $("go").addEventListener("click", async () => {
   say("deploy-error");
-  const plan = { ...S.where, admin: C.login, githubClientId: $("gh-id").value.trim(), githubClientSecret: $("gh-secret").value.trim(), anthropicKey: $("anthropic").value.trim() || undefined, landing: $("landing").checked };
+  const plan = { ...S.where, admin: C.login, githubClientId: $("gh-id").value.trim(), githubClientSecret: $("gh-secret").value.trim(), anthropicKey: $("anthropic").value.trim() || undefined };
   S.plan = plan;
   busy($("go"), true, "Starting…");
   try { const r = await api("start", { plan }); showRun(r.run); } catch (e) { say("deploy-error", e.message); }
@@ -424,7 +423,7 @@ function showRun(run) {
     const tokenWay = S.info.via != "oauth";
     $("live").hidden = false;
     $("live").innerHTML = "<h3>Your Erga is live</h3><p><a class='new' id='open-new' href='" + esc(run.result.url) + "' target='_blank' rel='noopener'>Open " + esc(run.result.url.replace("https://", "")) + " ↗</a></p>"
-      + "<p>Sign in there with GitHub as <b>" + esc(C.login) + "</b>: you're its admin, and add everyone else on its Admin page.</p>"
+      + "<p>Sign in there with GitHub as <b>" + esc(C.login) + "</b>: you're its admin, and add everyone else on its Admin page. Its front page is made the first time it's opened, yours to edit.</p>"
       + "<p class='muted'>" + (tokenWay
         ? "Erga has forgotten your Cloudflare token. You can delete it now: <a href='https://dash.cloudflare.com/profile/api-tokens' target='_blank' rel='noopener'>API Tokens on Cloudflare ↗</a> (it's called “Erga deploy”)."
         : "Erga has forgotten its access to your account and given it back to Cloudflare. <a href='https://dash.cloudflare.com/?to=/profile/access-management/authorization' target='_blank' rel='noopener'>Your OAuth authorizations ↗</a>.") + "</p>";

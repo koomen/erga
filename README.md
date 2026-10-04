@@ -179,39 +179,36 @@ there, signed in or not, read-only, in a frame on the document's own pages
 origin (as the editor shows any page: see [Pages run on their own
 origin](#pages-run-on-their-own-origin)), with Clone, which makes you a copy
 (`/new?from=landing`; the `create_document` tool's `template: "landing"`),
-and, for those who may edit it, Edit. Unset, or naming a document
-that's gone, `/` is a plain start page with the way in (and, for an admin, how
-to set one). Only a document's owner may make it the front page, since that
-shows it to everyone: from `/admin` (type its address), or by asking an agent
-(`set_setting`), or by deploying the repo's landing project.
+and, for those who may edit it, Edit. Only a document's owner may make it the
+front page, since that shows it to everyone: from `/admin` (type its
+address), or by asking an agent (`set_setting`).
 
-**The repo's landing project.** `server.config.ts` names it: `landing`, a
-folder (today `landing/`, the old demo) with an `index.html` (or
-`index.md`) and whatever it uses. It's never served from the code: after each
-deploy, `bun landing.ts` publishes it through the server's own API, as any
-agent would (`POST /api/publish`), as a document of the admin whose token the
-deploy holds, at `/<their login>/landing`, and sets `landing_document` to it.
-Each deploy publishes into that same document again (its files replaced, an
-edit open tabs see), so what's in the repo is what the front page shows; an
-admin who points `landing_document` elsewhere between deploys is overruled by
-the next one. `landing: null` leaves the front page to the admins. If the
-deploy locks `landing_document` (to a document's address or id), the project
-is published into that document and the setting is left alone.
+**The server makes it itself.** The repo's `landing/` folder (the demo page:
+its `index.html` or `index.md`, and text files beside it) is built into the
+Worker (`worker/index.ts`). When something asks for the front page (`/`,
+`/new?from=landing`) and `landing_document` is unset, or names a document
+that's gone, the server makes a document from those files and sets the
+setting to it (`seedLanding`, `front.ts`): there's always a front page, and
+it's always a real document, editable like any other. So on a fresh deploy
+the first visit to `/` makes it, with nothing to run after the deploy: no
+token, no build secret, no change to the deploy command. Its owner is the
+first login in `ADMINS` (locally, `DEV_LOGIN`), at `/<them>/landing`; the
+other `ADMINS` may edit it too; anyone else sees it at `/`. Requests at once
+make one: in one isolate they share the work, and across isolates the setting
+is claimed compare-and-set, the loser deleting the document it made.
 
-`bun landing.ts [server]` (default `https://erga.dev`, or `ERGA_URL`) needs
-`ERGA_DEPLOY_TOKEN`: an agent token of an admin's, made at `/settings`. `bun run
-deploy` runs it after `cf deploy`. On Workers Builds the deploy command is
-`bunx cf deploy && bun landing.ts`, with `ERGA_DEPLOY_TOKEN` set as a build
-secret (Settings, Build, Variables and secrets); it waits up to two minutes
-for the new Worker to answer. Without the token, or with a token of someone
-who isn't an admin, it fails, saying why. `ERGA_LANDING` (a folder, or `""`
-for none) overrides `landing` for one run.
+It's made from the repo only then: after that it's the admins' document, and a
+deploy with a changed `landing/` doesn't touch it. To start again from the
+repo's `landing/`, reset `landing_document` on `/admin` (or delete the
+document): the next visit to `/` makes a fresh copy (at `/<them>/landing-2`
+if the old one is still there). A document an admin chooses is respected and
+never replaced while it's there, and if the deploy locks `landing_document`
+(`server.config.ts`) the server never makes one. With no `ADMINS` (and no
+`DEV_LOGIN`) there's nobody to make it for, and `/` is a plain start page
+with the way in; so is a locked setting naming a document that isn't there.
 
-Locally, `bun start` does the same as it starts (`dev/plugin.ts`), with a
-token the Worker makes for `DEV_LOGIN` (`POST /__erga/token`, which only the
-dev server can call): your local front page is `/<DEV_LOGIN>/landing`, the
-repo's `landing/` as of when the server started. Test servers start with no
-landing project unless a test asks for one (`tests/host.ts`).
+Locally, `bun start` does the same: on a fresh local database the first `/`
+makes `/<DEV_LOGIN>/landing`. Test servers too, when a test asks for `/`.
 
 ### Users, admins and settings
 
@@ -396,8 +393,8 @@ The deploy runs in the session's Durable Object, calling the Cloudflare API
 directly (`deploy/cloudflare.ts`): no CLI, no container. It deploys a
 *release*: this server's own Worker as `cf build` builds it (its modules,
 static assets and `worker.config.json`, so the bindings and Durable Objects
-follow `cloudflare.config.ts`), the migrations and the landing project, made
-by `bun deploy/release.ts` into `.site/release/` (site.sh does it on Workers
+follow `cloudflare.config.ts`; the landing project is built into it) and the
+migrations, made by `bun deploy/release.ts` into `.site/release/` (site.sh does it on Workers
 Builds, `bun run deploy` too; the Worker reads it from its assets, and
 nothing serves it to browsers). The steps: check the account; find or make
 the D1 database `erga` (one by that name that isn't Erga's stops it, so
@@ -406,10 +403,9 @@ nothing is lost); apply `migrations/` through D1's query API, recorded in
 the Worker with its bindings (its database, `ADMINS` = the deploying login,
 their GitHub app, `SERVER_CONFIG` `{}`) and secrets (a new
 `SESSION_SECRET`, `GITHUB_CLIENT_SECRET`, `ANTHROPIC_API_KEY`) and a Durable
-Object migration; its address; the pages' address; wait for it to answer;
-and publish its front page with `landing-publish.ts` (landing.ts's network
-half), using an agent token minted straight into the new database and
-deleted after.
+Object migration; its address; the pages' address; and wait for it to
+answer. The new server makes its front page itself the first time it's
+opened, owned by its first admin: the person who deployed it.
 
 Locally, `ERGA_DEPLOY_MOCK=1 bun start` (run `bun deploy/release.ts` once
 first) points `/deploy` at a pretend Cloudflare (`deploy/mock.ts`), OAuth
@@ -867,9 +863,11 @@ publishing a folder, the tools over HTTP and MCP (with the person's own
 permissions), the share button's token, and revoking.
 `bun tests/account.ts` checks the corner on every page (signed in, signed
 out, the menu, signing in and back, the editor's avatar, light, dark and a
-phone). `bun tests/landing.ts` checks the front page: the landing project published
-by the dev server and by `landing.ts` (republished into the same document),
-what it refuses, `/new?from=landing`, and `/` with none set.
+phone). `bun tests/landing.ts` checks the front page the server makes: on a
+fresh server the first `/` (several at once) makes one, its owner edits it in
+the editor, someone else sees it without Edit, `/new?from=landing` copies it,
+a deleted one is made again, and an admin's choice is kept;
+`tests/landing.test.ts` races separate isolates on one database.
 `tests/directory.test.ts` covers the directory, permissions, users and
 settings on bun:sqlite; `tests/tokens.test.ts` the tokens themselves.
 `bun tests/isolation.ts` opens a page that tries to reach whoever views it
@@ -893,8 +891,8 @@ back, merging edits from disk, the agent's exact-match edits and attribution.
 
 - `page.html`, `page.js`, `frame.js`: the editor's shell and its built
   scripts (the shell's, and the frame's that runs on each document's own origin)
-- `landing/`, `landing.ts`: the repo's landing project, and the step that
-  publishes it to a server after a deploy (and to the local one, `bun start`)
+- `landing/`: the demo page, built into the Worker, which the server makes the
+  front page when there's none (`seedLanding`, `front.ts`)
 - `front.ts`: the app's own routes and pages (the front page, `/new`, `/docs` and
   its share dialog, delete, the unedited rule, titles)
 - `admin.ts`: `/admin`, the server's settings and users, for admins

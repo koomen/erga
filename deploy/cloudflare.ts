@@ -6,8 +6,7 @@
 //
 // What it deploys is a release (deploy/release.ts): the Worker exactly as
 // `cf build` builds it for erga.dev (its modules, its static assets, its
-// bindings and Durable Objects from cloudflare.config.ts), the migrations and
-// the landing project. "The same settings as erga.dev" are that build's
+// bindings and Durable Objects from cloudflare.config.ts) and the migrations. "The same settings as erga.dev" are that build's
 // config; only what's the new server's own changes: its database, its
 // admins (whoever deploys it), its GitHub sign-in, its secrets and its
 // addresses.
@@ -17,12 +16,10 @@
 // does), upload the static assets (direct upload), upload the Worker with
 // its bindings, secrets and Durable Object migration, give it its address
 // (workers.dev, or a custom domain on a zone in the account), give documents'
-// pages theirs, wait for it to answer, and publish its front page (with an
-// agent token minted straight into its database, used once and deleted).
+// pages theirs, and wait for it to answer. The new server makes its own
+// front page from the landing project built into it, the first time someone
+// opens it (front.ts), owned by its first admin: the person deploying.
 
-import { publishFiles, TEXT, type Files } from "../landing-publish";
-import { Tokens } from "../tokens";
-import type { Sql } from "../directory";
 
 export const API = "https://api.cloudflare.com/client/v4";
 export type Fetch = (input: Request | string | URL, init?: RequestInit) => Promise<Response>;
@@ -99,8 +96,6 @@ export interface Release {
   modules: Record<string, Uint8Array>;
   /** Its static assets, by path ("/page.js"). */
   assets: Record<string, Uint8Array>;
-  /** The landing project's files, by path; empty for none. */
-  landing: Record<string, Uint8Array>;
   /** migrations/, by file name, in order. */
   migrations: Record<string, string>;
 }
@@ -113,7 +108,6 @@ export interface ReleaseIndex {
   mainModule: string;
   modules: string[];
   assets: string[];
-  landing: string[];
   migrations: string[];
 }
 
@@ -131,11 +125,10 @@ export async function loadRelease(get: (path: string) => Promise<Uint8Array | nu
     }));
     return out;
   };
-  const [modules, assets, landing, migrations] = await Promise.all([read("bundle", toc.modules), read("assets", toc.assets), read("landing", toc.landing), read("migrations", toc.migrations)]);
+  const [modules, assets, migrations] = await Promise.all([read("bundle", toc.modules), read("assets", toc.assets), read("migrations", toc.migrations)]);
   return {
     version: toc.version, built: toc.built, worker: toc.worker, mainModule: toc.mainModule, modules,
     assets: Object.fromEntries(Object.entries(assets).map(([p, b]) => [`/${p}`, b])),
-    landing,
     migrations: Object.fromEntries(Object.entries(migrations).map(([n, b]) => [n, new TextDecoder().decode(b)])),
   };
 }
@@ -169,8 +162,6 @@ export interface DeployPlan {
   githubClientSecret: string;
   /** Turns the agent on; optional. */
   anthropicKey?: string;
-  /** Publish the release's landing project as the front page. */
-  landing: boolean;
 }
 
 export const appHost = (p: Pick<DeployPlan, "app" | "workerName" | "subdomain">) =>
@@ -210,7 +201,6 @@ export const STEPS = [
   { id: "address", title: "Give it its address" },
   { id: "pages", title: "Give documents' pages their own address" },
   { id: "live", title: "Wait for it to answer" },
-  { id: "landing", title: "Publish its front page" },
 ] as const;
 export type StepId = (typeof STEPS)[number]["id"];
 
@@ -338,23 +328,6 @@ export async function deploy(cf: Cloudflare, release: Release, plan: DeployPlan,
   }
   report("live", "done", `https://${host}`);
 
-  report("landing", "running");
-  if (!plan.landing || !Object.keys(release.landing).length) report("landing", "skipped", "no landing project: the front page is a plain start page until you choose one");
-  else {
-    // An agent token of the admin's, minted straight into the new database (the format tokens.ts makes), used once and deleted.
-    const tokens = new Tokens(d1Sql(cf, acc, dbId), opts.sessionSecret);
-    const { token, info } = await tokens.mint({ login: plan.admin, name: plan.adminName || plan.admin }, "Deploy (front page)");
-    try {
-      const files: Files = {};
-      for (const [path, bytes] of Object.entries(release.landing)) files[path] = TEXT.test(path) ? new TextDecoder().decode(bytes) : { base64: b64(bytes) };
-      const published = await publishFiles({ server: `https://${host}`, token, files, slug: "landing", wait: 60_000, fetch: site as typeof fetch });
-      report("landing", "done", `https://${host}${published.address}`);
-    } catch (e) {
-      throw new DeployError(`The server is up, but publishing its front page failed: ${(e as Error).message}. Sign in and choose a front page on its admin page, or deploy again.`);
-    } finally {
-      await d1(cf, acc, dbId, "DELETE FROM agent_tokens WHERE id = ?1", [info.id], "delete the deploy's token").catch(() => {});
-    }
-  }
   return { url: `https://${host}`, pages: pagesShown(plan), database: dbId, worker: plan.workerName };
 }
 
@@ -442,15 +415,6 @@ async function uploadAssets(cf: Cloudflare, acc: string, worker: string, assets:
 async function d1(cf: Cloudflare, acc: string, db: string, sql: string, params: (string | number | null)[], what: string): Promise<Record<string, unknown>[] | null> {
   const answer = await cf.call<{ results?: Record<string, unknown>[]; success?: boolean }[]>("POST", `${acc}/d1/database/${db}/query`, what, { sql, ...(params.length ? { params } : {}) });
   return answer?.[0]?.results ?? [];
-}
-
-/** The directory's Sql interface on a D1 database through the API (for minting the front page's token into it). */
-function d1Sql(cf: Cloudflare, acc: string, db: string): Sql {
-  return {
-    all: async <T>(q: string, ...params: (string | number | null)[]) => ((await d1(cf, acc, db, q, params, "use the new database")) ?? []) as T[],
-    run: async (q, ...params) => { await d1(cf, acc, db, q, params, "use the new database"); },
-    batch: async (statements) => { for (const [q, ...params] of statements) await d1(cf, acc, db, q, params, "use the new database"); },
-  };
 }
 
 export const b64 = (bytes: Uint8Array) => {

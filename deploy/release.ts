@@ -14,12 +14,11 @@
 //
 // release/ holds release.json (what's in it: the build's worker.config.json,
 // the module and file names), bundle/ (the Worker's modules), assets/ (the
-// editor's files, as .site has them), landing/ (the landing project,
-// server.config.ts) and migrations/.
+// editor's files, as .site has them) and migrations/. (The landing project
+// is built into the Worker itself.)
 
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
-import { landingFolder } from "../server.config.ts";
 import type { ReleaseIndex } from "./cloudflare.ts";
 
 const ROOT = resolve(import.meta.dirname, "..");
@@ -57,15 +56,11 @@ export async function makeRelease(): Promise<ReleaseIndex> {
   cpSync(join(built, "bundle"), join(staging, "bundle"), { recursive: true, filter: (p) => !p.includes("/.vite") });
   const assets = files(SITE).filter((p) => !p.startsWith("release/") && !p.startsWith("release."));
   for (const p of assets) { mkdirSync(join(staging, "assets", p, ".."), { recursive: true }); cpSync(join(SITE, p), join(staging, "assets", p)); }
-  const folder = landingFolder();
-  const landingDir = folder ? resolve(ROOT, folder) : null;
-  const landing = landingDir && existsSync(landingDir) && statSync(landingDir).isDirectory() ? files(landingDir) : [];
-  if (landingDir && landing.length) cpSync(landingDir, join(staging, "landing"), { recursive: true, filter: (p) => !relative(landingDir, p).split("/").some((s) => s.startsWith(".")) });
   const migrations = files(join(ROOT, "migrations")).filter((n) => n.endsWith(".sql"));
   cpSync(join(ROOT, "migrations"), join(staging, "migrations"), { recursive: true });
 
   const sha = process.env.WORKERS_CI_COMMIT_SHA || Bun.spawnSync(["git", "rev-parse", "--short", "HEAD"], { cwd: ROOT }).stdout.toString().trim() || "dev";
-  const index: ReleaseIndex = { version: sha.slice(0, 12), built: new Date().toISOString(), worker, mainModule: worker.manifest?.mainModule ?? "index.js", modules, assets, landing, migrations };
+  const index: ReleaseIndex = { version: sha.slice(0, 12), built: new Date().toISOString(), worker, mainModule: worker.manifest?.mainModule ?? "index.js", modules, assets, migrations };
   writeFileSync(join(staging, "release.json"), JSON.stringify(index, null, 2));
   rmSync(OUT, { recursive: true, force: true });
   cpSync(staging, OUT, { recursive: true });
@@ -75,5 +70,5 @@ export async function makeRelease(): Promise<ReleaseIndex> {
 
 if (import.meta.main) {
   const r = await makeRelease();
-  console.log(`release ${r.version}: ${r.modules.length} modules, ${r.assets.length} files, ${r.landing.length} landing files, ${r.migrations.length} migrations, in .site/release/`);
+  console.log(`release ${r.version}: ${r.modules.length} modules, ${r.assets.length} files, ${r.migrations.length} migrations, in .site/release/`);
 }

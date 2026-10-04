@@ -23,7 +23,6 @@
 //
 //   POST /__erga/migrate           brings the local D1 up to date with migrations/ (as it starts)
 //   POST /__erga/link              makes (or finds) the document for a file or folder, for whoever's signed in
-//   POST /__erga/token             an agent token for DEV_LOGIN, to publish the landing project with (landing.ts)
 //   /__erga/mirror/<id>            the WebSocket the document reaches its files on disk through
 
 import { accountOf, withAccount } from "../account";
@@ -45,6 +44,13 @@ for (const [path, text] of Object.entries(import.meta.glob("../templates/*/**", 
   (TEMPLATES[name] ??= {})[rel] = text;
 }
 
+/** The repo's landing project (landing/), the front page the server makes for itself (front.ts, seedLanding). Text files only. */
+const LANDING: Record<string, string> = {};
+for (const [path, text] of Object.entries(import.meta.glob("../landing/**", { query: "?raw", import: "default", eager: true }) as Record<string, string>)) {
+  const rel = path.replace(/^\.\.\/landing\//, "");
+  if (!rel.split("/").some((part) => part.startsWith("."))) LANDING[rel] = text;
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
@@ -57,6 +63,14 @@ export default {
     }, url.pathname + url.search);
   },
 } satisfies ExportedHandler<Env>;
+
+/** Whose the front page is when the server makes it: locally DEV_LOGIN, else the first of ADMINS; the rest of ADMINS may edit it. */
+const landingOf = (env: Env): NonNullable<Platform["landing"]> => {
+  const admins = (env.ADMINS ?? "").split(",").map((l) => l.trim().toLowerCase()).filter((l) => OWNER.test(l));
+  const dev = env.DEV_LOGIN?.trim().toLowerCase();
+  const owner = dev && OWNER.test(dev) ? dev : admins[0] ?? null;
+  return { files: LANDING, owner, editors: admins.filter((l) => l != owner) };
+};
 
 /** Where documents' pages run (front.ts, pagesOrigin): an origin each under PAGES_DOMAIN (erga-pages.dev), or the one PAGES_HOST. */
 const pagesDomainOf = (env: Env) => env.PAGES_DOMAIN?.trim() || "erga-pages.dev";
@@ -95,6 +109,7 @@ const platform = (env: Env): Platform => {
     directory,
     sessionOf: (request) => sessionOf(env, request),
     templates: TEMPLATES,
+    landing: landingOf(env),
     editor: (request) => env.ASSETS.fetch(new Request(new URL("/editor.html", request.url))),
     dev: (url) => isDev(env, url),
     // Locally (vite dev) each document's page runs on <id>-<owner>.localhost, which browsers send to this machine.
@@ -147,23 +162,11 @@ async function linked(env: Env, request: Request, url: URL): Promise<Response> {
     const doc = await env.DOCS.getByName(body.id).link(owner, body.id, body.index, { path: body.path, slug: slugify(body.slug ?? "") || "untitled", only: !!body.only });
     return Response.json({ owner: doc.owner, id: doc.id, slug: doc.slug });
   }
-  // A token for DEV_LOGIN (an admin locally), for the dev server to publish the repo's landing project with,
-  // the way a deploy does (landing.ts). One at a time: the last run's goes.
-  if (url.pathname == "/__erga/token" && request.method == "POST") {
-    const login = env.DEV_LOGIN?.toLowerCase();
-    if (!login || !OWNER.test(login)) return new Response("No DEV_LOGIN", { status: 400 });
-    const tokens = tokensOf(env);
-    for (const t of await tokens.list(login)) if (t.label == DEV_TOKEN_LABEL) await tokens.revoke(login, t.id);
-    const { token } = await tokens.mint({ login, name: (await directory.users.get(login))?.name || login }, DEV_TOKEN_LABEL);
-    return Response.json({ token, login });
-  }
   const [, id] = /^\/__erga\/mirror\/([^/]+)$/.exec(url.pathname) ?? [];
   const route = id && idShaped(id) ? await directory.route(id) : null;
   if (!route || request.headers.get("upgrade")?.toLowerCase() != "websocket") return new Response("Not found", { status: 404 });
   return env.DOCS.getByName(route.id).fetch(new Request(new URL(`/api/mirror${url.search}`, url.origin), request));
 }
-
-const DEV_TOKEN_LABEL = "bun start (landing page)";
 
 /** The directory's migrations (migrations/), as `cf d1 migrations apply` would apply them. */
 const MIGRATIONS = import.meta.glob("../migrations/*.sql", { query: "?raw", import: "default", eager: true }) as Record<string, string>;

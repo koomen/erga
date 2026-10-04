@@ -31,7 +31,7 @@ beforeAll(async () => {
 
 const plan = (over: Partial<DeployPlan> = {}): DeployPlan => ({
   accountId: ACC, workerName: "erga", subdomain: "ada-mock", app: { kind: "workers.dev" }, pages: { kind: "shared" },
-  admin: "Ada", githubClientId: "Ov23liMockClientId", githubClientSecret: "0123456789abcdef0123456789abcdef01234567", landing: true, ...over,
+  admin: "Ada", githubClientId: "Ov23liMockClientId", githubClientSecret: "0123456789abcdef0123456789abcdef01234567", ...over,
 });
 
 async function run(token: string, p: DeployPlan, mock = mockCloudflare()) {
@@ -51,7 +51,6 @@ describe("deploying", () => {
     expect(Object.keys(release.assets)).toContain("/editor.html");
     expect(Object.keys(release.assets).some((p) => p.startsWith("/release"))).toBe(false);
     expect(Object.keys(release.migrations)[0]).toBe("0001_erga.sql");
-    expect(Object.keys(release.landing)).toContain("index.html");
   });
 
   test("to workers.dev, with the shared pages host: every step, and what Cloudflare was asked for", async () => {
@@ -88,10 +87,6 @@ describe("deploying", () => {
 
     expect(state.scripts["erga-pages"].workersDev).toBe(true);
     expect(state.scripts["erga-pages"].metadata.bindings).toEqual([{ type: "service", name: "APP", service: "erga" }]);
-    // The front page: published with a token minted into the new database, which is gone afterwards.
-    expect(state.published).toEqual([{ slug: "landing", files: Object.keys(release.landing), landing: true }]);
-    expect(db.tokens).toEqual([]);
-    expect(db.statements.some((s) => s.startsWith("INSERT INTO agent_tokens"))).toBe(true);
   });
 
   test("to a domain of yours, with documents' pages on a second one", async () => {
@@ -132,7 +127,7 @@ describe("deploying", () => {
 
   test("refuses to touch a database called erga that isn't Erga's", async () => {
     const mock = mockCloudflare();
-    mock.state.databases.push({ uuid: "11111111-2222-3333-4444-555555555555", name: "erga", statements: [], migrations: [], tokens: [] });
+    mock.state.databases.push({ uuid: "11111111-2222-3333-4444-555555555555", name: "erga", statements: [], migrations: [] });
     await expect(run("mock-token", plan(), mock)).rejects.toThrow(/already has a D1 database called "erga" that isn't Erga's/);
     expect(mock.state.scripts.erga).toBeUndefined();
   });

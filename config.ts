@@ -64,7 +64,7 @@ export const SETTINGS = {
     },
   }),
   landing_document: setting<string | null>({
-    description: "Document shown at /, one of yours; empty for a plain page.",
+    description: "Document shown at /, one of yours; empty: a fresh copy of the repo's demo page.",
     default: null,
     parse: (v) => (v === null || v === "" ? null : text(300)(v) || null),
     kind: "document",
@@ -207,6 +207,30 @@ export class ServerConfig<S extends Settings = typeof SETTINGS> {
       key, JSON.stringify(parsed), Date.now(), by.login.toLowerCase());
     this.rows = null;
     return this.entry(key);
+  }
+
+  /**
+   * The server's own write, nobody's request: sets `key` to `value` only if
+   * its row is still `expected` (its stored JSON as `stored` read it, null
+   * for no row), so of several at once only one wins. Answers whether this
+   * one did. Not for locked keys (the caller checks). `by`: who to record.
+   */
+  async claim(key: string, expected: string | null, value: unknown, by: string): Promise<boolean> {
+    this.setting(key);
+    const json = JSON.stringify(value);
+    if (expected == null) {
+      await this.sql.run("INSERT INTO server_config (key, value, updated, updated_by) VALUES (?1, ?2, ?3, ?4) ON CONFLICT (key) DO NOTHING", key, json, Date.now(), by.toLowerCase());
+    } else {
+      await this.sql.run("UPDATE server_config SET value = ?2, updated = ?3, updated_by = ?4 WHERE key = ?1 AND value = ?5", key, json, Date.now(), by.toLowerCase(), expected);
+    }
+    this.rows = null;
+    return (await this.stored(key)) == json;
+  }
+
+  /** A setting's row as stored now (its JSON), read afresh; null if it has none. */
+  async stored(key: string): Promise<string | null> {
+    const [row] = await this.sql.all<Row>("SELECT * FROM server_config WHERE key = ?1", key);
+    return row ? row.value : null;
   }
 
   /** Puts a setting back to its default. Admins only; a locked one can't be. */
