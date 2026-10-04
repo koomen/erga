@@ -70,7 +70,7 @@ const peersField = StateField.define<DecorationSet>({
 });
 
 declare global {
-  interface Window { ergaPage?: unknown }
+  interface Window { ergaPage?: unknown; ergaShell?: { ready(): void } }
 }
 
 
@@ -86,9 +86,14 @@ declare global {
   const settings: { track: boolean; agent: boolean } = { track: false, agent: false, ...store.json(KEYS.settings) };
   const saveSettings = () => store.set(KEYS.settings, JSON.stringify(settings));
 
+  // The page this runs in is the document's page (front.ts), viewing or
+  // editing: the editor runs either way once loaded, its controls shown only
+  // while editing (setEditing, below).
+  const editing = () => document.body.classList.contains("erga-editing");
+
   // An agent pane left open stays open across reloads: put it back before
   // the first paint, without the open animation.
-  if (settings.agent) {
+  if (settings.agent && editing()) {
     document.body.classList.add("no-motion", "agent-open");
     ($("agent") as HTMLElement).inert = false;
     $("agent-fab").setAttribute("aria-expanded", "true");
@@ -139,6 +144,7 @@ declare global {
   } catch (e) {
     $("welcome").hidden = false;
     $("welcome").innerHTML = `<div><p>Nothing to edit here.</p><p>Open one from <a href="/docs">your documents</a>.</p></div>`;
+    window.ergaShell?.ready();
     return;
   }
 
@@ -175,6 +181,7 @@ declare global {
   } catch (e) {
     $("welcome").hidden = false;
     $("welcome").innerHTML = `<div><p>Couldn't join the document: ${(e as Error).message}.</p><p>Is the server still running?</p></div>`;
+    window.ergaShell?.ready();
     return;
   }
   const markdownHead = `<link rel="stylesheet" href="/fonts/inter.css"><link rel="stylesheet" href="/style.css"><style>
@@ -266,7 +273,15 @@ declare global {
     titleBtn.setAttribute("aria-label", `${n.title}: rename, or change its address`);
     titleBtn.title = `${location.host}${n.address}`;
     document.title = n.title;
-    if (location.pathname != n.address) window.history.replaceState(window.history.state, "", n.address + location.search + location.hash);
+    // The editor's own address is the document's, then /edit (the document's alone is its viewer, which the pencil, blue while editing, goes back to).
+    if (!n.address) return;
+    const view = $("btn-edit") as HTMLAnchorElement;
+    view.href = n.address + as;
+    view.hidden = false;
+    document.querySelector<HTMLMetaElement>('meta[name="erga-address"]')?.setAttribute("content", n.address);
+    // Viewing at the front page's address (/), it stays there.
+    const here = editing() ? `${n.address}/edit` : location.pathname == "/" ? "/" : n.address;
+    if (location.pathname != here) window.history.replaceState(window.history.state, "", here + location.search + location.hash);
   }
   if (info.docName) showName(info.docName);
   /** Asks for the name again (when the event channel connects: a rename may have gone by while it was down). */
@@ -289,6 +304,7 @@ declare global {
     showChrome();
     toggleHelp(false);
     toggleShare(false);
+    toggleSharing(false);
     toggleAccount(false);
     slugTouched = false;
     $("naming-prefix").textContent = `/${docName!.owner}/`;
@@ -536,12 +552,12 @@ declare global {
       (p.client == -1 ? meSlot : people).append(wrap);
     }
   }
-  // Your avatar opens a small menu: who you are, your documents, the admin
-  // page if you're an admin, your agent tokens, sign out (the same as every other page's upper
+  // Your avatar opens a small menu: who you are, Documents, Settings,
+  // Admin settings if you're an admin, Sign out (the same as every other page's upper
   // right, account.ts). The front door says which links (meta erga-account).
   const account = $("account");
   const accountLinks = (() => {
-    try { return JSON.parse(document.querySelector<HTMLMetaElement>('meta[name="erga-account"]')?.content ?? "") as { docs?: string; tokens?: string; admin?: string; signOut?: string }; } catch { return null; }
+    try { return JSON.parse(document.querySelector<HTMLMetaElement>('meta[name="erga-account"]')?.content ?? "") as { docs?: string; settings?: string; admin?: string; signOut?: string }; } catch { return null; }
   })();
   let accountBtn: HTMLElement | null = null;
   function accountButton(b: HTMLElement) {
@@ -558,12 +574,12 @@ declare global {
     account.hidden = !open;
     accountBtn?.setAttribute("aria-expanded", String(open));
     if (!open) return;
-    showChrome(); toggleHelp(false); toggleShare(false); toggleNaming(false);
+    showChrome(); toggleHelp(false); toggleShare(false); toggleSharing(false); toggleNaming(false);
     $("account-name").textContent = me.name;
     $("account-login").textContent = me.name.toLowerCase() == me.user ? "" : me.user;
     const set = (id: string, href: string | undefined) => { const a = $(id) as HTMLAnchorElement; a.hidden = !href; if (href) a.href = href; };
     set("account-docs", me.user.startsWith("test-") ? undefined : accountLinks!.docs);
-    set("account-tokens", me.user.startsWith("test-") ? undefined : accountLinks!.tokens);
+    set("account-settings", me.user.startsWith("test-") ? undefined : accountLinks!.settings);
     set("account-admin", accountLinks!.admin);
     set("account-out", accountLinks!.signOut);
   }
@@ -588,7 +604,7 @@ declare global {
   let anchor: { x: number; y: number; t: number } | null = null;
   let lastKeyAt = 0;
   function hideChrome() {
-    if (chromeHidden || !$("help").hidden || !$("share").hidden || !$("naming").hidden || !$("account").hidden) return;
+    if (chromeHidden || !$("help").hidden || !$("share").hidden || !$("sharing").hidden || !$("naming").hidden || !$("account").hidden) return;
     chromeHidden = true;
     anchor = null;
     document.body.classList.add("chrome-hidden");
@@ -626,7 +642,7 @@ declare global {
   function toggleHelp(force?: boolean) {
     const open = typeof force == "boolean" ? force : help.hidden;
     help.hidden = !open;
-    if (open) { showChrome(); toggleShare(false); toggleNaming(false); toggleAccount(false); }
+    if (open) { showChrome(); toggleShare(false); toggleSharing(false); toggleNaming(false); toggleAccount(false); }
   }
 
   // Share with an external agent: a prompt carrying this page's API and your
@@ -680,6 +696,7 @@ Once you've read the guide, await further instructions.`;
     if (!open) return;
     showChrome();
     toggleHelp(false);
+    toggleSharing(false);
     toggleNaming(false);
     toggleAccount(false);
     if (!shareToken) loadShare(false);
@@ -692,6 +709,81 @@ Once you've read the guide, await further instructions.`;
     shareStatus.textContent = copied ? "Copied" : "Couldn't reach the clipboard: the prompt is selected, press ⌘C.";
   });
   shareRotate.addEventListener("click", () => { if (shareRotate.getAttribute("aria-disabled") != "true") loadShare(true); });
+
+  // Share with people: who may view or edit the document, and anyone signed
+  // in with the link. Only its owner may (the front door says where, meta
+  // erga-share); each change is saved as it's made (/docs/share, as on My
+  // Documents' share dialog).
+  const sharing = $("sharing"), peopleBtn = $("btn-people");
+  const sharingList = $("sharing-list"), sharingAdd = $("sharing-add") as HTMLFormElement;
+  const sharingAnyone = $("sharing-anyone") as HTMLSelectElement, sharingStatus = $("sharing-status");
+  const shareAt = document.querySelector<HTMLMetaElement>('meta[name="erga-share"]')?.content ?? "";
+  const docId = BASE.replace(/^\/d\//, "");
+  peopleBtn.hidden = !shareAt;
+  type Shared = { permissions: { login: string; role: string }[]; notUsers?: string[] };
+  const tellSharing = (text: string, error = false) => { sharingStatus.textContent = text; sharingStatus.classList.toggle("error", error); };
+  async function shareCall(change?: { login: string; role: string }): Promise<Shared> {
+    const r = await fetch(change ? shareAt : `${shareAt}${shareAt.includes("?") ? "&" : "?"}id=${docId}`,
+      change ? { method: "POST", body: new URLSearchParams({ id: docId, ...change }), headers: { Accept: "application/json" }, signal: AbortSignal.timeout(10_000) } : { signal: AbortSignal.timeout(10_000) }).catch(() => null);
+    const body = r ? await r.json().catch(() => ({})) : {};
+    if (!r || !r.ok) throw new Error(body.error || "Couldn't reach the server: try again.");
+    return body as Shared;
+  }
+  function renderSharing({ permissions, notUsers }: Shared) {
+    sharingList.textContent = "";
+    const pending = new Set(notUsers ?? []);
+    let anyone = "none";
+    for (const p of permissions) {
+      if (p.login == "*") { anyone = p.role; continue; }
+      const li = document.createElement("li");
+      const who = Object.assign(document.createElement("span"), { className: "who", textContent: p.login });
+      if (p.login == me.user) who.append(Object.assign(document.createElement("small"), { textContent: "you" }));
+      if (pending.has(p.login)) who.append(Object.assign(document.createElement("small"), { className: "pending", textContent: "can't sign in yet", title: "Not a user of this server: an admin can add them" }));
+      li.append(who);
+      if (p.role == "owner") li.append(Object.assign(document.createElement("span"), { className: "fixed", textContent: "Owner" }));
+      else {
+        const role = document.createElement("select");
+        role.setAttribute("aria-label", `Role for ${p.login}`);
+        for (const [v, t] of [["editor", "Can edit"], ["viewer", "Can view"]]) role.append(new Option(t, v, false, v == p.role));
+        role.addEventListener("change", () => changeSharing(p.login, role.value));
+        const x = Object.assign(document.createElement("button"), { type: "button", className: "remove", textContent: "×", title: `Stop sharing with ${p.login}` });
+        x.setAttribute("aria-label", x.title);
+        x.addEventListener("click", () => changeSharing(p.login, "none"));
+        li.append(role, x);
+      }
+      sharingList.append(li);
+    }
+    sharingAnyone.value = anyone;
+  }
+  async function changeSharing(login: string, role: string): Promise<boolean> {
+    tellSharing("Saving…");
+    try { renderSharing(await shareCall({ login, role })); tellSharing(""); return true; }
+    catch (e) { tellSharing((e as Error).message, true); return false; }
+  }
+  function toggleSharing(force?: boolean) {
+    const open = typeof force == "boolean" ? force : sharing.hidden;
+    if (open && !shareAt) return;
+    sharing.hidden = !open;
+    peopleBtn.setAttribute("aria-expanded", String(open));
+    if (!open) return;
+    showChrome(); toggleHelp(false); toggleShare(false); toggleNaming(false); toggleAccount(false);
+    sharingAdd.reset();
+    tellSharing("Loading…");
+    (sharingAdd.elements.namedItem("login") as HTMLInputElement).focus();
+    shareCall().then((d) => { renderSharing(d); tellSharing(""); }, (e: Error) => tellSharing(e.message, true));
+  }
+  peopleBtn.addEventListener("click", () => toggleSharing());
+  sharingAdd.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const input = sharingAdd.elements.namedItem("login") as HTMLInputElement;
+    const login = input.value.trim().replace(/^@/, "");
+    if (login && (await changeSharing(login, (sharingAdd.elements.namedItem("role") as HTMLSelectElement).value))) input.value = "";
+  });
+  sharingAnyone.addEventListener("change", () => changeSharing("*", sharingAnyone.value));
+  $("sharing-copy").addEventListener("click", async () => {
+    const url = location.origin + (docName?.address ?? location.pathname.replace(/\/edit\/?$/, ""));
+    tellSharing(await navigator.clipboard.writeText(url).then(() => `Link copied: ${url}`, () => url));
+  });
   if (!isMac) {
     for (const k of help.querySelectorAll("kbd")) {
       if (k.textContent == "⌘") k.textContent = "Ctrl";
@@ -816,9 +908,11 @@ Once you've read the guide, await further instructions.`;
       activate();
       pointerDown = true;
       hideFmt();
+      closeModeMenu();
       if (!help.hidden) toggleHelp(false);
       if (!naming.hidden) toggleNaming(false);
       if (!share.hidden) toggleShare(false);
+      if (!sharing.hidden) toggleSharing(false);
       showPauseCard(false);
     },
     onActivity: (kind) => {
@@ -828,7 +922,7 @@ Once you've read the guide, await further instructions.`;
     onBackdrop: (b) => applyBackdrop(b),
     onStale: () => needRefresh(),
   });
-  frame.src = pagesUrl;
+  page.start();
 
   // ---------------------------------------------------------------- style bar
 
@@ -996,8 +1090,9 @@ Once you've read the guide, await further instructions.`;
       const m = b.dataset.mode as Mode;
       b.setAttribute("aria-checked", String(m == mode));
       const ro = m != "text" && m != info?.kind;
-      b.title = `${MODE_NAMES[m]}${ro ? " (read-only)" : ""}${m == "text" || m == info?.kind ? "  ⌘⇧P" : ""}`;
-      b.setAttribute("aria-label", b.title);
+      b.dataset.tip = `${MODE_NAMES[m]}${ro ? " (read-only)" : ""}${m == "text" || m == info?.kind ? (isMac ? "  ⌘⇧P" : "  Ctrl+Shift+P") : ""}`;
+      b.setAttribute("aria-label", b.dataset.tip);
+      b.dataset.tipClosed = `View: ${MODE_NAMES[mode]}${mode == "text" || mode == info?.kind ? (isMac ? "  ⌘⇧P" : "  Ctrl+Shift+P") : ""}`;
     }
   }
   function openModeMenu() { modeEl.classList.add("open"); showChrome(); }
@@ -1445,6 +1540,7 @@ Once you've read the guide, await further instructions.`;
   // ---------------------------------------------------------------- shortcuts & wiring
 
   function appShortcut(e: Keys): boolean {
+    if (!editing()) return false;
     const mod = isMac ? e.metaKey : e.ctrlKey;
     const key = e.key.toLowerCase();
     if (mod && e.shiftKey && key == "p") { toggleSource(); return true; }
@@ -1457,6 +1553,7 @@ Once you've read the guide, await further instructions.`;
       else if (!help.hidden) toggleHelp(false);
       else if (!naming.hidden) toggleNaming(false);
       else if (!share.hidden) toggleShare(false);
+      else if (!sharing.hidden) toggleSharing(false);
       else if (!$("pause-card").hidden) showPauseCard(false);
       else if (agentPanel.contains(document.activeElement)) toggleAgent(false);
       else if (modeEl.classList.contains("open")) closeModeMenu();
@@ -1484,7 +1581,6 @@ Once you've read the guide, await further instructions.`;
   }
   $("btn-track").addEventListener("click", () => setTracking(!page.isTracking));
   if (settings.track) { page.setTracking(true); $("btn-track").setAttribute("aria-pressed", "true"); $("btn-track").dataset.tip = "Tracking changes (click to stop)"; }
-  $("btn-help").addEventListener("click", () => toggleHelp());
 
   // Pausing the page: a page that reacts to clicks and keys (slides that
   // advance on click, a game) gets in the way of editing its text. If it
@@ -1540,13 +1636,34 @@ Once you've read the guide, await further instructions.`;
   syncPause();
   for (const b of document.querySelectorAll(".chrome button")) b.addEventListener("mousedown", (e) => e.preventDefault());
   document.addEventListener("mousedown", (e) => {
-    if (!help.hidden && !help.contains(e.target as Node) && !$("btn-help").contains(e.target as Node)) toggleHelp(false);
+    if (!help.hidden && !help.contains(e.target as Node)) toggleHelp(false);
     if (!share.hidden && !share.contains(e.target as Node) && !shareBtn.contains(e.target as Node)) toggleShare(false);
+    if (!sharing.hidden && !sharing.contains(e.target as Node) && !peopleBtn.contains(e.target as Node)) toggleSharing(false);
     if (!account.hidden && !account.contains(e.target as Node) && !accountBtn?.contains(e.target as Node)) toggleAccount(false);
     if (!$("pause-card").hidden && !$("pause-card").contains(e.target as Node) && !$("btn-pause").contains(e.target as Node)) showPauseCard(false);
   });
 
+  // Out of the editor and back in (front.ts), without leaving the page: the
+  // controls go out of sight, with anything open among them, and come back as they were.
+  function setEditing(on: boolean) {
+    if (on) {
+      document.body.classList.toggle("agent-open", settings.agent);
+      agentPanel.inert = !settings.agent;
+      page.focus();
+      return;
+    }
+    if (mode != "text") setMode("text");
+    toggleHelp(false); toggleShare(false); toggleSharing(false); toggleNaming(false); toggleAccount(false); showPauseCard(false);
+    hideFmt();
+    document.body.classList.remove("agent-open");
+    agentPanel.inert = true;
+    stopVoice();
+    showChrome();
+  }
+  if (!editing()) setEditing(false);
+
   started = true;
   presenceChanged();
-  window.ergaPage = { page, collab, toggleSource, captureView, get state() { return currentState(); } };
+  window.ergaPage = { page, collab, toggleSource, captureView, setEditing, get state() { return currentState(); } };
+  window.ergaShell?.ready();
 })();

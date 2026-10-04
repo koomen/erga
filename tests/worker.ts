@@ -52,8 +52,8 @@ async function make(query = ""): Promise<string> {
   const r = await get(`/new${query}`);
   const at = r.headers.get("location") ?? "";
   expect(r.status == 302 && at.startsWith(`/${login}/`), `/new${query} makes a document under /${login}/`, { status: r.status, at });
-  const name = (await (await get(`${at}/api/name`)).json()) as Name;
-  expect(name.address == at, "/new sends you to its canonical address", { at, name });
+  const name = (await (await get(`${at.replace(/\/edit$/, "")}/api/name`)).json()) as Name;
+  expect(`${name.address}/edit` == at, "/new sends you to its editor, at its canonical address", { at, name });
   return name.id;
 }
 
@@ -111,7 +111,7 @@ async function serverApiScenario() {
   };
   const me = await tool("whoami", {});
   expect(me.status == 200 && me.data?.login == login && me.data?.token?.label == "Worker test agent", "the token stands for its person", me);
-  expect((await (await get("/tokens")).text()).includes("Worker test agent"), "/tokens lists it");
+  expect((await get("/tokens")).headers.get("location") == "/settings" && (await (await get("/settings")).text()).includes("Worker test agent"), "/settings lists it (/tokens leads there)");
   ok("an agent asks for a token, its person approves, and it acts as them");
 
   // Publishing a folder from the command line: multipart, each part named by its path.
@@ -128,7 +128,7 @@ async function serverApiScenario() {
   expect(new Uint8Array(await (await get(`/d/${pub.id}/doc/img/dot.png`)).arrayBuffer()).join() == png.join(), "images arrive byte for byte");
   expect((await (await get(`/d/${pub.id}/doc/css/app.css`)).text()).includes("rebeccapurple"), "and styles as text");
   const list = await docs();
-  expect(list.includes(`href="/${login}/published-app"`) && !list.slice(list.indexOf(`/${login}/published-app"`)).split("</li>")[0].includes("Unedited"), "a published document is listed, and doesn't expire", list);
+  expect(list.includes(`href="/${login}/published-app/edit"`) && !list.slice(list.indexOf(`/${login}/published-app/edit"`)).split("</li>")[0].includes("Unedited"), "a published document is listed, and doesn't expire", list);
   ok("POST /api/publish puts a folder of files on the server as a document, which stays");
 
   // The document tools, for any document: a `document` argument.
@@ -173,7 +173,7 @@ async function serverApiScenario() {
   const otherLogin = `wother${Date.now().toString(36)}`;
   const other = await fetch(`${base}/auth/github?as=${otherLogin}&next=/new`, { redirect: "manual" });
   const otherCookie = other.headers.getSetCookie().map((c) => c.split(";")[0]).find((c) => c.startsWith("erga_session="))!;
-  const theirs = (await fetch(`${base}/new`, { redirect: "manual", headers: { Cookie: otherCookie } })).headers.get("location")!;
+  const theirs = (await fetch(`${base}/new`, { redirect: "manual", headers: { Cookie: otherCookie } })).headers.get("location")!.replace(/\/edit$/, "");
   const theirId = ((await (await fetch(`${base}${theirs}/api/name`, { headers: { Cookie: otherCookie } })).json()) as Name).id;
   t = await tool("read", { document: theirs, path: "index.html" });
   expect(t.status == 403, "an agent can't open a document not shared with its person", t);
@@ -265,7 +265,7 @@ async function adminScenario() {
   t = await admin.call("set_setting", { key: "delete_docs_after_hours", value: 0 });
   expect(t.status == 400 && /whole number/.test(t.text), "a bad value says what's wrong", t);
   // The new value is what the server uses: a new blank document lasts 36 hours.
-  const blank = await (await fetch(`${base}/new`, { redirect: "manual", headers: { Cookie: admin.cookie } })).headers.get("location");
+  const blank = await (await fetch(`${base}/new`, { redirect: "manual", headers: { Cookie: admin.cookie } })).headers.get("location")?.replace(/\/edit$/, "");
   const listed = (await admin.call("list_documents")).data.find((d: { address: string }) => d.address == blank);
   const lasts = (Date.parse(listed.expires) - Date.now()) / 3_600_000;
   expect(lasts > 35 && lasts <= 36, "and the server goes by it", { blank, listed, lasts });
@@ -288,7 +288,7 @@ async function adminScenario() {
   ok("an admin's agent adds users, makes and unmakes admins, and removes users");
 
   // Sharing, over the API.
-  const mine = (await (await fetch(`${base}/new`, { redirect: "manual", headers: { Cookie: person.cookie } })).headers.get("location"))!;
+  const mine = (await (await fetch(`${base}/new`, { redirect: "manual", headers: { Cookie: person.cookie } })).headers.get("location"))!.replace(/\/edit$/, "");
   t = await person.call("share_document", { document: mine, login: "Ada", role: "viewer" });
   expect(t.status == 200 && t.data.permissions.some((p: { login: string; role: string }) => p.login == "ada" && p.role == "viewer"), "share_document shares", t);
   expect((await get(`${mine}?user=Ada`)).status == 200, "and Ada can open it");
@@ -322,7 +322,7 @@ try {
   expect(name.title == "Untitled" && name.slug == "untitled" && !name.titleSet && !name.slugSet, "a blank document is Untitled, at /<you>/untitled", name);
   expect((await (await get(`/${login}/untitled/doc/index.html`)).text()) == template("doc"), "/new is a copy of templates/doc");
   let list = await docs();
-  expect(list.includes(`href="/${login}/untitled"`) && list.includes(">Untitled<") && list.includes("Unedited"), "the list shows it, untitled and unedited", list);
+  expect(list.includes(`href="/${login}/untitled/edit"`) && list.includes(">Untitled<") && list.includes("Unedited"), "the list shows it, untitled and unedited", list);
   ok("/new makes a blank document at /<you>/untitled, listed as unedited");
   if (local) {
     // With no landing document (a test server has none), there's nothing to copy; tests/landing.ts copies one.
@@ -333,15 +333,19 @@ try {
     ok("with no landing document, / is a plain start page and /new?from=landing has nothing to copy");
   }
 
-  // Addresses: /d/<id>, /<you>/<id> and a differently cased owner all lead to the canonical one, which is the editor.
+  // Addresses: /d/<id>, /<you>/<id> and a differently cased owner all lead to the canonical one, the viewer; /edit under it is the editor.
   expect(await location(`/d/${blank}`) == `/${login}/untitled`, "/d/<id> redirects to /<you>/<slug>", await location(`/d/${blank}`));
   expect(await location(`/${login}/${blank}?from=here`) == `/${login}/untitled?from=here`, "/<you>/<id> redirects there, keeping the query");
   expect(await location(`/${login.toUpperCase()}/untitled`) == `/${login}/untitled`, "so does a differently cased owner");
-  const editorHtml = await (await get(`/${login}/untitled`)).text();
-  expect(editorHtml.includes(`<meta name="erga-base" content="/d/${blank}">`) && editorHtml.includes("<title>Untitled</title>"), "the canonical address is the editor, which talks to /d/<id>", editorHtml.slice(0, 400));
+  const viewerHtml = await (await get(`/${login}/untitled`)).text();
+  expect(viewerHtml.includes('<iframe id="frame" class="erga-view"') && viewerHtml.includes(`href="/${login}/untitled/edit"`) && viewerHtml.includes(`href="/new?from=${blank}"`) && viewerHtml.includes('href="/docs"'), "the canonical address is the viewer: the page, Edit, Clone, and breadcrumbs back to Documents", viewerHtml.slice(-1500));
+  expect(await location(`/d/${blank}/edit`) == `/${login}/untitled/edit` && await location(`/${login}/${blank}/edit`) == `/${login}/untitled/edit`, "/edit under any of its addresses redirects to the canonical editor");
+  const editorHtml = await (await get(`/${login}/untitled/edit`)).text();
+  expect(editorHtml.includes(`<meta name="erga-base" content="/d/${blank}">`) && editorHtml.includes("<title>Untitled</title>"), "/<you>/<slug>/edit is the editor, which talks to /d/<id>", editorHtml.slice(0, 400));
+  expect(editorHtml.includes('<body class="erga-editing">') && editorHtml.includes('<iframe id="frame" class="erga-view"') && !editorHtml.includes("/page.js\"></script>"), "it's the viewer's page, going into the editor as it loads (the editor's code isn't in it)", editorHtml.slice(0, 1500));
   expect((await get(`/${login}/nothing-here`)).status == 404 && (await get(`/d/zzzzzzzz`)).status == 404, "an address with no document is a 404");
   for (const sub of [`/d/${blank}/api/doc`, `/${login}/untitled/api/doc`, `/${login}/${blank}/api/doc`]) expect((await get(sub)).ok, `the document's host answers under ${sub}`);
-  ok("/d/<id>, /<you>/<id> and the canonical /<you>/<slug> all reach the document");
+  ok("/d/<id>, /<you>/<id> and the canonical /<you>/<slug> all reach the document: the viewer there, the editor under /edit");
 
   // A second blank document can't have the same slug: it gets the next free one.
   const second = await make();
@@ -356,7 +360,7 @@ try {
   expect(shared.status == 200 && shared.body.permissions?.map((p) => `${p.login}:${p.role}`).join() == `${login}:owner,ada:viewer`, "the owner shares it with a viewer", shared);
   expect((await as("Ada", `/${login}/untitled-2`)).status == 200 && (await as("Ada", `/d/${second}/doc/index.html`)).ok, "a viewer opens it");
   const adaList = await (await as("Ada", "/docs")).text();
-  expect(adaList.includes(`href="/${login}/untitled-2?user=Ada"`) && adaList.includes(`${login} · view only`) && !adaList.includes(`value="${second}"`), "it's on their list, as shared with them, without a delete button", adaList.slice(adaList.indexOf("<ol>"), adaList.indexOf("</ol>")));
+  expect(adaList.includes(`href="/${login}/untitled-2/edit?user=Ada"`) && adaList.includes(`${login} · view only`) && !adaList.includes(`value="${second}"`), "it's on their list, as shared with them, without a delete button", adaList.slice(adaList.indexOf("<ol>"), adaList.indexOf("</ol>")));
   expect((await as("Ada", `/d/${second}/api/stored/index.html`, { method: "PUT", body: "<h1>Mine now</h1>" })).status == 403, "but can't publish to it");
   expect(!(await as("Ada", `/d/${second}/api/name`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: "Viewer's title" }) })).ok, "nor rename it");
   expect((await as("Ada", "/docs/delete", { method: "POST", body: new URLSearchParams({ id: second }), headers: { Origin: origin } })).status == 403, "nor delete it");
@@ -411,7 +415,7 @@ try {
   retitle(ada, "Untitled", "Field &amp; notes");
   await until(async () => (list = await docs()).includes(">Field &amp; notes<"), 5000, "the list shows the new title", () => list);
   await until(async () => (await nameOf(blank)).slug == "field-notes", 5000, "the slug follows the title");
-  expect(list.includes(`href="/${login}/field-notes"`), "the list links to the new address", list);
+  expect(list.includes(`href="/${login}/field-notes/edit"`), "the list links to the new address", list);
   // The title and the edit's time are recorded separately, so the mark can go a moment after the title changes.
   await until(async () => !(list = await docs()).slice(list.indexOf(`/${login}/field-notes"`)).split("</li>")[0].includes("Unedited"), 5000, "an edited document isn't marked unedited", () => list);
   expect(await location(`/${login}/untitled`) == `/${login}/field-notes`, "the old slug redirects to the new one", await location(`/${login}/untitled`));
@@ -451,7 +455,7 @@ try {
   // The list shows a document by its current address.
   const demo = await make();
   r = await rename(demo, { title: "Demo copy", slug: "my-demo" });
-  expect(r.ok && (await docs()).includes(`href="/${login}/my-demo"`), "the list shows a renamed document at its new address");
+  expect(r.ok && (await docs()).includes(`href="/${login}/my-demo/edit"`), "the list shows a renamed document at its new address");
 
   // The agent's tools, as an external agent calls them: get_title and set_title.
   const { token } = (await (await get(`/d/${demo}/api/share`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" })).json()) as { token: string };
@@ -475,11 +479,11 @@ try {
 
   // Open tabs follow a rename: the title, and the address bar (replaceState, no reload).
   const tab = await browser.page();
-  await tab.open(`${base}/auth/github?as=${login}&next=${encodeURIComponent(`/${login}/agents-pick`)}`);
+  await tab.open(`${base}/auth/github?as=${login}&next=${encodeURIComponent(`/${login}/agents-pick/edit`)}`);
   await until(async () => (await tab.eval<string>(`document.getElementById("doc-title-text")?.textContent ?? ""`)) == "Agent's pick", 10_000, "the editor shows the title");
   await tab.eval(`window.__sameTab = true`);
   await rename(demo, { title: "Renamed elsewhere" });
-  await until(async () => (await tab.eval<string>(`location.pathname`)) == `/${login}/renamed-elsewhere`, 5000, "the tab's address follows the rename", async () => tab.eval(`location.pathname`));
+  await until(async () => (await tab.eval<string>(`location.pathname`)) == `/${login}/renamed-elsewhere/edit`, 5000, "the tab's address follows the rename", async () => tab.eval(`location.pathname`));
   expect((await tab.eval<string>(`document.title`)) == "Renamed elsewhere" && (await tab.eval<string>(`document.getElementById("doc-title-text").textContent`)) == "Renamed elsewhere", "and its title");
   expect(await tab.eval<boolean>(`window.__sameTab === true`), "without reloading");
   // A title following the heading moves the tab too.
@@ -488,7 +492,7 @@ try {
   const bo = await join(demo, "Bo");
   const heading = /<h1[^>]*>([^<]*)<\/h1>/.exec(bo.text()?.toString() ?? "")?.[1] ?? "";
   bo.edit((y) => { const s = y.toString(), i = s.indexOf(heading, s.indexOf("<h1")); y.delete(i, heading.length); y.insert(i, "Heading moves tabs"); });
-  await until(async () => (await tab.eval<string>(`location.pathname`)) == `/${login}/heading-moves-tabs`, 6000, "the tab follows a title that follows the heading", async () => tab.eval(`location.pathname`));
+  await until(async () => (await tab.eval<string>(`location.pathname`)) == `/${login}/heading-moves-tabs/edit`, 6000, "the tab follows a title that follows the heading", async () => tab.eval(`location.pathname`));
   bo.destroy();
   ok("open tabs follow a rename, by anyone or by an edit to the heading, without reloading");
 
@@ -504,14 +508,14 @@ try {
   expect(await exists(open), "the one someone has open stays (for now)");
   list = await docs();
   const keptName = await nameOf(kept);
-  expect(!list.includes(`value="${gone}"`) && list.includes(`href="${keptName.address}"`), "the list follows", list);
+  expect(!list.includes(`value="${gone}"`) && list.includes(`href="${keptName.address}/edit"`), "the list follows", list);
   ok("an unedited document is deleted on time; edited or open ones stay");
   for (const p of [ada, bo2, cy]) p.destroy();
 
   // The page runs on the document's own origin: the editor names it, with a token that opens the document's files there.
   // (Browsers send <anything>.localhost to this machine; Bun's fetch doesn't, so it's told the host instead.)
   const pagesFetch = (u: string) => { const url = new URL(u); return url.hostname.endsWith(".localhost") ? fetch(u.replace(url.host, `localhost:${url.port}`), { headers: { Host: url.host } }) : fetch(u); };
-  const editorAt = await (await get((await nameOf(second)).address)).text();
+  const editorAt = await (await get(`${(await nameOf(second)).address}/edit`)).text();
   const pagesUrl = /<meta name="erga-pages" content="([^"]+)">/.exec(editorAt)?.[1] ?? "";
   const pages = pagesUrl ? new URL(pagesUrl) : null;
   expect(!!pages && pages.hostname.startsWith(`${second}-${login}.`) && pages.origin != origin, "the editor names the document's own origin", pagesUrl);
@@ -544,14 +548,14 @@ try {
   // Admin: only admins see /admin (DEV_LOGIN, "tester" for a test host, is one by the deploy); everyone else gets a 404.
   const adminName = local ? "tester" : null;
   expect((await get("/admin")).status == 404 && (await as("Ada", "/admin")).status == 404, "/admin isn't there for someone who isn't an admin");
-  expect(!(await docs()).includes(`>Admin</a>`), "nor linked from their list");
+  expect(!(await docs()).includes(`>Admin settings</a>`), "nor in their menu");
   const adminPost = (path: string, fields: Record<string, string>, who = adminName) =>
     get(`${path}${who ? `?user=${who}` : ""}`, { method: "POST", body: new URLSearchParams(fields), headers: { Origin: origin, Accept: "application/json" } });
   expect((await adminPost("/admin/settings", { key: "delete_docs_after_hours", value: "48" }, null)).status == 403, "nor can they change a setting");
   if (adminName) {
     const adminPage = await (await as(adminName, "/admin")).text();
     expect(adminPage.includes("delete_docs_after_hours") && adminPage.includes(`data-login="${adminName}"`) && adminPage.includes(`data-login="${login}"`), "an admin sees the settings and the users", adminPage.slice(0, 300));
-    expect((await (await as(adminName, "/docs")).text()).includes(`>Admin</a>`), "and their list links to it");
+    expect((await (await as(adminName, "/docs")).text()).includes(`>Admin settings</a>`), "and their menu links to it");
     // Settings: set, refused with the reason, reset.
     let res = await adminPost("/admin/settings", { key: "delete_docs_after_hours", value: "48" });
     let body = (await res.json()) as { entry?: { value: unknown; source: string; updatedBy: string }; error?: string };
@@ -594,7 +598,7 @@ try {
     expect((await adminPost("/admin/users", { do: "add", login: "not a login!" })).status == 403, "nor something that isn't a login");
     u = await (await adminPost("/admin/users", { do: "role", login, role: "admin" })).json();
     expect(u.user?.role == "admin", "makes someone an admin", u);
-    expect((await get("/admin")).status == 200 && (await docs()).includes(`>Admin</a>`), "who then sees /admin, linked from their list");
+    expect((await get("/admin")).status == 200 && (await docs()).includes(`>Admin settings</a>`), "who then sees /admin, in their menu");
     u = await (await adminPost("/admin/users", { do: "role", login, role: "user" })).json();
     expect(u.user?.role == "user" && (await get("/admin")).status == 404, "and back, and they don't");
     let r2 = await adminPost("/admin/users", { do: "role", login: adminName, role: "user" });
@@ -631,7 +635,7 @@ try {
   // The share dialog, in a browser: add someone, change anyone-with-the-link, and the list follows.
   const st = await browser.page();
   await st.open(`${base}/auth/github?as=${login}&next=/docs`);
-  await st.eval(`document.querySelector('li a[href="${(await nameOf(second)).address}"]').parentElement.querySelector('button.share').click()`);
+  await st.eval(`document.querySelector('li a[href="${(await nameOf(second)).address}/edit"]').parentElement.querySelector('button.share').click()`);
   await until(async () => at2(st, `document.querySelectorAll('#share .people li').length == 1`), 5000, "the share dialog lists the owner");
   await st.eval(`(() => { const f = document.querySelector('#share form.add'); f.elements.login.value = "Bo"; f.elements.role.value = "viewer"; f.requestSubmit(); })()`);
   await until(async () => at2(st, `document.querySelectorAll('#share .people li').length == 2`), 5000, "adding someone lists them");

@@ -16,7 +16,8 @@
 //
 // Configuration comes from the Worker's bindings (in local development,
 // .dev.vars; see .dev.vars.example). The key lives only here, in the host:
-//   ANTHROPIC_API_KEY          required
+//   ANTHROPIC_API_KEY          required (locally a real one in .dev.vars, else
+//                              the dev server's environment: dev/agent-key.ts)
 //   ERGA_AGENT_MODEL    the model a session starts on: sonnet (default,
 //                              Claude Sonnet 5.5) or opus-fast (Claude Opus 5.5
 //                              in fast mode); each person can switch in the panel
@@ -82,7 +83,7 @@ export const agentConfigFrom = (provider: ConfigProvider.ConfigProvider): Effect
   }
   const { apiKey, model, effort } = read.success;
   if (model == "script") return { apiKey: Redacted.make(""), model, effort: "medium" } satisfies AgentConfig;
-  if (Option.isNone(apiKey) || !Redacted.value(apiKey.value)) return { missing: `ANTHROPIC_API_KEY is not set (locally, add it to .dev.vars)` };
+  if (Option.isNone(apiKey) || !Redacted.value(apiKey.value)) return { missing: `ANTHROPIC_API_KEY is not set (locally, export it before bun start, or put it in .dev.vars)` };
   return { apiKey: apiKey.value, model, effort } satisfies AgentConfig;
 });
 

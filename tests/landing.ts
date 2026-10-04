@@ -6,7 +6,7 @@
 //
 //   - A dev server with a landing project (ERGA_LANDING=landing) publishes it
 //     as DEV_LOGIN's /tester/landing, and / shows it, in a frame on the
-//     document's own pages origin, with an Edit button; /new?from=landing
+//     document's own pages origin, with Edit and Clone; /new?from=landing
 //     copies it. Restarted, it publishes into the same document.
 //   - `bun landing.ts <server>`, the deploy's step, with an admin's token
 //     (ERGA_DEPLOY_TOKEN) republishes a changed project into that document,
@@ -40,9 +40,13 @@ try {
   await until(() => /landing page: landing_document is now \/tester\/landing/.test(host.output()), 30_000, "the dev server publishes the landing project", () => host.output().slice(-3000));
   const get = (path: string, init: RequestInit = {}) => fetch(root + path, { redirect: "manual", ...init });
   const front = await (await get("/")).text();
-  const src = /<iframe class="erga-landing" src="([^"]+)"/.exec(front)?.[1]?.replaceAll("&amp;", "&");
-  expect(src && /^http:\/\/[a-z0-9]{8}-tester\.localhost:\d+\/t\/[^/]+\/doc\/index\.html$/.test(src), "/ frames the landing document on its own pages origin", front.slice(0, 1500));
-  expect(front.includes("<title>Erga</title>") && front.includes('href="/new?from=landing"'), "titled by it, with an Edit button that copies it");
+  const frameSrc = /<iframe id="frame" class="erga-view" src="([^"]+)"/.exec(front)?.[1]?.replaceAll("&amp;", "&");
+  expect(frameSrc && /^http:\/\/[a-z0-9]{8}-tester\.localhost:\d+\/t\/[^/]+\/\?view=index\.html$/.test(frameSrc), "/ frames the landing document on its own pages origin", front.slice(0, 1500));
+  // The frame's host page shows the document's page, its index, straight away.
+  const hostPage = await (await fetch(frameSrc.replace(/^http:\/\/[^/]+/, root), { headers: { Host: new URL(frameSrc).host } })).text();
+  expect(hostPage.includes('<iframe id="view" class="on" src="doc/index.html"'), "whose host page shows its index straight away", hostPage.slice(0, 800));
+  const src = frameSrc.replace(/\?view=index\.html$/, "doc/index.html");
+  expect(front.includes("<title>Erga</title>") && front.includes('href="/new?from=landing"') && front.includes('href="/tester/landing/edit"'), "titled by it, with Clone (a copy) and, for its editor, Edit");
   const id = /^http:\/\/([a-z0-9]{8})-/.exec(src)![1];
   const served = await (await fetch(src.replace(/^http:\/\/[^/]+/, root), { headers: { Host: new URL(src).host } })).text();
   expect(served == landingHtml, "the frame serves the published landing/index.html", served.slice(0, 300));
@@ -58,16 +62,16 @@ try {
 
   // In a real browser: the front page shows the document, its own page in the frame.
   await p.open(`${root}/`, { width: 1100, height: 760, scale: 2 });
-  await until(async () => (await p.inFrames<string>(`document.querySelector("h1")?.textContent ?? ""`)).some((t) => t == "Erga"), 15_000, "the landing page renders in its frame");
-  expect(await p.eval<boolean>(`!!document.querySelector("a.erga-edit-button[href='/new?from=landing']")`), "with the Edit button over it");
+  await until(async () => (await p.inPage<string>(`document.querySelector("h1")?.textContent ?? ""`)).some((t) => t == "Erga"), 15_000, "the landing page renders in its frame");
+  expect(await p.eval<boolean>(`!!document.querySelector("a.erga-clone-button[href='/new?from=landing']") && !!document.querySelector("a.erga-edit-button[href='/tester/landing/edit']")`), "with Edit and Clone over it");
   await p.screenshot(join(SHOTS, "landing-front.png"));
-  ok("in headless Chrome, / renders the landing document with an Edit button");
+  ok("in headless Chrome, / renders the landing document with Edit and Clone");
 
-  // Edit makes your own copy of it.
+  // Clone makes your own copy of it, in the editor.
   const made = await get("/new?from=landing");
   const at = made.headers.get("location") ?? "";
-  expect(made.status == 302 && at.startsWith("/tester/"), "/new?from=landing makes a document", made.status);
-  const copyId = ((await (await get(`${at}/api/name`)).json()) as { id: string }).id;
+  expect(made.status == 302 && at.startsWith("/tester/") && at.endsWith("/edit"), "/new?from=landing makes a document, and opens its editor", { status: made.status, at });
+  const copyId = ((await (await get(`${at.replace(/\/edit$/, "")}/api/name`)).json()) as { id: string }).id;
   expect(copyId != id && (await (await get(`/d/${copyId}/doc/index.html`)).text()) == landingHtml, "a copy of the landing document");
   ok("/new?from=landing copies the landing document");
 
@@ -125,7 +129,7 @@ try {
   const reset = await fetch(`${root}/admin/settings`, { method: "POST", headers: { Origin: root }, body: new URLSearchParams({ key: "landing_document", reset: "1" }) });
   expect(reset.ok, "an admin resets landing_document", await reset.text());
   const plain = await (await get("/")).text();
-  expect(plain.includes("<h1>Erga</h1>") && plain.includes("landing_document") && !plain.includes("erga-landing"), "unset, / is a plain start page, telling an admin how to set one", plain.slice(0, 1500));
+  expect(plain.includes("<h1>Erga</h1>") && plain.includes("landing_document") && !plain.includes("erga-view"), "unset, / is a plain start page, telling an admin how to set one", plain.slice(0, 1500));
   await p.open(`${root}/`, { width: 1100, height: 760, scale: 2 });
   await p.screenshot(join(SHOTS, "landing-unset.png"));
   ok("unset, / is a plain start page");

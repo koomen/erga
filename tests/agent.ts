@@ -3,11 +3,12 @@
 // the page, one to its stylesheet), and checks that they reach the open page
 // through the document room without a reload, and the disk after it, that
 // the agent shows up as a participant, and that its last change can be undone. Calls the real API, so it needs
-// ANTHROPIC_API_KEY (in .dev.vars or the environment) and costs a little.
+// ANTHROPIC_API_KEY (in the environment or .dev.vars) and costs a little.
 //   bun tests/agent.ts [--keep]
 
 import { Browser, MOD, ROOT } from "./cdp";
 import { startHost } from "./host";
+import { localAgentKey } from "../dev/agent-key";
 import { F, W } from "./tab";
 import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
@@ -28,10 +29,9 @@ async function until(f: () => Promise<boolean> | boolean, ms: number) {
 const dir = mkdtempSync(join(tmpdir(), "erga-agent-"));
 cpSync(`${ROOT}tests/fixtures/page`, dir, { recursive: true });
 const file = join(dir, "index.html");
-// The real key: the environment's, else the one in .dev.vars (the test server has settings of its own).
-const devVars = await Bun.file(`${ROOT}.dev.vars`).text().catch(() => "");
-const key = process.env.ANTHROPIC_API_KEY || /^ANTHROPIC_API_KEY=(.+)$/m.exec(devVars)?.[1] || "";
-const host = await startHost(dir, { env: { ANTHROPIC_API_KEY: key } });
+// The real key, as `bun start` would pick it (a real one in .dev.vars, else the environment's), handed to the
+// test server (settings of its own) through its environment, the way an exported key reaches it.
+const host = await startHost(dir, { processEnv: { ANTHROPIC_API_KEY: localAgentKey(ROOT) } });
 const browser = await Browser.launch();
 try {
   const info = await (await fetch(`${host.base}/api/agent`)).json() as { enabled: boolean; reason?: string; model?: string };
@@ -40,7 +40,7 @@ try {
   console.log(`     model: ${info.model}`);
 
   const p = await browser.page();
-  await p.open(`${host.base}/`, { clear: false, width: 1280, height: 800 });
+  await p.open(`${host.base}/edit`, { clear: false, width: 1280, height: 800 });
   await Bun.sleep(500);
   await p.frame(`${W}.__marker = 1`);
 

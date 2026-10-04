@@ -22,8 +22,13 @@ With [Bun](https://bun.sh) 1.4 or later (and Node, which runs Vite):
 `bun start` (`dev.ts`; `--help` lists its options) builds the editor and runs
 the same Worker as erga.dev, under Vite and the Cloudflare plugin, at
 `http://localhost:4400`. The first time, it makes `.dev.vars` for you (see
-`.dev.vars.example`): you're signed in as `DEV_LOGIN`, and an
-`ANTHROPIC_API_KEY` there turns the agent on.
+`.dev.vars.example`): you're signed in as `DEV_LOGIN`. An `ANTHROPIC_API_KEY`
+turns the agent on: exported in the shell that runs `bun start` (and so task
+previews and live mode, which inherit the task queue's environment), or in
+`.dev.vars`. A real key in `.dev.vars` wins; a placeholder there (empty, short,
+not `sk-…`) counts as none, so the exported one is used. It reaches the Worker
+as a binding (`dev/agent-key.ts`, `cloudflare.config.ts`), never written to
+`.dev.vars`.
 
 There's one server, and it's the hosted one (below), so what you see locally
 is what erga.dev does. With nothing named, the browser opens on your
@@ -33,12 +38,32 @@ more can be opened from `/docs` (see [Local development](#local-development)).
 ## Hosted: erga.dev
 
 The editor runs on Cloudflare. A front-door Worker (`worker/index.ts`)
-serves the app's routes (`front.ts`). It shows the front page (the landing
-document: see [The front page](#the-front-page)) read-only at `/` with an Edit button; Edit signs you in with
-GitHub (only the server's users: see [Users, admins and
-settings](#users-admins-and-settings)) and makes you a copy of it at
-`/<you>/<slug>`, which only you can open until you share it. `/new` makes a
-blank document instead (a copy of `templates/doc/`). Each document is a
+serves the app's routes (`front.ts`). Its pages:
+
+- **The viewer**, `/<owner>/<slug>`: a document as it renders, read-only,
+  with small icons at the top right like the editor's: Clone (a copy of your
+  own, in the editor: `/new?from=<id>`) for anyone who may see it, and the
+  pencil (Edit) for those who may edit it. In the editor the pencil is blue
+  (on): clicking it goes back to the viewer. Beside it, right to left: the
+  view (page, Markdown or HTML), share with people (for the owner: who may
+  view or edit it, as on Documents), share with an agent, track changes
+  and pause. The viewer and the editor are one page (see [One page, viewing or
+  editing](#one-page-viewing-or-editing)): the pencil switches
+  between them without a reload, and the document doesn't move.
+- **The front page**, `/`: the viewer on the landing document (see [The front
+  page](#the-front-page)), for anyone, signed in or not.
+- **Documents**, `/docs`: home for anyone signed in, and under it **the
+  editor**, `/<owner>/<slug>/edit`, whose breadcrumbs (Documents › its
+  title) lead back.
+- **Settings**, `/settings`: your agent tokens (`/tokens` redirects there).
+- **Admin settings**, `/admin`: the server's settings and users, for admins.
+
+The user menu in the upper right of every page reaches Documents,
+Settings and (for admins) Admin settings. Clone and Edit sign you in with
+GitHub first (only the server's users: see [Users, admins and
+settings](#users-admins-and-settings)); a copy is yours at `/<you>/<slug>`,
+which only you can open until you share it. `/new` makes a blank document
+instead (a copy of `templates/doc/`). Each document is a
 Durable Object (`worker/doc-host.ts`), named by the document's id, that
 keeps its files and Yjs state in its own storage and serves the
 per-document host (`host.ts`), agent included.
@@ -51,15 +76,16 @@ and the directory of documents with their permissions.
 address, kept in the directory (`directory.ts`): D1 (`worker/d1.ts`; locally
 the dev server's own D1), behind a three-method `Sql` interface, so the unit
 tests run the same code on bun:sqlite. A document's
-canonical address is `/<owner>/<slug>`; `/d/<id>` always works, and
-`/<owner>/<id>` (older links) and any slug it had before redirect to it. The
+canonical address is `/<owner>/<slug>` (the viewer; its editor is that, then
+`/edit`); `/d/<id>` always works, and `/<owner>/<id>` (older links) and any
+slug it had before redirect to it (and `/edit` under them to the editor). The
 title follows the page's first `<h1>` (else `<title>`, else "Untitled") until
 someone sets it, and the slug follows the title (lowercase letters, digits
 and dashes, `-2`, `-3`... when taken) until someone sets it. Rename from the
-title next to the Documents link in the editor's top bar, or by asking an
-agent (its `get_title` and `set_title` tools, for the embedded agent and
-external ones). Every open tab follows a rename: its title, and its address
-bar. The editor itself talks to its document at `/d/<id>`, which a
+title after Documents in the editor's breadcrumbs, or by asking an agent
+(its `get_title` and `set_title` tools, for the embedded agent and external
+ones). Every open tab follows a rename: its title, and its address bar. The
+editor itself talks to its document at `/d/<id>`, which a
 rename never changes. Old slugs keep redirecting until another of the
 owner's documents takes that slug.
 
@@ -98,8 +124,8 @@ minted their token.
 `/docs` lists the documents you own or that are shared with you by name,
 latest edit first, with a New document button, share, rename and delete
 buttons on each of yours (one you've shared says so), and whose each shared
-one is and your role on it; the editor's top bar links to it, and its
-footer to `/tokens` and, for admins, `/admin`. Each document keeps its row up to
+one is and your role on it; each opens in the editor, whose breadcrumbs
+lead back. Each document keeps its row up to
 date (when it's edited, and the title that follows its heading, at most
 every two seconds). A document nobody edits is deleted after the
 `delete_docs_after_hours` setting (24 by default) from when it's made, by an
@@ -113,7 +139,7 @@ listed nor deleted.
 
 Agents can do all of this too, with an agent token: see [Agent tokens and
 the server's API](#agent-tokens-and-the-servers-api) (`/llms.txt`,
-`/tokens`).
+`/settings`).
 
     bun run deploy                  # build, migrate erga.dev's D1 and deploy with the cf CLI
 
@@ -134,9 +160,9 @@ gone.
 **Who you are, on every page.** The upper right of every page erga.dev
 serves (`account.ts`) shows your avatar (your GitHub picture, or your
 initial on your colour if it doesn't load); clicking it opens a small menu:
-your name, Your documents, Admin (admins only) and Sign out. Signed out, it's
-a person in a circle that offers Sign in with GitHub and brings you back to
-the same page. The Worker adds it to each of the site's own HTML pages
+your name, Documents, Settings, Admin settings (admins only) and Sign
+out. Signed out, it's a person in a circle whose menu has only Sign in (with
+GitHub, bringing you back to the same page). The Worker adds it to each of the site's own HTML pages
 (`withAccount`, `worker/index.ts`); the editor shows it itself, as your
 avatar at the far right of its controls (the front door tells it which links,
 `meta name="erga-account"`), and a document's own files and pages origin
@@ -146,11 +172,12 @@ never get it.
 
 What `/` shows is a document like any other, in the database and its own
 Durable Object: the one the `landing_document` setting names (kept by id,
-so a rename doesn't lose it). Everyone sees it there, signed in or not,
-read-only, in a frame on the document's own pages origin (as the editor shows
-any page: see [Pages run on their own origin](#pages-run-on-their-own-origin)),
-with an Edit button that makes you a copy (`/new?from=landing`; the
-`create_document` tool's `template: "landing"`). Unset, or naming a document
+so a rename doesn't lose it). `/` is the viewer on it: everyone sees it
+there, signed in or not, read-only, in a frame on the document's own pages
+origin (as the editor shows any page: see [Pages run on their own
+origin](#pages-run-on-their-own-origin)), with Clone, which makes you a copy
+(`/new?from=landing`; the `create_document` tool's `template: "landing"`),
+and, for those who may edit it, Edit. Unset, or naming a document
 that's gone, `/` is a plain start page with the way in (and, for an admin, how
 to set one). Only a document's owner may make it the front page, since that
 shows it to everyone: from `/admin` (type its address), or by asking an agent
@@ -170,7 +197,7 @@ deploy locks `landing_document` (to a document's address or id), the project
 is published into that document and the setting is left alone.
 
 `bun landing.ts [server]` (default `https://erga.dev`, or `ERGA_URL`) needs
-`ERGA_DEPLOY_TOKEN`: an agent token of an admin's, made at `/tokens`. `bun run
+`ERGA_DEPLOY_TOKEN`: an agent token of an admin's, made at `/settings`. `bun run
 deploy` runs it after `cf deploy`. On Workers Builds the deploy command is
 `bunx cf deploy && bun landing.ts`, with `ERGA_DEPLOY_TOKEN` set as a build
 secret (Settings, Build, Variables and secrets); it waits up to two minutes
@@ -301,14 +328,15 @@ anything. A new tool both agents should have is one more entry in
 Secrets are set with `bunx cf workers secrets update`: `GITHUB_CLIENT_SECRET`
 (for the GitHub OAuth app whose client ID is in `cloudflare.config.ts`, with
 the callback `https://erga.dev/auth/github/callback`), `SESSION_SECRET` (any long random
-string) and `ANTHROPIC_API_KEY`. Locally they come from `.dev.vars`.
+string) and `ANTHROPIC_API_KEY`. Locally they come from `.dev.vars` (the
+agent's key from the environment too, above).
 `bun tests/worker.ts http://localhost:4400` checks the front door's own
 routes against a running dev server: `/new`, `/docs` and its titles,
 deleting, and expiry (locally, `/new?unedited=<ms>` shortens a document's
 time); `bun tests/worker.ts --local` starts one of its own.
 
 To run it against erga.dev itself, get a test token from
-https://erga.dev/tokens (it lasts a week) and:
+https://erga.dev/settings (it lasts a week) and:
 
     ERGA_TEST_TOKEN=erga_test_... bun run test:prod
 
@@ -411,8 +439,8 @@ resumed, so only the editor answers clicks. The page has to support it
 (DOCUMENT_PROMPT.md, rule 10); on one that doesn't, the button is disabled,
 and hovering it explains, with a **Fix with agent** button.
 
-On a phone the controls make room: the Documents link shrinks to its arrow,
-the shortcuts button goes, avatars overlap, the agent covers the page instead
+On a phone the controls make room: the breadcrumbs shrink to a back arrow,
+avatars overlap, the agent covers the page instead
 of pushing it aside, and the style bar sits below a selection (the system's
 copy menu is above it). The page, the agent and the cards stop above the
 on-screen keyboard, and keep clear of a notch.
@@ -468,7 +496,7 @@ same name are the same person.
   Agents publish a caret where they last edited, but it isn't drawn (one
   lingering on the page distracts); their avatar says what they're doing,
   and clicking it scrolls there.
-- **Who's here.** Avatars at the top right: you (ringed), then the others.
+- **Who's here.** Avatars at the top right: the others, then you, apart at the far right (your menu).
   A person's agent, once it has done something, is a small ✦ badge on the
   lower right of their avatar, spinning while it works (an agent still
   working after its person left keeps their avatar, faded). Click someone, or
@@ -536,8 +564,8 @@ name in the panel's header is a menu that switches it to Claude Opus 5.5 in
 fast mode and back. The choice is per person (all their tabs follow, and a
 reload keeps it) and applies from the next message, so a running turn
 finishes on the model it started with. `ERGA_AGENT_MODEL=opus-fast`
-starts everyone on Opus instead. Set it up by adding `ANTHROPIC_API_KEY` to
-`.dev.vars` (locally; a secret on erga.dev). pi's model catalogue
+starts everyone on Opus instead. Set it up with `ANTHROPIC_API_KEY`: locally
+exported before `bun start` or in `.dev.vars`; a secret on erga.dev. pi's model catalogue
 predates the 5.5 models, so `agent.ts` describes them itself (`MODELS`) and
 rewrites each request for adaptive thinking, effort and, on Opus fast,
 `speed: "fast"`.
@@ -586,7 +614,7 @@ the agent panel, with its badge spinning while it works. Each call shows in
 your agent panel as "External agent: …". It works with the embedded agent
 off too (no API key needed). The share button's token is the same each time
 you open it (in any tab or browser), until New token in the dialog turns it
-off and makes another; `/tokens` lists and revokes it with the rest.
+off and makes another; `/settings` lists and revokes it with the rest.
 
 ### Agent tokens and the server's API
 
@@ -605,7 +633,7 @@ they're revoked. A token is an HMAC of its id with `SESSION_SECRET`, and only
 its SHA-256 is stored, so the database alone holds no working token. There
 are three ways to get one:
 
-- `/tokens`: make one (shown once, with what to tell the agent and the
+- `/settings`: make one (shown once, with what to tell the agent and the
   `claude mcp add` line), see when each was last used, revoke any. (It also
   still shows a test token for the test suite.)
 - The share button: your one "Share button" token, shown again each time
@@ -671,6 +699,25 @@ time against the number it has seen, and one offered against an older number is
 refused and comes back rebased over what it missed (as `@codemirror/collab`
 does), so both always hold the same text; `tests/relay.test.ts` fuzzes it. The
 source view takes the frame's state, undo history included, and hands it back.
+
+### One page, viewing or editing
+
+A document's page (`viewDocument` in `front.ts`) is the same at
+`/<owner>/<slug>` and at `/edit` under it, and small (about 4KB compressed):
+the controls, floating over the top corners, and a frame filling the window
+with the frame's host page in it (`/t/<token>/?view=<index>`), which shows
+the document's page straight away, as it renders. All the rest of the weight
+is the document's own. Editing is loaded on top, only for those who may edit
+and only when they go into it (the pencil, or opening `/edit`): the page adds
+the editor's controls and styles (`page.html`, served as `/editor.html`) and
+its code (`page.js`, which joins the room), and asks the frame for its half
+(`frame.js`). That renders the editable page out of sight and puts it in the
+plain page's place, scrolled to the same spot; then the editor's controls
+fade in over the viewer's. The pencil again and the browser's Back go the other way:
+the plain page loads again behind and takes its place, the viewer's controls
+fade back, and the editor carries on unseen, so going back in is immediate.
+Viewing, the page fetches the editor's files while the browser is idle.
+`tests/account.ts` switches both ways and checks that the document stays put.
 
 The pages origin (`pagesDoor` in `front.ts`) serves the frame at `/t/<token>/`
 and the document's files under `/t/<token>/doc/`. The token, signed with
@@ -796,7 +843,8 @@ back, merging edits from disk, the agent's exact-match edits and attribution.
   response and failures; the editor imports its types
 - `room.ts`: the document room (shared Yjs doc, sync, write-back, disk merges)
 - `agent.ts`, `workspace.ts`, `.dev.vars.example`: the per-person agent session, its
-  tools over the shared doc, and its settings
+  tools over the shared doc, and its settings; `dev/agent-key.ts` picks its key
+  locally (`.dev.vars` or the environment)
 - `src/room/doc.ts`: the shared doc's shape and helpers, used by host and shell
 - `src/page/`: the page editor, on CodeMirror 6: `manuscript.ts` (HTML source
   analysis), `markdown.ts` (Markdown rendering with source ranges),

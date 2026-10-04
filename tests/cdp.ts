@@ -193,6 +193,15 @@ export class Page {
     return Promise.all([...this.frames].map((s) => this.eval<T>(expr, s).catch(() => null as T)));
   }
 
+  /**
+   * Evaluates in the document's page each frame on another site shows (a
+   * document's page, viewing or editing: the host page's visible frame, front.ts),
+   * answering what each gave.
+   */
+  inPage<T = any>(expr: string): Promise<T[]> {
+    return this.inFrames<T>(`(() => { const w = document.querySelector("iframe.on")?.contentWindow; return w ? w.eval(${JSON.stringify(expr)}) : null; })()`);
+  }
+
   private async findEditorFrame(): Promise<string | null> {
     for (const s of this.frames) {
       const ok = await this.eval<boolean>("!!window.ergaFrame", s).catch(() => false);

@@ -56,9 +56,10 @@ export function freePort(): number {
 /**
  * A dev server, its settings from `env`: DEV_LOGIN ("tester"), the agent's
  * (ANTHROPIC_API_KEY, none by default; ERGA_AGENT_MODEL) and the room's
- * write delay (ERGA_WRITE_DELAY_MS).
+ * write delay (ERGA_WRITE_DELAY_MS). `processEnv` goes to the server's
+ * environment as is, past .dev.vars (e.g. an ANTHROPIC_API_KEY of its own).
  */
-export async function startHost(target: string | null, opts: { port?: number; env?: Record<string, string> } = {}): Promise<Host> {
+export async function startHost(target: string | null, opts: { port?: number; env?: Record<string, string>; processEnv?: Record<string, string> } = {}): Promise<Host> {
   // A port the OS says is free: a random guess collides now and then with this many servers starting at once.
   await build();
   const port = opts.port ?? freePort();
@@ -71,7 +72,10 @@ export async function startHost(target: string | null, opts: { port?: number; en
     ...process.env as Record<string, string>,
     // No landing project unless a test asks for one (ERGA_LANDING: a folder), so a test's documents are only its own.
     ERGA_LANDING: "",
+    // The agent's key only from .dev.vars above, not whatever this shell has (dev/agent-key.ts would take it), unless `processEnv` gives one.
+    ANTHROPIC_API_KEY: "",
     ...Object.fromEntries(Object.entries(opts.env ?? {}).filter(([k]) => !DEV_VARS.has(k))),
+    ...opts.processEnv,
     ERGA_STATE_DIR: state, ERGA_ENV_DIR: envDir, ERGA_VITE_CACHE: join(scratch, "vite"), ERGA_INSPECTOR: "0", ERGA_BUILT: "1",
   };
   const root = `http://127.0.0.1:${port}`;
@@ -84,7 +88,8 @@ export async function startHost(target: string | null, opts: { port?: number; en
       const r = await fetch(`${root}/__erga/open`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path }), redirect: "manual" });
       const at = r.headers.get("location");
       if (r.status != 303 || !at) throw new Error(`opening ${path}: ${r.status} ${await r.text()}`);
-      return root + at;
+      // The editor's address (…/edit); the tests address the document itself, where its API is too.
+      return root + at.replace(/\/edit(?=\?|$)/, "");
     },
     async forget(address) {
       const info = await (await fetch(`${address}/api/doc`)).json() as { docName?: { id: string } };

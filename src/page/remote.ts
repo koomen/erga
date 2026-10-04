@@ -64,8 +64,18 @@ export class RemotePage {
     this.state = EditorState.create({ doc: config.text });
     window.addEventListener("message", (e) => {
       if (e.source != this.frame.contentWindow || e.origin != config.origin || typeof e.data?.type != "string") return;
+      // The frame's host page is up (again: it reloaded): ask it for the editor afresh.
+      if (e.data.type == "erga-host") { this.ready = false; this.start(); return; }
       this.receive(e.data as FromFrame);
     });
+  }
+
+  /**
+   * Asks the frame for the editor (front.ts: its host page shows the page as
+   * it renders until then): it answers "ready" once the editor is loaded.
+   */
+  start(): void {
+    this.frame.contentWindow?.postMessage({ type: "erga-edit" }, this.config.origin);
   }
 
   // ------------------------------------------------------------ messages
@@ -87,7 +97,8 @@ export class RemotePage {
     const c = this.config;
     switch (m.type) {
       case "ready": {
-        // A frame that (re)loads starts from the shell's state.
+        // A frame that (re)loads starts from the shell's state (once: it may say so twice, see frame.ts).
+        if (this.ready) return;
         this.ready = true;
         this.authority.reset();
         const timescale = (globalThis as { __ergaTimescale?: number }).__ergaTimescale;

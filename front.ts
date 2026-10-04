@@ -4,13 +4,16 @@
 // who's signed in, the templates, the directory of documents (directory.ts,
 // in D1) and the documents themselves (Durable Objects).
 //
-//   /                          the front page: the landing document (a setting), read-only, with an Edit button
-//   /new                       a blank document for you (signs you in first); /new?from=landing a copy of the front page's
+//   /                          the front page: the viewer on the landing document (a setting), for anyone
+//   /new                       a blank document for you, in the editor (signs you in first); /new?from=landing a copy
+//                              of the front page's, /new?from=<id> of another you may open (the viewer's Clone)
 //   /docs                      your documents, latest edit first; POST /docs/delete deletes one,
 //                              /docs/share shares one (or stops sharing it), GET /docs/share?id= says with whom
 //   /admin                     the server's settings and users, for admins (admin.ts); POST /admin/settings, /admin/users
-//   /<owner>/<slug>            the editor on that document (for those it's shared with): its canonical address
-//   /<owner>/<id>, /<owner>/<old slug>, /d/<id>
+//   /<owner>/<slug>            the viewer on that document (for those it's shared with): its canonical address;
+//                              Clone, and Edit for those who may edit it
+//   /<owner>/<slug>/edit       the editor on it, under Documents (its breadcrumbs)
+//   /<owner>/<id>, /<owner>/<old slug>, /d/<id> (and /edit under them)
 //                              redirect there
 //   /d/<id>/<rest>             the document's own host (host.ts): /api/..., /doc/..., the sockets; the
 //                              editor uses this address, which never changes. Under any of the
@@ -162,23 +165,17 @@ export async function frontDoor(request: Request, base: Platform): Promise<Respo
   if (!first || (first != "d" && !OWNER.test(first))) return page("Not found", "There's nothing here. <a href=\"/\">Back to the start</a>.", 404);
   const session = await platform.sessionOf(request);
 
-  // The editor itself: sign in first, then the page that joins the document, at its canonical address.
-  if (!rest || rest == "/") {
+  // The viewer (/<owner>/<slug>) and the editor (/<owner>/<slug>/edit): sign in first, then the page, at its canonical address.
+  const editing = rest == "/edit" || rest == "/edit/";
+  if (!rest || rest == "/" || editing) {
     if (!session) return signInFirst(path + url.search);
     const doc = await documentAt(platform, first, second);
     if (!doc) return nothing();
     if (!(await platform.directory.may(whoOf(session), "open", doc))) return refused(session);
-    const canonical = `/${doc.owner}/${doc.slug}`;
+    const canonical = `/${doc.owner}/${doc.slug}${editing ? "/edit" : ""}`;
     if (path != canonical && path != `${canonical}/`) return new Response(null, { status: 302, headers: { Location: canonical + url.search } });
     if (!(await platform.docs.exists(doc))) return nothing();
-    // The page editor runs on the document's own origin, at an address that carries the token for its files.
-    // The editor reaches its document's host at /d/<id>, which a rename never changes.
-    const pagesUrl = `${pagesOrigin(doc.owner, doc.id, url, platform)}/t/${await pagesToken(platform.secret, doc.owner, doc.id, url.origin)}/`;
-    const editor = (await (await platform.editor(request)).text())
-      .replace(/<title>[^<]*<\/title>/, `<title>${esc(doc.title)}</title>`)
-      .replace("</head>", `<meta name="erga-pages" content="${esc(pagesUrl)}"><meta name="erga-base" content="/d/${doc.id}">${await accountMeta(platform, session)}</head>`);
-    // The editor shows who you are itself, among its own controls (account.ts).
-    return new Response(editor, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", [OWN_ACCOUNT]: "1" } });
+    return viewDocument(platform, request, doc, session, false, editing);
   }
   const route = await documentRoute(platform, first, second);
   if (!route) return new Response("No such document", { status: 404 });
@@ -203,7 +200,7 @@ export async function frontDoor(request: Request, base: Platform): Promise<Respo
 /** What the editor's menu on your avatar needs to know that the document doesn't (account.ts): the links it offers. */
 async function accountMeta(platform: Platform, session: Session): Promise<string> {
   const admin = !session.test && !session.agent && (await platform.directory.users.isAdmin(whoOf(session)));
-  const links = { docs: link("/docs", session), tokens: link("/tokens", session), ...(admin ? { admin: link("/admin", session) } : {}), signOut: "/auth/logout" };
+  const links = { docs: link("/docs", session), settings: link("/settings", session), ...(admin ? { admin: link("/admin", session) } : {}), signOut: "/auth/logout" };
   return `<meta name="erga-account" content="${esc(JSON.stringify(links))}">`;
 }
 
@@ -329,9 +326,12 @@ async function pagesDoor(request: Request, url: URL, doc: { owner: string; id: s
   const shell = await readPagesToken(platform.secret, token, doc.owner, doc.id);
   if (!shell) return new Response("This link has expired: reload the editor.", { status: 403, headers: { "Content-Type": "text/plain; charset=utf-8" } });
   if (rest == "/") {
+    // ?view=<file>: the page to show straight away, as it renders (the viewer's, and the editor's until it has its own).
+    const view = url.searchParams.get("view");
+    const src = view && !/^\/|(^|\/)\.\.(\/|$)/.test(view) ? `doc/${view.split("/").map(encodeURIComponent).join("/")}` : "";
     return new Response(`<!doctype html><html><head><meta charset="utf-8"><meta name="erga-shell" content="${esc(shell)}"><title>Erga page</title>
-<style>html,body{margin:0;height:100%;overflow:hidden;background:transparent}#page{position:fixed;inset:0;width:100%;height:100%;border:0;background:transparent}</style>
-</head><body><script src="/frame.js"></script></body></html>`, {
+<style>html,body{margin:0;height:100%;overflow:hidden;overscroll-behavior:none;background:transparent}iframe{position:fixed;inset:0;width:100%;height:100%;border:0;background:transparent;visibility:hidden}iframe.on{visibility:visible}</style>
+</head><body>${src ? `<iframe id="view" class="on" src="${esc(src)}" title="Document" sandbox="${PAGE_SANDBOX}"></iframe>` : ""}<script>${HOST_SCRIPT}</script></body></html>`, {
       headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "Content-Security-Policy": `frame-ancestors ${shell}`, "Referrer-Policy": "no-referrer" },
     });
   }
@@ -341,36 +341,192 @@ async function pagesDoor(request: Request, url: URL, doc: { owner: string; id: s
   return platform.docs.fetch(route, forwarded(request, url, rest, `${shell}/d/${doc.id}`, null, null));
 }
 
+/** What a document's page may do in its frame, in the viewer and the editor alike (frame.ts makes the editor's the same). */
+const PAGE_SANDBOX = "allow-scripts allow-same-origin allow-forms allow-modals allow-popups";
+
+/**
+ * The frame's host page, on the document's own origin: it shows the page as
+ * it renders (#view) until the document's page asks for the editor
+ * ("erga-edit"). Then it loads the editor's half (frame.js), which renders
+ * the editable page in a frame of its own (#page) and calls ergaHost.ready;
+ * the editable page takes the plain one's place, scrolled to the same spot.
+ * Back to viewing ("erga-view"), the plain page loads afresh behind it and
+ * takes its place again the same way, the editor carrying on unseen.
+ */
+const HOST_SCRIPT = `(function () {
+  var SHELL = document.querySelector('meta[name="erga-shell"]').content, want = "view", loading = false;
+  var view = document.getElementById("view"), src = view ? view.getAttribute("src") : "";
+  var page = function () { return document.getElementById("page"); };
+  // The page stops dead at its top and bottom, without the bounce that would show what's behind it (and pass on to the controls).
+  function still(f) {
+    try { var d = f.contentDocument, s = d.createElement("style"); s.textContent = "html { overscroll-behavior: none; }"; (d.head || d.documentElement).append(s); } catch (e) {}
+  }
+  if (view) view.addEventListener("load", function () { still(view); });
+  function show(to) {
+    var from = document.querySelector("iframe.on");
+    if (from == to) return;
+    try { if (from) to.contentWindow.scrollTo(from.contentWindow.scrollX, from.contentWindow.scrollY); } catch (e) {}
+    to.classList.add("on");
+    if (!from) return;
+    from.classList.remove("on");
+    if (from.id == "view") from.remove();
+  }
+  window.ergaHost = { ready: function () { if (want == "edit") show(page()); } };
+  addEventListener("message", function (e) {
+    if (e.source != parent || e.origin != SHELL || !e.data) return;
+    var type = e.data.type;
+    if (type == "erga-edit") {
+      want = "edit";
+      if (!loading) { loading = true; var s = document.createElement("script"); s.src = "/frame.js"; document.body.append(s); }
+      else if (page() && page().dataset.ready) show(page());
+    } else if (type == "erga-view" && src) {
+      want = "view";
+      if (!page()) return;
+      var old = document.getElementById("view");
+      if (old) old.remove();
+      var v = document.createElement("iframe");
+      v.id = "view"; v.title = "Document"; v.setAttribute("sandbox", "${PAGE_SANDBOX}");
+      v.onload = function () { still(v); if (want == "view") show(v); };
+      v.src = src;
+      document.body.prepend(v);
+    } else if (type == "erga-prefetch") {
+      var l = document.createElement("link"); l.rel = "prefetch"; l.href = "/frame.js"; document.head.append(l);
+    }
+  });
+  parent.postMessage({ type: "erga-host" }, SHELL);
+})();`;
+
 /** A link on this site, keeping the name a local tab gave (?user=) if it gave one. */
 export const link = (path: string, session: Session | null) =>
   session?.as ? `${path}${path.includes("?") ? "&" : "?"}user=${encodeURIComponent(session.as)}` : path;
 
-/**
- * The front page: the landing document (the landing_document setting) as
- * anyone sees it, signed in or not, with an Edit button that makes you a copy
- * of it (and, signed in, a way to your documents). It runs on its own pages
- * origin, in a frame filling the window, like any document's page: whoever
- * edits it can't act as the people who view it. With none set (or it's
- * gone), a plain start page.
- */
+/** The front page: the viewer on the landing document (the landing_document setting), for anyone, signed in or not. With none set (or it's gone), a plain start page. */
 async function viewLanding(platform: Platform, request: Request, session: Session | null): Promise<Response> {
-  const url = new URL(request.url);
   const doc = await platform.directory.landing();
-  const index = doc && await platform.docs.index(doc);
-  const docs = session && !session.test ? `<nav class="erga-docs-nav" aria-label="Documents"><a href="${esc(link("/docs", session))}" class="erga-edit-button erga-docs-button">‹ Documents</a></nav>` : "";
-  if (!doc || !index) return startPage(platform, session);
-  const pages = `${pagesOrigin(doc.owner, doc.id, url, platform)}/t/${await pagesToken(platform.secret, doc.owner, doc.id, url.origin)}/doc/${index.split("/").map(encodeURIComponent).join("/")}`;
-  const edit = `<a href="${esc(link("/new?from=landing", session))}" class="erga-edit-button">Edit</a>`;
+  if (!doc || !(await platform.docs.index(doc))) return startPage(platform, session);
+  return viewDocument(platform, request, doc, session, true);
+}
+
+/**
+ * A document's page, the viewer (/<owner>/<slug>) and the editor (…/edit)
+ * alike: the document as it renders, on its own pages origin (whoever edits
+ * it can't act as the people who view it), in a frame filling the window,
+ * with the controls floating over its top corners. The page is the same in
+ * both, and small: the document shows at once, and editing is loaded on top
+ * of it (EDIT_BOOT) only when someone goes into it, by the pencil or at /edit,
+ * without reloading or moving the document. Over the viewer, Clone (a copy of
+ * your own) for anyone who may see it, and Edit for those who may edit it.
+ * The front page is this, on the landing document.
+ */
+async function viewDocument(platform: Platform, request: Request, doc: DocRow, session: Session | null, landing: boolean, editing = false): Promise<Response> {
+  const url = new URL(request.url);
+  const index = await platform.docs.index(doc);
+  if (!index && !editing) return page("Not found", "There's no document here. <a href=\"/\">Back to the start</a>.", 404);
+  // The frame's host page (pagesDoor), with the token that opens the document's files, showing its page straight away.
+  const host = `${pagesOrigin(doc.owner, doc.id, url, platform)}/t/${await pagesToken(platform.secret, doc.owner, doc.id, url.origin)}/`;
+  const canEdit = !!session && !session.agent && (await platform.directory.may(whoOf(session), "edit", doc));
+  const address = `/${doc.owner}/${doc.slug}`;
+  const clone = `<a href="${esc(link(`/new?from=${landing ? "landing" : doc.id}`, session))}" class="erga-view-button erga-clone-button" aria-label="Clone: make your own copy" data-tip="Clone"><svg viewBox="0 0 24 24" aria-hidden="true"><g transform="translate(0 1.25)"><rect x="8.75" y="8.75" width="10.5" height="10.5" rx="2"/><path d="M15.25 8.75V6.5a1.75 1.75 0 0 0-1.75-1.75H6.5A1.75 1.75 0 0 0 4.75 6.5v7c0 .97.78 1.75 1.75 1.75h2.25"/></g></svg></a>`;
+  const edit = canEdit ? `<a href="${esc(link(`${address}/edit`, session))}" class="erga-view-button erga-edit-button" aria-label="Edit" aria-pressed="${editing}" data-tip="Edit"><svg viewBox="0 0 24 24" aria-hidden="true"><g transform="translate(0 1.25)"><path d="M4.75 19.25l1-4L15.6 5.4a1.4 1.4 0 0 1 2 0l1 1a1.4 1.4 0 0 1 0 2L8.75 18.25zM13.75 7.25l3 3"/></g></svg></a>` : "";
+  // What the editor needs to know, for whoever may go into it: where its document's host and frame are, and the links on its avatar.
+  const editable = editing || canEdit;
+  // Its owner shares it with people from the editor too (/docs/share).
+  const canShare = editable && !!session && !session.agent && !session.test && (await platform.directory.may(whoOf(session), "share", doc));
+  const meta = editable && session
+    ? `<meta name="erga-pages" content="${esc(host)}"><meta name="erga-base" content="/d/${doc.id}"><meta name="erga-address" content="${esc(address)}">${canShare ? `<meta name="erga-share" content="${esc(link("/docs/share", session))}">` : ""}${await accountMeta(platform, session)}`
+    : "";
+  const src = index ? `${host}?view=${encodeURIComponent(index)}` : host;
+  // Editing, the window takes the page's background (remembered from last time, main.ts) before the page has loaded, as the editor's own canvas does.
+  const backdrop = editing
+    ? `<script>try { const b = JSON.parse(localStorage.getItem("erga:backdrop:v1") || "null"); if (b?.bg) document.documentElement.style.setProperty("--page-bg", b.bg); } catch {}</script><style>html { background: var(--page-bg, #fff); }</style>`
+    : "";
   return new Response(`<!doctype html>
 <html lang="en">
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <title>${esc(doc.title)}</title>
-<style>html, body { margin: 0; height: 100%; } .erga-landing { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; display: block; }</style>
-<iframe class="erga-landing" src="${esc(pages)}" title="${esc(doc.title)}"></iframe>
-${docs}${edit}${EDIT_BUTTON_STYLE}
+${meta}${backdrop}<style>html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: none; } #frame { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; display: block; background: transparent; }</style>
+<body${editing ? ` class="erga-editing"` : ""}>
+<iframe id="frame" class="erga-view" src="${esc(src)}" title="${esc(doc.title)}" sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups"></iframe>
+<div class="erga-view-buttons">${clone}${edit}</div>${VIEW_STYLE}${editable ? `<script>${EDIT_BOOT}</script>` : ""}
+</body>
 </html>`, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" } });
 }
+
+/**
+ * Going into the editor and back, on a document's page (viewDocument), for
+ * those who may: the pencil, the editor's eye, the browser's back and
+ * forward, or a page opened at /edit. The address changes, the page doesn't.
+ * The first time, the editor's controls and styles (page.html, served as
+ * /editor.html) are added to the page, then its code (page.js), which joins
+ * the room; the frame loads its half (frame.js) and swaps the plain page for
+ * the editable one, at the same place (pagesDoor). The editor's controls fade
+ * in over the viewer's once it's ready (main.ts calls ergaShell.ready), and
+ * out again on the way back; the editor keeps running meanwhile, so going back
+ * in is immediate. Viewing, it fetches the editor's files while the browser is
+ * idle, so that first time is quick too.
+ */
+const EDIT_BOOT = `(() => {
+  const frame = document.getElementById("frame"), body = document.body;
+  const pages = new URL(document.querySelector('meta[name="erga-pages"]').content, location.href).origin;
+  let hostUp = false, wanted = null, editor = null, ready = false;
+  const toFrame = (type) => frame.contentWindow.postMessage({ type }, pages);
+  // The frame's host page is up (or up again): what it was asked before then goes now.
+  addEventListener("message", (e) => {
+    if (e.source != frame.contentWindow || e.origin != pages || e.data?.type != "erga-host") return;
+    hostUp = true;
+    if (wanted) toFrame(wanted);
+  });
+  const ask = (type) => { wanted = type; if (hostUp) toFrame(type); };
+  const sync = () => {
+    const wrap = document.getElementById("erga-editor");
+    body.classList.toggle("erga-editor-ready", ready);
+    if (wrap) wrap.inert = !(ready && body.classList.contains("erga-editing"));
+  };
+  const load = () => editor ??= (async () => {
+    const d = new DOMParser().parseFromString(await (await fetch("/editor.html")).text(), "text/html");
+    document.documentElement.dataset.theme = "light";
+    await Promise.all([...d.head.querySelectorAll('link[rel="stylesheet"], style')].map((el) => {
+      el = document.importNode(el, true);
+      const loaded = el.tagName == "LINK" && new Promise((done) => { el.onload = el.onerror = done; });
+      document.head.append(el);
+      return loaded;
+    }));
+    const wrap = document.createElement("div");
+    wrap.id = "erga-editor";
+    for (const el of d.body.children) if (el.id != "frame" && el.tagName != "SCRIPT") wrap.append(document.importNode(el, true));
+    body.append(wrap);
+    sync();
+    body.append(Object.assign(document.createElement("script"), { src: "/page.js" }));
+  })();
+  const editing = () => body.classList.contains("erga-editing");
+  function go(edit, push) {
+    if (push) {
+      const address = document.querySelector('meta[name="erga-address"]').content;
+      history.pushState(null, "", (edit ? address + "/edit" : address) + location.search);
+    }
+    if (edit == editing() && push !== null) return;
+    body.classList.toggle("erga-editing", edit);
+    document.querySelector(".erga-edit-button")?.setAttribute("aria-pressed", String(edit));
+    ask(edit ? "erga-edit" : "erga-view");
+    window.ergaPage?.setEditing(edit);
+    sync();
+    if (edit) load();
+  }
+  window.ergaShell = { ready() { ready = true; sync(); } };
+  document.addEventListener("click", (e) => {
+    const a = e.target.closest?.(".erga-edit-button, #btn-edit");
+    if (!a || e.button || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    e.preventDefault();
+    go(a.id != "btn-edit", true);
+  });
+  addEventListener("popstate", () => go(/\\/edit\\/?$/.test(location.pathname), false));
+  if (editing()) go(true, null);
+  else (window.requestIdleCallback ?? setTimeout)(() => {
+    for (const href of ["/editor.html", "/page.js", "/style.css", "/fonts/inter.css"]) document.head.append(Object.assign(document.createElement("link"), { rel: "prefetch", href }));
+    if (hostUp) toFrame("erga-prefetch");
+  });
+})();`;
 
 /** The front page when no landing document is set: what Erga is, and the way in. */
 async function startPage(platform: Platform, session: Session | null): Promise<Response> {
@@ -395,32 +551,45 @@ async function startPage(platform: Platform, session: Session | null): Promise<R
 </main>`), { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
 }
 
-const EDIT_BUTTON_STYLE = `
+const VIEW_STYLE = `
 <style>
-  /* Right of it is who you are (account.ts): your avatar, or a way to sign in. */
-  .erga-edit-button { position: fixed; top: 14px; right: 58px; z-index: 1000; padding: 7px 16px; border-radius: 999px;
-    font: 600 14px/1.2 system-ui, -apple-system, sans-serif; text-decoration: none; color: #fff; background: #1b2330;
-    box-shadow: 0 2px 10px rgba(20, 28, 40, .2); }
-  .erga-edit-button:hover { background: #2f3b4d; }
-  .erga-docs-button { right: auto; left: 16px; color: #1b2330; background: #fff; }
-  .erga-docs-button:hover { background: #eef1f5; }
-  /* On a phone they'd sit over the text the whole way down: they stay at the top instead, and are bigger to tap. */
-  @media (max-width: 640px), (max-height: 480px) { .erga-edit-button { position: absolute; padding: 10px 18px; } }
-  @media (prefers-color-scheme: dark) {
-    .erga-edit-button { color: #12161d; background: #e4e8ee; } .erga-edit-button:hover { background: #fff; }
-    .erga-docs-button { color: #e4e8ee; background: #1a2029; } .erga-docs-button:hover { background: #232a35; }
+  /* The editor's look (style.css, .icon-btn): small icons. Right of them is who you are (account.ts). No breadcrumbs: viewing, there's only the document. */
+  .erga-view-buttons { --chrome: #a1a1a9; --chrome-hover: #3f3f46; --fg: #1c1c1f; --soft: #6b6b73;
+    position: fixed; top: max(12px, env(safe-area-inset-top)); z-index: 1000; display: flex; align-items: center;
+    font: 500 13px/1 "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .erga-view-buttons { right: max(56px, calc(env(safe-area-inset-right) + 40px)); gap: 2px; }
+  .erga-view-button { position: relative; display: grid; place-items: center; width: 34px; height: 34px; border-radius: 8px; color: var(--chrome);
+    transition: color 150ms ease, background-color 150ms ease; }
+  .erga-view-button:hover { color: var(--chrome-hover); background: color-mix(in srgb, var(--chrome) 12%, transparent); }
+  /* Editing (or on the way into it), the pencil is blue, as the editor's own is. */
+  .erga-view-button[aria-pressed="true"], .erga-view-button[aria-pressed="true"]:hover { color: #3b7cf0; background: transparent; }
+  .erga-view-button svg { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+  .erga-view-button::after { content: attr(data-tip); position: absolute; left: var(--tip-x, 100%); top: var(--tip-y, calc(100% + 6px)); transform: translateX(-100%); white-space: pre; font-size: 12px;
+    font-weight: 400; line-height: 1.3; letter-spacing: .01em; color: var(--soft); opacity: 0; pointer-events: none; }
+  @media (hover: hover) { .erga-view-button:hover::after { opacity: 1; } }
+  /* Into the editor and out (EDIT_BOOT): the controls you're going to are there at once, whole, and the ones you're leaving fade
+     out; so those in both (the pencil, your avatar) never go see-through. The editor's breadcrumbs simply go: viewing has none. */
+  #erga-editor { opacity: 0; transition: opacity 200ms ease; }
+  body.erga-editing.erga-editor-ready #erga-editor { opacity: 1; transition: none; }
+  body:not(.erga-editing) #nav-docs { visibility: hidden; }
+  .erga-view-buttons, .erga-account { transition: none; }
+  body.erga-editing.erga-editor-ready :is(.erga-view-buttons, .erga-account) { opacity: 0; visibility: hidden; transition: opacity 200ms ease, visibility 0s 200ms; }
+  /* On a phone they'd sit over the text the whole way down: they stay at the top instead. */
+  @media (max-width: 640px), (max-height: 480px) {
+    .erga-view-buttons { position: absolute; }
   }
 </style>`;
 
 /**
  * What a new document starts from: a copy of the front page's document
- * (`landing`), or a blank page (templates/doc). Null if there's no landing
- * document to copy.
+ * (`landing`), of another document by id (one `who` may open), or a blank
+ * page (templates/doc). Null if there's nothing there to copy.
  */
-export async function startingFiles(platform: Platform, from: string | null): Promise<{ files: Record<string, string | Uint8Array>; index: string } | null> {
-  if (from != "landing") return { files: { ...platform.templates.doc }, index: "index.html" };
-  const doc = await platform.directory.landing();
-  return doc && platform.docs.snapshot(doc);
+export async function startingFiles(platform: Platform, from: string | null, who?: Who): Promise<{ files: Record<string, string | Uint8Array>; index: string } | null> {
+  if (!from) return { files: { ...platform.templates.doc }, index: "index.html" };
+  const doc = from == "landing" ? await platform.directory.landing() : ID.test(from) && who ? await platform.directory.get(from) : null;
+  if (!doc || (from != "landing" && !(await platform.directory.may(who!, "open", doc)))) return null;
+  return platform.docs.snapshot(doc);
 }
 
 /** A new document for the signed-in person, at /<login>/<id>: blank (templates/doc), or a copy of the front page's (?from=landing). */
@@ -431,11 +600,12 @@ async function newDoc(platform: Platform, request: Request): Promise<Response> {
   if (!session) return signInFirst(`/new${params.size ? `?${params}` : ""}`);
   // Another site may not make documents for you (nor an unconfirmed sign-in on the way back from GitHub).
   if (request.method == "POST" ? request.headers.get("origin") != url.origin : fromElsewhere(request)) {
-    return confirmAction("New document", params.get("from") == "landing" ? "Make your copy of this page" : "Make a new document", `/new${url.search}`);
+    return confirmAction("New document", params.get("from") ? "Make your copy of this page" : "Make a new document", `/new${url.search}`);
   }
   const wanted = params.get("id");
-  const start = await startingFiles(platform, params.get("from"));
-  if (!start) return page("Nothing to copy", "This server has no front page to copy. <a href=\"/new\">Make a blank document</a>.", 404);
+  const from = params.get("from");
+  const start = await startingFiles(platform, from, whoOf(session));
+  if (!start) return page("Nothing to copy", from == "landing" ? "This server has no front page to copy. <a href=\"/new\">Make a blank document</a>." : "There's no document here you can copy. <a href=\"/new\">Make a blank document</a>.", 404);
   const template = start.files, index = start.index;
   // A test person makes (or reuses) a test document under the address of whoever minted their token.
   // Its address is its id, which never follows the title (the suite addresses it by id).
@@ -445,7 +615,7 @@ async function newDoc(platform: Platform, request: Request): Promise<Response> {
     const known = await platform.directory.route(wanted);
     if (known && (known.owner != owner || !known.test)) return page("Taken", "That test document's id is someone else's: pick another.", 409);
     if (!known) await makeDoc(platform, owner, wanted, template, { test: true, index });
-    return new Response(null, { status: 302, headers: { Location: `/${owner}/${wanted}` } });
+    return new Response(null, { status: 302, headers: { Location: `/${owner}/${wanted}/edit` } });
   }
   // Local development may name the document (the test suite wants "test" in its address),
   // and say how soon it goes if nobody edits it (?unedited=<ms>, for tests/worker.ts).
@@ -454,7 +624,7 @@ async function newDoc(platform: Platform, request: Request): Promise<Response> {
   for (let tries = 0; tries < 5; tries++) {
     const id = wanted && dev && ID.test(wanted) ? wanted : newId();
     const made = await makeDoc(platform, session.login.toLowerCase(), id, template, { unedited, index });
-    if (made) return new Response(null, { status: 302, headers: { Location: link(`/${made.owner}/${made.slug}`, session) } });
+    if (made) return new Response(null, { status: 302, headers: { Location: link(`/${made.owner}/${made.slug}/edit`, session) } });
   }
   return page("Couldn't make a document", "Something went wrong picking an address. <a href=\"/new\">Try again</a>.", 500);
 }
@@ -712,7 +882,7 @@ function docsPage(session: Session, docs: Listed[], now: number, hours: number |
     const [remove, label] = d.path != null ? ["Remove from the list", `Remove ${esc(d.title)} from the list`] : ["Delete", `Delete ${esc(d.title)}`];
     // The whole row opens the document (the link stretches over it); its buttons sit on top.
     return `  <li>
-    <div class="name"><a class="doc" href="${esc(link(`/${d.owner}/${d.slug}`, session))}"><span class="title">${esc(d.title)}</span></a>${note}${mine ? sharedNote(d) : ""}</div>
+    <div class="name"><a class="doc" href="${esc(link(`/${d.owner}/${d.slug}/edit`, session))}"><span class="title">${esc(d.title)}</span></a>${note}${mine ? sharedNote(d) : ""}</div>
     <time datetime="${when}">${ago(d.modified, now)}</time>
     <div class="acts">${mine ? `<button type="button" class="act share" aria-label="Share ${esc(d.title)}" title="Share" data-id="${esc(d.id)}" data-title="${esc(d.title)}" data-address="/${esc(d.owner)}/${esc(d.slug)}">${ICON.share}</button>
     <form method="post" action="${esc(link("/docs/delete", session))}" data-title="${esc(d.title)}"${d.path != null ? " data-disk" : ""}><input type="hidden" name="id" value="${esc(d.id)}"><button class="act delete" aria-label="${label}" title="${remove}">${ICON.delete}</button></form>` : ""}</div>

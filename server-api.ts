@@ -12,7 +12,7 @@
 //   POST /api/auth/request         an agent asks for a token: a link for its person to approve
 //   POST /api/auth/poll            ... and collects the token once they have
 //   POST /mcp                      the same tools as a stateless MCP server (Streamable HTTP, JSON answers)
-//   /tokens                        a person's tokens: make, revoke, approve an agent's request
+//   /settings, /tokens/...         a person's settings: their tokens (make, revoke, approve an agent's request); /tokens redirects there
 //
 // The Worker (worker/index.ts) sends those paths here, with the platform
 // that knows agent tokens (front.ts, withTokens). The share button's token
@@ -534,7 +534,7 @@ export async function tokensDoor(request: Request, platform: Platform): Promise<
         notice: `<section class="approve"><h2>An agent asks to act as you</h2>
 <p><b>${esc(waiting.label)}</b> wants a token that lets it do everything you can do on Erga: list, make, edit, rename, share and delete your documents (and, if you're an admin, change the server's settings and users). Approve only if you started this, and the code matches what it showed you:</p>
 <p class="code">${esc(code)}</p>
-<form method="post" action="/tokens/approve"><input type="hidden" name="code" value="${esc(code)}"><button class="primary">Approve</button> <a href="/tokens">Not now</a></form></section>`,
+<form method="post" action="/tokens/approve"><input type="hidden" name="code" value="${esc(code)}"><button class="primary">Approve</button> <a href="/settings">Not now</a></form></section>`,
       });
     }
     const info = await platform.tokens.approve(code, who);
@@ -546,9 +546,11 @@ export async function tokensDoor(request: Request, platform: Platform): Promise<
   }
   if (path == "/tokens/revoke" && post) {
     await platform.tokens.revoke(session.login, field("id"));
-    return new Response(null, { status: 303, headers: { Location: "/tokens" } });
+    return new Response(null, { status: 303, headers: { Location: "/settings" } });
   }
-  if (path != "/tokens") return page("Not found", "There's nothing here. <a href=\"/tokens\">Your tokens</a>.", 404);
+  // Tokens live on the settings page now; old links still get there.
+  if (path == "/tokens") return new Response(null, { status: 302, headers: { Location: "/settings" } });
+  if (path != "/settings") return page("Not found", "There's nothing here. <a href=\"/settings\">Your settings</a>.", 404);
   return tokensPage(platform, session, url, {});
 }
 
@@ -576,7 +578,7 @@ async function tokensPage(platform: Platform, session: Session, url: URL, o: { n
 <html lang="en">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Tokens · Erga</title>
+<title>Settings · Erga</title>
 <link rel="stylesheet" href="/fonts/inter.css">
 <link rel="stylesheet" href="/style.css">
 <style>
@@ -606,6 +608,9 @@ async function tokensPage(platform: Platform, session: Session, url: URL, o: { n
   button.primary, .new button { border-color: var(--fg-strong); background: var(--fg-strong); color: var(--bg); }
   .revoke { padding: 4px 11px; font-size: 12.5px; }
   .empty { color: var(--soft); padding: 12px 2px; border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); }
+  h1 { margin-bottom: 28px; }
+  .part { font-size: 17px; }
+  .lede { font-size: 14px; }
   /* The page fills the window, so the footer sits at its foot. */
   body { min-height: 100vh; margin: 0; display: flex; flex-direction: column; }
   main { flex: 1; box-sizing: border-box; width: 100%; min-height: 0; }
@@ -613,11 +618,11 @@ async function tokensPage(platform: Platform, session: Session, url: URL, o: { n
   @media (max-width: 520px) { li { flex-wrap: wrap; } .meta { flex-basis: 100%; order: 3; } main { padding-top: 6vh; } }
 </style>
 <main>
-  <h1>Tokens</h1>
+  <h1>Settings</h1>
+  <h2 class="part">Agent tokens</h2>
   <p class="lede">An agent token lets an agent (Claude Code, Codex, a script) do everything you can do on Erga, as you: list, make, edit, rename, share and delete your documents, publish a folder of files as a site, and, if you're an admin, change the server's settings and users. Point the agent at <a href="/llms.txt">${esc(origin)}/llms.txt</a>; it explains the rest, including how to ask you for a token itself.</p>
   ${o.notice ?? ""}
   ${made}
-  <h2>Your tokens</h2>
   ${list.length ? `<ol>\n${rows}\n</ol>` : `<p class="empty">None yet. The share button in the editor makes one too.</p>`}
   <form class="new" method="post" action="/tokens/new"><input name="label" maxlength="${LABEL_MAX}" placeholder="What it's for: Claude Code on my laptop" aria-label="What the token is for" autocomplete="off"><button>New token</button></form>
   <div style="height:28px"></div>

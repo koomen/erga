@@ -54,7 +54,7 @@ let passed = 0;
 const ok = (what: string) => { passed++; console.log(`ok   ${what}`); };
 try {
   const p = await browser.page(await browser.context());
-  await p.open(host.base, { clear: false });
+  await p.open(`${host.base}/edit`, { clear: false });
   await until(async () => (await p.frame<string>(`${F}?.getElementById("loot")?.textContent ?? ""`)) != "", 10_000, "the page's script ran");
   const loot = JSON.parse(await p.frame<string>(`${F}.getElementById("loot").textContent`)) as Record<string, unknown>;
   const editor = new URL(await p.eval<string>("location.href")).origin;

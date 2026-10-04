@@ -41,7 +41,7 @@ async function session(browser: Browser, fixture: string, fileName: string, env:
   const file = join(dir, fileName);
   const host = await startHost(dir, { env });
   const p = await browser.page();
-  await p.open(`${host.base}/${query}`, { clear: false, width: 1100, height: 800, timescale });
+  await p.open(`${host.base}/edit${query}`, { clear: false, width: 1100, height: 800, timescale });
   await until(async () => await p.eval<boolean>(`!!window.ergaPage`) && await p.frame<boolean>(`!!${F}?.querySelector("[data-erga-id]")`), 10_000);
   // The page's own fonts too: text measured before they load moves when they do.
   await p.frame(`${F}.fonts.ready.then(() => true)`);
@@ -338,6 +338,19 @@ async function agentOffScenario(browser: Browser) {
   st = await state();
   check("typing and sending still explains instead of doing nothing", !st.hidden && /ANTHROPIC_API_KEY/.test(st.hint) && (await p.eval<string>(`document.getElementById("agent-input").value`)) == "hello");
   await s.close();
+
+  // A placeholder in .dev.vars doesn't hide the key the server's environment has (dev/agent-key.ts); nothing is written back.
+  const dir = mkdtempSync(join(tmpdir(), "erga-page-"));
+  cpSync(`${ROOT}tests/fixtures/page`, dir, { recursive: true });
+  const fromEnv = await startHost(dir, { env: { ANTHROPIC_API_KEY: "xxxxxx" }, processEnv: { ANTHROPIC_API_KEY: "sk-ant-test-from-the-environment" } });
+  const info = await (await fetch(`${fromEnv.base}/api/agent`)).json() as { enabled: boolean; reason?: string };
+  check("the environment's key turns the agent on past a placeholder in .dev.vars", info.enabled, JSON.stringify(info));
+  await fromEnv.dispose();
+  const placeholder = await startHost(dir, { env: { ANTHROPIC_API_KEY: "xxxxxx" } });
+  const off = await (await fetch(`${placeholder.base}/api/agent`)).json() as { enabled: boolean; reason?: string };
+  check("a placeholder alone is no key: off, saying how to set one", !off.enabled && /ANTHROPIC_API_KEY is not set.*export/.test(off.reason ?? ""), JSON.stringify(off));
+  await placeholder.dispose();
+  rmSync(dir, { recursive: true, force: true });
 }
 
 /** Styling: the style bar, shortcuts across inline elements, Markdown as you type, and the view switcher. */
@@ -592,7 +605,7 @@ async function modelScenario(browser: Browser) {
   const first = await sel(p);
   check("the agent starts on Sonnet 5.5, with Opus 5.5 fast to pick", first?.value == "sonnet" && first.options.join("|") == "Sonnet 5.5|Opus 5.5 fast", first);
   const q = await browser.page();
-  await q.open(`${s.base}/`, { clear: false, width: 900, height: 700 });
+  await q.open(`${s.base}/edit`, { clear: false, width: 900, height: 700 });
   await until(async () => (await sel(q))?.value == "sonnet");
   await p.eval(`(() => { const s = document.getElementById("agent-model-select"); s.value = "opus-fast"; s.dispatchEvent(new Event("change")); })()`);
   check("picking Opus 5.5 fast switches it", await until(async () => (await (await fetch(`${s.base}/api/agent`)).json() as { choice: string }).choice == "opus-fast"));
@@ -617,7 +630,8 @@ async function shareScenario(browser: Browser) {
   const token = /Token: (\S+)/.exec(prompt)?.[1], api = /API: (\S+)/.exec(prompt)?.[1];
   check("naming the API and the token, which works", !!api && !!token && (await fetch(api, { headers: { Authorization: `Bearer ${token}` } })).ok, prompt);
   await p.key("Escape");
-  check("Escape closes it", await p.eval<boolean>(`document.getElementById("share").hidden`));
+  // With the caret on the page, the key reaches the shell from the frame, by message: a moment later.
+  check("Escape closes it", await until(() => p.eval<boolean>(`document.getElementById("share").hidden`)));
   check("no page errors", p.errors.length == 0, p.errors.join("\n"));
   await s.close();
 }
