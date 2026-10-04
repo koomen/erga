@@ -113,7 +113,11 @@ Fill in the brackets:
 > 5. Attach screenshots that show the change, where it has a visible side:
 >    `tq shot [id] http://localhost:[port]/path "caption"` (headless Chrome
 >    takes it), or `tq shot [id] /path/to/file.png "caption"` for ones you
->    took yourself (e.g. after interacting, with tests/cdp.ts).
+>    took yourself (e.g. after interacting, with tests/cdp.ts). When you
+>    revise a task, remove the screenshots that no longer match
+>    (`tq unshot [id] FILE|INDEX`, or `tq unshot [id] --all`), or add
+>    `--replace` to the first `tq shot` of a fresh set. The card must show
+>    only current screenshots.
 > 6. Commit everything (the queue won't merge uncommitted work), then
 >    `tq done [id] "summary" [url]`. Write the summary, and your final
 >    reply, in ASD-STE100 (Simplified Technical English), as AGENTS.md
@@ -197,8 +201,9 @@ you (`claude --plugin-dir development/task-queue/mod`). It puts the workflow
 in the main agent's system prompt and gives it one tool,
 `mcp__task-queue__task_create`, which registers the task and starts a
 `task-queue:worker` subagent in the worktree with the prompt above built in.
-The worker reports with `task_log`, `task_preview`, `task_screenshot`,
-`task_done` and `task_fail`. `/tasks` opens a live pane with Open, Merge
+The worker reports with `task_log`, `task_preview`, `task_screenshot`
+(`replace: true` for a fresh set), `task_unscreenshot`, `task_done` and
+`task_fail`. `/tasks` opens a live pane with Open, Merge
 and Discard buttons (no Merge or Discard while a task is merging), and
 `/tasks board` opens the browser board. The status line counts working, ready
 and merging tasks, and toasts say when one is ready, starts merging, is
@@ -313,6 +318,7 @@ print the task as JSON.
 | `POST /api/tasks/:id/live {path?, command?}` | live mode: mark it live, run the dev server with live reload, open (or bring back) its Chrome window; records `chrome` |
 | `GET /api/tasks/:id/look[?shot=1&console=1]` | what that window shows: `url`, `title`, `tabs`, `selection`, `console`, `screenshot` |
 | `POST /api/tasks/:id/screenshots` | an image body, or `{path}`, or `{url}` (headless Chrome), with `caption` |
+| `DELETE /api/tasks/:id/screenshots/:file`, `DELETE /api/tasks/:id/screenshots` | remove one screenshot (by file name or 1-based index), or all, and delete the files; not while merging. The board's detail view has a × on each screenshot (on hover) |
 | `POST /api/tasks/:id/merge`, `POST /api/tasks/:id/discard` | the board's buttons; merge answers 202 with the task `merging` |
 | `GET /api/events` | server-sent events: every task, on each change |
 

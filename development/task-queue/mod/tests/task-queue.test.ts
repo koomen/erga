@@ -27,7 +27,7 @@ function fakeQueue(on: any) {
     const body = e.init?.body ? JSON.parse(e.init.body) : {}
     const ok = (data: unknown, status = 200) => ({ value: { status, ok: true, headers: {}, text: JSON.stringify(data) } })
     if (method === 'POST' && path === '/api/tasks') {
-      const t = { id: tasks.length + 1, title: body.title, description: body.description, status: 'queued', worktree: `/repo/.claude/worktrees/task-${tasks.length + 1}`, branch: 'task/1-x', port: 4501, log: [], updatedAt: new Date().toISOString() }
+      const t = { id: tasks.length + 1, title: body.title, description: body.description, status: 'queued', screenshots: [] as any[], worktree: `/repo/.claude/worktrees/task-${tasks.length + 1}`, branch: 'task/1-x', port: 4501, log: [], updatedAt: new Date().toISOString() }
       tasks.push(t)
       return ok(t, 201)
     }
@@ -38,6 +38,12 @@ function fakeQueue(on: any) {
       if (t.status !== 'complete') return { value: { status: 409, ok: false, headers: {}, text: JSON.stringify({ error: `task ${t.id} is ${t.status}, not complete` }) } }
       t.status = 'merging'
       return ok(t, 202)
+    }
+    if (method === 'POST' && t && path.endsWith('/screenshots')) { t.screenshots.push({ file: `f${t.screenshots.length + 1}.png`, caption: body.caption }); return ok(t) }
+    if (method === 'DELETE' && t) {
+      const which = path.match(/\/screenshots\/(.+)$/)?.[1]
+      t.screenshots = which ? t.screenshots.filter((s: any, i: number) => s.file !== which && String(i + 1) !== which) : []
+      return ok(t)
     }
     if (method === 'POST' && t) { if (body.message) t.log.push({ message: body.message }); return ok(t) }
     return ok(tasks)
@@ -64,6 +70,21 @@ test('task_done marks the task complete', async ($, on) => {
   await $.tool.call({ tool: 'mcp__task-queue__task_done', id: 1, summary: 'Did it' } as any)
   expect(tasks[0].status).toBe('complete')
   expect(tasks[0].summary).toBe('Did it')
+})
+
+test('task_unscreenshot removes one screenshot or all, and task_screenshot replace starts a fresh set', async ($, on) => {
+  const { tasks } = fakeQueue(on)
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await $.tool.call({ tool: 'mcp__task-queue__task_create', title: 'X', ask: 'Y' } as any)
+  for (const caption of ['a', 'b', 'c']) await $.tool.call({ tool: 'mcp__task-queue__task_screenshot', id: 1, target: '/tmp/x.png', caption } as any)
+  await $.tool.call({ tool: 'mcp__task-queue__task_unscreenshot', id: 1, index: 2 } as any)
+  expect(tasks[0].screenshots.map((s: any) => s.caption)).toEqual(['a', 'c'])
+  await $.tool.call({ tool: 'mcp__task-queue__task_unscreenshot', id: 1, file: 'f1.png' } as any)
+  expect(tasks[0].screenshots.map((s: any) => s.caption)).toEqual(['c'])
+  await $.tool.call({ tool: 'mcp__task-queue__task_screenshot', id: 1, target: '/tmp/y.png', caption: 'new', replace: true } as any)
+  expect(tasks[0].screenshots.map((s: any) => s.caption)).toEqual(['new'])
+  await $.tool.call({ tool: 'mcp__task-queue__task_unscreenshot', id: 1, all: true } as any)
+  expect(tasks[0].screenshots).toHaveLength(0)
 })
 
 const start = async ($: any, on: any) => {

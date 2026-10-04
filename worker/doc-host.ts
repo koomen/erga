@@ -37,10 +37,11 @@ import * as Scope from "effect/Scope";
 import { agentConfigFrom, type AgentConfig } from "../agent";
 import { DIRECTORY_EVERY_MS, nameOf, namingFor, throttle, UNTITLED, type DocName, type DocRow } from "../directory";
 import { afterUnedited, titleOf } from "../front";
-import { cleanRel, docFile, makeHost } from "../host";
+import { cleanRel, docFile, makeHost, relativeUrl } from "../host";
+import { resolvePage } from "../tree";
 import { agentToolsFor } from "../server-tools";
 import { FileStore, Room, StateStore, StoreError } from "../room";
-import { agentName, assets, authorOf, files as texts, isTextPath, type Author } from "../src/room/doc";
+import { agentName, assets, authorOf, files as texts, folders, isTextPath, type Author } from "../src/room/doc";
 import { describeChange, fallbackDescription, firePublished, publicVersion, versionNumber, Versions, type KV, type Published, type PublishRequest, type PublishResult, type StoredVersion, type Version, type VersionsState } from "../versions";
 import * as Y from "yjs";
 import { directoryOf } from "./d1";
@@ -58,7 +59,11 @@ interface OnDisk { path: string; slug: string; only?: boolean }
 
 interface Person { id: string; name: string }
 
-const FILE = "file:", META = "meta", STATE = "state";
+/** Storage keys: a file's bytes, a folder made as one (empty ones too), what the document is, the room's Yjs state. */
+const FILE = "file:", DIR = "dir:", META = "meta", STATE = "state";
+
+/** The new-document template's page (templates/doc), which a new page starts from. */
+const TEMPLATE = Object.values(import.meta.glob("../templates/doc/index.html", { query: "?raw", import: "default", eager: true }) as Record<string, string>)[0] ?? "";
 const AVATARS = "https://avatars.githubusercontent.com";
 
 export class DocHost extends DurableObject<Env> {
@@ -408,8 +413,16 @@ export class DocHost extends DurableObject<Env> {
     const v = n != null ? await this.versions.get(n) : null;
     if (!v) return null;
     const notFound = () => new Response("Not found", { status: 404, headers: { "Content-Type": "text/plain; charset=utf-8" } });
-    const rel = url.pathname == "/pub/" ? v.index : cleanRel(url.pathname.slice("/pub/".length));
-    if (!rel) return notFound();
+    const raw = url.pathname.slice("/pub/".length);
+    const rel = raw ? cleanRel(raw) : v.index;
+    // A page by its address (blog for blog.html or blog/index.html), as doc/ does (host.ts): sent to its file, relatively.
+    if (!rel || !(rel in v.files)) {
+      const found = resolvePage((p) => p in v.files, raw, v.index);
+      if (!found || found.file == rel) return notFound();
+      let from = raw;
+      try { from = decodeURIComponent(raw); } catch { /* resolvePage refused it already */ }
+      return new Response(null, { status: 302, headers: { Location: relativeUrl(from, found.file), "Cache-Control": "no-store" } });
+    }
     const bytes = await this.versions.file(v, rel);
     if (!bytes) return notFound();
     const r = docFile(rel, bytes, request.headers.get("if-none-match"));
@@ -488,7 +501,7 @@ export class DocHost extends DurableObject<Env> {
     const meta = await this.ctx.storage.get<Meta>(META);
     if (!opened || !meta) return null;
     const { authors } = this.clearPending();
-    const r = await this.versions.cut(await opened.current(), meta.index, as?.authors ?? authors, as?.description ?? ((await this.versions.head()) == 0 ? "First version" : null));
+    const r = await this.versions.cut(await opened.current(), meta.index, as?.authors ?? authors, as?.description ?? ((await this.versions.head()) == 0 ? "First version" : null), opened.room.folderPaths());
     if (!r) return null;
     opened.broadcast({ type: "versions" });
     if (!meta.published) this.firePublished(meta);
@@ -600,8 +613,13 @@ export class DocHost extends DurableObject<Env> {
     if (!v) return { ok: false, status: 404, error: `There's no version ${ref} of this document: its versions are v1 to v${await this.versions.head()}.` };
     await this.cutSoon("restore");
     const files = await this.versions.files(v);
+    const room = r.opened.room;
+    // Folders it didn't have go (unless something of it is inside); then its files over the current ones; then its folders.
+    const keep = [...files.keys(), ...(v.folders ?? [])];
+    for (const d of room.folderPaths()) if (!keep.some((p) => p == d || p.startsWith(`${d}/`)) && room.exists(d) == "folder") await Effect.runPromise(room.remove(d)).catch(() => {});
     const now = new Set((await r.opened.current()).keys());
     const out = await this.publish(Object.fromEntries(files), [...now].filter((p) => !files.has(p)));
+    for (const d of v.folders ?? []) if (room.exists(d) != "folder") await Effect.runPromise(room.mkdir(d)).catch(() => {});
     if (out.refused.length) console.log(`restoring ${v.id}: ${out.refused.map((x) => `${x.path} (${x.why})`).join(", ")}`);
     const made = await this.cutSoon("restored", { authors: [by], description: `Restored version ${v.n}` });
     return { ok: true, current: publicVersion(made ?? (await this.versions.latest())!) };
@@ -650,6 +668,27 @@ export class DocHost extends DurableObject<Env> {
       list: Effect.tryPromise({ try: async () => [...(await storage.list({ prefix: FILE })).keys()].map((k) => k.slice(FILE.length)), catch: storeError }),
       read: (path) => Effect.tryPromise({ try: async () => (await storage.get<Uint8Array>(FILE + path)) ?? null, catch: storeError }),
       write: (path, text) => Effect.tryPromise({ try: () => this.edited(path, text), catch: storeError }),
+      // Moving, deleting and folders are edits too: the document stays, and its row says when.
+      writeBytes: (path, bytes) => Effect.tryPromise({ try: async () => { await storage.put(FILE + path, bytes); await this.touch(); }, catch: storeError }),
+      remove: (path) => Effect.tryPromise({ try: async () => { if (await storage.delete(FILE + path)) await this.touch(); }, catch: storeError }),
+      folders: Effect.tryPromise({ try: async () => [...(await storage.list({ prefix: DIR })).keys()].map((k) => k.slice(DIR.length)), catch: storeError }),
+      mkdir: (path) => Effect.tryPromise({
+        try: async () => {
+          const all = path.split("/").map((_, i, parts) => parts.slice(0, i + 1).join("/"));
+          for (const d of all) await storage.put(DIR + d, true);
+          await this.touch();
+        },
+        catch: storeError,
+      }),
+      rmdir: (path) => Effect.tryPromise({
+        try: async () => {
+          const keys = [...(await storage.list({ prefix: FILE + path + "/" })).keys(), ...(await storage.list({ prefix: DIR + path + "/" })).keys(), DIR + path];
+          await storage.delete(keys.slice(0, 128));
+          for (let i = 128; i < keys.length; i += 128) await storage.delete(keys.slice(i, i + 128));
+          await this.touch();
+        },
+        catch: storeError,
+      }),
     });
     const state = StateStore.of({
       load: Effect.tryPromise({ try: async () => (await storage.get<Uint8Array>(STATE)) ?? null, catch: storeError }),
@@ -694,6 +733,8 @@ export class DocHost extends DurableObject<Env> {
         publish: (req) => this.setPublished(req),
         restore: (ref, by) => this.restore(ref, by),
       },
+      // A new page in its file tree starts as a new document does.
+      newPage: TEMPLATE ? (path) => (path.endsWith(".md") ? plainMarkdown : TEMPLATE) : undefined,
     });
     // Every edit to the files, and who made it: a version is cut once a burst of them ends (noteEdit).
     room.doc.on("afterTransaction", (tr: Y.Transaction) => {
@@ -761,6 +802,7 @@ export class DocHost extends DurableObject<Env> {
       catchUp: async () => {
         const paths = new Set([...await Effect.runPromise(files.list), ...texts(room.doc).keys(), ...assets(room.doc).keys()]);
         for (const path of paths) await Effect.runPromise(room.fileChanged(path)).catch(() => {});
+        await Effect.runPromise(room.syncFolders).catch(() => {});
       },
       close: () => Effect.runPromise(Scope.close(scope, Exit.void)).then(host.dispose),
     };
@@ -807,13 +849,16 @@ function kvOf(storage: DurableObjectStorage): KV {
 
 /** Whether a transaction changed a file: a text's content, or the list of files or other files (images). */
 function touchesFiles(doc: Y.Doc, tr: Y.Transaction): boolean {
-  const fileMap = texts(doc) as Y.AbstractType<any>, assetMap = assets(doc) as Y.AbstractType<any>;
+  const fileMap = texts(doc) as Y.AbstractType<any>, assetMap = assets(doc) as Y.AbstractType<any>, folderMap = folders(doc) as Y.AbstractType<any>;
   for (const type of tr.changed.keys()) {
-    if (type === fileMap || type === assetMap) return true;
+    if (type === fileMap || type === assetMap || type === folderMap) return true;
     if (type._item?.parent === fileMap) return true;
   }
   return false;
 }
+
+/** A new Markdown page (a document whose page is index.md). */
+const plainMarkdown = "# Untitled\n\nStart writing here.\n";
 
 function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
   if (a.length != b.length) return false;

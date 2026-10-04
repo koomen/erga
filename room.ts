@@ -43,18 +43,33 @@ import * as decoding from "lib0/decoding";
 import * as sync from "y-protocols/sync";
 import * as awarenessProtocol from "y-protocols/awareness";
 import { rebase } from "./src/page/merge";
-import { applyChanges, assets, files, hasSeen, introduce, isTextPath, roomInfo, stamp, type Author } from "./src/room/doc";
+import { applyChanges, assets, files, folders, hasSeen, introduce, isTextPath, roomInfo, stamp, type Author } from "./src/room/doc";
 
 /** Storage failed: a file couldn't be listed, read or written. */
 export class StoreError extends Schema.TaggedError<StoreError>()("StoreError", { message: Schema.String }) {}
 
-/** Where a room's files live: a folder on disk here, R2 when hosted. */
+/**
+ * Where a room's files live: a Durable Object's storage, or a folder on disk
+ * (local development). The folder operations are optional: a store without
+ * them keeps no folders of its own (the room's are then only in its state)
+ * and can't delete or copy files.
+ */
 export class FileStore extends Context.Service<FileStore, {
   /** Every file's path, relative, "/"-separated. */
   readonly list: Effect.Effect<string[], StoreError>;
   /** A file's bytes, or null if it doesn't exist. */
   readonly read: (path: string) => Effect.Effect<Uint8Array | null, StoreError>;
   readonly write: (path: string, text: string) => Effect.Effect<void, StoreError>;
+  /** Writes a file that isn't text (an image moved elsewhere). */
+  readonly writeBytes?: (path: string, bytes: Uint8Array) => Effect.Effect<void, StoreError>;
+  /** Deletes a file (nothing if it isn't there). */
+  readonly remove?: (path: string) => Effect.Effect<void, StoreError>;
+  /** Every folder made as one, empty ones included (folders holding files may be left out). */
+  readonly folders?: Effect.Effect<string[], StoreError>;
+  /** Makes a folder (and those it's in). */
+  readonly mkdir?: (path: string) => Effect.Effect<void, StoreError>;
+  /** Deletes a folder and whatever is still in it. */
+  readonly rmdir?: (path: string) => Effect.Effect<void, StoreError>;
 }>()("erga/FileStore") {}
 
 /** Where the room keeps its Yjs state between runs: a cache file here, Durable Object storage when hosted. */
@@ -92,6 +107,9 @@ export class Room {
   private conns = new Map<object, { send: (m: Uint8Array) => void; clients: Set<number> }>();
   private readonly me: Author = { user: "disk", name: "On disk", color: "#6b7280", kind: "disk" };
   private decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false });
+  /** Who hears that the tree changed (a file or folder added, removed or moved). */
+  private treeListeners = new Set<() => void>();
+  private treeQueued = false;
 
   private constructor(private store: FileStore["Service"], private state: StateStore["Service"], private log: (line: string) => void, readonly writeDelay: number) {
     // The room itself is not a visible participant.
@@ -109,6 +127,11 @@ export class Room {
       yield* room.restore();
       room.doc.on("update", (update: Uint8Array, origin: unknown) => room.broadcast(syncUpdate(update), origin));
       room.doc.on("afterTransaction", (tr: Y.Transaction) => room.noteDirty(tr));
+      // The tree changed: files or folders came or went (a file's text changing isn't one).
+      const treeChanged = (e: { keysChanged: Set<string> }) => { if (e.keysChanged.size) room.treeChanged(); };
+      files(room.doc).observe(treeChanged);
+      assets(room.doc).observe(treeChanged);
+      folders(room.doc).observe(treeChanged);
       room.awareness.on("update", ({ added, updated, removed }: AwarenessChange, origin: unknown) => {
         const conn = origin != null ? room.conns.get(origin) : undefined;
         if (conn) { for (const c of added) conn.clients.add(c); for (const c of removed) conn.clients.delete(c); }
@@ -146,6 +169,7 @@ export class Room {
         if (bytes) self.reconcile(path, bytes);
       }
       self.forgetMissing(paths);
+      yield* self.syncFolders;
       yield* self.saveState;
     });
   }
@@ -296,6 +320,13 @@ export class Room {
       this.dirty.clear();
       const write = (path: string) => {
         const text = this.text(path);
+        // Deleted in the room by a participant (an agent's undo taking back a file it made): storage follows.
+        if (text == null && this.stored.has(path) && !assets(this.doc).has(path) && this.store.remove) {
+          return this.store.remove(path).pipe(
+            Effect.map(() => { this.stored.delete(path); }),
+            Effect.catch((e) => Effect.sync(() => this.log(`  could not delete ${path}: ${e.message}`))),
+          );
+        }
         if (text == null || text == this.stored.get(path)) return Effect.void;
         return this.store.write(path, text).pipe(
           Effect.map(() => { this.stored.set(path, text); }),
@@ -380,6 +411,154 @@ export class Room {
     this.log(`  changed on disk: ${path}`);
     // The room had edits storage didn't: write the merge back.
     if (t.toString() != text) this.markDirty(path);
+  }
+
+  // ------------------------------------------------------------ the tree
+  //
+  // Files and folders made, moved and deleted as such (tree.ts checks what's
+  // asked first): storage and the shared doc change together, in one turn
+  // of the queue, so every participant sees the new tree at once.
+
+  /** Hears whenever the tree changes, from anyone (once per burst). Returns the way to stop. */
+  onTree(listener: () => void): () => void {
+    this.treeListeners.add(listener);
+    return () => { this.treeListeners.delete(listener); };
+  }
+
+  private treeChanged(): void {
+    if (this.treeQueued) return;
+    this.treeQueued = true;
+    queueMicrotask(() => { this.treeQueued = false; for (const l of this.treeListeners) l(); });
+  }
+
+  /** Every file the room holds, text or not. */
+  paths(): string[] {
+    return [...new Set([...files(this.doc).keys(), ...assets(this.doc).keys()])].sort();
+  }
+
+  /** The folders made as such (empty ones too). */
+  folderPaths(): string[] {
+    return [...folders(this.doc).keys()].sort();
+  }
+
+  /** Whether a file or folder is at a path. */
+  exists(path: string): "file" | "folder" | null {
+    if (files(this.doc).has(path) || assets(this.doc).has(path)) return "file";
+    if (folders(this.doc).has(path)) return "folder";
+    const inside = `${path}/`;
+    for (const p of [...files(this.doc).keys(), ...assets(this.doc).keys(), ...folders(this.doc).keys()]) if (p.startsWith(inside)) return "folder";
+    return null;
+  }
+
+  /** The folders storage keeps (empty ones included), into the shared doc: as the room opens, and when back in touch with disk. */
+  get syncFolders(): Effect.Effect<void, StoreError> {
+    const self = this;
+    return Effect.gen(function* () {
+      if (!self.store.folders) return;
+      const stored = new Set(yield* self.store.folders);
+      const map = folders(self.doc);
+      self.doc.transact(() => {
+        for (const d of stored) if (!map.has(d)) map.set(d, true);
+        for (const d of [...map.keys()]) if (!stored.has(d)) map.delete(d);
+      }, self);
+    });
+  }
+
+  /** Makes a folder, and those it's in. */
+  mkdir(path: string): Effect.Effect<void, StoreError> {
+    return Semaphore.withPermit(this.turn, this.makeFolder(path));
+  }
+
+  private makeFolder(path: string): Effect.Effect<void, StoreError> {
+    const self = this;
+    return Effect.gen(function* () {
+      const map = folders(self.doc);
+      const all = path.split("/").map((_, i, parts) => parts.slice(0, i + 1).join("/"));
+      if (self.store.mkdir) yield* self.store.mkdir(path);
+      self.doc.transact(() => { for (const d of all) if (!map.has(d)) map.set(d, true); }, self);
+    });
+  }
+
+  /** A new text file (a page from the template): written, and in the room. */
+  create(path: string, text: string): Effect.Effect<void, StoreError> {
+    const self = this;
+    return Semaphore.withPermit(this.turn, Effect.gen(function* () {
+      yield* self.store.write(path, text);
+      self.take(path, new TextEncoder().encode(text));
+    }));
+  }
+
+  /** Deletes a file, or a folder and everything in it. */
+  remove(path: string): Effect.Effect<void, StoreError> {
+    const self = this;
+    return Semaphore.withPermit(this.turn, Effect.gen(function* () {
+      if (files(self.doc).has(path) || assets(self.doc).has(path)) {
+        yield* self.removeFile(path);
+        // The folder it was in stays, as a folder on disk would, even if that was its last file.
+        if (path.includes("/")) yield* self.makeFolder(path.slice(0, path.lastIndexOf("/")));
+        return;
+      }
+      const inside = `${path}/`;
+      for (const p of self.paths()) if (p.startsWith(inside)) yield* self.removeFile(p);
+      if (self.store.rmdir) yield* self.store.rmdir(path);
+      const map = folders(self.doc);
+      self.doc.transact(() => { for (const d of [...map.keys()]) if (d == path || d.startsWith(inside)) map.delete(d); }, self);
+    }));
+  }
+
+  private removeFile(path: string): Effect.Effect<void, StoreError> {
+    const self = this;
+    return Effect.gen(function* () {
+      if (self.store.remove) yield* self.store.remove(path);
+      self.stored.delete(path);
+      self.dirty.delete(path);
+      self.doc.transact(() => { files(self.doc).delete(path); assets(self.doc).delete(path); }, self);
+    });
+  }
+
+  /**
+   * Moves (or renames) a file or a folder and everything in it. A text
+   * file's text goes as it is now, unsaved edits included; it starts a new
+   * history at its new path.
+   */
+  move(from: string, to: string): Effect.Effect<void, StoreError> {
+    const self = this;
+    return Semaphore.withPermit(this.turn, Effect.gen(function* () {
+      const map = folders(self.doc);
+      if (files(self.doc).has(from) || assets(self.doc).has(from)) {
+        yield* self.copyFile(from, to);
+        yield* self.removeFile(from);
+        if (from.includes("/")) yield* self.makeFolder(from.slice(0, from.lastIndexOf("/")));
+        return;
+      }
+      const inside = `${from}/`;
+      // The folder itself, then every folder and file inside it, each at its new place.
+      yield* self.makeFolder(to);
+      for (const d of [...map.keys()]) if (d.startsWith(inside)) yield* self.makeFolder(to + d.slice(from.length));
+      for (const p of self.paths()) if (p.startsWith(inside)) {
+        yield* self.copyFile(p, to + p.slice(from.length));
+        yield* self.removeFile(p);
+      }
+      if (self.store.rmdir) yield* self.store.rmdir(from);
+      self.doc.transact(() => { for (const d of [...map.keys()]) if (d == from || d.startsWith(inside)) map.delete(d); }, self);
+    }));
+  }
+
+  private copyFile(from: string, to: string): Effect.Effect<void, StoreError> {
+    const self = this;
+    return Effect.gen(function* () {
+      const text = self.text(from);
+      if (text != null) {
+        yield* self.store.write(to, text);
+        self.take(to, new TextEncoder().encode(text));
+        return;
+      }
+      const bytes = yield* self.store.read(from);
+      if (!bytes) return;
+      if (!self.store.writeBytes) return yield* Effect.fail(new StoreError({ message: `${from} can't be moved here: only text files can` }));
+      yield* self.store.writeBytes(to, bytes);
+      self.take(to, bytes);
+    });
   }
 }
 

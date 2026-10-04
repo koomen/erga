@@ -42,8 +42,8 @@ export interface VersionsState { current: Version; published: Published; version
 export type PublishRequest = { mode: "latest" } | { mode: "manual"; versionId?: string | number };
 export type PublishResult = { ok: true; published: Published } | { ok: false; status: number; error: string };
 
-/** A version as stored: also its files (path -> digest) and the document's page then. */
-export interface StoredVersion extends Version { files: Record<string, string>; index: string }
+/** A version as stored: also its files (path -> digest), the document's page then, and its folders made as such (empty ones too). */
+export interface StoredVersion extends Version { files: Record<string, string>; index: string; folders?: string[] }
 
 /** The storage a document's versions live in: Durable Object storage's shape (get and put of many keys at once). */
 export interface KV {
@@ -99,7 +99,7 @@ export class Versions {
    * nothing changed since the latest one: then null. Only blobs storage
    * doesn't have yet are written.
    */
-  async cut(files: Map<string, Uint8Array>, index: string, authors: string[], description: string | null = null): Promise<{ version: StoredVersion; previous: StoredVersion | null } | null> {
+  async cut(files: Map<string, Uint8Array>, index: string, authors: string[], description: string | null = null, folders: string[] = []): Promise<{ version: StoredVersion; previous: StoredVersion | null } | null> {
     const previous = await this.latest();
     const manifest: Record<string, string> = {};
     const bytesOf = new Map<string, Uint8Array>();
@@ -108,7 +108,8 @@ export class Versions {
       manifest[path] = digest;
       bytesOf.set(digest, bytes);
     }
-    if (previous && sameFiles(previous.files, manifest) && previous.index == index) return null;
+    const dirs = [...new Set(folders)].sort();
+    if (previous && sameFiles(previous.files, manifest) && previous.index == index && (previous.folders ?? []).join("\n") == dirs.join("\n")) return null;
     // Blobs the latest version has are stored; the rest are checked, and written if they're new.
     const known = new Set(previous ? Object.values(previous.files) : []);
     const unknown = [...bytesOf.keys()].filter((d) => !known.has(d));
@@ -121,7 +122,7 @@ export class Versions {
     const entries = Object.entries(missing);
     for (let i = 0; i < entries.length; i += BATCH) await this.kv.put(Object.fromEntries(entries.slice(i, i + BATCH)));
     const n = (previous?.n ?? 0) + 1;
-    const version: StoredVersion = { id: versionId(n), n, at: new Date(this.now()).toISOString(), authors: [...new Set(authors)].sort(), description, files: manifest, index };
+    const version: StoredVersion = { id: versionId(n), n, at: new Date(this.now()).toISOString(), authors: [...new Set(authors)].sort(), description, files: manifest, index, ...(dirs.length ? { folders: dirs } : {}) };
     await this.kv.put({ [key(n)]: version, [HEAD]: n });
     this.cache.set(n, version);
     return { version, previous };

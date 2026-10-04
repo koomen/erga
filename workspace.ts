@@ -18,7 +18,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Y from "yjs";
 import { changesBetween, rebase } from "./src/page/merge";
-import { applyChanges, assets, files, stamp, type Author } from "./src/room/doc";
+import { applyChanges, assets, files, folders, stamp, type Author } from "./src/room/doc";
 
 export interface Workspace {
   read(path: string): Effect.Effect<string, WorkspaceError>;
@@ -26,6 +26,8 @@ export interface Workspace {
   write(path: string, content: string): Effect.Effect<EditResult, WorkspaceError>;
   /** Every path, text and binary, sorted. */
   paths(): string[];
+  /** The folders made as such (empty ones too), sorted; folders holding files are in `paths` too. */
+  folders(): string[];
   isText(path: string): boolean;
 }
 
@@ -77,6 +79,10 @@ export class YjsWorkspace implements Workspace {
 
   paths(): string[] {
     return [...files(this.doc).keys(), ...assets(this.doc).keys()].sort();
+  }
+
+  folders(): string[] {
+    return [...folders(this.doc).keys()].sort();
   }
 
   read(path: string): Effect.Effect<string, WorkspaceError> {

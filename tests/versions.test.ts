@@ -26,6 +26,10 @@ test("a version holds every file; one that changes nothing isn't cut", async () 
   expect(first?.previous).toBeNull();
   expect(await v.cut(files({ "index.html": "<h1>Hi</h1>", "style.css": "h1{}" }), "index.html", ["bo"])).toBeNull();
   expect(await v.head()).toBe(1);
+  // An empty folder made is a change too, and kept with the version.
+  const withFolder = await v.cut(files({ "index.html": "<h1>Hi</h1>", "style.css": "h1{}" }), "index.html", ["ada"], null, ["drafts"]);
+  expect(withFolder?.version).toMatchObject({ n: 2, folders: ["drafts"] });
+  expect(await v.cut(files({ "index.html": "<h1>Hi</h1>", "style.css": "h1{}" }), "index.html", [], null, ["drafts"])).toBeNull();
 });
 
 test("unchanged files are stored once, shared by every version", async () => {
