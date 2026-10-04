@@ -4,7 +4,8 @@
 #
 #   ./test.sh         unit tests, tests/page.ts, a page trying to reach its
 #                     viewer (tests/isolation.ts), the front door's routes
-#                     (tests/worker.ts), the landing page (tests/landing.ts)
+#                     (tests/worker.ts), the landing page (tests/landing.ts),
+#                     live reload (tests/reload.ts, in a copy of the checkout)
 #                     and the multiplayer suite, each
 #                     against dev servers of its own (tests/host.ts)
 #
@@ -33,6 +34,7 @@ page_group() {
   run front bun tests/worker.ts --local
   run deployed bun tests/server-config.ts
   run landing bun tests/landing.ts
+  run reload bun tests/reload.ts
   # Latency is measured afterwards, alone: other tests running would skew it.
   run suite bun tests/suite/run.ts --skip latency
   collect
