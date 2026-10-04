@@ -2366,7 +2366,13 @@ production (every call checked), the guards, failure and retry, branch
 pushes (the queue, passing a push on, the status, the deploy log and its
 events), staging deploying itself across the restart its own upload causes
 (one log across it), the builder's stream, and
-`deploy/setup.ts` run end to end. `bun tests/deploys.ts` does it in the real
+`deploy/setup.ts` run end to end. `tests/tokens.test.ts` covers the deploy
+tokens against a mock that enforces a token's policies: each plan, the check
+catching a token broader than its plan, staging's token deploying staging
+(reading, never writing, its address, route and DNS record) and refused
+production, staging deploying itself with it, production deploying staging
+when staging's server doesn't take a move, and the Artifacts binding going
+only to Erga's own targets. `bun tests/deploys.ts` does it in the real
 Worker: a push to a dev server playing staging, its status and events, the
 deploy's log whole and live, Redeploy, a failed build, the redirect from
 /admin/deploys to /source, and who may.
