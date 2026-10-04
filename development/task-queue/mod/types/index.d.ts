@@ -6,6 +6,8 @@ export type Task = {
   branch?: string
   url?: string
   previewUp?: boolean
+  /** Worked on live, in a session with the user (its own dev server and Chrome window), not by a worker. */
+  live?: boolean
   error?: string
   last?: string
   commit?: string

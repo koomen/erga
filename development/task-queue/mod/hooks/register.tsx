@@ -40,6 +40,18 @@ title", "#4 failed: title: why", "#5 merge failed, back to ready to merge: title
 without being asked: relay a ready or failed task the worker hasn't already reported, say why a merge failed, and
 when a task merges, start (with task_create) any task that was waiting on it.
 
+Live mode is the other way to work, when the user asks for it ("live mode", "let's work on X live"): you and the user
+work on one task together, in this session, in a tight loop, usually on the UI. Don't use task_create for it (that
+starts a worker). Instead, with Bash: \`development/task-queue/tq add --live "title" "ask"\`, then \`tq live <id> [/path]\`,
+which marks it live and working, runs the dev server from its worktree on its port with live reload, and opens a Chrome
+window of its own (its own profile and DevTools port, recorded on the task; never the user's browser) on the page.
+Before acting on anything the user says, run \`tq look <id>\` (the tab in front: URL, title, selected text, console
+errors; --shot saves a screenshot to read, --console all messages), so "this" means what they're looking at. Edit in
+the worktree yourself (absolute paths, no worker); open pages reload by themselves. Commit as you go, test before
+finishing, and finish with \`tq done <id> "summary" <url>\` when the user says it's done: they merge from the board,
+which stops the dev server and closes the window. Meanwhile keep the queue watch armed and relay what it says, and
+send any unrelated change the user asks for through task_create as usual. AGENTS.md ("Live mode") has the details.
+
 Questions, explanations and anything that changes nothing in the repo are answered directly, without a task.`
 
 const WORKER_PROMPT = `You are a task worker: you do one task from the repo's task queue, start to finish, in the task's own git
@@ -128,7 +140,7 @@ async function api($: EngineInterface, method: string, path: string, body?: unkn
 }
 
 const brief = (t: any): Task => ({
-  id: t.id, title: t.title, status: t.status, branch: t.branch, url: t.url, previewUp: t.previewUp,
+  id: t.id, title: t.title, status: t.status, branch: t.branch, url: t.url, previewUp: t.previewUp, live: t.live,
   error: t.error, commit: t.commit, updatedAt: t.updatedAt, last: t.log?.[t.log.length - 1]?.message,
 })
 
@@ -322,7 +334,7 @@ export const register: Register = on => {
               {rows.map(t => (
                 <Box key={`t${t.id}`} flexDirection="column">
                   <Text color={t.status === 'failed' ? 'red' : undefined}>
-                    #{t.id} {t.title}{t.status === 'failed' ? ' (failed)' : ''}{t.status === 'merged' ? ` · ${t.commit ?? ''}` : ''}
+                    #{t.id} {t.title}{t.live ? ' · live' : ''}{t.status === 'failed' ? ' (failed)' : ''}{t.status === 'merged' ? ` · ${t.commit ?? ''}` : ''}
                   </Text>
                   {t.status !== 'merged' && (t.error || t.last) && <Text dimColor>  {(t.error ?? t.last ?? '').split('\n')[0]?.slice(0, 100)}</Text>}
                   {t.status !== 'merged' && (

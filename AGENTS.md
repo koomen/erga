@@ -38,7 +38,23 @@ On each line, act without being asked:
   (its dependencies all merged): register and hand it off as below.
 - **merge failed**: tell the user why, and what would fix it.
 
-When the user asks for a change to this repo:
+### Two modes: task mode and live mode
+
+Every change goes through the queue, in one of two modes:
+
+- **Task mode**, the default: the task is queued and a subagent does it in
+  the background, while the outer agent stays free (below).
+- **Live mode**: the user and the outer agent work on one task together, in
+  this session, in a tight loop: the user looks at the page in a Chrome
+  window, says what to change, and sees it change. For iterating on the UI
+  as quickly as possible (see [Live mode](#live-mode)).
+
+The user picks live mode by asking for it: "live mode", "let's work on X
+live", "work on this with me live". Anything else is task mode.
+
+### Task mode
+
+When the user asks for a change to this repo (and not live):
 
 1. **Register it, straight away**, before doing anything else:
 
@@ -57,7 +73,7 @@ When the user asks for a change to this repo:
    (Agent tool, `run_in_background: true`, no `isolation`: the queue already
    made the worktree). Then tell the user, in a line, that it's on the board
    as #id, and **stay free**: the outer agent does no implementation, testing
-   or merging itself, and waits for the next instruction. Several tasks can
+   or merging itself (except in live mode, below), and waits for the next instruction. Several tasks can
    be in flight at once, each in its own worktree.
 
 3. When a subagent reports back, relay its result in a sentence or two
@@ -111,6 +127,71 @@ Fill in the brackets:
 > Don't merge or push: the user merges from the board. Finish by replying
 > with the task's URL and a two-line summary.
 
+### Live mode
+
+The outer agent does the work itself, in the task's worktree, with the user
+watching. Step by step:
+
+1. **Register a live task, and start it**:
+
+       development/task-queue/tq add --live "Short imperative title" "A short, clear description of the ask"
+       development/task-queue/tq live <id> [/path]
+
+   `tq live` marks the task live and working; runs the dev server from the
+   task's worktree on the task's port, with live reload (`bun start --reload`;
+   it waits until the server answers); and opens a **Chrome window of its
+   own** on `http://localhost:<port><path>`: its own profile
+   (`development/task-queue/data/chrome/task-<id>`) and its own DevTools port,
+   never the user's everyday browser or tabs. It records the window on the
+   task (`chrome: {pid, port, profile, target}`, in `tq get <id>`), so this
+   agent, or a later session, finds it again: running `tq live <id>` again
+   brings the same window to the front (opening the page if its tabs were
+   closed), or opens a new one if the window is gone. Tell the user, in a
+   line, that #id is live, and where.
+
+2. **Look before acting.** Before acting on anything the user says, check
+   what they're looking at:
+
+       development/task-queue/tq look <id>                 # the tab in front: url, title; every tab; selected text; console errors
+       development/task-queue/tq look <id> --shot [FILE]   # and a screenshot (read it)
+       development/task-queue/tq look <id> --console       # and every console message
+
+   "This", "here" and "that button" mean what's on screen and selected
+   there. Take a screenshot whenever the ask is about how something looks.
+   To click, type or scroll in the window, drive it over its DevTools port
+   (`chrome.port`; `tests/cdp.ts`'s `Page` takes a tab's
+   `webSocketDebuggerUrl` from `http://127.0.0.1:<port>/json/list`). It's
+   the agent's own window; the user's own browser stays untouched.
+
+3. **Edit in the worktree directly**: absolute paths under it, no subagent,
+   never the main checkout. Open pages reload by themselves on every edit:
+   the editor's own code (`src/page/`, `page.html`, `style.css`, `fonts/`)
+   is rebuilt and the page reloads; Worker code is reloaded and so is the
+   page; the dev server restarts when its config or the files it imports
+   (`front.ts` and what it imports) change, and the page reloads once it's
+   back. Don't ask the user to reload. After each change, `tq look` (with
+   `--shot` for visible changes) to see that it landed and the console is
+   clean.
+
+4. **Commit as you go**, each commit a working state, with `tq log <id>` at
+   milestones so the board shows where things are.
+
+5. **Finish when the user says so**: test as in task mode (the tests that
+   cover what changed; `./test.sh` when the app changed), attach screenshots
+   (`tq shot`), commit everything, then `tq done <id> "summary" <url>`. The
+   user merges from the board as usual: a live task merges like any other,
+   and merging or discarding it stops its dev server and closes its window.
+   If the user drops it instead, `tq fail <id> "why"` (or they discard it).
+
+**The outer agent's other duties carry on during live mode.** The queue
+watch stays armed (re-arm it when the Monitor expires) and its lines are
+relayed between edits, as always. Any other change the user asks for
+meanwhile, unrelated to the live task, goes through task mode: registered
+and handed to a background subagent, while the live session carries on. One
+live task at a time per session; a new session picks an unfinished live task
+back up with `tq live <id>` (`tq list working` shows them; live ones have
+`live: true` in `tq get`).
+
 ### With the Claude Code mod
 
 `development/task-queue/mod/` is a Claude Code mod that does the above for
@@ -123,7 +204,7 @@ The worker reports with `task_log`, `task_preview`, `task_screenshot`,
 and Discard buttons (no Merge or Discard while a task is merging), and
 `/tasks board` opens the browser board. The status line counts working, ready
 and merging tasks, and toasts say when one is ready, starts merging, is
-merged, fails to merge or fails. With the mod loaded, use its tools instead of `tq` (but still watch the queue with `tq watch` under Monitor, as above: the mod's toasts tell the user, not the agent; its system prompt says so too).
+merged, fails to merge or fails. With the mod loaded, use its tools instead of `tq` (but still watch the queue with `tq watch` under Monitor, as above: the mod's toasts tell the user, not the agent; its system prompt says so too). Live mode has no tool of its own: use `tq add --live`, `tq live` and `tq look`, as above (the mod's system prompt says so).
 
 ## Changing the database
 
@@ -150,7 +231,8 @@ fails (uncommitted changes, unresolved conflicts, the main checkout not on
 `main`) goes back to Ready to merge (`complete`) with the reason on the card,
 as does one the queue was stopped in the middle of, when it starts again.
 Agents can't set `merging` or `merged`, nor change a merging task's status. Discard drops a task: preview stopped,
-worktree removed, branch deleted.
+worktree removed, branch deleted. A live task's Chrome window is closed on
+merge and on discard, as its dev server (the preview) is stopped.
 
 ### The queue restarts itself after merging its own code
 
@@ -175,12 +257,14 @@ print the task as JSON.
 
 | | |
 |---|---|
-| `POST /api/tasks {title, description}` | register (branch, worktree, port) |
+| `POST /api/tasks {title, description, live?}` | register (branch, worktree, port); `live: true` for a live task |
 | `GET /api/tasks[?status=…]`, `GET /api/tasks/:id` | read |
-| `PATCH /api/tasks/:id {status, url, summary, error, message}` | update; `status` is `queued`, `working`, `complete` or `failed` (`merging`, `merged` and `discarded` are the queue's); `message` goes on the log |
+| `PATCH /api/tasks/:id {status, url, summary, error, live, message}` | update; `status` is `queued`, `working`, `complete` or `failed` (`merging`, `merged` and `discarded` are the queue's); `message` goes on the log |
 | `POST /api/tasks/:id/log {message}` | a progress line |
 | `POST /api/tasks/:id/preview {command?, path?}` | run the preview (default `bun start --port $PORT --no-open`) in the worktree; sets `url` |
 | `DELETE /api/tasks/:id/preview` | stop it |
+| `POST /api/tasks/:id/live {path?, command?}` | live mode: mark it live, run the dev server with live reload, open (or bring back) its Chrome window; records `chrome` |
+| `GET /api/tasks/:id/look[?shot=1&console=1]` | what that window shows: `url`, `title`, `tabs`, `selection`, `console`, `screenshot` |
 | `POST /api/tasks/:id/screenshots` | an image body, or `{path}`, or `{url}` (headless Chrome), with `caption` |
 | `POST /api/tasks/:id/merge`, `POST /api/tasks/:id/discard` | the board's buttons; merge answers 202 with the task `merging` |
 | `GET /api/events` | server-sent events: every task, on each change |

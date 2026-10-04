@@ -17,6 +17,7 @@ With [Bun](https://bun.sh) 1.4 or later (and Node, which runs Vite):
     bun start                       # erga.dev's app, locally: your documents at /docs, /new, the front page at /
     bun start ./path/to/site        # and any folder with index.html or index.md, edited in place
     bun start ./notes/some.md       # or a single file
+    bun start --reload              # open tabs reload by themselves on every edit (live mode runs this)
 
 `bun start` (`dev.ts`; `--help` lists its options) builds the editor and runs
 the same Worker as erga.dev, under Vite and the Cloudflare plugin, at
@@ -344,6 +345,15 @@ development has:
   `build.sh` and served, with `page.html` and the fonts, from `.site/`
   (`site.sh`). The dev server rebuilds them when `src/page/`, `page.html`,
   `style.css` or `fonts/` change: reload the page to see it.
+- **Live reload** (`bun start --reload`, `dev/reload.ts`): every page sent
+  to a browser tab gets a small script that reloads the tab when the
+  editor's files are rebuilt, when the Worker's code changes (Vite reloads
+  the Worker), or when the dev server restarts (Vite restarts it when its
+  config, or a file the config imports, such as `front.ts`, changes). A
+  document's own frame gets nothing. It's what the task queue's live mode
+  runs (AGENTS.md). Edits are watched in any checkout, an agent's worktree
+  under `.claude/worktrees/` included; only a checkout's own `.claude/` is
+  ignored.
 
 Ctrl-C has every document on disk write what it holds before the server
 stops.
@@ -764,7 +774,8 @@ back, merging edits from disk, the agent's exact-match edits and attribution.
 - `worker/`: erga.dev on Cloudflare (front door, sign-in, Durable Objects,
   and `disk.ts`, a document's files on disk in local development)
 - `dev.ts`, `dev/`, `vite.config.ts`: local development (`bun start`): the
-  Worker under Vite, and the plugin that links files on disk to documents
+  Worker under Vite, the plugin that links files on disk to documents, and
+  live reload (`dev/reload.ts`)
 - `api.ts`: the host's HTTP API (Effect's HttpApi): each endpoint's request,
   response and failures; the editor imports its types
 - `room.ts`: the document room (shared Yjs doc, sync, write-back, disk merges)
