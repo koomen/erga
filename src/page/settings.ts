@@ -26,7 +26,8 @@
 import { ago, clock, nearNeed, pickerRows, RECENT, type Published, type Row, type Version, type Versions } from "./versions";
 
 export interface Deploy { state: "idle" | "scheduled" | "deploying" | "deployed" | "failed"; at: string | null; scheduledFor: string | null; version: number | null; error: string | null }
-export interface Home { isHome: boolean; canSet: boolean; deploy: Deploy }
+/** GET /api/docs/<id>/home. `blocked`: why this document can't be made the homepage (others may edit it), or null. */
+export interface Home { isHome: boolean; canSet: boolean; blocked?: string | null; deploy: Deploy }
 
 export interface SettingsHost {
   /** The document's id (its /d/<id>). */
@@ -250,6 +251,12 @@ function mount(host: SettingsHost): Settings {
   let loadSeq = 0, homeSeq = 0;
 
   const add = (vs: Version[]) => { for (const v of vs) loaded.set(v.n, v); };
+  /**
+   * The picker starts afresh (another published version: its neighbours, not the last one's). Versions loaded for
+   * the one before, still on their way, are dropped; a plain refresh (a new version, a description) keeps them.
+   */
+  let loadedEpoch = 0;
+  const fresh = () => { loaded = new Map(); loadedEpoch++; };
   async function loadVersions() {
     const seq = ++loadSeq;
     try {
@@ -257,7 +264,7 @@ function mount(host: SettingsHost): Settings {
       if (seq != loadSeq) return;
       // What was loaded before stays (more rows opened in the picker), with the fresh copies over it.
       // A different published version starts afresh: its neighbours, not the last one's.
-      if (data && (d.total < data.total || d.published.version.id != data.published.version.id)) loaded = new Map();
+      if (data && (d.total < data.total || d.published.version.id != data.published.version.id || d.published.mode != data.published.mode)) fresh();
       add(d.versions); add([d.current, d.published.version]);
       data = d;
       loadError = null;
@@ -276,9 +283,9 @@ function mount(host: SettingsHost): Settings {
     if (!data || data.published.mode != "manual") return;
     const need = nearNeed(loaded, data.published.version);
     if (!need) return;
-    const seq = loadSeq;
+    const epoch = loadedEpoch;
     const more = await call<Versions>("versions", undefined, { before: need.before, limit: String(need.limit) }).catch(() => null);
-    if (!more || seq != loadSeq) return;
+    if (!more || epoch != loadedEpoch) return;
     add(more.versions);
     renderMenu();
   }
@@ -302,7 +309,7 @@ function mount(host: SettingsHost): Settings {
       const r = await call<{ published: Published }>("publish", { method: "POST", body: JSON.stringify(body) });
       data.published = r.published;
       // The picker shows the new published version's neighbours, not the last one's.
-      loaded = new Map();
+      fresh();
       add(data.versions); add([data.current, r.published.version]);
     } catch (e) {
       data.published = was;
@@ -385,8 +392,10 @@ function mount(host: SettingsHost): Settings {
     pickField.hidden = !manual;
     pickBtn.innerHTML = `<span class="ds-val"><span class="ds-n">v${pub.version.n}</span><span>${desc(pub.version)}</span></span>${CHEV}`;
     const newer = current.n - pub.version.n;
-    pubCurrent.hidden = !manual || newer <= 0 || !data.canEdit;
-    pubCurrent.textContent = `Publish the current version (v${current.n})`;
+    // Edits not yet cut into a version count too: publishing cuts them first (the server's next version).
+    const unpublished = newer > 0 || !!data.pending;
+    pubCurrent.hidden = !manual || !unpublished || !data.canEdit;
+    pubCurrent.textContent = newer > 0 ? `Publish the current version (v${current.n})` : "Publish the latest edits";
     pubCurrent.title = "Viewers see the document as it is now, up to the keystroke";
     if (publishing) pubCurrent.setAttribute("aria-disabled", "true"); else pubCurrent.removeAttribute("aria-disabled");
     explainEl.textContent = !data.canEdit
@@ -394,6 +403,7 @@ function mount(host: SettingsHost): Settings {
       : publishing ? "Saving…"
       : !manual ? "Viewers see the latest version, up to the keystroke."
       : newer > 0 ? `Viewers see version ${pub.version.n} until you pick another. ${plural(newer, "newer version")} ${newer == 1 ? "isn't" : "aren't"} published.`
+      : data.pending ? `Viewers see version ${pub.version.n} until you pick another. The latest edits aren't published.`
       : "Viewers see this version until you pick another, even as the document changes.";
 
     totalEl.textContent = data.total > 1 ? `${data.total} in all` : "";
@@ -417,11 +427,13 @@ function mount(host: SettingsHost): Settings {
     if (!home || homeSec.hidden) return;
     const d = home.deploy;
     homeSwitch.setAttribute("aria-checked", String(home.isHome));
-    const locked = !home.canSet || homeBusy;
+    const blocked = !home.isHome && home.blocked ? home.blocked : null;
+    const locked = !home.canSet || !!blocked || homeBusy;
     if (locked) homeSwitch.setAttribute("aria-disabled", "true"); else homeSwitch.removeAttribute("aria-disabled");
     homeExplain.textContent = !host.admin ? "Only admins can choose the homepage."
+      : blocked ? blocked
       : !home.canSet && d.state == "deploying" ? "You can change this once the deploy finishes."
-      : !home.canSet ? "The homepage can't be changed right now."
+      : !home.canSet ? "You can't change the homepage here: the server's configuration fixes it, or you can't edit this document."
       : home.isHome ? "The site's front page shows this document. Each version you publish goes live a few minutes later."
       : "Turn on to make this the site's front page, in place of the current one.";
     deployBox.hidden = !home.isHome;
@@ -501,10 +513,10 @@ function mount(host: SettingsHost): Settings {
   }
   async function loadMore(before: string, count: number) {
     if (!menu) return;
-    const seq = loadSeq;
+    const epoch = loadedEpoch;
     const at = menu.active;
     const r = await call<Versions>("versions", undefined, { before, limit: String(Math.min(count, RECENT)) }).catch((e: Error) => { pubError.textContent = `Couldn't load more versions: ${e.message}`; return null; });
-    if (!r || seq != loadSeq) return;
+    if (!r || epoch != loadedEpoch) return;
     add(r.versions);
     renderMenu();
     // The first of the newly loaded versions, where the row was.

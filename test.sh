@@ -10,11 +10,13 @@
 #                     Erga's own source: the Git endpoint, merges, the mirror and the Source page (tests/source.ts),
 #                     branches deploying themselves, in the Worker (tests/deploys.ts),
 #                     who you are in every page's corner (tests/account.ts),
+#                     the viewer's controls fading while you read (tests/fade.ts),
 #                     a document's pages tree (tests/tree.ts),
 #                     the first switch into editing on a slow network (tests/switch.ts),
 #                     the band the top controls sit on (tests/band.ts),
 #                     versions and publishing (tests/versions.ts),
 #                     document settings (tests/settings.ts),
+#                     the factory, with simulated VMs (tests/factory.ts),
 #                     live reload (tests/reload.ts, in a copy of the checkout)
 #                     and the multiplayer suite, each
 #                     against dev servers of its own (tests/host.ts)
@@ -47,11 +49,14 @@ page_group() {
   run landing bun tests/landing.ts
   run source bun tests/source.ts
   run account bun tests/account.ts
+  run fade bun tests/fade.ts
   run tree bun tests/tree.ts
   run switch bun tests/switch.ts
   run band bun tests/band.ts
   run versions bun tests/versions.ts
   run settings bun tests/settings.ts
+  # The factory (experimental), with simulated VMs; `bun tests/factory.ts --docker` runs real containers, by hand.
+  run factory bun tests/factory.ts
   # Latency is measured afterwards, alone: other tests running would skew it.
   run suite bun tests/suite/run.ts --skip latency
   collect

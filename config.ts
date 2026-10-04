@@ -69,6 +69,15 @@ export const SETTINGS = {
     parse: (v) => (v === null || v === "" ? null : text(300)(v) || null),
     kind: "document",
   }),
+  factory: setting<"off" | "on">({
+    description: "The factory (experimental): tasks that Claude Code does in VMs, each a branch merged into staging, at /admin/factory. off or on.",
+    default: "off",
+    parse: (v) => {
+      const s = typeof v == "string" ? v.trim().toLowerCase() : v === true ? "on" : v === false ? "off" : v;
+      if (s === "off" || s === "on") return s;
+      throw new ConfigError('must be "off" or "on"');
+    },
+  }),
   deploy_page: setting<"off" | "admins" | "users">({
     description: "Who may use /deploy, to deploy Erga to their own Cloudflare account: off, admins or users (anyone signed in).",
     default: "users",

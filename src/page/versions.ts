@@ -7,7 +7,8 @@
 
 export interface Version { id: string; n: number; at: string; authors: string[]; description: string | null }
 export interface Published { mode: "latest" | "manual"; version: Version }
-export interface Versions { current: Version; published: Published; versions: Version[]; total: number; canEdit: boolean }
+/** GET /api/docs/<id>/versions. `pending`: edits since the current version, not cut into one yet. */
+export interface Versions { current: Version; published: Published; versions: Version[]; total: number; canEdit: boolean; pending?: boolean }
 
 export type Row =
   | { kind: "version"; v: Version }

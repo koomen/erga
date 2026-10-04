@@ -48,6 +48,8 @@ export default defineConfig(({ mode }) => ({
       Pipeline: exports.durableObject({ storage: "sqlite" }),
       // The homepage's deploys and the snapshot / serves (worker/home.ts): one object, "home".
       Home: exports.durableObject({ storage: "sqlite" }),
+      // The factory (experimental, worker/factory.ts): its tasks and the stored Claude token, in one object, "factory".
+      Factory: exports.durableObject({ storage: "sqlite" }),
       // Each person's list of documents before the directory: gone, with what it held.
       DocList: exports.durableObject({ state: "deleted" }),
     },
@@ -65,6 +67,7 @@ export default defineConfig(({ mode }) => ({
         GITHUB_MIRROR_TOKEN: bindings.secret(),
       } : {}),
       HOME: bindings.durableObject({ worker: PROD.worker, exportName: "Home" }),
+      FACTORY: bindings.durableObject({ worker: PROD.worker, exportName: "Factory" }),
       // The server's database: users, settings and the directory. `cf deploy` makes the database by name if there's none; its tables come
       // from migrations/, applied by migrate.ts (site.sh runs it on Workers Builds, before
       // the deploy). Locally (vite dev) it's a database of its own, at a fixed made-up id that

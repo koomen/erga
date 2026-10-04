@@ -15,6 +15,7 @@
 //   /llms.txt, /api/..., /mcp  the server's API for agents, with an agent token (server-api.ts, tokens.ts)
 //   /settings, /tokens/...     your settings: agent tokens, and a test token for running the test suite against erga.dev
 //   /deploy                    deploy Erga to your own Cloudflare account (worker/deploy.ts; the deploy_page setting)
+//   /admin/factory, /api/factory/...   the factory (experimental): tasks done by Claude Code in VMs (worker/factory.ts)
 //   /api/deploys, /api/events  branch deploys' status and events, and deploy logs (worker/deploys.ts)
 //   /auth/test?token=&as=      a test person (Ada, Bo...) signed in with one; they open only test documents
 //   /git/erga.git/...          Erga's own repository, over Git smart HTTP (worker/source.ts; admins' agent tokens)
@@ -35,6 +36,8 @@ import { serverApi, tokensDoor } from "../server-api";
 import { finishSignIn, isDev, mintTestToken, sessionOf, signOut, startSignIn, testSignIn } from "./auth";
 import { directoryOf, tokensOf } from "./d1";
 import { deployDoor } from "./deploy";
+import { factoryApi, factoryDoor, previewTicketOk } from "./factory";
+import { previewDoor } from "../factory/cloudflare";
 import { sourceApi, sourceDoor, sourceGit } from "./source";
 import { deploysDoor, isDeploysPath } from "./deploys";
 import { forgetHome, serveHome, serveHomeFile, serveHomeRoot } from "./home";
@@ -44,6 +47,7 @@ import { counted, simulateLatency, tallied } from "./timing";
 
 export { Deployer } from "./deployer";
 export { DocHost } from "./doc-host";
+export { Factory } from "./factory";
 export { Pipeline } from "./pipeline";
 export { SourceHost } from "./source-host";
 export { Home } from "./home";
@@ -122,6 +126,11 @@ const pagesSite = (env: Env, url: URL) => url.hostname.endsWith(`.${pagesDomainO
 async function route(request: Request, env: Env, url: URL, ctx: ExecutionContext): Promise<Response> {
   const path = url.pathname;
   const assets = path == "/page.js" || path == "/frame.js" || path == "/settings.js" || path == "/pages-tree.js" || path == "/style.css" || path.startsWith("/fonts/");
+  // A factory VM's preview (factory/cloudflare.ts), on Cloudflare only: <vm>.<FACTORY_PREVIEW_DOMAIN>.
+  if (env.FACTORY_PREVIEW_DOMAIN) {
+    const preview = await previewDoor(request, env, (vm, ticket) => previewTicketOk(env, vm, ticket));
+    if (preview) return preview;
+  }
   // A document's pages origin (front.ts, pagesDoor) serves its frame and files, and nothing of this site's.
   if (pagesSite(env, url)) return assets ? env.ASSETS.fetch(request) : frontDoor(request, platform(env));
   if (path == "/auth/github") return startSignIn(env, request);
@@ -155,6 +164,9 @@ async function route(request: Request, env: Env, url: URL, ctx: ExecutionContext
     const file = await serveHomeRoot(request, env, ctx);
     if (file) return file;
   }
+  // The factory (experimental): its board and API, admins only (worker/factory.ts).
+  if (path == "/admin/factory") return factoryDoor(request, env, url);
+  if (path == "/api/factory" || path.startsWith("/api/factory/")) return factoryApi(request, env, url);
   // The server's API for agents, and people's agent tokens (server-api.ts).
   if (path == "/llms.txt" || path == "/mcp" || path == "/api" || path.startsWith("/api/")) return serverApi(request, withTokens(platform(env), url));
   if (path == "/settings" || path == "/tokens" || path.startsWith("/tokens/")) return tokensDoor(request, withTokens(platform(env), url));
