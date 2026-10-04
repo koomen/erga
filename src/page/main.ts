@@ -266,8 +266,11 @@ declare global {
     titleBtn.setAttribute("aria-label", `${n.title}: rename, or change its address`);
     titleBtn.title = `${location.host}${n.address}`;
     document.title = n.title;
-    // The editor's own address is the document's, then /edit (the document's alone is its viewer).
+    // The editor's own address is the document's, then /edit (the document's alone is its viewer, which the eye opens).
     const here = `${n.address}/edit`;
+    const view = $("btn-view") as HTMLAnchorElement;
+    view.href = n.address + as;
+    view.hidden = !n.address;
     if (n.address && location.pathname != here) window.history.replaceState(window.history.state, "", here + location.search + location.hash);
   }
   if (info.docName) showName(info.docName);

@@ -36,8 +36,10 @@ The editor runs on Cloudflare. A front-door Worker (`worker/index.ts`)
 serves the app's routes (`front.ts`). Its pages:
 
 - **The viewer**, `/<owner>/<slug>`: a document as it renders, read-only,
-  with Clone (a copy of your own, in the editor: `/new?from=<id>`) for anyone
-  who may see it, and Edit for those who may edit it.
+  with small icons at the top right like the editor's: Clone (a copy of your
+  own, in the editor: `/new?from=<id>`) for anyone who may see it, and the
+  pencil (Edit) for those who may edit it. In the editor, the eye opens the
+  viewer.
 - **The front page**, `/`: the viewer on the landing document (see [The front
   page](#the-front-page)), for anyone, signed in or not.
 - **My Documents**, `/docs`: home for anyone signed in, and under it **the

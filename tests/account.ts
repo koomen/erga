@@ -118,6 +118,8 @@ try {
   expect(!(await p.eval<boolean>(`document.getElementById("account").hidden`)), "and it stays open");
   await p.screenshot(join(SHOTS, "account-editor.png"));
   await p.key("Escape");
+  const eye = await p.eval<{ hidden: boolean; href: string | null }>(`({ hidden: document.getElementById("btn-view").hidden, href: document.getElementById("btn-view").getAttribute("href") })`);
+  expect(!eye.hidden && eye.href == at.replace(/\/edit$/, ""), "the eye beside it opens the viewer", { eye, at });
   expect(await p.eval<boolean>(`document.getElementById("account").hidden`), "Escape closes it");
   ok("in the editor, your avatar opens the menu");
 

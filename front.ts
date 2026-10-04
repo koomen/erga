@@ -371,8 +371,8 @@ async function viewDocument(platform: Platform, request: Request, doc: DocRow, s
   if (!index) return page("Not found", "There's no document here. <a href=\"/\">Back to the start</a>.", 404);
   const pages = `${pagesOrigin(doc.owner, doc.id, url, platform)}/t/${await pagesToken(platform.secret, doc.owner, doc.id, url.origin)}/doc/${index.split("/").map(encodeURIComponent).join("/")}`;
   const canEdit = !!session && !session.agent && (await platform.directory.may(whoOf(session), "edit", doc));
-  const clone = `<a href="${esc(link(`/new?from=${landing ? "landing" : doc.id}`, session))}" class="erga-view-button erga-clone-button">Clone</a>`;
-  const edit = canEdit ? `<a href="${esc(link(`/${doc.owner}/${doc.slug}/edit`, session))}" class="erga-view-button erga-edit-button">Edit</a>` : "";
+  const clone = `<a href="${esc(link(`/new?from=${landing ? "landing" : doc.id}`, session))}" class="erga-view-button erga-clone-button" aria-label="Clone: make your own copy" data-tip="Clone"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8.75" y="8.75" width="10.5" height="10.5" rx="2"/><path d="M15.25 8.75V6.5a1.75 1.75 0 0 0-1.75-1.75H6.5A1.75 1.75 0 0 0 4.75 6.5v7c0 .97.78 1.75 1.75 1.75h2.25"/></svg></a>`;
+  const edit = canEdit ? `<a href="${esc(link(`/${doc.owner}/${doc.slug}/edit`, session))}" class="erga-view-button erga-edit-button" aria-label="Edit" data-tip="Edit"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.75 19.25l1-4L15.6 5.4a1.4 1.4 0 0 1 2 0l1 1a1.4 1.4 0 0 1 0 2L8.75 18.25zM13.75 7.25l3 3"/></svg></a>` : "";
   const crumbs = !landing && session && !session.test
     ? `<nav class="erga-crumbs" aria-label="Breadcrumbs"><a href="${esc(link("/docs", session))}">My Documents</a><span aria-hidden="true">›</span><span aria-current="page">${esc(doc.title)}</span></nav>`
     : "";
@@ -412,29 +412,30 @@ async function startPage(platform: Platform, session: Session | null): Promise<R
 
 const VIEW_STYLE = `
 <style>
-  /* Right of them is who you are (account.ts): your avatar, or a way to sign in. */
-  .erga-view-buttons { position: fixed; top: 14px; right: 58px; z-index: 1000; display: flex; gap: 8px; }
-  .erga-view-button { padding: 7px 16px; border-radius: 999px; font: 600 14px/1.2 system-ui, -apple-system, sans-serif; text-decoration: none;
-    color: #1b2330; background: #fff; box-shadow: 0 2px 10px rgba(20, 28, 40, .2); }
-  .erga-view-button:hover { background: #eef1f5; }
-  .erga-edit-button { color: #fff; background: #1b2330; }
-  .erga-edit-button:hover { background: #2f3b4d; }
-  .erga-crumbs { position: fixed; top: 14px; left: 16px; z-index: 1000; display: flex; align-items: center; gap: 8px; max-width: calc(100vw - 260px);
-    padding: 7px 14px; border-radius: 999px; background: #fff; box-shadow: 0 2px 10px rgba(20, 28, 40, .2);
-    font: 500 14px/1.2 system-ui, -apple-system, sans-serif; color: #5b6676; }
-  .erga-crumbs a { color: #1b2330; font-weight: 600; text-decoration: none; white-space: nowrap; }
-  .erga-crumbs a:hover { text-decoration: underline; }
-  .erga-crumbs [aria-current] { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  /* On a phone they'd sit over the text the whole way down: they stay at the top instead, and are bigger to tap. */
+  /* The editor's look (style.css, .icon-btn and .nav-back): small icons, and breadcrumbs as plain text. Right of the icons is who you are (account.ts). */
+  .erga-view-buttons, .erga-crumbs { --chrome: #a1a1a9; --chrome-hover: #3f3f46; --fg: #1c1c1f;
+    position: fixed; top: max(12px, env(safe-area-inset-top)); z-index: 1000; display: flex; align-items: center;
+    font: 500 13px/1 "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+  @media (prefers-color-scheme: dark) { .erga-view-buttons, .erga-crumbs { --chrome: #5f5f68; --chrome-hover: #d4d4da; --fg: #ececf1; } }
+  .erga-view-buttons { right: max(56px, calc(env(safe-area-inset-right) + 40px)); gap: 2px; }
+  .erga-view-button { position: relative; display: grid; place-items: center; width: 34px; height: 34px; border-radius: 8px; color: var(--chrome);
+    transition: color 150ms ease, background-color 150ms ease; }
+  .erga-view-button:hover { color: var(--chrome-hover); background: color-mix(in srgb, var(--chrome) 12%, transparent); }
+  .erga-view-button:focus-visible, .erga-crumbs a:focus-visible { outline: 2px solid #3b82f6; outline-offset: 1px; }
+  .erga-view-button svg { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+  .erga-view-button::after { content: attr(data-tip); position: absolute; top: calc(100% + 6px); right: 0; white-space: pre; font-size: 12px;
+    letter-spacing: .01em; color: var(--chrome); opacity: 0; pointer-events: none; transition: opacity 120ms ease; }
+  @media (hover: hover) { .erga-view-button:hover::after { opacity: 1; transition-delay: 600ms; } }
+  .erga-crumbs { left: max(14px, env(safe-area-inset-left)); max-width: calc(100vw - 200px); }
+  .erga-crumbs a { display: flex; align-items: center; height: 34px; padding: 0 10px; border-radius: 8px; color: var(--chrome); text-decoration: none; white-space: nowrap;
+    transition: color 150ms ease, background-color 150ms ease; }
+  .erga-crumbs a:hover { color: var(--chrome-hover); background: color-mix(in srgb, var(--chrome) 12%, transparent); }
+  .erga-crumbs [aria-hidden] { margin: 0 2px 0 -2px; color: var(--chrome); opacity: .55; font-weight: 400; }
+  .erga-crumbs [aria-current] { padding: 0 8px; color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* On a phone they'd sit over the text the whole way down: they stay at the top instead. */
   @media (max-width: 640px), (max-height: 480px) {
     .erga-view-buttons, .erga-crumbs { position: absolute; }
-    .erga-view-button { padding: 10px 18px; }
     .erga-crumbs [aria-current], .erga-crumbs [aria-hidden] { display: none; }
-  }
-  @media (prefers-color-scheme: dark) {
-    .erga-view-button, .erga-crumbs { color: #e4e8ee; background: #1a2029; } .erga-view-button:hover { background: #232a35; }
-    .erga-crumbs a { color: #e4e8ee; } .erga-crumbs { color: #9aa5b4; }
-    .erga-edit-button { color: #12161d; background: #e4e8ee; } .erga-edit-button:hover { background: #fff; }
   }
 </style>`;
 

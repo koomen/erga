@@ -313,6 +313,7 @@ body.chrome-hidden .chrome-bottom:has(.status.error) { opacity: 1; }
   cursor: pointer;
   transition: color 150ms ease, background-color 150ms ease;
 }
+.icon-btn[hidden] { display: none; }
 .icon-btn:hover { color: var(--chrome-hover); background: color-mix(in srgb, var(--chrome) 12%, transparent); }
 .icon-btn:focus-visible, .stat:focus-visible { outline: 2px solid var(--caret); outline-offset: 1px; }
 .icon-btn svg { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
