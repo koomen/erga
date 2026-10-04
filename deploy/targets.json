@@ -22,6 +22,10 @@
       },
       "notifies": [
         "staging"
+      ],
+      "deploys": [
+        "production",
+        "staging"
       ]
     },
     "staging": {
@@ -42,6 +46,9 @@
       "snapshotFrom": "production",
       "notifies": [
         "production"
+      ],
+      "deploys": [
+        "staging"
       ]
     }
   }
