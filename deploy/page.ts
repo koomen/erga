@@ -194,7 +194,7 @@ export function deployPage(c: DeployPageConfig): string {
   return appPage("Deploy your own", STYLE, body);
 }
 
-const LABELS: Record<string, string> = { account_settings: "Account Settings", workers_scripts: "Workers Scripts", d1: "D1", workers_routes: "Workers Routes", zone: "Zone", dns: "DNS", registrar: "Registrar" };
+const LABELS: Record<string, string> = { account_settings: "Account Settings", workers_scripts: "Workers Scripts", d1: "D1", workers_routes: "Workers Routes", zone: "Zone", dns: "DNS", registrar_domains: "Registrar: Domains" };
 const label = (key: string) => LABELS[key] ?? key;
 
 /** Local development only: a stand-in for Cloudflare's consent page. */

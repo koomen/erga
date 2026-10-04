@@ -480,7 +480,7 @@ export function tokenPermissions(registrar: boolean) {
     { key: "workers_routes", type: "edit", why: "route a domain of yours to the Worker" },
     { key: "zone", type: "read", why: "list your domains" },
     { key: "dns", type: "edit", why: "add the DNS record for documents' pages" },
-    ...(registrar ? [{ key: "registrar_domains", type: "edit", why: "search for and register a new domain (only when you confirm the price)" }] : []),
+    ...(registrar ? [{ key: "registrar_domains", type: "edit", why: "only with “Include buying a domain”: search for and register a new domain, after you confirm the price" }] : []),
   ];
 }
 
