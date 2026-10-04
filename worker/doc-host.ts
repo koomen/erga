@@ -475,24 +475,24 @@ export class DocHost extends DurableObject<Env> {
   }
 
   /** Cuts a version of what the document holds now (after any cut under way); the new version, or null if nothing changed. */
-  private cutSoon(reason: string): Promise<StoredVersion | null> {
-    const run = this.cutting.then(() => this.cutNow(reason));
+  private cutSoon(reason: string, as?: { authors: string[]; description: string }): Promise<StoredVersion | null> {
+    const run = this.cutting.then(() => this.cutNow(reason, as));
     this.cutting = run.catch((e) => console.log(`couldn't cut a version (${reason}): ${e instanceof Error ? e.stack : e}`));
     return run;
   }
 
-  private async cutNow(_reason: string): Promise<StoredVersion | null> {
+  private async cutNow(_reason: string, as?: { authors: string[]; description: string }): Promise<StoredVersion | null> {
     // Edits from in-process peers (agents) sync on microtasks: they've reached the room by the next macrotask.
     await new Promise((r) => setTimeout(r, 0));
     const opened = this.opened;
     const meta = await this.ctx.storage.get<Meta>(META);
     if (!opened || !meta) return null;
     const { authors } = this.clearPending();
-    const r = await this.versions.cut(await opened.current(), meta.index, authors, (await this.versions.head()) == 0 ? "First version" : null);
+    const r = await this.versions.cut(await opened.current(), meta.index, as?.authors ?? authors, as?.description ?? ((await this.versions.head()) == 0 ? "First version" : null));
     if (!r) return null;
     opened.broadcast({ type: "versions" });
     if (!meta.published) this.firePublished(meta);
-    if (r.previous) this.ctx.waitUntil(this.describe(r.version, r.previous, meta).catch((e) => console.log(`couldn't describe version ${r.version.n}: ${e}`)));
+    if (r.previous && !as) this.ctx.waitUntil(this.describe(r.version, r.previous, meta).catch((e) => console.log(`couldn't describe version ${r.version.n}: ${e}`)));
     return r.version;
   }
 
@@ -564,12 +564,16 @@ export class DocHost extends DurableObject<Env> {
     const r = await this.ready();
     if (!r) return { ok: false, status: 404, error: "There's no such document." };
     if (req?.mode != "latest" && req?.mode != "manual") return { ok: false, status: 400, error: 'Send {"mode": "latest"} or {"mode": "manual", "versionId": "v3"}.' };
+    // Edits not yet in a version become one: publishing the current version means up to the keystroke.
+    const before = await this.versions.head();
     await this.cutSoon("publish");
     const meta = (await this.ctx.storage.get<Meta>(META))!;
     if (req.mode == "latest") delete meta.published;
     else {
       const head = await this.versions.head();
-      const n = req.versionId == null ? head : versionNumber(req.versionId);
+      const asked = req.versionId == null ? head : versionNumber(req.versionId);
+      // The version that was current when the person asked is the current state, now cut.
+      const n = asked == before ? head : asked;
       if (n == null || n > head || !(await this.versions.get(n))) return { ok: false, status: 404, error: `There's no version ${req.versionId} of this document: its versions are v1 to v${head}.` };
       meta.published = { n };
     }
@@ -578,6 +582,29 @@ export class DocHost extends DurableObject<Env> {
     r.opened.broadcast({ type: "versions" });
     this.firePublished(meta);
     return { ok: true, published: await this.publishedNow(meta) };
+  }
+
+  /**
+   * Brings a version back: its files are written over the document as it
+   * is now (every file: those it didn't have are deleted), as an edit open
+   * editors see live, and that becomes a new version, the current one, by
+   * `by`, "Restored version <n>". Edits not yet in a version become one
+   * first, so nothing is lost. In "latest" mode viewers then see it; in
+   * "manual" mode what's published stays.
+   */
+  async restore(ref: string | number, by: string): Promise<{ ok: true; current: Version } | { ok: false; status: number; error: string }> {
+    const r = await this.ready();
+    if (!r) return { ok: false, status: 404, error: "There's no such document." };
+    const n = versionNumber(ref);
+    const v = n != null ? await this.versions.get(n) : null;
+    if (!v) return { ok: false, status: 404, error: `There's no version ${ref} of this document: its versions are v1 to v${await this.versions.head()}.` };
+    await this.cutSoon("restore");
+    const files = await this.versions.files(v);
+    const now = new Set((await r.opened.current()).keys());
+    const out = await this.publish(Object.fromEntries(files), [...now].filter((p) => !files.has(p)));
+    if (out.refused.length) console.log(`restoring ${v.id}: ${out.refused.map((x) => `${x.path} (${x.why})`).join(", ")}`);
+    const made = await this.cutSoon("restored", { authors: [by], description: `Restored version ${v.n}` });
+    return { ok: true, current: publicVersion(made ?? (await this.versions.latest())!) };
   }
 
   /**
@@ -665,6 +692,7 @@ export class DocHost extends DurableObject<Env> {
         version: (ref) => this.version(ref),
         file: (ref, path) => this.versionFile(ref, path),
         publish: (req) => this.setPublished(req),
+        restore: (ref, by) => this.restore(ref, by),
       },
     });
     // Every edit to the files, and who made it: a version is cut once a burst of them ends (noteEdit).

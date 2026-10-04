@@ -21,6 +21,8 @@ const host = await startHost(null, { env: { ERGA_AGENT_MODEL: "script", ERGA_WRI
 const base = host.base.replace(/\/+$/, "");
 const origin = new URL(base).origin;
 const checks: string[] = [];
+// Browsers send <anything>.localhost to this machine; Bun's fetch doesn't, so it's told the host instead.
+const pagesFetch = (u: string) => { const url = new URL(u); return url.hostname.endsWith(".localhost") ? fetch(u.replace(url.host, `localhost:${url.port}`), { headers: { Host: url.host } }) : fetch(u); };
 const ok = (what: string) => { checks.push(what); console.log(`ok   ${what}`); };
 
 async function signIn(as: string): Promise<string> {
@@ -58,7 +60,7 @@ try {
 
   // A burst of edits, quicker than the pause: one version, once they stop.
   const doc = { base: `${base}/d/${id}`, path: "index.html", roomUrl: `${base.replace(/^http/, "ws")}/d/${id}/api/room`, roomName: "doc", headersFor: () => ({ Cookie: cookie }) } as unknown as Doc;
-  const ada = await Participant.join(doc, "Ada");
+  const ada = await Participant.join(doc, owner);
   const t0 = Date.now();
   for (let i = 0; i < 6; i++) { ada.edit((t) => t.insert(t.toString().indexOf("</h1>"), ` burst${i}`)); await sleep(150); }
   await sleep(IDLE / 2);
@@ -112,7 +114,7 @@ try {
   expect((await publish(id, { mode: "manual", versionId: "v1" }, getBo)).status == 403, "a viewer can't publish");
   expect((await publish(id, { mode: "manual", versionId: "v1" }, get, {})).status == 403, "nor can another site's page, for the owner");
   expect((await publish(id, { mode: "manual", versionId: "v99" })).status == 404, "a version that isn't there is refused");
-  expect((await (await fetch(`${base}/api/docs/${id}/versions`)).status) == 401, "signed out: nothing");
+  expect((await fetch(`${base}/api/docs/${id}/versions`, { headers: { Authorization: "Bearer erga_forged" } })).status == 401, "a bad token: nothing");
   ok("only editors may publish (viewers may list), and only from this site's pages");
 
   // Manual: viewers see the chosen version, whatever happens to the document meanwhile.
@@ -121,24 +123,25 @@ try {
   const pubBody = (await pub.json()) as { published: { mode: string; version: V } };
   expect(pub.ok && pubBody.published.mode == "manual" && pubBody.published.version.id == "v2", "publishing v2", pubBody);
   await until(() => events.length > eventsBefore, 3000, "tabs hear of the publish");
-  const bob = await Participant.join(doc, "Bob");
+  await get("/docs/share", { method: "POST", body: new URLSearchParams({ id, login: "vbob", role: "editor" }), headers: { Origin: origin } });
+  const bob = await Participant.join(doc, "vbob");
   bob.edit((t) => t.insert(t.toString().indexOf("</h1>"), " unpublished-draft"));
   await until(async () => (await (await get(`/d/${id}/doc/index.html`)).text()).includes("unpublished-draft"), 3000, "the editor's files have the draft");
   // The viewer's frame and its files, as the viewer's page links them.
   const viewer = async (who: typeof get) => {
-    const html = await (await who(at)).text();
+    const html = await (await who(`/d/${id}`, { redirect: "follow" })).text();
     const frame = /<iframe id="frame"[^>]* src="([^"]+)"/.exec(html)![1].replace(/&amp;/g, "&");
-    const hostPage = await (await fetch(frame)).text();
+    const hostPage = await (await pagesFetch(frame)).text();
     const shown = new URL(/<iframe id="view"[^>]* src="([^"]+)"/.exec(hostPage)![1], frame).href;
     return { frame, shown, docUrl: shown.replace("/pub/", "/doc/") };
   };
   const mine = await viewer(get);
   expect(mine.shown.includes("/pub/"), "the viewer shows the page from pub/", mine);
-  const shownText = await (await fetch(mine.shown)).text();
+  const shownText = await (await pagesFetch(mine.shown)).text();
   expect(shownText.includes("burst5") && !shownText.includes("agent-one") && !shownText.includes("unpublished-draft"), "manual: the viewer's page is v2's, not the draft", shownText.slice(0, 400));
-  expect((await (await fetch(mine.docUrl)).text()).includes("unpublished-draft"), "while an editor's frame (doc/) has the draft");
+  expect((await (await pagesFetch(mine.docUrl)).text()).includes("unpublished-draft"), "while an editor's frame (doc/) has the draft");
   const theirs = await viewer(getBo);
-  const boDoc = await (await fetch(theirs.docUrl)).text();
+  const boDoc = await (await pagesFetch(theirs.docUrl)).text();
   expect(!boDoc.includes("unpublished-draft") && boDoc.includes("burst5"), "someone who may only view gets v2 from doc/ too", boDoc.slice(0, 300));
   expect((await get(`/api/docs/${id}/versions`).then((x) => x.json()) as State).published.version.id == "v2", "the API says v2 is published");
   // A viewer's copy is of what they see.
@@ -152,9 +155,8 @@ try {
   const browser = await Browser.launch();
   try {
     const tab = await browser.page();
-    await tab.send("Network.enable");
-    await tab.send("Network.setExtraHTTPHeaders", { headers: { Cookie: bo } });
-    await tab.open(`${base}${at}`);
+    // Signed in as the viewer, in the browser, then on to the document's viewer.
+    await tab.open(`${base}/auth/github?as=vbo&next=${encodeURIComponent(`/d/${id}`)}`);
     await until(async () => (await tab.inPage<string>("document.body?.innerText ?? ''")).some((t) => t?.includes("burst5")), 10_000, "the viewer shows the page");
     const texts = await tab.inPage<string>("document.body.innerText");
     expect(texts.some((t) => t?.includes("burst5") && !t.includes("unpublished-draft") && !t.includes("agent-one")), "headless Chrome shows v2 in the viewer", texts);
@@ -166,7 +168,7 @@ try {
   // Back to latest: viewers see every edit at once, without waiting for a version.
   expect((await publish(id, { mode: "latest" })).ok, "back to latest");
   bob.edit((t) => t.insert(t.toString().indexOf("</h1>"), " live-now"));
-  await until(async () => (await (await fetch(mine.shown)).text()).includes("live-now"), 2000, "latest: the viewer has the edit at once");
+  await until(async () => (await (await pagesFetch(mine.shown)).text()).includes("live-now"), 2000, "latest: the viewer has the edit at once");
   expect((await state(id)).pending, "and it's not a version yet");
   ok("latest: viewers see edits up to the keystroke, before any version is cut");
 
@@ -195,6 +197,36 @@ try {
   await publish(id, { mode: "latest" });
   ok("the agent's tools list, read and publish versions");
 
+  // "Publish current version" with edits not yet in a version: they're cut first, so it's up to the keystroke.
+  bob.edit((t) => t.insert(t.toString().indexOf("</h1>"), " pending-publish"));
+  await until(async () => (await state(id)).pending, 3000, "the edit is pending");
+  const cur = (await state(id)).current;
+  const pc = await publish(id, { mode: "manual", versionId: cur.id });
+  const pcBody = (await pc.json()) as { published: { mode: string; version: V } };
+  s = await state(id);
+  expect(pc.ok && s.current.n == cur.n + 1 && pcBody.published.version.id == s.current.id && !s.pending, "publishing the current version cuts the pending edits first and publishes that", { pcBody, s });
+  expect((await (await pagesFetch(mine.shown)).text()).includes("pending-publish"), "viewers see it, up to the keystroke");
+  ok("publishing the current version, with edits pending, publishes them too");
+
+  // Restore: an old version's files over the current state, as a new current version, live in open editors.
+  const restorePath = `/api/docs/${id}/versions/v2/restore`;
+  expect((await getBo(restorePath, { method: "POST", headers: { Origin: origin } })).status == 403, "a viewer can't restore");
+  expect((await get(`/api/docs/${id}/versions/v99/restore`, { method: "POST", headers: { Origin: origin } })).status == 404, "a version that isn't there can't be restored");
+  const published = (await state(id)).published.version.id;
+  const rs = await get(restorePath, { method: "POST", headers: { Origin: origin } });
+  const rsBody = (await rs.json()) as { current: V };
+  s = await state(id);
+  expect(rs.ok && rsBody.current.n == pcBody.published.version.n + 1 && rsBody.current.description == "Restored version 2" && rsBody.current.authors.join() == owner && s.current.id == rsBody.current.id, "restoring v2 makes a new current version, by the person", { rsBody, s });
+  const v2Text = (await tool("read_version", { version: "v2", path: "index.html" })).text;
+  await until(() => bob.str() == v2Text, 3000, "an open editor sees the restore live", () => ({ bob: bob.str().slice(0, 300), v2: v2Text.slice(0, 300) }));
+  expect(s.published.mode == "manual" && s.published.version.id == published, "manual: what's published stays", s.published);
+  expect((await (await pagesFetch(mine.shown)).text()).includes("pending-publish"), "and viewers still see it");
+  t = await tool("restore_version", { version: "v1" });
+  s = await state(id);
+  expect(t.status == 200 && s.current.description == "Restored version 1" && s.current.authors.some((a) => a.endsWith("agent")), "restore_version, by the agent", { t, current: s.current });
+  await publish(id, { mode: "latest" });
+  ok("restoring a version: a new current version, live in open editors, published version unchanged; also as an agent tool");
+
   bob.disconnect();
   ws.close();
   console.log(`\nversions: all ${checks.length} passing`);
@@ -203,5 +235,7 @@ try {
   console.error(host.output().slice(-3000));
   process.exitCode = 1;
 } finally {
+  process.exitCode ||= 0;
   await host.dispose();
+  process.exit(process.exitCode);
 }

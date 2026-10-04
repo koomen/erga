@@ -39,7 +39,7 @@ import { OWN_ACCOUNT } from "./account.ts";
 import { adminDoor } from "./admin.ts";
 import { type Directory, type DocRow, type Grant, type Permission, type Role, type Route, type Who, NotAllowed, roleMay, UNTITLED } from "./directory.ts";
 import type { AgentToken, Tokens } from "./tokens.ts";
-import type { PublishRequest, PublishResult, VersionsState } from "./versions.ts";
+import type { PublishRequest, PublishResult, Version, VersionsState } from "./versions.ts";
 
 /** Who's signed in. */
 export interface Session {
@@ -139,6 +139,8 @@ export interface Platform {
     versions(doc: Route, opts: { before?: string | null; limit?: number }): Promise<VersionsState | null>;
     /** Sets what a document's viewers see: "latest", or one version ("manual"). The caller checks the person may edit. */
     setPublished(doc: Route, req: PublishRequest): Promise<PublishResult>;
+    /** Brings a version back as a new current version, by `by`. The caller checks the person may edit. */
+    restore(doc: Route, ref: string, by: string): Promise<{ ok: true; current: Version } | { ok: false; status: number; error: string }>;
     exists(doc: Route): Promise<boolean>;
     /** Deletes a document (its host takes it out of the directory too); false if it had no host. */
     delete(doc: Route): Promise<boolean>;

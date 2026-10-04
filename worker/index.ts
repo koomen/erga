@@ -150,6 +150,7 @@ const platform = (env: Env): Platform => {
       snapshot: (doc, opts) => counted("doc", () => host(doc).snapshot(opts)),
       versions: (doc, opts) => host(doc).versionsState(opts),
       setPublished: (doc, req) => host(doc).setPublished(req),
+      restore: (doc, ref, by) => host(doc).restore(ref, by),
       exists: (doc) => counted("doc", () => host(doc).exists()),
       delete: (doc) => counted("doc", () => host(doc).delete()),
       list: async (owner) => {

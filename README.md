@@ -356,18 +356,26 @@ The API (also for the settings UI, and with an agent token):
     POST /api/docs/<id>/publish     editors only; from a browser only from this site's pages
       { mode: "latest" } | { mode: "manual", versionId: "v3" }   (no versionId: the current state)
       → { published } | 4xx { error }
+    POST /api/docs/<id>/versions/<versionId>/restore   editors only; from a browser only from this site's pages
+      → { current: Version } | 4xx { error }
 
 `description` is null until the model has answered; `pending` says there are
-edits since the current version. Everyone with the document open hears
+edits since the current version. Publishing the current version (`versionId`
+the current one's) while edits are pending cuts them into a new version first
+and publishes that, so "current" means up to the keystroke. A **restore**
+writes the version's files over the document as it is (files it didn't have
+are deleted), as an edit open editors see live, and cuts that as a new current
+version, by the person (or "<login>’s agent"), described "Restored version
+<n>"; pending edits become a version first, so nothing is lost. In "latest"
+mode viewers then see it; in "manual" mode what's published stays. Everyone with the document open hears
 `{ type: "versions" }` on its event channel (`/api/events`) when a version is
 cut, a description arrives, or the published version changes. In "latest"
 mode, `published.version` is the current version.
 
 The agents (the editor's and external ones, over `/api/ext`, the server's
 API and MCP) have `list_versions`, `read_version` (a version's files, or one
-file as it was) and `publish_version` (`latest`, or `manual` with a version;
-editors only), so an agent can do what the person can, and bring an old
-version back by reading its files and writing them.
+file as it was), `restore_version` and `publish_version` (`latest`, or
+`manual` with a version; editors only), so an agent can do what the person can.
 
 **In process, for the homepage's deploy** (`versions.ts`):
 `onPublished(docId | "*", cb)` calls `cb({ docId, published, files() })`
@@ -1038,7 +1046,8 @@ a deleted one is made again, and an admin's choice is kept;
 `bun tests/versions.ts` checks versions and publishing: a burst of edits is
 one version, an agent's turn is one, leaving cuts one, events and
 descriptions arrive, "latest" and "manual" in the viewer (headless Chrome),
-who may publish, and the agents' tools; `tests/versions.test.ts` covers their
+who may publish, publishing the current version with edits pending,
+restoring, and the agents' tools; `tests/versions.test.ts` covers their
 storage (unchanged files stored once).
 `tests/directory.test.ts` covers the directory, permissions, users and
 settings on bun:sqlite; `tests/tokens.test.ts` the tokens themselves.

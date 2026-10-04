@@ -9,7 +9,8 @@
 //   GET  /api/ext/tools            the tools, as JSON (name, description, JSON Schema)
 //   POST /api/ext/tools/<name>     runs one, the body its arguments: {"ok": true, "content": [...]}
 //   POST /api/publish              a folder of files as a document (multipart or JSON), or into one
-//   GET  /api/docs/<id>/versions   a document's versions and what's published; POST .../publish sets it (versions.ts)
+//   GET  /api/docs/<id>/versions   a document's versions and what's published; POST .../publish sets it,
+//                                  POST .../versions/<versionId>/restore brings one back (versions.ts)
 //   POST /api/auth/request         an agent asks for a token: a link for its person to approve
 //   POST /api/auth/poll            ... and collects the token once they have
 //   POST /mcp                      the same tools as a stateless MCP server (Streamable HTTP, JSON answers)
@@ -358,8 +359,8 @@ export async function serverApi(request: Request, platform: Platform): Promise<R
   }
   if (path == "/api/auth/request" && method == "POST") return askForToken(request, platform, origin);
   // A document's versions and publishing: for the person signed in (the settings UI) or an agent token alike.
-  const [, docId, what] = /^\/api\/docs\/([^/]+)\/(versions|publish)$/.exec(path) ?? [];
-  if (docId) return versionsApi(request, platform, session, decodeURIComponent(docId), what as "versions" | "publish");
+  const [, docId, what, restoreId] = /^\/api\/docs\/([^/]+)\/(versions|publish|versions\/([^/]+)\/restore)$/.exec(path) ?? [];
+  if (docId) return versionsApi(request, platform, session, decodeURIComponent(docId), restoreId ? "restore" : what as "versions" | "publish", restoreId && decodeURIComponent(restoreId));
   if (path == "/api/auth/poll" && method == "POST") return pollForToken(request, platform);
 
   const [, name] = /^\/api\/ext\/tools\/([^/]+)$/.exec(path) ?? [];
@@ -392,7 +393,7 @@ export async function serverApi(request: Request, platform: Platform): Promise<R
  * document, signed in or with an agent token; a POST from a browser only from
  * this site's own pages.
  */
-async function versionsApi(request: Request, platform: Platform, session: Session | null, ref: string, what: "versions" | "publish"): Promise<Response> {
+async function versionsApi(request: Request, platform: Platform, session: Session | null, ref: string, what: "versions" | "publish" | "restore", versionRef?: string): Promise<Response> {
   const url = new URL(request.url);
   const fail = (error: string, status: number) => json({ error }, status);
   if (!session) return fail("Sign in first, or send an agent token as \"Authorization: Bearer <token>\".", 401);
@@ -406,9 +407,15 @@ async function versionsApi(request: Request, platform: Platform, session: Sessio
     const state = await platform.docs.versions(doc, { before: url.searchParams.get("before"), limit });
     return state ? json({ ...state, canEdit }) : fail("There's no such document.", 404);
   }
-  if (request.method != "POST") return fail("POST {\"mode\": \"latest\"} or {\"mode\": \"manual\", \"versionId\": \"v3\"}.", 405);
-  if (!session.agent && request.headers.get("origin") != url.origin) return fail("Only this site's own pages may publish.", 403);
-  if (!canEdit) return fail("You may only view this document, so you can't publish it.", 403);
+  if (request.method != "POST") return fail(what == "restore" ? "POST this." : "POST {\"mode\": \"latest\"} or {\"mode\": \"manual\", \"versionId\": \"v3\"}.", 405);
+  if (!session.agent && request.headers.get("origin") != url.origin) return fail(`Only this site's own pages may ${what}.`, 403);
+  if (!canEdit) return fail(`You may only view this document, so you can't ${what} it.`, 403);
+  if (what == "restore") {
+    // An agent token's restore is its person's agent's; a person's is theirs.
+    const by = session.agent ? `${session.login.toLowerCase()}’s agent` : session.login.toLowerCase();
+    const r = await platform.docs.restore(doc, versionRef ?? "", by);
+    return r.ok ? json({ current: r.current }) : fail(r.error, r.status);
+  }
   const body = (await request.json().catch(() => null)) as PublishRequest | null;
   if (!body || typeof body != "object") return fail("Send JSON: {\"mode\": \"latest\"} or {\"mode\": \"manual\", \"versionId\": \"v3\"}.", 400);
   const r = await platform.docs.setPublished(doc, body);
@@ -773,14 +780,16 @@ because someone changed the text meanwhile.
 Each document keeps versions: snapshots of all its files, cut after each burst
 of edits and each agent turn, with a five-word description. What its viewers
 see is either "latest" (the document as it is) or one version ("manual"). The
-document tools list_versions, read_version and publish_version handle them; so
+document tools list_versions, read_version, restore_version and publish_version handle them; so
 does plain HTTP:
 
     curl -s ${origin}/api/docs/<id>/versions -H "Authorization: Bearer $ERGA_TOKEN"
     curl -s -X POST ${origin}/api/docs/<id>/publish -H "Authorization: Bearer $ERGA_TOKEN" -H "Content-Type: application/json" -d '{"mode": "manual", "versionId": "v3"}'
+    curl -s -X POST ${origin}/api/docs/<id>/versions/v3/restore -H "Authorization: Bearer $ERGA_TOKEN"
 
-Only someone who may edit a document may publish it. Publish only when your
-person asks.
+Only someone who may edit a document may publish it or restore a version (a
+restore writes the old version's files over the document, as a new version).
+Do either only when your person asks.
 
 ## The server's tools
 
