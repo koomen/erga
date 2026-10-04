@@ -1663,6 +1663,22 @@ edge (light, dark, a gradient; desktop and phone), compares the band's
 pixels with the page's, and records a first visit, a hard reload and the
 switch into the editor and back frame by frame on a slow network.
 
+**The viewer's controls fade while you read** (`FADE` in `front.ts`), on a
+document's page and on the homepage alike: Clone, Edit and your avatar are
+whole at the top of the page, and fade to 20% (`FADED`) as soon as it scrolls,
+in 180ms (at once, with `prefers-reduced-motion`). They're whole again back at
+the top, while the pointer is within 100px of them (`FADE_NEAR`), while one has
+keyboard focus, and while your menu is open. On a touch screen, a tap near them
+brings them back until the page scrolls again. Nothing else changes it, no
+timer included: the same scroll and pointer always look the same. The band
+behind them stays as it is, in the page's colour. On a document's page the page
+scrolls in its frame, on its own origin, so the frame's host page tells the
+shell where it's scrolled to and where the pointer is over it (`erga-scroll`,
+`erga-pointer`); the most a page can do with them is fade the controls or bring
+them back. The editor's controls don't fade. `bun tests/fade.ts` checks it
+all in both, on a desktop and a phone, with every frame of the fade keeping the
+band's colour (`--shots` keeps pictures).
+
 The pages origin (`pagesDoor` in `front.ts`) serves the frame at `/t/<token>/`
 and the document's files under `/t/<token>/doc/`. The token, signed with
 `SESSION_SECRET`, opens that one document for a week, names the shell's origin
