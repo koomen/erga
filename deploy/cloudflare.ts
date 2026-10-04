@@ -1,25 +1,35 @@
-// Deploying Erga to someone's own Cloudflare account, through the Cloudflare
-// API, from inside an Erga server (worker/deployer.ts runs it; /deploy is
-// the page). No CLI and no container: each step below is a few plain API
-// calls, so the page can show them one at a time, and the tests run every
-// one against a mock Cloudflare (deploy/mock.ts).
+// The deploy pipeline: the one way any Erga server is deployed, through the
+// Cloudflare API, with no CLI and no container. Each step below is a few
+// plain API calls, so a page can show them one at a time, and the tests run
+// every one against a mock Cloudflare (deploy/mock.ts).
 //
-// What it deploys is a release (deploy/release.ts): the Worker exactly as
-// `cf build` builds it for erga.dev (its modules, its static assets, its
-// bindings and Durable Objects from cloudflare.config.ts) and the migrations. "The same settings as erga.dev" are that build's
-// config; only what's the new server's own changes: its database, its
-// admins (whoever deploys it), its GitHub sign-in, its secrets and its
-// addresses.
+// Its input is a target (Target: an account, a Worker, a database, its
+// addresses, settings and secrets, and maybe a snapshot to copy in) and a
+// release (deploy/release.ts: the Worker exactly as `cf build` builds it from
+// cloudflare.config.ts, its static assets and the migrations). Its output is
+// a live server, each step reported as it goes. Three kinds of targets use it:
 //
-// The steps (STEPS): check the account, find or make the D1 database, apply
+//   - /deploy (worker/deployer.ts, deploy/page.ts): a copy of Erga on
+//     someone's own Cloudflare account, them its admin (targetOfPlan);
+//   - production and staging (deploy/targets.ts): erga.dev and
+//     staging.erga.dev, deployed by the server itself when their branch moves
+//     (deploy/branches.ts, worker/pipeline.ts), or from a machine (deploy/run.ts);
+//   - staging takes a fresh copy of production's data on every deploy
+//     (Target.snapshot: the "data" and "documents" steps).
+//
+// The steps (ALL_STEPS): check the account, find or make the D1 database
+// (afresh, for a snapshot), copy the source's database into it, apply
 // migrations/ to it (recorded in d1_migrations, as `cf d1 migrations apply`
-// does), upload the static assets (direct upload), upload the Worker with
-// its bindings, secrets and Durable Object migration, give it its address
-// (workers.dev, or a custom domain on a zone in the account), give documents'
-// pages theirs, and wait for it to answer. The new server makes its own
-// front page from the landing project built into it, the first time someone
-// opens it (front.ts), owned by its first admin: the person deploying.
+// does), upload the static assets (direct upload), upload the Worker with its
+// bindings, secrets and Durable Objects, give it its address (workers.dev,
+// or a custom domain), give documents' pages theirs, wait for it to answer,
+// and copy the source's documents into it. A new server makes its own front
+// page from the landing project built into it, the first time someone opens
+// it (front.ts), owned by its first admin.
 
+
+import { createHash } from "node:crypto";
+import { copyDocuments } from "./snapshot";
 
 export const API = "https://api.cloudflare.com/client/v4";
 export type Fetch = (input: Request | string | URL, init?: RequestInit) => Promise<Response>;
@@ -165,6 +175,9 @@ export interface DeployPlan {
   anthropicKey?: string;
 }
 
+/** The database a /deploy server gets. */
+const DB_NAME = "erga";
+
 export const appHost = (p: Pick<DeployPlan, "app" | "workerName" | "subdomain">) =>
   p.app.kind == "domain" ? p.app.hostname : `${p.workerName}.${p.subdomain}.workers.dev`;
 /** The shared pages host on workers.dev (pages: "shared"). */
@@ -192,7 +205,7 @@ export function checkPlan(p: DeployPlan): string | null {
   return null;
 }
 
-/** The deploy's steps, in order, as the page lists them. */
+/** The deploy page's steps, in order, as the page lists them (a /deploy target's: no copying of data). */
 export const STEPS = [
   { id: "account", title: "Check your Cloudflare account" },
   { id: "database", title: "Make the database (D1)" },
@@ -203,139 +216,348 @@ export const STEPS = [
   { id: "pages", title: "Give documents' pages their own address" },
   { id: "live", title: "Wait for it to answer" },
 ] as const;
-export type StepId = (typeof STEPS)[number]["id"];
+
+/** Every step the pipeline knows, in order: a target that copies another's data (staging) has all of them. */
+export const ALL_STEPS = [
+  STEPS[0], STEPS[1],
+  { id: "data", title: "Copy production's database into it" },
+  STEPS[2], STEPS[3], STEPS[4], STEPS[5], STEPS[6], STEPS[7],
+  { id: "documents", title: "Copy production's documents into it" },
+] as const;
+export type StepId = (typeof ALL_STEPS)[number]["id"];
+
+/** A target's steps: the deploy page's, and the two copying steps for one with a snapshot. */
+export const stepsFor = (t: Pick<Target, "snapshot">) => ALL_STEPS.filter((s) => t.snapshot || (s.id != "data" && s.id != "documents"));
 
 export type Report = (step: StepId, status: "running" | "done" | "skipped", detail?: string) => void;
 
 /** What the deploy made: where the server is, and where its pages run. */
 export interface Deployed { url: string; pages: string; database: string; worker: string }
 
-const DB_NAME = "erga";
-/** The Durable Object migration tag this deploy writes (and expects on a Worker it deployed before). */
 /** The tag the deploy puts on the Workers it makes, so a second run knows them as its own. */
 export const WORKER_TAG = "erga-deploy";
 
+// ------------------------------------------------------------------ the pipeline
+
 /**
- * Deploys `release` by `plan` with `cf`, reporting each step as it starts and
- * ends. `site`: how to reach the new server once it's up (fetch, or a mock's).
- * `sessionSecret`: the new server's SESSION_SECRET (made by the caller, new
- * for each deploy). Throws a DeployError saying what went wrong.
+ * Where a deploy goes: everything the pipeline needs to know about it, in
+ * any account. /deploy makes one from the page's plan (targetOfPlan); the
+ * branch deploys make production's and staging's from deploy/targets.ts
+ * (deploy/branches.ts, targetOf).
  */
-export async function deploy(cf: Cloudflare, release: Release, plan: DeployPlan, opts: { sessionSecret: string; report: Report; site?: Fetch; sleep?: (ms: number) => Promise<void>; waitMs?: number }): Promise<Deployed> {
+export interface Target {
+  /** What to call it in the log ("staging", or the account's name). */
+  label: string;
+  accountId: string;
+  /** The Worker's name: also its workers.dev address, <name>.<subdomain>.workers.dev. */
+  workerName: string;
+  /** The D1 database bound as DB: found by name, made if missing. */
+  databaseName: string;
+  /** The account's workers.dev subdomain: needed for a workers.dev app or shared pages host, checked (and made, with createSubdomain) when set. */
+  subdomain?: string;
+  createSubdomain?: boolean;
+  /** The app's address: <name>.<subdomain>.workers.dev, or a hostname on one of the account's zones (a custom domain; the zone's id is looked up by name if not given). */
+  app: { kind: "workers.dev" } | { kind: "domain"; zoneId?: string; zoneName: string; hostname: string };
+  /**
+   * Documents' pages: one origin per document under `domain` (default the
+   * zone itself), with a wildcard route and DNS record on the zone; or
+   * "shared", one origin for every document's pages at
+   * <name>-pages.<subdomain>.workers.dev (workers.dev has no wildcards).
+   */
+  pages: { kind: "shared" } | { kind: "zone"; zoneId?: string; zoneName: string; domain?: string };
+  /** Text bindings over the build's (cloudflare.config.ts as `cf build` wrote it). */
+  vars: Record<string, string>;
+  /** Secrets set with this upload. */
+  secrets: Record<string, string>;
+  /** Keep the Worker's other secrets from its last version (set once, deploy/setup.ts), as `cf deploy` does. */
+  keepSecrets?: boolean;
+  /** Service bindings, by binding name (BUILDER → erga-builder). */
+  services?: Record<string, string>;
+  /** Wait for this release's version to answer (GET /api/deploys/version), not only for the server to answer. */
+  checkVersion?: boolean;
+  /**
+   * Copy another server's data in, on every deploy (staging: production's).
+   * The target's database is made afresh from the source database's D1
+   * export (read-only on the source), and each document's Durable Object
+   * from the source server's snapshot endpoint (deploy/snapshot.ts),
+   * authorized with `token`. Nothing is ever written to the source.
+   */
+  snapshot?: { databaseName: string; origin: string; token: string };
+  /** This is production (erga.dev): only then may the target use production's names. */
+  production?: boolean;
+  /** Production's names (deploy/targets.ts PRODUCTION): a target that isn't production and uses one stops before it starts. */
+  guard?: { worker: string; database: string; host: string; pages: string; accountId?: string };
+}
+
+/** What runs on from one step to the next (and across a restart, deploy/branches.ts keeps it): the database, the version, and the documents staging had before. */
+export interface Carry { dbId?: string; version?: string; oldDocs?: string[] }
+
+export const targetHost = (t: Pick<Target, "app" | "workerName" | "subdomain">) => (t.app.kind == "domain" ? t.app.hostname : `${t.workerName}.${t.subdomain}.workers.dev`);
+export const targetSharedPagesHost = (t: Pick<Target, "workerName" | "subdomain">) => `${t.workerName}-pages.${t.subdomain}.workers.dev`;
+export const targetPagesShown = (t: Pick<Target, "pages" | "workerName" | "subdomain">) =>
+  t.pages.kind == "zone" ? `*.${t.pages.domain ?? t.pages.zoneName}` : targetSharedPagesHost(t);
+
+/** The /deploy page's plan as a pipeline target: a new server in someone's own account, them its admin, its own secrets. */
+export function targetOfPlan(plan: DeployPlan, sessionSecret: string): Target {
+  return {
+    label: plan.accountId, accountId: plan.accountId, workerName: plan.workerName, databaseName: DB_NAME,
+    subdomain: plan.subdomain, createSubdomain: plan.createSubdomain, app: plan.app, pages: plan.pages,
+    vars: {
+      ADMINS: plan.admin.toLowerCase(),
+      GITHUB_CLIENT_ID: plan.githubClientId.trim(),
+      SERVER_CONFIG: "{}",
+      // erga.dev's own deploy page needs erga.dev's OAuth client; the new server has none (the token link still works).
+      CLOUDFLARE_OAUTH_CLIENT_ID: "",
+      // Not one of Erga's own branch-deploy targets.
+      DEPLOY_TARGET: "",
+    },
+    secrets: { SESSION_SECRET: sessionSecret, GITHUB_CLIENT_SECRET: plan.githubClientSecret.trim(), ...(plan.anthropicKey?.trim() ? { ANTHROPIC_API_KEY: plan.anthropicKey.trim() } : {}) },
+  };
+}
+
+/** Why a target mustn't be deployed, or null: one that isn't production may not touch production's names, and a snapshot never goes into its own source. */
+export function guardTarget(t: Target): string | null {
+  const g = t.guard;
+  const host = t.app.kind == "domain" ? t.app.hostname.toLowerCase() : null;
+  const pages = t.pages.kind == "zone" ? (t.pages.domain ?? t.pages.zoneName).toLowerCase() : null;
+  if (g && !t.production) {
+    if (host == g.host || pages == g.pages) return `This deploy (${t.label}) would put a server on production's address (${host == g.host ? g.host : `*.${g.pages}`}). It stops here: production is deployed only as production.`;
+    const sameAccount = !g.accountId || g.accountId == t.accountId;
+    if (sameAccount && t.workerName == g.worker) return `This deploy (${t.label}) would replace production's Worker (${g.worker}). It stops here.`;
+    if (sameAccount && t.databaseName == g.database) return `This deploy (${t.label}) would use production's database (${g.database}). It stops here.`;
+  }
+  if (t.snapshot) {
+    if (t.production) return "Production never takes a copy of another server's data.";
+    if (t.snapshot.databaseName == t.databaseName) return `A snapshot can't go into the database it's copied from (${t.databaseName}).`;
+    if (g && (t.databaseName == g.database || t.workerName == g.worker)) return `A snapshot is made afresh in the target's database, which is deleted first: never production's (${g.database}).`;
+  }
+  return null;
+}
+
+/**
+ * The deploy pipeline: puts `release` on `target`, step by step, reporting
+ * each as it starts and ends. The one pipeline for every deploy: /deploy's
+ * (another person's account), production's and staging's (deploy/branches.ts,
+ * from inside the server itself, or deploy/run.ts from a machine). Every step
+ * is safe to run again.
+ *
+ * `from` starts at a later step (after a restart: a server that deploys
+ * itself is restarted by its own new version, deploy/branches.ts), with the
+ * `carry` the earlier steps left; `checkpoint` hears of each finished step,
+ * to keep that. `release` is needed only up to the Worker's upload.
+ */
+export async function runPipeline(cf: Cloudflare, release: Release | null, target: Target, opts: {
+  report: Report; site?: Fetch; sleep?: (ms: number) => Promise<void>; waitMs?: number;
+  from?: StepId; carry?: Carry; checkpoint?: (done: StepId, carry: Carry) => Promise<void> | void;
+}): Promise<Deployed> {
   const { report } = opts;
   const site = opts.site ?? globalThis.fetch;
   const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
-  const acc = `/accounts/${plan.accountId}`;
-  const host = appHost(plan);
-  const pagesHost = plan.pages.kind == "shared" ? sharedPagesHost(plan) : null;
+  const carry: Carry = opts.carry ?? {};
+  const acc = `/accounts/${target.accountId}`;
+  const host = targetHost(target);
+  const pagesHost = target.pages.kind == "shared" ? targetSharedPagesHost(target) : null;
+  const wrong = guardTarget(target);
+  if (wrong) throw new DeployError(wrong);
+  const steps = stepsFor(target).map((s) => s.id);
+  const start = opts.from ? steps.indexOf(opts.from) : 0;
+  if (start < 0) throw new DeployError(`This deploy has no step "${opts.from}".`);
+  const needRelease = () => {
+    if (!release) throw new DeployError("This step needs the build, which is gone (the server restarted part way): deploy again.");
+    return release;
+  };
+  if (release) carry.version = release.version;
+  let existing = false;
 
-  // The account, and its workers.dev subdomain (made if it has none and the plan names one).
-  report("account", "running");
-  const account = await cf.call<{ id: string; name: string }>("GET", acc, "read your account");
-  let sub = (await cf.call<{ subdomain: string }>("GET", `${acc}/workers/subdomain`, "read your workers.dev subdomain", undefined, { allow404: true }).catch(() => null))?.subdomain ?? null;
-  if (!sub) {
-    if (!plan.createSubdomain) throw new DeployError("Your account has no workers.dev subdomain yet. Go back, choose one, and deploy again.");
-    sub = (await cf.call<{ subdomain: string }>("PUT", `${acc}/workers/subdomain`, `make your workers.dev subdomain (${plan.subdomain})`, { subdomain: plan.subdomain }))?.subdomain ?? plan.subdomain;
-  } else if (sub != plan.subdomain) throw new DeployError(`Your workers.dev subdomain is ${sub}, not ${plan.subdomain}: reload the page and deploy again.`);
-  const scripts = (await cf.call<{ id: string; tags?: string[]; named_handlers?: { name?: string }[] }[]>("GET", `${acc}/workers/scripts`, "list your Workers")) ?? [];
-  const existing = scripts.find((s) => s.id == plan.workerName);
-  // Ours: tagged by an earlier run (or, failing that, Erga's own Durable Object among its exports).
-  const ours = (s: (typeof scripts)[number]) => !!s.tags?.includes(WORKER_TAG) || !!s.named_handlers?.some((h) => h.name == "DocHost");
-  if (existing && !ours(existing)) {
-    throw new DeployError(`Your account already has a Worker called ${plan.workerName} that isn't Erga. So it isn't overwritten, the deploy stops here: delete or rename that Worker, then deploy again.`);
+  const run: Record<StepId, () => Promise<string | undefined>> = {
+    // The account, its workers.dev subdomain (made if it has none and the target names one), and whether the Worker is Erga's.
+    async account() {
+      const account = await cf.call<{ id: string; name: string }>("GET", acc, "read your account");
+      if (target.subdomain) {
+        let sub = (await cf.call<{ subdomain: string }>("GET", `${acc}/workers/subdomain`, "read your workers.dev subdomain", undefined, { allow404: true }).catch(() => null))?.subdomain ?? null;
+        if (!sub) {
+          if (!target.createSubdomain) throw new DeployError("Your account has no workers.dev subdomain yet. Go back, choose one, and deploy again.");
+          sub = (await cf.call<{ subdomain: string }>("PUT", `${acc}/workers/subdomain`, `make your workers.dev subdomain (${target.subdomain})`, { subdomain: target.subdomain }))?.subdomain ?? target.subdomain;
+        } else if (sub != target.subdomain) throw new DeployError(`Your workers.dev subdomain is ${sub}, not ${target.subdomain}: reload the page and deploy again.`);
+      }
+      const scripts = (await cf.call<{ id: string; tags?: string[]; named_handlers?: { name?: string }[] }[]>("GET", `${acc}/workers/scripts`, "list your Workers")) ?? [];
+      const found = scripts.find((s) => s.id == target.workerName);
+      // Ours: tagged by an earlier run (or, failing that, Erga's own Durable Object among its exports).
+      const ours = (s: (typeof scripts)[number]) => !!s.tags?.includes(WORKER_TAG) || !!s.named_handlers?.some((h) => h.name == "DocHost");
+      if (found && !ours(found)) {
+        throw new DeployError(`Your account already has a Worker called ${target.workerName} that isn't Erga. So it isn't overwritten, the deploy stops here: delete or rename that Worker, then deploy again.`);
+      }
+      existing = !!found;
+      return `${account?.name ?? target.accountId}${found ? `; ${target.workerName} is already there and will be replaced${target.keepSecrets ? "" : " (everyone signs in again)"}` : ""}`;
+    },
+
+    // The database: the one by this name if it's Erga's, else a new one. With a snapshot, always a new one (the old one, staging's, deleted first).
+    async database() {
+      const found = await findDatabase(cf, acc, target.databaseName);
+      if (target.snapshot) {
+        if (found) {
+          // Which documents it had, so their Durable Objects are emptied too (the documents step), then gone.
+          const old = await d1(cf, acc, found, "SELECT id FROM documents", [], `read which documents ${target.databaseName} had`).catch(() => []);
+          carry.oldDocs = [...new Set([...(carry.oldDocs ?? []), ...(old ?? []).map((r) => String(r.id))])];
+          await opts.checkpoint?.("account", carry);
+          await cf.call("DELETE", `${acc}/d1/database/${found}`, `delete ${target.databaseName}'s old copy`);
+        }
+        const made = await cf.call<{ uuid: string }>("POST", `${acc}/d1/database`, "make the database", { name: target.databaseName });
+        if (!made?.uuid) throw new DeployError("Cloudflare made the database but didn't say its id. Deploy again: the next run will find it.");
+        carry.dbId = made.uuid;
+        return `"${target.databaseName}" (${carry.dbId}), made afresh${found ? " (the old copy deleted)" : ""}`;
+      }
+      if (found) {
+        // Erga's if it has Erga's first migration; usable if it's empty (made by a run that stopped before its tables).
+        const tables = ((await d1(cf, acc, found, "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_cf_%'", [], "look inside the database")) ?? []).map((r) => String(r.name));
+        const applied = tables.includes("d1_migrations") ? await d1(cf, acc, found, "SELECT name FROM d1_migrations", [], "read the database's migrations") : [];
+        const first = release ? Object.keys(release.migrations).sort()[0] : "0001_erga.sql";
+        const ours = !!applied?.some((r) => r.name == first) || tables.every((t) => t == "d1_migrations");
+        if (!ours) throw new DeployError(`Your account already has a D1 database called "${target.databaseName}" that isn't Erga's. So nothing of yours is lost, the deploy stops here: rename or delete that database, then deploy again.`);
+        carry.dbId = found;
+        return `using Erga's database from before (${found})`;
+      }
+      const made = await cf.call<{ uuid: string }>("POST", `${acc}/d1/database`, "make the database", { name: target.databaseName });
+      if (!made?.uuid) throw new DeployError("Cloudflare made the database but didn't say its id. Deploy again: the next run will find it.");
+      carry.dbId = made.uuid;
+      return `"${target.databaseName}" (${carry.dbId})`;
+    },
+
+    // Production's database, exported (D1's export: read-only on it) and loaded into the new one (D1's import).
+    async data() {
+      const snap = target.snapshot!;
+      const source = await findDatabase(cf, acc, snap.databaseName);
+      if (!source) throw new DeployError(`There's no database called ${snap.databaseName} to copy.`);
+      if (source == carry.dbId) throw new DeployError("The snapshot's source and target are the same database: stopped.");
+      const sql = await exportD1(cf, acc, source, snap.databaseName, site, sleep);
+      await importD1(cf, acc, carry.dbId!, target.databaseName, sql, site, sleep);
+      return `${snap.databaseName} (${source}) → ${target.databaseName}: ${sql.length} bytes of SQL`;
+    },
+
+    // migrations/, each once, recorded in d1_migrations as the cf CLI does (on a copy, the ones production hasn't had yet).
+    async migrations() {
+      const rel = needRelease();
+      const db = carry.dbId!;
+      await d1(cf, acc, db, "CREATE TABLE IF NOT EXISTS d1_migrations (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL)", [], "set up the database");
+      const done = new Set(((await d1(cf, acc, db, "SELECT name FROM d1_migrations", [], "read the database's migrations")) ?? []).map((r) => String(r.name)));
+      const pending = Object.keys(rel.migrations).sort().filter((n) => !done.has(n));
+      for (const name of pending) {
+        // The file and its record in d1_migrations, in one /query call (statements run as one batch, so all or nothing), as wrangler's `d1 migrations apply --remote` sends it.
+        const sql = rel.migrations[name].trim();
+        await d1(cf, acc, db, `${sql}${sql.endsWith(";") ? "" : ";"}\nINSERT INTO d1_migrations (name) VALUES ('${name.replace(/'/g, "''")}');`, [], `apply the database migration ${name}`);
+      }
+      return pending.length ? `applied ${pending.join(", ")}` : "already up to date";
+    },
+
+    // The static assets: the manifest, then each bucket Cloudflare asks for.
+    async assets() {
+      const rel = needRelease();
+      (carry as Carry & { assetsJwt?: string }).assetsJwt = await uploadAssets(cf, acc, target.workerName, rel.assets);
+      return `${Object.keys(rel.assets).length} files`;
+    },
+
+    // The Worker: modules, bindings (from the build's config, made the target's own), secrets, its Durable Objects.
+    async worker() {
+      const rel = needRelease();
+      const assetsJwt = (carry as Carry & { assetsJwt?: string }).assetsJwt;
+      if (!assetsJwt) throw new DeployError("The editor's files weren't uploaded first: deploy again.");
+      const metadata = workerMetadata(rel, target, { dbId: carry.dbId!, assetsJwt, pagesHost, existing });
+      const form = new FormData();
+      form.set("metadata", JSON.stringify(metadata));
+      for (const [name, bytes] of Object.entries(rel.modules)) form.append(name, new File([new Uint8Array(bytes)], name, { type: "application/javascript+module" }));
+      await cf.call("PUT", `${acc}/workers/scripts/${target.workerName}`, "upload the Worker", form);
+      delete (carry as Carry & { assetsJwt?: string }).assetsJwt;
+      return `${target.workerName}, release ${rel.version}`;
+    },
+
+    // Its address.
+    async address() {
+      if (target.app.kind == "workers.dev") {
+        await cf.call("POST", `${acc}/workers/scripts/${target.workerName}/subdomain`, "turn on its workers.dev address", { enabled: true, previews_enabled: false });
+      } else {
+        const zoneId = target.app.zoneId ?? (await zoneIdOf(cf, target.accountId, target.app.zoneName));
+        await cf.call("PUT", `${acc}/workers/domains`, `put it on ${target.app.hostname} (a custom domain)`, { hostname: target.app.hostname, service: target.workerName, zone_id: zoneId });
+      }
+      return `https://${host}`;
+    },
+
+    // Documents' pages: a wildcard on their own zone, or the shared workers.dev host (a small Worker handing every request to the app).
+    async pages() {
+      if (target.pages.kind == "zone") {
+        const zoneId = target.pages.zoneId ?? (await zoneIdOf(cf, target.accountId, target.pages.zoneName));
+        const zone = `/zones/${zoneId}`, name = target.pages.domain ?? target.pages.zoneName, pattern = `*.${name}/*`;
+        const records = (await cf.call<{ id: string }[]>("GET", `${zone}/dns_records?type=AAAA&name=${encodeURIComponent(`*.${name}`)}`, `read ${target.pages.zoneName}'s DNS records`)) ?? [];
+        if (!records.length) await cf.call("POST", `${zone}/dns_records`, `add the wildcard DNS record *.${name}`, { type: "AAAA", name: `*.${name}`, content: "100::", proxied: true, comment: "Erga: documents' pages" });
+        const routes = (await cf.call<{ pattern: string; script?: string }[]>("GET", `${zone}/workers/routes`, `read ${target.pages.zoneName}'s Worker routes`)) ?? [];
+        const route = routes.find((r) => r.pattern == pattern);
+        if (route && route.script != target.workerName) throw new DeployError(`${pattern} already sends requests to another Worker (${route.script ?? "none"}). Remove that route, or pick another domain for pages.`);
+        if (!route) await cf.call("POST", `${zone}/workers/routes`, `route ${pattern} to the Worker`, { pattern, script: target.workerName });
+        return `https://<document>.${name}`;
+      }
+      const rel = needRelease();
+      const proxy = new FormData();
+      const name = `${target.workerName}-pages`;
+      proxy.set("metadata", JSON.stringify({
+        main_module: "pages.js", compatibility_date: rel.worker.compatibilityDate, tags: [WORKER_TAG],
+        bindings: [{ type: "service", name: "APP", service: target.workerName }],
+      }));
+      proxy.append("pages.js", new File([PAGES_PROXY], "pages.js", { type: "application/javascript+module" }));
+      await cf.call("PUT", `${acc}/workers/scripts/${name}`, "upload the pages Worker", proxy);
+      await cf.call("POST", `${acc}/workers/scripts/${name}/subdomain`, "turn on the pages address", { enabled: true, previews_enabled: false });
+      return `https://${pagesHost} (shared by every document)`;
+    },
+
+    // Up: a new workers.dev address or certificate can take a minute or two. With checkVersion, until this release is the one answering.
+    async live() {
+      const until = Date.now() + (opts.waitMs ?? 180_000);
+      const want = carry.version;
+      let seen = "";
+      for (let tries = 0; ; tries++) {
+        if (target.checkVersion && want) {
+          const r = await site(`https://${host}/api/deploys/version`).catch(() => null);
+          const v = r?.ok ? ((await r.json().catch(() => null)) as { version?: string } | null)?.version ?? "" : "";
+          if (v == want) break;
+          if (v) seen = v;
+        } else {
+          const r = await site(`https://${host}/style.css`).catch(() => null);
+          if (r?.ok) break;
+        }
+        if (Date.now() > until) throw new DeployError(`The Worker is deployed, but https://${host} hasn't answered${seen ? ` with release ${want} yet (it still says ${seen})` : " yet"} (a new address can take a few minutes). Open it in a little while; if it still doesn't answer, deploy again.`);
+        await sleep(Math.min(5000, 1000 + tries * 500));
+      }
+      return `https://${host}${target.checkVersion && want ? `, release ${want}` : ""}`;
+    },
+
+    // Each document's Durable Object: production's storage, read through its snapshot endpoint, written into the new server's.
+    async documents() {
+      const snap = target.snapshot!;
+      const ids = ((await d1(cf, acc, carry.dbId!, "SELECT id FROM documents", [], "list the documents in the copy")) ?? []).map((r) => String(r.id));
+      const result = await copyDocuments({ ids, wipe: (carry.oldDocs ?? []).filter((id) => !ids.includes(id)), from: snap.origin, to: `https://${host}`, token: snap.token, fetch: site });
+      if (result.unsupported) return `skipped: ${snap.origin} doesn't serve snapshots yet (it needs this version, and SNAPSHOT_TOKEN set); the documents are listed but empty`;
+      carry.oldDocs = [];
+      return `${result.copied} documents copied${result.missing ? `, ${result.missing} gone from production since the database's copy` : ""}${result.wiped ? `, ${result.wiped} old ones emptied` : ""}`;
+    },
+  };
+
+  for (const id of steps.slice(start)) {
+    report(id, "running");
+    const detail = await run[id]();
+    const skipped = id == "documents" && detail?.startsWith("skipped");
+    report(id, skipped ? "skipped" : "done", detail);
+    await opts.checkpoint?.(id, carry);
   }
-  report("account", "done", `${account?.name ?? plan.accountId}${existing ? `; ${plan.workerName} is already there and will be replaced (everyone signs in again)` : ""}`);
+  return { url: `https://${host}`, pages: targetPagesShown(target), database: carry.dbId ?? "", worker: target.workerName };
+}
 
-  // The database: the one called "erga" if this page made it before, else a new one.
-  report("database", "running");
-  const found = ((await cf.call<{ uuid: string; name: string }[]>("GET", `${acc}/d1/database?name=${DB_NAME}`, "list your D1 databases")) ?? []).find((d) => d.name == DB_NAME);
-  let dbId: string;
-  if (found) {
-    dbId = found.uuid;
-    // Erga's if it has Erga's first migration; usable if it's empty (made by a run that stopped before its tables).
-    const tables = ((await d1(cf, acc, dbId, "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_cf_%'", [], "look inside the database")) ?? []).map((r) => String(r.name));
-    const applied = tables.includes("d1_migrations") ? await d1(cf, acc, dbId, "SELECT name FROM d1_migrations", [], "read the database's migrations") : [];
-    const ours = !!applied?.some((r) => r.name == Object.keys(release.migrations).sort()[0]) || tables.every((t) => t == "d1_migrations");
-    if (!ours) throw new DeployError(`Your account already has a D1 database called "${DB_NAME}" that isn't Erga's. So nothing of yours is lost, the deploy stops here: rename or delete that database, then deploy again.`);
-    report("database", "done", `using Erga's database from before (${dbId})`);
-  } else {
-    const made = await cf.call<{ uuid: string }>("POST", `${acc}/d1/database`, "make the database", { name: DB_NAME });
-    if (!made?.uuid) throw new DeployError("Cloudflare made the database but didn't say its id. Deploy again: the next run will find it.");
-    dbId = made.uuid;
-    report("database", "done", `"${DB_NAME}" (${dbId})`);
-  }
-
-  // migrations/, each once, recorded in d1_migrations as the cf CLI does.
-  report("migrations", "running");
-  await d1(cf, acc, dbId, "CREATE TABLE IF NOT EXISTS d1_migrations (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL)", [], "set up the database");
-  const done = new Set(((await d1(cf, acc, dbId, "SELECT name FROM d1_migrations", [], "read the database's migrations")) ?? []).map((r) => String(r.name)));
-  const pending = Object.keys(release.migrations).sort().filter((n) => !done.has(n));
-  for (const name of pending) {
-    // The file and its record in d1_migrations, in one /query call (statements run as one batch, so all or nothing), as wrangler's `d1 migrations apply --remote` sends it.
-    const sql = release.migrations[name].trim();
-    await d1(cf, acc, dbId, `${sql}${sql.endsWith(";") ? "" : ";"}\nINSERT INTO d1_migrations (name) VALUES ('${name.replace(/'/g, "''")}');`, [], `apply the database migration ${name}`);
-  }
-  report("migrations", "done", pending.length ? `applied ${pending.join(", ")}` : "already up to date");
-
-  // The static assets: the manifest, then each bucket Cloudflare asks for.
-  report("assets", "running");
-  const assetsJwt = await uploadAssets(cf, acc, plan.workerName, release.assets);
-  report("assets", "done", `${Object.keys(release.assets).length} files`);
-
-  // The Worker: modules, bindings (from the build's config), secrets, its Durable Objects.
-  report("worker", "running");
-  const metadata = workerMetadata(release, plan, { dbId, assetsJwt, sessionSecret: opts.sessionSecret, pagesHost });
-  const form = new FormData();
-  form.set("metadata", JSON.stringify(metadata));
-  for (const [name, bytes] of Object.entries(release.modules)) form.append(name, new File([new Uint8Array(bytes)], name, { type: "application/javascript+module" }));
-  await cf.call("PUT", `${acc}/workers/scripts/${plan.workerName}`, "upload the Worker", form);
-  report("worker", "done", `${plan.workerName}, release ${release.version}`);
-
-  // Its address.
-  report("address", "running");
-  if (plan.app.kind == "workers.dev") {
-    await cf.call("POST", `${acc}/workers/scripts/${plan.workerName}/subdomain`, "turn on its workers.dev address", { enabled: true, previews_enabled: false });
-  } else {
-    await cf.call("PUT", `${acc}/workers/domains`, `put it on ${plan.app.hostname} (a custom domain)`, { hostname: plan.app.hostname, service: plan.workerName, zone_id: plan.app.zoneId });
-  }
-  report("address", "done", `https://${host}`);
-
-  // Documents' pages: a wildcard on their own zone, or the shared workers.dev host (a small Worker handing every request to the app).
-  report("pages", "running");
-  if (plan.pages.kind == "zone") {
-    const zone = `/zones/${plan.pages.zoneId}`, name = plan.pages.zoneName, pattern = `*.${name}/*`;
-    const records = (await cf.call<{ id: string }[]>("GET", `${zone}/dns_records?type=AAAA&name=${encodeURIComponent(`*.${name}`)}`, `read ${name}'s DNS records`)) ?? [];
-    if (!records.length) await cf.call("POST", `${zone}/dns_records`, `add the wildcard DNS record on ${name}`, { type: "AAAA", name: `*.${name}`, content: "100::", proxied: true, comment: "Erga: documents' pages" });
-    const routes = (await cf.call<{ pattern: string; script?: string }[]>("GET", `${zone}/workers/routes`, `read ${name}'s Worker routes`)) ?? [];
-    const route = routes.find((r) => r.pattern == pattern);
-    if (route && route.script != plan.workerName) throw new DeployError(`${pattern} already sends requests to another Worker (${route.script ?? "none"}). Remove that route, or pick another domain for pages.`);
-    if (!route) await cf.call("POST", `${zone}/workers/routes`, `route ${pattern} to the Worker`, { pattern, script: plan.workerName });
-    report("pages", "done", `https://<document>.${name}`);
-  } else {
-    const proxy = new FormData();
-    const name = `${plan.workerName}-pages`;
-    proxy.set("metadata", JSON.stringify({
-      main_module: "pages.js", compatibility_date: release.worker.compatibilityDate, tags: [WORKER_TAG],
-      bindings: [{ type: "service", name: "APP", service: plan.workerName }],
-    }));
-    proxy.append("pages.js", new File([PAGES_PROXY], "pages.js", { type: "application/javascript+module" }));
-    await cf.call("PUT", `${acc}/workers/scripts/${name}`, "upload the pages Worker", proxy);
-    await cf.call("POST", `${acc}/workers/scripts/${name}/subdomain`, "turn on the pages address", { enabled: true, previews_enabled: false });
-    report("pages", "done", `https://${pagesHost} (shared by every document)`);
-  }
-
-  // Up: a new workers.dev address or certificate can take a minute or two.
-  report("live", "running");
-  const until = Date.now() + (opts.waitMs ?? 180_000);
-  for (let tries = 0; ; tries++) {
-    const r = await site(`https://${host}/style.css`).catch(() => null);
-    if (r?.ok) break;
-    if (Date.now() > until) throw new DeployError(`The Worker is deployed, but https://${host} hasn't answered yet (a new address can take a few minutes). Open it in a little while; if it still doesn't answer, deploy again.`);
-    await sleep(Math.min(5000, 1000 + tries * 500));
-  }
-  report("live", "done", `https://${host}`);
-
-  return { url: `https://${host}`, pages: pagesShown(plan), database: dbId, worker: plan.workerName };
+/**
+ * The deploy page's deploy: `release` by `plan` with `cf` (a target in the
+ * person's own account, through the same pipeline). `sessionSecret`: the new
+ * server's SESSION_SECRET (made by the caller, new for each deploy). Throws a
+ * DeployError saying what went wrong.
+ */
+export async function deploy(cf: Cloudflare, release: Release, plan: DeployPlan, opts: { sessionSecret: string; report: Report; site?: Fetch; sleep?: (ms: number) => Promise<void>; waitMs?: number }): Promise<Deployed> {
+  const { sessionSecret, ...rest } = opts;
+  return runPipeline(cf, release, targetOfPlan(plan, sessionSecret), rest);
 }
 
 /** The shared pages host's Worker: every request to the app, as it came (the app tells pages requests by their host, PAGES_HOST). */
@@ -343,40 +565,46 @@ export const PAGES_PROXY = `export default { fetch: (request, env) => env.APP.fe
 
 /**
  * The Worker's upload metadata: the build's bindings (cloudflare.config.ts
- * as `cf build` wrote it), each made the new server's own: its database, its
- * admins, its GitHub app, its secrets and where its pages run.
+ * as `cf build` wrote it), each made the target's own: its database, its
+ * text settings, its secrets, its services and where its pages run.
  */
-export function workerMetadata(release: Release, plan: DeployPlan, o: { dbId: string; assetsJwt: string; sessionSecret: string; pagesHost: string | null }) {
+export function workerMetadata(release: Release, target: Target, o: { dbId: string; assetsJwt: string; pagesHost: string | null; existing?: boolean }) {
   const w = release.worker;
-  const text: Record<string, string> = {
-    ADMINS: plan.admin.toLowerCase(),
-    GITHUB_CLIENT_ID: plan.githubClientId.trim(),
-    SERVER_CONFIG: "{}",
-    // erga.dev's own deploy page needs erga.dev's OAuth client; the new server has none (the token link still works).
-    CLOUDFLARE_OAUTH_CLIENT_ID: "",
-  };
-  const secrets: Record<string, string> = { SESSION_SECRET: o.sessionSecret, GITHUB_CLIENT_SECRET: plan.githubClientSecret.trim(), ...(plan.anthropicKey?.trim() ? { ANTHROPIC_API_KEY: plan.anthropicKey.trim() } : {}) };
+  // Which release this is (GET /api/deploys/version answers it), and which account the server is in (for its own branch deploys).
+  const text: Record<string, string> = { ERGA_VERSION: release.version, CLOUDFLARE_ACCOUNT_ID: target.accountId, ...target.vars };
+  const secrets = target.secrets;
   const bindings: Record<string, unknown>[] = [];
+  const named = new Set<string>();
   for (const [name, b] of Object.entries(w.env)) {
+    named.add(name);
     if (b.type == "durable-object") bindings.push({ type: "durable_object_namespace", name, class_name: b.exportName });
     else if (b.type == "d1") bindings.push({ type: "d1", name, database_id: o.dbId, id: o.dbId });
     else if (b.type == "assets") bindings.push({ type: "assets", name });
     else if (b.type == "text") bindings.push({ type: "plain_text", name, text: text[name] ?? b.value ?? "" });
     else if (b.type == "secret") { if (secrets[name] != null) bindings.push({ type: "secret_text", name, text: secrets[name] }); }
+    else if (b.type == "service" && b.name && target.services?.[name]) bindings.push({ type: "service", name, service: target.services[name] });
     else throw new DeployError(`This release has a binding this page doesn't know how to make (${name}, ${b.type}): it needs a newer deploy page.`);
   }
-  // Where documents' pages run (front.ts, pagesOrigin): a zone of their own, or the shared host.
-  if (plan.pages.kind == "zone") bindings.push({ type: "plain_text", name: "PAGES_DOMAIN", text: plan.pages.zoneName });
+  // Settings and secrets the build doesn't declare (the version, the account, the branch deploys' own secrets), and services.
+  for (const [name, value] of Object.entries(text)) if (!named.has(name)) { bindings.push({ type: "plain_text", name, text: value }); named.add(name); }
+  for (const [name, value] of Object.entries(secrets)) if (!named.has(name)) { bindings.push({ type: "secret_text", name, text: value }); named.add(name); }
+  for (const [name, service] of Object.entries(target.services ?? {})) if (!named.has(name)) { bindings.push({ type: "service", name, service }); named.add(name); }
+  // Where documents' pages run (front.ts, pagesOrigin): a domain of their own, or the shared host.
+  if (target.pages.kind == "zone") bindings.push({ type: "plain_text", name: "PAGES_DOMAIN", text: target.pages.domain ?? target.pages.zoneName });
   else bindings.push({ type: "plain_text", name: "PAGES_HOST", text: o.pagesHost });
   // Durable Objects as declarative exports, as `cf deploy` sends them: the platform makes each namespace on the first
   // deploy and matches it after, with no migration tags, so a deploy run again (or retried) is the same deploy.
-  // (A "deleted" tombstone is erga.dev's own history: a new account has nothing to delete.)
-  const exports = Object.fromEntries(Object.entries(w.exports ?? {}).filter(([, e]) => e.type == "durable-object" && e.state != "deleted").map(([n, e]) => [n, { type: "durable-object", storage: e.storage ?? "sqlite" }]));
+  // A "deleted" tombstone (erga.dev's DocList) goes only to a Worker that's there already: a new one has nothing to delete.
+  const exports = Object.fromEntries(Object.entries(w.exports ?? {})
+    .filter(([, e]) => e.type == "durable-object" && (o.existing || e.state != "deleted"))
+    .map(([n, e]) => [n, e.state == "deleted" ? { type: "durable-object", state: "deleted" } : { type: "durable-object", storage: e.storage ?? "sqlite" }]));
   return {
     main_module: release.mainModule,
     compatibility_date: w.compatibilityDate,
     compatibility_flags: w.compatibilityFlags ?? [],
     bindings,
+    // Secrets set once on the Worker (deploy/setup.ts) stay from version to version, as with `cf deploy`.
+    ...(target.keepSecrets ? { keep_bindings: ["secret_text", "secret_key"] } : {}),
     assets: {
       jwt: o.assetsJwt,
       config: { html_handling: w.assets?.htmlHandling ?? "auto-trailing-slash", not_found_handling: w.assets?.notFoundHandling ?? "none", run_worker_first: w.assets?.runWorkerFirst ?? false },
@@ -385,6 +613,71 @@ export function workerMetadata(release: Release, plan: DeployPlan, o: { dbId: st
     ...(Object.keys(exports).length ? { exports } : {}),
     tags: [WORKER_TAG],
   };
+}
+
+/** A D1 database's id by name, or null. */
+async function findDatabase(cf: Cloudflare, acc: string, name: string): Promise<string | null> {
+  return ((await cf.call<{ uuid: string; name: string }[]>("GET", `${acc}/d1/database?name=${encodeURIComponent(name)}`, "list your D1 databases")) ?? []).find((d) => d.name == name)?.uuid ?? null;
+}
+
+/** A zone's id, by its name, in the account. */
+export async function zoneIdOf(cf: Cloudflare, accountId: string, name: string): Promise<string> {
+  const zones = (await cf.call<{ id: string; name: string }[]>("GET", `/zones?name=${encodeURIComponent(name)}&account.id=${accountId}`, `find the zone ${name}`)) ?? [];
+  const zone = zones.find((z) => z.name == name);
+  if (!zone) throw new DeployError(`The account has no zone called ${name}: add it to Cloudflare first.`);
+  return zone.id;
+}
+
+/**
+ * A D1 database as SQL, through D1's export (POST …/export, polled until
+ * it's ready, then the file from its signed URL), as `wrangler d1 export
+ * --remote` does. Read-only on the database (it's never written to); D1
+ * holds the database's writes for the moment the export takes.
+ */
+export async function exportD1(cf: Cloudflare, acc: string, dbId: string, name: string, site: Fetch, sleep: (ms: number) => Promise<void>): Promise<string> {
+  let bookmark: string | undefined;
+  for (let tries = 0; ; tries++) {
+    const r = await cf.call<{ status?: string; at_bookmark?: string; error?: string; result?: { signed_url?: string; filename?: string } }>(
+      "POST", `${acc}/d1/database/${dbId}/export`, `export ${name} (read-only)`, { output_format: "polling", ...(bookmark ? { current_bookmark: bookmark } : {}) });
+    if (r?.error || r?.status == "error") throw new DeployError(`D1 couldn't export ${name}: ${r?.error ?? "it said it failed"}.`);
+    if (r?.status == "complete" && r.result?.signed_url) {
+      const file = await site(r.result.signed_url).catch(() => null);
+      if (!file?.ok) throw new DeployError(`D1 exported ${name}, but its file couldn't be downloaded (${file?.status ?? "no answer"}). Deploy again.`);
+      return await file.text();
+    }
+    bookmark = r?.at_bookmark ?? bookmark;
+    if (tries >= 300) throw new DeployError(`D1's export of ${name} took too long. Deploy again.`);
+    await sleep(1000);
+  }
+}
+
+/**
+ * SQL into a D1 database, through D1's import (init with the file's MD5,
+ * upload to the URL it gives, ingest, poll), as `wrangler d1 execute
+ * --remote --file` does.
+ */
+export async function importD1(cf: Cloudflare, acc: string, dbId: string, name: string, sql: string, site: Fetch, sleep: (ms: number) => Promise<void>): Promise<void> {
+  const etag = md5hex(sql);
+  const path = `${acc}/d1/database/${dbId}/import`;
+  type Answer = { status?: string; success?: boolean; error?: string; filename?: string; upload_url?: string; at_bookmark?: string };
+  const init = await cf.call<Answer>("POST", path, `start loading the copy into ${name}`, { action: "init", etag });
+  if (init?.upload_url) {
+    const put = await site(init.upload_url, { method: "PUT", body: sql }).catch(() => null);
+    if (!put?.ok) throw new DeployError(`The copy couldn't be uploaded for ${name} (${put?.status ?? "no answer"}). Deploy again.`);
+    const got = put.headers.get("etag")?.replace(/"/g, "");
+    if (got && got != etag) throw new DeployError(`The copy uploaded for ${name} arrived changed (its checksum doesn't match). Deploy again.`);
+  }
+  const ingest = await cf.call<Answer>("POST", path, `load the copy into ${name}`, { action: "ingest", etag, filename: init?.filename });
+  let bookmark = ingest?.at_bookmark;
+  if (ingest?.status == "complete") return;
+  for (let tries = 0; ; tries++) {
+    const r = await cf.call<Answer>("POST", path, `check on loading the copy into ${name}`, { action: "poll", current_bookmark: bookmark });
+    if (r?.status == "complete" || r?.error == "Not currently importing anything.") return;
+    if (r?.status == "error" || (r?.error && r.success === false)) throw new DeployError(`D1 couldn't load the copy into ${name}: ${r?.error ?? "it said it failed"}.`);
+    bookmark = r?.at_bookmark ?? bookmark;
+    if (tries >= 300) throw new DeployError(`Loading the copy into ${name} took too long. Deploy again.`);
+    await sleep(1000);
+  }
 }
 
 /** The static assets' 32-hex hash, as Cloudflare's direct upload takes it: SHA-256 of the base64 contents and the extension. */
@@ -572,3 +865,6 @@ const workflow = (r: Workflow | null) => ({ state: r?.state ?? "in_progress", co
 export async function registrationStatus(cf: Cloudflare, accountId: string, name: string): Promise<{ state: string; completed: boolean; error?: string }> {
   return workflow(await cf.call<Workflow>("GET", `/accounts/${accountId}/registrar/registrations/${encodeURIComponent(name)}/registration-status`, `check on ${name}'s registration`));
 }
+
+/** MD5, as hex: the checksum D1's import takes (etag). */
+const md5hex = (text: string) => createHash("md5").update(text).digest("hex");

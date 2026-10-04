@@ -15,6 +15,7 @@
 //   /llms.txt, /api/..., /mcp  the server's API for agents, with an agent token (server-api.ts, tokens.ts)
 //   /settings, /tokens/...     your settings: agent tokens, and a test token for running the test suite against erga.dev
 //   /deploy                    deploy Erga to your own Cloudflare account (worker/deploy.ts; the deploy_page setting)
+//   /api/deploys, /api/events  branch deploys' status and events, /admin/deploys their page (worker/deploys.ts)
 //   /auth/test?token=&as=      a test person (Ada, Bo...) signed in with one; they open only test documents
 //   /page.js, /style.css, ...  the editor's own files (static assets)
 //
@@ -32,11 +33,13 @@ import { serverApi, tokensDoor } from "../server-api";
 import { finishSignIn, isDev, mintTestToken, sessionOf, signOut, startSignIn, testSignIn } from "./auth";
 import { directoryOf, tokensOf } from "./d1";
 import { deployDoor } from "./deploy";
+import { deploysDoor, isDeploysPath } from "./deploys";
 import type { Env } from "./env";
 import { counted, simulateLatency, tallied } from "./timing";
 
 export { Deployer } from "./deployer";
 export { DocHost } from "./doc-host";
+export { Pipeline } from "./pipeline";
 
 /** The templates' files, by template then path ("doc" → { "index.html": "..." }). Text files only. */
 const TEMPLATES: Record<string, Record<string, string>> = {};
@@ -120,6 +123,8 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
   if (path == "/auth/test") return testSignIn(env, request);
   // The editor's controls and styles, which a document's page adds to itself to go into the editor (front.ts).
   if (assets || path == "/editor.html") return env.ASSETS.fetch(request);
+  // Branch deploys and their status, the event stream, and staging's snapshot endpoints (worker/deploys.ts).
+  if (isDeploysPath(path)) return deploysDoor(request, env, platform(env));
   // The server's API for agents, and people's agent tokens (server-api.ts).
   if (path == "/llms.txt" || path == "/mcp" || path == "/api" || path.startsWith("/api/")) return serverApi(request, withTokens(platform(env), url));
   if (path == "/settings" || path == "/tokens" || path.startsWith("/tokens/")) return tokensDoor(request, withTokens(platform(env), url));

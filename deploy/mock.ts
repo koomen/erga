@@ -26,14 +26,31 @@
 //
 // Registrar: a name with "taken" in it is taken, ".xyz" can't be registered
 // through the API, ".dev" costs 12.18 USD and anything else 10.44.
+//
+// With `fleet`, the account is Erga's own, as the branch deploys
+// (deploy/branches.ts) see it: the zones erga.dev and erga-pages.dev, the
+// production Worker "erga" already there (deployed by cf deploy, on erga.dev
+// and *.erga-pages.dev) with its database "erga" (tables, rows and
+// migrations) and three documents in its Durable Objects, the builder
+// Worker, and the source repo in Artifacts. D1's export and import work on
+// it (the SQL as text), secrets are kept per Worker (keep_bindings, the
+// secrets API), and each Worker answers as the real one would where the
+// pipeline needs it: /style.css, /api/deploys/version (its ERGA_VERSION) and
+// the snapshot endpoints (deploy/snapshot.ts, the real handler, over an
+// in-memory store of its documents). `failNext` makes the next call of a
+// step fail once (state.failNext = "worker"); `onUpload` hears of each
+// Worker uploaded (the tests restart the server that deployed itself).
 
-import type { Fetch } from "./cloudflare";
+import { createHash } from "node:crypto";
+import type { Fetch, Release } from "./cloudflare";
+import type { Builder } from "./branches";
+import { memoryStore, snapshotDoor, type DocStore } from "./snapshot";
 
 export interface MockState {
   account: { id: string; name: string };
   subdomain: string | null;
   zones: { id: string; name: string; status: string }[];
-  databases: { uuid: string; name: string; statements: string[]; migrations: string[]; tables: string[] }[];
+  databases: { uuid: string; name: string; statements: string[]; migrations: string[]; tables: string[]; rows?: string[] }[];
   scripts: Record<string, { metadata: Record<string, any>; modules: string[]; workersDev: boolean; tags: string[]; namespaces: string[] }>;
   assets: { manifest: Record<string, { hash: string; size: number }>; uploaded: string[] };
   domains: { hostname: string; service: string; zone_id: string }[];
@@ -43,6 +60,16 @@ export interface MockState {
   /** Every call, "METHOD path" (tokens never). */
   calls: string[];
   revoked: number;
+  /** Each Worker's secrets, by name (never in `scripts`' metadata, which shows only their lengths). */
+  secrets: Record<string, Record<string, string>>;
+  /** Each Worker's documents' Durable Objects (the snapshot endpoints read and write these). */
+  docs: Record<string, ReturnType<typeof memoryStore>>;
+  /** How many versions of each Worker were uploaded. */
+  versions: Record<string, number>;
+  /** Deleted D1 databases, by name. */
+  deletedDatabases: string[];
+  /** The next call of this step fails once (a 500), as mock-fail-<step> does for every call. */
+  failNext: string | null;
 }
 
 const ACCOUNT_ID = "0123456789abcdef0123456789abcdef";
@@ -52,13 +79,32 @@ const jwt = (claims: Record<string, unknown>) => `${btoa(JSON.stringify({ alg: "
 const UPLOAD = (single: boolean) => jwt({ kind: "upload", ...(single ? { wrangler_single_asset_uploads: true } : {}) });
 const COMPLETE = jwt({ kind: "complete" });
 
-export function mockCloudflare(opts: { delayMs?: number; singleAssetUploads?: boolean } = {}): { fetch: Fetch; state: MockState } {
+/** Erga's own account in the fleet mock (deploy/branches.ts's tests and the dev server's ERGA_DEPLOY_MOCK). */
+export const FLEET_ACCOUNT = ACCOUNT_ID;
+export const PROD_DB = "0b0d0b0d-0000-4000-8000-00000000e9a0";
+/** Production's SNAPSHOT_TOKEN in the fleet mock (the tests give staging the same). */
+export const MOCK_SNAPSHOT_TOKEN = "mock-snapshot-token-0123456789abcdef0123456789";
+export const MOCK_HOOK_SECRET = "mock-hook-secret-0123456789abcdef";
+/** Production's documents in the fleet mock: their ids, and what each holds. */
+export const PROD_DOCS = ["abcd2345", "efgh6789", "jkmn2345"];
+
+export function mockCloudflare(opts: {
+  delayMs?: number; singleAssetUploads?: boolean; fleet?: boolean;
+  onUpload?: (script: string, metadata: Record<string, any>) => void;
+  /** A Worker's own answer, before the mock's (the tests route /api/deploys/... to the servers they run). */
+  sites?: (req: Request, script: string) => Promise<Response | null> | Response | null;
+} = {}): { fetch: Fetch; state: MockState } {
   const state: MockState = {
     account: { id: ACCOUNT_ID, name: "Ada's account" },
     subdomain: "ada-mock",
     zones: [{ id: "zone0000000000000000000000000001", name: "ada-example.com", status: "active" }, { id: "zone0000000000000000000000000002", name: "ada-pages.net", status: "active" }],
     databases: [], scripts: {}, assets: { manifest: {}, uploaded: [] }, domains: [], routes: {}, dns: {}, registrations: [], calls: [], revoked: 0,
+    secrets: {}, docs: {}, versions: {}, deletedDatabases: [], failNext: null,
   };
+  if (opts.fleet) seedFleet(state);
+  /** D1 exports ready to download, and imports uploaded, by URL. */
+  const exportsAt = new Map<string, string>(), uploads = new Map<string, string>();
+  const importing = new Map<string, string>();
   let subFor: string | null = null, flaked = false;
   const ok = (result: unknown, status = 200) => Response.json({ success: true, errors: [], messages: [], result }, { status });
   const fail = (status: number, code: number, message: string) => Response.json({ success: false, errors: [{ code, message }], messages: [], result: null }, { status });
@@ -72,6 +118,7 @@ export function mockCloudflare(opts: { delayMs?: number; singleAssetUploads?: bo
     const step = stepOf(m, path);
     if (failAt == "registration" && step == "registration") return fail(400, 10500, "Your account has no default payment method");
     if (failAt && failAt == step) return fail(500, 10013, "An unknown error has occurred");
+    if (state.failNext && state.failNext == step) { state.failNext = null; return fail(500, 10013, "An unknown error has occurred"); }
     let r: RegExpExecArray | null;
     if (m == "GET" && /^\/accounts(\?|$)/.test(path)) return ok([state.account]);
     if (m == "GET" && path == "/user/tokens/verify") return ok({ status: "active" });
@@ -97,6 +144,49 @@ export function mockCloudflare(opts: { delayMs?: number; singleAssetUploads?: bo
           const db = { uuid: `${hex(4)}-${hex(2)}-${hex(2)}-${hex(2)}-${hex(6)}`, name, statements: [], migrations: [], tables: [] };
           state.databases.push(db);
           return ok({ uuid: db.uuid, name });
+        }
+        const del = /^\/d1\/database\/([^/?]+)$/.exec(rest);
+        if (m == "DELETE" && del) {
+          const i = state.databases.findIndex((d) => d.uuid == del[1]);
+          if (i < 0) return fail(404, 7404, "The database could not be found");
+          state.deletedDatabases.push(state.databases[i].name);
+          state.databases.splice(i, 1);
+          return ok(null);
+        }
+        const ex = /^\/d1\/database\/([^/]+)\/export$/.exec(rest);
+        const exDb = ex && state.databases.find((d) => d.uuid == ex[1]);
+        if (m == "POST" && ex) {
+          if (!exDb) return fail(404, 7404, "The database could not be found");
+          const { output_format, current_bookmark } = await body();
+          if (output_format != "polling") return fail(400, 7400, "output_format must be polling");
+          // The first call starts it; the next (with its bookmark) finds it done.
+          if (!current_bookmark) return ok({ success: true, type: "export", at_bookmark: `bm-${exDb.uuid}`, status: "active", messages: ["Generating"] });
+          const url = `https://d1-export.mock/${exDb.uuid}/${hex(4)}.sql`;
+          exportsAt.set(url, dumpOf(exDb));
+          return ok({ success: true, type: "export", at_bookmark: current_bookmark, status: "complete", result: { filename: url.split("/").pop(), signed_url: url } });
+        }
+        const im = /^\/d1\/database\/([^/]+)\/import$/.exec(rest);
+        const imDb = im && state.databases.find((d) => d.uuid == im[1]);
+        if (m == "POST" && im) {
+          if (!imDb) return fail(404, 7404, "The database could not be found");
+          const b = await body();
+          if (b.action == "init") {
+            if (!/^[0-9a-f]{32}$/.test(b.etag ?? "")) return fail(400, 7400, "etag must be the file's MD5");
+            return ok({ success: true, filename: `${b.etag}.sql`, upload_url: `https://d1-import.mock/${imDb.uuid}/${b.etag}` });
+          }
+          if (b.action == "ingest") {
+            const sql = uploads.get(`${imDb.uuid}/${b.etag}`);
+            if (sql == null) return fail(400, 7400, "Nothing was uploaded for that etag");
+            applySql(imDb, sql);
+            importing.set(imDb.uuid, `bm-import-${hex(4)}`);
+            return ok({ success: true, at_bookmark: importing.get(imDb.uuid), status: "active" });
+          }
+          if (b.action == "poll") {
+            if (!importing.has(imDb.uuid)) return ok({ success: false, error: "Not currently importing anything.", status: "complete" });
+            importing.delete(imDb.uuid);
+            return ok({ success: true, status: "complete", result: { num_queries: (imDb.rows ?? []).length } });
+          }
+          return fail(400, 7400, "action must be init, ingest or poll");
         }
         const q = /^\/d1\/database\/([^/]+)\/query$/.exec(rest);
         const db = q && state.databases.find((d) => d.uuid == q[1]);
@@ -154,13 +244,43 @@ export function mockCloudflare(opts: { delayMs?: number; singleAssetUploads?: bo
           if ((b.type == "plain_text" || b.type == "secret_text") && typeof b.text != "string") return fail(400, 10021, `binding ${b.name} needs text`);
           if (b.type == "service" && !state.scripts[b.service]) return fail(400, 10143, `service binding ${b.name}: no Worker ${b.service}`);
         }
-        state.scripts[r[1]] = { metadata: redact(meta), modules, workersDev: prev?.workersDev ?? false, tags: meta.tags ?? [], namespaces };
+        // Secrets: those in this upload, and the last version's when keep_bindings says so (as the real API does).
+        const kept = (meta.keep_bindings ?? []).includes("secret_text") ? { ...(state.secrets[r[1]] ?? {}) } : {};
+        for (const b of meta.bindings ?? []) if (b.type == "secret_text") kept[b.name] = b.text;
+        state.secrets[r[1]] = kept;
+        const named = new Set((meta.bindings ?? []).map((b: any) => b.name));
+        const keptBindings = Object.keys(kept).filter((n) => !named.has(n)).map((name) => ({ type: "secret_text", name, text: kept[name] }));
+        state.scripts[r[1]] = { metadata: redact({ ...meta, bindings: [...(meta.bindings ?? []), ...keptBindings] }), modules, workersDev: prev?.workersDev ?? false, tags: meta.tags ?? [], namespaces };
+        state.versions[r[1]] = (state.versions[r[1]] ?? 0) + 1;
+        opts.onUpload?.(r[1], state.scripts[r[1]].metadata);
         return ok({ id: r[1], tags: meta.tags ?? [] });
       }
       if (m == "POST" && (r = /^\/workers\/scripts\/([^/]+)\/subdomain$/.exec(rest))) {
         if (!state.scripts[r[1]]) return fail(404, 10007, "script not found");
         state.scripts[r[1]].workersDev = !!(await body()).enabled;
         return ok({ enabled: state.scripts[r[1]].workersDev });
+      }
+      if ((r = /^\/workers\/scripts\/([^/]+)\/secrets$/.exec(rest))) {
+        if (!state.scripts[r[1]]) return fail(404, 10007, "This Worker does not exist on your account.");
+        if (m == "GET") return ok(Object.keys(state.secrets[r[1]] ?? {}).map((name) => ({ name, type: "secret_text" })));
+        if (m == "PUT") {
+          const b = await body();
+          if (!b?.name || typeof b.text != "string" || b.type != "secret_text") return fail(400, 10021, "name, text and type secret_text are required");
+          (state.secrets[r[1]] ??= {})[b.name] = b.text;
+          const meta = state.scripts[r[1]].metadata;
+          meta.bindings = [...(meta.bindings ?? []).filter((x: any) => x.name != b.name), { type: "secret_text", name: b.name, text: `(${b.text.length} characters)` }];
+          state.versions[r[1]] = (state.versions[r[1]] ?? 0) + 1;
+          return ok({ name: b.name, type: "secret_text" });
+        }
+      }
+      if (m == "GET" && (r = /^\/artifacts\/namespaces\/([^/]+)\/repos\/([^/]+)$/.exec(rest))) {
+        if (!opts.fleet || r[1] != "erga" || r[2] != "erga") return fail(404, 10404, "repo not found");
+        return ok({ name: r[2], namespace: r[1], remote: "https://artifacts.mock/git/erga/erga.git", default_branch: "main" });
+      }
+      if (m == "POST" && (r = /^\/artifacts\/namespaces\/([^/]+)\/tokens$/.exec(rest))) {
+        const b = await body();
+        if (!opts.fleet || r[1] != "erga" || b?.repo != "erga") return fail(404, 10404, "repo not found");
+        return ok({ id: hex(8), token: `art-read-${hex(8)}`, scope: b.scope ?? "write", expires_at: new Date(Date.now() + (b.ttl ?? 3600) * 1000).toISOString() });
       }
       if (m == "PUT" && rest == "/workers/domains") {
         const d = await body();
@@ -193,7 +313,7 @@ export function mockCloudflare(opts: { delayMs?: number; singleAssetUploads?: bo
         return done ? ok({ domain_name: r[1], state: "succeeded", completed: true }) : fail(404, 10404, "no such registration");
       }
     }
-    if (m == "GET" && path.startsWith("/zones?")) return ok(state.zones);
+    if (m == "GET" && path.startsWith("/zones?")) { const name = new URLSearchParams(path.split("?")[1]).get("name"); return ok(state.zones.filter((z) => !name || z.name == name)); }
     if ((r = /^\/zones\/([^/?]+)(\/[^?]*)(?:\?(.*))?$/.exec(path))) {
       const [, zone, rest, query] = r;
       if (!state.zones.some((z) => z.id == zone)) return fail(404, 1001, "Invalid zone identifier");
@@ -223,6 +343,10 @@ export function mockCloudflare(opts: { delayMs?: number; singleAssetUploads?: bo
   function d1Query(db: MockState["databases"][number], { sql }: { sql: string; params?: unknown[] }): Record<string, unknown>[] {
     db.statements.push(sql.slice(0, 200));
     if (/FROM sqlite_master/i.test(sql)) return db.tables.map((name) => ({ name }));
+    if (/^SELECT id FROM documents/i.test(sql.trim())) {
+      if (!db.tables.includes("documents")) throw new D1Error("no such table: documents: SQLITE_ERROR");
+      return (db.rows ?? []).map((r) => /^INSERT INTO documents \(id[^)]*\) VALUES \('([^']+)'/.exec(r)?.[1]).filter(Boolean).map((id) => ({ id }));
+    }
     if (/^SELECT name FROM d1_migrations/i.test(sql.trim())) {
       if (!db.tables.includes("d1_migrations")) throw new D1Error("no such table: d1_migrations: SQLITE_ERROR");
       return db.migrations.map((name) => ({ name }));
@@ -237,13 +361,30 @@ export function mockCloudflare(opts: { delayMs?: number; singleAssetUploads?: bo
     return [];
   }
 
-  /** The new server, once deployed: it answers. */
-  async function site(_req: Request, url: URL): Promise<Response | null> {
+  /** A deployed server: it answers, as the real one would where the pipeline needs it. */
+  async function site(req: Request, url: URL): Promise<Response | null> {
     const host = url.hostname;
+    if (host == "d1-export.mock") { const sql = exportsAt.get(url.href); return sql == null ? new Response("expired", { status: 403 }) : new Response(sql); }
+    if (host == "d1-import.mock" && req.method == "PUT") {
+      const sql = await req.text();
+      uploads.set(url.pathname.slice(1), sql);
+      return new Response(null, { headers: { ETag: `"${createHash("md5").update(sql).digest("hex")}"` } });
+    }
     const script = Object.entries(state.scripts).find(([name, s]) =>
       (s.workersDev && state.subdomain && host == `${name}.${state.subdomain}.workers.dev`) || state.domains.some((d) => d.hostname == host && d.service == name));
     if (!script || script[0].endsWith("-pages")) return null;
+    const [name, s] = script;
+    const own = await opts.sites?.(req, name);
+    if (own) return own;
+    const text = (n: string) => (s.metadata.bindings ?? []).find((b: any) => b.name == n && b.type == "plain_text")?.text as string | undefined;
     if (url.pathname == "/style.css") return new Response("/* mock */", { headers: { "Content-Type": "text/css" } });
+    if (url.pathname == "/api/deploys/version") return Response.json({ version: text("ERGA_VERSION") ?? null });
+    const snap = await snapshotDoor(req, {
+      token: state.secrets[name]?.SNAPSHOT_TOKEN,
+      importAllowed: text("SNAPSHOT_IMPORT") == "1" && text("DEPLOY_TARGET") != "production",
+      store: (state.docs[name] ??= memoryStore()) as DocStore,
+    });
+    if (snap) return snap;
     return new Response("Not found", { status: 404 });
   }
 
@@ -277,11 +418,12 @@ class D1Error extends Error {}
 function stepOf(method: string, path: string): string {
   if (/^\/accounts\/[^/]+$/.test(path)) return "account";
   if (/\/registrar\/registrations$/.test(path) && method == "POST") return "registration";
-  if (/\/d1\/database(\?|$)/.test(path)) return "database";
+  if (/\/d1\/database\/[^/]+\/(export|import)$/.test(path)) return "data";
+  if (/\/d1\/database(\?|$)/.test(path) || (method == "DELETE" && /\/d1\/database\/[^/]+$/.test(path))) return "database";
   if (/\/d1\/database\/[^/]+\/query/.test(path)) return "migrations";
   if (/assets/.test(path)) return "assets";
-  if (/\/workers\/scripts\/[^/-]+$/.test(path) && method == "PUT") return "worker";
-  if (/\/workers\/domains|\/workers\/scripts\/[^/-]+\/subdomain/.test(path)) return "address";
+  if (/\/workers\/scripts\/[^/]+$/.test(path) && !/-pages$/.test(path) && method == "PUT") return "worker";
+  if (/\/workers\/domains|\/workers\/scripts\/[^/]+\/subdomain/.test(path) && !/-pages\/subdomain/.test(path)) return "address";
   if (/\/dns_records|\/workers\/routes|-pages/.test(path)) return "pages";
   return "";
 }
@@ -289,4 +431,90 @@ function stepOf(method: string, path: string): string {
 /** The Worker's metadata as the mock keeps it: secrets' values left out. */
 function redact(meta: Record<string, any>) {
   return { ...meta, bindings: (meta.bindings ?? []).map((b: any) => (b.type == "secret_text" ? { ...b, text: `(${String(b.text).length} characters)` } : b)) };
+}
+
+/** A database as D1's export writes it: its tables, its migrations, its rows. */
+function dumpOf(db: MockState["databases"][number]): string {
+  const lines = ["PRAGMA defer_foreign_keys=TRUE;"];
+  for (const t of db.tables) lines.push(t == "d1_migrations" ? "CREATE TABLE d1_migrations (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL);" : `CREATE TABLE ${t} (mock);`);
+  for (const name of db.migrations) lines.push(`INSERT INTO d1_migrations (name) VALUES ('${name}');`);
+  lines.push(...(db.rows ?? []));
+  return lines.join("\n") + "\n";
+}
+
+/** SQL loaded into a database (D1's import): its tables, migrations and rows, as dumpOf writes them. */
+function applySql(db: MockState["databases"][number], sql: string) {
+  for (const line of sql.split("\n").map((l) => l.trim()).filter(Boolean)) {
+    const made = /^CREATE TABLE (?:IF NOT EXISTS )?(\w+)/i.exec(line);
+    if (made) { if (db.tables.includes(made[1])) throw new D1Error(`table ${made[1]} already exists`); db.tables.push(made[1]); continue; }
+    const mig = /^INSERT INTO d1_migrations \(name\) VALUES \('([^']+)'\)/.exec(line);
+    if (mig) { db.migrations.push(mig[1]); continue; }
+    if (/^INSERT INTO/i.test(line)) (db.rows ??= []).push(line);
+  }
+  db.statements.push(`(import of ${sql.length} bytes)`);
+}
+
+/** Erga's own account: production as cf deploy left it, the builder, the source (the fleet option). */
+function seedFleet(state: MockState) {
+  state.account = { id: ACCOUNT_ID, name: "Erga" };
+  state.subdomain = "erga";
+  state.zones = [{ id: "zone00000000000000000000000e7ga1", name: "erga.dev", status: "active" }, { id: "zone00000000000000000000000e7ga2", name: "erga-pages.dev", status: "active" }];
+  const tables = ["d1_migrations", "users", "server_config", "documents", "permissions", "slug_history", "agent_tokens", "token_requests"];
+  state.databases.push({
+    uuid: PROD_DB, name: "erga", statements: [], tables,
+    migrations: ["0001_erga.sql", "0002_delete_docs_after_hours.sql", "0100_tokens.sql"],
+    rows: [
+      "INSERT INTO users (login, name) VALUES ('ada', 'Ada');",
+      ...PROD_DOCS.map((id, i) => `INSERT INTO documents (id, owner, slug, title) VALUES ('${id}', 'ada', 'doc-${i + 1}', 'Document ${i + 1}');`),
+      "INSERT INTO server_config (key, value) VALUES ('deploy_page', '\"admins\"');",
+    ],
+  });
+  const prodBindings = [
+    { type: "durable_object_namespace", name: "DOCS", class_name: "DocHost" },
+    { type: "d1", name: "DB", database_id: PROD_DB, id: PROD_DB },
+    { type: "plain_text", name: "DEPLOY_TARGET", text: "production" },
+    { type: "plain_text", name: "ERGA_VERSION", text: "prod00000000" },
+  ];
+  state.scripts.erga = { metadata: { main_module: "index.js", bindings: prodBindings }, modules: ["index.js"], workersDev: false, tags: [], namespaces: ["DocHost", "Deployer", "DocList"] };
+  state.secrets.erga = { SESSION_SECRET: "production-session-secret", GITHUB_CLIENT_SECRET: "production-github-secret", SNAPSHOT_TOKEN: MOCK_SNAPSHOT_TOKEN, DEPLOY_HOOK_SECRET: MOCK_HOOK_SECRET };
+  state.scripts["erga-builder"] = { metadata: { main_module: "worker.js", bindings: [] }, modules: ["worker.js"], workersDev: false, tags: [], namespaces: ["Builder"] };
+  state.versions = { erga: 1, "erga-builder": 1 };
+  state.domains.push({ hostname: "erga.dev", service: "erga", zone_id: state.zones[0].id });
+  state.routes[state.zones[1].id] = [{ pattern: "*.erga-pages.dev/*", script: "erga" }];
+  state.dns[state.zones[1].id] = [{ type: "AAAA", name: "*.erga-pages.dev", content: "100::", proxied: true }];
+  const docs = memoryStore();
+  PROD_DOCS.forEach((id, i) => docs.docs.set(id, {
+    entries: new Map<string, unknown>([
+      ["meta", { id, owner: "ada", index: "index.html", created: 1_700_000_000_000 + i, modified: 1_700_000_100_000 + i }],
+      ["file:index.html", new TextEncoder().encode(`<h1>Document ${i + 1}</h1><p>production's words</p>`)],
+      ["state", new Uint8Array([1, 2, 3, i])],
+      ...(i == 2 ? [["dir:drafts", true] as [string, unknown]] : []),
+    ]),
+    alarm: i == 1 ? 1_900_000_000_000 : null,
+  }));
+  state.docs.erga = docs;
+}
+
+/**
+ * A pretend builder (deploy/builder/ is the real one): it "builds" a commit
+ * by handing back `release` stamped with the commit, saying what the real
+ * one would run. `failNext` fails the next build once; `built` lists what it built.
+ */
+export function mockBuilder(release: () => Promise<Release>, o: { delayMs?: number } = {}): Builder & { built: string[]; failNext: string | null } {
+  const b = {
+    built: [] as string[],
+    failNext: null as string | null,
+    async build({ commit, branch, source }: { commit: string; branch: string; source: { cloneUrl: string; token?: string } }, log: (line: string) => void): Promise<Release> {
+      if (!source.token) throw new Error("no read token for the source");
+      log(`fetching ${commit.slice(0, 12)} (${branch}) from ${source.cloneUrl}`);
+      for (const step of ["bun install --frozen-lockfile", "./site.sh", "bun deploy/release.ts"]) {
+        if (o.delayMs) await new Promise((r) => setTimeout(r, o.delayMs));
+        log(`$ ${step}`);
+      }
+      if (b.failNext) { const why = b.failNext; b.failNext = null; throw new Error(why); }
+      b.built.push(commit);
+      return { ...(await release()), version: commit.slice(0, 12) };
+    },
+  };
+  return b;
 }

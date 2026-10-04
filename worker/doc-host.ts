@@ -41,6 +41,7 @@ import { cleanRel, docFile, makeHost } from "../host";
 import { agentToolsFor } from "../server-tools";
 import { FileStore, Room, StateStore, StoreError } from "../room";
 import { assets, isTextPath, files as texts } from "../src/room/doc";
+import { decodeValue, encodeValue, type DocSnapshot } from "../deploy/snapshot";
 import { directoryOf } from "./d1";
 import { DiskLink } from "./disk";
 import type { Env } from "./env";
@@ -322,6 +323,49 @@ export class DocHost extends DurableObject<Env> {
   /** Whether the document exists. */
   async exists(): Promise<boolean> {
     return (await this.ctx.storage.get<Meta>(META)) != null;
+  }
+
+  /**
+   * Everything in its storage, and its alarm: the snapshot staging copies
+   * (deploy/snapshot.ts). Only reads: the room isn't opened, nothing is
+   * written, the directory isn't touched. Null if there's no document.
+   */
+  async exportStorage(id: string): Promise<DocSnapshot | null> {
+    const all = await this.ctx.storage.list();
+    if (!all.has(META)) return null;
+    return { id, entries: [...all].map(([k, v]) => [k, encodeValue(v)]), alarm: await this.ctx.storage.getAlarm() };
+  }
+
+  /**
+   * Becomes `snap` (staging only: the front door allows it only with
+   * SNAPSHOT_IMPORT, never on production): whoever has it open is
+   * disconnected and the room closed first (it writes what it holds as it
+   * closes), then its storage is emptied and the snapshot written in.
+   */
+  async importStorage(snap: DocSnapshot): Promise<void> {
+    await this.closeForSnapshot();
+    await this.ctx.storage.deleteAlarm();
+    await this.ctx.storage.deleteAll();
+    const entries = Object.fromEntries(snap.entries.map(([k, e]) => [k, decodeValue(e)]));
+    const keys = Object.keys(entries);
+    for (let i = 0; i < keys.length; i += 100) await this.ctx.storage.put(Object.fromEntries(keys.slice(i, i + 100).map((k) => [k, entries[k]])));
+    if (snap.alarm != null) await this.ctx.storage.setAlarm(snap.alarm);
+  }
+
+  /** Empties it (staging only: a document production no longer has). The directory row is already gone with the old database. */
+  async wipeStorage(): Promise<void> {
+    await this.closeForSnapshot();
+    await this.ctx.storage.deleteAlarm();
+    await this.ctx.storage.deleteAll();
+  }
+
+  private async closeForSnapshot(): Promise<void> {
+    for (const socket of this.sockets) { try { socket.close(1012, "document replaced by a snapshot"); } catch { /* already closed */ } }
+    this.sockets.clear();
+    const opened = await this.open?.catch(() => null);
+    this.open = null;
+    this.opened = null;
+    await opened?.close().catch(() => {});
   }
 
   async fetch(request: Request): Promise<Response> {

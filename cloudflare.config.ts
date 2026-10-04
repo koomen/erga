@@ -10,21 +10,26 @@ import * as entrypoint from "./worker/index.ts" with { type: "cf-worker" };
 // (JSON, from the environment) over them. site.sh and dev.ts check them first (`bun server.config.ts`).
 import { deployed } from "./server.config.ts";
 import { localAgentKey } from "./dev/agent-key.ts";
+// Production's names (its Worker, database, domain, pages route, public settings): the same list the deploy
+// pipeline deploys from (deploy/targets.ts), so there's one source of truth for both.
+import { TARGETS } from "./deploy/targets.ts";
+
+const PROD = TARGETS.production;
 
 /** The local database's id (the dev server's D1): any UUID. Production's is found by name (migrate.ts). */
 const LOCAL_DB = "00000000-0000-4000-8000-00000000e29a";
 
 export default defineConfig(({ mode }) => ({
   worker: {
-    name: "erga",
+    name: PROD.worker,
     compatibilityDate: "2026-09-30",
     compatibilityFlags: ["nodejs_compat"],
     entrypoint,
-    domains: ["erga.dev"],
+    domains: [PROD.host],
     // Each document's page runs on an origin of its own, <id>-<owner>.erga-pages.dev
     // (front.ts, pagesDoor): a wildcard route, with a proxied wildcard DNS record
     // (* AAAA 100::) in the erga-pages.dev zone and its Universal SSL certificate.
-    triggers: [triggers.fetch({ pattern: "*.erga-pages.dev/*", zone: "erga-pages.dev" })],
+    triggers: [triggers.fetch({ pattern: `*.${PROD.pages.domain}/*`, zone: PROD.pages.zone })],
     // Logs and exceptions, queryable afterwards (cf observability telemetry query).
     observability: { enabled: true, logs: { enabled: true, invocationLogs: true } },
     // The Worker decides everything (view mode at /, documents under
@@ -34,24 +39,32 @@ export default defineConfig(({ mode }) => ({
       DocHost: exports.durableObject({ storage: "sqlite" }),
       // The deploy page's sessions (/deploy, worker/deployer.ts): each holds one person's Cloudflare token, only while they deploy.
       Deployer: exports.durableObject({ storage: "sqlite" }),
+      // Branch deploys (deploy/branches.ts, worker/pipeline.ts): one object, named "deploys", that builds and deploys
+      // this server's own branch when it moves, keeps each target's status and log, and serves /api/events.
+      Pipeline: exports.durableObject({ storage: "sqlite" }),
       // Each person's list of documents before the directory: gone, with what it held.
       DocList: exports.durableObject({ state: "deleted" }),
     },
     env: {
-      DOCS: bindings.durableObject({ worker: "erga", exportName: "DocHost" }),
-      DEPLOYS: bindings.durableObject({ worker: "erga", exportName: "Deployer" }),
+      DOCS: bindings.durableObject({ worker: PROD.worker, exportName: "DocHost" }),
+      DEPLOYS: bindings.durableObject({ worker: PROD.worker, exportName: "Deployer" }),
+      PIPELINE: bindings.durableObject({ worker: PROD.worker, exportName: "Pipeline" }),
       // The server's database: users, settings and the directory. `cf deploy` makes the database by name if there's none; its tables come
       // from migrations/, applied by migrate.ts (site.sh runs it on Workers Builds, before
       // the deploy). Locally (vite dev) it's a database of its own, at a fixed made-up id that
       // `bun run db:local` applies the migrations to.
-      DB: bindings.d1({ name: "erga", ...(mode == "development" ? { id: LOCAL_DB } : {}) }),
+      DB: bindings.d1({ name: PROD.database, ...(mode == "development" ? { id: LOCAL_DB } : {}) }),
       ASSETS: bindings.assets(),
       // The bootstrap admins: always admins, always allowed to sign in (users.ts). Admins let
       // everyone else in (the users table). Locally DEV_LOGIN is one too (worker/d1.ts).
-      ADMINS: bindings.text("koomen,dsiroker"),
+      ADMINS: bindings.text(PROD.vars.ADMINS),
       // The settings the deploy fixes, as JSON (server.config.ts; config.ts). Admins set the rest.
       SERVER_CONFIG: bindings.text(JSON.stringify(deployed())),
-      GITHUB_CLIENT_ID: bindings.text("Ov23ctkY7oLarHcPA97b"),
+      GITHUB_CLIENT_ID: bindings.text(PROD.vars.GITHUB_CLIENT_ID),
+      // Which branch-deploy target this server is (deploy/targets.ts): the pipeline sets it on each target it deploys
+      // ("staging" on erga-staging; empty on a server /deploy made). Branch deploys run only with CLOUDFLARE_DEPLOY_TOKEN
+      // set too (a secret, deploy/setup.ts), so this alone deploys nothing. Locally: ERGA_DEPLOY_TARGET.
+      DEPLOY_TARGET: bindings.text(mode == "development" ? (process.env.ERGA_DEPLOY_TARGET ?? "") : PROD.name),
       // The deploy page's Cloudflare OAuth client (public, PKCE: no secret), made under Manage Account > OAuth clients
       // with the callback https://erga.dev/deploy/auth/cloudflare/callback. Empty: /deploy offers the API token link only.
       CLOUDFLARE_OAUTH_CLIENT_ID: bindings.text(process.env.CLOUDFLARE_OAUTH_CLIENT_ID ?? ""),
