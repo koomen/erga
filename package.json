@@ -15,6 +15,7 @@
     "test:prod": "bun tests/suite/prod.ts"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "0.91.1",
     "@codemirror/commands": "6.11.1",
     "@codemirror/lang-html": "6.4.12",
     "@codemirror/lang-markdown": "6.5.2",

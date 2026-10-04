@@ -27,6 +27,12 @@
 // Test people (signed in with a test token, hosted) may touch only test
 // documents, and those as editors of the documents of whoever minted their
 // token. Server admins get nothing on documents by being admins.
+//
+// The front page (landing_document) is the exception: its scripts run on
+// this site itself (worker/home.ts), so while it's the front page only admins
+// may edit it. It can't be made the front page while anyone else may
+// (homeBlocked), nobody else can be made its editor (share), and anyone else
+// whose permission says otherwise only views it (homeLimit).
 
 import { ConfigError, ServerConfig } from "./config.ts";
 import { NotAllowed, Users } from "./users.ts";
@@ -165,16 +171,20 @@ export class Directory {
    * `admins`: the deploy's bootstrap admins (users.ts). `locked`: settings
    * the deploy fixes (config.ts).
    */
-  constructor(private sql: Sql, opts: { admins?: Iterable<string>; locked?: Record<string, unknown> } = {}) {
+  constructor(private sql: Sql, opts: { admins?: Iterable<string>; locked?: Record<string, unknown>; changed?: (key: string) => Promise<void> } = {}) {
     this.users = new Users(sql, opts.admins);
     this.config = new ServerConfig(sql, this.users, {
       locked: opts.locked,
-      // The front page shows a document to everyone: only its owner may put it there. Kept by id, which a rename never changes.
+      changed: opts.changed,
+      // The front page shows a document to everyone, and runs its scripts on this site itself (worker/home.ts): an admin
+      // who may edit it puts it there, and only if everyone who may edit it is an admin. Kept by id, which a rename never changes.
       checks: {
         landing_document: async (by, value) => {
           const doc = await this.find(String(value));
           if (!doc || doc.test) throw new ConfigError(`landing_document: there's no document at ${JSON.stringify(value)}. Give its address (/<owner>/<slug>), URL or id.`);
-          if (!(await this.may({ login: by.login.toLowerCase(), test: !!by.test }, "share", doc))) throw new NotAllowed(`Only its owner (${doc.owner}) can make /${doc.owner}/${doc.slug} the front page: it shows the document to everyone.`);
+          if (!(await this.may({ login: by.login.toLowerCase(), test: !!by.test }, "edit", doc))) throw new NotAllowed(`Only someone who may edit /${doc.owner}/${doc.slug} can make it the front page: it shows the document to everyone.`);
+          const blocked = await this.homeBlocked(doc.id);
+          if (blocked) throw new NotAllowed(blocked);
           return doc.id;
         },
       },
@@ -200,6 +210,41 @@ export class Directory {
     const ref = await this.config.get("landing_document");
     const doc = ref ? await this.find(ref) : null;
     return doc && !doc.test ? doc : null;
+  }
+
+  /**
+   * The id of the document the front page shows (landing_document), without
+   * asking the database when the setting holds an id (it does, unless the
+   * deploy locks it to an address). Null when it's unset.
+   */
+  async homeId(): Promise<string | null> {
+    const ref = await this.config.get("landing_document");
+    if (!ref) return null;
+    return idShaped(ref) ? ref : (await this.find(ref))?.id ?? null;
+  }
+
+  /**
+   * Why a document can't be the front page, or null if it can: the front
+   * page runs its scripts on this site itself (worker/home.ts), where they
+   * act as whoever views it, so everyone who may edit it must be an admin.
+   */
+  async homeBlocked(id: string): Promise<string | null> {
+    const editors = (await this.permissions(id)).filter((p) => p.role != "viewer");
+    const others: string[] = [];
+    for (const p of editors) if (p.login == ANYONE || !(await this.users.isAdmin(p.login))) others.push(p.login == ANYONE ? "anyone with the link" : p.login);
+    if (!others.length) return null;
+    return `Only admins may edit the front page, since its scripts run on this site itself. ${others.join(", ")} may edit this document: make ${others.length == 1 ? "them a viewer" : "them viewers"} (or admins) first.`;
+  }
+
+  /**
+   * The front page's editing is for admins only (homeBlocked): someone who
+   * isn't one, whatever their permission says (an admin since made a user),
+   * only views it while it's the front page.
+   */
+  private async homeLimit(who: Who, id: string, role: Role | null): Promise<Role | null> {
+    if (role != "owner" && role != "editor") return role;
+    if ((await this.homeId()) != id) return role;
+    return (await this.users.isAdmin(who)) ? role : "viewer";
   }
 
   async get(id: string): Promise<DocRow | null> {
@@ -256,7 +301,7 @@ export class Directory {
       owner.toLowerCase(), owner == "d" ? segment : segment.toLowerCase(), who.login.toLowerCase(), ANYONE);
     if (!row) return null;
     const role = (Object.keys(RANK) as Role[]).find((r) => RANK[r] == Number(row.rank)) ?? null;
-    return { doc: fromRow(row), role };
+    return { doc: fromRow(row), role: await this.homeLimit(who, row.id, role) };
   }
 
   /**
@@ -420,7 +465,7 @@ export class Directory {
     if (!who) return null;
     if (who.test) return doc.test && who.by != null && who.by.toLowerCase() == doc.owner ? "editor" : null;
     const rows = await this.sql.all<{ role: Role }>("SELECT role FROM permissions WHERE doc_id = ?1 AND login IN (?2, ?3)", doc.id, who.login.toLowerCase(), ANYONE);
-    return rows.reduce<Role | null>((best, r) => (best && RANK[best] >= RANK[r.role] ? best : r.role), null);
+    return this.homeLimit(who, doc.id, rows.reduce<Role | null>((best, r) => (best && RANK[best] >= RANK[r.role] ? best : r.role), null));
   }
 
   /** Whether someone may do something with a document: every such decision comes here (see the top of this file). */
@@ -449,6 +494,10 @@ export class Directory {
     if (login != ANYONE && !/^[a-z0-9][a-z0-9-]{0,38}$/.test(login)) throw new NotAllowed(`"${login}" isn't a login (or "*" for anyone with the link).`);
     if (login == doc.owner) throw new NotAllowed("The owner's own permission can't be changed.");
     if (role != null && role != "editor" && role != "viewer") throw new NotAllowed(`"${role}" isn't a role: editor or viewer.`);
+    // The front page's editors are admins only (homeBlocked).
+    if (role == "editor" && (await this.homeId()) == id && (login == ANYONE || !(await this.users.isAdmin(login)))) {
+      throw new NotAllowed(`This document is the front page, whose scripts run on this site itself: only admins may edit it. Share it with ${login == ANYONE ? "anyone with the link" : login} as a viewer${login == ANYONE ? "" : ", or make them an admin first"}.`);
+    }
     if (role == null) await this.sql.run("DELETE FROM permissions WHERE doc_id = ?1 AND login = ?2", id, login);
     else await this.sql.run(
       `INSERT INTO permissions (doc_id, login, role, granted, granted_by) VALUES (?1, ?2, ?3, ?4, ?5)

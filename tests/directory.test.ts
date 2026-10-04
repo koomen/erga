@@ -254,14 +254,14 @@ test("server config: the deploy's values, from server.config.ts and SERVER_CONFI
   expect(() => parseDeployed('{"delete_docs_after_hours": "soon"}')).toThrow(/delete_docs_after_hours to "soon", but it must be a whole number/);
 });
 
-test("landing_document: only the document's owner may choose it, by address, URL or id; kept by id", async () => {
+test("landing_document: an admin who may edit the document chooses it, by address, URL or id; kept by id", async () => {
   const dir = fresh({ admins: ["ada", "root"] });
   const one = (await dir.add(doc("aaaaaaaa", "Front page"))).doc;
   await dir.add(doc("tttttttt", "Test", { test: true }));
   expect(await dir.landing()).toBeNull();
   const ada = { login: "ada" }, root = { login: "root" };
-  // Someone else's document, even an admin's choosing: refused; a missing one or a test one: no such document.
-  await expect(dir.config.set(root, "landing_document", `/ada/${one.slug}`)).rejects.toThrow(/Only its owner \(ada\)/);
+  // A document an admin may not edit, even an admin's choosing: refused; a missing one or a test one: no such document.
+  await expect(dir.config.set(root, "landing_document", `/ada/${one.slug}`)).rejects.toThrow(/Only someone who may edit \/ada\//);
   await expect(dir.config.set(ada, "landing_document", "/ada/nothing-here")).rejects.toThrow(ConfigError);
   await expect(dir.config.set(ada, "landing_document", "tttttttt")).rejects.toThrow(/no document/);
   for (const ref of [`/ada/${one.slug}`, `https://erga.dev/ada/${one.slug}`, "/d/aaaaaaaa", "aaaaaaaa"]) {
@@ -275,4 +275,41 @@ test("landing_document: only the document's owner may choose it, by address, URL
   const locked = fresh({ locked: { landing_document: "/ada/front-page" } }, memory());
   await locked.add(doc("aaaaaaaa", "Front page"));
   expect((await locked.landing())?.id).toBe("aaaaaaaa");
+});
+
+test("the front page: only admins may edit it while it is one", async () => {
+  const changed: string[] = [];
+  const dir = fresh({ admins: ["ada"], changed: async (key) => { changed.push(key); } });
+  const ada = { login: "ada" };
+  await dir.users.add(ada, "bo", { role: "user" });
+  await dir.users.add(ada, "cy", { role: "admin" });
+  const one = (await dir.add(doc("aaaaaaaa", "Front page"))).doc;
+  // Someone who isn't an admin may edit it: it can't be the front page, and says why.
+  await dir.share(ada, one.id, "bo", "editor");
+  expect(await dir.homeBlocked(one.id)).toMatch(/bo may edit this document/);
+  await expect(dir.config.set(ada, "landing_document", one.id)).rejects.toThrow(/Only admins may edit the front page/);
+  await dir.share(ada, one.id, "*", "editor");
+  await dir.share(ada, one.id, "bo", "viewer");
+  expect(await dir.homeBlocked(one.id)).toMatch(/anyone with the link may edit/);
+  await dir.share(ada, one.id, "*", null);
+  // Viewers and admin editors are fine.
+  await dir.share(ada, one.id, "cy", "editor");
+  expect(await dir.homeBlocked(one.id)).toBeNull();
+  await dir.config.set(ada, "landing_document", one.id);
+  expect(changed).toEqual(["landing_document"]);
+  expect(await dir.homeId()).toBe(one.id);
+  // While it's the front page nobody else becomes its editor; a viewer still may.
+  await expect(dir.share(ada, one.id, "bo", "editor")).rejects.toThrow(/only admins may edit it/);
+  await expect(dir.share(ada, one.id, "*", "editor")).rejects.toThrow(/only admins may edit it/);
+  await dir.share(ada, one.id, "*", "viewer");
+  // An admin editor made a user only views it (users are remembered a few seconds: a fresh directory on the same database asks again).
+  expect(await dir.access({ login: "cy" }, one)).toBe("editor");
+  await dir.users.setRole(ada, "cy", "user");
+  const again = new Directory((dir as unknown as { sql: Sql }).sql, { admins: ["ada"] });
+  expect(await again.access({ login: "cy" }, one)).toBe("viewer");
+  expect((await again.openAs({ login: "cy" }, "ada", one.slug))?.role).toBe("viewer");
+  expect(await again.may({ login: "cy" }, "edit", one)).toBe(false);
+  // Not the front page any more: their permission counts again.
+  await again.config.reset(ada, "landing_document");
+  expect(await again.access({ login: "cy" }, one)).toBe("editor");
 });
