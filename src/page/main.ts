@@ -431,7 +431,7 @@ type TreeModule = { mountTree: typeof mountTree };
       if (tree || !docName) return;
       slot.replaceChildren();
       tree = t.mountTree(slot, {
-        id: docName.id, base: docName.address, editing: true, query: as, showRoot: true, label: "Documents",
+        id: docName.id, base: docName.address, editing: true, query: as, showRoot: true, label: "Pages",
         rootTitle: docName.title, titleOf: pageTitle, current: info!.path, hasRelativeLinks,
         onRenameRoot: () => toggleNaming(true),
       });
@@ -553,7 +553,7 @@ type TreeModule = { mountTree: typeof mountTree };
   function listen() {
     const events = new WebSocket(`${location.protocol == "https:" ? "wss:" : "ws:"}//${location.host}${api("/api/events")}`);
     events.onmessage = (ev) => {
-      let msg: { type?: string; ev?: LogEvent; id?: string; req?: ViewRequest; name?: DocName; moved?: { from: string; to: string }; deleted?: string } = {};
+      let msg: { type?: string; ev?: LogEvent; id?: string; req?: ViewRequest; name?: DocName; moved?: { from: string; to: string }; deleted?: string; path?: string } = {};
       try { msg = JSON.parse(String(ev.data)); } catch { return; }
       if (msg.type == "agent" && msg.ev) agentEvent(msg.ev);
       else if (msg.type == "model") renderModel(msg as unknown as ModelState);
@@ -561,6 +561,8 @@ type TreeModule = { mountTree: typeof mountTree };
       else if (msg.type == "name" && msg.name) showName(msg.name);
       else if (msg.type == "versions" || msg.type == "home") docSettings?.event(msg.type);
       else if (msg.type == "tree") { treeChanged(msg); tree?.refresh(); }
+      // Your agent (or an external one, as you) opened another page: go there (open_page).
+      else if (msg.type == "open" && msg.path && msg.path != info!.path) openPage(msg.path);
     };
     // Events sent while the channel was down are gone; catch up from the transcript.
     // A rename missed meanwhile (or before it first opened) is caught up the same way.
@@ -1443,6 +1445,10 @@ Once you've read the guide, await further instructions.`;
 
   /** Where the user is in the document, so "this" and "here" mean something to the agent. */
   function editorContext(): string {
+    const at = addressOf(info!.path).replace(/[?#].*$/, "");
+    return `The user has the page ${info!.path} open (${at}).\n${caretContext()}`;
+  }
+  function caretContext(): string {
     const s = currentState();
     const sel = s.selection.main;
     const line = s.doc.lineAt(sel.from);

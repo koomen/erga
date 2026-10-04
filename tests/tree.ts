@@ -7,7 +7,7 @@
 //     you're on is marked; the root row's pencil renames the document;
 //   - Documents: each document's chevron opens its pages beneath its row.
 //
-// And what it does: folders open and close, New document and New folder (at
+// And what it does: folders open and close, New page and New folder (at
 // the top level and in a folder) name the new one in place (.html added),
 // rename in place, Move to… and drag and drop, delete (a folder asks first),
 // the server's errors shown in its words, read-only for viewers, the keys,
@@ -141,9 +141,9 @@ try {
   await until(async () => (await tree()).includes("notes"), 5000, "the folder is made");
   await until(async () => (await focused(p)) == "notes", 3000, "and is focused");
   await act(p, "notes", "add");
-  await menuItem(p, "New document");
+  await menuItem(p, "New page");
   await p.type("Ideas");
-  expect(!(await p.eval<string>(`document.getElementById("pages").textContent`)).includes(".html"), "no .html anywhere: they're documents, not files");
+  expect(!(await p.eval<string>(`document.getElementById("pages").textContent`)).includes(".html"), "no .html anywhere: they're pages, not files");
   await p.key("Enter");
   await until(async () => (await tree()).includes("notes/ideas.html"), 5000, "the document is made: its name as an address has it, then .html");
   await until(async () => (await rows(p)).some((x) => x[0] == "notes/ideas.html" && x[1] == "Ideas" && x[2] == 3), 3000, "inside the folder, which opened, by its name");
@@ -151,10 +151,10 @@ try {
   await clickOn(p, ".et-foot .et-add:nth-child(1)");
   await p.type("about");
   await p.key("Enter");
-  expect(await p.eval<boolean>(`/already a document called “About”/.test(document.querySelector(".et-msg.error")?.textContent ?? "")`), "a taken name says so, in place", await p.eval(`document.querySelector(".et-msg")?.textContent`));
+  expect(await p.eval<boolean>(`/already a page called “About”/.test(document.querySelector(".et-msg.error")?.textContent ?? "")`), "a taken name says so, in place", await p.eval(`document.querySelector(".et-msg")?.textContent`));
   await p.key("Escape");
   expect(!(await p.eval<boolean>(`!!document.querySelector(".et-input")`)), "Escape drops it", await p.eval(`document.getElementById("pages").hidden`));
-  ok("New folder and New document, at the top level and in a folder, named in place; a taken name says so");
+  ok("New folder and New page, at the top level and in a folder, named in place; a taken name says so");
 
   // Rename in place (F2), and the server's own words when it refuses.
   // Clicking a page opens it, at its address in the editor.
@@ -178,7 +178,7 @@ try {
   await until(async () => (await tree()).includes("write-to-us.html") && !(await tree()).includes("contact.html"), 5000, "renamed");
   await stub({ fail: "That name is taken by a page another agent just made." });
   await act(p, "about.html", "more");
-  await menuItem(p, "Rename document");
+  await menuItem(p, "Rename page");
   await p.type("-x");
   await p.key("Enter");
   await until(() => p.eval<boolean>(`(document.querySelector(".et-msg.error")?.textContent ?? "").includes("another agent just made")`), 5000, "the server's error, in place");
@@ -187,7 +187,14 @@ try {
 
   // Move to…, and drag and drop.
   await act(p, "write-to-us.html", "more");
-  await menuItem(p, "Move to…");
+  // A document has pages: the tree says "page" for them, never "document", and folders stay folders.
+  const menu = await p.eval<string[]>(`[...document.querySelectorAll('.et-menu [role="menuitem"]')].map((b) => b.textContent.trim())`);
+  expect(JSON.stringify(menu) == JSON.stringify(["Open in a new tab", "Rename page", "Move page to…", "Delete page"]), "a page's menu says page", menu);
+  const words = await p.eval<string>(`document.getElementById("pages").textContent + " " + [...document.querySelectorAll("#pages [aria-label], #pages [placeholder], #pages [title]")].map((e) => (e.getAttribute("aria-label") ?? "") + " " + (e.getAttribute("placeholder") ?? "") + " " + (e.getAttribute("title") ?? "")).join(" ")`);
+  expect(words.includes("New page") && !/\bdocuments?\b/i.test(words.replace(/Rename this document, or change its address/g, "")), "the tree says page, not document (only the root row's rename names the document)", words);
+  await Bun.sleep(200);
+  await p.screenshot(join(SHOTS, "tree-page-menu.png"));
+  await menuItem(p, "Move page to…");
   await menuItem(p, "notes");
   await until(async () => (await tree()).includes("notes/write-to-us.html"), 5000, "Move to… moves it into the folder");
   await p.eval(`(() => {
@@ -207,11 +214,11 @@ try {
 
   // Delete: a page at once, a folder after asking.
   await act(p, "notes/ideas.html", "more");
-  await menuItem(p, "Delete document");
-  await until(async () => !(await tree()).includes("notes/ideas.html"), 5000, "a document is deleted");
+  await menuItem(p, "Delete page");
+  await until(async () => !(await tree()).includes("notes/ideas.html"), 5000, "a page is deleted");
   await act(p, "notes", "more");
   await menuItem(p, "Delete folder");
-  expect(await p.eval<boolean>(`/Delete the folder “notes” and the document in it\\?/.test(document.querySelector(".et-row.confirm")?.textContent ?? "")`), "a folder asks first, in its row", await p.eval(`document.querySelector(".et-row.confirm")?.textContent`));
+  expect(await p.eval<boolean>(`/Delete the folder “notes” and the page in it\\?/.test(document.querySelector(".et-row.confirm")?.textContent ?? "")`), "a folder asks first, in its row", await p.eval(`document.querySelector(".et-row.confirm")?.textContent`));
   await Bun.sleep(200);
   await p.screenshot(join(SHOTS, "tree-delete-folder.png"));
   await p.key("Escape");

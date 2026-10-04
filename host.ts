@@ -16,13 +16,13 @@ import * as HttpPlatform from "effect/http/HttpPlatform";
 import * as Path from "effect/Path";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { HttpApiBuilder, HttpApiMiddleware } from "effect/http-api";
-import { MODELS, externalGuide, isModelChoice, startSession, type AgentConfig, type AgentSession } from "./agent";
+import { MODELS, externalGuide, isModelChoice, startSession, type AgentConfig, type AgentSession, type OpenResult, type PageTree } from "./agent";
 import { AgentOff, Api, BadRequest, ExplainBadRequests, ModelFixed, NameRefused, NoSuchModel, NoSuchTool, Person, PersonFromRequest, SessionFailed, ExternalAgent, ToolFailed, Unauthorized, type AgentState, type ModelState } from "./api";
 import type { DocName, Naming } from "./directory";
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import { digest, StoreError, type FileStore, type Room } from "./room";
 import { titleOf } from "./front";
-import { checkNewName, cleanTreePath, isPage, parentsOf, resolvePage, TreeError, treeEntries, type TreeOp } from "./tree";
+import { checkNewName, cleanTreePath, isPage, pageAddress, parentsOf, resolvePage, TreeError, treeEntries, type TreeOp } from "./tree";
 import { ignored, isTextPath as isTextFile } from "./src/room/doc";
 import type { ViewRequest, ViewResult } from "./src/page/agent-log";
 import type { VersionsAccess } from "./agent";
@@ -162,6 +162,28 @@ export function makeHost(opts: HostOptions) {
     });
   };
 
+  /** The document's pages with their titles, and its address as the person sees it (list_pages). */
+  const pagesFor = (user: { id: string; name: string }) => async (): Promise<PageTree> => {
+    const name = await namingAs(user)?.get().catch(() => undefined);
+    return { address: name?.address ?? "/<owner>/<slug>", entries: entries() };
+  };
+  // open_page: the person's open tabs on this document go to another of its
+  // pages (main.ts, { type: "open" }). With none open, nothing can: the tool
+  // says so, and gives the page's address to pass on.
+  const openFor = (user: { id: string; name: string }) => async (raw: string): Promise<OpenResult> => {
+    const all = new Set(room.paths());
+    const asked = String(raw ?? "").trim().replace(/^\.?\/+/, "").replace(/#edit$/, "");
+    const file = isPage(asked) && all.has(asked) ? asked : resolvePage((p) => all.has(p), asked, doc.path)?.file;
+    if (!file) throw new TreeError(`There's no page "${raw}" in this document. list_pages lists them.`, 404);
+    const name = await namingAs(user)?.get().catch(() => undefined);
+    const rest = pageAddress(file);
+    const at = `${name?.address ?? "/<owner>/<slug>"}${rest ? `/${rest}` : ""}`;
+    const n = [...tabs].filter((t) => t.user == user.id).length;
+    if (!n) return { path: file, tabs: 0, message: `${user.name} has no editor open on this document, so nothing was opened. ${file} is at ${at} (its editor at ${at}#edit): give them that link if they should see it.` };
+    sendTo(user.id, { type: "open", path: file });
+    return { path: file, tabs: n, message: `Opened ${file} (${at}) in ${user.name}'s editor${n > 1 ? `, in all ${n} of their tabs` : ""}.` };
+  };
+
   const agentOff = "missing" in agent ? agent.missing : "";
   const sessions = new Map<string, Promise<AgentSession>>();
   /**
@@ -181,6 +203,8 @@ export function makeHost(opts: HostOptions) {
         turnEnded: opts.turnEnded,
         versions: opts.versions,
         tree: async (op) => { await tree(op); },
+        pages: pagesFor(user),
+        open: openFor(user),
       });
       s.then((session) => session.subscribe((ev) => sendTo(user.id, { type: "agent", ev })), () => sessions.delete(user.id));
       sessions.set(user.id, s);
@@ -270,7 +294,8 @@ export function makeHost(opts: HostOptions) {
       const user = yield* Person;
       const s = yield* extSession;
       const base = opts.baseUrl(yield* HttpServerRequest.HttpServerRequest);
-      return externalGuide({ docName: doc.path, kind: doc.kind, owner: user.name, base, tools: s.tools() });
+      const name = yield* Effect.promise(() => namingAs(user)?.get().catch(() => undefined) ?? Promise.resolve(undefined));
+      return externalGuide({ docName: name?.title ?? doc.path, kind: doc.kind, owner: user.name, base, tools: s.tools() });
     }))
     .handle("tools", () => Effect.map(extSession, (s) => ({ ok: true as const, tools: s.tools() })))
     .handle("run", ({ params: { name }, payload }) => Effect.gen(function* () {
