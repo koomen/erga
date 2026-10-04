@@ -52,7 +52,7 @@ try {
   const p = await browser.page(await browser.context());
   await p.open(`${root}/admin`, { width: 1100, height: 760, scale: 2 });
   const row = await p.eval<{ value: string; meta: string; link: string }>(`(() => { const li = document.querySelector('li.setting[data-key="landing_document"]'); return { value: li.querySelector("[name=value]").value, meta: li.querySelector(".meta").textContent, link: li.querySelector("a.open-doc")?.getAttribute("href") ?? "" }; })()`);
-  expect(row.value == "/tester/landing" && row.link == "/tester/landing" && row.meta.includes("Set by tester"), "/admin shows landing_document as the document's address, set by the deploying admin", row);
+  expect(row.value == "/tester/landing" && row.link == "/tester/landing" && row.meta.includes("set by tester"), "/admin shows landing_document as the document's address, set by the deploying admin", row);
   await p.screenshot(join(SHOTS, "landing-admin.png"));
   ok("/admin shows the landing document by its address");
 

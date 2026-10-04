@@ -2,9 +2,9 @@
 // The settings a deploy fixes (server.config.ts, ERGA_SERVER_CONFIG) reach
 // the Worker (cloudflare.config.ts → SERVER_CONFIG → worker/d1.ts) and win:
 // a dev server started with delete_docs_after_hours locked to 3 says so on /docs and
-// gives a new document 3 hours, and /admin shows it read-only ("Locked by the
-// deploy"), refusing a change; without the lock an admin sets it there. A
-// value the settings won't take stops the server from starting, saying why.
+// gives a new document 3 hours, and /admin shows it read-only ("Locked"),
+// refusing a change; without the lock an admin sets it there. A value the
+// settings won't take stops the server from starting, saying why.
 // Screenshots of /admin both ways land in tests/cdp.ts's SHOTS.
 //
 //   bun tests/server-config.ts
@@ -47,7 +47,7 @@ try {
 
   // /admin: shown read-only with its deployed value, and a change is refused.
   const { p, row } = await adminPage(host.root);
-  expect(await row(`li.querySelector(".badge")?.textContent`) == "Locked by the deploy", "/admin badges it as locked by the deploy");
+  expect(await row(`li.querySelector(".badge")?.textContent`) == "Locked", "/admin badges it as locked by the deploy");
   expect(await row(`li.querySelector("[name=value]").disabled && li.querySelector("[name=value]").value == "3" && !li.querySelector(".save")`), "its input shows 3, disabled, with no Save");
   const refused = await p.eval<{ status: number; error: string }>(`fetch("/admin/settings", { method: "POST", body: new URLSearchParams({ key: "delete_docs_after_hours", value: "48" }) }).then(async (r) => ({ status: r.status, error: (await r.json()).error }))`);
   expect(refused.status == 403 && /fixed by the deploy.*stays 3/.test(refused.error), "a change from the admin page is refused, saying why", refused);
@@ -63,7 +63,7 @@ try {
   const { p, row } = await adminPage(open.root);
   expect(await row(`!li.querySelector(".badge") && !li.querySelector("[name=value]").disabled`), "unlocked, it's editable");
   await row(`(li.querySelector("[name=value]").value = "36", li.querySelector("[name=value]").dispatchEvent(new Event("input")), li.querySelector("form").requestSubmit(), true)`);
-  await until(() => row(`li?.querySelector(".meta")?.textContent.includes("Set by tester") && li.querySelector("[name=value]").value == "36"`), 10_000, "the page reloads with the value set");
+  await until(() => row(`li?.querySelector(".meta")?.textContent.includes("set by tester") && li.querySelector("[name=value]").value == "36"`), 10_000, "the page reloads with the value set");
   await p.settle();
   await p.screenshot(join(SHOTS, "admin-set.png"));
   ok("unlocked, an admin sets it on /admin, and it says who set it");
