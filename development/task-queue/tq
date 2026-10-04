@@ -21,7 +21,7 @@
 //                                        --state keeps what it has seen in FILE, so a new watch (say, re-armed
 //                                        after a Monitor timeout) reports what changed in between
 //
-// Statuses: queued → working → complete (Ready to merge) → merging → merged (Done);
+// Statuses: queued → working → complete (Ready to merge) → merging → merged (on its commit in Branches);
 // also failed and discarded. Agents set queued, working, complete and failed.
 //
 // TASK_QUEUE_PORT picks the port (4700).
