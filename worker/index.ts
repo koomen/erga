@@ -7,7 +7,7 @@
 //
 //   /                          the front page: the landing document (a setting), read-only, with an Edit button
 //   /new                       a blank document for you (signs you in first); /new?from=landing a copy of the front page's
-//   /docs                      your documents (the directory, D1), latest edit first; POST /docs/delete, /docs/rename, /docs/share
+//   /docs                      your documents (the directory, D1), latest edit first; POST /docs/delete, /docs/share
 //   /<owner>/<slug>            the editor on that document (for those it's shared with); /d/<id>,
 //                              /<owner>/<id> and old slugs redirect here
 //   /d/<id>/<rest>             the document's own host: /api/..., /doc/..., the sockets (also under the other addresses)

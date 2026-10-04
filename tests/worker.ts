@@ -448,13 +448,10 @@ try {
   expect(r.ok && (await location(`/${login}/field-notes`)) == `(200)`, "another document can take a slug that's only in the history");
   ok("a taken or reserved slug is refused; an old one can be taken over");
 
-  // From /docs: the list's rename posts to /docs/rename, through the document's host.
+  // The list shows a document by its current address.
   const demo = await make();
-  r = await get("/docs/rename", { method: "POST", body: new URLSearchParams({ id: demo, title: "Demo copy", slug: "my-demo" }), headers: { Origin: origin, Accept: "application/json" } });
-  expect(r.ok && (await nameOf(demo)).address == `/${login}/my-demo`, "renaming from the list works", await r.text());
-  expect((await get("/docs/rename", { method: "POST", body: new URLSearchParams({ id: demo, title: "x" }) })).status == 403, "but only from this site's pages");
-  expect((await docs()).includes(`href="/${login}/my-demo"`), "and the list shows it");
-  ok("renaming from /docs works");
+  r = await rename(demo, { title: "Demo copy", slug: "my-demo" });
+  expect(r.ok && (await docs()).includes(`href="/${login}/my-demo"`), "the list shows a renamed document at its new address");
 
   // The agent's tools, as an external agent calls them: get_title and set_title.
   const { token } = (await (await get(`/d/${demo}/api/share`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" })).json()) as { token: string };

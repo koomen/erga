@@ -56,10 +56,10 @@ canonical address is `/<owner>/<slug>`; `/d/<id>` always works, and
 title follows the page's first `<h1>` (else `<title>`, else "Untitled") until
 someone sets it, and the slug follows the title (lowercase letters, digits
 and dashes, `-2`, `-3`... when taken) until someone sets it. Rename from the
-title next to the Documents link in the editor's top bar, from `/docs`, or
-by asking an agent (its `get_title` and `set_title` tools, for the embedded
-agent and external ones). Every open tab follows a rename: its title, and its
-address bar. The editor itself talks to its document at `/d/<id>`, which a
+title next to the Documents link in the editor's top bar, or by asking an
+agent (its `get_title` and `set_title` tools, for the embedded agent and
+external ones). Every open tab follows a rename: its title, and its address
+bar. The editor itself talks to its document at `/d/<id>`, which a
 rename never changes. Old slugs keep redirecting until another of the
 owner's documents takes that slug.
 

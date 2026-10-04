@@ -6,7 +6,7 @@
 //
 //   /                          the front page: the landing document (a setting), read-only, with an Edit button
 //   /new                       a blank document for you (signs you in first); /new?from=landing a copy of the front page's
-//   /docs                      your documents, latest edit first; POST /docs/delete deletes one, /docs/rename renames one,
+//   /docs                      your documents, latest edit first; POST /docs/delete deletes one,
 //                              /docs/share shares one (or stops sharing it), GET /docs/share?id= says with whom
 //   /admin                     the server's settings and users, for admins (admin.ts); POST /admin/settings, /admin/users
 //   /<owner>/<slug>            the editor on that document (for those it's shared with): its canonical address
@@ -154,7 +154,6 @@ export async function frontDoor(request: Request, base: Platform): Promise<Respo
   if (path == "/new") return newDoc(platform, request);
   if (path == "/docs") return listDocs(platform, request);
   if (path == "/docs/delete" && request.method == "POST") return deleteDoc(platform, request);
-  if (path == "/docs/rename" && request.method == "POST") return renameDoc(platform, request);
   if (path == "/docs/share") return shareDoc(platform, request);
   if (path == "/admin" || path == "/admin/settings" || path == "/admin/users") return adminDoor(platform, request);
 
@@ -529,33 +528,6 @@ async function deleteDoc(platform: Platform, request: Request): Promise<Response
 }
 
 /**
- * POST /docs/rename (id, title, slug): renames a document from the list. It
- * goes through the document's host, as a rename in the editor does, so its
- * open tabs follow. Answers JSON to the list's script, else goes back to the list.
- */
-async function renameDoc(platform: Platform, request: Request): Promise<Response> {
-  const session = await platform.sessionOf(request);
-  if (!session || session.test) return new Response("Sign in first", { status: 401 });
-  const url = new URL(request.url);
-  if (request.headers.get("origin") != url.origin) return new Response("Forbidden", { status: 403 });
-  const form = await request.formData();
-  const id = String(form.get("id") ?? "");
-  const route = ID.test(id) ? await platform.directory.route(id) : null;
-  if (!route) return new Response("No such document", { status: 404 });
-  // Only what's given changes; an empty one goes back to following (directory.ts, rename).
-  const patch = { title: form.has("title") ? String(form.get("title")) : undefined, slug: form.has("slug") ? String(form.get("slug")) : undefined };
-  // As the person asking: their cookie (and locally ?user=) come along, as forwarded() passes them.
-  const headers = new Headers(request.headers);
-  headers.set("Content-Type", "application/json");
-  headers.delete("Content-Length");
-  const inner = new Request(new URL("/api/name", url), { method: "POST", headers, body: JSON.stringify(patch) });
-  const answer = await platform.docs.fetch(route, forwarded(inner, url, "/api/name", `${url.origin}/d/${id}`, session, null));
-  if (request.headers.get("accept")?.includes("application/json")) return new Response(answer.body, { status: answer.status, headers: { "Content-Type": "application/json" } });
-  if (!answer.ok) return page("Couldn't rename", `${esc(((await answer.json().catch(() => ({}))) as { error?: string }).error ?? "Something went wrong.")} <a href="${esc(link("/docs", session))}">Back to your documents</a>.`, answer.status);
-  return new Response(null, { status: 303, headers: { Location: link("/docs", session) } });
-}
-
-/**
  * POST /docs/share (id, login, role): gives someone a role on one of your
  * documents ("editor" or "viewer"; login "*" is anyone signed in who has the
  * link), or takes it away (role "none" or empty). Only its owner may. Answers
@@ -696,7 +668,6 @@ export const TIMES_SCRIPT = `
 `;
 
 export const ICON = {
-  rename: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h1a3 3 0 0 1 3 3 3 3 0 0 1 3-3h1M13 20h-1a3 3 0 0 1-3-3 3 3 0 0 1-3 3H5M5 16H4a2 2 0 0 1-2-2v-4a2 2 0 0 1 2-2h1M13 8h7a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2h-7M9 7v10"/></svg>`,
   delete: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M10 7V5h4v2M7 7l1 12h8l1-12"/></svg>`,
   share: `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9.5" cy="8.5" r="3.5"/><path d="M3.5 19c.6-3.2 3-5 6-5s5.4 1.8 6 5"/><path d="M18.5 8v6M15.5 11h6"/></svg>`,
   close: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7 7 17"/></svg>`,
@@ -721,7 +692,7 @@ function sharedNote(d: Listed): string {
   return `<span class="note shared" title="Shared with ${d.shared} besides you">Shared</span>`;
 }
 
-/** The documents view: yours and those shared with you, with new, open, share, rename and delete. */
+/** The documents view: yours and those shared with you, with new, open, share and delete. */
 function docsPage(session: Session, docs: Listed[], now: number, hours: number | null): string {
   const rows = docs.map((d) => {
     const left = d.expires != null ? Math.max(1, Math.ceil((d.expires - now) / 3600000)) : null;
@@ -732,17 +703,16 @@ function docsPage(session: Session, docs: Listed[], now: number, hours: number |
     const when = new Date(d.modified).toISOString();
     // One opened from disk only comes off the list: its files stay where they are.
     const [remove, label] = d.path != null ? ["Remove from the list", `Remove ${esc(d.title)} from the list`] : ["Delete", `Delete ${esc(d.title)}`];
-    const rename = mine ? `<button type="button" class="act rename" aria-label="Rename ${esc(d.title)}" title="Rename" data-id="${esc(d.id)}" data-title="${esc(d.title)}" data-slug="${esc(d.slug)}"${d.titleSet ? " data-title-set" : ""}${d.slugSet ? " data-slug-set" : ""}>${ICON.rename}</button>` : "";
     // The whole row opens the document (the link stretches over it); its buttons sit on top.
     return `  <li>
-    <div class="name"><a class="doc" href="${esc(link(`/${d.owner}/${d.slug}`, session))}"><span class="title">${esc(d.title)}</span></a>${rename}${note}${mine ? sharedNote(d) : ""}</div>
+    <div class="name"><a class="doc" href="${esc(link(`/${d.owner}/${d.slug}`, session))}"><span class="title">${esc(d.title)}</span></a>${note}${mine ? sharedNote(d) : ""}</div>
     <time datetime="${when}">${ago(d.modified, now)}</time>
     <div class="acts">${mine ? `<button type="button" class="act share" aria-label="Share ${esc(d.title)}" title="Share" data-id="${esc(d.id)}" data-title="${esc(d.title)}" data-address="/${esc(d.owner)}/${esc(d.slug)}">${ICON.share}</button>
     <form method="post" action="${esc(link("/docs/delete", session))}" data-title="${esc(d.title)}"${d.path != null ? " data-disk" : ""}><input type="hidden" name="id" value="${esc(d.id)}"><button class="act delete" aria-label="${label}" title="${remove}">${ICON.delete}</button></form>` : ""}</div>
   </li>`;
   }).join("\n");
   const style = `
-  /* Rows, and the labels over them, in three columns: the name (its title, rename, what's special about it), when it was edited, its buttons. */
+  /* Rows, and the labels over them, in three columns: the name (its title and what's special about it), when it was edited, its buttons. */
   .labels, ol.rows > li { display: grid; grid-template-columns: minmax(0, 1fr) 10rem 64px; align-items: center; column-gap: 16px; }
   .labels { padding-bottom: 8px; font-size: 12px; font-weight: 500; color: var(--chrome); }
   ol.rows > li { position: relative; }
@@ -750,15 +720,10 @@ function docsPage(session: Session, docs: Listed[], now: number, hours: number |
   .name { min-width: 0; display: flex; align-items: center; gap: 6px; padding: 14px 0; }
   .doc { flex: 0 1 auto; padding: 0; }
   .doc::after { content: ""; position: absolute; inset: 0; }
-  .name .act, .acts { position: relative; z-index: 1; }
-  .name .note, .name .shared { margin-left: 6px; }
+  .acts { position: relative; z-index: 1; }
+  .name { gap: 12px; }
   .title { transition: color 120ms ease; }
   li:hover .title { color: var(--link); }
-  /* Rename takes no room until it shows, so what's special about a document sits right after its title. */
-  .rename { width: 0; height: 26px; margin-right: -6px; overflow: hidden; }
-  li:hover .rename, .rename:focus-visible { width: 26px; margin-right: 0; }
-  @media (hover: none) { .rename { width: 26px; margin-right: 0; } }
-  .rename svg { width: 16px; height: 16px; }
   .note, .shared { padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 500; color: var(--soft); background: color-mix(in srgb, var(--chrome) 13%, transparent); }
   time { margin: 0; text-align: left; }
   /* The buttons (only on your own documents) take the same room on every row, so the times line up. */
@@ -794,18 +759,6 @@ function docsPage(session: Session, docs: Listed[], now: number, hours: number |
   ${docs.length ? `<div class="labels" aria-hidden="true"><span>Name</span><span>Edited</span><span></span></div>
   <ol class="rows">\n${rows}\n  </ol>` : `<p class="empty">No documents yet. A new one starts blank${hours == null ? "." : `, and goes away after ${hours} hour${hours == 1 ? "" : "s"} if you never edit it.`}</p>`}
 </main>
-<dialog id="rename" aria-labelledby="rename-title">
-  <form method="post" action="${esc(link("/docs/rename", session))}">
-    <h2 id="rename-title">Rename</h2>
-    <input type="hidden" name="id">
-    <label for="rename-name">Title</label>
-    <div class="field"><input id="rename-name" name="title" autocomplete="off" spellcheck="false"></div>
-    <label for="rename-slug">Address</label>
-    <div class="field"><span>/${esc(session.login.toLowerCase())}/</span><input id="rename-slug" name="slug" autocomplete="off" autocapitalize="off" spellcheck="false"></div>
-    <p class="hint" id="rename-hint" role="status"></p>
-    <div class="buttons"><button type="button" value="cancel" formnovalidate>Cancel</button><button class="primary">Save</button></div>
-  </form>
-</dialog>
 <dialog id="share" aria-labelledby="share-title" data-action="${esc(link("/docs/share", session))}" data-me="${esc(session.login.toLowerCase())}">
   <h2 id="share-title">Share</h2>
   <form class="add">
@@ -829,42 +782,6 @@ function docsPage(session: Session, docs: Listed[], now: number, hours: number |
     const q = "disk" in f.dataset ? "Take “" + f.dataset.title + "” off your list? Its files stay where they are." : "Delete “" + f.dataset.title + "”? This can't be undone.";
     f.addEventListener("submit", (e) => { if (!confirm(q)) e.preventDefault(); });
   }
-  // Renaming: the title, and the address, which follows the title until it's set.
-  // An empty field goes back to following (the title the page's first heading).
-  const dialog = document.getElementById("rename"), form = dialog.querySelector("form");
-  const nameIn = form.elements.title, slugIn = form.elements.slug, hint = document.getElementById("rename-hint");
-  const slugify = (s) => s.normalize("NFKD").replace(/[\\u0300-\\u036f]/g, "").toLowerCase().replace(/['\\u2019]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60).replace(/-+$/, "");
-  let was = null, slugTouched = false;
-  const say = (text, error) => { hint.textContent = text; hint.classList.toggle("error", !!error); };
-  const preview = () => say(!nameIn.value.trim() ? "Empty: the title follows the page's first heading."
-    : !slugIn.value.trim() ? "Empty: the address follows the title." : "");
-  for (const b of document.querySelectorAll("button.rename")) b.addEventListener("click", () => {
-    was = { id: b.dataset.id, title: b.dataset.title, slug: b.dataset.slug, slugSet: "slugSet" in b.dataset };
-    slugTouched = false;
-    form.elements.id.value = was.id;
-    nameIn.value = was.title;
-    slugIn.value = was.slug;
-    say("");
-    dialog.showModal();
-    nameIn.select();
-  });
-  // An address that follows the title follows it here too, until it's typed in.
-  nameIn.addEventListener("input", () => { if (!was.slugSet && !slugTouched) slugIn.value = slugify(nameIn.value) || was.slug; preview(); });
-  slugIn.addEventListener("input", () => { slugTouched = true; preview(); });
-  form.querySelector('[value="cancel"]').addEventListener("click", () => dialog.close());
-  form.addEventListener("submit", async (e) => {
-    e.preventDefault();
-    // Only what was changed: a title left as it was keeps following the heading, if it did.
-    const body = new URLSearchParams({ id: was.id });
-    if (nameIn.value.trim() != was.title) body.set("title", nameIn.value.trim());
-    if (slugTouched && slugIn.value.trim() != was.slug) body.set("slug", slugIn.value.trim());
-    if ([...body.keys()].length == 1) return dialog.close();
-    say("Saving…");
-    const r = await fetch(form.action, { method: "POST", body, headers: { Accept: "application/json" } }).catch(() => null);
-    if (r && r.ok) return location.reload();
-    say((r && (await r.json().catch(() => ({}))).error) || "Couldn't rename it: try again.", true);
-  });
-
   // Sharing: each change is saved as it's made (POST /docs/share), and the list follows when the dialog closes.
   const share = document.getElementById("share"), action = share.dataset.action, me = share.dataset.me;
   const people = share.querySelector(".people"), adder = share.querySelector("form.add"), anyone = document.getElementById("share-anyone");
