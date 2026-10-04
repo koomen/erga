@@ -39,7 +39,7 @@ export class Pipeline extends DurableObject<Env> {
     this.deploys = new BranchDeploys({
       storage: { get: (k) => ctx.storage.get(k), put: (k, v) => ctx.storage.put(k, v) },
       env: deployEnv,
-      net: mock ? mockCloudflare({ fleet: true, delayMs: 25 }).fetch : globalThis.fetch.bind(globalThis),
+      net: mock ? mockCloudflare({ fleet: true, stagingSecrets: true, delayMs: 25 }).fetch : globalThis.fetch.bind(globalThis),
       builder: mock ? mockBuilder(release, { delayMs: 200 }) : env.BUILDER ? containerBuilder(env.BUILDER) : null,
       schedule: async (ms) => {
         const at = Date.now() + ms;

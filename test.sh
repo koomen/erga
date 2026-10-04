@@ -6,6 +6,7 @@
 #                     viewer (tests/isolation.ts), the front door's routes
 #                     (tests/worker.ts), documents with many pages (tests/pages.ts), the front page the server makes (tests/landing.ts),
 #                     the deploy page against a pretend Cloudflare (tests/deploy.ts),
+#                     branches deploying themselves, in the Worker (tests/deploys.ts),
 #                     who you are in every page's corner (tests/account.ts),
 #                     the first switch into editing on a slow network (tests/switch.ts),
 #                     live reload (tests/reload.ts, in a copy of the checkout)
@@ -47,6 +48,7 @@ page_group() {
   collect
   # The deploy page after the rest: the first group is as much as the multiplayer suite's timings bear.
   run deploy bun tests/deploy.ts
+  run deploys bun tests/deploys.ts
   collect
   # Live reload last, alone too: it edits files and waits on rebuilds, which a busy machine slows.
   run reload bun tests/reload.ts

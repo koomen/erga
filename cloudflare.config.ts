@@ -10,11 +10,13 @@ import * as entrypoint from "./worker/index.ts" with { type: "cf-worker" };
 // (JSON, from the environment) over them. site.sh and dev.ts check them first (`bun server.config.ts`).
 import { deployed } from "./server.config.ts";
 import { localAgentKey } from "./dev/agent-key.ts";
-// Production's names (its Worker, database, domain, pages route, public settings): the same list the deploy
-// pipeline deploys from (deploy/targets.ts), so there's one source of truth for both.
-import { TARGETS } from "./deploy/targets.ts";
+import { readFileSync } from "node:fs";
 
-const PROD = TARGETS.production;
+// Production's names (its Worker, database, domain, pages route, public settings): the same list the deploy
+// pipeline deploys from (deploy/targets.json, typed by deploy/targets.ts), so there's one source of truth for both.
+// Read as a file, not imported: the dev server can't load a module the config imports into the Worker too.
+const TARGETS = JSON.parse(readFileSync(new URL("./deploy/targets.json", import.meta.url), "utf8"));
+const PROD = { ...TARGETS.targets.production, vars: { ADMINS: TARGETS.admins, ...TARGETS.targets.production.vars } };
 
 /** The local database's id (the dev server's D1): any UUID. Production's is found by name (migrate.ts). */
 const LOCAL_DB = "00000000-0000-4000-8000-00000000e29a";

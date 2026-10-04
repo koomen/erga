@@ -90,6 +90,8 @@ export const PROD_DOCS = ["abcd2345", "efgh6789", "jkmn2345"];
 
 export function mockCloudflare(opts: {
   delayMs?: number; singleAssetUploads?: boolean; fleet?: boolean;
+  /** With fleet: staging's secrets already given (as deploy/setup.ts gives them to its first deploy), for the dev server's mock. */
+  stagingSecrets?: boolean;
   onUpload?: (script: string, metadata: Record<string, any>) => void;
   /** A Worker's own answer, before the mock's (the tests route /api/deploys/... to the servers they run). */
   sites?: (req: Request, script: string) => Promise<Response | null> | Response | null;
@@ -102,6 +104,7 @@ export function mockCloudflare(opts: {
     secrets: {}, docs: {}, versions: {}, deletedDatabases: [], failNext: null,
   };
   if (opts.fleet) seedFleet(state);
+  if (opts.fleet && opts.stagingSecrets) state.secrets["erga-staging"] = { SESSION_SECRET: "mock-staging-session-secret", GITHUB_CLIENT_SECRET: "mock-staging-github-secret", SNAPSHOT_TOKEN: MOCK_SNAPSHOT_TOKEN, DEPLOY_HOOK_SECRET: MOCK_HOOK_SECRET, CLOUDFLARE_DEPLOY_TOKEN: "mock-staging-deploy-token" };
   /** D1 exports ready to download, and imports uploaded, by URL. */
   const exportsAt = new Map<string, string>(), uploads = new Map<string, string>();
   const importing = new Map<string, string>();
@@ -502,7 +505,8 @@ function seedFleet(state: MockState) {
 /**
  * A pretend builder (deploy/builder/ is the real one): it "builds" a commit
  * by handing back `release` stamped with the commit, saying what the real
- * one would run. `failNext` fails the next build once; `built` lists what it built.
+ * one would run. `failNext` fails the next build once, and so does any commit
+ * starting 0bad; `built` lists what it built.
  */
 export function mockBuilder(release: () => Promise<Release>, o: { delayMs?: number } = {}): Builder & { built: string[]; failNext: string | null } {
   const b = {
@@ -516,6 +520,8 @@ export function mockBuilder(release: () => Promise<Release>, o: { delayMs?: numb
         log(`$ ${step}`);
       }
       if (b.failNext) { const why = b.failNext; b.failNext = null; throw new Error(why); }
+      // A commit starting 0bad fails to build (the dev server's mock, where failNext can't be reached).
+      if (commit.startsWith("0bad")) throw new Error("bun install --frozen-lockfile failed (exit 1): lockfile had changes, but lockfile is frozen");
       b.built.push(commit);
       return { ...(await release()), version: commit.slice(0, 12) };
     },

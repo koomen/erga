@@ -1,5 +1,5 @@
 // Where Erga's own branches deploy: the one list of them. cloudflare.config.ts
-// reads production's names from here (its Worker, database, domain and pages
+// reads production's names from targets.json (its Worker, database, domain and pages
 // route), and the deploy pipeline (deploy/cloudflare.ts, runPipeline) turns
 // each into a target to deploy to (deploy/branches.ts, deploy/run.ts).
 //
@@ -19,8 +19,9 @@
 // Everything here is public (names, hostnames, OAuth client ids). Secrets are
 // set on each Worker once (deploy/setup.ts) and kept by every deploy after.
 //
-// This file is loaded by cloudflare.config.ts under Node's type stripping:
-// plain types and values only, imports with their .ts extension.
+// The names themselves are in targets.json: cloudflare.config.ts reads that
+// file (the dev server can't load a module the config imports into the
+// Worker), and this module gives them their types.
 
 export type TargetName = "production" | "staging";
 
@@ -50,49 +51,24 @@ export interface TargetSpec {
   notifies?: TargetName[];
 }
 
+import data from "./targets.json";
+
 /** The bootstrap admins (users.ts): the same on every target. */
-export const ADMINS = "koomen,dsiroker";
+export const ADMINS: string = data.admins;
 
 /** The source: one Artifacts repo (task #39 hosts it, with branches main and staging). */
-export const SOURCE = { namespace: "erga", repo: "erga" };
+export const SOURCE: { namespace: string; repo: string } = data.source;
 
 /** The Worker that builds a commit (deploy/builder/): a container with bun and git, reached over a service binding. */
-export const BUILDER = "erga-builder";
+export const BUILDER: string = data.builder;
 
-export const TARGETS: Record<TargetName, TargetSpec> = {
-  production: {
-    name: "production",
-    branch: "main",
-    worker: "erga",
-    database: "erga",
-    host: "erga.dev",
-    zone: "erga.dev",
-    pages: { zone: "erga-pages.dev", domain: "erga-pages.dev" },
-    vars: {
-      ADMINS,
-      GITHUB_CLIENT_ID: "Ov23ctkY7oLarHcPA97b",
-    },
-    notifies: ["staging"],
-  },
-  staging: {
-    name: "staging",
-    branch: "staging",
-    worker: "erga-staging",
-    database: "erga-staging",
-    host: "staging.erga.dev",
-    zone: "erga.dev",
-    pages: { zone: "erga-pages.dev", domain: "staging.erga-pages.dev" },
-    vars: {
-      ADMINS,
-      // Staging's own GitHub OAuth app (homepage https://staging.erga.dev, callback
-      // https://staging.erga.dev/auth/github/callback): its Client ID goes here (README, the runbook).
-      GITHUB_CLIENT_ID: "",
-      // Staging has no /deploy OAuth client; the token link still works.
-      CLOUDFLARE_OAUTH_CLIENT_ID: "",
-    },
-    snapshotFrom: "production",
-  },
-};
+/**
+ * The targets themselves are in targets.json (staging's GITHUB_CLIENT_ID is
+ * its own GitHub OAuth app's: homepage https://staging.erga.dev, callback
+ * https://staging.erga.dev/auth/github/callback; the runbook in the README).
+ * Every target gets ADMINS.
+ */
+export const TARGETS = Object.fromEntries(Object.entries(data.targets).map(([name, t]) => [name, { ...t, vars: { ADMINS, ...t.vars } }])) as unknown as Record<TargetName, TargetSpec>;
 
 export const targetNames = Object.keys(TARGETS) as TargetName[];
 export const isTargetName = (s: string): s is TargetName => s in TARGETS;
