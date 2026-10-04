@@ -66,7 +66,7 @@ const notFound = () => page("Not found", "There's nothing here. <a href=\"/\">Ba
 
 /** How a setting's value is typed in: by the kind of its default. */
 function valueInput(e: ConfigEntry): string {
-  const locked = e.source == "locked";
+  const locked = e.locked;
   const attrs = `name="value" id="set-${esc(e.key)}" aria-label="${esc(e.key)}"${locked ? " disabled" : ""}`;
   if (typeof e.default == "boolean") {
     return `<select ${attrs} data-kind="boolean"><option value="true"${e.value === true ? " selected" : ""}>On</option><option value="false"${e.value === false ? " selected" : ""}>Off</option></select>`;
@@ -80,7 +80,7 @@ const shown = (v: unknown) => (typeof v == "boolean" ? (v ? "on" : "off") : type
 
 function settingRow(e: ConfigEntry, session: Session): string {
   const when = e.updated != null ? `<time datetime="${new Date(e.updated).toISOString()}">${new Date(e.updated).toISOString().slice(0, 10)}</time>` : "";
-  const meta = e.source == "locked" ? `<span class="badge" title="Set in the deploy's configuration: change it there and deploy">Locked by the deploy</span>`
+  const meta = e.locked ? `<span class="badge" title="Fixed in the deploy's configuration (server.config.ts or ERGA_SERVER_CONFIG): change it there and deploy">Locked by the deploy</span><span>· default ${esc(shown(e.default))}</span>`
     : e.source == "set" ? `<span>Set${e.updatedBy ? ` by ${esc(e.updatedBy)}` : ""} ${when}</span><span>· default ${esc(shown(e.default))}</span>`
     : `<span>Default</span>`;
   return `  <li class="setting" data-key="${esc(e.key)}">
@@ -92,7 +92,7 @@ function settingRow(e: ConfigEntry, session: Session): string {
     <form class="value" method="post" action="${esc(link("/admin/settings", session))}">
       <input type="hidden" name="key" value="${esc(e.key)}">
       ${valueInput(e)}
-      ${e.source == "locked" ? "" : `<button class="pill save" disabled>Save</button>${e.source == "set" ? `<button type="button" class="pill reset" title="Back to ${esc(shown(e.default))}">Reset</button>` : ""}`}
+      ${e.locked ? "" : `<button class="pill save" disabled>Save</button>${e.source == "set" ? `<button type="button" class="pill reset" title="Back to ${esc(shown(e.default))}">Reset</button>` : ""}`}
     </form>
     <p class="hint" role="status"></p>
   </li>`;
