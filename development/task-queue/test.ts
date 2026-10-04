@@ -8,7 +8,7 @@
 // screenshots (one taken by headless Chrome), merges and pushes (through the
 // merging status), merges a conflicting task with a stand-in resolver, fails
 // a merge back to complete (with tq merge --wait), recovers a merge cut off by
-// a restart, and discards one.
+// a restart, and discards one; tq watch follows it all, through the restart.
 
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -48,6 +48,7 @@ const until = async (id: number, pred: (t: any) => boolean) => {
   return api("GET", `/api/tasks/${id}`);
 };
 
+let watcher: ReturnType<typeof Bun.spawn> | undefined;
 try {
   await waitUp();
   const about = await api("GET", "/api");
@@ -67,6 +68,18 @@ try {
     }
     } catch {} // the server restarting, below
   })();
+
+  // tq watch: one line per status change, from here on, flushed as it happens.
+  const watchLines: string[] = [];
+  const follow = (proc: ReturnType<typeof Bun.spawn>, into: string[]) => (async () => {
+    const reader = (proc.stdout as ReadableStream<Uint8Array>).getReader(); let buf = "";
+    for (;;) { const { value, done } = await reader.read(); if (done) break; buf += new TextDecoder().decode(value); let i; while ((i = buf.indexOf("\n")) >= 0) { into.push(buf.slice(0, i)); buf = buf.slice(i + 1); } }
+  })();
+  const watchState = join(tmp, "watch-state.json");
+  watcher = Bun.spawn([join(import.meta.dir, "tq"), "watch", "--state", watchState], { env, stdout: "pipe", stderr: "pipe" });
+  follow(watcher, watchLines);
+  await Bun.sleep(1000);
+  check(watchLines.length == 0, "tq watch is quiet until something changes");
 
   // A task, start to finish.
   const t1 = await api("POST", "/api/tasks", { title: "Add a greeting!", description: "Say hello" });
@@ -102,6 +115,8 @@ try {
   check(!existsSync(t1.worktree) && !sh("git branch --list task/1-*"), "the worktree and branch are cleaned up");
   await Bun.sleep(5500);
   check(!(await fetch(`http://localhost:${t1.port}/`).then(() => true, () => false)), "the preview is stopped");
+
+  check(["#1 queued: Add a greeting!", "#1 working: Add a greeting!", "#1 ready to merge: Add a greeting!", "#1 merging: Add a greeting!", "#1 merged: Add a greeting!"].every((l, i) => watchLines[i] == l) && watchLines.length == 5, `tq watch prints each status change of task 1 (${JSON.stringify(watchLines)})`);
 
   // Two tasks changing the same line: the second conflicts with main once the first is in.
   const t2 = await api("POST", "/api/tasks", { title: "Line b, one way" });
@@ -139,12 +154,29 @@ try {
   server = startServer(); await waitUp();
   const r4 = await api("GET", `/api/tasks/${t4.id}`);
   check(r4.status == "complete" && /stopped while this was merging/.test(r4.error), "a merge interrupted by a restart is back at complete, saying why");
+  check(watchLines.includes(`#${t4.id} merge failed, back to ready to merge: Dirty: ${m4.error.replace(/\s+/g, " ")}`), "tq watch says when a merge failed, with why");
   const d4 = await api("POST", `/api/tasks/${t4.id}/discard`);
   check(d4.status == "discarded" && !existsSync(t4.worktree) && !sh("git branch --list task/4-*"), "discard removes worktree and branch");
+  for (let i = 0; i < 50 && watchLines.at(-1) != `#${t4.id} discarded: Dirty`; i++) await Bun.sleep(100);
+  check(watchLines.at(-1) == `#${t4.id} discarded: Dirty`, `tq watch reconnects after the server restarts (${watchLines.at(-1)})`);
+  check(!watchLines.some((l) => !/^#\d+ [a-z ,]+: /.test(l)), "tq watch prints nothing but status lines");
 
-  check(JSON.parse(readFileSync(join(data, "tasks.json"), "utf8")).tasks.length == 4, "tasks are saved to disk");
+  // A watch started again (re-armed) reports what changed while none was running.
+  watcher.kill(); await watcher.exited;
+  const t5 = await api("POST", "/api/tasks", { title: "While unwatched" });
+  await api("PATCH", `/api/tasks/${t5.id}`, { status: "failed", error: "it broke\nbadly" });
+  const again: string[] = [];
+  watcher = Bun.spawn([join(import.meta.dir, "tq"), "watch", "--state", watchState], { env, stdout: "pipe", stderr: "pipe" });
+  follow(watcher, again);
+  await Bun.sleep(1000);
+  check(again.length == 1 && again[0] == `#${t5.id} failed: While unwatched: it broke badly`, `tq watch --state catches up on changes made between watches (${JSON.stringify(again)})`);
+  watcher.kill();
+  await api("POST", `/api/tasks/${t5.id}/discard`);
+
+  check(JSON.parse(readFileSync(join(data, "tasks.json"), "utf8")).tasks.length == 5, "tasks are saved to disk");
 } finally {
   server.kill();
+  try { watcher?.kill(); } catch {}
   rmSync(tmp, { recursive: true, force: true });
 }
 console.log(failures ? `\n${failures} failed` : "\nall passing");
