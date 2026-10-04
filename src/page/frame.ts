@@ -95,7 +95,8 @@ function start(m: Extract<ToFrame, { type: "init" }>) {
     frame,
     kind: m.kind,
     state,
-    base: BASE,
+    // The page's own folder, so its relative links and assets resolve as they would on disk (tree.ts).
+    base: BASE + (m.dir ? m.dir.split("/").map(encodeURIComponent).join("/") + "/" : ""),
     markdownHead: m.markdownHead,
     self: m.self,
     onUpdate(u) {
@@ -188,6 +189,22 @@ function watchPage() {
   win.addEventListener("focus", () => post({ type: "activity", kind: "focus" }), true);
   d.addEventListener("scroll", () => queueSnapshot(), { passive: true });
   d.addEventListener("selectionchange", () => queueSnapshot());
+  // A link to another of the document's pages, outside the text being edited (a menu, say): the shell goes
+  // there, to that page's editor. Links in the text itself aren't followed (⌘-click opens them in a tab).
+  d.addEventListener("click", (e) => {
+    if (e.defaultPrevented || e.button || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    const a = (e.target as Element).closest?.("a[href]") as HTMLAnchorElement | null;
+    if (!a || a.isContentEditable || (a.target && a.target != "_self") || a.getAttribute("href")!.startsWith("#")) return;
+    let url: URL;
+    try { url = new URL(a.href); } catch { return; }
+    if (url.origin != location.origin || !url.pathname.startsWith(BASE)) return;
+    let path: string;
+    try { path = decodeURIComponent(url.pathname.slice(BASE.length)); } catch { return; }
+    // A page, or an address like a folder's ("blog/"); not a stylesheet or an image.
+    if (/\.[^./]+$/.test(path) && !/\.(html|md)$/i.test(path)) return;
+    e.preventDefault();
+    post({ type: "open", path });
+  });
 }
 window.addEventListener("resize", () => { remeasure = true; queueSnapshot(); });
 // While the page renders afresh, keys land on this frame's own document: the shell's shortcuts still reach it.

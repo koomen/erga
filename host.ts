@@ -20,7 +20,8 @@ import { MODELS, externalGuide, isModelChoice, startSession, type AgentConfig, t
 import { AgentOff, Api, BadRequest, ExplainBadRequests, ModelFixed, NameRefused, NoSuchModel, NoSuchTool, Person, PersonFromRequest, SessionFailed, ExternalAgent, ToolFailed, Unauthorized, type AgentState, type ModelState } from "./api";
 import type { DocName, Naming } from "./directory";
 import type { AgentTool } from "@mariozechner/pi-agent-core";
-import { digest, type FileStore, type Room } from "./room";
+import { digest, StoreError, type FileStore, type Room } from "./room";
+import { checkNewName, cleanTreePath, isPage, parentsOf, resolvePage, TreeError, treeEntries, type TreeOp } from "./tree";
 import { ignored } from "./src/room/doc";
 import type { ViewRequest, ViewResult } from "./src/page/agent-log";
 
@@ -57,6 +58,8 @@ export interface HostOptions {
   readonly naming?: (person: { id: string; name: string }) => Naming;
   /** The tools beyond the document a person's agent may use now (server-tools.ts: sharing; settings and users for an admin). */
   readonly serverTools?: (person: { id: string; name: string }) => Promise<AgentTool[]>;
+  /** A new page's text (templates/doc), by its path; a plain one if not given. */
+  readonly newPage?: (path: string) => string;
 }
 
 /** One of a person's open tabs: their agent's events and its view_page requests go only to them. */
@@ -97,6 +100,17 @@ export function makeHost(opts: HostOptions) {
   const { room, files, doc, agent } = opts;
   const tabs = new Set<Tab>();
   const sendTo = (user: string, msg: unknown) => { for (const t of tabs) if (t.user == user) t.send(msg); };
+  /** Every open tab, whoever's. */
+  const sendAll = (msg: unknown) => { for (const t of tabs) t.send(msg); };
+  // The tree changed, by anyone (a person, an agent, a publish, disk): every open tab refetches it.
+  room.onTree(() => sendAll({ type: "tree" }));
+  /** Does a tree operation, as a person or their agent; open tabs hear what moved or went, to follow a page that did. */
+  const tree = async (op: unknown) => {
+    const done = await runTreeOp(room, op, { index: doc.path, only: opts.only, newPage: opts.newPage });
+    if (done.op == "move") sendAll({ type: "tree", moved: { from: done.from, to: done.to } });
+    else if (done.op == "delete") sendAll({ type: "tree", deleted: done.path });
+    return done;
+  };
   /** Every open tab, whoever's: the document's new title and address, so they show it and move to it. */
   const renamed = (name: DocName) => { for (const t of tabs) t.send({ type: "name", name }); };
   /** The document's naming as a person; a rename (by them or their agent) reaches every tab. */
@@ -136,6 +150,7 @@ export function makeHost(opts: HostOptions) {
         naming: namingAs(user),
         serverTools: opts.serverTools && (() => opts.serverTools!(user)),
         readAsset: (rel) => Effect.runPromise(Effect.orElseSucceed(files.read(rel), () => null)),
+        tree: async (op) => { await tree(op); },
       });
       s.then((session) => session.subscribe((ev) => sendTo(user.id, { type: "agent", ev })), () => sessions.delete(user.id));
       sessions.set(user.id, s);
@@ -244,7 +259,26 @@ export function makeHost(opts: HostOptions) {
   // ---------------------------------------------------------- storage and files
 
   const badPath = HttpServerResponse.text("Bad path", { status: 400 });
+  const entries = () => treeEntries(room.paths(), room.folderPaths());
   const routes: Array<HttpRouter.Route<unknown>> = [
+    // The document's file tree (tree.ts): its pages, other files and folders.
+    HttpRouter.route("GET", "/api/tree", Effect.gen(function* () {
+      const req = yield* HttpServerRequest.HttpServerRequest;
+      const canEdit = (opts.mayPublish?.(req) ?? true) && opts.only == null;
+      return yield* HttpServerResponse.json({ entries: entries(), canEdit }, { headers: { "Cache-Control": "no-store" } });
+    })),
+    // A tree operation: a new page or folder, a move (or rename), a delete. Editors only.
+    HttpRouter.route("POST", "/api/tree", Effect.gen(function* () {
+      const req = yield* HttpServerRequest.HttpServerRequest;
+      if (opts.mayPublish && !opts.mayPublish(req)) return yield* HttpServerResponse.json({ error: "You can only view this document." }, { status: 403 });
+      const body = yield* Effect.orElseSucceed(req.json, () => null);
+      const r = yield* Effect.promise(() => tree(body).then(() => null, (e: unknown) => e));
+      if (r) {
+        const status = r instanceof TreeError ? r.status : 500;
+        return yield* HttpServerResponse.json({ error: r instanceof Error ? r.message : String(r) }, { status });
+      }
+      return yield* HttpServerResponse.json({ entries: entries() }, { headers: { "Cache-Control": "no-store" } });
+    })),
     // What storage holds (not the room): lets a test see the room's writes
     // land, and send an edit that arrives as a file (a publish, a git pull)
     // without depending on a filesystem watcher.
@@ -269,8 +303,19 @@ export function makeHost(opts: HostOptions) {
     // The document's folder: text files from the room, so a page always
     // loads the latest shared version, and everything else from storage.
     HttpRouter.route("GET", "/doc/*", Effect.gen(function* () {
-      const rel = cleanRel((yield* HttpRouter.params)["*"]);
-      if (!rel) return HttpServerResponse.text("Not found", { status: 404 });
+      const raw = (yield* HttpRouter.params)["*"] ?? "";
+      const rel = cleanRel(raw);
+      // A page by its address (blog for blog.html or blog/index.html; the root page for none): sent to its
+      // file, relatively, so the frame's address is the file's and the page's own relative links resolve.
+      const page = () => {
+        const found = resolvePage((p) => room.exists(p) == "file", raw, doc.path);
+        if (!found || found.file == rel) return null;
+        let from = raw;
+        try { from = decodeURIComponent(raw); } catch { /* resolvePage refused it already */ }
+        return HttpServerResponse.empty({ status: 302, headers: { Location: relativeUrl(from, found.file), "Cache-Control": "no-store" } });
+      };
+      if (!rel) return page() ?? HttpServerResponse.text("Not found", { status: 404 });
+      if (room.exists(rel) != "file") { const to = page(); if (to) return to; }
       const text = room.text(rel);
       if (text != null) return HttpServerResponse.text(text, { contentType: mimeOf(rel) ?? "text/plain; charset=utf-8", headers: { "Cache-Control": "no-store" } });
       const bytes = yield* files.read(rel);
@@ -310,3 +355,88 @@ export function failed(e: unknown) {
   const bad = err._tag == "SchemaError" || err.reason?._tag == "RequestParseError";
   return HttpServerResponse.text(String(err.message ?? e), { status: bad ? 400 : 500 });
 }
+
+/**
+ * The relative URL from a request's path to a file, both inside the
+ * document's folder ("blog" to "blog/index.html" is "blog/index.html"; from
+ * "blog/" it's "index.html"): a redirect that keeps whatever comes before
+ * (the pages origin's /t/<token>/doc/).
+ */
+export function relativeUrl(from: string, to: string): string {
+  const dir = from.split("/").filter(Boolean);
+  if (!from.endsWith("/")) dir.pop();
+  const target = to.split("/");
+  let k = 0;
+  while (k < dir.length && k < target.length - 1 && dir[k] == target[k]) k++;
+  return "../".repeat(dir.length - k) + target.slice(k).map(encodeURIComponent).join("/");
+}
+
+/** What a tree operation did, its paths cleaned (a new page's with its extension). */
+export type TreeDone = TreeOp;
+
+/**
+ * Checks a tree operation (tree.ts: TreeOp) against the document as it is,
+ * then does it in the room: a new page from the template, a new folder, a
+ * move (or rename) of a file or folder, or a delete (a folder with all it
+ * holds). The document's own page can't be moved or deleted. Throws a
+ * TreeError saying what's wrong.
+ */
+export async function runTreeOp(room: Room, raw: unknown, o: { index: string; only?: string; newPage?: (path: string) => string }): Promise<TreeDone> {
+  if (!raw || typeof raw != "object" || Array.isArray(raw)) throw new TreeError('Send the operation as JSON: {"op": "new_page" | "new_folder" | "move" | "delete", ...}.');
+  const op = raw as Record<string, unknown>;
+  if (o.only != null) throw new TreeError(`This document is the single file ${o.only}, opened from disk on its own: it can't hold other files or folders.`, 403);
+  const exists = (p: string) => room.exists(p);
+  const free = (p: string) => {
+    if (exists(p)) throw new TreeError(`There's already ${exists(p) == "folder" ? "a folder" : "a file"} at ${p}.`, 409);
+    const file = parentsOf(p).find((d) => exists(d) == "file");
+    if (file) throw new TreeError(`${file} is a file, so nothing can go inside it.`, 409);
+  };
+  const run = (e: Effect.Effect<void, StoreError>) => Effect.runPromise(Effect.mapError(e, (err) => new TreeError(`Couldn't do it: ${err.message}`, 500)));
+  switch (op.op) {
+    case "new_page": {
+      let path = cleanTreePath(op.path);
+      if (!isPage(path)) {
+        if (/\.[^./]+$/.test(path)) throw new TreeError(`A page is an .html or .md file, not ${path}.`);
+        path += o.index.endsWith(".md") ? ".md" : ".html";
+      }
+      checkNewName(path, "page");
+      free(path);
+      await run(room.create(path, (o.newPage ?? plainPage)(path)));
+      return { op: "new_page", path };
+    }
+    case "new_folder": {
+      const path = cleanTreePath(op.path);
+      checkNewName(path, "folder");
+      free(path);
+      await run(room.mkdir(path));
+      return { op: "new_folder", path };
+    }
+    case "move": {
+      const from = cleanTreePath(op.from, "from");
+      let to = cleanTreePath(op.to, "to");
+      const kind = exists(from);
+      if (!kind) throw new TreeError(`There's nothing at ${from}.`, 404);
+      if (from == o.index) throw new TreeError(`${from} is the document's own page: it can't be moved or renamed.`);
+      // A page renamed without an extension keeps its own.
+      if (kind == "file" && isPage(from) && !/\.[^./]+$/.test(to)) to += from.slice(from.lastIndexOf("."));
+      if (to == from) return { op: "move", from, to };
+      if (kind == "folder" && to.startsWith(`${from}/`)) throw new TreeError(`A folder can't go inside itself.`);
+      checkNewName(to, kind == "folder" ? "folder" : isPage(to) ? "page" : "file");
+      free(to);
+      await run(room.move(from, to));
+      return { op: "move", from, to };
+    }
+    case "delete": {
+      const path = cleanTreePath(op.path);
+      if (path == o.index) throw new TreeError(`${path} is the document's own page: it can't be deleted.`);
+      if (!exists(path)) throw new TreeError(`There's nothing at ${path}.`, 404);
+      await run(room.remove(path));
+      return { op: "delete", path };
+    }
+    default:
+      throw new TreeError(`There's no operation "${String(op.op)}": it's one of new_page, new_folder, move and delete.`);
+  }
+}
+
+/** A new page when there's no template: a heading to start from. */
+const plainPage = (path: string) => path.endsWith(".md") ? "# Untitled\n\nStart writing here.\n" : "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n<title>Untitled</title>\n</head>\n<body>\n<h1>Untitled</h1>\n<p>Start writing here.</p>\n</body>\n</html>\n";

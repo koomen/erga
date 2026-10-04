@@ -12,6 +12,8 @@
 //   POST /api/auth/request         an agent asks for a token: a link for its person to approve
 //   POST /api/auth/poll            ... and collects the token once they have
 //   POST /mcp                      the same tools as a stateless MCP server (Streamable HTTP, JSON answers)
+//   GET  /api/docs/<id>/tree       a document's file tree; POST does a tree operation (tree.ts). For people
+//                                  signed in (the tree's UI) as well as tokens
 //   /settings, /tokens/...         a person's settings: their tokens (make, revoke, approve an agent's request); /tokens redirects there
 //
 // The Worker (worker/index.ts) sends those paths here, with the platform
@@ -30,7 +32,7 @@
 import { validateToolArguments } from "@mariozechner/pi-ai";
 import { documentToolSpecs, type ToolContent, type ToolSpec } from "./agent";
 import { type Action, type DocRow, type Route, nameOf } from "./directory";
-import { accessOf, appPage, brand, esc, forwarded, ICON, makeDoc, newDocId, page, safeNext, startingFiles, TIMES_SCRIPT, type Platform, type Session, whoOf } from "./front";
+import { accessOf, appPage, brand, esc, forwarded, fromElsewhere, ICON, ID, makeDoc, newDocId, page, safeNext, startingFiles, TIMES_SCRIPT, type Platform, type Session, whoOf } from "./front";
 import { findDocument, runServerTool, SERVER_TOOLS, ToolError, type ToolWho } from "./server-tools";
 import { cleanRel } from "./host";
 import { LABEL_MAX, normalCode, REQUEST_MINUTES, type AgentToken } from "./tokens";
@@ -355,6 +357,8 @@ export async function serverApi(request: Request, platform: Platform): Promise<R
     return json({ ok: true, tools: (await toolsFor(ctx)).map(specOf) });
   }
   if (path == "/api/auth/request" && method == "POST") return askForToken(request, platform, origin);
+  const [, treeOf] = /^\/api\/docs\/([^/]+)\/tree$/.exec(path) ?? [];
+  if (treeOf && (method == "GET" || method == "POST")) return docTree(request, platform, session, decodeURIComponent(treeOf));
   if (path == "/api/auth/poll" && method == "POST") return pollForToken(request, platform);
 
   const [, name] = /^\/api\/ext\/tools\/([^/]+)$/.exec(path) ?? [];
@@ -377,6 +381,26 @@ export async function serverApi(request: Request, platform: Platform): Promise<R
     }
   }
   return failure(`There's nothing at ${method} ${path}. The guide: GET ${origin}/api/ext`, 404);
+}
+
+/**
+ * A document's file tree (host.ts, /api/tree): GET reads it, for whoever may
+ * open the document; POST does one operation, for its editors. Signed in
+ * with the app's session (the tree's UI, from this site's pages only) or an
+ * agent token. Answers JSON: the tree, or {error}.
+ */
+async function docTree(request: Request, platform: Platform, session: Session | null, id: string): Promise<Response> {
+  const err = (error: string, status: number) => json({ error }, status);
+  if (!session) return err("Sign in first, or send an agent token as \"Authorization: Bearer <token>\".", 401);
+  const post = request.method == "POST";
+  if (post && !session.agent && fromElsewhere(request)) return err("Not from this site.", 403);
+  const route = ID.test(id) ? await platform.directory.route(id) : null;
+  const access = route && (await platform.directory.access(whoOf(session), route));
+  if (!route || !access) return err("There's no such document, or it isn't shared with you.", 404);
+  if (post && accessOf(access) != "edit") return err("You can only view this document.", 403);
+  const url = new URL(request.url);
+  const inner = new Request(new URL("/api/tree", url.origin), { method: request.method, headers: request.headers, body: post ? await request.text() : undefined });
+  return platform.docs.fetch(route, forwarded(inner, new URL("/api/tree", url.origin), "/api/tree", `${url.origin}/d/${route.id}`, session, accessOf(access)));
 }
 
 /**
