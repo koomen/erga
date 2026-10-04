@@ -666,9 +666,9 @@ const VIEW_STYLE = `
   /* Editing (or on the way into it), the pencil is blue, as the editor's own is. */
   .erga-view-button[aria-pressed="true"], .erga-view-button[aria-pressed="true"]:hover { color: #3b7cf0; background: transparent; }
   /* On the way into the editor the first time, while its code arrives, the pencil breathes (only if that takes a moment). */
-  body.erga-editing:not(.erga-editor-ready) .erga-edit-button svg { animation: erga-edit-wait 700ms ease-in-out 250ms infinite alternate; }
+  body.erga-editing:not(.erga-editor-ready) .erga-view-button[aria-pressed] svg { animation: erga-edit-wait 700ms ease-in-out 250ms infinite alternate; }
   @keyframes erga-edit-wait { to { opacity: 0.35; } }
-  @media (prefers-reduced-motion: reduce) { body.erga-editing:not(.erga-editor-ready) .erga-edit-button svg { animation: none; opacity: 0.6; } }
+  @media (prefers-reduced-motion: reduce) { body.erga-editing:not(.erga-editor-ready) .erga-view-button[aria-pressed] svg { animation: none; opacity: 0.6; } }
   .erga-view-button svg { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
   .erga-view-button::after { content: attr(data-tip); position: absolute; left: var(--tip-x, 100%); top: var(--tip-y, calc(100% + 6px)); transform: translateX(-100%); white-space: pre; font-size: 12px;
     font-weight: 400; line-height: 1.3; letter-spacing: .01em; color: var(--soft); opacity: 0; pointer-events: none; }
