@@ -57,7 +57,7 @@ try {
   const docFile = await (await get(`/d/${id}/doc/index.html`)).text();
   expect(!docFile.includes("data-erga-account"), "a document's own files are left alone", docFile.slice(-400));
   const front = await (await get("/")).text();
-  const frameSrc = /<iframe id="frame" class="erga-view" src="([^"]+)"/.exec(front)![1].replaceAll("&amp;", "&");
+  const frameSrc = /<iframe id="frame" class="erga-view" (?:data-)?src="([^"]+)"/.exec(front)![1].replaceAll("&amp;", "&");
   const framed = await (await fetch(frameSrc.replace(/^http:\/\/[^/]+/, root), { headers: { Host: new URL(frameSrc).host } })).text();
   expect(!framed.includes("data-erga-account"), "nor the front page's document, on its pages origin");
   const ada = await (await get("/docs?user=Ada")).text();

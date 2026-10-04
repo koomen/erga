@@ -34,7 +34,7 @@ const root = host.root;
 const browser = await Browser.launch();
 const get = (path: string, init: RequestInit = {}) => fetch(root + path, { redirect: "manual", ...init });
 /** The id of the document / frames, from its pages origin. */
-const frameOf = (html: string) => /<iframe id="frame" class="erga-view" src="http:\/\/([a-z0-9]{8})-([a-z0-9-]+)\.localhost/.exec(html);
+const frameOf = (html: string) => /<iframe id="frame" class="erga-view" (?:data-)?src="http:\/\/([a-z0-9]{8})-([a-z0-9-]+)\.localhost/.exec(html);
 const landingSetting = async () => (await (await get("/admin")).text()).match(/data-key="landing_document"[\s\S]*?name="value"[^>]*value="([^"]*)"/)?.[1] ?? "";
 try {
   // A fresh database: nothing's set, and the first requests for /, at once, make one document.

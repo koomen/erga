@@ -537,8 +537,8 @@ try {
   expect(!!etag && pageFile.headers.get("cache-control") == "no-cache", "a file has an ETag and is checked each time", Object.fromEntries(pageFile.headers));
   const again = await pagesFetch(`${pagesUrl}doc/index.html`, { "If-None-Match": etag! });
   expect(again.status == 304 && !(await again.text()), "unchanged since, it's a 304 with no body", again.status);
-  const frameSrc = /<iframe id="frame"[^>]* src="([^"]+)"/.exec(editorAt)?.[1]?.replace(/&amp;/g, "&") ?? "";
-  expect(/[?&]v=[a-z0-9]+/.test(frameSrc) && /[?&]edit=1/.test(frameSrc), "the editor's frame has the host page's version in its address, and starts on the editor", frameSrc);
+  const frameSrc = /<iframe id="frame"[^>]* (?:data-)?src="([^"]+)"/.exec(editorAt)?.[1]?.replace(/&amp;/g, "&") ?? "";
+  expect(/[?&]v=[a-z0-9]+/.test(frameSrc) && editorAt.includes('f.src = f.dataset.src + (location.hash == "#edit" ? "&edit=1" : "")'), "the editor's frame has the host page's version in its address, and with #edit starts on the editor (&edit=1)", frameSrc);
   const hostPage = await pagesFetch(frameSrc);
   expect(/max-age=\d+/.test(hostPage.headers.get("cache-control") ?? "") && (await hostPage.text()).includes(`<base href="${pages!.pathname}doc/">`), "which the browser may keep, its base the document's folder", hostPage.headers.get("cache-control"));
   expect((await pagesFetch(frameSrc.replace(/([?&])v=[^&]+/, "$1v=old"))).headers.get("cache-control") == "no-cache", "another version is checked each time");
