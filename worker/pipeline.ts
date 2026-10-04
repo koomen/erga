@@ -7,20 +7,32 @@
 // "deploy-log"} with each deploy's new log lines, and whatever else is
 // published here, e.g. task #39's {type: "source"}).
 //
+// Each target's deploy history (deploy/branches.ts: the last 100 deploys and
+// their logs) is in this object's storage too.
+//
 // In local development with ERGA_DEPLOY_MOCK=1 it deploys to the mock
 // Cloudflare's Erga account (deploy/mock.ts, fleet) with the mock builder,
-// which "builds" a commit by stamping the server's own release with it.
+// which "builds" a commit by stamping the server's own release with it. The
+// dev server is one target (ERGA_DEPLOY_TARGET); the other target's server
+// is played here too, in the mock (`peer`, its storage apart under "peer:"),
+// answering at its host in the mock as the real one would (its status,
+// history, logs and hook), so a merge to main deploys "production" while the
+// dev server plays staging.
 
 import { DurableObject } from "cloudflare:workers";
-import { BranchDeploys, type DeployEnv, type DeployLog, type TargetStatus } from "../deploy/branches";
+import { BranchDeploys, type DeployEnv, type DeployLog, type DeployRecord, type TargetStatus } from "../deploy/branches";
 import { containerBuilder } from "../deploy/builder/client";
 import { loadRelease, type Release } from "../deploy/cloudflare";
 import { FLEET_ACCOUNT, MOCK_HOOK_SECRET, MOCK_SNAPSHOT_TOKEN, mockBuilder, mockCloudflare } from "../deploy/mock";
+import { isTargetName, TARGETS, targetNames, type TargetName } from "../deploy/targets";
 import type { Env } from "./env";
+import { hasSource } from "./artifacts";
 import { sourceForBuild } from "./source";
 
 export class Pipeline extends DurableObject<Env> {
   private deploys: BranchDeploys;
+  /** Local development's mock only: the other target's server. */
+  private peer: BranchDeploys | null = null;
   private listeners = new Set<WritableStreamDefaultWriter<Uint8Array>>();
   private beat: ReturnType<typeof setInterval> | null = null;
 
@@ -38,11 +50,25 @@ export class Pipeline extends DurableObject<Env> {
       if (!r) throw new Error("this dev server has no release to stand in for a build (run bun deploy/release.ts)");
       return r;
     };
-    this.deploys = new BranchDeploys({
-      storage: { get: (k) => ctx.storage.get(k), put: (k, v) => ctx.storage.put(k, v) },
-      env: deployEnv,
-      net: mock ? mockCloudflare({ fleet: true, stagingSecrets: true, delayMs: 25 }).fetch : globalThis.fetch.bind(globalThis),
-      builder: mock ? mockBuilder(release, { delayMs: 200 }) : env.BUILDER ? containerBuilder(env.BUILDER) : null,
+    // Where this server reads a branch's head, to check a move another server passes on (task #39's repository).
+    const headOf = async (branch: string) => {
+      const view = await env.SOURCE.getByName("erga").branches(env.ERGA_DEV_ORIGIN ?? "");
+      return view.branches.find((b: { name: string }) => b.name == branch)?.commit ?? null;
+    };
+    // The mock builder fails a commit whose subject says "[mock-fail]" (a real commit's id can't be chosen to start 0bad).
+    const mockFails = async (commit: string) => {
+      if (!hasSource(env)) return false;
+      const view = await env.SOURCE.getByName("erga").branches(env.ERGA_DEV_ORIGIN ?? "").catch(() => null);
+      return !!view?.branches.some((b: { commits: { sha: string; subject: string }[] }) => b.commits.some((c) => c.sha == commit && c.subject.includes("[mock-fail]")));
+    };
+    const self = env.DEPLOY_TARGET?.trim() ?? "";
+    const peerName: TargetName | null = mock && isTargetName(self) ? targetNames.find((n) => n != self) ?? null : null;
+    const fleet = mock ? mockCloudflare({ fleet: true, stagingSecrets: true, delayMs: 25, sites: (req, script) => this.peerSite(req, script, peerName) }) : null;
+    const make = (target: string | undefined, prefix: string) => new BranchDeploys({
+      storage: { get: (k) => ctx.storage.get(prefix + k), put: (k, v) => ctx.storage.put(prefix + k, v), delete: (k) => ctx.storage.delete(prefix + k) },
+      env: { ...deployEnv, DEPLOY_TARGET: target },
+      net: fleet ? fleet.fetch : globalThis.fetch.bind(globalThis),
+      builder: mock ? mockBuilder(release, { delayMs: 200, fails: mockFails }) : env.BUILDER ? containerBuilder(env.BUILDER) : null,
       schedule: async (ms) => {
         const at = Date.now() + ms;
         const now = await ctx.storage.getAlarm();
@@ -56,17 +82,35 @@ export class Pipeline extends DurableObject<Env> {
         const s = await sourceForBuild(env, commit);
         return { cloneUrl: s.remote, token: s.token.split("?")[0] };
       },
+      headOf: hasSource(env) ? headOf : undefined,
       ...(mock ? { waitMs: 5000, sleep: (ms: number) => new Promise<void>((r) => setTimeout(r, Math.min(ms, 50))) } : {}),
     });
+    this.deploys = make(env.DEPLOY_TARGET, "");
+    if (peerName) this.peer = make(peerName, "peer:");
   }
 
-  status(): Promise<{ targets: TargetStatus[] }> { return this.deploys.status(); }
-  own(): Promise<TargetStatus | null> { return this.deploys.own(); }
-  logOf(name: string): Promise<DeployLog | null> { return this.deploys.logOf(name); }
-  hook(branch: string, commit: string): Promise<void> { return this.deploys.hook(branch, commit); }
-  redeploy(name: string) { return this.deploys.redeploy(name); }
-  remoteHook(name: string, body: { branch?: string; commit?: string; redeploy?: boolean }) { return this.deploys.remoteHook(name, body); }
-  async alarm(): Promise<void> { await this.deploys.alarm(); }
+  /** The mock's other server, at its host: what deploysDoor answers another of Erga's servers (worker/deploys.ts). */
+  private async peerSite(req: Request, script: string, peerName: TargetName | null): Promise<Response | null> {
+    const url = new URL(req.url);
+    if (!peerName || !this.peer || script != TARGETS[peerName].worker || !url.pathname.startsWith("/api/deploys/") || url.pathname == "/api/deploys/version") return null;
+    if (req.headers.get("authorization") != `Bearer ${MOCK_HOOK_SECRET}`) return Response.json({ error: "Not found" }, { status: 404 });
+    const peer = this.peer;
+    const json = (body: unknown, status = 200) => Response.json(body, { status });
+    if (url.pathname == "/api/deploys/status") return json({ target: await peer.own(Number(url.searchParams.get("history") ?? 0)) });
+    const [, name, what] = /^\/api\/deploys\/([a-z]+)\/(log|history|hook)$/.exec(url.pathname) ?? [];
+    if (what == "log") { const l = await peer.logOf(name, url.searchParams.get("deploy") ?? undefined); return l ? json(l) : json({ error: "Not found" }, 404); }
+    if (what == "history") { const h = await peer.historyOf(name, Number(url.searchParams.get("limit") ?? 20)); return h ? json({ target: name, deploys: h }) : json({ error: "Not found" }, 404); }
+    if (what == "hook" && req.method == "POST") { const r = await peer.remoteHook(name, await req.json().catch(() => ({})) as never); return json(r, r.ok ? 200 : 400); }
+    return json({ error: "Not found" }, 404);
+  }
+  status(history = 0): Promise<{ targets: (TargetStatus & { history?: DeployRecord[] })[] }> { return this.deploys.status({ history }); }
+  own(history = 0): Promise<(TargetStatus & { history?: DeployRecord[] }) | null> { return this.deploys.own(history); }
+  logOf(name: string, deployId?: string): Promise<DeployLog | null> { return this.deploys.logOf(name, deployId); }
+  historyOf(name: string, limit?: number): Promise<DeployRecord[] | null> { return this.deploys.historyOf(name, limit); }
+  hook(branch: string, commit: string, trigger?: string): Promise<void> { return this.deploys.hook(branch, commit, trigger); }
+  redeploy(name: string, trigger?: string) { return this.deploys.redeploy(name, trigger); }
+  remoteHook(name: string, body: { branch?: string; commit?: string; redeploy?: boolean; trigger?: string }) { return this.deploys.remoteHook(name, body); }
+  async alarm(): Promise<void> { await Promise.all([this.deploys.alarm(), this.peer?.alarm()]); }
 
   /** An event to everyone listening on /api/events. */
   publish(event: { type: string } & Record<string, unknown>): void {

@@ -349,8 +349,10 @@ export function guardTarget(t: Target): string | null {
 export async function runPipeline(cf: Cloudflare, release: Release | null, target: Target, opts: {
   report: Report; site?: Fetch; sleep?: (ms: number) => Promise<void>; waitMs?: number;
   from?: StepId; carry?: Carry; checkpoint?: (done: StepId, carry: Carry) => Promise<void> | void;
+  /** Stops the run between steps, throwing the signal's reason: a step that has begun always ends first. */
+  signal?: AbortSignal;
 }): Promise<Deployed> {
-  const { report } = opts;
+  const { report, signal } = opts;
   const site = opts.site ?? globalThis.fetch;
   const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   const carry: Carry = opts.carry ?? {};
@@ -540,6 +542,7 @@ export async function runPipeline(cf: Cloudflare, release: Release | null, targe
   };
 
   for (const id of steps.slice(start)) {
+    signal?.throwIfAborted();
     report(id, "running");
     const detail = await run[id]();
     const skipped = id == "documents" && detail?.startsWith("skipped");

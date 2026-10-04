@@ -10,10 +10,13 @@
 //     commits; merging is a fast-forward of main, to staging's head or a
 //     chosen commit; who may merge, and a POST from another site;
 //   - the GitHub mirror, after each move;
-//   - the Source page in headless Chrome: one list with two dot columns
-//     (circles only: hollow orange, only on staging; solid green, on main),
-//     the deploy columns (from the deploys stand-in) and a deploy's live
-//     log, Merge to here, updating by itself, light, dark and a phone.
+//   - the Source page in headless Chrome: one list with one dot column and
+//     no header (circles only: hollow orange, only on staging; solid green,
+//     on main too), the deploy columns with each target's history (every
+//     move of staging deploys staging, every move of main production; a push
+//     while a deploy runs cancels it; a build that fails), a deploy's live
+//     log and a past one's, Merge to here, updating by itself, light, dark
+//     and a phone.
 //
 // Screenshots land in tests/cdp.ts's SHOTS.
 //
@@ -158,23 +161,26 @@ try {
   await until(async () => { const t = await stagingTarget(); return t.state == "deployed" && t.deployed == head; }, 60_000, "a push to staging deploys staging's head (deployHook)", stagingTarget);
   const log = await (await api("/api/deploys/staging/log")).json() as { commit: string; lines: { text: string }[] };
   expect(log.commit == head && log.lines.length > 3, "and its log is there", log);
-  ok("each move of staging reaches the deploy pipeline (deployHook), which deploys it");
+  const productionTarget = async () => ((await (await api("/api/deploys")).json()).targets as { name: string; state: string; deployed: string | null; remote?: boolean }[]).find((t) => t.name == "production")!;
+  await until(async () => { const t = await productionTarget(); return t.state == "deployed" && t.deployed == head; }, 60_000, "a merge to main deploys production's head (passed on, checked against the repository)", productionTarget);
+  ok("each move of staging and main reaches the deploy pipeline (deployHook), which deploys it");
 
   // ---- The Source page ------------------------------------------------------------------------------
   expect((await get("/source?user=Bo")).status == 404, "the Source page is for admins only");
   browser = await Browser.launch();
   const p: Page = await browser.page(await browser.context());
-  const state = () => p.eval<{ rows: { subject: string; staging: string; main: string; live: string[] }[]; heads: string[]; ahead: string; merge: boolean; mirror: string; title: string; targets: string[] }>(`(() => {
+  const state = () => p.eval<{ rows: { subject: string; sha: string; staging: string; live: string[] }[]; heads: string[]; dots: number; ahead: string; merge: boolean; mirror: string; title: string; targets: string[] }>(`(() => {
     const dot = (el) => {
       if (!el) return "none";
       const s = getComputedStyle(el);
       return [s.borderRadius == "50%" ? "circle" : "shape:" + s.borderRadius, s.transform == "none" ? "" : "transformed", s.backgroundColor, s.borderTopColor].join("|");
     };
     return {
-      rows: [...document.querySelectorAll("#grid .row")].map((r) => ({ subject: r.querySelector(".subj span").textContent, kind: r.className,
-        staging: dot(r.querySelector('[data-lane=staging]')), main: dot(r.querySelector('[data-lane=main]')),
-        live: [...r.querySelectorAll(".live")].map((c) => c.textContent) })),
-      heads: [...document.querySelectorAll("#grid .head.lane")].map((h) => h.textContent),
+      rows: [...document.querySelectorAll("#grid .row")].map((r) => ({ subject: r.querySelector(".subj span").textContent, sha: r.dataset.sha, kind: r.className,
+        staging: dot(r.querySelector(".rail .dot")),
+        live: [...r.querySelectorAll(".deps")].map((c) => [...c.querySelectorAll(".dep .w")].map((w) => w.textContent).join(" ")) })),
+      heads: [...document.querySelectorAll("#grid > .head")].map((h) => h.textContent.trim()),
+      dots: Math.max(...[...document.querySelectorAll("#grid .row")].map((r) => r.querySelectorAll(".dot").length)),
       ahead: document.getElementById("ahead").textContent, merge: !document.getElementById("merge").disabled,
       mirror: document.getElementById("mirror-state").textContent, title: document.title,
       targets: [...document.querySelectorAll(".target")].map((t) => t.textContent.replace(/\\s+/g, " ").trim()),
@@ -184,10 +190,10 @@ try {
   await until(async () => (await state()).rows.length > 0, 10_000, "the list draws");
   let s = await state();
   expect(s.rows.map((x) => x.subject).join() == "Fifth,Fourth,Third,Second,First" && s.title.startsWith("Source") && !s.merge && s.ahead.includes("main is at staging"), "one list: staging's commits, newest first; nothing to merge", s);
-  expect(s.heads.join() == "staging,main", "two dot columns, staging and main", s.heads);
+  expect(s.heads[0] == "" && s.heads[1] == "Commit" && s.dots == 1, "one dot column, with no header", s);
   expect(await p.eval(`document.querySelector(".crumbs .brand").textContent == "Erga" && document.querySelector(".crumbs .here").textContent == "Source" && !!document.querySelector("[data-erga-account]")`), "breadcrumbs (Erga › Source) and the avatar");
   expect(s.targets.length == 2 && s.targets[0].startsWith("staging") && s.targets[0].includes("live") && s.targets[1].startsWith("production"), "the deploy columns' heads: each target's status", s.targets);
-  expect(s.rows[0].live[0] == "live", "staging's column marks the commit it has live", s.rows.map((x) => x.live));
+  expect(s.rows[0].live[0] == "live" && s.rows[0].live[1] == "live", "each target's column marks the commit it has live (the import moved both branches: both deployed)", s.rows.map((x) => x.live));
   // Someone pushes to staging: the page shows it without a reload, and staging deploys it, live.
   must(b, "checkout", "-q", "-B", "staging", "origin/staging");
   commit(b, "app.ts", "export const x = 6;\n", "Staging only, live");
@@ -199,9 +205,9 @@ try {
   // The dots: circles only; hollow orange for only on staging, solid green for on main.
   const [top, below] = s.rows;
   const [, , topBg, topBorder] = top.staging.split("|"), [, , belowBg, belowBorder] = below.staging.split("|");
-  expect(s.rows.every((x) => x.staging.startsWith("circle|") && (x.main == "none" || x.main.startsWith("circle|"))), "every dot is a circle, untransformed", s.rows);
-  expect(topBorder != topBg && /rgb\((19[0-9]|2\d\d), (9\d|1[0-2]\d|1[5-9]\d), \d{1,2}\)/.test(topBorder) && top.main == "none", "a commit only on staging: a hollow orange circle, and no dot in main's column", top);
-  expect(belowBg == belowBorder && /rgb\(\d{1,2}, 1[0-4]\d, \d{2}\)/.test(belowBg) && below.main.split("|")[2] == belowBg, "a commit on main: a solid green circle, in both columns", below);
+  expect(s.rows.every((x) => x.staging.startsWith("circle|")), "every dot is a circle, untransformed", s.rows);
+  expect(topBorder != topBg && /rgb\((19[0-9]|2\d\d), (9\d|1[0-2]\d|1[5-9]\d), \d{1,2}\)/.test(topBorder), "a commit only on staging: a hollow orange circle", top);
+  expect(belowBg == belowBorder && /rgb\(\d{1,2}, 1[0-4]\d, \d{2}\)/.test(belowBg), "a commit on main too: a solid green circle", below);
   // The live log: clicking staging's status opens it; its lines arrive as the deploy runs ({ type: "deploy-log" }).
   const click = async (sel: string) => {
     const at = await p.eval<{ x: number; y: number }>(`(() => { const r = document.querySelector(${JSON.stringify(sel)}).getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })()`);
@@ -239,8 +245,48 @@ try {
   await p.mouse("mouseMoved", rowAt.x, rowAt.y);
   await until(async () => p.eval(`getComputedStyle(document.querySelector("#grid .row button.here")).display != "none"`), 5_000, "hovering a staging-only commit offers Merge to here");
   await click("#grid .row button.here");
-  await until(async () => (await state()).rows.find((x) => x.subject == "Staging only, live")?.main != "none", 10_000, "Merge to here moves main to that commit", state);
+  await until(async () => (await state()).rows.find((x) => x.sha == polled)?.kind.includes("on-main"), 10_000, "Merge to here moves main to that commit", state);
   expect((await p.eval<string>(`document.getElementById("merge-hint").textContent`)).includes("Merged: main is now"), "and says so");
+  // Every move of main deploys production (its server is played in the mock: deploy/mock.ts, worker/pipeline.ts's peer).
+  await until(async () => (await state()).rows.find((x) => x.sha == polled)?.live[1] == "live", 60_000, "and production deploys it", state);
+  ok("every move of staging deploys staging, every move of main deploys production");
+
+  // ---- Deploy history: a push while a deploy runs cancels it; a build that fails --------------
+  commit(b, "app.ts", "export const x = 7;\n", "Superseded");
+  must(b, "push", "-q", "origin", "staging");
+  const superseded = must(b, "rev-parse", "HEAD");
+  await until(async () => { const t = await stagingTarget(); return t.commit == superseded && ["building", "deploying"].includes(t.state); }, 20_000, "the deploy starts");
+  commit(b, "app.ts", "export const x = 8;\n", "Newer [mock-fail]");
+  must(b, "push", "-q", "origin", "staging");
+  const failing = must(b, "rev-parse", "HEAD");
+  await until(async () => { const t = await stagingTarget(); return t.commit == failing && t.state == "failed"; }, 60_000, "the newer one runs, and fails to build", stagingTarget);
+  const hist = await (await api("/api/deploys/staging/history?limit=50")).json() as { deploys: { id: string; commit: string; state: string; trigger: string; replacedBy?: string; live: boolean; started: number; ended: number }[] };
+  const [failedRec, cancelledRec] = hist.deploys;
+  expect(failedRec.commit == failing && failedRec.state == "failed" && cancelledRec.commit == superseded && cancelledRec.state == "cancelled" && cancelledRec.replacedBy == failedRec.id, "the history: the first cancelled, replaced by the newer one, which failed", hist.deploys.slice(0, 3));
+  expect(cancelledRec.trigger == "push by tester" && cancelledRec.ended >= cancelledRec.started && hist.deploys.filter((d) => d.live).length == 1 && hist.deploys.find((d) => d.live)!.commit == polled, "each with what started it and when; one live, the last that worked", hist.deploys.slice(0, 4));
+  const pastLog = await (await api(`/api/deploys/staging/log?deploy=${cancelledRec.id}`)).json() as { deployId: string; state: string; lines: { text: string }[] };
+  expect(pastLog.deployId == cancelledRec.id && pastLog.state == "cancelled" && pastLog.lines.some((l) => l.text.startsWith("cancelled:")), "a past deploy's log, by its id", pastLog.lines.slice(-3));
+  expect((await api("/api/deploys/staging/log?deploy=nope")).status == 404, "a deploy the history doesn't have: 404");
+  const withHistory = await (await api("/api/deploys?history=3")).json() as { targets: { name: string; history: unknown[] }[] };
+  expect(withHistory.targets.every((t) => Array.isArray(t.history) && t.history.length <= 3) && withHistory.targets.find((t) => t.name == "production")!.history.length > 0, "GET /api/deploys?history=N: each target's last N", withHistory);
+  await until(async () => { const r = (await state()).rows; return r.find((x) => x.sha == superseded)?.live[0] == "cancelled" && r.find((x) => x.sha == failing)?.live[0] == "failed"; }, 10_000, "the page shows the cancelled and the failed deploy beside their commits", state);
+  // A past deploy's badge opens its log.
+  await click(`#grid .row[data-sha="${superseded}"] button.dep`);
+  await until(async () => (await logText()).includes("cancelled:"), 10_000, "clicking a past deploy opens its log", logText);
+  expect((await p.eval<string>(`document.getElementById("log-meta").textContent`)).includes("cancelled"), "with its state");
+  await p.screenshot(join(SHOTS, "source-past-log.png"));
+  await click("#log-close");
+  // Two deploys of one commit: the dashboard shows one, the newest (the history keeps both).
+  await api("/api/deploys/staging", { method: "POST", headers: { Origin: origin } });
+  await until(async () => (await stagingTarget()).state == "failed" && (await (await api("/api/deploys/staging/history")).json()).deploys.filter((d: { commit: string }) => d.commit == failing).length == 2, 60_000, "a redeploy of the same commit");
+  const newest = (await (await api("/api/deploys/staging/history")).json()).deploys[0].id as string;
+  await until(async () => p.eval(`(() => { const b = document.querySelectorAll('#grid .row[data-sha="${failing}"] .deps[data-target=staging] .dep'); return b.length == 1 && b[0].dataset.deploy == ${JSON.stringify(newest)}; })()`), 10_000, "one entry per commit per target: the newest");
+  // Plain text: no pill shapes; only the live deploy has a background, a small-radius rectangle.
+  const looks = await p.eval<{ state: string; radius: string; bg: string; border: string }[]>(`[...document.querySelectorAll("#grid .dep")].map((d) => { const c = getComputedStyle(d); return { state: d.className, radius: c.borderTopLeftRadius, bg: c.backgroundColor, border: c.borderTopStyle }; })`);
+  expect(looks.every((l) => parseFloat(l.radius) <= 6 && l.border == "none"), "no pills: small radius, no borders", looks);
+  expect(looks.every((l) => l.state.includes("live") == (l.bg != "rgba(0, 0, 0, 0)")), "only the live deploy has a background", looks);
+  expect(!(await p.eval(`!!document.querySelector("#grid .more, #grid .sub")`)), "no counts, nothing to open");
+  ok("deploy history: a push while a deploy runs cancels it; a failed build; past logs; one entry per commit per target");
   await until(async () => (await state()).mirror.includes("Up to date"), 10_000, "the mirror catches up", state);
   await p.open(`${root}/source`, { width: 1280, height: 900, scale: 2, clear: false, dark: true });
   await until(async () => (await state()).rows.length > 0, 10_000, "the list draws (dark)");

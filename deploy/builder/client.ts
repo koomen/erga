@@ -11,11 +11,16 @@ import type { Builder } from "../branches";
 export function containerBuilder(fetcher: { fetch: typeof fetch }, o: { sleep?: (ms: number) => Promise<void> } = {}): Builder {
   const sleep = o.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   return {
-    async build({ commit, branch, source }, log): Promise<Release> {
+    async build({ commit, branch, source }, log, signal): Promise<Release> {
       let r: Response | null = null;
+      // Cancelled: the container stops this build (its commands killed), and the stream is dropped.
+      const stop = () => { fetcher.fetch("http://builder/cancel", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ commit }) }).catch(() => {}); };
+      signal?.addEventListener("abort", stop, { once: true });
+      try {
       // Another build in the container: wait for it (up to ~10 minutes).
       for (let i = 0; i < 120; i++) {
-        r = await fetcher.fetch("http://builder/build", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ source, commit, branch }) });
+        signal?.throwIfAborted();
+        r = await fetcher.fetch("http://builder/build", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ source, commit, branch }), signal });
         if (r.status != 409) break;
         if (i == 0) log("the builder is busy with another build: waiting");
         await sleep(5000);
@@ -36,11 +41,16 @@ export function containerBuilder(fetcher: { fetch: typeof fetch }, o: { sleep?: 
         const lines = buf.split("\n");
         buf = lines.pop() ?? "";
         lines.forEach(line);
+        signal?.throwIfAborted();
       }
       line(buf);
+      signal?.throwIfAborted();
       if (error) throw new DeployError(`The build failed: ${error}`);
       if (!bundle) throw new DeployError("The build stopped without a release (the builder's container may have restarted). Deploy again.");
       return unpackRelease(bundle, commit.slice(0, 12));
+      } finally {
+        signal?.removeEventListener("abort", stop);
+      }
     },
   };
 }

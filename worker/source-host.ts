@@ -29,7 +29,7 @@ export class SourceHost extends DurableObject<Env> {
       github: () => githubRemote(env, this.origin),
       moved: (m) => {
         ctx.waitUntil(publishEvent({ type: "source", branch: m.branch, commit: m.new }, env).catch(() => {}));
-        ctx.waitUntil(deployHook(m.branch, m.new, env).catch((e) => console.error(`deploy hook (${m.branch}):`, e)));
+        ctx.waitUntil(deployHook(m.branch, m.new, env, `${m.how} by ${m.by}`).catch((e) => console.error(`deploy hook (${m.branch}):`, e)));
       },
       changed: () => ctx.waitUntil(publishEvent({ type: "source" }, env).catch(() => {})),
       background: (work) => ctx.waitUntil(work),
