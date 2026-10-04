@@ -12,7 +12,7 @@ bun server.config.ts >/dev/null
 mkdir -p .site/fonts
 put() { local tmp; tmp="$(dirname ".site/$2")/.$(basename "$2").$$"; cp "$1" "$tmp" && mv -f "$tmp" ".site/$2"; }
 put page.html editor.html
-for f in page.js frame.js pages-tree.js style.css fonts/*; do put "$f" "$f"; done
+for f in page.js frame.js settings.js pages-tree.js style.css fonts/*; do put "$f" "$f"; done
 # Workers Builds runs this, then `bunx cf deploy`: bring erga.dev's directory
 # database (D1) up to date with migrations/ first, making it if it's new.
 # Only there (WORKERS_CI is set on Workers Builds); `bun run deploy` does it itself.
