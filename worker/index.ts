@@ -15,6 +15,7 @@
 //   /llms.txt, /api/..., /mcp  the server's API for agents, with an agent token (server-api.ts, tokens.ts)
 //   /settings, /tokens/...     your settings: agent tokens, and a test token for running the test suite against erga.dev
 //   /deploy                    deploy Erga to your own Cloudflare account (worker/deploy.ts; the deploy_page setting)
+//   /admin/factory, /api/factory/...   the factory (experimental): tasks done by Claude Code in VMs (worker/factory.ts)
 //   /auth/test?token=&as=      a test person (Ada, Bo...) signed in with one; they open only test documents
 //   /page.js, /style.css, ...  the editor's own files (static assets)
 //
@@ -32,6 +33,7 @@ import { serverApi, tokensDoor } from "../server-api";
 import { finishSignIn, isDev, mintTestToken, sessionOf, signOut, startSignIn, testSignIn } from "./auth";
 import { directoryOf, tokensOf } from "./d1";
 import { deployDoor } from "./deploy";
+import { factoryApi, factoryDoor } from "./factory";
 import { forgetHome, serveHome, serveHomeFile, serveHomeRoot } from "./home";
 import { homeApi } from "../home";
 import type { Env } from "./env";
@@ -39,6 +41,7 @@ import { counted, simulateLatency, tallied } from "./timing";
 
 export { Deployer } from "./deployer";
 export { DocHost } from "./doc-host";
+export { Factory } from "./factory";
 export { Home } from "./home";
 
 /** The templates' files, by template then path ("doc" → { "index.html": "..." }). Text files only. */
@@ -142,6 +145,9 @@ async function route(request: Request, env: Env, url: URL, ctx: ExecutionContext
     const file = await serveHomeRoot(request, env, ctx);
     if (file) return file;
   }
+  // The factory (experimental): its board and API, admins only (worker/factory.ts).
+  if (path == "/admin/factory") return factoryDoor(request, env, url);
+  if (path == "/api/factory" || path.startsWith("/api/factory/")) return factoryApi(request, env, url);
   // The server's API for agents, and people's agent tokens (server-api.ts).
   if (path == "/llms.txt" || path == "/mcp" || path == "/api" || path.startsWith("/api/")) return serverApi(request, withTokens(platform(env), url));
   if (path == "/settings" || path == "/tokens" || path.startsWith("/tokens/")) return tokensDoor(request, withTokens(platform(env), url));

@@ -1,5 +1,6 @@
 import type { Deployer } from "./deployer";
 import type { DocHost } from "./doc-host";
+import type { Factory } from "./factory";
 import type { Home } from "./home";
 
 /** The Worker's bindings (cloudflare.config.ts); secrets are set with `cf workers secrets update`. */
@@ -8,6 +9,13 @@ export interface Env {
   DOCS: DurableObjectNamespace<DocHost>;
   /** The homepage's deploys and its served snapshot: one Durable Object, named "home" (worker/home.ts). */
   HOME: DurableObjectNamespace<Home>;
+  /** The factory (experimental; worker/factory.ts): its tasks, logs, screenshots and the Claude token, in one Durable Object, "factory". */
+  FACTORY: DurableObjectNamespace<Factory>;
+  /**
+   * The factory's key (a Worker secret, `cf workers secrets update FACTORY_KEY`): it encrypts the
+   * stored Claude token and signs the VMs' tokens. Without it, a hosted server can't store a token.
+   */
+  FACTORY_KEY?: string;
   /** The server's database: users, settings and the directory of documents (directory.ts, users.ts, config.ts; migrations/). */
   DB: D1Database;
   /** The editor's own files (page.html as editor.html, page.js, style.css, fonts). */
