@@ -132,6 +132,7 @@ try {
   await until(async () => (await text(p, "#ds-mode")) == "Latest" && (await p.eval<boolean>(`document.getElementById("ds-pick-field").hidden`)), 3_000, "Latest: no picker");
   await saved(p);
   expect((await text(p, "#ds-explain")).includes("up to the keystroke"), "Latest says viewers see every change");
+  expect(!(await rect(p, "#ds-pick")), "and the picker isn't drawn");
   const top = await p.eval<string>(`document.querySelector("#ds-list li")?.textContent`);
   expect(top.includes("Current") && top.includes("Published"), "the current version is the published one", top);
   await p.screenshot(join(SHOTS, "settings-latest.png"));
@@ -154,6 +155,43 @@ try {
   expect((await text(p, "#ds-explain")).includes("1 newer version isn't published"), "and Manual says it isn't published", await text(p, "#ds-explain"));
   ok("versions update live: a new one, then its description");
 
+  // Publish the current version: one click, in Manual, when it isn't the published one.
+  expect(await p.eval<boolean>(`!document.getElementById("ds-pub-current").hidden`) && (await text(p, "#ds-pub-current")) == "Publish the current version (v48)", "Manual with a newer version: a button publishes the current one", await text(p, "#ds-pub-current"));
+  await p.screenshot(join(SHOTS, "settings-publish-current.png"));
+  await clickOn(p, "#ds-pub-current");
+  await until(async () => (await versionsOf(a.id)).published.version.n == 48, 5_000, "the current version is published");
+  await until(async () => (await text(p, "#ds-pick")).startsWith("v48") && (await p.eval<boolean>(`document.getElementById("ds-pub-current").hidden`)), 5_000, "the picker shows it, and the button goes, as current is now published");
+  await saved(p);
+  ok("Publish the current version: shown in Manual when the current version isn't published, gone once it is");
+
+  // Edit on a version: on hover at once, and on keyboard focus; a copy of it becomes the current version.
+  expect(!(await p.eval<boolean>(`!!document.querySelector('#ds-list li[data-n="48"] .ds-edit')`)), "the current version has no Edit");
+  const edit = (n: number) => `#ds-list li[data-n="${n}"] .ds-edit`;
+  const shown = (sel: string) => p.eval<string>(`getComputedStyle(document.querySelector(${JSON.stringify(sel)})).opacity`);
+  expect((await shown(edit(45))) == "0", "Edit is hidden until the pointer comes");
+  const v45 = (await rect(p, `#ds-list li[data-n="45"]`))!;
+  await p.mouse("mouseMoved", v45.left + 60, v45.y);
+  expect((await shown(edit(45))) == "1" && (await shown(edit(44))) == "0", "on hover, that version's Edit shows at once, with no fade", await shown(edit(45)));
+  await p.screenshot(join(SHOTS, "settings-edit-hover.png"));
+  await p.mouse("mouseMoved", 300, 600);
+  await p.key("Tab"); // a key first, so focus after it shows as keyboard focus
+  await p.eval(`document.querySelector(${JSON.stringify(edit(44))}).focus(), true`);
+  expect((await shown(edit(44))) == "1", "and on keyboard focus");
+  await p.key("Enter");
+  await until(async () => (await versionsOf(a.id)).current.n == 49, 5_000, "Edit makes a copy the current version");
+  await until(async () => (await p.eval<string>(`document.querySelector("#ds-list li")?.textContent`)).includes("Restored version 44"), 5_000, "the restored version shows at the top of the list", () => p.eval(`document.querySelector("#ds-list li")?.textContent`));
+  const first = await p.eval<string>(`document.querySelector("#ds-list li")?.textContent`);
+  expect(first.startsWith("v49") && first.includes("Current"), "as the current version", first);
+  expect((await text(p, "#ds-pick")).startsWith("v48"), "Manual: the published version doesn't change");
+  await p.screenshot(join(SHOTS, "settings-restored.png"));
+  await stub(a.id, { error: "The version store is down for maintenance." });
+  await p.mouse("mouseMoved", v45.left + 60, (await rect(p, `#ds-list li[data-n="46"]`))!.y);
+  await clickOn(p, edit(46));
+  await until(async () => (await text(p, "#ds-hist-error")).startsWith("Couldn't restore version 46: The version store is down"), 5_000, "a failed restore says why", () => text(p, "#ds-hist-error"));
+  await p.screenshot(join(SHOTS, "settings-restore-error.png"));
+  await stub(a.id, { error: null });
+  ok("Edit: on hover at once and on focus, not on the current version; a copy becomes the current version, live; a failure says why");
+
   // Fewer than ten versions in all; published one older.
   const b = await newDoc();
   await stub(b.id, { versions: 6, published: 2 });
@@ -173,6 +211,7 @@ try {
   await openSettings(p);
   await until(() => p.eval<boolean>(`!document.getElementById("ds-home").hidden`), 5_000, "an admin sees the homepage section");
   expect((await p.eval<string>(`document.getElementById("ds-home-switch").getAttribute("aria-checked")`)) == "false", "it isn't the homepage");
+  expect(!(await rect(p, "#ds-redeploy")), "so no deploy status or Redeploy is drawn");
   await clickOn(p, "#ds-home-switch");
   await until(async () => (await text(p, "#ds-status")).includes("Deploying"), 3_000, "turning it on deploys", () => p.eval(`({ s: document.getElementById("ds-status").textContent, sw: document.getElementById("ds-home-switch").outerHTML, err: document.getElementById("ds-home-error").textContent, dep: document.getElementById("ds-deploy").hidden })`));
   await p.screenshot(join(SHOTS, "settings-home-deploying.png"));

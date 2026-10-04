@@ -549,22 +549,27 @@ it (a sheet from the bottom on a phone; Escape or a click outside closes it):
   published-version menu always shows the published version, the latest ten
   and the three just before the published one (to roll back to); a row for
   each run of versions in between says how many there are and loads them
-  (`?before=`).
+  (`?before=`). Under it, **Publish the current version** publishes the
+  document as it is now, up to the keystroke, when that isn't what's published.
 - **Homepage**, for admins and on the homepage itself: whether this document
   is the server's homepage (only admins may change it, not while it deploys),
   how its deploy stands (Scheduled for, Deploying, Deployed at, Failed), and
   **Redeploy now**.
 - **Versions**: the latest ten, each with its number, the model's five-word
   description (a quiet placeholder until it arrives), when and who; the
-  current and the published one marked.
+  current and the published one marked. **Edit**, on any version but the
+  current one (it shows the moment the pointer is on the version, or the
+  keyboard reaches it), makes a copy of that version the current one, to edit
+  it now: it appears at the top as a new version ("Restored version 21"), and
+  the one it replaced stays a version.
 
 It follows the event channel's `{ type: "versions" }` and `{ type: "home" }`,
 so it's always up to date. Someone who can't edit sees it read-only, with a
 line saying why. Its code (`src/page/settings.ts`, built as `settings.js`)
 loads only when the gear is hovered, focused or clicked.
 
-It talks to the server's `/api/docs/<id>/versions`, `/publish`, `/home` and
-`/home/deploy`. Until those are in, `ERGA_STUB_SETTINGS=1 bun start` answers
+It talks to the server's `/api/docs/<id>/versions`, `/versions/<versionId>/restore`,
+`/publish`, `/home` and `/home/deploy`. Until those are in, `ERGA_STUB_SETTINGS=1 bun start` answers
 them with a stand-in (`dev/settings-stub.ts`, local development only), whose
 `POST /__erga/stub/settings` sets up any state (how many versions, which is
 published, a deploy that fails…); `tests/settings.ts` uses it.

@@ -14,6 +14,7 @@
 //   GET  /api/docs/<id>/home
 //   POST /api/docs/<id>/home           { isHome }
 //   POST /api/docs/<id>/home/deploy
+//   POST /api/docs/<id>/versions/<versionId>/restore
 //
 // And its own controls, for tests and previews:
 //
@@ -144,9 +145,10 @@ export function settingsStub(stateDir: string): Plugin {
         }
         // Pages get the script that adds the stub's events to their /api/events socket.
         if (isTopLevelPage(req)) inject(res, `<script>(()=>{const s=new Set(),W=window.WebSocket;window.WebSocket=class extends W{constructor(u,p){super(u,p);if(String(u).includes("/api/events")){s.add(this);this.addEventListener("close",()=>s.delete(this))}}};new EventSource("/__erga/stub/events").onmessage=(e)=>{for(const w of s)w.dispatchEvent(new MessageEvent("message",{data:e.data}))}})()/*erga settings stub*/</script>`);
-        const m = /^\/api\/docs\/([^/]+)\/(versions|publish|home|home\/deploy)$/.exec(url.pathname);
+        const m = /^\/api\/docs\/([^/]+)\/(versions|publish|home|home\/deploy|versions\/([^/]+)\/restore)$/.exec(url.pathname);
         if (!m) return next();
-        const [, id, what] = m;
+        const [, id, route, restoreId] = m;
+        const what = restoreId ? "restore" : route;
         const d = doc(id);
         if (d.error) return json(res, 500, { error: d.error });
         if (what == "versions" && req.method == "GET") {
@@ -156,6 +158,18 @@ export function settingsStub(stateDir: string): Plugin {
           if (from == null) return json(res, 404, { error: "There's no such version." });
           const versions = d.versions.filter((v) => v.n < from).reverse().slice(0, limit);
           return json(res, 200, { current: current(d), published: { mode: d.mode, version: published(d) }, versions, total: d.versions.length, canEdit: d.canEdit });
+        }
+        if (what == "restore" && req.method == "POST") {
+          if (!d.canEdit) return json(res, 403, { error: "Only the document's editors can restore a version." });
+          const from = d.versions.find((v) => v.id == decodeURIComponent(restoreId));
+          if (!from) return json(res, 404, { error: "There's no such version." });
+          const was = published(d).id;
+          const v: Version = { ...versionAt(current(d).n + 1, 0), authors: ["tester"], description: `Restored version ${from.n}` };
+          d.versions.push(v);
+          save();
+          send("versions");
+          if (published(d).id != was) schedule(id, d);
+          return json(res, 200, { current: v });
         }
         if (what == "publish" && req.method == "POST") {
           return void body(req).then((b) => {

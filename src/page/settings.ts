@@ -9,11 +9,13 @@
 //     which always shows the published version, the latest ten and the few
 //     before the published one, with a row for each run in between that
 //     loads more (versions.ts, pickerRows).
+//     Below it, "Publish the current version" when that isn't the published one.
 //   - Homepage (for admins, and on the homepage itself): whether this is the
 //     server's homepage, how its deploy is going, and Redeploy now.
 //   - Versions: the latest ten, each with its number, the model's five-word
 //     description (a quiet placeholder until it arrives), when and who; the
-//     current and the published one marked.
+//     current and the published one marked. Edit, on hover or focus, makes a
+//     copy of a version the current one (POST .../versions/<id>/restore).
 //
 // It talks to the server's API as the shared contract says (README,
 // "Versions and publishing" and "The homepage"), and refreshes on the event
@@ -54,6 +56,7 @@ declare global { interface Window { ergaSettings?: { mount(host: SettingsHost): 
 
 const CSS = `
 .help.ds:focus { outline: none; }
+.ds [hidden] { display: none !important; }
 .help.ds { width: min(380px, calc(100vw - 24px)); box-sizing: border-box; padding: 0; right: var(--ds-right, 16px); overflow-x: hidden; }
 .ds section { padding: 14px 16px; }
 .ds section + section { border-top: 1px solid var(--rule); }
@@ -85,6 +88,18 @@ html.page-dark body:not(.source) .ds-error { color: #ff9d94; }
 .ds-list { list-style: none; margin: 0; padding: 0; }
 .ds-list li { display: grid; grid-template-columns: 34px 1fr auto; gap: 1px 8px; align-items: baseline; padding: 7px 0; border-top: 1px solid var(--rule); }
 .ds-list li:first-child { border-top: 0; }
+.ds-list li { position: relative; }
+/* Edit: over the version's tags the moment the pointer is on it (or the keyboard reaches it), no fade. */
+.ds-edit {
+  position: absolute; right: 0; top: 50%; transform: translateY(-50%); opacity: 0; pointer-events: none;
+  font: 600 12px var(--font-text); padding: 5px 11px; border-radius: 7px; cursor: pointer; white-space: nowrap;
+  border: 1px solid var(--panel-border); background: var(--bg); color: var(--fg); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+.ds-list li:hover .ds-edit, .ds-edit:focus-visible, .ds-edit.busy { opacity: 1; pointer-events: auto; }
+.ds-list li:hover .ds-edit:hover { border-color: color-mix(in srgb, var(--chrome) 45%, var(--panel-border)); }
+.ds-edit:focus-visible { outline: 2px solid var(--caret); outline-offset: 1px; }
+@media (hover: none) { .ds-edit { opacity: 1; pointer-events: auto; position: static; transform: none; grid-column: 3; grid-row: 1 / span 2; align-self: center; } .ds-list li:has(.ds-edit) .ds-tags { display: none; } }
+.ds-pub-current { justify-self: start; margin-top: 4px; }
 .ds-list .ds-n { grid-row: span 2; }
 .ds-list .ds-desc { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg-strong, var(--fg)); font-size: 13px; }
 .ds-list .ds-meta { grid-column: 2 / span 2; font-size: 11.5px; color: var(--chrome); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -169,6 +184,7 @@ function mount(host: SettingsHost): Settings {
       <div class="ds-field" id="ds-pick-field" hidden>
         <span class="ds-label" id="ds-pick-label">Published version</span>
         <button type="button" class="ds-select" id="ds-pick" aria-haspopup="listbox" aria-expanded="false" aria-labelledby="ds-pick-label ds-pick"></button>
+        <button type="button" class="ds-btn ds-pub-current" id="ds-pub-current" hidden></button>
       </div>
       <p class="ds-explain" id="ds-explain"></p>
       <p class="ds-error" id="ds-pub-error" role="alert"></p>
@@ -188,13 +204,14 @@ function mount(host: SettingsHost): Settings {
     <section class="ds-history" aria-labelledby="ds-history-title">
       <h3 id="ds-history-title">Versions <small id="ds-total"></small></h3>
       <ol class="ds-list" id="ds-list" aria-label="Recent versions"></ol>
+      <p class="ds-error" id="ds-hist-error" role="alert"></p>
       <p class="ds-foot" id="ds-foot" hidden></p>
     </section>`;
   document.body.append(pop);
   const $ = <T extends HTMLElement = HTMLElement>(id: string) => pop.querySelector<T>(`#${id}`)!;
   const modeBtn = $("ds-mode"), pickBtn = $("ds-pick"), pickField = $("ds-pick-field");
   const explainEl = $("ds-explain"), pubError = $("ds-pub-error");
-  const list = $("ds-list"), totalEl = $("ds-total"), foot = $("ds-foot");
+  const list = $("ds-list"), totalEl = $("ds-total"), foot = $("ds-foot"), histError = $("ds-hist-error"), pubCurrent = $("ds-pub-current");
   const homeSec = $("ds-home"), homeSwitch = $("ds-home-switch"), homeExplain = $("ds-home-explain");
   const deployBox = $("ds-deploy"), statusEl = $("ds-status"), redeploy = $("ds-redeploy"), homeError = $("ds-home-error");
 
@@ -307,6 +324,42 @@ function mount(host: SettingsHost): Settings {
     publish({ mode: "manual", version: v }, { mode: "manual", versionId: v.id });
   };
 
+  /** Edit on a version: a copy of it becomes the current version (the previous current one stays a version). */
+  let restoring: string | null = null;
+  async function restore(id: string) {
+    if (!data || restoring) return;
+    const v = data.versions.find((x) => x.id == id);
+    restoring = id;
+    histError.textContent = "";
+    render();
+    try {
+      const r = await call<{ current: Version }>(`versions/${encodeURIComponent(id)}/restore`, { method: "POST" });
+      restoring = null;
+      // Shown at once; the event channel's "versions" brings the rest (its description, the total).
+      if (data && !data.versions.some((x) => x.id == r.current.id)) {
+        data = { ...data, current: r.current, versions: [r.current, ...data.versions], total: data.total + 1,
+          published: data.published.mode == "latest" ? { mode: "latest", version: r.current } : data.published };
+        add([r.current]);
+      }
+      render();
+      list.querySelector<HTMLElement>("li")?.scrollIntoView({ block: "nearest" });
+      loadVersions();
+    } catch (e) {
+      restoring = null;
+      histError.textContent = `Couldn't restore version ${v?.n ?? ""}: ${(e as Error).message}`;
+      render();
+    }
+  }
+  list.addEventListener("click", (e) => {
+    const b = (e.target as Element).closest<HTMLElement>("[data-restore]");
+    if (b) restore(b.dataset.restore!);
+  });
+  pubCurrent.addEventListener("click", () => {
+    if (!data || pubCurrent.getAttribute("aria-disabled") == "true") return;
+    // The server cuts a version of edits not yet in one first, so this is the document up to the keystroke.
+    publish({ mode: "manual", version: data.current }, { mode: "manual", versionId: data.current.id });
+  });
+
   // ------------------------------------------------------------ rendering
 
   const canEdit = () => !!data?.canEdit && !publishing;
@@ -332,6 +385,10 @@ function mount(host: SettingsHost): Settings {
     pickField.hidden = !manual;
     pickBtn.innerHTML = `<span class="ds-val"><span class="ds-n">v${pub.version.n}</span><span>${desc(pub.version)}</span></span>${CHEV}`;
     const newer = current.n - pub.version.n;
+    pubCurrent.hidden = !manual || newer <= 0 || !data.canEdit;
+    pubCurrent.textContent = `Publish the current version (v${current.n})`;
+    pubCurrent.title = "Viewers see the document as it is now, up to the keystroke";
+    if (publishing) pubCurrent.setAttribute("aria-disabled", "true"); else pubCurrent.removeAttribute("aria-disabled");
     explainEl.textContent = !data.canEdit
       ? `Only the document's editors can change what's published. Viewers see version ${pub.version.n}${manual ? "" : ", the latest"}.`
       : publishing ? "Saving…"
@@ -340,10 +397,15 @@ function mount(host: SettingsHost): Settings {
       : "Viewers see this version until you pick another, even as the document changes.";
 
     totalEl.textContent = data.total > 1 ? `${data.total} in all` : "";
+    // The list is drawn afresh: an Edit button that had focus keeps it.
+    const focused = (document.activeElement as HTMLElement | null)?.closest?.("#ds-list [data-restore]")?.getAttribute("data-restore");
     list.innerHTML = data.versions.slice(0, RECENT).map((v) => {
       const tags = [v.id == current.id ? `<span class="ds-tag">Current</span>` : "", v.id == pub.version.id ? `<span class="ds-tag pub">Published</span>` : ""].join("");
-      return `<li><span class="ds-n">v${v.n}</span><span class="ds-desc">${desc(v)}</span><span class="ds-tags">${tags}</span><span class="ds-meta" title="${esc(new Date(v.at).toLocaleString())}">${esc(whoWhen(v))}</span></li>`;
+      const edit = v.id == current.id || !data!.canEdit ? ""
+        : `<button type="button" class="ds-edit${restoring == v.id ? " busy" : ""}" data-restore="${esc(v.id)}" aria-label="Edit version ${v.n}: make a copy of it the current version" title="Make a copy of version ${v.n} the current version, to edit it">${restoring == v.id ? "Restoring…" : "Edit"}</button>`;
+      return `<li data-n="${v.n}"><span class="ds-n">v${v.n}</span><span class="ds-desc">${desc(v)}</span><span class="ds-tags">${tags}</span><span class="ds-meta" title="${esc(new Date(v.at).toLocaleString())}">${esc(whoWhen(v))}</span>${edit}</li>`;
     }).join("");
+    if (focused) [...list.querySelectorAll<HTMLElement>("[data-restore]")].find((b) => b.dataset.restore == focused)?.focus();
     const shown = Math.min(RECENT, data.versions.length);
     foot.hidden = data.total <= shown;
     foot.textContent = manual ? `The latest ${shown} of ${data.total}. The published-version menu reaches the older ones.` : `The latest ${shown} of ${data.total}.`;
@@ -567,6 +629,7 @@ function mount(host: SettingsHost): Settings {
     position();
     pubError.textContent = "";
     homeError.textContent = "";
+    histError.textContent = "";
     render();
     renderHome();
     loadVersions();
