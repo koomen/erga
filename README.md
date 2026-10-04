@@ -838,14 +838,22 @@ of that. What the server refuses shows where it happened, in its words. Keys:
 ↑ ↓ ← → Home End move and open folders, Enter opens, F2 renames, Delete
 deletes, Shift-F10 opens a row's menu, Esc cancels or closes.
 
-It talks to `GET /api/docs/<id>/tree` (`{ entries: [{ path, type: "page" |
-"folder" | "file", title? }], canEdit }`) and `POST` there (`new_page`,
-`new_folder`, `move`, `delete`), and reads it again on a `{ type: "tree" }`
-event on the editor's event channel, or when a file comes or goes in the room.
-That's the server's own tree API (below). `bun tests/tree.ts` checks the tree
-in headless Chrome, against `dev/tree-stub.ts` (`ERGA_TREE_STUB=1`: an
-in-memory stand-in for the API that changes no files, so the test can set
-any tree and make changes fail).
+It talks to the server's tree API (below): `GET /api/docs/<id>/tree` (`{
+entries: [{ path, type: "page" | "folder" | "file", title? }], canEdit }`,
+each page with its title) and `POST` there (`new_page`, `new_folder`, `move`,
+`delete`). It reads the tree again on a `{ type: "tree", moved?, deleted? }`
+event on the editor's event channel (which `main.ts` passes on as an
+`erga-tree` event on `window`), or when a file comes or goes in the room;
+on Documents, which has no event channel, an open tree is read again every
+few seconds while the tab is in view, and when you come back to it. Changes
+from elsewhere wait while you're naming, moving or deleting something, so
+the rows never shift under you. A folder that moved stays open where it went,
+and when the page you're editing moves (anyone's doing: another tab, an
+agent), the editor goes to its new address with the tree still open, marking
+it there. `bun tests/tree.ts` checks all of it in headless Chrome against a
+real server, on `tests/fixtures/multi` linked from disk: every operation,
+two tabs, an agent over the token API, a viewer, and a page two folders down
+that uses the stylesheet, image and font from the folders above it.
 
 ### When the page is broken
 

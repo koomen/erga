@@ -170,8 +170,22 @@ type TreeModule = { mountTree: typeof mountTree };
     const at = path == null ? doc : isPage(path) ? pageUrl(doc, path) : `${doc}/${path.replace(/^\/+|\/+$/g, "").split("/").map(encodeURIComponent).join("/")}`;
     return at.replace(/\/$/, "") + as + (editing() ? "#edit" : "");
   };
+  /**
+   * Goes to an address, once: the tree (after its own move or delete), the "tree" event and the catch-up on
+   * reconnecting (stillHere) may all ask for the same one at once, and a second navigation would cut the first short.
+   */
+  let goingTo: string | null = null;
+  const goTo = (url: string, replace = false) => {
+    if (goingTo == url) return;
+    goingTo = url;
+    // Following this page to where it moved (or went), with the tree open: it stays open there.
+    if (replace && !$("pages").hidden) { try { sessionStorage.setItem("erga:pages-open", BASE); } catch { /* private mode */ } }
+    // (A navigation that doesn't unload this page, only its hash changing, can be asked for again later.)
+    setTimeout(() => { if (goingTo == url) goingTo = null; }, 2000);
+    if (replace) location.replace(url); else location.assign(url);
+  };
   /** Goes to another of the document's pages: its address, in the editor while editing. */
-  const openPage = (path: string) => { location.assign(addressOf(path)); };
+  const openPage = (path: string) => goTo(addressOf(path));
 
   // The host attributes your edits and your agent to who you are, so the tab takes that.
   const me: Author = { user: info.userId, name: info.user, color: colorFor(info.userId), kind: "person", ...(info.avatar ? { avatar: info.avatar } : {}) };
@@ -429,7 +443,7 @@ type TreeModule = { mountTree: typeof mountTree };
       tree = t.mountTree(slot, {
         id: docName.id, base: docName.address, editing: true, query: as, showRoot: true, label: "Documents",
         rootTitle: docName.title, titleOf: pageTitle, current: info!.path, hasRelativeLinks,
-        onRenameRoot: () => toggleNaming(true),
+        onRenameRoot: () => toggleNaming(true), navigate: (url, o) => goTo(url, o.replace),
       });
       if (!pagesCard.hidden) tree.focus();
     }, (e: Error) => {
@@ -447,10 +461,12 @@ type TreeModule = { mountTree: typeof mountTree };
     if (!tree || pagesCard.hidden) return;
     treeStale ||= events.some((ev) => ev.target == files(collab.doc) && [...ev.changes.keys.values()].some((c) => c.action != "update"));
     clearTimeout(treeTimer);
-    treeTimer = window.setTimeout(() => { if (treeStale) tree?.refresh(); else tree?.retitle(); treeStale = false; }, treeStale ? 150 : 600);
+    treeTimer = window.setTimeout(() => { if (treeStale) tree?.refresh({ quiet: true }); else tree?.retitle(); treeStale = false; }, treeStale ? 150 : 600);
   });
-  // ?pages opens it straight away (a link to "this document's pages").
-  if (new URLSearchParams(location.search).has("pages") && editing()) requestAnimationFrame(() => togglePages(true));
+  // ?pages opens it straight away (a link to "this document's pages"), as does following this page to where it moved
+  // while it was open (goTo): it stays open across the move.
+  const reopen = (() => { try { const v = sessionStorage.getItem("erga:pages-open"); sessionStorage.removeItem("erga:pages-open"); return v == BASE; } catch { return false; } })();
+  if ((reopen || new URLSearchParams(location.search).has("pages")) && editing()) requestAnimationFrame(() => togglePages(true));
   pagesCard.addEventListener("keydown", (e) => { if (e.key == "Escape" && !e.defaultPrevented) { e.preventDefault(); togglePages(false); titleBtn.focus(); } });
 
   // ---------------------------------------------------------------- the room
@@ -556,7 +572,7 @@ type TreeModule = { mountTree: typeof mountTree };
       else if (msg.type == "view" && msg.id) answerView(msg.id, msg.req ?? {});
       else if (msg.type == "name" && msg.name) showName(msg.name);
       else if (msg.type == "versions" || msg.type == "home") docSettings?.event(msg.type);
-      else if (msg.type == "tree") { treeChanged(msg); tree?.refresh(); }
+      else if (msg.type == "tree") treeChanged(msg);
     };
     // Events sent while the channel was down are gone; catch up from the transcript.
     // A rename missed meanwhile (or before it first opened) is caught up the same way.
@@ -568,12 +584,12 @@ type TreeModule = { mountTree: typeof mountTree };
 
   // The document's file tree changed (anyone's doing: tree.ts). Whatever shows the tree hears it as an
   // "erga-tree" event on window (the event's detail is the message: { type: "tree", moved?, deleted? }) and
-  // fetches it again (GET <BASE>/api/tree). This page, moved, goes to where it went; deleted, to the document's own.
+  // fetches it again (the tree, tree.ts, does both). This page, moved, goes to where it went; deleted, to the document's own.
   function treeChanged(msg: { moved?: { from: string; to: string }; deleted?: string }) {
     window.dispatchEvent(new CustomEvent("erga-tree", { detail: { type: "tree", ...msg } }));
     const under = (p: string) => pagePath == p || pagePath.startsWith(`${p}/`);
-    if (msg.moved && under(msg.moved.from)) location.replace(addressOf(msg.moved.to + pagePath.slice(msg.moved.from.length)));
-    else if (msg.deleted && under(msg.deleted)) location.replace(addressOf(null));
+    if (msg.moved && under(msg.moved.from)) goTo(addressOf(msg.moved.to + pagePath.slice(msg.moved.from.length)), true);
+    else if (msg.deleted && under(msg.deleted)) goTo(addressOf(null), true);
   }
   /**
    * Whether this page is still there, once the event channel is up (a move or delete may have gone by while
@@ -584,7 +600,7 @@ type TreeModule = { mountTree: typeof mountTree };
     if (!t || t.entries.some((e) => e.path == pagePath)) return;
     let at = pagePath;
     for (const m of t.moved ?? []) if (at == m.from || at.startsWith(`${m.from}/`)) at = m.to + at.slice(m.from.length);
-    location.replace(addressOf(t.entries.some((e) => e.path == at) ? at : null));
+    goTo(addressOf(t.entries.some((e) => e.path == at) ? at : null), true);
   }
 
   // ---------------------------------------------------------------- presence
