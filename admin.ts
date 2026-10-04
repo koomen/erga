@@ -64,10 +64,18 @@ export async function adminDoor(platform: Platform, request: Request): Promise<R
 
 const notFound = () => page("Not found", "There's nothing here. <a href=\"/\">Back to the start</a>.", 404);
 
-/** How a setting's value is typed in: by the kind of its default. */
-function valueInput(e: ConfigEntry): string {
+/** A setting that names a document (Setting.kind), with the document it names now, if there is one. */
+type Shown = ConfigEntry & { doc?: { address: string; title: string } | null };
+
+/** How a setting's value is typed in: by its kind, else the kind of its default. */
+function valueInput(e: Shown): string {
   const locked = e.locked;
   const attrs = `name="value" id="set-${esc(e.key)}" aria-label="${esc(e.key)}"${locked ? " disabled" : ""}`;
+  // A document is typed by its address (kept by id, which a rename never changes); empty for none.
+  if (e.kind == "document") {
+    const value = e.doc ? e.doc.address : e.value == null ? "" : String(e.value);
+    return `<input class="input" ${attrs} data-kind="document" value="${esc(value)}" placeholder="/owner/slug" autocomplete="off" spellcheck="false">`;
+  }
   if (typeof e.default == "boolean") {
     return `<select ${attrs} data-kind="boolean"><option value="true"${e.value === true ? " selected" : ""}>On</option><option value="false"${e.value === false ? " selected" : ""}>Off</option></select>`;
   }
@@ -78,7 +86,7 @@ function valueInput(e: ConfigEntry): string {
 
 const shown = (v: unknown) => (typeof v == "boolean" ? (v ? "on" : "off") : typeof v == "string" ? `“${v}”` : JSON.stringify(v));
 
-function settingRow(e: ConfigEntry, session: Session): string {
+function settingRow(e: Shown, session: Session): string {
   const when = e.updated != null ? `<time datetime="${new Date(e.updated).toISOString()}">${new Date(e.updated).toISOString().slice(0, 10)}</time>` : "";
   const meta = e.locked ? `<span class="badge" title="Fixed in the deploy's configuration (server.config.ts or ERGA_SERVER_CONFIG): change it there and deploy">Locked by the deploy</span><span>· default ${esc(shown(e.default))}</span>`
     : e.source == "set" ? `<span>Set${e.updatedBy ? ` by ${esc(e.updatedBy)}` : ""} ${when}</span><span>· default ${esc(shown(e.default))}</span>`
@@ -87,7 +95,7 @@ function settingRow(e: ConfigEntry, session: Session): string {
     <div class="about">
       <label class="key" for="set-${esc(e.key)}">${esc(e.key)}</label>
       <p class="desc">${esc(e.description)}</p>
-      <p class="meta">${meta}</p>
+      <p class="meta">${meta}${e.kind == "document" && e.value != null ? e.doc ? `<span>· <a class="open-doc" href="${esc(link(e.doc.address, session))}">${esc(e.doc.title)}</a></span>` : `<span class="gone">· no such document now: the front page is the plain one</span>` : ""}</p>
     </div>
     <form class="value" method="post" action="${esc(link("/admin/settings", session))}">
       <input type="hidden" name="key" value="${esc(e.key)}">
@@ -112,7 +120,13 @@ function userRow(u: User, session: Session): string {
 
 async function adminPage(platform: Platform, session: Session): Promise<Response> {
   const who = whoOf(session);
-  const [settings, users] = await Promise.all([platform.directory.config.list(who), platform.directory.users.list(who)]);
+  const [entries, users] = await Promise.all([platform.directory.config.list(who), platform.directory.users.list(who)]);
+  // A setting naming a document shows it by its address now, linked.
+  const settings: Shown[] = await Promise.all(entries.map(async (e) => {
+    if (e.kind != "document" || e.value == null) return e;
+    const doc = await platform.directory.find(String(e.value));
+    return { ...e, doc: doc && { address: `/${doc.owner}/${doc.slug}`, title: doc.title } };
+  }));
   const admins = users.filter((u) => u.role == "admin").length;
   const style = `
   section { margin-bottom: 44px; }
@@ -127,6 +141,8 @@ async function adminPage(platform: Platform, session: Session): Promise<Response
   .setting .desc { margin: 2px 0 0; color: var(--fg); }
   .setting .meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 4px 0 0; font-size: 12.5px; color: var(--soft); }
   .setting .meta time { margin: 0; font-size: inherit; }
+  .setting .meta a { color: inherit; }
+  .setting .meta .gone { color: #c2410c; }
   .setting .value { display: flex; align-items: center; gap: 6px; }
   .setting .value .input { width: 7.5em; text-align: right; font-feature-settings: "tnum"; }
   .setting .value .input:not([type=number]) { width: 12em; text-align: left; }
@@ -187,7 +203,7 @@ ${users.map((u) => userRow(u, session)).join("\n")}
     const was = input.value;
     const asJson = () => {
       const kind = input.dataset.kind, v = input.value.trim();
-      return kind == "number" ? (v == "" ? "" : String(Number(v))) : kind == "boolean" ? v : kind == "string" ? JSON.stringify(input.value) : v;
+      return kind == "number" ? (v == "" ? "" : String(Number(v))) : kind == "boolean" ? v : kind == "string" ? JSON.stringify(input.value) : kind == "document" ? (v == "" ? "null" : JSON.stringify(v)) : v;
     };
     const dirty = () => { save.disabled = input.value == was; say(hint, ""); };
     input.addEventListener("input", dirty);

@@ -27,6 +27,8 @@ export interface Setting<T = unknown> {
   default: T;
   /** A value as given (parsed JSON), checked: throws a ConfigError saying what's wrong. */
   parse(value: unknown): T;
+  /** What the value names, when it isn't just a number or text: "document" (one of the server's documents, by id). */
+  kind?: "document";
 }
 
 /** A whole number from `min` to `max`. */
@@ -56,6 +58,12 @@ export const SETTINGS = {
     default: 24,
     parse: integer(1, 24 * 365),
   }),
+  landing_document: setting<string | null>({
+    description: "The document everyone sees at the server's front page (/), signed in or not: its address (/<owner>/<slug>), URL or id. Only its owner can choose it, and anyone can then view it there. Empty: a plain start page. A deploy whose repo has a landing project (server.config.ts, landing) publishes it and sets this.",
+    default: null,
+    parse: (v) => (v === null || v === "" ? null : text(300)(v) || null),
+    kind: "document",
+  }),
 };
 
 export type Settings = Record<string, Setting>;
@@ -72,6 +80,8 @@ export interface ConfigEntry {
   source: "default" | "set" | "locked";
   /** Fixed by the deploy: nobody can set or reset it here (show it read-only). */
   locked: boolean;
+  /** What the value names, if it isn't plain (Setting.kind). */
+  kind?: "document";
   /** The value the deploy fixes it to (only when it's locked; then it's `value` too). */
   deployed?: unknown;
   /** When it was last set, and by whom (null if it never was, or it's locked). */
@@ -111,20 +121,30 @@ export function parseDeployed(json: string | undefined, settings: Settings = SET
 }
 
 interface Row { key: string; value: string; updated: number; updated_by: string | null }
+/**
+ * By key: a parsed value someone sets, checked against more than the
+ * setting's parser knows (the directory, who's setting it). Answers the value
+ * to keep, or throws a ConfigError or NotAllowed saying why not.
+ */
+export type Checks = Record<string, (by: Actor, value: unknown) => Promise<unknown>>;
 const REMEMBER_MS = 10_000;
 
 export class ServerConfig<S extends Settings = typeof SETTINGS> {
   readonly settings: S;
   private locked: Record<string, unknown>;
+  private checks: Checks;
   private rows: { at: number; byKey: Map<string, Row> } | null = null;
 
   /**
    * `settings`: the keys there are (SETTINGS). `locked`: values fixed by the
    * deploy, by key; each must be a key there is, and a value it takes.
+   * `checks`: by key, what else a value set by someone must pass, beyond its
+   * parser (the directory's: a landing document must be the setter's own).
    */
-  constructor(private sql: Sql, private users: Users, opts: { settings?: S; locked?: Record<string, unknown> } = {}) {
+  constructor(private sql: Sql, private users: Users, opts: { settings?: S; locked?: Record<string, unknown>; checks?: Checks } = {}) {
     this.settings = opts.settings ?? (SETTINGS as unknown as S);
     this.locked = deployedSettings(opts.locked ?? {}, this.settings);
+    this.checks = opts.checks ?? {};
   }
 
   /** Whether the deploy fixes this key's value. */
@@ -141,7 +161,7 @@ export class ServerConfig<S extends Settings = typeof SETTINGS> {
   async entry(key: string): Promise<ConfigEntry> {
     const s = this.setting(key);
     const row = (await this.table()).get(key);
-    const base = { key, description: s.description, default: s.default };
+    const base = { key, description: s.description, default: s.default, ...(s.kind ? { kind: s.kind } : {}) };
     // The deploy's value wins; a row set before it was locked stays in the table, and counts again once it isn't.
     if (this.isLocked(key)) return { ...base, value: this.locked[key], source: "locked", locked: true, deployed: this.locked[key], updated: null, updatedBy: null };
     if (row) {
@@ -165,6 +185,8 @@ export class ServerConfig<S extends Settings = typeof SETTINGS> {
     if (this.isLocked(key)) throw new NotAllowed(`${key} is fixed by the deploy (server.config.ts), so it can't be changed here: it stays ${JSON.stringify(this.locked[key])}.`);
     let parsed: unknown;
     try { parsed = s.parse(value); } catch (e) { throw new ConfigError(`${key} ${(e as Error).message}.`); }
+    const check = Object.hasOwn(this.checks, key) ? this.checks[key] : undefined;
+    if (check && parsed != null) parsed = await check(by, parsed);
     await this.sql.run(
       `INSERT INTO server_config (key, value, updated, updated_by) VALUES (?1, ?2, ?3, ?4)
        ON CONFLICT (key) DO UPDATE SET value = ?2, updated = ?3, updated_by = ?4`,
