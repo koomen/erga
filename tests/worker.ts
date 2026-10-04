@@ -542,7 +542,7 @@ try {
   const hostPage = await pagesFetch(frameSrc);
   expect(/max-age=\d+/.test(hostPage.headers.get("cache-control") ?? "") && (await hostPage.text()).includes(`<base href="${pages!.pathname}doc/">`), "which the browser may keep, its base the document's folder", hostPage.headers.get("cache-control"));
   expect((await pagesFetch(frameSrc.replace(/([?&])v=[^&]+/, "$1v=old"))).headers.get("cache-control") == "no-cache", "another version is checked each time");
-  expect((editorAt.match(/<link rel="preload"/g) ?? []).length >= 2 && (frameDoc.headers.get("server-timing") ?? "").includes("worker;dur="), "the editor's page preloads its files; responses say where their time went");
+  expect(editorAt.includes('if (location.hash == "#edit") {') && ["/editor.html", "/page.js"].every((f) => editorAt.includes(`["${f}", `)) && editorAt.includes('rel: "preload"') && (frameDoc.headers.get("server-timing") ?? "").includes("worker;dur="), "opened with #edit, the editor's page preloads its files; responses say where their time went");
   ok("the page's files are cached and checked by ETag; the frame's host page is kept by version");
 
   // Another site can't make documents for you: its link gets a button instead, which posts from here.

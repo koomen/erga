@@ -1071,7 +1071,9 @@ a deleted one is made again, and an admin's choice is kept;
 settings on bun:sqlite; `tests/tokens.test.ts` the tokens themselves.
 `bun tests/pages.ts` checks documents with many pages: the tree's API and
 who may use it, every operation and what it refuses, live tree events,
-addresses (`blog.html` before `blog/index.html`, no slash added, 404s), the
+addresses (`blog.html` before `blog/index.html`, no slash added, 404s, a
+page called `edit`, no `/edit` route), `#edit` opening the editor on load
+and on a hash change (Back and Forward too, without a reload), the
 pages origin's redirects, the agents' file tools (API, MCP and the editor's
 agent), folders across a restart and single-page documents, and, in headless
 Chrome, nested pages in the viewer and editor with their relative assets, the
