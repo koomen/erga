@@ -23,7 +23,7 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { watch, type FSWatcher } from "node:fs";
-import { mkdir, readdir, readFile, realpath, rename, stat, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { homedir } from "node:os";
@@ -134,7 +134,7 @@ export function ergaDev(opts: DevOptions): Plugin {
         await migrated;
         const l = await link(target, { headers, user });
         log(`opened ${target.shown}: ${shown}/${l.owner}/${l.slug}`);
-        res.writeHead(303, { Location: `/${l.owner}/${l.slug}/edit${user ? `?user=${encodeURIComponent(user)}` : ""}` }).end();
+        res.writeHead(303, { Location: `/${l.owner}/${l.slug}${user ? `?user=${encodeURIComponent(user)}` : ""}#edit` }).end();
       }
 
       server.httpServer?.once("listening", () => {
@@ -159,7 +159,7 @@ export function ergaDev(opts: DevOptions): Plugin {
           if (opts.open) {
             const target = await resolveTarget(opts.open, opts.cwd);
             const l = await link(target, {});
-            const at = `${shown}/${l.owner}/${l.slug}/edit`;
+            const at = `${shown}/${l.owner}/${l.slug}#edit`;
             log(`editing ${target.shown}${target.only ? "" : ` (${target.index})`}: ${at}`);
             if (opts.browser) openBrowser(at);
           } else if (opts.browser) openBrowser(`${shown}/docs`);
@@ -301,16 +301,28 @@ class Mirror {
       const paths = only ? (await stat(join(folder, index)).then((s) => s.isFile(), () => false) ? [index] : []) : await listFiles(folder);
       return { paths };
     }
+    if (m.t == "folders") return { dirs: only ? [] : await listDirs(folder) };
     const rel = this.allowed(m.path);
     if (!rel) return m.t == "read" ? { b64: null } : { error: `${m.path} isn't one of this document's files` };
     const full = join(folder, rel);
+    if (m.t == "remove") {
+      this.disk.delete(rel);
+      await rm(full, { force: true });
+      return {};
+    }
+    if (m.t == "mkdir") { await mkdir(full, { recursive: true }); return {}; }
+    if (m.t == "rmdir") {
+      for (const k of [...this.disk.keys()]) if (k.startsWith(`${rel}/`)) this.disk.delete(k);
+      await rm(full, { recursive: true, force: true });
+      return {};
+    }
     if (m.t == "read") {
       const bytes = await readFile(full).catch(() => null);
       if (bytes && bytes.length > MAX_FILE) { this.log(`${full}: too big to edit (over 10MB), left out`); return { b64: null }; }
       if (bytes) this.disk.set(rel, digest(bytes)); else this.disk.delete(rel);
       return { b64: bytes ? bytes.toString("base64") : null };
     }
-    const bytes = new TextEncoder().encode(m.text);
+    const bytes = m.b64 != null ? Buffer.from(m.b64, "base64") : new TextEncoder().encode(m.text ?? "");
     this.disk.set(rel, digest(bytes));
     await writeAtomic(full, bytes);
     return {};
@@ -463,6 +475,17 @@ async function listFiles(root: string, rel = ""): Promise<string[]> {
     if (ignored(path)) continue;
     if (e.isDirectory()) out.push(...(await listFiles(root, path)));
     else if (e.isFile() || (e.isSymbolicLink() && (await stat(join(root, path)).then((s) => s.isFile(), () => false)))) out.push(path);
+  }
+  return out;
+}
+
+/** Every folder under a root (relative paths), empty ones included. */
+async function listDirs(root: string, rel = ""): Promise<string[]> {
+  const out: string[] = [];
+  for (const e of await readdir(join(root, rel), { withFileTypes: true })) {
+    const path = rel ? `${rel}/${e.name}` : e.name;
+    if (ignored(path) || !e.isDirectory()) continue;
+    out.push(path, ...(await listDirs(root, path)));
   }
   return out;
 }

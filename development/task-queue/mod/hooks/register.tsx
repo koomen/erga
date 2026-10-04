@@ -6,7 +6,7 @@ import type { Task } from '../types'
 // The task queue (development/task-queue in the repo) stays the source of
 // truth and the browser board; this mod is its front end in Claude Code:
 //   - task_create: registers a task and starts a worker in its worktree, in one call
-//   - task_log / task_preview / task_screenshot / task_done / task_fail: the worker's reports
+//   - task_log / task_preview / task_screenshot / task_unscreenshot / task_done / task_fail: the worker's reports
 //   - the worker agent type, its instructions built in
 //   - the workflow rule in the main agent's system prompt
 //   - a Tasks pane (/tasks) with Open / Merge / Discard, a status entry, toasts
@@ -68,7 +68,9 @@ worktree, and report on the board as you go. Your first message names the task, 
   and keeps it running after you finish. Choose the page (path) that shows the change best, with any state it needs
   already set up, so the user only has to open it.
 - Attach screenshots where the change has a visible side: mcp__task-queue__task_screenshot with a URL (headless
-  Chrome takes it) or a PNG you took yourself (e.g. after interacting, with tests/cdp.ts).
+  Chrome takes it) or a PNG you took yourself (e.g. after interacting, with tests/cdp.ts). When you revise a task,
+  remove the screenshots that no longer match (mcp__task-queue__task_unscreenshot), or start a fresh set with
+  replace: true on the first task_screenshot, so the card shows only current screenshots.
 - Commit everything (uncommitted work can't be merged), then mcp__task-queue__task_done with a summary. If you can't
   finish, mcp__task-queue__task_fail with why.
 - Write every summary (task_done, task_fail and your final reply) in ASD-STE100, Simplified Technical English; AGENTS.md
@@ -117,7 +119,12 @@ const TOOLS = [
   {
     name: 'task_screenshot',
     description: 'Attach a screenshot to a task: a URL (taken with headless Chrome after it loads) or the path of an image file you took.',
-    inputSchema: { type: 'object', properties: { id: { type: 'number' }, target: { type: 'string', description: 'http(s) URL or absolute file path' }, caption: { type: 'string' }, fullPage: { type: 'boolean' }, wait: { type: 'number', description: 'ms to wait after load (default 1500)' } }, required: ['id', 'target'] },
+    inputSchema: { type: 'object', properties: { id: { type: 'number' }, target: { type: 'string', description: 'http(s) URL or absolute file path' }, caption: { type: 'string' }, fullPage: { type: 'boolean' }, wait: { type: 'number', description: 'ms to wait after load (default 1500)' }, replace: { type: 'boolean', description: "Remove the task's screenshots first: a fresh set, e.g. when you revise the task" } }, required: ['id', 'target'] },
+  },
+  {
+    name: 'task_unscreenshot',
+    description: "Remove screenshots from a task that no longer match it (e.g. after a revision): one by file name or 1-based index, or all. Not while it merges.",
+    inputSchema: { type: 'object', properties: { id: { type: 'number' }, file: { type: 'string', description: "The screenshot's file name (as in the task's screenshots)" }, index: { type: 'number', description: '1-based position in the task\'s screenshots' }, all: { type: 'boolean', description: 'Remove every screenshot' } }, required: ['id'] },
   },
   {
     name: 'task_done',
@@ -284,10 +291,21 @@ export const register: Register = on => {
   })
 
   on('tool.call', { tool: 'mcp__task-queue__task_screenshot' }, async ($, e) => {
-    const { id, target, caption, fullPage, wait } = e as unknown as { id: number; target: string; caption?: string; fullPage?: boolean; wait?: number }
+    const { id, target, caption, fullPage, wait, replace } = e as unknown as { id: number; target: string; caption?: string; fullPage?: boolean; wait?: number; replace?: boolean }
+    if (replace) {
+      const cleared = await api($, 'DELETE', `/api/tasks/${id}/screenshots`)
+      if (!cleared.ok) return say(`Failed: ${cleared.error}`)
+    }
     const body = /^https?:/.test(target) ? { url: target, caption, fullPage, wait } : { path: target, caption }
     const r = await api($, 'POST', `/api/tasks/${id}/screenshots`, body)
     return say(r.ok ? `Attached (${r.data.screenshots.length} on the task).` : `Failed: ${r.error}`)
+  })
+
+  on('tool.call', { tool: 'mcp__task-queue__task_unscreenshot' }, async ($, e) => {
+    const { id, file, index, all } = e as unknown as { id: number; file?: string; index?: number; all?: boolean }
+    if (!all && !file && !index) return say('Say which: file, index, or all: true.')
+    const r = await api($, 'DELETE', `/api/tasks/${id}/screenshots${all ? '' : `/${encodeURIComponent(String(file ?? index))}`}`)
+    return say(r.ok ? `Removed (${r.data.screenshots.length} left on the task).` : `Failed: ${r.error}`)
   })
 
   on('tool.call', { tool: 'mcp__task-queue__task_done' }, async ($, e) => {

@@ -11,6 +11,9 @@
 //   authors  Yjs client id -> who that client is. Every participant writes
 //            its own entry on joining, so any edit can be attributed from
 //            the client ids it carries.
+//   folders  path -> true, for every folder made as one (a new folder, or one
+//            moved): empty ones too. Folders holding files are there anyway,
+//            from the files' paths (tree.ts puts the two together).
 //   room     the room's epoch: a fresh id whenever a room starts without
 //            its saved history. A tab only ever merges into the epoch its
 //            history came from.
@@ -35,6 +38,7 @@ export interface Author {
 export const files = (doc: Y.Doc) => doc.getMap<Y.Text>("files");
 export const assets = (doc: Y.Doc) => doc.getMap<string>("assets");
 export const authors = (doc: Y.Doc) => doc.getMap<Author>("authors");
+export const folders = (doc: Y.Doc) => doc.getMap<boolean>("folders");
 /** The room's own facts: its `epoch` (which history this is; see room.ts). */
 export const roomInfo = (doc: Y.Doc) => doc.getMap<string>("room");
 

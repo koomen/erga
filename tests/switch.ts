@@ -39,7 +39,7 @@ async function throttle(p: Page, on: boolean) {
 type Frame = { t: number; png: Buffer };
 
 async function firstSwitch(name: string, dir: string, bg: [number, number, number]) {
-  const address = new URL(await host.open(join(scratch, dir))).pathname.replace(/\/edit$/, "");
+  const address = new URL(await host.open(join(scratch, dir))).pathname;
   const ctx = await browser.context();
   const p = await browser.page(ctx);
   const W = 1200, H = 760;

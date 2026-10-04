@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-// A document's pages, as a tree (src/page/tree.ts, built as tree.js), in
+// A document's pages, as a tree (src/page/tree.ts, built as pages-tree.js), in
 // headless Chrome, in both places it shows:
 //
 //   - the editor: the document's title (top left) opens it; the document is
@@ -11,10 +11,10 @@
 // the top level and in a folder) name the new one in place (.html added),
 // rename in place, Move to… and drag and drop, delete (a folder asks first),
 // the server's errors shown in its words, read-only for viewers, the keys,
-// light, dark and a phone. tree.js isn't loaded until the tree is opened.
+// light, dark and a phone. pages-tree.js isn't loaded until the tree is opened.
 //
-// Until task #30's real API lands, the dev server answers it from
-// dev/tree-stub.ts (ERGA_TREE_STUB=1). Screenshots land in tests/cdp.ts's SHOTS.
+// The dev server answers the tree's API from dev/tree-stub.ts (ERGA_TREE_STUB=1),
+// so the test can set any tree. Screenshots land in tests/cdp.ts's SHOTS.
 //
 //   bun tests/tree.ts
 
@@ -71,9 +71,8 @@ const rendered = (doc: string) => `(async () => {
   return { width: d.defaultView.getComputedStyle(d.body).maxWidth, image: img.complete ? img.naturalWidth : 0,
     font: [...d.fonts].some((f) => f.family.replace(/["']/g, "") == "Field" && f.status == "loaded") };
 })()`;
-/** The editor at an address: <address>#edit (task #30), or <address>/edit while main still has that route. */
-const EDIT = (await fetch(`${host.base}/edit`, { redirect: "manual" })).status == 200 ? "/edit" : "#edit";
-const editor = (address: string) => address + EDIT;
+/** The editor at an address: <address>#edit. */
+const editor = (address: string) => address + "#edit";
 /** Where the tree sent the tab: its address with #edit (in the editor) or without (the viewer). */
 const wentTo = (went: string[], want: string) => went.some((u) => { const x = new URL(u); return x.pathname + x.hash == want; });
 const renderedRight = (r: { width: string; image: number; font: boolean } | null) => !!r && r.width == "608px" && r.image == 120 && r.font;
@@ -86,7 +85,7 @@ try {
   // A document two folders down (blog/drafts/owls.html) uses the shared stylesheet, an image and a font from
   // folders above it, by relative paths. The viewer's frame shows it as the server serves it.
   const viewer = await (await fetch(host.base)).text();
-  const frameSrc = /<iframe id="frame" class="erga-view" src="([^"]+)"/.exec(viewer)![1].replaceAll("&amp;", "&");
+  const frameSrc = /<iframe id="frame"[^>]* (?:data-)?src="([^"]+)"/.exec(viewer)![1].replaceAll("&amp;", "&");
   await p.open(frameSrc.replace(/view=[^&]*/, `view=${encodeURIComponent("blog/drafts/owls.html")}`), { width: 900, height: 700 });
   let look: { width: string; image: number; font: boolean } | null = null;
   await until(async () => renderedRight(look = await p.eval(rendered(`document.getElementById("view")?.contentDocument`))), 10_000, "the nested document, as the viewer's frame shows it, has its stylesheet, image and font").catch(() => { throw new Error(JSON.stringify(look)); });
@@ -104,7 +103,7 @@ try {
   // ------------------------------------------------------------ the editor
   await p.open(editor(host.base), { width: 1200, height: 760, scale: 2, agent: false });
   await until(() => p.eval<boolean>(`document.body.classList.contains("erga-editor-ready") && !document.getElementById("doc-title").hidden`), 20_000, "the editor is up with its title");
-  expect(!(await p.eval<boolean>(`!!window.ergaTree || !!document.querySelector('script[src="/tree.js"]')`)), "tree.js isn't loaded until it's wanted");
+  expect(!(await p.eval<boolean>(`!!window.ergaTree || !!document.querySelector('script[src="/pages-tree.js"]')`)), "pages-tree.js isn't loaded until it's wanted");
   await clickOn(p, "#doc-title");
   await until(() => p.eval<boolean>(`document.querySelectorAll(".et-row[data-path]").length > 0`), 10_000, "the tree shows");
   let r = await rows(p);
@@ -158,9 +157,9 @@ try {
   ok("New folder and New document, at the top level and in a folder, named in place; a taken name says so");
 
   // Rename in place (F2), and the server's own words when it refuses.
-  // Clicking a page opens it, at its address in the editor (task #30 serves it; until then the address is what's checked).
+  // Clicking a page opens it, at its address in the editor.
   const went: string[] = [];
-  p.onEvent("Page.frameNavigated", (e) => { if (!e.frame.parentId) went.push(e.frame.unreachableUrl ?? e.frame.url); });
+  p.onEvent("Page.frameNavigated", (e) => { if (!e.frame.parentId) went.push((e.frame.unreachableUrl ?? e.frame.url) + (e.frame.urlFragment ?? "")); });
   await clickOn(p, row("contact.html"));
   await until(async () => wentTo(went, `${address}/contact#edit`), 5000, "clicking a page goes to its address in the editor");
   ok("clicking a page opens it in the editor (its address, then #edit: …/contact#edit)");
@@ -268,7 +267,7 @@ try {
 
   // ------------------------------------------------------------ Documents
   await p.open(`${host.root}/docs`, { width: 1100, height: 760, scale: 2, clear: false });
-  expect(!(await p.eval<boolean>(`!!window.ergaTree`)), "Documents doesn't load tree.js until asked");
+  expect(!(await p.eval<boolean>(`!!window.ergaTree`)), "Documents doesn't load pages-tree.js until asked");
   await clickOn(p, "button.twist");
   await until(() => p.eval<boolean>(`document.querySelectorAll("#pages-${id} .et-row[data-path]").length > 0`), 10_000, "the document's pages show beneath it");
   r = await rows(p);

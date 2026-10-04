@@ -3,7 +3,7 @@
 // address (new_page, new_folder, move, delete). One component, in two places:
 // the editor (a card under the document's title, top left: main.ts) and
 // Documents (beneath a document's row: front.ts). It's built on its own
-// (build.sh: tree.js) and loaded only when someone opens it, so it costs the
+// (build.sh: pages-tree.js) and loaded only when someone opens it, so it costs the
 // viewer nothing.
 //
 // index.html is the root document; the others sit under it. People think in

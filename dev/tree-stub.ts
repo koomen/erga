@@ -1,6 +1,6 @@
-// TEMPORARY, dev only: a stand-in for a document's pages API (GET and POST
-// /api/docs/<id>/tree) until task #30 builds the real one. Delete this file
-// and its one line in vite.config.ts when that lands.
+// Dev only, for tests/tree.ts: an in-memory stand-in for a document's pages
+// API (GET and POST /api/docs/<id>/tree; the real one is host.ts's), so the
+// test can set any tree and make a change fail.
 //
 // It's a Vite plugin (never part of the Worker), on only with
 // ERGA_TREE_STUB=1. It keeps each document's tree in memory (and in
@@ -94,7 +94,7 @@ export function treeStub(stateDir: string): Plugin {
     name: "erga:tree-stub",
     apply: "serve",
     configureServer(server) {
-      server.config.logger.info("tree-stub: /api/docs/<id>/tree is answered by dev/tree-stub.ts (temporary, until task #30)");
+      server.config.logger.info("tree-stub: /api/docs/<id>/tree is answered by dev/tree-stub.ts, not the server");
       server.middlewares.use((req, res, next) => {
         const url = new URL(req.url ?? "/", "http://localhost");
         const seed = /^\/__erga\/tree-stub\/([a-z0-9]+)$/.exec(url.pathname);
