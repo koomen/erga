@@ -18,7 +18,7 @@
 import { ACCOUNT_STYLE, accountMarkup, type Account } from "./account.ts";
 import { ConfigError } from "./config.ts";
 import { NotAllowed, roleMay, type DocRow } from "./directory.ts";
-import { cloneButton, editButton, esc, fromElsewhere, VIEW_STYLE, whoOf, type Platform } from "./front.ts";
+import { cloneButton, editButton, esc, FADE, fromElsewhere, VIEW_STYLE, whoOf, type Platform } from "./front.ts";
 
 /** Where a deploy's files are served: /_home/<gen>/<path>, each address never reused, so browsers keep them for good. */
 export const HOME_FILES = "/_home/";
@@ -218,6 +218,16 @@ const HEADER_SCRIPT = `(() => {
     document.addEventListener("keydown", (e) => { if (e.key == "Escape" && !menu.hidden) { show(false); btn.focus(); } });
     addEventListener("blur", () => show(false));
   }
+  // The controls fade once the page is scrolled, as on any document's page (front.ts, FADE): on the host, whose own opacity
+  // the page can't touch; the band stays as it is.
+  ${FADE}
+  const fade = ergaFade(host, root);
+  const scrolled = () => fade.scroll(scrollY);
+  addEventListener("scroll", scrolled, { passive: true });
+  scrolled();
+  document.addEventListener("pointermove", (e) => { if (e.pointerType == "mouse") fade.pointer(e.clientX, e.clientY, false); }, { capture: true, passive: true });
+  document.addEventListener("pointerdown", (e) => { if (e.pointerType != "mouse") fade.pointer(e.clientX, e.clientY, true); }, { capture: true, passive: true });
+  document.addEventListener("mouseout", (e) => { if (!e.relatedTarget) fade.leave(); });
   // Tooltips follow the pointer while it's on a control.
   root.addEventListener("pointermove", (e) => {
     const el = e.pointerType == "mouse" && e.target.closest?.("[data-tip]");

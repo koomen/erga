@@ -477,12 +477,43 @@ const HOST_SCRIPT = `(function () {
       parent.postMessage({ type: "erga-nav", path: path }, SHELL);
     } catch (e) {}
   }
-  if (view) view.addEventListener("load", function () { still(view); moved(view); });
+  // The shell's controls fade once the page is scrolled (FADE): it hears where the page shown is scrolled to, and where the
+  // pointer is over it (in this page's coordinates; the shell places them), at most once a frame.
+  var scrolled = null, pointer = null;
+  function report(f) {
+    try {
+      if (!f.classList.contains("on")) return;
+      var y = Math.max(0, Math.round(f.contentWindow.scrollY));
+      if (y !== scrolled) { scrolled = y; parent.postMessage({ type: "erga-scroll", y: y }, SHELL); }
+    } catch (e) {}
+  }
+  function follow(f) {
+    try {
+      var d = f.contentDocument, w = f.contentWindow;
+      if (!d || d.ergaFollowed) return;
+      d.ergaFollowed = true;
+      w.addEventListener("scroll", function () { report(f); }, { passive: true });
+      d.addEventListener("pointermove", function (e) {
+        if (e.pointerType != "mouse" || !f.classList.contains("on")) return;
+        if (!pointer) requestAnimationFrame(function () { parent.postMessage({ type: "erga-pointer", x: pointer.x, y: pointer.y }, SHELL); pointer = null; });
+        pointer = { x: e.clientX, y: e.clientY };
+      }, { capture: true, passive: true });
+      d.addEventListener("pointerdown", function (e) {
+        if (e.pointerType != "mouse" && f.classList.contains("on")) parent.postMessage({ type: "erga-pointer", x: e.clientX, y: e.clientY, tap: true }, SHELL);
+      }, { capture: true, passive: true });
+      report(f);
+    } catch (e) {}
+  }
+  if (view) view.addEventListener("load", function () { still(view); moved(view); follow(view); });
+  // From as soon as the page shown has a document (well before its load event, on a page with large images), and again
+  // after it goes to another of the document's pages.
+  (function each() { var f = document.querySelector("iframe.on"); if (f) follow(f); requestAnimationFrame(each); })();
   function show(to) {
     var from = document.querySelector("iframe.on");
     if (from == to) return;
     try { if (from) to.contentWindow.scrollTo(from.contentWindow.scrollX, from.contentWindow.scrollY); } catch (e) {}
     to.classList.add("on");
+    report(to);
     if (!from) return;
     from.classList.remove("on");
     if (from.id == "view") from.remove();
@@ -502,7 +533,7 @@ const HOST_SCRIPT = `(function () {
       if (old) old.remove();
       var v = document.createElement("iframe");
       v.id = "view"; v.title = "Document"; v.setAttribute("sandbox", "${PAGE_SANDBOX}");
-      v.onload = function () { still(v); moved(v); if (want == "view") show(v); };
+      v.onload = function () { still(v); moved(v); follow(v); if (want == "view") show(v); };
       v.src = src;
       document.body.prepend(v);
     } else if (type == "erga-prefetch") {
@@ -659,7 +690,7 @@ async function viewDocument(platform: Platform, request: Request, opened: { doc:
 ${meta}${opening}<style>html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: none; } #frame { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; display: block; background: transparent; }</style>
 <body>${editable ? `<script>${EDITING_BODY}</script>` : ""}
 ${frame}${editable ? `<script>${FRAME_SRC}</script>` : ""}
-<div class="erga-view-buttons">${clone}${edit}</div>${VIEW_STYLE}<script>${NAV_SCRIPT}</script>${editable ? `<script>${EDIT_BOOT}</script>` : ""}
+<div class="erga-view-buttons">${clone}${edit}</div>${VIEW_STYLE}<script>${NAV_SCRIPT}</script><script>${FADE_BOOT}</script>${editable ? `<script>${EDIT_BOOT}</script>` : ""}
 </body>
 </html>`, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "Referrer-Policy": "no-referrer", Link: `<${origin}>; rel=preconnect` } });
 }
@@ -847,6 +878,91 @@ async function startPage(platform: Platform, session: Session | null): Promise<R
 </main>`), { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
 }
 
+/**
+ * The viewer's controls (Clone, Edit, who you are) fade once the page is
+ * scrolled, on a document's page (viewDocument, FADE_BOOT) and on the
+ * homepage (home.ts) alike: whole at the top of the page, faded (VIEW_STYLE,
+ * FADED) anywhere below it, and whole again while the pointer is within
+ * FADE_NEAR px of them, one of them has keyboard focus or your menu is open.
+ * On a touch screen, with no pointer to come near, a tap near them brings
+ * them back until the page scrolls again. It's a function of those alone:
+ * the same scroll and pointer give the same look, and no timer changes it.
+ *
+ * `ergaFade(target, root)` (a page script) puts the class erga-faded on
+ * `target` while they're faded; `root` is the document or shadow root they're
+ * in. Its caller tells it where the page is scrolled to (scroll(y)) and where
+ * the pointer is, in the window's coordinates (pointer(x, y, tap)), or that it
+ * left the window (leave()).
+ */
+export const FADE_NEAR = 100;
+/** How see-through the faded controls are: faint, but still there to find. */
+export const FADED = 0.2;
+export const FADE = `function ergaFade(target, root) {
+  var NEAR = ${FADE_NEAR}, y = 0, mouse = null, tap = false, CONTROLS = ".erga-view-buttons, .erga-account";
+  // How far (x, y) is from the nearest control (the account's button, not its menu).
+  function distance(x, y) {
+    var best = Infinity;
+    root.querySelectorAll(".erga-view-buttons > *, .erga-account-btn").forEach(function (el) {
+      var r = el.getBoundingClientRect();
+      if (!r.width || !r.height) return;
+      var dx = Math.max(r.left - x, 0, x - r.right), dy = Math.max(r.top - y, 0, y - r.bottom);
+      best = Math.min(best, Math.hypot(dx, dy));
+    });
+    return best;
+  }
+  function focused() {
+    var a = root.activeElement;
+    try { return !!(a && a.closest && a.closest(CONTROLS) && a.matches(":focus-visible")); } catch (e) { return false; }
+  }
+  function update() {
+    var whole = y <= 0 || tap || (mouse && distance(mouse.x, mouse.y) <= NEAR) || focused() || !!root.querySelector('.erga-account-btn[aria-expanded="true"]');
+    target.classList.toggle("erga-faded", !whole);
+  }
+  root.addEventListener("focusin", update);
+  root.addEventListener("focusout", function () { setTimeout(update); });
+  // The account's menu opening or closing.
+  new MutationObserver(update).observe(root, { subtree: true, attributes: true, attributeFilter: ["aria-expanded"] });
+  addEventListener("resize", update);
+  update();
+  return {
+    scroll: function (to) { to = Math.max(0, Number(to) || 0); if (to != y) tap = false; y = to; update(); },
+    pointer: function (x, py, isTap) {
+      if (!isFinite(x) || !isFinite(py)) return;
+      if (isTap) tap = distance(x, py) <= NEAR; else mouse = { x: x, y: py };
+      update();
+    },
+    leave: function () { mouse = null; update(); },
+    update: update,
+  };
+}`;
+
+/**
+ * The fade (FADE) on a document's page: the page scrolls in the frame, on its
+ * own origin, so the frame's host page says where it's scrolled to and where
+ * the pointer is over it (HOST_SCRIPT: erga-scroll, erga-pointer). The pointer
+ * over the band and the controls is this page's own.
+ */
+const FADE_BOOT = `(() => {
+  ${FADE}
+  const frame = document.getElementById("frame"), pages = new URL(frame.src || frame.dataset.src, location.href).origin;
+  const fade = ergaFade(document.documentElement, document);
+  addEventListener("message", (e) => {
+    const m = e.data;
+    if (e.source != frame.contentWindow || e.origin != pages || !m) return;
+    if (m.type == "erga-scroll") fade.scroll(m.y);
+    else if (m.type == "erga-pointer") { const r = frame.getBoundingClientRect(); fade.pointer(Number(m.x) + r.left, Number(m.y) + r.top, m.tap === true); }
+  });
+  document.addEventListener("pointermove", (e) => { if (e.pointerType == "mouse") fade.pointer(e.clientX, e.clientY, false); }, { passive: true });
+  document.addEventListener("pointerdown", (e) => { if (e.pointerType != "mouse") fade.pointer(e.clientX, e.clientY, true); }, { passive: true });
+  // Out of the window (not into the frame, which then says where the pointer is).
+  document.addEventListener("mouseout", (e) => {
+    if (e.relatedTarget) return;
+    const r = frame.getBoundingClientRect();
+    if (e.clientX > r.left + 1 && e.clientX < r.right - 1 && e.clientY > r.top + 1 && e.clientY < r.bottom - 1) return;
+    fade.leave();
+  });
+})();`;
+
 export const VIEW_STYLE = `
 <style>
   /* The editor's look (style.css, .icon-btn): small icons. Right of them is who you are (account.ts). No breadcrumbs: viewing, there's only the document. */
@@ -874,6 +990,12 @@ export const VIEW_STYLE = `
   body:not(.erga-editing) #nav-docs { visibility: hidden; }
   .erga-view-buttons, .erga-account { transition: none; }
   body.erga-editing.erga-editor-ready :is(.erga-view-buttons, .erga-account) { opacity: 0; visibility: hidden; transition: opacity 200ms ease, visibility 0s 200ms; }
+  /* Faded once the page is scrolled (FADE): the controls themselves, not the band behind them nor your open menu. Quick and
+     smooth, and with no motion at all for those who ask for less: just the change. */
+  .erga-view-buttons > *, .erga-account-btn { transition: opacity 180ms ease, color 150ms ease, background-color 150ms ease; }
+  html.erga-faded :is(.erga-view-buttons > *, .erga-account-btn) { opacity: ${FADED}; }
+  :host(.erga-faded) :is(.erga-view-buttons > *, .erga-account-btn) { opacity: ${FADED}; }
+  @media (prefers-reduced-motion: reduce) { .erga-view-buttons > *, .erga-account-btn { transition: color 150ms ease, background-color 150ms ease; } }
   /* On a phone they'd sit over the text the whole way down: they stay at the top instead. */
   @media (max-width: 640px), (max-height: 480px) {
     .erga-view-buttons { position: absolute; }

@@ -8,6 +8,7 @@
 #                     the homepage served directly and its deploys (tests/home.ts),
 #                     the deploy page against a pretend Cloudflare (tests/deploy.ts),
 #                     who you are in every page's corner (tests/account.ts),
+#                     the viewer's controls fading while you read (tests/fade.ts),
 #                     a document's pages tree (tests/tree.ts),
 #                     the first switch into editing on a slow network (tests/switch.ts),
 #                     versions and publishing (tests/versions.ts),
@@ -43,6 +44,7 @@ page_group() {
   run deployed bun tests/server-config.ts
   run landing bun tests/landing.ts
   run account bun tests/account.ts
+  run fade bun tests/fade.ts
   run tree bun tests/tree.ts
   run switch bun tests/switch.ts
   run versions bun tests/versions.ts
