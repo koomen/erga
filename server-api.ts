@@ -30,7 +30,7 @@
 import { validateToolArguments } from "@mariozechner/pi-ai";
 import { documentToolSpecs, type ToolContent, type ToolSpec } from "./agent";
 import { type Action, type DocRow, type Route, nameOf } from "./directory";
-import { accessOf, esc, forwarded, makeDoc, newDocId, page, safeNext, siteFooter, startingFiles, type Platform, type Session, whoOf } from "./front";
+import { accessOf, appPage, brand, esc, forwarded, ICON, makeDoc, newDocId, page, safeNext, startingFiles, TIMES_SCRIPT, type Platform, type Session, whoOf } from "./front";
 import { findDocument, runServerTool, SERVER_TOOLS, ToolError, type ToolWho } from "./server-tools";
 import { cleanRel } from "./host";
 import { LABEL_MAX, normalCode, REQUEST_MINUTES, type AgentToken } from "./tokens";
@@ -531,10 +531,10 @@ export async function tokensDoor(request: Request, platform: Platform): Promise<
     if (!waiting) return tokensPage(platform, session, url, { notice: `<p class="notice error">That request (${esc(code)}) has expired or was already approved. Ask the agent to start again.</p>` });
     if (!post) {
       return tokensPage(platform, session, url, {
-        notice: `<section class="approve"><h2>An agent asks to act as you</h2>
-<p><b>${esc(waiting.label)}</b> wants a token that lets it do everything you can do on Erga: list, make, edit, rename, share and delete your documents (and, if you're an admin, change the server's settings and users). Approve only if you started this, and the code matches what it showed you:</p>
+        notice: `<section class="card approve"><h2>An agent asks to act as you</h2>
+<p><b>${esc(waiting.label)}</b> wants a token to do everything you can do in Erga. Approve only if you started this and the code matches:</p>
 <p class="code">${esc(code)}</p>
-<form method="post" action="/tokens/approve"><input type="hidden" name="code" value="${esc(code)}"><button class="primary">Approve</button> <a href="/settings">Not now</a></form></section>`,
+<form class="buttons" method="post" action="/tokens/approve"><input type="hidden" name="code" value="${esc(code)}"><button class="new">Approve</button><a href="/settings">Not now</a></form></section>`,
       });
     }
     const info = await platform.tokens.approve(code, who);
@@ -557,83 +557,81 @@ export async function tokensDoor(request: Request, platform: Platform): Promise<
 async function tokensPage(platform: Platform, session: Session, url: URL, o: { notice?: string; made?: { token: string; label: string } }): Promise<Response> {
   const origin = url.origin;
   const list = await platform.tokens.list(session.login);
-  const when = (t: number | null) => (t ? `<time datetime="${new Date(t).toISOString()}">${new Date(t).toISOString().slice(0, 10)}</time>` : "never");
-  const rows = list.map((t) => `<li><span class="label">${esc(t.label)}</span><span class="meta">${t.kind == "share" ? "share button · " : ""}made ${when(t.created)} · used ${when(t.lastUsed)}</span>
-<form method="post" action="/tokens/revoke" data-label="${esc(t.label)}"><input type="hidden" name="id" value="${esc(t.id)}"><button class="revoke">Revoke</button></form></li>`).join("\n");
-  const made = o.made ? `<section class="made"><h2>Your new token: ${esc(o.made.label)}</h2>
+  const when = (t: number | null) => (t ? `<time datetime="${new Date(t).toISOString()}">${new Date(t).toISOString().slice(0, 10)}</time>` : `<span class="never">Never</span>`);
+  // Rows as the documents list's: its name (and whether it's the share button's), when it was made, when it was last used, revoke on hover.
+  const rows = list.map((t) => `  <li>
+    <div class="name"><span class="title">${esc(t.label)}</span>${t.kind == "share" ? `<span class="note">Share button</span>` : ""}</div>
+    ${when(t.created)}
+    ${when(t.lastUsed)}
+    <div class="acts"><form method="post" action="/tokens/revoke" data-label="${esc(t.label)}"><input type="hidden" name="id" value="${esc(t.id)}"><button class="act" aria-label="Revoke ${esc(t.label)}" data-tip="Revoke">${ICON.delete}</button></form></div>
+  </li>`).join("\n");
+  const made = o.made ? `<section class="card made"><h2>${esc(o.made.label)}</h2>
 <p>Copy it now: it isn't shown again.</p>
 <pre class="secret">${esc(o.made.token)}</pre>
-<p>Tell your agent (Claude Code, Codex...):</p>
+<p>Tell your agent:</p>
 <pre>Erga's API is at ${esc(origin)}: read ${esc(origin)}/llms.txt first. My token is ${esc(o.made.token)}
 (send it as "Authorization: Bearer &lt;token&gt;").</pre>
-<p>Or add Erga to Claude Code as an MCP server:</p>
+<p>Or add Erga to Claude Code:</p>
 <pre>claude mcp add --transport http erga ${esc(origin)}/mcp --header "Authorization: Bearer ${esc(o.made.token)}"</pre></section>` : "";
   const test = platform.testToken ? await platform.testToken(session.login) : null;
-  const testBlock = test ? `<section class="test"><h2>Test token</h2>
-<p>This one is different: it signs in test people (Ada, Bo, ...) who can open only test documents under <b>/${esc(session.login)}/test…</b>, where a scripted agent stands in for the model, so the test suite runs here for free. It lasts until ${test.expires.toUTCString()}. Each visit makes a new one.</p>
-<pre class="secret">${esc(test.token)}</pre>
-<p>Run the suite against ${esc(origin)}:</p>
-<pre>ERGA_TEST_TOKEN=${esc(test.token)} bun run test:prod</pre></section>` : "";
-  const html = `<!doctype html>
-<html lang="en">
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Settings · Erga</title>
-<link rel="stylesheet" href="/fonts/inter.css">
-<link rel="stylesheet" href="/style.css">
-<style>
-  body { font-size: 15px; line-height: 1.55; }
-  main { max-width: var(--column); margin: 0 auto; padding: 12vh 20px 48px; }
-  h1 { margin: 0 0 6px; font-size: 24px; font-weight: 650; letter-spacing: -0.015em; color: var(--fg-strong); }
-  h2 { margin: 0 0 8px; font-size: 16px; font-weight: 620; color: var(--fg-strong); }
-  p { margin: 0 0 12px; }
-  .lede { color: var(--soft); margin-bottom: 26px; }
-  a { color: inherit; text-decoration-color: var(--mark); text-underline-offset: 0.2em; }
-  section { margin: 0 0 28px; padding: 18px; border: 1px solid var(--rule); border-radius: 14px; }
+  const testBlock = test ? `<section class="part">
+  <h2>Test token</h2>
+  <p class="sub">Runs the test suite here, as test people, on test documents only. Until <time class="day" datetime="${test.expires.toISOString()}">${test.expires.toISOString().slice(0, 10)}</time>.</p>
+  <pre>ERGA_TEST_TOKEN=<span class="secret">${esc(test.token)}</span> bun run test:prod</pre>
+</section>` : "";
+  const style = `
+  .part { margin-bottom: 56px; }
+  .part h2 { margin: 0; font-size: 17px; font-weight: 620; letter-spacing: -0.01em; color: var(--fg-strong); }
+  .part > header { margin-bottom: 20px; align-items: flex-end; }
+  .part > .sub { margin-bottom: 16px; }
+  .part .sub a { color: inherit; text-decoration-color: var(--rule); text-underline-offset: 0.2em; }
+  .labels, ol.rows > li { display: grid; grid-template-columns: minmax(0, 1fr) 9rem 9rem 40px; align-items: center; column-gap: 16px; }
+  .labels { padding-bottom: 8px; border-bottom: 1px solid var(--rule); font-size: 12px; font-weight: 500; color: var(--chrome); }
+  ol.rows > li, ol.rows > li:first-child { border: 0; }
+  ol.rows { padding-top: 6px; margin-bottom: 20px; }
+  .name { min-width: 0; display: flex; align-items: center; gap: 12px; padding: 11px 0; }
+  .note { padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 500; color: var(--soft); background: color-mix(in srgb, var(--chrome) 13%, transparent); }
+  time, .never { margin: 0; text-align: left; font-size: 13px; color: var(--soft); }
+  .acts { display: flex; justify-content: flex-end; }
+  .acts .act { position: relative; }
+  .acts .act[data-tip]::after { content: attr(data-tip); position: absolute; left: var(--tip-x, 100%); top: var(--tip-y, calc(100% + 6px)); transform: translateX(-100%); z-index: 40;
+    white-space: pre; font: 400 12px/1.3 var(--font-text); letter-spacing: 0.01em; color: var(--soft); opacity: 0; pointer-events: none; }
+  @media (hover: hover) { .acts .act[data-tip]:hover::after { opacity: 1; } }
+  .empty { margin-bottom: 20px; padding: 32px 24px; }
+  form.add { display: flex; gap: 8px; max-width: 520px; }
+  form.add .input { flex: 1; }
+  .card { margin: 0 0 24px; padding: 18px 20px; border: 1px solid var(--rule); border-radius: 12px; font-size: 14px; }
+  .card h2 { margin: 0 0 8px; font-size: 15px; font-weight: 600; color: var(--fg-strong); }
+  .card p { margin: 0 0 10px; }
   .made, .approve { border-color: var(--caret); }
-  pre { margin: 0 0 12px; padding: 10px 12px; border-radius: 9px; background: color-mix(in srgb, var(--chrome) 9%, transparent); font: 12.5px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; word-break: break-all; color: var(--fg-strong); }
+  .card .buttons { display: flex; align-items: center; gap: 12px; }
+  .card .buttons a { color: var(--soft); font-size: 13.5px; }
+  .card button.new { font: inherit; font-size: 13.5px; font-weight: 550; }
+  pre { margin: 0 0 12px; padding: 10px 12px; border-radius: 8px; background: color-mix(in srgb, var(--chrome) 9%, transparent); font: 12.5px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; word-break: break-all; color: var(--fg-strong); }
   .secret { user-select: all; }
   .code { font: 600 26px/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: 0.08em; color: var(--fg-strong); }
-  .notice { padding: 12px 14px; border-radius: 10px; background: color-mix(in srgb, var(--caret) 10%, transparent); }
+  .notice { margin: 0 0 24px; padding: 12px 14px; border-radius: 10px; font-size: 14px; background: color-mix(in srgb, var(--caret) 10%, transparent); }
   .notice.error { background: color-mix(in srgb, #c2410c 12%, transparent); }
-  ol { list-style: none; margin: 0 0 16px; padding: 0; }
-  li { display: flex; align-items: baseline; gap: 12px; padding: 11px 2px; border-bottom: 1px solid var(--rule); }
-  li:first-child { border-top: 1px solid var(--rule); }
-  .label { font-weight: 550; color: var(--fg-strong); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .meta { flex: 1; font-size: 13px; color: var(--soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  form { margin: 0; }
-  .new { display: flex; gap: 8px; }
-  .new input { flex: 1; min-width: 0; padding: 7px 12px; border: 1px solid var(--rule); border-radius: 999px; background: transparent; color: var(--fg-strong); font: inherit; font-size: 14px; }
-  button { font: 600 13px var(--font-text); padding: 7px 14px; border-radius: 999px; border: 1px solid var(--rule); background: transparent; color: var(--fg); cursor: pointer; }
-  button.primary, .new button { border-color: var(--fg-strong); background: var(--fg-strong); color: var(--bg); }
-  .revoke { padding: 4px 11px; font-size: 12.5px; }
-  .empty { color: var(--soft); padding: 12px 2px; border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); }
-  h1 { margin-bottom: 28px; }
-  .part { font-size: 17px; }
-  .lede { font-size: 14px; }
-  /* The page fills the window, so the footer sits at its foot. */
-  body { min-height: 100vh; margin: 0; display: flex; flex-direction: column; }
-  main { flex: 1; box-sizing: border-box; width: 100%; min-height: 0; }
-  .site-foot { padding: 24px 16px 32px; text-align: center; font-size: 12.5px; color: var(--chrome); }
-  @media (max-width: 520px) { li { flex-wrap: wrap; } .meta { flex-basis: 100%; order: 3; } main { padding-top: 6vh; } }
-</style>
-<main>
-  <h1>Settings</h1>
-  <h2 class="part">Agent tokens</h2>
-  <p class="lede">An agent token lets an agent (Claude Code, Codex, a script) do everything you can do on Erga, as you: list, make, edit, rename, share and delete your documents, publish a folder of files as a site, and, if you're an admin, change the server's settings and users. Point the agent at <a href="/llms.txt">${esc(origin)}/llms.txt</a>; it explains the rest, including how to ask you for a token itself.</p>
+  @media (max-width: 520px) { .labels { display: none; } .labels, ol.rows > li { grid-template-columns: minmax(0, 1fr) auto 40px; } ol.rows time:nth-of-type(2), ol.rows .never:nth-of-type(2) { display: none; } }
+`;
+  const html = appPage("Settings", style, `${brand(session)}<main>
+  <header><div><h1>Settings</h1></div></header>
   ${o.notice ?? ""}
   ${made}
-  ${list.length ? `<ol>\n${rows}\n</ol>` : `<p class="empty">None yet. The share button in the editor makes one too.</p>`}
-  <form class="new" method="post" action="/tokens/new"><input name="label" maxlength="${LABEL_MAX}" placeholder="What it's for: Claude Code on my laptop" aria-label="What the token is for" autocomplete="off"><button>New token</button></form>
-  <div style="height:28px"></div>
+  <section class="part">
+  <h2>Agent tokens</h2>
+  <p class="sub">Agents (Claude Code, Codex, etc.) can do everything you can do in Erga. <a href="/llms.txt">Point them here</a>.</p>
+  ${list.length ? `<div class="labels" aria-hidden="true"><span>Name</span><span>Made</span><span>Last used</span><span></span></div>
+  <ol class="rows">\n${rows}\n  </ol>` : `<p class="empty">No tokens yet.</p>`}
+  <form class="add" method="post" action="/tokens/new"><input class="input" name="label" maxlength="${LABEL_MAX}" placeholder="What it's for: Claude Code on my laptop" aria-label="What the token is for" autocomplete="off"><button class="pill">${ICON.plus}New token</button></form>
+  </section>
   ${testBlock}
 </main>
-${siteFooter()}
 <script>
+  ${TIMES_SCRIPT}
+  for (const t of document.querySelectorAll("time.day")) t.textContent = new Date(t.dateTime).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
   for (const f of document.querySelectorAll("form[data-label]")) f.addEventListener("submit", (e) => { if (!confirm("Revoke \\u201c" + f.dataset.label + "\\u201d? Agents using it lose access at once.")) e.preventDefault(); });
-  for (const t of document.querySelectorAll("time")) { const d = new Date(t.dateTime); t.title = d.toLocaleString(); t.textContent = d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }); }
-</script>
-</html>`;
+</script>`);
   return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
 }
 
