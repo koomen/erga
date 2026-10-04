@@ -107,8 +107,8 @@ const ACCOUNT_STYLE = `<style>
   .erga-account-btn svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
   .erga-account-btn:focus-visible { outline: 2px solid #3b7cf0; outline-offset: 2px; }
   @media (pointer: coarse) { .erga-account-btn::after { content: ""; position: absolute; inset: -7px; } }
-  /* Its tooltip, as every control's in the editor: plain text, below it, the moment the pointer is on it. */
-  .erga-account-btn::before { content: attr(data-tip); position: absolute; top: calc(100% + 8px); right: 0; white-space: pre; font-size: 12px; font-weight: 400; line-height: 1.3;
+  /* Its tooltip, as every control's on the site: plain text, the moment the pointer is on it, just below the pointer and following it (the script below). */
+  .erga-account-btn::before { content: attr(data-tip); position: absolute; left: var(--tip-x, 100%); top: var(--tip-y, calc(100% + 6px)); transform: translateX(-100%); white-space: pre; font-size: 12px; font-weight: 400; line-height: 1.3;
     letter-spacing: .01em; color: var(--acc-soft); opacity: 0; pointer-events: none; }
   @media (hover: hover) { .erga-account-btn:hover::before { opacity: 1; } }
   .erga-account-btn[aria-expanded="true"]::before { display: none; }
@@ -137,4 +137,12 @@ const ACCOUNT_SCRIPT = `<script>(() => {
   document.addEventListener("pointerdown", (e) => { if (!root.contains(e.target)) show(false); });
   document.addEventListener("keydown", (e) => { if (e.key == "Escape" && !menu.hidden) { show(false); btn.focus(); } });
   window.addEventListener("blur", () => show(false));
+  // Every control's tooltip on the page (the editor's too) follows the pointer while it's on the control: where, for its CSS.
+  document.addEventListener("pointermove", (e) => {
+    const el = e.pointerType == "mouse" && e.target.closest?.("[data-tip]");
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    el.style.setProperty("--tip-x", e.clientX - r.left + "px");
+    el.style.setProperty("--tip-y", e.clientY - r.top + 22 + "px");
+  }, { passive: true });
 })();</script>`;

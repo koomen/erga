@@ -327,17 +327,18 @@ body.previewing .i-eye { display: none; }
 body.previewing .i-pen { display: block; }
 body.previewing #btn-preview { color: var(--chrome-hover); }
 
-/* Tooltips, the same on every control: plain text, below it, right-aligned with it, the moment the pointer is on it.
+/* Tooltips, the same on every control: plain text, the moment the pointer is on it,
+   just below the pointer with its right edge there, following it (account.ts sets
+   --tip-x and --tip-y as it moves; without them, right-aligned under the control).
    (Avatars use ::before: their ::after widens them for a finger.) */
 :is(.icon-btn, .mode button)[data-tip]::after, :is(.avatar, .agent-badge)[data-tip]::before {
   content: attr(data-tip);
-  position: absolute; top: calc(100% + 6px); right: 0; z-index: 40;
+  position: absolute; left: var(--tip-x, 100%); top: var(--tip-y, calc(100% + 6px)); transform: translateX(-100%); z-index: 40;
   white-space: pre;
   font: 400 12px/1.3 var(--font-text); letter-spacing: 0.01em;
   color: var(--soft);
   opacity: 0; pointer-events: none;
 }
-:is(.avatar, .agent-badge)[data-tip]::before { top: calc(100% + 8px); }
 @media (hover: hover) {
   :is(.icon-btn, .mode button)[data-tip]:hover::after, :is(.avatar, .agent-badge)[data-tip]:hover::before { opacity: 1; }
 }

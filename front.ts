@@ -570,7 +570,7 @@ const VIEW_STYLE = `
   .erga-view-button[aria-pressed="true"], .erga-view-button[aria-pressed="true"]:hover { color: #3b7cf0; background: transparent; }
   .erga-view-button:focus-visible, .erga-crumbs a:focus-visible { outline: 2px solid #3b82f6; outline-offset: 1px; }
   .erga-view-button svg { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
-  .erga-view-button::after { content: attr(data-tip); position: absolute; top: calc(100% + 6px); right: 0; white-space: pre; font-size: 12px;
+  .erga-view-button::after { content: attr(data-tip); position: absolute; left: var(--tip-x, 100%); top: var(--tip-y, calc(100% + 6px)); transform: translateX(-100%); white-space: pre; font-size: 12px;
     font-weight: 400; line-height: 1.3; letter-spacing: .01em; color: var(--soft); opacity: 0; pointer-events: none; }
   @media (hover: hover) { .erga-view-button:hover::after { opacity: 1; } }
   .erga-crumbs { left: max(14px, env(safe-area-inset-left)); max-width: calc(100vw - 200px); }
