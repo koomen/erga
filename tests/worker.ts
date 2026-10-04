@@ -612,18 +612,18 @@ try {
     const at = await browser.page();
     await at.open(`${base}/admin?user=${adminName}`);
     await at.eval(`(() => { const i = document.querySelector('li.setting[data-key=delete_docs_after_hours] input[name=value]'); i.value = "36"; i.dispatchEvent(new Event("input", { bubbles: true })); document.querySelector('li.setting[data-key=delete_docs_after_hours] .save').click(); })()`);
-    await until(async () => (await at.eval<string>(`document.readyState == "complete" ? document.querySelector('li.setting[data-key=delete_docs_after_hours] .meta')?.textContent ?? "" : ""`)).includes(`Set by ${adminName}`), 5000, "saving a setting from the page shows who set it");
+    await until(async () => (await at.eval<string>(`document.readyState == "complete" ? document.querySelector('li.setting[data-key=delete_docs_after_hours] .meta')?.textContent ?? "" : ""`)).includes(`set by ${adminName}`), 5000, "saving a setting from the page shows who set it");
     expect((await at.eval<string>(`document.querySelector('li.setting[data-key=delete_docs_after_hours] input[name=value]').value`)) == "36", "with its new value");
     await at.eval(`document.querySelector('li.setting[data-key=delete_docs_after_hours] .reset').click()`);
-    await until(async () => (await at.eval<string>(`document.readyState == "complete" ? document.querySelector('li.setting[data-key=delete_docs_after_hours] .meta')?.textContent ?? "" : ""`)).includes("Default"), 5000, "reset from the page");
+    await until(async () => await at.eval<boolean>(`document.readyState == "complete" && !document.querySelector('li.setting[data-key=delete_docs_after_hours] .meta') && !document.querySelector('li.setting[data-key=delete_docs_after_hours] .reset')`), 5000, "reset from the page");
     // Never, from the page: choosing it hides the hours, and saving keeps it.
     await at.eval(`(() => { const m = document.querySelector('li.setting[data-key=delete_docs_after_hours] select.mode'); m.value = "never"; m.dispatchEvent(new Event("change", { bubbles: true })); })()`);
     expect(await at.eval<boolean>(`document.querySelector('li.setting[data-key=delete_docs_after_hours] .amount').hidden && !document.querySelector('li.setting[data-key=delete_docs_after_hours] .save').disabled`), "choosing Never hides the hours and lights up Save");
     await at.eval(`document.querySelector('li.setting[data-key=delete_docs_after_hours] .save').click()`);
-    await until(async () => (await at.eval<string>(`document.readyState == "complete" ? document.querySelector('li.setting[data-key=delete_docs_after_hours] .meta')?.textContent ?? "" : ""`)).includes(`Set by ${adminName}`), 5000, "saving Never from the page");
+    await until(async () => (await at.eval<string>(`document.readyState == "complete" ? document.querySelector('li.setting[data-key=delete_docs_after_hours] .meta')?.textContent ?? "" : ""`)).includes(`set by ${adminName}`), 5000, "saving Never from the page");
     expect(await at.eval<boolean>(`document.querySelector('li.setting[data-key=delete_docs_after_hours] select.mode').value == "never" && document.querySelector('li.setting[data-key=delete_docs_after_hours] .amount').hidden`), "the page shows Never after saving");
     await at.eval(`document.querySelector('li.setting[data-key=delete_docs_after_hours] .reset').click()`);
-    await until(async () => (await at.eval<string>(`document.readyState == "complete" ? document.querySelector('li.setting[data-key=delete_docs_after_hours] .meta')?.textContent ?? "" : ""`)).includes("Default"), 5000, "reset from the page, again");
+    await until(async () => await at.eval<boolean>(`document.readyState == "complete" && !document.querySelector('li.setting[data-key=delete_docs_after_hours] .meta') && !document.querySelector('li.setting[data-key=delete_docs_after_hours] .reset')`), 5000, "reset from the page, again");
     await at.eval(`(() => { const f = document.querySelector('form.add-user'); f.elements.login.value = "pagebie"; f.requestSubmit(); })()`);
     await until(async () => at.eval<boolean>(`!!document.querySelector('li[data-login="pagebie"]')`), 5000, "adding a user from the page lists them");
     at.close?.();

@@ -97,15 +97,18 @@ function valueInput(e: Shown, never: boolean): string {
 const shown = (v: unknown, kind?: string) => (v === null ? (kind == "document" ? "none" : "never") : typeof v == "boolean" ? (v ? "on" : "off") : typeof v == "string" ? `“${v}”` : JSON.stringify(v));
 
 function settingRow(e: Shown, session: Session, never: boolean): string {
-  const when = e.updated != null ? `<time datetime="${new Date(e.updated).toISOString()}">${new Date(e.updated).toISOString().slice(0, 10)}</time>` : "";
-  const meta = e.locked ? `<span class="badge" title="Fixed in the deploy's configuration (server.config.ts or ERGA_SERVER_CONFIG): change it there and deploy">Locked by the deploy</span><span>· default ${esc(shown(e.default, e.kind))}</span>`
-    : e.source == "set" ? `<span>Set${e.updatedBy ? ` by ${esc(e.updatedBy)}` : ""} ${when}</span><span>· default ${esc(shown(e.default, e.kind))}</span>`
-    : `<span>Default</span>`;
+  const def = `default ${shown(e.default, e.kind)}`;
+  const when = e.updated != null ? `Set ${new Date(e.updated).toISOString().slice(0, 16).replace("T", " ")} UTC · ` : "";
+  const meta = e.locked ? `<span class="badge" title="Locked by the deploy (server.config.ts or ERGA_SERVER_CONFIG) · ${esc(def)}">Locked</span>`
+    : e.source == "set" ? `<span title="${esc(when + def)}">set${e.updatedBy ? ` by ${esc(e.updatedBy)}` : ""}</span>`
+    : "";
+  const doc = e.kind == "document" && e.value != null
+    ? e.doc ? `<a class="open-doc" href="${esc(link(e.doc.address, session))}">${esc(e.doc.title)}</a>` : `<span class="gone" title="No such document now: the front page is the plain one">missing</span>`
+    : "";
   return `  <li class="setting" data-key="${esc(e.key)}">
     <div class="about">
-      <label class="key" for="set-${esc(e.key)}">${esc(e.key)}</label>
+      <div class="head"><label class="key" for="set-${esc(e.key)}">${esc(e.key)}</label>${meta || doc ? `<span class="meta">${[meta, doc].filter(Boolean).join(`<span aria-hidden="true">·</span>`)}</span>` : ""}</div>
       <p class="desc">${esc(e.description)}</p>
-      <p class="meta">${meta}${e.kind == "document" && e.value != null ? e.doc ? `<span>· <a class="open-doc" href="${esc(link(e.doc.address, session))}">${esc(e.doc.title)}</a></span>` : `<span class="gone">· no such document now: the front page is the plain one</span>` : ""}</p>
     </div>
     <form class="value" method="post" action="${esc(link("/admin/settings", session))}">
       <input type="hidden" name="key" value="${esc(e.key)}">
@@ -142,16 +145,18 @@ async function adminPage(platform: Platform, session: Session): Promise<Response
   const takesNever = (key: string) => { try { return (platform.directory.config.settings as Settings)[key]?.parse(null) === null; } catch { return false; } };
   const style = `
   section { margin-bottom: 44px; }
-  h2 { display: flex; align-items: baseline; gap: 10px; margin: 0 0 4px; font-size: 16px; font-weight: 600; color: var(--fg-strong); }
+  h2 { display: flex; align-items: baseline; gap: 10px; margin: 0 0 8px; font-size: 16px; font-weight: 600; color: var(--fg-strong); }
   h2 small { font-size: 13px; font-weight: 400; color: var(--soft); }
   .lede { margin: 0 0 16px; font-size: 13.5px; color: var(--soft); }
   .back { font-size: 13px; color: var(--chrome); text-decoration: none; }
   .back:hover { color: var(--chrome-hover); }
-  ol.rows > li.setting { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 4px 16px; padding: 14px 2px; }
+  ol.rows > li.setting { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 4px 16px; padding: 10px 2px; }
   .setting .about { min-width: 0; }
-  .setting .key { display: block; margin: 0; font-family: var(--font-mono); font-size: 13.5px; color: var(--fg-strong); }
-  .setting .desc { margin: 2px 0 0; color: var(--fg); }
-  .setting .meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 4px 0 0; font-size: 12.5px; color: var(--soft); }
+  .setting .head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+  .setting .key { margin: 0; font-family: var(--font-mono); font-size: 13.5px; color: var(--fg-strong); }
+  .setting .desc { margin: 2px 0 0; font-size: 13px; color: var(--soft); }
+  .setting .meta { display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: 5px; font-size: 12px; color: var(--soft); }
+  .setting .meta .badge { margin: 0; }
   .setting .meta time { margin: 0; font-size: inherit; }
   .setting .meta a { color: inherit; }
   .setting .meta .gone { color: #c2410c; }
@@ -178,14 +183,13 @@ async function adminPage(platform: Platform, session: Session): Promise<Response
   </header>
   <section aria-labelledby="settings-title">
     <h2 id="settings-title">Settings</h2>
-    <p class="lede">The server's settings, the same for everyone. A setting the deploy locks can only be changed there.</p>
     <ol class="rows">
 ${settings.map((e) => settingRow(e, session, takesNever(e.key))).join("\n")}
     </ol>
   </section>
   <section aria-labelledby="users-title">
     <h2 id="users-title">Users <small>${users.length} · ${admins} admin${admins == 1 ? "" : "s"}</small></h2>
-    <p class="lede">Only the GitHub logins here can sign in. Admins can change the settings and who's here. Removing someone signs them out everywhere; their documents stay.</p>
+    <p class="lede">Only these GitHub logins can sign in.</p>
     <form class="add-user" method="post" action="${esc(link("/admin/users", session))}">
       <input type="hidden" name="do" value="add">
       <input class="input" name="login" placeholder="A GitHub login" aria-label="GitHub login to add" autocomplete="off" autocapitalize="off" spellcheck="false" required>

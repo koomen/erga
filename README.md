@@ -195,9 +195,9 @@ the agent in the editor, or Claude Code with their token, to add a user.
 
 **The admin page.** `/admin` (`admin.ts`) is for admins only; anyone else,
 and an agent with an admin's token, gets a 404 there. It shows every
-setting (its description, its value, where that comes from: default, set by
-whom and when, or locked by the deploy, which is shown but can't be
-changed) with Save and Reset, and every user (last seen, who added them,
+setting compactly (its key, a one-line description, its value with Save
+and Reset; a small "set by whom" note, with when and the default on hover, or a
+"Locked" badge for one the deploy fixes, whose value is shown read-only), and every user (last seen, who added them,
 a User/Admin role menu and a remove button; a bootstrap admin's are
 disabled), with a box to add one by GitHub login. Underneath it's `POST
 /admin/settings` (`key` and `value` as JSON, or `reset=1`) and `POST
