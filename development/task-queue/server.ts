@@ -39,6 +39,14 @@
 // a fresh server (detached, logging to data/server.log) and exits; the new
 // one waits for the old to be gone before it reads the state and listens.
 // Previews run in their own process groups, so they carry on through it.
+//
+// Dependencies between tasks: startAfter (don't start until these are merged)
+// and mergeAfter (don't merge until these are merged; startAfter ones count
+// too), stored on the task. blockedBy, computed on every change, says what a
+// task waits for; starting (PATCH status working, POST .../live) and merging
+// (POST .../merge, and again when a queued merge runs) are refused while it
+// does. A dependency that is discarded or failed blocks its dependents until
+// someone removes or changes it. GET /api, "dependencies", has the details.
 
 import { spawn as spawnDetached } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
@@ -104,6 +112,24 @@ interface Task {
   createdAt: string;
   updatedAt: string;
   mergedAt?: string;
+  /** Don't start until these tasks are merged. */
+  startAfter?: number[];
+  /** Don't merge until these tasks are merged (the startAfter ones too). */
+  mergeAfter?: number[];
+  /** Computed on every change (not stored): what the task waits for, if anything. */
+  blockedBy?: Blocked;
+}
+
+/** What a task waits for: dependencies (by id) that aren't merged yet. */
+interface Blocked {
+  /** A queued task's startAfter tasks not merged yet: it can't start. */
+  start: number[];
+  /** Its startAfter and mergeAfter tasks not merged yet: it can't merge. */
+  merge: number[];
+  /** Those of them that won't merge as things stand (discarded or failed): someone must remove or change the dependency. */
+  stuck: number[];
+  /** In words: "waiting for #12 to merge", "can't merge until #12 merges", "#12 was discarded: ...". */
+  reason: string;
 }
 
 // ---- state ----------------------------------------------------------------
@@ -114,7 +140,8 @@ const clients = new Set<ReadableStreamDefaultController>();
 const encoder = new TextEncoder();
 
 function save() {
-  writeFileSync(STORE + ".tmp", JSON.stringify(store, null, 2));
+  computeBlocked();
+  writeFileSync(STORE + ".tmp", JSON.stringify(store, (k, v) => (k == "blockedBy" ? undefined : v), 2));
   renameSync(STORE + ".tmp", STORE);
   broadcast("tasks", store.tasks);
 }
@@ -131,6 +158,114 @@ function touch(task: Task, changes: Partial<Task> = {}, message?: string) {
 }
 
 const find = (id: number) => store.tasks.find((t) => t.id == id);
+
+// ---- dependencies ---------------------------------------------------------
+
+const DONE: Status[] = ["merged", "discarded"];
+/** "#12", "#12 and #13", "#12, #13 and #14". */
+const ids = (list: number[]) => list.map((id) => `#${id}`).join(", ").replace(/, ([^,]*)$/, " and $1");
+const unmerged = (list?: number[]) => (list ?? []).filter((id) => find(id)?.status != "merged");
+/** The startAfter tasks not merged yet: the task can't start. */
+const unmetStart = (t: Task) => unmerged(t.startAfter);
+/** The startAfter and mergeAfter tasks not merged yet: the task can't merge. */
+const unmetMerge = (t: Task) => [...new Set([...unmerged(t.startAfter), ...unmerged(t.mergeAfter)])];
+
+function blocked(t: Task): Blocked | undefined {
+  if (DONE.includes(t.status)) return undefined;
+  const merge = unmetMerge(t);
+  if (!merge.length) return undefined;
+  const start = t.status == "queued" ? unmetStart(t) : [];
+  const stuck = merge.filter((id) => ["discarded", "failed"].includes(find(id)?.status ?? "discarded"));
+  const reason = stuck.length
+    ? `blocked: ${stuck.map((id) => `#${id} ${find(id)?.status == "failed" ? "failed" : "was discarded"}`).join(", ")}; remove or change the dependency${stuck.some((id) => find(id)?.status == "failed") ? " (or fix and merge it)" : ""}`
+    : start.length ? `waiting for ${ids(start)} to merge` : `can't merge until ${ids(merge)} merge${merge.length == 1 ? "s" : ""}`;
+  return { start, merge, stuck, reason };
+}
+
+function computeBlocked() {
+  for (const t of store.tasks) { const b = blocked(t); if (b) t.blockedBy = b; else delete t.blockedBy; }
+}
+
+/**
+ * Reads a dependency list from a request: an array of ids (or a "12,13" string); null or [] clears it.
+ * Each must be another task that exists and isn't discarded. Returns the ids, or an error.
+ */
+function parseDeps(v: unknown, self?: number): number[] | string {
+  if (v == null || v === "") return [];
+  const raw = Array.isArray(v) ? v : typeof v == "string" || typeof v == "number" ? String(v).split(",") : undefined;
+  if (!raw) return "dependencies are a list of task ids";
+  const list: number[] = [];
+  for (const x of raw) {
+    const s = String(x).trim().replace(/^#/, "");
+    if (!s) continue;
+    if (!/^\d+$/.test(s)) return `${JSON.stringify(x)} isn't a task id`;
+    const id = Number(s);
+    if (id == self) return `task ${id} can't depend on itself`;
+    const t = find(id);
+    if (!t) return `no task ${id}`;
+    if (t.status == "discarded") return `task ${id} is discarded`;
+    if (!list.includes(id)) list.push(id);
+  }
+  return list;
+}
+
+/** A chain of dependencies from one of `deps` back to `id` (so `id` waiting on them is a cycle), as ids from `id`. */
+function cycle(id: number, deps: number[]): number[] | undefined {
+  const seen = new Set<number>();
+  const walk = (n: number, path: number[]): number[] | undefined => {
+    if (n == id) return path;
+    if (seen.has(n)) return undefined;
+    seen.add(n);
+    const t = find(n);
+    for (const d of [...(t?.startAfter ?? []), ...(t?.mergeAfter ?? [])]) { const p = walk(d, [...path, d]); if (p) return p; }
+    return undefined;
+  };
+  for (const d of deps) { const p = walk(d, [id, d]); if (p) return p; }
+  return undefined;
+}
+
+/**
+ * The dependency changes a POST or PATCH body asks for (startAfter, mergeAfter), checked: ids, and no cycle.
+ * Returns the changes (only the keys given), or an error.
+ */
+function depChanges(b: Record<string, any>, task?: Task): Pick<Task, "startAfter" | "mergeAfter"> | string {
+  const out: Pick<Task, "startAfter" | "mergeAfter"> = {};
+  for (const k of ["startAfter", "mergeAfter"] as const) {
+    if (!(k in b)) continue;
+    const list = parseDeps(b[k], task?.id);
+    if (typeof list == "string") return `${k}: ${list}`;
+    out[k] = list.length ? list : undefined;
+  }
+  if (task) {
+    const all = [...new Set([...(("startAfter" in out ? out.startAfter : task.startAfter) ?? []), ...(("mergeAfter" in out ? out.mergeAfter : task.mergeAfter) ?? [])])];
+    const loop = cycle(task.id, all);
+    if (loop) return `that makes a cycle: ${loop.map((id) => `#${id}`).join(" waits for ")}`;
+  }
+  return out;
+}
+
+/** " (starts after #12; merges after #14)", or nothing. */
+const depsNote = (t: Pick<Task, "startAfter" | "mergeAfter">) => {
+  const parts = [t.startAfter?.length ? `starts after ${ids(t.startAfter)}` : "", t.mergeAfter?.length ? `merges after ${ids(t.mergeAfter)}` : ""].filter(Boolean);
+  return parts.length ? ` (${parts.join("; ")})` : "";
+};
+
+/** The tasks still to do that wait on this one. */
+const dependents = (id: number) => store.tasks.filter((t) => !DONE.includes(t.status) && (t.startAfter?.includes(id) || t.mergeAfter?.includes(id)));
+
+/** Notes on each dependent's log what happened to a dependency (merged, discarded, failed), and what that means for it. */
+function tellDependents(dep: Task) {
+  for (const t of dependents(dep.id)) {
+    const b = blocked(t);
+    const what = dep.status == "merged" ? `#${dep.id} merged` : `#${dep.id} ${dep.status == "failed" ? "failed" : "was discarded"}`;
+    const now = dep.status != "merged" ? `this task is blocked until the dependency is removed or changed`
+      : !b ? (t.status == "queued" ? "unblocked: it can start now" : "unblocked: it can merge now")
+      : t.status == "queued" && !b.start.length ? "unblocked: it can start now" : b.reason;
+    touch(t, {}, `${what}: ${now}`);
+  }
+}
+
+computeBlocked();
 
 // A merge that was running when the queue stopped will never finish: put it
 // back in Ready to merge, its worktree out of the half-done merge.
@@ -436,6 +571,9 @@ async function mergeInto(task: Task, ref: string) {
 async function merge(task: Task) {
   touch(task, {}, "Merging");
   try {
+    // A dependency that hasn't merged (its merge, queued ahead of this one, failed; or one added meanwhile).
+    const waiting = unmetMerge(task);
+    if (waiting.length) throw new Error(`Can't merge until ${ids(waiting)} merge${waiting.length == 1 ? "s" : ""} (${waiting.map((id) => `#${id} is ${find(id)?.status ?? "gone"}`).join(", ")}). Merge it again when they have, or remove the dependency.`);
     const wt = task.worktree;
     if (!wt || !existsSync(wt)) throw new Error("the task's worktree is gone");
     if (await git(wt, "status", "--porcelain", "--untracked-files=no")) throw new Error(`${wt} has uncommitted changes: commit them (or ask the task's agent to) and merge again`);
@@ -452,6 +590,7 @@ async function merge(task: Task) {
     await refresh(); // on the board at once, as not pushed yet
     if (origin) await git(REPO, "push", "origin", MAIN);
     touch(task, { status: "merged", commit, mergedAt: new Date().toISOString() }, `Merged into ${MAIN} as ${commit}${origin ? " and pushed" : ""}`);
+    tellDependents(task);
     await refresh();
     await cleanUp(task, false);
     console.log(`#${task.id} merged as ${commit}`);
@@ -530,13 +669,19 @@ const API = {
   pid: process.pid,
   live: "a live task (live: true) is worked on in a session with the user, not by a background worker: POST /api/tasks/:id/live runs its dev server with live reload and opens a Chrome window of its own on it (chrome: {pid, port, profile, target}); GET /api/tasks/:id/look says what that window shows; merge and discard stop both",
   restart: "after a merge that changes the queue's own code, it restarts itself (new pid) once nothing else is merging; tasks and previews carry on",
+  dependencies: {
+    startAfter: "task ids: don't start this task until they are merged. PATCH status working (tq start) and POST /live answer 409, with the reason, until then",
+    mergeAfter: "task ids: don't merge this task until they are merged. POST /merge (the board's Merge, tq merge) answers 409 until then; the startAfter tasks count too. A merge may be asked for while the dependencies are merging (queued ahead of it); if one of them doesn't merge, this merge fails back to complete with the reason",
+    blockedBy: "computed on every read and event, absent when nothing blocks the task: {start: startAfter ids not merged (queued tasks only), merge: startAfter and mergeAfter ids not merged, stuck: those discarded or failed, reason: e.g. 'waiting for #12 to merge', 'can't merge until #12 merges', 'blocked: #12 was discarded; remove or change the dependency'}",
+    rules: "set them in POST /api/tasks or change them with PATCH (a list of ids, or null / [] to clear; not while merging or once done). Each id must be another task that isn't discarded; a cycle is refused (400). When a dependency merges, its dependents' logs say so and the tasks event fires; tq watch prints '#14 unblocked: title (#12 merged)'. A discarded or failed dependency blocks its dependents until someone removes or changes it",
+  },
   columns: { Queued: ["queued"], Working: ["working", "failed"], "Ready to merge": ["complete"], Merging: ["merging"], Branches: "main's latest commits (GET /api/history): a merged task shows on its merge commit; older merged tasks and discarded ones aren't shown" },
   endpoints: {
     "GET /api": "this description",
     "GET /api/tasks[?status=complete]": "all tasks, oldest first",
     "GET /api/tasks/:id": "one task",
-    "POST /api/tasks {title, description?, worktree?: true, live?: false}": "register a task: makes branch task/<id>-<slug> and worktree .claude/worktrees/task-<id> from main (node_modules cloned from the main checkout) and assigns a preview port. live marks it a live task. Returns the task.",
-    "PATCH /api/tasks/:id {status?, url?, summary?, error?, title?, description?, live?, message?}": `update a task; status is one of ${AGENT_STATUSES.join(", ")}; message is appended to its log`,
+    "POST /api/tasks {title, description?, worktree?: true, live?: false, startAfter?: [ids], mergeAfter?: [ids]}": "register a task: makes branch task/<id>-<slug> and worktree .claude/worktrees/task-<id> from main (node_modules cloned from the main checkout) and assigns a preview port. live marks it a live task; startAfter and mergeAfter are its dependencies (see dependencies). Returns the task.",
+    "PATCH /api/tasks/:id {status?, url?, summary?, error?, title?, description?, live?, startAfter?, mergeAfter?, message?}": `update a task; status is one of ${AGENT_STATUSES.join(", ")} (working is refused, 409, while a startAfter task isn't merged); startAfter and mergeAfter replace its dependencies (see dependencies); message is appended to its log`,
     "POST /api/tasks/:id/log {message}": "append a progress line to the task's log",
     "POST /api/tasks/:id/preview {command?, path?}": `start the task's preview server in its worktree with $PORT set (default command: ${PREVIEW}); it outlives the agent and is stopped on merge. Sets url to http://localhost:<port><path> unless url is already set.`,
     "DELETE /api/tasks/:id/preview": "stop the preview server",
@@ -545,7 +690,7 @@ const API = {
     "POST /api/tasks/:id/screenshots": "attach a screenshot: a raw image body (Content-Type image/png, ?caption=...), or JSON {path, caption?} (a file on disk), or JSON {url, caption?, width?, height?, wait?: ms after load, fullPage?} (the queue takes it with headless Chrome)",
     "DELETE /api/tasks/:id/screenshots/:file": "remove one screenshot (by its file name, or its 1-based index) and delete its file; any status but merging",
     "DELETE /api/tasks/:id/screenshots": "remove all the task's screenshots and delete their files (for a fresh pass); any status but merging",
-    "POST /api/tasks/:id/merge": "for a complete (or failed) task: status merging at once (202), then, in the background and one merge at a time, merge main into the branch (claude -p resolves conflicts), merge the branch into main, push, and remove the worktree and branch: status merged. A failed merge goes back to complete with error. Watch the task.",
+    "POST /api/tasks/:id/merge": "for a complete (or failed) task whose dependencies are merged (else 409 with the reason; dependencies that are merging, ahead of it, are fine): status merging at once (202), then, in the background and one merge at a time, merge main into the branch (claude -p resolves conflicts), merge the branch into main, push, and remove the worktree and branch: status merged. A failed merge goes back to complete with error. Watch the task.",
     "POST /api/tasks/:id/discard": "drop the task: stops its preview (and a live task's Chrome window), removes its worktree and deletes its branch",
     "GET /api/history": `main's history, for the board's Branches column: {commits: the latest ${SHOWN} on main's first-parent line, newest first, each {sha, short, subject, at, task?: the task whose merge it is, remote: whether origin/main has it}, tasks: {id: {sha, short, index, remote}} for tasks merged in main's latest ${MATCHED}, unpushed, behind, origin}. origin/main is fetched every ${FETCH_EVERY || "(never)"}s (TASK_QUEUE_FETCH).`,
     "GET /api/events": "server-sent events: a `version` event (the board's own, which reloads when it changes), a `tasks` event with every task and a `history` event with GET /api/history, on connect and on each change",
@@ -595,10 +740,12 @@ async function handle(req: Request): Promise<Response> {
   if (path == "/api/tasks" && req.method == "POST") {
     const b = await body();
     if (!b.title || typeof b.title != "string") return fail(400, "title is required");
+    const deps = depChanges(b);
+    if (typeof deps == "string") return fail(400, deps);
     const now = new Date().toISOString();
-    const t: Task = { id: store.nextId++, title: b.title.trim(), description: String(b.description ?? "").trim(), status: "queued", screenshots: [], log: [], createdAt: now, updatedAt: now, ...(b.live ? { live: true } : {}) };
+    const t: Task = { id: store.nextId++, title: b.title.trim(), description: String(b.description ?? "").trim(), status: "queued", screenshots: [], log: [], createdAt: now, updatedAt: now, ...(b.live ? { live: true } : {}), ...deps };
     store.tasks.push(t);
-    touch(t, {}, "Registered");
+    touch(t, {}, "Registered" + depsNote(t));
     if (b.worktree !== false) {
       try { t.port = await freePort(); await setUpWorktree(t); } catch (e) {
         touch(t, { status: "failed", error: (e as Error).message }, `Couldn't set up: ${(e as Error).message}`);
@@ -612,11 +759,22 @@ async function handle(req: Request): Promise<Response> {
     const b = await body();
     if (b.status && !AGENT_STATUSES.includes(b.status)) return fail(400, `status must be one of ${AGENT_STATUSES.join(", ")} (merging, merged and discarded come from POST /api/tasks/:id/merge and /discard)`);
     if (["merging", "merged", "discarded"].includes(task.status) && b.status) return fail(409, `task ${task.id} is ${task.status}`);
-    const changes: Partial<Task> = {};
+    const depsAsked = "startAfter" in b || "mergeAfter" in b;
+    if (depsAsked && ["merging", "merged", "discarded"].includes(task.status)) return fail(409, `task ${task.id} is ${task.status}: its dependencies can't change`);
+    const deps = depChanges(b, task);
+    if (typeof deps == "string") return fail(400, deps);
+    if (b.status == "working" && task.status != "working") {
+      const waiting = unmerged("startAfter" in deps ? deps.startAfter : task.startAfter);
+      if (waiting.length) return fail(409, `task ${task.id} can't start: waiting for ${ids(waiting)} to merge (${waiting.map((id) => `#${id} is ${find(id)?.status}`).join(", ")})`);
+    }
+    const changes: Partial<Task> = { ...deps };
     for (const k of ["status", "url", "summary", "error", "title", "description"] as const) if (k in b) (changes as any)[k] = b[k] ?? undefined;
     if ("live" in b) changes.live = !!b.live || undefined;
     if (b.status && b.status != "failed" && !("error" in b)) changes.error = undefined;
-    touch(task, changes, b.message ?? (b.status && b.status != task.status ? `Status: ${b.status}` : undefined));
+    const was = task.status;
+    const message = [b.message ?? (b.status && b.status != task.status ? `Status: ${b.status}` : undefined), depsAsked ? `Dependencies: ${depsNote({ ...task, ...changes }).replace(/^ \(|\)$/g, "") || "none"}` : undefined].filter(Boolean).join("; ");
+    touch(task, changes, message || undefined);
+    if (task.status == "failed" && was != "failed") tellDependents(task);
     return json(task);
   }
   if (task && action == "log" && req.method == "POST") {
@@ -633,6 +791,7 @@ async function handle(req: Request): Promise<Response> {
   if (task && action == "preview" && req.method == "DELETE") { stopPreview(task); return json(task); }
   if (task && action == "live" && req.method == "POST") {
     if (["merging", "merged", "discarded"].includes(task.status)) return fail(409, `task ${task.id} is ${task.status}`);
+    if (task.status == "queued" && unmetStart(task).length) return fail(409, `task ${task.id} can't start: ${task.blockedBy?.reason ?? `waiting for ${ids(unmetStart(task))} to merge`}`);
     const b = await body();
     try { await goLive(task, b.path || "/", b.command || LIVE); } catch (e) { touch(task, {}, `Live mode: ${(e as Error).message}`); return fail(500, (e as Error).message); }
     return json(task);
@@ -688,6 +847,9 @@ async function handle(req: Request): Promise<Response> {
     if (task.status == "merging") return fail(409, `task ${task.id} is already merging`);
     if (!["complete", "failed"].includes(task.status) && !(task.status == "working" && url.searchParams.has("force"))) return fail(409, `task ${task.id} is ${task.status}, not complete`);
     if (!task.branch) return fail(409, "task has no branch");
+    // Its dependencies merged, or merging now (queued ahead of it, checked again when its turn comes).
+    const notYet = unmetMerge(task).filter((id) => find(id)?.status != "merging");
+    if (notYet.length) return fail(409, `task ${task.id} can't merge until ${ids(notYet)} merge${notYet.length == 1 ? "s" : ""}${task.blockedBy?.stuck.length ? ` (${task.blockedBy.reason})` : ""}`);
     const ahead = store.tasks.filter((t) => t.status == "merging").map((t) => `#${t.id}`);
     touch(task, { status: "merging", error: undefined }, ahead.length ? `Merge requested: waiting for ${ahead.join(", ")} to merge first` : "Merge requested");
     mergeLock = mergeLock.then(() => merge(task)).then(restartIfWanted);
@@ -696,6 +858,7 @@ async function handle(req: Request): Promise<Response> {
   if (task && action == "discard" && req.method == "POST") {
     if (["merging", "merged"].includes(task.status)) return fail(409, `task ${task.id} is ${task.status}`);
     touch(task, { status: "discarded" }, "Discarded");
+    tellDependents(task);
     await cleanUp(task, true);
     return json(task);
   }

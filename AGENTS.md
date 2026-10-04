@@ -24,7 +24,10 @@ a description like "task queue status changes"). It starts the queue if it
 isn't running, then prints one line per task status change, and nothing
 else: `#3 working: title`, `#3 ready to merge: title`, `#3 merging: title`,
 `#3 merged: title`, `#4 failed: title: why`, `#5 merge failed, back to
-ready to merge: title: why`, `#6 discarded: title`. It rides out the server
+ready to merge: title: why`, `#6 discarded: title`; and, for
+[dependencies](#dependencies-between-tasks), `#7 unblocked: title (#3
+merged)`, `#8 unblocked for merge: title (#3 merged)` and `#9 blocked:
+title: why`. It rides out the server
 restarting (and starts it again if it stays down). When the Monitor
 expires, **re-arm it** with the same command: `--state` remembers what it
 had seen, so changes made in between are reported then.
@@ -34,8 +37,12 @@ On each line, act without being asked:
 - **ready to merge** or **failed**: if its subagent hasn't already reported
   it, relay it to the user in a sentence or two (`tq get <id>` has the
   summary, URL or error).
-- **merged**: say so in a line, and start any task that was waiting on it
-  (its dependencies all merged): register and hand it off as below.
+- **merged**: say so in a line.
+- **unblocked**: its `--after` tasks have merged, so start it: hand it to a
+  subagent as below (it's registered already, with its worktree).
+  **unblocked for merge**: tell the user it can be merged now.
+- **blocked**: a dependency was discarded or failed. Tell the user, and
+  change the dependency (`tq deps`) if they agree.
 - **merge failed**: tell the user why, and what would fix it.
 
 ### Two modes: task mode and live mode
@@ -78,6 +85,27 @@ When the user asks for a change to this repo (and not live):
 
 3. When a subagent reports back, relay its result in a sentence or two
    (the task's URL, and anything the user must know). Don't redo its work.
+
+### Dependencies between tasks
+
+When the outer agent splits work into several tasks, it declares how they
+depend on each other, and the queue enforces it (in the API and on the
+board):
+
+- `--after 12,13`: the task truly needs #12 and #13 merged first. It stays
+  queued; `tq start` is refused until they merge. Register it now, but hand
+  it to a subagent only when `tq watch` prints `#14 unblocked`.
+- `--merge-after 12`: the tasks can be built in parallel against a contract
+  written in both asks (an API, a file format), but must land in order.
+  Merge stays off until #12 merges.
+
+      development/task-queue/tq add "Title" "Ask" --after 12 --merge-after 13
+      development/task-queue/tq deps 14 --after 12,13 | --merge-after none | --clear
+
+Don't build against a throwaway stub of another task's work, to be followed
+by a "connect it to the real thing" task: make the task wait (`--after`), or
+write the contract and use `--merge-after`. A dependency that is discarded or
+fails blocks its dependents until someone removes or changes it.
 
 Questions about the code, explanations and other asks that change nothing
 in the repo are answered directly, without a task. Work on the task queue
@@ -124,6 +152,11 @@ Fill in the brackets:
 >    ("Task summaries") shows: what changed for the user, results, limits,
 >    tests, and what the user must do. If you can't finish,
 >    `tq fail [id] "why"` instead.
+>
+> Don't build against a stand-in for another task's unmerged work: if the
+> ask says this task merges after #[n], build against the contract it gives,
+> as the real thing; if you find an unnamed dependency, say so
+> (`tq fail [id] "why"`) rather than stub it.
 >
 > Don't merge or push: the user merges from the board. Finish by replying
 > with the task's URL and a two-line summary.
@@ -203,11 +236,15 @@ in the main agent's system prompt and gives it one tool,
 `task-queue:worker` subagent in the worktree with the prompt above built in.
 The worker reports with `task_log`, `task_preview`, `task_screenshot`
 (`replace: true` for a fresh set), `task_unscreenshot`, `task_done` and
-`task_fail`. `/tasks` opens a live pane with Open, Merge
+`task_fail`. `task_create` also takes `after` and `mergeAfter`
+(dependencies, as above): a task with `after` gets no worker until its
+dependencies merge, and then `task_start` starts it; `task_deps` changes
+them. `/tasks` opens a live pane with Open, Merge
 and Discard buttons (no Merge or Discard while a task is merging), and
 `/tasks board` opens the browser board. The status line counts working, ready
-and merging tasks, and toasts say when one is ready, starts merging, is
-merged, fails to merge or fails. With the mod loaded, use its tools instead of `tq` (but still watch the queue with `tq watch` under Monitor, as above: the mod's toasts tell the user, not the agent; its system prompt says so too). Live mode has no tool of its own: use `tq add --live`, `tq live` and `tq look`, as above (the mod's system prompt says so).
+and merging tasks (and those waiting on others), and toasts say when one is
+ready, starts merging, is merged, fails to merge, fails, is unblocked or is
+blocked. With the mod loaded, use its tools instead of `tq` (but still watch the queue with `tq watch` under Monitor, as above: the mod's toasts tell the user, not the agent; its system prompt says so too). Live mode has no tool of its own: use `tq add --live`, `tq live` and `tq look`, as above (the mod's system prompt says so).
 
 ## Task summaries
 
@@ -271,7 +308,9 @@ whose admin-only calls check who's asking themselves.
 ## Merging
 
 The user merges from the board (the same as `tq merge <id>`, or
-`tq merge <id> --wait` to wait for the outcome; agents don't). The task goes
+`tq merge <id> --wait` to wait for the outcome; agents don't). Merge is off,
+with the reason, while a task's dependencies (`--after`, `--merge-after`)
+aren't merged; a dependency that is merging just ahead of it is fine. The task goes
 straight to **Merging** (status `merging`, its own column), and stays there
 while the queue works; merges run one at a time, in the order they were
 asked for, and a card waiting its turn says so. The queue merges `origin/main` and `main` into the task's branch, in its
@@ -280,7 +319,7 @@ conflicts, run the tests and commit. Then it merges the branch into `main`
 (`--no-ff`, "Merge task/…: title"), pushes to `origin`, stops the preview and
 removes the worktree and branch: the task is Done (`merged`). A merge that
 fails (uncommitted changes, unresolved conflicts, the main checkout not on
-`main`) goes back to Ready to merge (`complete`) with the reason on the card,
+`main`, or a `--merge-after` task that didn't merge first) goes back to Ready to merge (`complete`) with the reason on the card,
 as does one the queue was stopped in the middle of, when it starts again.
 Agents can't set `merging` or `merged`, nor change a merging task's status. Discard drops a task: preview stopped,
 worktree removed, branch deleted. A live task's Chrome window is closed on
@@ -309,9 +348,9 @@ print the task as JSON.
 
 | | |
 |---|---|
-| `POST /api/tasks {title, description, live?}` | register (branch, worktree, port); `live: true` for a live task |
+| `POST /api/tasks {title, description, live?, startAfter?, mergeAfter?}` | register (branch, worktree, port); `live: true` for a live task; `startAfter`, `mergeAfter`: task ids it depends on |
 | `GET /api/tasks[?status=…]`, `GET /api/tasks/:id` | read |
-| `PATCH /api/tasks/:id {status, url, summary, error, live, message}` | update; `status` is `queued`, `working`, `complete` or `failed` (`merging`, `merged` and `discarded` are the queue's); `message` goes on the log |
+| `PATCH /api/tasks/:id {status, url, summary, error, live, startAfter, mergeAfter, message}` | update; `status` is `queued`, `working`, `complete` or `failed` (`merging`, `merged` and `discarded` are the queue's; `working` is a 409 while a `startAfter` task isn't merged); `message` goes on the log. Reads carry `blockedBy {start, merge, stuck, reason}` while something blocks the task |
 | `POST /api/tasks/:id/log {message}` | a progress line |
 | `POST /api/tasks/:id/preview {command?, path?}` | run the preview (default `bun start --port $PORT --no-open`) in the worktree; sets `url` |
 | `DELETE /api/tasks/:id/preview` | stop it |
@@ -319,7 +358,7 @@ print the task as JSON.
 | `GET /api/tasks/:id/look[?shot=1&console=1]` | what that window shows: `url`, `title`, `tabs`, `selection`, `console`, `screenshot` |
 | `POST /api/tasks/:id/screenshots` | an image body, or `{path}`, or `{url}` (headless Chrome), with `caption` |
 | `DELETE /api/tasks/:id/screenshots/:file`, `DELETE /api/tasks/:id/screenshots` | remove one screenshot (by file name or 1-based index), or all, and delete the files; not while merging. The board's detail view has a × on each screenshot (on hover) |
-| `POST /api/tasks/:id/merge`, `POST /api/tasks/:id/discard` | the board's buttons; merge answers 202 with the task `merging` |
+| `POST /api/tasks/:id/merge`, `POST /api/tasks/:id/discard` | the board's buttons; merge answers 202 with the task `merging`, or 409 while its dependencies aren't merged |
 | `GET /api/events` | server-sent events: every task, on each change |
 
 If the queue isn't running, any `tq` command starts it (or

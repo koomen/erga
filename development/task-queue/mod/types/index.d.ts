@@ -12,6 +12,12 @@ export type Task = {
   last?: string
   commit?: string
   updatedAt: string
+  /** Don't start until these tasks are merged. */
+  startAfter?: number[]
+  /** Don't merge until these tasks are merged. */
+  mergeAfter?: number[]
+  /** What the task waits for (computed by the queue), absent when nothing blocks it. */
+  blockedBy?: { start: number[]; merge: number[]; stuck: number[]; reason: string }
 }
 
 declare module 'claude-code' {

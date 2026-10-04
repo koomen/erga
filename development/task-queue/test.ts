@@ -22,6 +22,13 @@
 // its own, launched headless here, reattached, relaunched when closed), tq look
 // (url, title, selection, console, a screenshot), the board's live badge, and
 // the window and dev server stopped on discard and on merge.
+// Dependencies: startAfter and mergeAfter set on creation and changed (ids
+// checked, cycles refused), start and merge refused until the dependency
+// merges and allowed after, a queued merge whose dependency's merge fails
+// (the race), a discarded and a failed dependency, tq watch's unblocked and
+// blocked lines, tq add --after/--merge-after and tq deps, and the board (the
+// chip, Merge disabled with the reason, adding and removing one in the detail
+// view) in headless Chrome. DEPS_ONLY=1 runs just this part.
 
 import { existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -68,6 +75,7 @@ const leftovers: number[] = [];
 let selfPid = 0;
 try {
   await waitUp();
+  if (process.env.DEPS_ONLY) { await dependencies(); throw "done"; }
   const about = await api("GET", "/api");
   check(about.endpoints, "GET /api describes the API");
   check(about.statuses.merging && about.columns.Merging?.[0] == "merging", "GET /api describes the merging status and its column");
@@ -327,6 +335,8 @@ try {
     check(page.errors.length == 0, `no errors on the board (${page.errors})`);
   } finally { browser.close(); }
 
+  await dependencies();
+
   // ---- Live mode -------------------------------------------------------------
   const running = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
   const gone = async (pid: number) => { for (let i = 0; i < 100 && running(pid); i++) await Bun.sleep(100); return !running(pid); };
@@ -503,6 +513,8 @@ try {
     check(page.errors.length == 0, `no errors on the board (${page.errors})`);
   } finally { browser2.close(); }
   await api2("POST", `/api/tasks/${k.id}/discard`);
+} catch (e) {
+  if (e !== "done") throw e;
 } finally {
   server.kill();
   for (const pid of leftovers) if (pid) try { process.kill(pid, "SIGKILL"); } catch {}
@@ -512,3 +524,165 @@ try {
 }
 console.log(failures ? `\n${failures} failed` : "\nall passing");
 process.exit(failures ? 1 : 0);
+
+/** Dependencies between tasks, on the first queue. */
+async function dependencies() {
+  const lines: string[] = [];
+  const w = Bun.spawn([join(import.meta.dir, "tq"), "watch"], { env, stdout: "pipe", stderr: "pipe" });
+  (async () => {
+    const reader = (w.stdout as ReadableStream<Uint8Array>).getReader(); let buf = "";
+    for (;;) { const { value, done } = await reader.read(); if (done) break; buf += new TextDecoder().decode(value); let i; while ((i = buf.indexOf("\n")) >= 0) { lines.push(buf.slice(0, i)); buf = buf.slice(i + 1); } }
+  })();
+  const line = async (want: string) => { for (let i = 0; i < 60 && !lines.includes(want); i++) await Bun.sleep(100); return lines.includes(want); };
+  const commit = (t: any, file: string) => sh(`echo ${file} > ${file}.txt && git add . && git commit -qm ${file}`, t.worktree);
+  try {
+    await Bun.sleep(800); // the watch's baseline
+    const about = await api("GET", "/api");
+    check(about.dependencies?.startAfter && about.dependencies.mergeAfter && about.dependencies.blockedBy && /startAfter/.test(Object.keys(about.endpoints).join(" ")), "GET /api documents dependencies");
+
+    const a = await api("POST", "/api/tasks", { title: "Dep A: the API" });
+    const b = await api("POST", "/api/tasks", { title: "Dep B: uses the API", startAfter: [a.id] });
+    const c = await api("POST", "/api/tasks", { title: "Dep C: lands after A", mergeAfter: [a.id] });
+    check(b.code == 201 && b.startAfter?.[0] == a.id && b.blockedBy?.start?.[0] == a.id && b.blockedBy.reason == `waiting for #${a.id} to merge`, `POST takes startAfter, and blockedBy says what it waits for (${b.blockedBy?.reason})`);
+    check(c.mergeAfter?.[0] == a.id && c.blockedBy?.start.length == 0 && c.blockedBy.merge[0] == a.id && c.blockedBy.reason == `can't merge until #${a.id} merges`, `POST takes mergeAfter (${c.blockedBy?.reason})`);
+    check(!a.blockedBy && (await api("GET", `/api/tasks/${a.id}`)).blockedBy === undefined, "a task without dependencies has no blockedBy");
+    check(await line(`#${b.id} queued: Dep B: uses the API: waiting for #${a.id} to merge`), "tq watch says what a new task waits for");
+    const saved = JSON.parse(readFileSync(join(data, "tasks.json"), "utf8")).tasks.find((t: any) => t.id == b.id);
+    check(saved.startAfter?.[0] == a.id && !("blockedBy" in saved), "dependencies are saved in tasks.json; blockedBy isn't (it's computed)");
+
+    // Ids checked, cycles refused.
+    const bad = await api("POST", "/api/tasks", { title: "Bad", startAfter: [9999] });
+    check(bad.code == 400 && /no task 9999/.test(bad.error), `an unknown id is refused (${bad.error})`);
+    check((await api("PATCH", `/api/tasks/${a.id}`, { startAfter: [a.id] })).code == 400, "a task can't depend on itself");
+    const cyc = await api("PATCH", `/api/tasks/${a.id}`, { mergeAfter: [b.id] });
+    check(cyc.code == 400 && cyc.error.includes(`cycle: #${a.id} waits for #${b.id} waits for #${a.id}`), `a cycle is refused (${cyc.error})`);
+    const d = await api("POST", "/api/tasks", { title: "Dep D", mergeAfter: [c.id], worktree: false });
+    const cyc2 = await api("PATCH", `/api/tasks/${a.id}`, { startAfter: [d.id] });
+    check(cyc2.code == 400 && cyc2.error.includes(`#${a.id} waits for #${d.id} waits for #${c.id} waits for #${a.id}`), `a longer cycle is refused (${cyc2.error})`);
+    check((await api("GET", `/api/tasks/${a.id}`)).startAfter === undefined, "and nothing changed");
+    check((await api("PATCH", `/api/tasks/${d.id}`, { mergeAfter: null })).mergeAfter === undefined, "PATCH with null clears a dependency list");
+
+    // Start refused until A merges.
+    const s1 = await api("PATCH", `/api/tasks/${b.id}`, { status: "working" });
+    check(s1.code == 409 && s1.error.includes(`waiting for #${a.id} to merge`), `PATCH status working is refused while a startAfter task isn't merged (${s1.error})`);
+    const s2 = tq("start", String(b.id));
+    check(s2.code == 1 && s2.err.includes(`waiting for #${a.id}`), "tq start says why");
+    check((await api("POST", `/api/tasks/${b.id}/live`)).code == 409, "and live mode can't start it either");
+    check((await api("GET", `/api/tasks/${b.id}`)).status == "queued", "it stays queued");
+
+    // Merge refused until A merges.
+    commit(c, "c");
+    await api("PATCH", `/api/tasks/${c.id}`, { status: "working" });
+    await api("PATCH", `/api/tasks/${c.id}`, { status: "complete", summary: "C" });
+    const m1 = await api("POST", `/api/tasks/${c.id}/merge`);
+    check(m1.code == 409 && m1.error.includes(`can't merge until #${a.id} merges`), `POST merge is refused while a mergeAfter task isn't merged (${m1.error})`);
+    check(tq("merge", String(c.id)).code == 1 && (await api("GET", `/api/tasks/${c.id}`)).status == "complete", "tq merge too, and it stays ready to merge");
+
+    // The CLI.
+    const x = JSON.parse(tq("add", "Dep X", "ask", "--after", `${a.id},${b.id}`, "--merge-after", String(c.id)).out || "{}");
+    check(x.startAfter?.join() == `${a.id},${b.id}` && x.mergeAfter?.join() == String(c.id) && x.description == "ask", `tq add --after --merge-after (${JSON.stringify([x.startAfter, x.mergeAfter])})`);
+    const shown = JSON.parse(tq("deps", String(x.id)).out || "{}");
+    check(shown.startAfter?.length == 2 && shown.blockedBy?.reason == `waiting for #${a.id} and #${b.id} to merge`, `tq deps shows them (${shown.blockedBy?.reason})`);
+    const x2 = JSON.parse(tq("deps", String(x.id), "--after", "none").out || "{}");
+    check(x2.startAfter?.length == 0 && x2.mergeAfter?.[0] == c.id && x2.blockedBy?.reason == `can't merge until #${c.id} merges`, "tq deps --after none clears startAfter");
+    const x3 = JSON.parse(tq("deps", String(x.id), "--clear", "--merge-after", String(a.id)).out || "{}");
+    check(x3.startAfter?.length == 0 && x3.mergeAfter?.join() == String(a.id), "tq deps --clear --merge-after replaces both");
+    check(tq("deps", String(x.id), "--after", String(x.id)).code == 1, "tq deps refuses a bad dependency");
+    const listed = JSON.parse(tq("list", "queued").out || "[]").find((t: any) => t.id == b.id);
+    check(listed?.startAfter?.[0] == a.id && listed.blockedBy == `waiting for #${a.id} to merge`, "tq list shows dependencies and what blocks a task");
+    check(/tq deps ID/.test(tq("help").out) && /--merge-after/.test(tq("help").out) && /unblocked/.test(tq("help").out), "tq help documents them");
+    await api("POST", `/api/tasks/${x.id}/discard`);
+
+    // The board: B's chip, C's Merge off with the reason, and C's dependencies in its detail view.
+    const browser = await Browser.launch();
+    try {
+      const page = await browser.page();
+      await page.open(base + "/", { width: 1500, height: 900, clear: false });
+      await Bun.sleep(600);
+      const v = await page.eval(`(() => { const card = (id) => document.querySelector('.card[data-open="' + id + '"]');
+        const m = card(${c.id})?.querySelector(".actions button.primary");
+        return { chip: card(${b.id})?.querySelector(".chip")?.textContent, blocked: card(${b.id})?.classList.contains("blocked"), aChip: !!card(${a.id})?.querySelector(".chip"),
+          cChip: card(${c.id})?.querySelector(".chip")?.textContent, mergeOff: m?.disabled, mergeTitle: m?.title, why: card(${c.id})?.querySelector(".why")?.textContent,
+          queued: [...document.querySelectorAll('[data-col="queued"] .card')].map((c) => Number(c.dataset.open)) }; })()`);
+      check(v.chip == `waiting for #${a.id}` && v.blocked && !v.aChip, `a card waiting to start has a "waiting for" chip and sits back (${JSON.stringify(v)})`);
+      check(v.queued.indexOf(a.id) < v.queued.indexOf(b.id), "in Queued, the tasks that can start come first");
+      check(v.cChip == `merges after #${a.id}` && v.mergeOff && v.mergeTitle == `Can't merge until #${a.id} merges` && v.why == v.mergeTitle, `Merge is disabled with the reason (${v.why})`);
+      await page.eval(`document.querySelector('.card[data-open="${c.id}"] .title').click(), true`);
+      await page.settle();
+      const dv = await page.eval(`({ rows: [...document.querySelectorAll("#dlg .dep")].map((r) => r.querySelector(".kind").textContent + ": " + r.querySelector("a").textContent + " (" + r.querySelector(".status").textContent + ")"), link: document.querySelector("#dlg .dep a")?.dataset.open, merge: document.querySelector("#dlg .actions button.primary")?.disabled })`);
+      check(dv.rows.length == 1 && dv.rows[0] == `Merges after: #${a.id} Dep A: the API (Queued)` && dv.link == String(a.id) && dv.merge, `the detail view lists the dependency, with a link (${JSON.stringify(dv)})`);
+      // Add one (merge after D), then remove it with its ×.
+      await page.eval(`document.getElementById("dep-kind").value = "mergeAfter", document.getElementById("dep-id").value = "${d.id}", document.querySelector('#dlg [data-act="dep"]').click(), true`);
+      const added = await until(c.id, (t) => t.mergeAfter?.includes(d.id));
+      await page.settle(); await Bun.sleep(200);
+      check(added.mergeAfter?.join() == `${a.id},${d.id}` && (await page.eval(`document.querySelectorAll("#dlg .dep").length`)) == 2, "the detail view adds a dependency");
+      await page.screenshot(join(tmp, "deps-detail.png"));
+      await page.eval(`document.querySelector('#dlg [data-act="undep"][data-dep="${d.id}"]').click(), true`);
+      const removed = await until(c.id, (t) => !t.mergeAfter?.includes(d.id));
+      check(removed.mergeAfter?.join() == String(a.id), "and its × removes it");
+      // A cycle from the board: the error shows in the detail view.
+      await page.eval(`document.querySelector('.card[data-open="${a.id}"] .title').click(), true`);
+      await page.settle();
+      await page.eval(`document.getElementById("dep-kind").value = "startAfter", document.getElementById("dep-id").value = "${b.id}", document.querySelector('#dlg [data-act="dep"]').click(), true`);
+      await Bun.sleep(500);
+      check((await page.eval(`document.querySelector("#dlg .err")?.textContent ?? ""`)).includes("cycle"), "a cycle added on the board is refused, and the detail view says why");
+      await page.eval(`document.querySelector('#dlg [data-act="close"]').click(), true`);
+      await page.screenshot(join(tmp, "deps-board.png"));
+      check(page.errors.length == 0, `no errors on the board (${page.errors})`);
+    } finally { browser.close(); }
+    await api("POST", `/api/tasks/${d.id}/discard`);
+
+    // A merges: B can start, C can merge.
+    commit(a, "a");
+    await api("PATCH", `/api/tasks/${a.id}`, { status: "complete" });
+    const ma = JSON.parse(tq("merge", String(a.id), "--wait").out || "{}");
+    check(ma.status == "merged", `A merges (${ma.error ?? ma.status})`);
+    const [b2, c2] = [await api("GET", `/api/tasks/${b.id}`), await api("GET", `/api/tasks/${c.id}`)];
+    check(!b2.blockedBy && !c2.blockedBy, "its dependents aren't blocked any more");
+    check(b2.log.at(-1).message == `#${a.id} merged: unblocked: it can start now` && c2.log.at(-1).message == `#${a.id} merged: unblocked: it can merge now`, `their logs say so (${b2.log.at(-1).message})`);
+    check(await line(`#${b.id} unblocked: Dep B: uses the API (#${a.id} merged)`), `tq watch: "#${b.id} unblocked: ... (#${a.id} merged)" (${JSON.stringify(lines.slice(-4))})`);
+    check(await line(`#${c.id} unblocked for merge: Dep C: lands after A (#${a.id} merged)`), "and C unblocked for merge");
+    check(tq("start", String(b.id)).code == 0, "B starts now");
+    check((await api("POST", `/api/tasks/${c.id}/merge`)).code == 202 && (await until(c.id, (t) => t.status != "merging")).status == "merged", "C merges now");
+
+    // The race: F asks to merge while E, its dependency, waits to merge (behind G); E's merge fails, so F's must too.
+    const g = await api("POST", "/api/tasks", { title: "Dep G: slow" });
+    const e = await api("POST", "/api/tasks", { title: "Dep E: dirty" });
+    const f = await api("POST", "/api/tasks", { title: "Dep F: after E", mergeAfter: [e.id] });
+    sh(`echo g >> notes.txt && git commit -qam g`, g.worktree);
+    sh(`echo main >> notes.txt && git commit -qam main`); // so G conflicts, and its merge takes the resolver's second
+    commit(e, "e"); writeFileSync(join(e.worktree, "notes.txt"), "dirty\n");
+    commit(f, "f");
+    for (const t of [g, e, f]) await api("PATCH", `/api/tasks/${t.id}`, { status: "complete" });
+    await api("POST", `/api/tasks/${g.id}/merge`);
+    await api("POST", `/api/tasks/${e.id}/merge`);
+    const qf = await api("POST", `/api/tasks/${f.id}/merge`);
+    check(qf.code == 202 && qf.log.at(-1).message.includes(`#${e.id}`), "a merge may be asked for while its dependency is merging (queued ahead of it)");
+    const f2 = await until(f.id, (t) => t.status != "merging");
+    const e2 = await api("GET", `/api/tasks/${e.id}`);
+    check((await api("GET", `/api/tasks/${g.id}`)).status == "merged" && e2.status == "complete", `G merges, E's merge fails (${e2.status})`);
+    check(f2.status == "complete" && f2.error?.includes(`Can't merge until #${e.id} merges`), `when F's turn comes, E isn't merged: F's merge fails back to ready to merge, saying why (${f2.error})`);
+
+    // E discarded: F is blocked for good, until its dependency changes.
+    await api("POST", `/api/tasks/${e.id}/discard`);
+    const f3 = await api("GET", `/api/tasks/${f.id}`);
+    check(f3.blockedBy?.stuck?.[0] == e.id && f3.blockedBy.reason == `blocked: #${e.id} was discarded; remove or change the dependency`, `a discarded dependency blocks it, with the reason (${f3.blockedBy?.reason})`);
+    check(f3.log.at(-1).message.startsWith(`#${e.id} was discarded: this task is blocked`), "its log says so");
+    check(await line(`#${f.id} blocked: Dep F: after E: blocked: #${e.id} was discarded; remove or change the dependency`), "tq watch says it's blocked");
+    check((await api("POST", `/api/tasks/${f.id}/merge`)).code == 409, "its merge is refused");
+    check((await api("POST", "/api/tasks", { title: "On a discarded one", startAfter: [e.id] })).code == 400, "a discarded task can't become a dependency");
+    tq("deps", String(f.id), "--clear");
+    check((await api("POST", `/api/tasks/${f.id}/merge`)).code == 202 && (await until(f.id, (t) => t.status != "merging")).status == "merged", "with the dependency removed, it merges");
+
+    // A failed dependency blocks too, and stops blocking when it's back at work.
+    const h = await api("POST", "/api/tasks", { title: "Dep H", worktree: false });
+    const i = await api("POST", "/api/tasks", { title: "Dep I", startAfter: [h.id], worktree: false });
+    await api("PATCH", `/api/tasks/${h.id}`, { status: "failed", error: "broke" });
+    const i2 = await api("GET", `/api/tasks/${i.id}`);
+    check(i2.blockedBy?.stuck?.[0] == h.id && /#\d+ failed; remove or change the dependency \(or fix and merge it\)/.test(i2.blockedBy.reason), `a failed dependency blocks it (${i2.blockedBy?.reason})`);
+    await api("PATCH", `/api/tasks/${h.id}`, { status: "working" });
+    check((await api("GET", `/api/tasks/${i.id}`)).blockedBy?.reason == `waiting for #${h.id} to merge`, "back at work, it's only waited for");
+    for (const t of [h, i, b]) await api("POST", `/api/tasks/${t.id}/discard`);
+    check(!lines.some((l) => !/^#\d+ [a-z ,]+: /.test(l)), `tq watch prints nothing but its lines (${lines.filter((l) => !/^#\d+ [a-z ,]+: /.test(l))})`);
+  } finally { w.kill(); }
+}
