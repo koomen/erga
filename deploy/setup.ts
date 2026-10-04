@@ -93,6 +93,7 @@ const putSecret = (worker: string, name: string, text: string) => cf.call("PUT",
 async function makeToken(plan: TokenPlan): Promise<boolean> {
   for (const l of describePlan(plan)) console.log(`   - ${l}`);
   if (!ask(`   Make ${plan.name} and store it on ${plan.storedOn}?`, yes)) { console.log("   Skipped."); return false; }
+  if (!mock && !makerValue && cred!.from != "CLOUDFLARE_API_TOKEN") throw new DeployError("The cf CLI's login can't make account API tokens (Cloudflare doesn't grant its OAuth client that scope). Make an account-owned API token with only Account › Account API Tokens › Edit (Manage Account › Account API Tokens, a TTL of today), and run this again with CLOUDFLARE_TOKEN_MAKER set to it.");
   if (!mock) {
     const d = await diagnoseMaker({ net, accountId, value: makerValue || token });
     for (const l of d.said) console.log(`   The token maker (${makerValue ? "CLOUDFLARE_TOKEN_MAKER" : cred!.from}): ${l}`);
