@@ -538,6 +538,37 @@ There's no dark mode: pages are shown as their authors made them, and most
 don't support one. The editor's own controls take their colours from the page
 under them instead.
 
+### Document settings
+
+The gear in the top row opens the document's settings, in a popover under
+it (a sheet from the bottom on a phone; Escape or a click outside closes it):
+
+- **Publishing**: *Latest*, the default, where viewers see the current
+  version, up to the keystroke, or *Manual*, where they see the version
+  picked, until another is. Switching to Manual keeps what viewers see. The
+  published-version menu always shows the published version, the latest ten
+  and the three just before the published one (to roll back to); a row for
+  each run of versions in between says how many there are and loads them
+  (`?before=`).
+- **Homepage**, for admins and on the homepage itself: whether this document
+  is the server's homepage (only admins may change it, not while it deploys),
+  how its deploy stands (Scheduled for, Deploying, Deployed at, Failed), and
+  **Redeploy now**.
+- **Versions**: the latest ten, each with its number, the model's five-word
+  description (a quiet placeholder until it arrives), when and who; the
+  current and the published one marked.
+
+It follows the event channel's `{ type: "versions" }` and `{ type: "home" }`,
+so it's always up to date. Someone who can't edit sees it read-only, with a
+line saying why. Its code (`src/page/settings.ts`, built as `settings.js`)
+loads only when the gear is hovered, focused or clicked.
+
+It talks to the server's `/api/docs/<id>/versions`, `/publish`, `/home` and
+`/home/deploy`. Until those are in, `ERGA_STUB_SETTINGS=1 bun start` answers
+them with a stand-in (`dev/settings-stub.ts`, local development only), whose
+`POST /__erga/stub/settings` sets up any state (how many versions, which is
+published, a deploy that fails…); `tests/settings.ts` uses it.
+
 ### When the page is broken
 
 Whenever the document is broken in a way you'd see, the editor says what's
@@ -951,6 +982,10 @@ a deleted one is made again, and an admin's choice is kept;
 `tests/landing.test.ts` races separate isolates on one database.
 `tests/directory.test.ts` covers the directory, permissions, users and
 settings on bun:sqlite; `tests/tokens.test.ts` the tokens themselves.
+`bun tests/settings.ts` checks document settings (the popover, Latest and
+Manual, the published-version menu's windows, live updates, the homepage's
+deploy states, errors, read-only, a phone and a dark page), and
+`tests/versions.test.ts` the menu's windows on their own.
 `bun tests/isolation.ts` opens a page that tries to reach whoever views it
 (the shell's window, its cookies, erga.dev's API, forged messages) and checks
 it gets nothing. The browser tests reach the page through the frame's own
@@ -1013,6 +1048,9 @@ back, merging edits from disk, the agent's exact-match edits and attribution.
   room connection and its binding to the editor), `merge.ts` (word diffs and
   rebasing as change sets), `agent-log.ts` (the agent transcript, shared by
   host and shell)
+- `src/page/settings.ts`, `src/page/versions.ts`: document settings (the gear's
+  popover: publishing, the homepage, versions), built on its own as `settings.js`;
+  `dev/settings-stub.ts` stands in for their server side (`ERGA_STUB_SETTINGS=1`)
 - `package.json`: the pinned CodeMirror and Yjs packages the page editor bundles, and pi
 - `style.css`: theme colours, typography and the editor's styling
 - `fonts/`: the self-hosted Inter web font

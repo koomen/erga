@@ -3,17 +3,17 @@
 // loaded only when the gear is reached for (main.ts, loadSettings), so it
 // costs viewing and opening the editor nothing.
 //
-// It holds:
+// It holds, top to bottom:
 //   - Publishing: Latest (viewers see the current version, as it's typed) or
 //     Manual (viewers see the version picked), and in Manual the picker,
 //     which always shows the published version, the latest ten and the few
 //     before the published one, with a row for each run in between that
 //     loads more (versions.ts, pickerRows).
+//   - Homepage (for admins, and on the homepage itself): whether this is the
+//     server's homepage, how its deploy is going, and Redeploy now.
 //   - Versions: the latest ten, each with its number, the model's five-word
 //     description (a quiet placeholder until it arrives), when and who; the
 //     current and the published one marked.
-//   - Homepage (for admins, and on the homepage itself): whether this is the
-//     server's homepage, how its deploy is going, and Redeploy now.
 //
 // It talks to the server's API as the shared contract says (README,
 // "Versions and publishing" and "The homepage"), and refreshes on the event
@@ -134,7 +134,7 @@ html.page-dark body:not(.source) .ds-error { color: #ff9d94; }
 .ds-menu .ds-more .ds-dots { letter-spacing: 2px; color: var(--chrome); }
 .ds-menu [role="separator"] { height: 1px; margin: 4px 6px; background: var(--rule); }
 @media (max-width: 520px) {
-  .help.ds { top: auto; left: 0; right: 0; bottom: 0; width: auto; max-height: min(82vh, calc(100% - var(--top-clear))); border-radius: 16px 16px 0 0; border-bottom: 0; padding-bottom: env(safe-area-inset-bottom); animation: ds-sheet 240ms var(--agent-ease, ease); }
+  .help.ds { z-index: 22; top: auto; left: 0; right: 0; bottom: 0; width: auto; max-height: min(82vh, calc(100% - var(--top-clear))); border-radius: 16px 16px 0 0; border-bottom: 0; padding-bottom: env(safe-area-inset-bottom); animation: ds-sheet 240ms var(--agent-ease, ease); }
   .ds section { padding: 14px 18px; }
   .ds-sheet-grip { display: block; width: 36px; height: 4px; margin: 8px auto -4px; border-radius: 2px; background: color-mix(in srgb, var(--chrome) 40%, transparent); }
 }
@@ -173,11 +173,6 @@ function mount(host: SettingsHost): Settings {
       <p class="ds-explain" id="ds-explain"></p>
       <p class="ds-error" id="ds-pub-error" role="alert"></p>
     </section>
-    <section class="ds-history" aria-labelledby="ds-history-title">
-      <h3 id="ds-history-title">Versions <small id="ds-total"></small></h3>
-      <ol class="ds-list" id="ds-list" aria-label="Recent versions"></ol>
-      <p class="ds-foot" id="ds-foot" hidden></p>
-    </section>
     <section class="ds-home" id="ds-home" hidden aria-label="Homepage">
       <div class="ds-switch-row">
         <label id="ds-home-label" for="ds-home-switch">This is the homepage</label>
@@ -189,6 +184,11 @@ function mount(host: SettingsHost): Settings {
         <button type="button" class="ds-btn" id="ds-redeploy">Redeploy now</button>
       </div>
       <p class="ds-error" id="ds-home-error" role="alert"></p>
+    </section>
+    <section class="ds-history" aria-labelledby="ds-history-title">
+      <h3 id="ds-history-title">Versions <small id="ds-total"></small></h3>
+      <ol class="ds-list" id="ds-list" aria-label="Recent versions"></ol>
+      <p class="ds-foot" id="ds-foot" hidden></p>
     </section>`;
   document.body.append(pop);
   const $ = <T extends HTMLElement = HTMLElement>(id: string) => pop.querySelector<T>(`#${id}`)!;
@@ -239,7 +239,8 @@ function mount(host: SettingsHost): Settings {
       const d = await call<Versions>("versions");
       if (seq != loadSeq) return;
       // What was loaded before stays (more rows opened in the picker), with the fresh copies over it.
-      if (data && d.total < data.total) loaded = new Map();
+      // A different published version starts afresh: its neighbours, not the last one's.
+      if (data && (d.total < data.total || d.published.version.id != data.published.version.id)) loaded = new Map();
       add(d.versions); add([d.current, d.published.version]);
       data = d;
       loadError = null;
@@ -248,7 +249,9 @@ function mount(host: SettingsHost): Settings {
     } catch (e) {
       if (seq != loadSeq) return;
       loadError = (e as Error).message;
-      render();
+      // What was shown stays, saying it may be out of date.
+      if (data) pubError.textContent = `Couldn't refresh the versions: ${loadError}`;
+      else render();
     }
   }
   /** The few versions before the published one, for rolling back to (Manual only). */
@@ -281,7 +284,9 @@ function mount(host: SettingsHost): Settings {
     try {
       const r = await call<{ published: Published }>("publish", { method: "POST", body: JSON.stringify(body) });
       data.published = r.published;
-      add([r.published.version]);
+      // The picker shows the new published version's neighbours, not the last one's.
+      loaded = new Map();
+      add(data.versions); add([data.current, r.published.version]);
     } catch (e) {
       data.published = was;
       pubError.textContent = `Couldn't change what's published: ${(e as Error).message}`;
