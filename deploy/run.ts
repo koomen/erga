@@ -8,8 +8,9 @@
 //   bun deploy/run.ts staging [--commit <sha>] [--yes]
 //   bun deploy/run.ts production --commit <sha>          (asks you to type "production")
 //
-// It needs CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID in the
-// environment (a token for the account, as deploy/setup.ts describes), and
+// It needs CLOUDFLARE_ACCOUNT_ID in the environment, your own credential for
+// the account (CLOUDFLARE_API_TOKEN, else the cf CLI's login:
+// deploy/credential.ts), and
 // SNAPSHOT_TOKEN for staging (production's, to copy its documents). It
 // builds the commit (default: HEAD, which must be committed) in a scratch
 // worktree, shows what it will do, and asks before doing it.
@@ -24,6 +25,7 @@ import { targetOf } from "./branches";
 import { buildIn } from "./builder/build";
 import { unpackRelease } from "./bundle";
 import { ALL_STEPS, Cloudflare, guardTarget, loadRelease, runPipeline, stepsFor, targetHost, type Fetch, type Release, type Target } from "./cloudflare";
+import { machineCredential } from "./credential";
 import { FLEET_ACCOUNT, MOCK_SNAPSHOT_TOKEN, mockCloudflare } from "./mock";
 import { isTargetName, TARGETS, type TargetName } from "./targets";
 
@@ -80,10 +82,10 @@ export async function deployFromMachine(o: MachineDeploy): Promise<boolean> {
   const log = o.log ?? console.log;
   const mock = process.env.ERGA_DEPLOY_MOCK == "1";
   const accountId = o.accountId ?? (mock ? FLEET_ACCOUNT : process.env.CLOUDFLARE_ACCOUNT_ID?.trim() ?? "");
-  const token = o.token ?? (mock ? "mock-machine-token" : process.env.CLOUDFLARE_API_TOKEN?.trim() ?? "");
-  const snapshotToken = o.snapshotToken ?? o.secrets?.SNAPSHOT_TOKEN ?? (mock ? MOCK_SNAPSHOT_TOKEN : process.env.SNAPSHOT_TOKEN?.trim() ?? "");
   if (!/^[0-9a-f]{32}$/.test(accountId)) throw new Error("Set CLOUDFLARE_ACCOUNT_ID (the account's id: 32 hex digits).");
-  if (!token) throw new Error("Set CLOUDFLARE_API_TOKEN (a token for the account: see deploy/setup.ts).");
+  const token = o.token ?? (mock ? "mock-machine-token" : machineCredential()?.token ?? "");
+  const snapshotToken = o.snapshotToken ?? o.secrets?.SNAPSHOT_TOKEN ?? (mock ? MOCK_SNAPSHOT_TOKEN : process.env.SNAPSHOT_TOKEN?.trim() ?? "");
+  if (!token) throw new Error("Set CLOUDFLARE_API_TOKEN, or log in with `bunx cf auth login` (see deploy/credential.ts).");
   const commit = o.commit ?? git("rev-parse", "HEAD");
   if (!o.commit && !mock && git("status", "--porcelain")) throw new Error("The checkout has changes that aren't committed: commit them, or name a commit (--commit).");
   const spec = TARGETS[o.name];

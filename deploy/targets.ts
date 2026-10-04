@@ -54,6 +54,14 @@ export interface TargetSpec {
    * never the commit another server names (deploy/branches.ts, remoteHook).
    */
   notifies?: TargetName[];
+  /**
+   * The targets this server's own Cloudflare token may deploy (deploy/tokens.ts
+   * makes the token so: Editor on these Workers only). Production's may deploy
+   * staging and production; staging's, staging only. Production deploys staging
+   * itself only when staging's server doesn't take a move passed on to it (it's
+   * down, or can't deploy itself): deploy/branches.ts.
+   */
+  deploys: TargetName[];
 }
 
 import data from "./targets.json";

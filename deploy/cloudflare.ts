@@ -83,7 +83,7 @@ export function explain(what: string, status: number, errors: { code: number; me
 // ------------------------------------------------------------------ release
 
 /** One binding or Durable Object as `cf build` writes them (worker.config.json). */
-export interface BuiltBinding { type: string; value?: string; exportName?: string; worker?: string; name?: string }
+export interface BuiltBinding { type: string; value?: string; exportName?: string; worker?: string; name?: string; namespace?: string }
 /** What `cf build` says about the Worker (its worker.config.json), as the release carries it. */
 export interface BuiltWorker {
   name: string;
@@ -273,6 +273,13 @@ export interface Target {
   keepSecrets?: boolean;
   /** Service bindings, by binding name (BUILDER → erga-builder). */
   services?: Record<string, string>;
+  /**
+   * The Artifacts namespace Erga's own source is in (deploy/targets.json's
+   * source): a release's Artifacts binding goes up only to a target that
+   * names it (production and staging). Elsewhere (/deploy, someone else's
+   * account) it's left out, and the server has no Git endpoint.
+   */
+  artifacts?: string;
   /** Wait for this release's version to answer (GET /api/deploys/version), not only for the server to answer. */
   checkVersion?: boolean;
   /**
@@ -374,7 +381,11 @@ export async function runPipeline(cf: Cloudflare, release: Release | null, targe
   const run: Record<StepId, () => Promise<string | undefined>> = {
     // The account, its workers.dev subdomain (made if it has none and the target names one), and whether the Worker is Erga's.
     async account() {
-      const account = await cf.call<{ id: string; name: string }>("GET", acc, "read your account");
+      // A narrow token (Erga's own deploy tokens: deploy/tokens.ts) may not read the account itself: its id is enough.
+      const account = await cf.call<{ id: string; name: string }>("GET", acc, "read your account").catch((e) => {
+        if (target.keepSecrets && e instanceof DeployError && e.status == 403) return null;
+        throw e;
+      });
       if (target.subdomain) {
         let sub = (await cf.call<{ subdomain: string }>("GET", `${acc}/workers/subdomain`, "read your workers.dev subdomain", undefined, { allow404: true }).catch(() => null))?.subdomain ?? null;
         if (!sub) {
@@ -382,7 +393,7 @@ export async function runPipeline(cf: Cloudflare, release: Release | null, targe
           sub = (await cf.call<{ subdomain: string }>("PUT", `${acc}/workers/subdomain`, `make your workers.dev subdomain (${target.subdomain})`, { subdomain: target.subdomain }))?.subdomain ?? target.subdomain;
         } else if (sub != target.subdomain) throw new DeployError(`Your workers.dev subdomain is ${sub}, not ${target.subdomain}: reload the page and deploy again.`);
       }
-      const scripts = (await cf.call<{ id: string; tags?: string[]; named_handlers?: { name?: string }[] }[]>("GET", `${acc}/workers/scripts`, "list your Workers")) ?? [];
+      const scripts = await listScripts(cf, acc, target);
       const found = scripts.find((s) => s.id == target.workerName);
       // Ours: tagged by an earlier run (or, failing that, Erga's own Durable Object among its exports).
       const ours = (s: (typeof scripts)[number]) => !!s.tags?.includes(WORKER_TAG) || !!s.named_handlers?.some((h) => h.name == "DocHost");
@@ -477,7 +488,20 @@ export async function runPipeline(cf: Cloudflare, release: Release | null, targe
       if (target.app.kind == "workers.dev") {
         await cf.call("POST", `${acc}/workers/scripts/${target.workerName}/subdomain`, "turn on its workers.dev address", { enabled: true, previews_enabled: false });
       } else {
-        const zoneId = target.app.zoneId ?? (await zoneIdOf(cf, target.accountId, target.app.zoneName));
+        const app = target.app;
+        const zoneId = app.zoneId ?? (await zoneIdOf(cf, target.accountId, app.zoneName));
+        // There already (Erga's own targets: the setup made it), nothing to change. The address itself says so: it
+        // answers as this target (a deploy token can't read the account's custom domains: Cloudflare has no per-zone
+        // read for them).
+        if (target.checkVersion && target.vars.DEPLOY_TARGET) {
+          const r = await site(`https://${app.hostname}/api/deploys/version`).catch(() => null);
+          const said = r?.ok ? ((await r.json().catch(() => null)) as { target?: string } | null)?.target : null;
+          if (said == target.vars.DEPLOY_TARGET) return `https://${host} (already its address)`;
+        }
+        const there = await cf.call<{ hostname: string; service: string }[]>("GET", `${acc}/workers/domains?hostname=${encodeURIComponent(app.hostname)}`, `read ${app.hostname}'s custom domain`).catch(() => null);
+        const mine = there?.find((d) => d.hostname == app.hostname);
+        if (mine && mine.service != target.workerName) throw new DeployError(`${app.hostname} is already the address of another Worker (${mine.service}). Remove it there, or pick another address.`);
+        if (mine) return `https://${host} (already its address)`;
         await cf.call("PUT", `${acc}/workers/domains`, `put it on ${target.app.hostname} (a custom domain)`, { hostname: target.app.hostname, service: target.workerName, zone_id: zoneId });
       }
       return `https://${host}`;
@@ -586,6 +610,8 @@ export function workerMetadata(release: Release, target: Target, o: { dbId: stri
     else if (b.type == "text") bindings.push({ type: "plain_text", name, text: text[name] ?? b.value ?? "" });
     else if (b.type == "secret") { if (secrets[name] != null) bindings.push({ type: "secret_text", name, text: secrets[name] }); }
     else if (b.type == "service" && b.name && target.services?.[name]) bindings.push({ type: "service", name, service: target.services[name] });
+    // Erga's own source (worker/artifacts.ts): only on a target that names the namespace; elsewhere left out.
+    else if (b.type == "artifacts") { if (target.artifacts) bindings.push({ type: "artifacts", name, namespace: target.artifacts }); }
     else throw new DeployError(`This release has a binding this page doesn't know how to make (${name}, ${b.type}): it needs a newer deploy page.`);
   }
   // Settings and secrets the build doesn't declare (the version, the account, the branch deploys' own secrets), and services.
@@ -616,6 +642,26 @@ export function workerMetadata(release: Release, target: Target, o: { dbId: stri
     ...(Object.keys(exports).length ? { exports } : {}),
     tags: [WORKER_TAG],
   };
+}
+
+/**
+ * The account's Workers, as the account step needs them (is the target's
+ * there, and is it Erga's). A token scoped to some Workers only (Erga's own
+ * deploy tokens: deploy/tokens.ts) may not list the account's: then the
+ * target's own settings answer whether it's there and Erga's.
+ */
+async function listScripts(cf: Cloudflare, acc: string, target: Target): Promise<{ id: string; tags?: string[]; named_handlers?: { name?: string }[] }[]> {
+  try {
+    const all = (await cf.call<{ id: string; tags?: string[]; named_handlers?: { name?: string }[] }[]>("GET", `${acc}/workers/scripts`, "list your Workers")) ?? [];
+    // A scoped token's list may hold only the Workers it can see: the target's own settings are the answer then.
+    if (all.some((s) => s.id == target.workerName) || !target.keepSecrets) return all;
+  } catch (e) {
+    if (!(target.keepSecrets && e instanceof DeployError && e.status == 403)) throw e;
+  }
+  const settings = await cf.call<{ tags?: string[]; bindings?: { type: string; class_name?: string }[] }>("GET", `${acc}/workers/scripts/${target.workerName}/settings`, `read ${target.workerName}'s settings`, undefined, { allow404: true });
+  if (!settings) return [];
+  const docHost = settings.bindings?.some((b) => b.type == "durable_object_namespace" && b.class_name == "DocHost");
+  return [{ id: target.workerName, tags: settings.tags ?? [], named_handlers: docHost ? [{ name: "DocHost" }] : [] }];
 }
 
 /** The release a Worker runs, by its ERGA_VERSION setting (the pipeline sets it), or null. */

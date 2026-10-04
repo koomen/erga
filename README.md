@@ -683,11 +683,26 @@ borrowed from git (the namespace). A database leak gives no working unlock
    revokes all of theirs) can sign in, add their own key to GitHub and
    bootstrap. Add a key soon after becoming an admin.
 2. *Pushes to GitHub still deploy erga.dev* until production deploys itself
-   (Deploys, the runbook's step 7): Workers Builds deploys `main` from
+   (Deploys, the runbook's step 8): Workers Builds deploys `main` from
    github.com/koomen/erga, which no Erga key protects. So do `bun run deploy`
    and `wrangler` from a machine with Cloudflare credentials, and the
    Cloudflare dashboard. The Cloudflare account, `SESSION_SECRET` and the
    GitHub repository remain roots of trust outside this scheme.
+8. *The deploy tokens are bearer credentials in the Workers* ([Deploys: the
+   deploy tokens](#deploys-staging-and-production)). Anyone who runs code in
+   a Worker (code merged to its branch, or a dependency it pulls in) can read
+   its `CLOUDFLARE_DEPLOY_TOKEN`. Staging's token deploys only
+   `erga-staging`; production's deploys `erga` and `erga-staging`; neither
+   can make or delete a Worker, nor change a custom domain, route or DNS
+   record. But both carry **D1 Write on the whole account**, as Cloudflare
+   has no per-database scope: on erga.dev's account, which other projects
+   share, that reaches their databases as well as production's. So code
+   pushed or merged to `staging` (by an unlocked admin, or a factory task an
+   unlocked admin merged) could read or wipe every D1 database in the
+   account. The merge is the review. Erga on an account of its own would
+   limit this to Erga's databases. Revoke a token on the dashboard (Manage
+   Account › Account API Tokens) or make new ones with `bun deploy/setup.ts
+   --tokens`.
 3. *An unlock is a bearer credential for its hour.* A stolen session cookie
    together with its `erga_admin` cookie, or a stolen admin token, works
    until it ends or its key is revoked. Revoking the key is the only way to
@@ -743,8 +758,10 @@ down on erga-pages.dev: a route `*.staging.erga-pages.dev/*` to
 `erga-staging` (more specific than production's `*.erga-pages.dev/*`, so it
 wins), a proxied `*.staging` AAAA `100::` record (the pipeline makes both),
 and an advanced certificate for `*.staging.erga-pages.dev`, since Universal
-SSL covers only one level (`deploy/setup.ts` orders it after asking; it needs
-Advanced Certificate Manager). staging.erga.dev is a Workers custom domain,
+SSL covers only one level (`deploy/setup.ts --certificate` orders it; it needs
+Advanced Certificate Manager, which is paid, so it isn't ordered yet: until it
+is, documents' pages on staging don't load over HTTPS, and the editor and
+viewer on staging can't show a document's page). staging.erga.dev is a Workers custom domain,
 whose DNS record and certificate Cloudflare makes. A deploy to anything but
 production that would use production's Worker, database or addresses stops
 before it calls Cloudflare (`guardTarget`), and a snapshot never goes into
@@ -763,11 +780,12 @@ release answers at `/api/deploys/version`; copy production's documents in
 **Building.** A Worker can't run `bun install` or Vite, so a commit is built
 in a **Cloudflare Container**: the builder Worker `erga-builder`
 (`deploy/builder/`: `worker.ts`, its `wrangler.jsonc`, a `Dockerfile` with
-Bun 1.4.2, Node and Git, and `server.ts`), which the servers reach over a
+Bun 1.4.2, Node 22 and Git, and `server.ts`), which the servers reach over a
 service binding (`BUILDER`) and which has no public address. The pipeline asks
 Artifacts for the repo's remote and a 15-minute read-only token
-(`deploy/source.ts`; the one place to plug in #39's own way to read a
-commit), and the container fetches the commit, runs `bun install
+(through the server's own Artifacts binding, `worker/source.ts`; the REST
+API, `deploy/source.ts`, only for a server without one, and it needs a token
+with Artifacts Read, which the deploy tokens don't have), and the container fetches the commit, runs `bun install
 --frozen-lockfile`, `./site.sh` and `bun deploy/release.ts`
 (`deploy/builder/build.ts`), and streams its output back, then the release
 (`deploy/bundle.ts`). GitHub is not involved. Why this: Workers Builds connects
@@ -794,7 +812,13 @@ hears for the other's branch (`POST /api/deploys/<name>/hook`, with
 `DEPLOY_HOOK_SECRET`): production tells staging of `staging`, staging tells
 production of `main` (so a merge on staging.erga.dev's /source deploys
 erga.dev too). Production never deploys a commit another server names: it
-reads `main`'s head from its own view of the repository and deploys that. A
+reads `main`'s head from its own view of the repository and deploys that.
+**Production may deploy staging itself:** its token may (above), so when
+staging's server doesn't take a move or a redeploy passed on to it (it's
+down, its last deploy broke it, or it can't deploy itself), production runs
+the same pipeline on staging's Worker, from its own `Pipeline` object, and
+says so in staging's log and history (`…, deployed by erga.dev`). Staging
+never deploys production, whatever it hears (its token can't). A
 server
 deploys itself only with `CLOUDFLARE_DEPLOY_TOKEN` set: until then a push is
 noted in its log and nothing is deployed, so merging this changes nothing on
@@ -808,7 +832,10 @@ stopped (it checks the Worker's `ERGA_VERSION` to know the upload went
 through): the address, the pages, waiting for the new release, copying the
 documents. A deploy stopped before the upload is marked failed
 ("interrupted"), and Redeploy runs it again from the top. Every step is safe
-to repeat.
+to repeat. Changing a secret on the Worker (`bunx cf workers secrets update`,
+the setup) is a new version too, and resets the `Pipeline` object up to a
+minute later: change secrets when no deploy runs, or the running one is
+marked interrupted and needs a Redeploy.
 
 **Staging's snapshot of production.** On each staging deploy:
 
@@ -839,10 +866,67 @@ snapshot (the `Home` object: staging makes its own from the same document). The 
 copied. Before production runs this version with `SNAPSHOT_TOKEN` set, the
 documents step is skipped, and says so.
 
-The token staging deploys itself with is account-wide: Cloudflare tokens
-can't be limited to one database, so it could write production's D1. The
-code only ever exports it, and the tests check every call (nothing but the
-export reaches production's database, and nothing reaches its Worker).
+**The deploy tokens** (`deploy/tokens.ts`). Each server deploys with its own
+Cloudflare API token, its `CLOUDFLARE_DEPLOY_TOKEN` secret, made by
+`deploy/setup.ts` through the API (an account-owned token), checked, and
+stored on the Worker; nobody copies or pastes it, and it's never printed. The
+rules are `deploys` in `deploy/targets.json`: production's server may deploy
+staging and production, staging's may deploy staging only.
+
+| permission | staging's token (`erga-deploy-staging`) | production's (`erga-deploy-production`) | what for |
+|---|---|---|---|
+| Individual Workers Editor (Specified Workers) | `erga-staging` | `erga`, `erga-staging` | upload and deploy versions, secrets (kept), static assets, settings; its Durable Objects inherit it. It can't make or delete a Worker |
+| D1 Write | the account | the account | staging's database deleted and made afresh from production's export; migrations |
+| Zone Read, Workers Routes Read, DNS Read | erga.dev, erga-pages.dev | erga.dev, erga-pages.dev | find the zones; check the custom domain, the pages' route and DNS record are there and point at the Worker |
+
+**Writing Erga's source (the factory).** No token carries an Artifacts
+permission, on purpose: each server writes Erga's Artifacts repository
+through its own **Artifacts binding** (`ARTIFACTS`, namespace `erga` only:
+`worker/artifacts.ts` mints one-hour tokens for the one repo), and the
+factory's VMs, pushes and merges all go through the server's Git endpoint
+(`/git/erga.git`), which holds Erga's rules. An Artifacts API token would
+reach every repository in the account's namespaces and bypass those rules.
+The pipeline keeps the binding on every deploy of Erga's own targets
+(`Target.artifacts`), and `deploy/setup.ts` checks staging has it.
+
+Nothing else: no account read, no Workers Scripts on the account, nothing on
+the builder (a service binding needs no permission on the Worker it binds),
+no Artifacts (the servers read and write Erga's source through their
+Artifacts binding, and the factory pushes through the server's Git endpoint:
+[Erga's own source](#ergas-own-source)), no write on DNS, routes or custom
+domains. The setup's first deploy, with your own credential, makes the
+Worker, its custom domain, the pages' route and their DNS record; a deploy
+after that only reads them (the pipeline reads before it writes, and writes
+only what's missing), so no deploy token can move erga.dev, a route or a
+DNS record. A token can name only a Worker that's there, so staging's token
+is made after its first deploy, and production's after `erga-staging` exists.
+
+Before storing a token, the setup checks it with the token itself: it's
+active; it reads each of its Workers' settings, the D1 list, and its zones'
+routes and DNS records; it can't read or write the Workers it mustn't reach
+(staging's: `erga`), make a Worker, or write a DNS record or a route (asked
+with an empty body, which Cloudflare refuses before doing anything; a 403 is
+the answer it must get); and its policies, read back, are exactly the plan.
+A token that fails is deleted, not stored. Making them needs your credential
+to be allowed to make account API tokens (`deploy/credential.ts`: the cf
+CLI's login asks for `account_api_tokens:create`, or an API token with
+Account API Tokens Write); `bun deploy/setup.ts --tokens` makes them again
+(rotation: the old ones by the same name are deleted once the new one is
+stored).
+
+What's left (the residual risk): **D1 Write is account-wide.** Cloudflare
+has no per-database scope for D1 yet (Workers roles don't cover bound
+resources), so each deploy token can read, change and delete every D1
+database in the account: production's, and, on a shared account such as
+erga.dev's, other projects' databases too. The code only ever exports
+production's database and only writes staging's, and the tests check every
+call, but code on the `staging` branch runs with staging's token: whoever can
+put code on staging (an admin's push, a factory merge) could reach every
+database in the account. Moving Erga to a Cloudflare account of its own
+limits that to Erga's two databases. A deploy token also can, within its
+Workers: replace them, change or delete their secrets, and read or wipe
+their Durable Objects (documents). Staging's can do that to staging only;
+production's to both.
 
 **Status.** `GET /api/deploys` (admins with admin access unlocked: the browser's, or an admin token)
 answers `{targets: [{name, host, branch, state, commit, deployId,
@@ -897,55 +981,78 @@ build). The other target's server (production, here) is played in the same
 Durable Object, at its host in the mock, so a merge to main on /source
 deploys "production" too, and both columns fill.
 
-#### Runbook: the first real staging deploy
+#### Runbook: staging, and its deploy token
 
 Each step is yours to run or approve; `deploy/setup.ts` asks before each
-change, and `--dry-run` shows the plan without doing anything.
+change, and `--dry-run` shows the plan (and exactly what each token grants)
+without doing anything. It uses your own credential: `CLOUDFLARE_API_TOKEN`
+if set, else the cf CLI's login (`bunx cf auth login`; `--force` once if your
+login is older than the `account_api_tokens:create` scope).
+
+Done on erga.dev's account (2026-10-04, task #2): the Artifacts repo
+`erga/erga`, the builder, staging's secrets, SNAPSHOT_TOKEN and
+DEPLOY_HOOK_SECRET on production, `erga-staging` with its own D1 copy of
+production's data, staging.erga.dev and the `*.staging.erga-pages.dev`
+route and DNS record, staging's deploy token (made with a short-lived token
+maker, then deleted), and staging deploying itself on a push to its branch.
+Still to do are the steps marked *(you)*.
 
 1. **Merge this to `main`.** Workers Builds deploys erga.dev from GitHub as
-   before. It gains the `Pipeline` Durable Object and the read-only routes;
-   branch deploys stay off (no `CLOUDFLARE_DEPLOY_TOKEN`). Check
-   `https://erga.dev/api/deploys/version` answers.
-2. **Staging's GitHub OAuth app.** At github.com/settings/applications/new:
-   homepage `https://staging.erga.dev`, callback
+   before; branch deploys stay off there (no `CLOUDFLARE_DEPLOY_TOKEN`).
+2. **Staging's GitHub OAuth app** *(you: GitHub has no API for OAuth apps)*.
+   At github.com/settings/applications/new: homepage
+   `https://staging.erga.dev`, callback
    `https://staging.erga.dev/auth/github/callback`. Put its Client ID in
    `deploy/targets.json` (`targets.staging.vars.GITHUB_CLIENT_ID`) and
-   commit. Keep its client secret for step 4.
-3. **Two Cloudflare API tokens** for the account, each with Workers Scripts
-   edit, D1 edit, Workers Routes edit, DNS edit, Zone read, Artifacts read
-   and Account Settings read: one for you to run the setup (add SSL and
-   Certificates edit for step 4's certificate), and one for staging to
-   deploy itself with.
-4. **Run the setup:**
-   `CLOUDFLARE_API_TOKEN=<yours> CLOUDFLARE_ACCOUNT_ID=<id> bun deploy/setup.ts`.
-   It checks the account and zones; orders the advanced certificate for
-   `*.staging.erga-pages.dev` (paid: say no to skip, and staging's pages
-   won't load over HTTPS); deploys the builder (`bunx wrangler deploy` in
-   `deploy/builder`, with Docker running); asks for staging's GitHub client
-   secret, its deploy token (step 3's second) and an Anthropic key
-   (optional), and makes SESSION_SECRET, SNAPSHOT_TOKEN and
-   DEPLOY_HOOK_SECRET; sets SNAPSHOT_TOKEN and DEPLOY_HOOK_SECRET on
-   production's Worker (a new version of the same code); then builds HEAD
-   here and deploys staging: `erga-staging`, `erga-staging` D1 with
-   production's data, staging.erga.dev and `*.staging.erga-pages.dev`
-   (DNS records and routes made by the deploy).
-5. **Verify it.** Open https://staging.erga.dev and sign in (with staging's
-   GitHub app): your documents are there, with production's contents; open
-   one, and its page loads from `<id>-<owner>.staging.erga-pages.dev`.
-   https://staging.erga.dev/api/deploys shows staging deployed (and, once
-   #39 is in, https://staging.erga.dev/source), and erga.dev is unchanged.
-6. **Staging deploys itself.** Once #39's source is in Artifacts with a
-   `staging` branch, push a commit to it (`git push
-   https://staging.erga.dev/git/erga.git staging`, an admin token from
-   `bun admin-login.ts https://staging.erga.dev` as the password). Watch https://staging.erga.dev/source (or
-   `/api/deploys/staging/log`): the builder builds it, the pipeline
-   deploys it, the server restarts into the new version and finishes, and
-   `https://staging.erga.dev/api/deploys/version` says the new commit.
-7. **Later, production** (not part of this): set `CLOUDFLARE_DEPLOY_TOKEN`
-   on `erga`, deploy it once from a machine (`bun run deploy`: it adds the
-   `BUILDER` binding), then turn off Workers Builds' trigger for `erga` and
-   remove `migrate.ts` and the `WORKERS_CI` lines in `site.sh`. From then on
-   `main` deploys itself.
+   commit; set its client secret on staging:
+   `bunx cf workers secrets update GITHUB_CLIENT_SECRET --name erga-staging`
+   (or answer the setup's question). Until then nobody can sign in to staging.
+3. **Run the setup:** `CLOUDFLARE_ACCOUNT_ID=<id> bun deploy/setup.ts`. It
+   checks the account and zones; makes the Artifacts repo if it's missing;
+   deploys the builder (`bunx wrangler@4.147.0 deploy` in `deploy/builder`,
+   with Docker running) if it's missing, or with `--builder`; makes
+   staging's secrets (SESSION_SECRET kept if there's one; SNAPSHOT_TOKEN and
+   DEPLOY_HOOK_SECRET new, set on production's Worker too: a new version of
+   the same code); builds HEAD here and deploys staging (`erga-staging`, its
+   D1 made afresh with production's data, staging.erga.dev,
+   `*.staging.erga-pages.dev`); then makes **staging's deploy token**,
+   checks it and stores it on `erga-staging` (above). It orders the paid
+   certificate only with `--certificate`.
+4. **Staging's deploy token** *(you, if step 3 stopped there)*. The cf
+   CLI's OAuth login can't make API tokens (Cloudflare doesn't grant it that
+   scope), so make a short-lived **token maker** on the dashboard: Manage
+   Account › Account API Tokens › Create Token › Custom, one permission,
+   Account › Account API Tokens › Edit, a TTL of today. Then
+   `CLOUDFLARE_ACCOUNT_ID=<id> CLOUDFLARE_TOKEN_MAKER="$(pbpaste)" bun deploy/setup.ts --tokens`.
+   The setup checks the maker first (an account-owned token, active, allowed
+   to make tokens; otherwise it says which of these is wrong), uses it only to
+   make, read back and delete tokens, and uses your cf login for the rest.
+   Delete the maker afterwards.
+5. **Seed the source** (once): the repo is empty until the history is in.
+   Push `main` and `staging` through a server's Git endpoint
+   (`ERGA_TOKEN=<admin token> bun source/import.ts https://staging.erga.dev`,
+   which needs step 2 to sign in), or straight to Artifacts with a write
+   token from its API (the setup's credential can make one), then tell
+   staging (`POST /api/deploys/staging/hook` with DEPLOY_HOOK_SECRET; a push
+   through the Git endpoint does that itself).
+6. **Verify it.** https://staging.erga.dev/api/deploys/version answers
+   staging's release; https://staging.erga.dev/source (signed in) shows the
+   commits and both targets. erga.dev is unchanged.
+7. **Staging deploys itself.** Push a commit to staging (`git push
+   https://staging.erga.dev/git/erga.git HEAD:staging`, an admin token from
+   `bun admin-login.ts https://staging.erga.dev` as the password; or merge a
+   factory task). Watch `/source` or `/api/deploys/staging/log`: the builder
+   builds it, the pipeline deploys it with staging's own token, the server
+   restarts into the new version and finishes, and `/api/deploys/version`
+   says the new commit.
+8. **Later, production** (task #3, not part of this): `bun deploy/setup.ts
+   --tokens --production` makes production's token (Editor on `erga` and
+   `erga-staging`) and stores it on `erga`; deploy it once from a machine
+   (`bun run deploy`: it adds the `BUILDER` binding, and
+   `ERGA_ARTIFACTS_NAMESPACE=erga` adds the source), then turn off Workers
+   Builds' trigger for `erga` and remove `migrate.ts` and the `WORKERS_CI`
+   lines in `site.sh`. From then on `main` deploys itself, and production
+   can deploy staging when staging can't.
 
 ### Deploy your own
 
@@ -1186,7 +1293,12 @@ Merge to here, light, dark and a phone; `--keep` leaves it running).
    `GITHUB_MIRROR_TOKEN`.
 3. Set `ERGA_ARTIFACTS_NAMESPACE=erga` in the deploy's environment (Workers
    Builds' build variables) and deploy: `cloudflare.config.ts` then binds
-   `ARTIFACTS` and the mirror.
+   `ARTIFACTS` and the mirror. Branch deploys and `deploy/run.ts` do this
+   themselves: the build (`deploy/builder/build.ts`) sets it from the
+   commit's own `deploy/targets.json` (`source.namespace`), and the pipeline
+   puts the binding only on Erga's own targets (never on a `/deploy` copy).
+   No API token is involved: the binding is the server's access, and a
+   deploy token needs no Artifacts permission.
 4. Seed it with the whole history, through Erga: `ERGA_TOKEN=<an admin
    token> bun source/import.ts https://erga.dev` (from GitHub's main).
    It refuses if main is already there.
@@ -2275,7 +2387,13 @@ production (every call checked), the guards, failure and retry, branch
 pushes (the queue, passing a push on, the status, the deploy log and its
 events), staging deploying itself across the restart its own upload causes
 (one log across it), the builder's stream, and
-`deploy/setup.ts` run end to end. `bun tests/deploys.ts` does it in the real
+`deploy/setup.ts` run end to end. `tests/tokens.test.ts` covers the deploy
+tokens against a mock that enforces a token's policies: each plan, the check
+catching a token broader than its plan, staging's token deploying staging
+(reading, never writing, its address, route and DNS record) and refused
+production, staging deploying itself with it, production deploying staging
+when staging's server doesn't take a move, and the Artifacts binding going
+only to Erga's own targets. `bun tests/deploys.ts` does it in the real
 Worker: a push to a dev server playing staging, its status and events, the
 deploy's log whole and live, Redeploy, a failed build, the redirect from
 /admin/deploys to /source, and who may.
@@ -2324,6 +2442,8 @@ back, merging edits from disk, the agent's exact-match edits and attribution.
   pipeline's side of it (`client.ts`); `deploy/bundle.ts`, a release as one file; `deploy/source.ts`, the
   source repo in Artifacts
 - `deploy/run.ts`, `deploy/setup.ts`: a deploy from a machine, and staging's one-time setup
+- `deploy/tokens.ts`, `deploy/credential.ts`: the servers' narrow deploy tokens (planned, made,
+  checked), and the person's own credential the setup uses
 - `deploy/page.ts`, `deploy/release.ts`, `deploy/mock.ts`, `deploy/seal.ts`, `worker/deploy.ts`,
   `worker/deployer.ts`: `/deploy`, deploying Erga to your own Cloudflare account (the page, the
   release, the pretend Cloudflare the tests use, Erga's own account included)
