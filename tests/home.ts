@@ -43,7 +43,7 @@ const post = (path: string, body?: unknown, user?: string) =>
 interface Home { isHome: boolean; canSet: boolean; blocked: string | null; deploy: { state: string; at: string | null; scheduledFor: string | null; version: number | null; error: string | null }; error?: string }
 const home = async (id: string, user?: string) => await (await get(`/api/docs/${id}/home${user ? `?user=${user}` : ""}`)).json() as Home;
 /** / as served: directly (from a deploy), or the viewer's frame. */
-const front = async () => { const r = await get("/"); const html = await r.text(); return { html, direct: html.includes("<erga-controls>"), timing: r.headers.get("server-timing") ?? "", headers: r.headers }; };
+const front = async () => { const r = await get("/"); const html = await r.text(); return { html, direct: html.includes("<erga-controls"), timing: r.headers.get("server-timing") ?? "", headers: r.headers }; };
 
 let token = "";
 const publish = async (files: Record<string, string>, opts: { document?: string; title?: string } = {}) => {
@@ -69,22 +69,43 @@ try {
   ok("on a fresh server the first / is the viewer and starts the first deploy; then / is the page itself, from the deploy");
 
   // ---------------------------------------------------------------- looks the same
-  // The viewer on the same document (/tester/landing, in its frame) is what / was: every view the same, pixel for pixel.
+  // The viewer on the same document (/tester/landing, in its frame) is what / was. / differs in one way: the page starts below
+  // the controls' band (58px), so they never cover its top. Everything else is the same, pixel for pixel: the band (the
+  // controls over the page's background) is the viewer's top 58px, and the page under it is the viewer's, moved down.
+  const BAND = 58;
+  /** Where the viewer's page starts (0 while its frame fills the window; lower if the viewer gets a band of its own). */
+  const viewerTop = async (v: (typeof VIEWS)[number]) => {
+    const q = await browser.page(await browser.context());
+    await q.send("Emulation.setDeviceMetricsOverride", { width: v.width, height: v.height, deviceScaleFactor: v.scale, mobile: v.mobile });
+    await q.send("Page.enable");
+    await q.navigate(`${root}/tester/landing`);
+    const top = await q.eval<number>(`Math.round(document.getElementById("frame").getBoundingClientRect().top)`);
+    q.close();
+    return top;
+  };
   for (const v of VIEWS) {
     const a = join(SHOTS, `home-viewer-${v.name}.png`), b = join(SHOTS, `home-direct-${v.name}.png`);
     await shoot(browser, `${root}/tester/landing`, v, a);
     await shoot(browser, `${root}/`, v, b);
+    const shift = BAND - (await viewerTop(v));
+    const s = v.scale;
     // Text a frame draws comes out a shade softer or sharper: blurred a little, only what moved or changed colour counts.
-    const d = await diffPng(browser, a, b, 24, 1.5);
-    expect(d.differ / d.total < 0.002, `/ looks like the viewer (${v.name})`, { ...d, a, b });
-    const exact = await diffPng(browser, a, b, 8, 0);
-    console.log(`     ${v.name}: ${exact.differ} of ${exact.total} pixels differ at all, ${d.differ} once blurred (${a} / ${b})`);
+    // Below the controls in both (the viewer's sit over its page).
+    const below = { a: BAND * s, b: (BAND + shift) * s, height: (v.height - BAND - shift - 4) * s }; // (the last rows: the blur's edge)
+    const page = await diffPng(browser, a, b, 24, 1.5, below);
+    const band = await diffPng(browser, a, b, 24, 1.5, { a: 0, b: 0, height: Math.min(BAND, 44) * s });
+    expect(page.differ / page.total < 0.002, `the page under the band looks as the viewer shows it (${v.name})`, { ...page, a, b });
+    expect(band.differ / band.total < 0.002, `the band looks as the viewer's top does: the controls on the page's background (${v.name})`, { ...band, a, b });
+    const exact = await diffPng(browser, a, b, 8, 0, below);
+    console.log(`     ${v.name}: below the band, ${exact.differ} of ${exact.total} pixels differ at all, ${page.differ} once blurred; the band ${band.differ} (${a} / ${b})`);
   }
-  ok("/ looks the same as the viewer on its document, light and dark, desktop and phone (pixel diff)");
+  ok("/ looks as the viewer shows its document, the page moved below the controls' band: light and dark, desktop and phone (pixel diff)");
 
-  // Every block of the page laid out where the viewer lays it out (its live demos, which animate, aside: their blocks count, not what moves in them).
+  // Every block of the page laid out where the viewer lays it out, moved down by the band (its live demos, which animate,
+  // aside: their blocks count, not what moves in them).
   const layout = `JSON.stringify([...document.body.querySelectorAll("main, header, footer, section, article, nav, figure, h1, h2, h3, h4, p, ul, ol, blockquote, table")].filter((e) => !e.closest("erga-controls")).map((e) => { const r = e.getBoundingClientRect(); return [e.tagName, Math.round(r.x), Math.round(r.y + scrollY), Math.round(r.width), Math.round(r.height)]; }))`;
   for (const v of [VIEWS[0], VIEWS[2]]) {
+    const shift = BAND - (await viewerTop(v));
     const pv = await browser.page(await browser.context()), pd = await browser.page(await browser.context());
     for (const [p, url] of [[pv, `${root}/tester/landing`], [pd, `${root}/`]] as const) {
       await p.send("Target.setAutoAttach", { autoAttach: true, waitForDebuggerOnStart: false, flatten: true });
@@ -92,15 +113,15 @@ try {
       await p.send("Page.enable");
       await p.navigate(url);
     }
-    let viewer = "", direct = "";
+    let viewer = "";
     await until(async () => { viewer = (await pv.inPage<string>(`document.fonts.ready.then(() => ${layout})`)).find((x) => x) ?? ""; return viewer.length > 100; }, 15_000, "the viewer's page");
-    direct = await pd.eval<string>(`document.fonts.ready.then(() => ${layout})`);
-    const va = JSON.parse(viewer) as unknown[][], da = JSON.parse(direct) as unknown[][];
+    const direct = await pd.eval<string>(`document.fonts.ready.then(() => ${layout})`);
+    const va = (JSON.parse(viewer) as number[][]).map(([t, x, y, w, h]) => [t, x, y + shift, w, h]), da = JSON.parse(direct) as unknown[][];
     const at = va.findIndex((e, i) => JSON.stringify(e) != JSON.stringify(da[i]));
-    expect(at < 0 && va.length == da.length, `every block where the viewer puts it (${v.name})`, { at, count: [va.length, da.length], viewer: va.slice(at, at + 4), direct: da.slice(at, at + 4) });
+    expect(at < 0 && va.length == da.length, `every block where the viewer puts it, below the band (${v.name})`, { at, count: [va.length, da.length], viewer: va.slice(at, at + 4), direct: da.slice(at, at + 4) });
     pv.close(); pd.close();
   }
-  ok("every block of the page is where the viewer puts it (desktop and phone)");
+  ok("every block of the page is where the viewer puts it, moved below the band (desktop and phone)");
 
   // ---------------------------------------------------------------- controls: who sees what
   const p = await browser.page(await browser.context());
@@ -274,10 +295,11 @@ try {
     const lr = (path: string, init: RequestInit = {}) => fetch(locked.root + path, { redirect: "manual", ...init });
     const t = /<pre class="secret">(erga_[^<]+)<\/pre>/.exec(await (await lr("/tokens/new", { method: "POST", body: new URLSearchParams({ label: "x" }), headers: { Origin: locked.root } })).text())?.[1];
     const made = await (await lr("/api/publish", { method: "POST", headers: { Authorization: `Bearer ${t}`, "Content-Type": "application/json" }, body: JSON.stringify({ files: { "index.html": "<h1>Mine</h1>" } }) })).json() as { id: string };
+    expect(/^[a-z0-9]{8}$/.test(made.id ?? ""), "a document on the locked server", made);
     const g = await (await lr(`/api/docs/${made.id}/home`)).json() as Home;
     expect(!g.isHome && !g.canSet, "a locked landing_document: canSet is false", g);
     const r = await lr(`/api/docs/${made.id}/home`, { method: "POST", headers: { Origin: locked.root, "Content-Type": "application/json" }, body: JSON.stringify({ isHome: true }) });
-    expect(r.status == 409, "and POST is refused", r.status);
+    expect(r.status == 409, "and POST is refused", { status: r.status, body: await r.text() });
   } finally { await locked.dispose(); }
   ok("a landing_document the deploy locks can't be changed (canSet false, POST refused)");
 

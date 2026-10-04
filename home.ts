@@ -51,8 +51,17 @@ export interface RenderedHome { before: string; after: string }
 const MARK = "<!--erga:home-controls-->";
 /** What the viewer's own page sets around a document (front.ts, viewDocument): the same here, so the page lays out as it does there. */
 const VIEWPORT = `<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">`;
-/** The viewer's frame stops the page dead at its top and bottom (front.ts, HOST_SCRIPT's still): the same here. */
-const STILL = `<style>html { overscroll-behavior: none; }</style>`;
+/**
+ * The controls' band (homeHeader): their height, 12px above and below them (more under a notch). The page starts below it,
+ * so the controls never cover the top of it, as a document's always does (task #38).
+ */
+export const BAND = "calc(max(12px, env(safe-area-inset-top)) + 46px)";
+/**
+ * What the page gets in its head: it starts below the controls' band (the root's padding, which only moves it down, unlike a
+ * margin on its body; in a rule the page's own can't outweigh), anchors scroll to below the band too, and it stops dead at
+ * its top and bottom, as the viewer's frame makes it (front.ts, HOST_SCRIPT's still).
+ */
+const STILL = `<style>html { overscroll-behavior: none; } html:root:root { padding-top: ${BAND} !important; scroll-padding-top: ${BAND}; }</style>`;
 
 /** A URL in the page, if it names one of the document's files: where that file is served in this deploy. */
 function fileUrl(value: string, base: URL, files: Set<string>, prefix: string): string | null {
@@ -163,7 +172,7 @@ export async function renderHome(opts: { index: string; files: Record<string, st
  */
 export function homeHeader(o: { clone: string; edit: string | null; account: Account | null; here: string; doc?: string }): string {
   const buttons = `<div class="erga-view-buttons">${cloneButton(o.clone)}${o.edit ? editButton(o.edit, false) : ""}</div>`;
-  return `<erga-controls${o.doc ? ` data-doc="${esc(o.doc)}"` : ""}><template shadowrootmode="open"><style>${HOST_STYLE}</style>${buttons}${accountMarkup(o.account, o.here)}${VIEW_STYLE}${ACCOUNT_STYLE}</template></erga-controls><script>${HEADER_SCRIPT}</script>`;
+  return `<erga-controls${o.doc ? ` data-doc="${esc(o.doc)}"` : ""}><template shadowrootmode="open"><style>${HOST_STYLE}</style><div class="band"></div>${buttons}${accountMarkup(o.account, o.here)}${VIEW_STYLE}${ACCOUNT_STYLE}</template></erga-controls><script>${HEADER_SCRIPT}</script>`;
 }
 
 // The host: nothing of the page's applies to it (its own !important rules win over the page's, from inside the shadow root).
@@ -172,7 +181,10 @@ export function homeHeader(o: { clone: string; edit: string | null; account: Acc
 const HOST_STYLE = `:host { all: initial !important; display: block !important; position: fixed !important; top: 0 !important; left: 0 !important;
   right: calc(-1 * var(--erga-scrollbar, 0px)) !important; width: auto !important; height: 0 !important; margin: 0 !important; padding: 0 !important;
   z-index: 2147483647 !important; contain: none !important; transform: none !important; filter: none !important; visibility: visible !important; opacity: 1 !important; }
-@media (max-width: 640px), (max-height: 480px) { :host { position: absolute !important; } }`;
+@media (max-width: 640px), (max-height: 480px) { :host { position: absolute !important; } }
+/* The band the controls sit in, above the page (which starts below it: STILL), in the page's own background (the script
+   sets it; until then it's see-through, over the page's padding, which shows the same colour). */
+.band { position: absolute; top: 0; left: 0; right: 0; height: ${BAND}; background: var(--erga-band, transparent); }`;
 
 const HEADER_SCRIPT = `(() => {
   const host = document.currentScript.previousElementSibling;
@@ -185,6 +197,18 @@ const HEADER_SCRIPT = `(() => {
   addEventListener("resize", bar);
   addEventListener("load", bar);
   if (window.ResizeObserver) new ResizeObserver(bar).observe(document.documentElement);
+  // The band takes the page's background: its root's, else its body's (which the root shows), else the canvas's.
+  const clear = (c) => !c || c == "transparent" || /^rgba\(.*,\s*0\)$/.test(c);
+  const band = () => {
+    let c = "";
+    for (const el of [document.documentElement, document.body]) { const b = el && getComputedStyle(el).backgroundColor; if (!clear(b)) { c = b; break; } }
+    host.style.setProperty("--erga-band", c || "Canvas");
+  };
+  band();
+  addEventListener("load", band);
+  new MutationObserver(band).observe(document.documentElement, { attributes: true, subtree: false });
+  if (document.body) new MutationObserver(band).observe(document.body, { attributes: true, attributeFilter: ["class", "style"] });
+  matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change", band);
   // Who you are (account.ts's corner): its menu opens and closes as everywhere else on the site.
   const acc = root.querySelector(".erga-account"), btn = acc && acc.querySelector("button"), menu = acc && acc.querySelector(".erga-account-menu");
   if (btn && menu) {

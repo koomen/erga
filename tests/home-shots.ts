@@ -56,9 +56,11 @@ if (import.meta.main) {
  * how many, and where the differing ones are (their bounding box). `blur`
  * (px) blurs both first, so text drawn a little sharper or softer (a frame's
  * text is rasterized apart from the page's) doesn't count, but anything
- * moved, missing or recoloured does.
+ * moved, missing or recoloured does. `rows`: compares only `height` rows
+ * (in the pictures' pixels), from row `a` of the first and row `b` of the
+ * second (the same page, moved down in one).
  */
-export async function diffPng(browser: Browser, a: string, b: string, tolerance = 8, blur = 0): Promise<{ differ: number; total: number; box: { x0: number; y0: number; x1: number; y1: number } | null; sizes: string }> {
+export async function diffPng(browser: Browser, a: string, b: string, tolerance = 8, blur = 0, rows?: { a: number; b: number; height: number }): Promise<{ differ: number; total: number; box: { x0: number; y0: number; x1: number; y1: number } | null; sizes: string }> {
   const p = await browser.page();
   try {
     const url = (f: string) => `data:image/png;base64,${Buffer.from(require("fs").readFileSync(f)).toString("base64")}`;
@@ -66,9 +68,10 @@ export async function diffPng(browser: Browser, a: string, b: string, tolerance 
       const load = (src) => new Promise((ok, no) => { const i = new Image(); i.onload = () => ok(i); i.onerror = no; i.src = src; });
       const [a, b] = await Promise.all([load(${JSON.stringify(url(a))}), load(${JSON.stringify(url(b))})]);
       const sizes = a.width + "x" + a.height + " / " + b.width + "x" + b.height;
-      const w = Math.max(a.width, b.width), h = Math.max(a.height, b.height);
-      const px = (img) => { const c = new OffscreenCanvas(w, h), g = c.getContext("2d"); g.filter = ${JSON.stringify(blur ? `blur(${blur}px)` : "none")}; g.drawImage(img, 0, 0); return g.getImageData(0, 0, w, h).data; };
-      const da = px(a), db = px(b);
+      const rows = ${JSON.stringify(rows ?? null)};
+      const w = Math.max(a.width, b.width), h = rows ? rows.height : Math.max(a.height, b.height);
+      const px = (img, from) => { const c = new OffscreenCanvas(w, h), g = c.getContext("2d"); g.filter = ${JSON.stringify(blur ? `blur(${blur}px)` : "none")}; g.drawImage(img, 0, -from); return g.getImageData(0, 0, w, h).data; };
+      const da = px(a, rows ? rows.a : 0), db = px(b, rows ? rows.b : 0);
       let differ = 0, x0 = w, y0 = h, x1 = -1, y1 = -1;
       for (let i = 0; i < da.length; i += 4) {
         if (Math.abs(da[i] - db[i]) > ${tolerance} || Math.abs(da[i + 1] - db[i + 1]) > ${tolerance} || Math.abs(da[i + 2] - db[i + 2]) > ${tolerance} || Math.abs(da[i + 3] - db[i + 3]) > ${tolerance}) {

@@ -225,7 +225,9 @@ run on their own origin](#pages-run-on-their-own-origin)). The front page
 as close to a static file as it gets, with Erga's controls on top, and
 nothing in between. It looks exactly as the viewer shows it (the same
 viewport, title and controls; `tests/home.ts` compares them pixel by pixel),
-and loads about twice as fast (below).
+but for one thing: the page starts below the controls, in a band of its own
+coloured as the page's background, so they never cover its top (as every
+document's does: task #38). It loads about twice as fast (below).
 
 **What `/` sends** (`serveHome`, `worker/home.ts`): the page as its last
 deploy rendered it (`renderHome`, `home.ts`), then, as soon as it's known who's
@@ -236,7 +238,11 @@ of the database at all. The controls are a declarative shadow root on an
 `<erga-controls>` element, so they paint as they arrive, before any script,
 and neither side's styles reach the other: the host's own `!important` rules
 win over anything the page says about it, and its few lines of script move
-it out of the page's `<body>` and run the avatar's menu. A deploy's files are
+it out of the page's `<body>` and run the avatar's menu. The band is the
+root's top padding (in the page's head from the start, so nothing moves when
+the controls arrive), with the controls' own band over it, fixed (on a phone
+it scrolls away with the page), in the page's background colour (its root's,
+else its body's, else the canvas's; anchors scroll to below it). A deploy's files are
 at `/_home/<gen>/<path>` (a new `<gen>` each deploy, so they're cached for
 good); the page's relative URLs that load something (`src`, `srcset`, `href`
 on `<link>`, `poster`, `url()` and `@import` in CSS, inline styles) are
