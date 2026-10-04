@@ -50,8 +50,10 @@ serves the app's routes (`front.ts`). Its pages:
   and pause. The viewer and the editor are one page (see [One page, viewing or
   editing](#one-page-viewing-or-editing)): the pencil switches
   between them without a reload, and the document doesn't move.
-- **The front page**, `/`: the viewer on the landing document (see [The front
-  page](#the-front-page)), for anyone, signed in or not.
+- **The front page**, `/`: the landing document, for anyone, signed in or not,
+  served directly from its last deploy, with the viewer's controls on top
+  (see [The front page](#the-front-page) and [The homepage, served
+  directly](#the-homepage-served-directly)).
 - **Documents**, `/docs`: home for anyone signed in, and under it **the
   editor**, `/<owner>/<slug>/edit`, whose breadcrumbs (Documents › its
   title) lead back.
@@ -119,7 +121,9 @@ the server yet is marked "can't sign in yet". Underneath it's `POST
 stop), which answers everyone's permissions (and `notUsers`), and `GET
 /docs/share?id=`, which only reads them. The owner's agent (in the editor,
 or with a token) shares too, with `share_document` and `document_access`.
-Server admins get nothing on documents by being admins.
+Server admins get nothing on documents by being admins, with one exception:
+the front page, which only admins may edit while it's the front page (see
+[The homepage, served directly](#the-homepage-served-directly)).
 Test people may open only test documents, as editors of those of whoever
 minted their token.
 
@@ -174,14 +178,17 @@ never get it.
 
 What `/` shows is a document like any other, in the database and its own
 Durable Object: the one the `landing_document` setting names (kept by id,
-so a rename doesn't lose it). `/` is the viewer on it: everyone sees it
-there, signed in or not, read-only, in a frame on the document's own pages
-origin (as the editor shows any page: see [Pages run on their own
-origin](#pages-run-on-their-own-origin)), with Clone, which makes you a copy
-(`/new?from=landing`; the `create_document` tool's `template: "landing"`),
-and, for those who may edit it, Edit. Only a document's owner may make it the
-front page, since that shows it to everyone: from `/admin` (type its
-address), or by asking an agent (`set_setting`).
+so a rename doesn't lose it). Everyone sees it at `/`, signed in or not,
+read-only, with Clone, which makes you a copy (`/new?from=landing`; the
+`create_document` tool's `template: "landing"`), and, for those who may edit
+it, Edit. Unlike any other document it's served directly, on this site, from
+its last deploy, with no frame (see [The homepage, served
+directly](#the-homepage-served-directly)); until its first deploy is done,
+`/` is the viewer on it, in a frame on its pages origin, as any document's.
+An admin who may edit a document makes it the front page, and only if
+everyone who may edit it is an admin: from `/admin` (type its address), its
+settings (`POST /api/docs/<id>/home`), or by asking an agent
+(`set_setting`).
 
 **The server makes it itself.** The repo's `landing/` folder (the demo page:
 its `index.html` or `index.md`, and text files beside it) is built into the
@@ -209,6 +216,114 @@ with the way in; so is a locked setting naming a document that isn't there.
 
 Locally, `bun start` does the same: on a fresh local database the first `/`
 makes `/<DEV_LOGIN>/landing`. Test servers too, when a test asks for `/`.
+
+### The homepage, served directly
+
+Every document renders in a frame on its own origin, for safety (see [Pages
+run on their own origin](#pages-run-on-their-own-origin)). The front page
+(the homepage) is the exception: `/` is its page itself, served on this site
+as close to a static file as it gets, with Erga's controls on top, and
+nothing in between. It looks exactly as the viewer shows it (the same
+viewport, title and controls; `tests/home.ts` compares them pixel by pixel),
+and loads about twice as fast (below).
+
+**What `/` sends** (`serveHome`, `worker/home.ts`): the page as its last
+deploy rendered it (`renderHome`, `home.ts`), then, as soon as it's known who's
+asking, the controls (`homeHeader`): Clone, Edit (the document's address with
+`#edit`) for those who may edit it, and who you are (account.ts's corner). The
+page goes out at once; signed out, so do the controls, and nothing is asked
+of the database at all. The controls are a declarative shadow root on an
+`<erga-controls>` element, so they paint as they arrive, before any script,
+and neither side's styles reach the other: the host's own `!important` rules
+win over anything the page says about it, and its few lines of script move
+it out of the page's `<body>` and run the avatar's menu. A deploy's files are
+at `/_home/<gen>/<path>` (a new `<gen>` each deploy, so they're cached for
+good); the page's relative URLs that load something (`src`, `srcset`, `href`
+on `<link>`, `poster`, `url()` and `@import` in CSS, inline styles) are
+pointed there. Links to its other pages stay relative: the deploy's files
+are also served at the root (`/<name>.<ext>` or `/<folder>/<name>.<ext>`)
+when the app has nothing there. Only an HTML page is served directly; a
+Markdown homepage's deploy fails, saying so, and `/` stays the viewer.
+
+**How it's served.** The deploy's snapshot lives in one Durable Object
+(`Home`, named "home"). The Worker keeps it in the isolate's memory and in
+the colo's cache (the Cache API), and checks the Durable Object for a newer
+one at most every 5 seconds (`ERGA_HOME_RECHECK_MS`), after answering: so `/`
+waits on nothing but memory, and on a cold isolate the colo's cache. We chose
+this over Cloudflare Pages: Pages would be a second project, with an API
+token as a secret, and erga.dev's `/` belongs to the Worker (its custom
+domain), so the Worker would have to fetch each page from Pages, a hop more
+than reading its own cache. KV would mean a namespace for every deploy (and
+`/deploy` making one), for the same edge caching; Workers static assets need
+a Worker deploy. This needs nothing new outside the Worker, works the same
+locally (`bun start`) and on `/deploy`ed servers, and on workers.dev (which
+has no Cache API) still serves from memory. A new deploy is everywhere within
+seconds: about 5 in each isolate and colo, after the next request.
+
+**Deploys** (`Home`, `worker/home.ts`). A deploy renders the homepage's
+published version (`publishedFiles`, `worker/published.ts`) and keeps it with
+its files under a new generation; the one before stays a while for pages
+still open on it, then goes. About five minutes after the published version
+changes (`ERGA_HOME_DELAY_MS` locally), on the object's alarm, the next
+deploy runs; each change pushes it back. Redeploy now runs it at once. A
+deploy that fails says why, and the last good one keeps serving. Making
+another document the homepage drops the snapshot and deploys the new one at
+once (meanwhile `/` is the viewer on it); deleting the homepage drops it too
+(the next `/` makes a new one from `landing/`). Every change of the deploy's
+state is told to everyone who has the homepage document open: `{ type: "home"
+}` on its `/api/events`. Until document versions arrive (task #33), a
+document's published version is its current files, and they change whenever
+it's edited (its host calls `publishedChanged`, at most every two seconds);
+`worker/published.ts` is the one place to switch to the versions' hooks.
+
+**Its API** (`homeApi`, `home.ts`; the settings UI builds on it):
+
+    GET  /api/docs/<id>/home          for anyone who may open the document (or an admin)
+      → { isHome: boolean,
+          canSet: boolean,            an admin who may edit it, and landing_document isn't locked by the deploy
+          blocked: string | null,     why it can't be the homepage (someone who isn't an admin may edit it), or null
+          deploy: { state: "idle" | "scheduled" | "deploying" | "deployed" | "failed",
+                    at: ISO time | null (the last success), scheduledFor: ISO time | null,
+                    version: number | null (the published version that's live), error: string | null } }
+    POST /api/docs/<id>/home   { isHome: boolean }   admins: sets or clears landing_document; answers as GET
+    POST /api/docs/<id>/home/deploy                  admins: deploys again now (the homepage only); answers as GET
+
+Refusals are `{ error }` with 401, 403 (not an admin, not allowed, from
+another site), 404, 409 (locked by the deploy, or not the homepage). Clearing
+it resets `landing_document`, so the next `/` makes a fresh homepage from
+`landing/`. A document that isn't the homepage has `deploy.state` `idle`.
+
+**Security.** The homepage's scripts run on erga.dev's own origin, where they
+can do anything the person viewing it can (call the app's API as them, read
+its local storage). So only admins may edit it, which the directory enforces
+(`directory.ts`): a document can't become the homepage while anyone who isn't
+an admin may edit it (`homeBlocked`, which GET `/home` reports as `blocked`),
+nobody but an admin can be made its editor while it's the homepage (`share`),
+and anyone else whose permission says otherwise (an admin since made a user)
+only views it (`homeLimit`, in `access` and `openAs`, so the room, the
+agents and publishing all follow). What's left to trust is the admins. The
+session cookie is `HttpOnly` (`SameSite=Lax`), so the page can't read it;
+`/` says `Content-Security-Policy: frame-ancestors 'self'`, `Referrer-Policy:
+no-referrer`, `Cache-Control: private, no-cache`.
+
+**To check on a real account** (the tests run locally only): the `Home`
+Durable Object's first deploy with `cf deploy` (a new class, declared in
+`exports`), the Cache API on erga.dev, `www.erga.dev` (not one of the Worker's
+domains today; add it to `domains` in `cloudflare.config.ts` if it should
+serve `/` too), and how quickly a deploy reaches other colos.
+
+**Speed** (`bun tests/bench.ts --prod --only front`, medians of 5, ms; cold is
+a fresh browser, warm the same page again; "visible" is the page's first
+contentful paint):
+
+|  | ttfb | visible (cold) | visible (warm) | requests | kB (cold) |
+|---|---|---|---|---|---|
+| desktop, before | 5 | 156 | 52 | 17 | 600 |
+| desktop, after | 5 | 133 | 31 | 9 | 190 |
+| desktop, 50ms to the database, before | 111 | 373 | 199 | 17 | 600 |
+| desktop, 50ms to the database, after | 4 | 123 | 35 | 9 | 190 |
+| phone (Slow 4G), before | 159 | 806 | 400 | 17 | 600 |
+| phone (Slow 4G), after | 156 | 463 | 234 | 9 | 190 |
 
 ### Users, admins and settings
 
@@ -247,6 +362,9 @@ key with who set it and when (`config.ts`). Only the keys declared in
 `SETTINGS` exist, each with a description, a default and a parser that
 refuses a bad value saying why; one never set has its default. Today there's
 `delete_docs_after_hours`, `landing_document` ([The front page](#the-front-page)) and `deploy_page` ([Deploy your own](#deploy-your-own)).
+A change to `landing_document`, however it's made, reaches the homepage's
+deploys (`ServerConfig`'s `changed`, which `worker/d1.ts` hands to
+`worker/home.ts`).
 A setting may name a document (`kind: "document"`): the admin page takes and
 shows it by address, and the directory checks who may set it (`checks`).
 `delete_docs_after_hours` is a whole number of hours, or `null` (also
@@ -774,7 +892,9 @@ arguments and a `run`): the REST API, MCP and the guide all list it.
 ### Pages run on their own origin
 
 Anyone who can edit a document can put a script in its page, so a page
-never runs where it could act as the person viewing it. The editor's shell
+never runs where it could act as the person viewing it (the homepage aside,
+which only admins may edit: see [The homepage, served
+directly](#the-homepage-served-directly)). The editor's shell
 (`page.html`, `src/page/main.ts`) runs on erga.dev and holds everything that
 acts as you: the session, the room, your agent, the source view. The page,
 with the page editor next to it (`src/page/frame.ts`), runs in a frame on the
@@ -949,6 +1069,14 @@ fresh server the first `/` (several at once) makes one, its owner edits it in
 the editor, someone else sees it without Edit, `/new?from=landing` copies it,
 a deleted one is made again, and an admin's choice is kept;
 `tests/landing.test.ts` races separate isolates on one database.
+`bun tests/home.ts` checks the homepage served directly: the first `/` is the
+viewer and starts the first deploy, then `/` is the page itself and looks
+like the viewer pixel for pixel (light, dark, desktop, phone; `bun
+tests/home-shots.ts <folder> [path or URL]` takes such pictures on their own),
+the page's styles and the controls' can't reach each other, its files load,
+only admins may edit it, deploys are debounced, Redeploy now, a failed deploy
+keeps the last one, the switch on and off, and a locked setting;
+`tests/home.test.ts` covers the rendering.
 `tests/directory.test.ts` covers the directory, permissions, users and
 settings on bun:sqlite; `tests/tokens.test.ts` the tokens themselves.
 `bun tests/isolation.ts` opens a page that tries to reach whoever views it
@@ -974,6 +1102,9 @@ back, merging edits from disk, the agent's exact-match edits and attribution.
   scripts (the shell's, and the frame's that runs on each document's own origin)
 - `landing/`: the demo page, built into the Worker, which the server makes the
   front page when there's none (`seedLanding`, `front.ts`)
+- `home.ts`, `worker/home.ts`, `worker/published.ts`: the homepage served
+  directly: its rendering, controls and API; its deploys (the `Home` Durable
+  Object) and serving `/`; the published version it deploys
 - `front.ts`: the app's own routes and pages (the front page, `/new`, `/docs` and
   its share dialog, delete, the unedited rule, titles)
 - `admin.ts`: `/admin`, the server's settings and users, for admins
