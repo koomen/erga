@@ -97,6 +97,8 @@ test("sharing: editors, viewers and anyone with the link", async () => {
   expect(await dir.access({ login: "dee" }, one)).toBeNull();
   // Shared documents are on the list of whoever they're shared with, with their role.
   expect((await dir.list("bo")).map((d) => [d.id, d.role])).toEqual([["aaaaaaaa", "editor"]]);
+  // And each listed document says how many it's shared with, besides its owner.
+  expect((await dir.list("ada")).map((d) => d.shared)).toEqual([2]);
   // Only the owner may share, and the owner's own permission can't change.
   await expect(dir.share({ login: "bo" }, one.id, "dee", "editor")).rejects.toBeInstanceOf(NotAllowed);
   await expect(dir.share({ login: "ada" }, one.id, "ada", "viewer")).rejects.toBeInstanceOf(NotAllowed);

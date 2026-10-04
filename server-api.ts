@@ -22,11 +22,16 @@
 // Schema and a `run`, given who's asking and the platform. Adding one is
 // adding an entry; REST, MCP and the guide all list it. The document tools
 // (read, edit, write, ... from agent.ts) are added with a `document`
-// argument and run in that document's host, as the person's agent.
+// argument and run in that document's host, as the person's agent. The
+// tools the editor's own agent has too (server-tools.ts: sharing, and the
+// server's settings and users for an admin) are added as they are; the admin
+// ones are listed only for an admin's token.
 
+import { validateToolArguments } from "@mariozechner/pi-ai";
 import { documentToolSpecs, type ToolContent, type ToolSpec } from "./agent";
 import { type Action, type DocRow, type Route, nameOf } from "./directory";
-import { accessOf, documentRoute, esc, forwarded, ID, makeDoc, newDocId, page, safeNext, type Platform, type Session, whoOf } from "./front";
+import { accessOf, esc, forwarded, makeDoc, newDocId, page, safeNext, type Platform, type Session, whoOf } from "./front";
+import { findDocument, runServerTool, SERVER_TOOLS, ToolError, type ToolWho } from "./server-tools";
 import { cleanRel } from "./host";
 import { LABEL_MAX, normalCode, REQUEST_MINUTES, type AgentToken } from "./tokens";
 
@@ -47,14 +52,13 @@ export interface ServerTool {
   readonly name: string;
   readonly description: string;
   readonly parameters: ArgsSchema;
+  /** Only for server admins: listed only for an admin's token. */
+  readonly admin?: boolean;
   /** Its answer: text, JSON (shown as text), or content items (text, images). Throws a ToolError the agent can act on. */
   run(args: Record<string, unknown>, ctx: ToolContext): Promise<string | object | ToolContent[]>;
 }
 
-/** A tool's failure, worded for the agent to act on; `status` is the HTTP status the REST API answers. */
-export class ToolError extends Error {
-  constructor(message: string, readonly status = 400) { super(message); }
-}
+export { ToolError };
 
 const str = (description: string) => ({ type: "string", description });
 const DOCUMENT_ARG = str("The document: its address (/<owner>/<slug>), its URL, its id, or the slug of one of yours.");
@@ -198,14 +202,37 @@ function documentTools(): ServerTool[] {
   });
 }
 
-/** Every tool: the server's, then the documents'. */
-export const allTools = (): ServerTool[] => [...TOOLS, ...documentTools()];
+/** What a tool in server-tools.ts runs with, for an agent token's person. */
+const toolWho = (ctx: ToolContext): ToolWho => ({ dir: ctx.platform.directory, who: whoOf(ctx.session), origin: ctx.origin });
+
+/** The tools the editor's agent has too (server-tools.ts): sharing, and the admin ones. */
+const sharedTools: ServerTool[] = SERVER_TOOLS.map((t) => ({
+  name: t.name,
+  description: t.description,
+  admin: t.admin,
+  parameters: JSON.parse(JSON.stringify(t.parameters)) as ArgsSchema,
+  run: async (args, ctx) => {
+    let checked: Record<string, unknown>;
+    try { checked = validateToolArguments(t as never, { type: "toolCall", id: "api", name: t.name, arguments: args }) as Record<string, unknown>; } catch (e) { throw new ToolError((e as Error).message); }
+    return runServerTool(t, checked, toolWho(ctx));
+  },
+}));
+
+/** Every tool: the server's, then those the editor's agent has too, then the documents'. */
+export const allTools = (): ServerTool[] => [...TOOLS, ...sharedTools, ...documentTools()];
+
+/** The tools someone may use (all of them, admin ones marked so, for no one in particular). */
+export async function toolsFor(ctx: ToolContext | null): Promise<ServerTool[]> {
+  const admin = ctx ? await ctx.platform.directory.users.isAdmin(whoOf(ctx.session)) : true;
+  return allTools().filter((t) => admin || !t.admin);
+}
 const specOf = (t: ServerTool): ToolSpec => ({ name: t.name, description: t.description, parameters: t.parameters });
 
 /** Runs a tool by name; its answer as content items. */
 async function runTool(name: string, args: unknown, ctx: ToolContext): Promise<ToolContent[]> {
   const tool = allTools().find((t) => t.name == name);
-  if (!tool) throw new ToolError(`There's no tool named "${name}". The tools are: ${allTools().map((t) => t.name).join(", ")}.`, 404);
+  if (!tool) throw new ToolError(`There's no tool named "${name}". The tools are: ${(await toolsFor(ctx)).map((t) => t.name).join(", ")}.`, 404);
+  if (tool.admin && !(await ctx.platform.directory.users.isAdmin(whoOf(ctx.session)))) throw new ToolError(`${name} is for the server's admins only, and ${ctx.session.login} isn't one.`, 403);
   if (args == null) args = {};
   if (typeof args != "object" || Array.isArray(args)) throw new ToolError("The arguments must be a JSON object.");
   const a = args as Record<string, unknown>;
@@ -227,24 +254,8 @@ function described(doc: DocRow, { origin }: ToolContext) {
  * The document an agent names (an address, a URL, an id, or one of the
  * person's slugs), if the person may do `action` with it.
  */
-async function resolve(ctx: ToolContext, ref: unknown, action: Action): Promise<DocRow> {
-  if (typeof ref != "string" || !ref.trim()) throw new ToolError("Name the document: its address (/<owner>/<slug>), URL or id.");
-  let path = ref.trim();
-  try { path = new URL(path).pathname; } catch { /* not a URL */ }
-  const parts = path.split("/").filter(Boolean);
-  const { platform, session } = ctx;
-  let route: Route | null = null;
-  if (parts.length >= 2) route = await documentRoute(platform, parts[0], parts[1]);
-  else if (parts.length == 1) {
-    route = ID.test(parts[0]) ? await platform.directory.route(parts[0]) : null;
-    route ??= await documentRoute(platform, session.login, parts[0]);
-  }
-  const doc = route && await platform.directory.get(route.id);
-  if (!doc) throw new ToolError(`There's no document "${ref}". list_documents lists yours.`, 404);
-  if (!(await platform.directory.may(whoOf(session), action, doc))) {
-    throw new ToolError(action == "delete" ? "Only its owner can delete a document." : `You can't ${action} that document.`, 403);
-  }
-  return doc;
+function resolve(ctx: ToolContext, ref: unknown, action: Action): Promise<DocRow> {
+  return findDocument(toolWho(ctx), ref, action);
 }
 
 /** A request to a document's own host, as the agent's person, with what they may do there (front.ts, forwarded). */
@@ -327,13 +338,17 @@ export async function serverApi(request: Request, platform: Platform): Promise<R
   const ctx = agent && { session: agent, platform, origin, url };
   const method = request.method;
 
-  if (path == "/llms.txt" && (method == "GET" || method == "HEAD")) return new Response(guide(origin, null), { headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-cache" } });
+  if (path == "/llms.txt" && (method == "GET" || method == "HEAD")) return new Response(guide(origin, null, true), { headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-cache" } });
   if ((path == "/api" || path == "/api/ext") && (method == "GET" || method == "HEAD")) {
     if (request.headers.get("authorization") && !agent) return failure(NO_TOKEN(origin), 401);
-    return new Response(guide(origin, agent), { headers: { "Content-Type": "text/markdown; charset=utf-8", "Cache-Control": "no-store" } });
+    return new Response(guide(origin, agent, agent ? await platform.directory.users.isAdmin(whoOf(agent)) : true), { headers: { "Content-Type": "text/markdown; charset=utf-8", "Cache-Control": "no-store" } });
   }
   if (path == "/mcp") return mcp(request, ctx, origin);
-  if (path == "/api/ext/tools" && method == "GET") return json({ ok: true, tools: allTools().map(specOf) });
+  if (path == "/api/ext/tools" && method == "GET") {
+    // With a token, the tools its person may use; without, all of them (the admin ones say so).
+    if (request.headers.get("authorization") && !ctx) return failure(NO_TOKEN(origin), 401);
+    return json({ ok: true, tools: (await toolsFor(ctx)).map(specOf) });
+  }
   if (path == "/api/auth/request" && method == "POST") return askForToken(request, platform, origin);
   if (path == "/api/auth/poll" && method == "POST") return pollForToken(request, platform);
 
@@ -443,11 +458,11 @@ async function rpc(m: RpcMessage, ctx: ToolContext): Promise<object | null> {
         protocolVersion: MCP_VERSIONS.includes(asked) ? asked : MCP_VERSIONS[0],
         capabilities: { tools: { listChanged: false } },
         serverInfo: { name: "erga", title: "Erga", version: "1.0.0" },
-        instructions: `Erga (${ctx.origin}) as ${ctx.session.name} (${ctx.session.login}): list, make (publish files as a site), rename and delete their documents, and read and edit any document they may edit (name it with "document"). The full guide: ${ctx.origin}/api/ext.`,
+        instructions: `Erga (${ctx.origin}) as ${ctx.session.name} (${ctx.session.login}): list, make (publish files as a site), rename, share and delete their documents, read and edit any document they may edit (name it with "document")${(await ctx.platform.directory.users.isAdmin(whoOf(ctx.session))) ? ", and, as they're an admin, read and change the server's settings and users" : ""}. The full guide: ${ctx.origin}/api/ext.`,
       });
     }
     case "ping": return ok({});
-    case "tools/list": return ok({ tools: allTools().map((t) => ({ name: t.name, description: t.description, inputSchema: t.parameters })) });
+    case "tools/list": return ok({ tools: (await toolsFor(ctx)).map((t) => ({ name: t.name, description: t.description, inputSchema: t.parameters })) });
     case "tools/call": {
       const name = String(m.params?.name ?? "");
       if (!allTools().some((t) => t.name == name)) return { jsonrpc: "2.0", id, error: { code: -32602, message: `Unknown tool: ${name}` } };
@@ -512,7 +527,7 @@ export async function tokensDoor(request: Request, platform: Platform): Promise<
     if (!post) {
       return tokensPage(platform, session, url, {
         notice: `<section class="approve"><h2>An agent asks to act as you</h2>
-<p><b>${esc(waiting.label)}</b> wants a token that lets it do everything you can do on Erga: list, make, edit, rename and delete your documents. Approve only if you started this, and the code matches what it showed you:</p>
+<p><b>${esc(waiting.label)}</b> wants a token that lets it do everything you can do on Erga: list, make, edit, rename, share and delete your documents (and, if you're an admin, change the server's settings and users). Approve only if you started this, and the code matches what it showed you:</p>
 <p class="code">${esc(code)}</p>
 <form method="post" action="/tokens/approve"><input type="hidden" name="code" value="${esc(code)}"><button class="primary">Approve</button> <a href="/tokens">Not now</a></form></section>`,
       });
@@ -592,7 +607,7 @@ async function tokensPage(platform: Platform, session: Session, url: URL, o: { n
 </style>
 <main>
   <h1>Tokens</h1>
-  <p class="lede">An agent token lets an agent (Claude Code, Codex, a script) do everything you can do on Erga, as you: list, make, edit, rename and delete your documents, and publish a folder of files as a site. Point the agent at <a href="/llms.txt">${esc(origin)}/llms.txt</a>; it explains the rest, including how to ask you for a token itself.</p>
+  <p class="lede">An agent token lets an agent (Claude Code, Codex, a script) do everything you can do on Erga, as you: list, make, edit, rename, share and delete your documents, publish a folder of files as a site, and, if you're an admin, change the server's settings and users. Point the agent at <a href="/llms.txt">${esc(origin)}/llms.txt</a>; it explains the rest, including how to ask you for a token itself.</p>
   ${o.notice ?? ""}
   ${made}
   <h2>Your tokens</h2>
@@ -613,10 +628,10 @@ async function tokensPage(platform: Platform, session: Session, url: URL, o: { n
 // ---------------------------------------------------------------- the guide
 
 /** The guide (/llms.txt for anyone; /api/ext, personal, with a token): enough for an agent to start from nothing. */
-export function guide(origin: string, session: ToolContext["session"] | null): string {
+export function guide(origin: string, session: ToolContext["session"] | null, admin: boolean): string {
   const toolDocs = (tools: ServerTool[]) => tools.map((t) => `### ${t.name}\n\n${t.description}\n\n\`\`\`json\n${JSON.stringify(t.parameters)}\n\`\`\``).join("\n\n");
   const you = session
-    ? `You're signed in as **${session.name}** (${session.login}), with the token "${session.agent.label}". Everything below acts as them.`
+    ? `You're signed in as **${session.name}** (${session.login}), with the token "${session.agent.label}". Everything below acts as them.${admin ? " They're an admin of this server, so the admin tools are yours too." : ""}`
     : `Nothing here works without a token: get one first (below).`;
   return `# Erga
 
@@ -624,9 +639,11 @@ export function guide(origin: string, session: ToolContext["session"] | null): s
 > HTML and Markdown documents together, in place, on the rendered page. Each
 > document is a folder of files (a page, its styles, scripts, images), at
 > ${origin}/<owner>/<slug>. This API lets an agent do everything a person can
-> do in the app, as that person: list, make, rename and delete their documents,
-> publish a folder of files (a static site, a page) as a document, and read and
-> edit any document they may edit.
+> do in the app, as that person: list, make, rename, share and delete their
+> documents, publish a folder of files (a static site, a page) as a document,
+> read and edit any document they may edit, and, for a server admin, configure
+> the server (its settings and who may sign in). The editor's own agent has
+> the same tools, for the same person.
 
 ${you}
 
@@ -707,7 +724,17 @@ because someone changed the text meanwhile.
 
 ## The server's tools
 
-${toolDocs(TOOLS)}
+${toolDocs([...TOOLS, ...sharedTools.filter((t) => !t.admin)])}
+
+## Admin tools
+
+For the server's admins only: ${session ? (admin ? "you are one, so these are listed for you and work." : `${session.login} isn't one, so these aren't listed for your token and are refused.`) : "they work only with an admin's token."}
+The settings are the server's own (list_settings says what each does); one the
+deploy locks shows as \`"locked": true\` and can't be changed here. Users are
+everyone who may sign in; an admin by the deploy (\`"bootstrap": true\`) can't
+be demoted or removed here.
+
+${admin || !session ? toolDocs(sharedTools.filter((t) => t.admin)) : "(none for you)"}
 
 ## Document tools
 

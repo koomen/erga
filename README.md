@@ -80,15 +80,24 @@ read-only (they see every edit as it happens; theirs are dropped, carets
 aside), their publishes (`PUT /api/stored`) are refused, and their agent,
 and an external agent with their share token, can read but not edit (it
 says so). `/api/doc` says whether you may edit (`canEdit`). The owner
-shares with `POST /docs/share` (`id`, `login` or `*`, `role`: `editor`,
-`viewer`, or `none` to stop), which answers everyone's permissions; there's
-no sharing UI yet. Server admins get nothing on documents by being admins.
+shares from `/docs`: each of their documents has a Share button, whose
+dialog adds people by GitHub login (can edit or can view), changes or
+removes them, sets what anyone signed in with the link may do (no access,
+view, edit) and copies the link; someone shared with who isn't a user of
+the server yet is marked "can't sign in yet". Underneath it's `POST
+/docs/share` (`id`, `login` or `*`, `role`: `editor`, `viewer`, or `none` to
+stop), which answers everyone's permissions (and `notUsers`), and `GET
+/docs/share?id=`, which only reads them. The owner's agent (in the editor,
+or with a token) shares too, with `share_document` and `document_access`.
+Server admins get nothing on documents by being admins.
 Test people may open only test documents, as editors of those of whoever
 minted their token.
 
 `/docs` lists the documents you own or that are shared with you by name,
-latest edit first, with a New document button and rename and delete buttons
-on each; the editor's top bar links to it. Each document keeps its row up to
+latest edit first, with a New document button, share, rename and delete
+buttons on each of yours (one you've shared says so), and whose each shared
+one is and your role on it; the editor's top bar links to it, and its
+footer to `/tokens` and, for admins, `/admin`. Each document keeps its row up to
 date (when it's edited, and the title that follows its heading, at most
 every two seconds). A document nobody edits is deleted after the
 `unedited_hours` setting (24 by default) from when it's made, by an alarm set
@@ -135,10 +144,20 @@ The first admins come from the deploy: the logins in the `ADMINS` binding
 their row the first time they do; they can't be demoted or removed except by
 taking them out of `ADMINS` and deploying. Every other admin is a row, made
 by an admin. Locally, `DEV_LOGIN` is a bootstrap admin too, and everyone
-signed in gets a row as they come. Until there's an admin UI, add a user on
-erga.dev with SQL (the database's id from `bunx cf d1 list --name erga`):
+signed in gets a row as they come. An admin's agent does all of it for them
+too (see [Agents configure the server](#agents-configure-the-server)): ask
+the agent in the editor, or Claude Code with their token, to add a user.
 
-    bunx cf d1 query <database id> --sql "INSERT INTO users (login, name, role, created, added_by) VALUES ('octocat', 'octocat', 'user', unixepoch() * 1000, 'koomen')"
+**The admin page.** `/admin` (`admin.ts`) is for admins only; anyone else,
+and an agent with an admin's token, gets a 404 there. It shows every
+setting (its description, its value, where that comes from: default, set by
+whom and when, or locked by the deploy, which is shown but can't be
+changed) with Save and Reset, and every user (last seen, who added them,
+a User/Admin role menu and a remove button; a bootstrap admin's are
+disabled), with a box to add one by GitHub login. Underneath it's `POST
+/admin/settings` (`key` and `value` as JSON, or `reset=1`) and `POST
+/admin/users` (`do=add|role|remove`, `login`, `role`), answering JSON, from
+this site's pages only.
 
 **Settings.** `server_config` holds the server's settings, a JSON value per
 key with who set it and when (`config.ts`). Only the keys declared in
@@ -190,6 +209,32 @@ applies, so local development is locked the same way as erga.dev.
 
 The admin-only calls throw `NotAllowed` (and a bad value `ConfigError`) with
 a message a person or an agent can act on.
+
+### Agents configure the server
+
+An admin's agents can do what an admin can: the editor's own agent and an
+external one with their token have the same tools, defined once in
+`server-tools.ts` (`SERVER_TOOLS`):
+
+- `document_access`, `share_document`: who a document is shared with, and
+  sharing it (its owner only; the editor's agent may leave out `document`
+  for the one it's in);
+- admins only: `list_settings`, `set_setting`, `reset_setting` (a setting
+  the deploy locks shows `"locked": true` and is refused), and `list_users`,
+  `add_user`, `set_user_role`, `remove_user` (a bootstrap admin can't be
+  demoted or removed; nor can you remove yourself).
+
+They need only the directory and who's asking, so they run in a document's
+host for the editor's agent (`agentToolsFor`, given to the session by
+`worker/doc-host.ts`) and in the Worker for the server's API (`server-api.ts`
+adds them to its registry). The admin ones are offered only to an admin: the
+editor's agent gets them (and a line in its system prompt) only if its
+person is one, looked up again before each new prompt; a token's tool list
+(`/api/ext/tools`, MCP `tools/list`, the personal guide) has them only for
+an admin's token, and `/llms.txt` lists them as admins only. Every call is
+checked again by the directory (`Users.mustAdmin`), so a stale list can't do
+anything. A new tool both agents should have is one more entry in
+`SERVER_TOOLS`.
 
 Secrets are set with `bunx cf workers secrets update`: `GITHUB_CLIENT_SECRET`
 (for the GitHub OAuth app whose client ID is in `cloudflare.config.ts`, with
@@ -525,7 +570,10 @@ over the text as it is now, as an edit open tabs see at once
 
 The tools are a registry (`TOOLS` in `server-api.ts`): whoami,
 list_documents, create_document, update_files, rename_document,
-delete_document, list_tokens and revoke_token, then the document tools
+delete_document, list_tokens and revoke_token, then those the editor's agent
+has too (`SERVER_TOOLS` in `server-tools.ts`: sharing, and for an admin's
+token the server's settings and users; see [Agents configure the
+server](#agents-configure-the-server)), then the document tools
 (`documentToolSpecs` in `agent.ts`) with a `document` argument (an address,
 URL, id or one of your slugs), run in that document's host as your agent. A
 new tool is one more entry (a name, a description, JSON Schema for its
@@ -617,7 +665,7 @@ they reach the open page without a reload and then the disk, that the agent
 shows up as a participant, and that its last change can be undone (it calls
 the API, so it isn't part of `./test.sh`).
 `bun tests/worker.ts --local` checks the app's own routes (`/new`, `/docs`,
-sharing and what each role may do, deleting, expiry, and the pages origin's
+sharing (the share dialog too) and what each role may do, `/admin` (settings and users, only for admins), deleting, expiry, and the pages origin's
 token) and the server's API for agents: asking for a token and approving it,
 publishing a folder, the tools over HTTP and MCP (with the person's own
 permissions), the share button's token, and revoking.
@@ -644,8 +692,9 @@ back, merging edits from disk, the agent's exact-match edits and attribution.
 
 - `page.html`, `page.js`, `frame.js`: the editor's shell and its built
   scripts (the shell's, and the frame's that runs on each document's own origin)
-- `front.ts`: the app's own routes and pages (the demo, `/new`, `/docs`,
-  delete, the unedited rule, titles)
+- `front.ts`: the app's own routes and pages (the demo, `/new`, `/docs` and
+  its share dialog, delete, the unedited rule, titles)
+- `admin.ts`: `/admin`, the server's settings and users, for admins
 - `directory.ts`: the directory of documents (addresses, titles, permissions, who may do what), over
   `Sql`; `worker/d1.ts` puts it on D1; its tables in `migrations/`, which `migrate.ts` applies to
   erga.dev's D1 (the dev server applies them locally)
@@ -654,6 +703,8 @@ back, merging edits from disk, the agent's exact-match edits and attribution.
   D1 (`migrations/0100_tokens.sql`)
 - `server-api.ts`: the server's API for agents (`/llms.txt`, `/api/ext`,
   `/api/publish`, `/api/auth/...`, `/mcp`), its tool registry, and `/tokens`
+- `server-tools.ts`: the tools both the editor's agent and a token's agent
+  have: sharing, and the server's settings and users for an admin
 - `host.ts`: the per-document host (API, `/doc/`)
 - `worker/`: erga.dev on Cloudflare (front door, sign-in, Durable Objects,
   and `disk.ts`, a document's files on disk in local development)

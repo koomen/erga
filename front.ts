@@ -7,7 +7,8 @@
 //   /                          the demo, rendered, with an Edit button (and your documents, signed in)
 //   /new                       a blank document for you (signs you in first); /new?from=demo a copy of the demo
 //   /docs                      your documents, latest edit first; POST /docs/delete deletes one, /docs/rename renames one,
-//                              /docs/share shares one (or stops sharing it)
+//                              /docs/share shares one (or stops sharing it), GET /docs/share?id= says with whom
+//   /admin                     the server's settings and users, for admins (admin.ts); POST /admin/settings, /admin/users
 //   /<owner>/<slug>            the editor on that document (for those it's shared with): its canonical address
 //   /<owner>/<id>, /<owner>/<old slug>, /d/<id>
 //                              redirect there
@@ -31,7 +32,8 @@
 // Worker. The rule for when an unedited document goes (`afterUnedited`) is
 // here; the document's alarm applies it.
 
-import { type Directory, type DocRow, type Grant, type Role, type Route, type Who, NotAllowed, UNTITLED } from "./directory.ts";
+import { adminDoor } from "./admin.ts";
+import { type Directory, type DocRow, type Grant, type Permission, type Role, type Route, type Who, NotAllowed, UNTITLED } from "./directory.ts";
 import type { AgentToken, Tokens } from "./tokens.ts";
 
 /** Who's signed in. */
@@ -63,6 +65,8 @@ export interface Listed {
   path?: string;
   /** What the person whose list it is may do with it: their own document, or one shared with them. */
   role: Role;
+  /** How many it's shared with besides its owner (anyone with the link counts as one). */
+  shared?: number;
 }
 
 /** What the front door needs from the platform it runs on. */
@@ -146,7 +150,8 @@ export async function frontDoor(request: Request, base: Platform): Promise<Respo
   if (path == "/docs") return listDocs(platform, request);
   if (path == "/docs/delete" && request.method == "POST") return deleteDoc(platform, request);
   if (path == "/docs/rename" && request.method == "POST") return renameDoc(platform, request);
-  if (path == "/docs/share" && request.method == "POST") return shareDoc(platform, request);
+  if (path == "/docs/share") return shareDoc(platform, request);
+  if (path == "/admin" || path == "/admin/settings" || path == "/admin/users") return adminDoor(platform, request);
 
   const [, first, second, rest] = /^\/([^/]+)\/([^/]+)(\/.*)?$/.exec(path) ?? [];
   const nothing = () => page("Not found", "There's no document here. <a href=\"/\">Back to the start</a>.", 404);
@@ -320,7 +325,7 @@ async function pagesDoor(request: Request, url: URL, doc: { owner: string; id: s
 }
 
 /** A link on this site, keeping the name a local tab gave (?user=) if it gave one. */
-const link = (path: string, session: Session | null) =>
+export const link = (path: string, session: Session | null) =>
   session?.as ? `${path}${path.includes("?") ? "&" : "?"}user=${encodeURIComponent(session.as)}` : path;
 
 /** The demo as anyone sees it: just the page, and an Edit button (which makes you a copy of it). */
@@ -432,9 +437,8 @@ async function listDocs(platform: Platform, request: Request): Promise<Response>
   const session = await platform.sessionOf(request);
   if (!session) return signInFirst("/docs");
   if (session.test) return page("Not for test people", "Test people have no documents of their own.", 403);
-  const docs = await platform.docs.list(session.login);
-  const hours = await platform.directory.config.get("unedited_hours");
-  return new Response(docsPage(session, docs, Date.now(), platform.dev(new URL(request.url)), hours), { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
+  const [docs, hours, admin] = await Promise.all([platform.docs.list(session.login), platform.directory.config.get("unedited_hours"), platform.directory.users.isAdmin(whoOf(session))]);
+  return new Response(docsPage(session, docs, Date.now(), platform.dev(new URL(request.url)), hours, admin), { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
 }
 
 /** POST /docs/delete (id=...): deletes one of the signed-in person's documents. */
@@ -483,18 +487,32 @@ async function renameDoc(platform: Platform, request: Request): Promise<Response
  * POST /docs/share (id, login, role): gives someone a role on one of your
  * documents ("editor" or "viewer"; login "*" is anyone signed in who has the
  * link), or takes it away (role "none" or empty). Only its owner may. Answers
- * JSON: everyone's permissions now, or the error.
+ * JSON: everyone's permissions now, and which of them can't sign in yet
+ * (`notUsers`: not users of this server), or the error. GET /docs/share?id=
+ * answers the same without changing anything (the list's share dialog).
  */
 async function shareDoc(platform: Platform, request: Request): Promise<Response> {
   const session = await platform.sessionOf(request);
   if (!session || session.test) return Response.json({ error: "Sign in first" }, { status: 401 });
-  if (request.headers.get("origin") != new URL(request.url).origin) return Response.json({ error: "Forbidden" }, { status: 403 });
+  const url = new URL(request.url);
+  const answer = async (permissions: Permission[]) => {
+    const notUsers = (await Promise.all(permissions.map(async (p) => (p.login == "*" || (await platform.directory.users.allowed(p.login)) ? null : p.login)))).filter((l) => l != null);
+    return Response.json({ permissions, notUsers });
+  };
+  if (request.method == "GET") {
+    const id = url.searchParams.get("id") ?? "";
+    const doc = ID.test(id) ? await platform.directory.get(id) : null;
+    if (!doc) return Response.json({ error: "No such document" }, { status: 404 });
+    if (!(await platform.directory.may(whoOf(session), "share", doc))) return Response.json({ error: "Only its owner can share a document." }, { status: 403 });
+    return answer(await platform.directory.permissions(id));
+  }
+  if (request.method != "POST") return Response.json({ error: "GET or POST" }, { status: 405 });
+  if (request.headers.get("origin") != url.origin) return Response.json({ error: "Forbidden" }, { status: 403 });
   const form = await request.formData();
   const id = String(form.get("id") ?? ""), login = String(form.get("login") ?? ""), role = String(form.get("role") ?? "");
   if (!ID.test(id) || !(await platform.directory.get(id))) return Response.json({ error: "No such document" }, { status: 404 });
   try {
-    const permissions = await platform.directory.share(whoOf(session), id, login, role == "" || role == "none" ? null : role as Grant);
-    return Response.json({ permissions });
+    return answer(await platform.directory.share(whoOf(session), id, login, role == "" || role == "none" ? null : role as Grant));
   } catch (e) {
     if (e instanceof NotAllowed) return Response.json({ error: e.message }, { status: 403 });
     throw e;
@@ -516,8 +534,113 @@ function ago(t: number, now: number): string {
   return new Date(t).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
 }
 
-/** The documents view, in the editor's own type and colours (style.css), light or dark with the system. */
-function docsPage(session: Session, docs: Listed[], now: number, dev: boolean, hours: number): string {
+/**
+ * The look the app's own pages share (/docs, /admin): the editor's type and
+ * colours (style.css), light or dark with the system, a column of rows, small
+ * icon buttons that show on hover, and dialogs as small cards.
+ */
+export const APP_STYLE = `
+  body { font-size: 15px; line-height: 1.5; }
+  main { max-width: var(--column); margin: 0 auto; padding: 14vh 20px 40px; display: flex; flex-direction: column; }
+  header { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 22px; }
+  h1 { margin: 0; font-size: 24px; font-weight: 650; letter-spacing: -0.015em; color: var(--fg-strong); }
+  .new { flex: none; padding: 7px 14px; border: 0; border-radius: 999px; background: var(--fg-strong); color: var(--bg); font: inherit; font-size: 13px; font-weight: 600; text-decoration: none; cursor: pointer; transition: opacity 150ms ease; }
+  .new:hover { opacity: 0.85; }
+  :is(.new, .doc, .act, footer a, dialog button, .pill, select):focus-visible { outline: 2px solid var(--caret); outline-offset: 2px; border-radius: 6px; }
+  ol.rows { list-style: none; margin: 0; padding: 0; }
+  ol.rows > li { display: flex; align-items: center; gap: 2px; border-bottom: 1px solid var(--rule); }
+  ol.rows > li:first-child { border-top: 1px solid var(--rule); }
+  .doc { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 12px; padding: 13px 2px; color: inherit; text-decoration: none; }
+  .title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; color: var(--fg-strong); }
+  a.doc:hover .title { text-decoration: underline; text-decoration-color: var(--mark); text-decoration-thickness: 1px; text-underline-offset: 0.2em; }
+  .note { flex: none; font-size: 12.5px; color: var(--chrome); }
+  time { flex: none; margin-left: auto; font-size: 13px; color: var(--soft); font-feature-settings: "tnum"; white-space: nowrap; }
+  form { margin: 0; }
+  .act { flex: none; display: grid; place-items: center; width: 30px; height: 30px; padding: 0; border: 0; border-radius: 8px; background: transparent; color: var(--chrome); cursor: pointer; opacity: 0; transition: opacity 150ms ease, color 150ms ease, background-color 150ms ease; }
+  .act svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+  li:hover .act, .act:focus-visible, .act.on { opacity: 1; }
+  .act:hover { color: var(--chrome-hover); background: color-mix(in srgb, var(--chrome) 12%, transparent); }
+  .act:disabled { cursor: default; opacity: 0 !important; }
+  @media (hover: none) { .act { opacity: 1; } }
+  .pill { flex: none; padding: 7px 14px; border: 1px solid var(--rule); border-radius: 999px; background: transparent; color: var(--fg-strong); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+  .pill:hover:not(:disabled) { background: color-mix(in srgb, var(--chrome) 12%, transparent); }
+  .pill:disabled { color: var(--chrome); cursor: default; }
+  .input { min-width: 0; padding: 7px 12px; border: 1px solid var(--rule); border-radius: 999px; background: transparent; color: var(--fg-strong); font: inherit; font-size: 13.5px; }
+  .input::placeholder { color: var(--soft); }
+  .input:focus-visible { outline: 2px solid var(--caret); outline-offset: 1px; }
+  .input:disabled { color: var(--soft); background: color-mix(in srgb, var(--chrome) 6%, transparent); }
+  select { padding: 5px 26px 5px 10px; border: 1px solid var(--rule); border-radius: 999px; color: var(--fg); font: inherit; font-size: 13px; cursor: pointer; appearance: none;
+    background: transparent url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23a1a1a9' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m7 10 5 5 5-5'/%3E%3C/svg%3E") no-repeat right 7px center / 14px; }
+  select:disabled { color: var(--soft); cursor: default; background-image: none; padding-right: 10px; }
+  select option { color: initial; }
+  .badge { flex: none; padding: 1px 8px; border-radius: 999px; font-size: 11.5px; font-weight: 600; color: var(--soft); background: color-mix(in srgb, var(--chrome) 14%, transparent); }
+  .badge.strong { color: var(--bg); background: var(--fg-strong); }
+  dialog { width: min(420px, calc(100vw - 32px)); box-sizing: border-box; padding: 18px; border: 1px solid var(--panel-border); border-radius: 14px; background: var(--bg); color: var(--fg); box-shadow: var(--shadow); font-size: 14px; }
+  dialog::backdrop { background: rgba(0, 0, 0, 0.18); }
+  dialog h2 { margin: 0 0 12px; font-size: 15px; font-weight: 600; color: var(--fg-strong); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  dialog label { display: block; margin: 0 0 4px; font-size: 12.5px; color: var(--soft); }
+  dialog .field { display: flex; align-items: center; margin-bottom: 12px; border: 1px solid var(--rule); border-radius: 9px; background: color-mix(in srgb, var(--chrome) 6%, transparent); padding: 0 10px; }
+  dialog .field:focus-within { border-color: var(--caret); }
+  dialog .field span { color: var(--soft); white-space: nowrap; }
+  dialog input { flex: 1; min-width: 0; padding: 8px 0; border: 0; outline: 0; background: transparent; color: var(--fg-strong); font: inherit; }
+  .hint { margin: -6px 0 12px; font-size: 12px; color: var(--soft); min-height: 1em; }
+  .hint:empty { display: none; }
+  .hint.error { color: #c2410c; }
+  dialog .buttons { display: flex; justify-content: flex-end; gap: 8px; }
+  dialog button { font: 600 13px var(--font-text); padding: 7px 14px; border-radius: 999px; border: 1px solid var(--rule); background: transparent; color: var(--fg); cursor: pointer; }
+  dialog button.primary { border-color: var(--fg-strong); background: var(--fg-strong); color: var(--bg); }
+  dialog button.act { padding: 0; border: 0; }
+  @media (pointer: coarse) { dialog input, .input { font-size: 16px; } }
+  .empty { margin: 0; padding: 28px 2px; border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); color: var(--soft); }
+  footer { padding-top: 40px; display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 13px; color: var(--chrome); }
+  footer a { color: inherit; text-decoration: none; }
+  footer a:hover { color: var(--chrome-hover); }
+  @media (max-width: 520px) { .note { display: none; } main { padding-top: 8vh; } }
+  /* Touch: room for a finger. */
+  @media (pointer: coarse) { .new, .pill { padding: 10px 16px; } .act { width: 40px; height: 40px; } footer a { padding: 8px 0; margin: -8px 0; } }
+`;
+
+/** Every <time datetime> in the reader's own language and zone: "5 minutes ago", "yesterday", the date. */
+export const TIMES_SCRIPT = `
+  const rtf = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
+  for (const t of document.querySelectorAll("time[datetime]")) {
+    const d = new Date(t.dateTime), s = (d - Date.now()) / 1000;
+    t.title = d.toLocaleString();
+    if (s > -60) t.textContent = "just now";
+    else if (s > -3600) t.textContent = rtf.format(Math.round(s / 60), "minute");
+    else if (s > -86400) t.textContent = rtf.format(Math.round(s / 3600), "hour");
+    else if (s > -30 * 86400) t.textContent = rtf.format(Math.round(s / 86400), "day");
+    else t.textContent = d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+  }
+`;
+
+export const ICON = {
+  rename: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 19h3.5L18.25 9.25a2.47 2.47 0 0 0-3.5-3.5L5 15.5V19Z"/><path d="m13.5 7 3.5 3.5"/></svg>`,
+  delete: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M10 7V5h4v2M7 7l1 12h8l1-12"/></svg>`,
+  share: `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9.5" cy="8.5" r="3.5"/><path d="M3.5 19c.6-3.2 3-5 6-5s5.4 1.8 6 5"/><path d="M18.5 8v6M15.5 11h6"/></svg>`,
+  close: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7 7 17"/></svg>`,
+};
+
+/** The page around a view (/docs, /admin): its title, the shared look and the view's own style. */
+export const appPage = (title: string, style: string, body: string) => `<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${esc(title)} · Erga</title>
+<link rel="stylesheet" href="/fonts/inter.css">
+<link rel="stylesheet" href="/style.css">
+<style>${APP_STYLE}${style}</style>
+${body}
+</html>`;
+
+/** Who a document is shared with, as its row in the list says it (the owner's own view). */
+function sharedNote(d: Listed): string {
+  if (!d.shared) return "";
+  return `<span class="note shared" title="Shared with ${d.shared} besides you">Shared</span>`;
+}
+
+/** The documents view: yours and those shared with you, with new, open, share, rename and delete. */
+function docsPage(session: Session, docs: Listed[], now: number, dev: boolean, hours: number, admin: boolean): string {
   const rows = docs.map((d) => {
     const left = d.expires != null ? Math.max(1, Math.ceil((d.expires - now) / 3600000)) : null;
     const mine = d.role == "owner";
@@ -528,81 +651,50 @@ function docsPage(session: Session, docs: Listed[], now: number, dev: boolean, h
     // One opened from disk only comes off the list: its files stay where they are.
     const [remove, label] = d.path != null ? ["Remove from the list", `Remove ${esc(d.title)} from the list`] : ["Delete", `Delete ${esc(d.title)}`];
     return `  <li>
-    <a class="doc" href="${esc(link(`/${d.owner}/${d.slug}`, session))}"><span class="title">${esc(d.title)}</span>${note}<time datetime="${when}">${ago(d.modified, now)}</time></a>
-    ${mine ? `<button type="button" class="act rename" aria-label="Rename ${esc(d.title)}" title="Rename" data-id="${esc(d.id)}" data-title="${esc(d.title)}" data-slug="${esc(d.slug)}"${d.titleSet ? " data-title-set" : ""}${d.slugSet ? " data-slug-set" : ""}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 19h3.5L18.25 9.25a2.47 2.47 0 0 0-3.5-3.5L5 15.5V19Z"/><path d="m13.5 7 3.5 3.5"/></svg></button>
-    <form method="post" action="${esc(link("/docs/delete", session))}" data-title="${esc(d.title)}"${d.path != null ? " data-disk" : ""}><input type="hidden" name="id" value="${esc(d.id)}"><button class="act delete" aria-label="${label}" title="${remove}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M10 7V5h4v2M7 7l1 12h8l1-12"/></svg></button></form>` : ""}
+    <a class="doc" href="${esc(link(`/${d.owner}/${d.slug}`, session))}"><span class="title">${esc(d.title)}</span>${note}${mine ? sharedNote(d) : ""}<time datetime="${when}">${ago(d.modified, now)}</time></a>
+    <div class="acts">${mine ? `<button type="button" class="act share" aria-label="Share ${esc(d.title)}" title="Share" data-id="${esc(d.id)}" data-title="${esc(d.title)}" data-address="/${esc(d.owner)}/${esc(d.slug)}">${ICON.share}</button>
+    <button type="button" class="act rename" aria-label="Rename ${esc(d.title)}" title="Rename" data-id="${esc(d.id)}" data-title="${esc(d.title)}" data-slug="${esc(d.slug)}"${d.titleSet ? " data-title-set" : ""}${d.slugSet ? " data-slug-set" : ""}>${ICON.rename}</button>
+    <form method="post" action="${esc(link("/docs/delete", session))}" data-title="${esc(d.title)}"${d.path != null ? " data-disk" : ""}><input type="hidden" name="id" value="${esc(d.id)}"><button class="act delete" aria-label="${label}" title="${remove}">${ICON.delete}</button></form>` : ""}</div>
   </li>`;
   }).join("\n");
-  return `<!doctype html>
-<html lang="en">
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Documents · Erga</title>
-<link rel="stylesheet" href="/fonts/inter.css">
-<link rel="stylesheet" href="/style.css">
-<style>
-  body { font-size: 15px; line-height: 1.5; }
-  main { max-width: var(--column); margin: 0 auto; padding: 14vh 20px 40px; display: flex; flex-direction: column; }
-  header { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 22px; }
-  h1 { margin: 0; font-size: 24px; font-weight: 650; letter-spacing: -0.015em; color: var(--fg-strong); }
-  .new { flex: none; padding: 7px 14px; border-radius: 999px; background: var(--fg-strong); color: var(--bg); font-size: 13px; font-weight: 600; text-decoration: none; transition: opacity 150ms ease; }
-  .new:hover { opacity: 0.85; }
-  :is(.new, .doc, .act, footer a, dialog button):focus-visible { outline: 2px solid var(--caret); outline-offset: 2px; border-radius: 6px; }
-  ol { list-style: none; margin: 0; padding: 0; }
-  li { display: flex; align-items: center; gap: 2px; border-bottom: 1px solid var(--rule); }
-  li:first-child { border-top: 1px solid var(--rule); }
-  .doc { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 12px; padding: 13px 2px; color: inherit; text-decoration: none; }
-  .title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; color: var(--fg-strong); }
-  .doc:hover .title { text-decoration: underline; text-decoration-color: var(--mark); text-decoration-thickness: 1px; text-underline-offset: 0.2em; }
-  .note { flex: none; font-size: 12.5px; color: var(--chrome); }
-  time { flex: none; margin-left: auto; font-size: 13px; color: var(--soft); font-feature-settings: "tnum"; white-space: nowrap; }
-  form { margin: 0; }
-  .act { display: grid; place-items: center; width: 30px; height: 30px; padding: 0; border: 0; border-radius: 8px; background: transparent; color: var(--chrome); cursor: pointer; opacity: 0; transition: opacity 150ms ease, color 150ms ease, background-color 150ms ease; }
-  .act svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
-  li:hover .act, .act:focus-visible { opacity: 1; }
-  .act:hover { color: var(--chrome-hover); background: color-mix(in srgb, var(--chrome) 12%, transparent); }
-  @media (hover: none) { .act { opacity: 1; } }
-  /* Renaming: a small card over the list. */
-  dialog { width: min(400px, calc(100vw - 32px)); box-sizing: border-box; padding: 18px; border: 1px solid var(--panel-border); border-radius: 14px; background: var(--bg); color: var(--fg); box-shadow: var(--shadow); font-size: 14px; }
-  dialog::backdrop { background: rgba(0, 0, 0, 0.18); }
-  dialog h2 { margin: 0 0 12px; font-size: 15px; font-weight: 600; color: var(--fg-strong); }
-  dialog label { display: block; margin: 0 0 4px; font-size: 12.5px; color: var(--soft); }
-  dialog .field { display: flex; align-items: center; margin-bottom: 12px; border: 1px solid var(--rule); border-radius: 9px; background: color-mix(in srgb, var(--chrome) 6%, transparent); padding: 0 10px; }
-  dialog .field:focus-within { border-color: var(--caret); }
-  dialog .field span { color: var(--soft); white-space: nowrap; }
-  dialog input { flex: 1; min-width: 0; padding: 8px 0; border: 0; outline: 0; background: transparent; color: var(--fg-strong); font: inherit; }
-  dialog .hint { margin: -6px 0 12px; font-size: 12px; color: var(--soft); min-height: 1em; }
-  dialog .hint:empty { display: none; }
-  dialog .hint.error { color: #c2410c; }
-  dialog .buttons { display: flex; justify-content: flex-end; gap: 8px; }
-  dialog button { font: 600 13px var(--font-text); padding: 7px 14px; border-radius: 999px; border: 1px solid var(--rule); background: transparent; color: var(--fg); cursor: pointer; }
-  dialog button.primary { border-color: var(--fg-strong); background: var(--fg-strong); color: var(--bg); }
-  @media (pointer: coarse) { dialog input { font-size: 16px; } }
-  .empty { margin: 0; padding: 28px 2px; border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); color: var(--soft); }
+  const style = `
+  .shared { color: var(--soft); }
+  /* The buttons (only on your own documents) take the same room on every row, so the times line up. */
+  .acts { flex: none; display: flex; justify-content: flex-end; gap: 2px; width: 94px; }
+  @media (pointer: coarse) { .acts { width: 124px; } }
   .open { display: flex; gap: 8px; margin: 28px 0 0; }
-  .open input { flex: 1; min-width: 0; padding: 7px 12px; border: 1px solid var(--rule); border-radius: 999px; background: transparent; color: var(--fg-strong); font: inherit; font-size: 13.5px; }
-  .open input::placeholder { color: var(--soft); }
-  .open input:focus-visible { outline: 2px solid var(--caret); outline-offset: 1px; }
-  .open button { flex: none; padding: 7px 14px; border: 1px solid var(--rule); border-radius: 999px; background: transparent; color: var(--fg-strong); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
-  .open button:hover { background: color-mix(in srgb, var(--chrome) 12%, transparent); }
-  footer { padding-top: 40px; display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 13px; color: var(--chrome); }
-  footer a { color: inherit; text-decoration: none; }
-  footer a:hover { color: var(--chrome-hover); }
-  @media (max-width: 520px) { .note { display: none; } main { padding-top: 8vh; } }
-  /* Touch: room for a finger. */
-  @media (pointer: coarse) { .new { padding: 10px 16px; } .act { width: 40px; height: 40px; } .delete { margin-right: -6px; } footer a { padding: 8px 0; margin: -8px 0; } }
-</style>
-<main>
+  .open .input { flex: 1; }
+  @media (pointer: coarse) { .delete { margin-right: -6px; } }
+  /* Sharing: who has it, anyone with the link, and adding someone. */
+  #share { width: min(460px, calc(100vw - 32px)); }
+  #share .add { display: flex; gap: 8px; align-items: center; margin-bottom: 14px; }
+  #share .add .field { flex: 1; margin: 0; }
+  .people { list-style: none; margin: 0 0 14px; padding: 0; max-height: 40vh; overflow: auto; }
+  .people li { display: flex; align-items: center; gap: 10px; padding: 7px 0; border-top: 1px solid var(--rule); }
+  .people li:last-child { border-bottom: 1px solid var(--rule); }
+  .people .face { flex: none; display: grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; font-size: 12px; font-weight: 600; color: var(--soft); background: color-mix(in srgb, var(--chrome) 16%, transparent); text-transform: uppercase; }
+  .people .who { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg-strong); }
+  .people .who small { margin-left: 6px; font-size: 12px; color: var(--soft); }
+  .people .pending { color: #c2410c; }
+  .people .fixed { font-size: 13px; color: var(--soft); padding-right: 4px; }
+  .people .act { opacity: 1; width: 26px; height: 26px; }
+  .anyone { display: flex; align-items: center; gap: 10px; margin: 0 0 14px; }
+  .anyone .face svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.7; }
+  .anyone .who { flex: 1; color: var(--fg-strong); }
+  .anyone .who small { display: block; font-size: 12px; color: var(--soft); }
+  #share .buttons { justify-content: space-between; }
+`;
+  return appPage("Documents", style, `<main>
   <header>
     <h1>Documents</h1>
     <a class="new" href="${esc(link("/new", session))}">New document</a>
   </header>
-  ${docs.length ? `<ol>\n${rows}\n  </ol>` : `<p class="empty">No documents yet. A new one starts blank, and goes away after ${hours} hours if you never edit it.</p>`}
+  ${docs.length ? `<ol class="rows">\n${rows}\n  </ol>` : `<p class="empty">No documents yet. A new one starts blank, and goes away after ${hours} hours if you never edit it.</p>`}
   ${dev ? `<form class="open" method="post" action="${esc(link("/__erga/open", session))}" aria-label="Open from disk">
-    <input name="path" required placeholder="A file or folder on this machine: ~/notes, ./site/index.md" aria-label="Path to a file or folder" autocomplete="off" spellcheck="false">
-    <button>Open</button>
+    <input class="input" name="path" required placeholder="A file or folder on this machine: ~/notes, ./site/index.md" aria-label="Path to a file or folder" autocomplete="off" spellcheck="false">
+    <button class="pill">Open</button>
   </form>` : ""}
-  <footer><span>Signed in as ${esc(session.login)}</span><a href="${esc(link("/", session))}">The demo</a><a href="/auth/logout">Sign out</a></footer>
+  <footer><span>Signed in as ${esc(session.login)}</span><a href="${esc(link("/", session))}">The demo</a><a href="${esc(link("/tokens", session))}">Agent tokens</a>${admin ? `<a href="${esc(link("/admin", session))}">Admin</a>` : ""}<a href="/auth/logout">Sign out</a></footer>
 </main>
 <dialog id="rename" aria-labelledby="rename-title">
   <form method="post" action="${esc(link("/docs/rename", session))}">
@@ -616,20 +708,27 @@ function docsPage(session: Session, docs: Listed[], now: number, dev: boolean, h
     <div class="buttons"><button type="button" value="cancel" formnovalidate>Cancel</button><button class="primary">Save</button></div>
   </form>
 </dialog>
+<dialog id="share" aria-labelledby="share-title" data-action="${esc(link("/docs/share", session))}" data-me="${esc(session.login.toLowerCase())}">
+  <h2 id="share-title">Share</h2>
+  <form class="add">
+    <div class="field"><input name="login" placeholder="A GitHub login" aria-label="GitHub login to share with" autocomplete="off" autocapitalize="off" spellcheck="false" required></div>
+    <select name="role" aria-label="Their role"><option value="editor">Can edit</option><option value="viewer">Can view</option></select>
+    <button class="primary">Add</button>
+  </form>
+  <ul class="people" aria-label="People with access"></ul>
+  <div class="anyone">
+    <span class="face" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.5 2.6 3.6 5.4 3.6 8.5s-1.1 5.9-3.6 8.5c-2.5-2.6-3.6-5.4-3.6-8.5s1.1-5.9 3.6-8.5Z"/></svg></span>
+    <label class="who" for="share-anyone">Anyone signed in with the link<small>Anyone who can sign in to this server</small></label>
+    <select id="share-anyone"><option value="none">No access</option><option value="viewer">Can view</option><option value="editor">Can edit</option></select>
+  </div>
+  <p class="hint" id="share-hint" role="status"></p>
+  <div class="buttons"><button type="button" class="copy">Copy link</button><button type="button" class="primary done">Done</button></div>
+</dialog>
 <script>
   // Times in the reader's own language and zone, and a question before deleting.
-  const rtf = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
-  for (const t of document.querySelectorAll("time")) {
-    const d = new Date(t.dateTime), s = (d - Date.now()) / 1000;
-    t.title = d.toLocaleString();
-    if (s > -60) t.textContent = "just now";
-    else if (s > -3600) t.textContent = rtf.format(Math.round(s / 60), "minute");
-    else if (s > -86400) t.textContent = rtf.format(Math.round(s / 3600), "hour");
-    else if (s > -30 * 86400) t.textContent = rtf.format(Math.round(s / 86400), "day");
-    else t.textContent = d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
-  }
+  ${TIMES_SCRIPT}
   for (const f of document.querySelectorAll("form[data-title]")) {
-    const q = "disk" in f.dataset ? "Take \\u201c" + f.dataset.title + "\\u201d off your list? Its files stay where they are." : "Delete \\u201c" + f.dataset.title + "\\u201d? This can't be undone.";
+    const q = "disk" in f.dataset ? "Take “" + f.dataset.title + "” off your list? Its files stay where they are." : "Delete “" + f.dataset.title + "”? This can't be undone.";
     f.addEventListener("submit", (e) => { if (!confirm(q)) e.preventDefault(); });
   }
   // Renaming: the title, and the address, which follows the title until it's set.
@@ -662,13 +761,81 @@ function docsPage(session: Session, docs: Listed[], now: number, dev: boolean, h
     if (nameIn.value.trim() != was.title) body.set("title", nameIn.value.trim());
     if (slugTouched && slugIn.value.trim() != was.slug) body.set("slug", slugIn.value.trim());
     if ([...body.keys()].length == 1) return dialog.close();
-    say("Saving\\u2026");
+    say("Saving…");
     const r = await fetch(form.action, { method: "POST", body, headers: { Accept: "application/json" } }).catch(() => null);
     if (r && r.ok) return location.reload();
     say((r && (await r.json().catch(() => ({}))).error) || "Couldn't rename it: try again.", true);
   });
-</script>
-</html>`;
+
+  // Sharing: each change is saved as it's made (POST /docs/share), and the list follows when the dialog closes.
+  const share = document.getElementById("share"), action = share.dataset.action, me = share.dataset.me;
+  const people = share.querySelector(".people"), adder = share.querySelector("form.add"), anyone = document.getElementById("share-anyone");
+  const shareHint = document.getElementById("share-hint");
+  const tell = (text, error) => { shareHint.textContent = text; shareHint.classList.toggle("error", !!error); };
+  let doc = null, changed = false;
+  const el = (tag, props = {}, ...kids) => { const e = Object.assign(document.createElement(tag), props); e.append(...kids); return e; };
+  const ROLES = [["editor", "Can edit"], ["viewer", "Can view"]];
+  const roleSelect = (role, label) => {
+    const s = el("select", { ariaLabel: label });
+    for (const [v, t] of ROLES) s.append(el("option", { value: v, textContent: t, selected: v == role }));
+    return s;
+  };
+  function render({ permissions, notUsers }) {
+    people.replaceChildren();
+    const pending = new Set(notUsers || []);
+    let all = "none";
+    for (const p of permissions) {
+      if (p.login == "*") { all = p.role; continue; }
+      const who = el("span", { className: "who", textContent: p.login });
+      if (p.login == me) who.append(el("small", { textContent: "you" }));
+      if (pending.has(p.login)) who.append(el("small", { className: "pending", textContent: "can't sign in yet", title: "Not a user of this server: an admin can add them" }));
+      const li = el("li", {}, el("span", { className: "face", ariaHidden: "true", textContent: p.login[0] }), who);
+      if (p.role == "owner") li.append(el("span", { className: "fixed", textContent: "Owner" }));
+      else {
+        const s = roleSelect(p.role, "Role for " + p.login);
+        s.addEventListener("change", () => change(p.login, s.value));
+        const x = el("button", { type: "button", className: "act", title: "Stop sharing with " + p.login, ariaLabel: "Stop sharing with " + p.login, innerHTML: ${JSON.stringify(ICON.close)} });
+        x.addEventListener("click", () => change(p.login, "none"));
+        li.append(s, x);
+      }
+      people.append(li);
+    }
+    anyone.value = all;
+  }
+  async function call(init) {
+    const r = await fetch(init ? action : action + (action.includes("?") ? "&" : "?") + "id=" + doc.id, init ? { method: "POST", body: new URLSearchParams(init), headers: { Accept: "application/json" } } : {}).catch(() => null);
+    const body = r ? await r.json().catch(() => ({})) : {};
+    if (!r || !r.ok) throw new Error(body.error || "Couldn't reach the server: try again.");
+    return body;
+  }
+  async function change(login, role) {
+    tell("Saving…");
+    try { render(await call({ id: doc.id, login, role })); changed = true; tell(""); return true; }
+    catch (e) { tell(e.message, true); return false; }
+  }
+  for (const b of document.querySelectorAll("button.share")) b.addEventListener("click", async () => {
+    doc = { id: b.dataset.id, title: b.dataset.title, address: b.dataset.address };
+    share.querySelector("h2").textContent = "Share “" + doc.title + "”";
+    people.replaceChildren();
+    adder.reset();
+    tell("Loading…");
+    share.showModal();
+    adder.elements.login.focus();
+    try { render(await call()); tell(""); } catch (e) { tell(e.message, true); }
+  });
+  adder.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const login = adder.elements.login.value.trim().replace(/^@/, "");
+    if (login && (await change(login, adder.elements.role.value))) adder.elements.login.value = "";
+  });
+  anyone.addEventListener("change", () => change("*", anyone.value));
+  share.querySelector(".copy").addEventListener("click", async () => {
+    const url = location.origin + doc.address;
+    try { await navigator.clipboard.writeText(url); tell("Link copied: " + url); } catch { tell(url); }
+  });
+  share.querySelector(".done").addEventListener("click", () => share.close());
+  share.addEventListener("close", () => { if (changed) location.reload(); });
+</script>`);
 }
 
 /**
