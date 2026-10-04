@@ -74,6 +74,9 @@ export default defineConfig(({ mode }) => ({
         // The homepage's deploys (worker/home.ts): how long after a change the next runs, and how often / checks for one (tests shorten both).
         ERGA_HOME_DELAY_MS: bindings.text(process.env.ERGA_HOME_DELAY_MS ?? ""),
         ERGA_HOME_RECHECK_MS: bindings.text(process.env.ERGA_HOME_RECHECK_MS ?? ""),
+        // When versions are cut (worker/doc-host.ts): how long edits pause first, and the longest burst one version holds.
+        ERGA_VERSION_IDLE_MS: bindings.text(process.env.ERGA_VERSION_IDLE_MS ?? ""),
+        ERGA_VERSION_MAX_MS: bindings.text(process.env.ERGA_VERSION_MAX_MS ?? ""),
         // tests/bench.ts --latency: each call to the database or a document waits this long first (worker/timing.ts).
         ERGA_REMOTE_LATENCY_MS: bindings.text(process.env.ERGA_REMOTE_LATENCY_MS ?? ""),
         // "1": /deploy talks to a pretend Cloudflare (deploy/mock.ts), for its tests and for trying it safely.

@@ -29,12 +29,13 @@ import { diffPng, shoot, VIEWS } from "./home-shots";
 import { startHost, type Host } from "./host";
 import { expect, until } from "./suite/harness";
 
-// Longer than the document's directory throttle (DIRECTORY_EVERY_MS, 2s), which is how often an edit reaches the deploys.
+// A deploy's delay; an edit reaches the deploys once a version is cut, IDLE after it (ERGA_VERSION_IDLE_MS).
 const DELAY = 4000;
+const IDLE = 200;
 const checks: string[] = [];
 const ok = (what: string) => { checks.push(what); console.log(`ok   ${what}`); };
 
-const host = await startHost(null, { env: { ERGA_HOME_DELAY_MS: String(DELAY), ERGA_HOME_RECHECK_MS: "0" } });
+const host = await startHost(null, { env: { ERGA_HOME_DELAY_MS: String(DELAY), ERGA_HOME_RECHECK_MS: "0", ERGA_VERSION_IDLE_MS: String(IDLE) } });
 const root = host.root;
 const browser = await Browser.launch();
 const get = (path: string, init: RequestInit = {}) => fetch(root + path, { redirect: "manual", ...init });
@@ -299,7 +300,7 @@ try {
   p.close();
 
   // A deploy that locks landing_document: nobody can change it here.
-  const locked: Host = await startHost(null, { env: { ERGA_SERVER_CONFIG: JSON.stringify({ landing_document: null }), ERGA_HOME_DELAY_MS: String(DELAY) } });
+  const locked: Host = await startHost(null, { env: { ERGA_SERVER_CONFIG: JSON.stringify({ landing_document: null }), ERGA_HOME_DELAY_MS: String(DELAY), ERGA_VERSION_IDLE_MS: String(IDLE) } });
   try {
     const lr = (path: string, init: RequestInit = {}) => fetch(locked.root + path, { redirect: "manual", ...init });
     const t = await mintToken(locked.root);

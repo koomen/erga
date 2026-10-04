@@ -91,7 +91,8 @@ route: `/<owner>/<slug>/edit` is a page called edit, if the document has one. Th
 title follows the page's first `<h1>` (else `<title>`, else "Untitled") until
 someone sets it, and the slug follows the title (lowercase letters, digits
 and dashes, `-2`, `-3`... when taken) until someone sets it. Rename from the
-title after Documents in the editor's breadcrumbs, or by asking an agent
+title after Documents in the editor's breadcrumbs (it opens the document's
+pages; the pencil on the first row, the document itself, renames it), or by asking an agent
 (its `get_title` and `set_title` tools, for the embedded agent and external
 ones). Every open tab follows a rename: its title, and its address bar. The
 editor itself talks to its document at `/d/<id>`, which a
@@ -282,10 +283,10 @@ another document the homepage drops the snapshot and deploys the new one at
 once (meanwhile `/` is the viewer on it); deleting the homepage drops it too
 (the next `/` makes a new one from `landing/`). Every change of the deploy's
 state is told to everyone who has the homepage document open: `{ type: "home"
-}` on its `/api/events`. Until document versions arrive (task #33), a
-document's published version is its current files, and they change whenever
-it's edited (its host calls `publishedChanged`, at most every two seconds);
-`worker/published.ts` is the one place to switch to the versions' hooks.
+}` on its `/api/events`. The published version is the one published in
+"manual" mode; in "latest" mode, the document as it is now, which changes
+each time a version is cut (see Versions and publishing). The document's host
+calls `publishedChanged` whenever it fires `firePublished`.
 
 **Its API** (`homeApi`, `home.ts`; the settings UI builds on it):
 
@@ -426,6 +427,100 @@ applies, so local development is locked the same way as erga.dev.
 
 The admin-only calls throw `NotAllowed` (and a bad value `ConfigError`) with
 a message a person or an agent can act on.
+
+### Versions and publishing
+
+A document keeps **versions** (`versions.ts`): snapshots of its whole file
+set (every page, style, script and image), numbered 1, 2, 3... A version is
+cut after a burst of edits, not on every keystroke. The rule
+(`noteEdit` in `worker/doc-host.ts`):
+
+- edits pause for 30 seconds;
+- a burst has gone on for 5 minutes since its first edit (long typing still
+  gets versions);
+- an agent's turn ends (the embedded agent's, or an external agent's calls, 8
+  seconds after its last): one version per agent turn, since while any agent
+  works the two rules above wait for it;
+- the last person who may edit leaves (their room connection closes);
+- before a publish;
+- when the document's room opens, if what it holds isn't the latest version
+  (edits whose timers didn't run, because the object was evicted).
+
+A cut that finds nothing changed makes no version. A new document's first
+version is the files it starts from. Each version says when it was cut, who
+edited since the one before (logins, and agents: "koomen’s agent"), and a
+five-word description: in the background, the document sends a compact diff
+(files added, removed and changed, and the changed lines with one line of
+context, about 6KB at most) to Claude Sonnet 5.5 (`DESCRIBE_MODEL`) with the
+server's `ANTHROPIC_API_KEY`, and stores its answer. With no key, under the
+scripted test model, on test documents, or if the model fails, it's a
+fallback made from the file names ("Edited index.html and style.css").
+Editing never waits for any of it.
+
+**Storage.** In the document's own Durable Object, beside its files: each
+file's bytes once, content-addressed (`b:<sha-256>`), shared by every version
+that has them, so a version that changes one file stores one new blob; a
+version (`v:<n>`) is a manifest (path → digest) with its details. No other
+database is asked, a version is served by the object that holds the document,
+and deleting the document deletes its versions. Versions are kept for as long
+as the document is.
+
+**Publishing.** What viewers see is the published version, by mode:
+**latest** (the default), the document as it is now, up to the keystroke, as
+before: the viewer never waits for a version; or **manual**, one chosen
+version, until someone publishes another. Editors always edit the current
+state. The viewer shows the page from the document's `pub/` (the frame's host
+page links it: `/t/<token>/pub/<page>`), which in "latest" mode is `doc/`
+exactly (no extra call: the mode is in the object's memory) and in "manual"
+mode the published version's files, the page's own relative links included.
+Someone who may only view the document (or nobody signed in, on the front
+page) gets a pages token that serves the published version for `doc/` too, so
+every file they can reach is the published one, and their Clone copies it.
+
+The API (also for the settings UI, and with an agent token):
+
+    GET  /api/docs/<id>/versions[?before=<versionId>&limit=<n>]
+      → { current: Version, published: { mode: "latest" | "manual", version: Version },
+          versions: Version[] (newest first, 10 by default), total, canEdit, pending }
+      Version = { id: "v3", n: 3, at: ISO time, authors: string[], description: string | null }
+    POST /api/docs/<id>/publish     editors only; from a browser only from this site's pages
+      { mode: "latest" } | { mode: "manual", versionId: "v3" }   (no versionId: the current state)
+      → { published } | 4xx { error }
+    POST /api/docs/<id>/versions/<versionId>/restore   editors only; from a browser only from this site's pages
+      → { current: Version } | 4xx { error }
+
+`description` is null until the model has answered; `pending` says there are
+edits since the current version. Publishing the current version (`versionId`
+the current one's) while edits are pending cuts them into a new version first
+and publishes that, so "current" means up to the keystroke. A **restore**
+writes the version's files over the document as it is (files it didn't have
+are deleted), as an edit open editors see live, and cuts that as a new current
+version, by the person (or "<login>’s agent"), described "Restored version
+<n>"; pending edits become a version first, so nothing is lost. In "latest"
+mode viewers then see it; in "manual" mode what's published stays. Everyone with the document open hears
+`{ type: "versions" }` on its event channel (`/api/events`) when a version is
+cut, a description arrives, or the published version changes. In "latest"
+mode, `published.version` is the current version.
+
+The agents (the editor's and external ones, over `/api/ext`, the server's
+API and MCP) have `list_versions`, `read_version` (a version's files, or one
+file as it was), `restore_version` and `publish_version` (`latest`, or
+`manual` with a version; editors only), so an agent can do what the person can.
+
+**In process, for the homepage's deploy** (`versions.ts`):
+`onPublished(docId | "*", cb)` calls `cb({ docId, published, files() })`
+whenever that document's published version changes (a publish, going back to
+"latest", or a new version in "latest" mode); it's fired in the document's
+Durable Object, so subscribe from code that runs there. `publishedFiles(env,
+docId)` answers `{ published, index, files: Map<path, bytes> }` from
+anywhere with the Worker's environment: the published version's files in
+"manual" mode, the files as they are now in "latest" mode (the Durable
+Object's `publishedFiles()` method underneath).
+
+Locally, `ERGA_VERSION_IDLE_MS` and `ERGA_VERSION_MAX_MS` shorten the pause
+and the longest burst (the tests do). `bun tests/versions.ts` tests all of
+this against a dev server of its own, and `tests/versions.test.ts` the
+storage.
 
 ### Agents configure the server
 
@@ -666,6 +761,90 @@ on-screen keyboard, and keep clear of a notch.
 There's no dark mode: pages are shown as their authors made them, and most
 don't support one. The editor's own controls take their colours from the page
 under them instead.
+
+### Document settings
+
+The gear in the top row opens the document's settings, in a popover under
+it (a sheet from the bottom on a phone; Escape or a click outside closes it):
+
+- **Publishing**: *Latest*, the default, where viewers see the current
+  version, up to the keystroke, or *Manual*, where they see the version
+  picked, until another is. Switching to Manual keeps what viewers see. The
+  published-version menu always shows the published version, the latest ten
+  and the three just before the published one (to roll back to); a row for
+  each run of versions in between says how many there are and loads them
+  (`?before=`). Under it, **Publish the current version** publishes the
+  document as it is now, up to the keystroke, when that isn't what's published.
+- **Homepage**, for admins and on the homepage itself: whether this document
+  is the server's homepage (only admins may change it, not while it deploys),
+  how its deploy stands (Scheduled for, Deploying, Deployed at, Failed), and
+  **Redeploy now**.
+- **Versions**: the latest ten, each with its number, the model's five-word
+  description (a quiet placeholder until it arrives), when and who; the
+  current and the published one marked. **Edit**, on any version but the
+  current one (it shows the moment the pointer is on the version, or the
+  keyboard reaches it), makes a copy of that version the current one, to edit
+  it now: it appears at the top as a new version ("Restored version 21"), and
+  the one it replaced stays a version.
+
+It follows the event channel's `{ type: "versions" }` and `{ type: "home" }`,
+so it's always up to date. Someone who can't edit sees it read-only, with a
+line saying why. Its code (`src/page/settings.ts`, built as `settings.js`)
+loads only when the gear is hovered, focused or clicked.
+
+It talks to the server's `/api/docs/<id>/versions`, `/versions/<versionId>/restore`,
+`/publish`, `/home` and `/home/deploy`. Until those are in, `ERGA_STUB_SETTINGS=1 bun start` answers
+them with a stand-in (`dev/settings-stub.ts`, local development only), whose
+`POST /__erga/stub/settings` sets up any state (how many versions, which is
+published, a deploy that fails…); `tests/settings.ts` uses it.
+
+### A document's pages
+
+A document can have more than one page. Its root is `index.html`; the
+others sit beside it, in folders if you like. People think in documents, not
+files: the tree shows only documents (HTML pages) and the folders holding
+them (or nothing yet). A document's stylesheets, scripts, fonts and images
+are part of it, out of sight, as are folders holding only those (`fonts/`,
+`assets/`); the API lists every file, and agents see them all. The tree of them
+(`src/page/tree.ts`, built on its own as `pages-tree.js` and loaded only when it's
+opened, so viewing never pays for it) shows in two places: in the editor, the
+document's title in the breadcrumbs opens it in a card, the document as its
+first row and everything else under it; on `/docs`, the chevron left of each
+document opens its pages beneath its row. Folders open and close (remembered
+for the tab); documents show by their title when it's known (in the editor,
+read from the room as they're edited; "Untitled" counts as none), else by
+their name made readable ("spring-migration" is "Spring migration", a
+folder's index is the folder's name), with the file's name as a quiet hint
+only where two would read the same. Clicking a document opens it, in the
+editor for those who may edit (`/<owner>/<slug>/<page>#edit`), in the viewer
+otherwise (`/<owner>/<slug>/<page>`), and the one you're on is marked.
+
+Editors get New document (from the new-document template; "My post" is
+`my-post.html`) and New folder, at the top level (the foot of the tree) and in each
+folder (its +), named in place; rename in place (the menu, F2, or the pencil
+on the root row, which renames the document itself: its title and address);
+move by drag and drop or the menu's Move to…; and delete (a folder asks
+first, in its row, counting the documents in it; `index.html` can't go).
+A document links its stylesheets, images and other documents by where they
+are from it (`../style.css`), so moving one to another folder (or a folder to
+another depth) can leave those behind: the tree says so after the move when
+the document has relative links (in the editor it reads them from the room;
+on `/docs` it always says so). It doesn't rewrite links, nor those from other
+documents to the one that moved or was renamed. The editor renders a page in
+a folder with its links resolved from that folder, as the browser does at its
+address. Viewers see the tree without any
+of that. What the server refuses shows where it happened, in its words. Keys:
+↑ ↓ ← → Home End move and open folders, Enter opens, F2 renames, Delete
+deletes, Shift-F10 opens a row's menu, Esc cancels or closes.
+
+It talks to `GET /api/docs/<id>/tree` (`{ entries: [{ path, type: "page" |
+"folder" | "file", title? }], canEdit }`) and `POST` there (`new_page`,
+`new_folder`, `move`, `delete`), and reads it again on a `{ type: "tree" }`
+event on the editor's event channel, or when a file comes or goes in the room.
+That's the server's own tree API (below). `bun tests/tree.ts` checks the tree
+in headless Chrome, against `dev/tree-stub.ts` (`ERGA_TREE_STUB=1`: an
+in-memory stand-in for the API that changes no files, so the test can set
+any tree and make changes fail).
 
 ### When the page is broken
 
@@ -1201,8 +1380,18 @@ the page's styles and the controls' can't reach each other, its files load,
 only admins may edit it, deploys are debounced, Redeploy now, a failed deploy
 keeps the last one, the switch on and off, and a locked setting;
 `tests/home.test.ts` covers the rendering.
+`bun tests/versions.ts` checks versions and publishing: a burst of edits is
+one version, an agent's turn is one, leaving cuts one, events and
+descriptions arrive, "latest" and "manual" in the viewer (headless Chrome),
+who may publish, publishing the current version with edits pending,
+restoring, and the agents' tools; `tests/versions.test.ts` covers their
+storage (unchanged files stored once).
 `tests/directory.test.ts` covers the directory, permissions, users and
 settings on bun:sqlite; `tests/tokens.test.ts` the tokens themselves.
+`bun tests/settings.ts` checks document settings (the popover, Latest and
+Manual, the published-version menu's windows, live updates, the homepage's
+deploy states, errors, read-only, a phone and a dark page), and
+`tests/versions.test.ts` the menu's windows on their own.
 `bun tests/pages.ts` checks documents with many pages: the tree's API and
 who may use it, every operation and what it refuses, live tree events,
 addresses (`blog.html` before `blog/index.html`, no slash added, 404s, a
@@ -1255,6 +1444,9 @@ back, merging edits from disk, the agent's exact-match edits and attribution.
   D1 (`migrations/0100_tokens.sql`)
 - `server-api.ts`: the server's API for agents (`/llms.txt`, `/api/ext`,
   `/api/publish`, `/api/auth/...`, `/mcp`), its tool registry, and `/tokens`
+- `versions.ts`: a document's versions (content-addressed snapshots of its
+  files, in its Durable Object), their descriptions, and the hooks for the
+  homepage's deploy (`onPublished`, `publishedFiles`)
 - `server-tools.ts`: the tools both the editor's agent and a token's agent
   have: sharing, and the server's settings and users for an admin
 - `host.ts`: the per-document host (API, `/doc/`)
@@ -1280,7 +1472,11 @@ back, merging edits from disk, the agent's exact-match edits and attribution.
   room connection and its binding to the editor), `merge.ts` (word diffs and
   rebasing as change sets), `agent-log.ts` (the agent transcript, shared by
   host and shell)
+- `src/page/settings.ts`, `src/page/versions.ts`: document settings (the gear's
+  popover: publishing, the homepage, versions), built on its own as `settings.js`;
+  `dev/settings-stub.ts` stands in for their server side (`ERGA_STUB_SETTINGS=1`)
 - `package.json`: the pinned CodeMirror and Yjs packages the page editor bundles, and pi
+- `src/page/tree.ts`: a document's pages as a tree (built as `pages-tree.js`, loaded on demand), in the editor and on `/docs`
 - `style.css`: theme colours, typography and the editor's styling
 - `fonts/`: the self-hosted Inter web font
 - `tests/`: unit tests, `page.ts`, `smoke.ts` and `fixtures/` for the page

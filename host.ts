@@ -25,6 +25,7 @@ import { titleOf } from "./front";
 import { checkNewName, cleanTreePath, isPage, parentsOf, resolvePage, TreeError, treeEntries, type TreeOp } from "./tree";
 import { ignored, isTextPath as isTextFile } from "./src/room/doc";
 import type { ViewRequest, ViewResult } from "./src/page/agent-log";
+import type { VersionsAccess } from "./agent";
 
 export interface HostOptions {
   readonly room: Room;
@@ -59,6 +60,10 @@ export interface HostOptions {
   readonly naming?: (person: { id: string; name: string }) => Naming;
   /** The tools beyond the document a person's agent may use now (server-tools.ts: sharing; settings and users for an admin). */
   readonly serverTools?: (person: { id: string; name: string }) => Promise<AgentTool[]>;
+  /** An agent's turn ended (the embedded agent's, or an external agent's run of calls): a version is cut. */
+  readonly turnEnded?: () => void;
+  /** The document's versions and publishing (versions.ts), for the agents' tools. */
+  readonly versions?: VersionsAccess;
   /** A new page's text (templates/doc), by its path; a plain one if not given. */
   readonly newPage?: (path: string) => string;
 }
@@ -173,6 +178,8 @@ export function makeHost(opts: HostOptions) {
         naming: namingAs(user),
         serverTools: opts.serverTools && (() => opts.serverTools!(user)),
         readAsset: (rel) => Effect.runPromise(Effect.orElseSucceed(files.read(rel), () => null)),
+        turnEnded: opts.turnEnded,
+        versions: opts.versions,
         tree: async (op) => { await tree(op); },
       });
       s.then((session) => session.subscribe((ev) => sendTo(user.id, { type: "agent", ev })), () => sessions.delete(user.id));
@@ -376,6 +383,8 @@ export function makeHost(opts: HostOptions) {
       tabs.add(tab);
       return () => { tabs.delete(tab); };
     },
+    /** Tells every open tab, whoever's (a new version, a publish: { type: "versions" }). */
+    broadcast: (msg: unknown) => { for (const t of tabs) t.send(msg); },
     /** The document was renamed some other way (its title following an edit): every tab hears of it. */
     renamed,
     /** A message for every open tab, whoever's (the homepage's deploy status, { type: "home" }: worker/home.ts). */

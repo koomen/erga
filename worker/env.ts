@@ -62,4 +62,7 @@ export interface Env {
   ERGA_HOME_RECHECK_MS?: string;
   /** Local development only: how long after an edit the room writes it (tests shorten it). */
   ERGA_WRITE_DELAY_MS?: string;
+  /** Local development only: how long edits pause before a version is cut, and the longest burst of edits one version holds (tests shorten them; versions.ts). */
+  ERGA_VERSION_IDLE_MS?: string;
+  ERGA_VERSION_MAX_MS?: string;
 }

@@ -114,7 +114,7 @@ const pagesSite = (env: Env, url: URL) => url.hostname.endsWith(`.${pagesDomainO
 
 async function route(request: Request, env: Env, url: URL, ctx: ExecutionContext): Promise<Response> {
   const path = url.pathname;
-  const assets = path == "/page.js" || path == "/frame.js" || path == "/style.css" || path.startsWith("/fonts/");
+  const assets = path == "/page.js" || path == "/frame.js" || path == "/settings.js" || path == "/pages-tree.js" || path == "/style.css" || path.startsWith("/fonts/");
   // A document's pages origin (front.ts, pagesDoor) serves its frame and files, and nothing of this site's.
   if (pagesSite(env, url)) return assets ? env.ASSETS.fetch(request) : frontDoor(request, platform(env));
   if (path == "/auth/github") return startSignIn(env, request);
@@ -182,7 +182,10 @@ const platform = (env: Env): Platform => {
       publish: (doc, files, remove) => counted("doc", () => host(doc).publish(files, remove)),
       paths: (doc) => counted("doc", () => host(doc).paths()),
       index: (doc) => counted("doc", () => host(doc).index()),
-      snapshot: (doc) => counted("doc", () => host(doc).snapshot()),
+      snapshot: (doc, opts) => counted("doc", () => host(doc).snapshot(opts)),
+      versions: (doc, opts) => host(doc).versionsState(opts),
+      setPublished: (doc, req) => host(doc).setPublished(req),
+      restore: (doc, ref, by) => host(doc).restore(ref, by),
       exists: (doc) => counted("doc", () => host(doc).exists()),
       delete: (doc) => counted("doc", () => host(doc).delete()),
       list: async (owner) => {

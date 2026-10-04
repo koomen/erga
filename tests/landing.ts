@@ -31,8 +31,8 @@ const checks: string[] = [];
 const ok = (what: string) => { checks.push(what); console.log(`ok   ${what}`); };
 const landingHtml = readFileSync(join(ROOT, "landing/index.html"), "utf8");
 
-// The homepage deploys half a second after a change, and / always asks for the latest deploy.
-const host = await startHost(null, { env: { ERGA_HOME_DELAY_MS: "500", ERGA_HOME_RECHECK_MS: "0" } });
+// The homepage deploys half a second after a change (a version, cut a second after edits pause), and / always asks for the latest deploy.
+const host = await startHost(null, { env: { ERGA_HOME_DELAY_MS: "500", ERGA_HOME_RECHECK_MS: "0", ERGA_VERSION_IDLE_MS: "1000" } });
 const root = host.root;
 const browser = await Browser.launch();
 const get = (path: string, init: RequestInit = {}) => fetch(root + path, { redirect: "manual", ...init });
