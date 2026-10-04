@@ -427,7 +427,7 @@ resumed, so only the editor answers clicks. The page has to support it
 and hovering it explains, with a **Fix with agent** button.
 
 On a phone the controls make room: the breadcrumbs shrink to a back arrow,
-the shortcuts button goes, avatars overlap, the agent covers the page instead
+avatars overlap, the agent covers the page instead
 of pushing it aside, and the style bar sits below a selection (the system's
 copy menu is above it). The page, the agent and the cards stop above the
 on-screen keyboard, and keep clear of a notch.

@@ -1486,7 +1486,6 @@ Once you've read the guide, await further instructions.`;
   }
   $("btn-track").addEventListener("click", () => setTracking(!page.isTracking));
   if (settings.track) { page.setTracking(true); $("btn-track").setAttribute("aria-pressed", "true"); $("btn-track").dataset.tip = "Tracking changes (click to stop)"; }
-  $("btn-help").addEventListener("click", () => toggleHelp());
 
   // Pausing the page: a page that reacts to clicks and keys (slides that
   // advance on click, a game) gets in the way of editing its text. If it
@@ -1542,7 +1541,7 @@ Once you've read the guide, await further instructions.`;
   syncPause();
   for (const b of document.querySelectorAll(".chrome button")) b.addEventListener("mousedown", (e) => e.preventDefault());
   document.addEventListener("mousedown", (e) => {
-    if (!help.hidden && !help.contains(e.target as Node) && !$("btn-help").contains(e.target as Node)) toggleHelp(false);
+    if (!help.hidden && !help.contains(e.target as Node)) toggleHelp(false);
     if (!share.hidden && !share.contains(e.target as Node) && !shareBtn.contains(e.target as Node)) toggleShare(false);
     if (!account.hidden && !account.contains(e.target as Node) && !accountBtn?.contains(e.target as Node)) toggleAccount(false);
     if (!$("pause-card").hidden && !$("pause-card").contains(e.target as Node) && !$("btn-pause").contains(e.target as Node)) showPauseCard(false);
