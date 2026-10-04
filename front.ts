@@ -80,8 +80,8 @@ export interface Platform {
   editor(request: Request): Promise<Response>;
   /**
    * Local development: /new may name the document (?id=) and shorten its
-   * unedited time (?unedited=<ms>), and /docs opens files from disk (the
-   * dev server's /__erga/open, dev/plugin.ts).
+   * unedited time (?unedited=<ms>). Files open from disk through the
+   * dev server's /__erga/open (dev/plugin.ts).
    */
   dev(url: URL): boolean;
   /**
@@ -510,7 +510,7 @@ async function listDocs(platform: Platform, request: Request): Promise<Response>
   if (!session) return signInFirst("/docs");
   if (session.test) return page("Not for test people", "Test people have no documents of their own.", 403);
   const [docs, hours] = await Promise.all([platform.docs.list(session.login), platform.directory.config.get("delete_docs_after_hours")]);
-  return new Response(docsPage(session, docs, Date.now(), platform.dev(new URL(request.url)), hours), { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
+  return new Response(docsPage(session, docs, Date.now(), hours), { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
 }
 
 /** POST /docs/delete (id=...): deletes one of the signed-in person's documents. */
@@ -613,7 +613,7 @@ function ago(t: number, now: number): string {
  */
 export const APP_STYLE = `
   body { font-size: 15px; line-height: 1.5; background: var(--bg); -webkit-font-smoothing: antialiased; }
-  main { box-sizing: border-box; max-width: 760px; margin: 0 auto; padding: 120px 24px 96px; display: flex; flex-direction: column; }
+  main { box-sizing: border-box; max-width: 1080px; margin: 0 auto; padding: 120px 24px 96px; display: flex; flex-direction: column; }
   /* The wordmark, upper left, on the same line as the account corner upper right (account.ts). */
   .brand { position: absolute; top: max(14px, env(safe-area-inset-top)); left: max(20px, env(safe-area-inset-left)); height: 30px; display: flex; align-items: center;
     font-size: 15px; font-weight: 650; letter-spacing: -0.02em; color: var(--fg-strong); text-decoration: none; }
@@ -701,8 +701,6 @@ export const ICON = {
   share: `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9.5" cy="8.5" r="3.5"/><path d="M3.5 19c.6-3.2 3-5 6-5s5.4 1.8 6 5"/><path d="M18.5 8v6M15.5 11h6"/></svg>`,
   close: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7 7 17"/></svg>`,
   plus: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>`,
-  page: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3.5h6.5L18 8v11.5a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1v-15a1 1 0 0 1 1-1Z"/><path d="M13.5 3.5V8H18"/></svg>`,
-  folder: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 7.5a1 1 0 0 1 1-1h4.6l2 2h8.4a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1h-15a1 1 0 0 1-1-1v-10Z"/></svg>`,
 };
 
 /** The page around a view (/docs, /admin): its title, the shared look and the view's own style. */
@@ -724,7 +722,7 @@ function sharedNote(d: Listed): string {
 }
 
 /** The documents view: yours and those shared with you, with new, open, share, rename and delete. */
-function docsPage(session: Session, docs: Listed[], now: number, dev: boolean, hours: number | null): string {
+function docsPage(session: Session, docs: Listed[], now: number, hours: number | null): string {
   const rows = docs.map((d) => {
     const left = d.expires != null ? Math.max(1, Math.ceil((d.expires - now) / 3600000)) : null;
     const mine = d.role == "owner";
@@ -735,39 +733,27 @@ function docsPage(session: Session, docs: Listed[], now: number, dev: boolean, h
     // One opened from disk only comes off the list: its files stay where they are.
     const [remove, label] = d.path != null ? ["Remove from the list", `Remove ${esc(d.title)} from the list`] : ["Delete", `Delete ${esc(d.title)}`];
     return `  <li>
-    <a class="doc" href="${esc(link(`/${d.owner}/${d.slug}`, session))}"><span class="icon">${d.path != null ? ICON.folder : ICON.page}</span><span class="title">${esc(d.title)}</span>${note}${mine ? sharedNote(d) : ""}<time datetime="${when}">${ago(d.modified, now)}</time></a>
+    <a class="doc" href="${esc(link(`/${d.owner}/${d.slug}`, session))}"><span class="title">${esc(d.title)}</span>${note}${mine ? sharedNote(d) : ""}<time datetime="${when}">${ago(d.modified, now)}</time></a>
     <div class="acts">${mine ? `<button type="button" class="act share" aria-label="Share ${esc(d.title)}" title="Share" data-id="${esc(d.id)}" data-title="${esc(d.title)}" data-address="/${esc(d.owner)}/${esc(d.slug)}">${ICON.share}</button>
     <button type="button" class="act rename" aria-label="Rename ${esc(d.title)}" title="Rename" data-id="${esc(d.id)}" data-title="${esc(d.title)}" data-slug="${esc(d.slug)}"${d.titleSet ? " data-title-set" : ""}${d.slugSet ? " data-slug-set" : ""}>${ICON.rename}</button>
     <form method="post" action="${esc(link("/docs/delete", session))}" data-title="${esc(d.title)}"${d.path != null ? " data-disk" : ""}><input type="hidden" name="id" value="${esc(d.id)}"><button class="act delete" aria-label="${label}" title="${remove}">${ICON.delete}</button></form>` : ""}</div>
   </li>`;
   }).join("\n");
   const style = `
-  /* Rows: a page's icon, its title and what's special about it; when it was edited, in a column; its buttons on hover. */
-  .labels { display: flex; padding: 0 106px 8px 42px; font-size: 12px; font-weight: 500; color: var(--chrome); }
+  /* Rows: its title and what's special about it; when it was edited, in a column; its buttons on hover. */
+  .labels { display: flex; padding: 0 100px 8px 0; font-size: 12px; font-weight: 500; color: var(--chrome); }
   .labels span:last-child { margin-left: auto; }
-  ol.rows > li { padding-right: 6px; border-radius: 0; transition: background-color 120ms ease; }
-  ol.rows > li:hover { background: color-mix(in srgb, var(--chrome) 7%, transparent); }
-  .doc { padding: 12px 6px 12px 12px; }
-  .doc .icon { flex: none; display: grid; place-items: center; width: 18px; height: 18px; color: var(--chrome); }
-  .doc .icon svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linejoin: round; }
-  a.doc:hover .icon { color: var(--soft); }
+  ol.rows > li:last-child { border-bottom: 0; }
+  .doc { padding: 14px 6px 14px 0; }
+  .title { transition: color 120ms ease; }
+  a.doc:hover .title { color: var(--link); }
   .note, .shared { padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 500; color: var(--soft); background: color-mix(in srgb, var(--chrome) 13%, transparent); }
   time { min-width: 6.5em; text-align: right; }
   /* The buttons (only on your own documents) take the same room on every row, so the times line up. */
   .acts { flex: none; display: flex; justify-content: flex-end; gap: 2px; width: 94px; }
-  @media (pointer: coarse) { .acts { width: 124px; } .labels { padding-right: 136px; } }
+  @media (pointer: coarse) { .acts { width: 124px; } .labels { padding-right: 130px; } }
   @media (max-width: 520px) { .labels { display: none; } }
-  /* Open from disk (dev only): one field, its button inside. */
-  .disk { margin-top: 56px; }
-  .disk h2 { margin: 0 0 10px; font-size: 13px; font-weight: 600; color: var(--fg-strong); }
-  .open { display: flex; align-items: center; gap: 8px; height: 42px; box-sizing: border-box; padding: 0 4px 0 12px; border: 1px solid var(--rule); border-radius: 10px; background: var(--bg); transition: border-color 150ms ease, box-shadow 150ms ease; }
-  .open:hover { border-color: color-mix(in srgb, var(--chrome) 55%, var(--rule)); }
-  .open:focus-within { border-color: var(--caret); box-shadow: 0 0 0 3px color-mix(in srgb, var(--caret) 18%, transparent); }
-  .open > svg { flex: none; width: 18px; height: 18px; fill: none; stroke: var(--chrome); stroke-width: 1.5; stroke-linejoin: round; }
-  .open .input { flex: 1; height: 100%; padding: 0; border: 0; outline: 0; box-shadow: none; background: transparent; font-family: var(--font-mono); font-size: 13px; }
-  .open .pill { height: 32px; box-shadow: none; }
-  .disk .sub { margin-top: 8px; font-size: 12.5px; color: var(--chrome); }
-  @media (pointer: coarse) { .delete { margin-right: -6px; } .open { height: 48px; } }
+  @media (pointer: coarse) { .delete { margin-right: -6px; } }
   /* Sharing: who has it, anyone with the link, and adding someone. */
   #share { width: min(460px, calc(100vw - 32px)); }
   #share .add { display: flex; gap: 8px; align-items: center; margin-bottom: 14px; }
@@ -795,14 +781,6 @@ function docsPage(session: Session, docs: Listed[], now: number, dev: boolean, h
   </header>
   ${docs.length ? `<div class="labels" aria-hidden="true"><span>Name</span><span>Edited</span></div>
   <ol class="rows">\n${rows}\n  </ol>` : `<p class="empty">No documents yet. A new one starts blank${hours == null ? "." : `, and goes away after ${hours} hour${hours == 1 ? "" : "s"} if you never edit it.`}</p>`}
-  ${dev ? `<section class="disk">
-    <h2>Open from this machine</h2>
-    <form class="open" method="post" action="${esc(link("/__erga/open", session))}" aria-label="Open from disk">
-      ${ICON.folder}<input class="input" name="path" required placeholder="~/notes or ./site/index.md" aria-label="Path to a file or folder" autocomplete="off" spellcheck="false">
-      <button class="pill">Open</button>
-    </form>
-    <p class="sub">A Markdown file, or a folder of pages. Edits are saved back to its files.</p>
-  </section>` : ""}
 </main>
 <dialog id="rename" aria-labelledby="rename-title">
   <form method="post" action="${esc(link("/docs/rename", session))}">

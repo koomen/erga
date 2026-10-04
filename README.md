@@ -338,7 +338,7 @@ development has:
   `ERGA_AGENT_MODEL=script` swaps in the scripted agent.
 - **Files on disk** (`dev/plugin.ts`, a Vite plugin, and `worker/disk.ts`).
   A folder with an `index.html` or `index.md`, or a single `.html` or `.md`
-  file, named to `bun start` or typed into the Open box on `/docs` (a path
+  file, named to `bun start` or posted to `/__erga/open` (a path
   on this machine; `~` and paths relative to where `bun start` ran work),
   becomes one of your documents, edited where it is, at
   `/<login>/<folder name>` (or the file's name, for a single file: its slug
