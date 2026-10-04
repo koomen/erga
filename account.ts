@@ -107,10 +107,10 @@ const ACCOUNT_STYLE = `<style>
   .erga-account-btn svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
   .erga-account-btn:focus-visible { outline: 2px solid #3b7cf0; outline-offset: 2px; }
   @media (pointer: coarse) { .erga-account-btn::after { content: ""; position: absolute; inset: -7px; } }
-  /* Its tooltip, as every control's in the editor: plain text, delayed, below it. */
+  /* Its tooltip, as every control's in the editor: plain text, below it, the moment the pointer is on it. */
   .erga-account-btn::before { content: attr(data-tip); position: absolute; top: calc(100% + 8px); right: 0; white-space: pre; font-size: 12px; font-weight: 400; line-height: 1.3;
-    letter-spacing: .01em; color: var(--acc-soft); opacity: 0; pointer-events: none; transition: opacity 120ms ease; }
-  @media (hover: hover) { .erga-account-btn:hover::before { opacity: 1; transition-delay: 600ms; } }
+    letter-spacing: .01em; color: var(--acc-soft); opacity: 0; pointer-events: none; }
+  @media (hover: hover) { .erga-account-btn:hover::before { opacity: 1; } }
   .erga-account-btn[aria-expanded="true"]::before { display: none; }
   .erga-account-menu { position: absolute; top: calc(100% + 8px); right: 0; min-width: 190px; max-width: calc(100vw - 32px); box-sizing: border-box; padding: 6px;
     color: var(--acc-fg); background: var(--acc-bg); border: 1px solid var(--acc-ring); border-radius: 12px;
