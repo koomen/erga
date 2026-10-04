@@ -713,6 +713,10 @@ function docsPage(session: Session, docs: Listed[], now: number, hours: number |
   }).join("\n");
   const style = `
   /* Rows, and the labels over them, in three columns: the name (its title and what's special about it), when it was edited, its buttons. */
+  /* The page fills the window, so the footer sits at its foot. */
+  body { min-height: 100vh; margin: 0; display: flex; flex-direction: column; }
+  main { flex: 1; width: 100%; min-height: 0; }
+  .foot { box-sizing: border-box; width: 100%; max-width: 1080px; margin: 0 auto; padding: 24px 24px 32px; font-size: 12.5px; color: var(--chrome); }
   .labels, ol.rows > li { display: grid; grid-template-columns: minmax(0, 1fr) 10rem 64px; align-items: center; column-gap: 16px; }
   .labels { padding-bottom: 8px; border-bottom: 1px solid var(--rule); font-size: 12px; font-weight: 500; color: var(--chrome); }
   ol.rows > li { position: relative; }
@@ -761,6 +765,7 @@ function docsPage(session: Session, docs: Listed[], now: number, hours: number |
   ${docs.length ? `<div class="labels" aria-hidden="true"><span>Name</span><span>Edited</span><span></span></div>
   <ol class="rows">\n${rows}\n  </ol>` : `<p class="empty">No documents yet. A new one starts blank${hours == null ? "." : `, and goes away after ${hours} hour${hours == 1 ? "" : "s"} if you never edit it.`}</p>`}
 </main>
+<footer class="foot">© ${new Date().getUTCFullYear()} Erga</footer>
 <dialog id="share" aria-labelledby="share-title" data-action="${esc(link("/docs/share", session))}" data-me="${esc(session.login.toLowerCase())}">
   <h2 id="share-title">Share</h2>
   <form class="add">
