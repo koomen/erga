@@ -21,9 +21,9 @@
   <link rel="stylesheet" href="/fonts/inter.css">
   <link rel="stylesheet" href="/style.css">
   <style>
-    /* The page fills the window, as in the viewer (the editor's controls are
-       added to the viewer's page, front.ts, and the document mustn't move),
-       and the chrome floats over it. The source view starts below a strip kept
+    /* The page fills the window below the top controls' band, as in the
+       viewer (the editor's controls are added to the viewer's page, front.ts,
+       and the document mustn't move), and the chrome floats over it. The source view starts below a strip kept
        clear for the top controls (their 34px row, its offset and a gap). The
        page stops at the on-screen keyboard (--kb, set by main.ts where the
        browser lays the keyboard over the page rather than resizing it), and
@@ -33,12 +33,14 @@
       --safe-l: env(safe-area-inset-left, 0px); --safe-r: env(safe-area-inset-right, 0px);
     }
     body { overflow: hidden; }
-    #frame { position: fixed; top: 0; left: 0; width: 100%; height: calc(100% - var(--kb, 0px)); border: 0; background: transparent; }
+    /* The page starts below the band the top controls sit on (--band-h, front.ts's BAND_STYLE), as in the viewer. */
+    :root { --band-h: calc(max(12px, env(safe-area-inset-top)) + 44px); }
+    #frame { position: fixed; top: var(--band-h); left: 0; width: 100%; height: calc(100% - var(--band-h) - var(--kb, 0px)); border: 0; background: transparent; }
 
     /* The shell's canvas is the page's own background (main.ts reads it from
        the page), so the space the agent opens up is the same surface as the
        page, with no seam. In the source view it's the editor's again. */
-    html { background: var(--page-bg, var(--bg)); background-image: var(--page-bg-image, none); transition: background-color 300ms ease; }
+    html { background: var(--page-bg, var(--band, var(--bg))); background-image: var(--page-bg-image, none); }
     body { background: transparent; }
     html:has(body.source) { background: var(--bg); }
 
