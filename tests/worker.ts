@@ -298,18 +298,17 @@ async function adminScenario() {
   expect(t.status == 200 && t.data.permissions.length == 2, "document_access", t);
   ok("an owner's agent shares a document over the API; nobody else's can");
 
-  // The editor's own agent, with the same tools.
+  // The editor's own agent never has the admin tools, even an admin's with admin access unlocked: a document's host carries no
+  // unlock, and a document's text can steer its agent (README, Admin SSH keys).
   const adminDoc = ((await (await fetch(`${base}${blank}/api/name`, { headers: { Cookie: admin.cookie } })).json()) as Name).id;
   let tools = await agentRun(adminDoc, admin.cookie, [{ tool: "set_setting", args: { key: "delete_docs_after_hours", value: 30 } }, { tool: "add_user", args: { login: newcomer, role: "admin" } }, { text: "Done." }]);
-  expect(tools.every((x) => x.status == "done") && tools.length == 2, "an admin's agent in the editor runs the admin tools", tools);
-  expect((await admin.call("list_settings")).data.find((e: { key: string }) => e.key == "delete_docs_after_hours").value == 30 && (await admin.call("list_users")).data.some((u: { login: string; role: string }) => u.login == newcomer && u.role == "admin"), "and they land");
-  await admin.call("reset_setting", { key: "delete_docs_after_hours" });
-  await admin.call("remove_user", { login: newcomer });
+  expect(tools.length == 2 && tools.every((x) => x.status == "error"), "an admin's agent in the editor has no admin tools", tools);
+  expect((await admin.call("list_settings")).data.find((e: { key: string }) => e.key == "delete_docs_after_hours").value != 30 && !(await admin.call("list_users")).data.some((u: { login: string }) => u.login == newcomer), "and nothing changed");
   const mineId = ((await (await get(`${mine}/api/name`)).json()) as Name).id;
   tools = await agentRun(mineId, person.cookie, [{ tool: "list_settings", args: {} }, { tool: "share_document", args: { login: "Bo", role: "editor" } }, { text: "Done." }]);
   expect(tools[0]?.status == "error" && tools[1]?.status == "done", "a user's agent has no admin tools, but shares the document it's in", tools);
   expect((await person.call("document_access", { document: mineId })).data.permissions.some((p: { login: string; role: string }) => p.login == "bo" && p.role == "editor"), "Bo is an editor now");
-  ok("the editor's agent has the same tools: an admin's configures the server, an owner's shares the document");
+  ok("the editor's agent shares the document it's in, but never has the admin tools, an admin's included");
 }
 
 try {
