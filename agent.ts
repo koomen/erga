@@ -40,7 +40,7 @@ import { Type } from "typebox";
 import { emptyLog, reduce, type Log, type LogEvent } from "./src/page/agent-log";
 import type { ViewRequest, ViewResult } from "./src/page/agent-log";
 import { agentName, colorFor, files, hasSeen, introduce, stamp, stateVector, type Author } from "./src/room/doc";
-import type { TreeOp } from "./tree";
+import { pageAddress, type TreeEntry, type TreeOp } from "./tree";
 import { joinLocal, type Room } from "./room";
 import type { Naming } from "./directory";
 import type { PublishRequest, PublishResult, Published, Version, VersionsState } from "./versions";
@@ -194,15 +194,15 @@ function beyondPrompt(owner: string, names: string[]): string {
 }
 
 const systemPrompt = (docName: string, kind: "html" | "md", owner: string, single = false, beyond: string[] = []) => `
-You are ${agentName(owner)}, embedded in Erga's page editor. ${owner} is looking at
-${docName} (${kind == "md" ? "Markdown" : "HTML"}) rendered as a live page, and editing its text in
-place. Other people may have the same document open and be editing it too, each with
-their own agent; you work for ${owner} only. ${single
-  ? `The document is that one file, opened from disk on its own: you may read and change it,
-but you can't make other files.`
-  : `The document is a folder of files, and it can have many pages; your tools
-see it as a file system (paths relative to its root), and you may read and change any
-text file in it. ${PAGES_PROMPT}`}
+You are ${agentName(owner)}, embedded in Erga's page editor. ${owner} has this
+document open: they see one of its pages rendered live, and edit its text in place.
+Other people may have the same document open and be editing it too, each with their own
+agent; you work for ${owner} only. ${single
+  ? `The document is that one file, ${docName} (${kind == "md" ? "Markdown" : "HTML"}), opened from disk on its own: you may read and
+change it, but you can't make other files.`
+  : `${FILES_PROMPT}
+
+${PAGES_PROMPT}`}
 
 - Your edits go straight into the shared document and show up in everyone's page as
   you make them, attributed to you. Prefer small, targeted edits (the edit tool) over
@@ -211,15 +211,21 @@ text file in it. ${PAGES_PROMPT}`}
   at that moment; if it fails because the text changed, read the file again and retry.
   Read a file right before editing it (with read, not grep: search output cuts long
   lines, so text copied from it won't match), and keep edits scoped to what was asked.
-- Messages may begin with an <editor> block saying where ${owner}'s caret or selection
-  is. "This", "here" and "the selection" refer to it.
+- Messages may begin with an <editor> block saying which page ${owner} has open, and
+  where their caret or selection is. "This page", "this", "here" and "the selection"
+  refer to it. ${owner} may move to another page between messages: trust the latest block.
 - Edits to the text show up in the page as you make them. Changes to anything else
   (the page's structure, scripts, styles, other files) show up when you finish your
   turn.
-- ls, find and grep look around; new_page makes a page from the template, mkdir a folder,
-  mv moves or renames a file or folder, rm deletes one. ${owner} has the same powers in the
-  editor's file tree, and sees your changes to it at once.
-- view_page shows you the page as ${owner} sees it (a screenshot, plus any script
+- ls, find and grep look around the whole document (from its root, unless you give a
+  folder); list_pages lists its pages with their titles and addresses. new_page makes a
+  page from the template, mkdir a folder, mv moves or renames a file or folder, rm deletes
+  one. ${owner} has the same powers in the editor's page tree, and sees your changes to it
+  at once.
+- open_page switches ${owner}'s editor to another page (new_page with open: true makes a
+  page and opens it). Do it when ${owner} asks to go to a page, or when you made one
+  they'll want to see; not just to look at a page yourself (read it instead).
+- view_page shows you the page ${owner} has open, as they see it (a screenshot, plus any script
   errors). Use it to check visual work, like a diagram, layout or styling, before you
   say it's done. It renders your latest changes, including ones the page won't show
   until your turn ends. Pass a CSS selector to look closely at one element.
@@ -239,6 +245,14 @@ text file in it. ${PAGES_PROMPT}`}
 
 ${DOCUMENT_RULES}
 `.trim();
+
+/** What a document is, to an agent: one folder of files (users see pages, agents see files), for both agents' prompts. */
+const FILES_PROMPT = `A document is a folder of files. Pages are its .html (or .md) files (index.html is
+the home page); everything else (CSS, JS, images, fonts, data) is shared assets. Users
+see pages; you see files: your tools see the whole document as one file system, rooted
+at the document's folder (paths relative to it), with every page's files, the shared
+assets and the folders, whichever page is open. You may read and change any text file
+in it.`;
 
 /** How a document's pages and addresses go together (tree.ts), for both agents' prompts. */
 const PAGES_PROMPT = `index.html at the root (or index.md) is the document's own page, at
@@ -267,6 +281,10 @@ function makeTools(ws: Workspace, opts: {
   by?: string;
   /** The document's file tree: new pages and folders, moves, deletes (host.ts, runTreeOp); resolves once the agent's replica has the result. */
   tree?: (op: TreeOp) => Promise<void>;
+  /** The document's pages, with titles, and its address (list_pages). */
+  pages?: () => Promise<PageTree>;
+  /** Switches the person's open editor tabs to a page (open_page). */
+  open?: (path: string) => Promise<OpenResult>;
 }): AgentTool[] {
   const text = (s: string) => ({ content: [{ type: "text" as const, text: s }], details: {} });
   /** Runs a workspace operation; its failure becomes the tool's error, which the model reads. */
@@ -332,7 +350,7 @@ function makeTools(ws: Workspace, opts: {
     {
       name: "ls",
       label: "List",
-      description: "List the files and folders directly inside a folder of the document (default: its root). Folders end in /.",
+      description: "List the files and folders directly inside a folder of the document (default: its root, which holds every page's files and the shared assets). Folders end in /.",
       parameters: Type.Object({ path: Type.Optional(Type.String({ description: "Folder to list" })) }),
       execute: async (_id, p: { path?: string }) => {
         const dir = p.path && p.path.replace(/^[./]+$/, "") ? run(cleanPath(p.path!)) + "/" : "";
@@ -348,7 +366,7 @@ function makeTools(ws: Workspace, opts: {
     {
       name: "find",
       label: "Find files",
-      description: "Find files by glob pattern, e.g. \"*.css\" or \"posts/**/*.md\".",
+      description: "Find files anywhere in the document by glob pattern, e.g. \"**/*.css\", \"*.html\" (top level) or \"posts/**/*.md\".",
       parameters: Type.Object({ pattern: Type.String({ description: "Glob pattern" }) }),
       execute: async (_id, p: { pattern: string }) => {
         const re = globToRegExp(p.pattern);
@@ -359,7 +377,7 @@ function makeTools(ws: Workspace, opts: {
     {
       name: "grep",
       label: "Search",
-      description: "Search the text files for a regular expression (or literal text). Returns path:line: text, long lines cut.",
+      description: "Search every text file in the document (all pages and assets) for a regular expression (or literal text). Returns path:line: text, long lines cut.",
       parameters: Type.Object({
         pattern: Type.String({ description: "Regular expression, or literal text with literal: true" }),
         glob: Type.Optional(Type.String({ description: "Only files matching this glob" })),
@@ -381,7 +399,7 @@ function makeTools(ws: Workspace, opts: {
     {
       name: "view_page",
       label: "Look at the page",
-      description: "See the page as the user sees it: a picture of the latest version rendered in the user's browser, plus any JavaScript errors it threw. By default one screenful from the top; full_page for the whole page (up to 4000px tall); selector for one element.",
+      description: "See the page the user has open, as they see it: a picture of the latest version rendered in the user's browser, plus any JavaScript errors it threw. By default one screenful from the top; full_page for the whole page (up to 4000px tall); selector for one element.",
       parameters: Type.Object({
         selector: Type.Optional(Type.String({ description: "CSS selector of an element to capture, e.g. \"#chart\" or \"figure:nth-of-type(2)\"." })),
         full_page: Type.Optional(Type.Boolean({ description: "Capture the whole page rather than the first screenful." })),
@@ -396,7 +414,8 @@ function makeTools(ws: Workspace, opts: {
         return { content: [{ type: "image" as const, data: v.png, mimeType: "image/png" }, { type: "text" as const, text: lines.join("\n") }], details: {} };
       },
     },
-    ...(opts.tree ? treeTools(opts.tree) : []),
+    ...(opts.pages ? pageTools(opts.pages, opts.open) : []),
+    ...(opts.tree ? treeTools(opts.tree, opts.open) : []),
     ...(opts.naming ? namingTools(opts.naming) : []),
     ...(opts.versions ? versionTools(opts.versions, opts.canEdit ?? (() => true), opts.by ?? "agent") : []),
   ] as AgentTool[];
@@ -495,15 +514,24 @@ function versionTools(versions: VersionsAccess, canEdit: () => boolean, by: stri
  * new_page, mkdir, mv and rm: the document's file tree, with the same powers
  * a person has in the editor's file tree (host.ts, runTreeOp, checks each).
  */
-function treeTools(tree: (op: TreeOp) => Promise<void>): AgentTool[] {
+function treeTools(tree: (op: TreeOp) => Promise<void>, open?: (path: string) => Promise<OpenResult>): AgentTool[] {
   const text = (s: string) => ({ content: [{ type: "text" as const, text: s }], details: {} });
   return [
     {
       name: "new_page",
       label: "New page",
-      description: "Make a new page from the new-document template, at a path like \"blog/post.html\" (folders it's in are made too; without an extension it's .html). Each page has its own address: blog/post.html is /<owner>/<slug>/blog/post, blog/index.html is /<owner>/<slug>/blog. Then edit it like any file. (write also makes a page, from your own text.)",
-      parameters: Type.Object({ path: Type.String({ description: "Path of the new page, e.g. \"about.html\" or \"blog/index.html\"" }) }),
-      execute: async (_id, p: { path: string }) => { await tree({ op: "new_page", path: p.path }); return text(`Made ${p.path}${/\.(html|md)$/i.test(p.path) ? "" : " (.html)"} from the template.`); },
+      description: `Make a new page from the new-page template, at a path like "blog/post.html" (folders it's in are made too; without an extension it's .html). Each page has its own address: blog/post.html is /<owner>/<slug>/blog/post, blog/index.html is /<owner>/<slug>/blog. Then edit it like any file. (write also makes a page, from your own text.)${open ? " open: true also switches the user's editor to it (as open_page)." : ""}`,
+      parameters: Type.Object({
+        path: Type.String({ description: "Path of the new page, e.g. \"about.html\" or \"blog/index.html\"" }),
+        ...(open ? { open: Type.Optional(Type.Boolean({ description: "Also open it in the user's editor" })) } : {}),
+      }),
+      execute: async (_id, p: { path: string; open?: boolean }) => {
+        await tree({ op: "new_page", path: p.path });
+        const file = /\.(html|md)$/i.test(p.path) ? p.path : `${p.path}.html`;
+        const made = `Made ${file} from the template.`;
+        if (!p.open || !open) return text(made);
+        return text(`${made} ${(await open(file)).message}`);
+      },
     },
     {
       name: "mkdir",
@@ -529,6 +557,42 @@ function treeTools(tree: (op: TreeOp) => Promise<void>): AgentTool[] {
       parameters: Type.Object({ path: Type.String({ description: "Path of the file or folder" }) }),
       execute: async (_id, p: { path: string }) => { await tree({ op: "delete", path: p.path }); return text(`Deleted ${p.path}.`); },
     },
+  ] as AgentTool[];
+}
+
+/** The document's pages as list_pages answers them: every entry (titles on pages), and the document's address. */
+export interface PageTree { address: string; entries: TreeEntry[] }
+/** What open_page did: the page it opened, and in how many of the person's tabs (none: nothing opened). */
+export interface OpenResult { path: string; tabs: number; message: string }
+
+/** list_pages and open_page: the document as its users see it (pages), and moving the person's editor between them. */
+function pageTools(pages: () => Promise<PageTree>, open?: (path: string) => Promise<OpenResult>): AgentTool[] {
+  const text = (s: string) => ({ content: [{ type: "text" as const, text: s }], details: {} });
+  return [
+    {
+      name: "list_pages",
+      label: "List pages",
+      description: "List the document's pages, as its users see them in the page tree: each page's file, title and address, by folder (folders end in /). Pages are the .html and .md files; index.html is the home page. The other files (CSS, JS, images...) are shared assets, which users don't see in the tree: ls and find list those.",
+      parameters: Type.Object({}),
+      execute: async () => {
+        const t = await pages();
+        const lines = t.entries.filter((e) => e.type != "file").map((e) => {
+          const depth = e.path.split("/").length - 1, pad = "  ".repeat(depth);
+          if (e.type == "folder") return `${pad}${e.path}/`;
+          const rest = pageAddress(e.path);
+          return `${pad}${e.path}  "${e.title ?? "(untitled)"}"  ${t.address}${rest ? `/${rest}` : ""}${e.path == "index.html" || e.path == "index.md" ? "  (home page)" : ""}`;
+        });
+        const n = t.entries.filter((e) => e.type == "page").length, assets = t.entries.filter((e) => e.type == "file").length;
+        return text(`${n} page(s) and ${assets} other file(s) (shared assets).\n\n${lines.join("\n")}`);
+      },
+    },
+    ...(open ? [{
+      name: "open_page",
+      label: "Open a page",
+      description: "Switch the user's open editor to another page of this document, by its file (\"blog/post.html\") or its address under the document (\"blog/post\", \"\" for the home page). Every editor tab the user has open on this document goes there. With none open, nothing happens, and the answer says so and gives the page's address. Use it when the user asks to go to a page, or to show them a page you made.",
+      parameters: Type.Object({ path: Type.String({ description: "The page's file, e.g. \"about.html\", or its address under the document, e.g. \"blog\"" }) }),
+      execute: async (_id: string, p: { path: string }) => text((await open(p.path)).message),
+    }] : []),
   ] as AgentTool[];
 }
 
@@ -574,7 +638,7 @@ export function documentToolSpecs(): ToolSpec[] {
   const none = () => { throw new Error("no document"); };
   const naming = { get: none, set: none } as unknown as Naming;
   const versions = { state: none, version: none, file: none, publish: none, restore: none } as unknown as VersionsAccess;
-  return makeTools(null as unknown as Workspace, { view: none, readAsset: none, edited: none, naming, tree: none, versions })
+  return makeTools(null as unknown as Workspace, { view: none, readAsset: none, edited: none, naming, tree: none, versions, pages: none, open: none })
     .map((t) => ({ name: t.name, description: t.description, parameters: JSON.parse(JSON.stringify(t.parameters)) }));
 }
 
@@ -629,6 +693,10 @@ export interface SessionOptions {
   naming?: Naming;
   /** Does a tree operation in the room (host.ts, runTreeOp): new_page, mkdir, mv and rm; without it those tools are left out. */
   tree?: (op: TreeOp) => Promise<void>;
+  /** The document's pages with titles, and its address (list_pages); without it list_pages and open_page are left out. */
+  pages?: () => Promise<PageTree>;
+  /** Switches the owner's open editor tabs to a page (open_page, new_page's open). */
+  open?: (path: string) => Promise<OpenResult>;
   /**
    * The tools beyond the document the owner may use now (server-tools.ts:
    * sharing; the server's settings and users for an admin). Asked for again
@@ -641,7 +709,7 @@ export interface SessionOptions {
   versions?: VersionsAccess;
 }
 
-const TOOL_ACTIVITY: Record<string, string> = { ...SERVER_TOOL_ACTIVITY, new_page: "making a page", mkdir: "making a folder", mv: "moving", rm: "deleting", read: "reading", edit: "editing", write: "writing", ls: "looking around", find: "looking for files", grep: "searching", view_page: "looking at the page", get_title: "reading the title", set_title: "renaming the document", list_versions: "looking at versions", read_version: "reading an old version", restore_version: "restoring a version", publish_version: "publishing" };
+const TOOL_ACTIVITY: Record<string, string> = { ...SERVER_TOOL_ACTIVITY, new_page: "making a page", list_pages: "looking at the pages", open_page: "opening a page", mkdir: "making a folder", mv: "moving", rm: "deleting", read: "reading", edit: "editing", write: "writing", ls: "looking around", find: "looking for files", grep: "searching", view_page: "looking at the page", get_title: "reading the title", set_title: "renaming the document", list_versions: "looking at versions", read_version: "reading an old version", restore_version: "restoring a version", publish_version: "publishing" };
 
 export async function startSession(opts: SessionOptions): Promise<AgentSession> {
   const { cfg, owner } = opts;
@@ -700,6 +768,8 @@ export async function startSession(opts: SessionOptions): Promise<AgentSession> 
     versions: opts.versions,
     canEdit: opts.canEdit,
     by: agentName(owner.id),
+    pages: opts.pages,
+    open: opts.open,
     tree: opts.tree && (async (op) => {
       if (!opts.canEdit()) throw new Error("Your user can only view this document, so you can't change it.");
       await opts.tree!(op);
@@ -856,11 +926,13 @@ export function externalGuide(o: { docName: string; kind: "html" | "md"; owner: 
   const tools = o.tools.map((t) => `### ${t.name}\n\n${t.description}\n\nArguments (JSON Schema):\n\n\`\`\`json\n${JSON.stringify(t.parameters, null, 2)}\n\`\`\``).join("\n\n");
   return `# Editing "${o.docName}" in Erga
 
-${o.owner} has ${o.docName} (${o.kind == "md" ? "Markdown" : "HTML"}) open in Erga's page editor and
-has given you access to edit it as their agent, ${agentName(o.owner)}. The document
-is a folder of files, and it can have many pages; the tools below see it as a
-file system (paths relative to its root: ls, find, grep, read, edit, write,
-new_page, mkdir, mv, rm), and you may read and change any text file in it.
+${o.owner} has given you access to edit the document "${o.docName}" in Erga's page
+editor, as their agent, ${agentName(o.owner)}.
+
+${FILES_PROMPT} The tools below work on it: ls, find, grep, read, edit, write,
+new_page, mkdir, mv and rm on its files, and list_pages for its pages as users see
+them.
+
 ${PAGES_PROMPT}
 
 ## Calling the tools
@@ -873,7 +945,7 @@ Run a tool by POSTing its arguments as JSON:
 
     curl -s -X POST ${o.base}/api/ext/tools/read \\
       -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \\
-      -d '{"path": "${o.docName}"}'
+      -d '{"path": "index.html"}'
 
 The answer is JSON: \`{"ok": true, "content": [...]}\`, where each content item is
 \`{"type": "text", "text": "..."}\` or \`{"type": "image", "mimeType": "image/png", "data": "<base64>"}\`.
@@ -891,9 +963,14 @@ error says what to fix), 401 (bad token) or 404 (no such tool).
   retry. Read a file right before editing it (with read, not grep: search output
   cuts long lines, so text copied from it won't match), and keep edits scoped to
   what was asked.
-- view_page shows you the page as ${o.owner} sees it, rendered in their browser (so it
+- view_page shows you the page ${o.owner} has open, rendered in their browser (so it
   needs their editor open): a screenshot plus any script errors. Use it to check
   visual work before you say it's done.
+- open_page switches ${o.owner}'s open editor (every tab they have open on this
+  document) to another page; new_page with open: true makes one and opens it. If
+  they have no editor open, nothing opens: the answer says so and gives the page's
+  address, which you can pass on. Use it when asked to go to a page, or to show
+  them one you made.
 - get_title and set_title read and change the document's title (shown in the
   document list and the browser tab) and its address, /<owner>/<slug>. Until
   someone sets them, the title follows the page's first heading and the slug
