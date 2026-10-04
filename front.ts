@@ -42,6 +42,7 @@ import { OWN_ACCOUNT } from "./account.ts";
 import { adminDoor } from "./admin.ts";
 import { type Directory, type DocRow, type Grant, type Permission, type Role, type Route, type Who, NotAllowed, roleMay, UNTITLED } from "./directory.ts";
 import type { AgentToken, Tokens } from "./tokens.ts";
+import { ADMIN_TOKEN_PREFIX, type AdminKeys, type Unlock } from "./admin-keys.ts";
 import type { PublishRequest, PublishResult, Version, VersionsState } from "./versions.ts";
 import { pageAddress, resolvePage } from "./tree.ts";
 
@@ -55,6 +56,12 @@ export interface Session {
   as?: string;
   /** Signed in with an agent token (tokens.ts): an agent acting as this person. */
   agent?: AgentToken;
+  /**
+   * Admin access unlocked with one of their SSH keys (admin-keys.ts): by the
+   * erga_admin cookie beside the session's (worker/auth.ts), or an admin
+   * token (withTokens). Every admin-only call needs it (Users.mustAdmin).
+   */
+  unlocked?: Unlock;
 }
 
 /** A document as its owner's list shows it. */
@@ -119,6 +126,13 @@ export interface Platform {
   directory: Directory;
   /** Agent tokens (tokens.ts). */
   tokens: Tokens;
+  /** Admins' SSH keys and the unlocks they make (admin-keys.ts): admin tokens are read with it. */
+  adminKeys?: AdminKeys;
+  /**
+   * Local development's shortcut (ERGA_ADMIN_UNLOCKED=1, which the tests set):
+   * every admin counts as unlocked, on localhost only.
+   */
+  devUnlocked?(url: URL): boolean;
   /** A test token for the test suite, minted by `login` (shown on /tokens), where the platform makes them. */
   testToken?(login: string): Promise<{ token: string; expires: Date }>;
   docs: {
@@ -266,12 +280,20 @@ export function withTokens(platform: Platform, url: URL): Platform {
     async sessionOf(request) {
       const bearer = /^Bearer\s+(\S+)\s*$/i.exec(request.headers.get("authorization") ?? "")?.[1];
       if (!bearer) return platform.sessionOf(request);
+      const users = platform.directory.users;
+      // An admin token (admin-keys.ts): its person, as their agent, with admin access unlocked by their SSH key until it ends.
+      if (bearer.startsWith(ADMIN_TOKEN_PREFIX)) {
+        const admin = await platform.adminKeys?.readToken(bearer).catch(() => null);
+        if (!admin || !(platform.dev(url) || (await users.allowed(admin.login)))) return null;
+        const agent: AgentToken = { id: `admin-${admin.unlock.key}`, login: admin.login, name: admin.name, label: "Admin token", kind: "agent", testBy: null, created: Date.now(), lastUsed: Date.now() };
+        return { login: admin.login, name: admin.name, agent, unlocked: admin.unlock };
+      }
       const token = await platform.tokens.verify(bearer).catch(() => null);
       if (!token) return null;
       // A test person's token opens only test documents, while whoever minted their test token may sign in.
       const session: Session = { login: token.login, name: token.name, agent: token, ...(token.testBy ? { test: { by: token.testBy } } : {}) };
-      const users = platform.directory.users;
       if (token.testBy) return (await users.allowed(token.testBy)) ? session : null;
+      if (platform.devUnlocked?.(url)) session.unlocked = DEV_UNLOCK();
       return platform.dev(url) || (await users.allowed(token.login)) ? session : null;
     },
   };
@@ -282,7 +304,10 @@ export const accessOf = (role: Role | null): "edit" | "view" | null =>
   role == "owner" || role == "editor" ? "edit" : role == "viewer" ? "view" : null;
 
 /** Who a session is, to the directory's `may`. */
-export const whoOf = (session: Session): Who => ({ login: session.login.toLowerCase(), test: !!session.test, ...(session.test ? { by: session.test.by.toLowerCase() } : {}) });
+export const whoOf = (session: Session): Who => ({ login: session.login.toLowerCase(), test: !!session.test, ...(session.test ? { by: session.test.by.toLowerCase() } : {}), ...(session.unlocked && !session.test ? { unlocked: session.unlocked } : {}) });
+
+/** Local development's shortcut unlock (Platform.devUnlocked): an hour from now, by no key. */
+export const DEV_UNLOCK = (): Unlock => ({ key: "local", until: Date.now() + 60 * 60 * 1000 });
 
 const refused = (session: Session) => session.test
   ? page("Test documents only", "Test people can open only test documents.", 403)
@@ -665,9 +690,12 @@ export function seedLanding(platform: Platform): Promise<DocRow | null> {
       if (!(await platform.docs.delete(made))) await platform.directory.remove(made.id);
       return live(await config.stored("landing_document"));
     }
+    // The deploy's own doing (its ADMINS), not a person's: the server shares as the owner, with admin access unlocked for it
+    // (editing the front page needs that: directory.ts, homeLimit).
+    const server = { login: owner, test: false, unlocked: { key: "server", until: Date.now() + 60_000 } };
     for (const login of project.editors) {
       if (login.toLowerCase() == owner) continue;
-      await platform.directory.share({ login: owner, test: false }, made.id, login, "editor").catch(() => {});
+      await platform.directory.share(server, made.id, login, "editor").catch(() => {});
     }
     return made;
   })().finally(() => seeding.delete(key));

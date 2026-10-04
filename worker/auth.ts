@@ -10,11 +10,14 @@
 // throwaway test people (Ada, Bo...) who can open only test documents
 // (ids starting "test"), so the test suite can run against erga.dev.
 
-import { confirmAction, fromElsewhere, page, safeNext, type Session } from "../front";
-import { directoryOf } from "./d1";
+import type { Unlock } from "../admin-keys";
+import { confirmAction, DEV_UNLOCK, fromElsewhere, page, safeNext, type Session } from "../front";
+import { adminKeysOf, directoryOf } from "./d1";
 import type { Env } from "./env";
 
 const COOKIE = "erga_session", STATE = "erga_oauth";
+/** An unlock of admin access (admin-keys.ts), for the person the session cookie names: SameSite=Strict, so no other site's link carries it. */
+const ADMIN_COOKIE = "erga_admin";
 /** Local development: this browser signed out, so it's nobody (not DEV_LOGIN) until it signs in again. */
 const SIGNED_OUT = "erga_signed_out";
 const DAY = 24 * 60 * 60;
@@ -74,8 +77,27 @@ async function findSession(env: Env, request: Request): Promise<Session | null> 
     : (await signedIn(env, request, dev)) ?? (dev && !cookies(request).has(SIGNED_OUT) ? { login: env.DEV_LOGIN!, name: env.DEV_LOGIN! } : null);
   // Locally everyone may sign in, and gets a user's row the first time (last seen, the next).
   if (session && !session.test) await users(env).signedIn(session.login, dev ? session.name : null, { create: dev });
+  // Admin access, if they unlocked it with their SSH key (or local development's shortcut, ERGA_ADMIN_UNLOCKED=1).
+  if (session && !session.test) {
+    const raw = cookies(request).get(ADMIN_COOKIE);
+    const unlocked = raw ? await adminKeysOf(env).readCookie(raw, session.login).catch(() => null) : null;
+    if (unlocked) session.unlocked = unlocked;
+    else if (devUnlocked(env, url)) session.unlocked = DEV_UNLOCK();
+  }
   return session;
 }
+
+/** Local development's shortcut: every admin counts as unlocked (ERGA_ADMIN_UNLOCKED=1, which tests/host.ts sets), on localhost only. */
+export const devUnlocked = (env: Env, url: URL) => isDev(env, url) && env.ERGA_ADMIN_UNLOCKED == "1";
+
+/** The Set-Cookie header that carries an unlock of `login`'s in this browser, until it ends (admin-access.ts). */
+export async function unlockCookie(env: Env, request: Request, login: string, unlock: Unlock): Promise<string> {
+  const value = await adminKeysOf(env).cookie(login, unlock);
+  return `${ADMIN_COOKIE}=${value}; Path=/; Max-Age=${Math.max(1, Math.floor((unlock.until - Date.now()) / 1000))}; HttpOnly; SameSite=Strict${new URL(request.url).protocol == "https:" ? "; Secure" : ""}`;
+}
+
+/** The Set-Cookie header that locks admin access in this browser again. */
+export const lockCookie = (request: Request) => `${ADMIN_COOKIE}=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict${new URL(request.url).protocol == "https:" ? "; Secure" : ""}`;
 
 const users = (env: Env) => directoryOf(env).users;
 
@@ -197,6 +219,7 @@ export function signOut(env: Env, request: Request): Response {
   if (request.method == "POST" ? request.headers.get("origin") != url.origin : fromElsewhere(request)) return confirmAction("Sign out", "Sign out of Erga", "/auth/logout");
   const headers = new Headers({ Location: "/" });
   headers.append("Set-Cookie", cookie(request, COOKIE, "", 0));
+  headers.append("Set-Cookie", lockCookie(request));
   // Locally someone is always signed in (DEV_LOGIN), unless the browser signs out: then nobody, as on erga.dev.
   if (isDev(env, url)) headers.append("Set-Cookie", cookie(request, SIGNED_OUT, "1", 30 * DAY));
   return new Response(null, { status: 302, headers });

@@ -11,9 +11,13 @@
 //   list_users, add_user,               who may sign in, and who's an admin (users.ts),
 //   set_user_role, remove_user          admins only
 //
-// An admin tool is offered only to an admin (`toolsFor`), and the directory
-// checks again on every call (Users.mustAdmin), so a tool list that's gone
-// stale (someone stopped being an admin) still can't do anything.
+// An admin tool is offered only to an admin who has unlocked admin access
+// with their SSH key (`toolsFor`; admin-keys.ts): an external agent with an
+// admin token. The editor's agent never has them (a document's host never
+// carries an unlock, and a document's text could steer its agent). The
+// directory checks again on every call (Users.mustAdmin), so a tool list
+// that's gone stale (an unlock ended, someone stopped being an admin) still
+// can't do anything.
 //
 // Adding one: an entry in SERVER_TOOLS. Both agents get it.
 
@@ -22,7 +26,7 @@ import { Type, type TObject } from "typebox";
 import { ConfigError, type ConfigEntry } from "./config.ts";
 import { type Action, type Directory, type DocRow, type Grant, type Route, type Who, ANYONE, NotAllowed, nameOf } from "./directory.ts";
 import { ID, OWNER } from "./front.ts";
-import type { User } from "./users.ts";
+import { LOCKED, type User } from "./users.ts";
 
 /** A tool's failure, worded for the agent to act on; `status` is the HTTP status the REST API answers. */
 export class ToolError extends Error {
@@ -184,9 +188,9 @@ export const SERVER_TOOLS: ServerToolDef[] = [
   },
 ];
 
-/** The tools someone may use: the admin ones only for an admin. */
+/** The tools someone may use: the admin ones only for an admin who has unlocked admin access (admin-keys.ts). */
 export async function toolsFor(dir: Directory, who: Who): Promise<ServerToolDef[]> {
-  const admin = await dir.users.isAdmin(who);
+  const admin = await dir.users.isUnlocked(who);
   return SERVER_TOOLS.filter((t) => admin || !t.admin);
 }
 
@@ -195,7 +199,7 @@ export async function toolsFor(dir: Directory, who: Who): Promise<ServerToolDef[
  * allowed: 403; a bad value: 400).
  */
 export async function runServerTool(tool: ServerToolDef, args: Record<string, unknown>, ctx: ToolWho): Promise<string | object> {
-  if (tool.admin && !(await ctx.dir.users.isAdmin(ctx.who))) throw new ToolError("Only an admin can do that.", 403);
+  if (tool.admin && !(await ctx.dir.users.isUnlocked(ctx.who))) throw new ToolError((await ctx.dir.users.isAdmin(ctx.who)) ? LOCKED : "Only an admin can do that.", 403);
   try {
     return await tool.run(args, ctx);
   } catch (e) {

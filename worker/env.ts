@@ -88,6 +88,8 @@ export interface Env {
   ERGA_DEPLOY_MOCK?: string;
   /** Local development only: sign in as this login without GitHub (honoured only on localhost). */
   DEV_LOGIN?: string;
+  /** Local development only: "1" counts every admin as having unlocked admin access (admin-keys.ts), for the tests that aren't about it (tests/host.ts sets it). Honoured only on localhost. */
+  ERGA_ADMIN_UNLOCKED?: string;
   /** "script" for the test suite's scripted agent; unset on erga.dev. */
   ERGA_AGENT_MODEL?: string;
   /** Local development only: what the dev server (dev/plugin.ts) proves itself with to link files on disk. */

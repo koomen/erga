@@ -52,6 +52,8 @@ import { containersHost } from "../factory/cloudflare";
 import { factoryPage } from "../factory/page";
 import { branchName, taskPrompt } from "../factory/prompt";
 import { whoOf } from "../front";
+import { unlockFirst } from "../admin-access";
+import { LOCKED } from "../users";
 import { isDev, sessionOf } from "./auth";
 import { directoryOf } from "./d1";
 import type { Env } from "./env";
@@ -573,18 +575,25 @@ const factory = (env: Env) => env.FACTORY.getByName("factory");
 /** Whether the `factory` setting is on. */
 const enabled = async (env: Env) => (await directoryOf(env).config.get("factory")) == "on";
 
-/** An admin, signed in (the person, in a browser: agent tokens don't reach the factory). */
-async function adminOf(env: Env, request: Request): Promise<{ login: string } | null> {
+/**
+ * An admin, signed in (the person, in a browser: agent tokens don't reach the factory), who has unlocked
+ * admin access with their SSH key (admin-keys.ts); "locked" for an admin who hasn't yet.
+ */
+async function adminOf(env: Env, request: Request): Promise<{ login: string } | "locked" | null> {
   const session = await sessionOf(env, request);
   if (!session || session.test || (session as { agent?: unknown }).agent) return null;
-  return (await directoryOf(env).users.isAdmin(whoOf(session))) ? { login: session.login.toLowerCase() } : null;
+  const users = directoryOf(env).users, who = whoOf(session);
+  if (!(await users.isAdmin(who))) return null;
+  return (await users.isUnlocked(who)) ? { login: session.login.toLowerCase() } : "locked";
 }
 
 /** /admin/factory: the board. */
 export async function factoryDoor(request: Request, env: Env, url: URL): Promise<Response> {
   const session = await sessionOf(env, request);
   if (!session) return new Response(null, { status: 302, headers: { Location: `/auth/github?next=${encodeURIComponent(url.pathname)}` } });
-  if (!(await adminOf(env, request))) return new Response("Not found", { status: 404 });
+  const admin = await adminOf(env, request);
+  if (!admin) return new Response("Not found", { status: 404 });
+  if (admin == "locked") return unlockFirst(url.pathname, session);
   return factoryPage({ enabled: await enabled(env), dev: isDev(env, url) });
 }
 
@@ -614,6 +623,7 @@ export async function factoryApi(request: Request, env: Env, url: URL): Promise<
 
   const admin = await adminOf(env, request);
   if (!admin) return json({ error: "Only admins can use the factory." }, (await sessionOf(env, request)) ? 403 : 401);
+  if (admin == "locked") return json({ error: LOCKED, locked: true }, 403);
   if (request.method != "GET" && request.headers.get("origin") != url.origin) return json({ error: "Forbidden" }, 403);
   const f = factory(env);
   const on = await enabled(env);

@@ -10,6 +10,7 @@
 #                     Erga's own source: the Git endpoint, merges, the mirror and the Source page (tests/source.ts),
 #                     branches deploying themselves, in the Worker (tests/deploys.ts),
 #                     who you are in every page's corner (tests/account.ts),
+#                     admin SSH keys and unlocking admin access with them (tests/admin-keys.ts),
 #                     the viewer's controls fading while you read (tests/fade.ts),
 #                     a document's pages tree (tests/tree.ts),
 #                     the first switch into editing on a slow network (tests/switch.ts),
@@ -49,6 +50,7 @@ page_group() {
   run landing bun tests/landing.ts
   run source bun tests/source.ts
   run account bun tests/account.ts
+  run admin-keys bun tests/admin-keys.ts
   run fade bun tests/fade.ts
   run tree bun tests/tree.ts
   run switch bun tests/switch.ts

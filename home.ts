@@ -17,6 +17,7 @@
 
 import { ACCOUNT_STYLE, accountMarkup, type Account } from "./account.ts";
 import { ConfigError } from "./config.ts";
+import { LOCKED } from "./users.ts";
 import { NotAllowed, roleMay, type DocRow } from "./directory.ts";
 import { cloneButton, editButton, esc, FADE, fromElsewhere, VIEW_STYLE, whoOf, type Platform } from "./front.ts";
 
@@ -252,12 +253,13 @@ export async function homeApi(request: Request, platform: Platform, deploys: Hom
   const dir = platform.directory;
   const doc = await dir.get(id);
   const who = whoOf(session);
-  const [role, admin] = await Promise.all([doc ? dir.access(who, doc) : null, session.test ? false : dir.users.isAdmin(who)]);
+  const [role, admin, unlocked] = await Promise.all([doc ? dir.access(who, doc) : null, session.test ? false : dir.users.isAdmin(who), session.test ? false : dir.users.isUnlocked(who)]);
   if (!doc || doc.test || (!role && !admin)) return json({ error: "There's no such document." }, 404);
   const state = async () => {
     const isHome = (await dir.homeId()) == doc.id;
-    const canSet = admin && !dir.config.isLocked("landing_document") && roleMay(await dir.access(who, doc), "edit");
-    return { isHome, canSet, blocked: isHome ? null : await dir.homeBlocked(doc.id), deploy: isHome ? await deploys.status() : IDLE };
+    // An admin who hasn't unlocked admin access with their SSH key (admin-keys.ts) is told so (locked), and can't set it until they do.
+    const canSet = unlocked && !dir.config.isLocked("landing_document") && roleMay(await dir.access(who, doc), "edit");
+    return { isHome, canSet, locked: admin && !unlocked, blocked: isHome ? null : await dir.homeBlocked(doc.id), deploy: isHome ? await deploys.status() : IDLE };
   };
   if (request.method == "GET" || request.method == "HEAD") {
     if (action) return json({ error: "Not found" }, 404);
@@ -267,6 +269,7 @@ export async function homeApi(request: Request, platform: Platform, deploys: Hom
   // Another site may not do this on someone's behalf (an agent's token is its own proof).
   if (!session.agent && (fromElsewhere(request) || (request.headers.has("origin") && request.headers.get("origin") != url.origin))) return json({ error: "Not from this site." }, 403);
   if (!admin) return json({ error: "Only an admin can choose the homepage or deploy it." }, 403);
+  if (!unlocked) return json({ error: LOCKED, locked: true }, 403);
   if (action == "deploy") {
     if ((await dir.homeId()) != doc.id) return json({ error: "This document isn't the homepage." }, 409);
     await deploys.deploy();

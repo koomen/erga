@@ -35,6 +35,7 @@
 // whose permission says otherwise only views it (homeLimit).
 
 import { ConfigError, ServerConfig } from "./config.ts";
+import type { Unlock } from "./admin-keys.ts";
 import { NotAllowed, Users } from "./users.ts";
 
 export { NotAllowed };
@@ -88,7 +89,7 @@ export type Action = "open" | "edit" | "rename" | "delete" | "share";
  * test person (who may touch only test documents), and if so whose test
  * token signed them in (`by`, lowercase).
  */
-export interface Who { login: string; test?: boolean; by?: string }
+export interface Who { login: string; test?: boolean; by?: string; /** An unlock of admin access (admin-keys.ts), checked by the front door. */ unlocked?: Unlock | null }
 /** The login a permission for anyone signed in (who has the link) is under. */
 export const ANYONE = "*";
 
@@ -182,7 +183,7 @@ export class Directory {
         landing_document: async (by, value) => {
           const doc = await this.find(String(value));
           if (!doc || doc.test) throw new ConfigError(`landing_document: there's no document at ${JSON.stringify(value)}. Give its address (/<owner>/<slug>), URL or id.`);
-          if (!(await this.may({ login: by.login.toLowerCase(), test: !!by.test }, "edit", doc))) throw new NotAllowed(`Only someone who may edit /${doc.owner}/${doc.slug} can make it the front page: it shows the document to everyone.`);
+          if (!(await this.may({ login: by.login.toLowerCase(), test: !!by.test, unlocked: by.unlocked }, "edit", doc))) throw new NotAllowed(`Only someone who may edit /${doc.owner}/${doc.slug} can make it the front page: it shows the document to everyone.`);
           const blocked = await this.homeBlocked(doc.id);
           if (blocked) throw new NotAllowed(blocked);
           return doc.id;
@@ -237,14 +238,16 @@ export class Directory {
   }
 
   /**
-   * The front page's editing is for admins only (homeBlocked): someone who
-   * isn't one, whatever their permission says (an admin since made a user),
-   * only views it while it's the front page.
+   * The front page's editing is for admins only (homeBlocked), and only
+   * while they've unlocked admin access with their SSH key (admin-keys.ts):
+   * its scripts run on this site itself, so editing it is changing the app.
+   * Anyone else, whatever their permission says (an admin since made a user,
+   * or an admin who hasn't unlocked), only views it while it's the front page.
    */
   private async homeLimit(who: Who, id: string, role: Role | null): Promise<Role | null> {
     if (role != "owner" && role != "editor") return role;
     if ((await this.homeId()) != id) return role;
-    return (await this.users.isAdmin(who)) ? role : "viewer";
+    return (await this.users.isUnlocked(who)) ? role : "viewer";
   }
 
   async get(id: string): Promise<DocRow | null> {

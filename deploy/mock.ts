@@ -468,10 +468,10 @@ function seedFleet(state: MockState) {
   state.account = { id: ACCOUNT_ID, name: "Erga" };
   state.subdomain = "erga";
   state.zones = [{ id: "zone00000000000000000000000e7ga1", name: "erga.dev", status: "active" }, { id: "zone00000000000000000000000e7ga2", name: "erga-pages.dev", status: "active" }];
-  const tables = ["d1_migrations", "users", "server_config", "documents", "permissions", "slug_history", "agent_tokens", "token_requests"];
+  const tables = ["d1_migrations", "users", "server_config", "documents", "permissions", "slug_history", "agent_tokens", "token_requests", "admin_keys", "admin_challenges", "admin_log"];
   state.databases.push({
     uuid: PROD_DB, name: "erga", statements: [], tables,
-    migrations: ["0001_erga.sql", "0002_delete_docs_after_hours.sql", "0100_tokens.sql"],
+    migrations: ["0001_erga.sql", "0002_delete_docs_after_hours.sql", "0100_tokens.sql", "0110_admin_keys.sql"],
     rows: [
       "INSERT INTO users (login, name) VALUES ('ada', 'Ada');",
       ...PROD_DOCS.map((id, i) => `INSERT INTO documents (id, owner, slug, title) VALUES ('${id}', 'ada', 'doc-${i + 1}', 'Document ${i + 1}');`),
