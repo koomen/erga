@@ -353,7 +353,7 @@ async function viewLanding(platform: Platform, request: Request, session: Sessio
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${esc(doc.title)}</title>
-<style>html, body { margin: 0; height: 100%; } /*MARK2*/ .erga-landing { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; display: block; }</style>
+<style>html, body { margin: 0; height: 100%; } .erga-landing { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; display: block; }</style>
 <iframe class="erga-landing" src="${esc(pages)}" title="${esc(doc.title)}"></iframe>
 ${docs}${edit}${EDIT_BUTTON_STYLE}
 </html>`, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" } });
