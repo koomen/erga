@@ -832,7 +832,10 @@ stopped (it checks the Worker's `ERGA_VERSION` to know the upload went
 through): the address, the pages, waiting for the new release, copying the
 documents. A deploy stopped before the upload is marked failed
 ("interrupted"), and Redeploy runs it again from the top. Every step is safe
-to repeat.
+to repeat. Changing a secret on the Worker (`bunx cf workers secrets update`,
+the setup) is a new version too, and resets the `Pipeline` object up to a
+minute later: change secrets when no deploy runs, or the running one is
+marked interrupted and needs a Redeploy.
 
 **Staging's snapshot of production.** On each staging deploy:
 
