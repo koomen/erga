@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 // A sample board, for working on the board itself: a throwaway repo (with a
 // bare "origin") whose main has a history of merged tasks, a few commits not
-// pushed yet, and tasks in every state (one of them live), served by this server.ts. Never
+// pushed yet, and tasks in every state (one of them live, some waiting on others), served by this server.ts. Never
 // touches this repo or the real queue's data.
 //
 //   bun development/task-queue/sample.ts [--tick SECONDS]
@@ -64,10 +64,15 @@ merged("Comments in the margin");
 direct("Tighten the docs list spacing");
 merged("Version history panel");
 
-task("Offline editing", "queued");
-task("Agent can insert images", "working", { log: [{ at: now(), message: "Registered" }, { at: now(), message: "Wiring the image tool into the agent" }] });
+// Dependencies: one waiting to start, one whose Merge waits, one blocked by a discarded task.
+const editorModel = tasks.find((t) => t.title == "Try a different editor model");
+const sync = task("Offline sync API", "working", { log: [{ at: now(), message: "Registered" }, { at: now(), message: "The sync endpoint answers; writing its tests" }] });
+task("Offline editing", "queued", { startAfter: [sync.id] });
+const images = task("Agent can insert images", "working", { log: [{ at: now(), message: "Registered" }, { at: now(), message: "Wiring the image tool into the agent" }] });
 task("Tighten the docs list", "working", { live: true, previewUp: true, chromeUp: true, url: "http://localhost:4502/docs", log: [{ at: now(), message: "Live: worked on in a session with the user" }, { at: now(), message: "Chrome window opened on http://localhost:4502/docs" }] });
+task("Image captions", "complete", { mergeAfter: [images.id], summary: "Adds captions under images; built against the image tool's contract in #" + images.id + "." });
 task("Print stylesheet", "complete", { summary: "Adds a print stylesheet; checked in headless Chrome's print preview." });
+task("Editor plugins", "queued", { startAfter: [editorModel.id] });
 task("Mobile toolbar", "failed", { error: "Tests fail on the toolbar overflow menu." });
 
 writeFileSync(join(data, "tasks.json"), JSON.stringify({ nextId: id + 1, tasks }, null, 2));
