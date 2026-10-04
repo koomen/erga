@@ -45,11 +45,20 @@ for (const [path, text] of Object.entries(import.meta.glob("../templates/*/**", 
   (TEMPLATES[name] ??= {})[rel] = text;
 }
 
-/** The repo's landing project (landing/), the front page the server makes for itself (front.ts, seedLanding). Text files only. */
-const LANDING: Record<string, string> = {};
-for (const [path, text] of Object.entries(import.meta.glob("../landing/**", { query: "?raw", import: "default", eager: true }) as Record<string, string>)) {
+/**
+ * The repo's landing project (landing/), the front page the server makes for
+ * itself (front.ts, seedLanding): its text files as they are, and its fonts
+ * and images as bytes (Vite inlines them as data: URLs, decoded here).
+ */
+const LANDING: Record<string, string | Uint8Array> = {};
+const landingFile = (path: string, file: string | Uint8Array) => {
   const rel = path.replace(/^\.\.\/landing\//, "");
-  if (!rel.split("/").some((part) => part.startsWith("."))) LANDING[rel] = text;
+  if (!rel.split("/").some((part) => part.startsWith("."))) LANDING[rel] = file;
+};
+// (Vite wants each glob written out.)
+for (const [path, text] of Object.entries(import.meta.glob(["../landing/**", "!../landing/**/*.{woff2,woff,ttf,otf,png,jpg,jpeg,gif,webp,avif,ico}"], { query: "?raw", import: "default", eager: true }) as Record<string, string>)) landingFile(path, text);
+for (const [path, url] of Object.entries(import.meta.glob("../landing/**/*.{woff2,woff,ttf,otf,png,jpg,jpeg,gif,webp,avif,ico}", { query: "?inline", import: "default", eager: true }) as Record<string, string>)) {
+  landingFile(path, Uint8Array.from(atob(url.slice(url.indexOf(",") + 1)), (c) => c.charCodeAt(0)));
 }
 
 export default {
