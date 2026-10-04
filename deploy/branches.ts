@@ -88,6 +88,8 @@ export interface Deps {
   schedule(ms: number): Promise<void> | void;
   /** Something in the status changed (an event to whoever listens). */
   changed(): void;
+  /** Where to clone the commit from (the source repo's own reader, task #39's sourceForBuild); else the REST API's (deploy/source.ts). */
+  source?(commit: string): Promise<Source | null>;
   /** New lines of a deploy's log ({type: "deploy-log"} on /api/events). */
   logged?(event: { type: "deploy-log"; target: TargetName; deployId: string; lines: LogLine[] }): void;
   now?: () => number;
@@ -347,7 +349,7 @@ export class BranchDeploys {
     try {
       const cf = new Cloudflare(this.deps.env.CLOUDFLARE_DEPLOY_TOKEN!.trim(), this.deps.net);
       const accountId = this.deps.env.CLOUDFLARE_ACCOUNT_ID!.trim();
-      const source = await sourceFor(cf, accountId);
+      const source = (await this.deps.source?.(commit)) ?? await sourceFor(cf, accountId);
       const release = await this.deps.builder!.build({ commit, branch: spec.branch, source }, (l) => { this.line(s, l, "build"); void this.save(s); });
       step(s, "build", "done", `release ${release.version}`);
       this.line(s, `built release ${release.version}`, "build");

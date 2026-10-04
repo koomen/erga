@@ -17,6 +17,8 @@
 //   /deploy                    deploy Erga to your own Cloudflare account (worker/deploy.ts; the deploy_page setting)
 //   /api/deploys, /api/events  branch deploys' status and events, and deploy logs (worker/deploys.ts)
 //   /auth/test?token=&as=      a test person (Ada, Bo...) signed in with one; they open only test documents
+//   /git/erga.git/...          Erga's own repository, over Git smart HTTP (worker/source.ts; admins' agent tokens)
+//   /source, /api/source/...   its Source page (the dashboard of source and deploys) and API
 //   /page.js, /style.css, ...  the editor's own files (static assets)
 //
 // In local development only, the dev server (dev/plugin.ts) links files on
@@ -33,6 +35,7 @@ import { serverApi, tokensDoor } from "../server-api";
 import { finishSignIn, isDev, mintTestToken, sessionOf, signOut, startSignIn, testSignIn } from "./auth";
 import { directoryOf, tokensOf } from "./d1";
 import { deployDoor } from "./deploy";
+import { sourceApi, sourceDoor, sourceGit } from "./source";
 import { deploysDoor, isDeploysPath } from "./deploys";
 import { forgetHome, serveHome, serveHomeFile, serveHomeRoot } from "./home";
 import { homeApi } from "../home";
@@ -42,6 +45,7 @@ import { counted, simulateLatency, tallied } from "./timing";
 export { Deployer } from "./deployer";
 export { DocHost } from "./doc-host";
 export { Pipeline } from "./pipeline";
+export { SourceHost } from "./source-host";
 export { Home } from "./home";
 
 /** The templates' files, by template then path ("doc" → { "index.html": "..." }). Text files only. */
@@ -126,6 +130,10 @@ async function route(request: Request, env: Env, url: URL, ctx: ExecutionContext
   if (path == "/auth/test") return testSignIn(env, request);
   // The editor's controls and styles, which a document's page adds to itself to go into the editor (front.ts).
   if (assets || path == "/editor.html") return env.ASSETS.fetch(request);
+  // Erga's own source: the Git endpoint, its page (the dashboard of source and deploys) and API (worker/source.ts).
+  if (path == "/git/erga.git" || path.startsWith("/git/erga.git/")) return sourceGit(request, env, url);
+  if (path == "/source") return sourceDoor(request, env, platform(env), url);
+  if (path.startsWith("/api/source/")) return sourceApi(request, env, platform(env), url);
   // Branch deploys and their status, the event stream, and staging's snapshot endpoints (worker/deploys.ts).
   if (isDeploysPath(path)) return deploysDoor(request, env, platform(env));
   const read = request.method == "GET" || request.method == "HEAD";

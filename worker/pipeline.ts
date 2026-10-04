@@ -17,6 +17,7 @@ import { containerBuilder } from "../deploy/builder/client";
 import { loadRelease, type Release } from "../deploy/cloudflare";
 import { FLEET_ACCOUNT, MOCK_HOOK_SECRET, MOCK_SNAPSHOT_TOKEN, mockBuilder, mockCloudflare } from "../deploy/mock";
 import type { Env } from "./env";
+import { sourceForBuild } from "./source";
 
 export class Pipeline extends DurableObject<Env> {
   private deploys: BranchDeploys;
@@ -49,6 +50,12 @@ export class Pipeline extends DurableObject<Env> {
       },
       changed: () => this.publish({ type: "deploys" }),
       logged: (event) => this.publish(event),
+      // The commit to build: the source repo's remote and a read token, through Erga's own binding (worker/source.ts).
+      source: async (commit) => {
+        if (!env.ARTIFACTS) return null;
+        const s = await sourceForBuild(env, commit);
+        return { cloneUrl: s.remote, token: s.token.split("?")[0] };
+      },
       ...(mock ? { waitMs: 5000, sleep: (ms: number) => new Promise<void>((r) => setTimeout(r, Math.min(ms, 50))) } : {}),
     });
   }

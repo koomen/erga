@@ -78,6 +78,8 @@ const vite = Bun.spawn(["node", "--no-experimental-webstorage", join(EDITOR, "no
     ERGA_RELOAD: reload ? "1" : "",
     ERGA_CWD: process.cwd(),
     ERGA_PARENT: String(process.pid),
+    // Where the Worker finds the dev server's stand-ins for Artifacts and GitHub (dev/git-server.ts).
+    ERGA_DEV_ORIGIN: `http://127.0.0.1:${port}`,
   },
 });
 

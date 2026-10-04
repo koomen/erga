@@ -41,6 +41,8 @@ export default defineConfig(({ mode }) => ({
       DocHost: exports.durableObject({ storage: "sqlite" }),
       // The deploy page's sessions (/deploy, worker/deployer.ts): each holds one person's Cloudflare token, only while they deploy.
       Deployer: exports.durableObject({ storage: "sqlite" }),
+      // Erga's own repository (worker/source-host.ts): one object, "erga", where pushes and merges happen one at a time.
+      SourceHost: exports.durableObject({ storage: "sqlite" }),
       // Branch deploys (deploy/branches.ts, worker/pipeline.ts): one object, named "deploys", that builds and deploys
       // this server's own branch when it moves, keeps each target's status and log, and serves /api/events.
       Pipeline: exports.durableObject({ storage: "sqlite" }),
@@ -53,6 +55,15 @@ export default defineConfig(({ mode }) => ({
       DOCS: bindings.durableObject({ worker: PROD.worker, exportName: "DocHost" }),
       DEPLOYS: bindings.durableObject({ worker: PROD.worker, exportName: "Deployer" }),
       PIPELINE: bindings.durableObject({ worker: PROD.worker, exportName: "Pipeline" }),
+      SOURCE: bindings.durableObject({ worker: PROD.worker, exportName: "SourceHost" }),
+      // Erga's own repository is in Cloudflare Artifacts (worker/artifacts.ts), bound only when the deploy names the
+      // namespace (ERGA_ARTIFACTS_NAMESPACE=erga), with the GitHub mirror's token (a secret, GITHUB_MIRROR_TOKEN) then too.
+      // Locally there's no binding: the dev server stands in for Artifacts and GitHub (dev/git-server.ts).
+      ...(mode != "development" && process.env.ERGA_ARTIFACTS_NAMESPACE ? {
+        ARTIFACTS: bindings.artifacts({ namespace: process.env.ERGA_ARTIFACTS_NAMESPACE }),
+        GITHUB_MIRROR_URL: bindings.text(process.env.GITHUB_MIRROR_URL ?? "https://github.com/koomen/erga.git"),
+        GITHUB_MIRROR_TOKEN: bindings.secret(),
+      } : {}),
       HOME: bindings.durableObject({ worker: PROD.worker, exportName: "Home" }),
       // The server's database: users, settings and the directory. `cf deploy` makes the database by name if there's none; its tables come
       // from migrations/, applied by migrate.ts (site.sh runs it on Workers Builds, before
@@ -96,6 +107,8 @@ export default defineConfig(({ mode }) => ({
         ERGA_REMOTE_LATENCY_MS: bindings.text(process.env.ERGA_REMOTE_LATENCY_MS ?? ""),
         // "1": /deploy and the branch deploys talk to a pretend Cloudflare (deploy/mock.ts), for their tests and for trying them safely.
         ERGA_DEPLOY_MOCK: bindings.text(process.env.ERGA_DEPLOY_MOCK ?? ""),
+        // The dev server's address (dev.ts), where its stand-ins for Artifacts and GitHub answer (dev/git-server.ts).
+        ERGA_DEV_ORIGIN: bindings.text(process.env.ERGA_DEV_ORIGIN ?? ""),
         // The agent's key: a real one in .dev.vars, else the environment's (dev/agent-key.ts), so a
         // placeholder in .dev.vars doesn't hide the key you exported. Never written to .dev.vars.
         ANTHROPIC_API_KEY: bindings.text(localAgentKey(process.env.ERGA_ENV_DIR || process.cwd())),
