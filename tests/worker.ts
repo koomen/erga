@@ -564,6 +564,25 @@ try {
     expect(body.entry?.value == 24 && body.entry.source == "default", "reset puts it back to its default", body);
     ok("admins see /admin and set and reset settings (a bad value is refused, saying why); nobody else can see it or change them");
 
+    // Never: new documents don't expire, /docs doesn't warn, and one already due stays.
+    res = await adminPost("/admin/settings", { key: "delete_docs_after_hours", value: "null" });
+    body = await res.json();
+    expect(res.ok && body.entry?.value === null && body.entry.source == "set", "an admin sets delete_docs_after_hours to never", body);
+    const forever = await make();
+    const due = await make("?unedited=2000");
+    let neverList = await docs();
+    const row = (id: string, html: string) => html.split("<li>").find((li) => li.includes(`value="${id}"`)) ?? "(not listed)";
+    expect(!row(forever, neverList).includes("deleted in") && !neverList.includes("goes away after"), "a new document isn't marked for deletion, and /docs doesn't warn", row(forever, neverList));
+    expect(row(forever, neverList) != "(not listed)", "(it's listed)");
+    expect(!(await as(adminName, "/docs").then((r) => r.text())).includes("goes away after"), "nor on anyone else's list");
+    await sleep(3500);
+    expect(await exists(due), "a document whose time came up stays, under never");
+    neverList = await docs();
+    expect(!row(due, neverList).includes("deleted in"), "and its row stops counting down", row(due, neverList));
+    expect((await (await as(adminName, "/admin")).text()).match(/<option value="never" selected>Never<\/option>/), "the admin page shows Never chosen");
+    await adminPost("/admin/settings", { key: "delete_docs_after_hours", reset: "1" });
+    ok("with delete_docs_after_hours never, documents aren't deleted and /docs doesn't say they will be");
+
     // Users: add, make admin (who then sees /admin), make user again, remove; a bootstrap admin can't be demoted or removed.
     const newcomer = `new${Date.now().toString(36)}`;
     let u = await (await adminPost("/admin/users", { do: "add", login: newcomer, role: "user" })).json() as { user?: { login: string; role: string; addedBy: string }; error?: string };
@@ -591,6 +610,14 @@ try {
     expect((await at.eval<string>(`document.querySelector('li.setting input[name=value]').value`)) == "36", "with its new value");
     await at.eval(`document.querySelector('li.setting .reset').click()`);
     await until(async () => (await at.eval<string>(`document.readyState == "complete" ? document.querySelector('li.setting .meta')?.textContent ?? "" : ""`)).includes("Default"), 5000, "reset from the page");
+    // Never, from the page: choosing it hides the hours, and saving keeps it.
+    await at.eval(`(() => { const m = document.querySelector('li.setting select.mode'); m.value = "never"; m.dispatchEvent(new Event("change", { bubbles: true })); })()`);
+    expect(await at.eval<boolean>(`document.querySelector('li.setting .amount').hidden && !document.querySelector('li.setting .save').disabled`), "choosing Never hides the hours and lights up Save");
+    await at.eval(`document.querySelector('li.setting .save').click()`);
+    await until(async () => (await at.eval<string>(`document.readyState == "complete" ? document.querySelector('li.setting .meta')?.textContent ?? "" : ""`)).includes(`Set by ${adminName}`), 5000, "saving Never from the page");
+    expect(await at.eval<boolean>(`document.querySelector('li.setting select.mode').value == "never" && document.querySelector('li.setting .amount').hidden`), "the page shows Never after saving");
+    await at.eval(`document.querySelector('li.setting .reset').click()`);
+    await until(async () => (await at.eval<string>(`document.readyState == "complete" ? document.querySelector('li.setting .meta')?.textContent ?? "" : ""`)).includes("Default"), 5000, "reset from the page, again");
     await at.eval(`(() => { const f = document.querySelector('form.add-user'); f.elements.login.value = "pagebie"; f.requestSubmit(); })()`);
     await until(async () => at.eval<boolean>(`!!document.querySelector('li[data-login="pagebie"]')`), 5000, "adding a user from the page lists them");
     at.close?.();

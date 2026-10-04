@@ -54,6 +54,8 @@ test("settings: set, a number given as a string, bad values explained, reset, lo
   expect([e.status, /whole number/.test(e.message)]).toEqual([400, true]);
   e = await failure(run(root, "set_setting", { key: "nope", value: 1 }));
   expect([e.status, e.message.includes("delete_docs_after_hours")]).toEqual([400, true]);
+  // Never: null, or "null" / "never" as a model may send it.
+  for (const value of [null, "null", "never"]) expect((await run(root, "set_setting", { key: "delete_docs_after_hours", value })).value).toBeNull();
   expect((await run(root, "reset_setting", { key: "delete_docs_after_hours" })).source).toBe("default");
 
   const locked = fresh({ admins: ["root"], locked: { delete_docs_after_hours: 6 } });

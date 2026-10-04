@@ -189,6 +189,32 @@ test("server config: defaults, admins set and reset, the deploy locks", async ()
   expect(() => fresh({ locked: { nope: 1 } })).toThrow(ConfigError);
 });
 
+test("server config: delete_docs_after_hours can be never (null)", async () => {
+  const admin = { login: "root" };
+  const { config } = fresh({ admins: ["root"] });
+  expect(await config.set(admin, "delete_docs_after_hours", null)).toMatchObject({ value: null, source: "set", default: 24 });
+  expect(await config.get("delete_docs_after_hours")).toBeNull();
+  // "never" (as an agent might put it) is the same; other words aren't.
+  await config.set(admin, "delete_docs_after_hours", 5);
+  expect(await config.set(admin, "delete_docs_after_hours", " Never ")).toMatchObject({ value: null });
+  await expect(config.set(admin, "delete_docs_after_hours", "off")).rejects.toThrow(/whole number from 1 to 8760 \(hours\), or null for never/);
+  expect(await config.reset(admin, "delete_docs_after_hours")).toMatchObject({ value: 24, source: "default" });
+  // The deploy can lock it to never, too.
+  const locked = fresh({ admins: ["root"], locked: { delete_docs_after_hours: null } }).config;
+  expect(await locked.entry("delete_docs_after_hours")).toMatchObject({ value: null, source: "locked", locked: true, deployed: null });
+  expect(parseDeployed('{"delete_docs_after_hours": null}')).toEqual({ delete_docs_after_hours: null });
+  expect(parseDeployed('{"delete_docs_after_hours": "never"}')).toEqual({ delete_docs_after_hours: null });
+});
+
+test("server config: a value under the old unedited_hours key is dropped by the migrations", async () => {
+  // The migrations run in order on a fresh database, so a row put there by hand before the last one stands for an old deploy's.
+  const sql = memory();
+  await sql.run("INSERT INTO server_config (key, value, updated, updated_by) VALUES ('unedited_hours', '48', 1, 'root')");
+  const drop = await Bun.file(MIGRATIONS + "0002_delete_docs_after_hours.sql").text();
+  for (const q of drop.split(";").map((q) => q.replace(/--.*$/gm, "").trim()).filter(Boolean)) await sql.run(q);
+  expect(await sql.all("SELECT key FROM server_config")).toEqual([]);
+});
+
 test("server config: what the deploy fixes is locked, with its deployed value", async () => {
   const admin = { login: "root" };
   const sql = memory();

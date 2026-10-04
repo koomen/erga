@@ -57,7 +57,7 @@ export const SETTINGS = {
     // null, or "never" (as an agent or a deploy might say it), is never.
     parse: (v) => {
       if (v === null || (typeof v == "string" && v.trim().toLowerCase() == "never")) return null;
-      if (typeof v != "number" || !Number.isInteger(v) || v < 1 || v > 24 * 365) throw new ConfigError(`must be a whole number of hours from 1 to ${24 * 365}, or null for never`);
+      if (typeof v != "number" || !Number.isInteger(v) || v < 1 || v > 24 * 365) throw new ConfigError(`must be a whole number from 1 to ${24 * 365} (hours), or null for never`);
       return v;
     },
   }),
