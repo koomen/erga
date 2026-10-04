@@ -33,7 +33,8 @@ import { serverApi, tokensDoor } from "../server-api";
 import { finishSignIn, isDev, mintTestToken, sessionOf, signOut, startSignIn, testSignIn } from "./auth";
 import { directoryOf, tokensOf } from "./d1";
 import { deployDoor } from "./deploy";
-import { factoryApi, factoryDoor } from "./factory";
+import { factoryApi, factoryDoor, previewTicketOk } from "./factory";
+import { previewDoor } from "../factory/cloudflare";
 import { forgetHome, serveHome, serveHomeFile, serveHomeRoot } from "./home";
 import { homeApi } from "../home";
 import type { Env } from "./env";
@@ -118,6 +119,11 @@ const pagesSite = (env: Env, url: URL) => url.hostname.endsWith(`.${pagesDomainO
 async function route(request: Request, env: Env, url: URL, ctx: ExecutionContext): Promise<Response> {
   const path = url.pathname;
   const assets = path == "/page.js" || path == "/frame.js" || path == "/settings.js" || path == "/pages-tree.js" || path == "/style.css" || path.startsWith("/fonts/");
+  // A factory VM's preview (factory/cloudflare.ts), on Cloudflare only: <vm>.<FACTORY_PREVIEW_DOMAIN>.
+  if (env.FACTORY_PREVIEW_DOMAIN) {
+    const preview = await previewDoor(request, env, (vm, ticket) => previewTicketOk(env, vm, ticket));
+    if (preview) return preview;
+  }
   // A document's pages origin (front.ts, pagesDoor) serves its frame and files, and nothing of this site's.
   if (pagesSite(env, url)) return assets ? env.ASSETS.fetch(request) : frontDoor(request, platform(env));
   if (path == "/auth/github") return startSignIn(env, request);

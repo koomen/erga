@@ -42,5 +42,6 @@ RUN git config --global user.name "Erga factory" && git config --global user.ema
  && git config --global init.defaultBranch main && git config --global github.user factory
 
 WORKDIR /work
-# The VM idles until the factory runs a job in it (docker exec, or the Sandbox's exec).
-CMD ["sleep", "infinity"]
+# The agent (factory/vm/agent.ts): runs the factory's jobs when asked, on port 8080.
+EXPOSE 8080 4401
+CMD ["bun", "/opt/factory/agent.ts"]

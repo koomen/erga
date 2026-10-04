@@ -114,7 +114,7 @@ const api = async (path, opts = {}) => {
 
 function actions(t, inDialog) {
   const b = [];
-  if (t.url && !inDialog && !["merged", "discarded"].includes(t.status)) b.push('<a class="btn" href="' + esc(t.url) + '" target="_blank" onclick="event.stopPropagation()">Open preview</a>');
+  if (t.url && !inDialog && !["merged", "discarded"].includes(t.status)) b.push('<a class="btn" href="/api/factory/tasks/' + t.id + '/open" target="_blank" onclick="event.stopPropagation()">Open preview</a>');
   if (t.status == "complete") b.push('<button class="primary" data-act="merge" data-id="' + t.id + '">Merge</button>');
   if (t.status == "merging") b.push('<button disabled><span class="spin"></span> ' + (t.log.at(-1)?.message.includes("waiting for") ? "Waiting to merge…" : "Merging…") + '</button>');
   if (!["merging", "merged", "discarded"].includes(t.status))
@@ -163,7 +163,7 @@ function renderDialog() {
   const revisable = ["complete", "failed"].includes(t.status);
   const keep = d.querySelector("#instructions")?.value || "";
   d.innerHTML = '<div class="dlg"><div class="dlg-head"><h3><span class="id">#' + t.id + '</span>' + esc(t.title) + ' <span class="status ' + t.status + '">' + (t.status == "complete" ? "ready to merge" : t.status) + '</span></h3><button data-act="close">Close</button></div>' +
-    '<div class="links">' + (t.url && t.status != "merged" ? '<a href="' + esc(t.url) + '" target="_blank">Open preview ↗</a>' : "") +
+    '<div class="links">' + (t.url && t.status != "merged" ? '<a href="/api/factory/tasks/' + t.id + '/open" target="_blank">Open preview ↗</a><span class="muted">' + esc(t.url) + '</span>' : "") +
     '<span class="branch">' + esc(t.branch) + (t.base ? " from staging at " + esc(t.base.slice(0, 10)) : "") + '</span>' +
     (t.mergeCommit ? '<span class="muted">merged as ' + esc(t.mergeCommit.slice(0, 10)) + '</span>' : "") + (t.vm ? '<span class="muted">VM ' + esc(t.vm) + '</span>' : "") + '</div>' +
     actions(t, true) +

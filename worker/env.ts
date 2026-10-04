@@ -1,5 +1,6 @@
 import type { Deployer } from "./deployer";
 import type { DocHost } from "./doc-host";
+import type { FactoryVm } from "../factory/cloudflare";
 import type { Factory } from "./factory";
 import type { Home } from "./home";
 
@@ -16,6 +17,10 @@ export interface Env {
    * stored Claude token and signs the VMs' tokens. Without it, a hosted server can't store a token.
    */
   FACTORY_KEY?: string;
+  /** The factory's VMs on Cloudflare: a container-backed Durable Object per VM (factory/cloudflare.ts). Absent until the runbook declares it. */
+  FACTORY_VM?: DurableObjectNamespace<FactoryVm>;
+  /** Where the VMs' previews show: <vm>.<FACTORY_PREVIEW_DOMAIN>, a wildcard route to this Worker. */
+  FACTORY_PREVIEW_DOMAIN?: string;
   /** The server's database: users, settings and the directory of documents (directory.ts, users.ts, config.ts; migrations/). */
   DB: D1Database;
   /** The editor's own files (page.html as editor.html, page.js, style.css, fonts). */

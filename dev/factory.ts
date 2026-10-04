@@ -25,6 +25,7 @@ import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { createWriteStream, existsSync, mkdirSync, rmSync } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { createServer, type AddressInfo } from "node:net";
+import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { gunzipSync } from "node:zlib";
 import { dockerUp, ensureImage } from "../factory/vm/build.ts";
@@ -206,33 +207,57 @@ function watch(p: ChildProcess, logFile: string): Promise<{ code: number; output
   });
 }
 
-function dockerRunner(stateDir: string, devPort: () => number, log: (line: string) => void): Runner {
+/** The label on a dev server's Docker VMs: from its state folder, so test servers never touch each other's. */
+export const dockerLabel = (stateDir: string) => createHmac("sha1", "erga-factory").update(resolve(stateDir)).digest("hex").slice(0, 12);
+
+function dockerRunner(stateDir: string, log: (line: string) => void): Runner {
   /** This dev server's containers, so tests' servers don't touch each other's. */
-  const label = `erga.factory=${createHmac("sha1", "x").update(stateDir).digest("hex").slice(0, 12)}`;
+  const label = `erga.factory=${dockerLabel(stateDir)}`;
   const logs = join(stateDir, "factory", "vms");
   mkdirSync(logs, { recursive: true });
+  /** A VM's agent (factory/vm/agent.ts): where Docker publishes it, and its secret (kept on the container, so a restarted dev server finds it). */
+  const agentOf = (vm: string): { url: string; secret: string } => {
+    const r = spawnSync("docker", ["inspect", "-f", '{{index .Config.Labels "erga.agent"}} {{(index (index .NetworkSettings.Ports "8080/tcp") 0).HostPort}}', vm], { encoding: "utf8" });
+    const [secret, port] = r.stdout.trim().split(" ");
+    if (r.status != 0 || !secret || !port) throw new Error(`no VM ${vm}`);
+    return { url: `http://127.0.0.1:${port}`, secret };
+  };
+  const agent = async (vm: string, path: string, body?: unknown) => {
+    const a = agentOf(vm);
+    const r = await fetch(a.url + path, { method: body ? "POST" : "GET", headers: { Authorization: `Bearer ${a.secret}`, "Content-Type": "application/json" }, body: body ? JSON.stringify(body) : undefined });
+    if (!r.ok) throw new Error(`the VM's agent answered ${r.status}: ${await r.text()}`);
+    return r;
+  };
   return {
     kind: "docker",
     async start(task) {
       const image = await ensureImage((l) => { if (/^#\d+ (DONE|\[)/.test(l) || /building/.test(l)) log(`factory image: ${l}`); });
       const name = `erga-factory-${task}-${randomBytes(3).toString("hex")}`;
-      const port = await freePort();
-      const r = spawnSync("docker", ["run", "-d", "--init", "--name", name, "--label", label, "--memory", "6g",
-        "-p", `127.0.0.1:${port}:${PUBLIC_PORT}`, "--add-host", "host.docker.internal:host-gateway", image], { encoding: "utf8" });
+      const secret = randomBytes(18).toString("hex");
+      const [agentPort, previewPort] = [await freePort(), await freePort()];
+      // As on Cloudflare, the VM shows two ports: its agent's and the preview's relay (on this machine's loopback only).
+      const r = spawnSync("docker", ["run", "-d", "--init", "--name", name, "--label", label, "--label", `erga.agent=${secret}`, "--memory", "6g",
+        "-e", `FACTORY_AGENT_SECRET=${secret}`, "-p", `127.0.0.1:${agentPort}:8080`, "-p", `127.0.0.1:${previewPort}:${PUBLIC_PORT}`,
+        "--add-host", "host.docker.internal:host-gateway", image], { encoding: "utf8" });
       if (r.status != 0) throw new Error(`docker run: ${r.stderr}`);
-      return { vm: name, preview: `http://localhost:${port}` };
+      for (let i = 0; ; i++) {
+        try { await agent(name, "/health"); break; } catch (e) { if (i > 100) throw e; await new Promise((ok) => setTimeout(ok, 100)); }
+      }
+      return { vm: name, preview: `http://localhost:${previewPort}` };
     },
     async job(j) {
-      // Values reach `docker exec` through its own environment (-e NAME), never its command line.
       const env: Record<string, string> = { ...j.env, FACTORY_WORK: "/work", FACTORY_PREVIEW_PORT: String(PREVIEW_PORT), FACTORY_PUBLIC_PORT: String(PUBLIC_PORT) };
+      // The VM reaches this machine as host.docker.internal.
       for (const k of ["FACTORY_API", "REPO_URL"]) if (env[k]) env[k] = env[k].replace(/\/\/(localhost|127\.0\.0\.1)(?=[:/])/, "//host.docker.internal");
-      const p = spawn("docker", ["exec", ...Object.keys(env).flatMap((k) => ["-e", k]), j.vm, "bun", `/opt/factory/${j.script}`, ...j.args], {
-        env: { PATH: process.env.PATH, HOME: process.env.HOME, DOCKER_HOST: process.env.DOCKER_HOST, ...env } as NodeJS.ProcessEnv,
-      });
-      const done = watch(p, join(logs, `${j.vm}.log`));
-      return j.wait ? done : null;
+      const r = await agent(j.vm, "/job", { script: j.script, args: j.args, env, wait: !!j.wait });
+      return j.wait ? r.json() as Promise<{ code: number; output: string }> : null;
     },
-    async stop(vm) { spawnSync("docker", ["rm", "-f", vm], { stdio: "ignore" }); },
+    async stop(vm) {
+      // Its log first, for looking into a task afterwards.
+      const out = spawnSync("docker", ["exec", vm, "cat", "/work/vm.log"], { encoding: "utf8" });
+      if (out.stdout) createWriteStream(join(logs, `${vm}.log`)).end(out.stdout);
+      spawnSync("docker", ["rm", "-f", vm], { stdio: "ignore" });
+    },
     async alive(vm) { return spawnSync("docker", ["inspect", "-f", "{{.State.Running}}", vm], { encoding: "utf8" }).stdout.trim() == "true"; },
     close() {},
   };
@@ -270,6 +295,8 @@ function simRunner(stateDir: string, log: (line: string) => void): Runner {
         PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: join(dir, "home"), TMPDIR: join(dir, "home"),
         GIT_CONFIG_GLOBAL: join(dir, "home", ".gitconfig"), GIT_AUTHOR_NAME: "Erga factory", GIT_AUTHOR_EMAIL: "factory@erga.dev",
         GIT_COMMITTER_NAME: "Erga factory", GIT_COMMITTER_EMAIL: "factory@erga.dev",
+        // What this machine has that a VM's image would: Bun's package cache (packages only), and for Chrome its HOME (task.ts, CHROME_HOME).
+        BUN_INSTALL_CACHE_DIR: process.env.BUN_INSTALL_CACHE_DIR || join(homedir(), ".bun", "install", "cache"), CHROME_HOME: homedir(),
         FACTORY_WORK: join(dir, "work"), FACTORY_PREVIEW_PORT: String(port), FACTORY_PUBLIC_PORT: String(port), FACTORY_PREVIEW: "static",
         ...j.env,
       };
@@ -293,7 +320,7 @@ export function factoryDev(opts: { stateDir: string; secret: string; port: () =>
     if (runner) return runner;
     const want = process.env.ERGA_FACTORY_RUNNER;
     const docker = want == "docker" || (want != "sim" && dockerUp());
-    runner = docker ? dockerRunner(opts.stateDir, opts.port, opts.log) : simRunner(opts.stateDir, opts.log);
+    runner = docker ? dockerRunner(opts.stateDir, opts.log) : simRunner(opts.stateDir, opts.log);
     opts.log(`factory: VMs are ${docker ? "Docker containers" : "simulated (no Docker)"}`);
     return runner;
   };

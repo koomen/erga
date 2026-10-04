@@ -16,6 +16,7 @@
 //   DELETE /api/factory/claude             forgets it
 //   GET  /api/factory/events               server-sent events: { type: "task", task } on each change
 //   GET  /api/factory/shots/<file>         a screenshot
+//   GET  /api/factory/tasks/<id>/open      to the task's preview (on Cloudflare, with a ticket for its host)
 //
 // The VMs call back with their task's token (Authorization: Bearer fct...),
 // which reaches their own task only:
@@ -34,6 +35,7 @@
 // (factory/cloudflare.ts), once set up.
 
 import { DurableObject } from "cloudflare:workers";
+import { containersHost } from "../factory/cloudflare";
 import { factoryPage } from "../factory/page";
 import { branchName, taskPrompt } from "../factory/prompt";
 import { whoOf } from "../front";
@@ -95,6 +97,20 @@ async function taskOfToken(env: Env, token: string): Promise<number | null> {
   return want.length == m[3].length && crypto.subtle.timingSafeEqual(enc.encode(want), enc.encode(m[3])) ? Number(m[1]) : null;
 }
 
+/** A ticket to a VM's preview (factory/cloudflare.ts, previewDoor): twelve hours. */
+async function previewTicket(env: Env, vm: string): Promise<string> {
+  const exp = Math.floor(Date.now() / 1000) + 43200;
+  return `${exp}.${hex(await hmac(await hmac(factoryKey(env)!, "erga-factory-preview"), `${vm}.${exp}`))}`;
+}
+
+export async function previewTicketOk(env: Env, vm: string, ticket: string): Promise<boolean> {
+  const m = /^(\d+)\.([0-9a-f]{64})$/.exec(ticket);
+  const key = factoryKey(env);
+  if (!m || !key || Number(m[1]) * 1000 < Date.now()) return false;
+  const want = hex(await hmac(await hmac(key, "erga-factory-preview"), `${vm}.${m[1]}`));
+  return crypto.subtle.timingSafeEqual(enc.encode(want), enc.encode(m[2]));
+}
+
 /** AES-GCM with a key from FACTORY_KEY. */
 async function aes(env: Env): Promise<CryptoKey> {
   const raw = await crypto.subtle.digest("SHA-256", enc.encode(`erga-factory-secrets:${factoryKey(env)}`));
@@ -137,6 +153,7 @@ function localHost(env: Env, origin: string): VmHost {
 function vmHost(env: Env, origin: string): VmHost | string {
   if (env.ERGA_LINK_SECRET && env.DEV_LOGIN) return localHost(env, origin);
   // On Cloudflare: Containers (factory/cloudflare.ts), once the runbook's steps are done.
+  if (env.FACTORY_VM && env.FACTORY_PREVIEW_DOMAIN) return containersHost(env, origin);
   return "This server has no VMs for the factory yet: see README, The factory, Runbook.";
 }
 
@@ -446,7 +463,7 @@ export async function factoryDoor(request: Request, env: Env, url: URL): Promise
 /** /api/factory/... */
 export async function factoryApi(request: Request, env: Env, url: URL): Promise<Response> {
   const path = url.pathname.replace(/\/$/, "");
-  const m = /^\/api\/factory\/tasks\/(\d+)(?:\/(brief|log|branch|preview|screenshots|merge|discard|revise))?$/.exec(path);
+  const m = /^\/api\/factory\/tasks\/(\d+)(?:\/(brief|log|branch|preview|screenshots|merge|discard|revise|open))?$/.exec(path);
   const id = m ? Number(m[1]) : null, action = m?.[2] ?? "";
 
   // A VM, with its task's token.
@@ -484,6 +501,14 @@ export async function factoryApi(request: Request, env: Env, url: URL): Promise<
     return data ? new Response(data, { headers: { "Content-Type": "image/png", "Cache-Control": "private, max-age=31536000, immutable" } }) : json({ error: "Not found" }, 404);
   }
   if (path == "/api/factory/tasks" && request.method == "GET") return json(await f.list());
+  // The preview, for the person asking: on Cloudflare with a ticket for its host (factory/cloudflare.ts).
+  if (id != null && action == "open" && request.method == "GET") {
+    const t = await f.task(id);
+    if (!t?.url || !t.vm) return new Response("This task has no preview now.", { status: 404 });
+    const to = new URL(t.url);
+    if (to.protocol == "https:") to.searchParams.set("factory_ticket", await previewTicket(env, t.vm));
+    return new Response(null, { status: 302, headers: { Location: to.toString() } });
+  }
   if (id != null && !action && request.method == "GET") { const t = await f.task(id); return t ? json(t) : json({ error: "Not found" }, 404); }
   if (path == "/api/factory/claude") {
     if (request.method == "GET") return json(await f.claude());

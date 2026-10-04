@@ -11,8 +11,8 @@
 //
 // A URL given to `task shot` on localhost is the VM's own (the preview).
 
-import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { api, CLONE, env, git, log, REPORTED, TASK } from "./common.ts";
@@ -65,14 +65,50 @@ function chrome(): string {
   return found;
 }
 
+/**
+ * Headless Chromium's screenshot of `url` into `file`; resolves with what it said that matters. Some builds (Chrome on a
+ * Mac) don't exit after writing it: once the file is there and stops growing, the browser is stopped.
+ */
+function chromeShot(url: string, file: string, profile: string): Promise<string> {
+  return new Promise((resolve) => {
+    const p = spawn(chrome(), ["--headless", "--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage", "--hide-scrollbars", "--no-first-run",
+      `--user-data-dir=${profile}`, "--window-size=1280,860", "--virtual-time-budget=10000", `--screenshot=${file}`, url], {
+      stdio: ["ignore", "ignore", "pipe"],
+      // The local simulation gives jobs a HOME of their own, in which Chrome on a Mac hangs: it gets the real one (CHROME_HOME), and its own profile.
+      env: process.env.CHROME_HOME ? { ...process.env, HOME: process.env.CHROME_HOME } : process.env,
+    });
+    let stderr = "", last = -1, settled = false;
+    p.stderr.on("data", (c: Buffer) => { stderr = (stderr + c.toString()).slice(-4000); });
+    const done = () => {
+      if (settled) return;
+      settled = true;
+      clearInterval(poll); clearTimeout(limit);
+      try { p.kill("SIGKILL"); } catch { /* gone */ }
+      resolve(/Page load failed[^\n]*/.exec(stderr)?.[0] ?? stderr.slice(-800));
+    };
+    const poll = setInterval(() => {
+      const size = existsSync(file) ? statSync(file).size : -1;
+      if (size > 0 && size == last) done();
+      last = size;
+    }, 300);
+    const limit = setTimeout(done, 60_000);
+    p.on("close", done);
+  });
+}
+
 export async function shot(target: string, caption: string, replace = false) {
   let file = target;
   if (/^https?:\/\//.test(target)) {
     const dir = mkdtempSync(join(tmpdir(), "shot-"));
     file = join(dir, "shot.png");
-    const r = spawnSync(chrome(), ["--headless", "--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage", "--hide-scrollbars", "--no-first-run",
-      `--user-data-dir=${join(dir, "profile")}`, "--window-size=1280,860", "--virtual-time-budget=10000", `--screenshot=${file}`, target], { encoding: "utf8", timeout: 60_000 });
-    if (!existsSync(file)) throw new Error(`the screenshot failed: ${(r.stderr ?? "").slice(-800)}`);
+    // A few tries: a dev server restarts when the files it serves change (a commit just made), and refuses meanwhile.
+    let err = "";
+    for (let attempt = 0; attempt < 4 && !existsSync(file); attempt++) {
+      if (attempt) await Bun.sleep(2500);
+      err = await chromeShot(target, file, join(dir, `profile-${attempt}`));
+      if (/ERR_CONNECTION_REFUSED|ERR_EMPTY_RESPONSE/.test(err)) rmSync(file, { force: true });
+    }
+    if (!existsSync(file)) throw new Error(`the screenshot failed: ${err}`);
   }
   const bytes = readFileSync(file);
   await api(`/screenshots?caption=${encodeURIComponent(caption)}${replace ? "&replace=1" : ""}`, { body: bytes, type: "image/png" });
