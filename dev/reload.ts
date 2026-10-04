@@ -77,14 +77,14 @@ export function liveReload(server: ViteDevServer, log: (line: string) => void): 
 }
 
 /** A browser loading a page into a tab (not a frame, a fetch or a script). */
-function isTopLevelPage(req: IncomingMessage): boolean {
+export function isTopLevelPage(req: IncomingMessage): boolean {
   if (req.method != "GET") return false;
   const dest = req.headers["sec-fetch-dest"];
   return dest ? dest == "document" : /text\/html/.test(req.headers.accept ?? "");
 }
 
 /** Adds `tag` to the end of the response, if it turns out to be uncompressed HTML. */
-function inject(res: ServerResponse, tag: string) {
+export function inject(res: ServerResponse, tag: string) {
   const writeHead = res.writeHead.bind(res) as (...a: unknown[]) => ServerResponse;
   const end = res.end.bind(res) as (...a: unknown[]) => ServerResponse;
   let html = false;
