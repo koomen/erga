@@ -585,7 +585,10 @@ function ago(t: number, now: number): string {
  */
 export const APP_STYLE = `
   body { font-size: 15px; line-height: 1.5; background: var(--bg); -webkit-font-smoothing: antialiased; }
-  main { box-sizing: border-box; max-width: 1080px; margin: 0 auto; padding: 120px 24px 96px; display: flex; flex-direction: column; }
+  /* The page fills the window, so the footer (siteFooter) sits at its foot. */
+  body { min-height: 100vh; margin: 0; display: flex; flex-direction: column; }
+  .site-foot { padding: 24px 16px 32px; text-align: center; font-size: 12.5px; color: var(--chrome); }
+  main { flex: 1; width: 100%; min-height: 0; box-sizing: border-box; max-width: 1080px; margin: 0 auto; padding: 120px 24px 96px; display: flex; flex-direction: column; }
   /* The wordmark, upper left, on the same line as the account corner upper right (account.ts). */
   .brand { position: absolute; top: max(14px, env(safe-area-inset-top)); left: max(20px, env(safe-area-inset-left)); height: 30px; display: flex; align-items: center;
     font-size: 15px; font-weight: 650; letter-spacing: -0.02em; color: var(--fg-strong); text-decoration: none; }
@@ -650,6 +653,9 @@ export const APP_STYLE = `
   @media (pointer: coarse) { .new, .pill, .input { height: 40px; } .act { width: 40px; height: 40px; } }
 `;
 
+/** The footer at the foot of Erga's own pages (not the editor's, nor a document's): the copyright, this year. */
+export const siteFooter = () => `<footer class="site-foot">© ${new Date().getUTCFullYear()} Erga</footer>`;
+
 /** The wordmark in the upper left of the app's own pages: back to the front page. */
 export const brand = (session: Session | null) => `<a class="brand" href="${esc(link("/", session))}">Erga</a>`;
 
@@ -684,6 +690,7 @@ export const appPage = (title: string, style: string, body: string) => `<!doctyp
 <link rel="stylesheet" href="/style.css">
 <style>${APP_STYLE}${style}</style>
 ${body}
+${siteFooter()}
 </html>`;
 
 /** Who a document is shared with, as its row in the list says it (the owner's own view). */
@@ -713,10 +720,6 @@ function docsPage(session: Session, docs: Listed[], now: number, hours: number |
   }).join("\n");
   const style = `
   /* Rows, and the labels over them, in three columns: the name (its title and what's special about it), when it was edited, its buttons. */
-  /* The page fills the window, so the footer sits at its foot. */
-  body { min-height: 100vh; margin: 0; display: flex; flex-direction: column; }
-  main { flex: 1; width: 100%; min-height: 0; }
-  .foot { box-sizing: border-box; width: 100%; max-width: 1080px; margin: 0 auto; padding: 24px 24px 32px; font-size: 12.5px; color: var(--chrome); }
   .labels, ol.rows > li { display: grid; grid-template-columns: minmax(0, 1fr) 10rem 64px; align-items: center; column-gap: 16px; }
   .labels { padding-bottom: 8px; border-bottom: 1px solid var(--rule); font-size: 12px; font-weight: 500; color: var(--chrome); }
   ol.rows > li { position: relative; }
@@ -765,7 +768,6 @@ function docsPage(session: Session, docs: Listed[], now: number, hours: number |
   ${docs.length ? `<div class="labels" aria-hidden="true"><span>Name</span><span>Edited</span><span></span></div>
   <ol class="rows">\n${rows}\n  </ol>` : `<p class="empty">No documents yet. A new one starts blank${hours == null ? "." : `, and goes away after ${hours} hour${hours == 1 ? "" : "s"} if you never edit it.`}</p>`}
 </main>
-<footer class="foot">© ${new Date().getUTCFullYear()} Erga</footer>
 <dialog id="share" aria-labelledby="share-title" data-action="${esc(link("/docs/share", session))}" data-me="${esc(session.login.toLowerCase())}">
   <h2 id="share-title">Share</h2>
   <form class="add">
@@ -943,5 +945,6 @@ const decodeEntities = (s: string) => s.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi,
 export function page(title: string, html: string, status: number): Response {
   return new Response(`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${title} · Erga</title>
 <style>body{font:17px/1.6 system-ui,sans-serif;max-width:32rem;margin:20vh auto;padding:0 16px;color:#1b2330;background:#f7f8fa}h1{font-size:1.4rem}a{color:#1f5f8b}
-@media(prefers-color-scheme:dark){body{color:#e4e8ee;background:#12161d}a{color:#7fb6e0}}</style><h1>${title}</h1><p>${html}</p>`, { status, headers: { "Content-Type": "text/html; charset=utf-8" } });
+.site-foot{position:fixed;left:0;right:0;bottom:24px;text-align:center;font-size:13px;color:#8a93a1}
+@media(prefers-color-scheme:dark){body{color:#e4e8ee;background:#12161d}a{color:#7fb6e0}}</style><h1>${title}</h1><p>${html}</p>${siteFooter()}`, { status, headers: { "Content-Type": "text/html; charset=utf-8" } });
 }

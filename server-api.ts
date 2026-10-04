@@ -30,7 +30,7 @@
 import { validateToolArguments } from "@mariozechner/pi-ai";
 import { documentToolSpecs, type ToolContent, type ToolSpec } from "./agent";
 import { type Action, type DocRow, type Route, nameOf } from "./directory";
-import { accessOf, esc, forwarded, makeDoc, newDocId, page, safeNext, startingFiles, type Platform, type Session, whoOf } from "./front";
+import { accessOf, esc, forwarded, makeDoc, newDocId, page, safeNext, siteFooter, startingFiles, type Platform, type Session, whoOf } from "./front";
 import { findDocument, runServerTool, SERVER_TOOLS, ToolError, type ToolWho } from "./server-tools";
 import { cleanRel } from "./host";
 import { LABEL_MAX, normalCode, REQUEST_MINUTES, type AgentToken } from "./tokens";
@@ -606,8 +606,10 @@ async function tokensPage(platform: Platform, session: Session, url: URL, o: { n
   button.primary, .new button { border-color: var(--fg-strong); background: var(--fg-strong); color: var(--bg); }
   .revoke { padding: 4px 11px; font-size: 12.5px; }
   .empty { color: var(--soft); padding: 12px 2px; border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); }
-  footer { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 13px; color: var(--chrome); }
-  footer a { text-decoration: none; }
+  /* The page fills the window, so the footer sits at its foot. */
+  body { min-height: 100vh; margin: 0; display: flex; flex-direction: column; }
+  main { flex: 1; box-sizing: border-box; width: 100%; min-height: 0; }
+  .site-foot { padding: 24px 16px 32px; text-align: center; font-size: 12.5px; color: var(--chrome); }
   @media (max-width: 520px) { li { flex-wrap: wrap; } .meta { flex-basis: 100%; order: 3; } main { padding-top: 6vh; } }
 </style>
 <main>
@@ -620,8 +622,8 @@ async function tokensPage(platform: Platform, session: Session, url: URL, o: { n
   <form class="new" method="post" action="/tokens/new"><input name="label" maxlength="${LABEL_MAX}" placeholder="What it's for: Claude Code on my laptop" aria-label="What the token is for" autocomplete="off"><button>New token</button></form>
   <div style="height:28px"></div>
   ${testBlock}
-  <footer><span>Signed in as ${esc(session.login)}</span><a href="/docs">Documents</a><a href="/llms.txt">The API</a><a href="/auth/logout">Sign out</a></footer>
 </main>
+${siteFooter()}
 <script>
   for (const f of document.querySelectorAll("form[data-label]")) f.addEventListener("submit", (e) => { if (!confirm("Revoke \\u201c" + f.dataset.label + "\\u201d? Agents using it lose access at once.")) e.preventDefault(); });
   for (const t of document.querySelectorAll("time")) { const d = new Date(t.dateTime); t.title = d.toLocaleString(); t.textContent = d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }); }
