@@ -14,7 +14,11 @@ When the user asks for a change to this repo:
 
 1. **Register it, straight away**, before doing anything else:
 
-       development/task-queue/tq add "Short imperative title" "The user's ask, in full, with any context you have"
+       development/task-queue/tq add "Short imperative title" "A short, clear description of the ask"
+
+   The description is what the board shows as the ask, and the worker's
+   brief: a few plain sentences saying what the user wants, plus only the
+   context the worker can't find itself. Not a wall of text.
 
    This starts the queue if it isn't running, and gives the task a branch
    (`task/<id>-<slug>`), its own worktree (`.claude/worktrees/task-<id>`,
