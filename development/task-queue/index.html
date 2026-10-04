@@ -101,6 +101,29 @@
   .close { flex: none; }
   a { color: var(--accent); }
 
+  /* Dependencies: a chip on the card saying what it waits for; blocked queued cards sit back a little. */
+  .chip { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; line-height: 1; padding: 3px 7px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); background: var(--panel); white-space: nowrap; }
+  .chip::before { content: ""; width: 6px; height: 6px; border-radius: 50%; border: 1.5px solid currentColor; box-sizing: border-box; }
+  .chip.start { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, var(--line)); }
+  .chip.stuck { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 45%, var(--line)); }
+  .chip.stuck::before { background: currentColor; }
+  .card.blocked { background: color-mix(in srgb, var(--card) 55%, var(--panel)); border-style: dashed; box-shadow: none; }
+  .card.blocked .title { color: var(--muted); }
+  .why { font-size: 11px; color: var(--muted); align-self: center; }
+  .deps { display: grid; gap: 6px; }
+  .dep { display: flex; align-items: center; gap: 8px; font-size: 13px; padding: 6px 10px; background: var(--panel); border-radius: 6px; }
+  .dep .kind { font-size: 11px; color: var(--muted); width: 84px; flex: none; }
+  .dep a { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-decoration: none; cursor: pointer; }
+  .dep a:hover { text-decoration: underline; }
+  .dep .status { font-size: 10px; padding: 3px 6px; }
+  .dep .met { color: var(--ok); font-size: 12px; }
+  .dep .x { border: 0; background: none; color: var(--muted); font-size: 15px; padding: 0 4px; cursor: pointer; }
+  .dep .x:hover { color: var(--bad); }
+  .dep-add { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+  .dep-add select { font: inherit; font-size: 12px; border: 1px solid var(--line); background: var(--card); color: var(--ink); border-radius: 6px; padding: 3px 6px; max-width: 100%; }
+  .dep-add select.which { flex: 1; min-width: 160px; }
+  .deps-note { font-size: 12px; color: var(--muted); margin-top: 6px; }
+
   /* Branches: main's latest commits, one dot each, newest at the top. The left lane is local main
      (every commit), the right one origin/main: a filled dot where it has the commit, a hollow one where
      it doesn't yet. A task's merge commit shows the task, and opens it. This is where merged tasks go. */
@@ -166,19 +189,44 @@ function actions(t, inDialog = false) {
   if (t.url && !inDialog && !["merged", "discarded"].includes(t.status)) b.push(`<a class="btn" href="${esc(t.url)}" target="_blank" onclick="event.stopPropagation()"><span class="dot ${t.previewUp ? "up" : ""}" title="${t.previewUp ? "preview is up" : "preview is down"}"></span>Open</a>`);
   if (t.live && t.port && t.worktree && !(t.previewUp && t.chromeUp) && ["queued", "working", "complete", "failed"].includes(t.status)) b.push(`<button data-act="live" data-id="${t.id}" title="Run its dev server and open its Chrome window">Open live window</button>`);
   else if (t.port && t.worktree && !t.previewUp && ["working", "complete", "failed"].includes(t.status)) b.push(`<button data-act="preview" data-id="${t.id}">Start preview</button>`);
-  if (t.status == "complete") b.push(`<button class="primary" data-act="merge" data-id="${t.id}">Merge</button>`);
+  if (t.status == "complete") {
+    const why = mergeBlocked(t);
+    b.push(why ? `<button class="primary" disabled title="${esc(why)}">Merge</button><span class="why">${esc(why)}</span>` : `<button class="primary" data-act="merge" data-id="${t.id}">Merge</button>`);
+  }
   if (t.status == "merging") b.push(`<button disabled><span class="spin"></span> ${t.log.at(-1)?.message.startsWith("Merge requested: waiting") ? "Waiting to merge…" : "Merging…"}</button>`);
   if (!["merging", "merged", "discarded"].includes(t.status))
     b.push(armed.has(t.id) ? `<button class="confirm" data-act="discard" data-id="${t.id}">Discard branch?</button>` : `<button class="danger" data-act="arm" data-id="${t.id}">Discard</button>`);
   return b.length ? `<div class="actions">${b.join("")}</div>` : "";
 }
 
+/**
+ * Why Merge is off, or null: a dependency not merged yet. One that is merging (ahead of this one in the
+ * merge queue) doesn't stop it: the queue checks again when this one's turn comes.
+ */
+function mergeBlocked(t) {
+  const b = t.blockedBy;
+  if (!b) return null;
+  if (b.stuck.length) return b.reason;
+  const notYet = b.merge.filter((id) => tasks.find((x) => x.id == id)?.status != "merging");
+  return notYet.length ? `Can't merge until ${ids(notYet)} merge${notYet.length == 1 ? "s" : ""}` : null;
+}
+const ids = (list) => list.map((id) => `#${id}`).join(", ").replace(/, ([^,]*)$/, " and $1");
+/** The card's chip: what the task waits for, in a few words. */
+function depChip(t) {
+  const b = t.blockedBy;
+  if (!b) return "";
+  if (b.stuck.length) return `<span class="chip stuck" title="${esc(b.reason)}">blocked by ${ids(b.stuck)}</span>`;
+  if (b.start.length) return `<span class="chip start" title="${esc(b.reason)}">waiting for ${ids(b.start)}</span>`;
+  return `<span class="chip merge" title="${esc(b.reason)}">merges after ${ids(b.merge)}</span>`;
+}
+
 function card(t) {
   const last = t.log[t.log.length - 1];
   const thumbs = t.screenshots.slice(-3).map((s) => `<img src="/shots/${esc(s.file)}" alt="${esc(s.caption)}" loading="lazy">`).join("");
-  return `<div class="card ${t.status} ${t.live ? "is-live" : ""}" data-open="${t.id}">
+  const blocked = t.status == "queued" && (t.blockedBy?.start.length || t.blockedBy?.stuck.length);
+  return `<div class="card ${t.status} ${t.live ? "is-live" : ""} ${blocked ? "blocked" : ""}" data-open="${t.id}">
     <div class="top"><span class="id">#${t.id}</span><span class="title">${esc(t.title)}</span>${liveBadge(t)}</div>
-    <div class="meta">${t.branch ? `<code>${esc(t.branch)}</code>` : ""}<span>${t.status == "merged" ? `merged ${ago(t.mergedAt)}` : t.status == "merging" ? `merging · ${ago(t.updatedAt)}` : ago(t.updatedAt)}</span>${t.status == "failed" ? "<span>failed</span>" : ""}${t.status == "discarded" ? "<span>discarded</span>" : ""}</div>
+    <div class="meta">${depChip(t)}${t.branch ? `<code>${esc(t.branch)}</code>` : ""}<span>${t.status == "merged" ? `merged ${ago(t.mergedAt)}` : t.status == "merging" ? `merging · ${ago(t.updatedAt)}` : ago(t.updatedAt)}</span>${t.status == "failed" ? "<span>failed</span>" : ""}${t.status == "discarded" ? "<span>discarded</span>" : ""}</div>
     ${t.error ? `<div class="err">${esc(t.error)}</div>` : last && !["merged", "discarded"].includes(t.status) ? `<div class="last">${esc(last.message)}</div>` : ""}
     ${thumbs && t.status != "discarded" ? `<div class="thumbs">${thumbs}</div>` : ""}
     ${actions(t)}
@@ -197,6 +245,8 @@ function render() {
     // Newest activity first; done things keep only the latest. Merges go in the order they were asked for (one at a time).
     if (c.title == "Merging") list.sort((a, b) => requested(a).localeCompare(requested(b)) || a.id - b.id);
     else list.sort((a, b) => (b.mergedAt ?? b.updatedAt).localeCompare(a.mergedAt ?? a.updatedAt));
+    // Queued: the ones that can start first; the ones waiting on others below them.
+    if (c.title == "Queued") list.sort((a, b) => !!a.blockedBy?.start.length - !!b.blockedBy?.start.length);
     const slug = c.title.toLowerCase().replace(/\W+/g, "-");
     return `<section class="col ${slug}" data-col="${slug}"><h2><span>${c.title}</span><span class="n ${c.title == "Merging" && list.length ? "busy" : ""}">${list.length}</span></h2>${list.map(card).join("") || `<div class="empty">Nothing here</div>`}</section>`;
   }).join("");
@@ -286,6 +336,7 @@ function renderDialog() {
     t.chrome && live ? `<span class="muted" title="Its own profile: ${esc(t.chrome.profile)}"><span class="dot ${t.chromeUp ? "up" : ""}"></span> Chrome window ${t.chromeUp ? `open · DevTools port ${esc(t.chrome.port)}` : "closed"}</span>` : "",
     t.commit ? `<code>${esc(t.commit)}</code>` : "",
   ].filter(Boolean);
+  const picked = { kind: dlg.querySelector("#dep-kind")?.value, dep: dlg.querySelector("#dep-id")?.value }; // kept across updates
   dlg.innerHTML = `<div class="dlg">
     <div class="dlg-head">
       <h3><span><span class="id">#${t.id}</span> ${esc(t.title)}</span><span class="status ${t.status}">${STATUS[t.status] ?? esc(t.status)}</span>${liveBadge(t)}</h3>
@@ -296,15 +347,47 @@ function renderDialog() {
     ${actions(t, true)}
     ${dlgError?.id == t.id ? `<div class="err" style="max-height:none">${esc(dlgError.msg)}</div>` : ""}
     ${t.error ? `<section><h4>Error</h4><div class="err" style="max-height:none">${esc(t.error)}</div></section>` : ""}
+    ${depsSection(t)}
     ${t.description ? textSection(t, "ask", "Ask", t.description) : ""}
     ${t.summary ? textSection(t, "summary", "Summary", t.summary) : ""}
     ${t.screenshots.length ? `<section><h4>Screenshots</h4><div class="shots">${t.screenshots.map((s) => `<figure><img src="/shots/${esc(s.file)}" alt="${esc(s.caption)}">${t.status != "merging" ? `<button class="unshot" data-act="unshot" data-id="${t.id}" data-file="${esc(s.file)}" title="Remove this screenshot" aria-label="Remove this screenshot">×</button>` : ""}${s.caption ? `<figcaption>${esc(s.caption)}</figcaption>` : ""}</figure>`).join("")}</div></section>` : ""}
     <section><h4>Log</h4><div class="log">${t.log.map((l) => `<div><time>${new Date(l.at).toLocaleTimeString()}</time>${esc(l.message)}</div>`).join("")}</div></section>
   </div>`;
+  if (picked.kind && dlg.querySelector("#dep-kind")) dlg.querySelector("#dep-kind").value = picked.kind;
+  if (picked.dep && dlg.querySelector(`#dep-id option[value="${picked.dep}"]`)) dlg.querySelector("#dep-id").value = picked.dep;
   const nl = dlg.querySelector(".log");
   if (atBottom) nl.scrollTop = nl.scrollHeight;
   if (!dlg.open) dlg.showModal();
   dlg.scrollTop = scroll;
+}
+
+/**
+ * The detail view's Dependencies: what the task starts and merges after (each a link to that task, with its
+ * status, and × to remove it), the tasks that wait on this one, and a way to add one. Not while merging or done.
+ */
+function depsSection(t) {
+  const editable = !["merging", "merged", "discarded"].includes(t.status);
+  const rows = [...(t.startAfter ?? []).map((id) => ["startAfter", id]), ...(t.mergeAfter ?? []).map((id) => ["mergeAfter", id])];
+  const needed = tasks.filter((x) => !["merged", "discarded"].includes(x.status) && (x.startAfter?.includes(t.id) || x.mergeAfter?.includes(t.id)));
+  if (!rows.length && !needed.length && !editable) return "";
+  const row = ([kind, id]) => {
+    const d = tasks.find((x) => x.id == id);
+    return `<div class="dep"><span class="kind">${kind == "startAfter" ? "Starts after" : "Merges after"}</span><a data-open="${id}" title="Open #${id}"><span class="id">#${id}</span> ${esc(d?.title ?? "(unknown task)")}</a>${d?.status == "merged" ? `<span class="met" title="Merged: met">✓ merged</span>` : `<span class="status ${d?.status}">${STATUS[d?.status] ?? "gone"}</span>`}${editable ? `<button class="x" data-act="undep" data-id="${t.id}" data-kind="${kind}" data-dep="${id}" title="Remove this dependency" aria-label="Remove this dependency">×</button>` : ""}</div>`;
+  };
+  const taken = new Set([t.id, ...(t.startAfter ?? []), ...(t.mergeAfter ?? [])]);
+  const options = tasks.filter((x) => !taken.has(x.id) && !["merged", "discarded"].includes(x.status)).sort((a, b) => b.id - a.id);
+  const add = editable && options.length ? `<div class="dep-add"><select id="dep-kind" aria-label="Kind of dependency"><option value="startAfter">Start after</option><option value="mergeAfter">Merge after</option></select><select id="dep-id" class="which" aria-label="Task">${options.map((x) => `<option value="${x.id}">#${x.id} ${esc(x.title)}</option>`).join("")}</select><button data-act="dep" data-id="${t.id}">Add</button></div>` : "";
+  return `<section><h4>Dependencies</h4>
+    ${t.blockedBy ? `<div class="deps-note" style="margin:0 0 6px;color:${t.blockedBy.stuck.length ? "var(--bad)" : "var(--muted)"}">${esc(t.blockedBy.reason[0].toUpperCase() + t.blockedBy.reason.slice(1))}</div>` : ""}
+    ${rows.length ? `<div class="deps">${rows.map(row).join("")}</div>` : `<div class="deps-note" style="margin:0">None: it can start and merge on its own.</div>`}
+    ${needed.length ? `<div class="deps-note">Needed by ${needed.map((x) => `<a data-open="${x.id}" style="cursor:pointer">#${x.id} ${esc(x.title)}</a>`).join(", ")}</div>` : ""}
+    ${add}
+  </section>`;
+}
+
+/** Sets a task's dependencies (PATCH), and shows any error in the detail view. */
+function setDeps(id, changes) {
+  post(`/api/tasks/${id}`, changes, "PATCH").then((msg) => { dlgError = msg ? { id, msg } : null; if (openId == id) renderDialog(); });
 }
 
 /** POSTs (or another method); on failure shows the error and returns it (null when it went through). */
@@ -335,6 +418,14 @@ document.addEventListener("click", (e) => {
     if (act == "preview") { btn.disabled = true; post(`/api/tasks/${id}/preview`); }
     if (act == "live") { btn.disabled = true; btn.innerHTML = `<span class="spin"></span> Opening…`; post(`/api/tasks/${id}/live`); }
     if (act == "unshot") { btn.closest("figure").style.opacity = ".4"; btn.disabled = true; post(`/api/tasks/${id}/screenshots/${encodeURIComponent(btn.dataset.file)}`, undefined, "DELETE").then((msg) => msg && renderDialog()); }
+    if (act == "dep" || act == "undep") {
+      const t = tasks.find((x) => x.id == id);
+      const kind = act == "dep" ? document.getElementById("dep-kind").value : btn.dataset.kind;
+      const dep = Number(act == "dep" ? document.getElementById("dep-id").value : btn.dataset.dep);
+      const now = t[kind] ?? [];
+      btn.disabled = true;
+      setDeps(id, { [kind]: act == "dep" ? [...now, dep] : now.filter((x) => x != dep) });
+    }
     if (act == "arm") { armed.add(id); render(); setTimeout(() => { armed.delete(id); render(); }, 4000); }
     if (act == "merge" || act == "discard") {
       // From the detail view: close it once the request goes through (the board shows the rest), or keep it open with the error.

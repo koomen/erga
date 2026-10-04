@@ -5,12 +5,13 @@ import type { Task } from '../types'
 
 // The task queue (development/task-queue in the repo) stays the source of
 // truth and the browser board; this mod is its front end in Claude Code:
-//   - task_create: registers a task and starts a worker in its worktree, in one call
+//   - task_create: registers a task and starts a worker in its worktree, in one call (unless its
+//     dependencies hold it: then task_start starts it once they've merged); task_deps changes them
 //   - task_log / task_preview / task_screenshot / task_unscreenshot / task_done / task_fail: the worker's reports
 //   - the worker agent type, its instructions built in
 //   - the workflow rule in the main agent's system prompt
 //   - a Tasks pane (/tasks) with Open / Merge / Discard, a status entry, toasts
-//     (ready to merge, merging, merged, merge failed, failed)
+//     (ready to merge, merging, merged, merge failed, failed, unblocked, blocked)
 // It does nothing in a repo without development/task-queue/server.ts.
 
 const QUEUE = 'http://127.0.0.1:4700'
@@ -38,7 +39,15 @@ the Monitor tool (timeout_ms at the maximum), and re-arm it with the same comman
 reports what changed in between). It prints one line per status change ("#3 ready to merge: title", "#3 merged:
 title", "#4 failed: title: why", "#5 merge failed, back to ready to merge: title: why") and nothing else. Act on each
 without being asked: relay a ready or failed task the worker hasn't already reported, say why a merge failed, and
-when a task merges, start (with task_create) any task that was waiting on it.
+when a task merges, start any task it unblocks (below).
+
+Dependencies: when you split work into several tasks, say how they depend on each other, so the queue enforces it.
+Pass after: [ids] to task_create when a task truly needs another one merged first (it stays queued, with no worker,
+until then); pass mergeAfter: [ids] when tasks can be built in parallel against a contract written in the asks, but
+must land in order (Merge stays off until they have). When the watch prints "#14 unblocked: title (#12 merged)",
+start it with task_start. "#14 blocked: ..." means a dependency was discarded or failed: tell the user, and change
+the dependency with task_deps if they agree. Never plan a task that builds against a throwaway stub of another
+task's work, to be followed by a "connect it to the real thing" task: make it wait (after) instead.
 
 Live mode is the other way to work, when the user asks for it ("live mode", "let's work on X live"): you and the user
 work on one task together, in this session, in a tight loop, usually on the UI. Don't use task_create for it (that
@@ -81,11 +90,15 @@ worktree, and report on the board as you go. Your first message names the task, 
   internal names or arrow chains. Shape: one sentence on what the task changes for the user, then results (with
   numbers), changes, limits, tests, and what the user must do.
 - Never merge or push: the user merges from the board.
+- Dependencies: if your task needs another task's work that isn't merged yet, don't build against a stand-in, stub
+  or mock of it that someone must later replace. If your task merges after another (mergeAfter), build against the
+  contract the ask describes, as the real thing. If you find a dependency the ask doesn't name, say so with
+  task_log and task_fail rather than stubbing it out.
 
 If the task-queue tools are missing, development/task-queue/tq in the worktree does the same from Bash (tq help).
 Finish by replying with the task's URL and a two-line summary.`
 
-const workerTask = (t: { id: number; title: string; description: string; worktree: string; branch: string; port: number }) =>
+const workerTask = (t: { id: number; title: string; description: string; worktree: string; branch: string; port: number; startAfter?: number[]; mergeAfter?: number[] }) =>
   `You are doing task #${t.id} from the task queue: ${t.title}
 
 The ask:
@@ -94,7 +107,7 @@ ${t.description}
 Worktree: ${t.worktree}
 Branch: ${t.branch}
 Preview port: ${t.port}
-
+${t.startAfter?.length ? `Started after: ${t.startAfter.map(id => `#${id}`).join(', ')} (merged into main; git merge main in the worktree if your branch predates it)\n` : ''}${t.mergeAfter?.length ? `Merges after: ${t.mergeAfter.map(id => `#${id}`).join(', ')} (not merged yet: build against the contract the ask gives, not a stub)\n` : ''}
 Start now: it's already marked working.`
 
 const TOOLS = [
@@ -106,9 +119,21 @@ const TOOLS = [
       properties: {
         title: { type: 'string', description: 'Short imperative title, e.g. "Add a dark mode toggle"' },
         ask: { type: 'string', description: "A short, clear description of the ask: a few plain sentences on what the user wants, plus only the context the worker can't find itself" },
+        after: { type: 'array', items: { type: 'number' }, description: "Task ids this one needs merged before it starts: it stays queued, with no worker, until they merge; then start it with task_start" },
+        mergeAfter: { type: 'array', items: { type: 'number' }, description: 'Task ids that must merge before this one does: built in parallel against a contract in the asks, landed in order' },
       },
       required: ['title', 'ask'],
     },
+  },
+  {
+    name: 'task_start',
+    description: "Start a worker on a queued task, e.g. one created with after: once tq watch says it's unblocked (its dependencies merged). Refused, with the reason, while it still waits.",
+    inputSchema: { type: 'object', properties: { id: { type: 'number' } }, required: ['id'] },
+  },
+  {
+    name: 'task_deps',
+    description: "Change a task's dependencies: after (don't start until these merge) and mergeAfter (don't merge until these merge). Each list replaces the old one; [] clears it. Refused for an unknown or discarded task, or a cycle.",
+    inputSchema: { type: 'object', properties: { id: { type: 'number' }, after: { type: 'array', items: { type: 'number' } }, mergeAfter: { type: 'array', items: { type: 'number' } } }, required: ['id'] },
   },
   { name: 'task_log', description: "Add a progress line to a task's card on the board.", inputSchema: { type: 'object', properties: { id: { type: 'number' }, message: { type: 'string' } }, required: ['id', 'message'] } },
   {
@@ -154,14 +179,27 @@ async function api($: EngineInterface, method: string, path: string, body?: unkn
 const brief = (t: any): Task => ({
   id: t.id, title: t.title, status: t.status, branch: t.branch, url: t.url, previewUp: t.previewUp, live: t.live,
   error: t.error, commit: t.commit, updatedAt: t.updatedAt, last: t.log?.[t.log.length - 1]?.message,
+  startAfter: t.startAfter, mergeAfter: t.mergeAfter, blockedBy: t.blockedBy,
 })
+
+const ids = (list: number[]) => list.map(id => `#${id}`).join(', ')
+/** What blocks a task, as a key to compare between polls: "s:12" can't start, "m:12" can't merge, "x:12" stuck. */
+const blockKey = (t: Task) => { const b = t.blockedBy; return !b ? '' : b.stuck.length ? `x:${b.stuck}` : b.start.length ? `s:${b.start}` : `m:${b.merge}` }
+/** Why a task can't merge now, or nothing: a dependency neither merged nor merging (ahead of it). */
+const mergeBlocked = (t: Task, list: Task[]) => {
+  const b = t.blockedBy
+  if (!b) return undefined
+  if (b.stuck.length) return b.reason
+  const notYet = b.merge.filter(id => list.find(x => x.id === id)?.status !== 'merging')
+  return notYet.length ? `can't merge until ${ids(notYet)} merge${notYet.length === 1 ? 's' : ''}` : undefined
+}
 
 const say = (text: string) => ({ result: text })
 
 // Where the queue lives: the main checkout of the session's repo (from a worktree too). Null: not here.
 let root: string | null = null
 let lastStart = 0
-const seen = new Map<number, string>()
+const seen = new Map<number, { status: string; blocked: string }>()
 let hasPolled = false
 
 async function startServer($: EngineInterface) {
@@ -187,9 +225,20 @@ async function poll($: EngineInterface) {
   const isFirst = !hasPolled
   hasPolled = true
   for (const t of list) {
-    const before = seen.get(t.id)
-    seen.set(t.id, t.status)
-    if (isFirst || before === t.status) continue
+    const was = seen.get(t.id)
+    const key = blockKey(t)
+    seen.set(t.id, { status: t.status, blocked: key })
+    if (isFirst) continue
+    // Dependencies: unblocked (it can start, or merge), or blocked for good (one discarded or failed).
+    if (was && was.blocked !== key && !['merged', 'discarded'].includes(t.status)) {
+      const freed = (was.blocked.slice(2).split(',').filter(Boolean).map(Number)).filter(id => !key.slice(2).split(',').map(Number).includes(id))
+      const why = freed.map(id => `#${id} ${list.find(x => x.id === id)?.status === 'merged' ? 'merged' : 'removed'}`).join(', ')
+      if (t.status === 'queued' && was.blocked.startsWith('s:') && !key.startsWith('s:') && !key.startsWith('x:')) $.ui.toast(`Task #${t.id} unblocked: ${t.title} (${why})`)
+      else if (t.status === 'complete' && was.blocked && !key) $.ui.toast(`Task #${t.id} can merge now: ${t.title} (${why})`)
+      else if (key.startsWith('x:') && !was.blocked.startsWith('x:')) $.ui.toast(`Task #${t.id} blocked: ${t.blockedBy?.reason ?? ''}`.slice(0, 200))
+    }
+    const before = was?.status
+    if (before === t.status) continue
     if (t.status === 'merging') $.ui.toast(`Task #${t.id} merging: ${t.title}`)
     if (t.status === 'complete' && before !== 'merging') $.ui.toast(`Task #${t.id} ready to merge: ${t.title}`)
     if (t.status === 'complete' && before === 'merging') $.ui.toast(`Task #${t.id} merge failed: ${t.error ?? ''}`.slice(0, 200))
@@ -197,8 +246,10 @@ async function poll($: EngineInterface) {
     if (t.status === 'failed') $.ui.toast(`Task #${t.id} failed: ${t.error ?? ''}`.slice(0, 200))
   }
   const count = (s: Task['status'][]) => list.filter(t => s.includes(t.status)).length
+  const waiting = list.filter(t => t.status === 'queued' && t.blockedBy?.start.length).length
   const parts = [
-    [count(['queued', 'working']), 'working'],
+    [count(['queued', 'working']) - waiting, 'working'],
+    [waiting, 'waiting'],
     [count(['complete']), 'ready'],
     [count(['merging']), 'merging'],
     [count(['failed']), 'failed'],
@@ -212,6 +263,24 @@ async function merge($: EngineInterface, id: number) {
   if (r.ok) await update($, tasks, list => list.map(t => (t.id === id ? brief(r.data) : t)))
   else $.ui.toast(`Task #${id} didn't start merging: ${r.error}`.slice(0, 200))
   await poll($)
+}
+
+/** Marks a registered task working and spawns its worker in its worktree. */
+async function startWorker($: EngineInterface, t: any) {
+  const started = await api($, 'PATCH', `/api/tasks/${t.id}`, { status: 'working', message: 'Worker starting' })
+  if (!started.ok) return say(`Task #${t.id} didn't start: ${started.error}`)
+  const spawned = await $.agent.spawn({
+    subagentType: WORKER,
+    description: `Task #${t.id}: ${t.title}`.slice(0, 60),
+    prompt: workerTask(t),
+    cwd: t.worktree,
+  })
+  if ('deny' in spawned && spawned.deny) {
+    await api($, 'PATCH', `/api/tasks/${t.id}`, { status: 'queued', message: `Worker didn't start: ${spawned.deny}` })
+    return say(`Task #${t.id} is on the board, but its worker didn't start (${spawned.deny}). Start one yourself: Agent tool, subagent_type "${WORKER}", run_in_background, prompt:\n\n${workerTask(t)}`)
+  }
+  await api($, 'POST', `/api/tasks/${t.id}/log`, { message: 'Worker started' })
+  return say(`Task #${t.id} is on the board (http://localhost:4700) and its worker has started in ${t.worktree}. Tell the user in one line and stay free; the worker reports back when it's done.`)
 }
 
 export const register: Register = on => {
@@ -258,24 +327,36 @@ export const register: Register = on => {
 
   on('tool.call', { tool: 'mcp__task-queue__task_create' }, async ($, e) => {
     if (e.agentId) return { deny: 'Task workers do their own task; only the main agent creates tasks.' }
-    const input = e as unknown as { title: string; ask: string }
-    const made = await api($, 'POST', '/api/tasks', { title: input.title, description: input.ask })
+    const input = e as unknown as { title: string; ask: string; after?: number[]; mergeAfter?: number[] }
+    const made = await api($, 'POST', '/api/tasks', {
+      title: input.title, description: input.ask,
+      ...(input.after?.length ? { startAfter: input.after } : {}), ...(input.mergeAfter?.length ? { mergeAfter: input.mergeAfter } : {}),
+    })
     if (!made.ok) return say(`Couldn't register the task: ${made.error}`)
     const t = made.data
     if (!t.worktree) return say(`Task #${t.id} was registered but has no worktree: ${t.error ?? 'unknown error'}`)
-    await api($, 'PATCH', `/api/tasks/${t.id}`, { status: 'working', message: 'Worker starting' })
-    const spawned = await $.agent.spawn({
-      subagentType: WORKER,
-      description: `Task #${t.id}: ${input.title}`.slice(0, 60),
-      prompt: workerTask(t),
-      cwd: t.worktree,
-    })
-    if ('deny' in spawned && spawned.deny) {
-      await api($, 'PATCH', `/api/tasks/${t.id}`, { status: 'queued', message: `Worker didn't start: ${spawned.deny}` })
-      return say(`Task #${t.id} is on the board, but its worker didn't start (${spawned.deny}). Start one yourself: Agent tool, subagent_type "${WORKER}", run_in_background, prompt:\n\n${workerTask(t)}`)
+    if (t.blockedBy?.start?.length) {
+      return say(`Task #${t.id} is on the board, queued: ${t.blockedBy.reason}. No worker yet. When the queue watch prints "#${t.id} unblocked", start it with task_start. Tell the user in one line and stay free.`)
     }
-    await api($, 'POST', `/api/tasks/${t.id}/log`, { message: 'Worker started' })
-    return say(`Task #${t.id} is on the board (http://localhost:4700) and its worker has started in ${t.worktree}. Tell the user in one line and stay free; the worker reports back when it's done.`)
+    return startWorker($, t)
+  })
+
+  on('tool.call', { tool: 'mcp__task-queue__task_start' }, async ($, e) => {
+    if (e.agentId) return { deny: 'Only the main agent starts tasks.' }
+    const { id } = e as unknown as { id: number }
+    const r = await api($, 'GET', `/api/tasks/${id}`)
+    if (!r.ok) return say(`Failed: ${r.error}`)
+    if (r.data.status !== 'queued') return say(`Task #${id} is ${r.data.status}, not queued: nothing to start.`)
+    if (r.data.blockedBy?.start?.length || r.data.blockedBy?.stuck?.length) return say(`Task #${id} can't start yet: ${r.data.blockedBy.reason}.`)
+    return startWorker($, r.data)
+  })
+
+  on('tool.call', { tool: 'mcp__task-queue__task_deps' }, async ($, e) => {
+    const { id, after, mergeAfter } = e as unknown as { id: number; after?: number[]; mergeAfter?: number[] }
+    const r = await api($, 'PATCH', `/api/tasks/${id}`, { ...(after ? { startAfter: after } : {}), ...(mergeAfter ? { mergeAfter } : {}) })
+    if (!r.ok) return say(`Failed: ${r.error}`)
+    const t = r.data
+    return say(`Task #${id}: starts after ${t.startAfter?.length ? ids(t.startAfter) : 'nothing'}; merges after ${t.mergeAfter?.length ? ids(t.mergeAfter) : 'nothing'}. ${t.blockedBy ? `Now ${t.blockedBy.reason}.` : 'Nothing blocks it.'}${t.status === 'queued' && !t.blockedBy?.start?.length ? ' It can start: task_start.' : ''}`)
   })
 
   on('tool.call', { tool: 'mcp__task-queue__task_log' }, async ($, e) => {
@@ -324,7 +405,7 @@ export const register: Register = on => {
     const r = await api($, 'GET', '/api/tasks')
     if (!r.ok) return say(`Failed: ${r.error}`)
     const open = (r.data as any[]).filter(t => !['merged', 'discarded'].includes(t.status))
-    return say(open.length ? open.map(t => `#${t.id} [${t.status}] ${t.title}${t.url ? ` ${t.url}` : ''}`).join('\n') : 'No open tasks.')
+    return say(open.length ? open.map(t => `#${t.id} [${t.status}] ${t.title}${t.url ? ` ${t.url}` : ''}${t.blockedBy ? ` (${t.blockedBy.reason})` : ''}`).join('\n') : 'No open tasks.')
   })
 
   // ---- the pane -----------------------------------------------------------
@@ -359,12 +440,13 @@ export const register: Register = on => {
                   <Text color={t.status === 'failed' ? 'red' : undefined}>
                     #{t.id} {t.title}{t.live ? ' · live' : ''}{t.status === 'failed' ? ' (failed)' : ''}{t.status === 'merged' ? ` · ${t.commit ?? ''}` : ''}
                   </Text>
+                  {t.blockedBy && <Text color={t.blockedBy.stuck.length ? 'red' : 'yellow'}>  {t.blockedBy.reason}</Text>}
                   {t.status !== 'merged' && (t.error || t.last) && <Text dimColor>  {(t.error ?? t.last ?? '').split('\n')[0]?.slice(0, 100)}</Text>}
                   {t.status !== 'merged' && (
                     <Box key={`a${t.id}`}>
                       <Text>  </Text>
                       {t.url && <Button key={`open${t.id}`} label={t.previewUp ? 'Open ●' : 'Open ○'} onPress={open(t.url)} />}
-                      {t.status === 'complete' && <Button key={`merge${t.id}`} label="Merge" onPress={() => merge($, t.id)} />}
+                      {t.status === 'complete' && !mergeBlocked(t, list) && <Button key={`merge${t.id}`} label="Merge" onPress={() => merge($, t.id)} />}
                       {t.status !== 'merging' && (armedId === t.id
                         ? <Button key={`discard${t.id}`} label="Discard branch?" onPress={() => { void update($, armed, () => null); void api($, 'POST', `/api/tasks/${t.id}/discard`).then(() => poll($)) }} />
                         : <Button key={`arm${t.id}`} label="Discard" onPress={() => { void update($, armed, () => t.id) }} />)}

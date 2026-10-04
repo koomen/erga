@@ -6,6 +6,7 @@ import { expect, mock, test } from 'claude-code/testing'
 function fakeQueue(on: any) {
   const tasks: any[] = []
   const spawned: any[] = []
+  const agents: any[] = []
   const toasts: string[] = []
   const status: (string | undefined)[] = []
   const clock = mock.clock(on)
@@ -17,7 +18,7 @@ function fakeQueue(on: any) {
     ({ value: e.argv[0] === 'git' ? { exitCode: 0, stdout: '/repo/.git\n', stderr: '' } : { exitCode: 0, stdout: '', stderr: '' } }))
   on('fs.stat', () => ({ value: { type: 'file', size: 1, mtimeMs: 0 } }))
   on('tool.register', (_$: any, e: any) => ({ value: { tool: `mcp__task-queue__${e.name}` } }))
-  on('agent.register', (_$: any, e: any) => ({ value: { agent: `task-queue:${e.name}` } }))
+  on('agent.register', (_$: any, e: any) => { agents.push(e); return { value: { agent: `task-queue:${e.name}` } } })
   on('command.register', (_$: any, e: any) => ({ value: { command: e.name } }))
   on('ui.open', () => ({ value: { shown: true } }))
   on('agent.spawn', (_$: any, e: any) => { spawned.push(e); return { model: 'm', agentId: 'a1' } })
@@ -25,15 +26,32 @@ function fakeQueue(on: any) {
     const method = e.init?.method ?? 'GET'
     const path = e.url.replace('http://127.0.0.1:4700', '')
     const body = e.init?.body ? JSON.parse(e.init.body) : {}
-    const ok = (data: unknown, status = 200) => ({ value: { status, ok: true, headers: {}, text: JSON.stringify(data) } })
+    // Like the queue, a task's blockedBy is computed on every answer: startAfter / mergeAfter tasks not merged yet.
+    const blocked = () => { for (const x of tasks) {
+      const unmet = (l?: number[]) => (l ?? []).filter(id => tasks[id - 1]?.status !== 'merged')
+      const merge = [...new Set([...unmet(x.startAfter), ...unmet(x.mergeAfter)])]
+      const start = x.status === 'queued' ? unmet(x.startAfter) : []
+      const stuck = merge.filter(id => ['discarded', 'failed'].includes(tasks[id - 1]?.status))
+      x.blockedBy = merge.length && !['merged', 'discarded'].includes(x.status)
+        ? { start, merge, stuck, reason: stuck.length ? `blocked: #${stuck[0]} was discarded; remove or change the dependency` : start.length ? `waiting for #${start.join(', #')} to merge` : `can't merge until #${merge.join(', #')} merges` }
+        : undefined
+    } }
+    const ok = (data: unknown, status = 200) => { blocked(); return { value: { status, ok: true, headers: {}, text: JSON.stringify(data) } } }
+    const no = (status: number, error: string) => ({ value: { status, ok: false, headers: {}, text: JSON.stringify({ error }) } })
     if (method === 'POST' && path === '/api/tasks') {
-      const t = { id: tasks.length + 1, title: body.title, description: body.description, status: 'queued', screenshots: [] as any[], worktree: `/repo/.claude/worktrees/task-${tasks.length + 1}`, branch: 'task/1-x', port: 4501, log: [], updatedAt: new Date().toISOString() }
+      const t: any = { id: tasks.length + 1, title: body.title, description: body.description, status: 'queued', screenshots: [] as any[], worktree: `/repo/.claude/worktrees/task-${tasks.length + 1}`, branch: 'task/1-x', port: 4501, log: [], updatedAt: new Date().toISOString(), startAfter: body.startAfter, mergeAfter: body.mergeAfter }
       tasks.push(t)
       return ok(t, 201)
     }
     const m = path.match(/^\/api\/tasks\/(\d+)/)
     const t = m ? tasks[Number(m[1]) - 1] : undefined
-    if (method === 'PATCH' && t) { Object.assign(t, body); return ok(t) }
+    if (method === 'GET' && t) return ok(t)
+    if (method === 'PATCH' && t) {
+      blocked()
+      if (body.status === 'working' && t.status !== 'working' && t.blockedBy?.start.length) return no(409, `task ${t.id} can't start: ${t.blockedBy.reason}`)
+      Object.assign(t, body)
+      return ok(t)
+    }
     if (method === 'POST' && t && path.endsWith('/merge')) {
       if (t.status !== 'complete') return { value: { status: 409, ok: false, headers: {}, text: JSON.stringify({ error: `task ${t.id} is ${t.status}, not complete` }) } }
       t.status = 'merging'
@@ -48,7 +66,7 @@ function fakeQueue(on: any) {
     if (method === 'POST' && t) { if (body.message) t.log.push({ message: body.message }); return ok(t) }
     return ok(tasks)
   })
-  return { tasks, spawned, toasts, status, clock }
+  return { tasks, spawned, toasts, status, clock, agents }
 }
 
 test('task_create registers the task and starts a worker in its worktree', async ($, on) => {
@@ -136,3 +154,54 @@ for (const surface of ['terminal', 'desktop'] as const) {
     expect(await pane.find({ key: 'open1' })).toBeUndefined() // no url set in this fake
   })
 }
+
+test('task_create with after leaves the task queued with no worker; task_start starts it once the dependency merges', async ($, on) => {
+  const { tasks, spawned, toasts, status, clock } = fakeQueue(on)
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await $.tool.call({ tool: 'mcp__task-queue__task_create', title: 'The API', ask: 'Add the API' } as any)
+  const r = await $.tool.call({ tool: 'mcp__task-queue__task_create', title: 'Use the API', ask: 'Call it', after: [1] } as any)
+  expect(tasks[1].startAfter).toEqual([1])
+  expect(tasks[1].status).toBe('queued')
+  expect(spawned).toHaveLength(1) // only #1's worker
+  expect(JSON.stringify(r)).toContain('waiting for #1 to merge')
+  expect(JSON.stringify(r)).toContain('task_start')
+  await clock.advance(2000)
+  expect(status.at(-1)).toBe('tasks: 1 working · 1 waiting')
+  const early = await $.tool.call({ tool: 'mcp__task-queue__task_start', id: 2 } as any)
+  expect(JSON.stringify(early)).toContain("can't start yet: waiting for #1 to merge")
+  expect(spawned).toHaveLength(1)
+  Object.assign(tasks[0], { status: 'merged', commit: 'abc1234' })
+  await clock.advance(2000)
+  expect(toasts).toContain('Task #2 unblocked: Use the API (#1 merged)')
+  await $.tool.call({ tool: 'mcp__task-queue__task_start', id: 2 } as any)
+  expect(spawned).toHaveLength(2)
+  expect(tasks[1].status).toBe('working')
+  expect(spawned[1].prompt).toContain('Started after: #1')
+})
+
+test('mergeAfter: the worker starts at once, the pane hides Merge until the dependency merges, and task_deps changes it', async ($, on) => {
+  const { tasks, spawned, toasts, clock } = fakeQueue(on)
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await $.tool.call({ tool: 'mcp__task-queue__task_create', title: 'First', ask: 'A' } as any)
+  await $.tool.call({ tool: 'mcp__task-queue__task_create', title: 'Second', ask: 'B', mergeAfter: [1] } as any)
+  expect(spawned).toHaveLength(2)
+  expect(spawned[1].prompt).toContain('Merges after: #1')
+  await $.tool.call({ tool: 'mcp__task-queue__task_done', id: 2, summary: 'Done' } as any)
+  await clock.advance(2000)
+  const pane = await $.ui.mount({ plugin: 'task-queue', surface: 'terminal', component: 'Pane', requestId: 'task-queue', props: { title: 'Tasks', isFocused: true, bodyColumns: 80 } as any })
+  expect(await pane.find({ text: "can't merge until #1 merges" })).toBeDefined()
+  expect(await pane.find({ key: 'merge2' })).toBeUndefined()
+  Object.assign(tasks[0], { status: 'merged', commit: 'abc1234' })
+  await clock.advance(2000)
+  expect(toasts).toContain('Task #2 can merge now: Second (#1 merged)')
+  const r = await $.tool.call({ tool: 'mcp__task-queue__task_deps', id: 2, mergeAfter: [] } as any)
+  expect(tasks[1].mergeAfter).toEqual([])
+  expect(JSON.stringify(r)).toContain('Nothing blocks it')
+})
+
+test('the worker prompt warns against building on stand-ins for blocked dependencies', async ($, on) => {
+  const { agents } = fakeQueue(on)
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  expect(agents[0].name).toBe('worker')
+  expect(agents[0].prompt).toContain("don't build against a stand-in, stub")
+})
