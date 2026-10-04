@@ -25,7 +25,7 @@ const ok = (what: string) => { checks.push(what); console.log(`ok   ${what}`); }
 const host = await startHost(null, { processEnv: { ERGA_STUB_SETTINGS: "1" } });
 const root = host.root;
 const browser = await Browser.launch();
-/** A document's editor. */
+/** A document's editor (its address and /edit; #edit once task #30 lands). */
 const editor = (address: string) => `${root}${address}/edit`;
 const stub = (doc: string, set: Record<string, unknown>) => fetch(`${root}/__erga/stub/settings`, { method: "POST", body: JSON.stringify({ doc, deployMs: 700, describeMs: 600, ...set }) }).then((r) => r.json());
 const versionsOf = (doc: string) => fetch(`${root}/api/docs/${doc}/versions`).then((r) => r.json()) as Promise<{ published: { mode: string; version: { n: number } }; current: { n: number } }>;
