@@ -948,7 +948,8 @@ and paints it before anything loads, so a reload, viewing or editing, shows
 no white. On a first visit nothing is remembered: the host page keeps the
 document out of sight until the band has its colour (half a second at most),
 so a dark page never shows under a white band; the window is white only
-before the document shows at all. The band is the same height viewing and
+before the document shows at all. A link to another of the document's pages,
+in a colour of its own, waits in the same way, a frame or two. The band is the same height viewing and
 editing, so the document doesn't move between them. `tests/band.ts` checks
 that no control covers the text of pages whose first line is at their top
 edge (light, dark, a gradient; desktop and phone), compares the band's
