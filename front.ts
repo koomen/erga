@@ -42,6 +42,7 @@ import { OWN_ACCOUNT } from "./account.ts";
 import { adminDoor } from "./admin.ts";
 import { type Directory, type DocRow, type Grant, type Permission, type Role, type Route, type Who, NotAllowed, roleMay, UNTITLED } from "./directory.ts";
 import type { AgentToken, Tokens } from "./tokens.ts";
+import type { PublishRequest, PublishResult, Version, VersionsState } from "./versions.ts";
 import { pageAddress, resolvePage } from "./tree.ts";
 
 /** Who's signed in. */
@@ -137,7 +138,13 @@ export interface Platform {
     /** A document's page (index.html, index.md...), or null if it has no host. */
     index(doc: Route): Promise<string | null>;
     /** A document's files as they are now, and its page: what a copy starts from. Null if it has no host. */
-    snapshot(doc: Route): Promise<{ index: string; files: Record<string, string | Uint8Array> } | null>;
+    snapshot(doc: Route, opts?: { published?: boolean }): Promise<{ index: string; files: Record<string, string | Uint8Array> } | null>;
+    /** A document's versions, the current one and the published one (versions.ts); null if it has no host. */
+    versions(doc: Route, opts: { before?: string | null; limit?: number }): Promise<VersionsState | null>;
+    /** Sets what a document's viewers see: "latest", or one version ("manual"). The caller checks the person may edit. */
+    setPublished(doc: Route, req: PublishRequest): Promise<PublishResult>;
+    /** Brings a version back as a new current version, by `by`. The caller checks the person may edit. */
+    restore(doc: Route, ref: string, by: string): Promise<{ ok: true; current: Version } | { ok: false; status: number; error: string }>;
     exists(doc: Route): Promise<boolean>;
     /** Deletes a document (its host takes it out of the directory too); false if it had no host. */
     delete(doc: Route): Promise<boolean>;
@@ -355,19 +362,25 @@ const b64url = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes)).replac
  * Its expiry is rounded up to the next whole day, so the token, and with it the address of every file of the page, stays the
  * same all day: the browser's cache can answer for them (they're checked by ETag, front.ts's pagesDoor and host.ts's docFile).
  */
-export async function pagesToken(secret: string, owner: string, id: string, shell: string, now = Date.now()): Promise<string> {
-  const claims = b64url(new TextEncoder().encode(JSON.stringify({ d: `${owner.toLowerCase()}/${id}`, e: Math.ceil((now / 1000 + WEEK) / DAY) * DAY, s: shell })));
+export async function pagesToken(secret: string, owner: string, id: string, shell: string, now = Date.now(), opts: { published?: boolean } = {}): Promise<string> {
+  // published: for someone who may only view it, whose every file is the published version's (versions.ts), doc/ as pub/.
+  const claims = b64url(new TextEncoder().encode(JSON.stringify({ d: `${owner.toLowerCase()}/${id}`, e: Math.ceil((now / 1000 + WEEK) / DAY) * DAY, s: shell, ...(opts.published ? { p: 1 } : {}) })));
   return `${claims}.${await hmac(secret, claims)}`;
 }
 
 /** The editor's origin, if `token` is good for this document and current. */
 export async function readPagesToken(secret: string, token: string, owner: string, id: string, now = Date.now()): Promise<string | null> {
+  return (await readPagesClaims(secret, token, owner, id, now))?.shell ?? null;
+}
+
+/** What a good, current token for this document says: the editor's origin, and whether it opens only the published version. */
+export async function readPagesClaims(secret: string, token: string, owner: string, id: string, now = Date.now()): Promise<{ shell: string; published: boolean } | null> {
   const [claims, mac, extra] = token.split(".");
   if (!claims || !mac || extra != null || mac != (await hmac(secret, claims))) return null;
   try {
-    const c = JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(claims.replace(/-/g, "+").replace(/_/g, "/")), (ch) => ch.charCodeAt(0)))) as { d?: string; e?: number; s?: string };
+    const c = JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(claims.replace(/-/g, "+").replace(/_/g, "/")), (ch) => ch.charCodeAt(0)))) as { d?: string; e?: number; s?: string; p?: number };
     if (c.d != `${owner.toLowerCase()}/${id}` || !(Number(c.e) > now / 1000) || typeof c.s != "string") return null;
-    return new URL(c.s).origin == c.s ? c.s : null;
+    return new URL(c.s).origin == c.s ? { shell: c.s, published: c.p == 1 } : null;
   } catch { return null; }
 }
 
@@ -378,16 +391,19 @@ export async function readPagesToken(secret: string, token: string, owner: strin
  */
 async function pagesDoor(request: Request, url: URL, doc: { owner: string; id: string }, platform: Platform): Promise<Response> {
   const notFound = () => new Response("Not found", { status: 404, headers: { "Content-Type": "text/plain; charset=utf-8" } });
-  const [, token, rest] = /^\/t\/([^/]+)(\/.*)$/.exec(url.pathname) ?? [];
+  let [, token, rest] = /^\/t\/([^/]+)(\/.*)$/.exec(url.pathname) ?? [];
   if (!token || (request.method != "GET" && request.method != "HEAD")) return notFound();
-  const shell = await readPagesToken(platform.secret, token, doc.owner, doc.id);
-  if (!shell) return new Response("This link has expired: reload the editor.", { status: 403, headers: { "Content-Type": "text/plain; charset=utf-8" } });
+  const claims = await readPagesClaims(platform.secret, token, doc.owner, doc.id);
+  const shell = claims?.shell;
+  if (!claims || !shell) return new Response("This link has expired: reload the editor.", { status: 403, headers: { "Content-Type": "text/plain; charset=utf-8" } });
   if (rest == "/") {
     // ?view=<file>: the page to show straight away, as it renders (the viewer's, and the editor's until it has its own).
     // ?view= (empty): the document's page, whatever its name (its host answers doc/ with it).
     const view = url.searchParams.get("view");
     const files = `/t/${token}/doc/`;
-    const src = view == "" ? files : view && !/^\/|(^|\/)\.\.(\/|$)/.test(view) ? `${files}${view.split("/").map(encodeURIComponent).join("/")}` : "";
+    // The page as it renders is what viewers see (pub/: the published version, or the files as they are now; versions.ts).
+    const shown = `/t/${token}/${VIEW_FILES}/`;
+    const src = view == "" ? shown : view && !/^\/|(^|\/)\.\.(\/|$)/.test(view) ? `${shown}${view.split("/").map(encodeURIComponent).join("/")}` : "";
     // Its base is the document's folder: the editable page (frame.js renders it as srcdoc, which takes this page's base) then
     // resolves the document's files there from the start, even in Chrome's preload scanner, which otherwise asks for them here too.
     const html = `<!doctype html><html><head><meta charset="utf-8"><base href="${esc(files)}"><meta name="erga-shell" content="${esc(shell)}"><title>Erga page</title>
@@ -402,7 +418,9 @@ async function pagesDoor(request: Request, url: URL, doc: { owner: string; id: s
     if (request.headers.get("if-none-match")?.split(",").some((t) => t.trim().replace(/^W\//, "") == etag)) return new Response(null, { status: 304, headers });
     return new Response(html, { headers });
   }
-  if (!rest.startsWith("/doc/")) return notFound();
+  if (!rest.startsWith("/doc/") && !rest.startsWith("/pub/")) return notFound();
+  // Someone who may only view the document gets the published version's files, whichever they ask for.
+  if (claims.published && rest.startsWith("/doc/")) rest = "/pub/" + rest.slice("/doc/".length);
   // The token names the document; the directory confirms it's still its owner's (remembered, so usually without asking the
   // database). Both at once: a file is only read, so asking the document before the answer comes costs nothing if it's no.
   const asked = { id: doc.id, owner: doc.owner.toLowerCase(), test: false };
@@ -414,7 +432,7 @@ async function pagesDoor(request: Request, url: URL, doc: { owner: string; id: s
   return answer;
 }
 
-const HOST_STYLE = "html,body{margin:0;height:100%;overflow:hidden;overscroll-behavior:none;background:transparent}iframe{position:fixed;inset:0;width:100%;height:100%;border:0;background:transparent;visibility:hidden}iframe.on{visibility:visible}";
+const HOST_STYLE = "html,body{margin:0;height:100%;overflow:hidden;overscroll-behavior:none;background:transparent}iframe{position:fixed;inset:0;width:100%;height:100%;border:0;background:transparent;visibility:hidden}iframe.on{visibility:visible}html.wait iframe{visibility:hidden}";
 
 /** The frame's host page's version: a digest of its code (FNV-1a), which changes whenever that does. */
 const versionOf = (text: string) => {
@@ -426,6 +444,8 @@ const versionOf = (text: string) => {
 /** What a document's page may do in its frame, in the viewer and the editor alike (frame.ts makes the editor's the same). */
 const PAGE_SANDBOX = "allow-scripts allow-same-origin allow-forms allow-modals allow-popups";
 
+/** Where the frame's host page shows the page as it renders from: what viewers see (versions.ts), which the document serves at pub/. */
+const VIEW_FILES = "pub";
 /**
  * The frame's host page, on the document's own origin: it shows the page as
  * it renders (#view) until the document's page asks for the editor
@@ -445,12 +465,12 @@ const HOST_SCRIPT = `(function () {
   }
   // The page went to another of the document's pages (a link followed): the shell's address follows, and so
   // does the page shown again on the way back from editing.
-  var DOC = location.pathname.replace(/\\/?$/, "/") + "doc/";
+  var DOC = location.pathname.replace(/\\/?$/, "/") + "${VIEW_FILES}/";
   function moved(f) {
     try {
       var p = f.contentWindow.location.pathname;
       if (p.indexOf(DOC) != 0) return;
-      // doc/ itself is the document's own page ("").
+      // pub/ itself is the document's own page ("").
       var path = decodeURIComponent(p.slice(DOC.length));
       if (path && !/\\.(html|md)$/i.test(path)) return;
       src = p;
@@ -458,6 +478,43 @@ const HOST_SCRIPT = `(function () {
     } catch (e) {}
   }
   if (view) view.addEventListener("load", function () { still(view); moved(view); });
+  // The band above the page (the document's page, viewDocument) takes the page's background: this tells the shell what it is,
+  // on every frame it changes (a page of a multi-page document, a theme switch), as a solid colour (a gradient's first one).
+  // The first time this page sees the document (nothing remembered here), the page waits out of sight until the shell has
+  // painted that colour, so a dark page never shows under a white band; later, the shell remembers it too, so it shows at once.
+  var band = null, known = null;
+  try { known = localStorage.getItem("erga:band"); } catch (e) {}
+  function reveal() { document.documentElement.classList.remove("wait"); }
+  if (known == null) { document.documentElement.classList.add("wait"); setTimeout(reveal, 500); }
+  function solid(cs) {
+    var img = cs.backgroundImage, stops = img && img != "none" && /gradient/.test(img) ? img.match(/rgba?\\([^)]*\\)/g) : null;
+    if (stops) return /^linear-gradient\\((to top|0deg|360deg)[,)]/.test(img) ? stops[stops.length - 1] : stops[0];
+    var c = cs.backgroundColor;
+    return /^(transparent|rgba\\([^)]*,\\s*0\\))$/.test(c) ? "" : c;
+  }
+  function colourOf(f) {
+    var d = f.contentDocument, w = f.contentWindow;
+    if (!d || !w || !d.documentElement || d.URL == "about:blank" || (!d.body && d.readyState == "loading")) return null;
+    var c = solid(w.getComputedStyle(d.documentElement));
+    if (!c && d.body) c = solid(w.getComputedStyle(d.body));
+    return c;
+  }
+  // A new page in a colour of its own (a link to another of the document's pages) waits out of sight in the same way, so
+  // it never shows under the last page's band; a page that changes its own colour (a theme switch) stays in sight.
+  var shown = null;
+  (function watch() {
+    try {
+      var f = document.querySelector("iframe.on"), c = f ? colourOf(f) : null;
+      if (c != null && c !== band) {
+        if (band != null && shown && f.contentDocument != shown) { document.documentElement.classList.add("wait"); setTimeout(reveal, 300); }
+        band = c;
+        try { localStorage.setItem("erga:band", c); } catch (e) {}
+        parent.postMessage({ type: "erga-band", color: c }, SHELL);
+      }
+      if (c != null) shown = f.contentDocument;
+    } catch (e) {}
+    requestAnimationFrame(watch);
+  })();
   function show(to) {
     var from = document.querySelector("iframe.on");
     if (from == to) return;
@@ -471,7 +528,8 @@ const HOST_SCRIPT = `(function () {
   addEventListener("message", function (e) {
     if (e.source != parent || e.origin != SHELL || !e.data) return;
     var type = e.data.type;
-    if (type == "erga-edit") {
+    if (type == "erga-band-ok") reveal();
+    else if (type == "erga-edit") {
       want = "edit";
       if (!loading) { loading = true; var s = document.createElement("script"); s.src = "/frame.js"; document.body.append(s); }
       else if (page() && page().dataset.ready) show(page());
@@ -493,7 +551,7 @@ const HOST_SCRIPT = `(function () {
   if (/[?&]edit=1(&|$)/.test(location.search)) { want = "edit"; loading = true; var s = document.createElement("script"); s.src = "/frame.js"; document.body.append(s); }
   parent.postMessage({ type: "erga-host" }, SHELL);
 })();`;
-const HOST_VERSION = versionOf(HOST_STYLE + PAGE_SANDBOX + HOST_SCRIPT);
+const HOST_VERSION = versionOf(HOST_STYLE + PAGE_SANDBOX + HOST_SCRIPT + VIEW_FILES);
 
 /** A link on this site, keeping the name a local tab gave (?user=) if it gave one. */
 export const link = (path: string, session: Session | null) =>
@@ -607,15 +665,16 @@ async function viewDocument(platform: Platform, request: Request, opened: { doc:
   // What the editor needs to know, for whoever may go into it: where its document's host and frame are, and the links on its avatar.
   const editable = canEdit;
   const [token, account] = await Promise.all([
-    pagesToken(platform.secret, doc.owner, doc.id, url.origin),
+    // Someone who may not edit it sees only its published version, in every file the frame asks for.
+    pagesToken(platform.secret, doc.owner, doc.id, url.origin, undefined, { published: !canEdit }),
     editable && session ? accountMeta(platform, session) : "",
   ]);
   const host = `${origin}/t/${token}/`;
   const address = `/${doc.owner}/${doc.slug}`;
-  const clone = `<a href="${esc(link(`/new?from=${landing ? "landing" : doc.id}`, session))}" class="erga-view-button erga-clone-button" aria-label="Clone: make your own copy" data-tip="Clone"><svg viewBox="0 0 24 24" aria-hidden="true"><g transform="translate(0 1.25)"><rect x="8.75" y="8.75" width="10.5" height="10.5" rx="2"/><path d="M15.25 8.75V6.5a1.75 1.75 0 0 0-1.75-1.75H6.5A1.75 1.75 0 0 0 4.75 6.5v7c0 .97.78 1.75 1.75 1.75h2.25"/></g></svg></a>`;
+  const clone = cloneButton(link(`/new?from=${landing ? "landing" : doc.id}`, session));
   // This page's address (one of the document's other pages, or the document's own).
   const here = index && pageAddress(index) ? `${address}/${pageAddress(index).split("/").map(encodeURIComponent).join("/")}` : address;
-  const edit = canEdit ? `<a href="${esc(link(here, session))}#edit" class="erga-view-button erga-edit-button" aria-label="Edit" aria-pressed="false" data-tip="Edit"><svg viewBox="0 0 24 24" aria-hidden="true"><g transform="translate(0 1.25)"><path d="M4.75 19.25l1-4L15.6 5.4a1.4 1.4 0 0 1 2 0l1 1a1.4 1.4 0 0 1 0 2L8.75 18.25zM13.75 7.25l3 3"/></g></svg></a>` : "";
+  const edit = canEdit ? editButton(`${link(here, session)}#edit`, false) : "";
   // Its owner shares it with people from the editor too (/docs/share).
   const canShare = editable && !!session && !session.agent && !session.test && roleMay(role, "share");
   // The document's address and which of its pages this is, for everyone: the address bar follows the page shown (NAV_SCRIPT).
@@ -627,36 +686,42 @@ async function viewDocument(platform: Platform, request: Request, opened: { doc:
   // Opened with #edit (which only the browser sees), for whoever may edit: the page is the editor's from its first moment
   // (EDITING_HEAD, EDITING_BODY), the frame starts on its half of the editor at once (&edit=1), and the editor's files are
   // fetched as the page parses, rather than one after another once its script runs (EDIT_BOOT).
-  const opening = editable ? `<script>${EDITING_HEAD}</script><style>html.erga-opening { background: var(--page-bg, #fff); }</style>` : "";
+  const opening = editable ? `<script>${EDITING_HEAD}</script>` : "";
   const frame = `<iframe id="frame" class="erga-view" ${editable ? "data-src" : "src"}="${esc(src)}" title="${esc(doc.title)}" sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups"></iframe>`;
+  // The band above the document (and, editing, the room the agent opens) takes the page's background: remembered from this
+  // document's last visit, before anything has loaded, then as the frame tells it (BAND_BOOT).
+  const backdrop = `<script>${BAND_HEAD}ergaBand(${JSON.stringify(doc.id)});</script>`;
   return new Response(`<!doctype html>
 <html lang="en">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <title>${esc(doc.title)}</title>
+<meta name="erga-doc" content="${esc(doc.id)}">
 <link rel="preconnect" href="${esc(origin)}">
-${meta}${opening}<style>html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: none; } #frame { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; display: block; background: transparent; }</style>
+${meta}${backdrop}${opening}<style>${BAND_STYLE}</style>
 <body>${editable ? `<script>${EDITING_BODY}</script>` : ""}
 ${frame}${editable ? `<script>${FRAME_SRC}</script>` : ""}
-<div class="erga-view-buttons">${clone}${edit}</div>${VIEW_STYLE}<script>${NAV_SCRIPT}</script>${editable ? `<script>${EDIT_BOOT}</script>` : ""}
+<div class="erga-view-buttons">${clone}${edit}</div>${VIEW_STYLE}<script>${NAV_SCRIPT}</script><script>${BAND_BOOT}</script>${editable ? `<script>${EDIT_BOOT}</script>` : ""}
 </body>
 </html>`, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "Referrer-Policy": "no-referrer", Link: `<${origin}>; rel=preconnect` } });
 }
 
+/** The viewer's Clone button (a copy of your own, at `href`): also the homepage's (home.ts). */
+export const cloneButton = (href: string) => `<a href="${esc(href)}" class="erga-view-button erga-clone-button" aria-label="Clone: make your own copy" data-tip="Clone"><svg viewBox="0 0 24 24" aria-hidden="true"><g transform="translate(0 1.25)"><rect x="8.75" y="8.75" width="10.5" height="10.5" rx="2"/><path d="M15.25 8.75V6.5a1.75 1.75 0 0 0-1.75-1.75H6.5A1.75 1.75 0 0 0 4.75 6.5v7c0 .97.78 1.75 1.75 1.75h2.25"/></g></svg></a>`;
+/** The viewer's pencil (Edit, the editor at `href`), blue while editing: also the homepage's (home.ts). */
+export const editButton = (href: string, editing: boolean) => `<a href="${esc(href)}" class="erga-view-button erga-edit-button" aria-label="Edit" aria-pressed="${editing}" data-tip="Edit"><svg viewBox="0 0 24 24" aria-hidden="true"><g transform="translate(0 1.25)"><path d="M4.75 19.25l1-4L15.6 5.4a1.4 1.4 0 0 1 2 0l1 1a1.4 1.4 0 0 1 0 2L8.75 18.25zM13.75 7.25l3 3"/></g></svg></a>`;
+
 /**
  * For whoever may edit, at the top of a document's page: opened with #edit, it
- * fetches the editor's files at once, and takes the page's background
- * (remembered from last time, main.ts) before the page has loaded, as the
- * editor's own canvas does.
+ * fetches the editor's files at once. (The page's background, remembered
+ * from last time, is BAND_HEAD's.)
  */
 const EDITING_HEAD = `if (location.hash == "#edit") {
-  document.documentElement.classList.add("erga-opening");
   for (const [href, as] of [["/editor.html", "fetch"], ["/page.js", "script"], ["/style.css", "style"], ["/fonts/inter.css", "style"]]) {
     const l = Object.assign(document.createElement("link"), { rel: "preload", href, as });
     if (as == "fetch") l.crossOrigin = "anonymous";
     document.head.append(l);
   }
-  try { const b = JSON.parse(localStorage.getItem("erga:backdrop:v1") || "null"); if (b?.bg) document.documentElement.style.setProperty("--page-bg", b.bg); } catch {}
 }`;
 /** ... and as its body starts: editing, from the first frame. */
 const EDITING_BODY = `if (location.hash == "#edit") document.body.classList.add("erga-editing");`;
@@ -694,6 +759,50 @@ const NAV_SCRIPT = `(() => {
     const here = ergaPageAddress();
     if (location.pathname != here) history.replaceState(history.state, "", here + location.search + location.hash);
     document.querySelector(".erga-view-buttons a[aria-pressed]")?.setAttribute("href", here + location.search + "#edit");
+  });
+})();`;
+
+/**
+ * The band at the top of a document's page (viewDocument), where the
+ * controls are: the document's frame starts below it, so they never cover
+ * the document, and it takes the document's own background, as a solid
+ * colour, so it reads as part of the page. --band-h is the controls' row
+ * (34px, at max(12px, the notch)) and a 10px gap; the editor's page.html
+ * keeps the frame there too. Until the frame says (BAND_BOOT), the colour
+ * is the one this document had last time on this browser, and the
+ * controls' tone (light or dark text) with it.
+ */
+const BAND_STYLE = `:root { --band-h: calc(max(12px, env(safe-area-inset-top)) + 44px); }
+html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: none; }
+html { background: var(--page-bg, var(--band, #fff)); }
+#frame { position: fixed; left: 0; top: var(--band-h); width: 100%; height: calc(100% - var(--band-h)); border: 0; display: block; background: transparent; }`;
+
+/** Sets the band's colour (ergaBand(id, colour)), or the one remembered for document `id` (ergaBand(id)); and the controls' tone to suit. Answers the tone. */
+const BAND_HEAD = `window.ergaBand = function (id, color) {
+  var key = "erga:band:v1:" + id, root = document.documentElement, tone = "";
+  try {
+    if (color === undefined) { var b = JSON.parse(localStorage.getItem(key) || "null"); color = b && typeof b.bg == "string" ? b.bg : ""; }
+  } catch (e) { color = ""; }
+  if (color && !(window.CSS && CSS.supports("color", color))) color = "";
+  var rgb = color.match(/[\\d.]+/g);
+  if (color && /^rgba?\\(/.test(color) && rgb && rgb.length >= 3) tone = (0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2]) / 255 < 0.45 ? "page-dark" : "page-light";
+  if (color) root.style.setProperty("--band", color); else root.style.removeProperty("--band");
+  root.classList.toggle("page-dark", tone == "page-dark");
+  root.classList.toggle("page-light", tone == "page-light");
+  if (arguments.length > 1) try { localStorage.setItem(key, JSON.stringify({ bg: color, tone: tone })); } catch (e) {}
+  return tone;
+};`;
+
+/** The band's colour, as the frame's host page tells it (pagesDoor, HOST_SCRIPT); answered once painted, so a first visit's page shows only under its own colour. */
+const BAND_BOOT = `(() => {
+  const frame = document.getElementById("frame"), pages = new URL(frame.src || frame.dataset.src, location.href).origin;
+  const id = document.querySelector('meta[name="erga-doc"]').content;
+  addEventListener("message", (e) => {
+    if (e.source != frame.contentWindow || e.origin != pages || e.data?.type != "erga-band") return;
+    const c = e.data.color;
+    if (typeof c != "string" || c.length > 200 || /url\\(/i.test(c)) return;
+    window.ergaBand(id, c);
+    requestAnimationFrame(() => frame.contentWindow.postMessage({ type: "erga-band-ok" }, pages));
   });
 })();`;
 
@@ -821,13 +930,18 @@ async function startPage(platform: Platform, session: Session | null): Promise<R
 </main>`), { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
 }
 
-const VIEW_STYLE = `
+export const VIEW_STYLE = `
 <style>
   /* The editor's look (style.css, .icon-btn): small icons. Right of them is who you are (account.ts). No breadcrumbs: viewing, there's only the document. */
   .erga-view-buttons { --chrome: #a1a1a9; --chrome-hover: #3f3f46; --fg: #1c1c1f; --soft: #6b6b73;
     position: fixed; top: max(12px, env(safe-area-inset-top)); z-index: 1000; display: flex; align-items: center;
     font: 500 13px/1 "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
   .erga-view-buttons { right: max(56px, calc(env(safe-area-inset-right) + 40px)); gap: 2px; }
+  /* On the band (BAND_STYLE), in the document's own colour: light or dark text to suit it, whatever the system's mode. */
+  html.page-dark .erga-view-buttons { --chrome: #8a8a94; --chrome-hover: #e4e4e9; --fg: #ececf1; --soft: #a1a1aa; }
+  html.page-light .erga-account { --acc-bg: #fff; --acc-fg: #1c1c1f; --acc-soft: #6b6b73; --acc-chrome: #a1a1a9; --acc-ring: #e6e6ea; --acc-hover: rgba(161, 161, 169, .14); }
+  html.page-dark .erga-account { --acc-bg: #1f1f23; --acc-fg: #ececf1; --acc-soft: #8f8f99; --acc-chrome: #8a8a94; --acc-ring: #2f2f35; --acc-hover: rgba(161, 161, 169, .16); }
+  html:is(.page-dark, .page-light) .erga-account-btn:not(.erga-account-out) { box-shadow: 0 0 0 2px var(--band, var(--acc-bg)); }
   .erga-view-button { position: relative; display: grid; place-items: center; width: 34px; height: 34px; border-radius: 8px; color: var(--chrome);
     transition: color 150ms ease, background-color 150ms ease; }
   .erga-view-button:hover { color: var(--chrome-hover); background: color-mix(in srgb, var(--chrome) 12%, transparent); }
@@ -863,7 +977,9 @@ export async function startingFiles(platform: Platform, from: string | null, who
   if (!from) return { files: { ...platform.templates.doc }, index: "index.html" };
   const doc = from == "landing" ? await landingDocument(platform) : ID.test(from) && who ? await platform.directory.get(from) : null;
   if (!doc || (from != "landing" && !(await platform.directory.may(who!, "open", doc)))) return null;
-  return platform.docs.snapshot(doc);
+  // A copy of what they may see: someone who may not edit it copies its published version (the same in "latest" mode).
+  const editor = !!who && (await platform.directory.may(who, "edit", doc));
+  return platform.docs.snapshot(doc, { published: !editor });
 }
 
 /** A new document for the signed-in person, at /<login>/<id>: blank (templates/doc), or a copy of the front page's (?from=landing). */

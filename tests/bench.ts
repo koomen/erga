@@ -16,7 +16,8 @@
 // document just made, so its Durable Object has not opened its room yet) and
 // warm (the same page loaded again, in the same profile):
 //
-//   front    /, the front page (the landing document; its fonts come from Google, so it varies with the network)
+//   front    /, the front page (the landing document, served directly from its deploy once that's done; its fonts
+//            come from Google, so it varies with the network)
 //   viewer   /<owner>/<slug>, a document of its own (a page with a stylesheet, a script and some text)
 //   editor   /<owner>/<slug>#edit, the same document opened in the editor
 //   switch   the viewer, then the pencil: how long until the editor is ready after the click
@@ -26,6 +27,7 @@
 //   ttfb      the shell's first byte (the HTML at the address)
 //   fcp       the shell's first contentful paint (its own controls)
 //   visible   the document's first contentful paint, in its frame on the pages origin: the document is on screen
+//             (the homepage, served directly, has no frame: the page's own)
 //   lcp       the largest contentful paint, the document's frame's (or the shell's, whichever is later)
 //   load      the shell's load event (every frame loaded)
 //   editable  the editor ready to type in (its controls in, the room joined: body.erga-editor-ready)
@@ -35,6 +37,7 @@
 // went (Server-Timing), which --waterfall prints beside each request.
 
 import { mkdtempSync, rmSync, writeFileSync } from "fs";
+import { constants as zlibConstants, createGzip } from "zlib";
 import { tmpdir } from "os";
 import { join } from "path";
 import { Browser, Page, ROOT } from "./cdp";
@@ -98,7 +101,18 @@ function compressing(target: string): string {
       if (!gzip) return new Response(res.body, { status: res.status, statusText: res.statusText, headers: out });
       out.delete("content-length");
       out.set("content-encoding", "gzip");
-      return new Response(Bun.gzipSync(new Uint8Array(await res.arrayBuffer()), { level: 6 }), { status: res.status, statusText: res.statusText, headers: out });
+      // As it arrives, each chunk flushed (a page sent in parts, the homepage's, gets its first part to the browser at once).
+      const gz = createGzip({ level: 6, flush: zlibConstants.Z_SYNC_FLUSH });
+      const reader = res.body!.getReader();
+      const body = new ReadableStream<Uint8Array>({
+        start(c) {
+          gz.on("data", (b: Buffer) => c.enqueue(new Uint8Array(b)));
+          gz.on("end", () => c.close());
+          gz.on("error", (e) => c.error(e));
+          (async () => { for (;;) { const { done, value } = await reader.read(); if (done) { gz.end(); return; } gz.write(value); } })().catch((e) => c.error(e));
+        },
+      });
+      return new Response(body, { status: res.status, statusText: res.statusText, headers: out });
     },
     websocket: {
       open(ws) {
@@ -306,7 +320,8 @@ async function measure(page: Page, url: string | null, profile: Profile, opts: {
   const run: Run = {
     ttfb: opts.act ? NaN : topDoc?.ttfb ? sinceMono(topDoc.ttfb) : NaN,
     fcp: opts.act ? NaN : sinceMono(first([top], "firstContentfulPaint")),
-    visible: opts.act ? NaN : sinceMono(first(docFrames, "firstContentfulPaint")),
+    // The homepage, served directly, has no frame: the document is the page itself.
+    visible: opts.act ? NaN : sinceMono(first(docFrames.length ? docFrames : [top], "firstContentfulPaint")),
     lcp: opts.act || !lcpWall ? NaN : sinceWall(lcpWall),
     load: opts.act ? NaN : sinceMono(loadMono),
     editable: readyWall != null ? sinceWall(readyWall / 1000) : null,
@@ -344,8 +359,20 @@ async function coldWarm(browser: Browser, profile: Profile, url: string, editabl
   } finally { page.close(); }
 }
 
+/**
+ * The homepage's first deploy done (the first / starts it, worker/home.ts), so / is served from it, as it is on erga.dev but
+ * for a moment after a new homepage: up to 20s, then it's measured as it is.
+ */
+let deployed: Promise<void> | null = null;
+const homeDeployed = () => deployed ??= (async () => {
+  for (let i = 0; i < 200; i++) {
+    if ((await (await fetch(`${root}/`)).text()).includes("<erga-controls")) return;
+    await Bun.sleep(100);
+  }
+})();
+
 const CASES: Case[] = [
-  { name: "front", run: (b, p) => coldWarm(b, p, `${root}/`, false) },
+  { name: "front", run: async (b, p) => { await homeDeployed(); return coldWarm(b, p, `${root}/`, false); } },
   { name: "viewer", run: async (b, p) => coldWarm(b, p, `${root}${await makeDoc()}`, false) },
   { name: "editor", run: async (b, p) => coldWarm(b, p, `${root}${await makeDoc()}#edit`, true) },
   {

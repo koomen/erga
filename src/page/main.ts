@@ -110,8 +110,9 @@ type TreeModule = { mountTree: typeof mountTree };
   // its body's when the root has none, as the browser itself would paint it.
   // The page reports its background (frame.ts). Only colours and gradients
   // are taken: an image would be fetched from here, as you.
-  // The first one lands at once, not faded in from the editor's white (page.html's transition): it's
-  // what the agent's opening uncovers on the way into the editor (openAgentOnEntry), so that waits for it.
+  // The first one is what the agent's opening uncovers on the way into the editor (openAgentOnEntry), so that waits for it.
+  // It lands at once, as every later one does: the band above the page (front.ts, BAND_STYLE) shows it too, and must keep
+  // up with the page.
   let backdropKnown!: () => void;
   const backdropReady = new Promise<void>((done) => (backdropKnown = done));
   let backdropSeen = false;
@@ -119,7 +120,6 @@ type TreeModule = { mountTree: typeof mountTree };
     if (!info) return;
     const first = !backdropSeen;
     backdropSeen = true;
-    if (first) document.documentElement.style.transition = "none";
     const color = b.color && CSS.supports("color", b.color) ? b.color : info.kind == "md" ? "" : "#ffffff";
     const image = b.image && !/url\(|image-set\(|image\(|element\(/i.test(b.image) && CSS.supports("background-image", b.image) ? b.image : "";
     const root = document.documentElement.style;
@@ -131,11 +131,7 @@ type TreeModule = { mountTree: typeof mountTree };
     document.documentElement.classList.toggle("page-light", !!color && !dark);
     // Remembered so the next load paints it before the page arrives (see page.html), not white first.
     store.set("erga:backdrop:v1", JSON.stringify({ bg: color, image, tone: color ? (dark ? "page-dark" : "page-light") : "" }));
-    if (first) {
-      void getComputedStyle(document.documentElement).backgroundColor;
-      document.documentElement.style.transition = "";
-      backdropKnown();
-    }
+    if (first) backdropKnown();
   }
 
   // ---------------------------------------------------------------- load
