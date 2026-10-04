@@ -16,6 +16,7 @@
 #                     the band the top controls sit on (tests/band.ts),
 #                     versions and publishing (tests/versions.ts),
 #                     document settings (tests/settings.ts),
+#                     the factory, with simulated VMs (tests/factory.ts),
 #                     live reload (tests/reload.ts, in a copy of the checkout)
 #                     and the multiplayer suite, each
 #                     against dev servers of its own (tests/host.ts)
@@ -54,6 +55,8 @@ page_group() {
   run band bun tests/band.ts
   run versions bun tests/versions.ts
   run settings bun tests/settings.ts
+  # The factory (experimental), with simulated VMs; `bun tests/factory.ts --docker` runs real containers, by hand.
+  run factory bun tests/factory.ts
   # Latency is measured afterwards, alone: other tests running would skew it.
   run suite bun tests/suite/run.ts --skip latency
   collect

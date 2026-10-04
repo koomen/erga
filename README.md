@@ -380,7 +380,7 @@ this site's pages only.
 key with who set it and when (`config.ts`). Only the keys declared in
 `SETTINGS` exist, each with a description, a default and a parser that
 refuses a bad value saying why; one never set has its default. Today there's
-`delete_docs_after_hours`, `landing_document` ([The front page](#the-front-page)) and `deploy_page` ([Deploy your own](#deploy-your-own)).
+`delete_docs_after_hours`, `landing_document` ([The front page](#the-front-page)), `deploy_page` ([Deploy your own](#deploy-your-own)) and `factory` ([The factory](#the-factory-experimental)).
 A change to `landing_document`, however it's made, reaches the homepage's
 deploys (`ServerConfig`'s `changed`, which `worker/d1.ts` hands to
 `worker/home.ts`).
@@ -1034,6 +1034,241 @@ Merge to here, light, dark and a phone; `--keep` leaves it running).
 Limits: a push is read whole into memory (at most 100MB); a clone during a push can briefly see the
 quarantine branch; the commit index loads every commit's parents, which is
 fine for Erga's thousands but not for millions.
+
+### The factory (experimental)
+
+The factory is the task queue (`development/task-queue/`) inside Erga, at
+`/admin/factory`: the same board (Queued, Working, Ready to merge, Merging,
+Merged), but each task is done by Claude Code in a VM of its own, not on
+this machine. It's a prototype: admins only, and off until an admin sets the
+`factory` setting to `on` (`/admin`). It does background tasks only; live
+mode stays on the user's own computer, with the local queue.
+
+**A task is a branch.** Adding a task names its branch
+`task/<id>-<slug>` (as the local queue does) and starts a VM. In the VM
+(`factory/vm/run.ts`) the task's job clones Erga's repository, makes the
+branch from staging and pushes it at once, installs the dependencies, and
+runs Claude Code (`claude -p`, unattended) with the task's prompt
+(`factory/prompt.ts`: AGENTS.md's worker prompt, with `task` in place of
+`tq`). Claude Code works on the clone, runs the app headless (`task
+preview`: `bun start` in the VM), takes screenshots with headless Chromium
+(`task shot`), commits, and says `task done "summary"`, which pushes the
+branch and moves the card to Ready to merge. Then the VM waits: its preview
+stays up, and the detail view takes more instructions ("Send to Claude
+Code"), which run Claude Code again on the same branch (`--continue`).
+**Merge** merges the branch into staging (`--no-ff`, "Merge task/…:
+title"; a conflict goes to Claude Code to resolve, as the local queue does,
+or fails, naming the files), pushes staging, deletes the branch and stops
+the VM; merges run one at a time. Staging's own deploy (task #40) then
+deploys staging.erga.dev. **Discard** deletes the branch and stops the VM.
+Branches live only as long as their task, and the Source page (task #39)
+shows only staging and main, so they never appear there.
+
+Without a signed-in Claude plan, a scripted stand-in (`factory/vm/fake-claude.ts`)
+does each task the same way, with a change known in advance (a note under
+the front page's heading), so all of it can be tried and tested for free.
+
+**Try it locally:** `bun start`, set `factory` to `on` on `/admin`, open
+`/admin/factory`, and add a task. With Docker running (OrbStack or Docker
+Desktop), each VM is a container of the factory's image (built the first
+time, a few minutes; then reused); without, a simulation runs the same
+scripts in a folder per VM, with a light preview (`ERGA_FACTORY_RUNNER=docker|sim`
+picks one). The repository is the dev server's own: a bare repository in its
+state folder (`.cloudflare/state/factory/erga.git`), made the first time
+from this checkout's HEAD, as staging and main. Nothing is pushed anywhere
+else, and no credential of this machine is used: the simulation gives each
+job a HOME of its own, and a job gets only the environment the factory hands
+it. Measured on a Mac (M-series, OrbStack), with the stand-in:
+
+| step | time |
+|---|---|
+| a VM starts (image cached; the first build is ~3 min) | 0.2–1.7 s |
+| clone, branch from staging, push | 0.5–0.9 s |
+| `bun install` from the image's cache | 0.8–1.8 s |
+| the preview (the real app, `bun start`, in the VM) is up | ~4 s |
+| a screenshot (headless Chromium in the VM) | ~1 s |
+| added to ready to merge | ~10 s |
+| merge into staging, branch deleted, VM stopped | ~2 s |
+
+`bun tests/factory.ts` tests it end to end with simulated VMs (in
+`./test.sh`), and `bun tests/factory.ts --docker` with real containers: off
+by default, a task added on the board (branch, VM, change, preview,
+screenshot, push), merge, discard, more instructions, the tokens' limits,
+and the Claude sign-in. `tests/factory.test.ts` tests the branch names and
+the git tokens' rules.
+
+**How it fits together.**
+
+- `worker/factory.ts`: the API (`/api/factory/...`, listed at its top), the
+  board's door, and the `Factory` Durable Object ("factory"), which holds
+  every task, its log and screenshots, and the Claude token, and drives the
+  VMs. The board (`factory/page.ts`) updates live from its event stream.
+- A `VmHost` starts and stops VMs and runs jobs in them. Locally it's the
+  dev server (`dev/factory.ts`: Docker or the simulation, and the
+  repository); on Cloudflare, Containers (`factory/cloudflare.ts`), once set
+  up (the runbook, below).
+- The image (`factory/vm/Dockerfile`): Bun (`.bun-version`), Node (Vite runs
+  on it), git, Chromium, socat, Claude Code (pinned: 2.1.285; its flags and
+  events change between releases), and the repo's dependencies in Bun's
+  cache, about 2.2 GB. `bun factory/vm/build.ts` builds it, tagged
+  `erga-factory:<hash>` of its inputs (the Dockerfile, `package.json`,
+  `bun.lock`, the VM's scripts), so a new lockfile makes a new image and an
+  unchanged one is reused. Not root: Claude Code refuses to skip its prompts
+  as root.
+- The VM's agent (`factory/vm/agent.ts`, the image's main process, port
+  8080) runs the jobs when the factory asks, so the platform needs only an
+  HTTP port: locally Docker publishes it on the loopback; on Cloudflare the
+  container's Durable Object reaches it. The preview shows on port 4401 (a
+  relay to the app's 4400, as the app listens on the VM's loopback).
+- Each job gets, in its environment only: the factory's API and the task's
+  own token for it (`fct…`: it reports on that task only), the repository and
+  a git token (`fgt…`) that pushes that task's branch only (a merge's also
+  moves staging, never deletes it), and the Claude token, if there is one.
+  Scripts take tokens out of anything they log; git gets its token through
+  its environment, never its command line or `.git/config`; the preview gets
+  none of them.
+
+**Findings.**
+
+1. *Compute: Cloudflare Containers, driven from a Durable Object.* A
+   container is a Firecracker microVM owned by a Durable Object
+   (`ctx.container`: start it, reach a port, destroy it). The Sandbox SDK is
+   now (1.0) only helpers on top (files, R2 mounts, directory backups), and
+   its 0.x API (exec, exposePort) is legacy until 2026-12-31, so the
+   factory uses the plain container API and its own agent. Instance types go
+   up to standard-4 (4 vCPU, 12 GiB, 20 GB disk); the factory wants
+   standard-3 (2 vCPU, 8 GiB) or more: Claude Code alone wants 4 GB, plus
+   the dev server and Chromium. Starts: "often 1–3 seconds"; Cloudflare's
+   `durable_object` scheduling (blog, 2026-09-30) reports a median of
+   0.65 s and lets the image and instance type be chosen at start. Disk is
+   ephemeral; filesystem snapshots (beta, `durable_object` policy only,
+   30 days) could later hold a warm clone; R2 mounts are the other way to
+   keep anything. Egress: on by default for the `Container` class, off for
+   native `start()` unless `enableInternet`; `allowedHosts` makes it
+   deny-by-default, and outbound handlers can intercept HTTP(S) in Worker
+   code. Pricing on Workers Paid: $0.000020 per vCPU-second, $0.0000025 per
+   GiB-second, $0.00000007 per GB-second of disk, egress $0.025/GB after
+   1 TB, with 375 vCPU-minutes and 25 GiB-hours included each month: a
+   standard-3 VM costs at most about $0.22 an hour while it runs. No fixed
+   lifetime; an inactivity timeout up to 6 hours. Browser Rendering could
+   take screenshots instead of Chromium in the VM, but it would need the
+   preview on a public URL; Chromium in the image is simpler.
+   (developers.cloudflare.com/containers: limits, pricing, outbound traffic,
+   faq; /sandbox: concepts, lifetime, previews, coding-agents/claude-code;
+   blog.cloudflare.com/faster-agent-sandboxes.)
+2. *The image* is built from the repo and versioned by its inputs (above).
+   On Cloudflare, `wrangler deploy` builds a Dockerfile and pushes only the
+   changed layers to Cloudflare's registry (which the `durable_object`
+   policy requires); an image may be as large as the instance type's disk.
+3. *Signing in to Claude once.* `claude setup-token` (on any computer with
+   Claude Code) runs the browser sign-in for a Pro or Max plan and prints a
+   one-year OAuth token (`sk-ant-oat01-…`) that `claude -p` takes as
+   `CLAUDE_CODE_OAUTH_TOKEN`. The admin pastes it once on the board ("Claude:
+   not signed in"); the `Factory` object keeps it encrypted (AES-GCM, with
+   a key from the `FACTORY_KEY` Worker secret), shows it to nobody (the API
+   says only whether there is one, who set it and when), and puts it in the
+   environment of the claude command's job only. Notes: `--bare` mode
+   ignores the token (and may become `-p`'s default: the factory never
+   passes it); an `ANTHROPIC_API_KEY` in the VM would win over the token
+   (the VM never gets one); on Linux Claude Code would otherwise keep a
+   login in `~/.claude/.credentials.json`, which an ephemeral VM loses.
+   Anthropic's terms: Pro and Max are for "ordinary, individual usage";
+   your own token in your own sandbox, for yourself, is what `setup-token`
+   is documented for, but many tasks at once may stretch "ordinary", and
+   it must never serve other people (code.claude.com/docs: authentication,
+   headless, legal-and-compliance).
+4. *Branches.* As above. The repository must enforce the git tokens' rules
+   (a task's branch only; staging only for a merge): Artifacts' own tokens
+   are for the whole repository, so the VMs must push through Erga's Git
+   endpoint (#39), which then also sees staging move and starts its deploy.
+5. *Previews* run in the task's VM, from the clone, and stay up until the
+   merge or discard. Locally Docker publishes them on a port of the
+   loopback. On Cloudflare each VM has a host, `<vm>.<FACTORY_PREVIEW_DOMAIN>`
+   (a wildcard route to this Worker): the board's "Open preview" goes
+   through `/api/factory/tasks/<id>/open`, which gives a 12-hour ticket for
+   that host only; the Worker trades it for a cookie there, then sends each
+   request to the VM's port 4401 as if to localhost (the dev server in the
+   VM signs everyone in as its `DEV_LOGIN`, on localhost only, so the
+   ticket is what keeps it to admins).
+6. *The board* is the local one's, without live mode or the Branches column
+   (Merged shows the last 20 merged tasks; the Source page shows staging).
+
+**Risks.**
+
+- The Claude token is in the job's environment, so the task's own code, and
+  any command Claude Code runs, can read it. A prompt injection (from a page,
+  a dependency, a test fixture) could send it out while the VM has the
+  internet. It gives Claude usage on your plan, nothing else; revoke it from
+  claude.ai's settings and sign in again. Narrow the egress to what a task
+  needs (api.anthropic.com, the npm registry, Erga itself) once that list is
+  known.
+- `FACTORY_KEY` decrypts the token: it's a Worker secret, and anyone who can
+  read the Worker's secrets or run code in the Worker can read the token.
+- A task's git token can push its own branch only, but Claude Code in the
+  VM could still write anything to that branch: the merge is the review.
+- The preview is a dev server in which everyone is signed in: only the
+  ticket guards it.
+
+**Assessment.**
+
+Works (locally, end to end, in real containers): tasks as branches made from
+staging; VMs from a prepared image in under 2 seconds; the clone, the
+install, the real app headless in the VM, screenshots, push and report in
+about 10 seconds with the stand-in; merge into staging and the branch
+deleted; discard; more instructions on the same branch; tokens scoped to
+one task and one branch; the Claude token stored encrypted and never shown.
+
+Uncertain: the container API's exact names (the code uses only `running`,
+`start`, `getTcpPort(...).fetch` and `destroy`, and is not yet run on
+Cloudflare); the image's 2.2 GB on first push and pull; whether the Durable
+Object keeps a long merge going (it should resume from an alarm); the
+in-VM Chromium's memory with the dev server and Claude Code; the preview's
+documents (they run on `*.localhost` origins in the VM's dev server, which
+the preview host doesn't reach yet: the app opens, documents' pages don't).
+
+Might not work: real Claude Code never ran here (no sign-in on this machine
+was used, by design), so its first run may need prompt and flag fixes;
+`./test.sh` starts many dev servers at once and may be too slow, or run out
+of memory, on even a standard-4 VM (the prompt may have to ask for the
+tests that cover the change only); and the plan's usage limits with several
+tasks at once.
+
+**Runbook: the first real run.**
+
+1. #39 (Erga's own source) and #40 (staging deploys itself) are in. Change
+   one thing in code: `containersHost`'s repository must be #39's
+   `/git/erga.git` (Erga's own source, above), which must accept the
+   factory's git tokens with the rules in `dev/factory.ts` (`checkGitToken`,
+   `refsAllowed`) and allow `task/*` branches; today it refuses any branch
+   but staging and main. `/source` must still show only staging and main.
+   #39's endpoint calls `deployHook` itself on every push that moves
+   staging, so then drop the factory's own `deployHook("staging", commit)`
+   call after a merge.
+2. Set the key: `openssl rand -base64 32 | bunx cf workers secrets update FACTORY_KEY`
+   (on the account's Workers Paid plan, which has Containers).
+3. Build the image: `bun factory/vm/build.ts`, then push it to Cloudflare's
+   registry (`bunx wrangler containers push erga-factory:<tag>`).
+4. Declare the container in `cloudflare.config.ts`: export `FactoryVm`
+   (from `factory/cloudflare.ts`, re-exported in `worker/index.ts`) as a
+   Durable Object with a container (the image's registry tag, instance type
+   `standard-3`, at most 5 instances, internet on), the binding `FACTORY_VM`
+   to it, and `FACTORY_PREVIEW_DOMAIN` as text.
+5. Previews: a zone for them (e.g. `erga-factory.dev`) with a proxied
+   wildcard record (`*` AAAA `100::`) and a route `*.erga-factory.dev/*` to
+   the Worker; set `FACTORY_PREVIEW_DOMAIN` to it.
+6. Deploy to staging first (staging.erga.dev), never straight to erga.dev.
+7. On `/admin`, set `factory` to `on`; open `/admin/factory`. "VMs" should
+   say cloudflare.
+8. On your computer, run `claude setup-token`, sign in with your plan, and
+   paste the token on the board (Claude: not signed in, then Save).
+9. Add a small task (e.g. "Change the footer's wording"). Watch the log: VM
+   started, branch made, dependencies installed, Claude Code's progress,
+   preview, screenshots, ready to merge. Open the preview.
+10. Merge it. Check that staging has the merge commit, the branch is gone,
+    the VM stopped, and staging.erga.dev deployed it.
+11. If anything goes wrong: discard the task, set `factory` to `off`, and
+    "Sign out" on the board (which deletes the stored token); revoke the
+    token on claude.ai if it may have leaked.
 
 ## Local development
 
@@ -1898,6 +2133,9 @@ back, merging edits from disk, the agent's exact-match edits and attribution.
 - `deploy/page.ts`, `deploy/release.ts`, `deploy/mock.ts`, `deploy/seal.ts`, `worker/deploy.ts`,
   `worker/deployer.ts`: `/deploy`, deploying Erga to your own Cloudflare account (the page, the
   release, the pretend Cloudflare the tests use, Erga's own account included)
+- `factory/`, `worker/factory.ts`, `dev/factory.ts`: the factory (experimental), tasks done by
+  Claude Code in VMs: the board and prompt, the VM's image and scripts (`factory/vm/`), the
+  Containers host, the API and Durable Object, and the local repository and VMs
 - `account.ts`: who you are in the upper right of every page (avatar and menu, or sign in)
 - `directory.ts`: the directory of documents (addresses, titles, permissions, who may do what), over
   `Sql`; `worker/d1.ts` puts it on D1; its tables in `migrations/`, which `migrate.ts` applies to

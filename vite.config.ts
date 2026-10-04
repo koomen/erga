@@ -24,7 +24,8 @@ export default defineConfig({
   // Only this machine: in development anyone who reaches the server is signed in (DEV_LOGIN).
   // Agents' scratch copies of this repo (its .claude/worktrees) are no part of it. Only this checkout's own
   // .claude: a checkout that is itself one of those worktrees still watches its own files.
-  server: { host: "127.0.0.1", watch: { ignored: [(path: string) => path.startsWith(resolve(".claude") + sep)] } },
+  // host.docker.internal: the factory's local VMs (Docker containers, dev/factory.ts) calling back.
+  server: { host: "127.0.0.1", allowedHosts: ["host.docker.internal"], watch: { ignored: [(path: string) => path.startsWith(resolve(".claude") + sep)] } },
   plugins: [
     markdownAsText,
     ergaDev({
