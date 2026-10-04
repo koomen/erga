@@ -452,7 +452,7 @@ declare global {
     };
     // Events sent while the channel was down are gone; catch up from the transcript.
     // A rename missed meanwhile (or before it first opened) is caught up the same way.
-    events.onopen = () => { if (opened) loadAgent(); opened = true; refreshName(); };
+    events.onopen = () => { if (opened) loadAgent(); opened = true; refreshName(); stillHere(); };
     events.onclose = () => setTimeout(listen, 1000);
   }
   let opened = false;
@@ -466,6 +466,17 @@ declare global {
     const under = (p: string) => pagePath == p || pagePath.startsWith(`${p}/`);
     if (msg.moved && under(msg.moved.from)) location.replace(addressOf(msg.moved.to + pagePath.slice(msg.moved.from.length)));
     else if (msg.deleted && under(msg.deleted)) location.replace(addressOf(null));
+  }
+  /**
+   * Whether this page is still there, once the event channel is up (a move or delete may have gone by while
+   * it wasn't): if it moved, to where it went (the host remembers the latest moves); if it's gone, to the first page.
+   */
+  async function stillHere() {
+    const t = await fetch(api("/api/tree")).then((r) => r.ok ? r.json() as Promise<{ entries: { path: string }[]; moved?: { from: string; to: string }[] }> : null, () => null);
+    if (!t || t.entries.some((e) => e.path == pagePath)) return;
+    let at = pagePath;
+    for (const m of t.moved ?? []) if (at == m.from || at.startsWith(`${m.from}/`)) at = m.to + at.slice(m.from.length);
+    location.replace(addressOf(t.entries.some((e) => e.path == at) ? at : null));
   }
 
   // ---------------------------------------------------------------- presence

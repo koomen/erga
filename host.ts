@@ -104,10 +104,16 @@ export function makeHost(opts: HostOptions) {
   const sendAll = (msg: unknown) => { for (const t of tabs) t.send(msg); };
   // The tree changed, by anyone (a person, an agent, a publish, disk): every open tab refetches it.
   room.onTree(() => sendAll({ type: "tree" }));
+  /** The latest moves, for a tab that missed one while it was loading (GET /api/tree). */
+  const moves: { from: string; to: string }[] = [];
   /** Does a tree operation, as a person or their agent; open tabs hear what moved or went, to follow a page that did. */
   const tree = async (op: unknown) => {
     const done = await runTreeOp(room, op, { index: doc.path, only: opts.only, newPage: opts.newPage });
-    if (done.op == "move") sendAll({ type: "tree", moved: { from: done.from, to: done.to } });
+    if (done.op == "move") {
+      moves.push({ from: done.from, to: done.to });
+      if (moves.length > 50) moves.shift();
+      sendAll({ type: "tree", moved: { from: done.from, to: done.to } });
+    }
     else if (done.op == "delete") sendAll({ type: "tree", deleted: done.path });
     return done;
   };
@@ -265,7 +271,7 @@ export function makeHost(opts: HostOptions) {
     HttpRouter.route("GET", "/api/tree", Effect.gen(function* () {
       const req = yield* HttpServerRequest.HttpServerRequest;
       const canEdit = (opts.mayPublish?.(req) ?? true) && opts.only == null;
-      return yield* HttpServerResponse.json({ entries: entries(), canEdit }, { headers: { "Cache-Control": "no-store" } });
+      return yield* HttpServerResponse.json({ entries: entries(), canEdit, moved: moves }, { headers: { "Cache-Control": "no-store" } });
     })),
     // A tree operation: a new page or folder, a move (or rename), a delete. Editors only.
     HttpRouter.route("POST", "/api/tree", Effect.gen(function* () {
@@ -303,7 +309,9 @@ export function makeHost(opts: HostOptions) {
     // The document's folder: text files from the room, so a page always
     // loads the latest shared version, and everything else from storage.
     HttpRouter.route("GET", "/doc/*", Effect.gen(function* () {
-      const raw = (yield* HttpRouter.params)["*"] ?? "";
+      // The path as asked for, a slash at the end included (the router's parameter drops it).
+      const asked = new URL((yield* HttpServerRequest.HttpServerRequest).url, "http://doc").pathname;
+      const raw = asked.startsWith("/doc/") ? asked.slice("/doc/".length) : (yield* HttpRouter.params)["*"] ?? "";
       const rel = cleanRel(raw);
       // A page by its address (blog for blog.html or blog/index.html; the root page for none): sent to its
       // file, relatively, so the frame's address is the file's and the page's own relative links resolve.
