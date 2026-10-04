@@ -372,7 +372,8 @@ async function startPage(platform: Platform, session: Session | null): Promise<R
   .start .actions { display: flex; gap: 8px; }
   .start .pill { text-decoration: none; }
   .start .hint { margin-top: 28px; font-size: 13px; }
-  .start code { font-family: var(--font-mono); font-size: 12.5px; }`;
+  .start code { font-family: var(--font-mono); font-size: 12.5px; }
+  .start .hint a { color: inherit; }`;
   return new Response(appPage("Erga", style, `<main class="start">
   <header><h1>Erga</h1></header>
   <p>Pages you edit where they're rendered, together with your agents.</p>

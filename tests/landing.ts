@@ -42,7 +42,7 @@ try {
   const front = await (await get("/")).text();
   const src = /<iframe class="erga-landing" src="([^"]+)"/.exec(front)?.[1]?.replaceAll("&amp;", "&");
   expect(src && /^http:\/\/[a-z0-9]{8}-tester\.localhost:\d+\/t\/[^/]+\/doc\/index\.html$/.test(src), "/ frames the landing document on its own pages origin", front.slice(0, 1500));
-  expect(front.includes("<title>Editing Rendered Documents</title>") && front.includes('href="/new?from=landing"'), "titled by it, with an Edit button that copies it");
+  expect(front.includes("<title>Erga</title>") && front.includes('href="/new?from=landing"'), "titled by it, with an Edit button that copies it");
   const id = /^http:\/\/([a-z0-9]{8})-/.exec(src)![1];
   const served = await (await fetch(src.replace(/^http:\/\/[^/]+/, root), { headers: { Host: new URL(src).host } })).text();
   expect(served == landingHtml, "the frame serves the published landing/index.html", served.slice(0, 300));
@@ -58,7 +58,7 @@ try {
 
   // In a real browser: the front page shows the document, its own page in the frame.
   await p.open(`${root}/`, { width: 1100, height: 760, scale: 2 });
-  await until(async () => (await p.inFrames<string>(`document.querySelector("h1")?.textContent ?? ""`)).some((t) => t.includes("Editing Rendered Documents")), 15_000, "the landing page renders in its frame");
+  await until(async () => (await p.inFrames<string>(`document.querySelector("h1")?.textContent ?? ""`)).some((t) => t == "Erga"), 15_000, "the landing page renders in its frame");
   expect(await p.eval<boolean>(`!!document.querySelector("a.erga-edit-button[href='/new?from=landing']")`), "with the Edit button over it");
   await p.screenshot(join(SHOTS, "landing-front.png"));
   ok("in headless Chrome, / renders the landing document with an Edit button");
@@ -77,7 +77,7 @@ try {
   expect(token, "an admin's token, made at /tokens", minted.slice(0, 300));
   const project = join(scratch, "landing");
   cpSync(join(ROOT, "landing"), project, { recursive: true });
-  writeFileSync(join(project, "index.html"), landingHtml.replace("<h1", "<h1 data-deployed").replace(/<title>[^<]*<\/title>/, "<title>Deployed landing</title>"));
+  writeFileSync(join(project, "index.html"), landingHtml.replace("<h1>Erga</h1>", "<h1>Erga, deployed</h1>"));
   writeFileSync(join(project, "extra.css"), "body { outline: 0; }\n");
   const deploy = (env: Record<string, string>) => {
     const r = Bun.spawnSync(["bun", join(ROOT, "landing.ts"), root], { env: { ...process.env, ERGA_LANDING: project, ...env } as Record<string, string>, stdout: "pipe", stderr: "pipe" });
@@ -85,8 +85,9 @@ try {
   };
   let run = deploy({ ERGA_DEPLOY_TOKEN: token! });
   expect(run.code == 0 && run.out.includes("republished") && run.out.includes("/tester/landing"), "bun landing.ts republishes the project", run.out);
-  const again = await (await get("/")).text();
-  expect(again.includes(`${id}-tester.localhost`) && again.includes("<title>Deployed landing</title>"), "into the same document, which / now shows", again.slice(0, 800));
+  let again = "";
+  await until(async () => (again = await (await get("/")).text()).includes("<title>Erga, deployed</title>"), 10_000, "/ shows the republished page (its title follows the heading)", () => again.slice(0, 800));
+  expect(again.includes(`${id}-tester.localhost`), "into the same document", again.slice(0, 800));
   expect((await (await get(`/d/${id}/doc/extra.css`)).text()).includes("outline"), "with its new files");
   ok("bun landing.ts (the deploy's step) republishes a changed project into the same document");
 
@@ -115,8 +116,9 @@ try {
   await host.stop();
   await host.start();
   await until(() => /landing page: republished/.test(host.output()), 30_000, "the dev server republishes on restart", () => host.output().slice(-3000));
-  const restarted = await (await get("/")).text();
-  expect(restarted.includes(`${id}-tester.localhost`) && restarted.includes("<title>Editing Rendered Documents</title>"), "into the same document, back to the repo's landing/", restarted.slice(0, 800));
+  let restarted = "";
+  await until(async () => (restarted = await (await get("/")).text()).includes("<title>Erga</title>"), 10_000, "back to the repo's landing/", () => restarted.slice(0, 800));
+  expect(restarted.includes(`${id}-tester.localhost`), "into the same document", restarted.slice(0, 800));
   ok("restarted, the dev server republishes landing/ into the same document");
 
   // Unset, the front page is a plain start page (with a hint for admins).
