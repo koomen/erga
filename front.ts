@@ -1122,6 +1122,7 @@ export const ICON = {
   share: `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9.5" cy="8.5" r="3.5"/><path d="M3.5 19c.6-3.2 3-5 6-5s5.4 1.8 6 5"/><path d="M18.5 8v6M15.5 11h6"/></svg>`,
   close: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7 7 17"/></svg>`,
   plus: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>`,
+  chevron: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9.75 7.5 4.5 4.5-4.5 4.5"/></svg>`,
 };
 
 /** The page around a view (/docs, /admin): its title, the shared look and the view's own style. */
@@ -1156,7 +1157,7 @@ function docsPage(session: Session, docs: Listed[], now: number, hours: number |
     const [remove, label] = d.path != null ? ["Remove from the list", `Remove ${esc(d.title)} from the list`] : ["Delete", `Delete ${esc(d.title)}`];
     // The whole row opens the document (the link stretches over it); its buttons sit on top.
     return `  <li>
-    <div class="name"><a class="doc" href="${esc(link(`/${d.owner}/${d.slug}`, session))}#edit"><span class="title">${esc(d.title)}</span></a>${note}${mine ? sharedNote(d) : ""}</div>
+    <div class="name"><button type="button" class="twist" aria-expanded="false" aria-controls="pages-${esc(d.id)}" aria-label="Pages of ${esc(d.title)}" data-tip="Pages" data-id="${esc(d.id)}" data-base="/${esc(d.owner)}/${esc(d.slug)}" data-title="${esc(d.title)}"${d.role == "viewer" ? "" : " data-edit"}>${ICON.chevron}</button><a class="doc" href="${esc(link(`/${d.owner}/${d.slug}`, session))}#edit"><span class="title">${esc(d.title)}</span></a>${note}${mine ? sharedNote(d) : ""}</div>
     <time datetime="${when}">${ago(d.modified, now)}</time>
     <div class="acts">${mine ? `<button type="button" class="act share" aria-label="Share ${esc(d.title)}" data-tip="Share" data-id="${esc(d.id)}" data-title="${esc(d.title)}" data-address="/${esc(d.owner)}/${esc(d.slug)}">${ICON.share}</button>
     <form method="post" action="${esc(link("/docs/delete", session))}" data-title="${esc(d.title)}"${d.path != null ? " data-disk" : ""}><input type="hidden" name="id" value="${esc(d.id)}"><button class="act delete" aria-label="${label}" data-tip="${remove}">${ICON.delete}</button></form>` : ""}</div>
@@ -1175,6 +1176,18 @@ function docsPage(session: Session, docs: Listed[], now: number, hours: number |
   .doc::after { content: ""; position: absolute; inset: 0; }
   .acts { position: relative; z-index: 1; }
   .name { gap: 12px; }
+  /* A document's pages (pages-tree.js, loaded when first asked for): the chevron left of its title opens them beneath its row. */
+  .twist { position: relative; z-index: 1; flex: none; display: grid; place-items: center; width: 22px; height: 22px; margin: 0 -8px 0 -4px; padding: 0; border: 0; border-radius: 6px;
+    background: transparent; color: var(--chrome); cursor: pointer; transition: color 120ms ease, background-color 120ms ease; }
+  .twist svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; transition: transform 150ms ease; }
+  .twist:hover { color: var(--chrome-hover); background: color-mix(in srgb, var(--chrome) 14%, transparent); }
+  .twist[aria-expanded="true"] svg { transform: rotate(90deg); }
+  .twist:focus-visible { outline: 2px solid var(--caret); outline-offset: 1px; }
+  .labels span:first-child { padding-left: 22px; }
+  ol.rows > li.sub { display: block; padding: 0 0 10px 18px; }
+  .sub-tree { max-width: 560px; }
+  .sub-tree.error { margin: 0; font-size: 13px; color: #c2410c; }
+  @media (pointer: coarse) { .twist { width: 34px; height: 34px; margin: 0 -10px 0 -10px; } }
   .title { transition: color 120ms ease; }
   li:hover .title { color: var(--link); }
   .note, .shared { padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 500; color: var(--soft); background: color-mix(in srgb, var(--chrome) 13%, transparent); }
@@ -1308,6 +1321,42 @@ function docsPage(session: Session, docs: Listed[], now: number, hours: number |
   });
   share.querySelector(".done").addEventListener("click", () => share.close());
   share.addEventListener("close", () => { if (changed) location.reload(); });
+  // A document's pages, beneath its row: the tree (pages-tree.js), loaded the first time one is opened (or the pointer heads for one).
+  // Pages open in the editor for those who may edit, in the viewer otherwise. Which are open is remembered for the tab.
+  let treeJs = null;
+  const loadTree = () => window.ergaTree ? Promise.resolve(window.ergaTree) : (treeJs ??= new Promise((ok, no) => {
+    const s = Object.assign(document.createElement("script"), { src: "/pages-tree.js" });
+    s.onload = () => window.ergaTree ? ok(window.ergaTree) : no(new Error("Couldn't load the pages."));
+    s.onerror = () => { treeJs = null; s.remove(); no(new Error("Couldn't load the pages: check your connection and try again.")); };
+    document.head.append(s);
+  }));
+  const treeQuery = ${JSON.stringify(session.as ? `?user=${encodeURIComponent(session.as)}` : "")};
+  const openKey = "erga:docs-open";
+  const opened = new Set((() => { try { return JSON.parse(sessionStorage.getItem(openKey) || "[]"); } catch { return []; } })());
+  const saveOpened = () => { try { sessionStorage.setItem(openKey, JSON.stringify([...opened])); } catch {} };
+  const trees = new Map();
+  async function showPages(b, open) {
+    const id = b.dataset.id;
+    b.setAttribute("aria-expanded", String(open));
+    if (open) opened.add(id); else opened.delete(id);
+    saveOpened();
+    let sub = document.getElementById("pages-" + id);
+    if (sub) { sub.hidden = !open; if (open) trees.get(id)?.refresh(); return; }
+    if (!open) return;
+    sub = Object.assign(document.createElement("li"), { id: "pages-" + id, className: "sub" });
+    const box = Object.assign(document.createElement("div"), { className: "sub-tree" });
+    sub.append(box);
+    b.closest("li").after(sub);
+    try {
+      const t = await loadTree();
+      trees.set(id, t.mountTree(box, { id, base: b.dataset.base, editing: "edit" in b.dataset, query: treeQuery, rootTitle: b.dataset.title, label: "Pages of " + b.dataset.title }));
+    } catch (e) { box.className = "sub-tree error"; box.textContent = e.message; }
+  }
+  for (const b of document.querySelectorAll("button.twist")) {
+    b.addEventListener("pointerenter", () => loadTree().catch(() => {}), { once: true });
+    b.addEventListener("click", () => showPages(b, b.getAttribute("aria-expanded") != "true"));
+    if (opened.has(b.dataset.id)) showPages(b, true);
+  }
 </script>`);
 }
 
