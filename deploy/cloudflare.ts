@@ -352,7 +352,7 @@ export async function deploy(cf: Cloudflare, release: Release, plan: DeployPlan,
     } catch (e) {
       throw new DeployError(`The server is up, but publishing its front page failed: ${(e as Error).message}. Sign in and choose a front page on its admin page, or deploy again.`);
     } finally {
-      await tokens.revoke(plan.admin.toLowerCase(), info.id).catch(() => {});
+      await d1(cf, acc, dbId, "DELETE FROM agent_tokens WHERE id = ?1", [info.id], "delete the deploy's token").catch(() => {});
     }
   }
   return { url: `https://${host}`, pages: pagesShown(plan), database: dbId, worker: plan.workerName };

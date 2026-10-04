@@ -92,13 +92,14 @@ const STYLE = `
   dialog p { margin: 0 0 12px; }
   dialog .price { font-size: 22px; font-weight: 650; color: var(--fg-strong); }
   dialog label.check { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; color: var(--fg); margin: 0 0 14px; }
+  dialog label.check input { flex: none; width: auto; padding: 0; margin: 2px 0 0; }
   dialog button:disabled { opacity: 0.45; cursor: default; }
   @media (max-width: 520px) { .step { padding-left: 36px; } dl.review { grid-template-columns: 1fr; } dl.review dt { margin-top: 6px; } }
 `;
 
 export function deployPage(c: DeployPageConfig): string {
   const perms = c.permissions.map((p) => `<li><b>${esc(label(p.key))}</b> (${p.type == "read" ? "read" : "edit"}): ${esc(p.why)}</li>`).join("");
-  const body = `<main>
+  const body = `<a class="brand" href="/">Erga</a><main>
   <header><div><h1>Deploy your own Erga</h1><p class="sub">A copy of this server on your own Cloudflare account, with you (${esc(c.login)}) as its admin.</p></div><a class="back" href="/docs">‹ Documents</a></header>
   <p class="banner"><span>⚗︎</span><span><b>Experimental.</b> ${c.mode == "users" ? "Everyone signed in can use this page" : "Only this server's admins can see this page"} (the <code>deploy_page</code> setting on Admin). It deploys the same Worker, database and settings erga.dev runs${c.release ? `, release <code>${esc(c.release.version)}</code>` : ""}.</span></p>
   ${c.mock ? `<p class="banner mock" id="mock-banner"><span>◎</span><span><b>Pretend Cloudflare.</b> This local server talks to a mock (<code>ERGA_DEPLOY_MOCK=1</code>): nothing is deployed and nothing is bought. Any token starting <code>mock-</code> works; <code>mock-noperm</code>, <code>mock-nosub</code> and <code>mock-fail-assets</code> (or any step) show what goes wrong.</span></p>` : ""}

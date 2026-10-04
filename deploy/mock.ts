@@ -58,7 +58,7 @@ export function mockCloudflare(opts: { delayMs?: number } = {}): { fetch: Fetch;
     const step = stepOf(m, path);
     if (failAt && failAt == step) return fail(500, 10013, "An unknown error has occurred");
     let r: RegExpExecArray | null;
-    if (m == "GET" && path == "/accounts") return ok([state.account]);
+    if (m == "GET" && /^\/accounts(\?|$)/.test(path)) return ok([state.account]);
     if (m == "GET" && path == "/user/tokens/verify") return ok({ status: "active" });
     if ((r = /^\/accounts\/([^/]+)(\/.*)?$/.exec(path))) {
       if (r[1] != ACCOUNT_ID) return fail(403, 9109, "Unauthorized to access requested resource");

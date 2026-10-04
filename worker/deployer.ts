@@ -18,12 +18,12 @@ import {
   type DeployPlan, type Deployed, type DomainOffer, type Fetch, type StepId,
 } from "../deploy/cloudflare";
 import { mockCloudflare, type MockState } from "../deploy/mock";
+import { open, randomSecret, seal, type Sealed } from "../deploy/seal";
 import type { Env } from "./env";
 
 const SESSION = "session", RUN = "run";
 const LIFETIME_MS = 2 * 60 * 60 * 1000;
 
-interface Sealed { iv: string; data: string }
 interface Session { owner: string; via: "oauth" | "token"; created: number; sealed: Sealed | null; accounts: { id: string; name: string }[] }
 
 export type StepState = { id: StepId; title: string; status: "pending" | "running" | "done" | "skipped" | "failed"; detail?: string };
@@ -140,11 +140,12 @@ export class Deployer extends DurableObject<Env> {
     plan = { ...plan, admin: owner };
     const wrong = checkPlan(plan);
     if (wrong) return { ok: false, error: wrong };
+    let unreadable = "";
     const release = await loadRelease(async (path) => {
-      const r = await this.env.ASSETS.fetch(new Request(`https://assets.invalid/release/${path.split("/").map(encodeURIComponent).join("/")}`));
+      const r = await this.env.ASSETS.fetch(new Request(`http://localhost/release/${path.split("/").map(encodeURIComponent).join("/")}`));
       return r.ok ? new Uint8Array(await r.arrayBuffer()) : null;
-    }).catch(() => null);
-    if (!release) return { ok: false, error: "This server has no release to deploy (it's built with the server's deploy: bun deploy/release.ts)." };
+    }).catch((e) => { unreadable = message(e); return null; });
+    if (!release) return { ok: false, error: unreadable || "This server has no release to deploy (it's built with the server's deploy: bun deploy/release.ts)." };
     const run: RunState & { owner: string } = {
       owner: owner.toLowerCase(), status: "running", started: Date.now(),
       steps: STEPS.map((s) => ({ id: s.id, title: s.title, status: "pending" })),
@@ -200,18 +201,3 @@ export class Deployer extends DurableObject<Env> {
 }
 
 const message = (e: unknown) => (e instanceof DeployError ? e.message : `Something went wrong: ${(e as Error)?.message ?? e}. Try again.`);
-
-const randomSecret = () => b64u(crypto.getRandomValues(new Uint8Array(32)));
-const b64u = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-const unb64u = (s: string) => Uint8Array.from(atob(s.replace(/-/g, "+").replace(/_/g, "/")), (c) => c.charCodeAt(0));
-const aes = (key: string) => crypto.subtle.importKey("raw", unb64u(key), "AES-GCM", false, ["encrypt", "decrypt"]);
-
-/** Seals the token with the session's key (made by the front door from the browser's half and SESSION_SECRET). */
-export async function seal(token: string, key: string): Promise<Sealed> {
-  const iv = crypto.getRandomValues(new Uint8Array(12));
-  const data = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv }, await aes(key), new TextEncoder().encode(token)));
-  return { iv: b64u(iv), data: b64u(data) };
-}
-export async function open(sealed: Sealed, key: string): Promise<string> {
-  return new TextDecoder().decode(await crypto.subtle.decrypt({ name: "AES-GCM", iv: unb64u(sealed.iv) }, await aes(key), unb64u(sealed.data)));
-}
