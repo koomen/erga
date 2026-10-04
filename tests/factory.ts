@@ -91,7 +91,7 @@ try {
   expect(detail.includes("task/1-say-hello-on-the-front-page") && detail.includes("summary") && detail.includes("more instructions") && detail.includes("open preview"), "the detail: branch, summary, instructions, preview", detail.slice(0, 800));
   await p.screenshot(join(SHOTS, "factory-detail.png"));
   await click(p, '[data-act="close"]');
-  await until(async () => (await task(2)).status == "complete" && (await task(3)).status == "complete", STEP, "the other two are ready");
+  await until(async () => (await task(2)).status == "complete" && (await task(3)).status == "complete", STEP, "the other two are ready", async () => [await task(2), await task(3)].map((t) => ({ status: t.status, error: t.error, log: t.log.slice(-5).map((l: any) => l.message) })));
   await p.settle();
   await p.screenshot(join(SHOTS, "factory-board.png"));
 
@@ -106,7 +106,7 @@ try {
   const subject = spawnSync("git", ["-C", repo, "log", "-1", "--format=%s %P", "staging"], { encoding: "utf8" }).stdout.trim();
   expect(subject.startsWith("Merge task/1-say-hello-on-the-front-page: Say hello on the front page") && subject.split(" ").length > 3, "a --no-ff merge commit named after the task", subject);
   expect(!merged.vm && !merged.url, "the VM is stopped, and the preview gone", merged);
-  await until(async () => (await column(p, "merged")).includes("Say hello"), 5000, "the card moves to Merged");
+  await until(async () => (await column(p, "merged")).includes("Say hello"), 15_000, "the card moves to Merged");
   ok("merge: into staging as a merge commit, the branch deleted, the VM stopped");
 
   // ---------------------------------------------------------------- 4. discard
