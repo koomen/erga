@@ -13,8 +13,12 @@
 // its order, which commits are only local, done tasks matched to their merge
 // commits, live updates on a commit, a push, a fetch and a merge, and the
 // board (Branches in place of a Done column) in headless Chrome.
+// Last, a queue run from a throwaway repo's own copy of its code: merging a
+// change to that code restarts it with the new code (after the merge queued
+// behind, once), keeping tasks, previews and a board connected in headless
+// Chrome (which loads the new board); other merges don't restart it.
 
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Browser } from "../../tests/cdp.ts";
@@ -54,6 +58,7 @@ const until = async (id: number, pred: (t: any) => boolean) => {
 };
 
 let watcher: ReturnType<typeof Bun.spawn> | undefined;
+let selfPid = 0;
 try {
   await waitUp();
   const about = await api("GET", "/api");
@@ -264,8 +269,97 @@ try {
     check(top[0] == "One more (local)" && top[1] == `#${t6.id}Fresh merge`, `a new commit appears at the top of the board, live (${top})`);
     check(page.errors.length == 0, `no errors on the board (${page.errors})`);
   } finally { browser.close(); }
+
+  // ---- Restarting itself after a merge of its own code ----------------------
+  // A second throwaway repo carrying the queue's code, run from there, as the real one runs from the main checkout.
+  const repo2 = join(tmp, "repo2"), origin2 = join(tmp, "origin2.git"), data2 = join(tmp, "data2"), code2 = join(repo2, "development/task-queue");
+  sh(`git init -q --bare -b main ${origin2}`, tmp);
+  sh(`git init -q -b main ${repo2} && cd ${repo2} && git config user.email t@t && git config user.name t && mkdir -p ${code2} && cp ${join(import.meta.dir, "server.ts")} ${join(import.meta.dir, "index.html")} ${join(import.meta.dir, "tq")} ${join(import.meta.dir, "README.md")} ${code2}/ && echo app > app.txt && git add . && git commit -qm init && git remote add origin ${origin2} && git push -q origin main`, tmp);
+  const port2 = port == 4798 ? 4790 : port + 1, base2 = `http://127.0.0.1:${port2}`;
+  const env2 = { ...env, TASK_QUEUE_PORT: String(port2), TASK_QUEUE_REPO: repo2, TASK_QUEUE_DATA: data2 };
+  const api2 = async (method: string, path: string, body?: unknown) => {
+    const r = await fetch(base2 + path, { method, headers: { "content-type": "application/json" }, body: body ? JSON.stringify(body) : undefined });
+    return { ...(await r.json()), code: r.status };
+  };
+  const until2 = async (id: number, pred: (t: any) => boolean, tries = 100) => {
+    for (let i = 0; i < tries; i++) { try { const t = await api2("GET", `/api/tasks/${id}`); if (pred(t)) return t; } catch {} await Bun.sleep(100); }
+    return api2("GET", `/api/tasks/${id}`);
+  };
+  const pidNow = async () => { try { return (await api2("GET", "/api")).pid; } catch { return 0; } };
+  mkdirSync(data2, { recursive: true });
+  const log2fd = openSync(join(data2, "server.log"), "a"); // as tq starts it
+  Bun.spawn(["bun", join(code2, "server.ts")], { env: env2, stdout: log2fd, stderr: log2fd });
+  for (let i = 0; i < 50 && !(selfPid = await pidNow()); i++) await Bun.sleep(100);
+  const pid0 = selfPid;
+  check(pid0 > 0, "a queue runs from the throwaway repo's own copy of its code");
+  const preview2 = (text: string) => `bun -e 'Bun.serve({port: Number(process.env.PORT), fetch: () => new Response("${text}")})'`;
+  const mergeAndWait = async (id: number) => { await api2("PATCH", `/api/tasks/${id}`, { status: "complete" }); await api2("POST", `/api/tasks/${id}/merge`); return until2(id, (t) => t.status != "merging", 200); };
+
+  // A task still being worked on, with its preview running: it must carry on through the restart.
+  const k = await api2("POST", "/api/tasks", { title: "Keeps working" });
+  await api2("POST", `/api/tasks/${k.id}/preview`, { command: preview2("still here") });
+  const kUp = await until2(k.id, (t) => t.previewUp);
+  check(kUp.previewUp, "the working task's preview is up");
+
+  // Merging other code, and the queue's docs, doesn't restart it.
+  const a = await api2("POST", "/api/tasks", { title: "Docs and app" });
+  sh(`echo more >> app.txt && echo "More docs." >> development/task-queue/README.md && git commit -qam docs`, a.worktree);
+  check((await mergeAndWait(a.id)).status == "merged", "a change to the app and the queue's docs merges");
+  await Bun.sleep(1500);
+  check((await pidNow()) == pid0, "and the queue doesn't restart for it");
+
+  // A board, connected.
+  const browser2 = await Browser.launch();
+  try {
+    const page = await browser2.page();
+    await page.open(base2 + "/", { width: 1400, height: 800, clear: false });
+    await Bun.sleep(500);
+    check(await page.eval(`document.getElementById("live").textContent == "live" && !document.body.dataset.v2`), "the board is connected");
+
+    // Two merges: one changes the server and the board, the other (queued behind it) only the app.
+    const b = await api2("POST", "/api/tasks", { title: "New server code" });
+    sh(`sed -i '' 's/Local task queue for agents/Local task queue (v2) for agents/' development/task-queue/server.ts && sed -i '' 's/^connect();$/document.body.dataset.v2 = "yes"; connect();/' development/task-queue/index.html && git commit -qam v2`, b.worktree);
+    const c = await api2("POST", "/api/tasks", { title: "Behind it" });
+    sh(`echo behind > behind.txt && git add . && git commit -qm behind`, c.worktree);
+    for (const id of [b.id, c.id]) await api2("PATCH", `/api/tasks/${id}`, { status: "complete" });
+    await api2("POST", `/api/tasks/${b.id}/merge`);
+    await api2("POST", `/api/tasks/${c.id}/merge`);
+    let pid1 = 0;
+    for (let i = 0; i < 300; i++) { pid1 = await pidNow(); if (pid1 && pid1 != pid0) break; await Bun.sleep(100); }
+    check(pid1 && pid1 != pid0, `merging a change to the queue's code restarts it (pid ${pid0} → ${pid1})`);
+    selfPid = pid1 || selfPid;
+    const about2 = await api2("GET", "/api");
+    check(about2.about.includes("(v2)"), "the restarted queue runs the new code");
+    const [mb, mc] = [await api2("GET", `/api/tasks/${b.id}`), await api2("GET", `/api/tasks/${c.id}`)];
+    check(mb.status == "merged" && mc.status == "merged", `both merges finished before the restart (${mb.status}, ${mc.status})`);
+    check(mb.log.some((l: any) => /Branch .* deleted/.test(l.message)) && mc.log.some((l: any) => /Branch .* deleted/.test(l.message)) && !existsSync(b.worktree) && !existsSync(c.worktree), "and each merge's clean-up was done first");
+    check(sh(`git --git-dir=${origin2} log --oneline main`).includes(`Merge task/${c.id}-`), "and pushed");
+    const log2 = readFileSync(join(data2, "server.log"), "utf8");
+    check((log2.match(/^restarting with the new code/gm) ?? []).length == 1 && log2.indexOf(`#${b.id} changed the queue's code`) < log2.indexOf(`#${c.id} merged`) && log2.indexOf(`#${c.id} merged`) < log2.indexOf("restarting with the new code"), "it restarted once, after the merge queued behind");
+    const tasks2 = await api2("GET", "/api/tasks");
+    check(Object.keys(tasks2).filter((x) => x != "code").length == 4, "the restarted queue has every task");
+    const k2 = await api2("GET", `/api/tasks/${k.id}`);
+    check(k2.status == "queued" && k2.preview?.pid == kUp.preview.pid && (await (await fetch(`http://localhost:${k.port}/`)).text()) == "still here", "the working task's preview carried on through the restart");
+    check((await until2(k.id, (t) => t.previewUp)).previewUp, "and the new queue sees it up");
+    for (let i = 0; i < 50 && !(await page.eval(`document.body.dataset.v2 == "yes" && document.getElementById("live").textContent == "live"`)); i++) await Bun.sleep(100);
+    check(await page.eval(`document.body.dataset.v2 == "yes" && document.getElementById("live").textContent == "live"`), "the board reconnected, and loaded the new board");
+    const n = await api2("POST", "/api/tasks", { title: "After the restart" });
+    await Bun.sleep(500);
+    check(await page.eval(`document.body.textContent.includes("After the restart")`), "and follows changes live again");
+    await api2("POST", `/api/tasks/${n.id}/discard`);
+
+    // The restarted queue merges a non-queue change without restarting again.
+    const e = await api2("POST", "/api/tasks", { title: "Plain change" });
+    sh(`echo plain > plain.txt && git add . && git commit -qm plain`, e.worktree);
+    check((await mergeAndWait(e.id)).status == "merged", "the restarted queue merges");
+    await Bun.sleep(1500);
+    check((await pidNow()) == pid1, "and a merge that leaves its code alone doesn't restart it");
+    check(page.errors.length == 0, `no errors on the board (${page.errors})`);
+  } finally { browser2.close(); }
+  await api2("POST", `/api/tasks/${k.id}/discard`);
 } finally {
   server.kill();
+  if (selfPid) try { process.kill(selfPid); } catch {}
   try { watcher?.kill(); } catch {}
   rmSync(tmp, { recursive: true, force: true });
 }

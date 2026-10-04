@@ -23,6 +23,13 @@
 // TASK_QUEUE_INSTALL=0 (don't set up node_modules in new worktrees),
 // TASK_QUEUE_FETCH (seconds between `git fetch origin main`, for the Branches
 // column's view of origin/main; 60, 0 for never).
+//
+// After a merge that changes the queue's own code (in this directory: not
+// docs, mod/ or its tests), the queue restarts itself, so it runs the new
+// code: once nothing else is merging and no request is in flight, it spawns
+// a fresh server (detached, logging to data/server.log) and exits; the new
+// one waits for the old to be gone before it reads the state and listens.
+// Previews run in their own process groups, so they carry on through it.
 
 import { spawn as spawnDetached } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
@@ -41,6 +48,17 @@ const PREVIEW = process.env.TASK_QUEUE_PREVIEW ?? "bun start --port $PORT --no-o
 const CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 const FETCH_EVERY = Number(process.env.TASK_QUEUE_FETCH ?? 60);
 for (const dir of [SHOTS, LOGS]) mkdirSync(dir, { recursive: true });
+
+// Started by a self-restart: wait for the old server to save, exit and let go of the port, then read the state.
+const restartedFrom = Number(process.env.TASK_QUEUE_RESTARTED_FROM) || 0;
+delete process.env.TASK_QUEUE_RESTARTED_FROM; // not for previews, nor the next restart
+if (restartedFrom) {
+  const alive = () => { try { process.kill(restartedFrom, 0); return true; } catch { return false; } };
+  for (let i = 0; i < 600 && alive(); i++) await Bun.sleep(50);
+  for (let i = 0; i < 100 && !(await portFree(PORT)); i++) await Bun.sleep(50);
+  // Something else got there first (a tq command that found the queue down started the same code): leave it to that one.
+  if (!(await portFree(PORT))) { console.log(`restart: something already listens on ${PORT}; leaving it be`); process.exit(0); }
+}
 
 type Status = "queued" | "working" | "complete" | "merging" | "merged" | "failed" | "discarded";
 /** What an agent may set; the rest the queue sets itself (merging and merged on merge, discarded on discard). */
@@ -158,11 +176,15 @@ async function setUpWorktree(task: Task) {
   }
 }
 
+/** Previews told to stop, still to be killed if they haven't (a restart waits for these). */
+const stopping = new Set<number>();
+
 function stopPreview(task: Task) {
   if (!task.preview) return;
   try { process.kill(-task.preview.pid, "SIGTERM"); } catch {}
   const { pid } = task.preview;
-  setTimeout(() => { try { process.kill(-pid, "SIGKILL"); } catch {} }, 5000);
+  stopping.add(pid);
+  setTimeout(() => { try { process.kill(-pid, "SIGKILL"); } catch {} stopping.delete(pid); }, 5000);
   touch(task, { preview: undefined, previewUp: false }, "Preview stopped");
 }
 
@@ -353,6 +375,7 @@ async function merge(task: Task) {
     const head = await git(REPO, "rev-parse", "--abbrev-ref", "HEAD");
     if (head != MAIN) throw new Error(`${REPO} is on ${head}, not ${MAIN}: switch it back to merge`);
     const origin = (await run(["git", "remote", "get-url", "origin"], REPO)).ok;
+    const before = await git(REPO, "rev-parse", "HEAD");
     // Main (local and pushed) into the branch first, where conflicts can be settled away from the main checkout...
     if (origin) { await git(REPO, "fetch", "origin", MAIN); await mergeInto(task, `origin/${MAIN}`); }
     await mergeInto(task, MAIN);
@@ -364,9 +387,48 @@ async function merge(task: Task) {
     touch(task, { status: "merged", commit, mergedAt: new Date().toISOString() }, `Merged into ${MAIN} as ${commit}${origin ? " and pushed" : ""}`);
     await refresh();
     await cleanUp(task, false);
+    console.log(`#${task.id} merged as ${commit}`);
+    const changed = await queueCodeChanged(before, "HEAD");
+    if (changed.length) { restartWanted = true; console.log(`#${task.id} changed the queue's code (${changed.join(", ")}): restarting once nothing else is merging`); }
   } catch (e) {
     touch(task, { status: "complete", error: (e as Error).message }, `Merge failed: ${(e as Error).message}`);
   }
+}
+
+// ---- restarting after a merge of the queue's own code ----------------------
+
+/** This directory, relative to the main checkout, if the server runs from there (else a merge can't change the code it runs). */
+const CODE_DIR = (() => {
+  try { return gitSync(HERE, "rev-parse", "--show-toplevel") == gitSync(REPO, "rev-parse", "--show-toplevel") ? gitSync(HERE, "rev-parse", "--show-prefix") : undefined; } catch { return undefined; }
+})();
+
+/** Files the server, the board or tq run: everything here but docs, the Claude Code mod, the tests and the sample, and the data. */
+const isQueueCode = (file: string) => !/\.md$/i.test(file) && !/^(mod|data)\//.test(file) && !["test.ts", "sample.ts", ".gitignore"].includes(file);
+
+async function queueCodeChanged(from: string, to: string) {
+  if (!CODE_DIR) return [];
+  const r = await run(["git", "diff", "--name-only", `${from}..${to}`, "--", CODE_DIR], REPO);
+  return r.out.split("\n").filter(Boolean).map((f) => f.slice(CODE_DIR.length)).filter(isQueueCode);
+}
+
+let restartWanted = false, restarting = false, inFlight = 0;
+
+/**
+ * Runs after every merge (on mergeLock): once a merge has changed the queue's
+ * code and nothing else is merging, waits for requests in flight and previews
+ * being stopped, then starts a fresh server and exits.
+ */
+async function restartIfWanted() {
+  if (!restartWanted || restarting || store.tasks.some((t) => t.status == "merging")) return;
+  restarting = true;
+  for (let i = 0; i < 300 && (inFlight > 0 || stopping.size); i++) await Bun.sleep(100);
+  if (store.tasks.some((t) => t.status == "merging")) { restarting = false; return; } // one was asked for meanwhile: after it
+  console.log(`restarting with the new code (pid ${process.pid})`);
+  save();
+  const out = openSync(join(DATA, "server.log"), "a");
+  spawnDetached(process.execPath, [join(HERE, "server.ts")], { cwd: process.cwd(), detached: true, stdio: ["ignore", out, out], env: { ...process.env, TASK_QUEUE_RESTARTED_FROM: String(process.pid) } }).unref();
+  for (const c of clients) try { c.close(); } catch {}
+  process.exit(0);
 }
 
 /** Stops the preview and removes the worktree and branch (force: even unmerged, for a discarded task). */
@@ -397,6 +459,8 @@ const API = {
     discarded: "dropped by the user",
   },
   board: `http://localhost:${PORT}/`,
+  pid: process.pid,
+  restart: "after a merge that changes the queue's own code, it restarts itself (new pid) once nothing else is merging; tasks and previews carry on",
   columns: { Queued: ["queued"], Working: ["working", "failed"], "Ready to merge": ["complete"], Merging: ["merging"], Branches: "main's latest commits (GET /api/history): a merged task shows on its merge commit; older merged tasks and discarded ones aren't shown" },
   endpoints: {
     "GET /api": "this description",
@@ -411,7 +475,7 @@ const API = {
     "POST /api/tasks/:id/merge": "for a complete (or failed) task: status merging at once (202), then, in the background and one merge at a time, merge main into the branch (claude -p resolves conflicts), merge the branch into main, push, and remove the worktree and branch: status merged. A failed merge goes back to complete with error. Watch the task.",
     "POST /api/tasks/:id/discard": "drop the task: stops its preview, removes its worktree and deletes its branch",
     "GET /api/history": `main's history, for the board's Branches column: {commits: the latest ${SHOWN} on main's first-parent line, newest first, each {sha, short, subject, at, task?: the task whose merge it is, remote: whether origin/main has it}, tasks: {id: {sha, short, index, remote}} for tasks merged in main's latest ${MATCHED}, unpushed, behind, origin}. origin/main is fetched every ${FETCH_EVERY || "(never)"}s (TASK_QUEUE_FETCH).`,
-    "GET /api/events": "server-sent events: a `tasks` event with every task and a `history` event with GET /api/history, on connect and on each change",
+    "GET /api/events": "server-sent events: a `version` event (the board's own, which reloads when it changes), a `tasks` event with every task and a `history` event with GET /api/history, on connect and on each change",
   },
 };
 
@@ -441,7 +505,9 @@ async function handle(req: Request): Promise<Response> {
     return new Response(new ReadableStream({
       start(c) {
         ctrl = c; clients.add(c);
-        c.enqueue(encoder.encode(`retry: 1000\nevent: tasks\ndata: ${JSON.stringify(store.tasks)}\n\nevent: history\ndata: ${JSON.stringify(history)}\n\n`));
+        // The board's version first: a board from older code reloads itself (say, after a restart with new code).
+        const version = Bun.hash(readFileSync(join(HERE, "index.html"))).toString(36);
+        c.enqueue(encoder.encode(`retry: 1000\nevent: version\ndata: ${JSON.stringify(version)}\n\nevent: tasks\ndata: ${JSON.stringify(store.tasks)}\n\nevent: history\ndata: ${JSON.stringify(history)}\n\n`));
         beat = setInterval(() => { try { c.enqueue(encoder.encode(": beat\n\n")); } catch { clearInterval(beat); } }, 15000);
       },
       cancel() { clients.delete(ctrl); clearInterval(beat); },
@@ -520,7 +586,7 @@ async function handle(req: Request): Promise<Response> {
     if (!task.branch) return fail(409, "task has no branch");
     const ahead = store.tasks.filter((t) => t.status == "merging").map((t) => `#${t.id}`);
     touch(task, { status: "merging", error: undefined }, ahead.length ? `Merge requested: waiting for ${ahead.join(", ")} to merge first` : "Merge requested");
-    mergeLock = mergeLock.then(() => merge(task));
+    mergeLock = mergeLock.then(() => merge(task)).then(restartIfWanted);
     return json(task, 202);
   }
   if (task && action == "discard" && req.method == "POST") {
@@ -532,5 +598,12 @@ async function handle(req: Request): Promise<Response> {
   return fail(404, `no route ${req.method} ${path} (GET /api lists them)`);
 }
 
-Bun.serve({ port: PORT, hostname: "127.0.0.1", idleTimeout: 0, fetch: (req) => handle(req).catch((e) => fail(500, (e as Error).message)) });
-console.log(`task queue on http://localhost:${PORT}  (repo ${REPO}, data ${DATA})`);
+/** Requests in flight (a restart waits for them), but not the event streams, which stay open. */
+async function counted(req: Request) {
+  if (new URL(req.url).pathname == "/api/events") return handle(req);
+  inFlight++;
+  try { return await handle(req); } catch (e) { return fail(500, (e as Error).message); } finally { inFlight--; }
+}
+
+Bun.serve({ port: PORT, hostname: "127.0.0.1", idleTimeout: 0, fetch: counted });
+console.log(`task queue on http://localhost:${PORT}  (repo ${REPO}, data ${DATA}, pid ${process.pid})${restartedFrom ? `, restarted from pid ${restartedFrom}` : ""}`);
