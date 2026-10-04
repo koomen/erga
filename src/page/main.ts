@@ -1660,8 +1660,17 @@ Once you've read the guide, await further instructions.`;
     stopVoice();
     showChrome();
   }
-  if (editing()) openAgentOnEntry();
-  else setEditing(false);
+  // Loaded in the editor: a reload (or back/forward) keeps things as they
+  // were, the pane put back as it was left, unanimated; arriving here from
+  // elsewhere is coming into the editor, and the agent grows out as above.
+  if (!editing()) setEditing(false);
+  else if (["reload", "back_forward"].includes((performance.getEntriesByType("navigation")[0] as PerformanceNavigationTiming | undefined)?.type ?? "")) {
+    if (settings.agent) {
+      document.body.classList.add("no-motion");
+      showAgent(true);
+      requestAnimationFrame(() => requestAnimationFrame(() => document.body.classList.remove("no-motion")));
+    }
+  } else openAgentOnEntry();
 
   started = true;
   presenceChanged();
