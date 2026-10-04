@@ -1,11 +1,12 @@
 # Writing Erga documents
 
 Rules for an agent creating or editing an Erga document so that people
-can keep editing it by hand in the page editor. A document is a folder (or a
-single file) with an `index.html` or `index.md` page, plus whatever styles,
-scripts and images it uses. It can have more pages: every other `.html` or
-`.md` file in it is a page with its own address (`blog/post.html` at
-`/<owner>/<slug>/blog/post`, `blog/index.html` at `/<owner>/<slug>/blog`).
+can keep editing it by hand in the page editor. A document is a folder of
+files (or, opened from disk, a single file). Pages are its `.html` (or `.md`)
+files: `index.html` is the home page, and every other page has its own
+address (`blog/post.html` at `/<owner>/<slug>/blog/post`, `blog/index.html`
+at `/<owner>/<slug>/blog`). Everything else (CSS, JS, images, fonts, data)
+is shared assets, which any page may use. Users see pages; you see files.
 
 ## How the editor sees a page
 

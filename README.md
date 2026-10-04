@@ -800,37 +800,39 @@ published, a deploy that fails…); `tests/settings.ts` uses it.
 
 ### A document's pages
 
-A document can have more than one page. Its root is `index.html`; the
-others sit beside it, in folders if you like. People think in documents, not
-files: the tree shows only documents (HTML pages) and the folders holding
-them (or nothing yet). A document's stylesheets, scripts, fonts and images
-are part of it, out of sight, as are folders holding only those (`fonts/`,
+A document can have more than one page. Its home page is `index.html`; the
+others sit beside it, in folders if you like. People think in pages, not
+files: a document has pages, and the tree shows only its pages (HTML and
+Markdown files) and the folders holding them (or nothing yet). The
+document's stylesheets, scripts, fonts and images are shared assets, out of sight, as are folders holding only those (`fonts/`,
 `assets/`); the API lists every file, and agents see them all. The tree of them
 (`src/page/tree.ts`, built on its own as `pages-tree.js` and loaded only when it's
 opened, so viewing never pays for it) shows in two places: in the editor, the
 document's title in the breadcrumbs opens it in a card, the document as its
 first row and everything else under it; on `/docs`, the chevron left of each
 document opens its pages beneath its row. Folders open and close (remembered
-for the tab); documents show by their title when it's known (in the editor,
+for the tab); pages show by their title when it's known (in the editor,
 read from the room as they're edited; "Untitled" counts as none), else by
 their name made readable ("spring-migration" is "Spring migration", a
 folder's index is the folder's name), with the file's name as a quiet hint
-only where two would read the same. Clicking a document opens it, in the
+only where two would read the same. Clicking a page opens it, in the
 editor for those who may edit (`/<owner>/<slug>/<page>#edit`), in the viewer
 otherwise (`/<owner>/<slug>/<page>`), and the one you're on is marked.
 
-Editors get New document (from the new-document template; "My post" is
+Editors get New page (from the new-page template; "My post" is
 `my-post.html`) and New folder, at the top level (the foot of the tree) and in each
 folder (its +), named in place; rename in place (the menu, F2, or the pencil
 on the root row, which renames the document itself: its title and address);
-move by drag and drop or the menu's Move to…; and delete (a folder asks
-first, in its row, counting the documents in it; `index.html` can't go).
-A document links its stylesheets, images and other documents by where they
+move by drag and drop or the menu's Move page to… (Move folder to…); and
+delete (Delete page; a folder asks first, in its row, counting the pages in
+it; `index.html` can't go). The tree says "page" for pages throughout, and
+"document" only for the document itself (the root row's rename).
+A page links its stylesheets, images and other pages by where they
 are from it (`../style.css`), so moving one to another folder (or a folder to
 another depth) can leave those behind: the tree says so after the move when
-the document has relative links (in the editor it reads them from the room;
+the page has relative links (in the editor it reads them from the room;
 on `/docs` it always says so). It doesn't rewrite links, nor those from other
-documents to the one that moved or was renamed. The editor renders a page in
+pages to the one that moved or was renamed. The editor renders a page in
 a folder with its links resolved from that folder, as the browser does at its
 address. Viewers see the tree without any
 of that. What the server refuses shows where it happened, in its words. Keys:
@@ -937,7 +939,7 @@ ask your agent for edits. Each person gets their own agent session in the host
 that person and that document (all their tabs show it live; nobody else ever
 sees it), it keeps running when the tab closes, and it edits through its own
 replica of the shared doc, as a participant in the room called "Ada's agent".
-Its tools (read, edit, write, ls, find, grep, new_page, mkdir, mv, rm, view_page; get_title and set_title rename the document) are written against
+Its tools (read, edit, write, ls, find, grep, list_pages, open_page, new_page, mkdir, mv, rm, view_page; get_title and set_title rename the document) are written against
 a small workspace interface (`workspace.ts`), not the disk, so it can change
 the page and anything next to it (styles, scripts, other pages) and could run
 anywhere the interface does. There's no bash tool. `edit` finds its `oldText`
@@ -1005,8 +1007,8 @@ into the other agent, which reads the guide and waits, then say what to change. 
 `GET /api/ext` (how to call the tools, their JSON schemas, and
 [DOCUMENT_PROMPT.md](DOCUMENT_PROMPT.md)), then calls
 `POST /api/ext/tools/<name>` with the arguments as JSON. These are the
-embedded agent's own tools (read, edit, write, ls, find, grep, new_page,
-mkdir, mv, rm, view_page, and get_title and set_title for the document's
+embedded agent's own tools (read, edit, write, ls, find, grep, list_pages,
+open_page, new_page, mkdir, mv, rm, view_page, and get_title and set_title for the document's
 title and address),
 run in your agent's session, so its edits are handled exactly like your
 agent's: attributed to "Pete's agent", marked in its colour, undoable from
@@ -1181,14 +1183,26 @@ operations also sends `{ "type": "tree", "moved": { from, to } }` or
 to refetch, and follows its own page: moved, to its new address; deleted, to
 the document's first page.
 
-**Agents** see the document as a file system, with the same powers as a
-person: `ls` (folders end in `/`), `find`, `grep`, `read`, `edit`, `write`
-(which also makes a page from its own text), `new_page` (from the template),
-`mkdir`, `mv` and `rm`, checked exactly as the tree's API checks them. The
-embedded agent, external agents over `/api/ext`, the token API and MCP all
-have them. Their prompts say the document can have many pages, how files map
-to addresses, and to link pages relatively; each message says which page the
-person is on.
+**Agents** see a document as one file system, rooted at the document's
+folder: every page's files, the shared assets and the folders, whichever page
+the person has open. Users see pages; agents see files. They have the same
+powers as a person: `ls` (folders end in `/`; by default the root), `find`
+and `grep` (the whole document by default), `read`, `edit`, `write` (which
+also makes a page from its own text), `new_page` (from the template),
+`mkdir`, `mv` and `rm`, checked exactly as the tree's API checks them.
+`list_pages` gives the tree as users see it: each page's file, title and
+address, by folder, with the assets counted. `open_page { path }` (a file,
+or an address under the document) switches the person's open editor to a
+page: every tab they have open on that document goes there (the host sends
+`{ "type": "open", path }` on its event channel). With no tab open, nothing
+opens, and the tool says so and gives the page's address to pass on.
+`new_page { path, open: true }` makes a page and opens it. The embedded
+agent, external agents over `/api/ext`, the token API and MCP all have them;
+an external agent's `open_page` moves the editor of the person whose token it
+holds. Their prompts say a document is a folder of files whose `.html` files
+are its pages (`index.html` the home page) and the rest shared assets, how
+files map to addresses, and to link pages relatively; each message says
+which page the person has open, and where their caret is.
 
 ### Pages run on their own origin
 
