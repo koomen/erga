@@ -4,7 +4,6 @@
 // all on one Bun server. No Worker: the logic alone, quickly.
 
 import { Database } from "bun:sqlite";
-import { spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -29,15 +28,17 @@ export interface Fixture {
   stop(): void;
 }
 
-export const git = (cwd: string, ...args: string[]) => {
-  const r = spawnSync("git", args, { cwd, encoding: "utf8", env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_AUTHOR_NAME: "Ada", GIT_AUTHOR_EMAIL: "ada@example.com", GIT_COMMITTER_NAME: "Ada", GIT_COMMITTER_EMAIL: "ada@example.com" } });
-  return { ok: r.status == 0, out: (r.stdout ?? "").trim(), err: (r.stderr ?? "").trim() };
-};
-export const must = (cwd: string, ...args: string[]) => {
-  const r = git(cwd, ...args);
+/** git, run without blocking: the fixture's server answers in this same process. */
+export async function git(cwd: string, ...args: string[]) {
+  const p = Bun.spawn(["git", ...args], { cwd, stdout: "pipe", stderr: "pipe", env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_AUTHOR_NAME: "Ada", GIT_AUTHOR_EMAIL: "ada@example.com", GIT_COMMITTER_NAME: "Ada", GIT_COMMITTER_EMAIL: "ada@example.com" } });
+  const [out, err, code] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited]);
+  return { ok: code == 0, out: out.trim(), err: err.trim() };
+}
+export async function must(cwd: string, ...args: string[]) {
+  const r = await git(cwd, ...args);
   if (!r.ok) throw new Error(`git ${args.join(" ")}: ${r.err}`);
   return r.out;
-};
+}
 
 export function startFixture(opts: { mirror?: boolean } = {}): Fixture {
   const dir = mkdtempSync(join(tmpdir(), "erga-source-"));

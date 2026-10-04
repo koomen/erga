@@ -82,7 +82,7 @@ describe("deploying", () => {
     expect(b.ANTHROPIC_API_KEY).toBeUndefined();
     expect(b.PAGES_HOST.text).toBe("erga-pages.ada-mock.workers.dev");
     // Durable Objects as declarative exports (as cf deploy sends them), never migrations; erga.dev's DocList tombstone left out.
-    expect(worker.metadata.exports).toEqual({ DocHost: { type: "durable-object", storage: "sqlite" }, Deployer: { type: "durable-object", storage: "sqlite" } });
+    expect(worker.metadata.exports).toEqual({ DocHost: { type: "durable-object", storage: "sqlite" }, Deployer: { type: "durable-object", storage: "sqlite" }, SourceHost: { type: "durable-object", storage: "sqlite" }, EventHub: { type: "durable-object", storage: "sqlite" } });
     expect(worker.metadata.migrations).toBeUndefined();
     expect(worker.tags).toEqual(["erga-deploy"]);
     expect(worker.metadata.assets.config).toEqual({ html_handling: "none", not_found_handling: "none", run_worker_first: true });
