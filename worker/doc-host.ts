@@ -37,6 +37,7 @@ import { agentConfigFrom } from "../agent";
 import { DIRECTORY_EVERY_MS, nameOf, namingFor, throttle, UNTITLED, type DocName, type DocRow } from "../directory";
 import { afterUnedited, titleOf } from "../front";
 import { makeHost } from "../host";
+import { agentToolsFor } from "../server-tools";
 import { FileStore, Room, StateStore, StoreError } from "../room";
 import { assets, isTextPath, files as texts } from "../src/room/doc";
 import { directoryOf } from "./d1";
@@ -371,6 +372,8 @@ export class DocHost extends DurableObject<Env> {
       avatarOf: (person) => (person.id.startsWith("test-") ? undefined : `${AVATARS}/${encodeURIComponent(person.id)}?s=64`),
       // Its title and address, renamed as whoever asks (test people are "test-...": they may rename only test documents).
       naming: (person) => naming({ login: person.id, test: person.id.startsWith("test-") }),
+      // Sharing this document (or another), and for an admin the server's settings and users, as the person.
+      serverTools: (person) => agentToolsFor({ dir: directoryOf(this.env), who: { login: person.id, test: person.id.startsWith("test-") }, here: this.idOf(meta) }),
     });
     const naming = namingFor(directoryOf(this.env), this.idOf(meta), () => titleOf(room.text(meta.index) ?? "", meta.index));
 

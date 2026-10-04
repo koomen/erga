@@ -41,6 +41,7 @@ import type { ViewRequest, ViewResult } from "./src/page/agent-log";
 import { agentName, colorFor, files, introduce, stamp, stateVector, type Author } from "./src/room/doc";
 import { joinLocal, type Room } from "./room";
 import type { Naming } from "./directory";
+import { SERVER_TOOL_ACTIVITY } from "./server-tools";
 import { YjsWorkspace, WorkspaceError, cleanPath, globToRegExp, type Workspace } from "./workspace";
 import documentPrompt from "./DOCUMENT_PROMPT.md" with { type: "text" };
 
@@ -172,7 +173,24 @@ async function scriptStep(context: Context) {
  */
 const DOCUMENT_RULES = documentPrompt.trim();
 
-const systemPrompt = (docName: string, kind: "html" | "md", owner: string, single = false) => `
+/**
+ * What the system prompt says about the tools beyond the document
+ * (server-tools.ts), by which of them the person has now.
+ */
+function beyondPrompt(owner: string, names: string[]): string {
+  const lines: string[] = [];
+  if (names.includes("share_document")) lines.push(`- document_access and share_document show who the document is shared with and share it
+  (editor, viewer, or none to stop; "*" is anyone signed in with the link). Only its owner
+  may; leave out "document" for this one. Share only when ${owner} asks you to.`);
+  if (names.includes("list_settings")) lines.push(`- ${owner} is an admin of this Erga server, so you can configure it for them:
+  list_settings, set_setting and reset_setting for the server's settings (a setting the
+  deploy locks can't be changed: say so), and list_users, add_user, set_user_role and
+  remove_user for who may sign in and who's an admin. These change the whole server, for
+  everyone: use them only when ${owner} asks, and say exactly what you changed.`);
+  return lines.length ? `\n${lines.join("\n")}` : "";
+}
+
+const systemPrompt = (docName: string, kind: "html" | "md", owner: string, single = false, beyond: string[] = []) => `
 You are ${agentName(owner)}, embedded in Erga's page editor. ${owner} is looking at
 ${docName} (${kind == "md" ? "Markdown" : "HTML"}) rendered as a live page, and editing its text in
 place. Other people may have the same document open and be editing it too, each with
@@ -203,7 +221,7 @@ and change any text file in it. Paths are relative to the folder.`}
   the browser tab) and its address, /<owner>/<slug>. Until someone sets them, the title
   follows the page's first heading and the slug follows the title, so a new heading
   usually renames the document by itself. Use set_title when asked to rename it or
-  change its address.
+  change its address.${beyondPrompt(owner, beyond)}
 - Keep replies short: say what you changed, not how. ${owner} can see the result.
 - Follow the rules below whenever you create or change a page, so people can keep
   editing it by hand. When you fix a page that breaks them, keep its text as it is.
@@ -445,9 +463,15 @@ export interface SessionOptions {
   readAsset: (path: string) => Promise<Uint8Array | null>;
   /** The document's title and address, as the owner (get_title, set_title); without it those tools are left out. */
   naming?: Naming;
+  /**
+   * The tools beyond the document the owner may use now (server-tools.ts:
+   * sharing; the server's settings and users for an admin). Asked for again
+   * before each new prompt, so becoming (or stopping being) an admin shows.
+   */
+  serverTools?: () => Promise<AgentTool[]>;
 }
 
-const TOOL_ACTIVITY: Record<string, string> = { read: "reading", edit: "editing", write: "writing", ls: "looking around", find: "looking for files", grep: "searching", view_page: "looking at the page", get_title: "reading the title", set_title: "renaming the document" };
+const TOOL_ACTIVITY: Record<string, string> = { ...SERVER_TOOL_ACTIVITY, read: "reading", edit: "editing", write: "writing", ls: "looking around", find: "looking for files", grep: "searching", view_page: "looking at the page", get_title: "reading the title", set_title: "renaming the document" };
 
 export async function startSession(opts: SessionOptions): Promise<AgentSession> {
   const { cfg, owner } = opts;
@@ -503,8 +527,13 @@ export async function startSession(opts: SessionOptions): Promise<AgentSession> 
     },
   });
 
+  // The tools beyond the document, as the owner may use them now (none if they can't be had).
+  const beyond = async () => (await opts.serverTools?.().catch((e: unknown) => { console.log(`server tools for ${owner.id}: ${e}`); return null; })) ?? [];
+  const serverTools = cfg ? await beyond() : [];
+  let starting = false;
+  const prompted = (more: AgentTool[]) => systemPrompt(opts.docName, opts.kind, owner.name, opts.only != null, more.map((t) => t.name));
   const agent = cfg && model ? new PiAgent({
-    initialState: { systemPrompt: systemPrompt(opts.docName, opts.kind, owner.name, opts.only != null), model, thinkingLevel: "medium", tools },
+    initialState: { systemPrompt: prompted(serverTools), model, thinkingLevel: "medium", tools: [...tools, ...serverTools] },
     getApiKey: () => Redacted.value(cfg.apiKey) || "none",
     onPayload: isScript(cfg) ? undefined : patchPayload(cfg, () => choice ?? DEFAULT_MODEL),
   }) : null;
@@ -557,8 +586,16 @@ export async function startSession(opts: SessionOptions): Promise<AgentSession> 
       if (!agent || !cfg) { emit({ t: "error", text: "The agent is off." }); return; }
       const content = context ? `<editor>\n${context}\n</editor>\n\n${text}` : text;
       if (isScript(cfg)) scriptModel();
-      if (agent.state.isStreaming) { agent.steer({ role: "user", content, timestamp: Date.now() }); return; }
-      agent.prompt(content).catch((err: unknown) => {
+      // A message sent while the turn is starting (its tools being looked up) steers it too.
+      if (agent.state.isStreaming || starting) { agent.steer({ role: "user", content, timestamp: Date.now() }); return; }
+      starting = true;
+      // The tools beyond the document as the owner may use them now (an admin's, say).
+      const refresh = opts.serverTools ? beyond().then((more) => {
+        agent.state.tools = [...tools, ...more];
+        agent.state.systemPrompt = prompted(more);
+      }) : Promise.resolve();
+      refresh.then(() => { starting = false; return agent.prompt(content); }).catch((err: unknown) => {
+        starting = false;
         emit({ t: "error", text: err instanceof Error ? err.message : String(err) });
         busy.agent = false;
         syncBusy();
@@ -681,8 +718,9 @@ error says what to fix), 401 (bad token) or 404 (no such tool).
 ## Beyond this document
 
 The same token works for all of Erga, as ${o.owner}: listing their documents,
-making new ones (publishing a folder of files as a site), renaming and deleting
-them, and these same tools on any document they may edit. The guide is at
+making new ones (publishing a folder of files as a site), renaming, sharing and
+deleting them, these same tools on any document they may edit, and, if they're
+an admin of the server, its settings and users. The guide is at
 \`GET ${origin}/api/ext\` (send the token), and there's an MCP server at
 \`${origin}/mcp\`. Use them only when asked.
 
