@@ -41,19 +41,19 @@ serves the app's routes (`front.ts`). Its pages:
   pencil (Edit) for those who may edit it. In the editor the pencil is blue
   (on): clicking it goes back to the viewer. Beside it, right to left: the
   view (page, Markdown or HTML), share with people (for the owner: who may
-  view or edit it, as on My Documents), share with an agent, track changes
+  view or edit it, as on Documents), share with an agent, track changes
   and pause. The viewer and the editor are one page (see [One page, viewing or
   editing](#one-page-viewing-or-editing)): the pencil switches
   between them without a reload, and the document doesn't move.
 - **The front page**, `/`: the viewer on the landing document (see [The front
   page](#the-front-page)), for anyone, signed in or not.
-- **My Documents**, `/docs`: home for anyone signed in, and under it **the
-  editor**, `/<owner>/<slug>/edit`, whose breadcrumbs (My Documents › its
+- **Documents**, `/docs`: home for anyone signed in, and under it **the
+  editor**, `/<owner>/<slug>/edit`, whose breadcrumbs (Documents › its
   title) lead back.
 - **Settings**, `/settings`: your agent tokens (`/tokens` redirects there).
 - **Admin settings**, `/admin`: the server's settings and users, for admins.
 
-The user menu in the upper right of every page reaches My Documents,
+The user menu in the upper right of every page reaches Documents,
 Settings and (for admins) Admin settings. Clone and Edit sign you in with
 GitHub first (only the server's users: see [Users, admins and
 settings](#users-admins-and-settings)); a copy is yours at `/<you>/<slug>`,
@@ -77,7 +77,7 @@ slug it had before redirect to it (and `/edit` under them to the editor). The
 title follows the page's first `<h1>` (else `<title>`, else "Untitled") until
 someone sets it, and the slug follows the title (lowercase letters, digits
 and dashes, `-2`, `-3`... when taken) until someone sets it. Rename from the
-title after My Documents in the editor's breadcrumbs, from `/docs`, or
+title after Documents in the editor's breadcrumbs, from `/docs`, or
 by asking an agent (its `get_title` and `set_title` tools, for the embedded
 agent and external ones). Every open tab follows a rename: its title, and its
 address bar. The editor itself talks to its document at `/d/<id>`, which a
@@ -155,7 +155,7 @@ gone.
 **Who you are, on every page.** The upper right of every page erga.dev
 serves (`account.ts`) shows your avatar (your GitHub picture, or your
 initial on your colour if it doesn't load); clicking it opens a small menu:
-your name, My Documents, Settings, Admin settings (admins only) and Sign
+your name, Documents, Settings, Admin settings (admins only) and Sign
 out. Signed out, it's a person in a circle whose menu has only Sign in (with
 GitHub, bringing you back to the same page). The Worker adds it to each of the site's own HTML pages
 (`withAccount`, `worker/index.ts`); the editor shows it itself, as your

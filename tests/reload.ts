@@ -55,7 +55,7 @@ try {
   const page = await browser.page();
   await page.open(`${root}/docs`, { width: 1100, height: 700 });
   await page.settle();
-  check(await page.eval(`document.title`) == "My Documents · Erga", "the docs page is open", await page.eval(`document.title`));
+  check(await page.eval(`document.title`) == "Documents · Erga", "the docs page is open", await page.eval(`document.title`));
 
   /** Marks the page, makes `change`, and waits for a fresh page (no mark) for which `ready` holds. */
   const reloads = async (what: string, change: () => void, ready: string) => {
@@ -71,7 +71,7 @@ try {
 
   await reloads("the Worker's front door changes (front.ts: Vite restarts the server): the page reloads, showing it",
     () => edit("front.ts", "<title>${esc(title)} · Erga</title>", "<title>${esc(title)} · Erga, edited</title>"),
-    `document.title == "My Documents · Erga, edited"`);
+    `document.title == "Documents · Erga, edited"`);
   await reloads("another Worker module changes (worker/index.ts: Vite reloads the Worker): the page reloads",
     () => edit("worker/index.ts", "\n", "\n// edited\n"), "true");
   await reloads("the editor's own files change (style.css: site.sh rebuilds them): the page reloads, with them",
@@ -81,9 +81,9 @@ try {
   // Both at once, as an agent's edit often is: the restart and the rebuild end in one good page, never an error page.
   await reloads("the front door and the editor's files change together: the page comes back, with both",
     () => { edit("front.ts", "· Erga, edited</title>", "· Erga, edited twice</title>"); edit("style.css", ".erga-reload-test {", ".erga-reload-test-2 {}\n.erga-reload-test {"); },
-    `document.title == "My Documents · Erga, edited twice"`);
+    `document.title == "Documents · Erga, edited twice"`);
   await Bun.sleep(1500);
-  check(await page.eval(`document.title`) == "My Documents · Erga, edited twice", "and stays there", await page.eval(`document.title`));
+  check(await page.eval(`document.title`) == "Documents · Erga, edited twice", "and stays there", await page.eval(`document.title`));
 
   // The page editor itself, on a new document: it reloads when its code changes (src/page/), on the same document.
   await page.navigate(`${root}/new`);
@@ -107,7 +107,7 @@ const port2 = freePort();
 const plain = await start(port2, false);
 try {
   const html = await (await fetch(`http://127.0.0.1:${port2}/docs`, { headers: { "sec-fetch-dest": "document" } })).text();
-  check(html.includes("<title>My Documents") && !html.includes("erga live reload"), "without --reload, pages are left alone", html.slice(0, 300) + plain.output().slice(-600));
+  check(html.includes("<title>Documents") && !html.includes("erga live reload"), "without --reload, pages are left alone", html.slice(0, 300) + plain.output().slice(-600));
 } finally {
   await plain.stop();
   rmSync(scratch, { recursive: true, force: true });

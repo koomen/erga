@@ -12,7 +12,7 @@
 //   /admin                     the server's settings and users, for admins (admin.ts); POST /admin/settings, /admin/users
 //   /<owner>/<slug>            the viewer on that document (for those it's shared with): its canonical address;
 //                              Clone, and Edit for those who may edit it
-//   /<owner>/<slug>/edit       the editor on it, under My Documents (its breadcrumbs)
+//   /<owner>/<slug>/edit       the editor on it, under Documents (its breadcrumbs)
 //   /<owner>/<id>, /<owner>/<old slug>, /d/<id> (and /edit under them)
 //                              redirect there
 //   /d/<id>/<rest>             the document's own host (host.ts): /api/..., /doc/..., the sockets; the
@@ -429,9 +429,6 @@ async function viewDocument(platform: Platform, request: Request, doc: DocRow, s
   const address = `/${doc.owner}/${doc.slug}`;
   const clone = `<a href="${esc(link(`/new?from=${landing ? "landing" : doc.id}`, session))}" class="erga-view-button erga-clone-button" aria-label="Clone: make your own copy" data-tip="Clone"><svg viewBox="0 0 24 24" aria-hidden="true"><g transform="translate(0 1.25)"><rect x="8.75" y="8.75" width="10.5" height="10.5" rx="2"/><path d="M15.25 8.75V6.5a1.75 1.75 0 0 0-1.75-1.75H6.5A1.75 1.75 0 0 0 4.75 6.5v7c0 .97.78 1.75 1.75 1.75h2.25"/></g></svg></a>`;
   const edit = canEdit ? `<a href="${esc(link(`${address}/edit`, session))}" class="erga-view-button erga-edit-button" aria-label="Edit" aria-pressed="${editing}" data-tip="Edit"><svg viewBox="0 0 24 24" aria-hidden="true"><g transform="translate(0 1.25)"><path d="M4.75 19.25l1-4L15.6 5.4a1.4 1.4 0 0 1 2 0l1 1a1.4 1.4 0 0 1 0 2L8.75 18.25zM13.75 7.25l3 3"/></g></svg></a>` : "";
-  const crumbs = !landing && session && !session.test
-    ? `<nav class="erga-crumbs" aria-label="Breadcrumbs"><a href="${esc(link("/docs", session))}">My Documents</a><span aria-hidden="true">›</span><span aria-current="page">${esc(doc.title)}</span></nav>`
-    : "";
   // What the editor needs to know, for whoever may go into it: where its document's host and frame are, and the links on its avatar.
   const editable = editing || canEdit;
   // Its owner shares it with people from the editor too (/docs/share).
@@ -452,7 +449,7 @@ async function viewDocument(platform: Platform, request: Request, doc: DocRow, s
 ${meta}${backdrop}<style>html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: none; } #frame { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; display: block; background: transparent; }</style>
 <body${editing ? ` class="erga-editing"` : ""}>
 <iframe id="frame" class="erga-view" src="${esc(src)}" title="${esc(doc.title)}" sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups"></iframe>
-${crumbs}<div class="erga-view-buttons">${clone}${edit}</div>${VIEW_STYLE}${editable ? `<script>${EDIT_BOOT}</script>` : ""}
+<div class="erga-view-buttons">${clone}${edit}</div>${VIEW_STYLE}${editable ? `<script>${EDIT_BOOT}</script>` : ""}
 </body>
 </html>`, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" } });
 }
@@ -557,37 +554,30 @@ async function startPage(platform: Platform, session: Session | null): Promise<R
 
 const VIEW_STYLE = `
 <style>
-  /* The editor's look (style.css, .icon-btn and .nav-back): small icons, and breadcrumbs as plain text. Right of the icons is who you are (account.ts). */
-  .erga-view-buttons, .erga-crumbs { --chrome: #a1a1a9; --chrome-hover: #3f3f46; --fg: #1c1c1f; --soft: #6b6b73;
+  /* The editor's look (style.css, .icon-btn): small icons. Right of them is who you are (account.ts). No breadcrumbs: viewing, there's only the document. */
+  .erga-view-buttons { --chrome: #a1a1a9; --chrome-hover: #3f3f46; --fg: #1c1c1f; --soft: #6b6b73;
     position: fixed; top: max(12px, env(safe-area-inset-top)); z-index: 1000; display: flex; align-items: center;
     font: 500 13px/1 "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
-  @media (prefers-color-scheme: dark) { .erga-view-buttons, .erga-crumbs { --chrome: #5f5f68; --chrome-hover: #d4d4da; --fg: #ececf1; --soft: #8f8f99; } }
   .erga-view-buttons { right: max(56px, calc(env(safe-area-inset-right) + 40px)); gap: 2px; }
   .erga-view-button { position: relative; display: grid; place-items: center; width: 34px; height: 34px; border-radius: 8px; color: var(--chrome);
     transition: color 150ms ease, background-color 150ms ease; }
   .erga-view-button:hover { color: var(--chrome-hover); background: color-mix(in srgb, var(--chrome) 12%, transparent); }
   /* Editing (or on the way into it), the pencil is blue, as the editor's own is. */
   .erga-view-button[aria-pressed="true"], .erga-view-button[aria-pressed="true"]:hover { color: #3b7cf0; background: transparent; }
-  .erga-view-button:focus-visible, .erga-crumbs a:focus-visible { outline: 2px solid #3b82f6; outline-offset: 1px; }
   .erga-view-button svg { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
   .erga-view-button::after { content: attr(data-tip); position: absolute; left: var(--tip-x, 100%); top: var(--tip-y, calc(100% + 6px)); transform: translateX(-100%); white-space: pre; font-size: 12px;
     font-weight: 400; line-height: 1.3; letter-spacing: .01em; color: var(--soft); opacity: 0; pointer-events: none; }
   @media (hover: hover) { .erga-view-button:hover::after { opacity: 1; } }
-  .erga-crumbs { left: max(14px, env(safe-area-inset-left)); max-width: calc(100vw - 200px); }
-  .erga-crumbs a { display: flex; align-items: center; height: 34px; padding: 0 10px; border-radius: 8px; color: var(--chrome); text-decoration: none; white-space: nowrap;
-    transition: color 150ms ease, background-color 150ms ease; }
-  .erga-crumbs a:hover { color: var(--chrome-hover); background: color-mix(in srgb, var(--chrome) 12%, transparent); }
-  .erga-crumbs [aria-hidden] { margin: 0 0 0 2px; color: var(--chrome); opacity: .55; font-weight: 400; }
-  .erga-crumbs [aria-current] { padding: 0 8px; color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  /* Going into the editor (EDIT_BOOT): its controls fade in over these once it's ready, and these fade out; the other way on the way back. */
+  /* Into the editor and out (EDIT_BOOT): the controls you're going to are there at once, whole, and the ones you're leaving fade
+     out; so those in both (the pencil, your avatar) never go see-through. The editor's breadcrumbs simply go: viewing has none. */
   #erga-editor { opacity: 0; transition: opacity 200ms ease; }
-  body.erga-editing.erga-editor-ready #erga-editor { opacity: 1; }
-  .erga-view-buttons, .erga-crumbs, .erga-account { transition: opacity 200ms ease, visibility 0s; }
-  body.erga-editing.erga-editor-ready :is(.erga-view-buttons, .erga-crumbs, .erga-account) { opacity: 0; visibility: hidden; transition: opacity 200ms ease, visibility 0s 200ms; }
+  body.erga-editing.erga-editor-ready #erga-editor { opacity: 1; transition: none; }
+  body:not(.erga-editing) #nav-docs { visibility: hidden; }
+  .erga-view-buttons, .erga-account { transition: none; }
+  body.erga-editing.erga-editor-ready :is(.erga-view-buttons, .erga-account) { opacity: 0; visibility: hidden; transition: opacity 200ms ease, visibility 0s 200ms; }
   /* On a phone they'd sit over the text the whole way down: they stay at the top instead. */
   @media (max-width: 640px), (max-height: 480px) {
-    .erga-view-buttons, .erga-crumbs { position: absolute; }
-    .erga-crumbs [aria-current], .erga-crumbs [aria-hidden] { display: none; }
+    .erga-view-buttons { position: absolute; }
   }
 </style>`;
 
@@ -936,9 +926,9 @@ function docsPage(session: Session, docs: Listed[], now: number, dev: boolean, h
   .anyone .who small { display: block; font-size: 12px; color: var(--soft); }
   #share .buttons { justify-content: space-between; }
 `;
-  return appPage("My Documents", style, `<main>
+  return appPage("Documents", style, `<main>
   <header>
-    <h1>My Documents</h1>
+    <h1>Documents</h1>
     <a class="new" href="${esc(link("/new", session))}">New document</a>
   </header>
   ${docs.length ? `<ol class="rows">\n${rows}\n  </ol>` : `<p class="empty">No documents yet. A new one starts blank${hours == null ? "." : `, and goes away after ${hours} hour${hours == 1 ? "" : "s"} if you never edit it.`}</p>`}

@@ -552,7 +552,7 @@ declare global {
       (p.client == -1 ? meSlot : people).append(wrap);
     }
   }
-  // Your avatar opens a small menu: who you are, My Documents, Settings,
+  // Your avatar opens a small menu: who you are, Documents, Settings,
   // Admin settings if you're an admin, Sign out (the same as every other page's upper
   // right, account.ts). The front door says which links (meta erga-account).
   const account = $("account");

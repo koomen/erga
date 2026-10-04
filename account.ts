@@ -1,6 +1,6 @@
 // Who you are, in the upper right of every page erga.dev serves: your
 // avatar (your GitHub picture, or your initial on your colour if it doesn't
-// load), which opens a small menu (your name, My Documents, Settings, Admin
+// load), which opens a small menu (your name, Documents, Settings, Admin
 // settings for admins, Sign out); or, signed out, a person in a circle whose
 // menu has only Sign in (with GitHub, coming back to the same page).
 //
@@ -61,7 +61,7 @@ export function accountHtml(account: Account | null, here: string): string {
 </button>
 <div class="erga-account-menu" id="${id}" hidden>
 <p class="erga-account-who"><b>${esc(account.name)}</b>${account.name.toLowerCase() != account.login.toLowerCase() ? `<span>${esc(account.login)}</span>` : ""}</p>
-<a href="${esc(link("/docs", s))}">My Documents</a>
+<a href="${esc(link("/docs", s))}">Documents</a>
 <a href="${esc(link("/settings", s))}">Settings</a>
 ${account.admin ? `<a href="${esc(link("/admin", s))}">Admin settings</a>` : ""}
 <a href="/auth/logout">Sign out</a>
