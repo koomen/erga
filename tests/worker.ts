@@ -258,11 +258,11 @@ async function adminScenario() {
 
   // Settings.
   t = await admin.call("list_settings");
-  const hours = t.data?.find((e: { key: string }) => e.key == "unedited_hours");
+  const hours = t.data?.find((e: { key: string }) => e.key == "delete_docs_after_hours");
   expect(t.status == 200 && hours && typeof hours.locked == "boolean", "list_settings lists them, saying which are locked", t);
-  t = await admin.call("set_setting", { key: "unedited_hours", value: 36 });
+  t = await admin.call("set_setting", { key: "delete_docs_after_hours", value: 36 });
   expect(t.status == 200 && t.data.value == 36 && t.data.source == "set" && t.data.updatedBy == adminLogin, "set_setting sets one", t);
-  t = await admin.call("set_setting", { key: "unedited_hours", value: 0 });
+  t = await admin.call("set_setting", { key: "delete_docs_after_hours", value: 0 });
   expect(t.status == 400 && /whole number/.test(t.text), "a bad value says what's wrong", t);
   // The new value is what the server uses: a new blank document lasts 36 hours.
   const blank = await (await fetch(`${base}/new`, { redirect: "manual", headers: { Cookie: admin.cookie } })).headers.get("location");
@@ -300,10 +300,10 @@ async function adminScenario() {
 
   // The editor's own agent, with the same tools.
   const adminDoc = ((await (await fetch(`${base}${blank}/api/name`, { headers: { Cookie: admin.cookie } })).json()) as Name).id;
-  let tools = await agentRun(adminDoc, admin.cookie, [{ tool: "set_setting", args: { key: "unedited_hours", value: 30 } }, { tool: "add_user", args: { login: newcomer, role: "admin" } }, { text: "Done." }]);
+  let tools = await agentRun(adminDoc, admin.cookie, [{ tool: "set_setting", args: { key: "delete_docs_after_hours", value: 30 } }, { tool: "add_user", args: { login: newcomer, role: "admin" } }, { text: "Done." }]);
   expect(tools.every((x) => x.status == "done") && tools.length == 2, "an admin's agent in the editor runs the admin tools", tools);
-  expect((await admin.call("list_settings")).data.find((e: { key: string }) => e.key == "unedited_hours").value == 30 && (await admin.call("list_users")).data.some((u: { login: string; role: string }) => u.login == newcomer && u.role == "admin"), "and they land");
-  await admin.call("reset_setting", { key: "unedited_hours" });
+  expect((await admin.call("list_settings")).data.find((e: { key: string }) => e.key == "delete_docs_after_hours").value == 30 && (await admin.call("list_users")).data.some((u: { login: string; role: string }) => u.login == newcomer && u.role == "admin"), "and they land");
+  await admin.call("reset_setting", { key: "delete_docs_after_hours" });
   await admin.call("remove_user", { login: newcomer });
   const mineId = ((await (await get(`${mine}/api/name`)).json()) as Name).id;
   tools = await agentRun(mineId, person.cookie, [{ tool: "list_settings", args: {} }, { tool: "share_document", args: { login: "Bo", role: "editor" } }, { text: "Done." }]);
@@ -544,23 +544,23 @@ try {
   expect(!(await docs()).includes(`>Admin</a>`), "nor linked from their list");
   const adminPost = (path: string, fields: Record<string, string>, who = adminName) =>
     get(`${path}${who ? `?user=${who}` : ""}`, { method: "POST", body: new URLSearchParams(fields), headers: { Origin: origin, Accept: "application/json" } });
-  expect((await adminPost("/admin/settings", { key: "unedited_hours", value: "48" }, null)).status == 403, "nor can they change a setting");
+  expect((await adminPost("/admin/settings", { key: "delete_docs_after_hours", value: "48" }, null)).status == 403, "nor can they change a setting");
   if (adminName) {
     const adminPage = await (await as(adminName, "/admin")).text();
-    expect(adminPage.includes("unedited_hours") && adminPage.includes(`data-login="${adminName}"`) && adminPage.includes(`data-login="${login}"`), "an admin sees the settings and the users", adminPage.slice(0, 300));
+    expect(adminPage.includes("delete_docs_after_hours") && adminPage.includes(`data-login="${adminName}"`) && adminPage.includes(`data-login="${login}"`), "an admin sees the settings and the users", adminPage.slice(0, 300));
     expect((await (await as(adminName, "/docs")).text()).includes(`>Admin</a>`), "and their list links to it");
     // Settings: set, refused with the reason, reset.
-    let res = await adminPost("/admin/settings", { key: "unedited_hours", value: "48" });
+    let res = await adminPost("/admin/settings", { key: "delete_docs_after_hours", value: "48" });
     let body = (await res.json()) as { entry?: { value: unknown; source: string; updatedBy: string }; error?: string };
     expect(res.ok && body.entry?.value == 48 && body.entry.source == "set" && body.entry.updatedBy == adminName, "an admin sets a setting", body);
     expect((await docs()).includes("goes away after 48 hours") || (await docs()).includes("deleted 48 hours"), "and the server uses it");
-    res = await adminPost("/admin/settings", { key: "unedited_hours", value: "0" });
+    res = await adminPost("/admin/settings", { key: "delete_docs_after_hours", value: "0" });
     body = await res.json();
     expect(res.status == 400 && (body.error ?? "").includes("whole number from 1"), "a bad value is refused, saying why", body);
     res = await adminPost("/admin/settings", { key: "nope", value: "1" });
     expect(res.status == 400, "so is a setting there isn't");
-    expect((await adminPost("/admin/settings", { key: "unedited_hours", value: "12" }, null)).status == 403 && (await get(`/admin/settings?user=${adminName}`, { method: "POST", body: new URLSearchParams({ key: "unedited_hours", value: "12" }) })).status == 403, "only from an admin, on this site's pages");
-    body = await (await adminPost("/admin/settings", { key: "unedited_hours", reset: "1" })).json();
+    expect((await adminPost("/admin/settings", { key: "delete_docs_after_hours", value: "12" }, null)).status == 403 && (await get(`/admin/settings?user=${adminName}`, { method: "POST", body: new URLSearchParams({ key: "delete_docs_after_hours", value: "12" }) })).status == 403, "only from an admin, on this site's pages");
+    body = await (await adminPost("/admin/settings", { key: "delete_docs_after_hours", reset: "1" })).json();
     expect(body.entry?.value == 24 && body.entry.source == "default", "reset puts it back to its default", body);
     ok("admins see /admin and set and reset settings (a bad value is refused, saying why); nobody else can see it or change them");
 

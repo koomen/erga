@@ -103,10 +103,10 @@ export const SERVER_TOOLS: ServerToolDef[] = [
     label: "Change a server setting",
     activity: "changing a server setting",
     admin: true,
-    description: "Admins only. Sets one of the server's settings (list_settings lists them, with what each takes). The value is JSON: a number, a string, true or false. A setting the deploy locks can't be changed. Answers the setting as it is now.",
+    description: "Admins only. Sets one of the server's settings (list_settings lists them, with what each takes). The value is JSON: a number, a string, true, false or null (e.g. delete_docs_after_hours: a number of hours, or null to never delete unedited documents). A setting the deploy locks can't be changed. Answers the setting as it is now.",
     parameters: Type.Object({
-      key: Type.String({ description: "The setting's key, e.g. unedited_hours" }),
-      value: Type.Unknown({ description: "Its new value (a number, string or boolean, as the setting takes)" }),
+      key: Type.String({ description: "The setting's key, e.g. delete_docs_after_hours" }),
+      value: Type.Unknown({ description: "Its new value (a number, string, boolean or null, as the setting takes)" }),
     }),
     run: async (args, { dir, who }) => {
       const key = String(args.key ?? "");

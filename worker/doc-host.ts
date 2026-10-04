@@ -18,7 +18,8 @@
 // It also keeps its row in the directory (directory.ts, D1) up to date: when
 // it was last edited, and the title that follows its first heading (at most
 // every DIRECTORY_EVERY_MS). It deletes itself, row included, if nobody
-// edits it within its unedited time (the unedited_hours setting) of being made.
+// edits it within its unedited time (the delete_docs_after_hours setting) of
+// being made; if an admin has since set that to never, it stays.
 //
 // In local development a document can be a file or folder on disk (`link`).
 // Its files then stay there: the room's storage is the folder itself, reached
@@ -83,7 +84,7 @@ export class DocHost extends DurableObject<Env> {
   /**
    * Creates the document, whose row the front door has just added to the
    * directory, from a template's files; false if it already exists. Unless
-   * someone edits it, it's deleted at `expires` (the unedited_hours setting
+   * someone edits it, it's deleted at `expires` (the delete_docs_after_hours setting
    * after it's made, or sooner when local development asks, to test it).
    */
   async create(owner: string, id: string, files: Record<string, string | Uint8Array>, index: string, opts: { test?: boolean; expires: number | null; modified?: number }): Promise<boolean> {
@@ -194,13 +195,17 @@ export class DocHost extends DurableObject<Env> {
   /**
    * Its unedited time is up: a document nobody has edited goes.
    * One open somewhere waits an hour more, so it isn't pulled from under
-   * someone about to type.
+   * someone about to type. If delete_docs_after_hours is now never, it stays.
    */
   async alarm(): Promise<void> {
     const meta = await this.ctx.storage.get<Meta>(META);
     if (!meta) return;
     const next = afterUnedited(meta, this.sockets.size > 0, Date.now());
     if (next == "keep") return;
+    if ((await directoryOf(this.env).config.get("delete_docs_after_hours")) == null) {
+      await directoryOf(this.env).setExpires(this.idOf(meta), null).catch((e) => console.log(`couldn't update ${this.idOf(meta)}'s row: ${e}`));
+      return;
+    }
     if (next != "delete") {
       await this.ctx.storage.setAlarm(next);
       await directoryOf(this.env).setExpires(this.idOf(meta), next).catch((e) => console.log(`couldn't update ${this.idOf(meta)}'s row: ${e}`));
