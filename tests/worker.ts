@@ -514,7 +514,7 @@ try {
 
   // The page runs on the document's own origin: the editor names it, with a token that opens the document's files there.
   // (Browsers send <anything>.localhost to this machine; Bun's fetch doesn't, so it's told the host instead.)
-  const pagesFetch = (u: string) => { const url = new URL(u); return url.hostname.endsWith(".localhost") ? fetch(u.replace(url.host, `localhost:${url.port}`), { headers: { Host: url.host } }) : fetch(u); };
+  const pagesFetch = (u: string, headers: Record<string, string> = {}) => { const url = new URL(u); return url.hostname.endsWith(".localhost") ? fetch(u.replace(url.host, `localhost:${url.port}`), { headers: { ...headers, Host: url.host } }) : fetch(u, { headers }); };
   const editorAt = await (await get(`${(await nameOf(second)).address}/edit`)).text();
   const pagesUrl = /<meta name="erga-pages" content="([^"]+)">/.exec(editorAt)?.[1] ?? "";
   const pages = pagesUrl ? new URL(pagesUrl) : null;
@@ -527,6 +527,21 @@ try {
   expect((await pagesFetch(`${pages!.origin.replace(second, "aaaaaaaa")}${pages!.pathname}doc/index.html`)).status == 403, "nor does a good one, at another document's origin");
   expect((await pagesFetch(`${pages!.origin}/docs`)).status == 404, "and none of this site's own pages are there");
   ok("a document's page runs on its own origin, whose files open only with the editor's token");
+
+  // Loading fast (README, "Loading fast"): the frame asks for doc/, which is the page; files are kept by the browser and checked by ETag.
+  const pageFile = await pagesFetch(`${pagesUrl}doc/index.html`);
+  const etag = pageFile.headers.get("etag");
+  expect((await (await pagesFetch(`${pagesUrl}doc/`)).text()) == (await pageFile.text()), "doc/ is the document's page");
+  expect(!!etag && pageFile.headers.get("cache-control") == "no-cache", "a file has an ETag and is checked each time", Object.fromEntries(pageFile.headers));
+  const again = await pagesFetch(`${pagesUrl}doc/index.html`, { "If-None-Match": etag! });
+  expect(again.status == 304 && !(await again.text()), "unchanged since, it's a 304 with no body", again.status);
+  const frameSrc = /<iframe id="frame"[^>]* src="([^"]+)"/.exec(editorAt)?.[1]?.replace(/&amp;/g, "&") ?? "";
+  expect(/[?&]v=[a-z0-9]+/.test(frameSrc) && /[?&]edit=1/.test(frameSrc), "the editor's frame has the host page's version in its address, and starts on the editor", frameSrc);
+  const hostPage = await pagesFetch(frameSrc);
+  expect(/max-age=\d+/.test(hostPage.headers.get("cache-control") ?? "") && (await hostPage.text()).includes(`<base href="${pages!.pathname}doc/">`), "which the browser may keep, its base the document's folder", hostPage.headers.get("cache-control"));
+  expect((await pagesFetch(frameSrc.replace(/([?&])v=[^&]+/, "$1v=old"))).headers.get("cache-control") == "no-cache", "another version is checked each time");
+  expect((editorAt.match(/<link rel="preload"/g) ?? []).length >= 2 && (frameDoc.headers.get("server-timing") ?? "").includes("worker;dur="), "the editor's page preloads its files; responses say where their time went");
+  ok("the page's files are cached and checked by ETag; the frame's host page is kept by version");
 
   // Another site can't make documents for you: its link gets a button instead, which posts from here.
   const before = await docs();
