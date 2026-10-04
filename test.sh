@@ -6,6 +6,7 @@
 #                     viewer (tests/isolation.ts), the front door's routes
 #                     (tests/worker.ts), documents with many pages (tests/pages.ts), the front page the server makes (tests/landing.ts),
 #                     the deploy page against a pretend Cloudflare (tests/deploy.ts),
+#                     Erga's own source: the Git endpoint, merges, the mirror and the Source page (tests/source.ts),
 #                     who you are in every page's corner (tests/account.ts),
 #                     the first switch into editing on a slow network (tests/switch.ts),
 #                     live reload (tests/reload.ts, in a copy of the checkout)
@@ -38,6 +39,7 @@ page_group() {
   run pages bun tests/pages.ts
   run deployed bun tests/server-config.ts
   run landing bun tests/landing.ts
+  run source bun tests/source.ts
   run account bun tests/account.ts
   run switch bun tests/switch.ts
   # Latency is measured afterwards, alone: other tests running would skew it.

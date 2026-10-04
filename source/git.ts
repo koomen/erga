@@ -257,7 +257,7 @@ export function inflate(src: Uint8Array, at: number, size: number): { data: Uint
  */
 export async function deflate(data: Uint8Array): Promise<Uint8Array> {
   if (typeof CompressionStream == "function") {
-    const stream = new Blob([data as BlobPart]).stream().pipeThrough(new CompressionStream("deflate"));
+    const stream = new Blob([data as unknown as ArrayBuffer]).stream().pipeThrough(new CompressionStream("deflate"));
     return new Uint8Array(await new Response(stream).arrayBuffer());
   }
   const parts: Uint8Array[] = [Uint8Array.of(0x78, 0x01)];

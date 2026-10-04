@@ -31,6 +31,7 @@ const STYLE = `
   .merge-row .count { font-size: 13px; color: var(--soft); white-space: nowrap; }
   #merge-hint { margin: -16px 0 18px; font-size: 13.5px; text-align: right; }
   #merge-hint.error { color: var(--bad); }
+  @media (max-width: 640px) { header { flex-direction: column; align-items: stretch; gap: 14px; } .merge-row { justify-content: space-between; } .merge-row .count { white-space: normal; flex: 1; min-width: 0; } #merge-hint { margin-top: -6px; text-align: left; } }
   .lanes { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
   @media (max-width: 760px) { .lanes { grid-template-columns: 1fr; } }
   .card { border: 1px solid var(--rule); border-radius: 12px; padding: 14px 14px 10px; min-width: 0; background: var(--bg); }
