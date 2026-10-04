@@ -792,9 +792,16 @@ too), on an origin of its own; relative links between its files work.
 
 ## Working in a document
 
+A document is a folder of files. Pages are its .html (or .md) files
+(index.html is the home page); everything else (CSS, JS, images, fonts) is
+shared assets. Users see pages; you see files: the document tools see the
+whole document as one file system, rooted at its folder.
+
 Every document has the tools its embedded agent uses (read, edit, write, ls,
-find, grep, view_page, get_title, set_title). Here they take a \`document\`
-argument too. Each document also has its own guide, with the rules for
+find, grep, list_pages, open_page, new_page, mkdir, mv, rm, view_page,
+get_title, set_title). Here they take a \`document\` argument too.
+open_page switches your person's open editor on that document to another
+page (if they have none open, it says so and gives the address). Each document also has its own guide, with the rules for
 writing pages people can keep editing by hand (read it before changing a page
 much): \`GET ${origin}/d/<id>/api/ext\` with the same token. Your edits show up
 live in everyone's editor, attributed to your person's agent, and your person
