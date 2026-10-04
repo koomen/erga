@@ -34,12 +34,15 @@ export default defineConfig(({ mode }) => ({
       DocHost: exports.durableObject({ storage: "sqlite" }),
       // The deploy page's sessions (/deploy, worker/deployer.ts): each holds one person's Cloudflare token, only while they deploy.
       Deployer: exports.durableObject({ storage: "sqlite" }),
+      // The homepage's deploys and the snapshot / serves (worker/home.ts): one object, "home".
+      Home: exports.durableObject({ storage: "sqlite" }),
       // Each person's list of documents before the directory: gone, with what it held.
       DocList: exports.durableObject({ state: "deleted" }),
     },
     env: {
       DOCS: bindings.durableObject({ worker: "erga", exportName: "DocHost" }),
       DEPLOYS: bindings.durableObject({ worker: "erga", exportName: "Deployer" }),
+      HOME: bindings.durableObject({ worker: "erga", exportName: "Home" }),
       // The server's database: users, settings and the directory. `cf deploy` makes the database by name if there's none; its tables come
       // from migrations/, applied by migrate.ts (site.sh runs it on Workers Builds, before
       // the deploy). Locally (vite dev) it's a database of its own, at a fixed made-up id that
@@ -68,6 +71,12 @@ export default defineConfig(({ mode }) => ({
         // secret that lets it link files on disk to documents, and a shorter write delay for tests.
         ERGA_LINK_SECRET: bindings.text(process.env.ERGA_LINK_SECRET ?? ""),
         ERGA_WRITE_DELAY_MS: bindings.text(process.env.ERGA_WRITE_DELAY_MS ?? ""),
+        // The homepage's deploys (worker/home.ts): how long after a change the next runs, and how often / checks for one (tests shorten both).
+        ERGA_HOME_DELAY_MS: bindings.text(process.env.ERGA_HOME_DELAY_MS ?? ""),
+        ERGA_HOME_RECHECK_MS: bindings.text(process.env.ERGA_HOME_RECHECK_MS ?? ""),
+        // When versions are cut (worker/doc-host.ts): how long edits pause first, and the longest burst one version holds.
+        ERGA_VERSION_IDLE_MS: bindings.text(process.env.ERGA_VERSION_IDLE_MS ?? ""),
+        ERGA_VERSION_MAX_MS: bindings.text(process.env.ERGA_VERSION_MAX_MS ?? ""),
         // tests/bench.ts --latency: each call to the database or a document waits this long first (worker/timing.ts).
         ERGA_REMOTE_LATENCY_MS: bindings.text(process.env.ERGA_REMOTE_LATENCY_MS ?? ""),
         // "1": /deploy talks to a pretend Cloudflare (deploy/mock.ts), for its tests and for trying it safely.

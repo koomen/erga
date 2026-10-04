@@ -50,8 +50,10 @@ serves the app's routes (`front.ts`). Its pages:
   and pause. The viewer and the editor are one page (see [One page, viewing or
   editing](#one-page-viewing-or-editing)): the pencil switches
   between them without a reload, and the document doesn't move.
-- **The front page**, `/`: the viewer on the landing document (see [The front
-  page](#the-front-page)), for anyone, signed in or not.
+- **The front page**, `/`: the landing document, for anyone, signed in or not,
+  served directly from its last deploy, with the viewer's controls on top
+  (see [The front page](#the-front-page) and [The homepage, served
+  directly](#the-homepage-served-directly)).
 - **Documents**, `/docs`: home for anyone signed in, and under it **the
   editor**, `/<owner>/<slug>#edit`, whose breadcrumbs (Documents › its
   title) lead back. A document's address always means the document: `#edit`
@@ -89,7 +91,8 @@ route: `/<owner>/<slug>/edit` is a page called edit, if the document has one. Th
 title follows the page's first `<h1>` (else `<title>`, else "Untitled") until
 someone sets it, and the slug follows the title (lowercase letters, digits
 and dashes, `-2`, `-3`... when taken) until someone sets it. Rename from the
-title after Documents in the editor's breadcrumbs, or by asking an agent
+title after Documents in the editor's breadcrumbs (it opens the document's
+pages; the pencil on the first row, the document itself, renames it), or by asking an agent
 (its `get_title` and `set_title` tools, for the embedded agent and external
 ones). Every open tab follows a rename: its title, and its address bar. The
 editor itself talks to its document at `/d/<id>`, which a
@@ -124,7 +127,9 @@ the server yet is marked "can't sign in yet". Underneath it's `POST
 stop), which answers everyone's permissions (and `notUsers`), and `GET
 /docs/share?id=`, which only reads them. The owner's agent (in the editor,
 or with a token) shares too, with `share_document` and `document_access`.
-Server admins get nothing on documents by being admins.
+Server admins get nothing on documents by being admins, with one exception:
+the front page, which only admins may edit while it's the front page (see
+[The homepage, served directly](#the-homepage-served-directly)).
 Test people may open only test documents, as editors of those of whoever
 minted their token.
 
@@ -179,14 +184,17 @@ never get it.
 
 What `/` shows is a document like any other, in the database and its own
 Durable Object: the one the `landing_document` setting names (kept by id,
-so a rename doesn't lose it). `/` is the viewer on it: everyone sees it
-there, signed in or not, read-only, in a frame on the document's own pages
-origin (as the editor shows any page: see [Pages run on their own
-origin](#pages-run-on-their-own-origin)), with Clone, which makes you a copy
-(`/new?from=landing`; the `create_document` tool's `template: "landing"`),
-and, for those who may edit it, Edit. Only a document's owner may make it the
-front page, since that shows it to everyone: from `/admin` (type its
-address), or by asking an agent (`set_setting`).
+so a rename doesn't lose it). Everyone sees it at `/`, signed in or not,
+read-only, with Clone, which makes you a copy (`/new?from=landing`; the
+`create_document` tool's `template: "landing"`), and, for those who may edit
+it, Edit. Unlike any other document it's served directly, on this site, from
+its last deploy, with no frame (see [The homepage, served
+directly](#the-homepage-served-directly)); until its first deploy is done,
+`/` is the viewer on it, in a frame on its pages origin, as any document's.
+An admin who may edit a document makes it the front page, and only if
+everyone who may edit it is an admin: from `/admin` (type its address), its
+settings (`POST /api/docs/<id>/home`), or by asking an agent
+(`set_setting`).
 
 **The server makes it itself.** The repo's `landing/` folder (the demo page:
 its `index.html` or `index.md`, and text files beside it) is built into the
@@ -214,6 +222,120 @@ with the way in; so is a locked setting naming a document that isn't there.
 
 Locally, `bun start` does the same: on a fresh local database the first `/`
 makes `/<DEV_LOGIN>/landing`. Test servers too, when a test asks for `/`.
+
+### The homepage, served directly
+
+Every document renders in a frame on its own origin, for safety (see [Pages
+run on their own origin](#pages-run-on-their-own-origin)). The front page
+(the homepage) is the exception: `/` is its page itself, served on this site
+as close to a static file as it gets, with Erga's controls on top, and
+nothing in between. It looks exactly as the viewer shows it (the same
+viewport, title and controls; `tests/home.ts` compares them pixel by pixel),
+but for one thing: the page starts below the controls, in a band of its own
+coloured as the page's background, so they never cover its top (as every
+document's does: task #38). It loads about twice as fast (below).
+
+**What `/` sends** (`serveHome`, `worker/home.ts`): the page as its last
+deploy rendered it (`renderHome`, `home.ts`), then, as soon as it's known who's
+asking, the controls (`homeHeader`): Clone, Edit (the document's address with
+`#edit`) for those who may edit it, and who you are (account.ts's corner). The
+page goes out at once; signed out, so do the controls, and nothing is asked
+of the database at all. The controls are a declarative shadow root on an
+`<erga-controls>` element, so they paint as they arrive, before any script,
+and neither side's styles reach the other: the host's own `!important` rules
+win over anything the page says about it, and its few lines of script move
+it out of the page's `<body>` and run the avatar's menu. The band is the
+root's top padding (in the page's head from the start, so nothing moves when
+the controls arrive), with the controls' own band over it, fixed (on a phone
+it scrolls away with the page), in the page's background colour (its root's,
+else its body's, else the canvas's; anchors scroll to below it). A deploy's files are
+at `/_home/<gen>/<path>` (a new `<gen>` each deploy, so they're cached for
+good); the page's relative URLs that load something (`src`, `srcset`, `href`
+on `<link>`, `poster`, `url()` and `@import` in CSS, inline styles) are
+pointed there. Links to its other pages stay relative: the deploy's files
+are also served at the root (`/<name>.<ext>` or `/<folder>/<name>.<ext>`)
+when the app has nothing there. Only an HTML page is served directly; a
+Markdown homepage's deploy fails, saying so, and `/` stays the viewer.
+
+**How it's served.** The deploy's snapshot lives in one Durable Object
+(`Home`, named "home"). The Worker keeps it in the isolate's memory and in
+the colo's cache (the Cache API), and checks the Durable Object for a newer
+one at most every 5 seconds (`ERGA_HOME_RECHECK_MS`), after answering: so `/`
+waits on nothing but memory, and on a cold isolate the colo's cache. We chose
+this over Cloudflare Pages: Pages would be a second project, with an API
+token as a secret, and erga.dev's `/` belongs to the Worker (its custom
+domain), so the Worker would have to fetch each page from Pages, a hop more
+than reading its own cache. KV would mean a namespace for every deploy (and
+`/deploy` making one), for the same edge caching; Workers static assets need
+a Worker deploy. This needs nothing new outside the Worker, works the same
+locally (`bun start`) and on `/deploy`ed servers, and on workers.dev (which
+has no Cache API) still serves from memory. A new deploy is everywhere within
+seconds: about 5 in each isolate and colo, after the next request.
+
+**Deploys** (`Home`, `worker/home.ts`). A deploy renders the homepage's
+published version (`publishedFiles`, `worker/published.ts`) and keeps it with
+its files under a new generation; the one before stays a while for pages
+still open on it, then goes. About five minutes after the published version
+changes (`ERGA_HOME_DELAY_MS` locally), on the object's alarm, the next
+deploy runs; each change pushes it back. Redeploy now runs it at once. A
+deploy that fails says why, and the last good one keeps serving. Making
+another document the homepage drops the snapshot and deploys the new one at
+once (meanwhile `/` is the viewer on it); deleting the homepage drops it too
+(the next `/` makes a new one from `landing/`). Every change of the deploy's
+state is told to everyone who has the homepage document open: `{ type: "home"
+}` on its `/api/events`. The published version is the one published in
+"manual" mode; in "latest" mode, the document as it is now, which changes
+each time a version is cut (see Versions and publishing). The document's host
+calls `publishedChanged` whenever it fires `firePublished`.
+
+**Its API** (`homeApi`, `home.ts`; the settings UI builds on it):
+
+    GET  /api/docs/<id>/home          for anyone who may open the document (or an admin)
+      → { isHome: boolean,
+          canSet: boolean,            an admin who may edit it, and landing_document isn't locked by the deploy
+          blocked: string | null,     why it can't be the homepage (someone who isn't an admin may edit it), or null
+          deploy: { state: "idle" | "scheduled" | "deploying" | "deployed" | "failed",
+                    at: ISO time | null (the last success), scheduledFor: ISO time | null,
+                    version: number | null (the published version that's live), error: string | null } }
+    POST /api/docs/<id>/home   { isHome: boolean }   admins: sets or clears landing_document; answers as GET
+    POST /api/docs/<id>/home/deploy                  admins: deploys again now (the homepage only); answers as GET
+
+Refusals are `{ error }` with 401, 403 (not an admin, not allowed, from
+another site), 404, 409 (locked by the deploy, or not the homepage). Clearing
+it resets `landing_document`, so the next `/` makes a fresh homepage from
+`landing/`. A document that isn't the homepage has `deploy.state` `idle`.
+
+**Security.** The homepage's scripts run on erga.dev's own origin, where they
+can do anything the person viewing it can (call the app's API as them, read
+its local storage). So only admins may edit it, which the directory enforces
+(`directory.ts`): a document can't become the homepage while anyone who isn't
+an admin may edit it (`homeBlocked`, which GET `/home` reports as `blocked`),
+nobody but an admin can be made its editor while it's the homepage (`share`),
+and anyone else whose permission says otherwise (an admin since made a user)
+only views it (`homeLimit`, in `access` and `openAs`, so the room, the
+agents and publishing all follow). What's left to trust is the admins. The
+session cookie is `HttpOnly` (`SameSite=Lax`), so the page can't read it;
+`/` says `Content-Security-Policy: frame-ancestors 'self'`, `Referrer-Policy:
+no-referrer`, `Cache-Control: private, no-cache`.
+
+**To check on a real account** (the tests run locally only): the `Home`
+Durable Object's first deploy with `cf deploy` (a new class, declared in
+`exports`), the Cache API on erga.dev, `www.erga.dev` (not one of the Worker's
+domains today; add it to `domains` in `cloudflare.config.ts` if it should
+serve `/` too), and how quickly a deploy reaches other colos.
+
+**Speed** (`bun tests/bench.ts --prod --only front`, medians of 5, ms; cold is
+a fresh browser, warm the same page again; "visible" is the page's first
+contentful paint):
+
+|  | ttfb | visible (cold) | visible (warm) | requests | kB (cold) |
+|---|---|---|---|---|---|
+| desktop, before | 5 | 156 | 52 | 17 | 600 |
+| desktop, after | 5 | 133 | 31 | 9 | 190 |
+| desktop, 50ms to the database, before | 111 | 373 | 199 | 17 | 600 |
+| desktop, 50ms to the database, after | 4 | 123 | 35 | 9 | 190 |
+| phone (Slow 4G), before | 159 | 806 | 400 | 17 | 600 |
+| phone (Slow 4G), after | 156 | 463 | 234 | 9 | 190 |
 
 ### Users, admins and settings
 
@@ -252,6 +374,9 @@ key with who set it and when (`config.ts`). Only the keys declared in
 `SETTINGS` exist, each with a description, a default and a parser that
 refuses a bad value saying why; one never set has its default. Today there's
 `delete_docs_after_hours`, `landing_document` ([The front page](#the-front-page)) and `deploy_page` ([Deploy your own](#deploy-your-own)).
+A change to `landing_document`, however it's made, reaches the homepage's
+deploys (`ServerConfig`'s `changed`, which `worker/d1.ts` hands to
+`worker/home.ts`).
 A setting may name a document (`kind: "document"`): the admin page takes and
 shows it by address, and the directory checks who may set it (`checks`).
 `delete_docs_after_hours` is a whole number of hours, or `null` (also
@@ -302,6 +427,100 @@ applies, so local development is locked the same way as erga.dev.
 
 The admin-only calls throw `NotAllowed` (and a bad value `ConfigError`) with
 a message a person or an agent can act on.
+
+### Versions and publishing
+
+A document keeps **versions** (`versions.ts`): snapshots of its whole file
+set (every page, style, script and image), numbered 1, 2, 3... A version is
+cut after a burst of edits, not on every keystroke. The rule
+(`noteEdit` in `worker/doc-host.ts`):
+
+- edits pause for 30 seconds;
+- a burst has gone on for 5 minutes since its first edit (long typing still
+  gets versions);
+- an agent's turn ends (the embedded agent's, or an external agent's calls, 8
+  seconds after its last): one version per agent turn, since while any agent
+  works the two rules above wait for it;
+- the last person who may edit leaves (their room connection closes);
+- before a publish;
+- when the document's room opens, if what it holds isn't the latest version
+  (edits whose timers didn't run, because the object was evicted).
+
+A cut that finds nothing changed makes no version. A new document's first
+version is the files it starts from. Each version says when it was cut, who
+edited since the one before (logins, and agents: "koomen’s agent"), and a
+five-word description: in the background, the document sends a compact diff
+(files added, removed and changed, and the changed lines with one line of
+context, about 6KB at most) to Claude Sonnet 5.5 (`DESCRIBE_MODEL`) with the
+server's `ANTHROPIC_API_KEY`, and stores its answer. With no key, under the
+scripted test model, on test documents, or if the model fails, it's a
+fallback made from the file names ("Edited index.html and style.css").
+Editing never waits for any of it.
+
+**Storage.** In the document's own Durable Object, beside its files: each
+file's bytes once, content-addressed (`b:<sha-256>`), shared by every version
+that has them, so a version that changes one file stores one new blob; a
+version (`v:<n>`) is a manifest (path → digest) with its details. No other
+database is asked, a version is served by the object that holds the document,
+and deleting the document deletes its versions. Versions are kept for as long
+as the document is.
+
+**Publishing.** What viewers see is the published version, by mode:
+**latest** (the default), the document as it is now, up to the keystroke, as
+before: the viewer never waits for a version; or **manual**, one chosen
+version, until someone publishes another. Editors always edit the current
+state. The viewer shows the page from the document's `pub/` (the frame's host
+page links it: `/t/<token>/pub/<page>`), which in "latest" mode is `doc/`
+exactly (no extra call: the mode is in the object's memory) and in "manual"
+mode the published version's files, the page's own relative links included.
+Someone who may only view the document (or nobody signed in, on the front
+page) gets a pages token that serves the published version for `doc/` too, so
+every file they can reach is the published one, and their Clone copies it.
+
+The API (also for the settings UI, and with an agent token):
+
+    GET  /api/docs/<id>/versions[?before=<versionId>&limit=<n>]
+      → { current: Version, published: { mode: "latest" | "manual", version: Version },
+          versions: Version[] (newest first, 10 by default), total, canEdit, pending }
+      Version = { id: "v3", n: 3, at: ISO time, authors: string[], description: string | null }
+    POST /api/docs/<id>/publish     editors only; from a browser only from this site's pages
+      { mode: "latest" } | { mode: "manual", versionId: "v3" }   (no versionId: the current state)
+      → { published } | 4xx { error }
+    POST /api/docs/<id>/versions/<versionId>/restore   editors only; from a browser only from this site's pages
+      → { current: Version } | 4xx { error }
+
+`description` is null until the model has answered; `pending` says there are
+edits since the current version. Publishing the current version (`versionId`
+the current one's) while edits are pending cuts them into a new version first
+and publishes that, so "current" means up to the keystroke. A **restore**
+writes the version's files over the document as it is (files it didn't have
+are deleted), as an edit open editors see live, and cuts that as a new current
+version, by the person (or "<login>’s agent"), described "Restored version
+<n>"; pending edits become a version first, so nothing is lost. In "latest"
+mode viewers then see it; in "manual" mode what's published stays. Everyone with the document open hears
+`{ type: "versions" }` on its event channel (`/api/events`) when a version is
+cut, a description arrives, or the published version changes. In "latest"
+mode, `published.version` is the current version.
+
+The agents (the editor's and external ones, over `/api/ext`, the server's
+API and MCP) have `list_versions`, `read_version` (a version's files, or one
+file as it was), `restore_version` and `publish_version` (`latest`, or
+`manual` with a version; editors only), so an agent can do what the person can.
+
+**In process, for the homepage's deploy** (`versions.ts`):
+`onPublished(docId | "*", cb)` calls `cb({ docId, published, files() })`
+whenever that document's published version changes (a publish, going back to
+"latest", or a new version in "latest" mode); it's fired in the document's
+Durable Object, so subscribe from code that runs there. `publishedFiles(env,
+docId)` answers `{ published, index, files: Map<path, bytes> }` from
+anywhere with the Worker's environment: the published version's files in
+"manual" mode, the files as they are now in "latest" mode (the Durable
+Object's `publishedFiles()` method underneath).
+
+Locally, `ERGA_VERSION_IDLE_MS` and `ERGA_VERSION_MAX_MS` shorten the pause
+and the longest burst (the tests do). `bun tests/versions.ts` tests all of
+this against a dev server of its own, and `tests/versions.test.ts` the
+storage.
 
 ### Agents configure the server
 
@@ -543,6 +762,90 @@ There's no dark mode: pages are shown as their authors made them, and most
 don't support one. The editor's own controls take their colours from the page
 instead, on a band in the page's colour above it (see "One page, viewing or
 editing").
+
+### Document settings
+
+The gear in the top row opens the document's settings, in a popover under
+it (a sheet from the bottom on a phone; Escape or a click outside closes it):
+
+- **Publishing**: *Latest*, the default, where viewers see the current
+  version, up to the keystroke, or *Manual*, where they see the version
+  picked, until another is. Switching to Manual keeps what viewers see. The
+  published-version menu always shows the published version, the latest ten
+  and the three just before the published one (to roll back to); a row for
+  each run of versions in between says how many there are and loads them
+  (`?before=`). Under it, **Publish the current version** publishes the
+  document as it is now, up to the keystroke, when that isn't what's published.
+- **Homepage**, for admins and on the homepage itself: whether this document
+  is the server's homepage (only admins may change it, not while it deploys),
+  how its deploy stands (Scheduled for, Deploying, Deployed at, Failed), and
+  **Redeploy now**.
+- **Versions**: the latest ten, each with its number, the model's five-word
+  description (a quiet placeholder until it arrives), when and who; the
+  current and the published one marked. **Edit**, on any version but the
+  current one (it shows the moment the pointer is on the version, or the
+  keyboard reaches it), makes a copy of that version the current one, to edit
+  it now: it appears at the top as a new version ("Restored version 21"), and
+  the one it replaced stays a version.
+
+It follows the event channel's `{ type: "versions" }` and `{ type: "home" }`,
+so it's always up to date. Someone who can't edit sees it read-only, with a
+line saying why. Its code (`src/page/settings.ts`, built as `settings.js`)
+loads only when the gear is hovered, focused or clicked.
+
+It talks to the server's `/api/docs/<id>/versions`, `/versions/<versionId>/restore`,
+`/publish`, `/home` and `/home/deploy`. Until those are in, `ERGA_STUB_SETTINGS=1 bun start` answers
+them with a stand-in (`dev/settings-stub.ts`, local development only), whose
+`POST /__erga/stub/settings` sets up any state (how many versions, which is
+published, a deploy that fails…); `tests/settings.ts` uses it.
+
+### A document's pages
+
+A document can have more than one page. Its root is `index.html`; the
+others sit beside it, in folders if you like. People think in documents, not
+files: the tree shows only documents (HTML pages) and the folders holding
+them (or nothing yet). A document's stylesheets, scripts, fonts and images
+are part of it, out of sight, as are folders holding only those (`fonts/`,
+`assets/`); the API lists every file, and agents see them all. The tree of them
+(`src/page/tree.ts`, built on its own as `pages-tree.js` and loaded only when it's
+opened, so viewing never pays for it) shows in two places: in the editor, the
+document's title in the breadcrumbs opens it in a card, the document as its
+first row and everything else under it; on `/docs`, the chevron left of each
+document opens its pages beneath its row. Folders open and close (remembered
+for the tab); documents show by their title when it's known (in the editor,
+read from the room as they're edited; "Untitled" counts as none), else by
+their name made readable ("spring-migration" is "Spring migration", a
+folder's index is the folder's name), with the file's name as a quiet hint
+only where two would read the same. Clicking a document opens it, in the
+editor for those who may edit (`/<owner>/<slug>/<page>#edit`), in the viewer
+otherwise (`/<owner>/<slug>/<page>`), and the one you're on is marked.
+
+Editors get New document (from the new-document template; "My post" is
+`my-post.html`) and New folder, at the top level (the foot of the tree) and in each
+folder (its +), named in place; rename in place (the menu, F2, or the pencil
+on the root row, which renames the document itself: its title and address);
+move by drag and drop or the menu's Move to…; and delete (a folder asks
+first, in its row, counting the documents in it; `index.html` can't go).
+A document links its stylesheets, images and other documents by where they
+are from it (`../style.css`), so moving one to another folder (or a folder to
+another depth) can leave those behind: the tree says so after the move when
+the document has relative links (in the editor it reads them from the room;
+on `/docs` it always says so). It doesn't rewrite links, nor those from other
+documents to the one that moved or was renamed. The editor renders a page in
+a folder with its links resolved from that folder, as the browser does at its
+address. Viewers see the tree without any
+of that. What the server refuses shows where it happened, in its words. Keys:
+↑ ↓ ← → Home End move and open folders, Enter opens, F2 renames, Delete
+deletes, Shift-F10 opens a row's menu, Esc cancels or closes.
+
+It talks to `GET /api/docs/<id>/tree` (`{ entries: [{ path, type: "page" |
+"folder" | "file", title? }], canEdit }`) and `POST` there (`new_page`,
+`new_folder`, `move`, `delete`), and reads it again on a `{ type: "tree" }`
+event on the editor's event channel, or when a file comes or goes in the room.
+That's the server's own tree API (below). `bun tests/tree.ts` checks the tree
+in headless Chrome, against `dev/tree-stub.ts` (`ERGA_TREE_STUB=1`: an
+in-memory stand-in for the API that changes no files, so the test can set
+any tree and make changes fail).
 
 ### When the page is broken
 
@@ -891,7 +1194,9 @@ person is on.
 ### Pages run on their own origin
 
 Anyone who can edit a document can put a script in its page, so a page
-never runs where it could act as the person viewing it. The editor's shell
+never runs where it could act as the person viewing it (the homepage aside,
+which only admins may edit: see [The homepage, served
+directly](#the-homepage-served-directly)). The editor's shell
 (`page.html`, `src/page/main.ts`) runs on erga.dev and holds everything that
 acts as you: the session, the room, your agent, the source view. The page,
 with the page editor next to it (`src/page/frame.ts`), runs in a frame on the
@@ -1087,8 +1392,26 @@ fresh server the first `/` (several at once) makes one, its owner edits it in
 the editor, someone else sees it without Edit, `/new?from=landing` copies it,
 a deleted one is made again, and an admin's choice is kept;
 `tests/landing.test.ts` races separate isolates on one database.
+`bun tests/home.ts` checks the homepage served directly: the first `/` is the
+viewer and starts the first deploy, then `/` is the page itself and looks
+like the viewer pixel for pixel (light, dark, desktop, phone; `bun
+tests/home-shots.ts <folder> [path or URL]` takes such pictures on their own),
+the page's styles and the controls' can't reach each other, its files load,
+only admins may edit it, deploys are debounced, Redeploy now, a failed deploy
+keeps the last one, the switch on and off, and a locked setting;
+`tests/home.test.ts` covers the rendering.
+`bun tests/versions.ts` checks versions and publishing: a burst of edits is
+one version, an agent's turn is one, leaving cuts one, events and
+descriptions arrive, "latest" and "manual" in the viewer (headless Chrome),
+who may publish, publishing the current version with edits pending,
+restoring, and the agents' tools; `tests/versions.test.ts` covers their
+storage (unchanged files stored once).
 `tests/directory.test.ts` covers the directory, permissions, users and
 settings on bun:sqlite; `tests/tokens.test.ts` the tokens themselves.
+`bun tests/settings.ts` checks document settings (the popover, Latest and
+Manual, the published-version menu's windows, live updates, the homepage's
+deploy states, errors, read-only, a phone and a dark page), and
+`tests/versions.test.ts` the menu's windows on their own.
 `bun tests/pages.ts` checks documents with many pages: the tree's API and
 who may use it, every operation and what it refuses, live tree events,
 addresses (`blog.html` before `blog/index.html`, no slash added, 404s, a
@@ -1123,6 +1446,9 @@ back, merging edits from disk, the agent's exact-match edits and attribution.
   scripts (the shell's, and the frame's that runs on each document's own origin)
 - `landing/`: the demo page, built into the Worker, which the server makes the
   front page when there's none (`seedLanding`, `front.ts`)
+- `home.ts`, `worker/home.ts`, `worker/published.ts`: the homepage served
+  directly: its rendering, controls and API; its deploys (the `Home` Durable
+  Object) and serving `/`; the published version it deploys
 - `front.ts`: the app's own routes and pages (the front page, `/new`, `/docs` and
   its share dialog, delete, the unedited rule, titles)
 - `admin.ts`: `/admin`, the server's settings and users, for admins
@@ -1138,6 +1464,9 @@ back, merging edits from disk, the agent's exact-match edits and attribution.
   D1 (`migrations/0100_tokens.sql`)
 - `server-api.ts`: the server's API for agents (`/llms.txt`, `/api/ext`,
   `/api/publish`, `/api/auth/...`, `/mcp`), its tool registry, and `/tokens`
+- `versions.ts`: a document's versions (content-addressed snapshots of its
+  files, in its Durable Object), their descriptions, and the hooks for the
+  homepage's deploy (`onPublished`, `publishedFiles`)
 - `server-tools.ts`: the tools both the editor's agent and a token's agent
   have: sharing, and the server's settings and users for an admin
 - `host.ts`: the per-document host (API, `/doc/`)
@@ -1163,7 +1492,11 @@ back, merging edits from disk, the agent's exact-match edits and attribution.
   room connection and its binding to the editor), `merge.ts` (word diffs and
   rebasing as change sets), `agent-log.ts` (the agent transcript, shared by
   host and shell)
+- `src/page/settings.ts`, `src/page/versions.ts`: document settings (the gear's
+  popover: publishing, the homepage, versions), built on its own as `settings.js`;
+  `dev/settings-stub.ts` stands in for their server side (`ERGA_STUB_SETTINGS=1`)
 - `package.json`: the pinned CodeMirror and Yjs packages the page editor bundles, and pi
+- `src/page/tree.ts`: a document's pages as a tree (built as `pages-tree.js`, loaded on demand), in the editor and on `/docs`
 - `style.css`: theme colours, typography and the editor's styling
 - `fonts/`: the self-hosted Inter web font
 - `tests/`: unit tests, `page.ts`, `smoke.ts` and `fixtures/` for the page

@@ -20,12 +20,14 @@ import { RemotePage } from "./remote";
 import type { Backdrop, Keys } from "./bridge";
 import { changesBetween } from "./merge";
 import { Collab, type Presence } from "./collab";
-import { colorFor, type Author } from "../room/doc";
+import { colorFor, files, type Author } from "../room/doc";
+import type { mountTree, TreeHandle } from "./tree";
 import { analyzeMarkdown } from "./markdown";
 import TurndownService from "turndown";
 import { emptyLog, reduce, type Log, type LogEvent, type LogItem, type ViewRequest, type ViewResult } from "./agent-log";
 import type { AgentState, DocInfo, DocName, ModelState } from "../../api";
 import { BASE } from "./base";
+import type { Settings } from "./settings";
 import { dirOf, isPage, pageUrl } from "../../tree";
 
 const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
@@ -73,6 +75,8 @@ const peersField = StateField.define<DecorationSet>({
 declare global {
   interface Window { ergaPage?: unknown; ergaShell?: { ready(): void; loadedEditing?: boolean }; ergaDocInfo?: { url: string; response: Promise<Response> } }
 }
+/** pages-tree.js, once loaded (it sets window.ergaTree). */
+type TreeModule = { mountTree: typeof mountTree };
 
 
 (async () => {
@@ -177,13 +181,15 @@ declare global {
   ($("nav-back") as HTMLAnchorElement).href = `/docs${as}`;
   /** The host's endpoints, as this person. */
   const api = (path: string) => `${BASE}${path}${as}`;
+  /** The document's settings, once the gear has loaded them (loadSettings). */
+  let docSettings: Settings | null = null;
 
   // Join the room and wait for the document's text. Presence and connection
   // news before the shell is set up is picked up once it is (`started`).
   let started = false;
   const collab: Collab = new Collab({
-    path: info.path,
     me,
+    path: info.path,
     onRemote: (changes, author) => applyRemote(changes, author),
     onFiles: () => needRefresh(),
     onPresence: () => { if (started) presenceChanged(); },
@@ -285,15 +291,20 @@ declare global {
   // the host at /d/<id> (BASE), which a rename never changes.
   let docName: DocName | null = null;
   const titleBtn = $("doc-title"), naming = $("naming");
+  // The pages card (below: togglePages) and its tree, once opened.
+  const pagesCard = $("pages");
+  let tree: TreeHandle | null = null;
   const namingForm = $("naming-form") as HTMLFormElement, namingStatus = $("naming-status");
   const titleIn = $("naming-title") as HTMLInputElement, slugIn = $("naming-slug") as HTMLInputElement;
   function showName(n: DocName) {
     docName = n;
     $("doc-title-text").textContent = n.title;
     titleBtn.hidden = false;
-    titleBtn.setAttribute("aria-label", `${n.title}: rename, or change its address`);
+    titleBtn.setAttribute("aria-label", `${n.title}: its pages`);
     titleBtn.title = `${location.host}${n.address}`;
     document.title = n.title;
+    tree?.setRootTitle(n.title);
+    if (n.address) tree?.setBase(n.address);
     // The editor's own address is the page's, with #edit (without, it's the viewer, which the pencil, blue while editing, goes back to).
     if (!n.address) return;
     const view = $("btn-edit") as HTMLAnchorElement;
@@ -321,13 +332,15 @@ declare global {
     const open = typeof force == "boolean" ? force : naming.hidden;
     if (open && !docName) return;
     naming.hidden = !open;
-    titleBtn.setAttribute("aria-expanded", String(open));
+    titleBtn.setAttribute("aria-expanded", String(open || !pagesCard.hidden));
     if (!open) return;
+    togglePages(false);
     showChrome();
     toggleHelp(false);
     toggleShare(false);
     toggleSharing(false);
     toggleAccount(false);
+    docSettings?.toggle(false);
     slugTouched = false;
     $("naming-prefix").textContent = `/${docName!.owner}/`;
     titleIn.value = docName!.title;
@@ -336,7 +349,7 @@ declare global {
     titleIn.focus();
     titleIn.select();
   }
-  titleBtn.addEventListener("click", () => toggleNaming());
+  titleBtn.addEventListener("click", () => (naming.hidden ? togglePages() : toggleNaming(false)));
   $("naming-cancel").addEventListener("click", () => toggleNaming(false));
   // An address that follows the title follows it here too, until it's typed in.
   titleIn.addEventListener("input", () => { if (!docName!.slugSet && !slugTouched) slugIn.value = slugify(titleIn.value) || docName!.slug; namingHint(); });
@@ -358,6 +371,87 @@ declare global {
     showName(r.name);
     toggleNaming(false);
   });
+
+  // ---------------------------------------------------------------- pages
+
+  // The document's pages: the title opens them, as a tree (tree.ts, built on
+  // its own as pages-tree.js and loaded only now, so viewing never pays for it).
+  // Its first row is the document itself, whose pencil renames it (the naming
+  // card above); the rest are its other pages, folders and files. Pages open
+  // in the editor; the tree follows changes from other tabs and agents (a
+  // "tree" event, or a file coming or going in the room) and the titles of
+  // the pages as they're edited.
+  let treeScript: Promise<TreeModule> | null = null;
+  const loadTree = () => (window.ergaTree ? Promise.resolve(window.ergaTree) : (treeScript ??= new Promise<TreeModule>((resolve, reject) => {
+    const s = Object.assign(document.createElement("script"), { src: "/pages-tree.js" });
+    s.onload = () => (window.ergaTree ? resolve(window.ergaTree) : reject(new Error("no tree")));
+    s.onerror = () => { treeScript = null; s.remove(); reject(new Error("Couldn't load the pages: check your connection and try again.")); };
+    document.head.append(s);
+  })));
+  // Fetched as the pointer heads for the title, so opening it is immediate.
+  titleBtn.addEventListener("pointerenter", () => { loadTree().catch(() => {}); }, { once: true });
+  titleBtn.addEventListener("focus", () => { loadTree().catch(() => {}); }, { once: true });
+  /** A page's title from its text, as the room has it: its first <h1>, else its <title>. */
+  function pageTitle(path: string): string | null {
+    const text = files(collab.doc).get(path)?.toString();
+    if (!text) return null;
+    const m = /<h1\b[^>]*>([\s\S]*?)<\/h1>/i.exec(text) ?? /<title\b[^>]*>([\s\S]*?)<\/title>/i.exec(text);
+    if (!m) return null;
+    const t = new DOMParser().parseFromString(m[1].replace(/<[^>]*>/g, ""), "text/html").body.textContent?.replace(/\s+/g, " ").trim();
+    return t ? t.slice(0, 120) : null;
+  }
+  /** Whether a document links to its styles, scripts or images by relative paths (a move may break those): read from the room. */
+  function hasRelativeLinks(path: string): boolean | undefined {
+    const text = files(collab.doc).get(path)?.toString();
+    if (text == null) return undefined;
+    const refs = [...text.matchAll(/\b(?:src|href|poster|data)\s*=\s*["']?([^"'\s>]+)|url\(\s*["']?([^"')]+)/gi)].map((m) => m[1] ?? m[2]);
+    return refs.some((r) => !/^(?:[a-z][a-z0-9+.-]*:|\/|#|\{)/i.test(r));
+  }
+  function togglePages(force?: boolean) {
+    const open = typeof force == "boolean" ? force : pagesCard.hidden;
+    if (open && !docName) return;
+    if (open != pagesCard.hidden) return;
+    pagesCard.hidden = !open;
+    titleBtn.setAttribute("aria-expanded", String(open || !naming.hidden));
+    if (!open) return;
+    showChrome();
+    toggleHelp(false);
+    toggleShare(false);
+    toggleSharing(false);
+    toggleAccount(false);
+    toggleNaming(false);
+    docSettings?.toggle(false);
+    if (tree) { tree.refresh(); tree.focus(); return; }
+    const slot = $("pages-tree");
+    loadTree().then((t) => {
+      if (tree || !docName) return;
+      slot.replaceChildren();
+      tree = t.mountTree(slot, {
+        id: docName.id, base: docName.address, editing: true, query: as, showRoot: true, label: "Documents",
+        rootTitle: docName.title, titleOf: pageTitle, current: info!.path, hasRelativeLinks,
+        onRenameRoot: () => toggleNaming(true),
+      });
+      if (!pagesCard.hidden) tree.focus();
+    }, (e: Error) => {
+      slot.replaceChildren(Object.assign(document.createElement("p"), { className: "naming-status error", textContent: e.message }));
+      pagesCard.hidden = true; pagesCard.hidden = false;
+    });
+  }
+  document.addEventListener("pointerdown", (e) => {
+    const t = e.target as Element;
+    if (!pagesCard.hidden && !pagesCard.contains(t) && !titleBtn.contains(t) && !t.closest?.(".et-menu")) togglePages(false);
+  });
+  // A file coming or going in the room (another tab, an agent) reads the tree again; a page's text changing may change its title.
+  let treeTimer = 0, treeStale = false;
+  files(collab.doc).observeDeep((events) => {
+    if (!tree || pagesCard.hidden) return;
+    treeStale ||= events.some((ev) => ev.target == files(collab.doc) && [...ev.changes.keys.values()].some((c) => c.action != "update"));
+    clearTimeout(treeTimer);
+    treeTimer = window.setTimeout(() => { if (treeStale) tree?.refresh(); else tree?.retitle(); treeStale = false; }, treeStale ? 150 : 600);
+  });
+  // ?pages opens it straight away (a link to "this document's pages").
+  if (new URLSearchParams(location.search).has("pages") && editing()) requestAnimationFrame(() => togglePages(true));
+  pagesCard.addEventListener("keydown", (e) => { if (e.key == "Escape" && !e.defaultPrevented) { e.preventDefault(); togglePages(false); titleBtn.focus(); } });
 
   // ---------------------------------------------------------------- the room
 
@@ -461,11 +555,12 @@ declare global {
       else if (msg.type == "model") renderModel(msg as unknown as ModelState);
       else if (msg.type == "view" && msg.id) answerView(msg.id, msg.req ?? {});
       else if (msg.type == "name" && msg.name) showName(msg.name);
-      else if (msg.type == "tree") treeChanged(msg);
+      else if (msg.type == "versions" || msg.type == "home") docSettings?.event(msg.type);
+      else if (msg.type == "tree") { treeChanged(msg); tree?.refresh(); }
     };
     // Events sent while the channel was down are gone; catch up from the transcript.
     // A rename missed meanwhile (or before it first opened) is caught up the same way.
-    events.onopen = () => { if (opened) loadAgent(); opened = true; refreshName(); stillHere(); };
+    events.onopen = () => { if (opened) { loadAgent(); docSettings?.event("versions"); docSettings?.event("home"); } opened = true; refreshName(); stillHere(); };
     events.onclose = () => setTimeout(listen, 1000);
   }
   let opened = false;
@@ -618,7 +713,7 @@ declare global {
     account.hidden = !open;
     accountBtn?.setAttribute("aria-expanded", String(open));
     if (!open) return;
-    showChrome(); toggleHelp(false); toggleShare(false); toggleSharing(false); toggleNaming(false);
+    showChrome(); toggleHelp(false); toggleShare(false); toggleSharing(false); toggleNaming(false); togglePages(false); docSettings?.toggle(false);
     $("account-name").textContent = me.name;
     $("account-login").textContent = me.name.toLowerCase() == me.user ? "" : me.user;
     const set = (id: string, href: string | undefined) => { const a = $(id) as HTMLAnchorElement; a.hidden = !href; if (href) a.href = href; };
@@ -648,7 +743,7 @@ declare global {
   let anchor: { x: number; y: number; t: number } | null = null;
   let lastKeyAt = 0;
   function hideChrome() {
-    if (chromeHidden || !$("help").hidden || !$("share").hidden || !$("sharing").hidden || !$("naming").hidden || !$("account").hidden) return;
+    if (chromeHidden || docSettings?.isOpen() || !$("help").hidden || !$("share").hidden || !$("sharing").hidden || !$("naming").hidden || !$("account").hidden) return;
     chromeHidden = true;
     anchor = null;
     document.body.classList.add("chrome-hidden");
@@ -686,7 +781,7 @@ declare global {
   function toggleHelp(force?: boolean) {
     const open = typeof force == "boolean" ? force : help.hidden;
     help.hidden = !open;
-    if (open) { showChrome(); toggleShare(false); toggleSharing(false); toggleNaming(false); toggleAccount(false); }
+    if (open) { showChrome(); toggleShare(false); toggleSharing(false); toggleNaming(false); togglePages(false); toggleAccount(false); docSettings?.toggle(false); }
   }
 
   // Share with an external agent: a prompt carrying this page's API and your
@@ -742,7 +837,9 @@ Once you've read the guide, await further instructions.`;
     toggleHelp(false);
     toggleSharing(false);
     toggleNaming(false);
+    togglePages(false);
     toggleAccount(false);
+    docSettings?.toggle(false);
     if (!shareToken) loadShare(false);
   }
   shareBtn.addEventListener("click", () => toggleShare());
@@ -810,7 +907,7 @@ Once you've read the guide, await further instructions.`;
     sharing.hidden = !open;
     peopleBtn.setAttribute("aria-expanded", String(open));
     if (!open) return;
-    showChrome(); toggleHelp(false); toggleShare(false); toggleNaming(false); toggleAccount(false);
+    showChrome(); toggleHelp(false); toggleShare(false); toggleNaming(false); togglePages(false); toggleAccount(false); docSettings?.toggle(false);
     sharingAdd.reset();
     tellSharing("Loading…");
     (sharingAdd.elements.namedItem("login") as HTMLInputElement).focus();
@@ -827,6 +924,31 @@ Once you've read the guide, await further instructions.`;
   $("sharing-copy").addEventListener("click", async () => {
     const url = location.origin + (docName?.address ?? location.pathname);
     tellSharing(await navigator.clipboard.writeText(url).then(() => `Link copied: ${url}`, () => url));
+  });
+  // Document settings (publishing, versions, the homepage): the gear opens
+  // them, a popover under it. Their code (src/page/settings.ts, settings.js)
+  // loads only when the gear is reached for: hovered, focused or clicked.
+  const settingsBtn = $("btn-settings");
+  let settingsLoading: Promise<Settings | null> | null = null;
+  function loadSettings(): Promise<Settings | null> {
+    return settingsLoading ??= new Promise((resolve) => {
+      const s = Object.assign(document.createElement("script"), { src: "/settings.js" });
+      s.onload = () => {
+        docSettings = window.ergaSettings?.mount({
+          docId, query: as, anchor: settingsBtn, admin: !!accountLinks?.admin,
+          onToggle: (open) => { if (open) { showChrome(); toggleHelp(false); toggleShare(false); toggleSharing(false); toggleNaming(false); togglePages(false); toggleAccount(false); } },
+        }) ?? null;
+        resolve(docSettings);
+      };
+      s.onerror = () => { settingsLoading = null; s.remove(); resolve(null); };
+      document.head.append(s);
+    });
+  }
+  for (const type of ["pointerenter", "focus"]) settingsBtn.addEventListener(type, () => void loadSettings(), { once: true });
+  settingsBtn.addEventListener("click", async () => {
+    const s = await loadSettings();
+    if (s) s.toggle();
+    else explain("Couldn't load the document's settings. Check your connection and try again.");
   });
   if (!isMac) {
     for (const k of help.querySelectorAll("kbd")) {
@@ -956,6 +1078,7 @@ Once you've read the guide, await further instructions.`;
       closeModeMenu();
       if (!help.hidden) toggleHelp(false);
       if (!naming.hidden) toggleNaming(false);
+      if (!pagesCard.hidden) togglePages(false);
       if (!share.hidden) toggleShare(false);
       if (!sharing.hidden) toggleSharing(false);
       showPauseCard(false);
@@ -1599,9 +1722,13 @@ Once you've read the guide, await further instructions.`;
     if (mod && !e.shiftKey && (key == "/" || key == "?")) { toggleHelp(); return true; }
     if (mod && !e.shiftKey && key == "s") { flash(connected ? "Saved: edits go to disk as you type" : "Offline: edits sync when the host is back", 2200); return true; }
     if (e.key == "Escape") {
-      if (!account.hidden) { toggleAccount(false); accountBtn?.focus(); }
+      // Naming something in the pages tree, a question in it or one of its menus: Escape is theirs (tree.ts) to cancel.
+      if (document.activeElement?.closest(".et-input, .et-row.confirm, .et-menu")) return false;
+      if (docSettings?.escape()) { /* its menu, or itself, closed */ }
+      else if (!account.hidden) { toggleAccount(false); accountBtn?.focus(); }
       else if (!help.hidden) toggleHelp(false);
       else if (!naming.hidden) toggleNaming(false);
+      else if (!pagesCard.hidden) { togglePages(false); titleBtn.focus(); }
       else if (!share.hidden) toggleShare(false);
       else if (!sharing.hidden) toggleSharing(false);
       else if (!$("pause-card").hidden) showPauseCard(false);
@@ -1715,7 +1842,7 @@ Once you've read the guide, await further instructions.`;
       return;
     }
     if (mode != "text") setMode("text");
-    toggleHelp(false); toggleShare(false); toggleSharing(false); toggleNaming(false); toggleAccount(false); showPauseCard(false);
+    toggleHelp(false); toggleShare(false); toggleSharing(false); toggleNaming(false); togglePages(false); toggleAccount(false); showPauseCard(false);
     hideFmt();
     showAgent(false);
     stopVoice();

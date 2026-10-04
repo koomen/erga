@@ -56,10 +56,16 @@ try {
   expect(JSON.parse(/name="erga-account" content="([^"]+)"/.exec(editorHtml)![1].replaceAll("&quot;", '"')).admin == "/admin", "an admin's editor menu has Admin");
   const docFile = await (await get(`/d/${id}/doc/index.html`)).text();
   expect(!docFile.includes("data-erga-account"), "a document's own files are left alone", docFile.slice(-400));
+  // The front page: the viewer's frame until its first deploy is done, then the page itself, whose one corner is in its controls (worker/home.ts).
   const front = await (await get("/")).text();
-  const frameSrc = /<iframe id="frame" class="erga-view" (?:data-)?src="([^"]+)"/.exec(front)![1].replaceAll("&amp;", "&");
-  const framed = await (await fetch(frameSrc.replace(/^http:\/\/[^/]+/, root), { headers: { Host: new URL(frameSrc).host } })).text();
-  expect(!framed.includes("data-erga-account"), "nor the front page's document, on its pages origin");
+  const frameSrc = /<iframe id="frame" class="erga-view" (?:data-)?src="([^"]+)"/.exec(front)?.[1].replaceAll("&amp;", "&");
+  if (frameSrc) {
+    const framed = await (await fetch(frameSrc.replace(/^http:\/\/[^/]+/, root), { headers: { Host: new URL(frameSrc).host } })).text();
+    expect(!framed.includes("data-erga-account"), "nor the front page's document, on its pages origin");
+  } else {
+    const at = front.indexOf("<erga-controls");
+    expect(at > 0 && front.split("data-erga-account").length == 2 && front.indexOf("data-erga-account") > at, "the front page, served directly, has one corner, in its controls", front.slice(-1500));
+  }
   const ada = await (await get("/docs?user=Ada")).text();
   expect(ada.includes('data-erga-account="in"') && ada.includes('href="/docs?user=Ada"') && !ada.includes('href="/admin'), "someone who isn't an admin has no Admin, and a local tab's ?user= stays on the links", ada.slice(-1200));
   ok("every page of the site's own has the corner; the editor has its own; documents have none");
@@ -98,8 +104,9 @@ try {
 
   // The front page: beside its Edit and Clone buttons, not under them.
   await p.open(`${root}/`, { width: 1100, height: 720, scale: 2, clear: false });
-  await until(async () => (await p.inPage<string>(`document.querySelector("h1")?.textContent ?? ""`)).some((t) => t == "Erga"), 15_000, "the landing page renders in its frame");
-  const apart = await p.eval<boolean>(`(() => { const a = document.querySelector("[data-erga-account] button").getBoundingClientRect(), e = document.querySelector(".erga-view-buttons").getBoundingClientRect(); return e.right <= a.left - 4 && Math.abs((e.top + e.bottom) / 2 - (a.top + a.bottom) / 2) < 3; })()`);
+  // The page itself once deployed (worker/home.ts), its controls in their own shadow root; the viewer's frame before.
+  await until(async () => (await p.eval<string>(`document.querySelector("h1")?.textContent ?? ""`)) == "Erga" || (await p.inPage<string>(`document.querySelector("h1")?.textContent ?? ""`)).some((t) => t == "Erga"), 15_000, "the landing page renders");
+  const apart = await p.eval<boolean>(`(() => { const r = document.querySelector("erga-controls")?.shadowRoot ?? document; const a = r.querySelector("[data-erga-account] button").getBoundingClientRect(), e = r.querySelector(".erga-view-buttons").getBoundingClientRect(); return e.right <= a.left - 4 && Math.abs((e.top + e.bottom) / 2 - (a.top + a.bottom) / 2) < 3; })()`);
   expect(apart, "the avatar sits right of the Edit and Clone buttons, level with them");
   await p.screenshot(join(SHOTS, "account-front.png"));
   ok("on the front page, the avatar sits beside the Edit and Clone buttons");
@@ -131,7 +138,7 @@ try {
   await p.eval(`[...document.querySelectorAll("#sharing-list li")].find((li) => li.textContent.startsWith("ada")).querySelector(".remove").click()`);
   await until(() => p.eval<boolean>(`![...document.querySelectorAll("#sharing-list li")].some((li) => li.textContent.startsWith("ada"))`), 5000, "and taking them off unlists them");
   const order = await p.eval<string>(`[...document.querySelectorAll(".chrome-top > button:not([hidden]), .chrome-top > .mode, .chrome-top > a:not([hidden])")].map((e) => e.id).join(" ")`);
-  expect(order == "btn-pause btn-track btn-share btn-people mode btn-edit", "the controls, right to left from your avatar: edit, view, share with people, share with an agent, track changes, pause", order);
+  expect(order == "btn-pause btn-track btn-share btn-people btn-settings mode btn-edit", "the controls, right to left from your avatar: edit, view, document settings, share with people, share with an agent, track changes, pause", order);
   await p.key("Escape");
   ok("in the editor, its owner shares it with people");
 

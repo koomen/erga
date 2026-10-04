@@ -28,7 +28,11 @@ export const adminsOf = (env: Env): string[] =>
 
 /** The directory, on this Worker's database, with the settings the deploy locks (SERVER_CONFIG). */
 export function directoryOf(env: Env): Directory {
-  if (directory?.db !== env.DB) directory = { db: env.DB, dir: new Directory(sqlOn(env.DB), { admins: adminsOf(env), locked: parseDeployed(env.SERVER_CONFIG) }) };
+  if (directory?.db !== env.DB) {
+    // A change to the homepage setting, however it's made (the admin page, an agent, the homepage's API, the first /), reaches its deploys (worker/home.ts).
+    const changed = async (key: string) => { if (key == "landing_document" && env.HOME) await env.HOME.getByName("home").homeChanged(); };
+    directory = { db: env.DB, dir: new Directory(sqlOn(env.DB), { admins: adminsOf(env), locked: parseDeployed(env.SERVER_CONFIG), changed }) };
+  }
   return directory.dir;
 }
 
