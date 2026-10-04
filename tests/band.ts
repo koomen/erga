@@ -11,6 +11,8 @@
 // 2. Frame by frame (a screencast), on the dark page: a first visit on a slow
 //    network, a hard reload, and into the editor and back. No frame shows a
 //    white band over the dark page, and the document's top never moves.
+// 3. A document of two pages, one dark and one light: following a link from
+//    one to the other, the band follows the page.
 //
 //   bun tests/band.ts            the checks
 //   bun tests/band.ts --shots    and screenshots, in tests/cdp.ts's SHOTS
@@ -28,7 +30,7 @@ const browser = await Browser.launch();
 const scratch = mkdtempSync(join(tmpdir(), "erga-band-"));
 cpSync(join(ROOT, "tests/fixtures/top"), scratch, { recursive: true });
 const address: Record<string, string> = {};
-for (const d of ["light", "dark", "gradient"]) address[d] = new URL(await host.open(join(scratch, d))).pathname.replace(/\/edit$/, "");
+for (const d of ["light", "dark", "gradient", "pages"]) address[d] = new URL(await host.open(join(scratch, d))).pathname.replace(/\/edit$/, "");
 
 type RGB = [number, number, number];
 const lum = ([r, g, b]: RGB) => 0.2126 * r + 0.7152 * g + 0.0722 * b;
@@ -201,7 +203,37 @@ async function frames() {
   await p.send("Page.close").catch(() => {});
 }
 
+// ---------------------------------------------------------------- 3. another page of the document
+
+async function pages() {
+  const W = 1200, H = 760;
+  const ctx = await browser.context();
+  const p = await browser.page(ctx);
+  await p.open(`${host.root}${address.pages}`, { width: W, height: H });
+  const heading = (t: string) => until(async () => (await p.inPage<string>(`document.querySelector("h1")?.textContent ?? ""`)).includes(t), 15_000, `the ${t} shows`);
+  await heading("The night page");
+  await Bun.sleep(300);
+  const band = await p.eval<number>(`document.getElementById("frame").getBoundingClientRect().top`);
+  const frames = await record(p, async () => {
+    for (const next of ["The day page", "The night page", "The day page"]) {
+      await p.inPage(`document.getElementById("next").click()`);
+      await heading(next);
+      await Bun.sleep(500);
+    }
+  }, W, H);
+  const colours = await sample(p, frames.map((f) => f.png), [[W / 2, 4], [W / 2, band + 2]]);
+  const off = colours.filter(([b, edge]) => diff(b, edge) > 40).length;
+  const sawBoth = colours.some(([, e]) => lum(e) < 80) && colours.some(([, e]) => lum(e) > 200);
+  console.log(`another page: ${frames.length} frames, ${off} with the band off the page's colour`);
+  expect(sawBoth, "another page: the recording shows both pages", { frames: frames.length });
+  // The new page waits out of sight until the band has its colour (HOST_SCRIPT); a frame's leeway for a busy machine.
+  expect(off <= 1, "another page: the band follows the page to its new colour", { off, colours: colours.filter(([b, e]) => diff(b, e) > 40).map(([b, e]) => `${b} / ${e}`).join("; ") });
+  console.log(`ok   another page: the band follows the page from dark to light and back`);
+  await p.send("Page.close").catch(() => {});
+}
+
 try {
+  await pages();
   await Promise.all([
     ...["light", "dark", "gradient"].flatMap((d) => [layout(d, "view", 1200, 760), layout(d, "edit", 1200, 760)]),
     ...["light", "dark"].flatMap((d) => [layout(d, "view", 390, 760), layout(d, "edit", 390, 760)]),

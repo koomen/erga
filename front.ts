@@ -479,14 +479,19 @@ const HOST_SCRIPT = `(function () {
     if (!c && d.body) c = solid(w.getComputedStyle(d.body));
     return c;
   }
+  // A new page in a colour of its own (a link to another of the document's pages) waits out of sight in the same way, so
+  // it never shows under the last page's band; a page that changes its own colour (a theme switch) stays in sight.
+  var shown = null;
   (function watch() {
     try {
       var f = document.querySelector("iframe.on"), c = f ? colourOf(f) : null;
       if (c != null && c !== band) {
+        if (band != null && shown && f.contentDocument != shown) { document.documentElement.classList.add("wait"); setTimeout(reveal, 300); }
         band = c;
         try { localStorage.setItem("erga:band", c); } catch (e) {}
         parent.postMessage({ type: "erga-band", color: c }, SHELL);
       }
+      if (c != null) shown = f.contentDocument;
     } catch (e) {}
     requestAnimationFrame(watch);
   })();
