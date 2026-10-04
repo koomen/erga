@@ -76,6 +76,9 @@
       font: 600 13px/1 var(--font-mono); white-space: nowrap; cursor: pointer; overflow: hidden;
       transition: max-width 220ms var(--agent-ease), padding 220ms var(--agent-ease), opacity 160ms ease, color 120ms ease, background-color 120ms ease;
     }
+    /* Open, a view's tooltip may reach past its button (style.css); not while the buttons are still opening out. */
+    .mode.open button { overflow: visible; transition: max-width 220ms var(--agent-ease), padding 220ms var(--agent-ease), opacity 160ms ease, color 120ms ease, background-color 120ms ease, overflow 0s 220ms; transition-behavior: allow-discrete; }
+    .mode button { position: relative; }
     .mode button[data-mode="text"] { font-family: var(--font-text); font-size: 14px; }
     .mode button:hover { color: var(--chrome-hover); }
     .mode:not(.open) button:not([aria-checked="true"]) { max-width: 0; padding: 0; opacity: 0; pointer-events: none; }
@@ -358,13 +361,6 @@
     .agent-badge.busy span { animation: agent-spin 1.2s linear infinite; }
     @media (prefers-reduced-motion: reduce) { .agent-badge.busy span { animation-duration: 4s; } }
     :is(.avatar, .agent-badge)[aria-disabled="true"] { cursor: default; }
-    @media (hover: hover) {
-      :is(.avatar, .agent-badge)[data-tip]:hover::before {
-        content: attr(data-tip); position: absolute; top: calc(100% + 8px); right: 0; z-index: 40; white-space: nowrap;
-        font: 500 12px/1.4 var(--font-text); color: var(--fg); background: var(--bg); border: 1px solid var(--panel-border);
-        border-radius: 7px; padding: 4px 8px; box-shadow: var(--shadow); pointer-events: none;
-      }
-    }
 
     /* The cards under the top row start below it (it moves down for a notch),
        and scroll inside themselves when the window is too short for them. */

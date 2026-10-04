@@ -908,6 +908,7 @@ Once you've read the guide, await further instructions.`;
       activate();
       pointerDown = true;
       hideFmt();
+      closeModeMenu();
       if (!help.hidden) toggleHelp(false);
       if (!naming.hidden) toggleNaming(false);
       if (!share.hidden) toggleShare(false);
@@ -1089,8 +1090,8 @@ Once you've read the guide, await further instructions.`;
       const m = b.dataset.mode as Mode;
       b.setAttribute("aria-checked", String(m == mode));
       const ro = m != "text" && m != info?.kind;
-      b.title = `${MODE_NAMES[m]}${ro ? " (read-only)" : ""}${m == "text" || m == info?.kind ? "  ⌘⇧P" : ""}`;
-      b.setAttribute("aria-label", b.title);
+      b.dataset.tip = `${MODE_NAMES[m]}${ro ? " (read-only)" : ""}${m == "text" || m == info?.kind ? (isMac ? "  ⌘⇧P" : "  Ctrl+Shift+P") : ""}`;
+      b.setAttribute("aria-label", b.dataset.tip);
     }
   }
   function openModeMenu() { modeEl.classList.add("open"); showChrome(); }

@@ -558,10 +558,10 @@ async function startPage(platform: Platform, session: Session | null): Promise<R
 const VIEW_STYLE = `
 <style>
   /* The editor's look (style.css, .icon-btn and .nav-back): small icons, and breadcrumbs as plain text. Right of the icons is who you are (account.ts). */
-  .erga-view-buttons, .erga-crumbs { --chrome: #a1a1a9; --chrome-hover: #3f3f46; --fg: #1c1c1f;
+  .erga-view-buttons, .erga-crumbs { --chrome: #a1a1a9; --chrome-hover: #3f3f46; --fg: #1c1c1f; --soft: #6b6b73;
     position: fixed; top: max(12px, env(safe-area-inset-top)); z-index: 1000; display: flex; align-items: center;
     font: 500 13px/1 "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
-  @media (prefers-color-scheme: dark) { .erga-view-buttons, .erga-crumbs { --chrome: #5f5f68; --chrome-hover: #d4d4da; --fg: #ececf1; } }
+  @media (prefers-color-scheme: dark) { .erga-view-buttons, .erga-crumbs { --chrome: #5f5f68; --chrome-hover: #d4d4da; --fg: #ececf1; --soft: #8f8f99; } }
   .erga-view-buttons { right: max(56px, calc(env(safe-area-inset-right) + 40px)); gap: 2px; }
   .erga-view-button { position: relative; display: grid; place-items: center; width: 34px; height: 34px; border-radius: 8px; color: var(--chrome);
     transition: color 150ms ease, background-color 150ms ease; }
@@ -571,7 +571,7 @@ const VIEW_STYLE = `
   .erga-view-button:focus-visible, .erga-crumbs a:focus-visible { outline: 2px solid #3b82f6; outline-offset: 1px; }
   .erga-view-button svg { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
   .erga-view-button::after { content: attr(data-tip); position: absolute; top: calc(100% + 6px); right: 0; white-space: pre; font-size: 12px;
-    letter-spacing: .01em; color: var(--chrome); opacity: 0; pointer-events: none; transition: opacity 120ms ease; }
+    font-weight: 400; line-height: 1.3; letter-spacing: .01em; color: var(--soft); opacity: 0; pointer-events: none; transition: opacity 120ms ease; }
   @media (hover: hover) { .erga-view-button:hover::after { opacity: 1; transition-delay: 600ms; } }
   .erga-crumbs { left: max(14px, env(safe-area-inset-left)); max-width: calc(100vw - 200px); }
   .erga-crumbs a { display: flex; align-items: center; height: 34px; padding: 0 10px; border-radius: 8px; color: var(--chrome); text-decoration: none; white-space: nowrap;

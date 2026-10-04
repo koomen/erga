@@ -47,7 +47,7 @@ export function accountHtml(account: Account | null, here: string): string {
   const id = "erga-account-menu";
   if (!account) {
     return `<div class="erga-account" data-erga-account="out">
-<button type="button" class="erga-account-btn erga-account-out" aria-label="Sign in" title="Sign in" aria-haspopup="true" aria-expanded="false" aria-controls="${id}">${PERSON}</button>
+<button type="button" class="erga-account-btn erga-account-out" aria-label="Sign in" data-tip="Sign in" aria-haspopup="true" aria-expanded="false" aria-controls="${id}">${PERSON}</button>
 <div class="erga-account-menu" id="${id}" hidden>
 <a class="erga-account-github" href="${esc(signInUrl(here))}">${GITHUB}<span>Sign in</span></a>
 </div>
@@ -56,7 +56,7 @@ export function accountHtml(account: Account | null, here: string): string {
   const initial = (account.name.trim()[0] ?? account.login[0] ?? "?").toUpperCase();
   const s = account.session;
   return `<div class="erga-account" data-erga-account="in">
-<button type="button" class="erga-account-btn" style="--c: ${colorFor(account.login.toLowerCase())}" aria-label="${esc(`You (${account.name})`)}" title="${esc(account.name)}" aria-haspopup="true" aria-expanded="false" aria-controls="${id}">
+<button type="button" class="erga-account-btn" style="--c: ${colorFor(account.login.toLowerCase())}" aria-label="${esc(`You (${account.name})`)}" data-tip="${esc(account.name)}" aria-haspopup="true" aria-expanded="false" aria-controls="${id}">
 <span aria-hidden="true">${esc(initial)}</span>${account.avatar ? `<img src="${esc(account.avatar)}" alt="" onerror="this.remove()">` : ""}
 </button>
 <div class="erga-account-menu" id="${id}" hidden>
@@ -107,6 +107,11 @@ const ACCOUNT_STYLE = `<style>
   .erga-account-btn svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
   .erga-account-btn:focus-visible { outline: 2px solid #3b7cf0; outline-offset: 2px; }
   @media (pointer: coarse) { .erga-account-btn::after { content: ""; position: absolute; inset: -7px; } }
+  /* Its tooltip, as every control's in the editor: plain text, delayed, below it. */
+  .erga-account-btn::before { content: attr(data-tip); position: absolute; top: calc(100% + 8px); right: 0; white-space: pre; font-size: 12px; font-weight: 400; line-height: 1.3;
+    letter-spacing: .01em; color: var(--acc-soft); opacity: 0; pointer-events: none; transition: opacity 120ms ease; }
+  @media (hover: hover) { .erga-account-btn:hover::before { opacity: 1; transition-delay: 600ms; } }
+  .erga-account-btn[aria-expanded="true"]::before { display: none; }
   .erga-account-menu { position: absolute; top: calc(100% + 8px); right: 0; min-width: 190px; max-width: calc(100vw - 32px); box-sizing: border-box; padding: 6px;
     color: var(--acc-fg); background: var(--acc-bg); border: 1px solid var(--acc-ring); border-radius: 12px;
     box-shadow: 0 8px 30px rgba(0, 0, 0, .12), 0 1px 2px rgba(0, 0, 0, .05); }

@@ -137,6 +137,16 @@ try {
   await p.key("Escape");
   ok("in the editor, its owner shares it with people");
 
+  // The view switcher: open, each view has its tooltip; a click on the document closes it, leaving the view as it was.
+  await clickOn(p, '#mode button[aria-checked="true"]');
+  await until(() => p.eval<boolean>(`document.getElementById("mode").classList.contains("open")`), 3000, "the view switcher opens");
+  const tips = await p.eval<string[]>(`[...document.querySelectorAll("#mode button")].map((b) => b.dataset.tip + "|" + (b.title || ""))`);
+  expect(tips.length == 3 && tips.every((t) => /^(Page|Markdown|HTML)/.test(t) && t.endsWith("|")), "each view has the controls' own tooltip (no browser one)", tips);
+  await p.click(550, 500);
+  await until(() => p.eval<boolean>(`!document.getElementById("mode").classList.contains("open")`), 3000, "a click on the document closes it");
+  expect(!(await p.eval<boolean>(`document.body.classList.contains("source")`)) && (await p.eval<string>(`document.querySelector('#mode button[aria-checked="true"]').dataset.mode`)) == "text", "and the view stays the page");
+  ok("the view switcher closes on a click outside it, leaving the view as it was");
+
   // Out of the editor and back, without leaving the page: the address and the controls change; the document doesn't move.
   const h1 = async () => (await p.inPage<number | null>(`document.querySelector("h1") ? Math.round(document.querySelector("h1").getBoundingClientRect().top) : null`)).find((t) => t != null) ?? null;
   const visible = (sel: string) => p.eval<boolean>(`(() => { const el = document.querySelector(${JSON.stringify(sel)}); return !!el && getComputedStyle(el).visibility != "hidden" && getComputedStyle(el).opacity == "1"; })()`);
