@@ -483,7 +483,7 @@ same name are the same person.
   Agents publish a caret where they last edited, but it isn't drawn (one
   lingering on the page distracts); their avatar says what they're doing,
   and clicking it scrolls there.
-- **Who's here.** Avatars at the top right: you (ringed), then the others.
+- **Who's here.** Avatars at the top right: the others, then you, apart at the far right (your menu).
   A person's agent, once it has done something, is a small ✦ badge on the
   lower right of their avatar, spinning while it works (an agent still
   working after its person left keeps their avatar, faded). Click someone, or
