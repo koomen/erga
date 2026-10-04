@@ -202,6 +202,10 @@ ${settings.map((e) => settingRow(e, session, takesNever(e.key))).join("\n")}
 ${users.map((u) => userRow(u, session)).join("\n")}
     </ol>
   </section>
+  <section aria-labelledby="source-title">
+    <h2 id="source-title">Source</h2>
+    <p class="lede">Erga's own repository, hosted here: its branches, merging staging into main, and the GitHub mirror, on <a href="${esc(link("/source", session))}">the Source page</a>.</p>
+  </section>
   ${deployOn ? `<section aria-labelledby="deploy-title">
     <h2 id="deploy-title">Deploy your own</h2>
     <p class="lede">Put a copy of this server on your own Cloudflare account, with you as its admin: <a href="${esc(link("/deploy", session))}">Deploy Erga</a>. Who may use it is the deploy_page setting.</p>
