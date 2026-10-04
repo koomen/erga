@@ -187,8 +187,8 @@ function keysPage(session: Session, url: URL, s: State, next: string | null): Re
   const live = s.keys.filter((k) => !k.revoked), revoked = s.keys.filter((k) => k.revoked);
   const usingId = s.unlocked?.key.id;
   const status = s.unlocked
-    ? `<div class="status on" role="status"><div><b>Admin access is unlocked</b> until <span data-time="${esc(s.unlocked.until)}">${esc(s.unlocked.until.slice(11, 16))} UTC</span>, with ${esc(s.unlocked.key.name)}.${back ? ` <a href="${esc(back)}" class="go">Continue to ${esc(back.split("#")[0])}</a>` : ""}</div><button type="button" class="pill" id="lock">Lock now</button></div>`
-    : `<div class="status" role="status"><div><b>Admin access is locked.</b> ${s.bootstrap ? "Add your first admin SSH key below: it must be one of your keys on GitHub." : "Sign a challenge with one of your admin SSH keys to unlock it for an hour."}</div></div>`;
+    ? `<div class="lockstate on" role="status"><div><b>Admin access is unlocked</b> until <span data-time="${esc(s.unlocked.until)}">${esc(s.unlocked.until.slice(11, 16))} UTC</span>, with ${esc(s.unlocked.key.name)}.${back ? ` <a href="${esc(back)}" class="go">Continue to ${esc(back.split("#")[0])}</a>` : ""}</div><button type="button" class="pill" id="lock">Lock now</button></div>`
+    : `<div class="lockstate" role="status"><div><b>Admin access is locked.</b> ${s.bootstrap ? "Add your first admin SSH key below: it must be one of your keys on GitHub." : "Sign a challenge with one of your admin SSH keys to unlock it for an hour."}</div></div>`;
   const style = `
   main { max-width: 760px; }
   section { margin-bottom: 40px; }
@@ -199,9 +199,9 @@ function keysPage(session: Session, url: URL, s: State, next: string | null): Re
   .back { font-size: 13px; color: var(--chrome); text-decoration: none; }
   .back:hover { color: var(--chrome-hover); }
   .mono { font-family: var(--font-mono); font-size: 12.5px; }
-  .status { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 0 0 36px; padding: 14px 16px; border: 1px solid var(--rule); border-radius: 10px; font-size: 14px; color: var(--fg); background: color-mix(in srgb, #c2410c 7%, var(--bg)); }
-  .status.on { background: color-mix(in srgb, #15803d 9%, var(--bg)); }
-  .status .go { margin-left: 4px; }
+  .lockstate { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 0 0 36px; padding: 14px 16px; border: 1px solid var(--rule); border-radius: 10px; font-size: 14px; color: var(--fg); background: color-mix(in srgb, #c2410c 7%, var(--bg)); }
+  .lockstate.on { background: color-mix(in srgb, #15803d 9%, var(--bg)); }
+  .lockstate .go { margin-left: 4px; }
   .step { margin: 0 0 14px; }
   .step > label { display: block; margin: 0 0 6px; font-size: 13px; font-weight: 600; color: var(--fg-strong); }
   .step > label small { font-weight: 400; color: var(--soft); }
@@ -229,7 +229,7 @@ function keysPage(session: Session, url: URL, s: State, next: string | null): Re
   ol.log li time { margin-left: 0; min-width: 7.5em; }
   ol.log li .d { min-width: 0; overflow-wrap: anywhere; }
   details summary { cursor: pointer; font-size: 13px; color: var(--soft); }
-  @media (max-width: 520px) { .status { flex-direction: column; align-items: flex-start; } .cmd { flex-direction: column; } }
+  @media (max-width: 520px) { .lockstate { flex-direction: column; align-items: flex-start; } .cmd { flex-direction: column; } }
 `;
   const keyPathField = (id: string) => `<div class="keypath"><label for="${id}">Your key</label><input class="input keyfile" id="${id}" value="~/.ssh/id_ed25519" autocomplete="off" spellcheck="false" aria-describedby="${id}-hint"><span id="${id}-hint">(or its .pub, if ssh-agent holds it)</span></div>`;
   const unlockSection = !s.unlocked && !s.bootstrap ? `
