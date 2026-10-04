@@ -62,7 +62,7 @@ try {
   ok("in headless Chrome, / renders the landing document with Edit and Clone");
 
   // Its owner edits it in the editor, and / shows the edit.
-  await p.open(`${root}/tester/landing/edit`, { width: 1200, height: 800, scale: 2, clear: false });
+  await p.open(`${root}/tester/landing/edit`, { width: 1200, height: 800, scale: 2, clear: false, agent: false });
   await until(() => p.eval<boolean>(`document.body.classList.contains("erga-editor-ready")`), 20_000, "the editor is ready");
   await until(() => p.frame<boolean>(`${F}.querySelector("h1")?.getAttribute("contenteditable") == "true"`), 20_000, "the editor makes the heading editable");
   const f = await frameAt(p);

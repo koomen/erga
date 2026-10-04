@@ -140,8 +140,8 @@
       --agent-inset: 16px;
       --agent-left: max(var(--agent-inset), var(--safe-l));
       --agent-fab: 44px;
-      --agent-ease: cubic-bezier(0.32, 0.72, 0, 1);
-      --agent-ms: 520ms;
+      --agent-ease: cubic-bezier(0.45, 0, 0.15, 1);
+      --agent-ms: 560ms;
     }
     #frame { left: var(--safe-l); width: calc(100% - var(--safe-l) - var(--safe-r)); transition: left var(--agent-ms) var(--agent-ease), width var(--agent-ms) var(--agent-ease); }
     #source { transition: left var(--agent-ms) var(--agent-ease); }
@@ -165,7 +165,7 @@
     .agent-fab svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
     .agent-fab.busy::after { content: ""; position: absolute; inset: -3px; border-radius: 50%; border: 2px solid transparent; border-top-color: var(--caret); animation: agent-spin 0.9s linear infinite; }
     @keyframes agent-spin { to { transform: rotate(360deg); } }
-    body.agent-open .agent-fab { opacity: 0; transform: scale(0.6); pointer-events: none; transition: transform var(--agent-ms) var(--agent-ease), opacity 120ms ease; }
+    body.agent-open .agent-fab { opacity: 0; pointer-events: none; transition: opacity 200ms ease; }
     /* The wrapper carries the shadow as a filter, so it follows the clipped,
        rounded card mid-animation instead of being cut off by the clip. */
     .agent {
@@ -190,10 +190,10 @@
     body.agent-open .agent-card {
       clip-path: inset(0 0 0 0 round 18px);
       opacity: 1;
-      transition: clip-path var(--agent-ms) var(--agent-ease), opacity 100ms ease;
+      transition: clip-path var(--agent-ms) var(--agent-ease), opacity 0s;
     }
     .agent-card > * { opacity: 0; transform: translateY(6px); transition: opacity 160ms ease, transform var(--agent-ms) var(--agent-ease); }
-    body.agent-open .agent-card > * { opacity: 1; transform: none; transition: opacity 260ms ease 140ms, transform var(--agent-ms) var(--agent-ease) 60ms; }
+    body.agent-open .agent-card > * { opacity: 1; transform: none; transition: opacity 280ms ease 220ms, transform var(--agent-ms) var(--agent-ease) 120ms; }
     body.no-motion, body.no-motion * { transition: none !important; }
 
     /* The style bar floats over a selection in the page. */
@@ -581,7 +581,7 @@
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
       </button>
       <button type="button" class="icon-btn" id="agent-close" aria-label="Collapse (Esc)" data-tip="Collapse  Esc">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 19 11 13M5 19v-4.5M5 19h4.5M19 5l-6 6M19 5v4.5M19 5h-4.5"/></svg>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 19.5 10 14M10 14H5.5M10 14v4.5M19.5 4.5 14 10M14 10h4.5M14 10V5.5"/></svg>
       </button>
     </div>
     <div class="agent-log" id="agent-log" data-empty="Ask for an edit. The agent can change any file in this page's folder, and you'll see its edits here as they land." aria-live="polite" tabindex="-1"></div>
