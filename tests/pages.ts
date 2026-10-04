@@ -239,11 +239,19 @@ await write("about.html", PAGE("About", `<nav data-erga-noedit><a href="index.ht
   expect(r.ok && !(await tool("ls", { document: doc.id })).text.includes("journal"), "rm deletes a folder", r);
   r = await tool("rm", { document: doc.id, path: "index.html" });
   expect(!r.ok && /own page/.test(r.text), "and refuses the document's own page", r);
+  // The page tree, as users see it: every page with its title and address; folders; assets counted, not listed.
+  const lp = await tool("list_pages", { document: doc.id });
+  for (const line of [`index.html  "Home"  ${address}  (home page)`, `about.html  "About"  ${address}/about`, `blog/`, `  blog/index.html  "Blog"  ${address}/blog`, `  blog/post.html  "A post"  ${address}/blog/post`]) expect(lp.ok && lp.text.split("\n").includes(line), `list_pages has ${line.trim()}`, lp);
+  expect(!lp.text.includes("style.css") && /\d+ page\(s\) and 2 other file\(s\) \(shared assets\)/.test(lp.text), "and counts the shared assets without listing them", lp);
+  // Nobody's editor is open: open_page opens nothing, and says so, with the page's address.
+  const none = await tool("open_page", { document: doc.id, path: "about" });
+  expect(none.ok && none.text.includes("no editor open") && none.text.includes(`${address}/about#edit`), "open_page with no editor open says so and gives the address", none);
+  expect(!(await tool("open_page", { document: doc.id, path: "nope.html" })).ok, "open_page refuses a page that isn't there");
   const listed = ((await (await fetch(`${base}/api/ext/tools`, { headers: auth })).json()) as { tools: { name: string }[] }).tools.map((t) => t.name);
   const mcp = ((await (await fetch(`${base}/mcp`, { method: "POST", headers: { ...auth, "Content-Type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }) })).json()) as { result: { tools: { name: string }[] } }).result.tools.map((t) => t.name);
-  expect(["new_page", "mkdir", "mv", "rm", "ls", "read", "write"].every((n) => listed.includes(n) && mcp.includes(n)), "the token API and MCP list them", { listed, mcp });
+  expect(["new_page", "mkdir", "mv", "rm", "ls", "read", "write", "list_pages", "open_page"].every((n) => listed.includes(n) && mcp.includes(n)), "the token API and MCP list them", { listed, mcp });
   const guide = await (await fetch(`${base}/d/${doc.id}/api/ext`, { headers: auth })).text();
-  expect(guide.includes("many pages") && guide.includes("blog/index.html is /<owner>/<slug>/blog"), "the external agent's guide says a document has many pages, and how they map to addresses", guide.slice(0, 600));
+  expect(guide.includes("A document is a folder of files") && guide.includes("Users\nsee pages; you see files") && guide.includes("blog/index.html is /<owner>/<slug>/blog") && guide.includes("open_page"), "the external agent's guide says a document is a folder of files whose pages users see, how pages map to addresses, and open_page", guide.slice(0, 900));
 
   // The editor's own agent, its turn scripted: the same tools, on the same tree.
   const log = async () => ((await (await get(`/d/${doc.id}/api/agent`)).json()) as { log: { busy: boolean; items: { kind: string; name?: string; status?: string; detail?: string }[] } }).log;
@@ -330,6 +338,62 @@ try {
   await until(ready, 15_000, "ready again");
   await p.screenshot(join(SHOTS, "pages-editor-post.png"));
   ok("in the editor, links to other pages open their editor, and a page moved under an open editor takes it along");
+
+  // An agent in the editor of blog/post.html sees the whole document, not that page's files: the editor's own agent
+  // (scripted) lists, reads and greps the other pages and the shared stylesheet, and lists the pages.
+  {
+    const agentLog = async () => ((await (await get(`/d/${doc.id}/api/agent`)).json()) as { log: { busy: boolean; items: { kind: string; name?: string; status?: string; detail?: string; text?: string }[] } }).log;
+    const before = (await agentLog()).items.length;
+    const steps = [
+      { tool: "ls", args: {} }, { tool: "read", args: { path: "index.html" } }, { tool: "read", args: { path: "style.css" } }, { tool: "read", args: { path: "about.html" } },
+      { tool: "grep", args: { pattern: "Who made this" } }, { tool: "find", args: { pattern: "**/*.css" } }, { tool: "list_pages", args: {} }, { text: "Seen." },
+    ];
+    const sent = await get(`/d/${doc.id}/api/agent`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: `Look around @script ${JSON.stringify(steps)}`, context: "The user has the page blog/post.html open." }) });
+    expect(sent.ok, "the editor's agent takes the prompt", sent.status);
+    let now = await agentLog();
+    await until(async () => { now = await agentLog(); return !now.busy && now.items.slice(before).filter((i) => i.kind == "tool").length >= 7; }, 20_000, "the agent finishes", () => now);
+    const calls = now.items.slice(before).filter((i) => i.kind == "tool");
+    expect(calls.length == 7 && calls.every((c) => c.status == "done"), "from blog/post.html's editor, the agent's ls, read (index.html, style.css, about.html), grep, find and list_pages all work", calls);
+    // The same tools, as the same person's agent from outside, with their answers.
+    const ls = await tool("ls", { document: doc.id });
+    expect(["about.html", "blog/", "index.html", "style.css"].every((f) => ls.text.split("\n").includes(f)), "ls defaults to the document's root", ls);
+    expect((await tool("read", { document: doc.id, path: "index.html" })).text.includes("<h1>Home</h1>") && (await tool("read", { document: doc.id, path: "style.css" })).text.includes("rgb(250, 246, 236)") && (await tool("read", { document: doc.id, path: "about.html" })).text.includes("Who made this"), "read reads every page and the shared stylesheet");
+    const g = await tool("grep", { document: doc.id, pattern: "stylesheet" });
+    expect(["index.html:", "about.html:", "blog/post.html:", "blog/index.html:"].every((f) => g.text.split("\n").some((l) => l.startsWith(f))), "grep searches every page by default", g);
+    expect((await tool("find", { document: doc.id, pattern: "**/*.css" })).text.split("\n").sort().join(" ") == "blog/blog.css style.css", "find finds files in every folder");
+    ok("an agent in blog/post.html's editor sees one file system: every page, the shared assets and folders (ls, read, grep, find, list_pages)");
+
+    // open_page: the embedded agent switches the open editor to about.html.
+    const openSteps = [{ tool: "open_page", args: { path: "about.html" } }, { text: "There." }];
+    await get(`/d/${doc.id}/api/agent`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: `Take me to About @script ${JSON.stringify(openSteps)}` }) });
+    await until(async () => (await where()) == `${address}/about#edit` && await ready() && await p.eval<string>("window.ergaPage?.pagePath").catch(() => "") == "about.html", 15_000, "the embedded agent's open_page switches the editor to about.html", where);
+    now = await agentLog();
+    await until(async () => { now = await agentLog(); return !now.busy && now.items.some((i) => i.kind == "tool" && i.name == "open_page" && i.status == "done"); }, 10_000, "open_page done", () => now);
+    ok("the editor's own agent switches the open editor to another page (open_page)");
+
+    // Through the external API, as the token's person: their open editor follows.
+    const back = await tool("open_page", { document: doc.id, path: "blog/post" });
+    expect(back.ok && back.text.startsWith("Opened blog/post.html"), "an external agent's open_page answers that it opened the page", back);
+    await until(async () => (await where()) == `${address}/blog/post#edit` && await ready(), 15_000, "an external agent's open_page switches the editor too", where);
+    ok("an external agent switches the token's person's open editor (open_page)");
+
+    // new_page, opening it: made from the template, and the editor goes there.
+    const made = await tool("new_page", { document: doc.id, path: "blog/second", open: true });
+    expect(made.ok && made.text.includes("Made blog/second.html") && made.text.includes("Opened blog/second.html"), "new_page with open: true makes the page and opens it", made);
+    await until(async () => (await where()) == `${address}/blog/second#edit` && await ready(), 15_000, "the editor goes to the new page", where);
+    await until(async () => (await p.frame<string | null>(`document.getElementById("page")?.contentDocument?.querySelector("h1")?.textContent ?? null`)) == "Untitled", 10_000, "and renders it");
+    await p.screenshot(join(SHOTS, "pages-agent-opened-new-page.png"));
+    // And open_page on a page just made by new_page.
+    await tool("new_page", { document: doc.id, path: "blog/third" });
+    expect((await tool("open_page", { document: doc.id, path: "blog/third.html" })).ok, "open_page opens a page new_page made");
+    await until(async () => (await where()) == `${address}/blog/third#edit` && await ready(), 15_000, "new_page then open_page", where);
+    await tool("rm", { document: doc.id, path: "blog/second.html" });
+    await tool("rm", { document: doc.id, path: "blog/third.html" });
+    await until(async () => (await where()) == `${address}#edit` || (await where()) == `${address}/#edit`, 15_000, "its page deleted, the editor goes to the home page", where);
+    await p.navigate(`${base}${address}/blog/post?user=tester#edit`);
+    await until(async () => (await where()) == `${address}/blog/post#edit` && await ready(), 15_000, "back on blog/post", where);
+    ok("new_page with open: true, and new_page then open_page, take the editor to the new page");
+  }
 
   // #edit is the editor: taking it off the address views, putting it back edits, Back and Forward follow; all without a reload.
   await p.eval(`window.__same = true`);

@@ -5,8 +5,9 @@
 // builder (deploy/builder/), which clones the commit with them. GitHub isn't
 // involved.
 //
-// If #39 exports its own way to read a commit (an archive, or a remote and
-// token), this is the one place to plug it in.
+// A server with the Artifacts binding uses its own reader instead
+// (worker/source.ts, sourceForBuild, through Deps.source in deploy/branches.ts);
+// this, with the REST API, is for one without.
 
 import { DeployError, type Cloudflare } from "./cloudflare";
 import { SOURCE } from "./targets";

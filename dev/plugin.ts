@@ -19,6 +19,8 @@
 //
 //   POST /__erga/open    path=<file or folder>: links it for whoever's signed in and goes to it
 //   POST /__erga/flush   ?link=<secret>: every linked document writes what it holds to disk now (dev.ts, before stopping)
+//   /__artifacts/..., /__github/...   stand-ins for Cloudflare Artifacts and GitHub, real Git (dev/git-server.ts):
+//                        where Erga's own repository and its mirror are, locally
 
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -31,6 +33,7 @@ import { basename, dirname, extname, join, resolve, sep } from "node:path";
 import type { Plugin } from "vite";
 import { ALPHABET } from "../front.ts";
 import { ignored } from "../src/room/doc.ts";
+import { gitServers } from "./git-server.ts";
 import type { FromDisk, ToDisk } from "./mirror.ts";
 import { liveReload, type LiveReload } from "./reload.ts";
 
@@ -107,11 +110,21 @@ export function ergaDev(opts: DevOptions): Plugin {
       server.middlewares.use((req, res, next) => {
         const url = new URL(req.url ?? "/", "http://localhost");
         if (req.method == "POST" && url.pathname == "/__erga/open") return void open(req, res, url).catch(next);
+        if (url.pathname.startsWith("/__artifacts/") || url.pathname.startsWith("/__github/")) return void git(req, res, url).catch(next);
         if (req.method == "POST" && url.pathname == "/__erga/flush" && url.searchParams.get("link") == opts.secret) {
           return void Promise.all([...mirrors.values()].map((m) => m.flush())).then(() => res.end("ok"), next);
         }
         next();
       });
+
+      /** The stand-ins for Artifacts and GitHub: real `git http-backend` on bare repositories in the state directory. */
+      async function git(req: IncomingMessage, res: ServerResponse, url: URL) {
+        const body = new Uint8Array(Buffer.from(await readBytes(req)));
+        const headers = Object.fromEntries(Object.entries(req.headers).map(([k, v]) => [k, Array.isArray(v) ? v.join(", ") : v]));
+        const r = await gitServers(opts.stateDir, opts.secret, { method: req.method ?? "GET", path: url.pathname, query: url.search.slice(1), headers, body });
+        if (!r) return void res.writeHead(404).end("Not found");
+        res.writeHead(r.status, r.headers).end(Buffer.from(r.body));
+      }
 
       /** The local database brought up to date (migrations/), which linking needs: set once the server's listening. */
       let migrated: Promise<void> | null = null;
@@ -460,6 +473,15 @@ function readBody(req: IncomingMessage): Promise<string> {
     let body = "";
     req.on("data", (c) => { body += c; if (body.length > 10_000) req.destroy(); });
     req.on("end", () => resolve(body));
+    req.on("error", reject);
+  });
+}
+
+function readBytes(req: IncomingMessage): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    req.on("data", (c: Buffer) => chunks.push(c));
+    req.on("end", () => resolve(Buffer.concat(chunks)));
     req.on("error", reject);
   });
 }

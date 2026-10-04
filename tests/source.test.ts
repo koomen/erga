@@ -1,0 +1,185 @@
+// Erga's own repository without the Worker (source/): Git's formats against
+// real git, then pushes, fast-forward rules, merges and the GitHub mirror,
+// with the real git CLI against Erga's endpoint in front of pretend
+// Artifacts and GitHub (tests/source-fixture.ts).
+
+import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
+
+// git against a local server: quick, but a machine busy with other tests slows it.
+setDefaultTimeout(30_000);
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { spawnSync } from "node:child_process";
+import zlib from "node:zlib";
+import { hashObject, inflate, parseCommit, parseTree, readPack, tar, text, treeBytes, utf8, writePack } from "../source/git.ts";
+import { git, must, startFixture, type Fixture } from "./source-fixture.ts";
+
+const scratch = () => mkdtempSync(join(tmpdir(), "erga-src-"));
+
+/** A repository with a little history: three commits on main. */
+async function seedRepo(): Promise<string> {
+  const d = scratch();
+  await must(d, "init", "-q", "-b", "main");
+  writeFileSync(join(d, "a.txt"), "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\n");
+  writeFileSync(join(d, "bin.dat"), new Uint8Array([0, 1, 2, 3, 255]));
+  await must(d, "add", "."); await must(d, "commit", "-qm", "First");
+  writeFileSync(join(d, "b.txt"), "bee\n".repeat(200));
+  await must(d, "add", "."); await must(d, "commit", "-qm", "Second");
+  writeFileSync(join(d, "b.txt"), "bee\n".repeat(199) + "wasp\n");
+  await must(d, "add", "."); await must(d, "commit", "-qm", "Third");
+  return d;
+}
+
+describe("Git's formats", () => {
+  test("reads a pack git made (deltas included), and every object hashes as git says", async () => {
+    const d = await seedRepo();
+    const revs = (await must(d, "rev-list", "--objects", "--all")).split("\n").map((l) => l.split(" ")[0]);
+    const r = spawnSync("git", ["pack-objects", "--stdout", "--delta-base-offset"], { cwd: d, input: revs.join("\n") + "\n" });
+    const objects = await readPack(new Uint8Array(r.stdout));
+    expect([...objects.keys()].sort()).toEqual([...revs].sort());
+    for (const [sha, o] of objects) expect(await hashObject(o)).toBe(sha);
+    const head = await must(d, "rev-parse", "HEAD");
+    const c = parseCommit(objects.get(head)!.data);
+    expect(c.message.trim()).toBe("Third");
+    expect(c.parents).toEqual([await must(d, "rev-parse", "HEAD~1")]);
+    // Only commits, when that's all that's wanted.
+    const commits = await readPack(new Uint8Array(r.stdout), (t) => t == "commit");
+    expect(commits.size).toBe(3);
+  });
+
+  test("git takes a pack Erga writes", async () => {
+    const d = scratch();
+    await must(d, "init", "-q", "--bare");
+    const blob = { type: "blob" as const, data: utf8("hello\n") };
+    const sha = await hashObject(blob);
+    const tree = { type: "tree" as const, data: treeBytes([{ mode: "100644", name: "hi.txt", sha }]) };
+    const pack = await writePack([blob, tree]);
+    const r = spawnSync("git", ["index-pack", "--stdin", "--fix-thin"], { cwd: d, input: pack });
+    expect(r.status).toBe(0);
+    expect(await must(d, "cat-file", "-p", sha)).toBe("hello");
+    expect(parseTree(tree.data)[0].name).toBe("hi.txt");
+    expect(await must(d, "cat-file", "-p", await hashObject(tree))).toContain("hi.txt");
+  });
+
+  test("inflate finds where a stream ends, over stored and compressed blocks", async () => {
+    for (const data of [utf8(""), utf8("x".repeat(70000)), crypto.getRandomValues(new Uint8Array(5000))]) {
+      const z = new Uint8Array(zlib.deflateSync(data, { level: data.length > 6000 ? 9 : 0 }));
+      const padded = new Uint8Array([...z, 9, 9, 9]);
+      const { data: out, end } = inflate(padded, 0, data.length);
+      expect(out).toEqual(data);
+      expect(end).toBe(z.length);
+    }
+  });
+
+  test("tar", () => {
+    const t = tar([{ path: "a/b.txt", mode: "100644", data: utf8("hi") }]);
+    expect(t.length % 512).toBe(0);
+    expect(text(t.subarray(0, 7))).toBe("a/b.txt");
+  });
+
+});
+
+describe("Erga's Git endpoint", () => {
+  let f: Fixture, src: string;
+  beforeAll(async () => { f = startFixture(); src = await seedRepo(); });
+  afterAll(() => f.stop());
+
+  test("a push seeds main and staging; a clone gets them back", async () => {
+    await must(src, "remote", "add", "erga", f.erga);
+    const pushed = await git(src, "push", "erga", "main:main", "main:staging");
+    expect(pushed.ok).toBe(true);
+    expect(pushed.err).toContain("Erga: main is now");
+    const c = scratch();
+    await must(c, "clone", "-q", f.erga, "copy");
+    expect(await must(join(c, "copy"), "log", "--format=%s")).toBe("Third\nSecond\nFirst");
+    expect(await must(join(c, "copy"), "ls-remote", "origin")).not.toContain("erga-incoming");
+    expect(f.moves.map((m) => m.branch).sort()).toEqual(["main", "staging"]);
+    await f.settle();
+    // The mirror has both.
+    expect(await must(src, "ls-remote", f.github)).toContain("refs/heads/staging");
+    expect(f.repo.mirrorStatus().error).toBeNull();
+  });
+
+  test("main only follows staging; staging always keeps what main has", async () => {
+    const ada = { login: "ada", name: "Ada" };
+    writeFileSync(join(src, "c.txt"), "c\n");
+    await must(src, "add", "."); await must(src, "commit", "-qm", "Fourth");
+    // Straight to main, before staging has it: refused.
+    const early = await git(src, "push", "erga", "main");
+    expect(early.ok).toBe(false);
+    expect(early.err).toContain("main only follows staging");
+    // To staging, then main: both land. Both at once lands too.
+    expect((await git(src, "push", "erga", "HEAD:staging")).ok).toBe(true);
+    expect((await git(src, "push", "erga", "HEAD:main")).ok).toBe(true);
+    writeFileSync(join(src, "d.txt"), "d\n");
+    await must(src, "add", "."); await must(src, "commit", "-qm", "Fifth");
+    expect((await git(src, "push", "erga", "HEAD:staging", "HEAD:main")).ok).toBe(true);
+    // A rewrite of staging that drops main's commits: refused, even forced.
+    await must(src, "reset", "-q", "--hard", "HEAD~1");
+    writeFileSync(join(src, "x.txt"), "x\n");
+    await must(src, "add", "."); await must(src, "commit", "-qm", "Rewritten");
+    const dropped = await git(src, "push", "--force", "erga", "HEAD:staging");
+    expect(dropped.ok).toBe(false);
+    expect(dropped.err).toContain("staging is always at or ahead of main");
+    // Main backwards: refused.
+    expect((await git(src, "push", "--force", "erga", "HEAD~1:main")).err).toContain("only moves forward");
+    // A rewrite of what's only on staging is fine.
+    await must(src, "fetch", "-q", "erga");
+    await must(src, "reset", "-q", "--hard", "erga/main");
+    for (const n of ["Sixth", "Seventh", "Eighth"]) { writeFileSync(join(src, n), n); await must(src, "add", "."); await must(src, "commit", "-qm", n); }
+    expect((await git(src, "push", "erga", "HEAD:staging")).ok).toBe(true);
+    await must(src, "commit", "-q", "--amend", "-m", "Eighth, amended");
+    expect((await git(src, "push", "--force", "erga", "HEAD:staging")).ok).toBe(true);
+    // Other branches, and deleting, are refused.
+    expect((await git(src, "push", "erga", "HEAD:feature")).err).toContain("two branches");
+    expect((await git(src, "push", "erga", ":staging")).ok).toBe(false);
+    // Merge: main moves to a chosen staging commit, then to staging's head; never anywhere else.
+    const sixth = await must(src, "rev-parse", "HEAD~2");
+    let r = await f.repo.merge(ada, sixth);
+    expect(r).toEqual({ commit: sixth, fastForward: true, upToDate: false });
+    await expect(f.repo.merge(ada, "0".repeat(39) + "1")).rejects.toThrow(/isn't one of staging's commits/);
+    r = await f.repo.merge(ada);
+    expect(r.commit).toBe(await must(src, "rev-parse", "HEAD"));
+    expect((await f.repo.merge(ada)).upToDate).toBe(true);
+    const c = scratch();
+    await must(c, "clone", "-q", f.erga, "copy");
+    expect(await must(join(c, "copy"), "rev-parse", "origin/main")).toBe(await must(join(c, "copy"), "rev-parse", "origin/staging"));
+    expect(await must(join(c, "copy"), "log", "-1", "--format=%s", "origin/main")).toBe("Eighth, amended");
+  });
+
+  test("the mirror catches up, and a diverged GitHub main stops it without blocking pushes", async () => {
+    await f.settle();
+    const c = scratch();
+    await must(c, "clone", "-q", f.erga, "copy");
+    const w = join(c, "copy");
+    expect((await must(w, "ls-remote", f.github, "main")).split("\t")[0]).toBe(await must(w, "rev-parse", "origin/main"));
+    expect(f.repo.mirrorStatus().lastPushAt).toBeGreaterThan(0);
+    // Someone pushes to GitHub's main directly.
+    await must(w, "checkout", "-q", "-B", "gh", "origin/main");
+    writeFileSync(join(w, "gh.txt"), "only on GitHub\n");
+    await must(w, "add", "."); await must(w, "commit", "-qm", "GitHub only");
+    await must(w, "push", "-q", f.github, "gh:main");
+    // A push to Erga's main still lands; the mirror says what's wrong.
+    await must(w, "checkout", "-q", "-B", "main", "origin/main");
+    writeFileSync(join(w, "e.txt"), "e\n");
+    await must(w, "add", "."); await must(w, "commit", "-qm", "Ninth");
+    expect((await git(w, "push", "origin", "HEAD:staging", "HEAD:main")).ok).toBe(true);
+    await f.settle();
+    expect(f.repo.mirrorStatus().error).toContain("GitHub's main has commits Erga doesn't");
+    // Staging still mirrors.
+    expect((await must(w, "ls-remote", f.github, "staging")).split("\t")[0]).toBe((await must(w, "ls-remote", "origin", "staging")).split("\t")[0]);
+  });
+
+  test("the Source page's view: the latest commits, and which main has", async () => {
+    const view = await f.repo.branches();
+    const [staging, main] = view.branches;
+    expect(main.commits[0].subject).toBe("Ninth");
+    expect(staging.commits[0].sha).toBe(main.commit!);
+    expect(main.commits.every((x) => x.inMain)).toBe(true);
+    expect(staging.commits.length).toBeGreaterThan(3);
+    expect(view.moves.length).toBeGreaterThan(0);
+    const files = await f.repo.files(main.commit!);
+    expect(files.map((x) => x.path)).toContain("e.txt");
+  });
+});

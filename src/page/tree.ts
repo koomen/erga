@@ -1,4 +1,4 @@
-// A document's pages, as a small tree: its folders, documents (pages) and
+// A document's pages, as a small tree: its folders, pages and
 // other files, from GET /api/docs/<id>/tree, changed through POST to the same
 // address (new_page, new_folder, move, delete). One component, in two places:
 // the editor (a card under the document's title, top left: main.ts) and
@@ -6,16 +6,17 @@
 // (build.sh: pages-tree.js) and loaded only when someone opens it, so it costs the
 // viewer nothing.
 //
-// index.html is the root document; the others sit under it. People think in
-// documents, not files: the tree shows only documents (HTML pages) and the
-// folders that hold them (or nothing yet). A document's stylesheets, scripts,
-// fonts and images are part of it, out of sight, as are folders holding only
-// those; the API lists them, and agents see them. A document shows by its
+// index.html is the home page; the others sit under it. People think in
+// pages, not files: a document has pages, and the tree shows only its pages
+// (HTML and Markdown files) and the folders that hold them (or nothing yet).
+// The document's stylesheets, scripts, fonts and images are shared assets,
+// out of sight, as are folders holding only those; the API lists them, and
+// agents see them (to an agent a document is one folder of files). A page shows by its
 // title when known, else by its name made readable ("spring-migration" is
 // "Spring migration"; a folder's index is the folder's name), its file's name
 // a quiet hint only where two would read the same. Clicking a page opens it,
 // in the editor when you're editing, in the viewer otherwise, and the page
-// you're on is marked. Editors add (New document, New folder: at the top level
+// you're on is marked. Editors add (New page, New folder: at the top level
 // and in each folder), rename in place, move (drag and drop, or Move to…) and
 // delete (a folder asks first); viewers only look. Errors from the server
 // show where they happened, in its words.
@@ -45,7 +46,7 @@ export interface TreeOptions {
   titleOf?: (path: string) => string | null | undefined;
   /** The page you're on (its path), if any. */
   current?: string | null;
-  /** Renaming the root document is renaming the document (its title and address): the caller's to do. */
+  /** Renaming the home page is renaming the document (its title and address): the caller's to do. */
   onRenameRoot?: () => void;
   /** Goes to a page (default: the browser goes there). `replace` when the page you were on moved. */
   navigate?: (url: string, opts: { replace?: boolean }) => void;
@@ -98,25 +99,25 @@ export function pageAt(entries: Entry[], base: string, pathname: string): string
 
 /** What's wrong with a name for something new (or renamed) in `dir`, or null. `taken` is what's there already. */
 export function checkName(name: string, type: EntryType, taken: Set<string>, was?: string): string | null {
-  if (!name || name == ".html") return type == "folder" ? "Give the folder a name." : "Give the document a name, with a letter or a digit in it.";
+  if (!name || name == ".html") return type == "folder" ? "Give the folder a name." : "Give the page a name, with a letter or a digit in it.";
   if (/[\/\\]/.test(name)) return "A name can't have / or \\ in it.";
   if (name.startsWith(".")) return "A name can't start with a dot.";
   if (/[\x00-\x1f\x7f]/.test(name)) return "That name has characters it can't have.";
   if (name.length > 120) return "That name is too long.";
-  if (name.toLowerCase() != was?.toLowerCase() && taken.has(name.toLowerCase())) return type == "folder" ? `There's already a folder called “${name}” here.` : `There's already a document called “${readable(name)}” here.`;
+  if (name.toLowerCase() != was?.toLowerCase() && taken.has(name.toLowerCase())) return type == "folder" ? `There's already a folder called “${name}” here.` : `There's already a page called “${readable(name)}” here.`;
   return null;
 }
 
 /** A name as an address has it: lowercase letters, digits and dashes. */
 export const slugify = (s: string) => s.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/['’]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 80);
 
-/** A name as typed, as a file: a document's is its address's name, then .html; a folder's is as typed. */
+/** A name as typed, as a file: a page's is its address's name, then .html; a folder's is as typed. */
 export const fileName = (typed: string, type: EntryType) => {
   const name = typed.trim().replace(PAGE_EXT, "");
   return type == "page" ? (slugify(name) ? `${slugify(name)}.html` : "") : typed.trim();
 };
 
-/** A document's name made readable, from its file: "spring-migration.html" is "Spring migration". */
+/** A page's name made readable, from its file: "spring-migration.html" is "Spring migration". */
 export function readable(path: string, folderTitle?: string): string {
   const stem = nameOf(path).replace(PAGE_EXT, "");
   const word = stem.toLowerCase() == "index" ? (parentOf(path) ? nameOf(parentOf(path)) : folderTitle || "Home") : stem;
@@ -124,7 +125,7 @@ export function readable(path: string, folderTitle?: string): string {
   return spaced ? spaced[0].toUpperCase() + spaced.slice(1) : word;
 }
 
-/** Whether an entry shows: documents, and folders holding a document (at any depth) or nothing at all. Other files are a document's own, out of sight. */
+/** Whether an entry shows: pages, and folders holding a page (at any depth) or nothing at all. Other files are shared assets, out of sight. */
 export function shows(n: { type: EntryType; children: { type: EntryType; children: any[] }[] }): boolean {
   if (n.type == "page") return true;
   if (n.type == "file") return false;
@@ -188,7 +189,7 @@ const STYLE = `
 .et-row.root .et-name { font-weight: 600; }
 .et-row.folder .et-name { color: var(--fg); }
 /* Files that aren't pages (a stylesheet, a script, an image) are there, quietly. */
-/* Two documents that read the same: which file each is, quietly. */
+/* Two pages that read the same: which file each is, quietly. */
 .et-ext { flex: none; color: var(--chrome); font-size: 12px; }
 /* The page you're on. */
 .et-row[aria-current="page"] { background: color-mix(in srgb, var(--caret) 10%, transparent); }
@@ -224,7 +225,7 @@ const STYLE = `
 .et-btn { flex: none; height: 24px; padding: 0 9px; border: 1px solid var(--rule); border-radius: 6px; background: transparent; color: var(--fg); font: 550 12px var(--font-text, inherit); cursor: pointer; }
 .et-btn.danger { border-color: #c2410c; background: #c2410c; color: #fff; }
 .et-btn:focus-visible, .et-add:focus-visible { outline: 2px solid var(--caret); outline-offset: 1px; }
-/* New document, New folder: at the top level, under the rows. */
+/* New page, New folder: at the top level, under the rows. */
 .et-foot { display: flex; gap: 4px; margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--rule); }
 .et-add { display: inline-flex; align-items: center; gap: 5px; height: 28px; padding: 0 9px 0 6px; border: 0; border-radius: 7px; background: transparent; color: var(--soft); font: 500 12.5px var(--font-text, inherit); cursor: pointer; transition: color 120ms ease, background-color 120ms ease; }
 .et-add:hover { color: var(--fg-strong, var(--fg)); background: color-mix(in srgb, var(--chrome) 12%, transparent); }
@@ -304,9 +305,9 @@ export function mountTree(container: HTMLElement, opts: TreeOptions): TreeHandle
 
   const root = el("div", { className: "et" });
   const bannerEl = el("div", { className: "et-banner", role: "alert", hidden: true });
-  const rows = el("div", { className: "et-rows", role: "tree", "aria-label": opts.label ?? "Documents" });
+  const rows = el("div", { className: "et-rows", role: "tree", "aria-label": opts.label ?? "Pages" });
   const foot = el("div", { className: "et-foot", hidden: true });
-  const addPage = el("button", { type: "button", className: "et-add" }, svg(ICONS.newPage), "New document");
+  const addPage = el("button", { type: "button", className: "et-add" }, svg(ICONS.newPage), "New page");
   const addFolder = el("button", { type: "button", className: "et-add" }, svg(ICONS.newFolder), "New folder");
   foot.append(addPage, addFolder);
   root.append(bannerEl, rows, foot);
@@ -314,10 +315,10 @@ export function mountTree(container: HTMLElement, opts: TreeOptions): TreeHandle
   addPage.addEventListener("click", () => startNew("", "page"));
   addFolder.addEventListener("click", () => startNew("", "folder"));
 
-  /** Where a page opens: its address, and #edit in the editor (an address always names a document, so one may be called "edit"). */
+  /** Where a page opens: its address, and #edit in the editor (an address always names a page, so one may be called "edit"). */
   const href = (path: string) => pageUrl(base, path) + query + (opts.editing ? "#edit" : "");
   const titleFor = (n: { path: string; title?: string }) => (n.path == ROOT && rootTitle) || opts.titleOf?.(n.path) || n.title || null;
-  // A new document's template is titled "Untitled": that says nothing, so its name does instead.
+  // A new page's template is titled "Untitled": that says nothing, so its name does instead.
   const known = (t: string | null | undefined) => (t && t.trim() && t.trim().toLowerCase() != "untitled" ? t.trim() : null);
   const label = (n: Node) => (n.type == "page" ? known(titleFor(n)) || readable(n.path, rootTitle) : nameOf(n.path));
   const sortKey = (n: Node) => `${n.type == "folder" ? 0 : n.type == "page" ? (nameOf(n.path).toLowerCase() == "index.html" ? 1 : 2) : 3}`;
@@ -330,14 +331,14 @@ export function mountTree(container: HTMLElement, opts: TreeOptions): TreeHandle
   const takenIn = (dir: string) => new Set((find(dir)?.children ?? []).map((c) => nameOf(c.path).toLowerCase()));
   const hasRoot = () => !!entries?.some((e) => e.path == ROOT);
   const say = (text: string | null, note = false) => { banner = text; bannerEl.hidden = !text; bannerEl.classList.toggle("note", note); bannerEl.replaceChildren(); if (text) bannerEl.append(el("span", {}, text)); };
-  /** What a move can break: a document links its styles, scripts and images by where they are from it, and links to it name its old address. */
+  /** What a move can break: a page links its styles, scripts and images by where they are from it, and links to it name its old address. */
   function warnMoved(from: string, to: string, name: string, before: Node[]) {
     const n = find(to);
     if (!n || parentOf(from) == parentOf(to)) return;
     const docs: string[] = [];
     const walk = (x: Node) => { if (x.type == "page") docs.push(x.path); x.children.forEach(walk); };
     walk(n);
-    // A folder moving to the same depth keeps its documents' links to things inside it, but not to things outside.
+    // A folder moving to the same depth keeps its pages' links to things inside it, but not to things outside.
     const depth = (p: string) => p.split("/").length;
     if (n.type == "folder" && depth(from) == depth(to)) return;
     // Asked where each is now, else where it was (the room may not have caught up).
@@ -345,7 +346,7 @@ export function mountTree(container: HTMLElement, opts: TreeOptions): TreeHandle
     const relative = docs.map((p) => opts.hasRelativeLinks?.(p) ?? opts.hasRelativeLinks?.(was.get(p) ?? p));
     if (relative.length && relative.every((r) => r === false)) return;
     say(n.type == "folder"
-      ? `Moved. The documents in “${name}” find their styles, images and links by where they were: check that they still look right, and fix what's missing (the agent can).`
+      ? `Moved. The pages in “${name}” find their styles, images and links by where they were: check that they still look right, and fix what's missing (the agent can).`
       : `Moved. “${name}” finds its styles, images and links by where it was: check that it still looks right, and fix what's missing (the agent can).`, true);
   }
 
@@ -405,7 +406,7 @@ export function mountTree(container: HTMLElement, opts: TreeOptions): TreeHandle
     finally { busy = null; render(); }
   }
 
-  /** After the page you're on moved or went: follow it (or go to the root document). */
+  /** After the page you're on moved or went: follow it (or go to the home page). */
   function follow(from: string, to: string | null) {
     if (!current) return;
     const moved = current == from ? to : current.startsWith(from + "/") ? (to == null ? null : to + current.slice(from.length)) : undefined;
@@ -466,7 +467,7 @@ export function mountTree(container: HTMLElement, opts: TreeOptions): TreeHandle
     if (from == ROOT || dir == parentOf(from) || dir == from || dir.startsWith(from + "/")) return;
     const to = join(dir, nameOf(from));
     const n = find(from);
-    if (takenIn(dir).has(nameOf(from).toLowerCase())) { say(`There's already ${n?.type == "folder" ? `a folder called “${nameOf(from)}”` : `a document called “${n ? label(n) : nameOf(from)}”`} in ${dir ? `“${nameOf(dir)}”` : "the top level"}.`); return; }
+    if (takenIn(dir).has(nameOf(from).toLowerCase())) { say(`There's already ${n?.type == "folder" ? `a folder called “${nameOf(from)}”` : `a page called “${n ? label(n) : nameOf(from)}”`} in ${dir ? `“${nameOf(dir)}”` : "the top level"}.`); return; }
     if (dir) open.add(dir);
     const name = n ? label(n) : nameOf(from), before: Node[] = [];
     const walk = (x: Node) => { if (x.type == "page") before.push(x); x.children.forEach(walk); };
@@ -545,7 +546,7 @@ export function mountTree(container: HTMLElement, opts: TreeOptions): TreeHandle
     };
     const newRow = (e: Extract<typeof editing, { kind: "new" }>) => {
       const depth = depthOfDir(e.dir);
-      return [editRow(depth, e.type, e.value, e.type == "folder" ? "Folder name" : "Document name", e.type == "page", e.error), ...(e.error ? [msg(depth, e.error)] : [])];
+      return [editRow(depth, e.type, e.value, e.type == "folder" ? "Folder name" : "Page name", e.type == "page", e.error), ...(e.error ? [msg(depth, e.error)] : [])];
     };
     // A new item goes first in its folder (or at the top level, first after the root row).
     if (editing?.kind == "new" && !editing.dir && !(showRoot && hasRoot())) rows.append(...newRow(editing));
@@ -565,7 +566,7 @@ export function mountTree(container: HTMLElement, opts: TreeOptions): TreeHandle
       if (editing?.kind == "new" && ((n.path == ROOT && showRoot && !editing.dir) || (n.type == "folder" && n.path == editing.dir))) rows.append(...newRow(editing));
     }
     const peers = list.filter(([n]) => n.path != ROOT).length;
-    if (!peers && !editing) rows.append(el("p", { className: "et-note", style: `--depth: ${showRoot && hasRoot() ? 1 : 0}` }, canEdit ? "No other documents yet." : "No other documents."));
+    if (!peers && !editing) rows.append(el("p", { className: "et-note", style: `--depth: ${showRoot && hasRoot() ? 1 : 0}` }, canEdit ? "No other pages yet." : "No other pages."));
     // Focus where it was (or on what was just made), unless someone's typing.
     const input = rows.querySelector<HTMLInputElement>(".et-input");
     if (input) {
@@ -587,7 +588,7 @@ export function mountTree(container: HTMLElement, opts: TreeOptions): TreeHandle
     const isRoot = n.path == ROOT && showRoot;
     const folder = n.type == "folder";
     const name = label(n);
-    // Two documents side by side that read the same: each says which it is, quietly, by its file's name.
+    // Two pages side by side that read the same: each says which it is, quietly, by its file's name.
     const twins = n.type == "page" && (find(parentOf(n.path))?.children ?? []).filter((c) => c.type == "page" && c.path != n.path).some((c) => label(c).toLowerCase() == name.toLowerCase());
     const hint = twins ? nameOf(n.path) : "";
     const r = el("div", {
@@ -626,7 +627,7 @@ export function mountTree(container: HTMLElement, opts: TreeOptions): TreeHandle
 
   function editRow(depth: number, type: EntryType, value: string, placeholder: string, ext: boolean, error?: string, path?: string): HTMLElement {
     const r = el("div", { className: "et-row editing", ...(depth ? { style: `--depth: ${depth}` } : {}) });
-    const input = el("input", { className: "et-input", value, placeholder, spellcheck: false, autocomplete: "off", "aria-label": path ? (type == "folder" ? `Rename the folder ${nameOf(path)}` : `Rename the document ${value}`) : placeholder });
+    const input = el("input", { className: "et-input", value, placeholder, spellcheck: false, autocomplete: "off", "aria-label": path ? (type == "folder" ? `Rename the folder ${nameOf(path)}` : `Rename the page ${value}`) : placeholder });
     input.setAttribute("autocapitalize", "off");
     if (error) input.setAttribute("aria-invalid", "true");
     r.append(el("span", { className: "et-twist none", "aria-hidden": "true" }), el("span", { className: "et-icon", "aria-hidden": "true" }, svg(type == "folder" ? ICONS.folder : type == "page" ? ICONS.page : ICONS.file)), input);
@@ -648,12 +649,12 @@ export function mountTree(container: HTMLElement, opts: TreeOptions): TreeHandle
 
   function confirmRow(n: Node, depth: number): HTMLElement {
     const r = el("div", { className: "et-row confirm", role: "group", "aria-label": `Delete ${nameOf(n.path)}?`, ...(depth ? { style: `--depth: ${depth}` } : {}) });
-    // Only what shows counts: a document's own styles and images go with it, unmentioned.
+    // Only what shows counts: the shared styles and images go with it, unmentioned.
     const docs = (x: Node): number => x.children.reduce((s, c) => s + (c.type == "page" ? 1 : 0) + docs(c), 0);
     const k = docs(n);
     const yes = el("button", { type: "button", className: "et-btn danger" }, "Delete");
     const no = el("button", { type: "button", className: "et-btn" }, "Cancel");
-    r.append(el("span", { className: "et-icon", "aria-hidden": "true" }, svg(ICONS.folder)), el("span", { className: "et-confirm" }, `Delete the folder “${nameOf(n.path)}”${k ? ` and the ${k == 1 ? "document" : `${k} documents`} in it` : ""}?`), no, yes);
+    r.append(el("span", { className: "et-icon", "aria-hidden": "true" }, svg(ICONS.folder)), el("span", { className: "et-confirm" }, `Delete the folder “${nameOf(n.path)}”${k ? ` and the ${k == 1 ? "page" : `${k} pages`} in it` : ""}?`), no, yes);
     yes.addEventListener("click", () => remove(n.path));
     no.addEventListener("click", () => { confirming = null; focusPath = n.path; render(); });
     r.addEventListener("keydown", (e) => { if (e.key == "Escape") { e.stopPropagation(); confirming = null; focusPath = n.path; render(); } });
@@ -726,7 +727,7 @@ export function mountTree(container: HTMLElement, opts: TreeOptions): TreeHandle
   }
 
   const addItems = (dir: string): Item[] => [
-    { label: "New document", icon: ICONS.newPage, run: () => startNew(dir, "page") },
+    { label: "New page", icon: ICONS.newPage, run: () => startNew(dir, "page") },
     { label: "New folder", icon: ICONS.newFolder, run: () => startNew(dir, "folder") },
   ];
   function moreMenu(anchor: HTMLElement, path: string) {
@@ -735,10 +736,10 @@ export function mountTree(container: HTMLElement, opts: TreeOptions): TreeHandle
     openMenu(anchor, [
       ...(n.type == "folder" ? [...addItems(path), "-" as const] : []),
       ...(n.type == "page" ? [{ label: "Open in a new tab", run: () => go(path, true) }, "-" as const] : []),
-      { label: n.type == "folder" ? "Rename folder" : "Rename document", run: () => startRename(path) },
-      { label: "Move to…", run: () => moveMenu(anchor, path) },
+      { label: n.type == "folder" ? "Rename folder" : "Rename page", run: () => startRename(path) },
+      { label: n.type == "folder" ? "Move folder to…" : "Move page to…", run: () => moveMenu(anchor, path) },
       "-",
-      { label: n.type == "folder" ? "Delete folder" : "Delete document", danger: true, run: () => remove(path) },
+      { label: n.type == "folder" ? "Delete folder" : "Delete page", danger: true, run: () => remove(path) },
     ]);
   }
   /** Move to…: the top level and every folder it can go into. */
@@ -751,7 +752,7 @@ export function mountTree(container: HTMLElement, opts: TreeOptions): TreeHandle
     const here = parentOf(path);
     const moving = find(path);
     const items: Item[] = [{ head: `Move “${moving ? label(moving) : nameOf(path)}” to` }];
-    if (here) items.push({ label: showRoot ? "Top level (beside the document)" : "Top level", icon: ICONS.page, run: () => move(path, "") });
+    if (here) items.push({ label: showRoot ? "Top level (beside the home page)" : "Top level", icon: ICONS.page, run: () => move(path, "") });
     for (const [p, depth] of folders) if (p != here) items.push({ label: nameOf(p), icon: ICONS.folder, depth: depth - 1, run: () => move(path, p) });
     if (items.length == 1) items.push({ head: "There's nowhere else to move it: make a folder first." });
     const anchorNow = anchor.isConnected ? anchor : rows.querySelector<HTMLElement>(`[data-path="${CSS.escape(path)}"] [data-act="more"]`) ?? anchor;

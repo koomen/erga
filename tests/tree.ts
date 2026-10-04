@@ -7,7 +7,7 @@
 //     you're on is marked; the root row's pencil renames the document;
 //   - Documents: each document's chevron opens its pages beneath its row.
 //
-// And what it does: folders open and close, New document and New folder (at
+// And what it does: folders open and close, New page and New folder (at
 // the top level and in a folder) name the new one in place (.html added),
 // rename in place, Move to… and drag and drop (with the warning about relative
 // links), delete (a folder asks first), the server's errors shown in its
@@ -179,9 +179,9 @@ try {
   await until(async () => (await tree()).includes("notes"), 5000, "the folder is made");
   await until(async () => (await focused(p)) == "notes", 3000, "and is focused");
   await act(p, "notes", "add");
-  await menuItem(p, "New document");
+  await menuItem(p, "New page");
   await p.type("Ideas");
-  expect(!(await p.eval<string>(`document.getElementById("pages").textContent`)).includes(".html"), "no .html anywhere: they're documents, not files");
+  expect(!(await p.eval<string>(`document.getElementById("pages").textContent`)).includes(".html"), "no .html anywhere: they're pages, not files");
   await p.key("Enter");
   await until(async () => (await tree()).includes("notes/ideas.html"), 5000, "the document is made: its name as an address has it, then .html");
   await until(async () => (await rows(p)).some((x) => x[0] == "notes/ideas.html" && x[1] == "Ideas" && x[2] == 3), 3000, "inside the folder, which opened, by its name");
@@ -189,10 +189,10 @@ try {
   await clickOn(p, ".et-foot .et-add:nth-child(1)");
   await p.type("about");
   await p.key("Enter");
-  expect(await p.eval<boolean>(`/already a document called “About”/.test(document.querySelector(".et-msg.error")?.textContent ?? "")`), "a taken name says so, in place", await p.eval(`document.querySelector(".et-msg")?.textContent`));
+  expect(await p.eval<boolean>(`/already a page called “About”/.test(document.querySelector(".et-msg.error")?.textContent ?? "")`), "a taken name says so, in place", await p.eval(`document.querySelector(".et-msg")?.textContent`));
   await p.key("Escape");
   expect(!(await p.eval<boolean>(`!!document.querySelector(".et-input")`)), "Escape drops it", await p.eval(`document.getElementById("pages").hidden`));
-  ok("New folder and New document, at the top level and in a folder, named in place; a taken name says so");
+  ok("New folder and New page, at the top level and in a folder, named in place; a taken name says so");
 
   // Rename in place (F2), and the server's own words when it refuses.
   // Clicking a page opens it, at its address in the editor.
@@ -227,7 +227,14 @@ try {
 
   // Move to…, and drag and drop.
   await act(p, "write-to-us.html", "more");
-  await menuItem(p, "Move to…");
+  // A document has pages: the tree says "page" for them, never "document", and folders stay folders.
+  const menu = await p.eval<string[]>(`[...document.querySelectorAll('.et-menu [role="menuitem"]')].map((b) => b.textContent.trim())`);
+  expect(JSON.stringify(menu) == JSON.stringify(["Open in a new tab", "Rename page", "Move page to…", "Delete page"]), "a page's menu says page", menu);
+  const words = await p.eval<string>(`document.getElementById("pages").textContent + " " + [...document.querySelectorAll("#pages [aria-label], #pages [placeholder], #pages [title]")].map((e) => (e.getAttribute("aria-label") ?? "") + " " + (e.getAttribute("placeholder") ?? "") + " " + (e.getAttribute("title") ?? "")).join(" ")`);
+  expect(words.includes("New page") && !/\bdocuments?\b/i.test(words.replace(/Rename this document, or change its address/g, "")), "the tree says page, not document (only the root row's rename names the document)", words);
+  await Bun.sleep(200);
+  await p.screenshot(join(SHOTS, "tree-page-menu.png"));
+  await menuItem(p, "Move page to…");
   await menuItem(p, "notes");
   await until(async () => (await tree()).includes("notes/write-to-us.html"), 5000, "Move to… moves it into the folder");
   await p.eval(`(() => {
@@ -248,11 +255,11 @@ try {
 
   // Delete: a page at once, a folder after asking.
   await act(p, "notes/ideas.html", "more");
-  await menuItem(p, "Delete document");
-  await until(async () => !(await tree()).includes("notes/ideas.html"), 5000, "a document is deleted");
+  await menuItem(p, "Delete page");
+  await until(async () => !(await tree()).includes("notes/ideas.html"), 5000, "a page is deleted");
   await act(p, "notes", "more");
   await menuItem(p, "Delete folder");
-  expect(await p.eval<boolean>(`/Delete the folder “notes” and the document in it\\?/.test(document.querySelector(".et-row.confirm")?.textContent ?? "")`), "a folder asks first, in its row", await p.eval(`document.querySelector(".et-row.confirm")?.textContent`));
+  expect(await p.eval<boolean>(`/Delete the folder “notes” and the page in it\\?/.test(document.querySelector(".et-row.confirm")?.textContent ?? "")`), "a folder asks first, in its row", await p.eval(`document.querySelector(".et-row.confirm")?.textContent`));
   await Bun.sleep(200);
   await p.screenshot(join(SHOTS, "tree-delete-folder.png"));
   await p.key("Escape");
@@ -291,13 +298,13 @@ try {
   await clickOn(p2, ".et-foot .et-add:nth-child(1)");
   await p2.type("Field notes");
   await p2.key("Enter");
-  await until(async () => (await tree()).includes("field-notes.html"), 5000, "the second tab makes a document");
+  await until(async () => (await tree()).includes("field-notes.html"), 5000, "the second tab makes a page");
   await until(async () => (await rows(p)).some((x) => x[0] == "field-notes.html" && x[1] == "Field notes"), 10_000, "the first tab shows it, live");
   await act(p2, "field-notes.html", "more");
-  await menuItem(p2, "Move to…");
+  await menuItem(p2, "Move page to…");
   await menuItem(p2, "blog");
   await until(async () => (await rows(p)).some((x) => x[0] == "blog/field-notes.html") && !(await paths(p)).includes("field-notes.html"), 10_000, "a move in the second tab shows in the first", () => paths(p));
-  ok("two tabs: a document made and moved in one shows in the other, live");
+  ok("two tabs: a page made and moved in one shows in the other, live");
   // An agent (over the token API) makes a page and moves one: the tree shows both, live, by their titles.
   await agentTool("new_page", { path: "blog/owl-calls" });
   await agentTool("write", { path: "blog/owl-calls.html", content: "<!doctype html><title>Owl calls</title><link rel=stylesheet href=../style.css><h1>Owl calls</h1>" });
@@ -351,17 +358,17 @@ try {
   await clickOn(p, `${sub} .et-foot .et-add:nth-child(1)`);
   await p.type("Old news");
   await p.key("Enter");
-  await until(async () => (await tree()).includes("old-news.html"), 5000, "a document made from Documents");
+  await until(async () => (await tree()).includes("old-news.html"), 5000, "a page made from Documents");
   await until(async () => (await rows(p)).some((x) => x[0] == "old-news.html"), 3000, "it shows");
   await act(p, "old-news.html", "more");
-  await menuItem(p, "Rename document");
+  await menuItem(p, "Rename page");
   await p.eval(`document.activeElement.select(), true`);
   await p.type("Older news");
   await p.key("Enter");
   await until(async () => (await tree()).includes("older-news.html") && !(await tree()).includes("old-news.html"), 5000, "renamed from Documents");
   await until(async () => (await rows(p)).some((x) => x[0] == "older-news.html"), 3000, "it shows renamed");
   await act(p, "older-news.html", "more");
-  await menuItem(p, "Move to…");
+  await menuItem(p, "Move page to…");
   await menuItem(p, "archive");
   await until(async () => (await tree()).includes("archive/older-news.html"), 5000, "moved from Documents");
   await until(() => p.eval<boolean>(`/Moved\. .* finds its styles, images and links by where it was/.test(document.querySelector("${sub} .et-banner.note")?.textContent ?? "")`), 3000, "with the warning about its relative links");
@@ -383,7 +390,7 @@ try {
   await clickOn(p, `${sub} ${row("owl-calls.html")}`);
   await until(async () => wentTo(went, `${address}/owl-calls#edit`), 5000, "a page opens in the editor, for an editor");
   await until(() => p.eval<boolean>(`document.body.classList.contains("erga-editor-ready")`).catch(() => false), 20_000, "the editor is up");
-  ok("Documents: a document's chevron shows its pages beneath it; New folder and New document, rename, move (with the warning), delete; live; light, dark; a page opens");
+  ok("Documents: a document's chevron shows its pages beneath it; New folder and New page, rename, move (with the warning), delete; live; light, dark; a page opens");
 
   // ------------------------------------------------------------ a viewer
   // Ada may only view it: on Documents and in the editor, the tree has no controls, and its pages open in the viewer.
