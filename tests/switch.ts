@@ -49,7 +49,8 @@ async function firstSwitch(name: string, dir: string, bg: [number, number, numbe
   await p.send("Network.enable");
   await p.send("Network.clearBrowserCache");
   await p.send("Network.setCacheDisabled", { cacheDisabled: true });
-  await p.navigate(`${host.root}${address}`);
+  await p.send("Page.reload", { ignoreCache: true });
+  await Bun.sleep(300);
   await until(async () => (await p.inPage<string>(`document.querySelector("h1")?.textContent ?? ""`)).some((t) => t.startsWith("A ")), 15_000, "the viewer shows the page");
   await p.settle();
   await throttle(p, true);
@@ -61,7 +62,7 @@ async function firstSwitch(name: string, dir: string, bg: [number, number, numbe
     p.send("Page.screencastFrameAck", { sessionId: f.sessionId }).catch(() => {});
   });
   // And where the document's frame is, on every animation frame.
-  await p.eval(`window.__rects = []; (function log() { const r = document.getElementById("frame").getBoundingClientRect(); window.__rects.push([performance.now(), r.left, r.width]); requestAnimationFrame(log); })(), true`);
+  await p.eval(`window.__rects = []; (function log() { const r = document.getElementById("frame").getBoundingClientRect(); const e = document.getElementById("erga-editor"); window.__rects.push([performance.now(), r.left, e ? Number(getComputedStyle(e).opacity) : 0]); requestAnimationFrame(log); })(), true`);
   await p.send("Page.startScreencast", { format: "png", everyNthFrame: 1, maxWidth: W, maxHeight: H });
   await Bun.sleep(150);
   const pencil = await p.eval<{ x: number; y: number }>(`(() => { const r = document.querySelector(".erga-edit-button").getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })()`);
@@ -76,7 +77,7 @@ async function firstSwitch(name: string, dir: string, bg: [number, number, numbe
   expect(took > 600, `${name}: the throttle makes the editor's code take a while to arrive`, { took });
 
   // The frames: decoded in the page itself (a canvas), sampled on a grid over the agent's side and the document.
-  const results = await p.eval<{ white: number; blank: number; x: number }[]>(`Promise.all(${JSON.stringify(frames.map((f) => f.png.toString("base64")))}.map(async (b64) => {
+  const results = await p.eval<{ white: number; ink: number }[]>(`Promise.all(${JSON.stringify(frames.map((f) => f.png.toString("base64")))}.map(async (b64) => {
     const img = new Image(); img.src = "data:image/png;base64," + b64; await img.decode();
     const c = document.createElement("canvas"); c.width = img.width; c.height = img.height;
     const g = c.getContext("2d"); g.drawImage(img, 0, 0);
@@ -88,9 +89,18 @@ async function firstSwitch(name: string, dir: string, bg: [number, number, numbe
       n++;
       if (d[i] > 250 && d[i + 1] > 250 && d[i + 2] > 250) white++;
     }
-    return { white: white / n, blank: 0, x: 0 };
+    // The document's text, wherever it is: pixels well off the page's background, in the band its heading and paragraphs are in.
+    let ink = 0, m = 0;
+    const [r, gr, b] = ${JSON.stringify(bg)};
+    for (let y = Math.round(60 * c.height / ${H}); y < 360 * c.height / ${H}; y += 2) for (let x = 0; x < c.width; x += 2) {
+      const i = (y * c.width + x) * 4;
+      m++;
+      if (Math.abs(d[i] - r) + Math.abs(d[i + 1] - gr) + Math.abs(d[i + 2] - b) > 120) ink++;
+    }
+    return { white: white / n, ink: ink / m };
   }))`);
   const worst = Math.max(...results.map((r) => r.white));
+  const inks = results.map((r) => r.ink), fewestInk = Math.min(...inks) / inks[0];
   if (keepFrames) {
     // A strip: up to 12 frames from the click on, each labelled with its time, small, in rows of four.
     const t0 = clicked / 1000;
@@ -118,14 +128,22 @@ async function firstSwitch(name: string, dir: string, bg: [number, number, numbe
   const rects = await p.eval<[number, number, number][]>("window.__rects");
   let jump = 0;
   for (let i = 1; i < rects.length; i++) jump = Math.max(jump, Math.abs(rects[i][1] - rects[i - 1][1]));
-  console.log(`${name}: worst white share on the left ${(worst * 100).toFixed(0)}%, biggest jump ${jump.toFixed(0)}px`);
-  return { worst, jump, frames, bg };
+  // What caused the flash: the page moving over for the agent before the agent (the editor's controls) could be seen.
+  const early = rects.filter(([, left, shown]) => left > 40 && shown < 1).length;
+  expect(early == 0, `${name}: the page makes room for the agent only once the agent can be seen`, { early });
+  console.log(`${name}: worst white share on the left ${(worst * 100).toFixed(0)}%, least text ${(fewestInk * 100).toFixed(0)}% of the viewer's, biggest jump ${jump.toFixed(0)}px`);
+  expect(worst < 0.02, `${name}: no frame shows a white block where the agent opens`, { whites: results.map((r) => r.white.toFixed(2)).join(" ") });
+  expect(fewestInk > 0.5, `${name}: no frame loses the document (blank where it should be)`, { inks: inks.map((i) => i.toFixed(4)).join(" ") });
+  // The slide moves the page ~400px over its 560ms, a few dozen px a frame (more when frames are dropped, as on a busy machine); the old jump was all of it at once.
+  expect(jump < 300, `${name}: the document slides over, it doesn't jump`, { jump });
+  const opened = await p.eval<boolean>(`(() => { const r = document.querySelector(".agent-card").getBoundingClientRect(); return document.body.classList.contains("agent-open") && r.width > 300 && getComputedStyle(document.getElementById("erga-editor")).opacity == "1"; })()`);
+  expect(opened, `${name}: and the agent ends up open, the editor shown`);
+  console.log(`ok   ${name}: the first switch into editing, on a slow network: no white, no blank, no jump`);
 }
 
 try {
-  const light = await firstSwitch("light", "light", [0xf1, 0xeb, 0xdc]);
-  const dark = await firstSwitch("dark", "dark", [0x16, 0x18, 0x1d]);
-  void light; void dark;
+  await firstSwitch("light", "light", [0xe9, 0xdc, 0xc0]);
+  await firstSwitch("dark", "dark", [0x16, 0x18, 0x1d]);
 } finally {
   browser.close();
   await host.dispose();
