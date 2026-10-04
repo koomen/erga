@@ -67,7 +67,7 @@ export interface Backdrop { color: string; image: string }
 
 /** Shell → frame. */
 export type ToFrame =
-  | { type: "init"; kind: Kind; state: unknown; version: number; markdownHead: string; self: MarkAuthor; tracking: boolean; timescale?: number }
+  | { type: "init"; kind: Kind; state: unknown; version: number; markdownHead: string; self: MarkAuthor; tracking: boolean; timescale?: number; /** The page's path in the document (blog/post.html): its relative links resolve from its folder. */ path?: string }
   | { type: "external"; changes: unknown; author: MarkAuthor | null; length: number }
   | { type: "ack" }
   | { type: "reject" }

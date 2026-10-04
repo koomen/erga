@@ -6,9 +6,14 @@
 // (build.sh: tree.js) and loaded only when someone opens it, so it costs the
 // viewer nothing.
 //
-// index.html is the root document; everything beside it sits under it. A page
-// shows as a document, by its title when known, else by its name; a folder
-// opens and closes; other files are shown quietly. Clicking a page opens it,
+// index.html is the root document; the others sit under it. People think in
+// documents, not files: the tree shows only documents (HTML pages) and the
+// folders that hold them (or nothing yet). A document's stylesheets, scripts,
+// fonts and images are part of it, out of sight, as are folders holding only
+// those; the API lists them, and agents see them. A document shows by its
+// title when known, else by its name made readable ("spring-migration" is
+// "Spring migration"; a folder's index is the folder's name), its file's name
+// a quiet hint only where two would read the same. Clicking a page opens it,
 // in the editor when you're editing, in the viewer otherwise, and the page
 // you're on is marked. Editors add (New document, New folder: at the top level
 // and in each folder), rename in place, move (drag and drop, or Move to…) and
@@ -28,7 +33,7 @@ export interface TreeOptions {
   id: string;
   /** Its address, /<owner>/<slug>: where its pages are (pageUrl). */
   base: string;
-  /** Open pages in the editor (…/edit) rather than the viewer. */
+  /** Open pages in the editor (<address>#edit) rather than the viewer (<address>). */
   editing: boolean;
   /** Carried on every request and link (a local tab's ?user=). */
   query?: string;
@@ -44,6 +49,8 @@ export interface TreeOptions {
   onRenameRoot?: () => void;
   /** Goes to a page (default: the browser goes there). `replace` when the page you were on moved. */
   navigate?: (url: string, opts: { replace?: boolean }) => void;
+  /** Whether a document links to other files by relative paths (../style.css), where the caller knows: a move may break those (warnMoved). Unknown: assume it does. */
+  hasRelativeLinks?: (path: string) => boolean | undefined;
   /** What the server answered last, for a caller that wants it (e.g. to count the pages). */
   onChange?: (answer: { entries: Entry[]; canEdit: boolean }) => void;
   /** Where to fetch from (tests stub it); default window.fetch. */
@@ -80,27 +87,45 @@ export function pageUrl(base: string, path: string): string {
 
 /** The page at an address (the inverse of pageUrl, against the pages there are), or null. */
 export function pageAt(entries: Entry[], base: string, pathname: string): string | null {
-  const want = decodeURIComponent(pathname.replace(/\/edit\/?$/, "").replace(/\/+$/, ""));
+  const want = decodeURIComponent(pathname.replace(/\/+$/, ""));
   for (const e of entries) if (e.type == "page" && decodeURIComponent(pageUrl(base, e.path)) == want) return e.path;
   return null;
 }
 
 /** What's wrong with a name for something new (or renamed) in `dir`, or null. `taken` is what's there already. */
 export function checkName(name: string, type: EntryType, taken: Set<string>, was?: string): string | null {
-  if (!name) return type == "folder" ? "Give the folder a name." : "Give the document a name.";
+  if (!name || name == ".html") return type == "folder" ? "Give the folder a name." : "Give the document a name, with a letter or a digit in it.";
   if (/[\/\\]/.test(name)) return "A name can't have / or \\ in it.";
   if (name.startsWith(".")) return "A name can't start with a dot.";
   if (/[\x00-\x1f\x7f]/.test(name)) return "That name has characters it can't have.";
   if (name.length > 120) return "That name is too long.";
-  if (name.toLowerCase() != was?.toLowerCase() && taken.has(name.toLowerCase())) return `There's already something called “${name}” here.`;
+  if (name.toLowerCase() != was?.toLowerCase() && taken.has(name.toLowerCase())) return type == "folder" ? `There's already a folder called “${name}” here.` : `There's already a document called “${readable(name)}” here.`;
   return null;
 }
 
-/** A name as typed, as a file: documents get .html unless they say .html or .htm. */
+/** A name as an address has it: lowercase letters, digits and dashes. */
+export const slugify = (s: string) => s.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/['’]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 80);
+
+/** A name as typed, as a file: a document's is its address's name, then .html; a folder's is as typed. */
 export const fileName = (typed: string, type: EntryType) => {
-  const name = typed.trim();
-  return type == "page" && !/\.html?$/i.test(name) ? `${name}.html` : name;
+  const name = typed.trim().replace(/\.html?$/i, "");
+  return type == "page" ? (slugify(name) ? `${slugify(name)}.html` : "") : typed.trim();
 };
+
+/** A document's name made readable, from its file: "spring-migration.html" is "Spring migration". */
+export function readable(path: string, folderTitle?: string): string {
+  const stem = nameOf(path).replace(/\.html?$/i, "");
+  const word = stem.toLowerCase() == "index" ? (parentOf(path) ? nameOf(parentOf(path)) : folderTitle || "Home") : stem;
+  const spaced = word.replace(/[-_]+/g, " ").replace(/\s+/g, " ").trim();
+  return spaced ? spaced[0].toUpperCase() + spaced.slice(1) : word;
+}
+
+/** Whether an entry shows: documents, and folders holding a document (at any depth) or nothing at all. Other files are a document's own, out of sight. */
+export function shows(n: { type: EntryType; children: { type: EntryType; children: any[] }[] }): boolean {
+  if (n.type == "page") return true;
+  if (n.type == "file") return false;
+  return n.children.length == 0 || n.children.some(shows);
+}
 
 interface Node { path: string; type: EntryType; title?: string; children: Node[] }
 
@@ -159,9 +184,7 @@ const STYLE = `
 .et-row.root .et-name { font-weight: 600; }
 .et-row.folder .et-name { color: var(--fg); }
 /* Files that aren't pages (a stylesheet, a script, an image) are there, quietly. */
-.et-row.file { cursor: default; }
-.et-row.file .et-name { color: var(--soft); font-size: 12.5px; }
-.et-row.file .et-icon { opacity: 0.7; }
+/* Two documents that read the same: which file each is, quietly. */
 .et-ext { flex: none; color: var(--chrome); font-size: 12px; }
 /* The page you're on. */
 .et-row[aria-current="page"] { background: color-mix(in srgb, var(--caret) 10%, transparent); }
@@ -188,6 +211,7 @@ const STYLE = `
 .et-note { margin: 0; padding: 6px 4px 6px calc(4px + var(--depth, 0) * 16px + 26px); font-size: 12.5px; color: var(--soft); }
 .et-banner { display: flex; align-items: flex-start; gap: 8px; margin: 0 0 6px; padding: 7px 10px; border-radius: 8px; font-size: 12.5px; line-height: 1.4; color: #c2410c; background: color-mix(in srgb, #c2410c 9%, transparent); }
 .et-banner span { flex: 1; }
+.et-banner.note { color: var(--fg); background: color-mix(in srgb, var(--caret) 9%, transparent); }
 .et-banner button { flex: none; padding: 0 2px; border: 0; background: none; color: inherit; font: inherit; font-weight: 600; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
 /* Delete a folder? Asked in its row. */
 .et-row.confirm { cursor: default; background: color-mix(in srgb, #c2410c 8%, transparent); }
@@ -273,7 +297,7 @@ export function mountTree(container: HTMLElement, opts: TreeOptions): TreeHandle
 
   const root = el("div", { className: "et" });
   const bannerEl = el("div", { className: "et-banner", role: "alert", hidden: true });
-  const rows = el("div", { className: "et-rows", role: "tree", "aria-label": opts.label ?? "Pages" });
+  const rows = el("div", { className: "et-rows", role: "tree", "aria-label": opts.label ?? "Documents" });
   const foot = el("div", { className: "et-foot", hidden: true });
   const addPage = el("button", { type: "button", className: "et-add" }, svg(ICONS.newPage), "New document");
   const addFolder = el("button", { type: "button", className: "et-add" }, svg(ICONS.newFolder), "New folder");
@@ -283,8 +307,12 @@ export function mountTree(container: HTMLElement, opts: TreeOptions): TreeHandle
   addPage.addEventListener("click", () => startNew("", "page"));
   addFolder.addEventListener("click", () => startNew("", "folder"));
 
+  /** Where a page opens: its address, and #edit in the editor (an address always names a document, so one may be called "edit"). */
+  const href = (path: string) => pageUrl(base, path) + query + (opts.editing ? "#edit" : "");
   const titleFor = (n: { path: string; title?: string }) => (n.path == ROOT && rootTitle) || opts.titleOf?.(n.path) || n.title || null;
-  const label = (n: Node) => (n.type == "page" ? titleFor(n) || nameOf(n.path).replace(/\.html?$/i, "") : nameOf(n.path));
+  // A new document's template is titled "Untitled": that says nothing, so its name does instead.
+  const known = (t: string | null | undefined) => (t && t.trim() && t.trim().toLowerCase() != "untitled" ? t.trim() : null);
+  const label = (n: Node) => (n.type == "page" ? known(titleFor(n)) || readable(n.path, rootTitle) : nameOf(n.path));
   const sortKey = (n: Node) => `${n.type == "folder" ? 0 : n.type == "page" ? (nameOf(n.path).toLowerCase() == "index.html" ? 1 : 2) : 3}`;
   const sorted = (list: Node[]) => [...list].sort((a, b) => sortKey(a).localeCompare(sortKey(b)) || label(a).localeCompare(label(b), undefined, { numeric: true, sensitivity: "base" }));
   const find = (path: string, at: Node = tree): Node | null => {
@@ -294,7 +322,25 @@ export function mountTree(container: HTMLElement, opts: TreeOptions): TreeHandle
   };
   const takenIn = (dir: string) => new Set((find(dir)?.children ?? []).map((c) => nameOf(c.path).toLowerCase()));
   const hasRoot = () => !!entries?.some((e) => e.path == ROOT);
-  const say = (text: string | null) => { banner = text; bannerEl.hidden = !text; bannerEl.replaceChildren(); if (text) bannerEl.append(el("span", {}, text)); };
+  const say = (text: string | null, note = false) => { banner = text; bannerEl.hidden = !text; bannerEl.classList.toggle("note", note); bannerEl.replaceChildren(); if (text) bannerEl.append(el("span", {}, text)); };
+  /** What a move can break: a document links its styles, scripts and images by where they are from it, and links to it name its old address. */
+  function warnMoved(from: string, to: string, name: string, before: Node[]) {
+    const n = find(to);
+    if (!n || parentOf(from) == parentOf(to)) return;
+    const docs: string[] = [];
+    const walk = (x: Node) => { if (x.type == "page") docs.push(x.path); x.children.forEach(walk); };
+    walk(n);
+    // A folder moving to the same depth keeps its documents' links to things inside it, but not to things outside.
+    const depth = (p: string) => p.split("/").length;
+    if (n.type == "folder" && depth(from) == depth(to)) return;
+    // Asked where each is now, else where it was (the room may not have caught up).
+    const was = new Map(before.map((b) => [b.path.replace(from, to), b.path]));
+    const relative = docs.map((p) => opts.hasRelativeLinks?.(p) ?? opts.hasRelativeLinks?.(was.get(p) ?? p));
+    if (relative.length && relative.every((r) => r === false)) return;
+    say(n.type == "folder"
+      ? `Moved. The documents in “${name}” find their styles, images and links by where they were: check that they still look right, and fix what's missing (the agent can).`
+      : `Moved. “${name}” finds its styles, images and links by where it was: check that it still looks right, and fix what's missing (the agent can).`, true);
+  }
 
   // ------------------------------------------------------------ talking to the server
 
@@ -352,7 +398,7 @@ export function mountTree(container: HTMLElement, opts: TreeOptions): TreeHandle
     if (moved === undefined) return;
     const target = moved ?? ROOT;
     current = moved ?? null;
-    const url = pageUrl(base, target) + (opts.editing ? "/edit" : "") + query;
+    const url = href(target);
     (opts.navigate ?? ((u, o) => (o.replace ? location.replace(u) : location.assign(u))))(url, { replace: true });
   }
 
@@ -371,7 +417,7 @@ export function mountTree(container: HTMLElement, opts: TreeOptions): TreeHandle
     const n = find(path);
     if (!n) return;
     confirming = null;
-    editing = { kind: "rename", path, value: n.type == "page" ? nameOf(path).replace(/\.html?$/i, "") : nameOf(path) };
+    editing = { kind: "rename", path, value: n.type == "page" ? readable(path, rootTitle) : nameOf(path) };
     render();
   }
   async function commitEdit() {
@@ -391,8 +437,8 @@ export function mountTree(container: HTMLElement, opts: TreeOptions): TreeHandle
     } else {
       const n = find(e.path);
       if (!n) { editing = null; render(); return; }
-      const name = fileName(typed, n.type == "page" ? "page" : n.type);
-      if (!typed || name == nameOf(e.path)) { editing = null; focusPath = e.path; render(); return; }
+      const name = fileName(typed, n.type);
+      if (!typed || name == nameOf(e.path) || (n.type == "page" && typed == readable(e.path, rootTitle))) { editing = null; focusPath = e.path; render(); return; }
       const problem = checkName(name, n.type, takenIn(parentOf(e.path)), nameOf(e.path));
       if (problem) { e.error = problem; render(); return; }
       const to = join(parentOf(e.path), name);
@@ -405,9 +451,13 @@ export function mountTree(container: HTMLElement, opts: TreeOptions): TreeHandle
   async function move(from: string, dir: string) {
     if (from == ROOT || dir == parentOf(from) || dir == from || dir.startsWith(from + "/")) return;
     const to = join(dir, nameOf(from));
-    if (takenIn(dir).has(nameOf(from).toLowerCase())) { say(`There's already something called “${nameOf(from)}” in ${dir ? `“${nameOf(dir)}”` : "the top level"}.`); return; }
+    const n = find(from);
+    if (takenIn(dir).has(nameOf(from).toLowerCase())) { say(`There's already ${n?.type == "folder" ? `a folder called “${nameOf(from)}”` : `a document called “${n ? label(n) : nameOf(from)}”`} in ${dir ? `“${nameOf(dir)}”` : "the top level"}.`); return; }
     if (dir) open.add(dir);
-    if (await change(from, { op: "move", from, to })) { focusPath = to; rekeyOpen(from, to); follow(from, to); }
+    const name = n ? label(n) : nameOf(from), before: Node[] = [];
+    const walk = (x: Node) => { if (x.type == "page") before.push(x); x.children.forEach(walk); };
+    if (n) walk(n);
+    if (await change(from, { op: "move", from, to })) { focusPath = to; rekeyOpen(from, to); warnMoved(from, to, name, before); follow(from, to); }
   }
   async function remove(path: string) {
     closeMenu();
@@ -424,7 +474,7 @@ export function mountTree(container: HTMLElement, opts: TreeOptions): TreeHandle
     saveOpen();
   };
   function go(path: string, newTab = false) {
-    const url = pageUrl(base, path) + (opts.editing ? "/edit" : "") + query;
+    const url = href(path);
     if (newTab) { window.open(url, "_blank", "noopener"); return; }
     if (path == current) return;
     (opts.navigate ?? ((u) => location.assign(u)))(url, {});
@@ -443,7 +493,7 @@ export function mountTree(container: HTMLElement, opts: TreeOptions): TreeHandle
   function visible(): [Node, number][] {
     const out: [Node, number][] = [];
     const walk = (list: Node[], depth: number) => {
-      for (const n of sorted(list)) {
+      for (const n of sorted(list.filter(shows))) {
         out.push([n, depth]);
         if (n.type == "folder" && open.has(n.path)) walk(n.children, depth + 1);
       }
@@ -501,7 +551,7 @@ export function mountTree(container: HTMLElement, opts: TreeOptions): TreeHandle
       if (editing?.kind == "new" && ((n.path == ROOT && showRoot && !editing.dir) || (n.type == "folder" && n.path == editing.dir))) rows.append(...newRow(editing));
     }
     const peers = list.filter(([n]) => n.path != ROOT).length;
-    if (!peers && !editing) rows.append(el("p", { className: "et-note", style: `--depth: ${showRoot && hasRoot() ? 1 : 0}` }, canEdit ? "No other pages yet." : "No other pages."));
+    if (!peers && !editing) rows.append(el("p", { className: "et-note", style: `--depth: ${showRoot && hasRoot() ? 1 : 0}` }, canEdit ? "No other documents yet." : "No other documents."));
     // Focus where it was (or on what was just made), unless someone's typing.
     const input = rows.querySelector<HTMLInputElement>(".et-input");
     if (input) {
@@ -522,10 +572,13 @@ export function mountTree(container: HTMLElement, opts: TreeOptions): TreeHandle
     const isRoot = n.path == ROOT && showRoot;
     const folder = n.type == "folder";
     const name = label(n);
+    // Two documents side by side that read the same: each says which it is, quietly, by its file's name.
+    const twins = n.type == "page" && (find(parentOf(n.path))?.children ?? []).filter((c) => c.type == "page" && c.path != n.path).some((c) => label(c).toLowerCase() == name.toLowerCase());
+    const hint = twins ? nameOf(n.path) : "";
     const r = el("div", {
       className: `et-row ${n.type}${isRoot ? " root" : ""}${busy == n.path ? " busy" : ""}`,
       role: "treeitem", tabIndex: -1, dataset: { path: n.path, type: n.type },
-      "aria-level": depth + 1, "aria-setsize": size, "aria-posinset": pos, "aria-label": name + (n.type == "file" ? " (file)" : ""),
+      "aria-level": depth + 1, "aria-setsize": size, "aria-posinset": pos, "aria-label": name + (hint ? ` (${hint})` : ""),
       ...(depth ? { style: `--depth: ${depth}` } : {}),
     });
     if (folder) r.setAttribute("aria-expanded", String(open.has(n.path)));
@@ -533,9 +586,10 @@ export function mountTree(container: HTMLElement, opts: TreeOptions): TreeHandle
     const twist = el("span", { className: `et-twist${folder ? "" : " none"}`, "aria-hidden": "true" }, svg(ICONS.chevron));
     const icon = el("span", { className: "et-icon", "aria-hidden": "true" }, svg(folder ? (open.has(n.path) ? ICONS.folderOpen : ICONS.folder) : n.type == "page" ? ICONS.page : ICONS.file));
     const text = n.type == "page"
-      ? el("a", { className: "et-name", href: pageUrl(base, n.path) + (opts.editing ? "/edit" : "") + query, tabIndex: -1, draggable: false, title: n.path }, name)
-      : el("span", { className: "et-name", title: n.path }, name);
+      ? el("a", { className: "et-name", href: href(n.path), tabIndex: -1, draggable: false }, name)
+      : el("span", { className: "et-name" }, name);
     r.append(twist, icon, text);
+    if (hint) r.append(el("span", { className: "et-ext", "aria-hidden": "true" }, hint));
     if (canEdit) {
       const acts = el("span", { className: "et-acts" });
       if (isRoot) {
@@ -557,16 +611,13 @@ export function mountTree(container: HTMLElement, opts: TreeOptions): TreeHandle
 
   function editRow(depth: number, type: EntryType, value: string, placeholder: string, ext: boolean, error?: string, path?: string): HTMLElement {
     const r = el("div", { className: "et-row editing", ...(depth ? { style: `--depth: ${depth}` } : {}) });
-    const input = el("input", { className: "et-input", value, placeholder, spellcheck: false, autocomplete: "off", "aria-label": path ? `Rename ${nameOf(path)}` : placeholder });
+    const input = el("input", { className: "et-input", value, placeholder, spellcheck: false, autocomplete: "off", "aria-label": path ? (type == "folder" ? `Rename the folder ${nameOf(path)}` : `Rename the document ${value}`) : placeholder });
     input.setAttribute("autocapitalize", "off");
     if (error) input.setAttribute("aria-invalid", "true");
     r.append(el("span", { className: "et-twist none", "aria-hidden": "true" }), el("span", { className: "et-icon", "aria-hidden": "true" }, svg(type == "folder" ? ICONS.folder : type == "page" ? ICONS.page : ICONS.file)), input);
-    if (ext && !/\.html?$/i.test(value)) r.append(el("span", { className: "et-ext", "aria-hidden": "true" }, ".html"));
     input.addEventListener("input", () => {
       if (!editing) return;
       editing.value = input.value;
-      const extEl = r.querySelector(".et-ext");
-      if (ext) { if (/\.html?$/i.test(input.value)) extEl?.remove(); else if (!extEl) r.append(el("span", { className: "et-ext", "aria-hidden": "true" }, ".html")); }
       if (editing.error) { editing.error = undefined; r.nextElementSibling?.classList.contains("et-msg") && r.nextElementSibling.remove(); input.removeAttribute("aria-invalid"); }
     });
     input.addEventListener("keydown", (e) => {
@@ -582,11 +633,12 @@ export function mountTree(container: HTMLElement, opts: TreeOptions): TreeHandle
 
   function confirmRow(n: Node, depth: number): HTMLElement {
     const r = el("div", { className: "et-row confirm", role: "group", "aria-label": `Delete ${nameOf(n.path)}?`, ...(depth ? { style: `--depth: ${depth}` } : {}) });
-    const count = (x: Node): number => x.children.reduce((s, c) => s + 1 + count(c), 0);
-    const k = count(n);
+    // Only what shows counts: a document's own styles and images go with it, unmentioned.
+    const docs = (x: Node): number => x.children.reduce((s, c) => s + (c.type == "page" ? 1 : 0) + docs(c), 0);
+    const k = docs(n);
     const yes = el("button", { type: "button", className: "et-btn danger" }, "Delete");
     const no = el("button", { type: "button", className: "et-btn" }, "Cancel");
-    r.append(el("span", { className: "et-icon", "aria-hidden": "true" }, svg(ICONS.folder)), el("span", { className: "et-confirm" }, `Delete “${nameOf(n.path)}”${k ? ` and the ${k == 1 ? "item" : `${k} items`} in it` : ""}?`), no, yes);
+    r.append(el("span", { className: "et-icon", "aria-hidden": "true" }, svg(ICONS.folder)), el("span", { className: "et-confirm" }, `Delete the folder “${nameOf(n.path)}”${k ? ` and the ${k == 1 ? "document" : `${k} documents`} in it` : ""}?`), no, yes);
     yes.addEventListener("click", () => remove(n.path));
     no.addEventListener("click", () => { confirming = null; focusPath = n.path; render(); });
     r.addEventListener("keydown", (e) => { if (e.key == "Escape") { e.stopPropagation(); confirming = null; focusPath = n.path; render(); } });
@@ -667,21 +719,22 @@ export function mountTree(container: HTMLElement, opts: TreeOptions): TreeHandle
     openMenu(anchor, [
       ...(n.type == "folder" ? [...addItems(path), "-" as const] : []),
       ...(n.type == "page" ? [{ label: "Open in a new tab", run: () => go(path, true) }, "-" as const] : []),
-      { label: "Rename", run: () => startRename(path) },
+      { label: n.type == "folder" ? "Rename folder" : "Rename document", run: () => startRename(path) },
       { label: "Move to…", run: () => moveMenu(anchor, path) },
       "-",
-      { label: "Delete", danger: true, run: () => remove(path) },
+      { label: n.type == "folder" ? "Delete folder" : "Delete document", danger: true, run: () => remove(path) },
     ]);
   }
   /** Move to…: the top level and every folder it can go into. */
   function moveMenu(anchor: HTMLElement, path: string) {
     const folders: [string, number][] = [];
     const walk = (list: Node[], depth: number) => {
-      for (const c of sorted(list)) if (c.type == "folder" && c.path != path && !c.path.startsWith(path + "/")) { folders.push([c.path, depth]); walk(c.children, depth + 1); }
+      for (const c of sorted(list)) if (c.type == "folder" && shows(c) && c.path != path && !c.path.startsWith(path + "/")) { folders.push([c.path, depth]); walk(c.children, depth + 1); }
     };
     walk(tree.children, 1);
     const here = parentOf(path);
-    const items: Item[] = [{ head: `Move “${nameOf(path)}” to` }];
+    const moving = find(path);
+    const items: Item[] = [{ head: `Move “${moving ? label(moving) : nameOf(path)}” to` }];
     if (here) items.push({ label: showRoot ? "Top level (beside the document)" : "Top level", icon: ICONS.page, run: () => move(path, "") });
     for (const [p, depth] of folders) if (p != here) items.push({ label: nameOf(p), icon: ICONS.folder, depth: depth - 1, run: () => move(path, p) });
     if (items.length == 1) items.push({ head: "There's nowhere else to move it: make a folder first." });
@@ -715,10 +768,6 @@ export function mountTree(container: HTMLElement, opts: TreeOptions): TreeHandle
       e.preventDefault();
       go(path);
     }
-  });
-  rows.addEventListener("dblclick", (e) => {
-    const r = (e.target as HTMLElement).closest<HTMLElement>(".et-row[data-path]");
-    if (r && canEdit && r.dataset.type == "file") startRename(r.dataset.path!);
   });
   rows.addEventListener("contextmenu", (e) => {
     const r = (e.target as HTMLElement).closest<HTMLElement>(".et-row[data-path]");

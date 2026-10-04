@@ -19,6 +19,8 @@ export interface RemotePageConfig {
   kind: Kind;
   text: string;
   markdownHead: string;
+  /** The page's path in the document: its folder is where its relative links (../style.css) resolve from. */
+  path?: string;
   self: MarkAuthor;
   tracking: boolean;
   /** The extensions of the shell's own state (the source view's), for states that come back from the frame. */
@@ -102,7 +104,7 @@ export class RemotePage {
         this.ready = true;
         this.authority.reset();
         const timescale = (globalThis as { __ergaTimescale?: number }).__ergaTimescale;
-        this.post({ type: "init", kind: this.kind, state: this.state.toJSON(), version: this.authority.version, markdownHead: c.markdownHead, self: c.self, tracking: this.tracking, ...(timescale ? { timescale } : {}) });
+        this.post({ type: "init", kind: this.kind, state: this.state.toJSON(), version: this.authority.version, markdownHead: c.markdownHead, self: c.self, tracking: this.tracking, ...(timescale ? { timescale } : {}), ...(c.path ? { path: c.path } : {}) });
         for (const q of this.queue.splice(0)) this.post(q);
         return;
       }

@@ -542,24 +542,38 @@ under them instead.
 ### A document's pages
 
 A document can have more than one page. Its root is `index.html`; the
-others (and folders, stylesheets, scripts) sit beside it. The tree of them
+others sit beside it, in folders if you like. People think in documents, not
+files: the tree shows only documents (HTML pages) and the folders holding
+them (or nothing yet). A document's stylesheets, scripts, fonts and images
+are part of it, out of sight, as are folders holding only those (`fonts/`,
+`assets/`); the API lists every file, and agents see them all. The tree of them
 (`src/page/tree.ts`, built on its own as `tree.js` and loaded only when it's
 opened, so viewing never pays for it) shows in two places: in the editor, the
 document's title in the breadcrumbs opens it in a card, the document as its
 first row and everything else under it; on `/docs`, the chevron left of each
 document opens its pages beneath its row. Folders open and close (remembered
-for the tab); pages show by their title when it's known (in the editor, read
-from the room as they're edited), else by name; other files are there,
-quietly. Clicking a page opens it, in the editor for those who may edit
-(`/<owner>/<slug>/<page>/edit`), in the viewer otherwise, and the page you're
-on is marked.
+for the tab); documents show by their title when it's known (in the editor,
+read from the room as they're edited; "Untitled" counts as none), else by
+their name made readable ("spring-migration" is "Spring migration", a
+folder's index is the folder's name), with the file's name as a quiet hint
+only where two would read the same. Clicking a document opens it, in the
+editor for those who may edit (`/<owner>/<slug>/<page>#edit`), in the viewer
+otherwise (`/<owner>/<slug>/<page>`), and the one you're on is marked.
 
-Editors get New document (from the new-document template, `.html` added to
-the name) and New folder, at the top level (the foot of the tree) and in each
+Editors get New document (from the new-document template; "My post" is
+`my-post.html`) and New folder, at the top level (the foot of the tree) and in each
 folder (its +), named in place; rename in place (the menu, F2, or the pencil
 on the root row, which renames the document itself: its title and address);
 move by drag and drop or the menu's Move to…; and delete (a folder asks
-first, in its row; `index.html` can't go). Viewers see the tree without any
+first, in its row, counting the documents in it; `index.html` can't go).
+A document links its stylesheets, images and other documents by where they
+are from it (`../style.css`), so moving one to another folder (or a folder to
+another depth) can leave those behind: the tree says so after the move when
+the document has relative links (in the editor it reads them from the room;
+on `/docs` it always says so). It doesn't rewrite links, nor those from other
+documents to the one that moved or was renamed. The editor renders a page in
+a folder with its links resolved from that folder, as the browser does at its
+address. Viewers see the tree without any
 of that. What the server refuses shows where it happened, in its words. Keys:
 ↑ ↓ ← → Home End move and open folders, Enter opens, F2 renames, Delete
 deletes, Shift-F10 opens a row's menu, Esc cancels or closes.

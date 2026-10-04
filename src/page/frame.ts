@@ -95,7 +95,8 @@ function start(m: Extract<ToFrame, { type: "init" }>) {
     frame,
     kind: m.kind,
     state,
-    base: BASE,
+    // A page in a folder (blog/post.html) resolves its links from there, as the browser does at its own address.
+    base: BASE + (m.path?.includes("/") ? m.path.slice(0, m.path.lastIndexOf("/") + 1).split("/").map((s) => s && encodeURIComponent(s)).join("/") : ""),
     markdownHead: m.markdownHead,
     self: m.self,
     onUpdate(u) {

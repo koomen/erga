@@ -380,6 +380,13 @@ type TreeModule = { mountTree: typeof mountTree };
     const t = new DOMParser().parseFromString(m[1].replace(/<[^>]*>/g, ""), "text/html").body.textContent?.replace(/\s+/g, " ").trim();
     return t ? t.slice(0, 120) : null;
   }
+  /** Whether a document links to its styles, scripts or images by relative paths (a move may break those): read from the room. */
+  function hasRelativeLinks(path: string): boolean | undefined {
+    const text = files(collab.doc).get(path)?.toString();
+    if (text == null) return undefined;
+    const refs = [...text.matchAll(/\b(?:src|href|poster|data)\s*=\s*["']?([^"'\s>]+)|url\(\s*["']?([^"')]+)/gi)].map((m) => m[1] ?? m[2]);
+    return refs.some((r) => !/^(?:[a-z][a-z0-9+.-]*:|\/|#|\{)/i.test(r));
+  }
   function togglePages(force?: boolean) {
     const open = typeof force == "boolean" ? force : pagesCard.hidden;
     if (open && !docName) return;
@@ -399,8 +406,8 @@ type TreeModule = { mountTree: typeof mountTree };
       if (tree || !docName) return;
       slot.replaceChildren();
       tree = t.mountTree(slot, {
-        id: docName.id, base: docName.address, editing: true, query: as, showRoot: true, label: "Pages",
-        rootTitle: docName.title, titleOf: pageTitle, current: info!.path,
+        id: docName.id, base: docName.address, editing: true, query: as, showRoot: true, label: "Documents",
+        rootTitle: docName.title, titleOf: pageTitle, current: info!.path, hasRelativeLinks,
         onRenameRoot: () => toggleNaming(true),
       });
       if (!pagesCard.hidden) tree.focus();
@@ -966,6 +973,7 @@ Once you've read the guide, await further instructions.`;
     kind: info.kind,
     text: initialText,
     markdownHead,
+    path: info.path,
     self,
     tracking: settings.track,
     extensions: sourceExtensions,

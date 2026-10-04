@@ -58,18 +58,58 @@ const menuItem = async (p: Page, label: string) => {
 };
 const focused = (p: Page) => p.eval<string | null>(`document.activeElement?.closest?.("[data-path]")?.dataset.path ?? (document.activeElement?.classList.contains("et-input") ? "input" : document.activeElement?.tagName ?? null)`);
 
+/**
+ * How a document's page rendered, from inside the frame showing it (`doc` names its document there): its
+ * stylesheet (../../style.css: the body's width), its image (../../assets/owl.svg) and its font (fonts/field.woff2,
+ * named by the stylesheet), all from folders above it.
+ */
+const rendered = (doc: string) => `(async () => {
+  const d = ${doc};
+  if (!d || d.readyState != "complete" || !d.getElementById("owl")) return null;
+  await d.fonts.ready;
+  const img = d.getElementById("owl");
+  return { width: d.defaultView.getComputedStyle(d.body).maxWidth, image: img.complete ? img.naturalWidth : 0,
+    font: [...d.fonts].some((f) => f.family.replace(/["']/g, "") == "Field" && f.status == "loaded") };
+})()`;
+/** The editor at an address: <address>#edit (task #30), or <address>/edit while main still has that route. */
+const EDIT = (await fetch(`${host.base}/edit`, { redirect: "manual" })).status == 200 ? "/edit" : "#edit";
+const editor = (address: string) => address + EDIT;
+/** Where the tree sent the tab: its address with #edit (in the editor) or without (the viewer). */
+const wentTo = (went: string[], want: string) => went.some((u) => { const x = new URL(u); return x.pathname + x.hash == want; });
+const renderedRight = (r: { width: string; image: number; font: boolean } | null) => !!r && r.width == "608px" && r.image == 120 && r.font;
+
 try {
-  // ------------------------------------------------------------ the editor
   const ctx = await browser.context();
   const p = await browser.page(ctx);
-  await p.open(`${host.base}/edit`, { width: 1200, height: 760, scale: 2, agent: false });
+
+  // ------------------------------------------------------------ a nested document renders whole
+  // A document two folders down (blog/drafts/owls.html) uses the shared stylesheet, an image and a font from
+  // folders above it, by relative paths. The viewer's frame shows it as the server serves it.
+  const viewer = await (await fetch(host.base)).text();
+  const frameSrc = /<iframe id="frame" class="erga-view" src="([^"]+)"/.exec(viewer)![1].replaceAll("&amp;", "&");
+  await p.open(frameSrc.replace(/view=[^&]*/, `view=${encodeURIComponent("blog/drafts/owls.html")}`), { width: 900, height: 700 });
+  let look: { width: string; image: number; font: boolean } | null = null;
+  await until(async () => renderedRight(look = await p.eval(rendered(`document.getElementById("view")?.contentDocument`))), 10_000, "the nested document, as the viewer's frame shows it, has its stylesheet, image and font").catch(() => { throw new Error(JSON.stringify(look)); });
+  // At its own address, in the viewer and the editor: once task #30 routes a document's pages (until then, said and skipped).
+  const nestedAt = `${host.base}/blog/drafts/owls`;
+  if ((await fetch(nestedAt, { redirect: "manual" })).status == 200) {
+    await p.open(nestedAt, { width: 900, height: 700, clear: false });
+    await until(async () => (await p.inPage<boolean>(`!!document.getElementById("owl")`)).some(Boolean), 10_000, "the viewer shows it at its address");
+    await until(async () => (await p.inFrames(rendered(`document.querySelector("iframe.on")?.contentDocument`))).some(renderedRight), 10_000, "rendered whole in the viewer at its address");
+    await p.open(editor(nestedAt), { width: 900, height: 700, clear: false, agent: false });
+    await until(async () => renderedRight(await p.frame(rendered(`document.getElementById("page")?.contentDocument`))), 15_000, "and in the editor, which resolves its links from its folder");
+    ok("a nested document renders whole (stylesheet, image, font from folders above it): in the viewer's frame, and at its address in the viewer and the editor");
+  } else ok("a nested document renders whole in the viewer's frame (stylesheet, image, font from folders above it); at its own address, viewer and editor wait for task #30's routes");
+
+  // ------------------------------------------------------------ the editor
+  await p.open(editor(host.base), { width: 1200, height: 760, scale: 2, agent: false });
   await until(() => p.eval<boolean>(`document.body.classList.contains("erga-editor-ready") && !document.getElementById("doc-title").hidden`), 20_000, "the editor is up with its title");
   expect(!(await p.eval<boolean>(`!!window.ergaTree || !!document.querySelector('script[src="/tree.js"]')`)), "tree.js isn't loaded until it's wanted");
   await clickOn(p, "#doc-title");
   await until(() => p.eval<boolean>(`document.querySelectorAll(".et-row[data-path]").length > 0`), 10_000, "the tree shows");
   let r = await rows(p);
   expect(r[0][0] == "index.html" && r[0][1] == "Field guide" && r[0][2] == 1 && r[0][3], "the root row is the document, by its title, marked as the page you're on", r);
-  expect(JSON.stringify(r.slice(1).map((x) => [x[0], x[2]])) == JSON.stringify([["blog", 2], ["about.html", 2], ["contact.html", 2], ["style.css", 2]]), "its other pages sit under it: folders first, then pages, then files", r);
+  expect(JSON.stringify(r.slice(1).map((x) => [x[0], x[2]])) == JSON.stringify([["blog", 2], ["about.html", 2], ["contact.html", 2]]), "its other documents sit under it, folders first; no stylesheet, font or image, nor folders of only those (assets/, fonts/)", r);
   expect(r.find((x) => x[0] == "about.html")?.[1] == "About us", "a page shows by its title, read from the room", r);
   expect(await p.eval<boolean>(`document.getElementById("doc-title").getAttribute("aria-expanded") == "true" && !document.getElementById("pages").hidden`), "the title says it's open");
   expect((await focused(p)) == "index.html", "focus goes to the page you're on");
@@ -77,7 +117,7 @@ try {
 
   // Open and close a folder: by click, and by key.
   await clickOn(p, row("blog"));
-  expect((await paths(p)).join() == "index.html,blog,blog/drafts,blog/index.html,blog/spring-migration.html,about.html,contact.html,style.css", "clicking a folder opens it", await paths(p));
+  expect((await paths(p)).join() == "index.html,blog,blog/drafts,blog/index.html,blog/spring-migration.html,about.html,contact.html", "clicking a folder opens it", await paths(p));
   await p.key("ArrowLeft");
   expect(!(await paths(p)).includes("blog/drafts"), "← closes it");
   await p.key("ArrowRight");
@@ -89,7 +129,7 @@ try {
   await p.key("Home");
   expect((await focused(p)) == "index.html", "Home goes to the first");
   await p.key("End");
-  expect((await focused(p)) == "style.css", "End to the last");
+  expect((await focused(p)) == "contact.html", "End to the last");
   ok("folders open and close by click and by key; ↑ ↓ ← → Home End move");
   await p.screenshot(join(SHOTS, "tree-editor.png"));
 
@@ -104,15 +144,15 @@ try {
   await act(p, "notes", "add");
   await menuItem(p, "New document");
   await p.type("Ideas");
-  expect(await p.eval<boolean>(`document.querySelector(".et-row.editing .et-ext")?.textContent == ".html"`), "a document's name shows .html after it");
+  expect(!(await p.eval<string>(`document.getElementById("pages").textContent`)).includes(".html"), "no .html anywhere: they're documents, not files");
   await p.key("Enter");
-  await until(async () => (await tree()).includes("notes/Ideas.html"), 5000, "the document is made, .html added");
-  await until(async () => (await rows(p)).some((x) => x[0] == "notes/Ideas.html" && x[2] == 3), 3000, "inside the folder, which opened");
+  await until(async () => (await tree()).includes("notes/ideas.html"), 5000, "the document is made: its name as an address has it, then .html");
+  await until(async () => (await rows(p)).some((x) => x[0] == "notes/ideas.html" && x[1] == "Ideas" && x[2] == 3), 3000, "inside the folder, which opened, by its name");
   // A name that's taken, or has a slash, is refused before it goes anywhere.
   await clickOn(p, ".et-foot .et-add:nth-child(1)");
   await p.type("about");
   await p.key("Enter");
-  expect(await p.eval<boolean>(`/already something called “about.html”/.test(document.querySelector(".et-msg.error")?.textContent ?? "")`), "a taken name says so, in place", await p.eval(`document.querySelector(".et-msg")?.textContent`));
+  expect(await p.eval<boolean>(`/already a document called “About”/.test(document.querySelector(".et-msg.error")?.textContent ?? "")`), "a taken name says so, in place", await p.eval(`document.querySelector(".et-msg")?.textContent`));
   await p.key("Escape");
   expect(!(await p.eval<boolean>(`!!document.querySelector(".et-input")`)), "Escape drops it", await p.eval(`document.getElementById("pages").hidden`));
   ok("New folder and New document, at the top level and in a folder, named in place; a taken name says so");
@@ -122,24 +162,24 @@ try {
   const went: string[] = [];
   p.onEvent("Page.frameNavigated", (e) => { if (!e.frame.parentId) went.push(e.frame.unreachableUrl ?? e.frame.url); });
   await clickOn(p, row("contact.html"));
-  await until(async () => went.some((u) => new URL(u).pathname == `${address}/contact/edit`), 5000, "clicking a page goes to its address in the editor");
-  ok("clicking a page opens it in the editor (its address: …/contact/edit)");
-  await p.navigate(`${host.base}/edit`);
+  await until(async () => wentTo(went, `${address}/contact#edit`), 5000, "clicking a page goes to its address in the editor");
+  ok("clicking a page opens it in the editor (its address, then #edit: …/contact#edit)");
+  await p.navigate(editor(host.base));
   await until(() => p.eval<boolean>(`document.body.classList.contains("erga-editor-ready") && !document.getElementById("doc-title").hidden`), 20_000, "the editor is back");
   await clickOn(p, "#doc-title");
   await until(() => p.eval<boolean>(`document.querySelectorAll(".et-row[data-path]").length > 3`), 10_000, "the tree shows again");
-  expect((await paths(p)).includes("notes/Ideas.html"), "folders stay open as they were, for the tab");
+  expect((await paths(p)).includes("notes/ideas.html"), "folders stay open as they were, for the tab");
   await p.eval(`document.querySelector(${JSON.stringify(row("contact.html"))}).focus(), true`);
   await p.send("Input.dispatchKeyEvent", { type: "rawKeyDown", key: "F2", code: "F2", windowsVirtualKeyCode: 113 });
   await p.send("Input.dispatchKeyEvent", { type: "keyUp", key: "F2", code: "F2", windowsVirtualKeyCode: 113 });
-  expect(await p.eval<boolean>(`document.activeElement?.value == "contact"`), "F2 renames in place, the name without .html", await p.eval(`document.activeElement?.value`));
+  expect(await p.eval<boolean>(`document.activeElement?.value == "Contact"`), "F2 renames in place: its name, readable, no .html", await p.eval(`document.activeElement?.value`));
   await p.eval(`document.activeElement.select(), true`);
   await p.type("write-to-us");
   await p.key("Enter");
   await until(async () => (await tree()).includes("write-to-us.html") && !(await tree()).includes("contact.html"), 5000, "renamed");
   await stub({ fail: "That name is taken by a page another agent just made." });
   await act(p, "about.html", "more");
-  await menuItem(p, "Rename");
+  await menuItem(p, "Rename document");
   await p.type("-x");
   await p.key("Enter");
   await until(() => p.eval<boolean>(`(document.querySelector(".et-msg.error")?.textContent ?? "").includes("another agent just made")`), 5000, "the server's error, in place");
@@ -161,16 +201,18 @@ try {
     from.dispatchEvent(new DragEvent("dragend", { bubbles: true, dataTransfer: dt }));
   })(), true`);
   await until(async () => (await tree()).includes("blog/about.html"), 5000, "dropping it on a folder moves it there");
+  await until(() => p.eval<boolean>(`/Moved\. “About us” finds its styles, images and links by where it was/.test(document.querySelector(".et-banner.note")?.textContent ?? "")`), 3000, "a move to another folder warns that its relative links may break");
+  await p.screenshot(join(SHOTS, "tree-move-warning.png"));
   expect(await p.eval<boolean>(`window.__dropShown`), "the folder lights up under it");
   ok("Move to… and drag and drop move pages into folders");
 
   // Delete: a page at once, a folder after asking.
-  await act(p, "notes/Ideas.html", "more");
-  await menuItem(p, "Delete");
-  await until(async () => !(await tree()).includes("notes/Ideas.html"), 5000, "a page is deleted");
+  await act(p, "notes/ideas.html", "more");
+  await menuItem(p, "Delete document");
+  await until(async () => !(await tree()).includes("notes/ideas.html"), 5000, "a document is deleted");
   await act(p, "notes", "more");
-  await menuItem(p, "Delete");
-  expect(await p.eval<boolean>(`/Delete “notes” and the item in it\\?/.test(document.querySelector(".et-row.confirm")?.textContent ?? "")`), "a folder asks first, in its row", await p.eval(`document.querySelector(".et-row.confirm")?.textContent`));
+  await menuItem(p, "Delete folder");
+  expect(await p.eval<boolean>(`/Delete the folder “notes” and the document in it\\?/.test(document.querySelector(".et-row.confirm")?.textContent ?? "")`), "a folder asks first, in its row", await p.eval(`document.querySelector(".et-row.confirm")?.textContent`));
   await Bun.sleep(200);
   await p.screenshot(join(SHOTS, "tree-delete-folder.png"));
   await p.key("Escape");
@@ -204,7 +246,7 @@ try {
 
   // Read-only.
   await stub({ canEdit: false });
-  await p.navigate(`${host.base}/edit`);
+  await p.navigate(editor(host.base));
   await until(() => p.eval<boolean>(`document.body.classList.contains("erga-editor-ready") && !document.getElementById("doc-title").hidden`), 20_000, "the editor is back");
   await clickOn(p, "#doc-title");
   await until(() => p.eval<boolean>(`document.querySelectorAll(".et-row[data-path]").length > 3`), 10_000, "the tree shows");
@@ -214,7 +256,7 @@ try {
   ok("read-only: no controls");
 
   // A phone.
-  await p.open(`${host.base}/edit`, { width: 390, height: 760, scale: 2, clear: false, agent: false });
+  await p.open(editor(host.base), { width: 390, height: 760, scale: 2, clear: false, agent: false });
   await until(() => p.eval<boolean>(`document.body.classList.contains("erga-editor-ready") && !document.getElementById("doc-title").hidden`), 20_000, "the editor, on a phone");
   await clickOn(p, "#doc-title");
   await until(() => p.eval<boolean>(`document.querySelectorAll(".et-row[data-path]").length > 3`), 10_000, "the tree shows");
@@ -243,7 +285,7 @@ try {
   expect(dark != "rgb(28, 28, 31)", "dark, it takes the page's dark colours", dark);
   await p.screenshot(join(SHOTS, "tree-docs-dark.png"));
   await clickOn(p, `#pages-${id} ${row("faq.html")}`);
-  await until(async () => went.some((u) => new URL(u).pathname == `${address}/faq/edit`), 5000, "a page opens in the editor, for an editor");
+  await until(async () => wentTo(went, `${address}/faq#edit`), 5000, "a page opens in the editor, for an editor");
   ok("Documents: a document's chevron shows its pages beneath it; light, dark; New folder; a page opens");
 
   expect(!p.errors.length, "no script errors", p.errors);
