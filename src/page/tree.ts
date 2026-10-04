@@ -385,7 +385,14 @@ export function mountTree(container: HTMLElement, opts: TreeOptions): TreeHandle
       .catch((e) => { throw new Error(plain(e)); });
     const body = (await r.json().catch(() => ({}))) as Partial<TreeAnswer> & { error?: string };
     if (!r.ok) throw new Error(body.error || (r.status == 403 ? "You can't change this document's pages." : `That didn't work (the server answered ${r.status}).`));
-    set(body.entries ?? entries ?? [], body.canEdit ?? canEdit);
+    let next = body.entries ?? entries ?? [];
+    // A moved document keeps its title while the server catches up with its text at the new path.
+    if (op.op == "move" && entries) {
+      const was = new Map(entries.filter((e) => e.title).map((e) => [e.path, e.title!]));
+      const back = (p: string) => (p == op.to ? op.from : p.startsWith(op.to + "/") ? op.from + p.slice(op.to.length) : null);
+      next = next.map((e) => { const b = !e.title && back(e.path); return b && was.has(b) ? { ...e, title: was.get(b) } : e; });
+    }
+    set(next, body.canEdit ?? canEdit);
   }
 
   /** Runs a change on a row, showing it busy; an error goes in the banner. */

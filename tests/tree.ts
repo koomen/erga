@@ -241,6 +241,7 @@ try {
   })(), true`);
   await until(async () => (await tree()).includes("blog/about.html"), 5000, "dropping it on a folder moves it there");
   await until(() => p.eval<boolean>(`/Moved\. “About us” finds its styles, images and links by where it was/.test(document.querySelector(".et-banner.note")?.textContent ?? "")`), 3000, "a move to another folder warns that its relative links may break");
+  expect((await rows(p)).some((x) => x[0] == "blog/about.html" && x[1] == "About us"), "the moved document keeps its title", await rows(p));
   await p.screenshot(join(SHOTS, "tree-move-warning.png"));
   expect(await p.eval<boolean>(`window.__dropShown`), "the folder lights up under it");
   ok("Move to… and drag and drop move pages into folders");
