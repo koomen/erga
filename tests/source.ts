@@ -215,6 +215,9 @@ try {
   await until(async () => (await logText()).includes("Cloning"), 10_000, "the log opens with the deploy's lines", logText);
   await setDeploys({ append: { target: "staging", lines: [{ at: Date.now(), text: "Bundling the Worker", step: "build" }] } });
   await until(async () => (await logText()).includes("Bundling the Worker"), 10_000, "a new line shows up in the open log by itself ({ type: \"deploy-log\" })", logText);
+  // A deploy running on another server sends no events here: the open log asks for new lines itself.
+  await setDeploys({ append: { target: "staging", quiet: true, lines: [{ at: Date.now(), text: "Uploading assets (heard by asking)", step: "deploy" }] } });
+  await until(async () => (await logText()).includes("heard by asking"), 10_000, "with no events, the open log polls and shows new lines", logText);
   await p.screenshot(join(SHOTS, "source-log.png"));
   await click("#log-close");
   // Merge to a chosen commit from the page: hover the row, click "Merge to here".

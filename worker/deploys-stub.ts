@@ -6,7 +6,7 @@
 //   GET  /api/deploys/<name>/log      { deployId, commit, state, lines: [{ at, text, step? }] }, or 404
 //   POST /__erga/deploys              local development only (the dev server's secret): sets the targets
 //                                     ({ targets }), a log ({ log: { target, ... } }) or appends lines to one
-//                                     ({ append: { target, lines } }); publishes { type: "deploys" } and
+//                                     ({ append: { target, lines, quiet? } }); publishes { type: "deploys" } and
 //                                     { type: "deploy-log", target, deployId, lines } as #40 does
 //
 // It keeps what it's given in the events hub's storage (worker/events.ts).
@@ -31,7 +31,7 @@ export async function deploysStub(request: Request, env: Env, url: URL): Promise
 
 /** POST /__erga/deploys: local development's tests set what the stand-in answers. */
 export async function setDeploysStub(request: Request, env: Env): Promise<Response> {
-  const body = (await request.json()) as { targets?: unknown[]; log?: Log & { target: string }; append?: { target: string; lines: Line[] } };
+  const body = (await request.json()) as { targets?: unknown[]; log?: Log & { target: string }; append?: { target: string; lines: Line[]; quiet?: boolean } };
   if (body.targets) { await hub(env).store("deploys:targets", body.targets); await publishEvent(env, { type: "deploys" }); }
   if (body.log) {
     const { target, ...log } = body.log;
@@ -43,7 +43,8 @@ export async function setDeploysStub(request: Request, env: Env): Promise<Respon
     const log = ((await hub(env).stored(key)) as Log | null) ?? { deployId: "stub", commit: null, state: "building", lines: [] };
     log.lines.push(...body.append.lines);
     await hub(env).store(key, log);
-    await publishEvent(env, { type: "deploy-log", target: body.append.target, deployId: log.deployId, lines: body.append.lines });
+    // quiet: no event, as when the deploy runs on another server (the page polls the log then).
+    if (!body.append.quiet) await publishEvent(env, { type: "deploy-log", target: body.append.target, deployId: log.deployId, lines: body.append.lines });
   }
   return json({ ok: true });
 }

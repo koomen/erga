@@ -270,7 +270,7 @@ git push erga HEAD:staging</code></pre>
 
   // The deploy log, live.
   const dlg = document.getElementById("log"), pre = document.getElementById("log-lines");
-  let open = null; // { target, deployId }
+  let open = null; // { target, deployId, shown: lines shown, state, heard: when an event last came }
   const line = (l) => '<span class="t">' + esc(new Date(l.at).toLocaleTimeString()) + "</span> " + (l.step ? '<span class="s">[' + esc(l.step) + "]</span> " : "") + esc(l.text) + "\\n";
   function append(lines) {
     const atEnd = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 8;
@@ -281,17 +281,35 @@ git push erga HEAD:staging</code></pre>
     const t = targetOf(name);
     document.getElementById("log-title").textContent = (t?.host ?? name) + " deploy log";
     pre.textContent = "Loading…";
-    open = { target: name, deployId: null };
+    open = { target: name, deployId: null, shown: 0, state: null, heard: 0 };
     if (!dlg.open) dlg.showModal();
-    const r = await fetch("/api/deploys/" + name + "/log").catch(() => null);
-    const log = r && r.ok ? await r.json() : null;
-    if (!log) { pre.textContent = "No deploy log yet."; document.getElementById("log-meta").textContent = ""; return; }
-    open.deployId = log.deployId;
-    document.getElementById("log-meta").textContent = [log.commit ? log.commit.slice(0, 7) : "", log.state].filter(Boolean).join(" · ");
-    pre.textContent = "";
-    append(log.lines || []);
-    pre.scrollTop = pre.scrollHeight;
+    await refreshLog(true);
   }
+  const running = (state) => state == "building" || state == "deploying";
+  /** The log as the server has it now: what's new since what's shown (or all of it, for another deploy). */
+  async function refreshLog(first) {
+    if (!open) return;
+    const name = open.target;
+    const r = await fetch("/api/deploys/" + name + "/log").catch(() => null);
+    const log = r && r.ok ? await r.json().catch(() => null) : null;
+    if (!open || open.target != name) return;
+    if (!log) { if (first) { pre.textContent = "No deploy log yet."; document.getElementById("log-meta").textContent = ""; } return; }
+    const lines = log.lines || [];
+    if (first || log.deployId != open.deployId) { pre.textContent = ""; open.shown = 0; }
+    open.deployId = log.deployId; open.state = log.state;
+    document.getElementById("log-meta").textContent = [log.commit ? log.commit.slice(0, 7) : "", log.state].filter(Boolean).join(" · ");
+    if (lines.length > open.shown) { append(lines.slice(open.shown)); open.shown = lines.length; }
+    if (first) pre.scrollTop = pre.scrollHeight;
+  }
+  // Live lines come as events only from the server running the deploy (staging's runs on staging's own server):
+  // while a deploy runs and no events arrive, ask for the log every two seconds.
+  setInterval(() => {
+    if (!open || !dlg.open) return;
+    const t = targetOf(open.target);
+    if (!(running(open.state) || running(t?.state))) return;
+    if (Date.now() - open.heard < 2500) return;
+    refreshLog(false);
+  }, 2000);
   for (const n of TARGETS) document.getElementById("target-" + n).addEventListener("click", () => openLog(n));
   document.getElementById("log-close").addEventListener("click", () => dlg.close());
   dlg.addEventListener("close", () => { open = null; });
@@ -325,8 +343,9 @@ git push erga HEAD:staging</code></pre>
     if (ev.type == "source") load();
     if (ev.type == "deploys") loadDeploys();
     if (ev.type == "deploy-log" && open && ev.target == open.target) {
-      if (open.deployId && ev.deployId != open.deployId) openLog(open.target);
-      else append(ev.lines || []);
+      open.heard = Date.now();
+      if (open.deployId && ev.deployId != open.deployId) refreshLog(false);
+      else { append(ev.lines || []); open.shown += (ev.lines || []).length; }
     }
   };
   load(); loadDeploys();
