@@ -10,7 +10,8 @@
     "typecheck": "tsc -p . && tsc -p worker",
     "site": "./site.sh",
     "db:migrate": "bun migrate.ts",
-    "deploy": "./site.sh && bun migrate.ts && cf deploy",
+    "deploy": "./site.sh && bun deploy/release.ts && bun migrate.ts && cf deploy",
+    "release": "bun deploy/release.ts",
     "test:prod": "bun tests/suite/prod.ts"
   },
   "dependencies": {

@@ -176,6 +176,7 @@ async function adminPage(platform: Platform, session: Session): Promise<Response
   .role { margin-left: 8px; }
   @media (max-width: 520px) { ol.rows > li.setting { grid-template-columns: 1fr; } .setting .value { justify-content: flex-end; } }
 `;
+  const deployOn = (await platform.directory.config.get("deploy_page")) != "off";
   return new Response(appPage("Admin", style, `${brand(session)}<main>
   <header>
     <h1>Admin</h1>
@@ -201,6 +202,10 @@ ${settings.map((e) => settingRow(e, session, takesNever(e.key))).join("\n")}
 ${users.map((u) => userRow(u, session)).join("\n")}
     </ol>
   </section>
+  ${deployOn ? `<section aria-labelledby="deploy-title">
+    <h2 id="deploy-title">Deploy your own</h2>
+    <p class="lede">Put a copy of this server on your own Cloudflare account, with you as its admin: <a href="${esc(link("/deploy", session))}">Deploy Erga</a>. Who may use it is the deploy_page setting.</p>
+  </section>` : ""}
 </main>
 <script>
   ${TIMES_SCRIPT}

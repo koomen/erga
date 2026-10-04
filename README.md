@@ -57,6 +57,8 @@ serves the app's routes (`front.ts`). Its pages:
   title) lead back.
 - **Settings**, `/settings`: your agent tokens (`/tokens` redirects there).
 - **Admin settings**, `/admin`: the server's settings and users, for admins.
+- **Deploy your own**, `/deploy`: anyone signed in, by default (see
+  [Deploy your own](#deploy-your-own)).
 
 The user menu in the upper right of every page reaches Documents,
 Settings and (for admins) Admin settings. Clone and Edit sign you in with
@@ -244,7 +246,7 @@ this site's pages only.
 key with who set it and when (`config.ts`). Only the keys declared in
 `SETTINGS` exist, each with a description, a default and a parser that
 refuses a bad value saying why; one never set has its default. Today there's
-`delete_docs_after_hours` and `landing_document` ([The front page](#the-front-page)).
+`delete_docs_after_hours`, `landing_document` ([The front page](#the-front-page)) and `deploy_page` ([Deploy your own](#deploy-your-own)).
 A setting may name a document (`kind: "document"`): the admin page takes and
 shows it by address, and the directory checks who may set it (`checks`).
 `delete_docs_after_hours` is a whole number of hours, or `null` (also
@@ -339,6 +341,96 @@ https://erga.dev/settings (it lasts a week) and:
 
 The token signs in test people (Ada, Bo, ...) who can open only test documents
 (`/<you>/test....`), where the scripted agent stands in for the model.
+
+### Deploy your own
+
+`/deploy` puts a copy of the server on someone's own Cloudflare account,
+with the same settings erga.dev has, and them as its admin. Who may use it
+is the `deploy_page` setting: `users` (anyone signed in, the default),
+`admins`, or `off`; anyone it doesn't let in gets "not found". `/admin`
+links to it. Its breadcrumbs sit after the wordmark in the upper left.
+
+The page goes in four steps:
+
+1. **Connect Cloudflare.** "Authorize with Cloudflare" bounces to
+   Cloudflare's OAuth (authorization code with PKCE, a public client: no
+   secret) when the server has a client (`CLOUDFLARE_OAUTH_CLIENT_ID`, made
+   under Manage Account › OAuth clients, callback
+   `https://<server>/deploy/auth/cloudflare/callback`, and the scopes
+   `account-settings.read workers-scripts.write d1.write workers-routes.write
+   zone.read dns.write`, plus `registrar-domains.admin` for buying domains: the
+   ids `GET /oauth/scopes` lists; it stays private to that account until it's
+   made public, which needs a logo and a verified domain;
+   `CLOUDFLARE_OAUTH_SCOPES` overrides the scopes asked for). Without
+   one, or as well, a "Create API token" link opens Cloudflare's dashboard
+   with exactly the permissions the deploy needs filled in (a token template
+   URL: Account Settings read, Workers Scripts, D1, Workers Routes and DNS
+   edit, Zone read; "Include buying a domain" adds `registrar_domains`), and the person pastes the
+   token back. Either way the token lives only in their deploy session (a
+   Durable Object per browser, `worker/deployer.ts`), sealed with AES-GCM by a
+   key made from a cookie's half and `SESSION_SECRET`; it's never logged and
+   never in D1, it's forgotten when the deploy succeeds (an OAuth token is
+   revoked too) or two hours after connecting, and the page says how to
+   delete it on Cloudflare.
+2. **Where it goes.** The app on `erga.<subdomain>.workers.dev` (made if the
+   account has no subdomain yet) or on a domain in the account (a Workers
+   custom domain). Documents' pages need an origin of their own (see [Pages
+   run on their own origin](#pages-run-on-their-own-origin)): one per
+   document on a second domain of theirs (a wildcard route and an `AAAA 100::`
+   DNS record, as erga-pages.dev), or, since workers.dev has no wildcards,
+   one shared host, `erga-pages.<subdomain>.workers.dev` (a tiny Worker
+   handing every request to the app), which keeps pages off the app's origin
+   but not off each other's: the page says so. The Worker learns which from
+   `PAGES_DOMAIN` or `PAGES_HOST` (unset: erga-pages.dev). A new domain can
+   be bought here through Cloudflare Registrar's API: search, a real-time
+   check with the price, then a confirmation showing the price and renewal,
+   and the purchase only if the price is still the one confirmed (premium
+   names go to the Registrar page).
+3. **Signing in with GitHub.** Their own GitHub OAuth app: the page links to
+   GitHub's form, filled in, with the homepage and callback URLs to copy,
+   and takes the Client ID and secret, and an Anthropic key if they want the
+   agent.
+4. **Deploy**, watching each step. A step that fails says which it was and
+   what Cloudflare said (its message and error code), and Try again runs the
+   deploy again from the top: every step is safe to repeat.
+
+The deploy runs in the session's Durable Object, calling the Cloudflare API
+directly (`deploy/cloudflare.ts`): no CLI, no container. It deploys a
+*release*: this server's own Worker as `cf build` builds it (its modules,
+static assets and `worker.config.json`, so the bindings and Durable Objects
+follow `cloudflare.config.ts`; the landing project is built into it) and the
+migrations, made by `bun deploy/release.ts` into `.site/release/` (site.sh does it on Workers
+Builds, `bun run deploy` too; the Worker reads it from its assets, and
+nothing serves it to browsers). The requests follow Cloudflare's OpenAPI
+schema (github.com/cloudflare/api-schemas) and how workers-sdk's deploy makes
+them. The steps: check the account (a Worker called `erga` that isn't Erga
+stops it; Erga's Workers carry the tag `erga-deploy`); find or make the D1
+database `erga` (one by that name with tables that aren't Erga's stops it, so
+nothing is lost; an empty one, from a run that stopped, is used); apply
+`migrations/` through D1's `/query`, each file with its `d1_migrations` row in
+one batch, as `wrangler d1 migrations apply --remote` sends it; upload the
+assets (an upload session from the manifest, then the buckets it asks for,
+base64 multipart or one file at a time as its upload token says, each tried
+up to four times; hashes are SHA-256 of the base64 and the extension, as
+Cloudflare's direct-upload guide does); upload the Worker (the metadata as a
+form field, the modules as `application/javascript+module`) with its
+bindings (its database by `database_id`, `ADMINS` = the deploying login,
+their GitHub app, `SERVER_CONFIG` `{}`), secrets (a new `SESSION_SECRET`,
+`GITHUB_CLIENT_SECRET`, `ANTHROPIC_API_KEY`) and its Durable Objects as
+declarative `exports` (as `cf deploy` sends them: no migration tags, so the
+same deploy can run again); its address (workers.dev, or a custom domain);
+the pages' address; and wait for it to answer. The new server makes its front page itself the first time it's
+opened, owned by its first admin: the person who deployed it.
+
+Locally, `bun start` (with `bun deploy/release.ts` run once) serves `/deploy`
+against the real Cloudflare API. The tests use a pretend Cloudflare
+(`deploy/mock.ts`, which answers and refuses as the schema says; a dev server
+started with `ERGA_DEPLOY_MOCK=1` uses it, OAuth consent page included, and
+`/deploy/api/mock` shows what it was asked to do): `tests/deploy.test.ts` runs
+the deploy against it step by step (retries, a stopped run run again, assets
+one at a time), and `bun tests/deploy.ts` clicks through the whole page in
+headless Chrome (OAuth, buying a domain, deploying, a failure, who may open
+it).
 
 ## Local development
 
@@ -821,6 +913,9 @@ back, merging edits from disk, the agent's exact-match edits and attribution.
 - `front.ts`: the app's own routes and pages (the front page, `/new`, `/docs` and
   its share dialog, delete, the unedited rule, titles)
 - `admin.ts`: `/admin`, the server's settings and users, for admins
+- `deploy/`, `worker/deploy.ts`, `worker/deployer.ts`: `/deploy`, deploying
+  Erga to your own Cloudflare account (the API steps, the release, the
+  pretend Cloudflare the tests use, the page)
 - `account.ts`: who you are in the upper right of every page (avatar and menu, or sign in)
 - `directory.ts`: the directory of documents (addresses, titles, permissions, who may do what), over
   `Sql`; `worker/d1.ts` puts it on D1; its tables in `migrations/`, which `migrate.ts` applies to
