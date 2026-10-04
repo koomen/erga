@@ -104,6 +104,7 @@ const STYLE = `
   .live-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--on-main); flex: none; }
   .sub { display: contents; }
   .sub > * { padding: 2px 0 8px; }
+  .sub > .rail { padding: 0; align-self: stretch; }
   .sub .stack { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; padding-left: 10px; }
   .sub .stack > span { display: inline-flex; align-items: center; gap: 4px; }
   .legend .dep { cursor: default; height: 18px; font-size: 10.5px; }
