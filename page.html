@@ -288,7 +288,9 @@
     .people { display: flex; align-items: center; gap: 4px; margin-right: 6px; }
     .people:empty { display: none; }
     /* You, at the far right, apart from the others. */
-    .me-slot { display: flex; align-items: center; margin-left: 8px; }
+    .me-slot { display: flex; align-items: center; margin-left: 8px; margin-right: 2px; }
+    /* Your avatar is the size and place it is on every other page (account.ts), so the eye here and the viewer's pencil swap in place. */
+    .me-slot .avatar { width: 30px; height: 30px; font-size: 13px; }
     .me-slot:empty { display: none; }
     .avatar {
       position: relative; width: 26px; height: 26px; border-radius: 50%; border: 0; padding: 0; cursor: pointer;

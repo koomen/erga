@@ -383,7 +383,7 @@ async function viewDocument(platform: Platform, request: Request, doc: DocRow, s
 <title>${esc(doc.title)}</title>
 <style>html, body { margin: 0; height: 100%; } .erga-view { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; display: block; }</style>
 <iframe class="erga-view" src="${esc(pages)}" title="${esc(doc.title)}"></iframe>
-${crumbs}<div class="erga-view-buttons">${edit}${clone}</div>${VIEW_STYLE}
+${crumbs}<div class="erga-view-buttons">${clone}${edit}</div>${VIEW_STYLE}
 </html>`, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" } });
 }
 
