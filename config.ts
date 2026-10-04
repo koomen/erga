@@ -70,8 +70,8 @@ export const SETTINGS = {
     kind: "document",
   }),
   deploy_page: setting<"off" | "admins" | "users">({
-    description: "Who may use /deploy (experimental): deploy Erga to their own Cloudflare account. off, admins or users.",
-    default: "admins",
+    description: "Who may use /deploy, to deploy Erga to their own Cloudflare account: off, admins or users (anyone signed in).",
+    default: "users",
     parse: (v) => {
       const s = typeof v == "string" ? v.trim().toLowerCase() : v;
       if (s === "off" || s === "admins" || s === "users") return s;

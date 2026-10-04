@@ -125,8 +125,8 @@ export class Deployer extends DurableObject<Env> {
         await new Promise((ok) => setTimeout(ok, 2000));
         r = await registrationStatus(cf, accountId, name);
       }
-      if (r.state == "failed" || r.state == "blocked") return { ok: false, error: `Cloudflare couldn't register ${name} (${r.state}). Check the Registrar page in your dashboard.` };
-      if (r.state == "action_required") return { ok: false, error: `Cloudflare needs something from you to finish registering ${name}: open the Registrar page in your dashboard.` };
+      if (r.state == "failed" || r.state == "blocked") return { ok: false, error: `Cloudflare couldn't register ${name} (${r.state})${r.error ? `: ${r.error}` : ""}. Check the Registrar page in your dashboard.` };
+      if (r.state == "action_required") return { ok: false, error: `Cloudflare needs something from you to finish registering ${name}${r.error ? ` (${r.error})` : ""}: open the Registrar page in your dashboard.` };
       return { ok: true, ...r };
     } catch (e) { return { ok: false, error: message(e) }; }
   }
@@ -173,9 +173,10 @@ export class Deployer extends DurableObject<Env> {
         await this.ctx.storage.put(SESSION, { ...t.session, sealed: null });
       } catch (e) {
         run.status = "failed";
-        run.error = message(e);
         const step = run.steps.find((s) => s.status == "running");
         if (step) step.status = "failed";
+        // Which step, and what Cloudflare said. Every step can run again: Try again picks up where this stopped.
+        run.error = `${step ? `Stopped at “${step.title}”. ` : ""}${message(e)}`;
       } finally {
         run.ended = Date.now();
         this.running = false;

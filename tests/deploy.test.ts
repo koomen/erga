@@ -72,7 +72,7 @@ describe("deploying", () => {
     const b = Object.fromEntries(worker.metadata.bindings.map((x: any) => [x.name, x]));
     expect(b.DOCS).toMatchObject({ type: "durable_object_namespace", class_name: "DocHost" });
     expect(b.DEPLOYS).toMatchObject({ type: "durable_object_namespace", class_name: "Deployer" });
-    expect(b.DB).toMatchObject({ type: "d1", id: db.uuid });
+    expect(b.DB).toMatchObject({ type: "d1", database_id: db.uuid });
     expect(b.ASSETS.type).toBe("assets");
     expect(b.ADMINS).toMatchObject({ type: "plain_text", text: "ada" });
     expect(b.GITHUB_CLIENT_ID.text).toBe("Ov23liMockClientId");
@@ -81,7 +81,10 @@ describe("deploying", () => {
     expect(b.GITHUB_CLIENT_SECRET.type).toBe("secret_text");
     expect(b.ANTHROPIC_API_KEY).toBeUndefined();
     expect(b.PAGES_HOST.text).toBe("erga-pages.ada-mock.workers.dev");
-    expect(worker.metadata.migrations.new_sqlite_classes.sort()).toEqual(["Deployer", "DocHost"]);
+    // Durable Objects as declarative exports (as cf deploy sends them), never migrations; erga.dev's DocList tombstone left out.
+    expect(worker.metadata.exports).toEqual({ DocHost: { type: "durable-object", storage: "sqlite" }, Deployer: { type: "durable-object", storage: "sqlite" } });
+    expect(worker.metadata.migrations).toBeUndefined();
+    expect(worker.tags).toEqual(["erga-deploy"]);
     expect(worker.metadata.assets.config).toEqual({ html_handling: "none", not_found_handling: "none", run_worker_first: true });
     expect(worker.metadata.compatibility_flags).toContain("nodejs_compat");
 
@@ -115,7 +118,7 @@ describe("deploying", () => {
     expect(state.databases.length).toBe(1);
     expect(steps).toContain("migrations:done already up to date");
     expect(steps.find((s) => s.startsWith("database:done"))).toContain("from before");
-    expect(state.scripts.erga.metadata.migrations).toBeUndefined();
+    expect(state.scripts.erga.metadata.exports.DocHost).toEqual({ type: "durable-object", storage: "sqlite" });
     expect(state.assets.uploaded.length).toBe(uploaded);
   });
 
@@ -127,15 +130,45 @@ describe("deploying", () => {
 
   test("refuses to touch a database called erga that isn't Erga's", async () => {
     const mock = mockCloudflare();
-    mock.state.databases.push({ uuid: "11111111-2222-3333-4444-555555555555", name: "erga", statements: [], migrations: [] });
+    mock.state.databases.push({ uuid: "11111111-2222-3333-4444-555555555555", name: "erga", statements: [], migrations: [], tables: ["notes"] });
     await expect(run("mock-token", plan(), mock)).rejects.toThrow(/already has a D1 database called "erga" that isn't Erga's/);
     expect(mock.state.scripts.erga).toBeUndefined();
   });
 
+  test("refuses to overwrite a Worker called erga that isn't Erga", async () => {
+    const mock = mockCloudflare();
+    mock.state.scripts.erga = { metadata: {}, modules: ["index.js"], workersDev: true, tags: [], namespaces: [] };
+    await expect(run("mock-token", plan(), mock)).rejects.toThrow(/already has a Worker called erga that isn't Erga/);
+  });
+
+  test("a deploy that stopped part way runs again from the top, and finishes", async () => {
+    const mock = mockCloudflare();
+    // Stopped after making the database, before its tables (a run whose migration failed): the empty database is reused.
+    mock.state.databases.push({ uuid: "11111111-2222-3333-4444-555555555555", name: "erga", statements: [], migrations: [], tables: [] });
+    await expect(run("mock-fail-worker", plan(), mock)).rejects.toThrow(/Cloudflare had a problem on its side while we tried to upload the Worker \(Cloudflare said: An unknown error has occurred \[code 10013\]\)/);
+    const { result, state } = await run("mock-token", plan(), mock);
+    expect(result.url).toBe("https://erga.ada-mock.workers.dev");
+    expect(state.databases.length).toBe(1);
+    expect(state.databases[0].migrations).toEqual(Object.keys(release.migrations).sort());
+    // And once more, over the finished one: nothing breaks.
+    await run("mock-token", plan(), mock);
+  });
+
+  test("a failed asset upload is tried again", async () => {
+    const { state } = await run("mock-flaky", plan());
+    expect(state.scripts.erga).toBeDefined();
+  }, 20_000);
+
+  test("assets one by one, when the upload token asks for it", async () => {
+    const { state } = await run("mock-token", plan(), mockCloudflare({ singleAssetUploads: true }));
+    expect(new Set(state.assets.uploaded).size).toBe(new Set(Object.values(state.assets.manifest).map((f) => f.hash)).size);
+    expect(state.calls.some((c) => /\/workers\/assets\/upload\/[0-9a-f]{32}$/.test(c))).toBe(true);
+  });
+
   test("says what went wrong, plainly", async () => {
     await expect(run("not-a-mock-token", plan())).rejects.toThrow(/didn't accept the token when we tried to read your account/);
-    await expect(run("mock-noperm", plan())).rejects.toThrow(/isn't allowed to list your D1 databases\. Make a new token with the link/);
-    await expect(run("mock-fail-assets", plan())).rejects.toThrow(/Cloudflare had a problem on its side while we tried to start uploading the editor's files/);
+    await expect(run("mock-noperm", plan())).rejects.toThrow(/isn't allowed to list your D1 databases\. Make a new token with the link.*Authentication error \[code 10000\]/);
+    await expect(run("mock-fail-assets", plan())).rejects.toThrow(/Cloudflare had a problem on its side while we tried to start uploading the editor's files \(Cloudflare said: An unknown error has occurred \[code 10013\]\)/);
     await expect(run("mock-token", plan({ subdomain: "someone-else" }))).rejects.toThrow(/Your workers.dev subdomain is ada-mock/);
   });
 
@@ -162,6 +195,8 @@ describe("buying a domain", () => {
     expect(await registerDomain(cf, ACC, "myerga.dev", { price: "12.18", currency: "USD" })).toEqual({ state: "succeeded", completed: true });
     expect(mock.state.registrations).toEqual([{ domain: "myerga.dev", price: "12.18" }]);
     expect(mock.state.zones.some((z) => z.name == "myerga.dev")).toBe(true);
+    // Cloudflare's own refusal, in its words.
+    await expect(registerDomain(new Cloudflare("mock-fail-registration", mock.fetch), ACC, "other.com", { price: "10.44", currency: "USD" })).rejects.toThrow(/Cloudflare refused to register other.com: Your account has no default payment method \[code 10500\]/);
   });
 });
 
@@ -183,7 +218,7 @@ describe("around it", () => {
       { key: "workers_routes", type: "edit" }, { key: "zone", type: "read" }, { key: "dns", type: "edit" },
     ]);
     expect(url.searchParams.get("accountId")).toBe("*");
-    expect(JSON.parse(new URL(tokenTemplateUrl(true)).searchParams.get("permissionGroupKeys")!).at(-1)).toEqual({ key: "registrar", type: "edit" });
+    expect(JSON.parse(new URL(tokenTemplateUrl(true)).searchParams.get("permissionGroupKeys")!).at(-1)).toEqual({ key: "registrar_domains", type: "edit" });
   });
 
   test("assets are hashed as Cloudflare's direct upload takes them", async () => {

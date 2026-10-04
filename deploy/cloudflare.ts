@@ -43,6 +43,7 @@ export class Cloudflare {
     const headers: Record<string, string> = { Authorization: `Bearer ${opts.bearer ?? this.token}` };
     let payload: BodyInit | undefined;
     if (body instanceof FormData) payload = body;
+    else if (body instanceof Blob) { payload = body; headers["Content-Type"] = body.type || "application/null"; }
     else if (body !== undefined) { payload = JSON.stringify(body); headers["Content-Type"] = "application/json"; }
     let r: Response;
     try { r = await this.fetch(`${API}${path}`, { method, headers, body: payload }); } catch (e) {
@@ -57,16 +58,16 @@ export class Cloudflare {
 
 /** A refusal from Cloudflare, in plain words. */
 export function explain(what: string, status: number, errors: { code: number; message: string }[]): string {
-  const said = errors.map((e) => e.message).filter(Boolean).join("; ");
+  const said = errors.map((e) => (e.code ? `${e.message} [code ${e.code}]` : e.message)).filter(Boolean).join("; ");
   if (status == 401 || errors.some((e) => e.code == 1000 || e.code == 9109 || e.code == 6003)) {
     return `Cloudflare didn't accept the token when we tried to ${what}: it may be mistyped, expired or revoked. Connect again with a new one.${said ? ` (Cloudflare said: ${said})` : ""}`;
   }
   if (status == 403 || errors.some((e) => e.code == 10000 || e.code == 9103)) {
     return `The token isn't allowed to ${what}. Make a new token with the link on this page (it has every permission the deploy needs), or add the missing permission to yours.${said ? ` (Cloudflare said: ${said})` : ""}`;
   }
-  if (status == 429) return `Cloudflare asked us to slow down while we tried to ${what}. Wait a minute and try again.`;
-  if (status >= 500) return `Cloudflare had a problem on its side while we tried to ${what}${said ? ` (${said})` : ""}. Try again in a few minutes.`;
-  return `Couldn't ${what}${said ? `: ${said}` : ` (Cloudflare answered ${status})`}.`;
+  if (status == 429) return `Cloudflare asked us to slow down while we tried to ${what}. Wait a minute and try again.${said ? ` (Cloudflare said: ${said})` : ""}`;
+  if (status >= 500) return `Cloudflare had a problem on its side while we tried to ${what}${said ? ` (Cloudflare said: ${said})` : ` (it answered ${status})`}. Try again in a few minutes.`;
+  return `Cloudflare refused to ${what}${said ? `: ${said}` : ` (it answered ${status})`}.`;
 }
 
 // ------------------------------------------------------------------ release
@@ -211,7 +212,8 @@ export interface Deployed { url: string; pages: string; database: string; worker
 
 const DB_NAME = "erga";
 /** The Durable Object migration tag this deploy writes (and expects on a Worker it deployed before). */
-export const MIGRATION_TAG = "erga-deploy-v1";
+/** The tag the deploy puts on the Workers it makes, so a second run knows them as its own. */
+export const WORKER_TAG = "erga-deploy";
 
 /**
  * Deploys `release` by `plan` with `cf`, reporting each step as it starts and
@@ -235,10 +237,12 @@ export async function deploy(cf: Cloudflare, release: Release, plan: DeployPlan,
     if (!plan.createSubdomain) throw new DeployError("Your account has no workers.dev subdomain yet. Go back, choose one, and deploy again.");
     sub = (await cf.call<{ subdomain: string }>("PUT", `${acc}/workers/subdomain`, `make your workers.dev subdomain (${plan.subdomain})`, { subdomain: plan.subdomain }))?.subdomain ?? plan.subdomain;
   } else if (sub != plan.subdomain) throw new DeployError(`Your workers.dev subdomain is ${sub}, not ${plan.subdomain}: reload the page and deploy again.`);
-  const scripts = (await cf.call<{ id: string; migration_tag?: string }[]>("GET", `${acc}/workers/scripts`, "list your Workers")) ?? [];
+  const scripts = (await cf.call<{ id: string; tags?: string[]; named_handlers?: { name?: string }[] }[]>("GET", `${acc}/workers/scripts`, "list your Workers")) ?? [];
   const existing = scripts.find((s) => s.id == plan.workerName);
-  if (existing && existing.migration_tag && existing.migration_tag != MIGRATION_TAG) {
-    throw new DeployError(`Your account already has a Worker called ${plan.workerName} that this page didn't deploy. Pick another name for this one, or delete that Worker first.`);
+  // Ours: tagged by an earlier run (or, failing that, Erga's own Durable Object among its exports).
+  const ours = (s: (typeof scripts)[number]) => !!s.tags?.includes(WORKER_TAG) || !!s.named_handlers?.some((h) => h.name == "DocHost");
+  if (existing && !ours(existing)) {
+    throw new DeployError(`Your account already has a Worker called ${plan.workerName} that isn't Erga. So it isn't overwritten, the deploy stops here: delete or rename that Worker, then deploy again.`);
   }
   report("account", "done", `${account?.name ?? plan.accountId}${existing ? `; ${plan.workerName} is already there and will be replaced (everyone signs in again)` : ""}`);
 
@@ -248,8 +252,10 @@ export async function deploy(cf: Cloudflare, release: Release, plan: DeployPlan,
   let dbId: string;
   if (found) {
     dbId = found.uuid;
-    const applied = await d1(cf, acc, dbId, "SELECT name FROM d1_migrations", [], "read the database's migrations").catch(() => null);
-    const ours = !!applied?.some((r) => r.name == Object.keys(release.migrations).sort()[0]);
+    // Erga's if it has Erga's first migration; usable if it's empty (made by a run that stopped before its tables).
+    const tables = ((await d1(cf, acc, dbId, "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_cf_%'", [], "look inside the database")) ?? []).map((r) => String(r.name));
+    const applied = tables.includes("d1_migrations") ? await d1(cf, acc, dbId, "SELECT name FROM d1_migrations", [], "read the database's migrations") : [];
+    const ours = !!applied?.some((r) => r.name == Object.keys(release.migrations).sort()[0]) || tables.every((t) => t == "d1_migrations");
     if (!ours) throw new DeployError(`Your account already has a D1 database called "${DB_NAME}" that isn't Erga's. So nothing of yours is lost, the deploy stops here: rename or delete that database, then deploy again.`);
     report("database", "done", `using Erga's database from before (${dbId})`);
   } else {
@@ -265,8 +271,9 @@ export async function deploy(cf: Cloudflare, release: Release, plan: DeployPlan,
   const done = new Set(((await d1(cf, acc, dbId, "SELECT name FROM d1_migrations", [], "read the database's migrations")) ?? []).map((r) => String(r.name)));
   const pending = Object.keys(release.migrations).sort().filter((n) => !done.has(n));
   for (const name of pending) {
-    const sql = release.migrations[name].split("\n").filter((l) => !l.trim().startsWith("--")).join("\n").trim();
-    await d1(cf, acc, dbId, `${sql}${sql.endsWith(";") ? "" : ";"}\nINSERT INTO d1_migrations (name) VALUES ('${name.replace(/'/g, "''")}');`, [], `apply ${name}`);
+    // The file and its record in d1_migrations, in one /query call (statements run as one batch, so all or nothing), as wrangler's `d1 migrations apply --remote` sends it.
+    const sql = release.migrations[name].trim();
+    await d1(cf, acc, dbId, `${sql}${sql.endsWith(";") ? "" : ";"}\nINSERT INTO d1_migrations (name) VALUES ('${name.replace(/'/g, "''")}');`, [], `apply the database migration ${name}`);
   }
   report("migrations", "done", pending.length ? `applied ${pending.join(", ")}` : "already up to date");
 
@@ -277,9 +284,9 @@ export async function deploy(cf: Cloudflare, release: Release, plan: DeployPlan,
 
   // The Worker: modules, bindings (from the build's config), secrets, its Durable Objects.
   report("worker", "running");
-  const metadata = workerMetadata(release, plan, { dbId, assetsJwt, sessionSecret: opts.sessionSecret, pagesHost, migrate: existing?.migration_tag != MIGRATION_TAG });
+  const metadata = workerMetadata(release, plan, { dbId, assetsJwt, sessionSecret: opts.sessionSecret, pagesHost });
   const form = new FormData();
-  form.append("metadata", new Blob([JSON.stringify(metadata)], { type: "application/json" }));
+  form.set("metadata", JSON.stringify(metadata));
   for (const [name, bytes] of Object.entries(release.modules)) form.append(name, new File([new Uint8Array(bytes)], name, { type: "application/javascript+module" }));
   await cf.call("PUT", `${acc}/workers/scripts/${plan.workerName}`, "upload the Worker", form);
   report("worker", "done", `${plan.workerName}, release ${release.version}`);
@@ -289,7 +296,7 @@ export async function deploy(cf: Cloudflare, release: Release, plan: DeployPlan,
   if (plan.app.kind == "workers.dev") {
     await cf.call("POST", `${acc}/workers/scripts/${plan.workerName}/subdomain`, "turn on its workers.dev address", { enabled: true, previews_enabled: false });
   } else {
-    await cf.call("PUT", `${acc}/workers/domains`, `put it on ${plan.app.hostname}`, { environment: "production", hostname: plan.app.hostname, service: plan.workerName, zone_id: plan.app.zoneId });
+    await cf.call("PUT", `${acc}/workers/domains`, `put it on ${plan.app.hostname} (a custom domain)`, { hostname: plan.app.hostname, service: plan.workerName, zone_id: plan.app.zoneId });
   }
   report("address", "done", `https://${host}`);
 
@@ -307,10 +314,10 @@ export async function deploy(cf: Cloudflare, release: Release, plan: DeployPlan,
   } else {
     const proxy = new FormData();
     const name = `${plan.workerName}-pages`;
-    proxy.append("metadata", new Blob([JSON.stringify({
-      main_module: "pages.js", compatibility_date: release.worker.compatibilityDate,
+    proxy.set("metadata", JSON.stringify({
+      main_module: "pages.js", compatibility_date: release.worker.compatibilityDate, tags: [WORKER_TAG],
       bindings: [{ type: "service", name: "APP", service: plan.workerName }],
-    })], { type: "application/json" }));
+    }));
     proxy.append("pages.js", new File([PAGES_PROXY], "pages.js", { type: "application/javascript+module" }));
     await cf.call("PUT", `${acc}/workers/scripts/${name}`, "upload the pages Worker", proxy);
     await cf.call("POST", `${acc}/workers/scripts/${name}/subdomain`, "turn on the pages address", { enabled: true, previews_enabled: false });
@@ -339,7 +346,7 @@ export const PAGES_PROXY = `export default { fetch: (request, env) => env.APP.fe
  * as `cf build` wrote it), each made the new server's own: its database, its
  * admins, its GitHub app, its secrets and where its pages run.
  */
-export function workerMetadata(release: Release, plan: DeployPlan, o: { dbId: string; assetsJwt: string; sessionSecret: string; pagesHost: string | null; migrate: boolean }) {
+export function workerMetadata(release: Release, plan: DeployPlan, o: { dbId: string; assetsJwt: string; sessionSecret: string; pagesHost: string | null }) {
   const w = release.worker;
   const text: Record<string, string> = {
     ADMINS: plan.admin.toLowerCase(),
@@ -352,7 +359,7 @@ export function workerMetadata(release: Release, plan: DeployPlan, o: { dbId: st
   const bindings: Record<string, unknown>[] = [];
   for (const [name, b] of Object.entries(w.env)) {
     if (b.type == "durable-object") bindings.push({ type: "durable_object_namespace", name, class_name: b.exportName });
-    else if (b.type == "d1") bindings.push({ type: "d1", name, id: o.dbId });
+    else if (b.type == "d1") bindings.push({ type: "d1", name, database_id: o.dbId, id: o.dbId });
     else if (b.type == "assets") bindings.push({ type: "assets", name });
     else if (b.type == "text") bindings.push({ type: "plain_text", name, text: text[name] ?? b.value ?? "" });
     else if (b.type == "secret") { if (secrets[name] != null) bindings.push({ type: "secret_text", name, text: secrets[name] }); }
@@ -361,7 +368,10 @@ export function workerMetadata(release: Release, plan: DeployPlan, o: { dbId: st
   // Where documents' pages run (front.ts, pagesOrigin): a zone of their own, or the shared host.
   if (plan.pages.kind == "zone") bindings.push({ type: "plain_text", name: "PAGES_DOMAIN", text: plan.pages.zoneName });
   else bindings.push({ type: "plain_text", name: "PAGES_HOST", text: o.pagesHost });
-  const classes = Object.entries(w.exports ?? {}).filter(([, e]) => e.type == "durable-object" && e.state != "deleted").map(([n]) => n);
+  // Durable Objects as declarative exports, as `cf deploy` sends them: the platform makes each namespace on the first
+  // deploy and matches it after, with no migration tags, so a deploy run again (or retried) is the same deploy.
+  // (A "deleted" tombstone is erga.dev's own history: a new account has nothing to delete.)
+  const exports = Object.fromEntries(Object.entries(w.exports ?? {}).filter(([, e]) => e.type == "durable-object" && e.state != "deleted").map(([n, e]) => [n, { type: "durable-object", storage: e.storage ?? "sqlite" }]));
   return {
     main_module: release.mainModule,
     compatibility_date: w.compatibilityDate,
@@ -372,7 +382,8 @@ export function workerMetadata(release: Release, plan: DeployPlan, o: { dbId: st
       config: { html_handling: w.assets?.htmlHandling ?? "auto-trailing-slash", not_found_handling: w.assets?.notFoundHandling ?? "none", run_worker_first: w.assets?.runWorkerFirst ?? false },
     },
     observability: { enabled: !!w.observability?.enabled, logs: { enabled: !!w.observability?.logs?.enabled, invocation_logs: !!w.observability?.logs?.invocationLogs } },
-    ...(o.migrate ? { migrations: { new_tag: MIGRATION_TAG, new_sqlite_classes: classes } } : {}),
+    ...(Object.keys(exports).length ? { exports } : {}),
+    tags: [WORKER_TAG],
   };
 }
 
@@ -386,7 +397,14 @@ export async function assetHash(path: string, bytes: Uint8Array): Promise<string
 const TYPES: Record<string, string> = { html: "text/html", js: "application/javascript", css: "text/css", json: "application/json", svg: "image/svg+xml", woff2: "font/woff2", woff: "font/woff", png: "image/png", ico: "image/x-icon", txt: "text/plain", md: "text/markdown" };
 const typeOf = (path: string) => TYPES[/\.([^./]+)$/.exec(path)?.[1]?.toLowerCase() ?? ""] ?? "application/octet-stream";
 
-/** Uploads the assets Cloudflare doesn't have yet; the completion token for the Worker's upload. */
+/**
+ * Uploads the assets Cloudflare doesn't have yet; the completion token for
+ * the Worker's upload. As workers-sdk's deploy does it: the manifest opens a
+ * session (its JWT, and buckets of hashes still needed), then each bucket goes
+ * up as base64 multipart, or, when the JWT says so
+ * (wrangler_single_asset_uploads), each file on its own as its raw bytes.
+ * Each upload is tried up to four times.
+ */
 async function uploadAssets(cf: Cloudflare, acc: string, worker: string, assets: Record<string, Uint8Array>): Promise<string> {
   const manifest: Record<string, { hash: string; size: number }> = {};
   const byHash = new Map<string, string>();
@@ -395,20 +413,44 @@ async function uploadAssets(cf: Cloudflare, acc: string, worker: string, assets:
     manifest[path] = { hash, size: bytes.byteLength };
     byHash.set(hash, path);
   }
-  const session = await cf.call<{ jwt: string; buckets: string[][] }>("POST", `${acc}/workers/scripts/${worker}/assets-upload-session`, "start uploading the editor's files", { manifest });
-  if (!session?.jwt) throw new DeployError("Cloudflare didn't start the upload of the editor's files. Deploy again.");
-  let jwt = session.jwt;
-  for (const bucket of session.buckets ?? []) {
-    const form = new FormData();
-    for (const hash of bucket) {
-      const path = byHash.get(hash);
-      if (!path) throw new DeployError("Cloudflare asked for a file the release doesn't have. Deploy again.");
-      form.append(hash, new File([b64(assets[path])], hash, { type: typeOf(path) }));
+  const session = await cf.call<{ jwt: string; buckets?: string[][] }>("POST", `${acc}/workers/scripts/${worker}/assets-upload-session`, "start uploading the editor's files", { manifest });
+  if (!session?.jwt) throw new DeployError("Cloudflare didn't start the upload of the editor's files (no upload token came back). Deploy again.");
+  const buckets = (session.buckets ?? []).filter((b) => b.length);
+  if (!buckets.length) return session.jwt;
+  const single = jwtClaims(session.jwt).wrangler_single_asset_uploads === true;
+  let jwt: string | null = null;
+  const pathOf = (hash: string) => {
+    const path = byHash.get(hash);
+    if (!path) throw new DeployError("Cloudflare asked for a file the release doesn't have. Deploy again.");
+    return path;
+  };
+  for (const bucket of single ? buckets.flat().map((h) => [h]) : buckets) {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        let done: { jwt?: string } | null;
+        if (single) {
+          const path = pathOf(bucket[0]);
+          done = await cf.call<{ jwt?: string }>("POST", `${acc}/workers/assets/upload/${bucket[0]}`, `upload ${path}`, new Blob([new Uint8Array(assets[path])], { type: typeOf(path) }), { bearer: session.jwt });
+        } else {
+          const form = new FormData();
+          for (const hash of bucket) { const path = pathOf(hash); form.append(hash, new File([b64(assets[path])], hash, { type: typeOf(path) })); }
+          done = await cf.call<{ jwt?: string }>("POST", `${acc}/workers/assets/upload?base64=true`, "upload the editor's files", form, { bearer: session.jwt });
+        }
+        if (done?.jwt) jwt = done.jwt;
+        break;
+      } catch (e) {
+        if (attempt >= 4 || (e instanceof DeployError && e.status >= 400 && e.status < 500 && e.status != 429)) throw e;
+        await new Promise((r) => setTimeout(r, 500 * 2 ** attempt));
+      }
     }
-    const done = await cf.call<{ jwt?: string }>("POST", `${acc}/workers/assets/upload?base64=true`, "upload the editor's files", form, { bearer: session.jwt });
-    if (done?.jwt) jwt = done.jwt;
   }
+  if (!jwt) throw new DeployError("Cloudflare took the editor's files but didn't say the upload was complete (no completion token). Deploy again: files already up aren't sent twice.");
   return jwt;
+}
+
+/** A JWT's claims, unchecked (only to read how Cloudflare wants the files sent). */
+function jwtClaims(jwt: string): Record<string, unknown> {
+  try { return JSON.parse(atob(jwt.split(".")[1].replace(/-/g, "+").replace(/_/g, "/"))); } catch { return {}; }
 }
 
 /** One statement (or a few, separated by semicolons) on a D1 database, through the API: the first statement's rows. */
@@ -438,7 +480,7 @@ export function tokenPermissions(registrar: boolean) {
     { key: "workers_routes", type: "edit", why: "route a domain of yours to the Worker" },
     { key: "zone", type: "read", why: "list your domains" },
     { key: "dns", type: "edit", why: "add the DNS record for documents' pages" },
-    ...(registrar ? [{ key: "registrar", type: "edit", why: "search for and register a new domain (only when you confirm the price)" }] : []),
+    ...(registrar ? [{ key: "registrar_domains", type: "edit", why: "search for and register a new domain (only when you confirm the price)" }] : []),
   ];
 }
 
@@ -456,12 +498,12 @@ export const OAUTH = {
 };
 
 /**
- * The scopes Erga's OAuth client asks for. Cloudflare names OAuth scopes after
- * API token permissions; the exact ids come from GET /oauth/scopes and must
- * match the ones chosen when the client was made, so a server can override
- * these (CLOUDFLARE_OAUTH_SCOPES). Needs checking against a real client.
+ * The scopes Erga's OAuth client asks for: Cloudflare's OAuth scope ids (GET
+ * /oauth/scopes; the cf CLI asks for the same names), one for each
+ * permission the token link gives. The client must have been made with these
+ * (Registrar's optional); CLOUDFLARE_OAUTH_SCOPES overrides them.
  */
-export const DEFAULT_OAUTH_SCOPES = "account-settings.read workers-scripts.write d1.write workers-routes.write zone.read dns.write registrar.write offline_access";
+export const DEFAULT_OAUTH_SCOPES = "account-settings.read workers-scripts.write d1.write workers-routes.write zone.read dns.write registrar-domains.admin";
 
 // ------------------------------------------------------------------ domains
 
@@ -482,6 +524,7 @@ const REASONS: Record<string, string> = {
   extension_not_supported_via_api: "this ending can't be registered through the API yet: use the Registrar page",
   extension_not_supported: "Cloudflare doesn't sell this ending",
   extension_disallows_registration: "this ending doesn't allow registration",
+  domain_premium: "a premium domain: register it on Cloudflare's Registrar page",
 };
 
 /** Cloudflare Registrar's search: candidate names, each checked for availability and price (search alone isn't the source of truth). */
@@ -511,19 +554,21 @@ interface RawCheck { name: string; registrable?: boolean; reason?: string; tier?
  * Registrar asks, and refuses premium names (they need a fee acknowledgement
  * the API doesn't take yet). Answers the registration's state.
  */
-export async function registerDomain(cf: Cloudflare, accountId: string, name: string, confirmed: { price: string; currency: string }): Promise<{ state: string; completed: boolean }> {
+export async function registerDomain(cf: Cloudflare, accountId: string, name: string, confirmed: { price: string; currency: string }): Promise<{ state: string; completed: boolean; error?: string }> {
   const [offer] = await checkDomains(cf, accountId, [name]);
   if (!offer?.registrable) throw new DeployError(`${name} can't be registered now${offer?.reason ? `: ${offer.reason}` : ""}.`);
   if (offer.premium) throw new DeployError(`${name} is a premium domain: register it on Cloudflare's Registrar page instead.`);
   if (offer.price != confirmed.price || offer.currency != confirmed.currency) {
     throw new DeployError(`${name} now costs ${offer.price} ${offer.currency}, not the ${confirmed.price} ${confirmed.currency} you confirmed. Nothing was bought: check the new price and confirm again.`);
   }
-  const r = await cf.call<{ state: string; completed: boolean }>("POST", `/accounts/${accountId}/registrar/registrations`, `register ${name}`, { domain_name: name });
-  return { state: r?.state ?? "in_progress", completed: !!r?.completed };
+  // One year, at the price shown (registration_cost is the first year's); auto-renew and WHOIS privacy keep Registrar's defaults (off, redaction).
+  const r = await cf.call<Workflow>("POST", `/accounts/${accountId}/registrar/registrations`, `register ${name}`, { domain_name: name, years: 1 });
+  return workflow(r);
 }
+interface Workflow { state: string; completed: boolean; error?: { code: string; message: string } }
+const workflow = (r: Workflow | null) => ({ state: r?.state ?? "in_progress", completed: !!r?.completed, ...(r?.error ? { error: `${r.error.message} [${r.error.code}]` } : {}) });
 
 /** Where a registration has got to. */
-export async function registrationStatus(cf: Cloudflare, accountId: string, name: string): Promise<{ state: string; completed: boolean }> {
-  const r = await cf.call<{ state: string; completed: boolean }>("GET", `/accounts/${accountId}/registrar/registrations/${encodeURIComponent(name)}/registration-status`, `check on ${name}'s registration`);
-  return { state: r?.state ?? "in_progress", completed: !!r?.completed };
+export async function registrationStatus(cf: Cloudflare, accountId: string, name: string): Promise<{ state: string; completed: boolean; error?: string }> {
+  return workflow(await cf.call<Workflow>("GET", `/accounts/${accountId}/registrar/registrations/${encodeURIComponent(name)}/registration-status`, `check on ${name}'s registration`));
 }

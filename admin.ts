@@ -203,7 +203,7 @@ ${users.map((u) => userRow(u, session)).join("\n")}
     </ol>
   </section>
   ${deployOn ? `<section aria-labelledby="deploy-title">
-    <h2 id="deploy-title">Deploy your own <small>experimental</small></h2>
+    <h2 id="deploy-title">Deploy your own</h2>
     <p class="lede">Put a copy of this server on your own Cloudflare account, with you as its admin: <a href="${esc(link("/deploy", session))}">Deploy Erga</a>. Who may use it is the deploy_page setting.</p>
   </section>` : ""}
 </main>

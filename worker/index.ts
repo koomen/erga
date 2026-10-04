@@ -14,7 +14,7 @@
 //   /auth/github[/callback]    signing in; /auth/logout signs out
 //   /llms.txt, /api/..., /mcp  the server's API for agents, with an agent token (server-api.ts, tokens.ts)
 //   /settings, /tokens/...     your settings: agent tokens, and a test token for running the test suite against erga.dev
-//   /deploy                    experimental: deploy Erga to your own Cloudflare account (worker/deploy.ts; the deploy_page setting)
+//   /deploy                    deploy Erga to your own Cloudflare account (worker/deploy.ts; the deploy_page setting)
 //   /auth/test?token=&as=      a test person (Ada, Bo...) signed in with one; they open only test documents
 //   /page.js, /style.css, ...  the editor's own files (static assets)
 //
@@ -91,7 +91,7 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
   if (path == "/llms.txt" || path == "/mcp" || path == "/api" || path.startsWith("/api/")) return serverApi(request, withTokens(platform(env), url));
   if (path == "/settings" || path == "/tokens" || path.startsWith("/tokens/")) return tokensDoor(request, withTokens(platform(env), url));
   if (path.startsWith("/__erga/")) return linked(env, request, url);
-  // Experimental: deploying Erga to your own Cloudflare account (worker/deploy.ts).
+  // Deploying Erga to your own Cloudflare account (worker/deploy.ts).
   if (path == "/deploy" || path.startsWith("/deploy/")) return deployDoor(request, env, platform(env));
   return frontDoor(request, platform(env));
 }

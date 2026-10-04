@@ -11,8 +11,6 @@ export interface DeployPageConfig {
   /** "Authorize with Cloudflare" is offered (the server has an OAuth client, or it's the mock). */
   oauth: boolean;
   mock: boolean;
-  /** The deploy_page setting: who may use the page. */
-  mode: string;
   release: { version: string; built: string } | null;
   tokenUrl: string;
   tokenUrlRegistrar: string;
@@ -23,11 +21,11 @@ export interface DeployPageConfig {
 
 const STYLE = `
   main { max-width: 760px; }
-  .banner { display: flex; gap: 10px; align-items: flex-start; margin: 0 0 14px; padding: 10px 14px; border-radius: 10px; font-size: 13.5px; line-height: 1.45;
-    background: color-mix(in srgb, #d97706 10%, var(--bg)); border: 1px solid color-mix(in srgb, #d97706 35%, var(--rule)); color: var(--fg); }
-  .banner.mock { background: color-mix(in srgb, #2563eb 8%, var(--bg)); border-color: color-mix(in srgb, #2563eb 35%, var(--rule)); }
-  .banner b { color: var(--fg-strong); }
-  .banner code { font-size: 12.5px; }
+  /* Breadcrumbs in the upper left, after the wordmark (as the editor's: Documents › its title). */
+  .crumbs { position: absolute; top: max(14px, env(safe-area-inset-top)); left: max(20px, env(safe-area-inset-left)); height: 30px; display: flex; align-items: center; gap: 0; }
+  .crumbs .brand { position: static; }
+  .crumbs .here { display: flex; align-items: center; font-size: 13.5px; font-weight: 500; color: var(--fg); }
+  .crumbs .here::before { content: "›"; margin: 0 9px 0 10px; color: var(--chrome); opacity: 0.55; font-weight: 400; }
   .steps { list-style: none; margin: 28px 0 0; padding: 0; counter-reset: step; }
   .step { position: relative; padding: 18px 0 22px 44px; border-top: 1px solid var(--rule); }
   .step::before { counter-increment: step; content: counter(step); position: absolute; left: 0; top: 18px; width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center;
@@ -99,10 +97,8 @@ const STYLE = `
 
 export function deployPage(c: DeployPageConfig): string {
   const perms = c.permissions.map((p) => `<li><b>${esc(label(p.key))}</b> (${p.type == "read" ? "read" : "edit"}): ${esc(p.why)}</li>`).join("");
-  const body = `<a class="brand" href="/">Erga</a><main>
-  <header><div><h1>Deploy your own Erga</h1><p class="sub">A copy of this server on your own Cloudflare account, with you (${esc(c.login)}) as its admin.</p></div><a class="back" href="/docs">‹ Documents</a></header>
-  <p class="banner"><span>⚗︎</span><span><b>Experimental.</b> ${c.mode == "users" ? "Everyone signed in can use this page" : "Only this server's admins can see this page"} (the <code>deploy_page</code> setting on Admin). It deploys the same Worker, database and settings erga.dev runs${c.release ? `, release <code>${esc(c.release.version)}</code>` : ""}.</span></p>
-  ${c.mock ? `<p class="banner mock" id="mock-banner"><span>◎</span><span><b>Pretend Cloudflare.</b> This local server talks to a mock (<code>ERGA_DEPLOY_MOCK=1</code>): nothing is deployed and nothing is bought. Any token starting <code>mock-</code> works; <code>mock-noperm</code>, <code>mock-nosub</code> and <code>mock-fail-assets</code> (or any step) show what goes wrong.</span></p>` : ""}
+  const body = `<nav class="crumbs" aria-label="Breadcrumbs"><a class="brand" href="/">Erga</a><span class="here" aria-current="page">Deploy</span></nav><main>
+  <header><div><h1>Deploy your own Erga</h1><p class="sub">A copy of this server on your own Cloudflare account, with you (${esc(c.login)}) as its admin: the same Worker, database and settings${c.release ? ` (release <code>${esc(c.release.version)}</code>)` : ""}.</p></div></header>
   ${c.release ? "" : `<p class="error">This server has no release to deploy yet: it's made when the server is deployed (<code>bun deploy/release.ts</code>).</p>`}
   <p class="error" id="top-error">${esc(c.error)}</p>
   <ol class="steps">

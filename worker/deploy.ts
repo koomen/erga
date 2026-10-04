@@ -1,7 +1,7 @@
-// /deploy, experimental: deploy Erga to your own Cloudflare account, from
-// erga.dev, with the same settings erga.dev has (deploy/cloudflare.ts). Who
-// may use it is the deploy_page setting (admins by default; "off" hides it);
-// anyone else gets "not found".
+// /deploy: deploy Erga to your own Cloudflare account, from erga.dev, with
+// the same settings erga.dev has (deploy/cloudflare.ts). Who may use it is
+// the deploy_page setting (anyone signed in by default; "admins" for admins
+// only, "off" hides it); anyone else gets "not found".
 //
 //   /deploy                                the page (deploy/page.ts)
 //   /deploy/auth/cloudflare[/callback]     "Authorize with Cloudflare": OAuth with PKCE, when the server has a client
@@ -15,7 +15,7 @@
 //
 // Each browser's session is a Durable Object (worker/deployer.ts) named by a
 // random id in a cookie (erga_deploy, with the key half that seals the token).
-// In local development with ERGA_DEPLOY_MOCK=1, Cloudflare is pretend
+// For the tests only (local development with ERGA_DEPLOY_MOCK=1), Cloudflare is pretend
 // (deploy/mock.ts), OAuth included (/deploy/mock/consent), and
 // GET /deploy/api/mock shows what it was asked to do.
 
@@ -37,12 +37,11 @@ export async function deployDoor(request: Request, env: Env, platform: Platform)
   const owner = whoOf(session!).login;
   const mock = env.ERGA_DEPLOY_MOCK == "1" && isDev(env, url);
   const oauth = mock || !!env.CLOUDFLARE_OAUTH_CLIENT_ID?.trim();
-  const mode = await platform.directory.config.get("deploy_page");
 
   if (path == "/deploy" && request.method == "GET") {
     const release = await env.ASSETS.fetch(new Request(new URL("/release/release.json", url))).then((r) => (r.ok ? r.json() as Promise<{ version: string; built: string }> : null)).catch(() => null);
     return new Response(deployPage({
-      login: owner, name: session!.name || owner, oauth, mock, mode,
+      login: owner, name: session!.name || owner, oauth, mock,
       release: release && { version: release.version, built: release.built },
       tokenUrl: tokenTemplateUrl(false), tokenUrlRegistrar: tokenTemplateUrl(true), permissions: tokenPermissions(true),
       error: url.searchParams.get("error") ?? "",

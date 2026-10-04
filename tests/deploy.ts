@@ -4,7 +4,8 @@
 // is deployed or bought. An admin authorizes with (pretend) Cloudflare's
 // OAuth, buys a domain after confirming its price, puts the app on it and
 // documents' pages on a second domain, fills in a GitHub app, deploys and
-// watches every step; then what the mock was asked for is checked. Another
+// watches every step; then what the mock was asked for is checked (the mock
+// is for tests only: the page itself never mentions it). Another
 // connects with a pasted token, on workers.dev, and the deploy fails at a
 // step, saying why. Who may open the page (deploy_page) last. Screenshots of
 // each step land in tests/cdp.ts's SHOTS (deploy-*.png).
@@ -45,10 +46,11 @@ try {
   const p = await browser.page(await browser.context());
   await p.open(`${host.root}/auth/github?next=/deploy`, { width: 1000, height: 1100, scale: 2 });
   await until(() => p.eval(`location.pathname == "/deploy" && !!document.getElementById("oauth")`), 15_000, "/deploy opens for an admin");
-  expect((await text(p, ".banner")).includes("Experimental"), "the page says it's experimental");
-  expect((await text(p, "#mock-banner")).includes("Pretend Cloudflare"), "and that Cloudflare is pretend");
+  expect(!(await p.eval(`document.body.innerText`)).match(/experimental|pretend|mock/i), "no experimental or mock notices on the page");
+  expect((await text(p, ".crumbs .brand")) == "Erga" && (await text(p, ".crumbs .here")) == "Deploy", "breadcrumbs: Erga, then Deploy", await text(p, ".crumbs"));
+  expect(await p.eval(`(() => { const r = document.querySelector(".crumbs").getBoundingClientRect(); return r.top < 40 && r.left < 40; })()`), "in the upper left");
   await shot(p, "1-connect");
-  ok("/deploy opens for an admin, saying it's experimental (and pretend)");
+  ok("/deploy opens, with its breadcrumbs in the upper left, and no experimental or mock notices");
 
   // A token that isn't one: refused, plainly.
   await click(p, "#token-details summary");
@@ -148,7 +150,7 @@ try {
   await click(q, "#go");
   await until(async () => (await text(q, "#run-error")).length > 0, 30_000, "the deploy fails at a step");
   const failure = await text(q, "#run-error");
-  expect(/Cloudflare had a problem on its side while we tried to upload the Worker/.test(failure), "saying what went wrong, plainly", failure);
+  expect(/^Stopped at “Upload the Worker, with its settings and secrets”\. Cloudflare had a problem on its side while we tried to upload the Worker \(Cloudflare said: An unknown error has occurred \[code 10013\]\)/.test(failure), "saying at which step, and what Cloudflare said", failure);
   expect(await q.eval(`document.querySelector("#progress li.failed")?.dataset.id == "worker" && !document.getElementById("run-actions").hidden`), "marking the step, and offering to try again");
   await shot(q, "10-failed", "#s-deploy");
   const kept = await q.eval<any>(`fetch("/deploy/api/session").then((r) => r.json())`);
@@ -162,7 +164,11 @@ try {
   };
   const bo = await signIn("bo");
   const asBo = await fetch(`${host.root}/deploy`, { headers: { Cookie: bo }, redirect: "manual" });
-  expect(asBo.status == 404, "someone who isn't an admin gets not found", asBo.status);
+  expect(asBo.status == 200, "by default anyone signed in may (deploy_page: users)", asBo.status);
+  const admins = await p.eval<number>(`fetch("/admin/settings", { method: "POST", body: new URLSearchParams({ key: "deploy_page", value: '"admins"' }) }).then((r) => r.status)`);
+  expect(admins == 200, "an admin limits it to admins", admins);
+  const notBo = await fetch(`${host.root}/deploy`, { headers: { Cookie: bo }, redirect: "manual" });
+  expect(notBo.status == 404, "then someone who isn't an admin gets not found", notBo.status);
   const api = await fetch(`${host.root}/deploy/api/session`, { headers: { Cookie: bo } });
   expect(api.status == 404, "and so does its API", api.status);
   // (Locally, a request with no cookie is DEV_LOGIN, an admin: but only this site's pages may post.)
@@ -174,8 +180,8 @@ try {
   expect(closed == 404, "off, it's gone for admins too", closed);
   await p.eval(`fetch("/admin/settings", { method: "POST", body: new URLSearchParams({ key: "deploy_page", value: '"users"' }) }).then((r) => r.status)`);
   const open = await fetch(`${host.root}/deploy`, { headers: { Cookie: bo }, redirect: "manual" });
-  expect(open.status == 200 && (await open.text()).includes("Everyone signed in can use this page"), "set to users, anyone signed in may", open.status);
-  ok("only admins by default; off hides it; users opens it to everyone signed in");
+  expect(open.status == 200, "set back to users, anyone signed in may again", open.status);
+  ok("anyone signed in by default; admins limits it; off hides it");
 } finally {
   await host.dispose();
   browser.close();
