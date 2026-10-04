@@ -682,7 +682,9 @@ const EDIT_BOOT = `(() => {
     sync();
     if (edit) load();
   }
-  window.ergaShell = { ready() { ready = true; sync(); } };
+  // Whether the page was opened in the editor (at /edit), rather than switched into it: main.ts restores
+  // the agent as it was left only then, and otherwise opens it the way it does on any later switch.
+  window.ergaShell = { ready() { ready = true; sync(); }, loadedEditing: editing() };
   document.addEventListener("click", (e) => {
     const a = e.target.closest?.(".erga-edit-button, #btn-edit");
     if (!a || e.button || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
@@ -690,11 +692,18 @@ const EDIT_BOOT = `(() => {
     go(a.id != "btn-edit", true);
   });
   addEventListener("popstate", () => go(/\\/edit\\/?$/.test(location.pathname), false));
-  if (editing()) go(true, null);
-  else (window.requestIdleCallback ?? setTimeout)(() => {
+  // Viewing, the editor's files are fetched ahead, at low priority: once the browser is idle, or sooner
+  // when the pointer or focus comes to the pencil, so going into the editor needn't wait for them.
+  let fetched = false;
+  const prefetch = () => {
+    if (fetched || editor) return;
+    fetched = true;
     for (const href of ["/editor.html", "/page.js", "/style.css", "/fonts/inter.css"]) document.head.append(Object.assign(document.createElement("link"), { rel: "prefetch", href }));
-    if (hostUp) toFrame("erga-prefetch");
-  });
+    if (hostUp) toFrame("erga-prefetch"); else wanted ??= "erga-prefetch";
+  };
+  for (const type of ["pointerover", "focusin"]) document.addEventListener(type, (e) => { if (e.target.closest?.(".erga-edit-button")) prefetch(); });
+  if (editing()) go(true, null);
+  else (window.requestIdleCallback ?? setTimeout)(prefetch);
 })();`;
 
 /** The front page when there's no landing document and none can be made (seedLanding): what Erga is, and the way in. */
@@ -732,6 +741,10 @@ const VIEW_STYLE = `
   .erga-view-button:hover { color: var(--chrome-hover); background: color-mix(in srgb, var(--chrome) 12%, transparent); }
   /* Editing (or on the way into it), the pencil is blue, as the editor's own is. */
   .erga-view-button[aria-pressed="true"], .erga-view-button[aria-pressed="true"]:hover { color: #3b7cf0; background: transparent; }
+  /* On the way into the editor the first time, while its code arrives, the pencil breathes (only if that takes a moment). */
+  body.erga-editing:not(.erga-editor-ready) .erga-view-button[aria-pressed] svg { animation: erga-edit-wait 700ms ease-in-out 250ms infinite alternate; }
+  @keyframes erga-edit-wait { to { opacity: 0.35; } }
+  @media (prefers-reduced-motion: reduce) { body.erga-editing:not(.erga-editor-ready) .erga-view-button[aria-pressed] svg { animation: none; opacity: 0.6; } }
   .erga-view-button svg { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
   .erga-view-button::after { content: attr(data-tip); position: absolute; left: var(--tip-x, 100%); top: var(--tip-y, calc(100% + 6px)); transform: translateX(-100%); white-space: pre; font-size: 12px;
     font-weight: 400; line-height: 1.3; letter-spacing: .01em; color: var(--soft); opacity: 0; pointer-events: none; }

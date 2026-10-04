@@ -71,7 +71,7 @@ const peersField = StateField.define<DecorationSet>({
 });
 
 declare global {
-  interface Window { ergaPage?: unknown; ergaShell?: { ready(): void } }
+  interface Window { ergaPage?: unknown; ergaShell?: { ready(): void; loadedEditing?: boolean } }
 }
 
 
@@ -106,8 +106,16 @@ declare global {
   // its body's when the root has none, as the browser itself would paint it.
   // The page reports its background (frame.ts). Only colours and gradients
   // are taken: an image would be fetched from here, as you.
+  // The first one lands at once, not faded in from the editor's white (page.html's transition): it's
+  // what the agent's opening uncovers on the way into the editor (openAgentOnEntry), so that waits for it.
+  let backdropKnown!: () => void;
+  const backdropReady = new Promise<void>((done) => (backdropKnown = done));
+  let backdropSeen = false;
   function applyBackdrop(b: Backdrop) {
     if (!info) return;
+    const first = !backdropSeen;
+    backdropSeen = true;
+    if (first) document.documentElement.style.transition = "none";
     const color = b.color && CSS.supports("color", b.color) ? b.color : info.kind == "md" ? "" : "#ffffff";
     const image = b.image && !/url\(|image-set\(|image\(|element\(/i.test(b.image) && CSS.supports("background-image", b.image) ? b.image : "";
     const root = document.documentElement.style;
@@ -119,6 +127,11 @@ declare global {
     document.documentElement.classList.toggle("page-light", !!color && !dark);
     // Remembered so the next load paints it before the page arrives (see page.html), not white first.
     store.set("erga:backdrop:v1", JSON.stringify({ bg: color, image, tone: color ? (dark ? "page-dark" : "page-light") : "" }));
+    if (first) {
+      void getComputedStyle(document.documentElement).backgroundColor;
+      document.documentElement.style.transition = "";
+      backdropKnown();
+    }
   }
 
   // ---------------------------------------------------------------- load
@@ -1683,9 +1696,17 @@ Once you've read the guide, await further instructions.`;
   // Out of the editor and back in (front.ts), without leaving the page: the
   // controls go out of sight, with anything open among them, and come back as they were.
   // Into the editor (or loading in it), the editor shows first, then the agent
-  // grows out of its button, unless the user keeps it closed.
+  // grows out of its button, unless the user keeps it closed. The first time,
+  // that's once the editor is ready (this runs before main.ts calls
+  // ergaShell.ready) and the page has said what its background is, so the
+  // room the page slides over to make is its colour, never the editor's white
+  // (applyBackdrop); a page that never says gives up waiting after a moment.
+  let entering = 0;
   function openAgentOnEntry() {
-    if (settings.agent) requestAnimationFrame(() => requestAnimationFrame(() => { if (editing()) showAgent(true); }));
+    if (!settings.agent) return;
+    const mine = ++entering;
+    void Promise.race([backdropReady, new Promise((r) => setTimeout(r, 2000))]).then(() =>
+      requestAnimationFrame(() => requestAnimationFrame(() => { if (mine == entering && editing()) showAgent(true); })));
   }
   function setEditing(on: boolean) {
     if (on) {
@@ -1703,8 +1724,10 @@ Once you've read the guide, await further instructions.`;
   // Loaded in the editor: a reload (or back/forward) keeps things as they
   // were, the pane put back as it was left, unanimated; arriving here from
   // elsewhere is coming into the editor, and the agent grows out as above.
+  // Only a page opened at /edit is "loaded in the editor": one opened viewing (by a reload or not) and
+  // switched into it is coming into the editor (front.ts says which, ergaShell.loadedEditing).
   if (!editing()) setEditing(false);
-  else if (["reload", "back_forward"].includes((performance.getEntriesByType("navigation")[0] as PerformanceNavigationTiming | undefined)?.type ?? "")) {
+  else if (window.ergaShell?.loadedEditing !== false && ["reload", "back_forward"].includes((performance.getEntriesByType("navigation")[0] as PerformanceNavigationTiming | undefined)?.type ?? "")) {
     if (settings.agent) {
       document.body.classList.add("no-motion");
       showAgent(true);
