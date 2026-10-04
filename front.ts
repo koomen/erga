@@ -789,7 +789,7 @@ function docsPage(session: Session, docs: Listed[], now: number, hours: number |
   return appPage("Documents", style, `${brand(session)}<main>
   <header>
     <div><h1>Documents</h1>${docs.length ? `<p class="sub">${count}</p>` : ""}</div>
-    <a class="new" href="${esc(link("/new", session))}">${ICON.plus}New document</a>
+    <a class="pill" href="${esc(link("/new", session))}" title="New document" aria-label="New document">${ICON.plus}New</a>
   </header>
   ${docs.length ? `<div class="labels" aria-hidden="true"><span>Name</span><span>Edited</span><span></span></div>
   <ol class="rows">\n${rows}\n  </ol>` : `<p class="empty">No documents yet. A new one starts blank${hours == null ? "." : `, and goes away after ${hours} hour${hours == 1 ? "" : "s"} if you never edit it.`}</p>`}
