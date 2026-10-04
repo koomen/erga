@@ -91,7 +91,7 @@ export interface Platform {
    * admin), and who else may edit it (the other bootstrap admins). No owner
    * (no ADMINS, no DEV_LOGIN): nobody to make it for, and / is a plain start page.
    */
-  landing?: { files: Record<string, string>; owner: string | null; editors: string[] };
+  landing?: { files: Record<string, string | Uint8Array>; owner: string | null; editors: string[] };
   /** The editor's page, served at each document's address. */
   editor(request: Request): Promise<Response>;
   /**
