@@ -289,6 +289,7 @@ declare global {
     showChrome();
     toggleHelp(false);
     toggleShare(false);
+    toggleAccount(false);
     slugTouched = false;
     $("naming-prefix").textContent = `/${docName!.owner}/`;
     titleIn.value = docName!.title;
@@ -515,7 +516,7 @@ declare global {
         b.append(img);
       }
       b.dataset.tip = p.client == -1 ? `You (${me.name})` : here ? p.user.name : `${p.user.name} (not here)`;
-      if (p.client == -1) b.setAttribute("aria-disabled", "true");
+      if (p.client == -1) accountButton(b);
       else if (here) revealOnClick(b, p, " (not in the text yet)");
       else b.setAttribute("aria-disabled", "true");
       b.setAttribute("aria-label", b.dataset.tip);
@@ -534,6 +535,36 @@ declare global {
       }
       (p.client == -1 ? meSlot : people).append(wrap);
     }
+  }
+  // Your avatar opens a small menu: who you are, your documents, the admin
+  // page if you're an admin, sign out (the same as every other page's upper
+  // right, account.ts). The front door says which links (meta erga-account).
+  const account = $("account");
+  const accountLinks = (() => {
+    try { return JSON.parse(document.querySelector<HTMLMetaElement>('meta[name="erga-account"]')?.content ?? "") as { docs?: string; admin?: string; signOut?: string }; } catch { return null; }
+  })();
+  let accountBtn: HTMLElement | null = null;
+  function accountButton(b: HTMLElement) {
+    accountBtn = b;
+    if (!accountLinks) { b.setAttribute("aria-disabled", "true"); return; }
+    b.setAttribute("aria-haspopup", "menu");
+    b.setAttribute("aria-controls", "account");
+    b.setAttribute("aria-expanded", String(!account.hidden));
+    b.addEventListener("click", () => toggleAccount());
+  }
+  function toggleAccount(force?: boolean) {
+    const open = typeof force == "boolean" ? force : account.hidden;
+    if (open && !accountLinks) return;
+    account.hidden = !open;
+    accountBtn?.setAttribute("aria-expanded", String(open));
+    if (!open) return;
+    showChrome(); toggleHelp(false); toggleShare(false); toggleNaming(false);
+    $("account-name").textContent = me.name;
+    $("account-login").textContent = me.name.toLowerCase() == me.user ? "" : me.user;
+    const set = (id: string, href: string | undefined) => { const a = $(id) as HTMLAnchorElement; a.hidden = !href; if (href) a.href = href; };
+    set("account-docs", me.user.startsWith("test-") ? undefined : accountLinks!.docs);
+    set("account-admin", accountLinks!.admin);
+    set("account-out", accountLinks!.signOut);
   }
   /**
    * A participant's picture: only GitHub avatars, since anyone in the room
@@ -556,7 +587,7 @@ declare global {
   let anchor: { x: number; y: number; t: number } | null = null;
   let lastKeyAt = 0;
   function hideChrome() {
-    if (chromeHidden || !$("help").hidden || !$("share").hidden || !$("naming").hidden) return;
+    if (chromeHidden || !$("help").hidden || !$("share").hidden || !$("naming").hidden || !$("account").hidden) return;
     chromeHidden = true;
     anchor = null;
     document.body.classList.add("chrome-hidden");
@@ -594,7 +625,7 @@ declare global {
   function toggleHelp(force?: boolean) {
     const open = typeof force == "boolean" ? force : help.hidden;
     help.hidden = !open;
-    if (open) { showChrome(); toggleShare(false); toggleNaming(false); }
+    if (open) { showChrome(); toggleShare(false); toggleNaming(false); toggleAccount(false); }
   }
 
   // Share with an external agent: a prompt carrying this page's API and your
@@ -649,6 +680,7 @@ Once you've read the guide, await further instructions.`;
     showChrome();
     toggleHelp(false);
     toggleNaming(false);
+    toggleAccount(false);
     if (!shareToken) loadShare(false);
   }
   shareBtn.addEventListener("click", () => toggleShare());
@@ -1420,7 +1452,8 @@ Once you've read the guide, await further instructions.`;
     if (mod && !e.shiftKey && (key == "/" || key == "?")) { toggleHelp(); return true; }
     if (mod && !e.shiftKey && key == "s") { flash(connected ? "Saved: edits go to disk as you type" : "Offline: edits sync when the host is back", 2200); return true; }
     if (e.key == "Escape") {
-      if (!help.hidden) toggleHelp(false);
+      if (!account.hidden) { toggleAccount(false); accountBtn?.focus(); }
+      else if (!help.hidden) toggleHelp(false);
       else if (!naming.hidden) toggleNaming(false);
       else if (!share.hidden) toggleShare(false);
       else if (!$("pause-card").hidden) showPauseCard(false);
@@ -1508,6 +1541,7 @@ Once you've read the guide, await further instructions.`;
   document.addEventListener("mousedown", (e) => {
     if (!help.hidden && !help.contains(e.target as Node) && !$("btn-help").contains(e.target as Node)) toggleHelp(false);
     if (!share.hidden && !share.contains(e.target as Node) && !shareBtn.contains(e.target as Node)) toggleShare(false);
+    if (!account.hidden && !account.contains(e.target as Node) && !accountBtn?.contains(e.target as Node)) toggleAccount(false);
     if (!$("pause-card").hidden && !$("pause-card").contains(e.target as Node) && !$("btn-pause").contains(e.target as Node)) showPauseCard(false);
   });
 

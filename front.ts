@@ -32,6 +32,7 @@
 // Worker. The rule for when an unedited document goes (`afterUnedited`) is
 // here; the document's alarm applies it.
 
+import { OWN_ACCOUNT } from "./account.ts";
 import { adminDoor } from "./admin.ts";
 import { type Directory, type DocRow, type Grant, type Permission, type Role, type Route, type Who, NotAllowed, UNTITLED } from "./directory.ts";
 import type { AgentToken, Tokens } from "./tokens.ts";
@@ -176,8 +177,9 @@ export async function frontDoor(request: Request, base: Platform): Promise<Respo
     const pagesUrl = `${pagesOrigin(doc.owner, doc.id, url, platform)}/t/${await pagesToken(platform.secret, doc.owner, doc.id, url.origin)}/`;
     const editor = (await (await platform.editor(request)).text())
       .replace(/<title>[^<]*<\/title>/, `<title>${esc(doc.title)}</title>`)
-      .replace("</head>", `<meta name="erga-pages" content="${esc(pagesUrl)}"><meta name="erga-base" content="/d/${doc.id}"></head>`);
-    return new Response(editor, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
+      .replace("</head>", `<meta name="erga-pages" content="${esc(pagesUrl)}"><meta name="erga-base" content="/d/${doc.id}">${await accountMeta(platform, session)}</head>`);
+    // The editor shows who you are itself, among its own controls (account.ts).
+    return new Response(editor, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", [OWN_ACCOUNT]: "1" } });
   }
   const route = await documentRoute(platform, first, second);
   if (!route) return new Response("No such document", { status: 404 });
@@ -191,7 +193,19 @@ export async function frontDoor(request: Request, base: Platform): Promise<Respo
   if (!access) return new Response("Not allowed", { status: 403 });
   // The share button's token is the front door's (tokens.ts), not the document's.
   if (rest == "/api/share" && request.method == "POST") return shareToken(platform, request, session);
-  return platform.docs.fetch(route, forwarded(request, url, rest, `${url.origin}/d/${route.id}`, session, accessOf(access)));
+  const answer = await platform.docs.fetch(route, forwarded(request, url, rest, `${url.origin}/d/${route.id}`, session, accessOf(access)));
+  // A document's own files are its own: nothing of the site's goes into them (account.ts).
+  if (!/^text\/html\b/i.test(answer.headers.get("content-type") ?? "") || answer.status == 101) return answer;
+  const headers = new Headers(answer.headers);
+  headers.set(OWN_ACCOUNT, "1");
+  return new Response(answer.body, { status: answer.status, statusText: answer.statusText, headers });
+}
+
+/** What the editor's menu on your avatar needs to know that the document doesn't (account.ts): the links it offers. */
+async function accountMeta(platform: Platform, session: Session): Promise<string> {
+  const admin = !session.test && !session.agent && (await platform.directory.users.isAdmin(whoOf(session)));
+  const links = { docs: link("/docs", session), ...(admin ? { admin: link("/admin", session) } : {}), signOut: "/auth/logout" };
+  return `<meta name="erga-account" content="${esc(JSON.stringify(links))}">`;
 }
 
 /**
@@ -384,7 +398,8 @@ async function startPage(platform: Platform, session: Session | null): Promise<R
 
 const EDIT_BUTTON_STYLE = `
 <style>
-  .erga-edit-button { position: fixed; top: 16px; right: 16px; z-index: 1000; padding: 7px 16px; border-radius: 999px;
+  /* Right of it is who you are (account.ts): your avatar, or a way to sign in. */
+  .erga-edit-button { position: fixed; top: 14px; right: 58px; z-index: 1000; padding: 7px 16px; border-radius: 999px;
     font: 600 14px/1.2 system-ui, -apple-system, sans-serif; text-decoration: none; color: #fff; background: #1b2330;
     box-shadow: 0 2px 10px rgba(20, 28, 40, .2); }
   .erga-edit-button:hover { background: #2f3b4d; }
