@@ -37,7 +37,7 @@ import * as Scope from "effect/Scope";
 import { agentConfigFrom } from "../agent";
 import { DIRECTORY_EVERY_MS, nameOf, namingFor, throttle, UNTITLED, type DocName, type DocRow } from "../directory";
 import { afterUnedited, titleOf } from "../front";
-import { makeHost } from "../host";
+import { cleanRel, docFile, makeHost } from "../host";
 import { agentToolsFor } from "../server-tools";
 import { FileStore, Room, StateStore, StoreError } from "../room";
 import { assets, isTextPath, files as texts } from "../src/room/doc";
@@ -323,6 +323,9 @@ export class DocHost extends DurableObject<Env> {
   async fetch(request: Request): Promise<Response> {
     // The dev server, bringing the files of a document on disk: before the room opens, which waits for them.
     if (new URL(request.url).pathname == "/api/mirror") return this.mirror(request);
+    // Someone viewing it: its files straight from storage while the room isn't open, without opening it.
+    const stored = this.opened || this.open ? null : await this.storedFile(request);
+    if (stored) return stored;
     const opened = await (this.open ??= this.load());
     // Not made yet: asked again next time, since it may be by then (made, or linked from disk).
     if (!opened) { this.open = null; return new Response("No such document", { status: 404 }); }
@@ -336,6 +339,27 @@ export class DocHost extends DurableObject<Env> {
       return new Response("Not found", { status: 404 });
     }
     return opened.handler(request);
+  }
+
+  /**
+   * A GET of one of its files (/doc/...) while the room isn't open: from
+   * storage, which holds the latest text then (the room writes every edit
+   * there before it closes), so viewing a document never waits for its room
+   * to open. Null for anything else (and for a document on disk, whose files
+   * are the dev server's), which opens the room as before.
+   */
+  private async storedFile(request: Request): Promise<Response | null> {
+    const url = new URL(request.url);
+    if ((request.method != "GET" && request.method != "HEAD") || !url.pathname.startsWith("/doc/") || request.headers.get("upgrade")) return null;
+    const meta = await this.ctx.storage.get<Meta>(META);
+    if (!meta || meta.disk) return null;
+    // doc/ itself is its page (front.ts's frame asks for it so, not knowing its name).
+    const rel = url.pathname == "/doc/" ? meta.index : cleanRel(url.pathname.slice("/doc/".length));
+    if (!rel) return new Response("Not found", { status: 404, headers: { "Content-Type": "text/plain; charset=utf-8" } });
+    const bytes = await this.ctx.storage.get<Uint8Array>(FILE + rel);
+    if (!bytes) return new Response("Not found", { status: 404, headers: { "Content-Type": "text/plain; charset=utf-8" } });
+    const r = docFile(rel, bytes, request.headers.get("if-none-match"));
+    return new Response(request.method == "HEAD" ? null : r.body, { status: r.status, headers: { "Content-Type": r.type, ...r.headers, "Server-Timing": 'doc;desc="stored"' } });
   }
 
   /** The dev server's socket to the files of a document on disk (the front door checked its secret; so does this). */

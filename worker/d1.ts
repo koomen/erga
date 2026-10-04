@@ -5,13 +5,14 @@ import { parseDeployed } from "../config";
 import { Directory, type Param, type Sql } from "../directory";
 import { Tokens } from "../tokens";
 import type { Env } from "./env";
+import { counted } from "./timing";
 
 const sqlOn = (db: D1Database): Sql => {
   const statement = (q: string, params: Param[]) => db.prepare(q).bind(...params);
   return {
-    all: async <T>(q: string, ...params: Param[]) => (await statement(q, params).all<T>()).results,
-    run: async (q, ...params) => { await statement(q, params).run(); },
-    batch: async (statements) => { await db.batch(statements.map(([q, ...params]) => statement(q, params))); },
+    all: <T>(q: string, ...params: Param[]) => counted("db", async () => (await statement(q, params).all<T>()).results),
+    run: (q, ...params) => counted("db", async () => { await statement(q, params).run(); }),
+    batch: (statements) => counted("db", async () => { await db.batch(statements.map(([q, ...params]) => statement(q, params))); }),
   };
 };
 

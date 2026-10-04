@@ -57,7 +57,16 @@ const cookie = (request: Request, name: string, value: string, maxAge: number) =
  * second person), else whoever this browser signed in as, else DEV_LOGIN,
  * unless it signed out (then nobody, until it signs in again: /auth/github).
  */
-export async function sessionOf(env: Env, request: Request): Promise<Session | null> {
+export function sessionOf(env: Env, request: Request): Promise<Session | null> {
+  // Asked more than once for one request (the route, then the corner, account.ts): worked out once.
+  let session = sessions.get(request);
+  if (!session) sessions.set(request, session = findSession(env, request));
+  return session;
+}
+
+const sessions = new WeakMap<Request, Promise<Session | null>>();
+
+async function findSession(env: Env, request: Request): Promise<Session | null> {
   const url = new URL(request.url);
   const dev = isDev(env, url);
   const as = dev ? url.searchParams.get("user")?.trim().slice(0, 40) : null;

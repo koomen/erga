@@ -33,6 +33,7 @@ import { finishSignIn, isDev, mintTestToken, sessionOf, signOut, startSignIn, te
 import { directoryOf, tokensOf } from "./d1";
 import { deployDoor } from "./deploy";
 import type { Env } from "./env";
+import { counted, simulateLatency, tallied } from "./timing";
 
 export { Deployer } from "./deployer";
 export { DocHost } from "./doc-host";
@@ -54,15 +55,38 @@ for (const [path, text] of Object.entries(import.meta.glob("../landing/**", { qu
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
-    const response = await route(request, env, url);
-    // Every page of the site's own has who you are in its upper right (account.ts); a document's pages origin never does.
-    if (pagesSite(env, url) || response.status == 101) return response;
-    return withAccount(response, async () => {
-      const session = await sessionOf(env, request);
-      return accountOf(session, !!session && !session.test && (await directoryOf(env).users.isAdmin(whoOf(session))));
-    }, url.pathname + url.search);
+    const started = Date.now();
+    if (env.ERGA_REMOTE_LATENCY_MS) simulateLatency(Number(env.ERGA_REMOTE_LATENCY_MS));
+    const { value: answer, timing } = await tallied(async () => {
+      const response = await route(request, env, url);
+      // Every page of the site's own has who you are in its upper right (account.ts); a document's pages origin never does.
+      if (response.status == 101 || pagesSite(env, url)) return response;
+      return withAccount(response, async () => {
+        const session = await sessionOf(env, request);
+        return accountOf(session, !!session && !session.test && (await directoryOf(env).users.isAdmin(whoOf(session))));
+      }, url.pathname + url.search);
+    });
+    if (answer.status == 101) return answer;
+    return timed(answer, [`worker;dur=${Date.now() - started}`, ...timing]);
   },
 } satisfies ExportedHandler<Env>;
+
+/**
+ * How long the Worker took over a response (Server-Timing, which the browser's
+ * network panel and tests/bench.ts show): time waiting on the database, a
+ * document's Durable Object and the like (a Worker's clock moves only across I/O).
+ */
+function timed(response: Response, entries: string[]): Response {
+  try {
+    for (const e of entries) response.headers.append("Server-Timing", e);
+    return response;
+  } catch {
+    // Immutable headers (a fetched response passed through): a copy.
+    const headers = new Headers(response.headers);
+    for (const e of entries) headers.append("Server-Timing", e);
+    return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+  }
+}
 
 /** Whose the front page is when the server makes it: locally DEV_LOGIN, else the first of ADMINS; the rest of ADMINS may edit it. */
 const landingOf = (env: Env): NonNullable<Platform["landing"]> => {
@@ -119,13 +143,13 @@ const platform = (env: Env): Platform => {
     tokens: tokensOf(env),
     testToken: (login) => mintTestToken(env, login),
     docs: {
-      create: (doc, files, index, opts) => host(doc).create(doc.owner, doc.id, files, index, opts),
-      publish: (doc, files, remove) => host(doc).publish(files, remove),
-      paths: (doc) => host(doc).paths(),
-      index: (doc) => host(doc).index(),
-      snapshot: (doc) => host(doc).snapshot(),
-      exists: (doc) => host(doc).exists(),
-      delete: (doc) => host(doc).delete(),
+      create: (doc, files, index, opts) => counted("doc", () => host(doc).create(doc.owner, doc.id, files, index, opts)),
+      publish: (doc, files, remove) => counted("doc", () => host(doc).publish(files, remove)),
+      paths: (doc) => counted("doc", () => host(doc).paths()),
+      index: (doc) => counted("doc", () => host(doc).index()),
+      snapshot: (doc) => counted("doc", () => host(doc).snapshot()),
+      exists: (doc) => counted("doc", () => host(doc).exists()),
+      delete: (doc) => counted("doc", () => host(doc).delete()),
       list: async (owner) => {
         return Promise.all((await directory.list(owner)).map(async (d) => {
           // In local development a document may be on disk: only it knows where.
@@ -137,7 +161,7 @@ const platform = (env: Env): Platform => {
           };
         }));
       },
-      fetch: (doc, request) => host(doc).fetch(request),
+      fetch: (doc, request) => counted("doc", () => host(doc).fetch(request)),
     },
   };
 };
