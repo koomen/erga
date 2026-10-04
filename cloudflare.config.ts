@@ -15,7 +15,7 @@ import { readFileSync } from "node:fs";
 // Production's names (its Worker, database, domain, pages route, public settings): the same list the deploy
 // pipeline deploys from (deploy/targets.json, typed by deploy/targets.ts), so there's one source of truth for both.
 // Read as a file, not imported: the dev server can't load a module the config imports into the Worker too.
-const TARGETS = JSON.parse(readFileSync(new URL("./deploy/targets.json", import.meta.url), "utf8"));
+const TARGETS = JSON.parse(readFileSync(decodeURIComponent(new URL("./deploy/targets.json", import.meta.url).pathname), "utf8"));
 const PROD = { ...TARGETS.targets.production, vars: { ADMINS: TARGETS.admins, ...TARGETS.targets.production.vars } };
 
 /** The local database's id (the dev server's D1): any UUID. Production's is found by name (migrate.ts). */
