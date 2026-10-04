@@ -45,13 +45,13 @@
     /* The floating UI takes its colours from the page under it rather than
        the editor's own: a card lifted from the page's own colour, with light
        or dark text to suit it. */
-    html.page-light body:not(.source) :is(.agent, .agent-fab, .chrome, .fmt, .refresh-pill) {
+    html.page-light body:not(.source) :is(.agent, .agent-fab, .chrome, .fmt, .refresh-pill, .help.pages) {
       --fg: #1c1c1f; --fg-strong: #0d0d0f; --soft: #6b6b73; --chrome: #9a9aa2; --chrome-hover: #3f3f46;
       --rule: rgba(0, 0, 0, 0.08); --code-bg: rgba(0, 0, 0, 0.05); --caret: #3b7cf0; --panel-border: rgba(0, 0, 0, 0.07);
       --bg: color-mix(in srgb, var(--page-bg) 45%, #fff);
       --panel-bg: var(--bg);
     }
-    html.page-dark body:not(.source) :is(.agent, .agent-fab, .chrome, .fmt, .refresh-pill) {
+    html.page-dark body:not(.source) :is(.agent, .agent-fab, .chrome, .fmt, .refresh-pill, .help.pages) {
       --fg: #cacad2; --fg-strong: #ececf1; --soft: #9a9aa4; --chrome: #74747d; --chrome-hover: #dcdce2;
       --rule: rgba(255, 255, 255, 0.08); --code-bg: rgba(255, 255, 255, 0.07); --caret: #6aa1ff; --panel-border: rgba(255, 255, 255, 0.08);
       --bg: color-mix(in srgb, var(--page-bg) 90%, #fff);
@@ -378,7 +378,8 @@
     }
 
     /* The document's title, after Documents as a breadcrumb (the arrow is Documents', inside its
-       box); click it to rename the document or change its address (the card below it). */
+       box); click it for the document's pages (the card below it), whose first row, the document
+       itself, has the pencil that renames it or changes its address (the naming card). */
     /* The arrow sits midway between the two words' ink: the right side has the title's padding too, so its margins differ. */
     .nav-back:has(+ .nav-title:not([hidden]))::after { content: "›"; margin: 0 -5px 0 11px; color: var(--chrome); opacity: 0.55; font-weight: 400; }
     .nav-title {
@@ -390,6 +391,10 @@
     .nav-title span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .nav-title:hover, .nav-title[aria-expanded="true"] { background: color-mix(in srgb, var(--chrome) 12%, transparent); }
     .nav-title:focus-visible { outline: 2px solid var(--caret); outline-offset: 1px; }
+    /* The title's caret: it opens the document's pages (the tree, tree.ts), where the document is renamed too. */
+    .nav-title .nav-caret { flex: none; align-self: center; width: 14px; height: 14px; margin: 1px -2px 0 3px; fill: none; stroke: var(--chrome); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; transition: transform 150ms ease; }
+    .nav-title[aria-expanded="true"] .nav-caret { transform: rotate(180deg); }
+    .help.pages { width: min(320px, calc(100vw - 28px)); padding: 8px; }
     .help.naming { right: auto; left: max(14px, var(--safe-l)); width: min(340px, calc(100vw - 28px)); transition: left var(--agent-ms) var(--agent-ease); }
     .naming label { display: block; margin: 0 0 4px; font-size: 12px; color: var(--soft); }
     .naming-input, .naming-addr {
@@ -459,7 +464,7 @@
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.5 6 8.5 12l6 6"/></svg>
       <span>Documents</span>
     </a>
-    <button type="button" class="nav-title" id="doc-title" aria-haspopup="dialog" aria-expanded="false" aria-controls="naming" hidden><span id="doc-title-text"></span></button>
+    <button type="button" class="nav-title" id="doc-title" aria-haspopup="dialog" aria-expanded="false" aria-controls="pages" hidden><span id="doc-title-text"></span><svg class="nav-caret" viewBox="0 0 24 24" aria-hidden="true"><path d="m8 10 4 4 4-4"/></svg></button>
   </nav>
 
   <header class="chrome chrome-top" aria-label="Controls">
@@ -528,6 +533,10 @@
       <button type="button" id="sharing-copy" class="share-primary">Copy link</button>
       <span id="sharing-status" class="share-status" role="status" aria-live="polite"></span>
     </div>
+  </div>
+
+  <div id="pages" class="help naming pages" hidden role="dialog" aria-label="Pages">
+    <div id="pages-tree"></div>
   </div>
 
   <div id="naming" class="help naming" hidden role="dialog" aria-label="Title and address">
