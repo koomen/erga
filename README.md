@@ -39,7 +39,10 @@ serves the app's routes (`front.ts`). Its pages:
   with small icons at the top right like the editor's: Clone (a copy of your
   own, in the editor: `/new?from=<id>`) for anyone who may see it, and the
   pencil (Edit) for those who may edit it. In the editor the pencil is blue
-  (on): clicking it goes back to the viewer. The viewer and the editor are one page (see [One page, viewing or
+  (on): clicking it goes back to the viewer. Beside it, right to left: the
+  view (page, Markdown or HTML), share with people (for the owner: who may
+  view or edit it, as on My Documents), share with an agent, track changes
+  and pause. The viewer and the editor are one page (see [One page, viewing or
   editing](#one-page-viewing-or-editing)): the pencil switches
   between them without a reload, and the document doesn't move.
 - **The front page**, `/`: the viewer on the landing document (see [The front

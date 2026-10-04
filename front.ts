@@ -434,8 +434,10 @@ async function viewDocument(platform: Platform, request: Request, doc: DocRow, s
     : "";
   // What the editor needs to know, for whoever may go into it: where its document's host and frame are, and the links on its avatar.
   const editable = editing || canEdit;
+  // Its owner shares it with people from the editor too (/docs/share).
+  const canShare = editable && !!session && !session.agent && !session.test && (await platform.directory.may(whoOf(session), "share", doc));
   const meta = editable && session
-    ? `<meta name="erga-pages" content="${esc(host)}"><meta name="erga-base" content="/d/${doc.id}"><meta name="erga-address" content="${esc(address)}">${await accountMeta(platform, session)}`
+    ? `<meta name="erga-pages" content="${esc(host)}"><meta name="erga-base" content="/d/${doc.id}"><meta name="erga-address" content="${esc(address)}">${canShare ? `<meta name="erga-share" content="${esc(link("/docs/share", session))}">` : ""}${await accountMeta(platform, session)}`
     : "";
   const src = index ? `${host}?view=${encodeURIComponent(index)}` : host;
   // Editing, the window takes the page's background (remembered from last time, main.ts) before the page has loaded, as the editor's own canvas does.

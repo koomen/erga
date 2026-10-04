@@ -304,6 +304,7 @@ declare global {
     showChrome();
     toggleHelp(false);
     toggleShare(false);
+    toggleSharing(false);
     toggleAccount(false);
     slugTouched = false;
     $("naming-prefix").textContent = `/${docName!.owner}/`;
@@ -573,7 +574,7 @@ declare global {
     account.hidden = !open;
     accountBtn?.setAttribute("aria-expanded", String(open));
     if (!open) return;
-    showChrome(); toggleHelp(false); toggleShare(false); toggleNaming(false);
+    showChrome(); toggleHelp(false); toggleShare(false); toggleSharing(false); toggleNaming(false);
     $("account-name").textContent = me.name;
     $("account-login").textContent = me.name.toLowerCase() == me.user ? "" : me.user;
     const set = (id: string, href: string | undefined) => { const a = $(id) as HTMLAnchorElement; a.hidden = !href; if (href) a.href = href; };
@@ -603,7 +604,7 @@ declare global {
   let anchor: { x: number; y: number; t: number } | null = null;
   let lastKeyAt = 0;
   function hideChrome() {
-    if (chromeHidden || !$("help").hidden || !$("share").hidden || !$("naming").hidden || !$("account").hidden) return;
+    if (chromeHidden || !$("help").hidden || !$("share").hidden || !$("sharing").hidden || !$("naming").hidden || !$("account").hidden) return;
     chromeHidden = true;
     anchor = null;
     document.body.classList.add("chrome-hidden");
@@ -641,7 +642,7 @@ declare global {
   function toggleHelp(force?: boolean) {
     const open = typeof force == "boolean" ? force : help.hidden;
     help.hidden = !open;
-    if (open) { showChrome(); toggleShare(false); toggleNaming(false); toggleAccount(false); }
+    if (open) { showChrome(); toggleShare(false); toggleSharing(false); toggleNaming(false); toggleAccount(false); }
   }
 
   // Share with an external agent: a prompt carrying this page's API and your
@@ -695,6 +696,7 @@ Once you've read the guide, await further instructions.`;
     if (!open) return;
     showChrome();
     toggleHelp(false);
+    toggleSharing(false);
     toggleNaming(false);
     toggleAccount(false);
     if (!shareToken) loadShare(false);
@@ -707,6 +709,81 @@ Once you've read the guide, await further instructions.`;
     shareStatus.textContent = copied ? "Copied" : "Couldn't reach the clipboard: the prompt is selected, press ⌘C.";
   });
   shareRotate.addEventListener("click", () => { if (shareRotate.getAttribute("aria-disabled") != "true") loadShare(true); });
+
+  // Share with people: who may view or edit the document, and anyone signed
+  // in with the link. Only its owner may (the front door says where, meta
+  // erga-share); each change is saved as it's made (/docs/share, as on My
+  // Documents' share dialog).
+  const sharing = $("sharing"), peopleBtn = $("btn-people");
+  const sharingList = $("sharing-list"), sharingAdd = $("sharing-add") as HTMLFormElement;
+  const sharingAnyone = $("sharing-anyone") as HTMLSelectElement, sharingStatus = $("sharing-status");
+  const shareAt = document.querySelector<HTMLMetaElement>('meta[name="erga-share"]')?.content ?? "";
+  const docId = BASE.replace(/^\/d\//, "");
+  peopleBtn.hidden = !shareAt;
+  type Shared = { permissions: { login: string; role: string }[]; notUsers?: string[] };
+  const tellSharing = (text: string, error = false) => { sharingStatus.textContent = text; sharingStatus.classList.toggle("error", error); };
+  async function shareCall(change?: { login: string; role: string }): Promise<Shared> {
+    const r = await fetch(change ? shareAt : `${shareAt}${shareAt.includes("?") ? "&" : "?"}id=${docId}`,
+      change ? { method: "POST", body: new URLSearchParams({ id: docId, ...change }), headers: { Accept: "application/json" }, signal: AbortSignal.timeout(10_000) } : { signal: AbortSignal.timeout(10_000) }).catch(() => null);
+    const body = r ? await r.json().catch(() => ({})) : {};
+    if (!r || !r.ok) throw new Error(body.error || "Couldn't reach the server: try again.");
+    return body as Shared;
+  }
+  function renderSharing({ permissions, notUsers }: Shared) {
+    sharingList.textContent = "";
+    const pending = new Set(notUsers ?? []);
+    let anyone = "none";
+    for (const p of permissions) {
+      if (p.login == "*") { anyone = p.role; continue; }
+      const li = document.createElement("li");
+      const who = Object.assign(document.createElement("span"), { className: "who", textContent: p.login });
+      if (p.login == me.user) who.append(Object.assign(document.createElement("small"), { textContent: "you" }));
+      if (pending.has(p.login)) who.append(Object.assign(document.createElement("small"), { className: "pending", textContent: "can't sign in yet", title: "Not a user of this server: an admin can add them" }));
+      li.append(who);
+      if (p.role == "owner") li.append(Object.assign(document.createElement("span"), { className: "fixed", textContent: "Owner" }));
+      else {
+        const role = document.createElement("select");
+        role.setAttribute("aria-label", `Role for ${p.login}`);
+        for (const [v, t] of [["editor", "Can edit"], ["viewer", "Can view"]]) role.append(new Option(t, v, false, v == p.role));
+        role.addEventListener("change", () => changeSharing(p.login, role.value));
+        const x = Object.assign(document.createElement("button"), { type: "button", className: "remove", textContent: "×", title: `Stop sharing with ${p.login}` });
+        x.setAttribute("aria-label", x.title);
+        x.addEventListener("click", () => changeSharing(p.login, "none"));
+        li.append(role, x);
+      }
+      sharingList.append(li);
+    }
+    sharingAnyone.value = anyone;
+  }
+  async function changeSharing(login: string, role: string): Promise<boolean> {
+    tellSharing("Saving…");
+    try { renderSharing(await shareCall({ login, role })); tellSharing(""); return true; }
+    catch (e) { tellSharing((e as Error).message, true); return false; }
+  }
+  function toggleSharing(force?: boolean) {
+    const open = typeof force == "boolean" ? force : sharing.hidden;
+    if (open && !shareAt) return;
+    sharing.hidden = !open;
+    peopleBtn.setAttribute("aria-expanded", String(open));
+    if (!open) return;
+    showChrome(); toggleHelp(false); toggleShare(false); toggleNaming(false); toggleAccount(false);
+    sharingAdd.reset();
+    tellSharing("Loading…");
+    (sharingAdd.elements.namedItem("login") as HTMLInputElement).focus();
+    shareCall().then((d) => { renderSharing(d); tellSharing(""); }, (e: Error) => tellSharing(e.message, true));
+  }
+  peopleBtn.addEventListener("click", () => toggleSharing());
+  sharingAdd.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const input = sharingAdd.elements.namedItem("login") as HTMLInputElement;
+    const login = input.value.trim().replace(/^@/, "");
+    if (login && (await changeSharing(login, (sharingAdd.elements.namedItem("role") as HTMLSelectElement).value))) input.value = "";
+  });
+  sharingAnyone.addEventListener("change", () => changeSharing("*", sharingAnyone.value));
+  $("sharing-copy").addEventListener("click", async () => {
+    const url = location.origin + (docName?.address ?? location.pathname.replace(/\/edit\/?$/, ""));
+    tellSharing(await navigator.clipboard.writeText(url).then(() => `Link copied: ${url}`, () => url));
+  });
   if (!isMac) {
     for (const k of help.querySelectorAll("kbd")) {
       if (k.textContent == "⌘") k.textContent = "Ctrl";
@@ -834,6 +911,7 @@ Once you've read the guide, await further instructions.`;
       if (!help.hidden) toggleHelp(false);
       if (!naming.hidden) toggleNaming(false);
       if (!share.hidden) toggleShare(false);
+      if (!sharing.hidden) toggleSharing(false);
       showPauseCard(false);
     },
     onActivity: (kind) => {
@@ -1473,6 +1551,7 @@ Once you've read the guide, await further instructions.`;
       else if (!help.hidden) toggleHelp(false);
       else if (!naming.hidden) toggleNaming(false);
       else if (!share.hidden) toggleShare(false);
+      else if (!sharing.hidden) toggleSharing(false);
       else if (!$("pause-card").hidden) showPauseCard(false);
       else if (agentPanel.contains(document.activeElement)) toggleAgent(false);
       else if (modeEl.classList.contains("open")) closeModeMenu();
@@ -1557,6 +1636,7 @@ Once you've read the guide, await further instructions.`;
   document.addEventListener("mousedown", (e) => {
     if (!help.hidden && !help.contains(e.target as Node)) toggleHelp(false);
     if (!share.hidden && !share.contains(e.target as Node) && !shareBtn.contains(e.target as Node)) toggleShare(false);
+    if (!sharing.hidden && !sharing.contains(e.target as Node) && !peopleBtn.contains(e.target as Node)) toggleSharing(false);
     if (!account.hidden && !account.contains(e.target as Node) && !accountBtn?.contains(e.target as Node)) toggleAccount(false);
     if (!$("pause-card").hidden && !$("pause-card").contains(e.target as Node) && !$("btn-pause").contains(e.target as Node)) showPauseCard(false);
   });
@@ -1571,7 +1651,7 @@ Once you've read the guide, await further instructions.`;
       return;
     }
     if (mode != "text") setMode("text");
-    toggleHelp(false); toggleShare(false); toggleNaming(false); toggleAccount(false); showPauseCard(false);
+    toggleHelp(false); toggleShare(false); toggleSharing(false); toggleNaming(false); toggleAccount(false); showPauseCard(false);
     hideFmt();
     document.body.classList.remove("agent-open");
     agentPanel.inert = true;

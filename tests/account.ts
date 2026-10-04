@@ -124,6 +124,19 @@ try {
   expect(await p.eval<boolean>(`document.getElementById("account").hidden`), "Escape closes it");
   ok("in the editor, your avatar opens the menu");
 
+  // Sharing with people, from the editor: its owner adds someone, sees them listed, and takes them off again.
+  await clickOn(p, "#btn-people");
+  await until(() => p.eval<boolean>(`!document.getElementById("sharing").hidden && !!document.querySelector("#sharing-list li")`), 5000, "the people button opens who has the document");
+  await p.eval(`(() => { const f = document.getElementById("sharing-add"); f.elements.login.value = "ada"; f.elements.role.value = "viewer"; f.requestSubmit(); })()`);
+  await until(() => p.eval<boolean>(`[...document.querySelectorAll("#sharing-list li")].some((li) => li.textContent.startsWith("ada") && li.querySelector("select")?.value == "viewer")`), 5000, "adding someone lists them, with their role");
+  await p.screenshot(join(SHOTS, "account-share-people.png"));
+  await p.eval(`[...document.querySelectorAll("#sharing-list li")].find((li) => li.textContent.startsWith("ada")).querySelector(".remove").click()`);
+  await until(() => p.eval<boolean>(`![...document.querySelectorAll("#sharing-list li")].some((li) => li.textContent.startsWith("ada"))`), 5000, "and taking them off unlists them");
+  const order = await p.eval<string>(`[...document.querySelectorAll(".chrome-top > button:not([hidden]), .chrome-top > .mode, .chrome-top > a:not([hidden])")].map((e) => e.id).join(" ")`);
+  expect(order == "btn-pause btn-track btn-share btn-people mode btn-edit", "the controls, right to left from your avatar: edit, view, share with people, share with an agent, track changes, pause", order);
+  await p.key("Escape");
+  ok("in the editor, its owner shares it with people");
+
   // Out of the editor and back, without leaving the page: the address and the controls change; the document doesn't move.
   const h1 = async () => (await p.inPage<number | null>(`document.querySelector("h1") ? Math.round(document.querySelector("h1").getBoundingClientRect().top) : null`)).find((t) => t != null) ?? null;
   const visible = (sel: string) => p.eval<boolean>(`(() => { const el = document.querySelector(${JSON.stringify(sel)}); return !!el && getComputedStyle(el).visibility != "hidden" && getComputedStyle(el).opacity == "1"; })()`);
