@@ -84,7 +84,7 @@ const STYLE = `
   .who { padding: 0 8px; font-size: 12px; color: var(--soft); max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .sha { padding: 0 6px; font: 11.5px var(--font-mono); color: var(--chrome); }
   .row time { margin: 0; justify-content: flex-end; padding-right: 8px; font-size: 12px; color: var(--soft); }
-  .live { justify-content: flex-start; gap: 4px; padding-left: 10px; }
+  .deps { justify-content: flex-start; gap: 4px; padding-left: 10px; }
   /* A deploy: its state as a badge, and when. Live: solid green. Deployed before: green outline. Running: orange, turning.
      Failed: red outline. Cancelled: grey, dashed, struck through. */
   .dep { display: inline-flex; align-items: center; gap: 5px; height: 20px; padding: 0 7px; border: 0; border-radius: 999px; font: 600 11px var(--font-text); white-space: nowrap; cursor: pointer;
@@ -115,7 +115,7 @@ const STYLE = `
   @media (max-width: 760px) { .grid { grid-template-columns: 22px minmax(0, 1fr) auto 84px 84px; } .who, .grid > .head.who-h, .row time, .grid > .head.time-h { display: none; } .target { max-width: 82px; } .target b { font-size: 10.5px; } .target .st span { display: none; }
     .dep { padding: 0 6px; font-size: 10.5px; gap: 4px; } .dep-at { display: none; } .legend .dep { display: none; } .legend .sep { display: none; }
     /* Short words on a phone: live, ok, failed, run, stop. */
-    .grid .dep[data-s] .w { display: none; } .grid .dep[data-s]::after { content: attr(data-s); } .grid .dep.cancelled[data-s]::after { text-decoration: line-through; } .live { padding-left: 6px; } }
+    .grid .dep[data-s] .w { display: none; } .grid .dep[data-s]::after { content: attr(data-s); } .grid .dep.cancelled[data-s]::after { text-decoration: line-through; } .deps { padding-left: 6px; } }
   .boxes { display: grid; grid-template-columns: 1fr 1.3fr; gap: 18px; margin-top: 18px; }
   @media (max-width: 760px) { .boxes { grid-template-columns: 1fr; } }
   .box { border: 1px solid var(--rule); border-radius: 12px; padding: 14px 16px; min-width: 0; }
@@ -281,7 +281,7 @@ git push erga HEAD:staging</code></pre>
         '<span class="rail ' + (up ? "up " : "") + (down ? "down " : "") + (x.inMain ? "on-main" : "") + '"><i class="dot ' + kind + '" title="' + (x.inMain ? "On main (and staging)" : "Only on staging") + '"></i></span>' +
         '<span class="subj" title="' + esc(title) + '"><span>' + esc(x.subject) + "</span>" + (x.inMain ? "" : '<button class="here" type="button" data-merge="' + x.sha + '" title="Move main forward to this commit">Merge to here</button>') + "</span>" +
         '<span class="who">' + esc(x.author) + '</span><code class="sha">' + x.sha.slice(0, 7) + '</code><time datetime="' + new Date(x.at).toISOString() + '">' + ago(x.at) + "</time>" +
-        TARGETS.map((n) => '<span class="live" data-target="' + n + '">' + deployCell(n, x.sha, groups[n]) + "</span>").join("");
+        TARGETS.map((n) => '<span class="deps" data-target="' + n + '">' + deployCell(n, x.sha, groups[n]) + "</span>").join("");
       grid.insertBefore(r, prev ? prev.nextSibling : document.getElementById("target-production").parentElement.nextSibling);
       prev = r;
       // The count opened: the commit's older deploys, under it, in each target's column.
