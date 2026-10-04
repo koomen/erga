@@ -50,6 +50,9 @@ worktree, and report on the board as you go. Your first message names the task, 
   Chrome takes it) or a PNG you took yourself (e.g. after interacting, with tests/cdp.ts).
 - Commit everything (uncommitted work can't be merged), then mcp__task-queue__task_done with a summary: what changed,
   how you tested it, what to look at. If you can't finish, mcp__task-queue__task_fail with why.
+- Write summaries (in task_done and your final reply) for the user, in plain language: what you built or changed, how
+  to use it, how you tested it, what to look at. Short and clear; no implementation trivia, strings of internal names
+  or arrow chains.
 - Never merge or push: the user merges from the board.
 
 If the task-queue tools are missing, development/task-queue/tq in the worktree does the same from Bash (tq help).
@@ -94,7 +97,7 @@ const TOOLS = [
   {
     name: 'task_done',
     description: 'Mark a task complete (ready for the user to merge): everything committed, tested, previewed.',
-    inputSchema: { type: 'object', properties: { id: { type: 'number' }, summary: { type: 'string', description: 'What changed, how it was tested, what to look at' }, url: { type: 'string', description: 'Where to look, if not the preview URL already set' } }, required: ['id', 'summary'] },
+    inputSchema: { type: 'object', properties: { id: { type: 'number' }, summary: { type: 'string', description: 'For the user, in plain language: what changed, how to use it, how it was tested, what to look at' }, url: { type: 'string', description: 'Where to look, if not the preview URL already set' } }, required: ['id', 'summary'] },
   },
   { name: 'task_fail', description: "Mark a task failed, with why.", inputSchema: { type: 'object', properties: { id: { type: 'number' }, reason: { type: 'string' } }, required: ['id', 'reason'] } },
   { name: 'task_list', description: 'List the tasks in the queue that are not done.', inputSchema: { type: 'object', properties: {} } },
