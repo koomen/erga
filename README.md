@@ -63,6 +63,8 @@ serves the app's routes (`front.ts`). Its pages:
 - **Admin settings**, `/admin`: the server's settings and users, for admins.
 - **Deploy your own**, `/deploy`: anyone signed in, by default (see
   [Deploy your own](#deploy-your-own)).
+- **Source**, `/source`: Erga's own repository, for admins (see [Erga's own
+  source](#ergas-own-source)).
 
 The user menu in the upper right of every page reaches Documents,
 Settings and (for admins) Admin settings. Clone and Edit sign you in with
@@ -437,6 +439,146 @@ the deploy against it step by step (retries, a stopped run run again, assets
 one at a time), and `bun tests/deploy.ts` clicks through the whole page in
 headless Chrome (OAuth, buying a domain, deploying, a failure, who may open
 it).
+
+### Erga's own source
+
+Erga's canonical repository is hosted by Erga itself, in Cloudflare
+Artifacts ("versioned storage that speaks Git": each repository a Durable
+Object running a Git server). One repository, `erga`, with two branches:
+**staging** and **main**. GitHub (github.com/koomen/erga) stays, as a
+mirror. Edits are pushed to Erga; deploys build from Erga (the deploy
+pipeline's `deployHook`, below).
+
+**How Erga uses Artifacts.** Through the Worker's Artifacts binding
+(`ARTIFACTS`), for two things only: the repository's Git remote
+(`repo.info().remote`) and short-lived repo-scoped tokens for it
+(`repo.createToken("read" | "write", 3600)`, kept until ten minutes before
+they expire; `worker/artifacts.ts`). Everything else is plain Git over
+HTTPS, the protocol every git client speaks (`source/remote.ts`: protocol
+v2's `ls-refs` and `fetch`, and v0's `receive-pack`). Not the REST API: that
+needs a Cloudflare API token with Artifacts Edit as a secret, which can do
+far more than one repository's tokens. And Erga proxies Git itself, with its
+own sign-in in front, rather than handing out Artifacts' remote: Artifacts'
+tokens don't know Erga's admins, Artifacts can't hold Erga's rules (two
+branches, main only forward), and every branch move must go through Erga so
+it can tell the Source page, the deploy pipeline and the mirror.
+
+**The Git endpoint**, `https://<server>/git/erga.git` (`worker/source.ts`,
+`source/http.ts`): clone, fetch, pull and push, over Git's smart HTTP. Git
+asks for a username and password: any username, and one of your agent
+tokens (Settings) as the password; admins only (no token, or one that isn't:
+401, which makes git ask; a user who isn't an admin: 403).
+
+    git remote add erga https://erga.dev/git/erga.git
+    git fetch erga
+    git push erga HEAD:staging
+
+Clones and fetches stream straight through to Artifacts with a read token.
+A push is Erga's (`source/repo.ts`, `SourceRepo.receive`, in one Durable
+Object, `SourceHost`, `worker/source-host.ts`, so pushes and merges happen
+one at a time): Erga advertises only staging and main; a push to anything
+else, or a delete, is refused; the objects go to Artifacts under a
+quarantine branch (`refs/heads/erga-incoming/<id>-<branch>`); Erga reads
+the new commits back and checks them (main takes fast-forwards only, even
+`--force`; staging takes anything); then it moves each branch from where it
+was (Artifacts refuses a move whose old value is stale, so two pushes at
+once can't lose one) and drops the quarantine branches. `git push` shows
+what happened (`remote: Erga: main is now 1a2b3c4 (3 new commits).`).
+
+Erga keeps an index of the commits (parents, subject, author, times) in
+that Durable Object's SQLite: "is this a fast-forward", "where do these
+branches meet" and "the last 25 commits" never ask Artifacts. Commits never
+change, so it's a cache that's always right; anything missing (a push made
+straight to Artifacts) is fetched from Artifacts when it's needed.
+
+**Merging**, `POST /api/source/merge { from: "staging", to: "main" }`
+(admins; the Source page's button): a fast-forward when main is behind,
+else a merge commit made by Erga ("Merge staging into main", both parents,
+by the admin who asked). The merge is three-way against the branches' merge
+base, path by path (`source/merge.ts`): a path one side changed takes that
+side; a text file both changed merges line by line (diff3); changes to the
+same or touching lines, a file deleted on one side and edited on the other,
+or a binary file both changed is a conflict, and the merge is refused (409)
+naming the files, to merge by hand (pull, merge, push). Answers `{ commit,
+fastForward, upToDate }` or `{ error }`.
+
+**The GitHub mirror.** After each branch move, in the background, Erga
+pushes staging and main to GitHub (`GITHUB_MIRROR_URL`, github.com/koomen/erga
+by default, with the `GITHUB_MIRROR_TOKEN` secret: a token that may push
+there). A failure is recorded and shown, never blocks a push or a merge.
+main moves on GitHub only forward: if GitHub's main has commits Erga
+doesn't (someone pushed there directly), the mirror stops for main and
+says so, rather than drop them; pull them into Erga's main and it carries
+on. With no token there's no mirror (the page says so). `POST
+/api/source/mirror` runs it now.
+
+**The Source page**, `/source` (`source/page.ts`, admins; breadcrumbs Erga ›
+Source): two lanes, staging and main, each with its last 25 commits as dots
+on a line, as the task queue board draws main. On staging, a filled dot is a
+commit only on staging; a hollow one main has too; a diamond is a merge.
+Each lane shows its branch's deploy (from `GET /api/deploys`; "not set up
+yet" until the pipeline is there), the page shows how many commits Merge
+would bring, the mirror's status (with Push now), the last moves, and the
+`git remote add` lines. It updates by itself: `GET /api/events` (server-sent
+events for admins' pages, `worker/events.ts`, one Durable Object,
+`EventHub`) sends `{ "type": "source" }` when a branch moves or the mirror's
+status changes, and `{ "type": "deploys" }` for deploys; anything in the
+Worker publishes with `publishEvent(env, event)`.
+
+`GET /api/source/branches` → `{ branches: [ { name, commit, commits: [ {
+sha, subject, author, email, at, parents, inMain } ], ahead } ], mirror: {
+url, lastPushAt, error, state, refs }, moves, remote }`. The API takes the
+app's session or an admin's agent token (Bearer); a POST with the session
+alone must come from this site's pages.
+
+**For the deploy pipeline.** After every push or merge that moves a branch,
+the repository calls `deployHook(branch, commit, { env })` (`deploy/index.ts`;
+a stand-in that logs until the pipeline replaces it). To read a commit for
+a build, `sourceForBuild(env, commit)` (`worker/source.ts`) answers the
+repository's Git remote with a read token (an hour; Bearer, or HTTP Basic
+with any username), for `git clone` in a build environment, and
+`archive()`, the commit's files as a tar, read through Erga. The commit
+should be a branch's head (Artifacts lets those be fetched).
+
+**Locally**, Artifacts has no local mode (miniflare's binding only proxies to
+the real service), so `bun start` stands in for it: the dev server serves a
+bare repository with Git's own `git http-backend`
+(`/__artifacts/git/erga/erga.git`, in `.cloudflare/state/artifacts/`,
+`dev/git-server.ts`), taking repo tokens as Artifacts does (read or write,
+with an expiry) that the Worker mints the same way, and a pretend GitHub
+for the mirror (`/__github/koomen/erga.git`). Local development never
+reaches the real Artifacts or GitHub. Seed it from your checkout:
+
+    ERGA_TOKEN=erga_... bun source/import.ts http://localhost:4400 --from .
+
+`bun test tests/source.test.ts` tests the Git formats, pushes, merges and
+the mirror against real git without a Worker; `bun tests/source.ts` tests
+it end to end on a dev server (auth, `git clone`, `git push` and `git pull`,
+merges and a conflict, the mirror, and the Source page in headless Chrome,
+live, light, dark and a phone; `--keep` leaves it running).
+
+**Setting it up on erga.dev**, once:
+
+1. Make the repository (Workers Paid plan; Artifacts makes the namespace
+   with it): `bunx wrangler artifacts repos create erga --namespace erga
+   --default-branch main` (or the dashboard: Storage & databases ›
+   Artifacts).
+2. Make a GitHub token that may push to koomen/erga (a fine-grained token,
+   Contents: read and write) and set it: `bunx cf workers secrets update`
+   `GITHUB_MIRROR_TOKEN`.
+3. Set `ERGA_ARTIFACTS_NAMESPACE=erga` in the deploy's environment (Workers
+   Builds' build variables) and deploy: `cloudflare.config.ts` then binds
+   `ARTIFACTS` and the mirror.
+4. Seed it with the whole history, through Erga: `ERGA_TOKEN=<an admin's
+   agent token> bun source/import.ts https://erga.dev` (from GitHub's main).
+   It refuses if main is already there.
+5. Point your checkouts at it (`git remote add erga https://erga.dev/git/erga.git`)
+   and push there. GitHub follows.
+
+Limits: a push is read whole into memory (at most 100MB); conflicts are
+never written out with markers; a clone during a push can briefly see the
+quarantine branch; the commit index loads every commit's parents, which is
+fine for Erga's thousands but not for millions.
 
 ## Local development
 
@@ -1195,6 +1337,11 @@ back, merging edits from disk, the agent's exact-match edits and attribution.
 - `front.ts`: the app's own routes and pages (the front page, `/new`, `/docs` and
   its share dialog, delete, the unedited rule, titles)
 - `admin.ts`: `/admin`, the server's settings and users, for admins
+- `source/`, `worker/source.ts`, `worker/source-host.ts`, `worker/artifacts.ts`,
+  `worker/events.ts`: Erga's own source in Cloudflare Artifacts (Git's formats,
+  the smart HTTP client and endpoint, pushes, merges, the GitHub mirror, the
+  Source page, the import script), and live events for admins' pages;
+  `dev/git-server.ts`, local development's stand-ins for Artifacts and GitHub
 - `deploy/`, `worker/deploy.ts`, `worker/deployer.ts`: `/deploy`, deploying
   Erga to your own Cloudflare account (the API steps, the release, the
   pretend Cloudflare the tests use, the page)
