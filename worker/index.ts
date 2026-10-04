@@ -114,7 +114,7 @@ const pagesSite = (env: Env, url: URL) => url.hostname.endsWith(`.${pagesDomainO
 
 async function route(request: Request, env: Env, url: URL): Promise<Response> {
   const path = url.pathname;
-  const assets = path == "/page.js" || path == "/frame.js" || path == "/style.css" || path.startsWith("/fonts/");
+  const assets = path == "/page.js" || path == "/frame.js" || path == "/settings.js" || path == "/pages-tree.js" || path == "/style.css" || path.startsWith("/fonts/");
   // A document's pages origin (front.ts, pagesDoor) serves its frame and files, and nothing of this site's.
   if (pagesSite(env, url)) return assets ? env.ASSETS.fetch(request) : frontDoor(request, platform(env));
   if (path == "/auth/github") return startSignIn(env, request);
