@@ -103,6 +103,8 @@ export function mockCloudflare(opts: {
     databases: [], scripts: {}, assets: { manifest: {}, uploaded: [] }, domains: [], routes: {}, dns: {}, registrations: [], calls: [], revoked: 0,
     secrets: {}, docs: {}, versions: {}, deletedDatabases: [], failNext: null,
   };
+  // Secrets' values never go out with the state (/deploy/api/mock shows it): only the tests read them, in this process.
+  Object.defineProperty(state, "secrets", { value: {}, enumerable: false, writable: true });
   if (opts.fleet) seedFleet(state);
   if (opts.fleet && opts.stagingSecrets) state.secrets["erga-staging"] = { SESSION_SECRET: "mock-staging-session-secret", GITHUB_CLIENT_SECRET: "mock-staging-github-secret", SNAPSHOT_TOKEN: MOCK_SNAPSHOT_TOKEN, DEPLOY_HOOK_SECRET: MOCK_HOOK_SECRET, CLOUDFLARE_DEPLOY_TOKEN: "mock-staging-deploy-token" };
   /** D1 exports ready to download, and imports uploaded, by URL. */
