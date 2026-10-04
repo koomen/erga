@@ -124,6 +124,8 @@ export class Page {
   private pending = new Map<number, (v: any) => void>();
   private listeners = new Map<string, ((params: any) => void)[]>();
   onEvent(method: string, f: (params: any) => void) { this.listeners.set(method, [...(this.listeners.get(method) ?? []), f]); }
+  /** Every event, frames' sessions' included (the benchmark, tests/bench.ts, follows requests and paints in all of them). */
+  onAny: ((event: { method: string; params: any; sessionId?: string }) => void) | null = null;
   errors: string[] = [];
   ready: Promise<void>;
   /** Frames on other sites (each its own DevTools session), as auto-attached after `open`. */
@@ -136,6 +138,7 @@ export class Page {
     this.ws.onmessage = (m) => {
       const d = JSON.parse(m.data as string);
       // Events from a frame's session are only collected for errors, below; the page's own listeners don't see them.
+      if (d.method && this.onAny) this.onAny(d);
       if (d.method && !d.sessionId) for (const f of this.listeners.get(d.method) ?? []) f(d.params);
       if (d.method == "Target.attachedToTarget" && d.params.targetInfo.type == "iframe") {
         this.frames.add(d.params.sessionId);

@@ -37,7 +37,7 @@
 
 import { OWN_ACCOUNT } from "./account.ts";
 import { adminDoor } from "./admin.ts";
-import { type Directory, type DocRow, type Grant, type Permission, type Role, type Route, type Who, NotAllowed, UNTITLED } from "./directory.ts";
+import { type Directory, type DocRow, type Grant, type Permission, type Role, type Route, type Who, NotAllowed, roleMay, UNTITLED } from "./directory.ts";
 import type { AgentToken, Tokens } from "./tokens.ts";
 
 /** Who's signed in. */
@@ -178,13 +178,15 @@ export async function frontDoor(request: Request, base: Platform): Promise<Respo
   const editing = rest == "/edit" || rest == "/edit/";
   if (!rest || rest == "/" || editing) {
     if (!session) return signInFirst(path + url.search);
-    const doc = await documentAt(platform, first, second);
-    if (!doc) return nothing();
-    if (!(await platform.directory.may(whoOf(session), "open", doc))) return refused(session);
+    // The document and what they may do with it, in one round trip to the database, and none to the document itself: its frame
+    // asks for its page (doc/, pagesDoor), which is all the document needs to say, so the page answers as soon as it can.
+    const found = first == "d" && !ID.test(second) ? null : await platform.directory.openAs(whoOf(session), first, second);
+    if (!found) return nothing();
+    const { doc, role } = found;
+    if (!role) return refused(session);
     const canonical = `/${doc.owner}/${doc.slug}${editing ? "/edit" : ""}`;
     if (path != canonical && path != `${canonical}/`) return new Response(null, { status: 302, headers: { Location: canonical + url.search } });
-    if (!(await platform.docs.exists(doc))) return nothing();
-    return viewDocument(platform, request, doc, session, false, editing);
+    return viewDocument(platform, request, { doc, index: null, role }, session, false, editing);
   }
   const route = await documentRoute(platform, first, second);
   if (!route) return new Response("No such document", { status: 404 });
@@ -248,15 +250,6 @@ const refused = (session: Session) => session.test
   : page("Not shared with you", `This document hasn't been shared with <b>${esc(session.login)}</b>. Ask its owner to share it with you.`, 403);
 
 /**
- * The document at /<first>/<second> (/d/<id>, /<owner>/<slug>,
- * /<owner>/<id>, /<owner>/<an old slug>), with all it is.
- */
-async function documentAt(platform: Platform, first: string, second: string): Promise<DocRow | null> {
-  if (first == "d") return ID.test(second) ? platform.directory.get(second) : null;
-  return (await platform.directory.locate(first, second))?.doc ?? null;
-}
-
-/**
  * How to reach the document at /<first>/<second>, for the requests under
  * it. By id it's remembered (an id is never another of the owner's slugs,
  * directory.ts), so a document's many subrequests rarely ask the database.
@@ -284,7 +277,7 @@ export async function documentRoute(platform: Pick<Platform, "directory">, first
 // it out to whoever may open the document.
 
 const PAGES_LABEL = /^([a-z0-9]{8})-([a-z0-9-]{1,39})$/;
-const WEEK = 7 * 24 * 60 * 60;
+const DAY = 24 * 60 * 60, WEEK = 7 * DAY;
 
 /** The origin a document's page runs on. */
 export function pagesOrigin(owner: string, id: string, url: URL, platform: Platform): string {
@@ -300,15 +293,26 @@ function pagesHost(url: URL, platform: Platform): { owner: string; id: string } 
   return m && OWNER.test(m[2]) && ID.test(m[1]) ? { owner: m[2], id: m[1] } : null;
 }
 
+/** The signing key, imported once per secret (per isolate): every file of a document's page checks its token. */
+const hmacKeys = new Map<string, Promise<CryptoKey>>();
 const hmac = async (secret: string, value: string) => {
-  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(`erga-pages:${secret}`), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
-  return b64url(new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(value))));
+  let key = hmacKeys.get(secret);
+  if (!key) {
+    key = crypto.subtle.importKey("raw", new TextEncoder().encode(`erga-pages:${secret}`), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+    if (hmacKeys.size > 4) hmacKeys.clear();
+    hmacKeys.set(secret, key);
+  }
+  return b64url(new Uint8Array(await crypto.subtle.sign("HMAC", await key, new TextEncoder().encode(value))));
 };
 const b64url = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 
-/** A token that opens one document's files on its pages origin, for a week, for the editor at `shell` (whose origin it names). */
+/**
+ * A token that opens one document's files on its pages origin, for a week, for the editor at `shell` (whose origin it names).
+ * Its expiry is rounded up to the next whole day, so the token, and with it the address of every file of the page, stays the
+ * same all day: the browser's cache can answer for them (they're checked by ETag, front.ts's pagesDoor and host.ts's docFile).
+ */
 export async function pagesToken(secret: string, owner: string, id: string, shell: string, now = Date.now()): Promise<string> {
-  const claims = b64url(new TextEncoder().encode(JSON.stringify({ d: `${owner.toLowerCase()}/${id}`, e: Math.floor(now / 1000) + WEEK, s: shell })));
+  const claims = b64url(new TextEncoder().encode(JSON.stringify({ d: `${owner.toLowerCase()}/${id}`, e: Math.ceil((now / 1000 + WEEK) / DAY) * DAY, s: shell })));
   return `${claims}.${await hmac(secret, claims)}`;
 }
 
@@ -336,13 +340,17 @@ async function pagesDoor(request: Request, url: URL, doc: { owner: string; id: s
   if (!shell) return new Response("This link has expired: reload the editor.", { status: 403, headers: { "Content-Type": "text/plain; charset=utf-8" } });
   if (rest == "/") {
     // ?view=<file>: the page to show straight away, as it renders (the viewer's, and the editor's until it has its own).
+    // ?view= (empty): the document's page, whatever its name (its host answers doc/ with it).
     const view = url.searchParams.get("view");
-    const src = view && !/^\/|(^|\/)\.\.(\/|$)/.test(view) ? `doc/${view.split("/").map(encodeURIComponent).join("/")}` : "";
-    return new Response(`<!doctype html><html><head><meta charset="utf-8"><meta name="erga-shell" content="${esc(shell)}"><title>Erga page</title>
+    const src = view == "" ? "doc/" : view && !/^\/|(^|\/)\.\.(\/|$)/.test(view) ? `doc/${view.split("/").map(encodeURIComponent).join("/")}` : "";
+    const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="erga-shell" content="${esc(shell)}"><title>Erga page</title>
 <style>html,body{margin:0;height:100%;overflow:hidden;overscroll-behavior:none;background:transparent}iframe{position:fixed;inset:0;width:100%;height:100%;border:0;background:transparent;visibility:hidden}iframe.on{visibility:visible}</style>
-</head><body>${src ? `<iframe id="view" class="on" src="${esc(src)}" title="Document" sandbox="${PAGE_SANDBOX}"></iframe>` : ""}<script>${HOST_SCRIPT}</script></body></html>`, {
-      headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "Content-Security-Policy": `frame-ancestors ${shell}`, "Referrer-Policy": "no-referrer" },
-    });
+</head><body>${src ? `<iframe id="view" class="on" src="${esc(src)}" title="Document" sandbox="${PAGE_SANDBOX}"></iframe>` : ""}<script>${HOST_SCRIPT}</script></body></html>`;
+    // The same for a given address (until the editor's code changes): checked with the server each time, answered 304 when unchanged.
+    const etag = `"${b64url(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(html)))).slice(0, 22)}"`;
+    const headers = { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-cache", ETag: etag, "Content-Security-Policy": `frame-ancestors ${shell}`, "Referrer-Policy": "no-referrer" };
+    if (request.headers.get("if-none-match")?.split(",").some((t) => t.trim().replace(/^W\//, "") == etag)) return new Response(null, { status: 304, headers });
+    return new Response(html, { headers });
   }
   if (!rest.startsWith("/doc/")) return notFound();
   const route = await platform.directory.route(doc.id);
@@ -402,6 +410,8 @@ const HOST_SCRIPT = `(function () {
       var l = document.createElement("link"); l.rel = "prefetch"; l.href = "/frame.js"; document.head.append(l);
     }
   });
+  // Opened in the editor (?edit=1): its half starts loading now, without waiting to be asked.
+  if (/[?&]edit=1(&|$)/.test(location.search)) { want = "edit"; loading = true; var s = document.createElement("script"); s.src = "/frame.js"; document.body.append(s); }
   parent.postMessage({ type: "erga-host" }, SHELL);
 })();`;
 
@@ -411,9 +421,16 @@ export const link = (path: string, session: Session | null) =>
 
 /** The front page: the viewer on the landing document (the landing_document setting), for anyone, signed in or not. Made from the repo's landing/ if there's none (seedLanding). */
 async function viewLanding(platform: Platform, request: Request, session: Session | null): Promise<Response> {
-  const doc = await landingDocument(platform);
-  if (!doc) return startPage(platform, session);
-  return viewDocument(platform, request, doc, session, true);
+  const roleOf = (doc: DocRow) => (session ? platform.directory.access(whoOf(session), doc) : Promise.resolve(null));
+  // The usual case, the setting's document there: whether it is (its host's page) and what they may do with it, at once.
+  const named = await platform.directory.landing();
+  if (named) {
+    const [index, role] = await Promise.all([platform.docs.index(named), roleOf(named)]);
+    if (index != null) return viewDocument(platform, request, { doc: named, index, role }, session, true);
+  }
+  const landing = await landingPage(platform);
+  if (!landing) return startPage(platform, session);
+  return viewDocument(platform, request, { ...landing, role: await roleOf(landing.doc) }, session, true);
 }
 
 /**
@@ -423,9 +440,17 @@ async function viewLanding(platform: Platform, request: Request, session: Sessio
  * that isn't there, or there's nobody to own one.
  */
 export async function landingDocument(platform: Platform): Promise<DocRow | null> {
+  return (await landingPage(platform))?.doc ?? null;
+}
+
+/** The front page's document (landingDocument) and its page: the one round trip to its host tells both that it's there and which file to show. */
+async function landingPage(platform: Platform): Promise<{ doc: DocRow; index: string } | null> {
   const doc = await platform.directory.landing();
-  if (doc && (await platform.docs.exists(doc))) return doc;
-  return seedLanding(platform);
+  const index = doc && (await platform.docs.index(doc));
+  if (doc && index != null) return { doc, index };
+  const made = await seedLanding(platform);
+  const madeIndex = made && (await platform.docs.index(made));
+  return made && madeIndex != null ? { doc: made, index: madeIndex } : null;
 }
 
 /** Seeds under way, by directory (one per database), so a burst of first requests in one isolate makes one document. */
@@ -492,24 +517,35 @@ export function seedLanding(platform: Platform): Promise<DocRow | null> {
  * your own) for anyone who may see it, and Edit for those who may edit it.
  * The front page is this, on the landing document.
  */
-async function viewDocument(platform: Platform, request: Request, doc: DocRow, session: Session | null, landing: boolean, editing = false): Promise<Response> {
+async function viewDocument(platform: Platform, request: Request, opened: { doc: DocRow; index: string | null; role: Role | null }, session: Session | null, landing: boolean, editing = false): Promise<Response> {
   const url = new URL(request.url);
-  const index = await platform.docs.index(doc);
-  if (!index && !editing) return page("Not found", "There's no document here. <a href=\"/\">Back to the start</a>.", 404);
+  const { doc, index, role } = opened;
+  const origin = pagesOrigin(doc.owner, doc.id, url, platform);
   // The frame's host page (pagesDoor), with the token that opens the document's files, showing its page straight away.
-  const host = `${pagesOrigin(doc.owner, doc.id, url, platform)}/t/${await pagesToken(platform.secret, doc.owner, doc.id, url.origin)}/`;
-  const canEdit = !!session && !session.agent && (await platform.directory.may(whoOf(session), "edit", doc));
+  // What they may do, from the role the caller looked up (as Directory.may decides).
+  const canEdit = !!session && !session.agent && roleMay(role, "edit");
+  // What the editor needs to know, for whoever may go into it: where its document's host and frame are, and the links on its avatar.
+  const editable = editing || canEdit;
+  const [token, account] = await Promise.all([
+    pagesToken(platform.secret, doc.owner, doc.id, url.origin),
+    editable && session ? accountMeta(platform, session) : "",
+  ]);
+  const host = `${origin}/t/${token}/`;
   const address = `/${doc.owner}/${doc.slug}`;
   const clone = `<a href="${esc(link(`/new?from=${landing ? "landing" : doc.id}`, session))}" class="erga-view-button erga-clone-button" aria-label="Clone: make your own copy" data-tip="Clone"><svg viewBox="0 0 24 24" aria-hidden="true"><g transform="translate(0 1.25)"><rect x="8.75" y="8.75" width="10.5" height="10.5" rx="2"/><path d="M15.25 8.75V6.5a1.75 1.75 0 0 0-1.75-1.75H6.5A1.75 1.75 0 0 0 4.75 6.5v7c0 .97.78 1.75 1.75 1.75h2.25"/></g></svg></a>`;
   const edit = canEdit ? `<a href="${esc(link(`${address}/edit`, session))}" class="erga-view-button erga-edit-button" aria-label="Edit" aria-pressed="${editing}" data-tip="Edit"><svg viewBox="0 0 24 24" aria-hidden="true"><g transform="translate(0 1.25)"><path d="M4.75 19.25l1-4L15.6 5.4a1.4 1.4 0 0 1 2 0l1 1a1.4 1.4 0 0 1 0 2L8.75 18.25zM13.75 7.25l3 3"/></g></svg></a>` : "";
-  // What the editor needs to know, for whoever may go into it: where its document's host and frame are, and the links on its avatar.
-  const editable = editing || canEdit;
   // Its owner shares it with people from the editor too (/docs/share).
-  const canShare = editable && !!session && !session.agent && !session.test && (await platform.directory.may(whoOf(session), "share", doc));
+  const canShare = editable && !!session && !session.agent && !session.test && roleMay(role, "share");
   const meta = editable && session
-    ? `<meta name="erga-pages" content="${esc(host)}"><meta name="erga-base" content="/d/${doc.id}"><meta name="erga-address" content="${esc(address)}">${canShare ? `<meta name="erga-share" content="${esc(link("/docs/share", session))}">` : ""}${await accountMeta(platform, session)}`
+    ? `<meta name="erga-pages" content="${esc(host)}"><meta name="erga-base" content="/d/${doc.id}"><meta name="erga-address" content="${esc(address)}">${canShare ? `<meta name="erga-share" content="${esc(link("/docs/share", session))}">` : ""}${account}`
     : "";
-  const src = index ? `${host}?view=${encodeURIComponent(index)}` : host;
+  // Opened at /edit, the frame starts on its half of the editor (frame.js) at once, and the page fetches the editor's files as it
+  // parses, rather than one after another once its script runs (EDIT_BOOT).
+  // Its page by name when it's known (the front page's), else the folder (doc/), which its host answers with its page.
+  const src = `${host}?view=${index ? encodeURIComponent(index) : ""}${editing ? "&edit=1" : ""}`;
+  const preload = editing
+    ? `<link rel="preload" href="/editor.html" as="fetch" crossorigin><link rel="preload" href="/page.js" as="script"><link rel="preload" href="/style.css" as="style"><link rel="preload" href="/fonts/inter.css" as="style">`
+    : "";
   // Editing, the window takes the page's background (remembered from last time, main.ts) before the page has loaded, as the editor's own canvas does.
   const backdrop = editing
     ? `<script>try { const b = JSON.parse(localStorage.getItem("erga:backdrop:v1") || "null"); if (b?.bg) document.documentElement.style.setProperty("--page-bg", b.bg); } catch {}</script><style>html { background: var(--page-bg, #fff); }</style>`
@@ -519,12 +555,13 @@ async function viewDocument(platform: Platform, request: Request, doc: DocRow, s
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <title>${esc(doc.title)}</title>
+<link rel="preconnect" href="${esc(origin)}">${preload}
 ${meta}${backdrop}<style>html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: none; } #frame { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; display: block; background: transparent; }</style>
 <body${editing ? ` class="erga-editing"` : ""}>
 <iframe id="frame" class="erga-view" src="${esc(src)}" title="${esc(doc.title)}" sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups"></iframe>
 <div class="erga-view-buttons">${clone}${edit}</div>${VIEW_STYLE}${editable ? `<script>${EDIT_BOOT}</script>` : ""}
 </body>
-</html>`, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" } });
+</html>`, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "Referrer-Policy": "no-referrer", Link: `<${origin}>; rel=preconnect` } });
 }
 
 /**
@@ -557,7 +594,13 @@ const EDIT_BOOT = `(() => {
     body.classList.toggle("erga-editor-ready", ready);
     if (wrap) wrap.inert = !(ready && body.classList.contains("erga-editing"));
   };
+  // The document's details (main.ts), asked for as soon as editing starts, alongside the editor's files: that wakes its room too.
+  const base = document.querySelector('meta[name="erga-base"]').content;
+  const user = new URLSearchParams(location.search).get("user")?.trim();
+  const info = () => { const url = base + "/api/doc" + (user ? "?user=" + encodeURIComponent(user) : ""); return { url, response: fetch(url) }; };
   const load = () => editor ??= (async () => {
+    window.ergaDocInfo = info();
+    document.head.append(Object.assign(document.createElement("link"), { rel: "preload", as: "script", href: "/page.js" }));
     const d = new DOMParser().parseFromString(await (await fetch("/editor.html")).text(), "text/html");
     document.documentElement.dataset.theme = "light";
     await Promise.all([...d.head.querySelectorAll('link[rel="stylesheet"], style')].map((el) => {
@@ -596,10 +639,18 @@ const EDIT_BOOT = `(() => {
   });
   addEventListener("popstate", () => go(/\\/edit\\/?$/.test(location.pathname), false));
   if (editing()) go(true, null);
-  else (window.requestIdleCallback ?? setTimeout)(() => {
-    for (const href of ["/editor.html", "/page.js", "/style.css", "/fonts/inter.css"]) document.head.append(Object.assign(document.createElement("link"), { rel: "prefetch", href }));
-    if (hostUp) toFrame("erga-prefetch");
-  });
+  else {
+    // Viewing, only once the document has loaded (its frame and everything in it) and the browser is idle, so it never
+    // competes with the document: the editor's files, and its room woken (its details asked for), for a quick switch.
+    const prefetch = () => {
+      if (editor) return;
+      for (const href of ["/editor.html", "/page.js", "/style.css", "/fonts/inter.css"]) document.head.append(Object.assign(document.createElement("link"), { rel: "prefetch", href }));
+      if (hostUp) toFrame("erga-prefetch");
+      info().response.catch(() => {});
+    };
+    const idle = () => (window.requestIdleCallback ?? setTimeout)(prefetch);
+    if (document.readyState == "complete") idle(); else addEventListener("load", idle, { once: true });
+  }
 })();`;
 
 /** The front page when there's no landing document and none can be made (seedLanding): what Erga is, and the way in. */

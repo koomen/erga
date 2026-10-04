@@ -51,15 +51,34 @@ for (const [path, text] of Object.entries(import.meta.glob("../landing/**", { qu
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
+    const started = Date.now();
     const response = await route(request, env, url);
     // Every page of the site's own has who you are in its upper right (account.ts); a document's pages origin never does.
-    if (pagesSite(url) || response.status == 101) return response;
-    return withAccount(response, async () => {
+    if (response.status == 101) return response;
+    const answer = pagesSite(url) ? response : await withAccount(response, async () => {
       const session = await sessionOf(env, request);
       return accountOf(session, !!session && !session.test && (await directoryOf(env).users.isAdmin(whoOf(session))));
     }, url.pathname + url.search);
+    return timed(answer, Date.now() - started);
   },
 } satisfies ExportedHandler<Env>;
+
+/**
+ * How long the Worker took over a response (Server-Timing, which the browser's
+ * network panel and tests/bench.ts show): time waiting on the database, a
+ * document's Durable Object and the like (a Worker's clock moves only across I/O).
+ */
+function timed(response: Response, ms: number): Response {
+  try {
+    response.headers.append("Server-Timing", `worker;dur=${ms}`);
+    return response;
+  } catch {
+    // Immutable headers (a fetched response passed through): a copy.
+    const headers = new Headers(response.headers);
+    headers.append("Server-Timing", `worker;dur=${ms}`);
+    return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+  }
+}
 
 /** Whose the front page is when the server makes it: locally DEV_LOGIN, else the first of ADMINS; the rest of ADMINS may edit it. */
 const landingOf = (env: Env): NonNullable<Platform["landing"]> => {
