@@ -101,6 +101,13 @@ export interface Platform {
    * "localhost" for a request that came to this machine.
    */
   pagesDomain(url: URL): string;
+  /**
+   * One host every document's pages share, instead of an origin each under
+   * pagesDomain: for a server with no wildcard domain (on workers.dev, which
+   * has none; PAGES_HOST). Pages stay off the app's origin, but not off each
+   * other's. Null or absent: an origin each.
+   */
+  pagesShared?(url: URL): string | null;
   /** Signs the tokens that open a document's files on its pages origin. */
   secret: string;
   /** Every document's address, title and permissions; the server's users and settings. */
@@ -288,12 +295,24 @@ const WEEK = 7 * 24 * 60 * 60;
 
 /** The origin a document's page runs on. */
 export function pagesOrigin(owner: string, id: string, url: URL, platform: Platform): string {
+  const shared = platform.pagesShared?.(url);
+  if (shared) return `https://${shared}`;
   const domain = platform.pagesDomain(url);
   return domain == "localhost" ? `${url.protocol}//${id}-${owner.toLowerCase()}.localhost${url.port ? `:${url.port}` : ""}` : `https://${id}-${owner.toLowerCase()}.${domain}`;
 }
 
 /** The document a pages origin is for, if the request came to one. */
-function pagesHost(url: URL, platform: Platform): { owner: string; id: string } | null {
+export function pagesHost(url: URL, platform: Platform): { owner: string; id: string } | null {
+  // On a shared host the document is the one its token names (pagesDoor checks the token itself).
+  const shared = platform.pagesShared?.(url);
+  if (shared && url.hostname == shared) {
+    const claims = /^\/t\/([^/.]+)\./.exec(url.pathname)?.[1];
+    try {
+      const d = claims && (JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(claims.replace(/-/g, "+").replace(/_/g, "/")), (ch) => ch.charCodeAt(0)))) as { d?: unknown }).d;
+      const [owner, id] = typeof d == "string" ? d.split("/") : [];
+      return owner && id && OWNER.test(owner) && ID.test(id) ? { owner, id } : null;
+    } catch { return null; }
+  }
   const domain = platform.pagesDomain(url);
   if (!url.hostname.endsWith(`.${domain}`)) return null;
   const m = PAGES_LABEL.exec(url.hostname.slice(0, -domain.length - 1));

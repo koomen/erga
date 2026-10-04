@@ -32,11 +32,14 @@ export default defineConfig(({ mode }) => ({
     assets: { htmlHandling: "none", notFoundHandling: "none", runWorkerFirst: true },
     exports: {
       DocHost: exports.durableObject({ storage: "sqlite" }),
+      // The deploy page's sessions (/deploy, worker/deployer.ts): each holds one person's Cloudflare token, only while they deploy.
+      Deployer: exports.durableObject({ storage: "sqlite" }),
       // Each person's list of documents before the directory: gone, with what it held.
       DocList: exports.durableObject({ state: "deleted" }),
     },
     env: {
       DOCS: bindings.durableObject({ worker: "erga", exportName: "DocHost" }),
+      DEPLOYS: bindings.durableObject({ worker: "erga", exportName: "Deployer" }),
       // The server's database: users, settings and the directory. `cf deploy` makes the database by name if there's none; its tables come
       // from migrations/, applied by migrate.ts (site.sh runs it on Workers Builds, before
       // the deploy). Locally (vite dev) it's a database of its own, at a fixed made-up id that
@@ -49,6 +52,9 @@ export default defineConfig(({ mode }) => ({
       // The settings the deploy fixes, as JSON (server.config.ts; config.ts). Admins set the rest.
       SERVER_CONFIG: bindings.text(JSON.stringify(deployed())),
       GITHUB_CLIENT_ID: bindings.text("Ov23ctkY7oLarHcPA97b"),
+      // The deploy page's Cloudflare OAuth client (public, PKCE: no secret), made under Manage Account > OAuth clients
+      // with the callback https://erga.dev/deploy/auth/cloudflare/callback. Empty: /deploy offers the API token link only.
+      CLOUDFLARE_OAUTH_CLIENT_ID: bindings.text(process.env.CLOUDFLARE_OAUTH_CLIENT_ID ?? ""),
       GITHUB_CLIENT_SECRET: bindings.secret(),
       SESSION_SECRET: bindings.secret(),
       ANTHROPIC_API_KEY: bindings.secret(),
@@ -62,6 +68,8 @@ export default defineConfig(({ mode }) => ({
         // secret that lets it link files on disk to documents, and a shorter write delay for tests.
         ERGA_LINK_SECRET: bindings.text(process.env.ERGA_LINK_SECRET ?? ""),
         ERGA_WRITE_DELAY_MS: bindings.text(process.env.ERGA_WRITE_DELAY_MS ?? ""),
+        // "1": /deploy talks to a pretend Cloudflare (deploy/mock.ts), for its tests and for trying it safely.
+        ERGA_DEPLOY_MOCK: bindings.text(process.env.ERGA_DEPLOY_MOCK ?? ""),
         // The agent's key: a real one in .dev.vars, else the environment's (dev/agent-key.ts), so a
         // placeholder in .dev.vars doesn't hide the key you exported. Never written to .dev.vars.
         ANTHROPIC_API_KEY: bindings.text(localAgentKey(process.env.ERGA_ENV_DIR || process.cwd())),
