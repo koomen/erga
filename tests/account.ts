@@ -128,11 +128,16 @@ try {
   const h1 = async () => (await p.inPage<number | null>(`document.querySelector("h1") ? Math.round(document.querySelector("h1").getBoundingClientRect().top) : null`)).find((t) => t != null) ?? null;
   const visible = (sel: string) => p.eval<boolean>(`(() => { const el = document.querySelector(${JSON.stringify(sel)}); return !!el && getComputedStyle(el).visibility != "hidden" && getComputedStyle(el).opacity == "1"; })()`);
   const editingTop = await h1();
+  // Neither the document nor anything around it bounces past its ends (macOS's rubber band), so the controls never move.
+  const still = `getComputedStyle(document.documentElement).overscrollBehaviorY`;
+  const bounce = async () => [await p.eval<string>(still), ...(await p.inFrames<string>(still)), ...(await p.inPage<string>(still))].filter((v) => v != null);
+  expect((await bounce()).every((v) => v == "none"), "editing, nothing bounces past its ends", await bounce());
   await p.eval(`window.__samePage = true`);
   await clickOn(p, "#btn-view");
   await until(async () => (await p.eval<string>("location.pathname")) == at.replace(/\/edit$/, "") && await visible(".erga-view-buttons") && !(await visible("#erga-editor")), 5000, "the eye goes to the viewer");
   await until(async () => (await h1()) != null, 5000, "the viewer's page shows");
   const viewingTop = await h1();
+  expect((await bounce()).every((v) => v == "none") && (await bounce()).length >= 3, "nor viewing", await bounce());
   expect(editingTop != null && viewingTop == editingTop, "the eye shows the viewer, with the document where it was", { editingTop, viewingTop });
   await p.screenshot(join(SHOTS, "account-viewing-from-editor.png"));
   await clickOn(p, ".erga-edit-button");

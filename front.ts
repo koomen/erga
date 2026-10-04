@@ -331,7 +331,7 @@ async function pagesDoor(request: Request, url: URL, doc: { owner: string; id: s
     const view = url.searchParams.get("view");
     const src = view && !/^\/|(^|\/)\.\.(\/|$)/.test(view) ? `doc/${view.split("/").map(encodeURIComponent).join("/")}` : "";
     return new Response(`<!doctype html><html><head><meta charset="utf-8"><meta name="erga-shell" content="${esc(shell)}"><title>Erga page</title>
-<style>html,body{margin:0;height:100%;overflow:hidden;background:transparent}iframe{position:fixed;inset:0;width:100%;height:100%;border:0;background:transparent;visibility:hidden}iframe.on{visibility:visible}</style>
+<style>html,body{margin:0;height:100%;overflow:hidden;overscroll-behavior:none;background:transparent}iframe{position:fixed;inset:0;width:100%;height:100%;border:0;background:transparent;visibility:hidden}iframe.on{visibility:visible}</style>
 </head><body>${src ? `<iframe id="view" class="on" src="${esc(src)}" title="Document" sandbox="${PAGE_SANDBOX}"></iframe>` : ""}<script>${HOST_SCRIPT}</script></body></html>`, {
       headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "Content-Security-Policy": `frame-ancestors ${shell}`, "Referrer-Policy": "no-referrer" },
     });
@@ -358,6 +358,11 @@ const HOST_SCRIPT = `(function () {
   var SHELL = document.querySelector('meta[name="erga-shell"]').content, want = "view", loading = false;
   var view = document.getElementById("view"), src = view ? view.getAttribute("src") : "";
   var page = function () { return document.getElementById("page"); };
+  // The page stops dead at its top and bottom, without the bounce that would show what's behind it (and pass on to the controls).
+  function still(f) {
+    try { var d = f.contentDocument, s = d.createElement("style"); s.textContent = "html { overscroll-behavior: none; }"; (d.head || d.documentElement).append(s); } catch (e) {}
+  }
+  if (view) view.addEventListener("load", function () { still(view); });
   function show(to) {
     var from = document.querySelector("iframe.on");
     if (from == to) return;
@@ -382,7 +387,7 @@ const HOST_SCRIPT = `(function () {
       if (old) old.remove();
       var v = document.createElement("iframe");
       v.id = "view"; v.title = "Document"; v.setAttribute("sandbox", "${PAGE_SANDBOX}");
-      v.onload = function () { if (want == "view") show(v); };
+      v.onload = function () { still(v); if (want == "view") show(v); };
       v.src = src;
       document.body.prepend(v);
     } else if (type == "erga-prefetch") {
@@ -442,7 +447,7 @@ async function viewDocument(platform: Platform, request: Request, doc: DocRow, s
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <title>${esc(doc.title)}</title>
-${meta}${backdrop}<style>html, body { margin: 0; height: 100%; } #frame { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; display: block; background: transparent; }</style>
+${meta}${backdrop}<style>html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: none; } #frame { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; display: block; background: transparent; }</style>
 <body${editing ? ` class="erga-editing"` : ""}>
 <iframe id="frame" class="erga-view" src="${esc(src)}" title="${esc(doc.title)}" sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups"></iframe>
 ${crumbs}<div class="erga-view-buttons">${clone}${edit}</div>${VIEW_STYLE}${editable ? `<script>${EDIT_BOOT}</script>` : ""}
