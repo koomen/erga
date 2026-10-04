@@ -80,16 +80,24 @@ read-only (they see every edit as it happens; theirs are dropped, carets
 aside), their publishes (`PUT /api/stored`) are refused, and their agent,
 and an external agent with their share token, can read but not edit (it
 says so). `/api/doc` says whether you may edit (`canEdit`). The owner
-shares with `POST /docs/share` (`id`, `login` or `*`, `role`: `editor`,
-`viewer`, or `none` to stop), which answers everyone's permissions; there's
-no sharing UI yet, but the owner's agent (in the editor, or with a token)
-shares with `share_document` and `document_access`. Server admins get nothing on documents by being admins.
+shares from `/docs`: each of their documents has a Share button, whose
+dialog adds people by GitHub login (can edit or can view), changes or
+removes them, sets what anyone signed in with the link may do (no access,
+view, edit) and copies the link; someone shared with who isn't a user of
+the server yet is marked "can't sign in yet". Underneath it's `POST
+/docs/share` (`id`, `login` or `*`, `role`: `editor`, `viewer`, or `none` to
+stop), which answers everyone's permissions (and `notUsers`), and `GET
+/docs/share?id=`, which only reads them. The owner's agent (in the editor,
+or with a token) shares too, with `share_document` and `document_access`.
+Server admins get nothing on documents by being admins.
 Test people may open only test documents, as editors of those of whoever
 minted their token.
 
 `/docs` lists the documents you own or that are shared with you by name,
-latest edit first, with a New document button and rename and delete buttons
-on each; the editor's top bar links to it. Each document keeps its row up to
+latest edit first, with a New document button, share, rename and delete
+buttons on each of yours (one you've shared says so), and whose each shared
+one is and your role on it; the editor's top bar links to it, and its
+footer to `/tokens` and, for admins, `/admin`. Each document keeps its row up to
 date (when it's edited, and the title that follows its heading, at most
 every two seconds). A document nobody edits is deleted after the
 `unedited_hours` setting (24 by default) from when it's made, by an alarm set
@@ -137,12 +145,19 @@ their row the first time they do; they can't be demoted or removed except by
 taking them out of `ADMINS` and deploying. Every other admin is a row, made
 by an admin. Locally, `DEV_LOGIN` is a bootstrap admin too, and everyone
 signed in gets a row as they come. An admin's agent does all of it for them
-(see [Agents configure the server](#agents-configure-the-server)): ask the
-agent in the editor, or Claude Code with their token, to add a user. Or, with
-no admin signed in yet, add one on erga.dev with SQL (the database's id from
-`bunx cf d1 list --name erga`):
+too (see [Agents configure the server](#agents-configure-the-server)): ask
+the agent in the editor, or Claude Code with their token, to add a user.
 
-    bunx cf d1 query <database id> --sql "INSERT INTO users (login, name, role, created, added_by) VALUES ('octocat', 'octocat', 'user', unixepoch() * 1000, 'koomen')"
+**The admin page.** `/admin` (`admin.ts`) is for admins only; anyone else,
+and an agent with an admin's token, gets a 404 there. It shows every
+setting (its description, its value, where that comes from: default, set by
+whom and when, or locked by the deploy, which is shown but can't be
+changed) with Save and Reset, and every user (last seen, who added them,
+a User/Admin role menu and a remove button; a bootstrap admin's are
+disabled), with a box to add one by GitHub login. Underneath it's `POST
+/admin/settings` (`key` and `value` as JSON, or `reset=1`) and `POST
+/admin/users` (`do=add|role|remove`, `login`, `role`), answering JSON, from
+this site's pages only.
 
 **Settings.** `server_config` holds the server's settings, a JSON value per
 key with who set it and when (`config.ts`). Only the keys declared in
@@ -625,7 +640,7 @@ they reach the open page without a reload and then the disk, that the agent
 shows up as a participant, and that its last change can be undone (it calls
 the API, so it isn't part of `./test.sh`).
 `bun tests/worker.ts --local` checks the app's own routes (`/new`, `/docs`,
-sharing and what each role may do, deleting, expiry, and the pages origin's
+sharing (the share dialog too) and what each role may do, `/admin` (settings and users, only for admins), deleting, expiry, and the pages origin's
 token) and the server's API for agents: asking for a token and approving it,
 publishing a folder, the tools over HTTP and MCP (with the person's own
 permissions), the share button's token, and revoking.
@@ -652,8 +667,9 @@ back, merging edits from disk, the agent's exact-match edits and attribution.
 
 - `page.html`, `page.js`, `frame.js`: the editor's shell and its built
   scripts (the shell's, and the frame's that runs on each document's own origin)
-- `front.ts`: the app's own routes and pages (the demo, `/new`, `/docs`,
-  delete, the unedited rule, titles)
+- `front.ts`: the app's own routes and pages (the demo, `/new`, `/docs` and
+  its share dialog, delete, the unedited rule, titles)
+- `admin.ts`: `/admin`, the server's settings and users, for admins
 - `directory.ts`: the directory of documents (addresses, titles, permissions, who may do what), over
   `Sql`; `worker/d1.ts` puts it on D1; its tables in `migrations/`, which `migrate.ts` applies to
   erga.dev's D1 (the dev server applies them locally)
