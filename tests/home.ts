@@ -52,6 +52,17 @@ const publish = async (files: Record<string, string>, opts: { document?: string;
   expect(body.ok, "published", body);
   return body;
 };
+/** An agent token for DEV_LOGIN on the server at `base`, made at /tokens (asked again for a while: a server just started may still be setting up its database). */
+const mintToken = async (base: string) => {
+  let page = "";
+  for (let i = 0; i < 50; i++) {
+    page = await (await fetch(`${base}/tokens/new`, { method: "POST", body: new URLSearchParams({ label: "Home test" }), headers: { Origin: base }, redirect: "manual" })).text();
+    const t = /<pre class="secret">(erga_[^<]+)<\/pre>/.exec(page)?.[1];
+    if (t) return t;
+    await Bun.sleep(200);
+  }
+  throw new Error(`no token from ${base}/tokens/new: ${page.slice(0, 300)}`);
+};
 const idOf = async (address: string) => ((await (await get(`${address}/api/doc`)).json()) as { docName: { id: string } }).docName.id;
 
 try {
@@ -144,9 +155,7 @@ try {
   ok("the controls: Clone for everyone, Edit for its editors, and who you are, with its menu");
 
   // ---------------------------------------------------------------- isolation, files
-  const tokensPage = await (await get("/tokens/new", { method: "POST", body: new URLSearchParams({ label: "Home test" }), headers: { Origin: root } })).text();
-  token = /<pre class="secret">(erga_[^<]+)<\/pre>/.exec(tokensPage)?.[1] ?? "";
-  expect(!!token, "a token", tokensPage.slice(0, 300));
+  token = await mintToken(root);
   const page = (text: string, extra = "") => `<!doctype html>
 <html><head><meta charset="utf-8"><title>Second home</title><link rel="stylesheet" href="style.css">
 <style>
@@ -293,7 +302,7 @@ try {
   const locked: Host = await startHost(null, { env: { ERGA_SERVER_CONFIG: JSON.stringify({ landing_document: null }), ERGA_HOME_DELAY_MS: String(DELAY) } });
   try {
     const lr = (path: string, init: RequestInit = {}) => fetch(locked.root + path, { redirect: "manual", ...init });
-    const t = /<pre class="secret">(erga_[^<]+)<\/pre>/.exec(await (await lr("/tokens/new", { method: "POST", body: new URLSearchParams({ label: "x" }), headers: { Origin: locked.root } })).text())?.[1];
+    const t = await mintToken(locked.root);
     const made = await (await lr("/api/publish", { method: "POST", headers: { Authorization: `Bearer ${t}`, "Content-Type": "application/json" }, body: JSON.stringify({ files: { "index.html": "<h1>Mine</h1>" } }) })).json() as { id: string };
     expect(/^[a-z0-9]{8}$/.test(made.id ?? ""), "a document on the locked server", made);
     const g = await (await lr(`/api/docs/${made.id}/home`)).json() as Home;
