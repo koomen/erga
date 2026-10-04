@@ -4,7 +4,8 @@
 #
 #   ./test.sh         unit tests, tests/page.ts, a page trying to reach its
 #                     viewer (tests/isolation.ts), the front door's routes
-#                     (tests/worker.ts), the landing page (tests/landing.ts)
+#                     (tests/worker.ts), the landing page (tests/landing.ts),
+#                     live reload (tests/reload.ts, in a copy of the checkout)
 #                     and the multiplayer suite, each
 #                     against dev servers of its own (tests/host.ts)
 #
@@ -37,6 +38,9 @@ page_group() {
   run suite bun tests/suite/run.ts --skip latency
   collect
   run latency bun tests/suite/run.ts --suite latency
+  collect
+  # Live reload last, alone too: it edits files and waits on rebuilds, which a busy machine slows.
+  run reload bun tests/reload.ts
   collect
 }
 failed=()

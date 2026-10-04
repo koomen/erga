@@ -7,10 +7,13 @@ repo's root.
 
     development/task-queue/tq serve           # start it (any tq command does)
     development/task-queue/tq watch           # one line per task status change (for Claude Code's Monitor)
+    development/task-queue/tq live ID         # live mode: the task's dev server (live reload) and a Chrome window of its own
+    development/task-queue/tq look ID         # what that window shows (--shot, --console)
     bun development/task-queue/test.ts        # its end-to-end test
     bun development/task-queue/sample.ts      # a sample board on :4507 (a throwaway repo; --tick N for live commits)
 
-`server.ts` is the server and API, `index.html` the board, `tq` the CLI, and
+`server.ts` is the server and API, `index.html` the board, `tq` the CLI,
+`chrome.ts` live mode's Chrome window (launch, reattach, look, close), and
 `mod/` a Claude Code mod that drives it from inside a session
 (`claude --plugin-dir development/task-queue/mod`; see AGENTS.md).
 
@@ -33,3 +36,15 @@ Previews run in their own process groups and carry on. The board's event
 stream sends its version first, so an open board reloads when `index.html`
 changed. If it doesn't restart, kill whatever listens on 4700 and run any
 `tq` command.
+
+Live tasks (`live: true`, `tq add --live`) are worked on in a session with
+the user rather than by a background worker (AGENTS.md, "Live mode"). Their
+card has a Live badge (pulsing while the dev server and window are up), and
+their detail view shows the window. `tq live` (`POST /api/tasks/:id/live`)
+runs the preview with `bun start --reload` (`TASK_QUEUE_LIVE`) and launches
+Chrome detached, in its own process group, with a profile in
+`data/chrome/task-<id>`, so it outlives the queue and its restarts; the
+queue checks it every 4s (`chromeUp`), and closes it (`Browser.close`, then
+a kill) and drops its profile on merge or discard. `tq look`
+(`GET /api/tasks/:id/look`) picks the tab in front (focused, else visible)
+and reads it over DevTools; screenshots go to `data/looks/`.

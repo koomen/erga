@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { resolve } from "node:path";
+import { resolve, sep } from "node:path";
 import { cloudflare } from "@cloudflare/vite-plugin";
 import { defineConfig, type Plugin } from "vite";
 import { ergaDev } from "./dev/plugin.ts";
@@ -22,8 +22,9 @@ export default defineConfig({
   envDir: process.env.ERGA_ENV_DIR || undefined,
   cacheDir: process.env.ERGA_VITE_CACHE || undefined,
   // Only this machine: in development anyone who reaches the server is signed in (DEV_LOGIN).
-  // Agents' scratch copies of this repo are no part of it.
-  server: { host: "127.0.0.1", watch: { ignored: ["**/.claude/**"] } },
+  // Agents' scratch copies of this repo (its .claude/worktrees) are no part of it. Only this checkout's own
+  // .claude: a checkout that is itself one of those worktrees still watches its own files.
+  server: { host: "127.0.0.1", watch: { ignored: [(path: string) => path.startsWith(resolve(".claude") + sep)] } },
   plugins: [
     markdownAsText,
     ergaDev({
@@ -32,6 +33,7 @@ export default defineConfig({
       open: process.env.ERGA_OPEN || undefined,
       browser: process.env.ERGA_BROWSER == "1",
       cwd: process.env.ERGA_CWD || process.cwd(),
+      reload: process.env.ERGA_RELOAD == "1",
     }),
     cloudflare({ persistState: { path: stateDir }, ...(process.env.ERGA_INSPECTOR == "0" ? { inspectorPort: false } : {}) }),
   ],

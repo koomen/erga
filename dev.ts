@@ -3,7 +3,11 @@
 // (worker/index.ts) run by Vite and the Cloudflare plugin, with any file or
 // folder from disk as a document.
 //
-//   bun start [file-or-folder] [--port 4400] [--no-open]
+//   bun start [file-or-folder] [--port 4400] [--no-open] [--reload]
+//
+// --reload reloads open tabs by itself when the editor is rebuilt, the
+// Worker's code changes or the server restarts (dev/reload.ts): what live
+// mode runs (AGENTS.md).
 //
 // A folder (with index.html or index.md) or a single .html or .md file
 // named here is linked to one of your documents and edited where it is:
@@ -34,6 +38,7 @@ if (args.includes("--help") || args.includes("-h")) {
 const flag = (name: string) => { const i = args.indexOf(name); return i >= 0 ? args.splice(i, 2)[1] : undefined; };
 const port = Number(flag("--port") ?? 4400);
 const browser = !args.includes("--no-open");
+const reload = args.includes("--reload");
 const target = args.find((a) => !a.startsWith("--"));
 
 // Fail fast on a target that won't open, before anything starts.
@@ -70,6 +75,7 @@ const vite = Bun.spawn(["node", "--no-experimental-webstorage", join(EDITOR, "no
     ERGA_LINK_SECRET: secret,
     ERGA_OPEN: target ?? "",
     ERGA_BROWSER: browser ? "1" : "",
+    ERGA_RELOAD: reload ? "1" : "",
     ERGA_CWD: process.cwd(),
     ERGA_PARENT: String(process.pid),
   },

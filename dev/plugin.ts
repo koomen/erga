@@ -38,6 +38,7 @@ import { publishLanding } from "../landing.ts";
 import { landingFolder } from "../server.config.ts";
 import { ignored } from "../src/room/doc.ts";
 import type { FromDisk, ToDisk } from "./mirror.ts";
+import { liveReload, type LiveReload } from "./reload.ts";
 
 const EDITOR = resolve(import.meta.dirname, "..");
 /** The largest file a document on disk takes: the room reads each whole when it opens, over a WebSocket. */
@@ -57,14 +58,27 @@ export interface DevOptions {
   browser?: boolean;
   /** Where relative paths start from: where `bun start` was run. */
   cwd: string;
+  /** Reload open tabs when the editor is rebuilt, the Worker's code changes or the server restarts (`bun start --reload`: dev/reload.ts). */
+  reload?: boolean;
 }
 
 export function ergaDev(opts: DevOptions): Plugin {
+  let live: LiveReload | undefined;
   return {
     name: "erga:dev",
     apply: "serve",
+    // The Worker's code changed (any environment but the browser's): Vite reloads it, then the tabs reload.
+    hotUpdate({ file }) {
+      // The editor's own sources reload the tabs once site.sh has rebuilt them (watchEditor), not before.
+      const editor = ["src/page/", "fonts/", "page.html", "style.css"].some((p) => file.startsWith(join(EDITOR, p)));
+      if (live && !editor && this.environment.name != "client") live.reload(`${file.startsWith(EDITOR + sep) ? file.slice(EDITOR.length + 1) : file} changed`);
+    },
     configureServer(server) {
       const log = (line: string) => server.config.logger.info(line, { timestamp: true });
+      // First, so it sees every page the Worker sends.
+      live = opts.reload ? liveReload(server, log) : undefined;
+      // A change Vite restarts the server for (its config, or a file the config imports): the restarted server reloads the tabs.
+      if (live) server.watcher.on("change", (file) => { if (server.config.configFileDependencies.includes(file)) live?.restarting(); });
       const linksFile = join(opts.stateDir, "erga-links.json");
       const mirrors = new Map<string, Mirror>();
       // Where the Worker answers (for us), and the address people use.
@@ -167,12 +181,12 @@ export function ergaDev(opts: DevOptions): Plugin {
         })().catch((e) => log(`couldn't link: ${(e as Error).message}`));
       });
 
-      const unwatch = process.env.ERGA_BUILT ? () => {} : watchEditor(log);
+      const unwatch = process.env.ERGA_BUILT ? () => {} : watchEditor(log, () => live?.reload("rebuilt the editor"));
       // Started by dev.ts in a process group of its own: if dev.ts is gone (killed outright), so is this.
       const parent = Number(process.env.ERGA_PARENT);
       if (parent) setInterval(() => { try { process.kill(parent, 0); } catch { process.exit(1); } }, 1000).unref();
       // Closed (stopping, or Vite restarting it when its config changes): nothing of this one stays behind.
-      server.httpServer?.once("close", () => { unwatch(); for (const m of mirrors.values()) m.stop(); });
+      server.httpServer?.once("close", () => { unwatch(); live?.stop(); for (const m of mirrors.values()) m.stop(); });
     },
   };
 }
@@ -388,7 +402,7 @@ class Mirror {
  * the page to see it. Only a real change counts (a file's time moved on):
  * watchers also report files merely touched. Returns the way to stop.
  */
-function watchEditor(log: (line: string) => void): () => void {
+function watchEditor(log: (line: string) => void, built: () => void): () => void {
   const SOURCES = [["src/page", true], ["fonts", true], ["page.html", false], ["style.css", false]] as const;
   /** The newest modification among the sources. */
   const newest = async () => {
@@ -412,6 +426,7 @@ function watchEditor(log: (line: string) => void): () => void {
     p.on("close", (code) => {
       running = false;
       log(code == 0 ? "rebuilt the editor: reload to see it" : `the editor didn't build:\n${err}`);
+      if (code == 0 && !again) built();
       if (again) { again = false; build(); }
     });
   };
