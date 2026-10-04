@@ -258,7 +258,8 @@ function dockerRunner(stateDir: string, log: (line: string) => void): Runner {
       if (out.stdout) createWriteStream(join(logs, `${vm}.log`)).end(out.stdout);
       spawnSync("docker", ["rm", "-f", vm], { stdio: "ignore" });
     },
-    async alive(vm) { return spawnSync("docker", ["inspect", "-f", "{{.State.Running}}", vm], { encoding: "utf8" }).stdout.trim() == "true"; },
+    // Running, and with an agent to talk to (a VM of an older image has none: it's replaced).
+    async alive(vm) { return spawnSync("docker", ["inspect", "-f", '{{.State.Running}} {{index .Config.Labels "erga.agent"}}', vm], { encoding: "utf8" }).stdout.trim().split(" ").filter(Boolean).length == 2 && spawnSync("docker", ["inspect", "-f", "{{.State.Running}}", vm], { encoding: "utf8" }).stdout.trim() == "true"; },
     close() {},
   };
 }

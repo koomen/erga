@@ -311,7 +311,9 @@ export class Factory extends DurableObject<Env> {
     return { ok: true };
   }
 
-  async revise(id: number, instructions: string, by: string): Promise<{ ok: boolean; error?: string }> {
+  async revise(id: number, instructions: string, by: string, origin?: string): Promise<{ ok: boolean; error?: string }> {
+    // The server as the person asking reaches it now (it can move: another port locally).
+    if (origin) this.sql.exec("UPDATE tasks SET origin = ? WHERE id = ?", origin, id);
     const r = this.row(id);
     if (!r) return { ok: false, error: "no such task" };
     if (!["complete", "failed"].includes(r.status)) return { ok: false, error: `task #${id} is ${r.status}: it takes instructions when it's ready to merge or failed` };
@@ -321,7 +323,9 @@ export class Factory extends DurableObject<Env> {
     return { ok: true };
   }
 
-  async merge(id: number, by: string): Promise<{ ok: boolean; error?: string }> {
+  async merge(id: number, by: string, origin?: string): Promise<{ ok: boolean; error?: string }> {
+    // The server as the person asking reaches it now (it can move: another port locally).
+    if (origin) this.sql.exec("UPDATE tasks SET origin = ? WHERE id = ?", origin, id);
     const r = this.row(id);
     if (!r) return { ok: false, error: "no such task" };
     if (r.status != "complete") return { ok: false, error: `task #${id} is ${r.status}: only a task that's ready to merge can be merged` };
@@ -355,7 +359,9 @@ export class Factory extends DurableObject<Env> {
     }
   }
 
-  async discard(id: number, by: string): Promise<{ ok: boolean; error?: string }> {
+  async discard(id: number, by: string, origin?: string): Promise<{ ok: boolean; error?: string }> {
+    // The server as the person asking reaches it now (it can move: another port locally).
+    if (origin) this.sql.exec("UPDATE tasks SET origin = ? WHERE id = ?", origin, id);
     const r = this.row(id);
     if (!r) return { ok: false, error: "no such task" };
     if (["merging", "merged", "discarded"].includes(r.status)) return { ok: false, error: `task #${id} is ${r.status}` };
@@ -529,7 +535,7 @@ export async function factoryApi(request: Request, env: Env, url: URL): Promise<
   }
   if (id != null && request.method == "POST" && ["merge", "discard", "revise"].includes(action)) {
     const body = action == "revise" ? await request.json().catch(() => ({})) as { instructions?: string } : {};
-    const r = action == "merge" ? await f.merge(id, admin.login) : action == "discard" ? await f.discard(id, admin.login) : await f.revise(id, String(body.instructions ?? ""), admin.login);
+    const r = action == "merge" ? await f.merge(id, admin.login, url.origin) : action == "discard" ? await f.discard(id, admin.login, url.origin) : await f.revise(id, String(body.instructions ?? ""), admin.login, url.origin);
     return r.ok ? json(await f.task(id), action == "merge" ? 202 : 200) : json(r, 409);
   }
   return json({ error: "Not found" }, 404);

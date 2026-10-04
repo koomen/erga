@@ -925,7 +925,7 @@ it. Measured on a Mac (M-series, OrbStack), with the stand-in:
 
 | step | time |
 |---|---|
-| a VM starts (image cached; the first build is ~3 min) | 1.7 s |
+| a VM starts (image cached; the first build is ~3 min) | 0.2–1.7 s |
 | clone, branch from staging, push | 0.5–0.9 s |
 | `bun install` from the image's cache | 0.8–1.8 s |
 | the preview (the real app, `bun start`, in the VM) is up | ~4 s |
@@ -1055,7 +1055,7 @@ the git tokens' rules.
 **Assessment.**
 
 Works (locally, end to end, in real containers): tasks as branches made from
-staging; VMs from a prepared image in about 2 seconds; the clone, the
+staging; VMs from a prepared image in under 2 seconds; the clone, the
 install, the real app headless in the VM, screenshots, push and report in
 about 10 seconds with the stand-in; merge into staging and the branch
 deleted; discard; more instructions on the same branch; tokens scoped to

@@ -47,9 +47,21 @@ export function dockerUp(): boolean {
   try { return spawnSync("docker", ["info", "--format", "{{.ServerVersion}}"], { stdio: "ignore", timeout: 15_000 }).status == 0; } catch { return false; }
 }
 
+/** Builds under way, by tag: VMs started at once wait for one build. */
+const building = new Map<string, Promise<string>>();
+
 /** The image, built if there isn't one with this tag yet. `log` hears Docker's output. */
-export async function ensureImage(log: (line: string) => void = () => {}): Promise<string> {
+export function ensureImage(log: (line: string) => void = () => {}): Promise<string> {
   const tag = imageTag();
+  let b = building.get(tag);
+  if (!b) {
+    building.set(tag, b = build(tag, log));
+    b.finally(() => building.delete(tag)).catch(() => {});
+  }
+  return b;
+}
+
+async function build(tag: string, log: (line: string) => void): Promise<string> {
   if (spawnSync("docker", ["image", "inspect", tag], { stdio: "ignore" }).status == 0) return tag;
   const ctx = mkdtempSync(join(tmpdir(), "erga-factory-image-"));
   try {
