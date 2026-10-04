@@ -172,13 +172,19 @@ try {
   ok("the pencil switches between viewing and editing without a reload, the document staying put");
 
   // The editor's breadcrumbs: Documents and the title on one baseline, the title's descenders (g, y, p) not clipped, light and dark;
-  // a long title still ends in an ellipsis. (A zero-size inline-block's bottom sits on its line's baseline.)
-  const crumbs = () => p.eval<{ docs: number; title: number; room: number; descent: number; scrollH: number; clientH: number; ellipsis: boolean }>(`(() => {
+  // the arrow midway between the two words' ink (not their boxes); a long title still ends in an ellipsis.
+  // (A zero-size inline-block's bottom sits on its line's baseline; a canvas measures each text's ink from where its box starts.)
+  const crumbs = () => p.eval<{ docs: number; title: number; room: number; descent: number; scrollH: number; clientH: number; ellipsis: boolean; gapL: number; gapR: number }>(`(() => {
     const base = (el) => { const i = document.createElement("i"); i.style.cssText = "display:inline-block;width:0;height:0"; el.appendChild(i); const y = i.getBoundingClientRect().bottom; i.remove(); return y; };
     const docs = document.querySelector("#nav-back span"), title = document.getElementById("doc-title-text");
     const ctx = document.createElement("canvas").getContext("2d"); ctx.font = getComputedStyle(title).font;
     const t = base(title);
-    return { docs: base(docs), title: t, room: title.getBoundingClientRect().bottom - t, descent: ctx.measureText(title.textContent).actualBoundingBoxDescent,
+    const nb = document.getElementById("nav-back"), ink = (el, text, pseudo) => { const cs = getComputedStyle(el, pseudo); ctx.font = cs.fontWeight + " " + cs.fontSize + " " + cs.fontFamily; return ctx.measureText(text); };
+    const d = ink(docs, docs.textContent), a = ink(nb, "›", "::after"), ti = ink(title, title.textContent);
+    const dr = docs.getBoundingClientRect(), tr = title.getBoundingClientRect();
+    const arrow = dr.right + (parseFloat(getComputedStyle(nb).columnGap) || 0) + parseFloat(getComputedStyle(nb, "::after").marginLeft);
+    const gapL = arrow - a.actualBoundingBoxLeft - (dr.left + d.actualBoundingBoxRight), gapR = tr.left - ti.actualBoundingBoxLeft - (arrow + a.actualBoundingBoxRight);
+    return { gapL, gapR, docs: base(docs), title: t, room: title.getBoundingClientRect().bottom - t, descent: ctx.measureText(title.textContent).actualBoundingBoxDescent,
       scrollH: title.scrollHeight, clientH: title.clientHeight, ellipsis: title.scrollWidth > title.clientWidth };
   })()`);
   const crumbsAt = (await get("/new")).headers.get("location")!;
@@ -194,6 +200,7 @@ try {
     const m = await crumbs();
     expect(Math.abs(m.docs - m.title) < 0.5, `Documents and the title share a baseline (${dark ? "dark" : "light"})`, m);
     expect(m.scrollH <= m.clientH && m.room >= m.descent, `the title's descenders aren't clipped (${dark ? "dark" : "light"})`, m);
+    expect(Math.abs(m.gapL - m.gapR) <= 1 && m.gapL > 6, `the arrow is midway between Documents and the title, ink to ink (${dark ? "dark" : "light"})`, m);
     await p.screenshot(join(SHOTS, `account-crumbs-${dark ? "dark" : "light"}.png`));
   }
   await retitle("A long gypsy jogging plan title that keeps going on past any reasonable width for a breadcrumb");
@@ -201,7 +208,7 @@ try {
   const long = await crumbs();
   expect(long.ellipsis && Math.abs(long.docs - long.title) < 0.5 && long.room >= long.descent, "a long title is cut short with an ellipsis, on the same baseline, descenders whole", long);
   expect((await p.eval<string>(`getComputedStyle(document.getElementById("doc-title-text")).textOverflow`)) == "ellipsis", "with an ellipsis");
-  ok("the editor's breadcrumbs share a baseline and show the title's descenders, light and dark; a long title ends in an ellipsis");
+  ok("the editor's breadcrumbs share a baseline and show the title's descenders, the arrow midway between them, light and dark; a long title ends in an ellipsis");
 
   // Sign out: nobody (locally too), and the corner offers to sign in, coming back here.
   await p.open(`${root}/docs`, { width: 1100, height: 720, scale: 2, clear: false });
