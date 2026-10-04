@@ -203,9 +203,9 @@ ${settings.map((e) => settingRow(e, session, takesNever(e.key))).join("\n")}
 ${users.map((u) => userRow(u, session)).join("\n")}
     </ol>
   </section>
-  <section aria-labelledby="deploys-title">
-    <h2 id="deploys-title">Deploys</h2>
-    <p class="lede">Erga's own branches deploy themselves: staging to staging.erga.dev, main to erga.dev. Their commits, deploys and logs: <a href="${esc(link("/source", session))}">Source</a>.</p>
+  <section aria-labelledby="source-title">
+    <h2 id="source-title">Source and deploys</h2>
+    <p class="lede">Erga's own repository, hosted here, and its branches deploying themselves: staging to staging.erga.dev, main to erga.dev. Commits, merging, deploys and their logs, and the GitHub mirror: <a href="${esc(link("/source", session))}">Source</a>.</p>
   </section>
   ${deployOn ? `<section aria-labelledby="deploy-title">
     <h2 id="deploy-title">Deploy your own</h2>

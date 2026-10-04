@@ -7,8 +7,10 @@
 #                     (tests/worker.ts), documents with many pages (tests/pages.ts), the front page the server makes (tests/landing.ts),
 #                     the homepage served directly and its deploys (tests/home.ts),
 #                     the deploy page against a pretend Cloudflare (tests/deploy.ts),
+#                     Erga's own source: the Git endpoint, merges, the mirror and the Source page (tests/source.ts),
 #                     branches deploying themselves, in the Worker (tests/deploys.ts),
 #                     who you are in every page's corner (tests/account.ts),
+#                     the viewer's controls fading while you read (tests/fade.ts),
 #                     a document's pages tree (tests/tree.ts),
 #                     the first switch into editing on a slow network (tests/switch.ts),
 #                     the band the top controls sit on (tests/band.ts),
@@ -45,7 +47,9 @@ page_group() {
   run pages bun tests/pages.ts
   run deployed bun tests/server-config.ts
   run landing bun tests/landing.ts
+  run source bun tests/source.ts
   run account bun tests/account.ts
+  run fade bun tests/fade.ts
   run tree bun tests/tree.ts
   run switch bun tests/switch.ts
   run band bun tests/band.ts

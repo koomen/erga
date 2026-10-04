@@ -65,6 +65,8 @@ serves the app's routes (`front.ts`). Its pages:
 - **Admin settings**, `/admin`: the server's settings and users, for admins.
 - **Deploy your own**, `/deploy`: anyone signed in, by default (see
   [Deploy your own](#deploy-your-own)).
+- **Source**, `/source`: Erga's own repository, for admins (see [Erga's own
+  source](#ergas-own-source)).
 
 The user menu in the upper right of every page reaches Documents,
 Settings and (for admins) Admin settings. Clone and Edit sign you in with
@@ -878,6 +880,161 @@ one at a time), and `bun tests/deploy.ts` clicks through the whole page in
 headless Chrome (OAuth, buying a domain, deploying, a failure, who may open
 it).
 
+### Erga's own source
+
+Erga's canonical repository is hosted by Erga itself, in Cloudflare
+Artifacts ("versioned storage that speaks Git": each repository a Durable
+Object running a Git server). One repository, `erga`, with two branches:
+**staging** and **main**, and never any other. Staging is always at or
+ahead of main, and main only follows staging: edits are pushed to staging,
+which deploys to staging.erga.dev; then main moves forward to staging (or to
+one of its commits), which deploys to erga.dev. So the two never diverge:
+there are no merge commits or conflicts between them. GitHub
+(github.com/koomen/erga) stays, as a mirror. Deploys build from Erga (the
+deploy pipeline's `deployHook`, below).
+
+**How Erga uses Artifacts.** Through the Worker's Artifacts binding
+(`ARTIFACTS`), for two things only: the repository's Git remote
+(`repo.info().remote`) and short-lived repo-scoped tokens for it
+(`repo.createToken("read" | "write", 3600)`, kept until ten minutes before
+they expire; `worker/artifacts.ts`). Everything else is plain Git over
+HTTPS, the protocol every git client speaks (`source/remote.ts`: protocol
+v2's `ls-refs` and `fetch`, and v0's `receive-pack`). Not the REST API: that
+needs a Cloudflare API token with Artifacts Edit as a secret, which can do
+far more than one repository's tokens. And Erga proxies Git itself, with its
+own sign-in in front, rather than handing out Artifacts' remote: Artifacts'
+tokens don't know Erga's admins, Artifacts can't hold Erga's rules (two
+branches, main only forward), and every branch move must go through Erga so
+it can tell the Source page, the deploy pipeline and the mirror.
+
+**The Git endpoint**, `https://<server>/git/erga.git` (`worker/source.ts`,
+`source/http.ts`): clone, fetch, pull and push, over Git's smart HTTP. Git
+asks for a username and password: any username, and one of your agent
+tokens (Settings) as the password; admins only (no token, or one that isn't:
+401, which makes git ask; a user who isn't an admin: 403).
+
+    git remote add erga https://erga.dev/git/erga.git
+    git fetch erga
+    git push erga HEAD:staging
+
+Clones and fetches stream straight through to Artifacts with a read token.
+A push is Erga's (`source/repo.ts`, `SourceRepo.receive`, in one Durable
+Object, `SourceHost`, `worker/source-host.ts`, so pushes and merges happen
+one at a time): Erga advertises only staging and main; a push to anything
+else, or a delete, is refused; the objects go to Artifacts under a
+quarantine branch (`refs/heads/erga-incoming/<id>-<branch>`); Erga reads
+the new commits back and checks them (main takes fast-forwards only, even
+`--force`); then it moves each branch from where it
+was (Artifacts refuses a move whose old value is stale, so two pushes at
+once can't lose one) and drops the quarantine branches. The checks: a push
+to main must be one of staging's commits (staging's new head counts, when the
+same push moves both: `git push erga HEAD:staging HEAD:main`) and forward of
+main; a push to staging, even `--force`, must keep every commit main has
+(rewriting what's only on staging is fine). `git push` shows
+what happened (`remote: Erga: main is now 1a2b3c4 (3 new commits).`).
+
+Erga keeps an index of the commits (parents, subject, author, times) in
+that Durable Object's SQLite: "is this a fast-forward", "where do these
+branches meet" and "the last 25 commits" never ask Artifacts. Commits never
+change, so it's a cache that's always right; anything missing (a push made
+straight to Artifacts) is fetched from Artifacts when it's needed.
+
+**Merging**, `POST /api/source/merge { from: "staging", to: "main", commit? }`
+(admins; the Source page's Merge button, and a commit's Merge to here):
+main moves forward to staging's head, or to `commit`, one of staging's
+commits it doesn't have yet. Always a fast-forward; `from` and `to` can only
+be staging and main. Answers `{ commit, fastForward, upToDate }` or `{ error }`.
+
+**The GitHub mirror.** After each branch move, in the background, Erga
+pushes staging and main to GitHub (`GITHUB_MIRROR_URL`, github.com/koomen/erga
+by default, with the `GITHUB_MIRROR_TOKEN` secret: a token that may push
+there). A failure is recorded and shown, never blocks a push or a merge.
+main moves on GitHub only forward: if GitHub's main has commits Erga
+doesn't (someone pushed there directly), the mirror stops for main and
+says so, rather than drop them; pull them into Erga's main and it carries
+on. With no token there's no mirror (the page says so). `POST
+/api/source/mirror` runs it now.
+
+**The Source page**, `/source` (`source/page.ts`, admins; breadcrumbs Erga ›
+Source): the one place to manage the source and its deploys (the deploy
+pipeline's own page redirects here). One list, staging's last 25 commits,
+newest first, with two dot columns beside it, as the task queue board's
+Branches column draws them: staging's (a hollow orange circle for a commit
+only on staging, a solid green circle for one main has too) and main's (a
+solid green circle where main has it). Circles only, no other shapes. Then
+two deploy columns, staging and production: a "live" mark on the commit each
+target has live ("building", "deploying" or "failed" on one in progress),
+and each target's status in the column's head, from `GET /api/deploys`;
+clicking it opens that deploy's log, live (`GET /api/deploys/<name>/log`,
+then `{ "type": "deploy-log" }` events). Merge moves main to staging's head;
+hovering a commit only on staging offers Merge to here. Also the mirror's
+status (with Push now), the last moves, and the `git remote add` lines. It
+updates by itself, on the deploy pipeline's event stream, `GET /api/events`
+(one hub for admins' pages, `worker/deploys.ts`): `{ "type": "source" }` when
+a branch moves or the mirror's status changes (`publishEvent` in
+`deploy/index.ts`), `{ "type": "deploys" }`, and `{ "type": "deploy-log",
+target, deployId, lines }` for an open log. Live log lines come as events
+only from the server running the deploy (staging's runs on staging's own
+server), so while a deploy runs and no events arrive, the open log asks for
+`GET /api/deploys/<name>/log` every two seconds.
+
+`GET /api/source/branches` → `{ branches: [ { name, commit, commits: [ {
+sha, subject, author, email, at, parents, inMain } ], ahead } ], mirror: {
+url, lastPushAt, error, state, refs }, moves, remote }`. The API takes the
+app's session or an admin's agent token (Bearer); a POST with the session
+alone must come from this site's pages.
+
+**For the deploy pipeline.** After every push or merge that moves a branch,
+the repository calls the pipeline's `deployHook(branch, commit, env)`
+(`deploy/index.ts`). To read a commit for a build, the pipeline asks
+`sourceForBuild(env, commit)` (`worker/source.ts`, through the Artifacts
+binding; the REST API, `deploy/source.ts`, only on a server without one): it
+answers the
+repository's Git remote with a read token (an hour; Bearer, or HTTP Basic
+with any username), for `git clone` in a build environment, and
+`archive()`, the commit's files as a tar, read through Erga. The commit
+should be a branch's head (Artifacts lets those be fetched).
+
+**Locally**, Artifacts has no local mode (miniflare's binding only proxies to
+the real service), so `bun start` stands in for it: the dev server serves a
+bare repository with Git's own `git http-backend`
+(`/__artifacts/git/erga/erga.git`, in `.cloudflare/state/artifacts/`,
+`dev/git-server.ts`), taking repo tokens as Artifacts does (read or write,
+with an expiry) that the Worker mints the same way, and a pretend GitHub
+for the mirror (`/__github/koomen/erga.git`). Local development never
+reaches the real Artifacts or GitHub. Seed it from your checkout:
+
+    ERGA_TOKEN=erga_... bun source/import.ts http://localhost:4400 --from .
+
+`bun test tests/source.test.ts` tests the Git formats, pushes and the
+branch model, merges and the mirror against real git without a Worker; `bun tests/source.ts` tests
+it end to end on a dev server (auth, `git clone`, `git push` and `git pull`,
+the branch model, merges, the mirror, and the Source page in headless
+Chrome: the dots' shapes and colours, the deploy columns, the live log,
+Merge to here, light, dark and a phone; `--keep` leaves it running).
+
+**Setting it up on erga.dev**, once:
+
+1. Make the repository (Workers Paid plan; Artifacts makes the namespace
+   with it): `bunx wrangler artifacts repos create erga --namespace erga
+   --default-branch main` (or the dashboard: Storage & databases ›
+   Artifacts).
+2. Make a GitHub token that may push to koomen/erga (a fine-grained token,
+   Contents: read and write) and set it: `bunx cf workers secrets update`
+   `GITHUB_MIRROR_TOKEN`.
+3. Set `ERGA_ARTIFACTS_NAMESPACE=erga` in the deploy's environment (Workers
+   Builds' build variables) and deploy: `cloudflare.config.ts` then binds
+   `ARTIFACTS` and the mirror.
+4. Seed it with the whole history, through Erga: `ERGA_TOKEN=<an admin's
+   agent token> bun source/import.ts https://erga.dev` (from GitHub's main).
+   It refuses if main is already there.
+5. Point your checkouts at it (`git remote add erga https://erga.dev/git/erga.git`)
+   and push there. GitHub follows.
+
+Limits: a push is read whole into memory (at most 100MB); a clone during a push can briefly see the
+quarantine branch; the commit index loads every commit's parents, which is
+fine for Erga's thousands but not for millions.
+
 ### The factory (experimental)
 
 The factory is the task queue (`development/task-queue/`) inside Erga, at
@@ -1078,14 +1235,15 @@ tasks at once.
 
 **Runbook: the first real run.**
 
-1. Merge #39 (Erga's own source); #40 (staging deploys itself) is in
-   already, and a merge calls its `deployHook("staging", commit)`. Then
-   change one thing in code: `containersHost`'s repository is #39's
-   `/git/erga.git`, which must accept the factory's git tokens with the
-   rules in `dev/factory.ts` (`checkGitToken`, `refsAllowed`) and allow
-   `task/*` branches, still showing only staging and main on `/source`. (If
-   #39's endpoint calls `deployHook` itself on every push to staging, drop
-   the factory's call.)
+1. #39 (Erga's own source) and #40 (staging deploys itself) are in. Change
+   one thing in code: `containersHost`'s repository must be #39's
+   `/git/erga.git` (Erga's own source, above), which must accept the
+   factory's git tokens with the rules in `dev/factory.ts` (`checkGitToken`,
+   `refsAllowed`) and allow `task/*` branches; today it refuses any branch
+   but staging and main. `/source` must still show only staging and main.
+   #39's endpoint calls `deployHook` itself on every push that moves
+   staging, so then drop the factory's own `deployHook("staging", commit)`
+   call after a merge.
 2. Set the key: `openssl rand -base64 32 | bunx cf workers secrets update FACTORY_KEY`
    (on the account's Workers Paid plan, which has Containers).
 3. Build the image: `bun factory/vm/build.ts`, then push it to Cloudflare's
@@ -1250,10 +1408,11 @@ line saying why. Its code (`src/page/settings.ts`, built as `settings.js`)
 loads only when the gear is hovered, focused or clicked.
 
 It talks to the server's `/api/docs/<id>/versions`, `/versions/<versionId>/restore`,
-`/publish`, `/home` and `/home/deploy`. Until those are in, `ERGA_STUB_SETTINGS=1 bun start` answers
-them with a stand-in (`dev/settings-stub.ts`, local development only), whose
-`POST /__erga/stub/settings` sets up any state (how many versions, which is
-published, a deploy that fails…); `tests/settings.ts` uses it.
+`/publish`, `/home` and `/home/deploy` (see "Versions and publishing" and
+"The homepage"). When the document can't be made the homepage (someone who
+isn't an admin may edit it), the homepage section says why (`blocked`).
+`tests/settings.ts` sets up its state on a real server: documents with many
+versions, cut by edits, Manual mode, the homepage and its deploys.
 
 ### A document's pages
 
@@ -1739,6 +1898,22 @@ edge (light, dark, a gradient; desktop and phone), compares the band's
 pixels with the page's, and records a first visit, a hard reload and the
 switch into the editor and back frame by frame on a slow network.
 
+**The viewer's controls fade while you read** (`FADE` in `front.ts`), on a
+document's page and on the homepage alike: Clone, Edit and your avatar are
+whole at the top of the page, and fade to 20% (`FADED`) as soon as it scrolls,
+in 180ms (at once, with `prefers-reduced-motion`). They're whole again back at
+the top, while the pointer is within 100px of them (`FADE_NEAR`), while one has
+keyboard focus, and while your menu is open. On a touch screen, a tap near them
+brings them back until the page scrolls again. Nothing else changes it, no
+timer included: the same scroll and pointer always look the same. The band
+behind them stays as it is, in the page's colour. On a document's page the page
+scrolls in its frame, on its own origin, so the frame's host page tells the
+shell where it's scrolled to and where the pointer is over it (`erga-scroll`,
+`erga-pointer`); the most a page can do with them is fade the controls or bring
+them back. The editor's controls don't fade. `bun tests/fade.ts` checks it
+all in both, on a desktop and a phone, with every frame of the fade keeping the
+band's colour (`--shots` keeps pictures).
+
 The pages origin (`pagesDoor` in `front.ts`) serves the frame at `/t/<token>/`
 and the document's files under `/t/<token>/doc/`. The token, signed with
 `SESSION_SECRET`, opens that one document for a week, names the shell's origin
@@ -1942,6 +2117,10 @@ back, merging edits from disk, the agent's exact-match edits and attribution.
 - `front.ts`: the app's own routes and pages (the front page, `/new`, `/docs` and
   its share dialog, delete, the unedited rule, titles)
 - `admin.ts`: `/admin`, the server's settings and users, for admins
+- `source/`, `worker/source.ts`, `worker/source-host.ts`, `worker/artifacts.ts`: Erga's own source in
+  Cloudflare Artifacts (Git's formats, the smart HTTP client and endpoint, pushes, the branch model, the
+  GitHub mirror, the Source page, the import script); `dev/git-server.ts`, local development's stand-ins
+  for Artifacts and GitHub
 - `deploy/cloudflare.ts`: the one deploy pipeline (`runPipeline`: targets, steps, D1's export and import)
 - `deploy/targets.json`, `deploy/targets.ts`: Erga's own targets, production and staging (cloudflare.config.ts reads production's names there)
 - `deploy/branches.ts`, `deploy/index.ts`, `worker/pipeline.ts`, `worker/deploys.ts`: branches deploying
@@ -1995,8 +2174,7 @@ back, merging edits from disk, the agent's exact-match edits and attribution.
   rebasing as change sets), `agent-log.ts` (the agent transcript, shared by
   host and shell)
 - `src/page/settings.ts`, `src/page/versions.ts`: document settings (the gear's
-  popover: publishing, the homepage, versions), built on its own as `settings.js`;
-  `dev/settings-stub.ts` stands in for their server side (`ERGA_STUB_SETTINGS=1`)
+  popover: publishing, the homepage, versions), built on its own as `settings.js`
 - `package.json`: the pinned CodeMirror and Yjs packages the page editor bundles, and pi
 - `src/page/tree.ts`: a document's pages as a tree (built as `pages-tree.js`, loaded on demand), in the editor and on `/docs`
 - `style.css`: theme colours, typography and the editor's styling
