@@ -43,7 +43,9 @@ const stagingOf = async () => ((await api("/api/deploys")).body.targets as any[]
 
 try {
   // ---------------------------------------------------------------- the status, before anything
-  const first = await api("/api/deploys");
+  // The dev server migrates its database as it starts: until then, its first answers can be errors.
+  let first = await api("/api/deploys");
+  await until(async () => (first = await api("/api/deploys")).status == 200, 20_000, "the server answers");
   expect(first.status == 200 && first.body.targets.map((t: any) => t.name).join() == "production,staging", "GET /api/deploys: both targets", first);
   const [prod0, stag0] = first.body.targets;
   expect(prod0.host == "erga.dev" && prod0.branch == "main" && !prod0.self && stag0.host == "staging.erga.dev" && stag0.branch == "staging" && stag0.self && stag0.state == "idle", "staging is this server's; production another's", first.body);

@@ -128,10 +128,10 @@ export interface Deps {
   /** Where to clone the commit from (the source repo's own reader, task #39's sourceForBuild); else the REST API's (deploy/source.ts). */
   source?(commit: string): Promise<Source | null>;
   /**
-   * A branch's head as this server's own repository has it (task #39's). A
-   * branch move another server passes on is checked against it: what's
-   * deployed is the head read here, never the commit the other server named.
-   * Production takes no move from another server without it.
+   * A branch's head as this server's own repository has it (task #39's).
+   * Production checks a move of main that another server passes on against
+   * it: what's deployed is the head read here, never the commit the other
+   * server named. Without it, production takes no move from another server.
    */
   headOf?(branch: string): Promise<string | null>;
   /** New lines of a deploy's log ({type: "deploy-log"} on /api/events). */
@@ -410,9 +410,9 @@ export class BranchDeploys {
 
   /**
    * Another server says this one's branch moved, or asks for a redeploy
-   * (POST /api/deploys/<name>/hook). A move is checked against this server's
-   * own repository where it can read it (headOf): its head is deployed, not
-   * the commit named. Production deploys nothing another server names.
+   * (POST /api/deploys/<name>/hook). Production checks a move against its
+   * own repository (headOf) and deploys main's head as it reads it there,
+   * never the commit another server names; staging takes the commit named.
    */
   async remoteHook(name: string, body: { branch?: string; commit?: string; redeploy?: boolean; trigger?: string }): Promise<{ ok: boolean; error?: string }> {
     if (name != this.self) return { ok: false, error: `This server is ${this.self ?? "no deploy target"}, not ${name}.` };
@@ -421,12 +421,11 @@ export class BranchDeploys {
     const branch = TARGETS[name].branch;
     if (body.branch != branch || !body.commit) return { ok: false, error: "Which branch and commit?" };
     let commit = body.commit;
-    if (this.deps.headOf) {
+    if (name == "production") {
+      if (!this.deps.headOf) return { ok: false, error: "Production deploys only main's head as its own repository has it, and this server can't read its repository." };
       const head = await this.deps.headOf(branch).catch(() => null);
       if (!head) return { ok: false, error: `This server couldn't read ${branch}'s head in its repository.` };
       commit = head;
-    } else if (name == "production") {
-      return { ok: false, error: "Production deploys only main's head as its own repository has it, and this server can't read its repository." };
     }
     if (!/^[0-9a-f]{7,40}$/.test(commit)) return { ok: false, error: `Not a commit: ${commit}` };
     const said = commit == body.commit ? "" : `; another server said ${body.commit.slice(0, 12)}`;

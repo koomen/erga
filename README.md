@@ -649,10 +649,20 @@ per server, `Pipeline`, named "deploys": `worker/pipeline.ts`). #39 calls
 `deployHook(branch, commit)` (`deploy/index.ts`) after any push or merge
 that moves `staging` or `main`. The server whose target is that branch
 (`DEPLOY_TARGET`) queues the commit and deploys it in its alarm: build, then
-the pipeline on its own Worker. A push while a deploy runs waits, and only
-the newest waiting one is deployed after it. Production passes a push of
-`staging` it hears on to staging (`POST /api/deploys/staging/hook`, with
-`DEPLOY_HOOK_SECRET`); staging never makes production deploy. A server
+the pipeline on its own Worker. A push while a deploy runs cancels it: the
+running deploy stops before its next step (never half way through one; its
+build is stopped too, the builder's container killing its commands), is
+marked `cancelled`, and the newest waiting commit deploys straight after.
+Stopped before the Worker's upload, nothing on the target changed: it stays
+on its last good version. Stopped after it, the newer deploy replaces what
+went up. A deploy the server's restart interrupted isn't carried on when a
+newer one waits: it's cancelled too. Each server passes on the moves it
+hears for the other's branch (`POST /api/deploys/<name>/hook`, with
+`DEPLOY_HOOK_SECRET`): production tells staging of `staging`, staging tells
+production of `main` (so a merge on staging.erga.dev's /source deploys
+erga.dev too). Production never deploys a commit another server names: it
+reads `main`'s head from its own view of the repository and deploys that. A
+server
 deploys itself only with `CLOUDFLARE_DEPLOY_TOKEN` set: until then a push is
 noted in its log and nothing is deployed, so merging this changes nothing on
 erga.dev by itself.
@@ -702,24 +712,37 @@ code only ever exports it, and the tests check every call (nothing but the
 export reaches production's database, and nothing reaches its Worker).
 
 **Status.** `GET /api/deploys` (admins, also with an admin's agent token)
-answers `{targets: [{name, host, branch, state, commit, at, error, log,
-deployed, pending, steps, self}]}`: `state` is `idle`, `building`,
-`deploying`, `deployed` or `failed`; `log` the last lines. Another server's
+answers `{targets: [{name, host, branch, state, commit, deployId,
+liveDeploy, at, error, log, deployed, pending, steps, self}]}`: `state` is
+`idle`, `building`, `deploying`, `deployed`, `failed` or `cancelled`; `log`
+the last lines. `?history=N` adds each target's last N deploys (`history`). Another server's
 target is that server's own answer when it gives one (`remote`).
 `POST /api/deploys/<name>` redeploys that target's branch head now (on
 production, `staging` is passed on). `GET /api/deploys/<name>/log` (admins)
-is the latest deploy's whole log, `{deployId, commit, state, lines: [{at,
-text, step?}]}`: each line with its time (ms) and its step (`build`, or one
+is the latest deploy's whole log, `{deployId, commit, state, trigger,
+started, ended, error, live, lines: [{at, text, step?}]}`, and
+`?deploy=<id>` any past deploy's: each line with its time (ms) and its step (`build`, or one
 of the pipeline's), the first and last 2,500 lines if it's longer. It's kept
 in storage as it grows, so one deploy's log runs on across the restart its
 own upload causes; another server's target's log comes from that server.
+**History:** `GET /api/deploys/<name>/history?limit=N` (default 20) is a
+target's deploys, newest first, `{target, deploys: [{id, commit, state,
+started, ended, trigger, error, supersededBy?, replacedBy?, live}]}`:
+`trigger` says what started it (`push by ada`, `merge by ada`, `redeploy by
+ada`, `…, passed on` when another server passed it on), a cancelled one
+names the commit and deploy that took its place. The last 100 of each
+target, and their logs, are kept in the `Pipeline` Durable Object's storage
+(older ones' logs deleted); another server's history comes from that server.
 `/api/events` (admins) is server-sent events: `{type: "deploys"}` on each
 change, `{type: "deploy-log", target, deployId, lines}` with each deploy's
 new lines as they arrive (for a live log), and others put there with
 `publishEvent` in `deploy/index.ts` (#39's `{type: "source"}`).
 `GET /api/deploys/version` (anyone) is the release the server runs. The
-dashboard is task #39's **/source**: the commits, with the branches and each
-target's deploys beside them, and a deploy's log in a modal;
+dashboard is task #39's **/source**: the commits, one dot column beside them
+(a solid green circle: on main too; a hollow orange one: only on staging),
+and each target's deploys beside the commit each deployed (the latest, with
+a count that opens the rest; live, deployed, running, failed or cancelled),
+any deploy's log, past or live, in a modal;
 `/admin/deploys` redirects there.
 
 **The branch model.** There are only two branches, and `staging` is always
@@ -735,7 +758,10 @@ dev server staging, deploying into the mock Cloudflare's copy of Erga's
 account (`deploy/mock.ts`, `fleet`) with a mock builder; a push is
 `curl -X POST -H "Authorization: Bearer mock-hook-secret-0123456789abcdef"
 -d '{"branch":"staging","commit":"<40 hex>"}' localhost:4400/api/deploys/staging/hook`
-(a commit starting `0bad` fails to build).
+(a commit starting `0bad`, or whose subject has `[mock-fail]`, fails to
+build). The other target's server (production, here) is played in the same
+Durable Object, at its host in the mock, so a merge to main on /source
+deploys "production" too, and both columns fill.
 
 #### Runbook: the first real staging deploy
 
