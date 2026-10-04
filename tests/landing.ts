@@ -40,8 +40,12 @@ try {
   await until(() => /landing page: landing_document is now \/tester\/landing/.test(host.output()), 30_000, "the dev server publishes the landing project", () => host.output().slice(-3000));
   const get = (path: string, init: RequestInit = {}) => fetch(root + path, { redirect: "manual", ...init });
   const front = await (await get("/")).text();
-  const src = /<iframe class="erga-view" src="([^"]+)"/.exec(front)?.[1]?.replaceAll("&amp;", "&");
-  expect(src && /^http:\/\/[a-z0-9]{8}-tester\.localhost:\d+\/t\/[^/]+\/doc\/index\.html$/.test(src), "/ frames the landing document on its own pages origin", front.slice(0, 1500));
+  const frameSrc = /<iframe id="frame" class="erga-view" src="([^"]+)"/.exec(front)?.[1]?.replaceAll("&amp;", "&");
+  expect(frameSrc && /^http:\/\/[a-z0-9]{8}-tester\.localhost:\d+\/t\/[^/]+\/\?view=index\.html$/.test(frameSrc), "/ frames the landing document on its own pages origin", front.slice(0, 1500));
+  // The frame's host page shows the document's page, its index, straight away.
+  const hostPage = await (await fetch(frameSrc.replace(/^http:\/\/[^/]+/, root), { headers: { Host: new URL(frameSrc).host } })).text();
+  expect(hostPage.includes('<iframe id="view" class="on" src="doc/index.html"'), "whose host page shows its index straight away", hostPage.slice(0, 800));
+  const src = frameSrc.replace(/\?view=index\.html$/, "doc/index.html");
   expect(front.includes("<title>Erga</title>") && front.includes('href="/new?from=landing"') && front.includes('href="/tester/landing/edit"'), "titled by it, with Clone (a copy) and, for its editor, Edit");
   const id = /^http:\/\/([a-z0-9]{8})-/.exec(src)![1];
   const served = await (await fetch(src.replace(/^http:\/\/[^/]+/, root), { headers: { Host: new URL(src).host } })).text();
@@ -58,7 +62,7 @@ try {
 
   // In a real browser: the front page shows the document, its own page in the frame.
   await p.open(`${root}/`, { width: 1100, height: 760, scale: 2 });
-  await until(async () => (await p.inFrames<string>(`document.querySelector("h1")?.textContent ?? ""`)).some((t) => t == "Erga"), 15_000, "the landing page renders in its frame");
+  await until(async () => (await p.inPage<string>(`document.querySelector("h1")?.textContent ?? ""`)).some((t) => t == "Erga"), 15_000, "the landing page renders in its frame");
   expect(await p.eval<boolean>(`!!document.querySelector("a.erga-clone-button[href='/new?from=landing']") && !!document.querySelector("a.erga-edit-button[href='/tester/landing/edit']")`), "with Edit and Clone over it");
   await p.screenshot(join(SHOTS, "landing-front.png"));
   ok("in headless Chrome, / renders the landing document with Edit and Clone");

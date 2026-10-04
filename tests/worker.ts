@@ -338,10 +338,11 @@ try {
   expect(await location(`/${login}/${blank}?from=here`) == `/${login}/untitled?from=here`, "/<you>/<id> redirects there, keeping the query");
   expect(await location(`/${login.toUpperCase()}/untitled`) == `/${login}/untitled`, "so does a differently cased owner");
   const viewerHtml = await (await get(`/${login}/untitled`)).text();
-  expect(viewerHtml.includes('<iframe class="erga-view"') && viewerHtml.includes(`href="/${login}/untitled/edit"`) && viewerHtml.includes(`href="/new?from=${blank}"`) && viewerHtml.includes('href="/docs"'), "the canonical address is the viewer: the page, Edit, Clone, and breadcrumbs back to My Documents", viewerHtml.slice(-1500));
+  expect(viewerHtml.includes('<iframe id="frame" class="erga-view"') && viewerHtml.includes(`href="/${login}/untitled/edit"`) && viewerHtml.includes(`href="/new?from=${blank}"`) && viewerHtml.includes('href="/docs"'), "the canonical address is the viewer: the page, Edit, Clone, and breadcrumbs back to My Documents", viewerHtml.slice(-1500));
   expect(await location(`/d/${blank}/edit`) == `/${login}/untitled/edit` && await location(`/${login}/${blank}/edit`) == `/${login}/untitled/edit`, "/edit under any of its addresses redirects to the canonical editor");
   const editorHtml = await (await get(`/${login}/untitled/edit`)).text();
   expect(editorHtml.includes(`<meta name="erga-base" content="/d/${blank}">`) && editorHtml.includes("<title>Untitled</title>"), "/<you>/<slug>/edit is the editor, which talks to /d/<id>", editorHtml.slice(0, 400));
+  expect(editorHtml.includes('<body class="erga-editing">') && editorHtml.includes('<iframe id="frame" class="erga-view"') && !editorHtml.includes("/page.js\"></script>"), "it's the viewer's page, going into the editor as it loads (the editor's code isn't in it)", editorHtml.slice(0, 1500));
   expect((await get(`/${login}/nothing-here`)).status == 404 && (await get(`/d/zzzzzzzz`)).status == 404, "an address with no document is a 404");
   for (const sub of [`/d/${blank}/api/doc`, `/${login}/untitled/api/doc`, `/${login}/${blank}/api/doc`]) expect((await get(sub)).ok, `the document's host answers under ${sub}`);
   ok("/d/<id>, /<you>/<id> and the canonical /<you>/<slug> all reach the document: the viewer there, the editor under /edit");

@@ -21,18 +21,19 @@
   <link rel="stylesheet" href="/fonts/inter.css">
   <link rel="stylesheet" href="/style.css">
   <style>
-    /* The page fills the window below a strip kept clear for the top controls
-       (their 34px row, its offset and a gap), so the top of a document never
-       sits under them; the rest of the chrome floats over the page. It stops
-       at the on-screen keyboard (--kb, set by main.ts where the browser lays
-       the keyboard over the page rather than resizing it), and keeps out of a
-       phone's notch held sideways (--safe-l, --safe-r). */
+    /* The page fills the window, as in the viewer (the editor's controls are
+       added to the viewer's page, front.ts, and the document mustn't move),
+       and the chrome floats over it. The source view starts below a strip kept
+       clear for the top controls (their 34px row, its offset and a gap). The
+       page stops at the on-screen keyboard (--kb, set by main.ts where the
+       browser lays the keyboard over the page rather than resizing it), and
+       keeps out of a phone's notch held sideways (--safe-l, --safe-r). */
     :root {
       --top-clear: calc(max(12px, env(safe-area-inset-top)) + 34px + 14px);
       --safe-l: env(safe-area-inset-left, 0px); --safe-r: env(safe-area-inset-right, 0px);
     }
     body { overflow: hidden; }
-    #frame { position: fixed; top: var(--top-clear); left: 0; width: 100%; height: calc(100% - var(--top-clear) - var(--kb, 0px)); border: 0; background: transparent; }
+    #frame { position: fixed; top: 0; left: 0; width: 100%; height: calc(100% - var(--kb, 0px)); border: 0; background: transparent; }
 
     /* The shell's canvas is the page's own background (main.ts reads it from
        the page), so the space the agent opens up is the same surface as the

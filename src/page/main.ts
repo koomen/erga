@@ -70,7 +70,7 @@ const peersField = StateField.define<DecorationSet>({
 });
 
 declare global {
-  interface Window { ergaPage?: unknown }
+  interface Window { ergaPage?: unknown; ergaShell?: { ready(): void } }
 }
 
 
@@ -86,9 +86,14 @@ declare global {
   const settings: { track: boolean; agent: boolean } = { track: false, agent: false, ...store.json(KEYS.settings) };
   const saveSettings = () => store.set(KEYS.settings, JSON.stringify(settings));
 
+  // The page this runs in is the document's page (front.ts), viewing or
+  // editing: the editor runs either way once loaded, its controls shown only
+  // while editing (setEditing, below).
+  const editing = () => document.body.classList.contains("erga-editing");
+
   // An agent pane left open stays open across reloads: put it back before
   // the first paint, without the open animation.
-  if (settings.agent) {
+  if (settings.agent && editing()) {
     document.body.classList.add("no-motion", "agent-open");
     ($("agent") as HTMLElement).inert = false;
     $("agent-fab").setAttribute("aria-expanded", "true");
@@ -139,6 +144,7 @@ declare global {
   } catch (e) {
     $("welcome").hidden = false;
     $("welcome").innerHTML = `<div><p>Nothing to edit here.</p><p>Open one from <a href="/docs">your documents</a>.</p></div>`;
+    window.ergaShell?.ready();
     return;
   }
 
@@ -175,6 +181,7 @@ declare global {
   } catch (e) {
     $("welcome").hidden = false;
     $("welcome").innerHTML = `<div><p>Couldn't join the document: ${(e as Error).message}.</p><p>Is the server still running?</p></div>`;
+    window.ergaShell?.ready();
     return;
   }
   const markdownHead = `<link rel="stylesheet" href="/fonts/inter.css"><link rel="stylesheet" href="/style.css"><style>
@@ -267,11 +274,14 @@ declare global {
     titleBtn.title = `${location.host}${n.address}`;
     document.title = n.title;
     // The editor's own address is the document's, then /edit (the document's alone is its viewer, which the eye opens).
-    const here = `${n.address}/edit`;
+    if (!n.address) return;
     const view = $("btn-view") as HTMLAnchorElement;
     view.href = n.address + as;
-    view.hidden = !n.address;
-    if (n.address && location.pathname != here) window.history.replaceState(window.history.state, "", here + location.search + location.hash);
+    view.hidden = false;
+    document.querySelector<HTMLMetaElement>('meta[name="erga-address"]')?.setAttribute("content", n.address);
+    // Viewing at the front page's address (/), it stays there.
+    const here = editing() ? `${n.address}/edit` : location.pathname == "/" ? "/" : n.address;
+    if (location.pathname != here) window.history.replaceState(window.history.state, "", here + location.search + location.hash);
   }
   if (info.docName) showName(info.docName);
   /** Asks for the name again (when the event channel connects: a rename may have gone by while it was down). */
@@ -833,7 +843,7 @@ Once you've read the guide, await further instructions.`;
     onBackdrop: (b) => applyBackdrop(b),
     onStale: () => needRefresh(),
   });
-  frame.src = pagesUrl;
+  page.start();
 
   // ---------------------------------------------------------------- style bar
 
@@ -1450,6 +1460,7 @@ Once you've read the guide, await further instructions.`;
   // ---------------------------------------------------------------- shortcuts & wiring
 
   function appShortcut(e: Keys): boolean {
+    if (!editing()) return false;
     const mod = isMac ? e.metaKey : e.ctrlKey;
     const key = e.key.toLowerCase();
     if (mod && e.shiftKey && key == "p") { toggleSource(); return true; }
@@ -1550,7 +1561,27 @@ Once you've read the guide, await further instructions.`;
     if (!$("pause-card").hidden && !$("pause-card").contains(e.target as Node) && !$("btn-pause").contains(e.target as Node)) showPauseCard(false);
   });
 
+  // Out of the editor and back in (front.ts), without leaving the page: the
+  // controls go out of sight, with anything open among them, and come back as they were.
+  function setEditing(on: boolean) {
+    if (on) {
+      document.body.classList.toggle("agent-open", settings.agent);
+      agentPanel.inert = !settings.agent;
+      page.focus();
+      return;
+    }
+    if (mode != "text") setMode("text");
+    toggleHelp(false); toggleShare(false); toggleNaming(false); toggleAccount(false); showPauseCard(false);
+    hideFmt();
+    document.body.classList.remove("agent-open");
+    agentPanel.inert = true;
+    stopVoice();
+    showChrome();
+  }
+  if (!editing()) setEditing(false);
+
   started = true;
   presenceChanged();
-  window.ergaPage = { page, collab, toggleSource, captureView, get state() { return currentState(); } };
+  window.ergaPage = { page, collab, toggleSource, captureView, setEditing, get state() { return currentState(); } };
+  window.ergaShell?.ready();
 })();

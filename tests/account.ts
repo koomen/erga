@@ -54,12 +54,12 @@ try {
   const at = made.headers.get("location")!;
   const id = ((await (await get(`${at.replace(/\/edit$/, "")}/api/name`)).json()) as { id: string }).id;
   const editorHtml = await (await get(at)).text();
-  expect(!editorHtml.includes("data-erga-account") && editorHtml.includes('name="erga-account"'), "the editor shows it itself (and is told which links)", editorHtml.slice(0, 400));
+  expect(editorHtml.includes('data-erga-account="in"') && editorHtml.includes('name="erga-account"'), "the editor's page has it (for viewing) and is told the links for the editor's own (editing)", editorHtml.slice(0, 400));
   expect(JSON.parse(/name="erga-account" content="([^"]+)"/.exec(editorHtml)![1].replaceAll("&quot;", '"')).admin == "/admin", "an admin's editor menu has Admin");
   const docFile = await (await get(`/d/${id}/doc/index.html`)).text();
   expect(!docFile.includes("data-erga-account"), "a document's own files are left alone", docFile.slice(-400));
   const front = await (await get("/")).text();
-  const frameSrc = /<iframe class="erga-view" src="([^"]+)"/.exec(front)![1].replaceAll("&amp;", "&");
+  const frameSrc = /<iframe id="frame" class="erga-view" src="([^"]+)"/.exec(front)![1].replaceAll("&amp;", "&");
   const framed = await (await fetch(frameSrc.replace(/^http:\/\/[^/]+/, root), { headers: { Host: new URL(frameSrc).host } })).text();
   expect(!framed.includes("data-erga-account"), "nor the front page's document, on its pages origin");
   const ada = await (await get("/docs?user=Ada")).text();
@@ -100,7 +100,7 @@ try {
 
   // The front page: beside its Edit and Clone buttons, not under them.
   await p.open(`${root}/`, { width: 1100, height: 720, scale: 2, clear: false });
-  await until(async () => (await p.inFrames<string>(`document.querySelector("h1")?.textContent ?? ""`)).some((t) => t == "Erga"), 15_000, "the landing page renders in its frame");
+  await until(async () => (await p.inPage<string>(`document.querySelector("h1")?.textContent ?? ""`)).some((t) => t == "Erga"), 15_000, "the landing page renders in its frame");
   const apart = await p.eval<boolean>(`(() => { const a = document.querySelector("[data-erga-account] button").getBoundingClientRect(), e = document.querySelector(".erga-view-buttons").getBoundingClientRect(); return e.right <= a.left - 4 && Math.abs((e.top + e.bottom) / 2 - (a.top + a.bottom) / 2) < 3; })()`);
   expect(apart, "the avatar sits right of the Edit and Clone buttons, level with them");
   await p.screenshot(join(SHOTS, "account-front.png"));
@@ -108,7 +108,8 @@ try {
 
   // The editor: your avatar, the last of its controls, opens the same menu.
   await p.open(`${root}${at}`, { width: 1100, height: 720, scale: 2, clear: false });
-  await until(() => p.eval<boolean>(`!!document.querySelector("#me .avatar")`), 15_000, "the editor shows your avatar");
+  await until(() => p.eval<boolean>(`!!document.querySelector("#me .avatar") && document.body.classList.contains("erga-editor-ready")`), 15_000, "the editor shows your avatar");
+  await Bun.sleep(250); // its controls fade in
   const meRect = await p.eval<{ right: number; top: number; img: string | null }>(`(() => { const b = document.querySelector("#me .avatar"), r = b.getBoundingClientRect(); return { right: r.right, top: r.top, img: b.querySelector("img")?.getAttribute("src") ?? null }; })()`);
   expect(meRect.right > 1100 - 30 && meRect.top < 30 && meRect.img?.startsWith("https://avatars.githubusercontent.com/tester"), "far right of the editor's controls, with your GitHub picture", meRect);
   await clickOn(p, "#me .avatar");
@@ -122,6 +123,24 @@ try {
   expect(!eye.hidden && eye.href == at.replace(/\/edit$/, ""), "the eye beside it opens the viewer", { eye, at });
   expect(await p.eval<boolean>(`document.getElementById("account").hidden`), "Escape closes it");
   ok("in the editor, your avatar opens the menu");
+
+  // Out of the editor and back, without leaving the page: the address and the controls change; the document doesn't move.
+  const h1 = async () => (await p.inPage<number | null>(`document.querySelector("h1") ? Math.round(document.querySelector("h1").getBoundingClientRect().top) : null`)).find((t) => t != null) ?? null;
+  const visible = (sel: string) => p.eval<boolean>(`(() => { const el = document.querySelector(${JSON.stringify(sel)}); return !!el && getComputedStyle(el).visibility != "hidden" && getComputedStyle(el).opacity == "1"; })()`);
+  const editingTop = await h1();
+  await p.eval(`window.__samePage = true`);
+  await clickOn(p, "#btn-view");
+  await until(async () => (await p.eval<string>("location.pathname")) == at.replace(/\/edit$/, "") && await visible(".erga-view-buttons") && !(await visible("#erga-editor")), 5000, "the eye goes to the viewer");
+  await until(async () => (await h1()) != null, 5000, "the viewer's page shows");
+  const viewingTop = await h1();
+  expect(editingTop != null && viewingTop == editingTop, "the eye shows the viewer, with the document where it was", { editingTop, viewingTop });
+  await p.screenshot(join(SHOTS, "account-viewing-from-editor.png"));
+  await clickOn(p, ".erga-edit-button");
+  await until(async () => (await p.eval<string>("location.pathname")) == at && await visible("#erga-editor") && !(await visible(".erga-view-buttons")), 5000, "the pencil goes back into the editor");
+  expect(await p.eval<boolean>(`window.__samePage === true`), "and neither reloaded the page");
+  await p.send("Runtime.evaluate", { expression: "history.back()" });
+  await until(async () => (await p.eval<string>("location.pathname")) == at.replace(/\/edit$/, "") && await visible(".erga-view-buttons"), 5000, "Back goes to the viewer too");
+  ok("the eye and the pencil switch between viewing and editing without a reload, the document staying put");
 
   // Sign out: nobody (locally too), and the corner offers to sign in, coming back here.
   await p.open(`${root}/docs`, { width: 1100, height: 720, scale: 2, clear: false });

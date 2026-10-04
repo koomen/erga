@@ -66,7 +66,8 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
   if (path == "/auth/github/callback") return finishSignIn(env, request);
   if (path == "/auth/logout") return signOut(env, request);
   if (path == "/auth/test") return testSignIn(env, request);
-  if (assets) return env.ASSETS.fetch(request);
+  // The editor's controls and styles, which a document's page adds to itself to go into the editor (front.ts).
+  if (assets || path == "/editor.html") return env.ASSETS.fetch(request);
   // The server's API for agents, and people's agent tokens (server-api.ts).
   if (path == "/llms.txt" || path == "/mcp" || path == "/api" || path.startsWith("/api/")) return serverApi(request, withTokens(platform(env), url));
   if (path == "/settings" || path == "/tokens" || path.startsWith("/tokens/")) return tokensDoor(request, withTokens(platform(env), url));
