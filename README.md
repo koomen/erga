@@ -38,9 +38,9 @@ serves the app's routes (`front.ts`). Its pages:
 - **The viewer**, `/<owner>/<slug>`: a document as it renders, read-only,
   with small icons at the top right like the editor's: Clone (a copy of your
   own, in the editor: `/new?from=<id>`) for anyone who may see it, and the
-  pencil (Edit) for those who may edit it. In the editor, the eye opens the
-  viewer. The viewer and the editor are one page (see [One page, viewing or
-  editing](#one-page-viewing-or-editing)): the pencil and the eye switch
+  pencil (Edit) for those who may edit it. In the editor the pencil is blue
+  (on): clicking it goes back to the viewer. The viewer and the editor are one page (see [One page, viewing or
+  editing](#one-page-viewing-or-editing)): the pencil switches
   between them without a reload, and the document doesn't move.
 - **The front page**, `/`: the viewer on the landing document (see [The front
   page](#the-front-page)), for anyone, signed in or not.
@@ -704,7 +704,7 @@ the editor's controls and styles (`page.html`, served as `/editor.html`) and
 its code (`page.js`, which joins the room), and asks the frame for its half
 (`frame.js`). That renders the editable page out of sight and puts it in the
 plain page's place, scrolled to the same spot; then the editor's controls
-fade in over the viewer's. The eye and the browser's Back go the other way:
+fade in over the viewer's. The pencil again and the browser's Back go the other way:
 the plain page loads again behind and takes its place, the viewer's controls
 fade back, and the editor carries on unseen, so going back in is immediate.
 Viewing, the page fetches the editor's files while the browser is idle.

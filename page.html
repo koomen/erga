@@ -93,11 +93,11 @@
     .refresh-pill[hidden] { display: none; }
     .refresh-pill svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; animation: agent-spin 1.6s linear infinite; }
     .refresh-pill b { font-weight: 600; color: var(--caret); }
-    #btn-track[aria-pressed="true"] { color: #16a34a; background: rgba(34, 197, 94, 0.12); }
+    /* A control that's on (tracking, paused, editing, its card open) is blue, nothing more. */
+    .chrome-top :is(.icon-btn[aria-pressed="true"], .icon-btn[aria-expanded="true"]), .chrome-top :is(.icon-btn[aria-pressed="true"], .icon-btn[aria-expanded="true"]):hover { color: var(--caret); background: transparent; }
     /* Pausing the page: the button shows what clicking it does (pause, or play to resume). */
     #btn-pause .i-play, #btn-pause[aria-pressed="true"] .i-pause { display: none; }
     #btn-pause[aria-pressed="true"] .i-play { display: block; }
-    #btn-pause[aria-pressed="true"] { color: #d97706; background: rgba(245, 158, 11, 0.14); }
     #btn-pause[aria-disabled="true"] { opacity: 0.4; cursor: default; }
     #btn-pause[aria-disabled="true"]:hover { background: transparent; color: var(--chrome); }
     /* Back to your documents, top left (hidden for test people, who have none). */
@@ -456,8 +456,8 @@
       <button type="button" role="radio" data-mode="md" aria-checked="false">*T*</button>
       <button type="button" role="radio" data-mode="html" aria-checked="false">&lt;T&gt;</button>
     </div>
-    <a class="icon-btn" id="btn-view" href="" aria-label="View the page, read-only" data-tip="View" hidden>
-      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.75 12S6.25 5.75 12 5.75 21.25 12 21.25 12 17.75 18.25 12 18.25 2.75 12 2.75 12Z"/><circle cx="12" cy="12" r="2.75"/></svg>
+    <a class="icon-btn" id="btn-edit" href="" aria-label="Editing: stop, and view the page" aria-pressed="true" data-tip="Edit" hidden>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.75 19.25l1-4L15.6 5.4a1.4 1.4 0 0 1 2 0l1 1a1.4 1.4 0 0 1 0 2L8.75 18.25zM13.75 7.25l3 3"/></svg>
     </a>
     <div class="me-slot" id="me" aria-label="You"></div>
   </header>

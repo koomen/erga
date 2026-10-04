@@ -273,9 +273,9 @@ declare global {
     titleBtn.setAttribute("aria-label", `${n.title}: rename, or change its address`);
     titleBtn.title = `${location.host}${n.address}`;
     document.title = n.title;
-    // The editor's own address is the document's, then /edit (the document's alone is its viewer, which the eye opens).
+    // The editor's own address is the document's, then /edit (the document's alone is its viewer, which the pencil, blue while editing, goes back to).
     if (!n.address) return;
-    const view = $("btn-view") as HTMLAnchorElement;
+    const view = $("btn-edit") as HTMLAnchorElement;
     view.href = n.address + as;
     view.hidden = false;
     document.querySelector<HTMLMetaElement>('meta[name="erga-address"]')?.setAttribute("content", n.address);

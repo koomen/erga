@@ -428,7 +428,7 @@ async function viewDocument(platform: Platform, request: Request, doc: DocRow, s
   const canEdit = !!session && !session.agent && (await platform.directory.may(whoOf(session), "edit", doc));
   const address = `/${doc.owner}/${doc.slug}`;
   const clone = `<a href="${esc(link(`/new?from=${landing ? "landing" : doc.id}`, session))}" class="erga-view-button erga-clone-button" aria-label="Clone: make your own copy" data-tip="Clone"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8.75" y="8.75" width="10.5" height="10.5" rx="2"/><path d="M15.25 8.75V6.5a1.75 1.75 0 0 0-1.75-1.75H6.5A1.75 1.75 0 0 0 4.75 6.5v7c0 .97.78 1.75 1.75 1.75h2.25"/></svg></a>`;
-  const edit = canEdit ? `<a href="${esc(link(`${address}/edit`, session))}" class="erga-view-button erga-edit-button" aria-label="Edit" data-tip="Edit"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.75 19.25l1-4L15.6 5.4a1.4 1.4 0 0 1 2 0l1 1a1.4 1.4 0 0 1 0 2L8.75 18.25zM13.75 7.25l3 3"/></svg></a>` : "";
+  const edit = canEdit ? `<a href="${esc(link(`${address}/edit`, session))}" class="erga-view-button erga-edit-button" aria-label="Edit" aria-pressed="${editing}" data-tip="Edit"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.75 19.25l1-4L15.6 5.4a1.4 1.4 0 0 1 2 0l1 1a1.4 1.4 0 0 1 0 2L8.75 18.25zM13.75 7.25l3 3"/></svg></a>` : "";
   const crumbs = !landing && session && !session.test
     ? `<nav class="erga-crumbs" aria-label="Breadcrumbs"><a href="${esc(link("/docs", session))}">My Documents</a><span aria-hidden="true">›</span><span aria-current="page">${esc(doc.title)}</span></nav>`
     : "";
@@ -509,6 +509,7 @@ const EDIT_BOOT = `(() => {
     }
     if (edit == editing() && push !== null) return;
     body.classList.toggle("erga-editing", edit);
+    document.querySelector(".erga-edit-button")?.setAttribute("aria-pressed", String(edit));
     ask(edit ? "erga-edit" : "erga-view");
     window.ergaPage?.setEditing(edit);
     sync();
@@ -516,10 +517,10 @@ const EDIT_BOOT = `(() => {
   }
   window.ergaShell = { ready() { ready = true; sync(); } };
   document.addEventListener("click", (e) => {
-    const a = e.target.closest?.(".erga-edit-button, #btn-view");
+    const a = e.target.closest?.(".erga-edit-button, #btn-edit");
     if (!a || e.button || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
     e.preventDefault();
-    go(a.id != "btn-view", true);
+    go(a.id != "btn-edit", true);
   });
   addEventListener("popstate", () => go(/\\/edit\\/?$/.test(location.pathname), false));
   if (editing()) go(true, null);
@@ -563,6 +564,8 @@ const VIEW_STYLE = `
   .erga-view-button { position: relative; display: grid; place-items: center; width: 34px; height: 34px; border-radius: 8px; color: var(--chrome);
     transition: color 150ms ease, background-color 150ms ease; }
   .erga-view-button:hover { color: var(--chrome-hover); background: color-mix(in srgb, var(--chrome) 12%, transparent); }
+  /* Editing (or on the way into it), the pencil is blue, as the editor's own is. */
+  .erga-view-button[aria-pressed="true"], .erga-view-button[aria-pressed="true"]:hover { color: #3b7cf0; background: transparent; }
   .erga-view-button:focus-visible, .erga-crumbs a:focus-visible { outline: 2px solid #3b82f6; outline-offset: 1px; }
   .erga-view-button svg { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
   .erga-view-button::after { content: attr(data-tip); position: absolute; top: calc(100% + 6px); right: 0; white-space: pre; font-size: 12px;
