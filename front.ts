@@ -696,7 +696,7 @@ export const TIMES_SCRIPT = `
 `;
 
 export const ICON = {
-  rename: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 19h3.5L18.25 9.25a2.47 2.47 0 0 0-3.5-3.5L5 15.5V19Z"/><path d="m13.5 7 3.5 3.5"/></svg>`,
+  rename: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h1a3 3 0 0 1 3 3 3 3 0 0 1 3-3h1M13 20h-1a3 3 0 0 1-3-3 3 3 0 0 1-3 3H5M5 16H4a2 2 0 0 1-2-2v-4a2 2 0 0 1 2-2h1M13 8h7a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2h-7M9 7v10"/></svg>`,
   delete: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M10 7V5h4v2M7 7l1 12h8l1-12"/></svg>`,
   share: `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9.5" cy="8.5" r="3.5"/><path d="M3.5 19c.6-3.2 3-5 6-5s5.4 1.8 6 5"/><path d="M18.5 8v6M15.5 11h6"/></svg>`,
   close: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7 7 17"/></svg>`,
@@ -732,27 +732,36 @@ function docsPage(session: Session, docs: Listed[], now: number, hours: number |
     const when = new Date(d.modified).toISOString();
     // One opened from disk only comes off the list: its files stay where they are.
     const [remove, label] = d.path != null ? ["Remove from the list", `Remove ${esc(d.title)} from the list`] : ["Delete", `Delete ${esc(d.title)}`];
+    const rename = mine ? `<button type="button" class="act rename" aria-label="Rename ${esc(d.title)}" title="Rename" data-id="${esc(d.id)}" data-title="${esc(d.title)}" data-slug="${esc(d.slug)}"${d.titleSet ? " data-title-set" : ""}${d.slugSet ? " data-slug-set" : ""}>${ICON.rename}</button>` : "";
+    // The whole row opens the document (the link stretches over it); its buttons sit on top.
     return `  <li>
-    <a class="doc" href="${esc(link(`/${d.owner}/${d.slug}`, session))}"><span class="title">${esc(d.title)}</span>${note}${mine ? sharedNote(d) : ""}<time datetime="${when}">${ago(d.modified, now)}</time></a>
+    <div class="name"><a class="doc" href="${esc(link(`/${d.owner}/${d.slug}`, session))}"><span class="title">${esc(d.title)}</span></a>${rename}${note}${mine ? sharedNote(d) : ""}</div>
+    <time datetime="${when}">${ago(d.modified, now)}</time>
     <div class="acts">${mine ? `<button type="button" class="act share" aria-label="Share ${esc(d.title)}" title="Share" data-id="${esc(d.id)}" data-title="${esc(d.title)}" data-address="/${esc(d.owner)}/${esc(d.slug)}">${ICON.share}</button>
-    <button type="button" class="act rename" aria-label="Rename ${esc(d.title)}" title="Rename" data-id="${esc(d.id)}" data-title="${esc(d.title)}" data-slug="${esc(d.slug)}"${d.titleSet ? " data-title-set" : ""}${d.slugSet ? " data-slug-set" : ""}>${ICON.rename}</button>
     <form method="post" action="${esc(link("/docs/delete", session))}" data-title="${esc(d.title)}"${d.path != null ? " data-disk" : ""}><input type="hidden" name="id" value="${esc(d.id)}"><button class="act delete" aria-label="${label}" title="${remove}">${ICON.delete}</button></form>` : ""}</div>
   </li>`;
   }).join("\n");
   const style = `
-  /* Rows: its title and what's special about it; when it was edited, in a column; its buttons on hover. */
-  .labels { display: flex; padding: 0 100px 8px 0; font-size: 12px; font-weight: 500; color: var(--chrome); }
-  .labels span:last-child { margin-left: auto; }
+  /* Rows, and the labels over them, in three columns: the name (its title, rename, what's special about it), when it was edited, its buttons. */
+  .labels, ol.rows > li { display: grid; grid-template-columns: minmax(0, 1fr) 10rem 64px; align-items: center; column-gap: 16px; }
+  .labels { padding-bottom: 8px; font-size: 12px; font-weight: 500; color: var(--chrome); }
+  ol.rows > li { position: relative; }
   ol.rows > li:last-child { border-bottom: 0; }
-  .doc { padding: 14px 6px 14px 0; }
+  .name { min-width: 0; display: flex; align-items: center; gap: 6px; padding: 14px 0; }
+  .doc { flex: 0 1 auto; padding: 0; }
+  .doc::after { content: ""; position: absolute; inset: 0; }
+  .name .act, .acts { position: relative; z-index: 1; }
+  .name .note, .name .shared { margin-left: 6px; }
   .title { transition: color 120ms ease; }
-  a.doc:hover .title { color: var(--link); }
+  li:hover .title { color: var(--link); }
+  .rename { width: 26px; height: 26px; }
+  .rename svg { width: 16px; height: 16px; }
   .note, .shared { padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 500; color: var(--soft); background: color-mix(in srgb, var(--chrome) 13%, transparent); }
-  time { min-width: 6.5em; text-align: right; }
+  time { margin: 0; text-align: left; }
   /* The buttons (only on your own documents) take the same room on every row, so the times line up. */
-  .acts { flex: none; display: flex; justify-content: flex-end; gap: 2px; width: 94px; }
-  @media (pointer: coarse) { .acts { width: 124px; } .labels { padding-right: 130px; } }
-  @media (max-width: 520px) { .labels { display: none; } }
+  .acts { display: flex; justify-content: flex-end; gap: 2px; }
+  @media (pointer: coarse) { .labels, ol.rows > li { grid-template-columns: minmax(0, 1fr) 8rem 84px; } }
+  @media (max-width: 520px) { .labels { display: none; } .labels, ol.rows > li { grid-template-columns: minmax(0, 1fr) auto 64px; } }
   @media (pointer: coarse) { .delete { margin-right: -6px; } }
   /* Sharing: who has it, anyone with the link, and adding someone. */
   #share { width: min(460px, calc(100vw - 32px)); }
@@ -779,7 +788,7 @@ function docsPage(session: Session, docs: Listed[], now: number, hours: number |
     <div><h1>Documents</h1>${docs.length ? `<p class="sub">${count}</p>` : ""}</div>
     <a class="new" href="${esc(link("/new", session))}">${ICON.plus}New document</a>
   </header>
-  ${docs.length ? `<div class="labels" aria-hidden="true"><span>Name</span><span>Edited</span></div>
+  ${docs.length ? `<div class="labels" aria-hidden="true"><span>Name</span><span>Edited</span><span></span></div>
   <ol class="rows">\n${rows}\n  </ol>` : `<p class="empty">No documents yet. A new one starts blank${hours == null ? "." : `, and goes away after ${hours} hour${hours == 1 ? "" : "s"} if you never edit it.`}</p>`}
 </main>
 <dialog id="rename" aria-labelledby="rename-title">
