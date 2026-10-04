@@ -69,6 +69,8 @@ export async function startHost(target: string | null, opts: { port?: number; en
   writeFileSync(join(envDir, ".dev.vars"), Object.entries(vars).filter(([k, v]) => DEV_VARS.has(k) && v).map(([k, v]) => `${k}=${v}\n`).join(""));
   const env: Record<string, string> = {
     ...process.env as Record<string, string>,
+    // No landing project unless a test asks for one (ERGA_LANDING: a folder), so a test's documents are only its own.
+    ERGA_LANDING: "",
     ...Object.fromEntries(Object.entries(opts.env ?? {}).filter(([k]) => !DEV_VARS.has(k))),
     ERGA_STATE_DIR: state, ERGA_ENV_DIR: envDir, ERGA_VITE_CACHE: join(scratch, "vite"), ERGA_INSPECTOR: "0", ERGA_BUILT: "1",
   };

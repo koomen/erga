@@ -11,6 +11,10 @@
 //     file is linked on its own: only it is synced, and the document can't
 //     make others. The links are kept in the state directory
 //     (erga-links.json), so they come back after a restart.
+//   - The repo's landing project (server.config.ts, `landing`), published
+//     to the local server as it starts, as DEV_LOGIN's document, and made the
+//     front page: the same way a deploy publishes it to erga.dev (landing.ts),
+//     with a token the Worker makes for DEV_LOGIN (/__erga/token).
 //   - The editor's own files: page.js and frame.js are built by bun
 //     (build.sh) and served from .site/, so a change to src/page/,
 //     page.html, style.css or fonts/ runs site.sh again.
@@ -30,6 +34,8 @@ import { homedir } from "node:os";
 import { basename, dirname, extname, join, resolve, sep } from "node:path";
 import type { Plugin } from "vite";
 import { ALPHABET } from "../front.ts";
+import { publishLanding } from "../landing.ts";
+import { landingFolder } from "../server.config.ts";
 import { ignored } from "../src/room/doc.ts";
 import type { FromDisk, ToDisk } from "./mirror.ts";
 
@@ -133,6 +139,15 @@ export function ergaDev(opts: DevOptions): Plugin {
           const r = await fetch(`${base}/__erga/migrate?link=${opts.secret}`, { method: "POST" });
           if (!r.ok) throw new Error(`migrating the local database: ${r.status} ${await r.text()}`);
         })();
+        // The landing project, the way a deploy publishes it: through the server's API, with a token.
+        const landing = landingFolder();
+        if (landing) (async () => {
+          await migrated;
+          const r = await fetch(`${base}/__erga/token?link=${opts.secret}`, { method: "POST" });
+          if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+          const { token } = await r.json() as { token: string };
+          await publishLanding({ server: base, token, folder: resolve(EDITOR, landing), log: (l) => log(`landing page: ${l.replaceAll(base, shown)}`) });
+        })().catch((e) => log(`couldn't publish the landing page (${landing}): ${(e as Error).message}`));
         (async () => {
           await migrated;
           // Last run's links first, then whatever `bun start` was given.

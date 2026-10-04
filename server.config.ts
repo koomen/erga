@@ -17,6 +17,17 @@
 //
 // Take a key out and deploy to hand it back to the admins: what they set
 // before it was locked counts again.
+//
+// `landing` names the repo's landing project: a folder (with index.html or
+// index.md, and whatever it uses) whose page is the server's front page.
+// After each deploy, `bun landing.ts` publishes it to the server through the
+// server's API (POST /api/publish), as a document of whoever's token the
+// deploy holds (ERGA_DEPLOY_TOKEN, an admin's), into the same document each
+// time, and sets the landing_document setting to it. `bun start` does the
+// same against the local server as it starts. null: the repo has none, and
+// the front page is whatever the admins choose (landing_document on /admin).
+// ERGA_LANDING, in the environment, overrides it for one deploy or dev
+// server: a folder, or "" for none.
 
 import type { SETTINGS } from "./config.ts";
 
@@ -26,6 +37,15 @@ const settings: Values = {
   // delete_docs_after_hours: 24,    // hours an unedited document lasts; null never deletes them
 };
 export default settings;
+
+/** The repo's landing project: a folder, relative to the repo (see above), or null for none. */
+export const landing: string | null = "landing";
+
+/** The landing project's folder as this deploy or dev server has it (ERGA_LANDING over `landing`), relative to the repo; null for none. */
+export function landingFolder(env: Record<string, string | undefined> = process.env): string | null {
+  if (env.ERGA_LANDING !== undefined) return env.ERGA_LANDING.trim() || null;
+  return landing;
+}
 
 // (This file is loaded by cloudflare.config.ts under Node's type stripping,
 // and must not import config.ts itself: the dev server can't then load it

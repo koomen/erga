@@ -188,6 +188,11 @@ export class Page {
     }
   }
 
+  /** Evaluates in every frame on another site (e.g. the front page's document), answering what each gave. */
+  async inFrames<T = any>(expr: string): Promise<T[]> {
+    return Promise.all([...this.frames].map((s) => this.eval<T>(expr, s).catch(() => null as T)));
+  }
+
   private async findEditorFrame(): Promise<string | null> {
     for (const s of this.frames) {
       const ok = await this.eval<boolean>("!!window.ergaFrame", s).catch(() => false);

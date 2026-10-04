@@ -4,8 +4,8 @@
 // who's signed in, the templates, the directory of documents (directory.ts,
 // in D1) and the documents themselves (Durable Objects).
 //
-//   /                          the demo, rendered, with an Edit button (and your documents, signed in)
-//   /new                       a blank document for you (signs you in first); /new?from=demo a copy of the demo
+//   /                          the front page: the landing document (a setting), read-only, with an Edit button
+//   /new                       a blank document for you (signs you in first); /new?from=landing a copy of the front page's
 //   /docs                      your documents, latest edit first; POST /docs/delete deletes one, /docs/rename renames one,
 //                              /docs/share shares one (or stops sharing it), GET /docs/share?id= says with whom
 //   /admin                     the server's settings and users, for admins (admin.ts); POST /admin/settings, /admin/users
@@ -73,7 +73,7 @@ export interface Listed {
 export interface Platform {
   /** Who's asking, if anyone is signed in (in local development, someone always is). */
   sessionOf(request: Request): Promise<Session | null>;
-  /** The templates' text files, by template then path ("demo" → { "index.html": "..." }). */
+  /** The templates' text files, by template then path ("doc" → { "index.html": "..." }): templates/doc is a blank document. */
   templates: Record<string, Record<string, string>>;
   /** The editor's page, served at each document's address. */
   editor(request: Request): Promise<Response>;
@@ -110,6 +110,10 @@ export interface Platform {
     publish(doc: Route, files: Record<string, string | Uint8Array>, remove: string[]): Promise<{ written: string[]; removed: string[]; refused: { path: string; why: string }[] }>;
     /** Every file a document holds. */
     paths(doc: Route): Promise<string[]>;
+    /** A document's page (index.html, index.md...), or null if it has no host. */
+    index(doc: Route): Promise<string | null>;
+    /** A document's files as they are now, and its page: what a copy starts from. Null if it has no host. */
+    snapshot(doc: Route): Promise<{ index: string; files: Record<string, string | Uint8Array> } | null>;
     exists(doc: Route): Promise<boolean>;
     /** Deletes a document (its host takes it out of the directory too); false if it had no host. */
     delete(doc: Route): Promise<boolean>;
@@ -145,7 +149,7 @@ export async function frontDoor(request: Request, base: Platform): Promise<Respo
   const pages = pagesHost(url, base);
   if (pages) return pagesDoor(request, url, pages, base);
   const platform = withTokens(base, url);
-  if (path == "/") return viewDemo(platform, await platform.sessionOf(request));
+  if (path == "/") return viewLanding(platform, request, await platform.sessionOf(request));
   if (path == "/new") return newDoc(platform, request);
   if (path == "/docs") return listDocs(platform, request);
   if (path == "/docs/delete" && request.method == "POST") return deleteDoc(platform, request);
@@ -328,12 +332,54 @@ async function pagesDoor(request: Request, url: URL, doc: { owner: string; id: s
 export const link = (path: string, session: Session | null) =>
   session?.as ? `${path}${path.includes("?") ? "&" : "?"}user=${encodeURIComponent(session.as)}` : path;
 
-/** The demo as anyone sees it: just the page, and an Edit button (which makes you a copy of it). */
-function viewDemo(platform: Platform, session: Session | null): Response {
+/**
+ * The front page: the landing document (the landing_document setting) as
+ * anyone sees it, signed in or not, with an Edit button that makes you a copy
+ * of it (and, signed in, a way to your documents). It runs on its own pages
+ * origin, in a frame filling the window, like any document's page: whoever
+ * edits it can't act as the people who view it. With none set (or it's
+ * gone), a plain start page.
+ */
+async function viewLanding(platform: Platform, request: Request, session: Session | null): Promise<Response> {
+  const url = new URL(request.url);
+  const doc = await platform.directory.landing();
+  const index = doc && await platform.docs.index(doc);
   const docs = session && !session.test ? `<nav class="erga-docs-nav" aria-label="Documents"><a href="${esc(link("/docs", session))}" class="erga-edit-button erga-docs-button">‹ Documents</a></nav>` : "";
-  const edit = `<a href="${esc(link("/new?from=demo", session))}" class="erga-edit-button">Edit</a>`;
-  const html = platform.templates.demo["index.html"].replace("</body>", `${docs}${edit}${EDIT_BUTTON_STYLE}</body>`);
-  return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-cache" } });
+  if (!doc || !index) return startPage(platform, session);
+  const pages = `${pagesOrigin(doc.owner, doc.id, url, platform)}/t/${await pagesToken(platform.secret, doc.owner, doc.id, url.origin)}/doc/${index.split("/").map(encodeURIComponent).join("/")}`;
+  const edit = `<a href="${esc(link("/new?from=landing", session))}" class="erga-edit-button">Edit</a>`;
+  return new Response(`<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${esc(doc.title)}</title>
+<style>html, body { margin: 0; height: 100%; } .erga-landing { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; display: block; }</style>
+<iframe class="erga-landing" src="${esc(pages)}" title="${esc(doc.title)}"></iframe>
+${docs}${edit}${EDIT_BUTTON_STYLE}
+</html>`, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" } });
+}
+
+/** The front page when no landing document is set: what Erga is, and the way in. */
+async function startPage(platform: Platform, session: Session | null): Promise<Response> {
+  const admin = !!session && !session.agent && (await platform.directory.users.isAdmin(whoOf(session)));
+  const signedIn = session && !session.test;
+  const actions = signedIn
+    ? `<a class="new" href="${esc(link("/docs", session))}">Your documents</a><a class="pill" href="${esc(link("/new", session))}">New document</a>`
+    : `<a class="new" href="/auth/github?next=%2Fdocs">Sign in</a>`;
+  const style = `
+  .start { padding-top: 22vh; }
+  .start p { margin: 0 0 22px; color: var(--soft); }
+  .start .actions { display: flex; gap: 8px; }
+  .start .pill { text-decoration: none; }
+  .start .hint { margin-top: 28px; font-size: 13px; }
+  .start code { font-family: var(--font-mono); font-size: 12.5px; }
+  .start .hint a { color: inherit; }`;
+  return new Response(appPage("Erga", style, `<main class="start">
+  <header><h1>Erga</h1></header>
+  <p>Pages you edit where they're rendered, together with your agents.</p>
+  <div class="actions">${actions}</div>
+  ${admin ? `<p class="hint">There's no front page yet: choose one of your documents as <code>landing_document</code> on <a href="${esc(link("/admin", session))}">the admin page</a>, or deploy a repo with a landing project (<code>server.config.ts</code>).</p>` : ""}
+</main>`), { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
 }
 
 const EDIT_BUTTON_STYLE = `
@@ -352,10 +398,18 @@ const EDIT_BUTTON_STYLE = `
   }
 </style>`;
 
-/** The templates /new?from= may copy; anything else makes a blank document. */
-const FROM = new Set(["demo"]);
+/**
+ * What a new document starts from: a copy of the front page's document
+ * (`landing`), or a blank page (templates/doc). Null if there's no landing
+ * document to copy.
+ */
+export async function startingFiles(platform: Platform, from: string | null): Promise<{ files: Record<string, string | Uint8Array>; index: string } | null> {
+  if (from != "landing") return { files: { ...platform.templates.doc }, index: "index.html" };
+  const doc = await platform.directory.landing();
+  return doc && platform.docs.snapshot(doc);
+}
 
-/** A new document for the signed-in person, at /<login>/<id>: blank (templates/doc), or a copy of the demo. */
+/** A new document for the signed-in person, at /<login>/<id>: blank (templates/doc), or a copy of the front page's (?from=landing). */
 async function newDoc(platform: Platform, request: Request): Promise<Response> {
   const session = await platform.sessionOf(request);
   const url = new URL(request.url);
@@ -363,11 +417,12 @@ async function newDoc(platform: Platform, request: Request): Promise<Response> {
   if (!session) return signInFirst(`/new${params.size ? `?${params}` : ""}`);
   // Another site may not make documents for you (nor an unconfirmed sign-in on the way back from GitHub).
   if (request.method == "POST" ? request.headers.get("origin") != url.origin : fromElsewhere(request)) {
-    return confirmAction("New document", params.get("from") == "demo" ? "Make your copy of the demo" : "Make a new document", `/new${url.search}`);
+    return confirmAction("New document", params.get("from") == "landing" ? "Make your copy of this page" : "Make a new document", `/new${url.search}`);
   }
   const wanted = params.get("id");
-  const from = params.get("from");
-  const template = platform.templates[from && FROM.has(from) ? from : "doc"];
+  const start = await startingFiles(platform, params.get("from"));
+  if (!start) return page("Nothing to copy", "This server has no front page to copy. <a href=\"/new\">Make a blank document</a>.", 404);
+  const template = start.files, index = start.index;
   // A test person makes (or reuses) a test document under the address of whoever minted their token.
   // Its address is its id, which never follows the title (the suite addresses it by id).
   if (session.test) {
@@ -375,7 +430,7 @@ async function newDoc(platform: Platform, request: Request): Promise<Response> {
     const owner = session.test.by.toLowerCase();
     const known = await platform.directory.route(wanted);
     if (known && (known.owner != owner || !known.test)) return page("Taken", "That test document's id is someone else's: pick another.", 409);
-    if (!known) await makeDoc(platform, owner, wanted, template, { test: true });
+    if (!known) await makeDoc(platform, owner, wanted, template, { test: true, index });
     return new Response(null, { status: 302, headers: { Location: `/${owner}/${wanted}` } });
   }
   // Local development may name the document (the test suite wants "test" in its address),
@@ -384,7 +439,7 @@ async function newDoc(platform: Platform, request: Request): Promise<Response> {
   const unedited = (dev && Number(params.get("unedited"))) || undefined;
   for (let tries = 0; tries < 5; tries++) {
     const id = wanted && dev && ID.test(wanted) ? wanted : newId();
-    const made = await makeDoc(platform, session.login.toLowerCase(), id, template, { unedited });
+    const made = await makeDoc(platform, session.login.toLowerCase(), id, template, { unedited, index });
     if (made) return new Response(null, { status: 302, headers: { Location: link(`/${made.owner}/${made.slug}`, session) } });
   }
   return page("Couldn't make a document", "Something went wrong picking an address. <a href=\"/new\">Try again</a>.", 500);
@@ -696,7 +751,7 @@ function docsPage(session: Session, docs: Listed[], now: number, dev: boolean, h
     <input class="input" name="path" required placeholder="A file or folder on this machine: ~/notes, ./site/index.md" aria-label="Path to a file or folder" autocomplete="off" spellcheck="false">
     <button class="pill">Open</button>
   </form>` : ""}
-  <footer><span>Signed in as ${esc(session.login)}</span><a href="${esc(link("/", session))}">The demo</a><a href="${esc(link("/tokens", session))}">Agent tokens</a>${admin ? `<a href="${esc(link("/admin", session))}">Admin</a>` : ""}<a href="/auth/logout">Sign out</a></footer>
+  <footer><span>Signed in as ${esc(session.login)}</span><a href="${esc(link("/", session))}">Front page</a><a href="${esc(link("/tokens", session))}">Agent tokens</a>${admin ? `<a href="${esc(link("/admin", session))}">Admin</a>` : ""}<a href="/auth/logout">Sign out</a></footer>
 </main>
 <dialog id="rename" aria-labelledby="rename-title">
   <form method="post" action="${esc(link("/docs/rename", session))}">

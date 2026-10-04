@@ -324,9 +324,14 @@ try {
   let list = await docs();
   expect(list.includes(`href="/${login}/untitled"`) && list.includes(">Untitled<") && list.includes("Unedited"), "the list shows it, untitled and unedited", list);
   ok("/new makes a blank document at /<you>/untitled, listed as unedited");
-  const demo = await make("?from=demo");
-  expect((await (await get(`/d/${demo}/doc/index.html`)).text()) == template("demo"), "/new?from=demo copies the demo");
-  ok("/new?from=demo copies the demo");
+  if (local) {
+    // With no landing document (a test server has none), there's nothing to copy; tests/landing.ts copies one.
+    const nothing = await get("/new?from=landing");
+    expect(nothing.status == 404 && (await nothing.text()).includes("no front page to copy"), "/new?from=landing with no landing document says so", nothing.status);
+    const front = await (await get("/")).text();
+    expect(front.includes("<h1>Erga</h1>") && front.includes('href="/docs"') && !front.includes("landing_document"), "with none, / is a plain start page (the hint how to set one is for admins)", front.slice(0, 1500));
+    ok("with no landing document, / is a plain start page and /new?from=landing has nothing to copy");
+  }
 
   // Addresses: /d/<id>, /<you>/<id> and a differently cased owner all lead to the canonical one, which is the editor.
   expect(await location(`/d/${blank}`) == `/${login}/untitled`, "/d/<id> redirects to /<you>/<slug>", await location(`/d/${blank}`));
@@ -444,6 +449,7 @@ try {
   ok("a taken or reserved slug is refused; an old one can be taken over");
 
   // From /docs: the list's rename posts to /docs/rename, through the document's host.
+  const demo = await make();
   r = await get("/docs/rename", { method: "POST", body: new URLSearchParams({ id: demo, title: "Demo copy", slug: "my-demo" }), headers: { Origin: origin, Accept: "application/json" } });
   expect(r.ok && (await nameOf(demo)).address == `/${login}/my-demo`, "renaming from the list works", await r.text());
   expect((await get("/docs/rename", { method: "POST", body: new URLSearchParams({ id: demo, title: "x" }) })).status == 403, "but only from this site's pages");
@@ -523,11 +529,11 @@ try {
 
   // Another site can't make documents for you: its link gets a button instead, which posts from here.
   const before = await docs();
-  const linked = await get("/new?from=demo", { headers: { "Sec-Fetch-Site": "cross-site" } });
-  expect(linked.status == 200 && (await linked.text()).includes(`<form method="post" action="/new?from=demo">`), "a link from another site asks first");
+  const linked = await get("/new?from=landing", { headers: { "Sec-Fetch-Site": "cross-site" } });
+  expect(linked.status == 200 && (await linked.text()).includes(`<form method="post" action="/new?from=landing">`), "a link from another site asks first");
   expect((await docs()) == before, "and makes nothing");
   expect((await get("/new", { method: "POST", headers: { Origin: "https://elsewhere.example" } })).status == 200, "a form from another site asks too");
-  const posted = await get("/new?from=demo", { method: "POST", headers: { Origin: origin } });
+  const posted = await get("/new", { method: "POST", headers: { Origin: origin } });
   expect(posted.status == 302 && (posted.headers.get("location") ?? "").startsWith(`/${login}/`), "the button makes the document");
   ok("another site's link or form to /new asks first; the button makes it");
 
@@ -605,19 +611,19 @@ try {
     // In a browser: the admin page's own controls.
     const at = await browser.page();
     await at.open(`${base}/admin?user=${adminName}`);
-    await at.eval(`(() => { const i = document.querySelector('li.setting input[name=value]'); i.value = "36"; i.dispatchEvent(new Event("input", { bubbles: true })); document.querySelector('li.setting .save').click(); })()`);
-    await until(async () => (await at.eval<string>(`document.readyState == "complete" ? document.querySelector('li.setting .meta')?.textContent ?? "" : ""`)).includes(`Set by ${adminName}`), 5000, "saving a setting from the page shows who set it");
-    expect((await at.eval<string>(`document.querySelector('li.setting input[name=value]').value`)) == "36", "with its new value");
-    await at.eval(`document.querySelector('li.setting .reset').click()`);
-    await until(async () => (await at.eval<string>(`document.readyState == "complete" ? document.querySelector('li.setting .meta')?.textContent ?? "" : ""`)).includes("Default"), 5000, "reset from the page");
+    await at.eval(`(() => { const i = document.querySelector('li.setting[data-key=delete_docs_after_hours] input[name=value]'); i.value = "36"; i.dispatchEvent(new Event("input", { bubbles: true })); document.querySelector('li.setting[data-key=delete_docs_after_hours] .save').click(); })()`);
+    await until(async () => (await at.eval<string>(`document.readyState == "complete" ? document.querySelector('li.setting[data-key=delete_docs_after_hours] .meta')?.textContent ?? "" : ""`)).includes(`Set by ${adminName}`), 5000, "saving a setting from the page shows who set it");
+    expect((await at.eval<string>(`document.querySelector('li.setting[data-key=delete_docs_after_hours] input[name=value]').value`)) == "36", "with its new value");
+    await at.eval(`document.querySelector('li.setting[data-key=delete_docs_after_hours] .reset').click()`);
+    await until(async () => (await at.eval<string>(`document.readyState == "complete" ? document.querySelector('li.setting[data-key=delete_docs_after_hours] .meta')?.textContent ?? "" : ""`)).includes("Default"), 5000, "reset from the page");
     // Never, from the page: choosing it hides the hours, and saving keeps it.
-    await at.eval(`(() => { const m = document.querySelector('li.setting select.mode'); m.value = "never"; m.dispatchEvent(new Event("change", { bubbles: true })); })()`);
-    expect(await at.eval<boolean>(`document.querySelector('li.setting .amount').hidden && !document.querySelector('li.setting .save').disabled`), "choosing Never hides the hours and lights up Save");
-    await at.eval(`document.querySelector('li.setting .save').click()`);
-    await until(async () => (await at.eval<string>(`document.readyState == "complete" ? document.querySelector('li.setting .meta')?.textContent ?? "" : ""`)).includes(`Set by ${adminName}`), 5000, "saving Never from the page");
-    expect(await at.eval<boolean>(`document.querySelector('li.setting select.mode').value == "never" && document.querySelector('li.setting .amount').hidden`), "the page shows Never after saving");
-    await at.eval(`document.querySelector('li.setting .reset').click()`);
-    await until(async () => (await at.eval<string>(`document.readyState == "complete" ? document.querySelector('li.setting .meta')?.textContent ?? "" : ""`)).includes("Default"), 5000, "reset from the page, again");
+    await at.eval(`(() => { const m = document.querySelector('li.setting[data-key=delete_docs_after_hours] select.mode'); m.value = "never"; m.dispatchEvent(new Event("change", { bubbles: true })); })()`);
+    expect(await at.eval<boolean>(`document.querySelector('li.setting[data-key=delete_docs_after_hours] .amount').hidden && !document.querySelector('li.setting[data-key=delete_docs_after_hours] .save').disabled`), "choosing Never hides the hours and lights up Save");
+    await at.eval(`document.querySelector('li.setting[data-key=delete_docs_after_hours] .save').click()`);
+    await until(async () => (await at.eval<string>(`document.readyState == "complete" ? document.querySelector('li.setting[data-key=delete_docs_after_hours] .meta')?.textContent ?? "" : ""`)).includes(`Set by ${adminName}`), 5000, "saving Never from the page");
+    expect(await at.eval<boolean>(`document.querySelector('li.setting[data-key=delete_docs_after_hours] select.mode').value == "never" && document.querySelector('li.setting[data-key=delete_docs_after_hours] .amount').hidden`), "the page shows Never after saving");
+    await at.eval(`document.querySelector('li.setting[data-key=delete_docs_after_hours] .reset').click()`);
+    await until(async () => (await at.eval<string>(`document.readyState == "complete" ? document.querySelector('li.setting[data-key=delete_docs_after_hours] .meta')?.textContent ?? "" : ""`)).includes("Default"), 5000, "reset from the page, again");
     await at.eval(`(() => { const f = document.querySelector('form.add-user'); f.elements.login.value = "pagebie"; f.requestSubmit(); })()`);
     await until(async () => at.eval<boolean>(`!!document.querySelector('li[data-login="pagebie"]')`), 5000, "adding a user from the page lists them");
     at.close?.();

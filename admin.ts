@@ -64,14 +64,23 @@ export async function adminDoor(platform: Platform, request: Request): Promise<R
 
 const notFound = () => page("Not found", "There's nothing here. <a href=\"/\">Back to the start</a>.", 404);
 
+/** A setting that names a document (Setting.kind), with the document it names now, if there is one. */
+type Shown = ConfigEntry & { doc?: { address: string; title: string } | null };
+
 /**
- * How a setting's value is typed in: by the kind of its default. A number
- * that can also be never (null, e.g. delete_docs_after_hours) gets a choice
- * of "After [n] hours" or "Never" in front of it.
+ * How a setting's value is typed in: by its kind, else the kind of its
+ * default. A document is typed by its address (kept by id, which a rename
+ * never changes), empty for none. A number that can also be never (null,
+ * e.g. delete_docs_after_hours) gets a choice of "After [n] hours" or
+ * "Never" in front of it.
  */
-function valueInput(e: ConfigEntry, never: boolean): string {
+function valueInput(e: Shown, never: boolean): string {
   const locked = e.locked;
   const attrs = `name="value" id="set-${esc(e.key)}" aria-label="${esc(e.key)}"${locked ? " disabled" : ""}`;
+  if (e.kind == "document") {
+    const value = e.doc ? e.doc.address : e.value == null ? "" : String(e.value);
+    return `<input class="input" ${attrs} data-kind="document" value="${esc(value)}" placeholder="/owner/slug" autocomplete="off" spellcheck="false">`;
+  }
   if (never && typeof e.default == "number") {
     const off = e.value === null, unit = e.key.endsWith("_hours") ? "hours" : "";
     return `<select class="mode" name="mode" aria-label="${esc(e.key)}: after a time, or never"${locked ? " disabled" : ""}><option value="after"${off ? "" : " selected"}>After</option><option value="never"${off ? " selected" : ""}>Never</option></select>
@@ -85,23 +94,23 @@ function valueInput(e: ConfigEntry, never: boolean): string {
   return `<input class="input mono" ${attrs} data-kind="json" value="${esc(JSON.stringify(e.value))}" autocomplete="off" spellcheck="false">`;
 }
 
-const shown = (v: unknown) => (v === null ? "never" : typeof v == "boolean" ? (v ? "on" : "off") : typeof v == "string" ? `“${v}”` : JSON.stringify(v));
+const shown = (v: unknown, kind?: string) => (v === null ? (kind == "document" ? "none" : "never") : typeof v == "boolean" ? (v ? "on" : "off") : typeof v == "string" ? `“${v}”` : JSON.stringify(v));
 
-function settingRow(e: ConfigEntry, session: Session, never: boolean): string {
+function settingRow(e: Shown, session: Session, never: boolean): string {
   const when = e.updated != null ? `<time datetime="${new Date(e.updated).toISOString()}">${new Date(e.updated).toISOString().slice(0, 10)}</time>` : "";
-  const meta = e.locked ? `<span class="badge" title="Fixed in the deploy's configuration (server.config.ts or ERGA_SERVER_CONFIG): change it there and deploy">Locked by the deploy</span><span>· default ${esc(shown(e.default))}</span>`
-    : e.source == "set" ? `<span>Set${e.updatedBy ? ` by ${esc(e.updatedBy)}` : ""} ${when}</span><span>· default ${esc(shown(e.default))}</span>`
+  const meta = e.locked ? `<span class="badge" title="Fixed in the deploy's configuration (server.config.ts or ERGA_SERVER_CONFIG): change it there and deploy">Locked by the deploy</span><span>· default ${esc(shown(e.default, e.kind))}</span>`
+    : e.source == "set" ? `<span>Set${e.updatedBy ? ` by ${esc(e.updatedBy)}` : ""} ${when}</span><span>· default ${esc(shown(e.default, e.kind))}</span>`
     : `<span>Default</span>`;
   return `  <li class="setting" data-key="${esc(e.key)}">
     <div class="about">
       <label class="key" for="set-${esc(e.key)}">${esc(e.key)}</label>
       <p class="desc">${esc(e.description)}</p>
-      <p class="meta">${meta}</p>
+      <p class="meta">${meta}${e.kind == "document" && e.value != null ? e.doc ? `<span>· <a class="open-doc" href="${esc(link(e.doc.address, session))}">${esc(e.doc.title)}</a></span>` : `<span class="gone">· no such document now: the front page is the plain one</span>` : ""}</p>
     </div>
     <form class="value" method="post" action="${esc(link("/admin/settings", session))}">
       <input type="hidden" name="key" value="${esc(e.key)}">
       ${valueInput(e, never)}
-      ${e.locked ? "" : `<button class="pill save" disabled>Save</button>${e.source == "set" ? `<button type="button" class="pill reset" title="Back to ${esc(shown(e.default))}">Reset</button>` : ""}`}
+      ${e.locked ? "" : `<button class="pill save" disabled>Save</button>${e.source == "set" ? `<button type="button" class="pill reset" title="Back to ${esc(shown(e.default, e.kind))}">Reset</button>` : ""}`}
     </form>
     <p class="hint" role="status"></p>
   </li>`;
@@ -121,7 +130,13 @@ function userRow(u: User, session: Session): string {
 
 async function adminPage(platform: Platform, session: Session): Promise<Response> {
   const who = whoOf(session);
-  const [settings, users] = await Promise.all([platform.directory.config.list(who), platform.directory.users.list(who)]);
+  const [entries, users] = await Promise.all([platform.directory.config.list(who), platform.directory.users.list(who)]);
+  // A setting naming a document shows it by its address now, linked.
+  const settings: Shown[] = await Promise.all(entries.map(async (e) => {
+    if (e.kind != "document" || e.value == null) return e;
+    const doc = await platform.directory.find(String(e.value));
+    return { ...e, doc: doc && { address: `/${doc.owner}/${doc.slug}`, title: doc.title } };
+  }));
   const admins = users.filter((u) => u.role == "admin").length;
   // Whether a setting takes null (never) as well as its kind of value.
   const takesNever = (key: string) => { try { return (platform.directory.config.settings as Settings)[key]?.parse(null) === null; } catch { return false; } };
@@ -138,6 +153,8 @@ async function adminPage(platform: Platform, session: Session): Promise<Response
   .setting .desc { margin: 2px 0 0; color: var(--fg); }
   .setting .meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 4px 0 0; font-size: 12.5px; color: var(--soft); }
   .setting .meta time { margin: 0; font-size: inherit; }
+  .setting .meta a { color: inherit; }
+  .setting .meta .gone { color: #c2410c; }
   .setting .value { display: flex; align-items: center; gap: 6px; }
   .setting .value .input { width: 7.5em; text-align: right; font-feature-settings: "tnum"; }
   .setting .value .input:not([type=number]) { width: 12em; text-align: left; }
@@ -203,7 +220,7 @@ ${users.map((u) => userRow(u, session)).join("\n")}
     const asJson = () => {
       const kind = input.dataset.kind, v = input.value.trim();
       if (mode && mode.value == "never") return "null";
-      return kind == "number" || kind == "number-or-never" ? (v == "" ? "" : String(Number(v))) : kind == "boolean" ? v : kind == "string" ? JSON.stringify(input.value) : v;
+      return kind == "number" || kind == "number-or-never" ? (v == "" ? "" : String(Number(v))) : kind == "boolean" ? v : kind == "string" ? JSON.stringify(input.value) : kind == "document" ? (v == "" ? "null" : JSON.stringify(v)) : v;
     };
     const dirty = () => { save.disabled = state() == was; say(hint, ""); };
     input.addEventListener("input", dirty);

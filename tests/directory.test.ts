@@ -179,7 +179,7 @@ test("server config: defaults, admins set and reset, the deploy locks", async ()
   expect(set).toMatchObject({ value: 48, source: "set", updatedBy: "root" });
   expect(set.updated).toBeGreaterThan(0);
   expect(await config.get("delete_docs_after_hours")).toBe(48);
-  expect((await config.list(admin)).map((e) => [e.key, e.value])).toEqual([["delete_docs_after_hours", 48]]);
+  expect((await config.list(admin)).map((e) => [e.key, e.value])).toContainEqual(["delete_docs_after_hours", 48]);
   expect(await config.reset(admin, "delete_docs_after_hours")).toMatchObject({ value: 24, source: "default" });
   // Locked by the deploy: its value wins, and it can't be changed here.
   const locked = fresh({ admins: ["root"], locked: { delete_docs_after_hours: 2 } });
@@ -228,7 +228,7 @@ test("server config: what the deploy fixes is locked, with its deployed value", 
     key: "delete_docs_after_hours", description: SETTINGS.delete_docs_after_hours.description, default: 24,
     value: 72, source: "locked", locked: true, deployed: 72, updated: null, updatedBy: null,
   });
-  expect((await config.list(admin)).map((e) => [e.key, e.locked, e.value])).toEqual([["delete_docs_after_hours", true, 72]]);
+  expect((await config.list(admin)).map((e) => [e.key, e.locked, e.value])).toContainEqual(["delete_docs_after_hours", true, 72]);
   // Nobody changes it here, admin or not, and saying why (for a person or an agent).
   await expect(config.set(admin, "delete_docs_after_hours", 5)).rejects.toThrow(/delete_docs_after_hours is fixed by the deploy.*stays 72/);
   await expect(config.reset(admin, "delete_docs_after_hours")).rejects.toThrow(/fixed by the deploy/);
@@ -252,4 +252,27 @@ test("server config: the deploy's values, from server.config.ts and SERVER_CONFI
   expect(() => parseDeployed("[1]")).toThrow(/must be an object/);
   expect(() => parseDeployed('{"landing": "x"}')).toThrow(/"landing", which isn't a setting.*delete_docs_after_hours/);
   expect(() => parseDeployed('{"delete_docs_after_hours": "soon"}')).toThrow(/delete_docs_after_hours to "soon", but it must be a whole number/);
+});
+
+test("landing_document: only the document's owner may choose it, by address, URL or id; kept by id", async () => {
+  const dir = fresh({ admins: ["ada", "root"] });
+  const one = (await dir.add(doc("aaaaaaaa", "Front page"))).doc;
+  await dir.add(doc("tttttttt", "Test", { test: true }));
+  expect(await dir.landing()).toBeNull();
+  const ada = { login: "ada" }, root = { login: "root" };
+  // Someone else's document, even an admin's choosing: refused; a missing one or a test one: no such document.
+  await expect(dir.config.set(root, "landing_document", `/ada/${one.slug}`)).rejects.toThrow(/Only its owner \(ada\)/);
+  await expect(dir.config.set(ada, "landing_document", "/ada/nothing-here")).rejects.toThrow(ConfigError);
+  await expect(dir.config.set(ada, "landing_document", "tttttttt")).rejects.toThrow(/no document/);
+  for (const ref of [`/ada/${one.slug}`, `https://erga.dev/ada/${one.slug}`, "/d/aaaaaaaa", "aaaaaaaa"]) {
+    expect((await dir.config.set(ada, "landing_document", ref)).value).toBe("aaaaaaaa");
+  }
+  expect((await dir.landing())?.id).toBe("aaaaaaaa");
+  // Empty is none.
+  expect((await dir.config.set(ada, "landing_document", "")).value).toBeNull();
+  expect(await dir.landing()).toBeNull();
+  // A deploy may lock it to an address; the document it names is the front page.
+  const locked = fresh({ locked: { landing_document: "/ada/front-page" } }, memory());
+  await locked.add(doc("aaaaaaaa", "Front page"));
+  expect((await locked.landing())?.id).toBe("aaaaaaaa");
 });

@@ -161,6 +161,29 @@ export class DocHost extends DurableObject<Env> {
     return [...new Set([...texts(opened.room.doc).keys(), ...assets(opened.room.doc).keys()])].sort();
   }
 
+  /** The document's page (index.html, index.md...), or null if there's no such document. */
+  async index(): Promise<string | null> {
+    return (await this.ctx.storage.get<Meta>(META))?.index ?? null;
+  }
+
+  /**
+   * Every file the document holds as it is now (text from the room, so the
+   * latest edits are in it), and its page: what a copy of it starts from.
+   * Null if there's no such document.
+   */
+  async snapshot(): Promise<{ index: string; files: Record<string, string | Uint8Array> } | null> {
+    const meta = await this.ctx.storage.get<Meta>(META);
+    const opened = meta && await (this.open ??= this.load());
+    if (!meta || !opened) { if (!opened) this.open = null; return null; }
+    const files: Record<string, string | Uint8Array> = {};
+    for (const path of await this.paths()) {
+      const text = opened.room.text(path);
+      const data = text ?? (await this.ctx.storage.get<Uint8Array>(FILE + path));
+      if (data != null) files[path] = data;
+    }
+    return { index: meta.index, files };
+  }
+
   /** Deletes the document (the front door has asked the directory who may): everyone on it is disconnected. */
   async delete(): Promise<boolean> {
     const meta = await this.ctx.storage.get<Meta>(META);

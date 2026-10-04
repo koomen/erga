@@ -1,12 +1,12 @@
 /// <reference types="vite/client" />
 // erga.dev's front door. It signs people in with GitHub and serves the
-// app's own routes (front.ts), the same in local development: the demo
-// read-only at /, new documents (blank, or a copy of the demo), each
+// app's own routes (front.ts), the same in local development: the front
+// page (the landing document) at /, new documents (blank, or a copy of it), each
 // person's list, and everything under a document's address forwarded to
 // that document's Durable Object (doc-host.ts):
 //
-//   /                          the demo, rendered, with an Edit button (and your documents, signed in)
-//   /new                       a blank document for you (signs you in first); /new?from=demo a copy of the demo
+//   /                          the front page: the landing document (a setting), read-only, with an Edit button
+//   /new                       a blank document for you (signs you in first); /new?from=landing a copy of the front page's
 //   /docs                      your documents (the directory, D1), latest edit first; POST /docs/delete, /docs/rename, /docs/share
 //   /<owner>/<slug>            the editor on that document (for those it's shared with); /d/<id>,
 //                              /<owner>/<id> and old slugs redirect here
@@ -22,6 +22,7 @@
 //
 //   POST /__erga/migrate           brings the local D1 up to date with migrations/ (as it starts)
 //   POST /__erga/link              makes (or finds) the document for a file or folder, for whoever's signed in
+//   POST /__erga/token             an agent token for DEV_LOGIN, to publish the landing project with (landing.ts)
 //   /__erga/mirror/<id>            the WebSocket the document reaches its files on disk through
 
 import { idShaped, slugify, type Route } from "../directory";
@@ -33,7 +34,7 @@ import type { Env } from "./env";
 
 export { DocHost } from "./doc-host";
 
-/** The templates' files, by template then path ("demo" → { "index.html": "..." }). Text files only. */
+/** The templates' files, by template then path ("doc" → { "index.html": "..." }). Text files only. */
 const TEMPLATES: Record<string, Record<string, string>> = {};
 for (const [path, text] of Object.entries(import.meta.glob("../templates/*/**", { query: "?raw", import: "default", eager: true }) as Record<string, string>)) {
   const [, name, rel] = /^\.\.\/templates\/([^/]+)\/(.+)$/.exec(path)!;
@@ -82,6 +83,8 @@ const platform = (env: Env): Platform => {
       create: (doc, files, index, opts) => host(doc).create(doc.owner, doc.id, files, index, opts),
       publish: (doc, files, remove) => host(doc).publish(files, remove),
       paths: (doc) => host(doc).paths(),
+      index: (doc) => host(doc).index(),
+      snapshot: (doc) => host(doc).snapshot(),
       exists: (doc) => host(doc).exists(),
       delete: (doc) => host(doc).delete(),
       list: async (owner) => {
@@ -120,11 +123,23 @@ async function linked(env: Env, request: Request, url: URL): Promise<Response> {
     const doc = await env.DOCS.getByName(body.id).link(owner, body.id, body.index, { path: body.path, slug: slugify(body.slug ?? "") || "untitled", only: !!body.only });
     return Response.json({ owner: doc.owner, id: doc.id, slug: doc.slug });
   }
+  // A token for DEV_LOGIN (an admin locally), for the dev server to publish the repo's landing project with,
+  // the way a deploy does (landing.ts). One at a time: the last run's goes.
+  if (url.pathname == "/__erga/token" && request.method == "POST") {
+    const login = env.DEV_LOGIN?.toLowerCase();
+    if (!login || !OWNER.test(login)) return new Response("No DEV_LOGIN", { status: 400 });
+    const tokens = tokensOf(env);
+    for (const t of await tokens.list(login)) if (t.label == DEV_TOKEN_LABEL) await tokens.revoke(login, t.id);
+    const { token } = await tokens.mint({ login, name: (await directory.users.get(login))?.name || login }, DEV_TOKEN_LABEL);
+    return Response.json({ token, login });
+  }
   const [, id] = /^\/__erga\/mirror\/([^/]+)$/.exec(url.pathname) ?? [];
   const route = id && idShaped(id) ? await directory.route(id) : null;
   if (!route || request.headers.get("upgrade")?.toLowerCase() != "websocket") return new Response("Not found", { status: 404 });
   return env.DOCS.getByName(route.id).fetch(new Request(new URL(`/api/mirror${url.search}`, url.origin), request));
 }
+
+const DEV_TOKEN_LABEL = "bun start (landing page)";
 
 /** The directory's migrations (migrations/), as `cf d1 migrations apply` would apply them. */
 const MIGRATIONS = import.meta.glob("../migrations/*.sql", { query: "?raw", import: "default", eager: true }) as Record<string, string>;
