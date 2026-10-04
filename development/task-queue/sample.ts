@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 // A sample board, for working on the board itself: a throwaway repo (with a
 // bare "origin") whose main has a history of merged tasks, a few commits not
-// pushed yet, and tasks in every state, served by this server.ts. Never
+// pushed yet, and tasks in every state (one of them live), served by this server.ts. Never
 // touches this repo or the real queue's data.
 //
 //   bun development/task-queue/sample.ts [--tick SECONDS]
@@ -66,6 +66,7 @@ merged("Version history panel");
 
 task("Offline editing", "queued");
 task("Agent can insert images", "working", { log: [{ at: now(), message: "Registered" }, { at: now(), message: "Wiring the image tool into the agent" }] });
+task("Tighten the docs list", "working", { live: true, previewUp: true, chromeUp: true, url: "http://localhost:4502/docs", log: [{ at: now(), message: "Live: worked on in a session with the user" }, { at: now(), message: "Chrome window opened on http://localhost:4502/docs" }] });
 task("Print stylesheet", "complete", { summary: "Adds a print stylesheet; checked in headless Chrome's print preview." });
 task("Mobile toolbar", "failed", { error: "Tests fail on the toolbar overflow menu." });
 
