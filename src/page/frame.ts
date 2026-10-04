@@ -13,7 +13,7 @@ import { Relay, docExtensions, isAppShortcut, stateJSON, type Backdrop, type Fro
 import type { ViewRequest, ViewResult } from "./agent-log";
 
 declare global {
-  interface Window { ergaFrame?: unknown; __ergaTimescale?: number }
+  interface Window { ergaFrame?: unknown; __ergaTimescale?: number; ergaHost?: { ready(): void } }
 }
 
 const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
@@ -25,7 +25,9 @@ const BASE = location.pathname.replace(/\/?$/, "/") + "doc/";
 const post = (m: FromFrame) => window.parent.postMessage(m, SHELL);
 
 // The page itself: scripts, forms and the rest, as on any web page. It's on
-// this origin, which holds nothing but this document.
+// this origin, which holds nothing but this document. It starts out of sight,
+// behind the page as it renders (the host page's #view, front.ts), and takes
+// its place once it has rendered (ergaHost.ready).
 const frame = document.createElement("iframe");
 frame.id = "page";
 frame.title = "Document";
@@ -40,7 +42,9 @@ let restoreScroll: number | null = null;
 
 window.addEventListener("message", (e: MessageEvent) => {
   if (e.source != window.parent || e.origin != SHELL) return;
-  const m = e.data as ToFrame;
+  const m = e.data as ToFrame | { type: "erga-edit" };
+  // The shell asks for the editor (front.ts): it may have missed our "ready", sent before it was listening.
+  if (m.type == "erga-edit") { if (!page) post({ type: "ready" }); return; }
   if (m.type == "init") return start(m);
   if (!page || !relay) return;
   switch (m.type) {
@@ -101,6 +105,7 @@ function start(m: Extract<ToFrame, { type: "init" }>) {
         if (restoreScroll != null) { frame.contentWindow?.scrollTo(0, restoreScroll); restoreScroll = null; }
         watchPage();
         syncBackdrop();
+        if (!frame.dataset.ready) { frame.dataset.ready = "1"; window.ergaHost?.ready(); }
       }
       queueSnapshot(u.rendered);
     },

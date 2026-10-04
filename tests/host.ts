@@ -88,7 +88,8 @@ export async function startHost(target: string | null, opts: { port?: number; en
       const r = await fetch(`${root}/__erga/open`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path }), redirect: "manual" });
       const at = r.headers.get("location");
       if (r.status != 303 || !at) throw new Error(`opening ${path}: ${r.status} ${await r.text()}`);
-      return root + at;
+      // The editor's address (…/edit); the tests address the document itself, where its API is too.
+      return root + at.replace(/\/edit(?=\?|$)/, "");
     },
     async forget(address) {
       const info = await (await fetch(`${address}/api/doc`)).json() as { docName?: { id: string } };

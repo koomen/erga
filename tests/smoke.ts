@@ -14,7 +14,7 @@ cpSync(isFile ? dirname(target) : target, dir, { recursive: true });
 const host = await startHost(isFile ? join(dir, basename(target)) : dir);
 const browser = await Browser.launch();
 const p = await browser.page();
-await p.open(`${host.base}/`, { clear: false, width: 1200, height: 900 });
+await p.open(`${host.base}/edit`, { clear: false, width: 1200, height: 900 });
 await Bun.sleep(800);
 const units = await p.frame<number>(`${F}.querySelectorAll("[data-erga-id]").length`);
 const locked = await p.frame<number>(`${F}.querySelectorAll(".erga-locked").length`);

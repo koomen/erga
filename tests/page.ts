@@ -41,7 +41,7 @@ async function session(browser: Browser, fixture: string, fileName: string, env:
   const file = join(dir, fileName);
   const host = await startHost(dir, { env });
   const p = await browser.page();
-  await p.open(`${host.base}/${query}`, { clear: false, width: 1100, height: 800, timescale });
+  await p.open(`${host.base}/edit${query}`, { clear: false, width: 1100, height: 800, timescale });
   await until(async () => await p.eval<boolean>(`!!window.ergaPage`) && await p.frame<boolean>(`!!${F}?.querySelector("[data-erga-id]")`), 10_000);
   // The page's own fonts too: text measured before they load moves when they do.
   await p.frame(`${F}.fonts.ready.then(() => true)`);
@@ -605,7 +605,7 @@ async function modelScenario(browser: Browser) {
   const first = await sel(p);
   check("the agent starts on Sonnet 5.5, with Opus 5.5 fast to pick", first?.value == "sonnet" && first.options.join("|") == "Sonnet 5.5|Opus 5.5 fast", first);
   const q = await browser.page();
-  await q.open(`${s.base}/`, { clear: false, width: 900, height: 700 });
+  await q.open(`${s.base}/edit`, { clear: false, width: 900, height: 700 });
   await until(async () => (await sel(q))?.value == "sonnet");
   await p.eval(`(() => { const s = document.getElementById("agent-model-select"); s.value = "opus-fast"; s.dispatchEvent(new Event("change")); })()`);
   check("picking Opus 5.5 fast switches it", await until(async () => (await (await fetch(`${s.base}/api/agent`)).json() as { choice: string }).choice == "opus-fast"));
@@ -630,7 +630,8 @@ async function shareScenario(browser: Browser) {
   const token = /Token: (\S+)/.exec(prompt)?.[1], api = /API: (\S+)/.exec(prompt)?.[1];
   check("naming the API and the token, which works", !!api && !!token && (await fetch(api, { headers: { Authorization: `Bearer ${token}` } })).ok, prompt);
   await p.key("Escape");
-  check("Escape closes it", await p.eval<boolean>(`document.getElementById("share").hidden`));
+  // With the caret on the page, the key reaches the shell from the frame, by message: a moment later.
+  check("Escape closes it", await until(() => p.eval<boolean>(`document.getElementById("share").hidden`)));
   check("no page errors", p.errors.length == 0, p.errors.join("\n"));
   await s.close();
 }

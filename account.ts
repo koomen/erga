@@ -1,8 +1,8 @@
 // Who you are, in the upper right of every page erga.dev serves: your
 // avatar (your GitHub picture, or your initial on your colour if it doesn't
-// load), which opens a small menu (your name, your documents, the admin page
-// for admins, sign out); or, signed out, a person in a circle that offers to
-// sign in with GitHub and come back to the same page.
+// load), which opens a small menu (your name, Documents, Settings, Admin
+// settings for admins, Sign out); or, signed out, a person in a circle whose
+// menu has only Sign in (with GitHub, coming back to the same page).
 //
 // The Worker adds it to each of the site's HTML pages (`withAccount`,
 // worker/index.ts), so every page has it without each building it. The
@@ -47,23 +47,23 @@ export function accountHtml(account: Account | null, here: string): string {
   const id = "erga-account-menu";
   if (!account) {
     return `<div class="erga-account" data-erga-account="out">
-<button type="button" class="erga-account-btn erga-account-out" aria-label="Sign in" title="Sign in" aria-haspopup="true" aria-expanded="false" aria-controls="${id}">${PERSON}</button>
+<button type="button" class="erga-account-btn erga-account-out" aria-label="Sign in" data-tip="Sign in" aria-haspopup="true" aria-expanded="false" aria-controls="${id}">${PERSON}</button>
 <div class="erga-account-menu" id="${id}" hidden>
-<p class="erga-account-who">You're not signed in.</p>
-<a class="erga-account-github" href="${esc(signInUrl(here))}">${GITHUB}<span>Sign in with GitHub</span></a>
+<a class="erga-account-github" href="${esc(signInUrl(here))}">${GITHUB}<span>Sign in</span></a>
 </div>
 </div>${ACCOUNT_STYLE}${ACCOUNT_SCRIPT}`;
   }
   const initial = (account.name.trim()[0] ?? account.login[0] ?? "?").toUpperCase();
   const s = account.session;
   return `<div class="erga-account" data-erga-account="in">
-<button type="button" class="erga-account-btn" style="--c: ${colorFor(account.login.toLowerCase())}" aria-label="${esc(`You (${account.name})`)}" title="${esc(account.name)}" aria-haspopup="true" aria-expanded="false" aria-controls="${id}">
+<button type="button" class="erga-account-btn" style="--c: ${colorFor(account.login.toLowerCase())}" aria-label="${esc(`You (${account.name})`)}" data-tip="${esc(account.name)}" aria-haspopup="true" aria-expanded="false" aria-controls="${id}">
 <span aria-hidden="true">${esc(initial)}</span>${account.avatar ? `<img src="${esc(account.avatar)}" alt="" onerror="this.remove()">` : ""}
 </button>
 <div class="erga-account-menu" id="${id}" hidden>
 <p class="erga-account-who"><b>${esc(account.name)}</b>${account.name.toLowerCase() != account.login.toLowerCase() ? `<span>${esc(account.login)}</span>` : ""}</p>
-<a href="${esc(link("/docs", s))}">Your documents</a>
-${account.admin ? `<a href="${esc(link("/admin", s))}">Admin</a>` : ""}
+<a href="${esc(link("/docs", s))}">Documents</a>
+<a href="${esc(link("/settings", s))}">Settings</a>
+${account.admin ? `<a href="${esc(link("/admin", s))}">Admin settings</a>` : ""}
 <a href="/auth/logout">Sign out</a>
 </div>
 </div>${ACCOUNT_STYLE}${ACCOUNT_SCRIPT}`;
@@ -107,6 +107,11 @@ const ACCOUNT_STYLE = `<style>
   .erga-account-btn svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
   .erga-account-btn:focus-visible { outline: 2px solid #3b7cf0; outline-offset: 2px; }
   @media (pointer: coarse) { .erga-account-btn::after { content: ""; position: absolute; inset: -7px; } }
+  /* Its tooltip, as every control's on the site: plain text, the moment the pointer is on it, just below the pointer and following it (the script below). */
+  .erga-account-btn::before { content: attr(data-tip); position: absolute; left: var(--tip-x, 100%); top: var(--tip-y, calc(100% + 6px)); transform: translateX(-100%); white-space: pre; font-size: 12px; font-weight: 400; line-height: 1.3;
+    letter-spacing: .01em; color: var(--acc-soft); opacity: 0; pointer-events: none; }
+  @media (hover: hover) { .erga-account-btn:hover::before { opacity: 1; } }
+  .erga-account-btn[aria-expanded="true"]::before { display: none; }
   .erga-account-menu { position: absolute; top: calc(100% + 8px); right: 0; min-width: 190px; max-width: calc(100vw - 32px); box-sizing: border-box; padding: 6px;
     color: var(--acc-fg); background: var(--acc-bg); border: 1px solid var(--acc-ring); border-radius: 12px;
     box-shadow: 0 8px 30px rgba(0, 0, 0, .12), 0 1px 2px rgba(0, 0, 0, .05); }
@@ -132,4 +137,13 @@ const ACCOUNT_SCRIPT = `<script>(() => {
   document.addEventListener("pointerdown", (e) => { if (!root.contains(e.target)) show(false); });
   document.addEventListener("keydown", (e) => { if (e.key == "Escape" && !menu.hidden) { show(false); btn.focus(); } });
   window.addEventListener("blur", () => show(false));
+  // Every control's tooltip on the page (the editor's too) follows the pointer while it's on the control: where, for its CSS.
+  document.addEventListener("pointermove", (e) => {
+    const el = e.pointerType == "mouse" && e.target.closest?.("[data-tip]");
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    // Clear of the pointer's arrow, which reaches down and right of its tip.
+    el.style.setProperty("--tip-x", e.clientX - r.left - 6 + "px");
+    el.style.setProperty("--tip-y", e.clientY - r.top + 30 + "px");
+  }, { passive: true });
 })();</script>`;
