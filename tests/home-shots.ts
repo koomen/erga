@@ -45,7 +45,8 @@ if (import.meta.main) {
   const url = host ? host.root + at : at;
   const browser = await Browser.launch();
   try {
-    await fetch(url);
+    // The homepage's first deploy done, where there is one (the first / starts it): up to 20s.
+    for (let i = 0; i < 200 && !(await (await fetch(url)).text()).includes("<erga-controls"); i++) await Bun.sleep(100);
     for (const v of VIEWS) { await shoot(browser, url, v, join(dir, `${v.name}.png`)); console.log(join(dir, `${v.name}.png`)); }
   } finally { browser.close(); await host?.dispose(); }
 }
