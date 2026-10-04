@@ -635,7 +635,7 @@ try {
   // The share dialog, in a browser: add someone, change anyone-with-the-link, and the list follows.
   const st = await browser.page();
   await st.open(`${base}/auth/github?as=${login}&next=/docs`);
-  await st.eval(`document.querySelector('li a[href="${(await nameOf(second)).address}/edit"]').parentElement.querySelector('button.share').click()`);
+  await st.eval(`document.querySelector('li a[href="${(await nameOf(second)).address}/edit"]').closest('li').querySelector('button.share').click()`);
   await until(async () => at2(st, `document.querySelectorAll('#share .people li').length == 1`), 5000, "the share dialog lists the owner");
   await st.eval(`(() => { const f = document.querySelector('#share form.add'); f.elements.login.value = "Bo"; f.elements.role.value = "viewer"; f.requestSubmit(); })()`);
   await until(async () => at2(st, `document.querySelectorAll('#share .people li').length == 2`), 5000, "adding someone lists them");
