@@ -33,6 +33,12 @@ export async function buildCommit(o: { source: Source; commit: string; branch?: 
   // The branch, then the commit on it (servers don't all let a commit be fetched by its id).
   await run(["git", ...auth, "fetch", "-q", "--no-tags", o.source.cloneUrl, o.branch ? `+refs/heads/${o.branch}:refs/remotes/origin/${o.branch}` : o.commit], { cwd: o.dir, env, log: o.log, secret: o.source.token });
   await run(["git", "-c", "advice.detachedHead=false", "checkout", "-q", o.commit], { cwd: o.dir, env, log: o.log });
+  return buildIn({ dir: o.dir, commit: o.commit, log: o.log, run });
+}
+
+/** Steps 2 to 5 in a checkout of `commit` at `dir`: the release bundle's bytes. */
+export async function buildIn(o: { dir: string; commit: string; log: Log; run?: Runner }): Promise<Uint8Array> {
+  const run = o.run ?? spawnRunner;
   await run(["bun", "install", "--frozen-lockfile"], { cwd: o.dir, log: o.log });
   await run(["./site.sh"], { cwd: o.dir, log: o.log, env: { WORKERS_CI: "" } });
   await run(["bun", "deploy/release.ts"], { cwd: o.dir, log: o.log, env: { WORKERS_CI_COMMIT_SHA: o.commit } });

@@ -469,3 +469,28 @@ describe("the builder", () => {
     await expect(containerBuilder(failing).build({ commit: SHA2, branch: "staging", source: { cloneUrl: "x", token: "t" } }, () => {})).rejects.toThrow(/The build failed: bun install failed/);
   });
 });
+
+describe("the one-time setup", () => {
+  test("deploy/setup.ts says what it will do, and (against the mock) does it: production's two secrets, staging's first deploy", () => {
+    const dry = Bun.spawnSync(["bun", join(ROOT, "deploy/setup.ts"), "--dry-run"], { cwd: ROOT, env: { ...process.env, CLOUDFLARE_API_TOKEN: "", CLOUDFLARE_ACCOUNT_ID: "" } });
+    const said = dry.stdout.toString();
+    expect(dry.exitCode).toBe(0);
+    expect(said).toContain("8. Check it");
+    expect(said).toContain("--dry-run: nothing done.");
+    const run = Bun.spawnSync(["bun", join(ROOT, "deploy/setup.ts"), "--yes"], { cwd: ROOT, env: { ...process.env, ERGA_DEPLOY_MOCK: "1", CLOUDFLARE_API_TOKEN: "", CLOUDFLARE_ACCOUNT_ID: "" } });
+    const out = run.stdout.toString();
+    expect(run.exitCode).toBe(0);
+    expect(out).toContain("(the mock Cloudflare: nothing real)");
+    expect(out).toContain("secrets set: SESSION_SECRET, GITHUB_CLIENT_SECRET, CLOUDFLARE_DEPLOY_TOKEN, SNAPSHOT_TOKEN, DEPLOY_HOOK_SECRET\n");
+    expect(out).toContain("Copy production's documents into it: done, 3 documents copied");
+    expect(out).toMatch(/runs [0-9a-f]{12}; it says it's staging/);
+  }, 60_000);
+
+  test("deploy/run.ts refuses production's names for staging, and needs credentials", () => {
+    const r = Bun.spawnSync(["bun", join(ROOT, "deploy/run.ts"), "nowhere"], { cwd: ROOT });
+    expect(r.exitCode).toBe(2);
+    const noCreds = Bun.spawnSync(["bun", join(ROOT, "deploy/run.ts"), "staging", "--yes"], { cwd: ROOT, env: { ...process.env, CLOUDFLARE_API_TOKEN: "", CLOUDFLARE_ACCOUNT_ID: "" } });
+    expect(noCreds.exitCode).toBe(1);
+    expect(noCreds.stderr.toString()).toContain("Set CLOUDFLARE_ACCOUNT_ID");
+  });
+});

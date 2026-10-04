@@ -385,7 +385,7 @@ export function mockCloudflare(opts: {
     if (own) return own;
     const text = (n: string) => (s.metadata.bindings ?? []).find((b: any) => b.name == n && b.type == "plain_text")?.text as string | undefined;
     if (url.pathname == "/style.css") return new Response("/* mock */", { headers: { "Content-Type": "text/css" } });
-    if (url.pathname == "/api/deploys/version") return Response.json({ version: text("ERGA_VERSION") ?? null });
+    if (url.pathname == "/api/deploys/version") return Response.json({ version: text("ERGA_VERSION") ?? null, target: text("DEPLOY_TARGET") || null });
     const snap = await snapshotDoor(req, {
       token: state.secrets[name]?.SNAPSHOT_TOKEN,
       importAllowed: text("SNAPSHOT_IMPORT") == "1" && text("DEPLOY_TARGET") != "production",
