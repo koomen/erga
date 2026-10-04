@@ -88,7 +88,11 @@
   .dlg h4 { margin: 0 0 6px; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
   .pre { white-space: pre-wrap; overflow-wrap: anywhere; }
   .shots { display: grid; gap: 12px; }
-  .shots figure { margin: 0; }
+  .shots figure { margin: 0; position: relative; }
+  .shots .unshot { position: absolute; top: 6px; right: 6px; width: 22px; height: 22px; padding: 0; border: 1px solid var(--line); border-radius: 50%;
+    background: var(--card); color: var(--muted); font: 15px/1 ui-sans-serif, -apple-system, sans-serif; cursor: pointer; opacity: 0; transition: opacity .12s; box-shadow: var(--shadow); }
+  .shots figure:hover .unshot, .shots .unshot:focus-visible { opacity: 1; }
+  .shots .unshot:hover { color: var(--bad); border-color: var(--bad); }
   .shots img { width: 100%; border: 1px solid var(--line); border-radius: 6px; }
   .shots figcaption { color: var(--muted); font-size: 12px; margin-top: 4px; }
   .log { font: 12px/1.5 ui-monospace, monospace; max-height: 260px; overflow: auto; background: var(--panel); border-radius: 6px; padding: 8px 10px; }
@@ -294,7 +298,7 @@ function renderDialog() {
     ${t.error ? `<section><h4>Error</h4><div class="err" style="max-height:none">${esc(t.error)}</div></section>` : ""}
     ${t.description ? textSection(t, "ask", "Ask", t.description) : ""}
     ${t.summary ? textSection(t, "summary", "Summary", t.summary) : ""}
-    ${t.screenshots.length ? `<section><h4>Screenshots</h4><div class="shots">${t.screenshots.map((s) => `<figure><img src="/shots/${esc(s.file)}" alt="${esc(s.caption)}">${s.caption ? `<figcaption>${esc(s.caption)}</figcaption>` : ""}</figure>`).join("")}</div></section>` : ""}
+    ${t.screenshots.length ? `<section><h4>Screenshots</h4><div class="shots">${t.screenshots.map((s) => `<figure><img src="/shots/${esc(s.file)}" alt="${esc(s.caption)}">${t.status != "merging" ? `<button class="unshot" data-act="unshot" data-id="${t.id}" data-file="${esc(s.file)}" title="Remove this screenshot" aria-label="Remove this screenshot">×</button>` : ""}${s.caption ? `<figcaption>${esc(s.caption)}</figcaption>` : ""}</figure>`).join("")}</div></section>` : ""}
     <section><h4>Log</h4><div class="log">${t.log.map((l) => `<div><time>${new Date(l.at).toLocaleTimeString()}</time>${esc(l.message)}</div>`).join("")}</div></section>
   </div>`;
   const nl = dlg.querySelector(".log");
@@ -303,11 +307,11 @@ function renderDialog() {
   dlg.scrollTop = scroll;
 }
 
-/** POSTs; on failure shows the error and returns it (null when it went through). */
-async function post(path, body) {
+/** POSTs (or another method); on failure shows the error and returns it (null when it went through). */
+async function post(path, body, method = "POST") {
   let msg = null;
   try {
-    const res = await fetch(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body ?? {}) });
+    const res = await fetch(path, { method, headers: { "content-type": "application/json" }, body: JSON.stringify(body ?? {}) });
     if (!res.ok) { const { error } = await res.json().catch(() => ({})); msg = error || res.statusText || `HTTP ${res.status}`; }
   } catch (e) { msg = `Request failed: ${e.message}`; }
   if (msg) showError(msg);
@@ -330,6 +334,7 @@ document.addEventListener("click", (e) => {
     if (act == "close") { openId = null; document.getElementById("dlg").close(); }
     if (act == "preview") { btn.disabled = true; post(`/api/tasks/${id}/preview`); }
     if (act == "live") { btn.disabled = true; btn.innerHTML = `<span class="spin"></span> Opening…`; post(`/api/tasks/${id}/live`); }
+    if (act == "unshot") { btn.closest("figure").style.opacity = ".4"; btn.disabled = true; post(`/api/tasks/${id}/screenshots/${encodeURIComponent(btn.dataset.file)}`, undefined, "DELETE").then((msg) => msg && renderDialog()); }
     if (act == "arm") { armed.add(id); render(); setTimeout(() => { armed.delete(id); render(); }, 4000); }
     if (act == "merge" || act == "discard") {
       // From the detail view: close it once the request goes through (the board shows the rest), or keep it open with the error.

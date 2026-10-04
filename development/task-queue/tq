@@ -7,7 +7,10 @@
 //   tq start ID ["message"]              status: working
 //   tq log ID "message"                  a progress line on the card
 //   tq preview ID [path] [--cmd "..."]   run the task's app in its worktree on its port ($PORT)
-//   tq shot ID URL-or-FILE ["caption"]   attach a screenshot (a URL is taken with headless Chrome)
+//   tq shot ID URL-or-FILE ["caption"] [--replace]
+//                                        attach a screenshot (a URL is taken with headless Chrome); --replace removes
+//                                        the task's screenshots first (for a fresh pass)
+//   tq unshot ID FILE|INDEX | --all      remove a screenshot (by file name, or 1-based index), or all of them
 //   tq live ID [path] [--cmd "..."]      live mode: marks the task live, runs its dev server with live reload on its
 //                                        port, and opens its own Chrome window on it (or brings it back); prints the task
 //   tq look ID [--shot [FILE]] [--console]
@@ -98,9 +101,17 @@ switch (cmd) {
   case "preview": { need(id, "preview ID [path] [--cmd ...]"); const command = flag("--cmd"); out = await call("POST", `/api/tasks/${id}/preview`, { path: rest[0], command }); break; }
   case "url": need(id && rest[0], "url ID URL"); out = await call("PATCH", `/api/tasks/${id}`, { url: rest[0] }); break;
   case "shot": {
-    need(id && rest[0], 'shot ID URL-or-FILE ["caption"]');
+    const replace = has("--replace");
+    need(id && rest[0], 'shot ID URL-or-FILE ["caption"] [--replace]');
     const [target, caption] = rest;
+    if (replace) await call("DELETE", `/api/tasks/${id}/screenshots`);
     out = await call("POST", `/api/tasks/${id}/screenshots`, /^https?:/.test(target) ? { url: target, caption } : { path: resolve(target), caption });
+    break;
+  }
+  case "unshot": {
+    const all = has("--all");
+    need(id && (all || rest[0]), "unshot ID FILE|INDEX | --all");
+    out = await call("DELETE", `/api/tasks/${id}/screenshots${all ? "" : `/${encodeURIComponent(rest[0])}`}`);
     break;
   }
   case "done": need(id && rest[0], 'done ID "summary" [URL]'); out = await call("PATCH", `/api/tasks/${id}`, { status: "complete", summary: rest[0], ...(rest[1] ? { url: rest[1] } : {}), message: "Complete: ready to merge" }); break;
