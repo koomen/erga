@@ -617,7 +617,8 @@ async function shareScenario(browser: Browser) {
   const token = /Token: (\S+)/.exec(prompt)?.[1], api = /API: (\S+)/.exec(prompt)?.[1];
   check("naming the API and the token, which works", !!api && !!token && (await fetch(api, { headers: { Authorization: `Bearer ${token}` } })).ok, prompt);
   await p.key("Escape");
-  check("Escape closes it", await p.eval<boolean>(`document.getElementById("share").hidden`));
+  // With the caret on the page, the key reaches the shell from the frame, by message: a moment later.
+  check("Escape closes it", await until(() => p.eval<boolean>(`document.getElementById("share").hidden`)));
   check("no page errors", p.errors.length == 0, p.errors.join("\n"));
   await s.close();
 }
