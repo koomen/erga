@@ -242,7 +242,7 @@ document.addEventListener("click", (e) => {
       armed.delete(id); btn.disabled = true;
       post(`/api/tasks/${id}/${act}`).then((msg) => {
         if (!inDialog || openId != id) return;
-        if (msg) { dlgError = { id, msg }; renderDialog(); } else document.getElementById("dlg").close();
+        if (msg) { dlgError = { id, msg }; renderDialog(); } else { openId = null; document.getElementById("dlg").close(); } // openId first: an update before the close event would reopen it
       });
     }
     return;
