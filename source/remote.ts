@@ -38,7 +38,7 @@ const hostOf = (url: string) => { try { return new URL(url).host; } catch { retu
 /** The remote's branches (refs/heads/...), and where HEAD points, with protocol v2's ls-refs. */
 export async function lsRefs(remote: Remote, prefix = "refs/heads/"): Promise<{ refs: Map<string, string>; head: string | null }> {
   const body = concat([pkt("command=ls-refs\n"), pkt("agent=erga\n"), DELIM, pkt("symrefs\n"), pkt(`ref-prefix ${prefix}\n`), pkt("ref-prefix HEAD\n"), FLUSH]);
-  const answer = await call(remote, "/git-upload-pack", { method: "POST", body, headers: { "Content-Type": "application/x-git-upload-pack-request", Accept: "application/x-git-upload-pack-result", "Git-Protocol": "version=2" } });
+  const answer = await call(remote, "/git-upload-pack", { method: "POST", body: body as BodyInit, headers: { "Content-Type": "application/x-git-upload-pack-request", Accept: "application/x-git-upload-pack-result", "Git-Protocol": "version=2" } });
   const refs = new Map<string, string>();
   let head: string | null = null;
   for (const p of readPkts(answer).pkts) {
@@ -91,7 +91,7 @@ export async function fetchPack(remote: Remote, opts: { wants: string[]; haves?:
     pkt("done\n"),
   ];
   const body = concat([pkt("command=fetch\n"), pkt("agent=erga\n"), DELIM, ...args, FLUSH]);
-  const answer = await call(remote, "/git-upload-pack", { method: "POST", body, headers: { "Content-Type": "application/x-git-upload-pack-request", Accept: "application/x-git-upload-pack-result", "Git-Protocol": "version=2" } });
+  const answer = await call(remote, "/git-upload-pack", { method: "POST", body: body as BodyInit, headers: { "Content-Type": "application/x-git-upload-pack-request", Accept: "application/x-git-upload-pack-result", "Git-Protocol": "version=2" } });
   // Sections (shallow-info, acknowledgments...), then "packfile" and the pack in side-band packets.
   const { pkts } = readPkts(answer);
   const at = pkts.findIndex((p) => pktText(p) == "packfile");
@@ -114,7 +114,7 @@ export async function receivePack(remote: Remote, updates: RefUpdate[], pack: Ui
   const lines = updates.map((u, i) => pkt(`${u.old} ${u.new} ${u.ref}${i == 0 ? `\0${["report-status", ...caps, "agent=erga"].join(" ")}` : ""}\n`));
   // A pack follows unless every update is a delete.
   const body = concat([...lines, FLUSH, ...(updates.some((u) => u.new != ZERO) && pack ? [pack] : [])]);
-  const answer = await call(remote, "/git-receive-pack", { method: "POST", body, headers: { "Content-Type": "application/x-git-receive-pack-request", Accept: "application/x-git-receive-pack-result" } });
+  const answer = await call(remote, "/git-receive-pack", { method: "POST", body: body as BodyInit, headers: { "Content-Type": "application/x-git-receive-pack-request", Accept: "application/x-git-receive-pack-result" } });
   let pkts = readPkts(answer).pkts;
   // Some send report-status in side-band whether asked or not.
   if (pkts[0]?.kind == "data" && pkts[0].data[0] == 1) pkts = readPkts(sideBand(pkts).data).pkts;

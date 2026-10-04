@@ -1,5 +1,8 @@
+import type { ArtifactsBinding } from "./artifacts";
 import type { Deployer } from "./deployer";
 import type { DocHost } from "./doc-host";
+import type { EventHub } from "./events";
+import type { SourceHost } from "./source-host";
 
 /** The Worker's bindings (cloudflare.config.ts); secrets are set with `cf workers secrets update`. */
 export interface Env {
@@ -53,6 +56,20 @@ export interface Env {
   ERGA_LINK_SECRET?: string;
   /** Local development only: a wait before every call to the database or a document, standing in for erga.dev's distances (tests/bench.ts --latency; worker/timing.ts). */
   ERGA_REMOTE_LATENCY_MS?: string;
+  /** Erga's own repository (worker/source-host.ts): one Durable Object, "erga". */
+  SOURCE: DurableObjectNamespace<SourceHost>;
+  /** Live events for admins' pages, /api/events (worker/events.ts): one Durable Object, "app". */
+  EVENTS: DurableObjectNamespace<EventHub>;
+  /**
+   * Cloudflare Artifacts, where Erga's repository is (worker/artifacts.ts):
+   * bound only when the deploy names a namespace (ERGA_ARTIFACTS_NAMESPACE).
+   */
+  ARTIFACTS?: ArtifactsBinding;
+  /** The GitHub mirror: where it is (github.com/koomen/erga by default) and a token that may push there (a secret). No token, no mirror. */
+  GITHUB_MIRROR_URL?: string;
+  GITHUB_MIRROR_TOKEN?: string;
+  /** Local development only: the dev server's address, where the stand-ins for Artifacts and GitHub are (dev/git-server.ts). */
+  ERGA_DEV_ORIGIN?: string;
   /** Local development only: how long after an edit the room writes it (tests shorten it). */
   ERGA_WRITE_DELAY_MS?: string;
 }

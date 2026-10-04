@@ -33,7 +33,7 @@ export function unhex(s: string): Uint8Array {
 export const isSha = (s: unknown): s is string => typeof s == "string" && /^[0-9a-f]{40}$/.test(s);
 
 export async function sha1(data: Uint8Array): Promise<string> {
-  return hex(new Uint8Array(await crypto.subtle.digest("SHA-1", data)));
+  return hex(new Uint8Array(await crypto.subtle.digest("SHA-1", data as BufferSource)));
 }
 
 /** An object as Git stores it ("<type> <size>\0" and its data), and its id. */

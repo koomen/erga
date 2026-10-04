@@ -16,6 +16,8 @@
 //   /settings, /tokens/...     your settings: agent tokens, and a test token for running the test suite against erga.dev
 //   /deploy                    deploy Erga to your own Cloudflare account (worker/deploy.ts; the deploy_page setting)
 //   /auth/test?token=&as=      a test person (Ada, Bo...) signed in with one; they open only test documents
+//   /git/erga.git/...          Erga's own repository, over Git smart HTTP (worker/source.ts; admins' agent tokens)
+//   /source, /api/source/...   its Source page and API, and /api/events, live events for admins' pages
 //   /page.js, /style.css, ...  the editor's own files (static assets)
 //
 // In local development only, the dev server (dev/plugin.ts) links files on
@@ -32,11 +34,14 @@ import { serverApi, tokensDoor } from "../server-api";
 import { finishSignIn, isDev, mintTestToken, sessionOf, signOut, startSignIn, testSignIn } from "./auth";
 import { directoryOf, tokensOf } from "./d1";
 import { deployDoor } from "./deploy";
+import { sourceApi, sourceDoor, sourceGit } from "./source";
 import type { Env } from "./env";
 import { counted, simulateLatency, tallied } from "./timing";
 
 export { Deployer } from "./deployer";
 export { DocHost } from "./doc-host";
+export { EventHub } from "./events";
+export { SourceHost } from "./source-host";
 
 /** The templates' files, by template then path ("doc" → { "index.html": "..." }). Text files only. */
 const TEMPLATES: Record<string, Record<string, string>> = {};
@@ -120,6 +125,10 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
   if (path == "/auth/test") return testSignIn(env, request);
   // The editor's controls and styles, which a document's page adds to itself to go into the editor (front.ts).
   if (assets || path == "/editor.html") return env.ASSETS.fetch(request);
+  // Erga's own source: the Git endpoint, its page and API, and admins' live events (worker/source.ts).
+  if (path == "/git/erga.git" || path.startsWith("/git/erga.git/")) return sourceGit(request, env, url);
+  if (path == "/source") return sourceDoor(request, env, platform(env), url);
+  if (path == "/api/events" || path.startsWith("/api/source/")) return sourceApi(request, env, platform(env), url);
   // The server's API for agents, and people's agent tokens (server-api.ts).
   if (path == "/llms.txt" || path == "/mcp" || path == "/api" || path.startsWith("/api/")) return serverApi(request, withTokens(platform(env), url));
   if (path == "/settings" || path == "/tokens" || path.startsWith("/tokens/")) return tokensDoor(request, withTokens(platform(env), url));
