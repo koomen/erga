@@ -552,8 +552,6 @@ declare global {
     b.setAttribute("aria-expanded", String(!account.hidden));
     b.addEventListener("click", () => toggleAccount());
   }
-  // A click into the page (its frame) is a click away from the menu too.
-  window.addEventListener("blur", () => { if (!account.hidden) toggleAccount(false); });
   function toggleAccount(force?: boolean) {
     const open = typeof force == "boolean" ? force : account.hidden;
     if (open && !accountLinks) return;

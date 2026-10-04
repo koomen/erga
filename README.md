@@ -131,6 +131,17 @@ and its backfill included), so documents made before it, and the per-person
 `DocList` Durable Objects (deleted by the config, with what they held), are
 gone.
 
+**Who you are, on every page.** The upper right of every page erga.dev
+serves (`account.ts`) shows your avatar (your GitHub picture, or your
+initial on your colour if it doesn't load); clicking it opens a small menu:
+your name, Your documents, Admin (admins only) and Sign out. Signed out, it's
+a person in a circle that offers Sign in with GitHub and brings you back to
+the same page. The Worker adds it to each of the site's own HTML pages
+(`withAccount`, `worker/index.ts`); the editor shows it itself, as your
+avatar at the far right of its controls (the front door tells it which links,
+`meta name="erga-account"`), and a document's own files and pages origin
+never get it.
+
 ### The front page
 
 What `/` shows is a document like any other, in the database and its own
@@ -319,7 +330,9 @@ development has:
   someone else (open `http://localhost:4400/<login>/<slug>?user=Ada` in
   another window to be a second person; the tab carries it on every request
   it makes), and `/auth/github?as=Ada` signs the browser in as Ada until
-  `/auth/logout`. Anyone may sign in locally, but documents are as private
+  `/auth/logout`, which locally signs the browser out altogether (it's
+  nobody, as on erga.dev, until it signs in again: `/auth/github`, or the
+  corner's Sign in). Anyone may sign in locally, but documents are as private
   as on erga.dev: a blank one opens only for its owner until it's shared,
   while one opened from disk is shared with anyone signed in (`*`, editor).
   `ERGA_AGENT_MODEL=script` swaps in the scripted agent.
@@ -729,7 +742,9 @@ sharing (the share dialog too) and what each role may do, `/admin` (settings and
 token) and the server's API for agents: asking for a token and approving it,
 publishing a folder, the tools over HTTP and MCP (with the person's own
 permissions), the share button's token, and revoking.
-`bun tests/landing.ts` checks the front page: the landing project published
+`bun tests/account.ts` checks the corner on every page (signed in, signed
+out, the menu, signing in and back, the editor's avatar, light, dark and a
+phone). `bun tests/landing.ts` checks the front page: the landing project published
 by the dev server and by `landing.ts` (republished into the same document),
 what it refuses, `/new?from=landing`, and `/` with none set.
 `tests/directory.test.ts` covers the directory, permissions, users and
@@ -760,6 +775,7 @@ back, merging edits from disk, the agent's exact-match edits and attribution.
 - `front.ts`: the app's own routes and pages (the front page, `/new`, `/docs` and
   its share dialog, delete, the unedited rule, titles)
 - `admin.ts`: `/admin`, the server's settings and users, for admins
+- `account.ts`: who you are in the upper right of every page (avatar and menu, or sign in)
 - `directory.ts`: the directory of documents (addresses, titles, permissions, who may do what), over
   `Sql`; `worker/d1.ts` puts it on D1; its tables in `migrations/`, which `migrate.ts` applies to
   erga.dev's D1 (the dev server applies them locally)
