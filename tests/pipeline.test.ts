@@ -96,8 +96,9 @@ describe("staging", () => {
     expect(mock.state.secrets["erga-staging"].SESSION_SECRET).not.toBe(mock.state.secrets.erga.SESSION_SECRET);
     const meta = mock.state.scripts["erga-staging"].metadata;
     expect(meta.keep_bindings).toEqual(["secret_text", "secret_key"]);
-    expect(meta.exports).toEqual({ DocHost: { type: "durable-object", storage: "sqlite" }, Deployer: { type: "durable-object", storage: "sqlite" }, Pipeline: { type: "durable-object", storage: "sqlite" } });
-    expect(mock.state.scripts["erga-staging"].namespaces).toEqual(["DocHost", "Deployer", "Pipeline"]);
+    expect(meta.exports.DocList).toBeUndefined();
+    expect(Object.keys(meta.exports).sort()).toEqual(Object.entries(release.worker.exports!).filter(([, e]) => e.state != "deleted").map(([n]) => n).sort());
+    expect(mock.state.scripts["erga-staging"].namespaces.sort()).toEqual(Object.keys(meta.exports).sort());
 
     // Its addresses: staging.erga.dev, and documents' pages one level down on erga-pages.dev, routed ahead of production's wildcard.
     expect(mock.state.domains).toContainEqual({ hostname: "staging.erga.dev", service: "erga-staging", zone_id: "zone00000000000000000000000e7ga1" });

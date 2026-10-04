@@ -44,6 +44,11 @@ export const signInUrl = (here: string) => `/auth/github?next=${encodeURICompone
 
 /** The corner: markup, its style and the few lines that open and close the menu. */
 export function accountHtml(account: Account | null, here: string): string {
+  return `${accountMarkup(account, here)}${ACCOUNT_STYLE}${ACCOUNT_SCRIPT}`;
+}
+
+/** The corner's markup alone (the homepage puts it in a shadow root of its own, with ACCOUNT_STYLE: home.ts). */
+export function accountMarkup(account: Account | null, here: string): string {
   const id = "erga-account-menu";
   if (!account) {
     return `<div class="erga-account" data-erga-account="out">
@@ -51,7 +56,7 @@ export function accountHtml(account: Account | null, here: string): string {
 <div class="erga-account-menu" id="${id}" hidden>
 <a class="erga-account-github" href="${esc(signInUrl(here))}">${GITHUB}<span>Sign in</span></a>
 </div>
-</div>${ACCOUNT_STYLE}${ACCOUNT_SCRIPT}`;
+</div>`;
   }
   const initial = (account.name.trim()[0] ?? account.login[0] ?? "?").toUpperCase();
   const s = account.session;
@@ -66,7 +71,7 @@ export function accountHtml(account: Account | null, here: string): string {
 ${account.admin ? `<a href="${esc(link("/admin", s))}">Admin settings</a>` : ""}
 <a href="/auth/logout">Sign out</a>
 </div>
-</div>${ACCOUNT_STYLE}${ACCOUNT_SCRIPT}`;
+</div>`;
 }
 
 /**
@@ -92,7 +97,7 @@ export async function withAccount(response: Response, account: () => Promise<Acc
 
 // Its own colours, since pages differ (style.css's, the small pages', the
 // landing page's frame): quiet like the editor's controls, a card for the menu.
-const ACCOUNT_STYLE = `<style>
+export const ACCOUNT_STYLE = `<style>
   .erga-account { --acc-bg: #fff; --acc-fg: #1c1c1f; --acc-soft: #6b6b73; --acc-chrome: #a1a1a9; --acc-ring: #e6e6ea; --acc-hover: rgba(161, 161, 169, .14);
     position: absolute; top: max(14px, env(safe-area-inset-top)); right: max(16px, env(safe-area-inset-right)); z-index: 1001;
     font: 400 14px/1.4 "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
