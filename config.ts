@@ -7,9 +7,12 @@
 // Reading a setting is for anyone (the server reads them to do its work);
 // listing them and changing them is for admins (users.ts).
 //
-// A key can also be locked by the deploy: `locked` gives its value, which
-// wins over the table, and an admin can see it but not change it. To add a
-// setting, add it to SETTINGS; nothing in the database changes.
+// A key can also be fixed by the deploy (server.config.ts, and
+// ERGA_SERVER_CONFIG over it): then its deployed value wins over the table,
+// and nobody can change it here (admin page, API or agent): it's `locked`,
+// and shows its deployed value. A key the deploy leaves out is the admins'
+// to set. To add a setting, add it to SETTINGS; nothing in the database
+// changes.
 
 import type { Sql } from "./directory.ts";
 import { NotAllowed, type Actor, type Users } from "./users.ts";
@@ -24,6 +27,8 @@ export interface Setting<T = unknown> {
   default: T;
   /** A value as given (parsed JSON), checked: throws a ConfigError saying what's wrong. */
   parse(value: unknown): T;
+  /** What the value names, when it isn't just a number or text: "document" (one of the server's documents, by id). */
+  kind?: "document";
 }
 
 /** A whole number from `min` to `max`. */
@@ -48,10 +53,21 @@ const setting = <T>(s: Setting<T>) => s;
 
 /** Every setting the server has. */
 export const SETTINGS = {
-  unedited_hours: setting({
-    description: "How many hours a new document lasts if nobody edits it.",
+  delete_docs_after_hours: setting<number | null>({
+    description: "Hours before an unedited new document is deleted; null: never.",
     default: 24,
-    parse: integer(1, 24 * 365),
+    // null, or "never" (as an agent or a deploy might say it), is never.
+    parse: (v) => {
+      if (v === null || (typeof v == "string" && v.trim().toLowerCase() == "never")) return null;
+      if (typeof v != "number" || !Number.isInteger(v) || v < 1 || v > 24 * 365) throw new ConfigError(`must be a whole number from 1 to ${24 * 365} (hours), or null for never`);
+      return v;
+    },
+  }),
+  landing_document: setting<string | null>({
+    description: "Document shown at /, one of yours; empty for a plain page.",
+    default: null,
+    parse: (v) => (v === null || v === "" ? null : text(300)(v) || null),
+    kind: "document",
   }),
 };
 
@@ -67,36 +83,78 @@ export interface ConfigEntry {
   default: unknown;
   /** Where `value` comes from. */
   source: "default" | "set" | "locked";
+  /** Fixed by the deploy: nobody can set or reset it here (show it read-only). */
+  locked: boolean;
+  /** What the value names, if it isn't plain (Setting.kind). */
+  kind?: "document";
+  /** The value the deploy fixes it to (only when it's locked; then it's `value` too). */
+  deployed?: unknown;
   /** When it was last set, and by whom (null if it never was, or it's locked). */
   updated: number | null;
   updatedBy: string | null;
 }
 
+/**
+ * The values a deploy fixes, checked against `settings`: each key must be
+ * one there is, and each value one it takes. Throws a ConfigError saying
+ * what's wrong. `bun server.config.ts` runs it on what the deploy fixes, so a
+ * bad one fails the deploy (site.sh) or `bun start` (dev.ts), not the server.
+ */
+export function deployedSettings(values: Record<string, unknown>, settings: Settings = SETTINGS): Record<string, unknown> {
+  if (!values || typeof values != "object" || Array.isArray(values)) throw new ConfigError("the deploy's server config must be an object of settings by key");
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(values)) {
+    if (value === undefined) continue;
+    const s = Object.hasOwn(settings, key) ? settings[key] : undefined;
+    if (!s) throw new ConfigError(`the deploy fixes "${key}", which isn't a setting (the settings are: ${Object.keys(settings).sort().join(", ")})`);
+    try { out[key] = s.parse(value); } catch (e) { throw new ConfigError(`the deploy fixes ${key} to ${JSON.stringify(value)}, but it ${(e as Error).message}`); }
+  }
+  return out;
+}
+
+/**
+ * The deploy's values as the Worker gets them: the SERVER_CONFIG binding, a
+ * JSON object (cloudflare.config.ts makes it from server.config.ts and
+ * ERGA_SERVER_CONFIG). Empty or missing: nothing is locked. A bad one
+ * throws, as the server starts (but the deploy checks it first).
+ */
+export function parseDeployed(json: string | undefined, settings: Settings = SETTINGS): Record<string, unknown> {
+  if (!json?.trim()) return {};
+  let values: unknown;
+  try { values = JSON.parse(json); } catch { throw new ConfigError(`the deploy's server config isn't JSON: ${json.slice(0, 200)}`); }
+  return deployedSettings(values as Record<string, unknown>, settings);
+}
+
 interface Row { key: string; value: string; updated: number; updated_by: string | null }
+/**
+ * By key: a parsed value someone sets, checked against more than the
+ * setting's parser knows (the directory, who's setting it). Answers the value
+ * to keep, or throws a ConfigError or NotAllowed saying why not.
+ */
+export type Checks = Record<string, (by: Actor, value: unknown) => Promise<unknown>>;
 const REMEMBER_MS = 10_000;
 
 export class ServerConfig<S extends Settings = typeof SETTINGS> {
   readonly settings: S;
   private locked: Record<string, unknown>;
+  private checks: Checks;
   private rows: { at: number; byKey: Map<string, Row> } | null = null;
 
   /**
    * `settings`: the keys there are (SETTINGS). `locked`: values fixed by the
    * deploy, by key; each must be a key there is, and a value it takes.
+   * `checks`: by key, what else a value set by someone must pass, beyond its
+   * parser (the directory's: a landing document must be the setter's own).
    */
-  constructor(private sql: Sql, private users: Users, opts: { settings?: S; locked?: Record<string, unknown> } = {}) {
+  constructor(private sql: Sql, private users: Users, opts: { settings?: S; locked?: Record<string, unknown>; checks?: Checks } = {}) {
     this.settings = opts.settings ?? (SETTINGS as unknown as S);
-    this.locked = {};
-    for (const [key, value] of Object.entries(opts.locked ?? {})) {
-      const s = this.settings[key];
-      if (!s) throw new ConfigError(`the deploy locks "${key}", which isn't a setting`);
-      try { this.locked[key] = s.parse(value); } catch (e) { throw new ConfigError(`the deploy locks ${key} to ${JSON.stringify(value)}, but it ${(e as Error).message}`); }
-    }
+    this.locked = deployedSettings(opts.locked ?? {}, this.settings);
+    this.checks = opts.checks ?? {};
   }
 
   /** Whether the deploy fixes this key's value. */
   isLocked(key: string): boolean {
-    return key in this.locked;
+    return Object.hasOwn(this.locked, key);
   }
 
   /** A setting's value now (for the server's own use: anyone may read). */
@@ -108,14 +166,15 @@ export class ServerConfig<S extends Settings = typeof SETTINGS> {
   async entry(key: string): Promise<ConfigEntry> {
     const s = this.setting(key);
     const row = (await this.table()).get(key);
-    const base = { key, description: s.description, default: s.default };
-    if (this.isLocked(key)) return { ...base, value: this.locked[key], source: "locked", updated: null, updatedBy: null };
+    const base = { key, description: s.description, default: s.default, ...(s.kind ? { kind: s.kind } : {}) };
+    // The deploy's value wins; a row set before it was locked stays in the table, and counts again once it isn't.
+    if (this.isLocked(key)) return { ...base, value: this.locked[key], source: "locked", locked: true, deployed: this.locked[key], updated: null, updatedBy: null };
     if (row) {
       try {
-        return { ...base, value: s.parse(JSON.parse(row.value)), source: "set", updated: Number(row.updated), updatedBy: row.updated_by };
+        return { ...base, value: s.parse(JSON.parse(row.value)), source: "set", locked: false, updated: Number(row.updated), updatedBy: row.updated_by };
       } catch { /* a value an older or newer version took: the default stands */ }
     }
-    return { ...base, value: s.default, source: "default", updated: null, updatedBy: null };
+    return { ...base, value: s.default, source: "default", locked: false, updated: null, updatedBy: null };
   }
 
   /** Every setting, as an admin sees it. Admins only. */
@@ -128,9 +187,11 @@ export class ServerConfig<S extends Settings = typeof SETTINGS> {
   async set(by: Actor, key: string, value: unknown): Promise<ConfigEntry> {
     await this.users.mustAdmin(by);
     const s = this.setting(key);
-    if (this.isLocked(key)) throw new NotAllowed(`${key} is fixed by the deploy, so it can't be changed here.`);
+    if (this.isLocked(key)) throw new NotAllowed(`${key} is fixed by the deploy (server.config.ts), so it can't be changed here: it stays ${JSON.stringify(this.locked[key])}.`);
     let parsed: unknown;
     try { parsed = s.parse(value); } catch (e) { throw new ConfigError(`${key} ${(e as Error).message}.`); }
+    const check = Object.hasOwn(this.checks, key) ? this.checks[key] : undefined;
+    if (check && parsed != null) parsed = await check(by, parsed);
     await this.sql.run(
       `INSERT INTO server_config (key, value, updated, updated_by) VALUES (?1, ?2, ?3, ?4)
        ON CONFLICT (key) DO UPDATE SET value = ?2, updated = ?3, updated_by = ?4`,
@@ -143,7 +204,7 @@ export class ServerConfig<S extends Settings = typeof SETTINGS> {
   async reset(by: Actor, key: string): Promise<ConfigEntry> {
     await this.users.mustAdmin(by);
     this.setting(key);
-    if (this.isLocked(key)) throw new NotAllowed(`${key} is fixed by the deploy, so it can't be changed here.`);
+    if (this.isLocked(key)) throw new NotAllowed(`${key} is fixed by the deploy (server.config.ts), so it can't be changed here: it stays ${JSON.stringify(this.locked[key])}.`);
     await this.sql.run("DELETE FROM server_config WHERE key = ?1", key);
     this.rows = null;
     return this.entry(key);

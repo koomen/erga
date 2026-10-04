@@ -59,8 +59,25 @@
   dialog { border: 1px solid var(--line); border-radius: 12px; background: var(--card); color: var(--ink); width: min(900px, calc(100vw - 32px)); max-height: calc(100vh - 48px); padding: 0; }
   dialog::backdrop { background: rgba(0,0,0,.35); }
   .dlg { padding: 18px 22px 22px; }
-  .dlg h3 { margin: 0 0 4px; font-size: 18px; }
-  .dlg section { margin-top: 16px; }
+  .dlg-head { display: flex; align-items: flex-start; gap: 12px; }
+  .dlg h3 { margin: 0; font-size: 18px; line-height: 1.3; flex: 1; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
+  .dlg h3 .id { font-size: 14px; }
+  .status { font: 600 11px/1 ui-sans-serif, -apple-system, sans-serif; text-transform: uppercase; letter-spacing: .05em; padding: 4px 8px; border-radius: 999px; border: 1px solid currentColor; color: var(--muted); white-space: nowrap; }
+  .status.working { color: var(--accent); }
+  .status.complete, .status.merged { color: var(--ok); }
+  .status.merging { color: var(--warn); }
+  .status.failed { color: var(--bad); }
+  .branch { font: 12px ui-monospace, monospace; color: var(--muted); margin-top: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .links { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; margin-top: 8px; font-size: 13px; }
+  .links a, .links button.link { color: var(--accent); text-decoration: none; display: inline-flex; align-items: center; gap: 5px; }
+  .links a:hover, .links button.link:hover { text-decoration: underline; }
+  .links .muted, .links code { color: var(--muted); font-size: 12px; }
+  button.link { border: 0; background: none; padding: 0; font: inherit; cursor: pointer; }
+  .copied { color: var(--ok) !important; }
+  .dlg section { margin-top: 18px; }
+  .text { white-space: pre-wrap; overflow-wrap: anywhere; background: var(--panel); border-radius: 8px; padding: 10px 12px; font-size: 14px; line-height: 1.5; }
+  .text.clamp { max-height: 9em; overflow: hidden; -webkit-mask-image: linear-gradient(#000 70%, transparent); mask-image: linear-gradient(#000 70%, transparent); }
+  .more { margin-top: 4px; font-size: 12px; color: var(--accent); }
   .dlg h4 { margin: 0 0 6px; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
   .pre { white-space: pre-wrap; overflow-wrap: anywhere; }
   .shots { display: grid; gap: 12px; }
@@ -70,7 +87,7 @@
   .log { font: 12px/1.5 ui-monospace, monospace; max-height: 260px; overflow: auto; background: var(--panel); border-radius: 6px; padding: 8px 10px; }
   .log div { white-space: pre-wrap; overflow-wrap: anywhere; }
   .log time { color: var(--muted); margin-right: 8px; }
-  .close { float: right; }
+  .close { flex: none; }
   a { color: var(--accent); }
 
   /* Branches: main's latest commits, one dot each, newest at the top. The left lane is local main
@@ -133,9 +150,9 @@ const ago = (iso) => {
   return s < 60 ? "just now" : s < 3600 ? `${Math.floor(s / 60)}m ago` : s < 86400 ? `${Math.floor(s / 3600)}h ago` : new Date(iso).toLocaleDateString();
 };
 
-function actions(t) {
+function actions(t, inDialog = false) {
   const b = [];
-  if (t.url && !["merged", "discarded"].includes(t.status)) b.push(`<a class="btn" href="${esc(t.url)}" target="_blank" onclick="event.stopPropagation()"><span class="dot ${t.previewUp ? "up" : ""}" title="${t.previewUp ? "preview is up" : "preview is down"}"></span>Open</a>`);
+  if (t.url && !inDialog && !["merged", "discarded"].includes(t.status)) b.push(`<a class="btn" href="${esc(t.url)}" target="_blank" onclick="event.stopPropagation()"><span class="dot ${t.previewUp ? "up" : ""}" title="${t.previewUp ? "preview is up" : "preview is down"}"></span>Open</a>`);
   if (t.port && t.worktree && !t.previewUp && ["working", "complete", "failed"].includes(t.status)) b.push(`<button data-act="preview" data-id="${t.id}">Start preview</button>`);
   if (t.status == "complete") b.push(`<button class="primary" data-act="merge" data-id="${t.id}">Merge</button>`);
   if (t.status == "merging") b.push(`<button disabled><span class="spin"></span> ${t.log.at(-1)?.message.startsWith("Merge requested: waiting") ? "Waiting to merge…" : "Merging…"}</button>`);
@@ -221,6 +238,25 @@ function showTip(li) {
 document.addEventListener("mouseover", (e) => showTip(e.target.closest?.("#graph li")));
 document.addEventListener("scroll", () => showTip(null), true);
 
+let dlgError = null; // {id, msg}: a Merge or Discard request from the detail view that failed
+const STATUS = { queued: "Queued", working: "Working", complete: "Ready to merge", merging: "Merging", merged: "Merged", failed: "Failed", discarded: "Discarded" };
+const expanded = new Set(); // "<id>:ask" / "<id>:summary" texts shown in full
+/** The ask or the summary: a few lines, with "Show all" when it runs longer. */
+function textSection(t, key, title, text) {
+  const k = `${t.id}:${key}`;
+  const long = text.length > 600 || text.split("\n").length > 7;
+  const open = !long || expanded.has(k);
+  return `<section><h4>${title}</h4><div class="text ${open ? "" : "clamp"}">${esc(text.trim())}</div>${long ? `<button class="link more" data-act="more" data-key="${k}">${open ? "Show less" : "Show all"}</button>` : ""}</section>`;
+}
+
+async function copy(text) {
+  try { await navigator.clipboard.writeText(text); return true; } catch {
+    const ta = Object.assign(document.createElement("textarea"), { value: text });
+    document.getElementById("dlg").append(ta); ta.select();
+    const ok = document.execCommand("copy"); ta.remove(); return ok;
+  }
+}
+
 function renderDialog() {
   const t = tasks.find((x) => x.id == openId);
   const dlg = document.getElementById("dlg");
@@ -228,15 +264,24 @@ function renderDialog() {
   const log = dlg.querySelector(".log");
   const atBottom = !log || log.scrollTop + log.clientHeight >= log.scrollHeight - 4;
   const scroll = dlg.scrollTop;
+  const live = !["merged", "discarded"].includes(t.status);
+  const links = [
+    t.worktree && live ? `<button class="link" data-act="copy" data-text="${esc(t.worktree)}" title="Copy ${esc(t.worktree)}">worktree</button>` : "",
+    t.url && live ? `<a href="${esc(t.url)}" target="_blank" title="${esc(t.url)}"><span class="dot ${t.previewUp ? "up" : ""}"></span>preview</a>${t.previewUp ? "" : ` <span class="muted">(not running)</span>`}` : "",
+    t.commit ? `<code>${esc(t.commit)}</code>` : "",
+  ].filter(Boolean);
   dlg.innerHTML = `<div class="dlg">
-    <button class="close" data-act="close">Close</button>
-    <h3><span class="id">#${t.id}</span> ${esc(t.title)}</h3>
-    <div class="meta"><span>${esc(t.status)}</span>${t.branch ? `<code>${esc(t.branch)}</code>` : ""}${t.worktree ? `<code>${esc(t.worktree)}</code>` : ""}${t.port ? `<span>port ${t.port}</span>` : ""}${t.commit ? `<code>${esc(t.commit)}</code>` : ""}</div>
-    ${t.url ? `<section><h4>Where to look</h4><a href="${esc(t.url)}" target="_blank">${esc(t.url)}</a> ${t.previewUp ? "" : "<span class='meta'>(preview not running)</span>"}</section>` : ""}
-    ${actions(t)}
+    <div class="dlg-head">
+      <h3><span><span class="id">#${t.id}</span> ${esc(t.title)}</span><span class="status ${t.status}">${STATUS[t.status] ?? esc(t.status)}</span></h3>
+      <button class="close" data-act="close">Close</button>
+    </div>
+    ${t.branch ? `<div class="branch" title="${esc(t.branch)}">${esc(t.branch)}</div>` : ""}
+    ${links.length ? `<div class="links">${links.join("")}</div>` : ""}
+    ${actions(t, true)}
+    ${dlgError?.id == t.id ? `<div class="err" style="max-height:none">${esc(dlgError.msg)}</div>` : ""}
     ${t.error ? `<section><h4>Error</h4><div class="err" style="max-height:none">${esc(t.error)}</div></section>` : ""}
-    ${t.summary ? `<section><h4>Summary</h4><div class="pre">${esc(t.summary)}</div></section>` : ""}
-    ${t.description ? `<section><h4>Ask</h4><div class="pre">${esc(t.description)}</div></section>` : ""}
+    ${t.description ? textSection(t, "ask", "Ask", t.description) : ""}
+    ${t.summary ? textSection(t, "summary", "Summary", t.summary) : ""}
     ${t.screenshots.length ? `<section><h4>Screenshots</h4><div class="shots">${t.screenshots.map((s) => `<figure><a href="/shots/${esc(s.file)}" target="_blank"><img src="/shots/${esc(s.file)}" alt="${esc(s.caption)}"></a>${s.caption ? `<figcaption>${esc(s.caption)}</figcaption>` : ""}</figure>`).join("")}</div></section>` : ""}
     <section><h4>Log</h4><div class="log">${t.log.map((l) => `<div><time>${new Date(l.at).toLocaleTimeString()}</time>${esc(l.message)}</div>`).join("")}</div></section>
   </div>`;
@@ -246,9 +291,15 @@ function renderDialog() {
   dlg.scrollTop = scroll;
 }
 
+/** POSTs; on failure shows the error and returns it (null when it went through). */
 async function post(path, body) {
-  const res = await fetch(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body ?? {}) });
-  if (!res.ok) { const { error } = await res.json().catch(() => ({})); showError(error || res.statusText); }
+  let msg = null;
+  try {
+    const res = await fetch(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body ?? {}) });
+    if (!res.ok) { const { error } = await res.json().catch(() => ({})); msg = error || res.statusText || `HTTP ${res.status}`; }
+  } catch (e) { msg = `Request failed: ${e.message}`; }
+  if (msg) showError(msg);
+  return msg;
 }
 function showError(msg) {
   const el = document.getElementById("live");
@@ -262,17 +313,26 @@ document.addEventListener("click", (e) => {
     e.stopPropagation();
     const id = Number(btn.dataset.id);
     const act = btn.dataset.act;
+    if (act == "copy") { copy(btn.dataset.text).then((ok) => { btn.textContent = ok ? "copied" : "couldn't copy"; btn.classList.add("copied"); setTimeout(() => { btn.textContent = "worktree"; btn.classList.remove("copied"); }, 1500); }); }
+    if (act == "more") { const k = btn.dataset.key; expanded.has(k) ? expanded.delete(k) : expanded.add(k); renderDialog(); }
     if (act == "close") { openId = null; document.getElementById("dlg").close(); }
-    if (act == "merge") { btn.disabled = true; post(`/api/tasks/${id}/merge`); }
     if (act == "preview") { btn.disabled = true; post(`/api/tasks/${id}/preview`); }
     if (act == "arm") { armed.add(id); render(); setTimeout(() => { armed.delete(id); render(); }, 4000); }
-    if (act == "discard") { armed.delete(id); btn.disabled = true; post(`/api/tasks/${id}/discard`); }
+    if (act == "merge" || act == "discard") {
+      // From the detail view: close it once the request goes through (the board shows the rest), or keep it open with the error.
+      const inDialog = !!btn.closest("#dlg");
+      armed.delete(id); btn.disabled = true;
+      post(`/api/tasks/${id}/${act}`).then((msg) => {
+        if (!inDialog || openId != id) return;
+        if (msg) { dlgError = { id, msg }; renderDialog(); } else { openId = null; document.getElementById("dlg").close(); } // openId first: an update before the close event would reopen it
+      });
+    }
     return;
   }
   const c = e.target.closest("[data-open]");
   if (c) { openId = Number(c.dataset.open); renderDialog(); }
 });
-document.getElementById("dlg").addEventListener("close", () => { openId = null; });
+document.getElementById("dlg").addEventListener("close", () => { openId = null; dlgError = null; });
 document.getElementById("dlg").addEventListener("click", (e) => { if (e.target.id == "dlg") e.target.close(); });
 
 function connect() {

@@ -6,6 +6,8 @@
 # one, even with two builds at once.
 set -euo pipefail
 cd "$(dirname "$0")"
+# The server settings the deploy fixes (server.config.ts, ERGA_SERVER_CONFIG): a bad one stops the deploy here.
+bun server.config.ts >/dev/null
 ./build.sh
 mkdir -p .site/fonts
 put() { local tmp; tmp="$(dirname ".site/$2")/.$(basename "$2").$$"; cp "$1" "$tmp" && mv -f "$tmp" ".site/$2"; }

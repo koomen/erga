@@ -18,7 +18,8 @@
 // It also keeps its row in the directory (directory.ts, D1) up to date: when
 // it was last edited, and the title that follows its first heading (at most
 // every DIRECTORY_EVERY_MS). It deletes itself, row included, if nobody
-// edits it within its unedited time (the unedited_hours setting) of being made.
+// edits it within its unedited time (the delete_docs_after_hours setting) of
+// being made; if an admin has since set that to never, it stays.
 //
 // In local development a document can be a file or folder on disk (`link`).
 // Its files then stay there: the room's storage is the folder itself, reached
@@ -83,7 +84,7 @@ export class DocHost extends DurableObject<Env> {
   /**
    * Creates the document, whose row the front door has just added to the
    * directory, from a template's files; false if it already exists. Unless
-   * someone edits it, it's deleted at `expires` (the unedited_hours setting
+   * someone edits it, it's deleted at `expires` (the delete_docs_after_hours setting
    * after it's made, or sooner when local development asks, to test it).
    */
   async create(owner: string, id: string, files: Record<string, string | Uint8Array>, index: string, opts: { test?: boolean; expires: number | null; modified?: number }): Promise<boolean> {
@@ -160,6 +161,29 @@ export class DocHost extends DurableObject<Env> {
     return [...new Set([...texts(opened.room.doc).keys(), ...assets(opened.room.doc).keys()])].sort();
   }
 
+  /** The document's page (index.html, index.md...), or null if there's no such document. */
+  async index(): Promise<string | null> {
+    return (await this.ctx.storage.get<Meta>(META))?.index ?? null;
+  }
+
+  /**
+   * Every file the document holds as it is now (text from the room, so the
+   * latest edits are in it), and its page: what a copy of it starts from.
+   * Null if there's no such document.
+   */
+  async snapshot(): Promise<{ index: string; files: Record<string, string | Uint8Array> } | null> {
+    const meta = await this.ctx.storage.get<Meta>(META);
+    const opened = meta && await (this.open ??= this.load());
+    if (!meta || !opened) { if (!opened) this.open = null; return null; }
+    const files: Record<string, string | Uint8Array> = {};
+    for (const path of await this.paths()) {
+      const text = opened.room.text(path);
+      const data = text ?? (await this.ctx.storage.get<Uint8Array>(FILE + path));
+      if (data != null) files[path] = data;
+    }
+    return { index: meta.index, files };
+  }
+
   /** Deletes the document (the front door has asked the directory who may): everyone on it is disconnected. */
   async delete(): Promise<boolean> {
     const meta = await this.ctx.storage.get<Meta>(META);
@@ -194,13 +218,17 @@ export class DocHost extends DurableObject<Env> {
   /**
    * Its unedited time is up: a document nobody has edited goes.
    * One open somewhere waits an hour more, so it isn't pulled from under
-   * someone about to type.
+   * someone about to type. If delete_docs_after_hours is now never, it stays.
    */
   async alarm(): Promise<void> {
     const meta = await this.ctx.storage.get<Meta>(META);
     if (!meta) return;
     const next = afterUnedited(meta, this.sockets.size > 0, Date.now());
     if (next == "keep") return;
+    if ((await directoryOf(this.env).config.get("delete_docs_after_hours")) == null) {
+      await directoryOf(this.env).setExpires(this.idOf(meta), null).catch((e) => console.log(`couldn't update ${this.idOf(meta)}'s row: ${e}`));
+      return;
+    }
     if (next != "delete") {
       await this.ctx.storage.setAlarm(next);
       await directoryOf(this.env).setExpires(this.idOf(meta), next).catch((e) => console.log(`couldn't update ${this.idOf(meta)}'s row: ${e}`));

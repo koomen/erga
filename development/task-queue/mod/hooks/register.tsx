@@ -24,12 +24,21 @@ const armed = atom({ plugin: 'task-queue', key: 'armed' } as const, null)
 const WORKFLOW = `# The task queue
 
 This repo tracks work in a task queue (board: http://localhost:4700). When the user asks for a change to the repo,
-your first and only step is to call mcp__task-queue__task_create with a short imperative title and the user's ask in
-full (with any context from the conversation the worker will need). That registers the task, makes its branch and
+your first and only step is to call mcp__task-queue__task_create with a short imperative title and a short, clear description
+of the ask: a few plain sentences on what the user wants, plus only the context the worker can't find itself, not a
+wall of text (the board shows it as the ask). That registers the task, makes its branch and
 worktree, and starts a background worker that does, tests and reports the work. Then tell the user in one line that
 it's task #<id> on the board, and stay free for their next instruction: don't implement, test or merge it yourself,
 and don't wait on the worker. Several tasks may run at once. When a worker reports back, relay its URL and summary in
 a sentence or two. The user merges from the board or the Tasks pane (/tasks).
+
+Watch the queue for the whole session, so you hear when each task changes state without the user telling you: at the
+start of the session, run \`development/task-queue/tq watch --state /tmp/tq-watch-<a name for this session>.json\` under
+the Monitor tool (timeout_ms at the maximum), and re-arm it with the same command whenever it expires (--state
+reports what changed in between). It prints one line per status change ("#3 ready to merge: title", "#3 merged:
+title", "#4 failed: title: why", "#5 merge failed, back to ready to merge: title: why") and nothing else. Act on each
+without being asked: relay a ready or failed task the worker hasn't already reported, say why a merge failed, and
+when a task merges, start (with task_create) any task that was waiting on it.
 
 Questions, explanations and anything that changes nothing in the repo are answered directly, without a task.`
 
@@ -49,6 +58,9 @@ worktree, and report on the board as you go. Your first message names the task, 
   Chrome takes it) or a PNG you took yourself (e.g. after interacting, with tests/cdp.ts).
 - Commit everything (uncommitted work can't be merged), then mcp__task-queue__task_done with a summary: what changed,
   how you tested it, what to look at. If you can't finish, mcp__task-queue__task_fail with why.
+- Write summaries (in task_done and your final reply) for the user, in plain language: what you built or changed, how
+  to use it, how you tested it, what to look at. Short and clear; no implementation trivia, strings of internal names
+  or arrow chains.
 - Never merge or push: the user merges from the board.
 
 If the task-queue tools are missing, development/task-queue/tq in the worktree does the same from Bash (tq help).
@@ -74,7 +86,7 @@ const TOOLS = [
       type: 'object',
       properties: {
         title: { type: 'string', description: 'Short imperative title, e.g. "Add a dark mode toggle"' },
-        ask: { type: 'string', description: "The user's ask in full, with any context from the conversation the worker needs" },
+        ask: { type: 'string', description: "A short, clear description of the ask: a few plain sentences on what the user wants, plus only the context the worker can't find itself" },
       },
       required: ['title', 'ask'],
     },
@@ -93,7 +105,7 @@ const TOOLS = [
   {
     name: 'task_done',
     description: 'Mark a task complete (ready for the user to merge): everything committed, tested, previewed.',
-    inputSchema: { type: 'object', properties: { id: { type: 'number' }, summary: { type: 'string', description: 'What changed, how it was tested, what to look at' }, url: { type: 'string', description: 'Where to look, if not the preview URL already set' } }, required: ['id', 'summary'] },
+    inputSchema: { type: 'object', properties: { id: { type: 'number' }, summary: { type: 'string', description: 'For the user, in plain language: what changed, how to use it, how it was tested, what to look at' }, url: { type: 'string', description: 'Where to look, if not the preview URL already set' } }, required: ['id', 'summary'] },
   },
   { name: 'task_fail', description: "Mark a task failed, with why.", inputSchema: { type: 'object', properties: { id: { type: 'number' }, reason: { type: 'string' } }, required: ['id', 'reason'] } },
   { name: 'task_list', description: 'List the tasks in the queue that are not done.', inputSchema: { type: 'object', properties: {} } },

@@ -28,7 +28,7 @@
 // documents, and those as editors of the documents of whoever minted their
 // token. Server admins get nothing on documents by being admins.
 
-import { ServerConfig } from "./config.ts";
+import { ConfigError, ServerConfig } from "./config.ts";
 import { NotAllowed, Users } from "./users.ts";
 
 export { NotAllowed };
@@ -164,7 +164,39 @@ export class Directory {
    */
   constructor(private sql: Sql, opts: { admins?: Iterable<string>; locked?: Record<string, unknown> } = {}) {
     this.users = new Users(sql, opts.admins);
-    this.config = new ServerConfig(sql, this.users, { locked: opts.locked });
+    this.config = new ServerConfig(sql, this.users, {
+      locked: opts.locked,
+      // The front page shows a document to everyone: only its owner may put it there. Kept by id, which a rename never changes.
+      checks: {
+        landing_document: async (by, value) => {
+          const doc = await this.find(String(value));
+          if (!doc || doc.test) throw new ConfigError(`landing_document: there's no document at ${JSON.stringify(value)}. Give its address (/<owner>/<slug>), URL or id.`);
+          if (!(await this.may({ login: by.login.toLowerCase(), test: !!by.test }, "share", doc))) throw new NotAllowed(`Only its owner (${doc.owner}) can make /${doc.owner}/${doc.slug} the front page: it shows the document to everyone.`);
+          return doc.id;
+        },
+      },
+    });
+  }
+
+  /**
+   * The document a reference names: its id, its address (/<owner>/<slug>,
+   * an old slug, /d/<id>) or a URL with one of those as its path.
+   */
+  async find(ref: string): Promise<DocRow | null> {
+    let path = ref.trim();
+    try { if (/^https?:\/\//i.test(path)) path = new URL(path).pathname; } catch { return null; }
+    if (idShaped(path)) return this.get(path);
+    const [, first, second] = /^\/?([^/]+)\/([^/?#]+)\/?$/.exec(path) ?? [];
+    if (!first || !second) return null;
+    if (first == "d") return idShaped(second) ? this.get(second) : null;
+    return (await this.locate(first, second))?.doc ?? null;
+  }
+
+  /** The document the front page shows (the landing_document setting), if it's set and there is one. */
+  async landing(): Promise<DocRow | null> {
+    const ref = await this.config.get("landing_document");
+    const doc = ref ? await this.find(ref) : null;
+    return doc && !doc.test ? doc : null;
   }
 
   async get(id: string): Promise<DocRow | null> {

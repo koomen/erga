@@ -14,7 +14,7 @@ It is multiplayer: people and their agents edit one page together (see
 With [Bun](https://bun.sh) 1.4 or later (and Node, which runs Vite):
 
     bun install
-    bun start                       # erga.dev's app, locally: your documents at /docs, /new, the demo at /
+    bun start                       # erga.dev's app, locally: your documents at /docs, /new, the front page at /
     bun start ./path/to/site        # and any folder with index.html or index.md, edited in place
     bun start ./notes/some.md       # or a single file
 
@@ -32,9 +32,10 @@ more can be opened from `/docs` (see [Local development](#local-development)).
 ## Hosted: erga.dev
 
 The editor runs on Cloudflare. A front-door Worker (`worker/index.ts`)
-serves the app's routes (`front.ts`). It shows the demo read-only at `/` with an Edit button; Edit signs you in with
+serves the app's routes (`front.ts`). It shows the front page (the landing
+document: see [The front page](#the-front-page)) read-only at `/` with an Edit button; Edit signs you in with
 GitHub (only the server's users: see [Users, admins and
-settings](#users-admins-and-settings)) and makes you a copy of the demo at
+settings](#users-admins-and-settings)) and makes you a copy of it at
 `/<you>/<slug>`, which only you can open until you share it. `/new` makes a
 blank document instead (a copy of `templates/doc/`). Each document is a
 Durable Object (`worker/doc-host.ts`), named by the document's id, that
@@ -100,8 +101,10 @@ one is and your role on it; the editor's top bar links to it, and its
 footer to `/tokens` and, for admins, `/admin`. Each document keeps its row up to
 date (when it's edited, and the title that follows its heading, at most
 every two seconds). A document nobody edits is deleted after the
-`unedited_hours` setting (24 by default) from when it's made, by an alarm set
-when it's made. An edit is a change to a
+`delete_docs_after_hours` setting (24 by default) from when it's made, by an
+alarm set when it's made. Set to never (`null`), new documents don't expire,
+`/docs` doesn't say they will, and one whose alarm comes up after the switch
+stays. An edit is a change to a
 file's text, from a person, an agent or a publish; opening the document,
 moving a caret or the room's own bookkeeping never are. One still open in
 a tab when its time comes gets another hour. Test documents are neither
@@ -127,6 +130,48 @@ and its backfill included), so documents made before it, and the per-person
 `DocList` Durable Objects (deleted by the config, with what they held), are
 gone.
 
+### The front page
+
+What `/` shows is a document like any other, in the database and its own
+Durable Object: the one the `landing_document` setting names (kept by id,
+so a rename doesn't lose it). Everyone sees it there, signed in or not,
+read-only, in a frame on the document's own pages origin (as the editor shows
+any page: see [Pages run on their own origin](#pages-run-on-their-own-origin)),
+with an Edit button that makes you a copy (`/new?from=landing`; the
+`create_document` tool's `template: "landing"`). Unset, or naming a document
+that's gone, `/` is a plain start page with the way in (and, for an admin, how
+to set one). Only a document's owner may make it the front page, since that
+shows it to everyone: from `/admin` (type its address), or by asking an agent
+(`set_setting`), or by deploying the repo's landing project.
+
+**The repo's landing project.** `server.config.ts` names it: `landing`, a
+folder (today `landing/`, the old demo) with an `index.html` (or
+`index.md`) and whatever it uses. It's never served from the code: after each
+deploy, `bun landing.ts` publishes it through the server's own API, as any
+agent would (`POST /api/publish`), as a document of the admin whose token the
+deploy holds, at `/<their login>/landing`, and sets `landing_document` to it.
+Each deploy publishes into that same document again (its files replaced, an
+edit open tabs see), so what's in the repo is what the front page shows; an
+admin who points `landing_document` elsewhere between deploys is overruled by
+the next one. `landing: null` leaves the front page to the admins. If the
+deploy locks `landing_document` (to a document's address or id), the project
+is published into that document and the setting is left alone.
+
+`bun landing.ts [server]` (default `https://erga.dev`, or `ERGA_URL`) needs
+`ERGA_DEPLOY_TOKEN`: an agent token of an admin's, made at `/tokens`. `bun run
+deploy` runs it after `cf deploy`. On Workers Builds the deploy command is
+`bunx cf deploy && bun landing.ts`, with `ERGA_DEPLOY_TOKEN` set as a build
+secret (Settings, Build, Variables and secrets); it waits up to two minutes
+for the new Worker to answer. Without the token, or with a token of someone
+who isn't an admin, it fails, saying why. `ERGA_LANDING` (a folder, or `""`
+for none) overrides `landing` for one run.
+
+Locally, `bun start` does the same as it starts (`dev/plugin.ts`), with a
+token the Worker makes for `DEV_LOGIN` (`POST /__erga/token`, which only the
+dev server can call): your local front page is `/<DEV_LOGIN>/landing`, the
+repo's `landing/` as of when the server started. Test servers start with no
+landing project unless a test asks for one (`tests/host.ts`).
+
 ### Users, admins and settings
 
 **Users.** A GitHub login with a row in `users` may sign in; nobody else
@@ -150,9 +195,9 @@ the agent in the editor, or Claude Code with their token, to add a user.
 
 **The admin page.** `/admin` (`admin.ts`) is for admins only; anyone else,
 and an agent with an admin's token, gets a 404 there. It shows every
-setting (its description, its value, where that comes from: default, set by
-whom and when, or locked by the deploy, which is shown but can't be
-changed) with Save and Reset, and every user (last seen, who added them,
+setting compactly (its key, a one-line description, its value with Save
+and Reset; a small "set by whom" note, with when and the default on hover, or a
+"Locked" badge for one the deploy fixes, whose value is shown read-only), and every user (last seen, who added them,
 a User/Admin role menu and a remove button; a bootstrap admin's are
 disabled), with a box to add one by GitHub login. Underneath it's `POST
 /admin/settings` (`key` and `value` as JSON, or `reset=1`) and `POST
@@ -163,10 +208,37 @@ this site's pages only.
 key with who set it and when (`config.ts`). Only the keys declared in
 `SETTINGS` exist, each with a description, a default and a parser that
 refuses a bad value saying why; one never set has its default. Today there's
-`unedited_hours`. Anyone's request may read a setting (the server reads them
-to do its work); only admins list and change them. A setting can also be
-locked by the deploy: `new Directory(sql, { locked })` takes values that win
-over the table and that admins can see but not change.
+`delete_docs_after_hours` and `landing_document` ([The front page](#the-front-page)).
+A setting may name a document (`kind: "document"`): the admin page takes and
+shows it by address, and the directory checks who may set it (`checks`).
+`delete_docs_after_hours` is a whole number of hours, or `null` (also
+`"never"`) for never; the admin page offers it as "After [n] hours" or
+"Never". Anyone's request may read a setting (the server reads them
+to do its work); only admins list and change them.
+
+**Settings the deploy fixes.** A setting can also be fixed in the repo, in
+`server.config.ts`:
+
+    export default { delete_docs_after_hours: 72 };   // or null: never delete
+
+A key there is locked: the deployed value wins over whatever the table holds,
+and nobody can change it, from the admin page, the API or an agent (`set` and
+`reset` refuse with `NotAllowed`, saying it's fixed by the deploy and what it
+stays). Admins still see it, read-only, with its value. A key left out is the
+admins' to set, in `server_config`. Taking a key out and deploying hands it
+back: what an admin set before it was locked counts again. So the precedence
+is: the deploy's value, else the one an admin set, else the default.
+
+`ERGA_SERVER_CONFIG`, a JSON object in the environment of the deploy (or of
+`bun start`), adds to `server.config.ts` or overrides it, for one deploy or
+one dev server: `ERGA_SERVER_CONFIG='{"delete_docs_after_hours":3}' bun start`.
+`cloudflare.config.ts` hands the two, merged, to the Worker as the
+`SERVER_CONFIG` binding (JSON), which `directoryOf(env)` (`worker/d1.ts`)
+passes to the `Directory` as its locked settings. `bun server.config.ts`
+checks them against `SETTINGS` and prints them: `site.sh` runs it before
+every deploy and `bun start` before it starts, so a key that isn't a setting,
+or a value it won't take, stops there, saying why. Locally the same file
+applies, so local development is locked the same way as erga.dev.
 
 **The API**, for the admin UI and agents to build on: `directoryOf(env)`
 (`worker/d1.ts`) gives the `Directory`, and through it
@@ -180,7 +252,10 @@ over the table and that admins can see but not change.
   login)`;
 - settings: `dir.config.get(key)` (typed by `SETTINGS`), `entry(key)`,
   `isLocked(key)`, and, admins only, `list(by)`, `set(by, key, value)`,
-  `reset(by, key)`.
+  `reset(by, key)`. An entry (`ConfigEntry`) has the key, its description,
+  `value` (what applies now), `default`, `source` (`default`, `set` or
+  `locked`), `locked` (true when the deploy fixes it: show it read-only),
+  `deployed` (the deploy's value, only when locked) and who set it and when.
 
 The admin-only calls throw `NotAllowed` (and a bad value `ConfigError`) with
 a message a person or an agent can act on.
@@ -644,6 +719,9 @@ sharing (the share dialog too) and what each role may do, `/admin` (settings and
 token) and the server's API for agents: asking for a token and approving it,
 publishing a folder, the tools over HTTP and MCP (with the person's own
 permissions), the share button's token, and revoking.
+`bun tests/landing.ts` checks the front page: the landing project published
+by the dev server and by `landing.ts` (republished into the same document),
+what it refuses, `/new?from=landing`, and `/` with none set.
 `tests/directory.test.ts` covers the directory, permissions, users and
 settings on bun:sqlite; `tests/tokens.test.ts` the tokens themselves.
 `bun tests/isolation.ts` opens a page that tries to reach whoever views it
@@ -667,7 +745,9 @@ back, merging edits from disk, the agent's exact-match edits and attribution.
 
 - `page.html`, `page.js`, `frame.js`: the editor's shell and its built
   scripts (the shell's, and the frame's that runs on each document's own origin)
-- `front.ts`: the app's own routes and pages (the demo, `/new`, `/docs` and
+- `landing/`, `landing.ts`: the repo's landing project, and the step that
+  publishes it to a server after a deploy (and to the local one, `bun start`)
+- `front.ts`: the app's own routes and pages (the front page, `/new`, `/docs` and
   its share dialog, delete, the unedited rule, titles)
 - `admin.ts`: `/admin`, the server's settings and users, for admins
 - `directory.ts`: the directory of documents (addresses, titles, permissions, who may do what), over

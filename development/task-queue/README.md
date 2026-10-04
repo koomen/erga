@@ -6,6 +6,7 @@ pushed from the board. How agents use it, and its API: `AGENTS.md` at the
 repo's root.
 
     development/task-queue/tq serve           # start it (any tq command does)
+    development/task-queue/tq watch           # one line per task status change (for Claude Code's Monitor)
     bun development/task-queue/test.ts        # its end-to-end test
     bun development/task-queue/sample.ts      # a sample board on :4507 (a throwaway repo; --tick N for live commits)
 
