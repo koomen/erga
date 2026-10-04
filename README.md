@@ -53,8 +53,12 @@ serves the app's routes (`front.ts`). Its pages:
 - **The front page**, `/`: the viewer on the landing document (see [The front
   page](#the-front-page)), for anyone, signed in or not.
 - **Documents**, `/docs`: home for anyone signed in, and under it **the
-  editor**, `/<owner>/<slug>/edit`, whose breadcrumbs (Documents › its
-  title) lead back.
+  editor**, `/<owner>/<slug>#edit`, whose breadcrumbs (Documents › its
+  title) lead back. A document's address always means the document: `#edit`
+  (which never reaches the server) opens it in the editor, on the same page.
+- **A document's other pages**, `/<owner>/<slug>/<page>` (`/blog` is
+  `blog.html`, else `blog/index.html`), each with its editor at `#edit` after
+  it (see [Documents with many pages](#documents-with-many-pages)).
 - **Settings**, `/settings`: your agent tokens (`/tokens` redirects there).
 - **Admin settings**, `/admin`: the server's settings and users, for admins.
 - **Deploy your own**, `/deploy`: anyone signed in, by default (see
@@ -78,13 +82,15 @@ and the directory of documents with their permissions.
 address, kept in the directory (`directory.ts`): D1 (`worker/d1.ts`; locally
 the dev server's own D1), behind a three-method `Sql` interface, so the unit
 tests run the same code on bun:sqlite. A document's
-canonical address is `/<owner>/<slug>` (the viewer; its editor is that, then
-`/edit`); `/d/<id>` always works, and `/<owner>/<id>` (older links) and any
-slug it had before redirect to it (and `/edit` under them to the editor). The
+canonical address is `/<owner>/<slug>` (the viewer; its editor is that with
+`#edit`); `/d/<id>` always works, and `/<owner>/<id>` (older links) and any
+slug it had before redirect to it (pages under them too). There is no `/edit`
+route: `/<owner>/<slug>/edit` is a page called edit, if the document has one. The
 title follows the page's first `<h1>` (else `<title>`, else "Untitled") until
 someone sets it, and the slug follows the title (lowercase letters, digits
 and dashes, `-2`, `-3`... when taken) until someone sets it. Rename from the
-title after Documents in the editor's breadcrumbs, or by asking an agent
+title after Documents in the editor's breadcrumbs (it opens the document's
+pages; the pencil on the first row, the document itself, renames it), or by asking an agent
 (its `get_title` and `set_title` tools, for the embedded agent and external
 ones). Every open tab follows a rename: its title, and its address bar. The
 editor itself talks to its document at `/d/<id>`, which a
@@ -574,6 +580,54 @@ them with a stand-in (`dev/settings-stub.ts`, local development only), whose
 `POST /__erga/stub/settings` sets up any state (how many versions, which is
 published, a deploy that fails…); `tests/settings.ts` uses it.
 
+### A document's pages
+
+A document can have more than one page. Its root is `index.html`; the
+others sit beside it, in folders if you like. People think in documents, not
+files: the tree shows only documents (HTML pages) and the folders holding
+them (or nothing yet). A document's stylesheets, scripts, fonts and images
+are part of it, out of sight, as are folders holding only those (`fonts/`,
+`assets/`); the API lists every file, and agents see them all. The tree of them
+(`src/page/tree.ts`, built on its own as `pages-tree.js` and loaded only when it's
+opened, so viewing never pays for it) shows in two places: in the editor, the
+document's title in the breadcrumbs opens it in a card, the document as its
+first row and everything else under it; on `/docs`, the chevron left of each
+document opens its pages beneath its row. Folders open and close (remembered
+for the tab); documents show by their title when it's known (in the editor,
+read from the room as they're edited; "Untitled" counts as none), else by
+their name made readable ("spring-migration" is "Spring migration", a
+folder's index is the folder's name), with the file's name as a quiet hint
+only where two would read the same. Clicking a document opens it, in the
+editor for those who may edit (`/<owner>/<slug>/<page>#edit`), in the viewer
+otherwise (`/<owner>/<slug>/<page>`), and the one you're on is marked.
+
+Editors get New document (from the new-document template; "My post" is
+`my-post.html`) and New folder, at the top level (the foot of the tree) and in each
+folder (its +), named in place; rename in place (the menu, F2, or the pencil
+on the root row, which renames the document itself: its title and address);
+move by drag and drop or the menu's Move to…; and delete (a folder asks
+first, in its row, counting the documents in it; `index.html` can't go).
+A document links its stylesheets, images and other documents by where they
+are from it (`../style.css`), so moving one to another folder (or a folder to
+another depth) can leave those behind: the tree says so after the move when
+the document has relative links (in the editor it reads them from the room;
+on `/docs` it always says so). It doesn't rewrite links, nor those from other
+documents to the one that moved or was renamed. The editor renders a page in
+a folder with its links resolved from that folder, as the browser does at its
+address. Viewers see the tree without any
+of that. What the server refuses shows where it happened, in its words. Keys:
+↑ ↓ ← → Home End move and open folders, Enter opens, F2 renames, Delete
+deletes, Shift-F10 opens a row's menu, Esc cancels or closes.
+
+It talks to `GET /api/docs/<id>/tree` (`{ entries: [{ path, type: "page" |
+"folder" | "file", title? }], canEdit }`) and `POST` there (`new_page`,
+`new_folder`, `move`, `delete`), and reads it again on a `{ type: "tree" }`
+event on the editor's event channel, or when a file comes or goes in the room.
+That's the server's own tree API (below). `bun tests/tree.ts` checks the tree
+in headless Chrome, against `dev/tree-stub.ts` (`ERGA_TREE_STUB=1`: an
+in-memory stand-in for the API that changes no files, so the test can set
+any tree and make changes fail).
+
 ### When the page is broken
 
 Whenever the document is broken in a way you'd see, the editor says what's
@@ -665,7 +719,7 @@ ask your agent for edits. Each person gets their own agent session in the host
 that person and that document (all their tabs show it live; nobody else ever
 sees it), it keeps running when the tab closes, and it edits through its own
 replica of the shared doc, as a participant in the room called "Ada's agent".
-Its tools (read, edit, write, ls, find, grep, view_page; get_title and set_title rename the document) are written against
+Its tools (read, edit, write, ls, find, grep, new_page, mkdir, mv, rm, view_page; get_title and set_title rename the document) are written against
 a small workspace interface (`workspace.ts`), not the disk, so it can change
 the page and anything next to it (styles, scripts, other pages) and could run
 anywhere the interface does. There's no bash tool. `edit` finds its `oldText`
@@ -733,8 +787,9 @@ into the other agent, which reads the guide and waits, then say what to change. 
 `GET /api/ext` (how to call the tools, their JSON schemas, and
 [DOCUMENT_PROMPT.md](DOCUMENT_PROMPT.md)), then calls
 `POST /api/ext/tools/<name>` with the arguments as JSON. These are the
-embedded agent's own tools (read, edit, write, ls, find, grep, view_page, and
-get_title and set_title for the document's title and address),
+embedded agent's own tools (read, edit, write, ls, find, grep, new_page,
+mkdir, mv, rm, view_page, and get_title and set_title for the document's
+title and address),
 run in your agent's session, so its edits are handled exactly like your
 agent's: attributed to "Pete's agent", marked in its colour, undoable from
 the agent panel, with its badge spinning while it works. Each call shows in
@@ -807,6 +862,116 @@ URL, id or one of your slugs), run in that document's host as your agent. A
 new tool is one more entry (a name, a description, JSON Schema for its
 arguments and a `run`): the REST API, MCP and the guide all list it.
 
+### Documents with many pages
+
+A document is a folder, and any page in it is a page of the document
+(`tree.ts`). `index.html` (or `index.md`) at its root is the document's own
+page; every other `.html` or `.md` file is a page too, with an address under
+the document's:
+
+| file | address |
+|---|---|
+| `index.html` | `/<owner>/<slug>` |
+| `about.html` | `/<owner>/<slug>/about` |
+| `blog/index.html` | `/<owner>/<slug>/blog` |
+| `blog/post.html` | `/<owner>/<slug>/blog/post` |
+
+An address resolves to `<path>.html`, then `<path>.md`, then
+`<path>/index.html`, then `<path>/index.md`, so `blog.html` wins over
+`blog/index.html`. No address gets a slash added (`/blog/` is the same page,
+left as it is); a page's file name (`/blog/post.html`, `/blog/index`)
+redirects to its address; anything else is a 404 page. The editor for a page
+is its address with `#edit`, the same page in edit mode, exactly as for the
+first page; so a page may be called `edit` like any other. Under a document's
+address `/api/...` and `/doc/...` are its host (its API, sockets and files,
+which older tabs and share links reach under any of its addresses), so no
+page or folder may be called `api` or `doc` at the top of a document.
+
+**Relative links and assets.** The viewer and the editor both render a page
+at its own file's path on the pages origin (`/t/<token>/doc/blog/post.html`;
+the editor's `<base>` is the page's folder), so `../style.css`, `blog.css`
+and `post.html` resolve as they would on disk, whatever the address bar says.
+A request there for an address rather than a file (`doc/blog`, `doc/blog/`,
+`doc/`) is redirected, relatively, to the page's file, so links like `blog/`
+and `../` work too. Links starting with `/` don't: DOCUMENT_PROMPT.md tells
+agents to link pages relatively.
+
+**Moving between pages.** In the viewer, following a link to another of the
+document's pages changes the address bar to that page's (no reload: the frame
+says where it went, `erga-nav`), and the pencil opens that page's editor. In
+the editor a link outside the text being edited (a menu) opens the other
+page's editor (the frame asks the shell, `open`); links in the text aren't
+followed, as before (⌘-click opens them in a tab). Switching pages in the
+editor loads that page's address, which is quick (the editor's files are
+cached and the room is the same), and `window.ergaPage.openPage(path)` does it
+for whatever shows the tree. One room holds every file of the document, so
+people on different pages are in the same room and their agents see
+everything; each tab edits the page its address names (`<meta name="erga-page">`,
+which the front door sets).
+
+**Storage.** Pages and other files are what they always were: files in the
+room (text as `Y.Text`, others as hashes) and in the document's storage.
+Folders are real: a folder made as one (empty ones included) is in the shared
+doc's `folders` map and in storage (`dir:<path>` keys in the Durable Object,
+real directories for a document on disk), and folders holding files come from
+the files' paths. Deleting a page leaves its folder, as on disk. The room's
+tree operations (`room.ts`: `create`, `mkdir`, `move`, `remove`) change
+storage and the shared doc in one turn of its queue; a move takes a text
+file's text as it is now (unsaved edits too), starting a new history at its
+new path. A file a participant deletes from the shared doc (an agent's undo
+taking back a file it made) is deleted from storage too.
+
+**The tree's API**, for the tree's UI and agents alike (`host.ts`; at
+`/api/docs/<id>/tree` through the server's API, with the app's session or an
+agent token, and at `/d/<id>/api/tree` for the editor):
+
+    GET  /api/docs/<id>/tree
+      → 200 { entries: [ { path: "index.html", type: "page", title: "Home" }, { path: "blog", type: "folder" },
+                         { path: "blog/index.html", type: "page", title: "Blog" }, { path: "style.css", type: "file" } ],
+              canEdit: boolean,
+              moved: [ { from, to } ] }        (the latest moves, for a tab that missed one)
+    POST /api/docs/<id>/tree   (JSON; editors only)
+      { op: "new_page",   path: "blog/post.html" }   from the new-document template (templates/doc); no
+                                                     extension: .html (.md in an index.md document)
+      { op: "new_folder", path: "blog/drafts" }      and any folders it's in
+      { op: "move",       from: "blog/post.html", to: "posts/hello.html" }
+                                                     rename = move; folders with all they hold; a page renamed
+                                                     without an extension keeps its own
+      { op: "delete",     path: "blog" }             folders recursively
+      → 200 { entries: [...] } | 4xx { error: "plain message" }
+
+Paths are relative to the document's root, "/"-separated, with no leading or
+trailing slash; every folder is listed (empty ones too), folders first at each
+level; `page` is `.html` or `.md`, `file` anything else; a page has a `title`
+when it has one (its first heading, else its `<title>`, as a document's title
+follows its page). Refused: `..`, hidden
+names and `node_modules`, control characters and `< > : " | ? * # %`, names
+ending in a space or dot, anything already at the destination (409), a path
+inside a file, a folder into itself, the reserved names above, and moving or
+deleting the root `index.html` (400); nothing there is a 404, a viewer's POST
+a 403 (`canEdit` is false for them), someone the document isn't shared with a
+404, a POST from another site a 403. A single file opened from disk has no
+tree to change (403).
+
+**Live updates.** Whenever the tree changes, from anyone (a person, another
+person, an agent, a publish, a file on disk), every open tab gets
+`{ "type": "tree" }` on its event channel (`/api/events`, the socket that
+carries the agent's events and renames); a move or delete through the tree's
+operations also sends `{ "type": "tree", "moved": { from, to } }` or
+`{ "type": "tree", "deleted": path }`. The editor passes each on as an
+`erga-tree` event on `window` (its `detail` is the message), for the tree's UI
+to refetch, and follows its own page: moved, to its new address; deleted, to
+the document's first page.
+
+**Agents** see the document as a file system, with the same powers as a
+person: `ls` (folders end in `/`), `find`, `grep`, `read`, `edit`, `write`
+(which also makes a page from its own text), `new_page` (from the template),
+`mkdir`, `mv` and `rm`, checked exactly as the tree's API checks them. The
+embedded agent, external agents over `/api/ext`, the token API and MCP all
+have them. Their prompts say the document can have many pages, how files map
+to addresses, and to link pages relatively; each message says which page the
+person is on.
+
 ### Pages run on their own origin
 
 Anyone who can edit a document can put a script in its page, so a page
@@ -830,17 +995,17 @@ source view takes the frame's state, undo history included, and hands it back.
 ### One page, viewing or editing
 
 A document's page (`viewDocument` in `front.ts`) is the same at
-`/<owner>/<slug>` and at `/edit` under it, and small (about 4KB compressed):
+`/<owner>/<slug>` and with `#edit` after it (the server never sees the fragment, so it serves one page; the page decides from `location.hash`, as it loads and whenever it changes), and small (about 4KB compressed):
 the controls, floating over the top corners, and a frame filling the window
 with the frame's host page in it (`/t/<token>/?view=`), which shows
 the document's page straight away, as it renders. All the rest of the weight
 is the document's own. Editing is loaded on top, only for those who may edit
-and only when they go into it (the pencil, or opening `/edit`): the page adds
+and only when they go into it (the pencil, or opening it with `#edit`, or adding `#edit` to the address): the page adds
 the editor's controls and styles (`page.html`, served as `/editor.html`) and
 its code (`page.js`, which joins the room), and asks the frame for its half
 (`frame.js`). That renders the editable page out of sight and puts it in the
 plain page's place, scrolled to the same spot; then the editor's controls
-fade in over the viewer's. The pencil again and the browser's Back go the other way:
+fade in over the viewer's. The pencil again, taking `#edit` off the address, and the browser's Back go the other way:
 the plain page loads again behind and takes its place, the viewer's controls
 fade back, and the editor carries on unseen, so going back in is immediate.
 Viewing, the page fetches the editor's files (and wakes the document's room)
@@ -850,7 +1015,7 @@ viewer stays as it is while they arrive (the pencil breathes if that takes a
 moment); then the editor's controls show and the agent grows out of its
 button as on any later switch, once the page has said what its background is,
 so the room the page slides over to make is its colour, never a white block.
-Only a page opened at `/edit` and reloaded puts the agent back unanimated.
+Only a page opened with `#edit` and reloaded puts the agent back unanimated.
 `tests/account.ts` switches both ways and checks that the document stays put;
 `tests/switch.ts` records the first switch frame by frame on a slow network,
 light and dark, and checks no frame shows white or loses the document, and
@@ -891,8 +1056,10 @@ What happens between asking for a document and seeing it, and what keeps it shor
   has. While the room isn't open they come straight from storage
   (`DocHost.storedFile`).
 - **Viewing**, nothing of the editor loads until the document has (above).
-- **Editing**, a page opened at `/edit` fetches the editor's files as it
-  parses (preloads), its frame starts on `frame.js` at once (`?edit=1`), and
+- **Editing**, a page opened with `#edit` fetches the editor's files as it
+  parses (preloads, added by an inline check of `location.hash` at the top of
+  the page, for those who may edit), its frame starts on `frame.js` at once
+  (`?edit=1`, added to the frame's address by the same check), and
   the document's details (`/api/doc`, which opens its room) are asked for
   alongside the editor's code rather than after it (`window.ergaDocInfo`).
   `frame.js` leaves out the HTML language (and its CSS and JavaScript), which
@@ -991,6 +1158,17 @@ settings on bun:sqlite; `tests/tokens.test.ts` the tokens themselves.
 Manual, the published-version menu's windows, live updates, the homepage's
 deploy states, errors, read-only, a phone and a dark page), and
 `tests/versions.test.ts` the menu's windows on their own.
+`bun tests/pages.ts` checks documents with many pages: the tree's API and
+who may use it, every operation and what it refuses, live tree events,
+addresses (`blog.html` before `blog/index.html`, no slash added, 404s, a
+page called `edit`, no `/edit` route), `#edit` opening the editor on load
+and on a hash change (Back and Forward too, without a reload), the
+pages origin's redirects, the agents' file tools (API, MCP and the editor's
+agent), folders across a restart and single-page documents, and, in headless
+Chrome, nested pages in the viewer and editor with their relative assets, the
+address following links, and an open editor following its page when it's
+moved (`--keep` leaves the server running with the sample document);
+`tests/tree.test.ts` covers `tree.ts` and the room's tree operations.
 `bun tests/isolation.ts` opens a page that tries to reach whoever views it
 (the shell's window, its cookies, erga.dev's API, forged messages) and checks
 it gets nothing. The browser tests reach the page through the frame's own
@@ -1039,7 +1217,8 @@ back, merging edits from disk, the agent's exact-match edits and attribution.
   live reload (`dev/reload.ts`)
 - `api.ts`: the host's HTTP API (Effect's HttpApi): each endpoint's request,
   response and failures; the editor imports its types
-- `room.ts`: the document room (shared Yjs doc, sync, write-back, disk merges)
+- `room.ts`: the document room (shared Yjs doc, sync, write-back, disk merges, the tree's operations)
+- `tree.ts`: a document's file tree: pages and their addresses, the tree's entries, names it takes
 - `agent.ts`, `workspace.ts`, `.dev.vars.example`: the per-person agent session, its
   tools over the shared doc, and its settings; `dev/agent-key.ts` picks its key
   locally (`.dev.vars` or the environment)
@@ -1057,6 +1236,7 @@ back, merging edits from disk, the agent's exact-match edits and attribution.
   popover: publishing, the homepage, versions), built on its own as `settings.js`;
   `dev/settings-stub.ts` stands in for their server side (`ERGA_STUB_SETTINGS=1`)
 - `package.json`: the pinned CodeMirror and Yjs packages the page editor bundles, and pi
+- `src/page/tree.ts`: a document's pages as a tree (built as `pages-tree.js`, loaded on demand), in the editor and on `/docs`
 - `style.css`: theme colours, typography and the editor's styling
 - `fonts/`: the self-hosted Inter web font
 - `tests/`: unit tests, `page.ts`, `smoke.ts` and `fixtures/` for the page

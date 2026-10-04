@@ -1,0 +1,3 @@
+@font-face { font-family: "Field"; src: url("fonts/field.woff2") format("woff2"); }
+body { font: 18px/1.6 "Field", Georgia, serif; max-width: 38rem; margin: 4rem auto; padding: 0 1rem; color: #222; }
+h1 { font-size: 2rem; }

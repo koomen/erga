@@ -20,13 +20,15 @@ import { RemotePage } from "./remote";
 import type { Backdrop, Keys } from "./bridge";
 import { changesBetween } from "./merge";
 import { Collab, type Presence } from "./collab";
-import { colorFor, type Author } from "../room/doc";
+import { colorFor, files, type Author } from "../room/doc";
+import type { mountTree, TreeHandle } from "./tree";
 import { analyzeMarkdown } from "./markdown";
 import TurndownService from "turndown";
 import { emptyLog, reduce, type Log, type LogEvent, type LogItem, type ViewRequest, type ViewResult } from "./agent-log";
 import type { AgentState, DocInfo, DocName, ModelState } from "../../api";
 import { BASE } from "./base";
 import type { Settings } from "./settings";
+import { dirOf, isPage, pageUrl } from "../../tree";
 
 const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 
@@ -73,6 +75,8 @@ const peersField = StateField.define<DecorationSet>({
 declare global {
   interface Window { ergaPage?: unknown; ergaShell?: { ready(): void; loadedEditing?: boolean }; ergaDocInfo?: { url: string; response: Promise<Response> } }
 }
+/** pages-tree.js, once loaded (it sets window.ergaTree). */
+type TreeModule = { mountTree: typeof mountTree };
 
 
 (async () => {
@@ -159,6 +163,20 @@ declare global {
     return;
   }
 
+  // Which of the document's pages this is (tree.ts): the one the address named (the front door says, erga-page),
+  // else the document's own. One room holds them all; this tab edits this one, and goes to another by its address.
+  const pagePath = document.querySelector<HTMLMetaElement>('meta[name="erga-page"]')?.content || info.path;
+  info = { ...info, path: pagePath, name: pagePath, kind: pagePath.endsWith(".md") ? "md" : "html" };
+  /** A page's address (the editor's, while editing), given its path in the document; the root page's for null. */
+  const addressOf = (path: string | null) => {
+    const doc = docName?.address ?? document.querySelector<HTMLMetaElement>('meta[name="erga-address"]')?.content ?? "";
+    // A path that isn't a page file ("blog/", a folder) is an address as it is: the front door finds its page.
+    const at = path == null ? doc : isPage(path) ? pageUrl(doc, path) : `${doc}/${path.replace(/^\/+|\/+$/g, "").split("/").map(encodeURIComponent).join("/")}`;
+    return at.replace(/\/$/, "") + as + (editing() ? "#edit" : "");
+  };
+  /** Goes to another of the document's pages: its address, in the editor while editing. */
+  const openPage = (path: string) => { location.assign(addressOf(path)); };
+
   // The host attributes your edits and your agent to who you are, so the tab takes that.
   const me: Author = { user: info.userId, name: info.user, color: colorFor(info.userId), kind: "person", ...(info.avatar ? { avatar: info.avatar } : {}) };
   const self: MarkAuthor = { name: me.name, color: me.color };
@@ -174,8 +192,8 @@ declare global {
   // news before the shell is set up is picked up once it is (`started`).
   let started = false;
   const collab: Collab = new Collab({
-    path: info.path,
     me,
+    path: info.path,
     onRemote: (changes, author) => applyRemote(changes, author),
     onFiles: () => needRefresh(),
     onPresence: () => { if (started) presenceChanged(); },
@@ -277,23 +295,29 @@ declare global {
   // the host at /d/<id> (BASE), which a rename never changes.
   let docName: DocName | null = null;
   const titleBtn = $("doc-title"), naming = $("naming");
+  // The pages card (below: togglePages) and its tree, once opened.
+  const pagesCard = $("pages");
+  let tree: TreeHandle | null = null;
   const namingForm = $("naming-form") as HTMLFormElement, namingStatus = $("naming-status");
   const titleIn = $("naming-title") as HTMLInputElement, slugIn = $("naming-slug") as HTMLInputElement;
   function showName(n: DocName) {
     docName = n;
     $("doc-title-text").textContent = n.title;
     titleBtn.hidden = false;
-    titleBtn.setAttribute("aria-label", `${n.title}: rename, or change its address`);
+    titleBtn.setAttribute("aria-label", `${n.title}: its pages`);
     titleBtn.title = `${location.host}${n.address}`;
     document.title = n.title;
-    // The editor's own address is the document's, then /edit (the document's alone is its viewer, which the pencil, blue while editing, goes back to).
+    tree?.setRootTitle(n.title);
+    if (n.address) tree?.setBase(n.address);
+    // The editor's own address is the page's, with #edit (without, it's the viewer, which the pencil, blue while editing, goes back to).
     if (!n.address) return;
     const view = $("btn-edit") as HTMLAnchorElement;
-    view.href = n.address + as;
+    const at = pageUrl(n.address, pagePath);
+    view.href = at + as;
     view.hidden = false;
     document.querySelector<HTMLMetaElement>('meta[name="erga-address"]')?.setAttribute("content", n.address);
-    // Viewing at the front page's address (/), it stays there.
-    const here = editing() ? `${n.address}/edit` : location.pathname == "/" ? "/" : n.address;
+    // At the front page's address (/), it stays there.
+    const here = location.pathname == "/" ? "/" : at;
     if (location.pathname != here) window.history.replaceState(window.history.state, "", here + location.search + location.hash);
   }
   if (info.docName) showName(info.docName);
@@ -312,8 +336,9 @@ declare global {
     const open = typeof force == "boolean" ? force : naming.hidden;
     if (open && !docName) return;
     naming.hidden = !open;
-    titleBtn.setAttribute("aria-expanded", String(open));
+    titleBtn.setAttribute("aria-expanded", String(open || !pagesCard.hidden));
     if (!open) return;
+    togglePages(false);
     showChrome();
     toggleHelp(false);
     toggleShare(false);
@@ -328,7 +353,7 @@ declare global {
     titleIn.focus();
     titleIn.select();
   }
-  titleBtn.addEventListener("click", () => toggleNaming());
+  titleBtn.addEventListener("click", () => (naming.hidden ? togglePages() : toggleNaming(false)));
   $("naming-cancel").addEventListener("click", () => toggleNaming(false));
   // An address that follows the title follows it here too, until it's typed in.
   titleIn.addEventListener("input", () => { if (!docName!.slugSet && !slugTouched) slugIn.value = slugify(titleIn.value) || docName!.slug; namingHint(); });
@@ -350,6 +375,87 @@ declare global {
     showName(r.name);
     toggleNaming(false);
   });
+
+  // ---------------------------------------------------------------- pages
+
+  // The document's pages: the title opens them, as a tree (tree.ts, built on
+  // its own as pages-tree.js and loaded only now, so viewing never pays for it).
+  // Its first row is the document itself, whose pencil renames it (the naming
+  // card above); the rest are its other pages, folders and files. Pages open
+  // in the editor; the tree follows changes from other tabs and agents (a
+  // "tree" event, or a file coming or going in the room) and the titles of
+  // the pages as they're edited.
+  let treeScript: Promise<TreeModule> | null = null;
+  const loadTree = () => (window.ergaTree ? Promise.resolve(window.ergaTree) : (treeScript ??= new Promise<TreeModule>((resolve, reject) => {
+    const s = Object.assign(document.createElement("script"), { src: "/pages-tree.js" });
+    s.onload = () => (window.ergaTree ? resolve(window.ergaTree) : reject(new Error("no tree")));
+    s.onerror = () => { treeScript = null; s.remove(); reject(new Error("Couldn't load the pages: check your connection and try again.")); };
+    document.head.append(s);
+  })));
+  // Fetched as the pointer heads for the title, so opening it is immediate.
+  titleBtn.addEventListener("pointerenter", () => { loadTree().catch(() => {}); }, { once: true });
+  titleBtn.addEventListener("focus", () => { loadTree().catch(() => {}); }, { once: true });
+  /** A page's title from its text, as the room has it: its first <h1>, else its <title>. */
+  function pageTitle(path: string): string | null {
+    const text = files(collab.doc).get(path)?.toString();
+    if (!text) return null;
+    const m = /<h1\b[^>]*>([\s\S]*?)<\/h1>/i.exec(text) ?? /<title\b[^>]*>([\s\S]*?)<\/title>/i.exec(text);
+    if (!m) return null;
+    const t = new DOMParser().parseFromString(m[1].replace(/<[^>]*>/g, ""), "text/html").body.textContent?.replace(/\s+/g, " ").trim();
+    return t ? t.slice(0, 120) : null;
+  }
+  /** Whether a document links to its styles, scripts or images by relative paths (a move may break those): read from the room. */
+  function hasRelativeLinks(path: string): boolean | undefined {
+    const text = files(collab.doc).get(path)?.toString();
+    if (text == null) return undefined;
+    const refs = [...text.matchAll(/\b(?:src|href|poster|data)\s*=\s*["']?([^"'\s>]+)|url\(\s*["']?([^"')]+)/gi)].map((m) => m[1] ?? m[2]);
+    return refs.some((r) => !/^(?:[a-z][a-z0-9+.-]*:|\/|#|\{)/i.test(r));
+  }
+  function togglePages(force?: boolean) {
+    const open = typeof force == "boolean" ? force : pagesCard.hidden;
+    if (open && !docName) return;
+    if (open != pagesCard.hidden) return;
+    pagesCard.hidden = !open;
+    titleBtn.setAttribute("aria-expanded", String(open || !naming.hidden));
+    if (!open) return;
+    showChrome();
+    toggleHelp(false);
+    toggleShare(false);
+    toggleSharing(false);
+    toggleAccount(false);
+    toggleNaming(false);
+    docSettings?.toggle(false);
+    if (tree) { tree.refresh(); tree.focus(); return; }
+    const slot = $("pages-tree");
+    loadTree().then((t) => {
+      if (tree || !docName) return;
+      slot.replaceChildren();
+      tree = t.mountTree(slot, {
+        id: docName.id, base: docName.address, editing: true, query: as, showRoot: true, label: "Documents",
+        rootTitle: docName.title, titleOf: pageTitle, current: info!.path, hasRelativeLinks,
+        onRenameRoot: () => toggleNaming(true),
+      });
+      if (!pagesCard.hidden) tree.focus();
+    }, (e: Error) => {
+      slot.replaceChildren(Object.assign(document.createElement("p"), { className: "naming-status error", textContent: e.message }));
+      pagesCard.hidden = true; pagesCard.hidden = false;
+    });
+  }
+  document.addEventListener("pointerdown", (e) => {
+    const t = e.target as Element;
+    if (!pagesCard.hidden && !pagesCard.contains(t) && !titleBtn.contains(t) && !t.closest?.(".et-menu")) togglePages(false);
+  });
+  // A file coming or going in the room (another tab, an agent) reads the tree again; a page's text changing may change its title.
+  let treeTimer = 0, treeStale = false;
+  files(collab.doc).observeDeep((events) => {
+    if (!tree || pagesCard.hidden) return;
+    treeStale ||= events.some((ev) => ev.target == files(collab.doc) && [...ev.changes.keys.values()].some((c) => c.action != "update"));
+    clearTimeout(treeTimer);
+    treeTimer = window.setTimeout(() => { if (treeStale) tree?.refresh(); else tree?.retitle(); treeStale = false; }, treeStale ? 150 : 600);
+  });
+  // ?pages opens it straight away (a link to "this document's pages").
+  if (new URLSearchParams(location.search).has("pages") && editing()) requestAnimationFrame(() => togglePages(true));
+  pagesCard.addEventListener("keydown", (e) => { if (e.key == "Escape" && !e.defaultPrevented) { e.preventDefault(); togglePages(false); titleBtn.focus(); } });
 
   // ---------------------------------------------------------------- the room
 
@@ -447,21 +553,43 @@ declare global {
   function listen() {
     const events = new WebSocket(`${location.protocol == "https:" ? "wss:" : "ws:"}//${location.host}${api("/api/events")}`);
     events.onmessage = (ev) => {
-      let msg: { type?: string; ev?: LogEvent; id?: string; req?: ViewRequest; name?: DocName } = {};
+      let msg: { type?: string; ev?: LogEvent; id?: string; req?: ViewRequest; name?: DocName; moved?: { from: string; to: string }; deleted?: string } = {};
       try { msg = JSON.parse(String(ev.data)); } catch { return; }
       if (msg.type == "agent" && msg.ev) agentEvent(msg.ev);
       else if (msg.type == "model") renderModel(msg as unknown as ModelState);
       else if (msg.type == "view" && msg.id) answerView(msg.id, msg.req ?? {});
       else if (msg.type == "name" && msg.name) showName(msg.name);
       else if (msg.type == "versions" || msg.type == "home") docSettings?.event(msg.type);
+      else if (msg.type == "tree") { treeChanged(msg); tree?.refresh(); }
     };
     // Events sent while the channel was down are gone; catch up from the transcript.
     // A rename missed meanwhile (or before it first opened) is caught up the same way.
-    events.onopen = () => { if (opened) { loadAgent(); docSettings?.event("versions"); docSettings?.event("home"); } opened = true; refreshName(); };
+    events.onopen = () => { if (opened) { loadAgent(); docSettings?.event("versions"); docSettings?.event("home"); } opened = true; refreshName(); stillHere(); };
     events.onclose = () => setTimeout(listen, 1000);
   }
   let opened = false;
   listen();
+
+  // The document's file tree changed (anyone's doing: tree.ts). Whatever shows the tree hears it as an
+  // "erga-tree" event on window (the event's detail is the message: { type: "tree", moved?, deleted? }) and
+  // fetches it again (GET <BASE>/api/tree). This page, moved, goes to where it went; deleted, to the document's own.
+  function treeChanged(msg: { moved?: { from: string; to: string }; deleted?: string }) {
+    window.dispatchEvent(new CustomEvent("erga-tree", { detail: { type: "tree", ...msg } }));
+    const under = (p: string) => pagePath == p || pagePath.startsWith(`${p}/`);
+    if (msg.moved && under(msg.moved.from)) location.replace(addressOf(msg.moved.to + pagePath.slice(msg.moved.from.length)));
+    else if (msg.deleted && under(msg.deleted)) location.replace(addressOf(null));
+  }
+  /**
+   * Whether this page is still there, once the event channel is up (a move or delete may have gone by while
+   * it wasn't): if it moved, to where it went (the host remembers the latest moves); if it's gone, to the first page.
+   */
+  async function stillHere() {
+    const t = await fetch(api("/api/tree")).then((r) => r.ok ? r.json() as Promise<{ entries: { path: string }[]; moved?: { from: string; to: string }[] }> : null, () => null);
+    if (!t || t.entries.some((e) => e.path == pagePath)) return;
+    let at = pagePath;
+    for (const m of t.moved ?? []) if (at == m.from || at.startsWith(`${m.from}/`)) at = m.to + at.slice(m.from.length);
+    location.replace(addressOf(t.entries.some((e) => e.path == at) ? at : null));
+  }
 
   // ---------------------------------------------------------------- presence
 
@@ -589,7 +717,7 @@ declare global {
     account.hidden = !open;
     accountBtn?.setAttribute("aria-expanded", String(open));
     if (!open) return;
-    showChrome(); toggleHelp(false); toggleShare(false); toggleSharing(false); toggleNaming(false); docSettings?.toggle(false);
+    showChrome(); toggleHelp(false); toggleShare(false); toggleSharing(false); toggleNaming(false); togglePages(false); docSettings?.toggle(false);
     $("account-name").textContent = me.name;
     $("account-login").textContent = me.name.toLowerCase() == me.user ? "" : me.user;
     const set = (id: string, href: string | undefined) => { const a = $(id) as HTMLAnchorElement; a.hidden = !href; if (href) a.href = href; };
@@ -657,7 +785,7 @@ declare global {
   function toggleHelp(force?: boolean) {
     const open = typeof force == "boolean" ? force : help.hidden;
     help.hidden = !open;
-    if (open) { showChrome(); toggleShare(false); toggleSharing(false); toggleNaming(false); toggleAccount(false); docSettings?.toggle(false); }
+    if (open) { showChrome(); toggleShare(false); toggleSharing(false); toggleNaming(false); togglePages(false); toggleAccount(false); docSettings?.toggle(false); }
   }
 
   // Share with an external agent: a prompt carrying this page's API and your
@@ -713,6 +841,7 @@ Once you've read the guide, await further instructions.`;
     toggleHelp(false);
     toggleSharing(false);
     toggleNaming(false);
+    togglePages(false);
     toggleAccount(false);
     docSettings?.toggle(false);
     if (!shareToken) loadShare(false);
@@ -782,7 +911,7 @@ Once you've read the guide, await further instructions.`;
     sharing.hidden = !open;
     peopleBtn.setAttribute("aria-expanded", String(open));
     if (!open) return;
-    showChrome(); toggleHelp(false); toggleShare(false); toggleNaming(false); toggleAccount(false); docSettings?.toggle(false);
+    showChrome(); toggleHelp(false); toggleShare(false); toggleNaming(false); togglePages(false); toggleAccount(false); docSettings?.toggle(false);
     sharingAdd.reset();
     tellSharing("Loading…");
     (sharingAdd.elements.namedItem("login") as HTMLInputElement).focus();
@@ -797,7 +926,7 @@ Once you've read the guide, await further instructions.`;
   });
   sharingAnyone.addEventListener("change", () => changeSharing("*", sharingAnyone.value));
   $("sharing-copy").addEventListener("click", async () => {
-    const url = location.origin + (docName?.address ?? location.pathname.replace(/\/edit\/?$/, ""));
+    const url = location.origin + (docName?.address ?? location.pathname);
     tellSharing(await navigator.clipboard.writeText(url).then(() => `Link copied: ${url}`, () => url));
   });
   // Document settings (publishing, versions, the homepage): the gear opens
@@ -811,7 +940,7 @@ Once you've read the guide, await further instructions.`;
       s.onload = () => {
         docSettings = window.ergaSettings?.mount({
           docId, query: as, anchor: settingsBtn, admin: !!accountLinks?.admin,
-          onToggle: (open) => { if (open) { showChrome(); toggleHelp(false); toggleShare(false); toggleSharing(false); toggleNaming(false); toggleAccount(false); } },
+          onToggle: (open) => { if (open) { showChrome(); toggleHelp(false); toggleShare(false); toggleSharing(false); toggleNaming(false); togglePages(false); toggleAccount(false); } },
         }) ?? null;
         resolve(docSettings);
       };
@@ -915,6 +1044,7 @@ Once you've read the guide, await further instructions.`;
     frame,
     origin: new URL(pagesUrl, location.href).origin,
     kind: info.kind,
+    dir: dirOf(pagePath),
     text: initialText,
     markdownHead,
     self,
@@ -952,6 +1082,7 @@ Once you've read the guide, await further instructions.`;
       closeModeMenu();
       if (!help.hidden) toggleHelp(false);
       if (!naming.hidden) toggleNaming(false);
+      if (!pagesCard.hidden) togglePages(false);
       if (!share.hidden) toggleShare(false);
       if (!sharing.hidden) toggleSharing(false);
       showPauseCard(false);
@@ -962,6 +1093,7 @@ Once you've read the guide, await further instructions.`;
     },
     onBackdrop: (b) => applyBackdrop(b),
     onStale: () => needRefresh(),
+    onOpen: (path) => openPage(path),
   });
   page.start();
 
@@ -1594,10 +1726,13 @@ Once you've read the guide, await further instructions.`;
     if (mod && !e.shiftKey && (key == "/" || key == "?")) { toggleHelp(); return true; }
     if (mod && !e.shiftKey && key == "s") { flash(connected ? "Saved: edits go to disk as you type" : "Offline: edits sync when the host is back", 2200); return true; }
     if (e.key == "Escape") {
+      // Naming something in the pages tree, a question in it or one of its menus: Escape is theirs (tree.ts) to cancel.
+      if (document.activeElement?.closest(".et-input, .et-row.confirm, .et-menu")) return false;
       if (docSettings?.escape()) { /* its menu, or itself, closed */ }
       else if (!account.hidden) { toggleAccount(false); accountBtn?.focus(); }
       else if (!help.hidden) toggleHelp(false);
       else if (!naming.hidden) toggleNaming(false);
+      else if (!pagesCard.hidden) { togglePages(false); titleBtn.focus(); }
       else if (!share.hidden) toggleShare(false);
       else if (!sharing.hidden) toggleSharing(false);
       else if (!$("pause-card").hidden) showPauseCard(false);
@@ -1711,7 +1846,7 @@ Once you've read the guide, await further instructions.`;
       return;
     }
     if (mode != "text") setMode("text");
-    toggleHelp(false); toggleShare(false); toggleSharing(false); toggleNaming(false); toggleAccount(false); showPauseCard(false);
+    toggleHelp(false); toggleShare(false); toggleSharing(false); toggleNaming(false); togglePages(false); toggleAccount(false); showPauseCard(false);
     hideFmt();
     showAgent(false);
     stopVoice();
@@ -1720,7 +1855,7 @@ Once you've read the guide, await further instructions.`;
   // Loaded in the editor: a reload (or back/forward) keeps things as they
   // were, the pane put back as it was left, unanimated; arriving here from
   // elsewhere is coming into the editor, and the agent grows out as above.
-  // Only a page opened at /edit is "loaded in the editor": one opened viewing (by a reload or not) and
+  // Only a page opened with #edit is "loaded in the editor": one opened viewing (by a reload or not) and
   // switched into it is coming into the editor (front.ts says which, ergaShell.loadedEditing).
   if (!editing()) setEditing(false);
   else if (window.ergaShell?.loadedEditing !== false && ["reload", "back_forward"].includes((performance.getEntriesByType("navigation")[0] as PerformanceNavigationTiming | undefined)?.type ?? "")) {
@@ -1733,6 +1868,6 @@ Once you've read the guide, await further instructions.`;
 
   started = true;
   presenceChanged();
-  window.ergaPage = { page, collab, toggleSource, captureView, setEditing, get state() { return currentState(); } };
+  window.ergaPage = { page, collab, toggleSource, captureView, setEditing, pagePath, openPage, get state() { return currentState(); } };
   window.ergaShell?.ready();
 })();

@@ -3,7 +3,9 @@
 Rules for an agent creating or editing an Erga document so that people
 can keep editing it by hand in the page editor. A document is a folder (or a
 single file) with an `index.html` or `index.md` page, plus whatever styles,
-scripts and images it uses.
+scripts and images it uses. It can have more pages: every other `.html` or
+`.md` file in it is a page with its own address (`blog/post.html` at
+`/<owner>/<slug>/blog/post`, `blog/index.html` at `/<owner>/<slug>/blog`).
 
 ## How the editor sees a page
 
@@ -68,7 +70,9 @@ rendered page:
 
 6. **Use relative URLs for the document's own files.** Write `style.css`,
    `images/chart.png`, `./data.json`, never `/style.css`. The editor serves
-   the folder under its own path, and so may a published site.
+   the folder under its own path, and so may a published site. Link pages to
+   each other the same way (`about.html`, `../index.html`, `blog/`): each page
+   renders at its own file's path.
 
 7. **Keep the page free of errors.** The editor announces script errors and
    files that fail to load (stylesheets, scripts, images) to whoever is
