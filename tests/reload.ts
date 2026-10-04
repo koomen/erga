@@ -8,7 +8,7 @@
 //
 //   bun tests/reload.ts
 
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { dirname, join } from "path";
 import { Browser, ROOT } from "./cdp.ts";
@@ -17,12 +17,12 @@ import { freePort } from "./host.ts";
 let failures = 0;
 const check = (ok: unknown, what: string, detail?: unknown) => { console.log(`${ok ? "ok  " : "FAIL"} ${what}${ok || detail == null ? "" : ` (${typeof detail == "string" ? detail : JSON.stringify(detail)})`}`); if (!ok) failures++; };
 
-// The copy: the checkout's files (committed or not, minus what git ignores) and a copy-on-write clone of its packages.
+// The copy: the checkout's files (committed or not, minus what git ignores), and its packages (a link to them).
 const scratch = mkdtempSync(join(tmpdir(), "erga-reload-"));
 const copy = join(scratch, "erga");
 const files = Bun.spawnSync(["git", "ls-files", "-co", "--exclude-standard", "-z"], { cwd: ROOT }).stdout.toString().split("\0").filter(Boolean);
 for (const f of files) { try { mkdirSync(dirname(join(copy, f)), { recursive: true }); cpSync(join(ROOT, f), join(copy, f)); } catch { /* deleted, not yet committed */ } }
-if (Bun.spawnSync(["cp", "-cR", join(ROOT, "node_modules"), join(copy, "node_modules")]).exitCode != 0) cpSync(join(ROOT, "node_modules"), join(copy, "node_modules"), { recursive: true });
+symlinkSync(join(ROOT, "node_modules"), join(copy, "node_modules")); // read-only here, and copying it is slow
 mkdirSync(join(scratch, "env"));
 writeFileSync(join(scratch, "env", ".dev.vars"), `DEV_LOGIN=tester\nSESSION_SECRET=${crypto.randomUUID()}\n`);
 

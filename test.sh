@@ -34,11 +34,13 @@ page_group() {
   run front bun tests/worker.ts --local
   run deployed bun tests/server-config.ts
   run landing bun tests/landing.ts
-  run reload bun tests/reload.ts
   # Latency is measured afterwards, alone: other tests running would skew it.
   run suite bun tests/suite/run.ts --skip latency
   collect
   run latency bun tests/suite/run.ts --suite latency
+  collect
+  # Live reload last, alone too: it edits files and waits on rebuilds, which a busy machine slows.
+  run reload bun tests/reload.ts
   collect
 }
 failed=()

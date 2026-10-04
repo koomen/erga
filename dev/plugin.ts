@@ -69,7 +69,9 @@ export function ergaDev(opts: DevOptions): Plugin {
     apply: "serve",
     // The Worker's code changed (any environment but the browser's): Vite reloads it, then the tabs reload.
     hotUpdate({ file }) {
-      if (live && this.environment.name != "client") live.reload(`${file.startsWith(EDITOR + sep) ? file.slice(EDITOR.length + 1) : file} changed`);
+      // The editor's own sources reload the tabs once site.sh has rebuilt them (watchEditor), not before.
+      const editor = ["src/page/", "fonts/", "page.html", "style.css"].some((p) => file.startsWith(join(EDITOR, p)));
+      if (live && !editor && this.environment.name != "client") live.reload(`${file.startsWith(EDITOR + sep) ? file.slice(EDITOR.length + 1) : file} changed`);
     },
     configureServer(server) {
       const log = (line: string) => server.config.logger.info(line, { timestamp: true });
