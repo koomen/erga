@@ -61,8 +61,11 @@ export interface TreeOptions {
 
 export interface TreeHandle {
   readonly element: HTMLElement;
-  /** Reads the tree again (another tab or an agent changed it). */
-  refresh(): Promise<void>;
+  /**
+   * Reads the tree again (another tab or an agent changed it). `quiet`: a change from elsewhere, which waits
+   * while someone is naming, asking, dragging or in a menu here, so it never pulls the rug from under them.
+   */
+  refresh(opts?: { quiet?: boolean }): Promise<void>;
   setCurrent(path: string | null): void;
   setRootTitle(title: string): void;
   setBase(base: string): void;
@@ -74,14 +77,15 @@ export interface TreeHandle {
 }
 
 const ROOT = "index.html";
-const isPage = (p: string) => /\.html?$/i.test(p);
+/** A page's file: .html (or .htm), or .md (the server counts those as pages too). */
+const PAGE_EXT = /\.(html?|md)$/i;
 const parentOf = (p: string) => (p.includes("/") ? p.slice(0, p.lastIndexOf("/")) : "");
 const nameOf = (p: string) => p.slice(p.lastIndexOf("/") + 1);
 const join = (dir: string, name: string) => (dir ? `${dir}/${name}` : name);
 
 /** A page's address: /<owner>/<slug>/<path without .html, and without a trailing /index>. */
 export function pageUrl(base: string, path: string): string {
-  const rest = path.replace(/\.html?$/i, "").replace(/(^|\/)index$/, "");
+  const rest = path.replace(PAGE_EXT, "").replace(/(^|\/)index$/, "");
   return base.replace(/\/+$/, "") + (rest ? "/" + rest.split("/").map(encodeURIComponent).join("/") : "");
 }
 
@@ -108,13 +112,13 @@ export const slugify = (s: string) => s.normalize("NFKD").replace(/[\u0300-\u036
 
 /** A name as typed, as a file: a document's is its address's name, then .html; a folder's is as typed. */
 export const fileName = (typed: string, type: EntryType) => {
-  const name = typed.trim().replace(/\.html?$/i, "");
+  const name = typed.trim().replace(PAGE_EXT, "");
   return type == "page" ? (slugify(name) ? `${slugify(name)}.html` : "") : typed.trim();
 };
 
 /** A document's name made readable, from its file: "spring-migration.html" is "Spring migration". */
 export function readable(path: string, folderTitle?: string): string {
-  const stem = nameOf(path).replace(/\.html?$/i, "");
+  const stem = nameOf(path).replace(PAGE_EXT, "");
   const word = stem.toLowerCase() == "index" ? (parentOf(path) ? nameOf(parentOf(path)) : folderTitle || "Home") : stem;
   const spaced = word.replace(/[-_]+/g, " ").replace(/\s+/g, " ").trim();
   return spaced ? spaced[0].toUpperCase() + spaced.slice(1) : word;
@@ -294,6 +298,9 @@ export function mountTree(container: HTMLElement, opts: TreeOptions): TreeHandle
   let dragFrom: string | null = null;
   // Asked to focus before the first answer came: done once it has.
   let wantFocus = false;
+  // A change from elsewhere came while someone was in the middle of something here: read again once they're done.
+  let stale = false;
+  const interacting = () => !!(editing || confirming || menu || dragFrom || busy);
 
   const root = el("div", { className: "et" });
   const bannerEl = el("div", { className: "et-banner", role: "alert", hidden: true });
@@ -562,6 +569,7 @@ export function mountTree(container: HTMLElement, opts: TreeOptions): TreeHandle
     }
     focusPath = null;
     if (!rows.querySelector('[tabindex="0"]')) setRoving(rows.querySelector<HTMLElement>('[aria-current="page"]') ?? rows.querySelector<HTMLElement>(".et-row[data-path]"));
+    if (stale && !interacting()) { stale = false; queueMicrotask(load); }
   }
 
   const setRoving = (target: HTMLElement | null) => {
@@ -662,6 +670,7 @@ export function mountTree(container: HTMLElement, opts: TreeOptions): TreeHandle
     if (!menu) return;
     menu.remove();
     menu = null;
+    if (stale && !interacting()) { stale = false; queueMicrotask(load); }
     menuButton?.setAttribute("aria-expanded", "false");
     menuButton?.closest(".et-row")?.classList.remove("menu-open");
     const row = menuButton?.closest<HTMLElement>(".et-row");
@@ -864,7 +873,32 @@ export function mountTree(container: HTMLElement, opts: TreeOptions): TreeHandle
     dragFrom = null;
     move(from, dir!);
   });
-  root.addEventListener("dragend", () => { dragFrom = null; clearDrop(); root.querySelectorAll(".dragging").forEach((x) => x.classList.remove("dragging")); });
+  root.addEventListener("dragend", () => {
+    dragFrom = null; clearDrop(); root.querySelectorAll(".dragging").forEach((x) => x.classList.remove("dragging"));
+    if (stale && !interacting()) { stale = false; load(); }
+  });
+
+  // The tree changed, anyone's doing: the editor says so with an "erga-tree" event on window ({ type: "tree", moved?, deleted? }:
+  // main.ts, from the document's event channel). A folder that moved stays open where it went, and the page you're on, moved,
+  // is still marked (the editor goes to its new address); then the tree is read again, if it's showing.
+  const onTreeEvent = (e: Event) => {
+    const d = (e as CustomEvent<{ moved?: { from: string; to: string }; deleted?: string }>).detail ?? {};
+    const under = (p: string, dir: string) => p == dir || p.startsWith(dir + "/");
+    if (d.moved) {
+      const { from, to } = d.moved;
+      rekeyOpen(from, to);
+      if (current && under(current, from)) current = to + current.slice(from.length);
+    }
+    if (d.deleted && current && under(current, d.deleted)) current = null;
+    if (root.offsetParent) refresh(true);
+  };
+  window.addEventListener("erga-tree", onTreeEvent);
+  /** Reads it again; quietly (a change from elsewhere) waits while someone's in the middle of something here. */
+  function refresh(quiet = false): Promise<void> {
+    if (quiet && interacting()) { stale = true; return Promise.resolve(); }
+    stale = false;
+    return load();
+  }
 
   const outside = (e: PointerEvent) => { if (menu && !menu.contains(e.target as globalThis.Node) && !(menuButton?.contains(e.target as globalThis.Node))) closeMenu(); };
   document.addEventListener("pointerdown", outside, true);
@@ -877,7 +911,7 @@ export function mountTree(container: HTMLElement, opts: TreeOptions): TreeHandle
 
   return {
     element: root,
-    refresh: load,
+    refresh: (o) => refresh(!!o?.quiet),
     setCurrent(path) { current = path; render(); },
     setRootTitle(title) { if (title == rootTitle) return; rootTitle = title; render(); },
     setBase(b) { if (b == base) return; base = b; render(); },
@@ -887,6 +921,7 @@ export function mountTree(container: HTMLElement, opts: TreeOptions): TreeHandle
       closeMenu();
       document.removeEventListener("pointerdown", outside, true);
       window.removeEventListener("scroll", onScroll, true);
+      window.removeEventListener("erga-tree", onTreeEvent);
       root.remove();
     },
   };

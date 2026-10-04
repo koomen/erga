@@ -1357,6 +1357,11 @@ function docsPage(session: Session, docs: Listed[], now: number, hours: number |
     b.addEventListener("click", () => showPages(b, b.getAttribute("aria-expanded") != "true"));
     if (opened.has(b.dataset.id)) showPages(b, true);
   }
+  // Changes made elsewhere (another tab, an agent) show here too: the open trees are read again when the tab comes back,
+  // and every few seconds while it's in view. Quietly: never while someone is naming, moving or deleting something in one.
+  const refreshOpen = () => { for (const [id, t] of trees) if (!document.getElementById("pages-" + id)?.hidden) t.refresh({ quiet: true }); };
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState == "visible") refreshOpen(); });
+  setInterval(() => { if (document.visibilityState == "visible") refreshOpen(); }, 4000);
 </script>`);
 }
 
