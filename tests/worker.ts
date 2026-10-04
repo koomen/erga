@@ -70,6 +70,8 @@ async function share(id: string, who: string, role: "editor" | "viewer" | "none"
 /** Replaces the page's first heading's text. */
 const retitle = (p: Participant, from: string, to: string) => p.edit((t) => { const i = t.toString().indexOf(`<h1>${from}`); t.delete(i + 4, from.length); t.insert(i + 4, to); });
 
+/** Whether an expression is true in a tab. */
+const at2 = (tab: { eval<T>(e: string): Promise<T> }, expr: string) => tab.eval<boolean>(expr);
 const exists = async (id: string) => [200, 302].includes((await get(`/d/${id}`)).status);
 const location = async (path: string) => { const r = await get(path); return r.status == 302 ? r.headers.get("location") : `(${r.status})`; };
 const checks: string[] = [];
@@ -276,6 +278,16 @@ try {
   expect((await share(second, login, "viewer")).status == 403, "and the owner's own permission can't be changed");
   ok("only those a document is shared with may open it; viewers can't edit, publish, rename, delete or share; editors edit; only the owner shares");
 
+  // The list's share dialog: GET /docs/share says with whom (owner only), and the list marks a shared document.
+  await share(second, "Ada", "viewer");
+  const sharedWith = (await (await get(`/docs/share?id=${second}`)).json()) as { permissions: { login: string; role: string }[]; notUsers: string[] };
+  expect(sharedWith.permissions.map((p) => `${p.login}:${p.role}`).join() == `${login}:owner,ada:viewer` && Array.isArray(sharedWith.notUsers), "GET /docs/share answers who it's shared with", sharedWith);
+  expect((await as("Ada", `/docs/share?id=${second}`)).status == 403, "only to its owner");
+  const listed = (await docs()).split("<li>").find((li) => li.includes(`/${login}/untitled-2"`)) ?? "";
+  expect(listed.includes(">Shared<") && listed.includes(`class="act share"`), "the list marks it shared, with a share button", listed);
+  await share(second, "Ada", "none");
+  ok("GET /docs/share says who a document is shared with, for its owner; the list marks shared documents");
+
   // Opening it, being in its room and moving a caret aren't edits.
   expect(await exists(blank), "the editor opens it");
   for (const who of ["Ada", "Bo", "Cy"]) await share(blank, who, "editor");
@@ -420,6 +432,80 @@ try {
     expect(res.headers.get("location") == "/", `sign-in won't go to ${JSON.stringify(next)}`, res.headers.get("location"));
   }
   ok("sign-in's next= stays on the site");
+
+  // Admin: only admins see /admin (DEV_LOGIN, "tester" for a test host, is one by the deploy); everyone else gets a 404.
+  const adminName = local ? "tester" : null;
+  expect((await get("/admin")).status == 404 && (await as("Ada", "/admin")).status == 404, "/admin isn't there for someone who isn't an admin");
+  expect(!(await docs()).includes(`>Admin</a>`), "nor linked from their list");
+  const adminPost = (path: string, fields: Record<string, string>, who = adminName) =>
+    get(`${path}${who ? `?user=${who}` : ""}`, { method: "POST", body: new URLSearchParams(fields), headers: { Origin: origin, Accept: "application/json" } });
+  expect((await adminPost("/admin/settings", { key: "unedited_hours", value: "48" }, null)).status == 403, "nor can they change a setting");
+  if (adminName) {
+    const adminPage = await (await as(adminName, "/admin")).text();
+    expect(adminPage.includes("unedited_hours") && adminPage.includes(`data-login="${adminName}"`) && adminPage.includes(`data-login="${login}"`), "an admin sees the settings and the users", adminPage.slice(0, 300));
+    expect((await (await as(adminName, "/docs")).text()).includes(`>Admin</a>`), "and their list links to it");
+    // Settings: set, refused with the reason, reset.
+    let res = await adminPost("/admin/settings", { key: "unedited_hours", value: "48" });
+    let body = (await res.json()) as { entry?: { value: unknown; source: string; updatedBy: string }; error?: string };
+    expect(res.ok && body.entry?.value == 48 && body.entry.source == "set" && body.entry.updatedBy == adminName, "an admin sets a setting", body);
+    expect((await docs()).includes("goes away after 48 hours") || (await docs()).includes("deleted 48 hours"), "and the server uses it");
+    res = await adminPost("/admin/settings", { key: "unedited_hours", value: "0" });
+    body = await res.json();
+    expect(res.status == 400 && (body.error ?? "").includes("whole number from 1"), "a bad value is refused, saying why", body);
+    res = await adminPost("/admin/settings", { key: "nope", value: "1" });
+    expect(res.status == 400, "so is a setting there isn't");
+    expect((await adminPost("/admin/settings", { key: "unedited_hours", value: "12" }, null)).status == 403 && (await get(`/admin/settings?user=${adminName}`, { method: "POST", body: new URLSearchParams({ key: "unedited_hours", value: "12" }) })).status == 403, "only from an admin, on this site's pages");
+    body = await (await adminPost("/admin/settings", { key: "unedited_hours", reset: "1" })).json();
+    expect(body.entry?.value == 24 && body.entry.source == "default", "reset puts it back to its default", body);
+    ok("admins see /admin and set and reset settings (a bad value is refused, saying why); nobody else can see it or change them");
+
+    // Users: add, make admin (who then sees /admin), make user again, remove; a bootstrap admin can't be demoted or removed.
+    const newcomer = `new${Date.now().toString(36)}`;
+    let u = await (await adminPost("/admin/users", { do: "add", login: newcomer, role: "user" })).json() as { user?: { login: string; role: string; addedBy: string }; error?: string };
+    expect(u.user?.login == newcomer && u.user.role == "user" && u.user.addedBy == adminName, "an admin adds a user", u);
+    expect((await adminPost("/admin/users", { do: "add", login: newcomer })).status == 403, "not twice");
+    expect((await adminPost("/admin/users", { do: "add", login: "not a login!" })).status == 403, "nor something that isn't a login");
+    u = await (await adminPost("/admin/users", { do: "role", login, role: "admin" })).json();
+    expect(u.user?.role == "admin", "makes someone an admin", u);
+    expect((await get("/admin")).status == 200 && (await docs()).includes(`>Admin</a>`), "who then sees /admin, linked from their list");
+    u = await (await adminPost("/admin/users", { do: "role", login, role: "user" })).json();
+    expect(u.user?.role == "user" && (await get("/admin")).status == 404, "and back, and they don't");
+    let r2 = await adminPost("/admin/users", { do: "role", login: adminName, role: "user" });
+    expect(r2.status == 403 && ((await r2.json()) as { error: string }).error.includes("ADMINS"), "a bootstrap admin can't be demoted");
+    expect((await adminPost("/admin/users", { do: "remove", login: adminName })).status == 403, "nor removed");
+    r2 = await adminPost("/admin/users", { do: "remove", login: newcomer });
+    expect(r2.ok && !(await (await as(adminName, "/admin")).text()).includes(`data-login="${newcomer}"`), "removing a user takes them off the list");
+    expect((await adminPost("/admin/users", { do: "role", login: newcomer, role: "admin" }, null)).status == 403, "and someone who isn't an admin can't change users");
+    ok("admins add and remove users and make them admins or not; a bootstrap admin can't be demoted or removed");
+
+    // In a browser: the admin page's own controls.
+    const at = await browser.page();
+    await at.open(`${base}/admin?user=${adminName}`);
+    await at.eval(`(() => { const i = document.querySelector('li.setting input[name=value]'); i.value = "36"; i.dispatchEvent(new Event("input", { bubbles: true })); document.querySelector('li.setting .save').click(); })()`);
+    await until(async () => (await at.eval<string>(`document.readyState == "complete" ? document.querySelector('li.setting .meta')?.textContent ?? "" : ""`)).includes(`Set by ${adminName}`), 5000, "saving a setting from the page shows who set it");
+    expect((await at.eval<string>(`document.querySelector('li.setting input[name=value]').value`)) == "36", "with its new value");
+    await at.eval(`document.querySelector('li.setting .reset').click()`);
+    await until(async () => (await at.eval<string>(`document.readyState == "complete" ? document.querySelector('li.setting .meta')?.textContent ?? "" : ""`)).includes("Default"), 5000, "reset from the page");
+    await at.eval(`(() => { const f = document.querySelector('form.add-user'); f.elements.login.value = "pagebie"; f.requestSubmit(); })()`);
+    await until(async () => at.eval<boolean>(`!!document.querySelector('li[data-login="pagebie"]')`), 5000, "adding a user from the page lists them");
+    at.close?.();
+    await adminPost("/admin/users", { do: "remove", login: "pagebie" });
+    ok("the admin page saves and resets a setting and adds a user, in a browser");
+  }
+
+  // The share dialog, in a browser: add someone, change anyone-with-the-link, and the list follows.
+  const st = await browser.page();
+  await st.open(`${base}/auth/github?as=${login}&next=/docs`);
+  await st.eval(`document.querySelector('li a[href="${(await nameOf(second)).address}"]').parentElement.querySelector('button.share').click()`);
+  await until(async () => at2(st, `document.querySelectorAll('#share .people li').length == 1`), 5000, "the share dialog lists the owner");
+  await st.eval(`(() => { const f = document.querySelector('#share form.add'); f.elements.login.value = "Bo"; f.elements.role.value = "viewer"; f.requestSubmit(); })()`);
+  await until(async () => at2(st, `document.querySelectorAll('#share .people li').length == 2`), 5000, "adding someone lists them");
+  await st.eval(`(() => { const s = document.getElementById("share-anyone"); s.value = "editor"; s.dispatchEvent(new Event("change")); })()`);
+  await until(async () => ((await (await get(`/docs/share?id=${second}`)).json()) as { permissions: { login: string; role: string }[] }).permissions.map((p) => `${p.login}:${p.role}`).join() == `${login}:owner,*:editor,bo:viewer`, 5000, "the dialog's changes are saved");
+  await st.eval(`document.querySelector('#share .people li:last-child button.act').click()`);
+  await until(async () => at2(st, `document.querySelectorAll('#share .people li').length == 1`), 5000, "stopping sharing with someone takes them off");
+  await share(second, "*", "none");
+  ok("the share dialog on /docs adds people, sets anyone-with-the-link and stops sharing");
 
   await serverApiScenario();
 
