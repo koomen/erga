@@ -338,6 +338,19 @@ async function agentOffScenario(browser: Browser) {
   st = await state();
   check("typing and sending still explains instead of doing nothing", !st.hidden && /ANTHROPIC_API_KEY/.test(st.hint) && (await p.eval<string>(`document.getElementById("agent-input").value`)) == "hello");
   await s.close();
+
+  // A placeholder in .dev.vars doesn't hide the key the server's environment has (dev/agent-key.ts); nothing is written back.
+  const dir = mkdtempSync(join(tmpdir(), "erga-page-"));
+  cpSync(`${ROOT}tests/fixtures/page`, dir, { recursive: true });
+  const fromEnv = await startHost(dir, { env: { ANTHROPIC_API_KEY: "xxxxxx" }, processEnv: { ANTHROPIC_API_KEY: "sk-ant-test-from-the-environment" } });
+  const info = await (await fetch(`${fromEnv.base}/api/agent`)).json() as { enabled: boolean; reason?: string };
+  check("the environment's key turns the agent on past a placeholder in .dev.vars", info.enabled, JSON.stringify(info));
+  await fromEnv.dispose();
+  const placeholder = await startHost(dir, { env: { ANTHROPIC_API_KEY: "xxxxxx" } });
+  const off = await (await fetch(`${placeholder.base}/api/agent`)).json() as { enabled: boolean; reason?: string };
+  check("a placeholder alone is no key: off, saying how to set one", !off.enabled && /ANTHROPIC_API_KEY is not set.*export/.test(off.reason ?? ""), JSON.stringify(off));
+  await placeholder.dispose();
+  rmSync(dir, { recursive: true, force: true });
 }
 
 /** Styling: the style bar, shortcuts across inline elements, Markdown as you type, and the view switcher. */
