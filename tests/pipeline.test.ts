@@ -716,17 +716,21 @@ describe("the builder", () => {
 });
 
 describe("the one-time setup", () => {
-  test("deploy/setup.ts says what it will do, and (against the mock) does it: production's two secrets, staging's first deploy", () => {
+  test("deploy/setup.ts says what it will do, and (against the mock) does it: production's two secrets, staging's first deploy, staging's deploy token", () => {
     const dry = Bun.spawnSync(["bun", join(ROOT, "deploy/setup.ts"), "--dry-run"], { cwd: ROOT, env: { ...process.env, CLOUDFLARE_API_TOKEN: "", CLOUDFLARE_ACCOUNT_ID: "" } });
     const said = dry.stdout.toString();
     expect(dry.exitCode).toBe(0);
-    expect(said).toContain("8. Check it");
+    expect(said).toContain("11. Check it");
+    expect(said).toContain("Individual Workers Editor: erga-staging (nothing else)");
     expect(said).toContain("--dry-run: nothing done.");
     const run = Bun.spawnSync(["bun", join(ROOT, "deploy/setup.ts"), "--yes"], { cwd: ROOT, env: { ...process.env, ERGA_DEPLOY_MOCK: "1", CLOUDFLARE_API_TOKEN: "", CLOUDFLARE_ACCOUNT_ID: "" } });
     const out = run.stdout.toString();
     expect(run.exitCode).toBe(0);
     expect(out).toContain("(the mock Cloudflare: nothing real)");
-    expect(out).toContain("secrets set: SESSION_SECRET, GITHUB_CLIENT_SECRET, CLOUDFLARE_DEPLOY_TOKEN, SNAPSHOT_TOKEN, DEPLOY_HOOK_SECRET\n");
+    expect(out).toContain("secrets set: SESSION_SECRET, SNAPSHOT_TOKEN, DEPLOY_HOOK_SECRET, GITHUB_CLIENT_SECRET\n");
+    expect(out).toContain("Made and checked: it deploys erga-staging, reads erga.dev and erga-pages.dev, and can't reach erga or write DNS and routes.");
+    expect(out).toContain("Stored on erga-staging as CLOUDFLARE_DEPLOY_TOKEN (not printed).");
+    expect(out).not.toContain("mock-scoped-");
     expect(out).toContain("Copy production's documents into it: done, 3 documents copied");
     expect(out).toMatch(/runs [0-9a-f]{12}; it says it's staging/);
   }, 60_000);
