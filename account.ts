@@ -142,7 +142,8 @@ const ACCOUNT_SCRIPT = `<script>(() => {
     const el = e.pointerType == "mouse" && e.target.closest?.("[data-tip]");
     if (!el) return;
     const r = el.getBoundingClientRect();
-    el.style.setProperty("--tip-x", e.clientX - r.left + "px");
-    el.style.setProperty("--tip-y", e.clientY - r.top + 22 + "px");
+    // Clear of the pointer's arrow, which reaches down and right of its tip.
+    el.style.setProperty("--tip-x", e.clientX - r.left - 6 + "px");
+    el.style.setProperty("--tip-y", e.clientY - r.top + 30 + "px");
   }, { passive: true });
 })();</script>`;
