@@ -260,6 +260,10 @@ export function mockCloudflare(opts: {
         state.scripts[r[1]].workersDev = !!(await body()).enabled;
         return ok({ enabled: state.scripts[r[1]].workersDev });
       }
+      if (m == "GET" && (r = /^\/workers\/scripts\/([^/]+)\/settings$/.exec(rest))) {
+        if (!state.scripts[r[1]]) return fail(404, 10007, "This Worker does not exist on your account.");
+        return ok({ bindings: state.scripts[r[1]].metadata.bindings ?? [], compatibility_date: state.scripts[r[1]].metadata.compatibility_date });
+      }
       if ((r = /^\/workers\/scripts\/([^/]+)\/secrets$/.exec(rest))) {
         if (!state.scripts[r[1]]) return fail(404, 10007, "This Worker does not exist on your account.");
         if (m == "GET") return ok(Object.keys(state.secrets[r[1]] ?? {}).map((name) => ({ name, type: "secret_text" })));

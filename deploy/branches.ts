@@ -30,7 +30,7 @@
 // Source page shows it next to each branch), and an event on each change
 // ({type: "deploys"} on /api/events).
 
-import { ALL_STEPS, Cloudflare, DeployError, runPipeline, stepsFor, type Carry, type Fetch, type Release, type StepId, type Target } from "./cloudflare";
+import { ALL_STEPS, Cloudflare, DeployError, runPipeline, stepsFor, workerVersion, type Carry, type Fetch, type Release, type StepId, type Target } from "./cloudflare";
 import { sourceFor, type Source } from "./source";
 import { BUILDER, isTargetName, PRODUCTION, TARGETS, targetNames, type TargetName, type TargetSpec } from "./targets";
 
@@ -94,12 +94,15 @@ export interface Deps {
 }
 
 interface Run { commit: string; started: number; cursor: StepId | null; carry: Carry }
-interface Stored { status: TargetStatus; head: string | null; run: Run | null; oldDocs: string[] }
+interface Stored { status: TargetStatus; run: Run | null; oldDocs: string[] }
+/** The branch's head and what's waiting, kept apart from the run's record (a hook can come while a deploy runs and saves its own). */
+interface Queue { head: string | null; pending: string | null }
 
 const LOG_LINES = 200;
 /** How long after the Worker's upload the new version is woken to finish a deploy its upload interrupted. */
 export const RESUME_MS = 20_000;
 const key = (name: TargetName) => `target:${name}`;
+const queueKey = (name: TargetName) => `queue:${name}`;
 
 export class BranchDeploys {
   private running: TargetName | null = null;
@@ -127,14 +130,25 @@ export class BranchDeploys {
   private async load(name: TargetName): Promise<Stored> {
     const spec = TARGETS[name];
     const s = await this.deps.storage.get<Stored>(key(name));
-    return s ?? {
+    const out = s ?? {
       status: { name, host: spec.host, branch: spec.branch, state: "idle", commit: null, at: null, error: null, log: [], deployed: null, pending: null, steps: [], self: name == this.self },
-      head: null, run: null, oldDocs: [],
+      run: null, oldDocs: [],
     };
+    out.status.pending = (await this.queue(name)).pending;
+    return out;
+  }
+
+  private async queue(name: TargetName): Promise<Queue> {
+    return (await this.deps.storage.get<Queue>(queueKey(name))) ?? { head: null, pending: null };
+  }
+
+  private async setQueue(name: TargetName, change: Partial<Queue>): Promise<void> {
+    await this.deps.storage.put(queueKey(name), { ...(await this.queue(name)), ...change });
   }
 
   private async save(s: Stored): Promise<void> {
     s.status.self = s.status.name == this.self;
+    s.status.pending = (await this.queue(s.status.name)).pending;
     if (s.status.log.length > LOG_LINES) s.status.log = s.status.log.slice(-LOG_LINES);
     await this.deps.storage.put(key(s.status.name), s);
     this.deps.changed();
@@ -201,7 +215,7 @@ export class BranchDeploys {
       return { ok: true, status: (await this.load(name)).status };
     }
     const s = await this.load(name);
-    const commit = s.head ?? s.status.commit;
+    const commit = (await this.queue(name)).head ?? s.status.commit;
     if (!commit) return { ok: false, error: `No commit of ${TARGETS[name].branch} has reached this server yet: push to it first.`, status: 409 };
     await this.enqueue(name, commit, `redeploy of ${commit.slice(0, 12)} asked for`);
     return { ok: true, status: (await this.load(name)).status };
@@ -220,7 +234,7 @@ export class BranchDeploys {
     const s = await this.load(name);
     const secret = this.deps.env.DEPLOY_HOOK_SECRET?.trim();
     const what = body.redeploy ? "a redeploy" : `${body.branch} at ${String(body.commit).slice(0, 12)}`;
-    if (typeof body.commit == "string") s.head = body.commit;
+    if (typeof body.commit == "string") await this.setQueue(name, { head: body.commit });
     if (!secret) { this.line(s, `${what}: not passed on to ${TARGETS[name].host} (no DEPLOY_HOOK_SECRET here)`); await this.save(s); return; }
     try {
       const r = await this.deps.net(`https://${TARGETS[name].host}/api/deploys/${name}/hook`, { method: "POST", headers: { Authorization: `Bearer ${secret}`, "Content-Type": "application/json" }, body: JSON.stringify(body) });
@@ -232,17 +246,16 @@ export class BranchDeploys {
   }
 
   private async enqueue(name: TargetName, commit: string, why: string): Promise<void> {
-    const s = await this.load(name);
-    s.head = commit;
-    this.line(s, why);
     const wrong = this.notReady();
+    await this.setQueue(name, { head: commit, pending: wrong ? null : commit });
+    const s = await this.load(name);
+    this.line(s, why);
     if (wrong) {
-      s.status = { ...s.status, commit, at: this.now(), error: null, pending: null };
+      s.status = { ...s.status, commit, at: this.now(), error: null };
       this.line(s, wrong);
       await this.save(s);
       return;
     }
-    s.status.pending = commit;
     await this.save(s);
     await this.deps.schedule(0);
   }
@@ -267,7 +280,8 @@ export class BranchDeploys {
     const spec = TARGETS[name];
     this.running = name;
     const steps: StepStatus[] = [{ id: "build", title: "Build the commit", status: "running" }, ...stepsFor(targetOf(spec, this.deps.env)).map((x) => ({ id: x.id, title: x.title, status: "pending" as const }))];
-    s.status = { ...s.status, state: "building", commit, at: this.now(), error: null, pending: s.status.pending == commit ? null : s.status.pending, steps };
+    if ((await this.queue(name)).pending == commit) await this.setQueue(name, { pending: null });
+    s.status = { ...s.status, state: "building", commit, at: this.now(), error: null, pending: (await this.queue(name)).pending, steps };
     s.run = { commit, started: this.now(), cursor: null, carry: { oldDocs: s.oldDocs } };
     this.line(s, `deploying ${commit.slice(0, 12)} (${spec.branch}) to ${spec.host}`);
     await this.save(s);
@@ -294,6 +308,12 @@ export class BranchDeploys {
   private async resume(s: Stored): Promise<void> {
     const run = s.run!;
     const order = ALL_STEPS.map((x) => x.id) as StepId[];
+    // Stopped at the upload itself: done if the Worker there is this run's release (the restart came before its end was kept).
+    if (run.cursor == "worker" && run.carry.version) {
+      const target = targetOf(TARGETS[s.status.name], this.deps.env);
+      const there = await workerVersion(new Cloudflare(this.deps.env.CLOUDFLARE_DEPLOY_TOKEN!.trim(), this.deps.net), target.accountId, target.workerName).catch(() => null);
+      if (there == run.carry.version) { step(s, "worker", "done", `${target.workerName}, release ${there}`); run.cursor = "address"; }
+    }
     const past = run.cursor != null && order.indexOf(run.cursor) > order.indexOf("worker");
     if (!past) {
       this.line(s, "interrupted before the new version was uploaded (the server restarted): nothing changed. Redeploy to try again.");

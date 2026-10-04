@@ -615,6 +615,12 @@ export function workerMetadata(release: Release, target: Target, o: { dbId: stri
   };
 }
 
+/** The release a Worker runs, by its ERGA_VERSION setting (the pipeline sets it), or null. */
+export async function workerVersion(cf: Cloudflare, accountId: string, worker: string): Promise<string | null> {
+  const settings = await cf.call<{ bindings?: { name: string; type: string; text?: string }[] }>("GET", `/accounts/${accountId}/workers/scripts/${worker}/settings`, `read ${worker}'s settings`, undefined, { allow404: true });
+  return settings?.bindings?.find((b) => b.name == "ERGA_VERSION" && b.type == "plain_text")?.text ?? null;
+}
+
 /** A D1 database's id by name, or null. */
 async function findDatabase(cf: Cloudflare, acc: string, name: string): Promise<string | null> {
   return ((await cf.call<{ uuid: string; name: string }[]>("GET", `${acc}/d1/database?name=${encodeURIComponent(name)}`, "list your D1 databases")) ?? []).find((d) => d.name == name)?.uuid ?? null;
