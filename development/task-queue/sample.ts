@@ -78,6 +78,17 @@ const server = Bun.spawn(["bun", join(import.meta.dir, "server.ts")], {
 });
 console.log(`sample board on http://localhost:${port} (repo ${repo})`);
 
+// Screenshots on the Ready to merge task, to show them (and their × on hover) in its detail view.
+(async () => {
+  const base = `http://127.0.0.1:${port}`;
+  for (let i = 0; i < 50; i++) { try { await fetch(base + "/api"); break; } catch { await Bun.sleep(100); } }
+  const printTask = tasks.find((t) => t.title == "Print stylesheet");
+  for (const [caption, bg] of [["First pass: the print preview", "#fde2e2"], ["Review: margins fixed", "#e2f0fd"]]) {
+    const html = `<body style="margin:0;font:28px sans-serif;background:${bg};display:grid;place-items:center;height:100vh">${caption}</body>`;
+    await fetch(`${base}/api/tasks/${printTask.id}/screenshots`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ url: "data:text/html," + encodeURIComponent(html), caption, width: 800, height: 400, wait: 100 }) }).catch(() => {});
+  }
+})();
+
 if (tick) {
   let n = 0;
   setInterval(() => {
