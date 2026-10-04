@@ -14,6 +14,7 @@
 //   /auth/github[/callback]    signing in; /auth/logout signs out
 //   /llms.txt, /api/..., /mcp  the server's API for agents, with an agent token (server-api.ts, tokens.ts)
 //   /settings, /tokens/...     your settings: agent tokens, and a test token for running the test suite against erga.dev
+//   /deploy                    experimental: deploy Erga to your own Cloudflare account (worker/deploy.ts; the deploy_page setting)
 //   /auth/test?token=&as=      a test person (Ada, Bo...) signed in with one; they open only test documents
 //   /page.js, /style.css, ...  the editor's own files (static assets)
 //
@@ -31,8 +32,10 @@ import { frontDoor, OWNER, whoOf, withTokens, type Platform } from "../front";
 import { serverApi, tokensDoor } from "../server-api";
 import { finishSignIn, isDev, mintTestToken, sessionOf, signOut, startSignIn, testSignIn } from "./auth";
 import { directoryOf, tokensOf } from "./d1";
+import { deployDoor } from "./deploy";
 import type { Env } from "./env";
 
+export { Deployer } from "./deployer";
 export { DocHost } from "./doc-host";
 
 /** The templates' files, by template then path ("doc" → { "index.html": "..." }). Text files only. */
@@ -47,7 +50,7 @@ export default {
     const url = new URL(request.url);
     const response = await route(request, env, url);
     // Every page of the site's own has who you are in its upper right (account.ts); a document's pages origin never does.
-    if (pagesSite(url) || response.status == 101) return response;
+    if (pagesSite(env, url) || response.status == 101) return response;
     return withAccount(response, async () => {
       const session = await sessionOf(env, request);
       return accountOf(session, !!session && !session.test && (await directoryOf(env).users.isAdmin(whoOf(session))));
@@ -55,13 +58,15 @@ export default {
   },
 } satisfies ExportedHandler<Env>;
 
-const pagesSite = (url: URL) => url.hostname.endsWith(".erga-pages.dev") || url.hostname.endsWith(".localhost");
+/** Where documents' pages run (front.ts, pagesOrigin): an origin each under PAGES_DOMAIN (erga-pages.dev), or the one PAGES_HOST. */
+const pagesDomainOf = (env: Env) => env.PAGES_DOMAIN?.trim() || "erga-pages.dev";
+const pagesSite = (env: Env, url: URL) => url.hostname.endsWith(`.${pagesDomainOf(env)}`) || (!!env.PAGES_HOST && url.hostname == env.PAGES_HOST.trim()) || url.hostname.endsWith(".localhost");
 
 async function route(request: Request, env: Env, url: URL): Promise<Response> {
   const path = url.pathname;
   const assets = path == "/page.js" || path == "/frame.js" || path == "/style.css" || path.startsWith("/fonts/");
   // A document's pages origin (front.ts, pagesDoor) serves its frame and files, and nothing of this site's.
-  if (pagesSite(url)) return assets ? env.ASSETS.fetch(request) : frontDoor(request, platform(env));
+  if (pagesSite(env, url)) return assets ? env.ASSETS.fetch(request) : frontDoor(request, platform(env));
   if (path == "/auth/github") return startSignIn(env, request);
   if (path == "/auth/github/callback") return finishSignIn(env, request);
   if (path == "/auth/logout") return signOut(env, request);
@@ -72,6 +77,8 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
   if (path == "/llms.txt" || path == "/mcp" || path == "/api" || path.startsWith("/api/")) return serverApi(request, withTokens(platform(env), url));
   if (path == "/settings" || path == "/tokens" || path.startsWith("/tokens/")) return tokensDoor(request, withTokens(platform(env), url));
   if (path.startsWith("/__erga/")) return linked(env, request, url);
+  // Experimental: deploying Erga to your own Cloudflare account (worker/deploy.ts).
+  if (path == "/deploy" || path.startsWith("/deploy/")) return deployDoor(request, env, platform(env));
   return frontDoor(request, platform(env));
 }
 
@@ -80,6 +87,7 @@ async function route(request: Request, env: Env, url: URL): Promise<Response> {
  * directory is in D1 (d1.ts), and a document is a Durable Object
  * (doc-host.ts) named by its id.
  */
+const local = (url: URL) => url.hostname == "localhost" || url.hostname.endsWith(".localhost") || url.hostname == "127.0.0.1";
 const platform = (env: Env): Platform => {
   const directory = directoryOf(env);
   const host = (doc: Route) => env.DOCS.getByName(doc.id);
@@ -90,7 +98,8 @@ const platform = (env: Env): Platform => {
     editor: (request) => env.ASSETS.fetch(new Request(new URL("/editor.html", request.url))),
     dev: (url) => isDev(env, url),
     // Locally (vite dev) each document's page runs on <id>-<owner>.localhost, which browsers send to this machine.
-    pagesDomain: (url) => (url.hostname == "localhost" || url.hostname.endsWith(".localhost") || url.hostname == "127.0.0.1" ? "localhost" : "erga-pages.dev"),
+    pagesDomain: (url) => (local(url) ? "localhost" : pagesDomainOf(env)),
+    pagesShared: (url) => (local(url) ? null : env.PAGES_HOST?.trim() || null),
     secret: env.SESSION_SECRET,
     tokens: tokensOf(env),
     testToken: (login) => mintTestToken(env, login),

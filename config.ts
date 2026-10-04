@@ -69,6 +69,15 @@ export const SETTINGS = {
     parse: (v) => (v === null || v === "" ? null : text(300)(v) || null),
     kind: "document",
   }),
+  deploy_page: setting<"off" | "admins" | "users">({
+    description: "Who may use /deploy (experimental): deploy Erga to their own Cloudflare account. off, admins or users.",
+    default: "admins",
+    parse: (v) => {
+      const s = typeof v == "string" ? v.trim().toLowerCase() : v;
+      if (s === "off" || s === "admins" || s === "users") return s;
+      throw new ConfigError('must be "off", "admins" or "users"');
+    },
+  }),
 };
 
 export type Settings = Record<string, Setting>;
