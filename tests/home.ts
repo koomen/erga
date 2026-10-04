@@ -117,7 +117,8 @@ try {
   // aside: their blocks count, not what moves in them).
   const layout = `JSON.stringify([...document.body.querySelectorAll("main, header, footer, section, article, nav, figure, h1, h2, h3, h4, p, ul, ol, blockquote, table")].filter((e) => !e.closest("erga-controls")).map((e) => { const r = e.getBoundingClientRect(); return [e.tagName, Math.round(r.x), Math.round(r.y + scrollY), Math.round(r.width), Math.round(r.height)]; }))`;
   for (const v of [VIEWS[0], VIEWS[2]]) {
-    const shift = BAND - (await viewerTop(v));
+    // (Measured in the viewer's frame, its blocks start at 0 wherever the frame sits: on the page, they're BAND lower.)
+    const shift = BAND;
     const pv = await browser.page(await browser.context()), pd = await browser.page(await browser.context());
     for (const [p, url] of [[pv, `${root}/tester/landing`], [pd, `${root}/`]] as const) {
       await p.send("Target.setAutoAttach", { autoAttach: true, waitForDebuggerOnStart: false, flatten: true });
