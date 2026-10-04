@@ -7,6 +7,7 @@
 #                     (tests/worker.ts), documents with many pages (tests/pages.ts), the front page the server makes (tests/landing.ts),
 #                     the deploy page against a pretend Cloudflare (tests/deploy.ts),
 #                     who you are in every page's corner (tests/account.ts),
+#                     a document's pages tree (tests/tree.ts),
 #                     the first switch into editing on a slow network (tests/switch.ts),
 #                     versions and publishing (tests/versions.ts),
 #                     live reload (tests/reload.ts, in a copy of the checkout)
@@ -40,6 +41,7 @@ page_group() {
   run deployed bun tests/server-config.ts
   run landing bun tests/landing.ts
   run account bun tests/account.ts
+  run tree bun tests/tree.ts
   run switch bun tests/switch.ts
   run versions bun tests/versions.ts
   # Latency is measured afterwards, alone: other tests running would skew it.

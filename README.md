@@ -89,7 +89,8 @@ route: `/<owner>/<slug>/edit` is a page called edit, if the document has one. Th
 title follows the page's first `<h1>` (else `<title>`, else "Untitled") until
 someone sets it, and the slug follows the title (lowercase letters, digits
 and dashes, `-2`, `-3`... when taken) until someone sets it. Rename from the
-title after Documents in the editor's breadcrumbs, or by asking an agent
+title after Documents in the editor's breadcrumbs (it opens the document's
+pages; the pencil on the first row, the document itself, renames it), or by asking an agent
 (its `get_title` and `set_title` tools, for the embedded agent and external
 ones). Every open tab follows a rename: its title, and its address bar. The
 editor itself talks to its document at `/d/<id>`, which a
@@ -636,6 +637,54 @@ on-screen keyboard, and keep clear of a notch.
 There's no dark mode: pages are shown as their authors made them, and most
 don't support one. The editor's own controls take their colours from the page
 under them instead.
+
+### A document's pages
+
+A document can have more than one page. Its root is `index.html`; the
+others sit beside it, in folders if you like. People think in documents, not
+files: the tree shows only documents (HTML pages) and the folders holding
+them (or nothing yet). A document's stylesheets, scripts, fonts and images
+are part of it, out of sight, as are folders holding only those (`fonts/`,
+`assets/`); the API lists every file, and agents see them all. The tree of them
+(`src/page/tree.ts`, built on its own as `pages-tree.js` and loaded only when it's
+opened, so viewing never pays for it) shows in two places: in the editor, the
+document's title in the breadcrumbs opens it in a card, the document as its
+first row and everything else under it; on `/docs`, the chevron left of each
+document opens its pages beneath its row. Folders open and close (remembered
+for the tab); documents show by their title when it's known (in the editor,
+read from the room as they're edited; "Untitled" counts as none), else by
+their name made readable ("spring-migration" is "Spring migration", a
+folder's index is the folder's name), with the file's name as a quiet hint
+only where two would read the same. Clicking a document opens it, in the
+editor for those who may edit (`/<owner>/<slug>/<page>#edit`), in the viewer
+otherwise (`/<owner>/<slug>/<page>`), and the one you're on is marked.
+
+Editors get New document (from the new-document template; "My post" is
+`my-post.html`) and New folder, at the top level (the foot of the tree) and in each
+folder (its +), named in place; rename in place (the menu, F2, or the pencil
+on the root row, which renames the document itself: its title and address);
+move by drag and drop or the menu's Move to…; and delete (a folder asks
+first, in its row, counting the documents in it; `index.html` can't go).
+A document links its stylesheets, images and other documents by where they
+are from it (`../style.css`), so moving one to another folder (or a folder to
+another depth) can leave those behind: the tree says so after the move when
+the document has relative links (in the editor it reads them from the room;
+on `/docs` it always says so). It doesn't rewrite links, nor those from other
+documents to the one that moved or was renamed. The editor renders a page in
+a folder with its links resolved from that folder, as the browser does at its
+address. Viewers see the tree without any
+of that. What the server refuses shows where it happened, in its words. Keys:
+↑ ↓ ← → Home End move and open folders, Enter opens, F2 renames, Delete
+deletes, Shift-F10 opens a row's menu, Esc cancels or closes.
+
+It talks to `GET /api/docs/<id>/tree` (`{ entries: [{ path, type: "page" |
+"folder" | "file", title? }], canEdit }`) and `POST` there (`new_page`,
+`new_folder`, `move`, `delete`), and reads it again on a `{ type: "tree" }`
+event on the editor's event channel, or when a file comes or goes in the room.
+That's the server's own tree API (below). `bun tests/tree.ts` checks the tree
+in headless Chrome, against `dev/tree-stub.ts` (`ERGA_TREE_STUB=1`: an
+in-memory stand-in for the API that changes no files, so the test can set
+any tree and make changes fail).
 
 ### When the page is broken
 
@@ -1247,6 +1296,7 @@ back, merging edits from disk, the agent's exact-match edits and attribution.
   rebasing as change sets), `agent-log.ts` (the agent transcript, shared by
   host and shell)
 - `package.json`: the pinned CodeMirror and Yjs packages the page editor bundles, and pi
+- `src/page/tree.ts`: a document's pages as a tree (built as `pages-tree.js`, loaded on demand), in the editor and on `/docs`
 - `style.css`: theme colours, typography and the editor's styling
 - `fonts/`: the self-hosted Inter web font
 - `tests/`: unit tests, `page.ts`, `smoke.ts` and `fixtures/` for the page

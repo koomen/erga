@@ -20,7 +20,8 @@ import { RemotePage } from "./remote";
 import type { Backdrop, Keys } from "./bridge";
 import { changesBetween } from "./merge";
 import { Collab, type Presence } from "./collab";
-import { colorFor, type Author } from "../room/doc";
+import { colorFor, files, type Author } from "../room/doc";
+import type { mountTree, TreeHandle } from "./tree";
 import { analyzeMarkdown } from "./markdown";
 import TurndownService from "turndown";
 import { emptyLog, reduce, type Log, type LogEvent, type LogItem, type ViewRequest, type ViewResult } from "./agent-log";
@@ -73,6 +74,8 @@ const peersField = StateField.define<DecorationSet>({
 declare global {
   interface Window { ergaPage?: unknown; ergaShell?: { ready(): void; loadedEditing?: boolean }; ergaDocInfo?: { url: string; response: Promise<Response> } }
 }
+/** pages-tree.js, once loaded (it sets window.ergaTree). */
+type TreeModule = { mountTree: typeof mountTree };
 
 
 (async () => {
@@ -186,8 +189,8 @@ declare global {
   // news before the shell is set up is picked up once it is (`started`).
   let started = false;
   const collab: Collab = new Collab({
-    path: info.path,
     me,
+    path: info.path,
     onRemote: (changes, author) => applyRemote(changes, author),
     onFiles: () => needRefresh(),
     onPresence: () => { if (started) presenceChanged(); },
@@ -289,15 +292,20 @@ declare global {
   // the host at /d/<id> (BASE), which a rename never changes.
   let docName: DocName | null = null;
   const titleBtn = $("doc-title"), naming = $("naming");
+  // The pages card (below: togglePages) and its tree, once opened.
+  const pagesCard = $("pages");
+  let tree: TreeHandle | null = null;
   const namingForm = $("naming-form") as HTMLFormElement, namingStatus = $("naming-status");
   const titleIn = $("naming-title") as HTMLInputElement, slugIn = $("naming-slug") as HTMLInputElement;
   function showName(n: DocName) {
     docName = n;
     $("doc-title-text").textContent = n.title;
     titleBtn.hidden = false;
-    titleBtn.setAttribute("aria-label", `${n.title}: rename, or change its address`);
+    titleBtn.setAttribute("aria-label", `${n.title}: its pages`);
     titleBtn.title = `${location.host}${n.address}`;
     document.title = n.title;
+    tree?.setRootTitle(n.title);
+    if (n.address) tree?.setBase(n.address);
     // The editor's own address is the page's, with #edit (without, it's the viewer, which the pencil, blue while editing, goes back to).
     if (!n.address) return;
     const view = $("btn-edit") as HTMLAnchorElement;
@@ -325,8 +333,9 @@ declare global {
     const open = typeof force == "boolean" ? force : naming.hidden;
     if (open && !docName) return;
     naming.hidden = !open;
-    titleBtn.setAttribute("aria-expanded", String(open));
+    titleBtn.setAttribute("aria-expanded", String(open || !pagesCard.hidden));
     if (!open) return;
+    togglePages(false);
     showChrome();
     toggleHelp(false);
     toggleShare(false);
@@ -340,7 +349,7 @@ declare global {
     titleIn.focus();
     titleIn.select();
   }
-  titleBtn.addEventListener("click", () => toggleNaming());
+  titleBtn.addEventListener("click", () => (naming.hidden ? togglePages() : toggleNaming(false)));
   $("naming-cancel").addEventListener("click", () => toggleNaming(false));
   // An address that follows the title follows it here too, until it's typed in.
   titleIn.addEventListener("input", () => { if (!docName!.slugSet && !slugTouched) slugIn.value = slugify(titleIn.value) || docName!.slug; namingHint(); });
@@ -362,6 +371,86 @@ declare global {
     showName(r.name);
     toggleNaming(false);
   });
+
+  // ---------------------------------------------------------------- pages
+
+  // The document's pages: the title opens them, as a tree (tree.ts, built on
+  // its own as pages-tree.js and loaded only now, so viewing never pays for it).
+  // Its first row is the document itself, whose pencil renames it (the naming
+  // card above); the rest are its other pages, folders and files. Pages open
+  // in the editor; the tree follows changes from other tabs and agents (a
+  // "tree" event, or a file coming or going in the room) and the titles of
+  // the pages as they're edited.
+  let treeScript: Promise<TreeModule> | null = null;
+  const loadTree = () => (window.ergaTree ? Promise.resolve(window.ergaTree) : (treeScript ??= new Promise<TreeModule>((resolve, reject) => {
+    const s = Object.assign(document.createElement("script"), { src: "/pages-tree.js" });
+    s.onload = () => (window.ergaTree ? resolve(window.ergaTree) : reject(new Error("no tree")));
+    s.onerror = () => { treeScript = null; s.remove(); reject(new Error("Couldn't load the pages: check your connection and try again.")); };
+    document.head.append(s);
+  })));
+  // Fetched as the pointer heads for the title, so opening it is immediate.
+  titleBtn.addEventListener("pointerenter", () => { loadTree().catch(() => {}); }, { once: true });
+  titleBtn.addEventListener("focus", () => { loadTree().catch(() => {}); }, { once: true });
+  /** A page's title from its text, as the room has it: its first <h1>, else its <title>. */
+  function pageTitle(path: string): string | null {
+    const text = files(collab.doc).get(path)?.toString();
+    if (!text) return null;
+    const m = /<h1\b[^>]*>([\s\S]*?)<\/h1>/i.exec(text) ?? /<title\b[^>]*>([\s\S]*?)<\/title>/i.exec(text);
+    if (!m) return null;
+    const t = new DOMParser().parseFromString(m[1].replace(/<[^>]*>/g, ""), "text/html").body.textContent?.replace(/\s+/g, " ").trim();
+    return t ? t.slice(0, 120) : null;
+  }
+  /** Whether a document links to its styles, scripts or images by relative paths (a move may break those): read from the room. */
+  function hasRelativeLinks(path: string): boolean | undefined {
+    const text = files(collab.doc).get(path)?.toString();
+    if (text == null) return undefined;
+    const refs = [...text.matchAll(/\b(?:src|href|poster|data)\s*=\s*["']?([^"'\s>]+)|url\(\s*["']?([^"')]+)/gi)].map((m) => m[1] ?? m[2]);
+    return refs.some((r) => !/^(?:[a-z][a-z0-9+.-]*:|\/|#|\{)/i.test(r));
+  }
+  function togglePages(force?: boolean) {
+    const open = typeof force == "boolean" ? force : pagesCard.hidden;
+    if (open && !docName) return;
+    if (open != pagesCard.hidden) return;
+    pagesCard.hidden = !open;
+    titleBtn.setAttribute("aria-expanded", String(open || !naming.hidden));
+    if (!open) return;
+    showChrome();
+    toggleHelp(false);
+    toggleShare(false);
+    toggleSharing(false);
+    toggleAccount(false);
+    toggleNaming(false);
+    if (tree) { tree.refresh(); tree.focus(); return; }
+    const slot = $("pages-tree");
+    loadTree().then((t) => {
+      if (tree || !docName) return;
+      slot.replaceChildren();
+      tree = t.mountTree(slot, {
+        id: docName.id, base: docName.address, editing: true, query: as, showRoot: true, label: "Documents",
+        rootTitle: docName.title, titleOf: pageTitle, current: info!.path, hasRelativeLinks,
+        onRenameRoot: () => toggleNaming(true),
+      });
+      if (!pagesCard.hidden) tree.focus();
+    }, (e: Error) => {
+      slot.replaceChildren(Object.assign(document.createElement("p"), { className: "naming-status error", textContent: e.message }));
+      pagesCard.hidden = true; pagesCard.hidden = false;
+    });
+  }
+  document.addEventListener("pointerdown", (e) => {
+    const t = e.target as Element;
+    if (!pagesCard.hidden && !pagesCard.contains(t) && !titleBtn.contains(t) && !t.closest?.(".et-menu")) togglePages(false);
+  });
+  // A file coming or going in the room (another tab, an agent) reads the tree again; a page's text changing may change its title.
+  let treeTimer = 0, treeStale = false;
+  files(collab.doc).observeDeep((events) => {
+    if (!tree || pagesCard.hidden) return;
+    treeStale ||= events.some((ev) => ev.target == files(collab.doc) && [...ev.changes.keys.values()].some((c) => c.action != "update"));
+    clearTimeout(treeTimer);
+    treeTimer = window.setTimeout(() => { if (treeStale) tree?.refresh(); else tree?.retitle(); treeStale = false; }, treeStale ? 150 : 600);
+  });
+  // ?pages opens it straight away (a link to "this document's pages").
+  if (new URLSearchParams(location.search).has("pages") && editing()) requestAnimationFrame(() => togglePages(true));
+  pagesCard.addEventListener("keydown", (e) => { if (e.key == "Escape" && !e.defaultPrevented) { e.preventDefault(); togglePages(false); titleBtn.focus(); } });
 
   // ---------------------------------------------------------------- the room
 
@@ -465,7 +554,7 @@ declare global {
       else if (msg.type == "model") renderModel(msg as unknown as ModelState);
       else if (msg.type == "view" && msg.id) answerView(msg.id, msg.req ?? {});
       else if (msg.type == "name" && msg.name) showName(msg.name);
-      else if (msg.type == "tree") treeChanged(msg);
+      else if (msg.type == "tree") { treeChanged(msg); tree?.refresh(); }
     };
     // Events sent while the channel was down are gone; catch up from the transcript.
     // A rename missed meanwhile (or before it first opened) is caught up the same way.
@@ -622,7 +711,7 @@ declare global {
     account.hidden = !open;
     accountBtn?.setAttribute("aria-expanded", String(open));
     if (!open) return;
-    showChrome(); toggleHelp(false); toggleShare(false); toggleSharing(false); toggleNaming(false);
+    showChrome(); toggleHelp(false); toggleShare(false); toggleSharing(false); toggleNaming(false); togglePages(false);
     $("account-name").textContent = me.name;
     $("account-login").textContent = me.name.toLowerCase() == me.user ? "" : me.user;
     const set = (id: string, href: string | undefined) => { const a = $(id) as HTMLAnchorElement; a.hidden = !href; if (href) a.href = href; };
@@ -690,7 +779,7 @@ declare global {
   function toggleHelp(force?: boolean) {
     const open = typeof force == "boolean" ? force : help.hidden;
     help.hidden = !open;
-    if (open) { showChrome(); toggleShare(false); toggleSharing(false); toggleNaming(false); toggleAccount(false); }
+    if (open) { showChrome(); toggleShare(false); toggleSharing(false); toggleNaming(false); togglePages(false); toggleAccount(false); }
   }
 
   // Share with an external agent: a prompt carrying this page's API and your
@@ -746,6 +835,7 @@ Once you've read the guide, await further instructions.`;
     toggleHelp(false);
     toggleSharing(false);
     toggleNaming(false);
+    togglePages(false);
     toggleAccount(false);
     if (!shareToken) loadShare(false);
   }
@@ -814,7 +904,7 @@ Once you've read the guide, await further instructions.`;
     sharing.hidden = !open;
     peopleBtn.setAttribute("aria-expanded", String(open));
     if (!open) return;
-    showChrome(); toggleHelp(false); toggleShare(false); toggleNaming(false); toggleAccount(false);
+    showChrome(); toggleHelp(false); toggleShare(false); toggleNaming(false); togglePages(false); toggleAccount(false);
     sharingAdd.reset();
     tellSharing("Loading…");
     (sharingAdd.elements.namedItem("login") as HTMLInputElement).focus();
@@ -960,6 +1050,7 @@ Once you've read the guide, await further instructions.`;
       closeModeMenu();
       if (!help.hidden) toggleHelp(false);
       if (!naming.hidden) toggleNaming(false);
+      if (!pagesCard.hidden) togglePages(false);
       if (!share.hidden) toggleShare(false);
       if (!sharing.hidden) toggleSharing(false);
       showPauseCard(false);
@@ -1603,9 +1694,12 @@ Once you've read the guide, await further instructions.`;
     if (mod && !e.shiftKey && (key == "/" || key == "?")) { toggleHelp(); return true; }
     if (mod && !e.shiftKey && key == "s") { flash(connected ? "Saved: edits go to disk as you type" : "Offline: edits sync when the host is back", 2200); return true; }
     if (e.key == "Escape") {
+      // Naming something in the pages tree, a question in it or one of its menus: Escape is theirs (tree.ts) to cancel.
+      if (document.activeElement?.closest(".et-input, .et-row.confirm, .et-menu")) return false;
       if (!account.hidden) { toggleAccount(false); accountBtn?.focus(); }
       else if (!help.hidden) toggleHelp(false);
       else if (!naming.hidden) toggleNaming(false);
+      else if (!pagesCard.hidden) { togglePages(false); titleBtn.focus(); }
       else if (!share.hidden) toggleShare(false);
       else if (!sharing.hidden) toggleSharing(false);
       else if (!$("pause-card").hidden) showPauseCard(false);
@@ -1719,7 +1813,7 @@ Once you've read the guide, await further instructions.`;
       return;
     }
     if (mode != "text") setMode("text");
-    toggleHelp(false); toggleShare(false); toggleSharing(false); toggleNaming(false); toggleAccount(false); showPauseCard(false);
+    toggleHelp(false); toggleShare(false); toggleSharing(false); toggleNaming(false); togglePages(false); toggleAccount(false); showPauseCard(false);
     hideFmt();
     showAgent(false);
     stopVoice();
