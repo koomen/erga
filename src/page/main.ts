@@ -1629,6 +1629,8 @@ Once you've read the guide, await further instructions.`;
     if (mod && !e.shiftKey && (key == "/" || key == "?")) { toggleHelp(); return true; }
     if (mod && !e.shiftKey && key == "s") { flash(connected ? "Saved: edits go to disk as you type" : "Offline: edits sync when the host is back", 2200); return true; }
     if (e.key == "Escape") {
+      // Naming something in the pages tree, a question in it or one of its menus: Escape is theirs (tree.ts) to cancel.
+      if (document.activeElement?.closest(".et-input, .et-row.confirm, .et-menu")) return false;
       if (!account.hidden) { toggleAccount(false); accountBtn?.focus(); }
       else if (!help.hidden) toggleHelp(false);
       else if (!naming.hidden) toggleNaming(false);

@@ -191,7 +191,8 @@ const STYLE = `
 .et-banner button { flex: none; padding: 0 2px; border: 0; background: none; color: inherit; font: inherit; font-weight: 600; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
 /* Delete a folder? Asked in its row. */
 .et-row.confirm { cursor: default; background: color-mix(in srgb, #c2410c 8%, transparent); }
-.et-confirm { flex: 1; min-width: 0; font-size: 12.5px; color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.et-row.confirm { padding-top: 4px; padding-bottom: 4px; flex-wrap: wrap; row-gap: 4px; }
+.et-confirm { flex: 1 1 140px; min-width: 0; font-size: 12.5px; line-height: 1.35; color: var(--fg); }
 .et-btn { flex: none; height: 24px; padding: 0 9px; border: 1px solid var(--rule); border-radius: 6px; background: transparent; color: var(--fg); font: 550 12px var(--font-text, inherit); cursor: pointer; }
 .et-btn.danger { border-color: #c2410c; background: #c2410c; color: #fff; }
 .et-btn:focus-visible, .et-add:focus-visible { outline: 2px solid var(--caret); outline-offset: 1px; }

@@ -7,6 +7,7 @@
 #                     (tests/worker.ts), the front page the server makes (tests/landing.ts),
 #                     the deploy page against a pretend Cloudflare (tests/deploy.ts),
 #                     who you are in every page's corner (tests/account.ts),
+#                     a document's pages tree (tests/tree.ts),
 #                     live reload (tests/reload.ts, in a copy of the checkout)
 #                     and the multiplayer suite, each
 #                     against dev servers of its own (tests/host.ts)
@@ -37,6 +38,7 @@ page_group() {
   run deployed bun tests/server-config.ts
   run landing bun tests/landing.ts
   run account bun tests/account.ts
+  run tree bun tests/tree.ts
   # Latency is measured afterwards, alone: other tests running would skew it.
   run suite bun tests/suite/run.ts --skip latency
   collect
