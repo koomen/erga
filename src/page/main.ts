@@ -26,6 +26,7 @@ import TurndownService from "turndown";
 import { emptyLog, reduce, type Log, type LogEvent, type LogItem, type ViewRequest, type ViewResult } from "./agent-log";
 import type { AgentState, DocInfo, DocName, ModelState } from "../../api";
 import { BASE } from "./base";
+import { dirOf, isPage, pageUrl } from "../../tree";
 
 const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 
@@ -158,6 +159,20 @@ declare global {
     return;
   }
 
+  // Which of the document's pages this is (tree.ts): the one the address named (the front door says, erga-page),
+  // else the document's own. One room holds them all; this tab edits this one, and goes to another by its address.
+  const pagePath = document.querySelector<HTMLMetaElement>('meta[name="erga-page"]')?.content || info.path;
+  info = { ...info, path: pagePath, name: pagePath, kind: pagePath.endsWith(".md") ? "md" : "html" };
+  /** A page's address (the editor's, while editing), given its path in the document; the root page's for null. */
+  const addressOf = (path: string | null) => {
+    const doc = docName?.address ?? document.querySelector<HTMLMetaElement>('meta[name="erga-address"]')?.content ?? "";
+    // A path that isn't a page file ("blog/", a folder) is an address as it is: the front door finds its page.
+    const at = path == null ? doc : isPage(path) ? pageUrl(doc, path) : `${doc}/${path.replace(/^\/+|\/+$/g, "").split("/").map(encodeURIComponent).join("/")}`;
+    return at.replace(/\/$/, "") + as + (editing() ? "#edit" : "");
+  };
+  /** Goes to another of the document's pages: its address, in the editor while editing. */
+  const openPage = (path: string) => { location.assign(addressOf(path)); };
+
   // The host attributes your edits and your agent to who you are, so the tab takes that.
   const me: Author = { user: info.userId, name: info.user, color: colorFor(info.userId), kind: "person", ...(info.avatar ? { avatar: info.avatar } : {}) };
   const self: MarkAuthor = { name: me.name, color: me.color };
@@ -283,14 +298,15 @@ declare global {
     titleBtn.setAttribute("aria-label", `${n.title}: rename, or change its address`);
     titleBtn.title = `${location.host}${n.address}`;
     document.title = n.title;
-    // The editor's own address is the document's, then /edit (the document's alone is its viewer, which the pencil, blue while editing, goes back to).
+    // The editor's own address is the page's, with #edit (without, it's the viewer, which the pencil, blue while editing, goes back to).
     if (!n.address) return;
     const view = $("btn-edit") as HTMLAnchorElement;
-    view.href = n.address + as;
+    const at = pageUrl(n.address, pagePath);
+    view.href = at + as;
     view.hidden = false;
     document.querySelector<HTMLMetaElement>('meta[name="erga-address"]')?.setAttribute("content", n.address);
-    // Viewing at the front page's address (/), it stays there.
-    const here = editing() ? `${n.address}/edit` : location.pathname == "/" ? "/" : n.address;
+    // At the front page's address (/), it stays there.
+    const here = location.pathname == "/" ? "/" : at;
     if (location.pathname != here) window.history.replaceState(window.history.state, "", here + location.search + location.hash);
   }
   if (info.docName) showName(info.docName);
@@ -443,20 +459,42 @@ declare global {
   function listen() {
     const events = new WebSocket(`${location.protocol == "https:" ? "wss:" : "ws:"}//${location.host}${api("/api/events")}`);
     events.onmessage = (ev) => {
-      let msg: { type?: string; ev?: LogEvent; id?: string; req?: ViewRequest; name?: DocName } = {};
+      let msg: { type?: string; ev?: LogEvent; id?: string; req?: ViewRequest; name?: DocName; moved?: { from: string; to: string }; deleted?: string } = {};
       try { msg = JSON.parse(String(ev.data)); } catch { return; }
       if (msg.type == "agent" && msg.ev) agentEvent(msg.ev);
       else if (msg.type == "model") renderModel(msg as unknown as ModelState);
       else if (msg.type == "view" && msg.id) answerView(msg.id, msg.req ?? {});
       else if (msg.type == "name" && msg.name) showName(msg.name);
+      else if (msg.type == "tree") treeChanged(msg);
     };
     // Events sent while the channel was down are gone; catch up from the transcript.
     // A rename missed meanwhile (or before it first opened) is caught up the same way.
-    events.onopen = () => { if (opened) loadAgent(); opened = true; refreshName(); };
+    events.onopen = () => { if (opened) loadAgent(); opened = true; refreshName(); stillHere(); };
     events.onclose = () => setTimeout(listen, 1000);
   }
   let opened = false;
   listen();
+
+  // The document's file tree changed (anyone's doing: tree.ts). Whatever shows the tree hears it as an
+  // "erga-tree" event on window (the event's detail is the message: { type: "tree", moved?, deleted? }) and
+  // fetches it again (GET <BASE>/api/tree). This page, moved, goes to where it went; deleted, to the document's own.
+  function treeChanged(msg: { moved?: { from: string; to: string }; deleted?: string }) {
+    window.dispatchEvent(new CustomEvent("erga-tree", { detail: { type: "tree", ...msg } }));
+    const under = (p: string) => pagePath == p || pagePath.startsWith(`${p}/`);
+    if (msg.moved && under(msg.moved.from)) location.replace(addressOf(msg.moved.to + pagePath.slice(msg.moved.from.length)));
+    else if (msg.deleted && under(msg.deleted)) location.replace(addressOf(null));
+  }
+  /**
+   * Whether this page is still there, once the event channel is up (a move or delete may have gone by while
+   * it wasn't): if it moved, to where it went (the host remembers the latest moves); if it's gone, to the first page.
+   */
+  async function stillHere() {
+    const t = await fetch(api("/api/tree")).then((r) => r.ok ? r.json() as Promise<{ entries: { path: string }[]; moved?: { from: string; to: string }[] }> : null, () => null);
+    if (!t || t.entries.some((e) => e.path == pagePath)) return;
+    let at = pagePath;
+    for (const m of t.moved ?? []) if (at == m.from || at.startsWith(`${m.from}/`)) at = m.to + at.slice(m.from.length);
+    location.replace(addressOf(t.entries.some((e) => e.path == at) ? at : null));
+  }
 
   // ---------------------------------------------------------------- presence
 
@@ -791,7 +829,7 @@ Once you've read the guide, await further instructions.`;
   });
   sharingAnyone.addEventListener("change", () => changeSharing("*", sharingAnyone.value));
   $("sharing-copy").addEventListener("click", async () => {
-    const url = location.origin + (docName?.address ?? location.pathname.replace(/\/edit\/?$/, ""));
+    const url = location.origin + (docName?.address ?? location.pathname);
     tellSharing(await navigator.clipboard.writeText(url).then(() => `Link copied: ${url}`, () => url));
   });
   if (!isMac) {
@@ -884,6 +922,7 @@ Once you've read the guide, await further instructions.`;
     frame,
     origin: new URL(pagesUrl, location.href).origin,
     kind: info.kind,
+    dir: dirOf(pagePath),
     text: initialText,
     markdownHead,
     self,
@@ -931,6 +970,7 @@ Once you've read the guide, await further instructions.`;
     },
     onBackdrop: (b) => applyBackdrop(b),
     onStale: () => needRefresh(),
+    onOpen: (path) => openPage(path),
   });
   page.start();
 
@@ -1688,7 +1728,7 @@ Once you've read the guide, await further instructions.`;
   // Loaded in the editor: a reload (or back/forward) keeps things as they
   // were, the pane put back as it was left, unanimated; arriving here from
   // elsewhere is coming into the editor, and the agent grows out as above.
-  // Only a page opened at /edit is "loaded in the editor": one opened viewing (by a reload or not) and
+  // Only a page opened with #edit is "loaded in the editor": one opened viewing (by a reload or not) and
   // switched into it is coming into the editor (front.ts says which, ergaShell.loadedEditing).
   if (!editing()) setEditing(false);
   else if (window.ergaShell?.loadedEditing !== false && ["reload", "back_forward"].includes((performance.getEntriesByType("navigation")[0] as PerformanceNavigationTiming | undefined)?.type ?? "")) {
@@ -1701,6 +1741,6 @@ Once you've read the guide, await further instructions.`;
 
   started = true;
   presenceChanged();
-  window.ergaPage = { page, collab, toggleSource, captureView, setEditing, get state() { return currentState(); } };
+  window.ergaPage = { page, collab, toggleSource, captureView, setEditing, pagePath, openPage, get state() { return currentState(); } };
   window.ergaShell?.ready();
 })();

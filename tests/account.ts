@@ -50,7 +50,7 @@ try {
   }
   const made = await get("/new");
   const at = made.headers.get("location")!;
-  const id = ((await (await get(`${at.replace(/\/edit$/, "")}/api/name`)).json()) as { id: string }).id;
+  const id = ((await (await get(`${at.replace(/#edit$/, "")}/api/name`)).json()) as { id: string }).id;
   const editorHtml = await (await get(at)).text();
   expect(editorHtml.includes('data-erga-account="in"') && editorHtml.includes('name="erga-account"'), "the editor's page has it (for viewing) and is told the links for the editor's own (editing)", editorHtml.slice(0, 400));
   expect(JSON.parse(/name="erga-account" content="([^"]+)"/.exec(editorHtml)![1].replaceAll("&quot;", '"')).admin == "/admin", "an admin's editor menu has Admin");
@@ -58,7 +58,7 @@ try {
   expect(!docFile.includes("data-erga-account"), "a document's own files are left alone", docFile.slice(-400));
   // The front page: the viewer's frame until its first deploy is done, then the page itself, whose one corner is in its controls (worker/home.ts).
   const front = await (await get("/")).text();
-  const frameSrc = /<iframe id="frame" class="erga-view" src="([^"]+)"/.exec(front)?.[1].replaceAll("&amp;", "&");
+  const frameSrc = /<iframe id="frame" class="erga-view" (?:data-)?src="([^"]+)"/.exec(front)?.[1].replaceAll("&amp;", "&");
   if (frameSrc) {
     const framed = await (await fetch(frameSrc.replace(/^http:\/\/[^/]+/, root), { headers: { Host: new URL(frameSrc).host } })).text();
     expect(!framed.includes("data-erga-account"), "nor the front page's document, on its pages origin");
@@ -125,7 +125,7 @@ try {
   await p.screenshot(join(SHOTS, "account-editor.png"));
   await p.key("Escape");
   const eye = await p.eval<{ pressed: string | null; hidden: boolean; href: string | null }>(`({ pressed: document.getElementById("btn-edit").getAttribute("aria-pressed"), hidden: document.getElementById("btn-edit").hidden, href: document.getElementById("btn-edit").getAttribute("href") })`);
-  expect(!eye.hidden && eye.pressed == "true" && eye.href == at.replace(/\/edit$/, ""), "the pencil beside it, on, goes back to the viewer", { eye, at });
+  expect(!eye.hidden && eye.pressed == "true" && eye.href == at.replace(/#edit$/, ""), "the pencil beside it, on, goes back to the viewer", { eye, at });
   expect(await p.eval<boolean>(`document.getElementById("account").hidden`), "Escape closes it");
   ok("in the editor, your avatar opens the menu");
 
@@ -162,7 +162,7 @@ try {
   expect((await bounce()).every((v) => v == "none"), "editing, nothing bounces past its ends", await bounce());
   await p.eval(`window.__samePage = true`);
   await clickOn(p, "#btn-edit");
-  await until(async () => (await p.eval<string>("location.pathname")) == at.replace(/\/edit$/, "") && await visible(".erga-view-buttons") && !(await visible("#erga-editor")), 5000, "the pencil goes back to the viewer");
+  await until(async () => (await p.eval<string>("location.pathname + location.hash")) == at.replace(/#edit$/, "") && await visible(".erga-view-buttons") && !(await visible("#erga-editor")), 5000, "the pencil goes back to the viewer");
   await until(async () => (await h1()) != null, 5000, "the viewer's page shows");
   const viewingTop = await h1();
   expect((await bounce()).every((v) => v == "none") && (await bounce()).length >= 3, "nor viewing", await bounce());
@@ -170,10 +170,10 @@ try {
   expect(editingTop != null && viewingTop == editingTop, "the viewer shows, with the document where it was", { editingTop, viewingTop });
   await p.screenshot(join(SHOTS, "account-viewing-from-editor.png"));
   await clickOn(p, ".erga-edit-button");
-  await until(async () => (await p.eval<string>("location.pathname")) == at && await visible("#erga-editor") && !(await visible(".erga-view-buttons")), 5000, "the pencil goes back into the editor");
+  await until(async () => (await p.eval<string>("location.pathname + location.hash")) == at && await visible("#erga-editor") && !(await visible(".erga-view-buttons")), 5000, "the pencil goes back into the editor");
   expect(await p.eval<boolean>(`window.__samePage === true`), "and neither reloaded the page");
   await p.send("Runtime.evaluate", { expression: "history.back()" });
-  await until(async () => (await p.eval<string>("location.pathname")) == at.replace(/\/edit$/, "") && await visible(".erga-view-buttons"), 5000, "Back goes to the viewer too");
+  await until(async () => (await p.eval<string>("location.pathname + location.hash")) == at.replace(/#edit$/, "") && await visible(".erga-view-buttons"), 5000, "Back goes to the viewer too");
   ok("the pencil switches between viewing and editing without a reload, the document staying put");
 
   // The editor's breadcrumbs: Documents and the title on one baseline, the title's descenders (g, y, p) not clipped, light and dark;
@@ -193,14 +193,14 @@ try {
       scrollH: title.scrollHeight, clientH: title.clientHeight, ellipsis: title.scrollWidth > title.clientWidth };
   })()`);
   const crumbsAt = (await get("/new")).headers.get("location")!;
-  const crumbsId = ((await (await get(`${crumbsAt.replace(/\/edit$/, "")}/api/name`)).json()) as { id: string }).id;
+  const crumbsId = ((await (await get(`${crumbsAt.replace(/#edit$/, "")}/api/name`)).json()) as { id: string }).id;
   const retitle = async (title: string) => {
     const r = await get(`/d/${crumbsId}/api/name`, { method: "POST", headers: { "Content-Type": "application/json", Origin: root }, body: JSON.stringify({ title, slug: "gyp" }) });
     expect(r.ok, `renamed to ${title}`, await r.text());
   };
   await retitle("Gyp jogging plan");
   for (const dark of [false, true]) {
-    await p.open(`${root}/tester/gyp/edit`, { width: 1100, height: 720, scale: 2, dark, clear: false });
+    await p.open(`${root}/tester/gyp#edit`, { width: 1100, height: 720, scale: 2, dark, clear: false });
     await until(() => p.eval<boolean>(`document.getElementById("doc-title-text").textContent == "Gyp jogging plan"`), 15_000, "the editor shows the title");
     const m = await crumbs();
     expect(Math.abs(m.docs - m.title) < 0.5, `Documents and the title share a baseline (${dark ? "dark" : "light"})`, m);

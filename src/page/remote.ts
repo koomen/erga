@@ -17,6 +17,8 @@ export interface RemotePageConfig {
   /** The frame's origin: messages from anywhere else are ignored. */
   origin: string;
   kind: Kind;
+  /** The folder the page is in, inside the document ("" at its root): where its relative links and assets resolve. */
+  dir?: string;
   text: string;
   markdownHead: string;
   self: MarkAuthor;
@@ -38,6 +40,8 @@ export interface RemotePageConfig {
   onBackdrop: (b: Backdrop) => void;
   /** The page needs rendering again to show the latest change. */
   onStale: () => void;
+  /** A link on the page to another of the document's pages was followed (its path in the document). */
+  onOpen?: (path: string) => void;
 }
 
 const EMPTY: Snapshot = { title: "", column: 0, canPause: false, paused: false, fmt: { rect: null, blocker: null, has: { strong: false, em: false, code: false }, link: null } };
@@ -102,7 +106,7 @@ export class RemotePage {
         this.ready = true;
         this.authority.reset();
         const timescale = (globalThis as { __ergaTimescale?: number }).__ergaTimescale;
-        this.post({ type: "init", kind: this.kind, state: this.state.toJSON(), version: this.authority.version, markdownHead: c.markdownHead, self: c.self, tracking: this.tracking, ...(timescale ? { timescale } : {}) });
+        this.post({ type: "init", kind: this.kind, dir: c.dir ?? "", state: this.state.toJSON(), version: this.authority.version, markdownHead: c.markdownHead, self: c.self, tracking: this.tracking, ...(timescale ? { timescale } : {}) });
         for (const q of this.queue.splice(0)) this.post(q);
         return;
       }
@@ -144,6 +148,7 @@ export class RemotePage {
         return;
       }
       case "activity": if (m.kind == "focus" || m.kind == "key") c.onActivity(m.kind); return;
+      case "open": if (typeof m.path == "string" && m.path.length < 1000) c.onOpen?.(m.path); return;
       case "detached": case "styled": case "captured":
         this.waiting.get(m.id)?.(m);
         this.waiting.delete(m.id);

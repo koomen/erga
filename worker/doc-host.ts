@@ -57,7 +57,11 @@ interface OnDisk { path: string; slug: string; only?: boolean }
 
 interface Person { id: string; name: string }
 
-const FILE = "file:", META = "meta", STATE = "state";
+/** Storage keys: a file's bytes, a folder made as one (empty ones too), what the document is, the room's Yjs state. */
+const FILE = "file:", DIR = "dir:", META = "meta", STATE = "state";
+
+/** The new-document template's page (templates/doc), which a new page starts from. */
+const TEMPLATE = Object.values(import.meta.glob("../templates/doc/index.html", { query: "?raw", import: "default", eager: true }) as Record<string, string>)[0] ?? "";
 const AVATARS = "https://avatars.githubusercontent.com";
 
 export class DocHost extends DurableObject<Env> {
@@ -402,6 +406,27 @@ export class DocHost extends DurableObject<Env> {
       list: Effect.tryPromise({ try: async () => [...(await storage.list({ prefix: FILE })).keys()].map((k) => k.slice(FILE.length)), catch: storeError }),
       read: (path) => Effect.tryPromise({ try: async () => (await storage.get<Uint8Array>(FILE + path)) ?? null, catch: storeError }),
       write: (path, text) => Effect.tryPromise({ try: () => this.edited(path, text), catch: storeError }),
+      // Moving, deleting and folders are edits too: the document stays, and its row says when.
+      writeBytes: (path, bytes) => Effect.tryPromise({ try: async () => { await storage.put(FILE + path, bytes); await this.touch(); }, catch: storeError }),
+      remove: (path) => Effect.tryPromise({ try: async () => { if (await storage.delete(FILE + path)) await this.touch(); }, catch: storeError }),
+      folders: Effect.tryPromise({ try: async () => [...(await storage.list({ prefix: DIR })).keys()].map((k) => k.slice(DIR.length)), catch: storeError }),
+      mkdir: (path) => Effect.tryPromise({
+        try: async () => {
+          const all = path.split("/").map((_, i, parts) => parts.slice(0, i + 1).join("/"));
+          for (const d of all) await storage.put(DIR + d, true);
+          await this.touch();
+        },
+        catch: storeError,
+      }),
+      rmdir: (path) => Effect.tryPromise({
+        try: async () => {
+          const keys = [...(await storage.list({ prefix: FILE + path + "/" })).keys(), ...(await storage.list({ prefix: DIR + path + "/" })).keys(), DIR + path];
+          await storage.delete(keys.slice(0, 128));
+          for (let i = 128; i < keys.length; i += 128) await storage.delete(keys.slice(i, i + 128));
+          await this.touch();
+        },
+        catch: storeError,
+      }),
     });
     const state = StateStore.of({
       load: Effect.tryPromise({ try: async () => (await storage.get<Uint8Array>(STATE)) ?? null, catch: storeError }),
@@ -437,6 +462,8 @@ export class DocHost extends DurableObject<Env> {
       naming: (person) => naming({ login: person.id, test: person.id.startsWith("test-") }),
       // Sharing this document (or another), and for an admin the server's settings and users, as the person.
       serverTools: (person) => agentToolsFor({ dir: directoryOf(this.env), who: { login: person.id, test: person.id.startsWith("test-") }, here: this.idOf(meta) }),
+      // A new page in its file tree starts as a new document does.
+      newPage: TEMPLATE ? (path) => (path.endsWith(".md") ? plainMarkdown : TEMPLATE) : undefined,
     });
     const naming = namingFor(directoryOf(this.env), this.idOf(meta), () => titleOf(room.text(meta.index) ?? "", meta.index));
 
@@ -478,6 +505,7 @@ export class DocHost extends DurableObject<Env> {
       catchUp: async () => {
         const paths = new Set([...await Effect.runPromise(files.list), ...texts(room.doc).keys(), ...assets(room.doc).keys()]);
         for (const path of paths) await Effect.runPromise(room.fileChanged(path)).catch(() => {});
+        await Effect.runPromise(room.syncFolders).catch(() => {});
       },
       close: () => Effect.runPromise(Scope.close(scope, Exit.void)).then(host.dispose),
     };
@@ -507,6 +535,9 @@ interface Opened {
   notify: (msg: unknown) => void;
   close: () => Promise<void>;
 }
+
+/** A new Markdown page (a document whose page is index.md). */
+const plainMarkdown = "# Untitled\n\nStart writing here.\n";
 
 function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
   if (a.length != b.length) return false;

@@ -13,7 +13,8 @@ import * as Effect from "effect/Effect";
 import type { FromDisk, ToDisk } from "../dev/mirror";
 import { FileStore, StoreError } from "../room";
 
-type Ask = { t: "list" } | { t: "read"; path: string } | { t: "write"; path: string; text: string };
+type Ask = { t: "list" } | { t: "read"; path: string } | { t: "write"; path: string; text?: string; b64?: string }
+  | { t: "remove"; path: string } | { t: "folders" } | { t: "mkdir"; path: string } | { t: "rmdir"; path: string };
 
 export class DiskLink {
   private socket: WebSocket | null = null;
@@ -64,6 +65,12 @@ export class DiskLink {
       }),
       // A file anyone else adds beside a single file stays in the room, never on disk.
       write: (path, text) => only != null && path != only ? Effect.void : Effect.tryPromise({ try: () => this.ask({ t: "write", path, text }).then(() => {}), catch: fail }),
+      // The tree (a single file has none: tree operations refuse it before they get here).
+      writeBytes: (path, bytes) => Effect.tryPromise({ try: () => this.ask({ t: "write", path, b64: toBase64(bytes) }).then(() => {}), catch: fail }),
+      remove: (path) => Effect.tryPromise({ try: () => this.ask({ t: "remove", path }).then(() => {}), catch: fail }),
+      folders: only != null ? Effect.succeed([]) : Effect.tryPromise({ try: async () => (await this.ask({ t: "folders" })).dirs ?? [], catch: fail }),
+      mkdir: (path) => Effect.tryPromise({ try: () => this.ask({ t: "mkdir", path }).then(() => {}), catch: fail }),
+      rmdir: (path) => Effect.tryPromise({ try: () => this.ask({ t: "rmdir", path }).then(() => {}), catch: fail }),
     });
   }
 
@@ -93,4 +100,10 @@ export class DiskLink {
   private send(m: ToDisk): void {
     try { this.socket?.send(JSON.stringify(m)); } catch { /* gone */ }
   }
+}
+
+function toBase64(bytes: Uint8Array): string {
+  let s = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(s);
 }

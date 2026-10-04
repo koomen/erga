@@ -338,6 +338,10 @@ if (FETCH_EVERY > 0) setInterval(() => { mergeLock = mergeLock.then(fetchOrigin)
 
 // ---- screenshots ----------------------------------------------------------
 
+function removeShot(file: string) {
+  rmSync(join(SHOTS, basename(file)), { force: true });
+}
+
 function shotName(task: Task, ext = ".png") {
   return `task-${task.id}-${task.screenshots.length + 1}-${Date.now().toString(36)}${ext}`;
 }
@@ -512,7 +516,7 @@ async function cleanUp(task: Task, force: boolean) {
 
 const API = {
   about: "Local task queue for agents working in this repo. Every task gets a branch, a worktree and a preview port; the board at / updates live.",
-  cli: "development/task-queue/tq (run it with no arguments for its commands); it starts this server when it isn't running",
+  cli: "development/task-queue/tq (run it with no arguments for its commands); it starts this server when it isn't running. Screenshots: tq shot ID URL-or-FILE [caption] [--replace] (--replace removes the old ones first), tq unshot ID FILE|INDEX, tq unshot ID --all",
   statuses: {
     queued: "registered, not started",
     working: "an agent is on it",
@@ -539,6 +543,8 @@ const API = {
     "POST /api/tasks/:id/live {path?, command?}": `live mode: marks the task live (and working), runs its dev server with live reload (default command: ${LIVE}) unless that already runs, waits for it to answer, and opens a Chrome window of its own (own profile and DevTools port) on http://localhost:<port><path>, or brings the open one back to the front. Records it as chrome {pid, port, profile, target}. Returns the task.`,
     "GET /api/tasks/:id/look[?shot=1][&console=1]": "what the live task's Chrome window shows: {url, title, target, tabs, selection?, console? (errors and warnings; everything with console=1), screenshot?: a PNG's path (with shot=1)}",
     "POST /api/tasks/:id/screenshots": "attach a screenshot: a raw image body (Content-Type image/png, ?caption=...), or JSON {path, caption?} (a file on disk), or JSON {url, caption?, width?, height?, wait?: ms after load, fullPage?} (the queue takes it with headless Chrome)",
+    "DELETE /api/tasks/:id/screenshots/:file": "remove one screenshot (by its file name, or its 1-based index) and delete its file; any status but merging",
+    "DELETE /api/tasks/:id/screenshots": "remove all the task's screenshots and delete their files (for a fresh pass); any status but merging",
     "POST /api/tasks/:id/merge": "for a complete (or failed) task: status merging at once (202), then, in the background and one merge at a time, merge main into the branch (claude -p resolves conflicts), merge the branch into main, push, and remove the worktree and branch: status merged. A failed merge goes back to complete with error. Watch the task.",
     "POST /api/tasks/:id/discard": "drop the task: stops its preview (and a live task's Chrome window), removes its worktree and deletes its branch",
     "GET /api/history": `main's history, for the board's Branches column: {commits: the latest ${SHOWN} on main's first-parent line, newest first, each {sha, short, subject, at, task?: the task whose merge it is, remote: whether origin/main has it}, tasks: {id: {sha, short, index, remote}} for tasks merged in main's latest ${MATCHED}, unpushed, behind, origin}. origin/main is fetched every ${FETCH_EVERY || "(never)"}s (TASK_QUEUE_FETCH).`,
@@ -553,9 +559,11 @@ const TYPES: Record<string, string> = { ".png": "image/png", ".jpg": "image/jpeg
 async function handle(req: Request): Promise<Response> {
   const url = new URL(req.url);
   const path = url.pathname.replace(/\/$/, "") || "/";
-  const m = path.match(/^\/api\/tasks\/(\d+)(?:\/(\w+))?$/);
+  const m = path.match(/^\/api\/tasks\/(\d+)(?:\/(\w+)(?:\/([^/]+))?)?$/);
   const task = m ? find(Number(m[1])) : undefined;
   const action = m?.[2];
+  const sub = m?.[3] && decodeURIComponent(m[3]);
+  if (sub && action != "screenshots") return fail(404, `no route ${req.method} ${path} (GET /api lists them)`);
   if (m && !task) return fail(404, `no task ${m[1]}`);
   const body = async () => (req.headers.get("content-type")?.includes("json") ? await req.json() : {}) as Record<string, any>;
 
@@ -633,6 +641,23 @@ async function handle(req: Request): Promise<Response> {
     if (!(await chrome.alive(task.chrome))) return fail(409, `task ${task.id} has no Chrome window open: tq live ${task.id} opens one`);
     const shot = url.searchParams.get("shot") ? join(LOOKS, `task-${task.id}-${Date.now().toString(36)}.png`) : undefined;
     try { return json(await chrome.look(task.chrome!, { shot, console: !!url.searchParams.get("console") })); } catch (e) { return fail(500, (e as Error).message); }
+  }
+  if (task && action == "screenshots" && req.method == "DELETE") {
+    if (task.status == "merging") return fail(409, `task ${task.id} is merging`);
+    if (!sub) {
+      const n = task.screenshots.length;
+      for (const s of task.screenshots.splice(0)) removeShot(s.file);
+      touch(task, {}, n ? `Screenshots removed (${n})` : undefined);
+      return json(task);
+    }
+    // A 1-based index (as tq lists them), or the file name.
+    const i = /^\d+$/.test(sub) ? Number(sub) - 1 : task.screenshots.findIndex((s) => s.file == sub);
+    const shot = task.screenshots[i];
+    if (!shot) return fail(404, `task ${task.id} has no screenshot ${sub}`);
+    task.screenshots.splice(i, 1);
+    removeShot(shot.file);
+    touch(task, {}, `Screenshot removed: ${shot.caption ?? shot.file}`);
+    return json(task);
   }
   if (task && action == "screenshots" && req.method == "POST") {
     const type = req.headers.get("content-type") ?? "";
