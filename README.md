@@ -740,8 +740,9 @@ new lines as they arrive (for a live log), and others put there with
 `GET /api/deploys/version` (anyone) is the release the server runs. The
 dashboard is task #39's **/source**: the commits, one dot column beside them
 (a solid green circle: on main too; a hollow orange one: only on staging),
-and each target's deploys beside the commit each deployed (the latest, with
-a count that opens the rest; live, deployed, running, failed or cancelled),
+and each target's deploys beside the commit each deployed (one for each
+commit: the running one, else the live one, else the newest; its state as
+plain text, and only the live one with a background),
 any deploy's log, past or live, in a modal;
 `/admin/deploys` redirects there.
 

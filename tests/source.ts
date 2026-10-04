@@ -276,13 +276,17 @@ try {
   expect((await p.eval<string>(`document.getElementById("log-meta").textContent`)).includes("cancelled"), "with its state");
   await p.screenshot(join(SHOTS, "source-past-log.png"));
   await click("#log-close");
-  // Two deploys of one commit: the latest, and a count that opens the rest.
+  // Two deploys of one commit: the dashboard shows one, the newest (the history keeps both).
   await api("/api/deploys/staging", { method: "POST", headers: { Origin: origin } });
   await until(async () => (await stagingTarget()).state == "failed" && (await (await api("/api/deploys/staging/history")).json()).deploys.filter((d: { commit: string }) => d.commit == failing).length == 2, 60_000, "a redeploy of the same commit");
-  await until(async () => p.eval(`!!document.querySelector('#grid .row[data-sha="${failing}"] button.more')`), 10_000, "the row shows a count");
-  await click(`#grid .row[data-sha="${failing}"] button.more`);
-  expect(await p.eval(`document.querySelectorAll('#grid .sub[data-sub="${failing}"] .stack[data-target=staging] .dep').length == 1`), "which opens the older deploy under it");
-  ok("deploy history: a push while a deploy runs cancels it; a failed build; past logs; many deploys of one commit");
+  const newest = (await (await api("/api/deploys/staging/history")).json()).deploys[0].id as string;
+  await until(async () => p.eval(`(() => { const b = document.querySelectorAll('#grid .row[data-sha="${failing}"] .deps[data-target=staging] .dep'); return b.length == 1 && b[0].dataset.deploy == ${JSON.stringify(newest)}; })()`), 10_000, "one entry per commit per target: the newest");
+  // Plain text: no pill shapes; only the live deploy has a background, a small-radius rectangle.
+  const looks = await p.eval<{ state: string; radius: string; bg: string; border: string }[]>(`[...document.querySelectorAll("#grid .dep")].map((d) => { const c = getComputedStyle(d); return { state: d.className, radius: c.borderTopLeftRadius, bg: c.backgroundColor, border: c.borderTopStyle }; })`);
+  expect(looks.every((l) => parseFloat(l.radius) <= 6 && l.border == "none"), "no pills: small radius, no borders", looks);
+  expect(looks.every((l) => l.state.includes("live") == (l.bg != "rgba(0, 0, 0, 0)")), "only the live deploy has a background", looks);
+  expect(!(await p.eval(`!!document.querySelector("#grid .more, #grid .sub")`)), "no counts, nothing to open");
+  ok("deploy history: a push while a deploy runs cancels it; a failed build; past logs; one entry per commit per target");
   await until(async () => (await state()).mirror.includes("Up to date"), 10_000, "the mirror catches up", state);
   await p.open(`${root}/source`, { width: 1280, height: 900, scale: 2, clear: false, dark: true });
   await until(async () => (await state()).rows.length > 0, 10_000, "the list draws (dark)");

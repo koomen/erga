@@ -6,10 +6,11 @@
 // with no header: every commit listed is on staging; a solid green circle is
 // on main too, a hollow orange circle only on staging. Then two deploy
 // columns, staging and production: each target's deploys (GET
-// /api/deploys?history=100), beside the commit each deployed, with a badge
-// for its state (live, deployed, failed, cancelled, or running) and when; a
-// commit deployed more than once shows its latest, with a count that opens
-// the rest. Each target's status is in its column's head. Any deploy opens
+// /api/deploys?history=100), one beside each commit it deployed: its state
+// as plain text (live, deployed, failed, cancelled, or running) and when.
+// A commit deployed more than once shows one deploy: the running one, else
+// the live one, else the newest (a redeploy cancels the attempt before it).
+// Only the live deploy has a background. Each target's status is in its column's head. Any deploy opens
 // its log, past or live (GET /api/deploys/<name>/log?deploy=<id>, then
 // { type: "deploy-log" } events). Merge moves main forward to staging's
 // head, or to the commit a row's "Merge to here" names. Also the GitHub
@@ -49,10 +50,10 @@ const STYLE = `
   .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; box-sizing: border-box; flex: none; }
   .dot.staging-only { background: var(--bg); border: 2px solid var(--only-staging); }
   .dot.on-main { background: var(--on-main); border: 2px solid var(--on-main); }
-  .grid { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto auto 70px 148px 148px; align-items: center; }
+  .grid { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto auto 70px 132px 132px; align-items: center; }
   .grid > .head { position: sticky; top: 0; z-index: 2; background: var(--bg); height: 44px; display: flex; align-items: flex-end; padding-bottom: 6px; box-sizing: border-box; border-bottom: 1px solid var(--rule);
     font-size: 11.5px; font-weight: 600; letter-spacing: .02em; color: var(--soft); white-space: nowrap; }
-  .grid > .head.deploy { justify-content: flex-start; padding-left: 4px; }
+  .grid > .head.deploy { justify-content: flex-start; padding-left: 2px; }
   .target { display: inline-flex; flex-direction: column; align-items: flex-start; gap: 2px; max-width: 144px; border: 0; background: transparent; color: inherit; font: inherit; padding: 2px 6px; border-radius: 6px; cursor: pointer; }
   .target:hover { background: color-mix(in srgb, var(--chrome) 12%, transparent); }
   .target b { font-weight: 650; color: var(--fg-strong); font-size: 11.5px; }
@@ -84,39 +85,30 @@ const STYLE = `
   .who { padding: 0 8px; font-size: 12px; color: var(--soft); max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .sha { padding: 0 6px; font: 11.5px var(--font-mono); color: var(--chrome); }
   .row time { margin: 0; justify-content: flex-end; padding-right: 8px; font-size: 12px; color: var(--soft); }
-  .deps { justify-content: flex-start; gap: 4px; padding-left: 10px; }
-  /* A deploy: its state as a badge, and when. Live: solid green. Deployed before: green outline. Running: orange, turning.
-     Failed: red outline. Cancelled: grey, dashed, struck through. */
-  .dep { display: inline-flex; align-items: center; gap: 5px; height: 20px; padding: 0 7px; border: 0; border-radius: 999px; font: 600 11px var(--font-text); white-space: nowrap; cursor: pointer;
-    color: var(--on-main); background: transparent; box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--on-main) 70%, transparent); }
-  .dep:hover { filter: brightness(1.08); background: color-mix(in srgb, var(--chrome) 10%, transparent); }
+  /* A deploy, beside the commit it deployed: its state as plain text, then when. Colour only where it says something:
+     muted for deployed, red for failed, orange with a turning dot while it runs, struck through for cancelled.
+     Only the live one has a background: a low-contrast rounded rectangle. */
+  .deps { min-width: 0; padding: 0 6px 0 2px; }
+  .dep { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; width: 100%; min-width: 0; height: 22px; padding: 0 6px; border: 0; border-radius: 5px; background: transparent;
+    color: var(--soft); font: 500 12px var(--font-text); text-align: left; white-space: nowrap; cursor: pointer; }
+  .dep:hover { background: color-mix(in srgb, var(--chrome) 10%, transparent); }
   .dep:focus-visible { outline: 2px solid var(--caret); outline-offset: 1px; }
-  .dep.live { color: var(--bg); background: var(--on-main); box-shadow: none; }
-  .dep.live:hover { background: var(--on-main); }
-  .dep.failed { color: var(--bad); box-shadow: inset 0 0 0 1.5px var(--bad); }
-  .dep.cancelled { color: var(--soft); box-shadow: none; border: 1.5px dashed var(--chrome); height: 20px; box-sizing: border-box; padding: 0 6px; }
-  .dep.cancelled .w { text-decoration: line-through; text-decoration-thickness: 1px; }
-  .dep.building, .dep.deploying { color: var(--only-staging); box-shadow: inset 0 0 0 1.5px var(--only-staging); }
-  .dep.building::before, .dep.deploying::before { content: ""; width: 5px; height: 5px; border-radius: 50%; border: 2px solid var(--only-staging); border-right-color: transparent; animation: spin .8s linear infinite; }
-  .dep-at { font-size: 11px; color: var(--soft); white-space: nowrap; font-variant-numeric: tabular-nums; }
-  .more { height: 18px; min-width: 22px; padding: 0 5px; border: 1px solid var(--rule); border-radius: 999px; background: var(--bg); color: var(--soft); font: 600 10.5px var(--font-text); cursor: pointer; }
-  .more:hover, .more[aria-expanded="true"] { color: var(--fg-strong); border-color: color-mix(in srgb, var(--chrome) 55%, var(--rule)); }
-  .live-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--on-main); flex: none; }
-  .sub { display: contents; }
-  .sub > * { padding: 2px 0 8px; }
-  .sub > .rail { padding: 0; align-self: stretch; }
-  .sub .stack { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; padding-left: 10px; }
-  .sub .stack > span { display: inline-flex; align-items: center; gap: 4px; }
-  .legend .dep { cursor: default; height: 18px; font-size: 10.5px; }
-  .legend .dep.cancelled { height: 18px; }
-  .legend .sep { width: 1px; height: 14px; background: var(--rule); }
+  .dep .w { display: inline-flex; align-items: center; gap: 6px; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .dep .at { font-size: 11.5px; color: var(--chrome); font-variant-numeric: tabular-nums; }
+  .dep.live { background: color-mix(in srgb, var(--on-main) 11%, transparent); color: var(--on-main); font-weight: 600; }
+  .dep.live:hover { background: color-mix(in srgb, var(--on-main) 16%, transparent); }
+  .dep.live .at { color: color-mix(in srgb, var(--on-main) 70%, var(--soft)); }
+  .dep.failed .w { color: var(--bad); }
+  .dep.cancelled .w { color: var(--chrome); text-decoration: line-through; text-decoration-thickness: 1px; }
+  .dep.building .w, .dep.deploying .w { color: var(--only-staging); }
+  .dep.building .w::before, .dep.deploying .w::before { content: ""; flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--only-staging); animation: pulse 1.2s ease-in-out infinite; }
+  @keyframes pulse { 50% { opacity: .25; } }
   .none { padding: 18px 4px; font-size: 13.5px; color: var(--soft); grid-column: 1 / -1; }
   .older { grid-column: 1 / -1; padding: 8px 4px 0; font-size: 12px; color: var(--soft); display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; }
   .older span { display: inline-flex; align-items: center; gap: 6px; }
-  @media (max-width: 760px) { .grid { grid-template-columns: 22px minmax(0, 1fr) auto 84px 84px; } .who, .grid > .head.who-h, .row time, .grid > .head.time-h { display: none; } .target { max-width: 82px; } .target b { font-size: 10.5px; } .target .st span { display: none; }
-    .dep { padding: 0 6px; font-size: 10.5px; gap: 4px; } .dep-at { display: none; } .legend .dep { display: none; } .legend .sep { display: none; }
-    /* Short words on a phone: live, ok, failed, run, stop. */
-    .grid .dep[data-s] .w { display: none; } .grid .dep[data-s]::after { content: attr(data-s); } .grid .dep.cancelled[data-s]::after { text-decoration: line-through; } .deps { padding-left: 6px; } }
+  .older .dep { display: inline-grid; width: auto; }
+  @media (max-width: 760px) { .grid { grid-template-columns: 22px minmax(0, 1fr) auto 80px 80px; } .who, .grid > .head.who-h, .row time, .grid > .head.time-h { display: none; } .target { max-width: 82px; } .target b { font-size: 10.5px; } .target .st span { display: none; }
+    .dep { font-size: 11.5px; padding: 0 5px; } .dep .at { display: none; } }
   .boxes { display: grid; grid-template-columns: 1fr 1.3fr; gap: 18px; margin-top: 18px; }
   @media (max-width: 760px) { .boxes { grid-template-columns: 1fr; } }
   .box { border: 1px solid var(--rule); border-radius: 12px; padding: 14px 16px; min-width: 0; }
@@ -167,8 +159,7 @@ export function sourcePage(c: SourcePageConfig): Response {
   </header>
   <p class="hint" id="merge-hint" role="status"></p>
   <section class="card" aria-label="Commits">
-    <div class="legend"><span><i class="dot staging-only"></i>only on staging</span><span><i class="dot on-main"></i>on main too</span><i class="sep"></i>
-      <span class="dep live"><span class="w">live</span></span><span class="dep deployed"><span class="w">deployed</span></span><span class="dep deploying"><span class="w">running</span></span><span class="dep failed"><span class="w">failed</span></span><span class="dep cancelled"><span class="w">cancelled</span></span></div>
+    <div class="legend"><span><i class="dot staging-only"></i>only on staging</span><span><i class="dot on-main"></i>on main too</span></div>
     <div class="grid" id="grid">
       <div class="head"></div>
       <div class="head" style="padding-left:6px">Commit</div><div class="head who-h"></div><div class="head"></div><div class="head time-h"></div>
@@ -212,8 +203,6 @@ git push erga HEAD:staging</code></pre>
   const TARGETS = ["staging", "production"];
   let view = null, deploys = null, busy = false, drawn = false;
   const grid = document.getElementById("grid");
-  /** Commits whose older deploys are shown (the count opened). */
-  const expanded = new Set();
   const running = (state) => state == "building" || state == "deploying";
   const short = (t) => {
     if (!t) return "";
@@ -232,27 +221,27 @@ git push erga HEAD:staging</code></pre>
     for (const r of targetOf(name)?.history ?? []) { if (!m.has(r.commit)) m.set(r.commit, []); m.get(r.commit).push(r); }
     return m;
   }
-  const word = (r) => r.live ? "live" : r.state;
+  /** The one deploy a commit shows in a target's column: the running one, else the live one, else the newest. */
+  function shown(list) {
+    if (running(list[0].state)) return list[0];
+    return list.find((r) => r.live) ?? list[0];
+  }
+  const WORD = { building: "building", deploying: "deploying", deployed: "deployed", failed: "failed", cancelled: "cancelled" };
   function badge(name, r) {
     const t = targetOf(name);
     const tip = (r.live ? "Live on " + (t?.host ?? name) + ". " : "") + r.state[0].toUpperCase() + r.state.slice(1) + " · " + r.commit.slice(0, 7) + " · " + r.trigger + "\\n" +
       "Started " + new Date(r.started).toLocaleString() + (r.ended ? ", took " + took(r) : ", running for " + took(r)) + (r.error ? "\\n" + r.error : "") + "\\nClick for its log.";
-    return '<button class="dep ' + esc(r.state) + (r.live ? " live" : "") + '" type="button" data-target="' + name + '" data-deploy="' + esc(r.id) + '" data-s="' + ({ live: "live", deployed: "ok", failed: "failed", cancelled: "stop", building: "run", deploying: "run" })[word(r)] + '" title="' + esc(tip) + '"><span class="w">' + esc(word(r)) + "</span></button>";
+    return '<button class="dep ' + esc(r.state) + (r.live ? " live" : "") + '" type="button" data-target="' + name + '" data-deploy="' + esc(r.id) + '" title="' + esc(tip) + '">' +
+      '<span class="w">' + esc(r.live ? "live" : WORD[r.state] || r.state) + '</span><span class="at">' + short(r.started) + "</span></button>";
   }
-  /** What a target shows on a commit's row: its latest deploy of it (and that the live one is among the rest), and how many more. */
+  /** What a target shows on a commit's row: one deploy, or nothing. */
   function deployCell(name, sha, groups) {
     const list = groups.get(sha);
-    if (!list) {
-      // A server without the history: whether the commit is live, as before.
-      const t = targetOf(name);
-      if (t && !t.history && (t.deployed ?? (t.state == "deployed" ? t.commit : null)) == sha) return '<span class="dep live" title="Live on ' + esc(t.host) + '"><span class="w">live</span></span>';
-      return "";
-    }
-    const [latest, ...rest] = list;
-    const liveRest = rest.some((r) => r.live);
-    return (liveRest ? '<i class="live-dot" title="An older deploy of this commit is live: open the count"></i>' : "") + badge(name, latest) +
-      '<span class="dep-at">' + short(latest.started) + "</span>" +
-      (rest.length ? '<button class="more" type="button" data-more="' + sha + '" aria-expanded="' + expanded.has(sha) + '" title="' + rest.length + " more deploy" + (rest.length == 1 ? "" : "s") + ' of this commit">+' + rest.length + "</button>" : "");
+    if (list) return badge(name, shown(list));
+    // A server without the history: whether the commit is live, as before.
+    const t = targetOf(name);
+    if (t && !t.history && (t.deployed ?? (t.state == "deployed" ? t.commit : null)) == sha) return '<span class="dep live" title="Live on ' + esc(t.host) + '"><span class="w">live</span><span class="at"></span></span>';
+    return "";
   }
 
   function render() {
@@ -265,7 +254,6 @@ git push erga HEAD:staging</code></pre>
     const rows = new Map([...grid.querySelectorAll(".row")].map((r) => [r.dataset.sha, r]));
     const want = new Set(commits.map((x) => x.sha));
     for (const [sha, r] of rows) if (!want.has(sha)) r.remove();
-    grid.querySelectorAll(".sub").forEach((x) => x.remove());
     grid.querySelector(".none.empty")?.remove();
     grid.querySelector(".older")?.remove();
     if (!commits.length) { grid.insertAdjacentHTML("beforeend", '<div class="none empty">No commits yet. Push one: git push erga HEAD:staging</div>'); }
@@ -285,21 +273,12 @@ git push erga HEAD:staging</code></pre>
         TARGETS.map((n) => '<span class="deps" data-target="' + n + '">' + deployCell(n, x.sha, groups[n]) + "</span>").join("");
       grid.insertBefore(r, prev ? prev.nextSibling : document.getElementById("target-production").parentElement.nextSibling);
       prev = r;
-      // The count opened: the commit's older deploys, under it, in each target's column.
-      if (expanded.has(x.sha) && TARGETS.some((n) => (groups[n].get(x.sha)?.length ?? 0) > 1)) {
-        const sub = document.createElement("div");
-        sub.className = "sub"; sub.dataset.sub = x.sha;
-        sub.innerHTML = '<span class="rail ' + (down ? "up down " : "") + (next?.inMain ? "on-main" : "") + '"></span><span></span><span class="who"></span><span></span><time></time>' + TARGETS.map((n) => '<span class="stack" data-target="' + n + '">' +
-          (groups[n].get(x.sha) ?? []).slice(1).map((d) => "<span>" + badge(n, d) + '<span class="dep-at">' + short(d.started) + "</span></span>").join("") + "</span>").join("");
-        grid.insertBefore(sub, r.nextSibling);
-        prev = sub;
-      }
     });
     // Deploys of commits further down than the list goes, and where a target is live if it's there.
     const older = TARGETS.map((n) => {
       const t = targetOf(n), away = [...groups[n].entries()].filter(([sha]) => !want.has(sha));
       if (!t) return "";
-      if (away.length) return '<span><b>' + esc(n) + "</b> " + away.length + " older commit" + (away.length == 1 ? "" : "s") + " deployed, latest " + badge(n, away[0][1][0]) + "</span>";
+      if (away.length) return '<span><b>' + esc(n) + "</b> " + away.length + " older commit" + (away.length == 1 ? "" : "s") + " deployed, latest " + badge(n, shown(away[0][1])) + "</span>";
       const live = t.deployed ?? (t.state == "deployed" ? t.commit : null);
       return live && !want.has(live) && !t.history ? "<span>" + esc(n) + " is live on " + esc(live.slice(0, 7)) + ", further down</span>" : "";
     }).filter(Boolean);
@@ -408,8 +387,6 @@ git push erga HEAD:staging</code></pre>
   grid.addEventListener("click", (e) => {
     const d = e.target.closest("button[data-deploy]");
     if (d) { openLog(d.dataset.target, d.dataset.deploy); return; }
-    const more = e.target.closest("button[data-more]");
-    if (more) { const sha = more.dataset.more; expanded.has(sha) ? expanded.delete(sha) : expanded.add(sha); render(); grid.querySelector('button[data-more="' + sha + '"]')?.focus(); }
   });
 
   const hint = document.getElementById("merge-hint"), mergeBtn = document.getElementById("merge");
