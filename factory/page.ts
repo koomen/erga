@@ -5,7 +5,7 @@
 // is finishing, Merge off, with the reason; merged tasks leave the board, and the Source page
 // shows staging); a card per task, its
 // detail on a click (the ask, the summary, the preview, the branch, the log,
-// the screenshots), with Merge, Discard and new instructions; live, over
+// the screenshots, at the top in a grid, a click to enlarge one), with Merge, Discard and new instructions; live, over
 // /api/factory/events. Dependencies between tasks as on the local board: a
 // chip on the card ("waiting for #12"), blocked tasks at the bottom of
 // Queued, Merge (and Start) off with the reason, and a Dependencies section
@@ -83,8 +83,11 @@ export const BOARD_STYLE = `
   .dlg section { margin-top: 18px; }
   .dlg h4 { margin: 0 0 6px; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
   .text { white-space: pre-wrap; overflow-wrap: anywhere; background: var(--panel); border-radius: 8px; padding: 10px 12px; font-size: 14px; line-height: 1.5; }
-  .shots { display: grid; gap: 12px; }
-  .shots figure { margin: 0; } .shots img { width: 100%; border: 1px solid var(--line); border-radius: 6px; }
+  .shots { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+  .shots figure { margin: 0; min-width: 0; cursor: zoom-in; } .shots img { display: block; width: 100%; border: 1px solid var(--line); border-radius: 6px; }
+  .shots figure:not(.big) img { aspect-ratio: 16 / 10; object-fit: cover; object-position: top; }
+  .shots figure.big { grid-column: 1 / -1; grid-row: 1; cursor: zoom-out; }
+  .shots figure.big img { max-height: calc(100vh - 140px); object-fit: contain; background: var(--panel); }
   .shots figcaption { color: var(--muted); font-size: 12px; margin-top: 4px; }
   .log { font: 12px/1.5 ui-monospace, monospace; max-height: 260px; overflow: auto; background: var(--panel); border-radius: 6px; padding: 8px 10px; }
   .log div { white-space: pre-wrap; overflow-wrap: anywhere; } .log time { color: var(--muted); margin: 0 8px 0 0; font-size: inherit; }
@@ -136,7 +139,7 @@ const COLUMNS = [
   { title: "Ready to merge", statuses: ["complete"] },
   { title: "Merging", statuses: ["merging", "needs agent"] },
 ];
-let tasks = [], info = null, openId = null, depError = null, live = "connecting";
+let tasks = [], info = null, openId = null, depError = null, bigShot = null, live = "connecting";
 const showLive = () => { const el = $("live"); if (el) { el.textContent = live; el.classList.toggle("on", live == "live"); } };
 const STATUS = { queued: "queued", working: "working", complete: "ready to merge", merging: "merging", "needs agent": "needs agent", merged: "merged", failed: "failed", discarded: "discarded" };
 /** A status as a class name ("needs agent": needs-agent). */
@@ -243,7 +246,8 @@ function renderDialog() {
   const t = tasks.find((x) => x.id == openId);
   const d = $("dlg");
   if (!t) { d.close(); return; }
-  const shots = t.screenshots.map((s) => '<figure><img src="/api/factory/shots/' + esc(s.file) + '" alt=""><figcaption>' + esc(s.caption) + '</figcaption></figure>').join("");
+  // Click a screenshot to enlarge it to the modal's width (on the first row), again to put it back in the grid.
+  const shots = t.screenshots.map((s) => '<figure data-act="shot" data-file="' + esc(s.file) + '"' + (s.file == bigShot ? ' class="big"' : "") + ' title="' + (s.file == bigShot ? "Click to shrink" : "Click to enlarge") + '"><img src="/api/factory/shots/' + esc(s.file) + '" alt=""><figcaption>' + esc(s.caption) + '</figcaption></figure>').join("");
   const log = t.log.map((l) => '<div><time>' + new Date(l.at).toLocaleTimeString() + '</time>' + esc(l.message) + '</div>').join("");
   const revisable = ["complete", "failed"].includes(t.status);
   const keep = d.querySelector("#instructions")?.value || "";
@@ -252,12 +256,12 @@ function renderDialog() {
     '<span class="branch">' + esc(t.branch) + (t.base ? " from staging at " + esc(t.base.slice(0, 10)) : "") + '</span>' +
     (t.mergeCommit ? '<span class="muted">merged as ' + esc(t.mergeCommit.slice(0, 10)) + '</span>' : "") + (t.vm ? '<span class="muted">VM ' + esc(t.vm) + '</span>' : "") + '</div>' +
     actions(t, true) +
+    (shots ? '<section><h4>Screenshots</h4><div class="shots">' + shots + '</div></section>' : "") +
     (t.error ? '<section><h4>Error</h4><div class="text" style="color:var(--bad)">' + esc(t.error) + '</div></section>' : "") +
     depsSection(t) +
     (t.summary ? '<section><h4>Summary</h4><div class="text">' + esc(t.summary) + '</div></section>' : "") +
     '<section><h4>The ask</h4><div class="text">' + esc(t.description) + '</div></section>' +
     (revisable ? '<section><h4>More instructions</h4><textarea id="instructions" placeholder="What Claude Code should change next">' + esc(keep) + '</textarea><div class="row"><span class="why" id="revise-why"></span><button class="primary" data-act="revise" data-id="' + t.id + '">Send to Claude Code</button></div></section>' : "") +
-    (shots ? '<section><h4>Screenshots</h4><div class="shots">' + shots + '</div></section>' : "") +
     '<section><h4>Log</h4><div class="log" id="task-log">' + log + '</div></section></div>';
   const l = $("task-log"); if (l) l.scrollTop = l.scrollHeight;
   if (!d.open) d.showModal();
@@ -359,11 +363,12 @@ function upsert(t) {
 document.addEventListener("click", async (e) => {
   const el = e.target.closest("[data-act], [data-open]");
   if (!el) { if (e.target.id == "dlg" || e.target.id == "form") e.target.close(); return; }
-  if (el.dataset.open && !el.dataset.act) { openId = Number(el.dataset.open); renderDialog(); return; }
+  if (el.dataset.open && !el.dataset.act) { openId = Number(el.dataset.open); bigShot = null; renderDialog(); return; }
   e.stopPropagation();
   const id = Number(el.dataset.id), act = el.dataset.act;
   try {
     if (act == "close") { openId = null; $("dlg").close(); }
+    else if (act == "shot") { bigShot = bigShot == el.dataset.file ? null : el.dataset.file; renderDialog(); $("dlg").querySelector(".shots figure.big")?.scrollIntoView({ block: "nearest" }); }
     else if (act == "cancel") $("form").close();
     else if (act == "new") newTask();
     else if (act == "claude") claudeDialog();
@@ -385,7 +390,7 @@ document.addEventListener("click", async (e) => {
     if (act == "revise") $("revise-why").textContent = err.message; else alert(err.message);
   }
 });
-$("dlg").addEventListener("close", () => { openId = null; });
+$("dlg").addEventListener("close", () => { openId = null; bigShot = null; });
 
 async function load() {
   [info, tasks] = await Promise.all([api(""), api("/tasks")]);
