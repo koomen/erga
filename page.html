@@ -104,8 +104,6 @@
     .refresh-pill[hidden] { display: none; }
     .refresh-pill svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; animation: agent-spin 1.6s linear infinite; }
     .refresh-pill b { font-weight: 600; color: var(--caret); }
-    /* A control that's on (tracking, paused, editing, its card open) is blue, nothing more. */
-    .chrome-top :is(.icon-btn[aria-pressed="true"], .icon-btn[aria-expanded="true"]), .chrome-top :is(.icon-btn[aria-pressed="true"], .icon-btn[aria-expanded="true"]):hover { color: var(--caret); background: transparent; }
     /* Pausing the page: the button shows what clicking it does (pause, or play to resume). */
     #btn-pause .i-play, #btn-pause[aria-pressed="true"] .i-pause { display: none; }
     #btn-pause[aria-pressed="true"] .i-play { display: block; }
@@ -250,23 +248,6 @@
     .account a:hover, .account a:focus-visible { background: color-mix(in srgb, var(--chrome) 14%, transparent); outline: none; }
     @media (pointer: coarse) { .account a { padding: 10px 12px; } }
     .avatar.me[aria-expanded="true"]::before { display: none; }
-    /* Share with an external agent. */
-    .share { width: min(400px, calc(100vw - 32px)); }
-    .share h2 { margin: 0 0 6px; font: 600 14px/1.3 var(--font-text); color: var(--fg-strong, var(--fg)); }
-    .share p { margin: 0 0 10px; }
-    .share textarea {
-      display: block; width: 100%; box-sizing: border-box; height: 168px; resize: vertical; margin: 0;
-      font: 11.5px/1.5 var(--font-mono); color: var(--fg); background: var(--code-bg); border: 1px solid var(--panel-border);
-      border-radius: 8px; padding: 8px 10px;
-    }
-    .share-actions { display: flex; gap: 8px; align-items: center; margin: 10px 0 0; }
-    .share-actions button {
-      font: 600 12.5px var(--font-text); border-radius: 7px; padding: 6px 12px; cursor: pointer;
-      border: 1px solid var(--panel-border); background: transparent; color: var(--fg);
-    }
-    .share-actions .share-primary { background: var(--caret); border-color: var(--caret); color: #fff; }
-    .share-actions button[aria-disabled="true"] { opacity: 0.5; cursor: default; }
-    .share-status { font-size: 12px; color: var(--soft); }
     /* Sharing with people: adding someone, who has it (each with their role), and anyone with the link. Each change is saved as it's made. */
     .sharing-add { display: flex; gap: 6px; align-items: center; margin: 4px 0 10px; }
     .sharing-add .naming-input { flex: 1; min-width: 0; }
@@ -283,8 +264,6 @@
     .sharing-list .remove:hover { color: var(--chrome-hover); background: color-mix(in srgb, var(--chrome) 12%, transparent); }
     .sharing-anyone { display: flex; align-items: center; gap: 8px; }
     .sharing-anyone label { flex: 1; color: var(--fg); }
-    .share .share-note { margin: 10px 0 0; font-size: 12px; }
-    .share .share-note a { color: inherit; }
     .msg-tool .via { font-weight: 600; }
     /* A person's agent: a small badge on their avatar's lower right, spinning while it works. */
     .person { position: relative; display: grid; }
@@ -434,18 +413,6 @@
     <a role="menuitem" id="account-settings" href="/settings">Settings</a>
     <a role="menuitem" id="account-admin" href="/admin" hidden>Admin settings</a>
     <a role="menuitem" id="account-out" href="/auth/logout">Sign out</a>
-  </div>
-
-  <div id="share" class="help share" hidden role="dialog" aria-labelledby="share-title">
-    <h2 id="share-title">Let another agent edit this page</h2>
-    <p>Paste this into an agent that can run commands on this computer (Claude Code, Codex…), then explain what you want it to do.</p>
-    <textarea id="share-prompt" readonly spellcheck="false" aria-label="Prompt for the other agent"></textarea>
-    <div class="share-actions">
-      <button type="button" id="share-copy" class="share-primary">Copy prompt</button>
-      <button type="button" id="share-rotate">New token</button>
-      <span id="share-status" class="share-status" role="status" aria-live="polite"></span>
-    </div>
-    <p class="share-note">Anyone with this token can act as you on Erga: edit this document as your agent, and your other documents too. New token turns the old one off; <a href="/settings" target="_blank">your settings</a> lists and revokes them all.</p>
   </div>
 
   <div id="sharing" class="help share sharing" hidden role="dialog" aria-labelledby="sharing-title">

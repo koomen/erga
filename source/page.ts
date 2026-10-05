@@ -13,7 +13,11 @@
 // The dashboard:
 //
 // One list: staging's history, newest first (staging is always at or ahead
-// of main, so it holds every commit main has). Beside it, one dot column,
+// of main, so it holds every commit main has). When staging is far ahead, a
+// break ("… N more commits only on staging …") leaves commits out: above it,
+// staging's head and the 10 before it; below it, the 5 commits just after
+// main's head, then main's head and the 5 before it. The break shows only
+// when it leaves at least one commit out (17 or more ahead). Beside it, one dot column,
 // with no header: every commit listed is on staging; a solid green circle is
 // on main too, a hollow orange circle only on staging. Then two deploy
 // columns, staging and production: each target's deploys (GET
@@ -117,6 +121,11 @@ const SOURCE_STYLE = `
   .dep.building .w, .dep.deploying .w { color: var(--only-staging); }
   .dep.building .w::before, .dep.deploying .w::before { content: ""; flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--only-staging); animation: pulse 1.2s ease-in-out infinite; }
   @keyframes pulse { 50% { opacity: .25; } }
+  /* The break, when staging is far ahead of main: a dashed rail and how many commits it leaves out. */
+  .gap { display: contents; }
+  .gap > * { height: var(--row); display: flex; align-items: center; }
+  .gap .rail::before { content: ""; position: absolute; left: calc(50% - 1px); top: 0; bottom: 0; width: 0; height: auto; display: block; border-left: 2px dashed var(--only-staging); background: none; opacity: .5; }
+  .gap .gap-text { grid-column: 2 / -1; padding: 0 6px; font: 12.5px var(--font-text); color: var(--soft); border-block: 1px dashed var(--rule); box-sizing: border-box; }
   .none { padding: 18px 4px; font-size: 13.5px; color: var(--soft); grid-column: 1 / -1; }
   @media (max-width: 760px) { .grid { grid-template-columns: 22px minmax(0, 1fr) auto 80px 80px; } .who, .grid > .head.who-h, .row time, .grid > .head.time-h { display: none; } .target { max-width: 82px; } .target b { font-size: 10.5px; } .target .st span { display: none; }
     .dep { font-size: 11.5px; padding: 0 5px; } .dep .at { display: none; } }
@@ -199,6 +208,8 @@ const SOURCE_SCRIPT = `
     return new Date(t).toLocaleDateString(undefined, { month: "short", day: "numeric" });
   };
   const TARGETS = ["staging", "production"];
+  /** When staging is far ahead of main: how many of its newest commits show above the break, and how many of main's below it. */
+  const GAP_TOP = 11, GAP_MAIN = 6;
   let view = null, deploys = null, busy = false, drawn = false;
   const grid = document.getElementById("grid");
   const running = (state) => state == "building" || state == "deploying";
@@ -245,7 +256,13 @@ const SOURCE_SCRIPT = `
   function render() {
     if (!view) return;
     const staging = view.branches.find((b) => b.name == "staging"), main = view.branches.find((b) => b.name == "main");
-    const commits = staging?.commits ?? [];
+    // Staging far ahead of main: its head and the GAP_TOP - 1 commits before it, a break that counts the commits left out,
+    // the commits just after main's head (afterMain), then main's head and the GAP_MAIN - 1 behind it, so the list shows
+    // where production is. The break only when commits are left out; else staging's log, as always.
+    const recent = staging?.commits ?? [], ahead = staging?.ahead ?? 0, after = staging?.afterMain ?? [];
+    const top = recent.filter((x) => !x.inMain).slice(0, GAP_TOP);
+    const hidden = Math.max(0, ahead - top.length - after.length);
+    const commits = hidden && after.length ? [...top, ...after.map((x) => ({ ...x, inMain: false })), ...(main?.commits ?? []).slice(0, GAP_MAIN).map((x) => ({ ...x, inMain: true }))] : recent;
     document.getElementById("loading")?.remove();
     const groups = Object.fromEntries(TARGETS.map((n) => [n, byCommit(n)]));
     // One row per commit, kept: a new commit fades in at the top, the oldest goes at the bottom.
@@ -253,6 +270,7 @@ const SOURCE_SCRIPT = `
     const want = new Set(commits.map((x) => x.sha));
     for (const [sha, r] of rows) if (!want.has(sha)) r.remove();
     grid.querySelector(".none.empty")?.remove();
+    grid.querySelector(".gap")?.remove();
     if (!commits.length) { grid.insertAdjacentHTML("beforeend", '<div class="none empty">No commits yet. Push one: git push erga HEAD:staging</div>'); }
     let prev = null;
     commits.forEach((x, i) => {
@@ -261,7 +279,7 @@ const SOURCE_SCRIPT = `
       const kind = x.inMain ? "on-main" : "staging-only";
       r.className = "row " + kind;
       const next = commits[i + 1];
-      const up = i > 0, down = !!next || x.parents.length > 0;
+      const up = i > 0, down = !!next || x.parents.length > 0, gapAfter = hidden && after.length && i == top.length - 1;
       const title = x.subject + "\\n" + x.sha.slice(0, 10) + " · " + x.author + " · " + new Date(x.at).toLocaleString() + (x.inMain ? " · on main" : " · only on staging");
       r.innerHTML =
         '<span class="rail ' + (up ? "up " : "") + (down ? "down " : "") + (x.inMain ? "on-main" : "") + '"><i class="dot ' + kind + '" title="' + (x.inMain ? "On main (and staging)" : "Only on staging") + '"></i></span>' +
@@ -270,9 +288,17 @@ const SOURCE_SCRIPT = `
         TARGETS.map((n) => '<span class="deps" data-target="' + n + '">' + deployCell(n, x.sha, groups[n]) + "</span>").join("");
       grid.insertBefore(r, prev ? prev.nextSibling : document.getElementById("target-production").parentElement.nextSibling);
       prev = r;
+      if (gapAfter) {
+        const g = document.createElement("div");
+        g.className = "gap";
+        const n = hidden.toLocaleString() + " more commit" + (hidden == 1 ? "" : "s");
+        g.innerHTML = '<span class="rail"></span><span class="gap-text" title="' + n + ' only on staging, not shown. Below: the commit main is at, which production deploys.">… ' + n + " only on staging …</span>";
+        grid.insertBefore(g, prev.nextSibling);
+        prev = g;
+      }
     });
     drawn = true;
-    const ahead = staging?.ahead ?? 0, mergeBtn = document.getElementById("merge");
+    const mergeBtn = document.getElementById("merge");
     // Nothing at all while main is at staging: no count, no button, no space. While a merge runs the button stays, disabled.
     if (!busy) mergeBtn.disabled = document.getElementById("merge-row").hidden = !ahead;
     document.getElementById("ahead").textContent = !staging?.commit ? "" : ahead ? ahead + " commit" + (ahead == 1 ? "" : "s") + " to merge" : "";
@@ -533,7 +559,6 @@ const PAGE_STYLE = `
   .agent-pane { position: sticky; top: 16px; height: calc(100vh - 78px); height: calc(100dvh - 78px); min-height: 420px; display: flex; flex-direction: column; min-width: 0;
     border: 1px solid var(--panel-border); border-radius: 18px; background: var(--bg); box-shadow: 0 12px 28px rgba(0, 0, 0, 0.07), 0 1px 3px rgba(0, 0, 0, 0.05); font: 14px/1.55 var(--font-text); color: var(--fg); overflow: hidden; }
   .agent-pane .agent-head .title { white-space: nowrap; }
-  .agent-pane .agent-head .share { margin-left: auto; }
   .panes { min-width: 0; display: flex; flex-direction: column; gap: 28px; }
   .pane { container-type: inline-size; min-width: 0; }
   .pane-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-bottom: 10px; }
@@ -553,26 +578,6 @@ const PAGE_STYLE = `
     body[data-tab="tasks"] #tasks, body[data-tab="source"] #source-pane { display: block; }
     body[data-tab="agent"] .agent-pane { display: flex; position: static; height: calc(100dvh - 150px); min-height: 360px; }
   }
-  /* Share with agent: the factory token's dialog. */
-  dialog#share-dlg { width: min(560px, calc(100vw - 32px)); }
-  #share-dlg p { margin: 0 0 12px; font-size: 13.5px; color: var(--soft); }
-  #share-dlg .make { display: grid; grid-template-columns: 1fr auto auto; gap: 8px; align-items: end; margin-bottom: 12px; }
-  #share-dlg .make label { margin: 0; }
-  #share-dlg .make input, #share-dlg .make select { width: 100%; height: 34px; box-sizing: border-box; border: 1px solid var(--rule); border-radius: 8px; padding: 0 10px; background: var(--bg); color: var(--fg-strong); font: inherit; font-size: 13.5px; }
-  #share-dlg .make select { padding-right: 26px; }
-  @media (max-width: 520px) { #share-dlg .make { grid-template-columns: 1fr 1fr; } #share-dlg .make .grow { grid-column: 1 / -1; } }
-  #share-prompt { display: block; width: 100%; height: 170px; box-sizing: border-box; margin: 0 0 10px; padding: 10px 12px; border: 1px solid var(--rule); border-radius: 8px; background: var(--code-bg); color: var(--fg); font: 12px/1.5 var(--font-mono); resize: vertical; }
-  #share-prompt[hidden] { display: none; }
-  #share-dlg .buttons { align-items: center; }
-  #share-status { margin-right: auto; font-size: 12.5px; color: var(--soft); }
-  #share-dlg h3 { margin: 16px 0 6px; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--soft); }
-  #share-tokens { list-style: none; margin: 0; padding: 0; font-size: 13px; }
-  #share-tokens li { display: flex; align-items: center; gap: 8px; padding: 7px 0; border-top: 1px solid var(--rule); }
-  #share-tokens li .what { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg-strong); }
-  #share-tokens li .when { color: var(--soft); font-size: 12px; white-space: nowrap; }
-  #share-tokens li.ended .what { color: var(--soft); text-decoration: line-through; }
-  #share-tokens li button { height: 26px; padding: 0 10px; font-size: 12px; }
-  #share-tokens .none { color: var(--soft); border: 0; }
   /* The GitHub mirror: its state and Push now, or how to turn it on. */
   dialog#mirror-dlg { width: min(600px, calc(100vw - 32px)); }
   #mirror-dlg p { margin: 0 0 12px; font-size: 13.5px; color: var(--soft); overflow-wrap: anywhere; }
@@ -638,7 +643,7 @@ function mirrorDialog(c: SourcePageConfig): string {
 export function adminSourcePage(c: SourcePageConfig): Response {
   const crumbs = `<nav class="crumbs" aria-label="Breadcrumbs"><a class="brand" href="/">Erga</a><a class="here-link" href="/admin">Admin</a><span class="here" aria-current="page">Source</span></nav>`;
   // The header bar, upper right, as the editor's (page.html, .chrome-top): Share with agent, the same icon button.
-  const bar = `<div class="chrome chrome-top" role="toolbar" aria-label="Controls"><button type="button" class="icon-btn" id="btn-share" aria-label="Share the factory with an agent" data-tip="Share with an agent" aria-haspopup="dialog" aria-expanded="false" aria-controls="share-dlg">${ICON.agent}</button></div>`;
+  const bar = `<div class="chrome chrome-top" role="toolbar" aria-label="Controls"><button type="button" class="icon-btn" id="btn-share" aria-label="Share the factory with an agent" data-tip="Share with an agent" aria-expanded="false" aria-controls="share">${ICON.agent}</button></div>`;
   const page = (body: string, status = 200) => new Response(appPage("Source", PAGE_STYLE + scopeCss(BOARD_STYLE, "#tasks") + scopeCss(SOURCE_STYLE, "#source-pane"), `${crumbs}${body}`, false), { status, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
   if (!c.admin) return page(`<main><p class="empty">There's nothing here. <a href="/">Back to the start</a>.</p></main>`, 404);
   return page(`${bar}
@@ -665,20 +670,6 @@ export function adminSourcePage(c: SourcePageConfig): Response {
     <section class="pane" id="source-pane" aria-label="Source and deploys">${sourceMarkup(c)}</section>
   </div>
   </div>
-  <dialog id="share-dlg" aria-labelledby="share-title">
-    <h2 id="share-title">Share the factory with an agent</h2>
-    <p>Make a token, then paste the prompt into an agent that can run commands (Claude Code, Codex…). It can queue tasks, read them and send them more instructions, as your agent. It can't merge, discard or start tasks, push or deploy.</p>
-    <div class="make">
-      <label class="grow">Label<input id="share-label" maxlength="60" value="Claude Code" autocomplete="off"></label>
-      <label>Lasts<select id="share-hours"><option value="1">1 hour</option><option value="4" selected>4 hours</option><option value="12">12 hours</option></select></label>
-      <button type="button" class="primary" id="share-make">Make token</button>
-    </div>
-    <textarea id="share-prompt" readonly spellcheck="false" aria-label="Prompt for the other agent" hidden></textarea>
-    <div class="buttons"><span id="share-status" role="status" aria-live="polite"></span><button type="button" id="share-copy" hidden>Copy prompt</button><button type="button" id="share-close">Close</button></div>
-    <h3>Factory tokens</h3>
-    <ul id="share-tokens"><li class="none">None yet.</li></ul>
-    <p style="margin-top:10px">A token ends by itself; Revoke ends it now. Revoking the admin key you unlocked with ends it too.</p>
-  </dialog>
   ${c.ready ? mirrorDialog(c) : ""}
 </main>
 <script>${TABS_SCRIPT}</script>
