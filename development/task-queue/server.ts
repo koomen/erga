@@ -535,16 +535,16 @@ async function merge(task: Task) {
     await refresh(); // on the board at once, as not pushed yet
     if (origin) await git(REPO, "push", "origin", MAIN);
     touch(task, { status: "merged", commit, mergedAt: new Date().toISOString() }, `Merged into ${MAIN} as ${commit}${origin ? " and pushed" : ""}`);
-    // Then upstream (Erga: its source, which deploys it). A failure doesn't undo the merge: it's on the task's log, and tried again when origin/main next moves.
+    tellDependents(task);
+    await refresh();
+    await cleanUp(task, false);
+    console.log(`#${task.id} merged as ${commit}`);
+    // Then upstream, last (Erga: its source, which deploys it; maybe minutes, with a deploy from here). A failure doesn't undo the merge: it's on the task's log, and tried again when origin/main next moves.
     if (PUBLISH) {
       const p = await publish(origin ? `origin/${MAIN}` : MAIN);
       if (origin) published = (await ref(`origin/${MAIN}`)) ?? "";
       touch(task, {}, p.ok ? `Upstream: ${p.said}` : `Upstream didn't take it: ${p.said}`);
     }
-    tellDependents(task);
-    await refresh();
-    await cleanUp(task, false);
-    console.log(`#${task.id} merged as ${commit}`);
     const changed = await queueCodeChanged(before, "HEAD");
     if (changed.length) { restartWanted = true; console.log(`#${task.id} changed the queue's code (${changed.join(", ")}): restarting once nothing else is merging`); }
   } catch (e) {
