@@ -1,7 +1,8 @@
 // Who you are, in the upper right of every page erga.dev serves: your
 // avatar (your GitHub picture, or your initial on your colour if it doesn't
-// load), which opens a small menu (your name, Documents, Settings, Admin
-// settings for admins, Sign out); or, signed out, a person in a circle whose
+// load), which opens a small menu (your name, Documents, Settings, Deploy
+// your own for those the deploy_page setting lets in, Admin settings for
+// admins, Sign out); or, signed out, a person in a circle whose
 // menu has only Sign in (with GitHub, coming back to the same page).
 //
 // The Worker adds it to each of the site's HTML pages (`withAccount`,
@@ -21,15 +22,17 @@ export interface Account {
   login: string;
   name: string;
   admin: boolean;
+  /** May use /deploy (the deploy_page setting): not an admin right. */
+  deploy?: boolean;
   /** Their GitHub picture (test people have none). */
   avatar?: string;
   /** The ?user= a local tab carries, kept on the menu's links. */
   session: Session;
 }
 
-export const accountOf = (session: Session | null, admin: boolean): Account | null =>
+export const accountOf = (session: Session | null, admin: boolean, deploy = false): Account | null =>
   !session || session.agent ? null : {
-    login: session.login, name: session.name, admin, session,
+    login: session.login, name: session.name, admin, deploy, session,
     ...(session.test ? {} : { avatar: avatarUrl(session.login) }),
   };
 
@@ -68,6 +71,7 @@ export function accountMarkup(account: Account | null, here: string): string {
 <p class="erga-account-who"><b>${esc(account.name)}</b>${account.name.toLowerCase() != account.login.toLowerCase() ? `<span>${esc(account.login)}</span>` : ""}</p>
 <a href="${esc(link("/docs", s))}">Documents</a>
 <a href="${esc(link("/settings", s))}">Settings</a>
+${account.deploy ? `<a href="${esc(link("/deploy", s))}">Deploy your own</a>` : ""}
 ${account.admin ? `<a href="${esc(link("/admin", s))}">Admin settings</a>` : ""}
 <a href="/auth/logout">Sign out</a>
 </div>

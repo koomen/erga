@@ -182,7 +182,6 @@ async function adminPage(platform: Platform, session: Session): Promise<Response
   .role { margin-left: 8px; }
   @media (max-width: 520px) { ol.rows > li.setting { grid-template-columns: 1fr; } .setting .value { justify-content: flex-end; } }
 `;
-  const deployOn = (await platform.directory.config.get("deploy_page")) != "off";
   const factoryOn = (await platform.directory.config.get("factory")) == "on";
   return new Response(appPage("Admin", style, `${brand(session)}<main>
   <header>
@@ -213,10 +212,6 @@ ${users.map((u) => userRow(u, session)).join("\n")}
     <h2 id="source-title">Source and deploys</h2>
     <p class="lede">Erga's own repository, hosted here, and its branches deploying themselves: staging to staging.erga.dev, main to erga.dev. Commits, merging, deploys and their logs, the GitHub mirror, and the factory's tasks and agent: <a href="${esc(link("/admin/source", session))}">Source</a>.</p>
   </section>
-  ${deployOn ? `<section aria-labelledby="deploy-title">
-    <h2 id="deploy-title">Deploy your own</h2>
-    <p class="lede">Put a copy of this server on your own Cloudflare account, with you as its admin: <a href="${esc(link("/deploy", session))}">Deploy Erga</a>. Who may use it is the deploy_page setting.</p>
-  </section>` : ""}
   ${factoryOn ? `<section aria-labelledby="factory-title">
     <h2 id="factory-title">Factory</h2>
     <p class="lede">Tasks that Claude Code does in VMs, each a branch merged into staging (experimental): <a href="${esc(link("/admin/source", session))}">Open the factory</a>. The factory setting turns it off.</p>

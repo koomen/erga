@@ -266,10 +266,23 @@ const samePath = (a: string, b: string) => {
 /** A document that's there, at a page that isn't. */
 const noPage = (address: string) => page("Not found", `This document has no page here. <a href="${esc(address)}">Go to its first page</a>.`, 404);
 
+/**
+ * Who may use /deploy: the deploy_page setting (off, admins or users), and
+ * never a test person or an agent's token. It's a permission of its own: it
+ * gives nothing of an admin's (settings, users, the factory).
+ */
+export async function mayDeploy(directory: Directory, session: Session | null): Promise<boolean> {
+  if (!session || session.test || session.agent) return false;
+  const mode = await directory.config.get("deploy_page");
+  if (mode == "users") return true;
+  return mode == "admins" && (await directory.users.isAdmin(whoOf(session)));
+}
+
 /** What the editor's menu on your avatar needs to know that the document doesn't (account.ts): the links it offers. */
 async function accountMeta(platform: Platform, session: Session): Promise<string> {
   const admin = !session.test && !session.agent && (await platform.directory.users.isAdmin(whoOf(session)));
-  const links = { docs: link("/docs", session), settings: link("/settings", session), ...(admin ? { admin: link("/admin", session) } : {}), signOut: "/auth/logout" };
+  const deploy = await mayDeploy(platform.directory, session);
+  const links = { docs: link("/docs", session), settings: link("/settings", session), ...(deploy ? { deploy: link("/deploy", session) } : {}), ...(admin ? { admin: link("/admin", session) } : {}), signOut: "/auth/logout" };
   return `<meta name="erga-account" content="${esc(JSON.stringify(links))}">`;
 }
 
