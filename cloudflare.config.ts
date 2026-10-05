@@ -50,6 +50,10 @@ export default defineConfig(({ mode }) => ({
       Home: exports.durableObject({ storage: "sqlite" }),
       // The factory (experimental, worker/factory.ts): its tasks and the stored Claude token, in one object, "factory".
       Factory: exports.durableObject({ storage: "sqlite" }),
+      // The factory's VMs (factory/cloudflare.ts): one object per task's VM, each owning a Cloudflare Container. The deploy
+      // pipeline adds the container (its image, deploy/targets.json `factory`) on Erga's own targets; elsewhere (and
+      // locally, where the dev server runs the VMs) it's a plain object nothing uses.
+      FactoryVm: exports.durableObject({ storage: "sqlite" }),
       // Each person's list of documents before the directory: gone, with what it held.
       DocList: exports.durableObject({ state: "deleted" }),
     },
@@ -68,6 +72,7 @@ export default defineConfig(({ mode }) => ({
       } : {}),
       HOME: bindings.durableObject({ worker: PROD.worker, exportName: "Home" }),
       FACTORY: bindings.durableObject({ worker: PROD.worker, exportName: "Factory" }),
+      FACTORY_VM: bindings.durableObject({ worker: PROD.worker, exportName: "FactoryVm" }),
       // The server's database: users, settings and the directory. The deploy pipeline (deploy/cloudflare.ts) finds it by name, or
       // makes it, and applies migrations/ before each deploy. Locally (vite dev) it's a database of its own, at a fixed made-up id that
       // `bun run db:local` applies the migrations to.

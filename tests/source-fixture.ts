@@ -10,6 +10,8 @@ import { join } from "node:path";
 import { gitServers, localToken, MOCK_GITHUB_TOKEN } from "../dev/git-server.ts";
 import { gitHttp } from "../source/http.ts";
 import { SourceRepo, type Move } from "../source/repo.ts";
+import { verifyGitToken, type GitGrant } from "../factory/git-grant.ts";
+import { mintGitToken } from "../dev/factory.ts";
 import type { Remote } from "../source/remote.ts";
 
 export interface Fixture {
@@ -22,6 +24,8 @@ export interface Fixture {
   artifacts: string;
   repo: SourceRepo;
   moves: Move[];
+  /** Erga's endpoint with a factory VM's git token for this grant (worker/factory.ts mints them so). */
+  factory(grant: Omit<GitGrant, "exp"> & { exp?: number }): string;
   /** Background work (the mirror) settled. */
   settle(): Promise<void>;
   dir: string;
@@ -39,6 +43,9 @@ export async function must(cwd: string, ...args: string[]) {
   if (!r.ok) throw new Error(`git ${args.join(" ")}: ${r.err}`);
   return r.out;
 }
+
+/** What the fixture's factory tokens are signed with (FACTORY_KEY on Cloudflare). */
+const FACTORY_SECRET = "test-factory-key";
 
 export function startFixture(opts: { mirror?: boolean } = {}): Fixture {
   const dir = mkdtempSync(join(tmpdir(), "erga-source-"));
@@ -61,10 +68,16 @@ export function startFixture(opts: { mirror?: boolean } = {}): Fixture {
     async fetch(request) {
       const url = new URL(request.url);
       if (url.pathname.startsWith("/git/erga.git")) {
+        // As worker/source.ts: a factory token (fgt.…) is checked, and its grant goes with the push; anything else is Ada.
+        const basic = /^Basic\s+(\S+)$/i.exec(request.headers.get("authorization") ?? "")?.[1];
+        const pass = basic ? atob(basic).split(":").slice(1).join(":") : "";
+        if (!basic) return new Response("who?", { status: 401, headers: { "WWW-Authenticate": 'Basic realm="Erga"' } });
+        const grant = pass.startsWith("fgt.") ? await verifyGitToken(FACTORY_SECRET, pass) : undefined;
+        if (grant === null) return new Response("bad factory token", { status: 401, headers: { "WWW-Authenticate": 'Basic realm="Erga"' } });
         return gitHttp(request, url.pathname.slice("/git/erga.git".length), {
           upstream: async () => artifacts(),
-          advertise: () => repo.advertise(),
-          receive: (body) => repo.receive(body, { login: "ada", name: "Ada" }),
+          advertise: () => repo.advertise(grant),
+          receive: (body) => repo.receive(body, grant ? { login: grant.by ?? "factory", name: "Erga factory" } : { login: "ada", name: "Ada" }, grant),
         });
       }
       const body = new Uint8Array(await request.arrayBuffer());
@@ -81,6 +94,7 @@ export function startFixture(opts: { mirror?: boolean } = {}): Fixture {
     github: withAuth("/__github/koomen/erga.git", "x", MOCK_GITHUB_TOKEN),
     artifacts: withAuth("/__artifacts/git/erga/erga.git", "x", localToken(secret, "erga/erga", "write").split("?")[0]),
     repo, moves, dir,
+    factory: (g) => withAuth("/git/erga.git", "x", mintGitToken(FACTORY_SECRET, { exp: Math.floor(Date.now() / 1000) + 600, ...g })),
     async settle() { while (background.length) await Promise.allSettled(background.splice(0)); },
     stop() { server.stop(true); rmSync(dir, { recursive: true, force: true }); },
   };

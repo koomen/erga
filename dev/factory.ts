@@ -22,13 +22,16 @@
 
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
-import { createWriteStream, existsSync, mkdirSync, rmSync } from "node:fs";
+import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { createServer, type AddressInfo } from "node:net";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { gunzipSync } from "node:zlib";
 import { dockerUp, ensureImage } from "../factory/vm/build.ts";
+import { isTaskBranch, refsAllowed, type GitGrant } from "../factory/git-grant.ts";
+
+export { refsAllowed, type GitGrant };
 
 const EDITOR = resolve(import.meta.dirname, "..");
 const VM_SCRIPTS = join(EDITOR, "factory/vm");
@@ -44,9 +47,6 @@ export interface FactoryDev {
 
 // ---- tokens --------------------------------------------------------------------------
 
-/** What a git token allows: read, and push `branch` (a task's); a merge token also pushes staging. */
-export interface GitGrant { scope: "task" | "merge"; branch: string; exp: number }
-
 const b64url = (s: string) => Buffer.from(s).toString("base64url");
 /** The key factory tokens are signed with, from the dev server's secret (worker/factory.ts derives the same). */
 export const gitKey = (secret: string) => createHmac("sha256", secret).update("erga-factory-git").digest();
@@ -58,7 +58,7 @@ export function checkGitToken(secret: string, token: string): GitGrant | null {
   if (!timingSafeEqual(Buffer.from(want), Buffer.from(m[2]))) return null;
   try {
     const g = JSON.parse(Buffer.from(m[1], "base64url").toString()) as GitGrant;
-    if (!g.branch?.startsWith("task/") || g.exp * 1000 < Date.now()) return null;
+    if (!isTaskBranch(g.branch) || g.exp * 1000 < Date.now()) return null;
     return g;
   } catch { return null; }
 }
@@ -94,17 +94,6 @@ export function pushedRefs(body: Uint8Array): { old: string; next: string; ref: 
     if (m) out.push({ old: m[1], next: m[2], ref: m[3] });
   }
   return out;
-}
-
-/** Whether a grant allows these ref updates; the reason if not. */
-export function refsAllowed(grant: GitGrant, refs: { next: string; ref: string }[]): string | null {
-  for (const { next, ref } of refs) {
-    const deleting = /^0+$/.test(next);
-    if (ref == `refs/heads/${grant.branch}`) continue;
-    if (grant.scope == "merge" && ref == "refs/heads/staging" && !deleting) continue;
-    return `this token may push ${grant.branch}${grant.scope == "merge" ? " and staging" : ""} only, not ${ref}`;
-  }
-  return null;
 }
 
 // ---- the repository ------------------------------------------------------------------
@@ -207,6 +196,11 @@ function watch(p: ChildProcess, logFile: string): Promise<{ code: number; output
   });
 }
 
+/** The VM's job scripts, by name (factory/vm/*.ts but the agent, the build and the Worker's bundle of them). */
+export function jobScripts(): Record<string, string> {
+  return Object.fromEntries(readdirSync(VM_SCRIPTS).filter((n) => n.endsWith(".ts") && !["agent.ts", "build.ts", "push.ts", "scripts.ts"].includes(n)).sort().map((n) => [n, readFileSync(join(VM_SCRIPTS, n), "utf8")]));
+}
+
 /** The label on a dev server's Docker VMs: from its state folder, so test servers never touch each other's. */
 export const dockerLabel = (stateDir: string) => createHmac("sha1", "erga-factory").update(resolve(stateDir)).digest("hex").slice(0, 12);
 
@@ -249,7 +243,8 @@ function dockerRunner(stateDir: string, log: (line: string) => void): Runner {
       const env: Record<string, string> = { ...j.env, FACTORY_WORK: "/work", FACTORY_PREVIEW_PORT: String(PREVIEW_PORT), FACTORY_PUBLIC_PORT: String(PUBLIC_PORT) };
       // The VM reaches this machine as host.docker.internal.
       for (const k of ["FACTORY_API", "REPO_URL"]) if (env[k]) env[k] = env[k].replace(/\/\/(localhost|127\.0\.0\.1)(?=[:/])/, "//host.docker.internal");
-      const r = await agent(j.vm, "/job", { script: j.script, args: j.args, env, wait: !!j.wait });
+      // The job's scripts from this checkout, as the Worker sends its own on Cloudflare (factory/vm/scripts.ts).
+      const r = await agent(j.vm, "/job", { script: j.script, args: j.args, env, wait: !!j.wait, scripts: jobScripts() });
       return j.wait ? r.json() as Promise<{ code: number; output: string }> : null;
     },
     async stop(vm) {

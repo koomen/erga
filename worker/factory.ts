@@ -46,7 +46,6 @@
 // (factory/cloudflare.ts), once set up.
 
 import { DurableObject } from "cloudflare:workers";
-import { deployHook } from "../deploy";
 import { type Blocked, dependents, depRules, depsNote, type DepTask, ids } from "../development/task-queue/deps";
 import { containersHost } from "../factory/cloudflare";
 import { factoryPage } from "../factory/page";
@@ -94,14 +93,14 @@ function factoryKey(env: Env): string | null {
   return env.ERGA_LINK_SECRET && env.DEV_LOGIN ? `local:${env.SESSION_SECRET}` : null;
 }
 
-/** What the repository checks the VMs' git tokens with: locally the dev server's secret (dev/factory.ts checks them). */
-const gitSecret = (env: Env) => env.ERGA_LINK_SECRET || factoryKey(env);
+/** What the repository checks the VMs' git tokens with: locally the dev server's secret (dev/factory.ts checks them); on Cloudflare FACTORY_KEY (worker/source.ts). */
+export const gitSecret = (env: Env) => env.ERGA_LINK_SECRET || factoryKey(env);
 
-/** A git token for the repository: pushes `branch` only, or (a merge) that and staging. Two hours. */
-export async function gitToken(env: Env, scope: "task" | "merge", branch: string): Promise<string> {
+/** A git token for the repository: pushes `branch` only, or (a merge) that and staging. Two hours. `by`: the admin who asked. */
+export async function gitToken(env: Env, scope: "task" | "merge", branch: string, by?: string): Promise<string> {
   const secret = gitSecret(env);
   if (!secret) throw new Error("FACTORY_KEY isn't set");
-  const body = b64url(JSON.stringify({ scope, branch, exp: Math.floor(Date.now() / 1000) + 7200 }));
+  const body = b64url(JSON.stringify({ scope, branch, exp: Math.floor(Date.now() / 1000) + 7200, ...(by ? { by } : {}) }));
   return `fgt.${body}.${hex(await hmac(await hmac(secret, "erga-factory-git"), body))}`;
 }
 
@@ -175,9 +174,9 @@ function localHost(env: Env, origin: string): VmHost {
 /** The VMs of this server, or null with why there are none. */
 function vmHost(env: Env, origin: string): VmHost | string {
   if (env.ERGA_LINK_SECRET && env.DEV_LOGIN) return localHost(env, origin);
-  // On Cloudflare: Containers (factory/cloudflare.ts), once the runbook's steps are done.
+  // On Cloudflare: Containers (factory/cloudflare.ts), which the deploy declares (deploy/cloudflare.ts, deploy/targets.json).
   if (env.FACTORY_VM && env.FACTORY_PREVIEW_DOMAIN) return containersHost(env, origin);
-  return "This server has no VMs for the factory yet: see README, The factory, Runbook.";
+  return "This server has no VMs for the factory yet: its deploy declares them (README, The factory, On Cloudflare).";
 }
 
 /** What the dev server says about its VMs: Docker or simulated (local only). */
@@ -358,6 +357,7 @@ export class Factory extends DurableObject<Env> {
         const started = await host.start(id);
         vm = started.vm;
         this.update(id, { vm, preview_origin: started.preview, preview_path: null, status: "working" }, `VM ${vm} started in ${((Date.now() - t) / 1000).toFixed(1)}s`);
+        this.keepAlive();
       } else this.update(id, { status: "working" });
       await host.job(vm, "run.ts", [job], await this.jobEnv(id, "task"), false);
     } catch (e) {
@@ -367,13 +367,13 @@ export class Factory extends DurableObject<Env> {
   }
 
   /** What a job in the task's VM gets: where to report and with what, the repository, and the Claude token when there is one. */
-  private async jobEnv(id: number, scope: "task" | "merge"): Promise<Record<string, string>> {
+  private async jobEnv(id: number, scope: "task" | "merge", by?: string): Promise<Record<string, string>> {
     const r = this.row(id)!;
     const host = vmHost(this.env, r.origin) as VmHost;
     const claude = await this.claudeToken();
     return {
       FACTORY_API: `${r.origin}/api/factory`, FACTORY_TASK: String(id), FACTORY_TOKEN: await taskToken(this.env, id),
-      REPO_URL: host.repo(r.origin), REPO_TOKEN: await gitToken(this.env, scope, r.branch),
+      REPO_URL: host.repo(r.origin), REPO_TOKEN: await gitToken(this.env, scope, r.branch, by ?? r.by_login),
       ...(claude ? { CLAUDE_CODE_OAUTH_TOKEN: claude } : {}),
     };
   }
@@ -438,13 +438,13 @@ export class Factory extends DurableObject<Env> {
     if (why) return { ok: false, error: why };
     const waiting = this.sql.exec<{ n: number }>("SELECT count(*) AS n FROM tasks WHERE status = 'merging'").one().n;
     this.update(id, { status: "merging", error: null }, waiting ? `Merge requested by ${by}: waiting for ${waiting} merge${waiting > 1 ? "s" : ""} first` : `Merge requested by ${by}`);
-    const run = this.merges.then(() => this.doMerge(id));
+    const run = this.merges.then(() => this.doMerge(id, by));
     this.merges = run.catch(() => {});
     this.ctx.waitUntil(run);
     return { ok: true };
   }
 
-  private async doMerge(id: number) {
+  private async doMerge(id: number, by: string) {
     const r = this.row(id)!;
     const host = vmHost(this.env, r.origin);
     if (typeof host == "string") return this.update(id, { status: "complete", error: host });
@@ -454,17 +454,16 @@ export class Factory extends DurableObject<Env> {
     try {
       this.note(id, `Merging ${r.branch} into staging`);
       const vm = await this.vmFor(id, host);
-      const out = await host.job(vm, "merge.ts", ["merge", r.branch, r.title], await this.jobEnv(id, "merge"), true);
+      const out = await host.job(vm, "merge.ts", ["merge", r.branch, r.title], await this.jobEnv(id, "merge", by), true);
       const res = resultOf(out);
       if (!res.ok) return this.update(id, { status: "complete", error: `The merge failed: ${res.error}` }, "Merge failed: back to ready to merge");
       await host.stop(vm).catch(() => {});
       this.update(id, { status: "merged", merged_at: now(), merge_commit: String(res.commit), vm: null, preview_origin: null }, `Merged into staging as ${String(res.commit).slice(0, 10)}; ${r.branch} deleted; VM stopped`);
       this.tellDependents(id);
-      // Staging moved: its deploy (#40) builds and deploys staging.erga.dev. Locally the repository is the dev server's own, which no deploy reads.
-      if (host.kind == "local") this.note(id, "Staging moved (the local repository: nothing deploys it)");
-      else {
-        await deployHook("staging", String(res.commit), this.env).then(() => this.note(id, "Staging's deploy is asked for (/admin/deploys)"), (e) => this.note(id, `Staging's deploy wasn't asked for: ${(e as Error).message}`));
-      }
+      // Staging moved. On Cloudflare the push went through Erga's Git endpoint, which tells the deploy pipeline itself
+      // (worker/source-host.ts, deployHook): staging.erga.dev builds and deploys it. Locally the repository is the dev
+      // server's own, which no deploy reads.
+      this.note(id, host.kind == "local" ? "Staging moved (the local repository: nothing deploys it)" : "Staging moved: staging.erga.dev deploys it now (see /source)");
     } catch (e) {
       this.update(id, { status: "complete", error: `The merge failed: ${(e as Error).message}` }, "Merge failed: back to ready to merge");
     }
@@ -501,7 +500,33 @@ export class Factory extends DurableObject<Env> {
     if (r.vm && (await host.alive(r.vm).catch(() => false))) return r.vm;
     const started = await host.start(id);
     this.update(id, { vm: started.vm, preview_origin: null }, `VM ${started.vm} started for the job`);
+    this.keepAlive();
     return started.vm;
+  }
+
+  // -- keeping VMs up
+
+  /**
+   * On Cloudflare a container stops a while after its Durable Object last heard from anyone (factory/cloudflare.ts sets
+   * that to the most it may be, six hours), and a task's VM can wait longer than that for a merge, with its preview.
+   * So every 20 minutes, while any task has a VM, the factory asks each one whether it's up, which keeps it up.
+   */
+  private keepAlive() {
+    this.ctx.waitUntil((async () => { if ((await this.ctx.storage.getAlarm()) == null) await this.ctx.storage.setAlarm(Date.now() + 20 * 60_000); })());
+  }
+
+  async alarm() {
+    const rows = this.sql.exec<Row>("SELECT * FROM tasks WHERE vm IS NOT NULL AND status NOT IN ('merged', 'discarded')").toArray();
+    let any = false;
+    for (const r of rows) {
+      const host = vmHost(this.env, r.origin);
+      if (typeof host == "string" || host.kind != "cloudflare") continue;
+      any = true;
+      if (!(await host.alive(r.vm!).catch(() => true))) {
+        this.update(r.id, { vm: null, preview_origin: null }, "The VM stopped by itself (its preview is gone). More instructions, or a merge, start a new one.");
+      }
+    }
+    if (any) await this.ctx.storage.setAlarm(Date.now() + 20 * 60_000);
   }
 
   // -- the Claude plan's token
@@ -514,7 +539,7 @@ export class Factory extends DurableObject<Env> {
   async setClaude(token: string | null, by: string): Promise<{ ok: boolean; error?: string }> {
     if (token == null) { this.sql.exec("DELETE FROM secrets WHERE name = 'claude'"); return { ok: true }; }
     token = token.trim();
-    if (!factoryKey(this.env)) return { ok: false, error: "This server has no FACTORY_KEY to encrypt the token with: set it first (README, The factory, Runbook)." };
+    if (!factoryKey(this.env)) return { ok: false, error: "This server has no FACTORY_KEY to encrypt the token with: bun deploy/setup.ts --factory makes it (README, The factory, On Cloudflare)." };
     if (!/^sk-ant-[A-Za-z0-9_-]{20,}$/.test(token)) return { ok: false, error: "That isn't a Claude Code token. Run `claude setup-token` and paste the token it prints (sk-ant-…)." };
     const iv = crypto.getRandomValues(new Uint8Array(12));
     const data = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv }, await aes(this.env), enc.encode(token)));

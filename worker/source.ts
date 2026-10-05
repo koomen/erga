@@ -3,6 +3,8 @@
 //
 //   /git/erga.git/...           Git smart HTTP: clone, fetch, pull and push. HTTP Basic with any username and
 //                               an admin token (admin-keys.ts, admin-login.ts) as the password. main takes fast-forwards only.
+//                               A factory VM's git token (fgt.…, factory/git-grant.ts) reaches its own task's branch only
+//                               (and staging, for a merge).
 //   GET  /api/source/branches   staging and main: each head and its last 25 commits, and the mirror's status
 //   POST /api/source/merge      { from: "staging", to: "main", commit? }: main fast-forwards to staging's head (or to
 //                               that staging commit): { commit } or 4xx { error } (admins)
@@ -26,6 +28,8 @@ import { devUnlocked } from "./auth";
 import { unlockFirst } from "../admin-access";
 import { LOCKED } from "../users";
 import type { Env } from "./env";
+import { verifyGitToken, type GitGrant } from "../factory/git-grant";
+import { gitSecret } from "./factory";
 
 const host = (env: Env) => env.SOURCE.getByName("erga");
 const json = (body: unknown, status = 200) => Response.json(body, { status, headers: { "Cache-Control": "no-store" } });
@@ -41,6 +45,14 @@ export async function sourceGit(request: Request, env: Env, url: URL): Promise<R
   const challenge = (why: string) => new Response(`${why}\n`, { status: 401, headers: { "WWW-Authenticate": 'Basic realm="Erga", charset="UTF-8"', "Content-Type": "text/plain" } });
   const howTo = "Erga's Git endpoint needs an admin token, made by signing a challenge with your admin SSH key: `ERGA_TOKEN=<agent token> bun admin-login.ts " + url.origin + "` prints one. Then any username, and the admin token as the password.";
   if (!secret) return challenge(howTo);
+  // A factory VM's git token (worker/factory.ts, gitToken): its own task's branch, and staging for a merge (factory/git-grant.ts).
+  if (secret.startsWith("fgt.")) {
+    const key = gitSecret(env);
+    const grant = key ? await verifyGitToken(key, secret) : null;
+    if (!grant) return challenge("That factory token isn't working (it may have ended, or the factory's key changed).");
+    if (!hasSource(env)) return new Response(`${notSetUp}\n`, { status: 503 });
+    return git(request, env, url, rest, { login: grant.by ?? "factory", name: "Erga factory" }, grant);
+  }
   // An admin token (admin-keys.ts): admin access unlocked with the admin's own SSH key. Local development's shortcut
   // (ERGA_ADMIN_UNLOCKED=1) takes an admin's agent token as it is.
   const admin = await adminKeysOf(env).readToken(secret).catch(() => null);
@@ -55,12 +67,18 @@ export async function sourceGit(request: Request, env: Env, url: URL): Promise<R
     return new Response(`Only admins can reach Erga's repository, and ${who.login} isn't one.\n`, { status: 403, headers: { "Content-Type": "text/plain" } });
   }
   if (!hasSource(env)) return new Response(`${notSetUp}\n`, { status: 503 });
-  const actor: Actor = { login: who.login, name: who.name };
+  return git(request, env, url, rest, { login: who.login, name: who.name });
+}
+
+/** Git itself, for someone allowed: clones and fetches from Artifacts, pushes through SourceRepo (with a factory VM's grant, if it's one). */
+function git(request: Request, env: Env, url: URL, rest: string, actor: Actor, grant?: GitGrant): Promise<Response> {
   return gitHttp(request, rest, {
     upstream: async () => (await artifactsRemote(env, "read", url.origin))!,
-    advertise: () => host(env).advertise(url.origin),
+    advertise: () => host(env).advertise(url.origin, grant),
     receive: async (body) => {
-      const r = await host(env).fetch(new Request(`${url.origin}/push`, { method: "POST", body: body as BodyInit, headers: { "x-erga-actor": JSON.stringify(actor), "x-erga-origin": url.origin } }));
+      const headers: Record<string, string> = { "x-erga-actor": JSON.stringify(actor), "x-erga-origin": url.origin };
+      if (grant) headers["x-erga-grant"] = JSON.stringify(grant);
+      const r = await host(env).fetch(new Request(`${url.origin}/push`, { method: "POST", body: body as BodyInit, headers }));
       if (!r.ok) throw new Error(await r.text());
       return new Uint8Array(await r.arrayBuffer());
     },
