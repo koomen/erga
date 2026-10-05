@@ -3,7 +3,8 @@
 // the factory. Three parts, on one page: the factory's task board
 // (factory/page.ts), the source and deploy dashboard (below), and the
 // factory's agent (factory/agent.ts; its panel is src/page/factory-agent.ts,
-// built to /factory-agent.js), with "Share with agent" for an outside agent.
+// built to /factory-agent.js), with "Share with agent" for an outside agent
+// (the icon in the header bar, upper right, as in the editor).
 // On a wide window the agent sits on the left, as in the editor, and the
 // board and the dashboard are beside it, one above the other; narrower, tabs
 // show one at a time. Each part's stylesheet is scoped to its pane
@@ -27,7 +28,7 @@
 // mirror and how to clone and push. It updates by itself (/api/events) and
 // follows the system's light or dark.
 
-import { appPage, esc, type Session } from "../front";
+import { appPage, esc, ICON, type Session } from "../front";
 import { BOARD_SCRIPT, BOARD_STYLE, boardMarkup } from "../factory/page";
 
 export interface SourcePageConfig {
@@ -509,6 +510,8 @@ const PAGE_STYLE = `
   .crumbs a.here-link:hover { color: var(--fg-strong); }
   .crumbs > :not(.brand)::before { content: "›"; margin: 0 9px 0 10px; color: var(--chrome); opacity: 0.55; font-weight: 400; }
   .crumbs .here { display: flex; align-items: center; font-size: 13.5px; font-weight: 500; color: var(--fg); }
+  /* The header bar: left of your avatar (account.ts), as the editor's icons are; it scrolls with the page, as the avatar does. */
+  .chrome-top { position: absolute; right: calc(max(16px, env(safe-area-inset-right)) + 38px); }
   /* The agent on the left, as in the editor; the board and the dashboard beside it, one above the other. */
   .workspace { display: grid; grid-template-columns: minmax(300px, 370px) minmax(0, 1fr); gap: 20px; align-items: start; }
   .agent-pane { position: sticky; top: 16px; height: calc(100vh - 78px); height: calc(100dvh - 78px); min-height: 420px; display: flex; flex-direction: column; min-width: 0;
@@ -521,8 +524,6 @@ const PAGE_STYLE = `
   .pane-head h2 { margin: 0; font-size: 18px; line-height: 1.3; font-weight: 650; letter-spacing: -0.01em; color: var(--fg-strong); }
   .pane-head .sub { margin: 2px 0 0; font-size: 13px; }
   .pane-note { margin: -4px 0 10px; font-size: 13px; color: var(--soft); }
-  #tasks .share-btn { margin-left: auto; height: 30px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--fg-strong); background: var(--fg-strong); color: var(--bg); font: 550 12.5px var(--font-text); cursor: pointer; }
-  #tasks .share-btn:hover { opacity: 0.86; }
   .tabs { display: none; }
   /* Narrower, one at a time: tabs for the board, the dashboard and the agent. */
   @media (max-width: 999.98px) {
@@ -579,9 +580,12 @@ const TABS_SCRIPT = `
 /** /admin/source: the factory's board, the source and deploy dashboard, and the factory's agent, on one page (admins, unlocked). */
 export function adminSourcePage(c: SourcePageConfig): Response {
   const crumbs = `<nav class="crumbs" aria-label="Breadcrumbs"><a class="brand" href="/">Erga</a><a class="here-link" href="/admin">Admin</a><span class="here" aria-current="page">Source</span></nav>`;
+  // The header bar, upper right, as the editor's (page.html, .chrome-top): Share with agent, the same icon button.
+  const bar = `<div class="chrome chrome-top" role="toolbar" aria-label="Controls"><button type="button" class="icon-btn" id="btn-share" aria-label="Share the factory with an agent" data-tip="Share with an agent" aria-haspopup="dialog" aria-expanded="false" aria-controls="share-dlg">${ICON.agent}</button></div>`;
   const page = (body: string, status = 200) => new Response(appPage("Source", PAGE_STYLE + scopeCss(BOARD_STYLE, "#tasks") + scopeCss(SOURCE_STYLE, "#source-pane"), `${crumbs}${body}`), { status, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
   if (!c.admin) return page(`<main><p class="empty">There's nothing here. <a href="/">Back to the start</a>.</p></main>`, 404);
-  return page(`<main class="admin">
+  return page(`${bar}
+<main class="admin">
   <div class="tabs" role="tablist" aria-label="Show"><button type="button" role="tab" data-tab="tasks">Tasks</button><button type="button" role="tab" data-tab="source">Source</button><button type="button" role="tab" data-tab="agent">Agent</button></div>
   <div class="workspace">
   <aside class="agent-pane" id="agent" aria-label="Agent">
