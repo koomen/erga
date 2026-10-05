@@ -780,7 +780,7 @@ describe("the factory's VMs (Containers)", () => {
     const pinned = FACTORY.image.split("@")[0], built = imageTag();
     if (pinned != built) throw new Error(
       `deploy/targets.json pins the factory image ${pinned}, but factory/vm/build.ts now tags ${built}: its inputs ` +
-      `(factory/vm/Dockerfile, the agent, .bun-version...) changed. Push and prepare the new image, then commit deploy/targets.json:\n` +
+      `(factory/vm/Dockerfile, factory/vm/agent.ts or .bun-version) changed. Push and prepare the new image, then commit deploy/targets.json:\n` +
       `  CLOUDFLARE_ACCOUNT_ID=<id> bun factory/vm/push.ts\n` +
       `(with Docker running, and the cf CLI's login). Cloudflare Containers can take about an hour after preparation before it ` +
       `starts a new image: check it with bun factory/vm/probe.ts before the commit deploys (README, "The factory").`);
