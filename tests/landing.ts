@@ -76,10 +76,14 @@ try {
   await p.open(`${root}/tester/landing#edit`, { width: 1200, height: 800, scale: 2, clear: false, agent: false });
   await until(() => p.eval<boolean>(`document.body.classList.contains("erga-editor-ready")`), 20_000, "the editor is ready");
   await until(() => p.frame<boolean>(`${F}.querySelector("h1")?.getAttribute("contenteditable") == "true"`), 20_000, "the editor makes the heading editable");
+  // Its fonts first: the heading moves when they load, and a click before that can land at its start.
+  await p.frame(`${F}.fonts.ready.then(() => true)`);
   const f = await frameAt(p);
   const at = await p.frame<{ x: number; y: number }>(`(() => { const r = ${F}.querySelector("h1").getBoundingClientRect(); return { x: ${f.x} + r.right - 2, y: ${f.y} + r.top + r.height / 2 }; })()`);
   await p.click(at.x, at.y);
   await Bun.sleep(100);
+  // The caret at the heading's end, wherever the click put it.
+  await p.frame(`(() => { const h = ${F}.querySelector("h1"); ${F}.getSelection().collapse(h, h.childNodes.length); return true; })()`);
   await p.type(" home");
   await until(async () => (await (await get(`/d/${id}/doc/index.html`)).text()).includes("<h1>Erga home</h1>"), 10_000, "the edit is saved", async () => ({ disk: (await (await get(`/d/${id}/doc/index.html`)).text()).match(/<h1>.*?<\/h1>/)?.[0], page: await p.frame<string>(`${F}.querySelector("h1")?.outerHTML`), errors: p.errors }));
   await p.screenshot(join(SHOTS, "landing-editor.png"));
