@@ -10,6 +10,8 @@
 // - A plain card (no thumbnails, no error) is at most two lines of text and a row of buttons.
 // - The thumbnails stay.
 // - Each column is in id order, oldest first, so a card moves only when its status changes.
+// - The detail view shows the screenshots first, three in a row; a click enlarges one to the modal's width, a
+//   second click puts it back (factory-detail-shots.png, factory-detail-shot-big.png).
 // Screenshots land in tests/cdp.ts's SHOTS (factory-cards.png, factory-cards-dark.png). --html saves the board as one
 // static page (styles and images inlined, no scripts), to look at without a server.
 
@@ -35,7 +37,7 @@ const tasks = [
   t("Make factory task cards on /admin/source more compact and easier to scan", "working", 2, "Reading the code"),
   t("Tests run in the factory VM without lsof", "working", 12, "Running tests/factory.ts under a time limit of 180 seconds"),
   t("Dark mode for the outline panel", "failed", 45, "failed", { error: "The build failed: src/page/outline.ts(12,3): Property 'x' does not exist." }),
-  t("Show word counts in the document list, with a total for each folder", "complete", 70, "ready to merge", { url: "http://localhost:4400/", screenshots: [shot("a.png"), shot("b.png")] }),
+  t("Show word counts in the document list, with a total for each folder", "complete", 70, "ready to merge", { url: "http://localhost:4400/", screenshots: [shot("a.png"), shot("b.png"), shot("c.png"), shot("d.png")] }),
   t("Faster first paint on the reader page", "complete", 8, "ready to merge", { url: "http://localhost:4401/", blockedBy: { start: [], merge: [3], stuck: [], reason: ["merges after #3"] } }),
   t("Keyboard shortcuts help dialog", "queued", 1, "queued"),
   t("Export a document as EPUB, with the cover image and the table of contents", "queued", 4, "queued", { startAfter: [6], blockedBy: { start: [6], merge: [], stuck: [], reason: ["waits for #6 to merge"] } }),
@@ -49,12 +51,18 @@ try {
   // The thumbnails' image: a small page, as a task's screenshot would show one.
   await p.open(`data:text/html,<body style="margin:0;padding:24px;font:32px sans-serif;background:linear-gradient(135deg,%23dfe9f5,%23f7efe3)"><h1>Preview</h1><p>A page of the task.</p></body>`, { width: 480, height: 300 });
   const png = Buffer.from((await p.send("Page.captureScreenshot", { format: "png" })).data, "base64");
+  // The detail view's screenshots: each its own page, so the grid shows which is which.
+  const pngs: Record<string, Buffer> = {};
+  for (const [i, f] of ["a", "b", "c", "d"].entries()) {
+    await p.open(`data:text/html,<body style="margin:0;padding:24px;font:32px sans-serif;background:hsl(${i * 70 + 200},45%,88%)"><h1>Screenshot ${f.toUpperCase()}</h1><p>A page of the task, step ${i + 1}.</p></body>`, { width: 800, height: 500 });
+    pngs[f + ".png"] = Buffer.from((await p.send("Page.captureScreenshot", { format: "png" })).data, "base64");
+  }
   await p.send("Fetch.enable", { patterns: [{ urlPattern: "*/api/factory*" }] });
   p.onEvent("Fetch.requestPaused", ({ requestId, request }) => {
     const path = new URL(request.url).pathname.replace(/^\/api\/factory/, "");
     const reply = (body: string | Uint8Array, type: string) => p.send("Fetch.fulfillRequest", { requestId, responseCode: 200, responseHeaders: [{ name: "Content-Type", value: type }], body: Buffer.from(body).toString("base64") }).catch(() => {});
     if (path == "/events") reply("retry: 600000\n\n", "text/event-stream");
-    else if (path.startsWith("/shots/")) reply(png, "image/png");
+    else if (path.startsWith("/shots/")) reply(pngs[path.slice(7)] ?? png, "image/png");
     else if (path == "/tasks") reply(JSON.stringify(tasks), "application/json");
     else if (path == "") reply(JSON.stringify(info), "application/json");
     else p.send("Fetch.continueRequest", { requestId }).catch(() => {});
@@ -90,12 +98,42 @@ try {
   ok(`a plain card is ${Math.round(plain.height)}px high`);
   expect(await p.eval(`(() => { const b = [...document.querySelectorAll("[data-open='6'] .actions > *")].map((e) => e.getBoundingClientRect().top); return b.length == 3 && b.every((y) => y == b[0]); })()`), "Preview, Merge and Discard fit on one row");
   ok("Preview, Merge and Discard fit on one row");
-  expect(card(6).thumbs == 2, "the thumbnails stay", card(6));
+  expect(card(6).thumbs == 3, "the thumbnails stay (the last three)", card(6));
   ok("the thumbnails stay");
   // Each column in id order (oldest first), not by last update: #7 updated after #6, yet stays below it.
   const order = await p.eval<number[][]>(`[...document.querySelectorAll("#board .col")].map((c) => [...c.querySelectorAll(".card")].map((e) => Number(e.dataset.open)))`);
   for (const ids of order) expect(ids.every((id, i) => !i || ids[i - 1] < id), "each column is in id order", order);
   ok("each column is in id order, oldest first");
+  // The detail view: the screenshots first, three in a row, a click to enlarge one and a click to put it back.
+  await p.eval(`document.querySelector("#board .card[data-open='6']").click()`);
+  await Bun.sleep(300);
+  const detail = () => p.eval<{ first: string; boxes: { x: number; y: number; w: number; h: number; big: boolean }[]; dlgW: number; dlgH: number }>(`(() => {
+    const d = document.getElementById("dlg"), r = d.getBoundingClientRect();
+    return { first: d.querySelector(".dlg section h4")?.textContent, dlgW: r.width, dlgH: r.height,
+      boxes: [...d.querySelectorAll(".shots figure")].map((f) => { const b = f.querySelector("img").getBoundingClientRect(); return { x: b.x, y: b.y, w: b.width, h: b.height, big: f.classList.contains("big") }; }) };
+  })()`);
+  let d = await detail();
+  expect(d.first == "Screenshots", "the screenshots are the detail view's first section", d.first);
+  expect(d.boxes.length == 4 && d.boxes[0].y == d.boxes[1].y && d.boxes[1].y == d.boxes[2].y && d.boxes[3].y > d.boxes[0].y && Math.abs(d.boxes[3].x - d.boxes[0].x) < 1, "three screenshots in a row, the fourth on the next row", d.boxes);
+  ok("the detail view: the screenshots first, three in a row");
+  await p.screenshot(join(SHOTS, "factory-detail-shots.png"));
+  await p.eval(`document.querySelectorAll("#dlg .shots figure img")[1].click()`);
+  await Bun.sleep(300);
+  d = await detail();
+  const big = d.boxes.find((b) => b.big);
+  expect(d.boxes[1].big && d.boxes.filter((b) => b.big).length == 1, "a click enlarges that screenshot", d.boxes);
+  expect(big && big.w > d.dlgW - 60 && big.h > d.dlgH / 2, "the enlarged screenshot fills the modal's width", { big, w: d.dlgW, h: d.dlgH });
+  ok(`a click enlarges a screenshot: ${Math.round(big!.w)}x${Math.round(big!.h)}px in a ${Math.round(d.dlgW)}px modal`);
+  await p.screenshot(join(SHOTS, "factory-detail-shot-big.png"));
+  // A live update redraws the view; the screenshot stays enlarged.
+  await p.eval(`window.ergaBoard.open(6)`);
+  expect((await detail()).boxes[1].big, "a redraw keeps the screenshot enlarged");
+  await p.eval(`document.querySelector("#dlg .shots figure.big img").click()`);
+  await Bun.sleep(300);
+  d = await detail();
+  expect(d.boxes.every((b) => !b.big) && d.boxes[0].y == d.boxes[2].y, "a second click puts it back in the grid", d.boxes);
+  ok("a second click shrinks it back into the grid");
+  await p.eval(`document.querySelector("#dlg [data-act=close]").click()`);
   expect(!p.errors.length, "no errors in the page", p.errors);
   const html = process.argv[process.argv.indexOf("--html") + 1];
   if (process.argv.includes("--html") && html) {
