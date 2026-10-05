@@ -1624,7 +1624,11 @@ stopped; the same VM's stand-in resolves it and the merge goes on to
 merged), a merge step that hangs (killed at its limit with its process
 tree, needs agent, then merged) and an install that hangs (the stand-in is
 told and installs again). `tests/factory.test.ts` tests the branch names and
-the git tokens' rules.
+the git tokens' rules. `tests/factory-cards.ts` checks that the board's cards
+stay compact, on a board of fixture tasks: a title on one line (the full
+title in its tooltip), no branch name (the detail has it), the last update
+as a short time on the title's line ("5m"), small buttons on one row, and
+the thumbnails.
 
 **How it fits together.**
 

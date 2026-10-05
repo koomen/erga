@@ -35,22 +35,27 @@ export const BOARD_STYLE = `
   .col h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 2px 4px 10px; min-height: 26px; display: flex; justify-content: space-between; align-items: center; }
   .col h2 button { text-transform: none; letter-spacing: 0; }
   .empty { color: var(--muted); font-size: 12px; padding: 8px 4px; border: 0; text-align: left; }
-  .card { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; box-shadow: var(--shadow); cursor: pointer; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 6px; margin-bottom: 6px; min-width: 0; box-shadow: var(--shadow); cursor: pointer; }
   .card:hover { border-color: var(--muted); }
   .card.failed { border-left: 3px solid var(--bad); }
   .card.merging { border-left: 3px solid var(--warn); }
   .card.needs-agent { border-left: 3px solid var(--bad); }
-  .card .agent-now { margin-top: 6px; font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
-  .top { display: flex; gap: 8px; align-items: baseline; }
-  .id { color: var(--muted); font: 12px ui-monospace, monospace; }
-  .title { font-weight: 600; flex: 1; overflow-wrap: anywhere; white-space: normal; color: var(--ink); }
-  .meta { color: var(--muted); font-size: 12px; margin-top: 4px; display: flex; flex-wrap: wrap; gap: 4px 10px; }
-  .meta code, .branch { font: 11px ui-monospace, monospace; }
-  .last { color: var(--muted); font-size: 12px; margin-top: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .err { color: var(--bad); font-size: 12px; margin-top: 6px; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 7.5em; overflow: hidden; }
-  .thumbs { display: flex; gap: 6px; margin-top: 8px; overflow: hidden; }
-  .thumbs img { height: 54px; border-radius: 4px; border: 1px solid var(--line); object-fit: cover; max-width: 96px; }
+  .card .agent-now { margin-top: 2px; font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .top { display: flex; gap: 6px; align-items: baseline; min-width: 0; }
+  .id { color: var(--muted); font: 11px ui-monospace, monospace; flex: none; }
+  .title { font-weight: 600; flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--ink); }
+  .card .title { font-size: 13px; }
+  /* On the card's title line: failed or needs agent, and the last update as a short time ("5m"). */
+  .when { flex: none; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+  .flag { flex: none; color: var(--bad); font-size: 11px; font-weight: 600; }
+  .last { color: var(--muted); font-size: 12px; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .last .chip { margin-right: 6px; vertical-align: 1px; }
+  .err { color: var(--bad); font-size: 12px; margin-top: 2px; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .thumbs { display: flex; gap: 4px; margin-top: 4px; overflow: hidden; }
+  .thumbs img { height: 40px; border-radius: 4px; border: 1px solid var(--line); object-fit: cover; max-width: 72px; }
   .actions { display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; }
+  .card .actions { gap: 3px; margin-top: 4px; }
+  .card .actions button, .card .actions .btn { font-size: 11px; line-height: 16px; padding: 1px 4px; border-radius: 5px; }
   button, .btn { font: inherit; font-size: 12px; border: 1px solid var(--line); background: var(--card); color: var(--ink); border-radius: 6px; padding: 4px 10px; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; gap: 5px; }
   button:hover, .btn:hover { border-color: var(--muted); }
   button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
@@ -140,6 +145,8 @@ const armed = new Set();
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 const ago = (iso) => { const s = (Date.now() - new Date(iso)) / 1000; return s < 60 ? "just now" : s < 3600 ? Math.floor(s / 60) + "m ago" : s < 86400 ? Math.floor(s / 3600) + "h ago" : new Date(iso).toLocaleDateString(); };
+/** A short time since, for a card: "now", "5m", "3h", "2d", then the date. */
+const short = (iso) => { const s = (Date.now() - new Date(iso)) / 1000; return s < 60 ? "now" : s < 3600 ? Math.floor(s / 60) + "m" : s < 86400 ? Math.floor(s / 3600) + "h" : s < 7 * 86400 ? Math.floor(s / 86400) + "d" : new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" }); };
 const api = async (path, opts = {}) => {
   const r = await fetch("/api/factory" + path, { method: opts.method || "GET", headers: opts.json !== undefined ? { "Content-Type": "application/json" } : {}, body: opts.json !== undefined ? JSON.stringify(opts.json) : undefined });
   const body = await r.json().catch(() => ({}));
@@ -170,18 +177,20 @@ const waitsToStart = (t) => t.status == "queued" && !!(t.blockedBy?.start.length
 
 function actions(t, inDialog) {
   const b = [];
-  if (t.url && !inDialog && !["merged", "discarded"].includes(t.status)) b.push('<a class="btn" href="/api/factory/tasks/' + t.id + '/open" target="_blank" onclick="event.stopPropagation()">Open preview</a>');
+  // On a card, why a button is off is its tooltip (and the chip or the error says it); the detail spells it out.
+  const why = (text) => inDialog ? '<span class="why">' + esc(text) + '</span>' : "";
+  if (t.url && !inDialog && !["merged", "discarded"].includes(t.status)) b.push('<a class="btn" href="/api/factory/tasks/' + t.id + '/open" target="_blank" title="Open the preview" onclick="event.stopPropagation()">Preview</a>');
   if (t.status == "queued" && !t.vm) {
-    const why = t.blockedBy?.start.length ? (t.blockedBy.stuck.length ? t.blockedBy.reason[0].toUpperCase() + t.blockedBy.reason.slice(1) : "Starts when " + ids(t.blockedBy.start) + " merge" + (t.blockedBy.start.length == 1 ? "s" : "")) : null;
-    if (why) b.push('<button disabled title="' + esc(why) + '">Start</button><span class="why">' + esc(why) + '</span>');
+    const off = t.blockedBy?.start.length ? (t.blockedBy.stuck.length ? t.blockedBy.reason[0].toUpperCase() + t.blockedBy.reason.slice(1) : "Starts when " + ids(t.blockedBy.start) + " merge" + (t.blockedBy.start.length == 1 ? "s" : "")) : null;
+    if (off) b.push('<button disabled title="' + esc(off) + '">Start</button>' + why(off));
     else if (t.starting) b.push('<button disabled><span class="spin"></span> Starting…</button>');
     else b.push('<button class="primary" data-act="start" data-id="' + t.id + '">Start</button>');
   }
   if (t.status == "complete") {
-    const why = mergeBlocked(t);
-    b.push(why ? '<button class="primary" disabled title="' + esc(why) + '">Merge</button><span class="why">' + esc(why) + '</span>' : '<button class="primary" data-act="merge" data-id="' + t.id + '">Merge</button>');
+    const off = mergeBlocked(t);
+    b.push(off ? '<button class="primary" disabled title="' + esc(off) + '">Merge</button>' + why(off) : '<button class="primary" data-act="merge" data-id="' + t.id + '">Merge</button>');
   }
-  if (t.status == "needs agent") b.push('<button class="primary" disabled title="Claude Code is finishing the merge">Merge</button><span class="why">Needs agent: the task’s Claude Code is finishing the merge, which then goes on by itself</span>');
+  if (t.status == "needs agent") b.push('<button class="primary" disabled title="Claude Code is finishing the merge">Merge</button>' + why("Needs agent: the task’s Claude Code is finishing the merge, which then goes on by itself"));
   if (t.status == "merging") b.push('<button disabled><span class="spin"></span> ' + (t.log.at(-1)?.message.includes("waiting for") ? "Waiting to merge…" : "Merging…") + '</button>');
   if (!["merging", "merged", "discarded"].includes(t.status))
     b.push(armed.has(t.id) ? '<button class="confirm" data-act="discard" data-id="' + t.id + '">Discard branch?</button>' : '<button class="danger" data-act="arm" data-id="' + t.id + '">Discard</button>');
@@ -190,11 +199,14 @@ function actions(t, inDialog) {
 
 function card(t) {
   const last = t.log[t.log.length - 1];
+  const when = t.status == "merged" && t.mergedAt ? t.mergedAt : t.updatedAt;
   const thumbs = t.screenshots.slice(-3).map((s) => '<img src="/api/factory/shots/' + esc(s.file) + '" alt="' + esc(s.caption) + '" loading="lazy">').join("");
   return '<div class="card ' + cls(t.status) + (waitsToStart(t) ? " blocked" : "") + '" data-open="' + t.id + '">' +
-    '<div class="top"><span class="id">#' + t.id + '</span><span class="title">' + esc(t.title) + '</span></div>' +
-    '<div class="meta">' + depChip(t) + '<code>' + esc(t.branch) + '</code><span>' + (t.status == "merged" ? "merged " + ago(t.mergedAt) : ago(t.updatedAt)) + '</span>' + (t.status == "failed" ? "<span>failed</span>" : "") + (t.status == "needs agent" ? '<span class="status needs-agent">needs agent</span>' : "") + '</div>' +
-    (t.error ? '<div class="err">' + esc(t.error) + '</div>' + (t.status == "needs agent" && last ? '<div class="agent-now">Now: ' + esc(last.message.length > 160 ? last.message.slice(0, 160) + "…" : last.message) + '</div>' : "") : last && t.status != "merged" && !waitsToStart(t) ? '<div class="last">' + esc(last.message) + '</div>' : "") +
+    '<div class="top"><span class="id">#' + t.id + '</span><span class="title" title="' + esc(t.title) + '">' + esc(t.title) + '</span>' +
+    (t.status == "failed" ? '<span class="flag">failed</span>' : t.status == "needs agent" ? '<span class="flag">needs agent</span>' : "") +
+    '<span class="when" title="' + esc((when == t.mergedAt ? "Merged " : "Last update ") + new Date(when).toLocaleString()) + '">' + short(when) + '</span></div>' +
+    (t.error ? (depChip(t) ? '<div class="last">' + depChip(t) + '</div>' : "") + '<div class="err" title="' + esc(t.error) + '">' + esc(t.error) + '</div>' + (t.status == "needs agent" && last ? '<div class="agent-now" title="' + esc(last.message) + '">Now: ' + esc(last.message) + '</div>' : "")
+      : depChip(t) || (last && t.status != "merged") ? '<div class="last"' + (last ? ' title="' + esc(last.message) + '"' : "") + '>' + depChip(t) + (last && t.status != "merged" && !waitsToStart(t) ? esc(last.message) : "") + '</div>' : "") +
     (thumbs && t.status != "merged" ? '<div class="thumbs">' + thumbs + '</div>' : "") +
     actions(t, false) + '</div>';
 }
