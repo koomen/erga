@@ -2,15 +2,17 @@
 // The factory board's cards on /admin/source, compact: a board of fixture tasks (the page's
 // /api/factory requests answered over DevTools, so no VM runs), in headless Chrome.
 //
-//   bun tests/factory-cards.ts
+//   bun tests/factory-cards.ts [--html FILE]
 //
 // - A long title stays on one line, cut with an ellipsis; the full title is its tooltip.
 // - No branch name on a card (the detail still has it).
 // - The last update is a short time on the title's line ("5m"), its date in a tooltip.
 // - A plain card (no thumbnails, no error) is at most two lines of text and a row of buttons.
 // - The thumbnails stay.
-// Screenshots land in tests/cdp.ts's SHOTS (factory-cards.png, factory-cards-dark.png).
+// Screenshots land in tests/cdp.ts's SHOTS (factory-cards.png, factory-cards-dark.png). --html saves the board as one
+// static page (styles and images inlined, no scripts), to look at without a server.
 
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Browser, SHOTS } from "./cdp";
 import { startHost } from "./host";
@@ -89,6 +91,20 @@ try {
   expect(card(6).thumbs == 2, "the thumbnails stay", card(6));
   ok("the thumbnails stay");
   expect(!p.errors.length, "no errors in the page", p.errors);
+  const html = process.argv[process.argv.indexOf("--html") + 1];
+  if (process.argv.includes("--html") && html) {
+    await p.open(`${host.root}/admin/source`, { width: 1400, height: 900 });
+    while (!(await p.eval(`document.querySelectorAll("#board .card").length`))) await Bun.sleep(50);
+    await Bun.sleep(300);
+    writeFileSync(html, await p.eval<string>(`(async () => {
+      const css = [...document.styleSheets].map((sheet) => { try { return [...sheet.cssRules].map((r) => r.cssText).join("\\n"); } catch { return ""; } }).join("\\n");
+      const doc = document.documentElement.cloneNode(true);
+      doc.querySelectorAll("script, link[rel=stylesheet], style, link[rel=modulepreload]").forEach((e) => e.remove());
+      const style = document.createElement("style"); style.textContent = css; doc.querySelector("head").append(style);
+      return "<!doctype html>\\n" + doc.outerHTML;
+    })()`).then((page) => page.replace(/src="\/api\/factory\/shots\/[^"]*"/g, `src="data:image/png;base64,${png.toString("base64")}"`)));
+    ok(`the board, as a static page: ${html}`);
+  }
 } finally {
   await browser.close();
   await host.stop();
