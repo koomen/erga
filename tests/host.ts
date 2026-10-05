@@ -101,8 +101,9 @@ export async function startHost(target: string | null, opts: { port?: number; en
       // Its own process group, so stopping it outright takes the server with it.
       const p = proc = Bun.spawn(["bun", join(ROOT, "dev.ts"), ...(target ? [target] : []), "--port", String(port), "--no-open"], { env, stdout: "pipe", stderr: "pipe", detached: true });
       for (const s of [p.stdout, p.stderr] as ReadableStream<Uint8Array>[]) (async () => { for await (const c of s) output = (output + new TextDecoder().decode(c)).slice(-20000); })();
-      // Usually ~2s; the margin is for a machine busy running everything else at once.
-      for (let i = 0; i < 1200; i++) {
+      // Usually ~2s; the margin is for a machine busy running everything else at once (./test.sh starts many
+      // servers together, each optimizing Vite's dependencies in a cache of its own: on a loaded machine, 30s wasn't enough).
+      for (const until = Date.now() + 120_000; Date.now() < until;) {
         if (p.exitCode != null) break;
         const at = target ? new RegExp(`editing .*: http://localhost:${port}(/[a-z0-9-]+/[a-z0-9-]+)`).exec(output)?.[1] : "";
         try { if (at != null && (await fetch(target ? `${root}${at}/api/doc` : `${root}/style.css`)).ok) { host.base = root + at; return; } } catch { /* not up yet */ }
