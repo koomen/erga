@@ -62,6 +62,12 @@ export interface TargetSpec {
    * down, or can't deploy itself): deploy/branches.ts.
    */
   deploys: TargetName[];
+  /**
+   * More zones this server's deploy token may read, beyond its targets' own
+   * (production's: erga-pages-staging.dev, staging's pages zone from task #4,
+   * so production can deploy staging there too).
+   */
+  tokenZones?: string[];
 }
 
 import data from "./targets.json";

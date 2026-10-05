@@ -26,6 +26,9 @@
       "deploys": [
         "production",
         "staging"
+      ],
+      "tokenZones": [
+        "erga-pages-staging.dev"
       ]
     },
     "staging": {
