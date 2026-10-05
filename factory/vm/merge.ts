@@ -6,6 +6,8 @@
 //   bun merge.ts merge BRANCH "TITLE"   merges staging into BRANCH in the task's clone, pushes BRANCH, then moves
 //                                       staging to a --no-ff merge commit ("Merge BRANCH: TITLE") and deletes BRANCH
 //   bun merge.ts discard BRANCH         deletes the branch
+//   bun merge.ts save BRANCH            before a restart: stops the task's Claude Code and preview, then commits what isn't
+//                                       committed in the clone and pushes BRANCH, so the fresh VM has all the work
 //   bun merge.ts stop BRANCH            stops the task's Claude Code (run.ts) if it still runs 5 s later: the factory gave
 //                                       up on it (its merge went back to ready to merge)
 //
@@ -98,6 +100,35 @@ async function merge(): Promise<Record<string, unknown>> {
 const stepFailure = (what: string, r: StepResult) =>
   `${what} ${r.timedOut ? `timed out after ${r.limit}s (its processes were killed)` : `failed (exit ${r.code})`}: ${(r.err || r.out).slice(-2000)}`;
 
+/**
+ * Before a restart (the factory stops this VM next): Claude Code and the preview stopped at once, an unfinished merge
+ * dropped (its conflict markers aren't work), anything not committed committed, and the branch pushed.
+ */
+async function save(): Promise<Record<string, unknown>> {
+  mkdirSync(WORK(), { recursive: true });
+  await stopPreview();
+  const stopped = await stopRun(0);
+  const dir = CLONE();
+  if (!existsSync(join(dir, ".git"))) return { ok: true, stopped, saved: "no clone in the VM: nothing to save" };
+  const notes: string[] = [];
+  if ((await git(["rev-parse", "-q", "--verify", "MERGE_HEAD"], dir, { quiet: true })).code == 0) {
+    await git(["merge", "--abort"], dir, { quiet: true });
+    notes.push("an unfinished merge of staging was dropped");
+  }
+  const on = (await git(["rev-parse", "--abbrev-ref", "HEAD"], dir, { quiet: true })).out;
+  if (on != branch) return { ok: false, stopped, error: `the clone is on ${on}, not ${branch}: nothing was saved` };
+  await git(["add", "-A"], dir);
+  const files = (await git(["diff", "--cached", "--name-only"], dir, { quiet: true })).out.split("\n").filter(Boolean);
+  if (files.length) {
+    await git(["commit", "--quiet", "--no-verify", "-m", `Work in progress on ${branch}, saved by the factory before a restart`], dir);
+    notes.push(`${files.length} uncommitted file${files.length == 1 ? "" : "s"} committed`);
+  }
+  const pushed = await git(["push", "--quiet", "origin", `HEAD:refs/heads/${branch}`], dir, { quiet: true, name: "push" });
+  if (pushed.code != 0) return { ok: false, stopped, error: `${notes.length ? notes.join("; ") + ", but " : ""}${stepFailure(`pushing ${branch}`, pushed)}` };
+  const commit = (await git(["rev-parse", "HEAD"], dir)).out;
+  return { ok: true, stopped, commit, saved: `${notes.length ? notes.join("; ") + "; " : "nothing uncommitted; "}${branch} pushed at ${commit.slice(0, 10)}` };
+}
+
 async function discard(): Promise<Record<string, unknown>> {
   // No clone needed: a push that deletes the branch, from an empty repository.
   mkdirSync(WORK(), { recursive: true });
@@ -113,7 +144,7 @@ async function discard(): Promise<Record<string, unknown>> {
 
 if (!branch?.startsWith("task/")) { result({ ok: false, error: "name a task/ branch" }); process.exit(2); }
 try {
-  result(what == "merge" ? await merge() : what == "discard" ? await discard() : what == "stop" ? { ok: true, stopped: await stopRun(5) } : { ok: false, error: `${what}?` });
+  result(what == "merge" ? await merge() : what == "discard" ? await discard() : what == "save" ? await save() : what == "stop" ? { ok: true, stopped: await stopRun(5) } : { ok: false, error: `${what}?` });
 } catch (e) {
   result({ ok: false, error: scrub((e as Error).message) });
 }

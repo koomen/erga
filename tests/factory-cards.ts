@@ -129,13 +129,13 @@ try {
   }
   ok("every card: Preview, Start, Restart, Discard, Merge, on one row, Merge on the right; an off button says why");
   const enabled = (id: number) => rows.find((r) => r.id == id)!.on.join();
-  expect(enabled(3) == "discard" && enabled(4) == "discard", "a working task: only Discard", rows);
+  expect(enabled(3) == "restart,discard" && enabled(4) == "restart,discard", "a working task: Restart and Discard", rows);
   expect(enabled(5) == "restart,discard", "a failed task: Restart and Discard", enabled(5));
   expect(enabled(6) == "preview,restart,discard,merge", "a task ready to merge: all but Start", enabled(6));
   expect(enabled(7) == "preview,restart,discard", "a ready task whose Merge waits for #3: Merge off", enabled(7));
   expect(enabled(8) == "start,discard" && enabled(9) == "discard", "queued: Start, unless it waits for another task", [enabled(8), enabled(9)]);
-  expect(enabled(10) == "discard", "needs agent: only Discard", enabled(10));
-  ok("the buttons that work: only Discard while working; Restart once failed or ready; Merge when it can merge");
+  expect(enabled(10) == "restart,discard", "needs agent: Restart and Discard", enabled(10));
+  ok("the buttons that work: Restart and Discard while working; Restart in any state once the task has run; Merge when it can merge");
   const offLook = await p.eval<{ border: string; cursor: string }>(`(() => { const s = getComputedStyle(document.querySelector("[data-open='3'] [data-btn='merge']")); return { border: s.borderStyle, cursor: s.cursor }; })()`);
   expect(offLook.border == "dashed" && offLook.cursor == "not-allowed", "an off button looks off", offLook);
   ok("an off button looks off: a dashed border, no fill");

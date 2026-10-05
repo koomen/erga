@@ -35,6 +35,8 @@
 //    limit, with its whole process tree, and the same happens; an install that hangs wakes the stand-in with the log;
 //    a merge that conflicts twice in a row, while the first wake-up still ends, gets two wake-ups that each report
 //    their own end, and merges; a stand-in that gives up and goes on is stopped when the merge goes back to ready.
+// 13. Restart while the task works: its Claude Code (the stand-in) is stopped, its uncommitted work committed and
+//    pushed, and a fresh VM goes on from the branch.
 // Screenshots land in tests/cdp.ts's SHOTS (factory-*.png).
 
 import { spawnSync } from "node:child_process";
@@ -166,8 +168,11 @@ try {
   const log3c = spawnSync("git", ["-C", repo, "log", "--format=%s", `staging..${t3c.branch}`], { encoding: "utf8" }).stdout;
   expect(log3c.includes("Revise task #3") && log3c.split("\n").filter((l) => l.startsWith("Factory task #3")).length == 2, "the restart worked on the same branch", log3c);
   expect(t3c.log.some((l: any) => l.message.startsWith("Restarted by")) && t3c.log.some((l: any) => l.message.includes("checked out at")), "the log says it restarted, on the branch", t3c.log.slice(-12));
+  expect(t3c.log.some((l: any) => /^Saved before the restart: .*pushed at/.test(l.message)), "the old VM saved the work first", t3c.log.slice(-14));
+  expect(t3c.log.some((l: any) => l.message.startsWith("The stand-in was restarted.") && l.message.includes("Say it again.")), "the fresh Claude Code got the instructions sent before", t3c.log.slice(-14));
   expect((await api("/tasks/2/restart", { method: "POST" })).status == 409, "a discarded task doesn't restart");
-  ok("restart: the task runs again on its branch, in a fresh VM, and is ready to merge again");
+  ok("restart: the task runs again on its branch, in a fresh VM, with its earlier instructions, and is ready to merge again");
+
 
   // ---------------------------------------------------------------- 6. tokens
   const brief = await fetch(`${root}/api/factory/tasks/3/brief`, { headers: { Authorization: "Bearer fct.1.9999999999." + "0".repeat(64) } });
@@ -521,6 +526,21 @@ try {
   expect(!standIns && h.error.includes("Claude Code couldn't finish the merge"), "H is back in ready to merge, and no stand-in still runs", standIns);
   ok("a merge whose Claude Code gives up: back to ready to merge, and that Claude Code is stopped");
 
+
+  // Restart while it works: its Claude Code is stopped, what it hadn't committed is committed and pushed, and a fresh VM goes on.
+  const w = await make("Restart me while I work", "A note. [factory-test: keep working]");
+  await until(async () => (await task(w)).log.some((l: any) => l.message.includes("keeps working")), STEP, "the stand-in works, with work not committed");
+  const tw = await task(w);
+  expect(tw.status == "working", "it is working", tw.status);
+  expect((await api(`/tasks/${w}/restart`, { method: "POST" })).status == 200, "a working task restarts");
+  await until(async () => { const t = await task(w); return t.status == "complete" && !!t.vm && t.vm != tw.vm; }, STEP, "the restarted task is ready, from a fresh VM", async () => JSON.stringify((await task(w)).log.slice(-8)));
+  const tw2 = await task(w);
+  const logW = spawnSync("git", ["-C", repo, "log", "--format=%s", "--name-only", `staging..${tw2.branch}`], { encoding: "utf8" }).stdout;
+  expect(/Work in progress on task\/\S+, saved by the factory before a restart\n+factory-wip\.txt/.test(logW) && logW.includes(`Factory task #${w}`), "the uncommitted file was committed and pushed, and the fresh run went on from it", logW);
+  expect(tw2.log.some((l: any) => /^Restarted by .* \(the task was working\)/.test(l.message)) && tw2.log.some((l: any) => /^Saved before the restart: Claude Code was stopped; 1 uncommitted file committed/.test(l.message)), "the log says it restarted, and what was saved", tw2.log.slice(-14));
+  expect(!tw2.log.some((l: any) => /^Failed/.test(l.message)), "the stopped run reported nothing", tw2.log.slice(-14));
+  ok("restart while working: Claude Code stopped, its uncommitted work committed and pushed, a fresh VM goes on from it");
+  expect((await api(`/tasks/${w}/discard`, { method: "POST" })).status == 200, "and it is discarded");
   console.log("all factory checks pass");
 } catch (e) {
   // What the VMs said (the simulation's logs; Docker's are saved when a VM stops), to see why.

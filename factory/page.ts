@@ -208,10 +208,14 @@ function actions(t, inDialog) {
     else b.push(on("start", "Start", "Start the task's VM", "primary"));
   } else b.push(off("start", "Start", done ? gone : "The task has started already"));
 
-  if (["complete", "failed"].includes(t.status)) {
+  // Restart: any time once the task has run (working, merging and stuck too): its VM saves the work, then a fresh one starts.
+  if (!done && !(t.status == "queued" && !t.vm)) {
     const why = t.blockedBy?.start.length ? "Can't restart until " + ids(t.blockedBy.start) + " merge" + (t.blockedBy.start.length == 1 ? "s" : "") : null;
-    b.push(why ? off("restart", "Restart", why) : on("restart", "Restart", "Run the task again on its branch, in a fresh VM"));
-  } else b.push(off("restart", "Restart", done ? gone : t.status == "queued" ? "The task hasn't run yet" : t.status == "working" ? "The task is running: it restarts when it fails or is ready to merge" : "The task is merging"));
+    const stops = t.status == "working" ? "Stop Claude Code, save its work on the branch, and start it again in a fresh VM"
+      : ["merging", "needs agent"].includes(t.status) ? "Stop the merge and Claude Code, save the work on the branch, and start the task again in a fresh VM"
+      : "Run the task again on its branch, in a fresh VM";
+    b.push(why ? off("restart", "Restart", why) : on("restart", "Restart", stops));
+  } else b.push(off("restart", "Restart", done ? gone : "The task hasn't run yet"));
 
   if (!["merging", ...(done ? [t.status] : [])].includes(t.status))
     b.push(armed.has(t.id) ? '<button class="confirm" data-btn="discard" data-act="discard" data-id="' + t.id + '">Discard branch?</button>' : '<button class="danger" data-btn="discard" data-act="arm" data-id="' + t.id + '" title="Delete the branch and stop the VM">Discard</button>');
