@@ -1493,6 +1493,9 @@ preview`: `bun start` in the VM), takes screenshots with headless Chromium
 branch and moves the card to Ready to merge. Then the VM waits: its preview
 stays up, and the detail view takes more instructions ("Send to Claude
 Code"), which run Claude Code again on the same branch (`--continue`).
+**Restart** (on a failed task, or one ready to merge) runs the task again
+on the same branch with no new instructions: the old VM stops, and a fresh
+VM, with a fresh git token, starts Claude Code with the task's prompt.
 **Merge** works in the task's own VM, in its clone (`factory/vm/merge.ts`):
 it stops the preview, merges staging into the branch and pushes it, then
 moves staging to a `--no-ff` merge commit of it ("Merge task/…: title"),
