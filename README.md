@@ -1849,7 +1849,10 @@ real run") is code now, and staging.erga.dev runs it.
   after a new image was pushed and prepared, starts failed with "There is no
   container instance that can be provided" (Cloudflare still putting the
   image on its machines, it seems); later the same image started at once. So
-  push a new image a while before it's needed.
+  push a new image a while before it's needed. (The Dockerfile installs
+  `lsof`, which images before it lack; tests/host.ts doesn't need it: on
+  Linux it reads `/proc/*/cwd`. The next image built picks it up; there's
+  no need to push one just for that.)
 
 Done on erga.dev's account (task #7): the image pushed and prepared;
 `FACTORY_KEY` on `erga-staging`; staging deployed from a machine with this
