@@ -48,6 +48,7 @@ const SOURCE_STYLE = `
   .pane-head { justify-content: space-between; }
   .merge-row { display: flex; align-items: center; gap: 10px; }
   .merge-row .count { font-size: 13px; color: var(--soft); white-space: nowrap; }
+  .merge-row[hidden], #merge-hint:empty { display: none; }
   #merge-hint { margin: -4px 0 10px; font-size: 13.5px; text-align: right; }
   #merge-hint.error { color: var(--bad); }
   @media (max-width: 640px) { .pane-head { flex-direction: column; align-items: stretch; gap: 10px; } .merge-row { justify-content: space-between; } .merge-row .count { white-space: normal; flex: 1; min-width: 0; } #merge-hint { margin-top: -6px; text-align: left; } }
@@ -161,7 +162,7 @@ function sourceMarkup(c: SourcePageConfig): string {
   return `
   <div class="pane-head">
     <div><h2>Source and deploys</h2><p class="sub">Push to staging, or merge a task: staging deploys itself. Then move main up to it: main deploys to production.</p></div>
-    <div class="merge-row"><span class="count" id="ahead"></span><button class="new" id="merge" disabled>Merge staging into main</button></div>
+    <div class="merge-row" id="merge-row" hidden><span class="count" id="ahead"></span><button class="new" id="merge" disabled>Merge staging into main</button></div>
   </div>
   <p class="hint" id="merge-hint" role="status"></p>
   <section class="card" aria-label="Commits">
@@ -294,8 +295,9 @@ const SOURCE_SCRIPT = `
     if (older.length && commits.length) grid.insertAdjacentHTML("beforeend", '<div class="older">' + older.join("") + "</div>");
     drawn = true;
     const ahead = staging?.ahead ?? 0, mergeBtn = document.getElementById("merge");
-    if (!busy) mergeBtn.disabled = !ahead;
-    document.getElementById("ahead").textContent = !staging?.commit ? "" : ahead ? ahead + " commit" + (ahead == 1 ? "" : "s") + " to merge" : "main is at staging";
+    // Nothing at all while main is at staging: no count, no button, no space. While a merge runs the button stays, disabled.
+    if (!busy) mergeBtn.disabled = document.getElementById("merge-row").hidden = !ahead;
+    document.getElementById("ahead").textContent = !staging?.commit ? "" : ahead ? ahead + " commit" + (ahead == 1 ? "" : "s") + " to merge" : "";
     const m = view.mirror, st = document.getElementById("mirror-state"), err = document.getElementById("mirror-error");
     st.className = "state " + (m.state == "off" ? "off" : m.state == "pushing" ? "pushing" : m.error ? "error" : "ok");
     st.querySelector(".what").textContent = m.state == "off" ? "Off: the server has no GITHUB_MIRROR_TOKEN" : m.state == "pushing" ? "Pushing…" : m.error ? "Behind" + (m.lastPushAt ? " · last pushed " + ago(m.lastPushAt) : "") : m.lastPushAt ? "Up to date · pushed " + ago(m.lastPushAt) : "Not pushed yet";
@@ -334,7 +336,9 @@ const SOURCE_SCRIPT = `
     if (asking) { again = true; return asking; }
     asking = (async () => {
       const r = await fetch("/api/deploys?history=100", { headers: { Accept: "application/json" } }).catch(() => null);
-      deploys = r && r.ok ? await r.json().catch(() => null) : null;
+      // No answer, or a 5xx (a server restarting into its new version): keep what's shown, and the poll below asks again.
+      const body = r && r.ok ? await r.json().catch(() => null) : null;
+      if (body || (r && r.status < 500)) deploys = body;
       renderTargets();
       if (open && !open.pinned) { const t = targetOf(open.target); if (t?.deployId && t.deployId != open.deployId) refreshLog(false); }
       await new Promise((ok) => setTimeout(ok, 500));
@@ -419,19 +423,32 @@ const SOURCE_SCRIPT = `
     load();
   });
 
-  // Live: an event says what changed; a reconnect reloads everything.
-  const events = new EventSource("/api/events");
-  events.onopen = () => { load(); loadDeploys(); };
-  events.onmessage = (e) => {
-    let ev; try { ev = JSON.parse(e.data); } catch { return; }
-    if (ev.type == "source") load();
-    if (ev.type == "deploys") loadDeploys();
-    if (ev.type == "deploy-log" && open && ev.target == open.target) {
-      if (ev.deployId == open.deployId) { open.heard = Date.now(); append(ev.lines || []); open.shown += (ev.lines || []).length; }
-      else if (!open.pinned) { open.heard = Date.now(); refreshLog(false); }
-    }
-  };
+  // Live: an event says what changed; a reconnect reloads everything. A stream the server answers with an error
+  // (a server restarting into its new version) the browser closes for good: open it again.
+  let heard = 0;
+  function listen() {
+    const events = new EventSource("/api/events");
+    events.onopen = () => { load(); loadDeploys(); };
+    events.onerror = () => { if (events.readyState == EventSource.CLOSED) setTimeout(listen, 3000); };
+    events.onmessage = (e) => {
+      let ev; try { ev = JSON.parse(e.data); } catch { return; }
+      if (ev.type == "source") { load(); loadDeploys(); } // a move starts a deploy, here or on another server
+      if (ev.type == "deploys") { heard = Date.now(); loadDeploys(); }
+      if (ev.type == "deploy-log" && open && ev.target == open.target) {
+        if (ev.deployId == open.deployId) { open.heard = Date.now(); append(ev.lines || []); open.shown += (ev.lines || []).length; }
+        else if (!open.pinned) { open.heard = Date.now(); refreshLog(false); }
+      }
+    };
+  }
+  listen();
   load(); loadDeploys();
+  // Events don't tell everything: another server's deploy (erga.dev's page shows staging's, run by staging's server)
+  // sends this page none, and a server that deploys itself cuts the stream and can miss its last change. So while
+  // a deploy shows running (or the status didn't load) and no event came lately, ask for the status every two seconds.
+  setInterval(() => {
+    if (asking || Date.now() - heard < 2500) return;
+    if (!deploys || deploys.targets?.some((t) => running(t.state) || t.history?.some((r) => running(r.state)))) loadDeploys();
+  }, 2000);
   setInterval(() => { render(); renderTargets(); }, 30000);
 })();
 `;

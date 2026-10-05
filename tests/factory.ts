@@ -125,7 +125,8 @@ try {
   const subject = spawnSync("git", ["-C", repo, "log", "-1", "--format=%s %P", "staging"], { encoding: "utf8" }).stdout.trim();
   expect(subject.startsWith("Merge task/1-say-hello-on-the-front-page: Say hello on the front page") && subject.split(" ").length > 3, "a --no-ff merge commit named after the task", subject);
   expect(!merged.vm && !merged.url, "the VM is stopped, and the preview gone", merged);
-  await until(async () => (await column(p, "merged")).includes("Say hello"), 15_000, "the card moves to Merged");
+  await until(async () => !(await p.eval<string>(`document.getElementById("board")?.innerText ?? ""`)).includes("Say hello"), 15_000, "the card leaves the board (no Merged column)");
+  expect(!(await p.eval<boolean>(`!!document.querySelector('[data-col="merged"]')`)) && (await p.eval<number>(`document.querySelectorAll("#board .col").length`)) == 4, "the board has four columns, and no Merged one");
   ok("merge: into staging as a merge commit, the branch deleted, the VM stopped");
 
   // ---------------------------------------------------------------- 4. discard
@@ -298,7 +299,7 @@ try {
   const box = (sel: string) => p.eval<{ left: number; right: number; top: number; bottom: number; width: number }>(`(() => { const r = document.querySelector(${JSON.stringify(sel)}).getBoundingClientRect(); return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, width: r.width }; })()`);
   const [agentBox, tasksBox, sourceBox] = [await box("#agent"), await box("#tasks"), await box("#source-pane")];
   expect(agentBox.right <= tasksBox.left && tasksBox.bottom <= sourceBox.top && agentBox.width >= 300 && agentBox.bottom <= 900, "on a wide window: the agent on the left, the board above the dashboard beside it", { agentBox, tasksBox, sourceBox });
-  expect(await p.eval(`getComputedStyle(document.querySelector("#tasks .board")).gridTemplateColumns.split(" ").length == 5`), "the board keeps its five columns beside the agent");
+  expect(await p.eval(`getComputedStyle(document.querySelector("#tasks .board")).gridTemplateColumns.split(" ").length == 4`), "the board keeps its four columns beside the agent");
   const phone = await browser.page(await browser.context());
   await phone.open(`${root}/admin/source`, { width: 390, height: 844, scale: 2 });
   await until(() => phone.eval(`!!document.querySelector('#tasks [data-col="queued"]')`), 10_000, "the page on a phone");
