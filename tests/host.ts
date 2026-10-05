@@ -109,7 +109,8 @@ export async function startHost(target: string | null, opts: { port?: number; en
       for (const until = Date.now() + 120_000; Date.now() < until;) {
         if (p.exitCode != null) break;
         const at = target ? new RegExp(`editing .*: http://localhost:${port}(/[a-z0-9-]+/[a-z0-9-]+)`).exec(output)?.[1] : "";
-        try { if (at != null && (await fetch(target ? `${root}${at}/api/doc` : `${root}/style.css`)).ok) { host.base = root + at; return; } } catch { /* not up yet */ }
+        // Up once a page that reads the database answers: the server migrates it as it starts, and until then those fail.
+        try { if (at != null && (await fetch(target ? `${root}${at}/api/doc` : `${root}/docs`, { redirect: "manual" })).ok) { host.base = root + at; return; } } catch { /* not up yet */ }
         await Bun.sleep(25);
       }
       throw new Error(`dev server didn't start:\n${output}`);
