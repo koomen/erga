@@ -86,6 +86,7 @@ import { factoryGuide, factoryTools, startFactoryAgent, type FactoryAgent, type 
 import { containersHost } from "../factory/cloudflare";
 import { b64url } from "../factory/git-grant";
 import { branchName, claudeToken, resolvePrompt, taskPrompt } from "../factory/prompt";
+import { type Stalled, stalledOf } from "../factory/stall";
 import { whoOf } from "../front";
 import { LOCKED } from "../users";
 import { isDev, keysRequired, sessionOf } from "./auth";
@@ -115,6 +116,8 @@ export interface Task {
   blockedBy?: Blocked;
   /** Its VM is being started (a queued task, between Start and the VM). */
   starting?: boolean;
+  /** Computed on every read: working or needs agent, and no new log line in 5 minutes (factory/stall.ts). */
+  stalled?: Stalled;
 }
 
 const enc = new TextEncoder();
@@ -291,6 +294,7 @@ export class Factory extends DurableObject<Env> {
   private view(r: Row): Task {
     const log = this.sql.exec<{ at: string; message: string }>("SELECT at, message FROM (SELECT * FROM logs WHERE task = ? ORDER BY n DESC LIMIT 200) ORDER BY n", r.id).toArray();
     const screenshots = this.sql.exec<{ file: string; caption: string; at: string }>("SELECT file, caption, at FROM shots WHERE task = ? ORDER BY n", r.id).toArray();
+    const stalled = stalledOf({ status: r.status, updatedAt: r.updated, log });
     return {
       id: r.id, title: r.title, description: r.description, status: r.status, branch: r.branch, base: r.base, commit: r.commit_sha,
       summary: r.summary, error: r.error, url: r.preview_origin && r.preview_path != null ? r.preview_origin + r.preview_path : null,
@@ -298,6 +302,7 @@ export class Factory extends DurableObject<Env> {
       startAfter: list(r.start_after), mergeAfter: list(r.merge_after),
       ...(this.deps.blocked(depOf(r)) ? { blockedBy: this.deps.blocked(depOf(r)) } : {}),
       ...(this.starting.has(r.id) ? { starting: true } : {}),
+      ...(stalled ? { stalled } : {}),
     };
   }
 

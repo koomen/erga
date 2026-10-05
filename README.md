@@ -1555,6 +1555,15 @@ board: a chip on the card ("waiting for #12", "merges after #12", "blocked by
 #12"), waiting tasks at the bottom of Queued with Start off, and Merge off
 with the reason.
 
+**Stalled tasks.** A task that is working or needs agent, and whose log has
+had no new line in 5 minutes, is *stalled* (`factory/stall.ts`): its Claude
+Code may be hung, or in one long step. Its card and its detail view show a
+badge ("stalled 12 min") and the detail view says since when; the board
+checks again every 30 seconds, and a new log line clears it. The API's tasks
+carry a computed `stalled {since, quietMs}`, and `list_tasks` and `get_task`
+tell the factory's agent how long the task has been quiet. "Stalled" is not
+"blocked": a blocked task waits for its dependencies.
+
 **The factory's agent.** Beside the board, an agent panel like the editor's
 (the same panel and conversation, `src/page/agent-chat.ts`; its own code is
 `src/page/factory-agent.ts`, built to `factory-agent.js`) talks to the admin's

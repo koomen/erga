@@ -16,6 +16,8 @@
 // boardMarkup and BOARD_SCRIPT. The script tells the page's agent panel which task is open
 // (window.ergaBoard).
 
+import { STALL_MS } from "./stall";
+
 export const BOARD_STYLE = `
   :root { --ink: var(--fg-strong); --muted: var(--soft); --line: var(--rule); --card: var(--bg); --panel: color-mix(in srgb, var(--chrome) 9%, var(--bg));
     --accent: var(--caret); --ok: #1f7a4d; --warn: #b26a00; --bad: #b3261e; --shadow: 0 1px 2px rgba(0,0,0,.05); }
@@ -50,6 +52,11 @@ export const BOARD_STYLE = `
   /* On the card's title line: failed or needs agent, and the last update as a short time ("5m"). */
   .when { flex: none; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
   .flag { flex: none; color: var(--bad); font-size: 11px; font-weight: 600; }
+  /* Stalled (factory/stall.ts): working or needs agent, and no new log line in 5 minutes. Not "blocked", which is a dependency. */
+  .stalled-badge { flex: none; color: var(--warn); font-size: 11px; font-weight: 600; border: 1px solid currentColor; border-radius: 999px; padding: 1px 6px; line-height: 14px; white-space: nowrap; }
+  h3 .stalled-badge { font-size: 11px; vertical-align: 2px; }
+  .card.stalled { border-left: 3px solid var(--warn); }
+  .stalled-note { color: var(--warn); font-size: 13px; margin-top: 8px; padding: 6px 10px; border: 1px solid color-mix(in srgb, var(--warn) 45%, var(--line)); border-radius: 6px; }
   .last { color: var(--muted); font-size: 12px; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .last .chip { margin-right: 6px; vertical-align: 1px; }
   .err { color: var(--bad); font-size: 12px; margin-top: 2px; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
@@ -182,6 +189,22 @@ function depChip(t) {
   if (b.start.length) return '<span class="chip start" title="' + esc(b.reason) + '">waiting for ' + ids(b.start) + '</span>';
   return '<span class="chip merge" title="' + esc(b.reason) + '">merges after ' + ids(b.merge) + '</span>';
 }
+/**
+ * How long the task's log has been quiet, in ms, if it is stalled: working or needs agent, and no new log line in
+ * ${STALL_MS / 60000} minutes (factory/stall.ts, which the API's stalled is). Computed here, again on each redraw (every 30 s), so the
+ * badge shows up while no event arrives, and clears with the event that brings a new log line.
+ */
+const stalledMs = (t) => {
+  if (t.status != "working" && t.status != "needs agent") return 0;
+  const ms = Date.now() - new Date(t.log.at(-1)?.at ?? t.updatedAt);
+  return ms >= ${STALL_MS} ? ms : 0;
+};
+const quiet = (ms) => { const m = Math.floor(ms / 60000); return m < 60 ? m + " min" : Math.floor(m / 60) + " h" + (m % 60 ? " " + (m % 60) + " min" : ""); };
+const stalledTip = (t, ms) => "No new log line for " + quiet(ms) + ", since " + new Date(t.log.at(-1)?.at ?? t.updatedAt).toLocaleTimeString() + ". Claude Code may be hung, or in one long step.";
+function stalledBadge(t) {
+  const ms = stalledMs(t);
+  return ms ? '<span class="stalled-badge" title="' + esc(stalledTip(t, ms)) + '">stalled ' + quiet(ms) + '</span>' : "";
+}
 const waitsToStart = (t) => t.status == "queued" && !!(t.blockedBy?.start.length || t.blockedBy?.stuck.length);
 
 /**
@@ -234,9 +257,9 @@ function card(t) {
   const last = t.log[t.log.length - 1];
   const when = t.status == "merged" && t.mergedAt ? t.mergedAt : t.updatedAt;
   const thumbs = t.screenshots.slice(-3).map((s) => '<img src="/api/factory/shots/' + esc(s.file) + '" alt="' + esc(s.caption) + '" loading="lazy">').join("");
-  return '<div class="card ' + cls(t.status) + (waitsToStart(t) ? " blocked" : "") + '" data-open="' + t.id + '">' +
+  return '<div class="card ' + cls(t.status) + (waitsToStart(t) ? " blocked" : "") + (stalledMs(t) ? " stalled" : "") + '" data-open="' + t.id + '">' +
     '<div class="top"><span class="id">#' + t.id + '</span><span class="title" title="' + esc(t.title) + '">' + esc(t.title) + '</span>' +
-    (t.status == "failed" ? '<span class="flag">failed</span>' : t.status == "needs agent" ? '<span class="flag">needs agent</span>' : "") +
+    (t.status == "failed" ? '<span class="flag">failed</span>' : t.status == "needs agent" ? '<span class="flag">needs agent</span>' : "") + stalledBadge(t) +
     '<span class="when" title="' + esc((when == t.mergedAt ? "Merged " : "Last update ") + new Date(when).toLocaleString()) + '">' + short(when) + '</span></div>' +
     (t.error ? (depChip(t) ? '<div class="last">' + depChip(t) + '</div>' : "") + '<div class="err" title="' + esc(t.error) + '">' + esc(t.error) + '</div>' + (t.status == "needs agent" && last ? '<div class="agent-now" title="' + esc(last.message) + '">Now: ' + esc(last.message) + '</div>' : "")
       : depChip(t) || (last && t.status != "merged") ? '<div class="last"' + (last ? ' title="' + esc(last.message) + '"' : "") + '>' + depChip(t) + (last && t.status != "merged" && !waitsToStart(t) ? esc(last.message) : "") + '</div>' : "") +
@@ -283,11 +306,12 @@ function renderDialog() {
   // A redraw of the open task (a live update) keeps what the user is doing in it: see keepState.
   const restore = d.open && d.dataset.task == String(t.id) ? keepState(d) : () => {};
   d.dataset.task = t.id;
-  d.innerHTML = '<div class="dlg"><div class="dlg-head"><h3><span class="id">#' + t.id + '</span>' + esc(t.title) + ' <span class="status ' + cls(t.status) + '">' + esc(STATUS[t.status] || t.status) + '</span></h3><button data-act="close">Close</button></div>' +
+  d.innerHTML = '<div class="dlg"><div class="dlg-head"><h3><span class="id">#' + t.id + '</span>' + esc(t.title) + ' <span class="status ' + cls(t.status) + '">' + esc(STATUS[t.status] || t.status) + '</span> ' + stalledBadge(t) + '</h3><button data-act="close">Close</button></div>' +
     '<div class="links">' + (t.url && t.status != "merged" ? '<a href="/api/factory/tasks/' + t.id + '/open" target="_blank">Open preview ↗</a><span class="muted">' + esc(t.url) + '</span>' : "") +
     '<span class="branch">' + esc(t.branch) + (t.base ? " from staging at " + esc(t.base.slice(0, 10)) : "") + '</span>' +
     (t.mergeCommit ? '<span class="muted">merged as ' + esc(t.mergeCommit.slice(0, 10)) + '</span>' : "") + (t.vm ? '<span class="muted">VM ' + esc(t.vm) + '</span>' : "") + '</div>' +
     actions(t, true) +
+    (stalledMs(t) ? '<div class="stalled-note" id="stalled-note">Stalled: ' + esc(stalledTip(t, stalledMs(t))) + '</div>' : "") +
     (shots ? '<section><h4>Screenshots</h4><div class="shots">' + shots + '</div></section>' : "") +
     (t.error ? '<section><h4>Error</h4><div class="text" style="color:var(--bad)">' + esc(t.error) + '</div></section>' : "") +
     depsSection(t) +
