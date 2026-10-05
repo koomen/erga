@@ -28,7 +28,8 @@ async function hmac(key: Uint8Array<ArrayBuffer> | string, data: string): Promis
   return crypto.subtle.sign("HMAC", k, enc.encode(data));
 }
 
-const fromB64url = (s: string) => atob(s.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - (s.length % 4)) % 4));
+/** base64url of UTF-8 JSON, as text. */
+const fromB64url = (s: string) => new TextDecoder().decode(Uint8Array.from(atob(s.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - (s.length % 4)) % 4)), (c) => c.charCodeAt(0)));
 
 /** The grant a token carries, if `secret` signed it, it names a task branch, and it hasn't ended; else null. */
 export async function verifyGitToken(secret: string, token: string): Promise<GitGrant | null> {

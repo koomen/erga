@@ -19,7 +19,28 @@ You work in a fresh clone of Erga's source, in the current directory, on the bra
 3. Test it thoroughly: the tests that cover what you changed (\`./test.sh\` for the whole suite) and new ones where they belong. Verify in headless Chromium (tests/cdp.ts drives it; CHROME is set).
 4. Make the result visible at one URL: \`task preview [/path]\` runs the app from this clone on port ${4400} and keeps it running after you finish. Pick the page that shows the change best, with any state it needs already set up, so the user only has to open it.
 5. Attach screenshots that show the change, where it has a visible side: \`task shot http://localhost:4400/path "caption"\` (headless Chromium takes it), or \`task shot /path/to/file.png "caption"\` for ones you took yourself. Add \`--replace\` to the first one of a fresh set.
-6. Commit everything, then \`task done "summary"\`: it pushes your branch and marks the task ready to merge. Write the summary in ASD-STE100 (Simplified Technical English), as AGENTS.md ("Task summaries") shows: what changed for the user, results, limits, tests, and what the user must do. If you can't finish, \`task fail "why"\` instead.
+6. Run every build, test and server under a time limit, so nothing can hang the task: \`task run --timeout SECONDS -- CMD\` (it kills the command's whole process tree when the time is up, and exits 124), e.g. \`task run --timeout 900 -- ./test.sh\`. If a command times out, find out why (a server left running, a port in use, a test that waits forever) before you run it again. Leave no processes behind when you finish: only the preview that \`task preview\` started may keep running. The factory also gives each step and your whole run a time limit: past it, it stops everything you started and tells you.
+7. Commit everything, then \`task done "summary"\`: it pushes your branch and marks the task ready to merge. Write the summary in ASD-STE100 (Simplified Technical English), as AGENTS.md ("Task summaries") shows: what changed for the user, results, limits, tests, and what the user must do. If you can't finish, \`task fail "why"\` instead.
 
 Don't merge, and don't push to staging or main (your token can't): the user merges from the board.`;
+}
+
+
+/** What a merge that needs the task's Claude Code asks of it (merge.ts answered needsAgent): the same session, woken in its clone. */
+export function resolvePrompt(t: { branch: string }, res: { kind?: string; step?: string; error?: string; files?: string[]; log?: string }): string {
+  const what = res.kind == "conflict"
+    ? `Merging staging into ${t.branch} conflicts in ${(res.files ?? []).join(", ")}. The merge is in progress in your clone, with the conflicts in the working tree.`
+    : res.kind == "timeout"
+      ? `A step of the merge (${res.step}) timed out, and the factory killed its processes.`
+      : `A step of the merge (${res.step}) failed.`;
+  return `The user pressed Merge on your task. ${what} The factory stopped your preview first.
+
+What the factory saw:
+${(res.error ?? "").slice(0, 4000)}
+
+Finish the merge:
+1. ${res.kind == "conflict" ? "Resolve the conflicts, keeping both sides' intent (staging's changes and your task's)." : "Find out why, and fix what is yours to fix (an uncommitted change, a branch that parted from the pushed one, a process that hangs). If it was the network or the repository, say so."}
+2. Run the tests that cover what changed, each under a time limit (\`task run --timeout SECONDS -- CMD\`). Leave no processes behind.
+3. Commit${res.kind == "conflict" ? " the merge (git commit --no-edit)" : ""}. Don't push to staging or main, and don't start a merge of your own.
+4. Say \`task done "what you did, in one or two sentences"\`: the factory then runs the merge again by itself. If you can't finish it, \`task fail "why"\`: the task goes back to ready to merge, with your reason.`;
 }
