@@ -14,6 +14,9 @@
 // - Each column is in id order, oldest first, so a card moves only when its status changes.
 // - The detail view shows the screenshots first, three in a row; a click enlarges one to the modal's width, a
 //   second click puts it back (factory-detail-shots.png, factory-detail-shot-big.png).
+// - The left and right arrow keys go to the previous and next screenshot, around at the ends: along the grid (the
+//   focus moves; Enter enlarges) and in the enlarged view (factory-detail-shot-keys.png). Escape shrinks it and
+//   leaves the view open. In the instructions the arrows move the cursor.
 // - Live updates of the open task don't disturb what the user does in its detail view: the instructions keep
 //   the focus, the cursor, the selection and the text typed while the updates arrive; a dependency's kind keeps
 //   its choice (factory-detail-typing.png).
@@ -180,6 +183,39 @@ try {
   d = await detail();
   expect(d.boxes.every((b) => !b.big) && d.boxes[0].y == d.boxes[2].y, "a second click puts it back in the grid", d.boxes);
   ok("a second click shrinks it back into the grid");
+  // The arrow keys: along the grid (the focus moves), around at the ends; in the enlarged view, the enlarged one
+  // changes; Escape shrinks it and leaves the view open; in the instructions they move the cursor.
+  const state = () => p.eval<{ focus: string | null; big: string | null; open: boolean }>(`({ focus: document.activeElement.dataset?.file ?? null,
+    big: document.querySelector("#dlg .shots figure.big")?.dataset.file ?? null, open: document.getElementById("dlg").open })`);
+  const keys = async (...ks: string[]) => { for (const k of ks) await p.key(k); await Bun.sleep(50); return state(); };
+  let s = await keys("ArrowRight");
+  expect(s.focus == "a.png" && !s.big, "Right goes to the first screenshot", s);
+  s = await keys("ArrowRight", "ArrowRight", "ArrowRight");
+  expect(s.focus == "d.png" && !s.big, "Right moves along the grid", s);
+  s = await keys("ArrowRight");
+  expect(s.focus == "a.png", "Right goes around from the last to the first", s);
+  s = await keys("ArrowLeft");
+  expect(s.focus == "d.png", "Left goes around from the first to the last", s);
+  ok("the arrow keys move along the screenshots, around at the ends");
+  s = await keys("Enter");
+  expect(s.big == "d.png" && s.focus == "d.png", "Enter enlarges the screenshot with the focus", s);
+  s = await keys("ArrowRight");
+  expect(s.big == "a.png" && s.focus == "a.png", "Right in the enlarged view goes around to the first", s);
+  s = await keys("ArrowRight");
+  expect(s.big == "b.png", "Right enlarges the next one", s);
+  await p.screenshot(join(SHOTS, "factory-detail-shot-keys.png"));
+  s = await keys("ArrowLeft", "ArrowLeft");
+  expect(s.big == "d.png", "Left goes around to the last", s);
+  ok("the arrow keys change the enlarged screenshot, around at the ends");
+  s = await keys("Escape");
+  expect(s.open && !s.big && s.focus == "d.png", "Escape shrinks it, and the detail view stays open", s);
+  ok("Escape shrinks the enlarged screenshot");
+  await p.eval(`(() => { const t = document.getElementById("instructions"); t.value = "abc"; t.focus(); t.setSelectionRange(3, 3); })()`);
+  await keys("ArrowLeft", "ArrowLeft");
+  const caret = await p.eval<{ focus: string; at: number; big: boolean }>(`({ focus: document.activeElement.id, at: document.getElementById("instructions").selectionStart, big: !!document.querySelector("#dlg .shots figure.big") })`);
+  expect(caret.focus == "instructions" && caret.at == 1 && !caret.big, "in the instructions, the arrows move the cursor", caret);
+  await p.eval(`document.getElementById("instructions").value = ""`);
+  ok("in the instructions, the arrow keys move the cursor, not the screenshots");
   // Typing in the instructions while live updates of the task arrive: the focus, the cursor, the selection and
   // the text stay, and what is typed next lands where the cursor is.
   const box = await p.eval<{ x: number; y: number }>(`(() => { const t = document.getElementById("instructions"); t.scrollIntoView({ block: "center" }); const r = t.getBoundingClientRect(); return { x: r.x + 20, y: r.y + 20 }; })()`);
