@@ -152,8 +152,10 @@ if (import.meta.main) {
     for (let i = 0; i < 8; i++) {
       res = await fetch(`${origin}/probe`, { method: "POST", headers: { Authorization: `Bearer ${secret}`, "Content-Type": "application/json" }, body: JSON.stringify({ seed, scripts }) }).catch(() => null);
       // A new application takes a while to reach the Durable Object's machines.
-      const early = !!res && (await res.clone().text()).includes("no container application");
-      if (early) say("the container application isn't there for the Durable Object yet: again in 10 s");
+      // Just after the upload, workers.dev can also answer "Script not found", or the Durable Object an internal error.
+      const body = res ? await res.clone().text() : "";
+      const early = body.includes("no container application") || (res?.status == 500 && /Script not found|internal error; reference/.test(body));
+      if (early) say(`the new Worker or its container application isn't ready yet (${body.includes("no container application") ? "no application" : body.includes("Script not found") ? "script not found" : "internal error"}): again in 10 s`);
       if (res && !early && res.status != 404 && res.status != 522 && res.status != 530) break;
       await Bun.sleep(early ? 10_000 : 2000);
     }
