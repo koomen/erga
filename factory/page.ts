@@ -1,8 +1,9 @@
 // The factory's board (experimental), a part of /admin/source (source/page.ts,
 // which puts it beside the source dashboard and the factory's agent): the
 // local task queue's board (development/task-queue/index.html) inside Erga. Columns
-// Queued, Working, Ready to merge, Merging (with "needs agent": a merge the task's Claude Code
-// is finishing, Merge off, with the reason) and Merged; a card per task, its
+// Queued, Working, Ready to merge and Merging (with "needs agent": a merge the task's Claude Code
+// is finishing, Merge off, with the reason; merged tasks leave the board, and the Source page
+// shows staging); a card per task, its
 // detail on a click (the ask, the summary, the preview, the branch, the log,
 // the screenshots), with Merge, Discard and new instructions; live, over
 // /api/factory/events. Dependencies between tasks as on the local board: a
@@ -28,8 +29,8 @@ export const BOARD_STYLE = `
   button.pill { cursor: pointer; font: inherit; font-size: 12px; } button.pill:hover { border-color: var(--muted); color: var(--ink); }
   .notice { margin: 0 0 10px; padding: 10px 14px; border-radius: 8px; background: var(--panel); color: var(--muted); font-size: 13px; }
   .notice a { color: var(--accent); }
-  .board { display: grid; grid-template-columns: repeat(5, minmax(150px, 1fr)); gap: 10px; align-items: start; }
-  @media (max-width: 900px) { .board { grid-template-columns: repeat(3, minmax(160px, 1fr)); } }
+  .board { display: grid; grid-template-columns: repeat(4, minmax(150px, 1fr)); gap: 10px; align-items: start; }
+  @media (max-width: 900px) { .board { grid-template-columns: repeat(2, minmax(160px, 1fr)); } }
   @media (max-width: 560px) { .board { grid-template-columns: 1fr; } .col { min-height: 0; } }
   .col { background: var(--panel); border-radius: 10px; padding: 10px; min-height: 120px; }
   .col h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 2px 4px 10px; min-height: 26px; display: flex; justify-content: space-between; align-items: center; }
@@ -128,7 +129,6 @@ const COLUMNS = [
   { title: "Working", statuses: ["working", "failed"] },
   { title: "Ready to merge", statuses: ["complete"] },
   { title: "Merging", statuses: ["merging", "needs agent"] },
-  { title: "Merged", statuses: ["merged"] },
 ];
 let tasks = [], info = null, openId = null, depError = null, live = "connecting";
 const showLive = () => { const el = $("live"); if (el) { el.textContent = live; el.classList.toggle("on", live == "live"); } };
@@ -203,7 +203,6 @@ function render() {
   $("board").innerHTML = COLUMNS.map((c) => {
     let list = tasks.filter((t) => c.statuses.includes(t.status));
     list.sort((a, b) => (b.mergedAt || b.updatedAt).localeCompare(a.mergedAt || a.updatedAt));
-    if (c.title == "Merged") list = list.slice(0, 20);
     // Queued: the ones that can start first; the ones waiting on others below them.
     if (c.title == "Queued") list.sort((a, b) => waitsToStart(a) - waitsToStart(b));
     const add = c.title == "Queued" && info && info.enabled ? '<button id="new" data-act="new">New task</button>' : "";

@@ -1459,8 +1459,8 @@ fine for Erga's thousands but not for millions.
 
 The factory is the task queue (`development/task-queue/`) inside Erga, on
 `/admin/source` (with the source dashboard and the factory's agent;
-`/admin/factory` redirects there): the same board (Queued, Working, Ready to merge, Merging,
-Merged, and `needs agent` cards in Merging), but each task is done by Claude Code in a VM of its own, not on
+`/admin/factory` redirects there): the same board (Queued, Working, Ready to merge and Merging,
+with `needs agent` cards in Merging; merged tasks leave the board), but each task is done by Claude Code in a VM of its own, not on
 this machine: on staging.erga.dev and erga.dev a Cloudflare Container
 ([On Cloudflare](#on-cloudflare), below). It's a prototype: admins only, and
 off until an admin sets the `factory` setting to `on` (`/admin`). It does
@@ -1736,8 +1736,8 @@ the git tokens' rules.
    request to the VM's port 4401 as if to localhost (the dev server in the
    VM signs everyone in as its `DEV_LOGIN`, on localhost only, so the
    ticket is what keeps it to admins).
-6. *The board* is the local one's, without live mode or the Branches column
-   (Merged shows the last 20 merged tasks; the Source page shows staging).
+6. *The board* is the local one's, without live mode, the Merged column or
+   the Branches column (merged tasks leave the board; the Source page shows staging).
 
 **Risks.**
 
