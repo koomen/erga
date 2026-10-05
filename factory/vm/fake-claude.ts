@@ -16,7 +16,11 @@ import { join } from "node:path";
 import { api, CLONE, git, log, TASK } from "./common.ts";
 import { done, preview, shot } from "./task.ts";
 
-const job = process.argv[2] ?? "work";
+// Takes Claude Code's --model (the factory_model setting) like the real one, and says which.
+const args = process.argv.slice(2);
+const m = args.indexOf("--model");
+const model = m >= 0 ? args.splice(m, 2)[1] : undefined;
+const job = args[0] ?? "work";
 const brief = await api("/brief") as { title: string; instructions?: string | null };
 const file = join(CLONE(), "landing/index.html");
 const html = readFileSync(file, "utf8");
@@ -27,6 +31,7 @@ const at = html.search(/<\/h1>/i);
 const next = html.replace(/<p class="factory-note"[^]*?<\/p>\n?/g, "");
 const changed = at >= 0 ? next.replace(/<\/h1>/i, `</h1>\n${line}`) : next.replace(/<body[^>]*>/i, (b) => `${b}\n${line}`);
 writeFileSync(file, changed);
+if (model) await log(`The stand-in runs in place of Claude Code with --model ${model}`);
 git(["add", "landing/index.html"]);
 git(["commit", "--quiet", "-m", `${job == "revise" ? "Revise" : "Factory"} task #${TASK()}: a note on the front page`]);
 await log("Changed landing/index.html and committed it");
