@@ -13,7 +13,9 @@
 // The dashboard:
 //
 // One list: staging's history, newest first (staging is always at or ahead
-// of main, so it holds every commit main has). Beside it, one dot column,
+// of main, so it holds every commit main has). When staging is further ahead
+// than its log reaches (25 commits), a break ("… N more commits only on
+// staging …") sits between staging's newest and main's head and a few behind it. Beside it, one dot column,
 // with no header: every commit listed is on staging; a solid green circle is
 // on main too, a hollow orange circle only on staging. Then two deploy
 // columns, staging and production: each target's deploys (GET
@@ -117,6 +119,11 @@ const SOURCE_STYLE = `
   .dep.building .w, .dep.deploying .w { color: var(--only-staging); }
   .dep.building .w::before, .dep.deploying .w::before { content: ""; flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--only-staging); animation: pulse 1.2s ease-in-out infinite; }
   @keyframes pulse { 50% { opacity: .25; } }
+  /* The break, when staging is further ahead of main than its log reaches: a dashed rail and how many commits it leaves out. */
+  .gap { display: contents; }
+  .gap > * { height: var(--row); display: flex; align-items: center; }
+  .gap .rail::before { content: ""; position: absolute; left: calc(50% - 1px); top: 0; bottom: 0; width: 0; height: auto; display: block; border-left: 2px dashed var(--only-staging); background: none; opacity: .5; }
+  .gap .gap-text { grid-column: 2 / -1; padding: 0 6px; font: 12.5px var(--font-text); color: var(--soft); border-block: 1px dashed var(--rule); box-sizing: border-box; }
   .none { padding: 18px 4px; font-size: 13.5px; color: var(--soft); grid-column: 1 / -1; }
   @media (max-width: 760px) { .grid { grid-template-columns: 22px minmax(0, 1fr) auto 80px 80px; } .who, .grid > .head.who-h, .row time, .grid > .head.time-h { display: none; } .target { max-width: 82px; } .target b { font-size: 10.5px; } .target .st span { display: none; }
     .dep { font-size: 11.5px; padding: 0 5px; } .dep .at { display: none; } }
@@ -199,6 +206,8 @@ const SOURCE_SCRIPT = `
     return new Date(t).toLocaleDateString(undefined, { month: "short", day: "numeric" });
   };
   const TARGETS = ["staging", "production"];
+  /** How many of main's commits show below the break, when staging is too far ahead for its log to reach main. */
+  const MAIN_AFTER_GAP = 5;
   let view = null, deploys = null, busy = false, drawn = false;
   const grid = document.getElementById("grid");
   const running = (state) => state == "building" || state == "deploying";
@@ -245,7 +254,11 @@ const SOURCE_SCRIPT = `
   function render() {
     if (!view) return;
     const staging = view.branches.find((b) => b.name == "staging"), main = view.branches.find((b) => b.name == "main");
-    const commits = staging?.commits ?? [];
+    // Staging far ahead of main (more commits than its log holds): staging's newest, a break that counts the commits
+    // left out, then main's head and a few behind it, so the list shows where production is.
+    const recent = staging?.commits ?? [], ahead = staging?.ahead ?? 0;
+    const hidden = Math.max(0, ahead - recent.filter((x) => !x.inMain).length);
+    const commits = hidden ? [...recent.filter((x) => !x.inMain), ...(main?.commits ?? []).slice(0, MAIN_AFTER_GAP).map((x) => ({ ...x, inMain: true }))] : recent;
     document.getElementById("loading")?.remove();
     const groups = Object.fromEntries(TARGETS.map((n) => [n, byCommit(n)]));
     // One row per commit, kept: a new commit fades in at the top, the oldest goes at the bottom.
@@ -253,6 +266,7 @@ const SOURCE_SCRIPT = `
     const want = new Set(commits.map((x) => x.sha));
     for (const [sha, r] of rows) if (!want.has(sha)) r.remove();
     grid.querySelector(".none.empty")?.remove();
+    grid.querySelector(".gap")?.remove();
     if (!commits.length) { grid.insertAdjacentHTML("beforeend", '<div class="none empty">No commits yet. Push one: git push erga HEAD:staging</div>'); }
     let prev = null;
     commits.forEach((x, i) => {
@@ -261,7 +275,7 @@ const SOURCE_SCRIPT = `
       const kind = x.inMain ? "on-main" : "staging-only";
       r.className = "row " + kind;
       const next = commits[i + 1];
-      const up = i > 0, down = !!next || x.parents.length > 0;
+      const up = i > 0, down = !!next || x.parents.length > 0, gapAfter = hidden && !x.inMain && next?.inMain;
       const title = x.subject + "\\n" + x.sha.slice(0, 10) + " · " + x.author + " · " + new Date(x.at).toLocaleString() + (x.inMain ? " · on main" : " · only on staging");
       r.innerHTML =
         '<span class="rail ' + (up ? "up " : "") + (down ? "down " : "") + (x.inMain ? "on-main" : "") + '"><i class="dot ' + kind + '" title="' + (x.inMain ? "On main (and staging)" : "Only on staging") + '"></i></span>' +
@@ -270,9 +284,17 @@ const SOURCE_SCRIPT = `
         TARGETS.map((n) => '<span class="deps" data-target="' + n + '">' + deployCell(n, x.sha, groups[n]) + "</span>").join("");
       grid.insertBefore(r, prev ? prev.nextSibling : document.getElementById("target-production").parentElement.nextSibling);
       prev = r;
+      if (gapAfter) {
+        const g = document.createElement("div");
+        g.className = "gap";
+        const n = hidden.toLocaleString() + " more commit" + (hidden == 1 ? "" : "s");
+        g.innerHTML = '<span class="rail"></span><span class="gap-text" title="' + n + ' only on staging, not shown. Below: the commit main is at, which production deploys.">… ' + n + " only on staging …</span>";
+        grid.insertBefore(g, prev.nextSibling);
+        prev = g;
+      }
     });
     drawn = true;
-    const ahead = staging?.ahead ?? 0, mergeBtn = document.getElementById("merge");
+    const mergeBtn = document.getElementById("merge");
     // Nothing at all while main is at staging: no count, no button, no space. While a merge runs the button stays, disabled.
     if (!busy) mergeBtn.disabled = document.getElementById("merge-row").hidden = !ahead;
     document.getElementById("ahead").textContent = !staging?.commit ? "" : ahead ? ahead + " commit" + (ahead == 1 ? "" : "s") + " to merge" : "";
