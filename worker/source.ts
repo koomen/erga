@@ -26,7 +26,7 @@ import { adminSourcePage } from "../source/page";
 import { factoryEnabled } from "./factory";
 import { artifactsRemote, githubUrl, hasSource } from "./artifacts";
 import { adminKeysOf, directoryOf, tokensOf } from "./d1";
-import { devUnlocked } from "./auth";
+import { devUnlocked, keysRequired } from "./auth";
 import { unlockFirst } from "../admin-access";
 import { LOCKED } from "../users";
 import type { Env } from "./env";
@@ -56,9 +56,9 @@ export async function sourceGit(request: Request, env: Env, url: URL): Promise<R
     return git(request, env, url, rest, { login: grant.by ?? "factory", name: "Erga factory" }, grant);
   }
   // An admin token (admin-keys.ts): admin access unlocked with the admin's own SSH key. Local development's shortcut
-  // (ERGA_ADMIN_UNLOCKED=1) takes an admin's agent token as it is.
+  // (ERGA_ADMIN_UNLOCKED=1), and any server where admin keys aren't required (keysRequired), take an admin's agent token as it is.
   const admin = await adminKeysOf(env).readToken(secret).catch(() => null);
-  const token = admin ? null : devUnlocked(env, url) ? await tokensOf(env).verify(secret).catch(() => null) : null;
+  const token = admin ? null : devUnlocked(env, url) || !keysRequired(env) ? await tokensOf(env).verify(secret).catch(() => null) : null;
   const who = admin ? { login: admin.login, name: admin.name } : token && !token.testBy ? { login: token.login, name: token.name } : null;
   if (!who) {
     const agent = !admin && (await tokensOf(env).verify(secret).catch(() => null));

@@ -52,6 +52,7 @@ page_group() {
   run source bun tests/source.ts
   run account bun tests/account.ts
   run admin-keys bun tests/admin-keys.ts
+  run admin-open bun tests/admin-open.ts
   run fade bun tests/fade.ts
   run tree bun tests/tree.ts
   run switch bun tests/switch.ts
