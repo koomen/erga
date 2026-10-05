@@ -83,8 +83,10 @@ async function main() {
   let wake = "";
   if (job != "resolve") {
     const t = Date.now();
-    let r = await step(["bun", "install", "--frozen-lockfile"], { name: "install", timeout: LIMITS.install, cwd: CLONE(), echo: true });
-    if (r.code != 0 && !r.timedOut) r = await step(["bun", "install"], { name: "install", timeout: LIMITS.install, cwd: CLONE(), echo: true });
+    // FACTORY_INSTALL_ARGS: more flags, from a simulated VM under test (dev/factory.ts: --ignore-scripts).
+    const more = (process.env.FACTORY_INSTALL_ARGS ?? "").split(" ").filter(Boolean);
+    let r = await step(["bun", "install", "--frozen-lockfile", ...more], { name: "install", timeout: LIMITS.install, cwd: CLONE(), echo: true });
+    if (r.code != 0 && !r.timedOut) r = await step(["bun", "install", ...more], { name: "install", timeout: LIMITS.install, cwd: CLONE(), echo: true });
     if (r.code == 0) await log(`Dependencies installed in ${((Date.now() - t) / 1000).toFixed(1)}s`);
     else {
       wake = stepError("`bun install`", r);

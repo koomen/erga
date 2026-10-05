@@ -36,7 +36,7 @@ trap 'rm -rf "$tmp"' EXIT
 names=(); pids=()
 run() { # run NAME CMD...: in the background, output to a file
   local name=$1; shift
-  ( "$@" >"$tmp/$name.log" 2>&1; echo $? >"$tmp/$name.rc" ) &
+  ( t0=$(date +%s); rc=0; "$@" >"$tmp/$name.log" 2>&1 || rc=$?; echo $rc >"$tmp/$name.rc"; echo $(( $(date +%s) - t0 )) >"$tmp/$name.time" ) &
   names+=("$name"); pids+=($!)
 }
 
@@ -80,7 +80,7 @@ for i in "${!pids[@]}"; do
   wait "${pids[$i]}" || true
   name=${names[$i]}
   rc=$(cat "$tmp/$name.rc" 2>/dev/null || echo 1)
-  echo "=== $name $([[ $rc == 0 ]] && echo ok || echo FAILED)"
+  echo "=== $name $([[ $rc == 0 ]] && echo ok || echo FAILED) ($(cat "$tmp/$name.time" 2>/dev/null || echo ?)s)"
   # Passing lines are noise once it's green; show everything when it isn't.
   if [[ $rc == 0 ]]; then grep -vE "^(ok |MATCH|PASS|\s*$)" "$tmp/$name.log" | tail -5 || true; else cat "$tmp/$name.log"; failed+=("$name"); fi
 done

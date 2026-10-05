@@ -293,6 +293,9 @@ function simRunner(stateDir: string, log: (line: string) => void): Runner {
         GIT_COMMITTER_NAME: "Erga factory", GIT_COMMITTER_EMAIL: "factory@erga.dev",
         // What this machine has that a VM's image would: Bun's package cache (packages only), and for Chrome its HOME (task.ts, CHROME_HOME).
         BUN_INSTALL_CACHE_DIR: process.env.BUN_INSTALL_CACHE_DIR || join(homedir(), ".bun", "install", "cache"), CHROME_HOME: homedir(),
+        // Tests (tests/factory.ts) skip packages' install scripts: they cost seconds a VM (a Mac checks each fresh copy of
+        // workerd's and esbuild's binaries on its first run), and a simulated VM's preview, a static one, runs neither.
+        ...(process.env.ERGA_FACTORY_INSTALL_ARGS ? { FACTORY_INSTALL_ARGS: process.env.ERGA_FACTORY_INSTALL_ARGS } : {}),
         FACTORY_WORK: join(dir, "work"), FACTORY_PREVIEW_PORT: String(port), FACTORY_PUBLIC_PORT: String(port), FACTORY_PREVIEW: "static",
         ...j.env,
       };
