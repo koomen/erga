@@ -861,7 +861,9 @@ staging.erga.dev, as any push to staging does. It never moves `main`:
 1. Before a merge, the queue fetches origin and merges `origin/staging`
    into the task's branch with `main`. Commits made in Erga (a factory task,
    a push from elsewhere) so come back to `main`, and the push is a
-   fast-forward.
+   fast-forward. If that conflicts, the queue stops and the task's own
+   agent resolves it (status `needs-agent`, then `tq continue`: AGENTS.md,
+   "Merging").
 2. After the merge, it pushes `main` to `staging`
    (`remote.origin.push` is `refs/heads/main:refs/heads/staging`, so a plain
    `git push` in the main checkout does the same). The task's log has what
@@ -1474,7 +1476,7 @@ branch and moves the card to Ready to merge. Then the VM waits: its preview
 stays up, and the detail view takes more instructions ("Send to Claude
 Code"), which run Claude Code again on the same branch (`--continue`).
 **Merge** merges the branch into staging (`--no-ff`, "Merge task/…:
-title"; a conflict goes to Claude Code to resolve, as the local queue does,
+title"; a conflict goes to Claude Code to resolve,
 or fails, naming the files), pushes staging, deletes the branch and stops
 the VM; merges run one at a time. The push goes through Erga's Git endpoint,
 which tells the deploy pipeline (`deployHook`) as for any push to staging:

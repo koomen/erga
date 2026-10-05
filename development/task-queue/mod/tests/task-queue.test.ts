@@ -57,6 +57,11 @@ function fakeQueue(on: any) {
       t.status = 'merging'
       return ok(t, 202)
     }
+    if (method === 'POST' && t && path.endsWith('/continue')) {
+      if (t.status !== 'needs-agent') return no(409, `task ${t.id} is ${t.status}: tq continue is for a task whose merge waits for its agent (needs-agent)`)
+      t.status = 'merging'
+      return ok(t, 202)
+    }
     if (method === 'POST' && t && path.endsWith('/screenshots')) { t.screenshots.push({ file: `f${t.screenshots.length + 1}.png`, caption: body.caption }); return ok(t) }
     if (method === 'DELETE' && t) {
       const which = path.match(/\/screenshots\/(.+)$/)?.[1]
@@ -79,6 +84,7 @@ test('task_create registers the task and starts a worker in its worktree', async
   expect(spawned[0].cwd).toBe('/repo/.claude/worktrees/task-1')
   expect(spawned[0].prompt).toContain('Please add a thing')
   expect(JSON.stringify(r)).toContain('Task #1')
+  // (The worker's agent id is recorded on the task from $.agent.spawn's agentId, which only core sets: a fake can't.)
 })
 
 test('task_done marks the task complete', async ($, on) => {
@@ -204,4 +210,31 @@ test('the worker prompt warns against building on stand-ins for blocked dependen
   await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
   expect(agents[0].name).toBe('worker')
   expect(agents[0].prompt).toContain("don't build against a stand-in, stub")
+})
+
+test('a merge that needs the agent: toast with the agent, status line, the pane\'s own group, and task_continue merges again', async ($, on) => {
+  const { clock, tasks, toasts, status } = await start($, on)
+  tasks[0].status = 'merging'
+  await clock.advance(2000)
+  Object.assign(tasks[0], { status: 'needs-agent', error: 'conflicts merging origin/staging: README.md', agent: 'a1' })
+  await clock.advance(2000)
+  expect(toasts.at(-1)).toBe('Task #1 needs its agent (a1): conflicts merging origin/staging: README.md')
+  expect(status.at(-1)).toBe('tasks: 1 need agent')
+  const pane = await $.ui.mount({ plugin: 'task-queue', surface: 'terminal', component: 'Pane', requestId: 'task-queue', props: { title: 'Tasks', isFocused: true, bodyColumns: 80 } as any })
+  expect(await pane.find({ text: 'Needs agent (1)' })).toBeDefined()
+  expect(await pane.find({ key: 'merge1' })).toBeUndefined()
+  const r = await $.tool.call({ tool: 'mcp__task-queue__task_continue', id: 1 } as any)
+  expect(tasks[0].status).toBe('merging')
+  expect(JSON.stringify(r)).toContain('merging again')
+  const again = await $.tool.call({ tool: 'mcp__task-queue__task_continue', id: 1 } as any)
+  expect(JSON.stringify(again)).toContain('Failed')
+})
+
+test('the worker prompt: time limits, no processes left behind, and the task\'s agent until it merges', async ($, on) => {
+  const { agents } = fakeQueue(on)
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  expect(agents[0].prompt).toContain('timeout 180')
+  expect(agents[0].prompt).toContain('never leave processes behind')
+  expect(agents[0].prompt).toContain("You are the task's agent until it merges")
+  expect(agents[0].prompt).toContain('task_continue')
 })
