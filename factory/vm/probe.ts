@@ -3,7 +3,7 @@
 // touching any server: it puts up a throwaway Worker (erga-factory-probe,
 // on workers.dev) whose one Durable Object starts a container from the image
 // deploy/targets.json names, exactly as FactoryVm does (the `durable_object`
-// policy, ctx.container.images.factory, standard-3, internet on, the agent on
+// policy, ctx.container.images.factory, standard-4, internet on, the agent on
 // 8080), and runs one task in it with the scripted stand-in: the VM's real
 // scripts (run.ts, task.ts, fake-claude.ts) clone a small repository made in
 // the VM, make the task's branch, change the front page, start the preview
@@ -11,7 +11,7 @@
 // a pretend factory API that the probe Worker serves. Then it deletes the
 // container, the application and the Worker.
 //
-//   CLOUDFLARE_ACCOUNT_ID=<id> bun factory/vm/probe.ts [--keep] [--shot FILE] [--instance standard-3] [--wait SECONDS]
+//   CLOUDFLARE_ACCOUNT_ID=<id> bun factory/vm/probe.ts [--keep] [--shot FILE] [--instance standard-4] [--wait SECONDS]
 //
 // --shot saves the screenshot the VM took. --keep leaves the Worker up (delete it with
 // `bunx cf workers delete erga-factory-probe`). This machine's own credential (deploy/credential.ts).
@@ -50,7 +50,7 @@ export class ${CLASS} extends DurableObject {
     const step = (s) => out.steps.push(((Date.now() - t0) / 1000).toFixed(1) + "s " + s);
     out.images = c.images ? Object.fromEntries(Object.entries(c.images)) : null;
     step("images: " + JSON.stringify(out.images) + ", running: " + c.running);
-    c.start({ image: c.images.factory, instance: this.env.PROBE_INSTANCE || "standard-3", enableInternet: true, env: { FACTORY_AGENT_SECRET: secret } });
+    c.start({ image: c.images.factory, instance: this.env.PROBE_INSTANCE || "standard-4", enableInternet: true, env: { FACTORY_AGENT_SECRET: secret } });
     step("start() returned");
     const agent = (path, body) => c.getTcpPort(8080).fetch("http://vm" + path, { method: body ? "POST" : "GET", headers: { Authorization: "Bearer " + secret, "Content-Type": "application/json" }, body: body ? JSON.stringify(body) : undefined });
     let up = false, last = "";
@@ -127,7 +127,7 @@ if (import.meta.main) {
       bindings: [{ type: "durable_object_namespace", name: "PROBE", class_name: CLASS }, { type: "secret_text", name: "PROBE_SECRET", text: secret },
         { type: "secret_text", name: "PROBE_TASK_TOKEN", text: taskToken }, { type: "plain_text", name: "PROBE_ORIGIN", text: origin },
         { type: "plain_text", name: "PROBE_WAIT_MS", text: String(Number(args.includes("--wait") ? args[args.indexOf("--wait") + 1] : 240) * 1000) },
-        { type: "plain_text", name: "PROBE_INSTANCE", text: args.includes("--instance") ? args[args.indexOf("--instance") + 1] : "standard-3" }],
+        { type: "plain_text", name: "PROBE_INSTANCE", text: args.includes("--instance") ? args[args.indexOf("--instance") + 1] : "standard-4" }],
       exports: { [CLASS]: { type: "durable-object", storage: "sqlite" } },
       containers: [{ name: `${WORKER}-${CLASS.toLowerCase()}`, class_name: CLASS, images: { factory: ref } }],
       tags: ["erga-factory-probe"],

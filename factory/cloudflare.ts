@@ -44,8 +44,11 @@ const AGENT = 8080, PREVIEW = 4401;
 const IDLE_MS = 6 * 3600_000;
 /** The image's name on the Worker's version (deploy/cloudflare.ts, FACTORY_IMAGE_NAME). */
 export const IMAGE_NAME = "factory";
-/** A VM's size: 2 vCPU, 8 GiB (Claude Code, the dev server and Chromium at once). FACTORY_VM_INSTANCE overrides it. */
-const INSTANCE = "standard-3";
+/**
+ * A VM's size: standard-4, 4 vCPU, 12 GiB, 20 GB disk (Claude Code, the dev server and Chromium at once): Cloudflare's largest.
+ * Chosen at each start (the durable_object application has no instance type of its own). FACTORY_VM_INSTANCE overrides it.
+ */
+const INSTANCE = "standard-4";
 
 export class FactoryVm extends DurableObject<Env> {
   private get box(): ContainerApi {
