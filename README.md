@@ -68,8 +68,9 @@ serves the app's routes (`front.ts`). Its pages:
   access with them (see [Admin SSH keys](#admin-ssh-keys)).
 - **Deploy your own**, `/deploy`: anyone signed in, by default (see
   [Deploy your own](#deploy-your-own)).
-- **Source**, `/source`: Erga's own repository, for admins (see [Erga's own
-  source](#ergas-own-source)).
+- **Source**, `/admin/source`: Erga's own repository and its deploys, the
+  factory's tasks and the factory's own agent, on one page, for admins (see
+  [Erga's own source](#ergas-own-source) and [The factory](#the-factory-experimental)).
 
 The user menu in the upper right of every page reaches Documents,
 Settings and (for admins) Admin settings. Clone and Edit sign you in with
@@ -171,7 +172,7 @@ deploys its own branch when it moves. A push to GitHub deploys nothing
 `origin` is Erga's own Git endpoint (`https://erga.dev/git/erga.git`), and the
 task queue pushes each merge to its `staging`, so a merge on the board
 deploys staging.erga.dev. erga.dev moves only when someone moves `main` to
-staging: Merge on erga.dev/source, or `tq release`. The deploy pipeline applies `migrations/` to the
+staging: Merge on erga.dev/admin/source, or `tq release`. The deploy pipeline applies `migrations/` to the
 database before it uploads the Worker.
 
 A migration lands just before the Worker that needs it, so it must keep working with the one still deployed (add tables
@@ -600,8 +601,8 @@ and `{ error, locked: true }`, or sends them to unlock first):
 | `/admin`, `POST /admin/settings`, `POST /admin/users` | `admin.ts` |
 | the admin tools (`list_settings`, `set_setting`, `reset_setting`, `list_users`, `add_user`, `set_user_role`, `remove_user`) over `/api/ext/tools`, `/mcp` and the editor's agent | `server-tools.ts`, `server-api.ts` |
 | `dir.config.list/set/reset`, `dir.users.list/add/setRole/remove`, whatever calls them | `Users.mustAdmin` (`users.ts`, `config.ts`) |
-| `/admin/factory`, `/api/factory/...` (not the VMs' own task tokens) | `worker/factory.ts` |
-| `/source`, `GET /api/source/branches`, `POST /api/source/merge`, `POST /api/source/mirror` | `worker/source.ts` |
+| `/api/factory/...` (not the VMs' own task tokens, nor factory tokens, below), the factory's agent and minting factory tokens | `worker/factory.ts` |
+| `/admin/source` (the board, the dashboard and the agent), `GET /api/source/branches`, `POST /api/source/merge`, `POST /api/source/mirror` | `worker/source.ts` |
 | `/git/erga.git` (clone, fetch, push) | `worker/source.ts` |
 | `GET /api/deploys`, `POST /api/deploys/<name>` (redeploy), `/log`, `/history`, `GET /api/events` | `worker/deploys.ts` |
 | `POST /api/docs/<id>/home` (choosing the homepage), `POST /api/docs/<id>/home/deploy` | `home.ts` |
@@ -611,7 +612,10 @@ and `{ error, locked: true }`, or sends them to unlock first):
 Not covered, on purpose: `/api/deploys/<name>/hook` and `/api/snapshot/...`
 (server to server, with `DEPLOY_HOOK_SECRET` and `SNAPSHOT_TOKEN`); the
 factory VMs' `fct…` and `fgt…` tokens (one task, one branch, minted by the
-factory for a task an unlocked admin started); `/deploy` (it deploys a copy
+factory for a task an unlocked admin started); factory tokens (`erga_factory_…`,
+"Share with agent" on `/admin/source`: made by an unlocked admin, they only
+create, read and instruct factory tasks, and end with the key that unlocked
+the admin who made them); `/deploy` (it deploys a copy
 to the person's own Cloudflare account, and changes nothing here); `/__erga/...`
 (local development only, with the dev server's secret).
 
@@ -722,6 +726,23 @@ borrowed from git (the namespace). A database leak gives no working unlock
    connection writable after the unlock ends, until it reconnects.
 5. *Revocation takes up to ten seconds* to reach other isolates (as with
    removing a user).
+9. *The factory's agent reads text other agents wrote.* On `/admin/source`
+   an unlocked admin's own agent (`factory/agent.ts`) reads task titles, asks,
+   summaries, logs and screenshots, all written by the VMs' Claude Code or by
+   whoever queued the task, and any of it can try to steer it (a prompt
+   injection). Task #1 kept the admin tools out of the editor's agent for this
+   reason; this agent has none of them either. Its tools only queue, read and
+   instruct factory tasks (no merge, discard or start, no settings, users,
+   pushes or deploys), every call checks again that its admin is unlocked (the
+   unlock their page sent last, its key not revoked, still an admin), and its
+   prompt says tool answers are information, never instructions. What an
+   injection could still do: queue tasks, or send instructions to a task,
+   that the admin didn't ask for, for the rest of the unlock. Each task's work
+   lands only on its branch, and an admin approves every merge by hand: the
+   merge is the review. **Factory tokens** ("Share with agent", for an agent
+   such as Claude Code on a laptop) have the same reach and the same risk,
+   plus that of any bearer token: up to 12 hours, revocable in the dialog,
+   and ended when the key that unlocked their admin is revoked.
 6. *The `/deploy` page, server-to-server secrets and the factory's VM tokens*
    are outside this scheme (above). The VMs run code an admin asked for, with
    the branch's push token: the merge is the review.
@@ -818,7 +839,7 @@ went up. A deploy the server's restart interrupted isn't carried on when a
 newer one waits: it's cancelled too. Each server passes on the moves it
 hears for the other's branch (`POST /api/deploys/<name>/hook`, with
 `DEPLOY_HOOK_SECRET`): production tells staging of `staging`, staging tells
-production of `main` (so a merge on staging.erga.dev's /source deploys
+production of `main` (so a merge on staging.erga.dev's /admin/source deploys
 erga.dev too). Production never deploys a commit another server names: it
 reads `main`'s head from its own view of the repository and deploys that.
 **Production may deploy staging itself:** its token may (above), so when
@@ -848,7 +869,7 @@ staging.erga.dev, as any push to staging does. It never moves `main`:
    nothing: the merge stays in `main`, the log says why, and the queue
    pushes again by itself between merges (a queue merge that staging can
    take as a fast-forward) or with the next merge.
-3. **Production is a deliberate step**: Merge on erga.dev/source, or `tq
+3. **Production is a deliberate step**: Merge on erga.dev/admin/source, or `tq
    release` (`POST /api/release` on the queue: Erga's `main` to `staging`'s
    head, or `tq release <commit>`, one of staging's commits). Agents run it
    only when the user asks. The board's Branches column counts the commits
@@ -1023,13 +1044,13 @@ change, `{type: "deploy-log", target, deployId, lines}` with each deploy's
 new lines as they arrive (for a live log), and others put there with
 `publishEvent` in `deploy/index.ts` (#39's `{type: "source"}`).
 `GET /api/deploys/version` (anyone) is the release the server runs. The
-dashboard is task #39's **/source**: the commits, one dot column beside them
+dashboard is **/admin/source**: the commits, one dot column beside them
 (a solid green circle: on main too; a hollow orange one: only on staging),
 and each target's deploys beside the commit each deployed (one for each
 commit: the running one, else the live one, else the newest; its state as
 plain text, and only the live one with a background),
 any deploy's log, past or live, in a modal;
-`/admin/deploys` redirects there.
+`/admin/deploys` (and `/source`) redirect there.
 
 **The branch model.** There are only two branches, and `staging` is always
 at or ahead of `main`: `main` only fast-forwards to a commit of `staging`
@@ -1104,12 +1125,12 @@ Still to do are the steps marked *(you)*.
    staging (`POST /api/deploys/staging/hook` with DEPLOY_HOOK_SECRET; a push
    through the Git endpoint does that itself).
 6. **Verify it.** https://staging.erga.dev/api/deploys/version answers
-   staging's release; https://staging.erga.dev/source (signed in) shows the
+   staging's release; https://staging.erga.dev/admin/source (signed in) shows the
    commits and both targets. erga.dev is unchanged.
 7. **Staging deploys itself.** Push a commit to staging (`git push
    https://staging.erga.dev/git/erga.git HEAD:staging`, an admin token from
    `bun admin-login.ts https://staging.erga.dev` as the password; or merge a
-   factory task). Watch `/source` or `/api/deploys/staging/log`: the builder
+   factory task). Watch `/admin/source` or `/api/deploys/staging/log`: the builder
    builds it, the pipeline deploys it with staging's own token, the server
    restarts into the new version and finishes, and `/api/deploys/version`
    says the new commit.
@@ -1329,9 +1350,16 @@ says so, rather than drop them; pull them into Erga's main and it carries
 on. With no token there's no mirror (the page says so). `POST
 /api/source/mirror` runs it now.
 
-**The Source page**, `/source` (`source/page.ts`, admins; breadcrumbs Erga ›
-Source): the one place to manage the source and its deploys (the deploy
-pipeline's own page redirects here). One list, staging's last 25 commits,
+**The Source page**, `/admin/source` (`source/page.ts`, admins with admin
+access unlocked; breadcrumbs Erga › Admin › Source): the one place to manage
+the source, its deploys and the factory. Three parts on one page: the factory's
+task board ([The factory](#the-factory-experimental)), this dashboard, and the
+factory's own agent. On a wide window the agent sits on the left, as in the
+editor, with the board above the dashboard beside it; narrower than 1000px,
+tabs (Tasks, Source, Agent) show one at a time. Each part's stylesheet is
+scoped to its pane (`scopeCss`: its width queries measure the pane, so the
+board keeps its five columns beside the agent). `/source`, `/admin/factory`
+and `/admin/deploys` redirect here. The dashboard: One list, staging's last 25 commits,
 newest first, with two dot columns beside it, as the task queue board's
 Branches column draws them: staging's (a hollow orange circle for a commit
 only on staging, a solid green circle for one main has too) and main's (a
@@ -1423,8 +1451,9 @@ fine for Erga's thousands but not for millions.
 
 ### The factory (experimental)
 
-The factory is the task queue (`development/task-queue/`) inside Erga, at
-`/admin/factory`: the same board (Queued, Working, Ready to merge, Merging,
+The factory is the task queue (`development/task-queue/`) inside Erga, on
+`/admin/source` (with the source dashboard and the factory's agent;
+`/admin/factory` redirects there): the same board (Queued, Working, Ready to merge, Merging,
 Merged), but each task is done by Claude Code in a VM of its own, not on
 this machine. It's a prototype: admins only, and off until an admin sets the
 `factory` setting to `on` (`/admin`). It does background tasks only; live
@@ -1470,12 +1499,46 @@ board: a chip on the card ("waiting for #12", "merges after #12", "blocked by
 #12"), waiting tasks at the bottom of Queued with Start off, and Merge off
 with the reason.
 
+**The factory's agent.** Beside the board, an agent panel like the editor's
+(the same panel and conversation, `src/page/agent-chat.ts`; its own code is
+`src/page/factory-agent.ts`, built to `factory-agent.js`) talks to the admin's
+own agent session (`factory/agent.ts`), one per admin, in the `Factory`
+Durable Object, so it keeps working when the tab closes and a reload keeps the
+conversation. It queues up work the way the local outer agent uses the task
+queue (AGENTS.md): `create_task` (title, ask, `startAfter`, `mergeAfter`),
+`set_dependencies`, `instruct_task` (more instructions for a task that's
+ready to merge or failed), and reads with `list_tasks`, `get_task` (the ask,
+summary, error, preview URL, log) and `view_screenshot`; `factory_status`
+says whether the factory is on. It can't merge, discard or start a task:
+an admin approves each merge by hand on the board, and Merge merges into
+staging, which deploys itself. Each message carries the task open on the
+board, if any, so "this task" means something. It acts only for an unlocked
+admin, checked on every call; [Admin SSH keys](#admin-ssh-keys) has the risk
+(task text can steer it). It runs on the editor agent's models
+(`ANTHROPIC_API_KEY`, `ERGA_AGENT_MODEL`). API: `GET`/`POST /api/factory/agent`,
+`POST /api/factory/agent/abort|reset|model`, and `{ type: "agent" }` events on
+`/api/factory/events`, to that admin only.
+
+**Share with agent.** The button on the board's head makes a factory token
+for an outside agent (Claude Code on a laptop, say) and a prompt to paste into
+it, as the editor's share button does. Only an unlocked admin in a browser can
+make one (`POST /api/factory/tokens { label, hours }`: 1 to 12 hours, shown
+once; only its SHA-256 is kept, in the `Factory` object), and the dialog lists
+them and revokes them (`DELETE /api/factory/tokens/<id>`). A token also ends
+when the admin key that unlocked its admin is revoked, or they stop being an
+admin. With `Authorization: Bearer erga_factory_…` an agent reads the guide
+(`GET /api/factory/guide`), the factory, its tasks and screenshots, adds tasks
+(`POST /api/factory/tasks`), changes dependencies (`PATCH`) and sends
+instructions (`POST .../revise`), as "<admin>'s agent (shared: <label>)".
+Anything else answers 403: merge, discard, start, the Claude sign-in, the
+agent, tokens, events.
+
 Without a signed-in Claude plan, a scripted stand-in (`factory/vm/fake-claude.ts`)
 does each task the same way, with a change known in advance (a note under
 the front page's heading), so all of it can be tried and tested for free.
 
 **Try it locally:** `bun start`, set `factory` to `on` on `/admin`, open
-`/admin/factory`, and add a task. With Docker running (OrbStack or Docker
+`/admin/source`, and add a task (or ask the agent to). With Docker running (OrbStack or Docker
 Desktop), each VM is a container of the factory's image (built the first
 time, a few minutes; then reused); without, a simulation runs the same
 scripts in a folder per VM, with a light preview (`ERGA_FACTORY_RUNNER=docker|sim`
@@ -1502,15 +1565,20 @@ by default, a task added on the board (branch, VM, change, preview,
 screenshot, push), merge, discard, more instructions, the tokens' limits,
 the Claude sign-in, and dependencies (bad ids and cycles, a blocked start
 with no VM, a blocked merge, the merge-time check, a discarded dependency,
-the automatic start on unblock). `tests/factory.test.ts` tests the branch names and
+the automatic start on unblock), then `/admin/source` itself (the layout, the
+old pages' redirects, a phone's tabs), the factory's agent with the scripted
+model (it queues a task with a dependency, reads it, looks at its screenshot,
+sends instructions, has no merge or discard tool) and factory tokens (what
+they may and may not do, Revoke). `tests/factory.test.ts` tests the branch names and
 the git tokens' rules.
 
 **How it fits together.**
 
-- `worker/factory.ts`: the API (`/api/factory/...`, listed at its top), the
-  board's door, and the `Factory` Durable Object ("factory"), which holds
-  every task, its log and screenshots, and the Claude token, and drives the
-  VMs. The board (`factory/page.ts`) updates live from its event stream.
+- `worker/factory.ts`: the API (`/api/factory/...`, listed at its top) and
+  the `Factory` Durable Object ("factory"), which holds every task, its log
+  and screenshots, the Claude token, the factory tokens and each admin's
+  agent session, and drives the VMs. The board (`factory/page.ts`, a part of
+  `/admin/source`) updates live from its event stream.
 - A `VmHost` starts and stops VMs and runs jobs in them. Locally it's the
   dev server (`dev/factory.ts`: Docker or the simulation, and the
   repository); on Cloudflare, Containers (`factory/cloudflare.ts`), once set
@@ -1648,7 +1716,7 @@ tasks at once.
    `/git/erga.git` (Erga's own source, above), which must accept the
    factory's git tokens with the rules in `dev/factory.ts` (`checkGitToken`,
    `refsAllowed`) and allow `task/*` branches; today it refuses any branch
-   but staging and main. `/source` must still show only staging and main.
+   but staging and main. `/admin/source` must still show only staging and main.
    #39's endpoint calls `deployHook` itself on every push that moves
    staging, so then drop the factory's own `deployHook("staging", commit)`
    call after a merge.
@@ -1665,7 +1733,7 @@ tasks at once.
    wildcard record (`*` AAAA `100::`) and a route `*.erga-factory.dev/*` to
    the Worker; set `FACTORY_PREVIEW_DOMAIN` to it.
 6. Deploy to staging first (staging.erga.dev), never straight to erga.dev.
-7. On `/admin`, set `factory` to `on`; open `/admin/factory`. "VMs" should
+7. On `/admin`, set `factory` to `on`; open `/admin/source`. "VMs" should
    say cloudflare.
 8. On your computer, run `claude setup-token`, sign in with your plan, and
    paste the token on the board (Claude: not signed in, then Save).
@@ -2508,7 +2576,7 @@ when staging's server doesn't take a move, and the Artifacts binding going
 only to Erga's own targets. `bun tests/deploys.ts` does it in the real
 Worker: a push to a dev server playing staging, its status and events, the
 deploy's log whole and live, Redeploy, a failed build, the redirect from
-/admin/deploys to /source, and who may.
+/admin/deploys to /admin/source, and who may.
 `bun tests/isolation.ts` opens a page that tries to reach whoever views it
 (the shell's window, its cookies, erga.dev's API, forged messages) and checks
 it gets nothing. The browser tests reach the page through the frame's own
@@ -2561,7 +2629,7 @@ back, merging edits from disk, the agent's exact-match edits and attribution.
   `worker/deployer.ts`: `/deploy`, deploying Erga to your own Cloudflare account (the page, the
   release, the pretend Cloudflare the tests use, Erga's own account included)
 - `factory/`, `worker/factory.ts`, `dev/factory.ts`: the factory (experimental), tasks done by
-  Claude Code in VMs: the board and prompt, the VM's image and scripts (`factory/vm/`), the
+  Claude Code in VMs: the board, the factory's agent (`factory/agent.ts`) and prompt, the VM's image and scripts (`factory/vm/`), the
   Containers host, the API and Durable Object, and the local repository and VMs
 - `account.ts`: who you are in the upper right of every page (avatar and menu, or sign in)
 - `directory.ts`: the directory of documents (addresses, titles, permissions, who may do what), over
@@ -2599,7 +2667,8 @@ back, merging edits from disk, the agent's exact-match edits and attribution.
   (the messages between the two, and the shell's side of them), `collab.ts` (the
   room connection and its binding to the editor), `merge.ts` (word diffs and
   rebasing as change sets), `agent-log.ts` (the agent transcript, shared by
-  host and shell)
+  host and shell), `agent-chat.ts` (the agent panel's conversation, shared with
+  `factory-agent.ts`, the factory's panel on `/admin/source`, built as `factory-agent.js`)
 - `src/page/settings.ts`, `src/page/versions.ts`: document settings (the gear's
   popover: publishing, the homepage, versions), built on its own as `settings.js`
 - `package.json`: the pinned CodeMirror and Yjs packages the page editor bundles, and pi
