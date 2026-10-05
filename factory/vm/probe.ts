@@ -2,7 +2,7 @@
 // Checks the factory's image on Cloudflare Containers, for real, without
 // touching any server: it puts up a throwaway Worker (erga-factory-probe,
 // on workers.dev) whose one Durable Object starts a container from the image
-// deploy/targets.json names, exactly as FactoryVm does (the `durable_object`
+// deploy/targets.json names (or --image; probeImage() for push.ts and deploys), exactly as FactoryVm does (the `durable_object`
 // policy, ctx.container.images.factory, standard-4, internet on, the agent on
 // 8080), and runs one task in it with the scripted stand-in: the VM's real
 // scripts (run.ts, task.ts, fake-claude.ts) clone a small repository made in
@@ -11,7 +11,7 @@
 // a pretend factory API that the probe Worker serves. Then it deletes the
 // container, the application and the Worker.
 //
-//   CLOUDFLARE_ACCOUNT_ID=<id> bun factory/vm/probe.ts [--keep] [--shot FILE] [--instance standard-4] [--wait SECONDS]
+//   CLOUDFLARE_ACCOUNT_ID=<id> bun factory/vm/probe.ts [--image erga-factory:<tag>@sha256:<digest>] [--keep] [--shot FILE] [--instance standard-4] [--wait SECONDS]
 //
 // --shot saves the screenshot the VM took. --keep leaves the Worker up (delete it with
 // `bunx cf workers delete erga-factory-probe`). This machine's own credential (deploy/credential.ts).
@@ -103,21 +103,31 @@ sh("git init -q -b staging && git add . && git commit -qm 'The probe repository'
 console.log("seeded");
 `;
 
-if (import.meta.main) {
-  const { machineCredential } = await import("../../deploy/credential.ts");
-  const args = process.argv.slice(2);
-  const accountId = process.env.CLOUDFLARE_ACCOUNT_ID ?? "";
-  const cred = machineCredential();
-  if (!/^[0-9a-f]{32}$/.test(accountId) || !cred) { console.error("Set CLOUDFLARE_ACCOUNT_ID, and log in (bunx cf auth login) or set CLOUDFLARE_API_TOKEN."); process.exit(1); }
-  const cf = new Cloudflare(cred.token);
+export interface ProbeOptions {
+  /** Seconds to wait for the VM's agent (default 240). */
+  wait?: number;
+  instance?: string;
+  /** Leave the probe Worker up. */
+  keep?: boolean;
+  /** Save the VM's screenshot here. */
+  shot?: string;
+  log?: (line: string) => void;
+}
+
+/**
+ * Starts a container from `image` (erga-factory:<tag>@sha256:<digest>) on Cloudflare Containers, through a throwaway
+ * Worker, runs one task in it, and deletes it all: true if the task ran (PROBE OK).
+ */
+export async function probeImage(cf: Cloudflare, accountId: string, image: string, o: ProbeOptions = {}): Promise<boolean> {
+  const print = o.log ?? ((l: string) => console.log(l));
   const acc = `/accounts/${accountId}`;
-  const ref = imageRef(accountId, FACTORY.image);
+  const ref = imageRef(accountId, image);
   const rand = () => crypto.randomUUID().replace(/-/g, "");
   const secret = rand(), taskToken = rand();
   const sub = (await cf.call<{ subdomain: string }>("GET", `${acc}/workers/subdomain`, "read the workers.dev subdomain"))!.subdomain;
   const origin = `https://${WORKER}.${sub}.workers.dev`;
   const t0 = Date.now();
-  const say = (s: string) => console.log(`${((Date.now() - t0) / 1000).toFixed(1)}s ${s}`);
+  const say = (s: string) => print(`${((Date.now() - t0) / 1000).toFixed(1)}s ${s}`);
   let appId: string | null = null;
   try {
     await prepareImage(cf, accountId, ref);
@@ -126,8 +136,8 @@ if (import.meta.main) {
       main_module: "probe.js", compatibility_date: "2026-09-30",
       bindings: [{ type: "durable_object_namespace", name: "PROBE", class_name: CLASS }, { type: "secret_text", name: "PROBE_SECRET", text: secret },
         { type: "secret_text", name: "PROBE_TASK_TOKEN", text: taskToken }, { type: "plain_text", name: "PROBE_ORIGIN", text: origin },
-        { type: "plain_text", name: "PROBE_WAIT_MS", text: String(Number(args.includes("--wait") ? args[args.indexOf("--wait") + 1] : 240) * 1000) },
-        { type: "plain_text", name: "PROBE_INSTANCE", text: args.includes("--instance") ? args[args.indexOf("--instance") + 1] : "standard-4" }],
+        { type: "plain_text", name: "PROBE_WAIT_MS", text: String((o.wait ?? 240) * 1000) },
+        { type: "plain_text", name: "PROBE_INSTANCE", text: o.instance ?? "standard-4" }],
       exports: { [CLASS]: { type: "durable-object", storage: "sqlite" } },
       containers: [{ name: `${WORKER}-${CLASS.toLowerCase()}`, class_name: CLASS, images: { factory: ref } }],
       tags: ["erga-factory-probe"],
@@ -152,29 +162,41 @@ if (import.meta.main) {
     for (let i = 0; i < 8; i++) {
       res = await fetch(`${origin}/probe`, { method: "POST", headers: { Authorization: `Bearer ${secret}`, "Content-Type": "application/json" }, body: JSON.stringify({ seed, scripts }) }).catch(() => null);
       // A new application takes a while to reach the Durable Object's machines.
-      const early = !!res && (await res.clone().text()).includes("no container application");
-      if (early) say("the container application isn't there for the Durable Object yet: again in 10 s");
+      // Just after the upload, workers.dev can also answer "Script not found", or the Durable Object an internal error.
+      const body = res ? await res.clone().text() : "";
+      const early = body.includes("no container application") || (res?.status == 500 && /Script not found|internal error; reference/.test(body));
+      if (early) say(`the new Worker or its container application isn't ready yet (${body.includes("no container application") ? "no application" : body.includes("Script not found") ? "script not found" : "internal error"}): again in 10 s`);
       if (res && !early && res.status != 404 && res.status != 522 && res.status != 530) break;
       await Bun.sleep(early ? 10_000 : 2000);
     }
     const text = await res!.text();
     const out = (() => { try { return JSON.parse(text); } catch { return { error: `HTTP ${res!.status}: ${text.slice(0, 1500)}` }; } })() as any;
-    for (const s of out.steps ?? []) console.log(`   VM ${s}`);
-    if (out.error) console.log(`   ${out.error}`);
-    console.log(`   images on the version: ${JSON.stringify(out.images)}`);
-    console.log(`   reports to the pretend factory: ${(out.reports ?? []).map((r: any) => `${r.kind}${r.body?.message ? `: ${r.body.message}` : r.body?.status ? `: ${r.body.status}` : ""}`).join(" | ")}`);
-    console.log(`   screenshots: ${JSON.stringify(out.shots)}`);
-    if (out.run?.code) console.log(`   the job's output:\n${out.run.output}`);
-    const at = args.indexOf("--shot");
-    if (at >= 0 && out.shot) { writeFileSync(args[at + 1], Buffer.from(out.shot, "base64")); say(`the VM's screenshot: ${args[at + 1]}`); }
+    for (const s of out.steps ?? []) print(`   VM ${s}`);
+    if (out.error) print(`   ${out.error}`);
+    print(`   images on the version: ${JSON.stringify(out.images)}`);
+    print(`   reports to the pretend factory: ${(out.reports ?? []).map((r: any) => `${r.kind}${r.body?.message ? `: ${r.body.message}` : r.body?.status ? `: ${r.body.status}` : ""}`).join(" | ")}`);
+    print(`   screenshots: ${JSON.stringify(out.shots)}`);
+    if (out.run?.code) print(`   the job's output:\n${out.run.output}`);
+    if (o.shot && out.shot) { writeFileSync(o.shot, Buffer.from(out.shot, "base64")); say(`the VM's screenshot: ${o.shot}`); }
     const ok = out.run?.code == 0 && out.preview?.status == 200 && out.preview?.note && (out.reports ?? []).some((r: any) => r.body?.status == "complete") && out.shots?.length;
     say(ok ? "PROBE OK: a task ran with the stand-in in a real Cloudflare container" : "PROBE FAILED");
-    process.exitCode = ok ? 0 : 1;
+    return !!ok;
   } finally {
-    if (!args.includes("--keep")) {
-      if (appId) await cf.call("DELETE", `${acc}/containers/applications/${appId}`, "delete its container application").catch((e) => console.log(`   (the application: ${(e as Error).message})`));
-      await cf.call("DELETE", `${acc}/workers/scripts/${WORKER}?force=true`, "delete the probe Worker").catch((e) => console.log(`   (the Worker: ${(e as Error).message})`));
+    if (!o.keep) {
+      if (appId) await cf.call("DELETE", `${acc}/containers/applications/${appId}`, "delete its container application").catch((e) => print(`   (the application: ${(e as Error).message})`));
+      await cf.call("DELETE", `${acc}/workers/scripts/${WORKER}?force=true`, "delete the probe Worker").catch((e) => print(`   (the Worker: ${(e as Error).message})`));
       say("the probe Worker and its application deleted");
     }
   }
+}
+
+if (import.meta.main) {
+  const { machineCredential } = await import("../../deploy/credential.ts");
+  const args = process.argv.slice(2);
+  const opt = (name: string) => (args.includes(name) ? args[args.indexOf(name) + 1] : undefined);
+  const accountId = process.env.CLOUDFLARE_ACCOUNT_ID ?? "";
+  const cred = machineCredential();
+  if (!/^[0-9a-f]{32}$/.test(accountId) || !cred) { console.error("Set CLOUDFLARE_ACCOUNT_ID, and log in (bunx cf auth login) or set CLOUDFLARE_API_TOKEN."); process.exit(1); }
+  const ok = await probeImage(new Cloudflare(cred.token), accountId, opt("--image") ?? FACTORY.image, { wait: opt("--wait") ? Number(opt("--wait")) : undefined, instance: opt("--instance"), keep: args.includes("--keep"), shot: opt("--shot") });
+  process.exit(ok ? 0 : 1);
 }

@@ -1390,7 +1390,7 @@ and each target's status in the column's head, from `GET /api/deploys`;
 clicking it opens that deploy's log, live (`GET /api/deploys/<name>/log`,
 then `{ "type": "deploy-log" }` events). Merge moves main to staging's head;
 hovering a commit only on staging offers Merge to here. Also the mirror's
-status (with Push now), the last moves, and the `git remote add` lines. It
+status: clicking it opens the GitHub sync dialog, with Push now while the mirror is on, or the steps that turn it on (the token, the `GITHUB_MIRROR_TOKEN` secret on this server's Worker) while it is off (`bun tests/source-mirror.ts` tests it). Then the last moves, and the `git remote add` lines. It
 updates by itself, on the deploy pipeline's event stream, `GET /api/events`
 (one hub for admins' pages, `worker/deploys.ts`): `{ "type": "source" }` when
 a branch moves or the mirror's status changes (`publishEvent` in
@@ -1812,11 +1812,24 @@ real run") is code now, and staging.erga.dev runs it.
   with an attestation beside the image, which Containers can't start, "There
   is no container instance that can be provided"), pushes it (a 15-minute
   registry password, in a Docker config folder of its own), prepares it for
-  Containers, and writes its name into `deploy/targets.json`. A deploy from a
-  machine (`deploy/run.ts`) does the same if the registry lacks it. A
-  Worker can't run Docker, so a server deploying itself uses the image
-  `deploy/targets.json` names: a new Dockerfile or agent needs `push.ts`
-  run, and its commit, before it deploys.
+  Containers, starts a container from it (`probeImage`, `factory/vm/probe.ts`),
+  and only then writes its name into `deploy/targets.json` (`updatePin`):
+  commit that. A new image can take up to an hour after its preparation
+  before Containers starts it ("There is no container instance that can be
+  provided to this Durable Object"; task #21's: refused after 11 minutes,
+  started after 28), and a version that names it in that time has VMs that
+  don't start. So the pin moves only after a real start, and until then
+  every deploy keeps the old image; `push.ts --wait` tries the start again
+  every 10 minutes, for up to 90. It does nothing when the tags already
+  match. A deploy from a machine (`deploy/run.ts`) deploys with the pinned
+  image (pushing it first if the registry lacks it), then does the same as `push.ts` (once, without waiting) and says
+  what came of it: a new pin to commit (`run.ts` won't deploy an uncommitted
+  checkout, so it isn't forgotten), "pushed, not started yet: try again
+  later", or what it lacks (Docker, a login that may use Containers). A
+  Worker can't run Docker, so a server deploying itself always uses the
+  image `deploy/targets.json` names; the test that compares the tags fails
+  until the pin follows a new Dockerfile or agent, and says how. The probe
+  uses a Worker of its own, so running tasks keep the old image meanwhile.
 - **The deploy pipeline** (`runPipeline`, `deploy/containers.ts`) has two
   more steps on Erga's own targets (`factory: true` in
   `deploy/targets.json`): "image" (prepared for Containers) before the
@@ -2646,12 +2659,21 @@ and the editor's timers (how long notes stay up, how marks fade) run at a
 fraction of real time under test (`window.__ergaTimescale`, `ms` in
 `src/page/editor.ts`).
 
-    ./test.sh          # page editor, isolation, front door + multiplayer: ~25s
+    ./test.sh          # every test file: ~3.5 minutes on a 10-core Mac
     bun run typecheck  # tsc over the host, the editor and the suite
 
-Each file also runs alone: `bun tests/page.ts` (~7s), `bun tests/suite/run.ts`
-(~11s; `--suite`, `--grep` and `--seed` narrow it, `--long` for the big slow
-version), `bun test tests/` (under a second).
+`./test.sh` runs the files in a pool, the longest first: one for every two
+usable cores, as each file has dev servers and a Chrome of its own, and more
+at once only slows them all. `tests/cores.ts` decides, for test.sh,
+`tests/page.ts`'s scenarios and `tests/cdp.ts`'s browsers alike: the cores
+are the fewest of what the OS reports and the container's CPU quota (cgroup
+v2 or v1), and memory caps it (1 GB a file). `TEST_JOBS=n` sets it exactly;
+`TEST_CORES_PER_JOB=c` tunes it (the factory's VMs set 3: Claude Code and the
+preview share their 4 cores). test.sh prints what it found. Each file prints its
+time. Each file also runs alone: `bun tests/page.ts` (~30s; `PAGE_JOBS=n`
+scenarios at a time), `bun tests/suite/run.ts` (~22s; `--suite`, `--grep` and
+`--seed` narrow it, `--long` for the big slow version), `bun tests/factory.ts`
+(~57s), `bun test tests/` (~11s).
 
 `bun tests/agent.ts` asks the real agent for edits through the panel and checks
 they reach the open page without a reload and then the disk, that the agent

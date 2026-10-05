@@ -15,7 +15,8 @@
 // way, the new version finishing the deploy.
 
 import { beforeAll, describe, expect, test } from "bun:test";
-import { existsSync, readFileSync } from "fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { tmpdir } from "os";
 import { join } from "path";
 import { ATTEMPTS, BranchDeploys, HISTORY_KEEP, RESUME_MS, targetOf, type DeployEnv, type DeployRecord, type Deps, type LogLine, type TargetStatus } from "../deploy/branches";
 import { fromBase64, unpackRelease } from "../deploy/bundle";
@@ -27,6 +28,7 @@ import { FLEET_ACCOUNT, MOCK_HOOK_SECRET, MOCK_SNAPSHOT_TOKEN, mockBuilder, mock
 import { memoryStore, snapshotDoor } from "../deploy/snapshot";
 import { FACTORY, TARGETS } from "../deploy/targets";
 import { imageTag } from "../factory/vm/build";
+import { updatePin } from "../factory/vm/push";
 
 const ROOT = new URL("..", import.meta.url).pathname;
 let release: Release;
@@ -777,7 +779,48 @@ describe("the factory's VMs (Containers)", () => {
 
   test("factory.image in deploy/targets.json is the image factory/vm/build.ts tags, pinned by its digest", () => {
     expect(FACTORY.image).toMatch(/^erga-factory:[0-9a-f]{12}@sha256:[0-9a-f]{64}$/);
-    expect(FACTORY.image.split("@")[0]).toBe(imageTag());
+    const pinned = FACTORY.image.split("@")[0], built = imageTag();
+    if (pinned != built) throw new Error(
+      `deploy/targets.json pins the factory image ${pinned}, but factory/vm/build.ts now tags ${built}: its inputs ` +
+      `(factory/vm/Dockerfile, factory/vm/agent.ts or .bun-version) changed. Run, with Docker running and the cf CLI's login:\n` +
+      `  CLOUDFLARE_ACCOUNT_ID=<id> bun factory/vm/push.ts --wait\n` +
+      `It pushes and prepares the new image, and writes its name into deploy/targets.json only once a container starts from it ` +
+      `(up to an hour after preparation); then commit deploy/targets.json. A deploy from a machine (deploy/run.ts) does the same (README, "The factory").`);
+  });
+
+  test("updatePin moves the pinned image only after a container starts from the new one", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "erga-pin-"));
+    const file = join(dir, "targets.json"), old = `erga-factory:${"a".repeat(12)}@sha256:${"1".repeat(64)}`, next = `erga-factory:${"b".repeat(12)}@sha256:${"2".repeat(64)}`;
+    const write = () => writeFileSync(file, JSON.stringify({ factory: { image: old }, targets: {} }, null, 2) + "\n");
+    const pinned = () => JSON.parse(readFileSync(file, "utf8")).factory.image;
+    const cf = null as never, steps: string[] = [];
+    const deps = (starts: boolean) => ({ file, tag: next.split("@")[0], push: async () => (steps.push("push"), next), prepare: async (ref: string) => void steps.push(`prepare ${ref}`), probe: async (img: string) => (steps.push(`probe ${img}`), starts) });
+    try {
+      write();
+      expect((await updatePin(cf, FLEET_ACCOUNT, () => {}, { ...deps(true), tag: old.split("@")[0] })).status).toBe("same");
+      expect(steps).toEqual([]);
+      // Pushed and prepared, but Containers doesn't start it yet: the pin stays.
+      const waiting = await updatePin(cf, FLEET_ACCOUNT, () => {}, deps(false));
+      expect(waiting.status).toBe("waiting");
+      expect(waiting.message).toContain("bun factory/vm/push.ts --wait");
+      expect(steps).toEqual(["push", `prepare registry.cloudflare.com/${FLEET_ACCOUNT}/erga-factory@sha256:${"2".repeat(64)}`, `probe ${next}`]);
+      expect(pinned()).toBe(old);
+      // No Docker or no Containers permission: the pin stays, and it says what's needed.
+      const failed = await updatePin(cf, FLEET_ACCOUNT, () => {}, { ...deps(true), push: async () => { throw new Error("Docker isn't running."); } });
+      expect(failed.status).toBe("failed");
+      expect(failed.message).toMatch(/Docker isn't running\..*bun factory\/vm\/push\.ts --wait/);
+      expect(pinned()).toBe(old);
+      // A probe that throws counts as no start.
+      expect((await updatePin(cf, FLEET_ACCOUNT, () => {}, { ...deps(true), probe: async () => { throw new Error("HTTP 500"); } })).status).toBe("waiting");
+      expect(pinned()).toBe(old);
+      // It starts: the pin moves, and the rest of the file stays.
+      const switched = await updatePin(cf, FLEET_ACCOUNT, () => {}, deps(true));
+      expect(switched.status).toBe("switched");
+      expect(pinned()).toBe(next);
+      expect(JSON.parse(readFileSync(file, "utf8")).targets).toEqual({});
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

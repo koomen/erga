@@ -580,8 +580,9 @@ type TreeModule = { mountTree: typeof mountTree };
     };
     // Events sent while the channel was down are gone; catch up from the transcript.
     // A rename missed meanwhile (or before it first opened) is caught up the same way.
-    events.onopen = () => { if (opened) { loadAgent(); docSettings?.event("versions"); docSettings?.event("home"); } opened = true; refreshName(); stillHere(); };
-    events.onclose = () => setTimeout(listen, 1000);
+    // The body's erga-listening class: the channel is up, so this tab hears its agent (and open_page counts it). Tests wait on it.
+    events.onopen = () => { document.body.classList.add("erga-listening"); if (opened) { loadAgent(); docSettings?.event("versions"); docSettings?.event("home"); } opened = true; refreshName(); stillHere(); };
+    events.onclose = () => { document.body.classList.remove("erga-listening"); setTimeout(listen, 1000); };
   }
   let opened = false;
   listen();
