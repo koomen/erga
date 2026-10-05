@@ -233,7 +233,7 @@ test('a merge that needs the agent: toast with the agent, status line, the pane\
 test('the worker prompt: time limits, no processes left behind, and the task\'s agent until it merges', async ($, on) => {
   const { agents } = fakeQueue(on)
   await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
-  expect(agents[0].prompt).toContain('timeout 600')
+  expect(agents[0].prompt).toContain('timeout 180')
   expect(agents[0].prompt).toContain('never leave processes behind')
   expect(agents[0].prompt).toContain("You are the task's agent until it merges")
   expect(agents[0].prompt).toContain('task_continue')

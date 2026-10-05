@@ -235,6 +235,8 @@ try {
       return { inCol: !!c, chip: c?.querySelector(".chip.agent")?.textContent, err: c?.querySelector(".err")?.textContent, off: m?.disabled, n: document.querySelector('[data-col="needs-agent"] .n')?.textContent,
         cols: [...document.querySelectorAll("main section")].map((x) => x.dataset.col).join(",") }; })()`);
     check(v.cols == "queued,working,needs-agent,ready-to-merge,merging,branches", `the board has a Needs agent column, after Working (${v.cols})`);
+    const times = await page.eval(`[...document.querySelectorAll('.card[data-open="${t3.id}"] .time')].map((x) => x.textContent).join(" · ")`);
+    check(/^worked \d+s · merge \d+s$/.test(times), `the card shows its times: worked (working to ready) and the last merge (${times})`);
     check(v.inCol && v.chip == "agent agent-3" && v.err == "conflicts merging origin/main: notes.txt" && v.off && v.n == "1", `the card is in it, with its agent, why, and Merge off (${JSON.stringify(v)})`);
     if (process.env.TQ_SHOTS) await page.screenshot(join(process.env.TQ_SHOTS, "needs-agent-board.png"));
     await page.eval(`document.querySelector('.card[data-open="${t3.id}"] .title').click(), true`);
@@ -856,7 +858,7 @@ async function originPart() {
 
     // Signing in waits for an approval: the board, GET /api/history and tq watch say where.
     let h: any;
-    for (let i = 0; i < 50 && !(h = await api3("GET", "/api/history")).login; i++) await Bun.sleep(100);
+    for (let i = 0; i < 150 && !(h = await api3("GET", "/api/history")).login; i++) await Bun.sleep(100);
     check(h.login?.approve_url == "https://erga.example/tokens/approve?code=WXYZ" && h.login.user_code == "WXYZ", "GET /api/history says where to approve this machine");
     const browser = await Browser.launch();
     try {

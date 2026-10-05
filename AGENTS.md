@@ -26,9 +26,16 @@ and in live mode, and for the queue itself:
    pushes, previews, screenshots, every step the queue runs. When the limit
    is reached, the whole process tree is killed and the task's agent is woken
    to resolve the issue. Agents run their own builds and tests under
-   `timeout` (e.g. `timeout 600 ./test.sh`), stop their own preview when it
+   `timeout` (e.g. `timeout 180 bun tests/x.ts`), stop their own preview when it
    gets in the way of a build in the worktree, and never leave processes
    behind.
+3. **A task builds, tests and merges in under 5 minutes.** Run only the
+   tests that cover the change, each command under a short time limit
+   (e.g. `timeout 180 bun tests/x.ts`). Run `./test.sh` or Docker only when
+   the change needs them, never by default. The queue's own step limits are
+   minutes, not tens of minutes, and the board shows each task's times
+   (worked: working to ready to merge; merge: the last merge), so slowness
+   shows.
 
 ### Watch the queue, always
 
@@ -71,7 +78,7 @@ On each line, act without being asked:
 - **needs agent**: the merge stopped for something in the task's worktree:
   a conflict (`conflicts merging origin/staging: README.md, worker/factory.ts`),
   uncommitted changes, a failed check, or a step that timed out (`git fetch
-  origin timed out after 180s`). The queue put the worktree back on the
+  origin timed out after 120s`). The queue put the worktree back on the
   branch's last commit; Merge is off. Do this, without being asked:
   1. Tell the user in a line.
   2. Wake the task's own agent: SendMessage to the agent id in the line
@@ -189,8 +196,10 @@ Fill in the brackets:
 > 3. Test it thoroughly: the tests that cover what you changed (`./test.sh`
 >    for the whole suite) and new ones where they belong. Verify in a real
 >    browser with **headless Chrome only** (`tests/cdp.ts` drives it; never
->    open or drive the user's own browser). Run every build and test under a
->    time limit (`timeout 600 ./test.sh`, `timeout 300 bun tests/x.ts`). If
+>    open or drive the user's own browser). Aim to build, test and merge in
+>    under 5 minutes: run only the tests that cover the change, each under a
+>    short time limit (`timeout 180 bun tests/x.ts`); `./test.sh` and Docker
+>    only when the change needs them, never by default. If
 >    your own preview gets in the way of a build in the worktree, stop it
 >    first (`tq preview [id] --stop`) and start it again after. Never leave
 >    processes behind (dev servers, watchers, browsers): stop what you start.
@@ -428,13 +437,13 @@ Agents can't set `merging`, `needs-agent` or `merged`, nor change a merging task
 **Time limits.** Every step the queue runs has one, and runs in a process
 group of its own; at the limit the whole group is killed. The limits, in
 seconds (each one is changed with `TASK_QUEUE_TIMEOUT_<STEP>`; `GET /api`
-lists them): `git` 120 (local git), `origin` 180 (fetch and push, with the
-credential helper), `login` 600 (the sign-in to origin), `check` 1200
-(`TASK_QUEUE_CHECK`), `install` 300 (a new worktree's `node_modules`),
+lists them): `git` 120 (local git), `origin` 120 (fetch and push, with the
+credential helper), `login` 300 (the sign-in to origin), `check` 240
+(`TASK_QUEUE_CHECK`), `install` 180 (a new worktree's `node_modules`),
 `stop` 15 (a preview or a leftover process stopping), `screenshot` 60, and
 `build` 60 (the new code built before a restart). During a merge a step
 that times out sends the task to its agent (`needs agent: git fetch origin
-timed out after 180s`, with the output's tail). A push that times out is
+timed out after 120s`, with the output's tail). A push that times out is
 like a refused push: the merge stays, and the queue pushes again later. Discard drops a task: preview stopped,
 worktree removed, branch deleted. A live task's Chrome window is closed on
 merge and on discard, as its dev server (the preview) is stopped.

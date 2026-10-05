@@ -60,6 +60,7 @@
   .title { font-weight: 600; flex: 1; overflow-wrap: anywhere; }
   .meta { color: var(--muted); font-size: 12px; margin-top: 4px; display: flex; flex-wrap: wrap; gap: 4px 10px; }
   .meta code { font: 11px ui-monospace, monospace; }
+  .meta .time { font-variant-numeric: tabular-nums; }
   .last { color: var(--muted); font-size: 12px; margin-top: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .err { color: var(--bad); font-size: 12px; margin-top: 6px; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 7.5em; overflow: hidden; }
   .thumbs { display: flex; gap: 6px; margin-top: 8px; overflow: hidden; }
@@ -247,11 +248,20 @@ function card(t) {
   const blocked = t.status == "queued" && (t.blockedBy?.start.length || t.blockedBy?.stuck.length);
   return `<div class="card ${t.status} ${t.live ? "is-live" : ""} ${blocked ? "blocked" : ""}" data-open="${t.id}">
     <div class="top"><span class="id">#${t.id}</span><span class="title">${esc(t.title)}</span>${liveBadge(t)}</div>
-    <div class="meta">${depChip(t)}${agentChip(t)}${t.branch ? `<code>${esc(t.branch)}</code>` : ""}<span>${t.status == "merged" ? `merged ${ago(t.mergedAt)}` : t.status == "merging" ? `merging · ${ago(t.updatedAt)}` : ago(t.updatedAt)}</span>${t.status == "failed" ? "<span>failed</span>" : ""}${t.status == "discarded" ? "<span>discarded</span>" : ""}</div>
+    <div class="meta">${depChip(t)}${agentChip(t)}${t.branch ? `<code>${esc(t.branch)}</code>` : ""}${times(t)}<span>${t.status == "merged" ? `merged ${ago(t.mergedAt)}` : t.status == "merging" ? `merging · ${ago(t.updatedAt)}` : ago(t.updatedAt)}</span>${t.status == "failed" ? "<span>failed</span>" : ""}${t.status == "discarded" ? "<span>discarded</span>" : ""}</div>
     ${t.error ? `<div class="err">${esc(t.error)}</div>` : last && !["merged", "discarded"].includes(t.status) ? `<div class="last">${esc(last.message)}</div>` : ""}
     ${thumbs && t.status != "discarded" ? `<div class="thumbs">${thumbs}</div>` : ""}
     ${actions(t)}
   </div>`;
+}
+
+/** How long it took: working → ready to merge, and its last merge (so far, while merging). */
+const dur = (a, b) => { const s = Math.max(0, Math.round((new Date(b) - new Date(a)) / 1000)); return s < 60 ? `${s}s` : s < 3600 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${Math.floor(s / 3600)}h ${Math.floor(s / 60) % 60}m`; };
+function times(t) {
+  const out = [];
+  if (t.workingAt) out.push(`<span class="time" title="From working to ready to merge">worked ${dur(t.workingAt, t.completeAt && t.completeAt > t.workingAt ? t.completeAt : new Date().toISOString())}</span>`);
+  if (t.mergeStartedAt) out.push(`<span class="time" title="The last merge's time">merge ${dur(t.mergeStartedAt, t.status == "merging" ? new Date().toISOString() : t.mergedAt && t.mergedAt > t.mergeStartedAt ? t.mergedAt : t.updatedAt)}</span>`);
+  return out.join("");
 }
 
 /** A task that needs its agent: which agent (the one to wake), or that none is recorded. */

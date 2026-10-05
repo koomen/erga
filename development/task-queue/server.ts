@@ -102,10 +102,10 @@ const CHECK = process.env.TASK_QUEUE_CHECK ?? "";
  */
 const TIMEOUTS = Object.fromEntries(Object.entries({
   git: 120, // a local git command: merge, commit, reset, worktree add/remove, ...
-  origin: 180, // git fetch and push to origin (with its credential helper)
-  login: 600, // TASK_QUEUE_LOGIN: it may wait for someone to approve this machine
-  check: 1200, // TASK_QUEUE_CHECK
-  install: 300, // node_modules for a new worktree
+  origin: 120, // git fetch and push to origin (with its credential helper)
+  login: 300, // TASK_QUEUE_LOGIN: it may wait for someone to approve this machine
+  check: 240, // TASK_QUEUE_CHECK (a task builds, tests and merges in under 5 minutes: AGENTS.md)
+  install: 180, // node_modules for a new worktree
   stop: 15, // a preview, or a process left in the worktree, stopping (SIGTERM, then SIGKILL)
   screenshot: 60, // a headless Chrome screenshot
   build: 60, // the new code built before a self-restart
@@ -178,6 +178,10 @@ interface Task {
   createdAt: string;
   updatedAt: string;
   mergedAt?: string;
+  /** When it first went to working, when it was last set complete, and when its last merge began: the board shows the times. */
+  workingAt?: string;
+  completeAt?: string;
+  mergeStartedAt?: string;
   /** Don't start until these tasks are merged. */
   startAfter?: number[];
   /** Don't merge until these tasks are merged (the startAfter ones too). */
@@ -208,7 +212,12 @@ function broadcast(event: string, data: unknown) {
 }
 
 function touch(task: Task, changes: Partial<Task> = {}, message?: string) {
-  Object.assign(task, changes, { updatedAt: new Date().toISOString() });
+  const now = new Date().toISOString();
+  if (changes.status && changes.status != task.status) {
+    if (changes.status == "working" && !task.workingAt) changes.workingAt = now;
+    if (changes.status == "complete" && task.status != "merging") changes.completeAt = now;
+  }
+  Object.assign(task, changes, { updatedAt: now });
   if (message) task.log.push({ at: task.updatedAt, message });
   save();
 }
@@ -813,7 +822,7 @@ async function runCheck(task: Task) {
  * Anything else (a dependency not merged, the main checkout off main) goes back to complete with the reason.
  */
 async function merge(task: Task) {
-  touch(task, {}, "Merging");
+  touch(task, { mergeStartedAt: new Date().toISOString() }, "Merging");
   const wt = task.worktree!;
   const preview = task.preview?.command;
   let from: string | undefined, inMain = false;

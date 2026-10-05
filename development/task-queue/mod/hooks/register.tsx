@@ -104,7 +104,9 @@ worktree, and report on the board as you go. Your first message names the task, 
   internal names or arrow chains. Shape: one sentence on what the task changes for the user, then results (with
   numbers), changes, limits, tests, and what the user must do.
 - Never merge or push: the user merges from the board.
-- Run every build and test under a time limit (e.g. \`timeout 600 ./test.sh\`), and never leave processes behind
+- Build, test and merge in under 5 minutes: run only the tests that cover the change, each under a short time
+  limit (e.g. \`timeout 180 bun tests/x.ts\`); ./test.sh and Docker only when the change needs them, never by
+  default. And never leave processes behind
   (dev servers, watchers, browsers): stop what you start. If your own preview gets in the way of a build in the
   worktree (a dev server that the build waits on), stop it first (\`development/task-queue/tq preview <id> --stop\`),
   and start it again after.
