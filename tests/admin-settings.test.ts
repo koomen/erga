@@ -8,7 +8,8 @@ import { afterAll, expect, test } from "bun:test";
 import { adminDoor } from "../admin.ts";
 import { ConfigError, logins, type ConfigEntry } from "../config.ts";
 import type { Platform } from "../front.ts";
-import { Browser } from "./cdp";
+import { join } from "path";
+import { Browser, SHOTS } from "./cdp";
 import { until } from "./suite/harness";
 
 test("logins: a list of GitHub logins, tidied; a bad one is refused, saying which", () => {
@@ -42,7 +43,16 @@ const platform = {
     find: async () => null,
   },
 } as unknown as Platform;
-const server = Bun.serve({ port: 0, fetch: (r) => (new URL(r.url).pathname.startsWith("/admin") ? adminDoor(platform, r) : new Response("", { status: 404 })) });
+// The page, and its stylesheet and fonts from the repo, so the screenshot looks as it does.
+const server = Bun.serve({
+  port: 0,
+  fetch: async (r) => {
+    const path = new URL(r.url).pathname;
+    if (path.startsWith("/admin")) return adminDoor(platform, r);
+    const file = Bun.file(join(import.meta.dir, "..", path));
+    return (path == "/style.css" || path.startsWith("/fonts/")) && !path.includes("..") && (await file.exists()) ? new Response(file) : new Response("", { status: 404 });
+  },
+});
 const browser = await Browser.launch();
 afterAll(() => { browser.close(); server.stop(true); });
 
@@ -65,6 +75,7 @@ test("in the browser: add a user, take one out, Save sends the list", async () =
   await row(`(() => { const pick = li.querySelector("input.pick"); pick.value = "Carol"; pick.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })); })()`);
   await row(`(() => { const pick = li.querySelector("input.pick"); pick.value = "bob"; pick.dispatchEvent(new Event("input")); })()`);
   expect(await row(`[...li.querySelectorAll(".chip")].map((c) => c.dataset.login).join(" ")`)).toBe("alice carol bob");
+  await p.screenshot(join(SHOTS, "admin-picker.png"));
   await row(`li.querySelector('.chip[data-login="alice"] .unpick').click()`);
   expect(await row(`li.querySelector("[name=value]").value`)).toBe(`["carol","bob"]`);
   expect(await row(`li.querySelector(".save").disabled`)).toBe(false);
