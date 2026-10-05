@@ -26,7 +26,7 @@
 // { type: "deploy-log" } events). Merge moves main forward to staging's
 // head, or to the commit a row's "Merge to here" names. Also how to clone and
 // push, and the GitHub mirror's status (in the board's status row; a click
-// pushes now). It updates by itself (/api/events) and
+// opens a dialog: the mirror's state and Push now, or how to turn it on). It updates by itself (/api/events) and
 // follows the system's light or dark.
 
 import { appPage, esc, ICON, type Session } from "../front";
@@ -41,6 +41,8 @@ export interface SourcePageConfig {
   ready: boolean;
   origin: string;
   mirrorUrl: string;
+  /** This server's Worker (deploy/targets.ts), for the GitHub mirror's setup steps; null when it isn't one of Erga's targets. */
+  worker: string | null;
 }
 
 const SOURCE_STYLE = `
@@ -281,9 +283,28 @@ const SOURCE_SCRIPT = `
       mp.className = "pill " + (m.state == "off" ? "" : m.state == "pushing" ? "pushing" : m.error ? "off" : "on");
       mp.textContent = "GitHub: " + (m.state == "off" ? "off" : m.state == "pushing" ? "pushing…" : m.error ? "behind" : m.lastPushAt ? "up to date" : "not pushed yet");
       const where = String(m.url || "").includes("/__github/") ? "A pretend GitHub, in the dev server (local development never pushes to the real one)" : String(m.url || "").replace(/^https?:\\/\\//, "").replace(/\\.git$/, "");
-      mp.title = (m.state == "off" ? "Off: the server has no GITHUB_MIRROR_TOKEN" : (m.lastPushAt ? "Last pushed " + ago(m.lastPushAt) : "Not pushed yet") + (m.error ? ". " + m.error : "") + ". Click to push now.") + (where ? "\\n" + where : "");
-      mp.disabled = m.state == "off";
+      mp.title = (m.state == "off" ? "Off: the server has no GITHUB_MIRROR_TOKEN. Click for how to turn it on." : (m.lastPushAt ? "Last pushed " + ago(m.lastPushAt) : "Not pushed yet") + (m.error ? ". " + m.error : "") + ". Click to push now.") + (where ? "\\n" + where : "");
+      mp.setAttribute("aria-haspopup", "dialog");
+      renderMirror(where);
     }
+  }
+  /** The mirror's dialog: how to turn it on while it's off; its state, any error, and Push now while it's on. */
+  function renderMirror(where) {
+    const m = view?.mirror, d = document.getElementById("mirror-dlg");
+    if (!m || !d) return;
+    const off = m.state == "off";
+    document.getElementById("mirror-off").hidden = !off;
+    document.getElementById("mirror-on").hidden = off;
+    const push = document.getElementById("mirror-push");
+    push.hidden = off;
+    push.disabled = m.state == "pushing";
+    push.textContent = m.state == "pushing" ? "Pushing…" : "Push now";
+    if (off) return;
+    document.getElementById("mirror-state").textContent = "GitHub sync is on. " + (m.state == "pushing" ? "It pushes now." : m.lastPushAt ? "Last pushed " + ago(m.lastPushAt) + "." : "Not pushed yet.");
+    document.getElementById("mirror-where").textContent = where ? "Where: " + where : "";
+    const err = document.getElementById("mirror-error");
+    err.hidden = !m.error;
+    err.textContent = m.error || "";
   }
 
   function renderTargets() {
@@ -402,10 +423,21 @@ const SOURCE_SCRIPT = `
     cloneBtn.textContent = ok ? "Copied" : "Couldn't copy";
     setTimeout(() => { cloneBtn.textContent = "Clone"; }, 1500);
   });
-  document.getElementById("mirror-pill")?.addEventListener("click", async (e) => {
+  const mirrorDlg = document.getElementById("mirror-dlg");
+  document.getElementById("mirror-pill")?.addEventListener("click", () => {
+    document.getElementById("mirror-status").textContent = "";
+    render();
+    if (!mirrorDlg.open) mirrorDlg.showModal();
+  });
+  document.getElementById("mirror-close").addEventListener("click", () => mirrorDlg.close());
+  document.getElementById("mirror-push").addEventListener("click", async (e) => {
     e.currentTarget.disabled = true;
-    await fetch("/api/source/mirror", { method: "POST" }).catch(() => {});
-    load();
+    const status = document.getElementById("mirror-status");
+    status.textContent = "Pushing…";
+    const r = await fetch("/api/source/mirror", { method: "POST" }).catch(() => null);
+    const body = r ? await r.json().catch(() => null) : null;
+    status.textContent = !r || !r.ok ? (body?.error || "Couldn't push.") : "";
+    await load();
   });
 
   // Live: an event says what changed; a reconnect reloads everything. A stream the server answers with an error
@@ -541,6 +573,19 @@ const PAGE_STYLE = `
   #share-tokens li.ended .what { color: var(--soft); text-decoration: line-through; }
   #share-tokens li button { height: 26px; padding: 0 10px; font-size: 12px; }
   #share-tokens .none { color: var(--soft); border: 0; }
+  /* The GitHub mirror: its state and Push now, or how to turn it on. */
+  dialog#mirror-dlg { width: min(600px, calc(100vw - 32px)); }
+  #mirror-dlg p { margin: 0 0 12px; font-size: 13.5px; color: var(--soft); overflow-wrap: anywhere; }
+  #mirror-dlg p.error { color: var(--bad, #c2410c); }
+  #mirror-dlg ol { margin: 0 0 14px; padding-left: 22px; font-size: 13.5px; color: var(--fg); }
+  #mirror-dlg li { margin: 0 0 10px; }
+  #mirror-dlg li p { margin: 4px 0 0; }
+  #mirror-dlg a { color: inherit; }
+  #mirror-dlg code { font: 12.5px var(--font-mono); }
+  #mirror-dlg pre { margin: 6px 0 0; padding: 8px 10px; border-radius: 8px; background: var(--code-bg); color: var(--fg-strong); font: 12px/1.5 var(--font-mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+  #mirror-dlg [hidden] { display: none; }
+  #mirror-dlg .buttons { align-items: center; }
+  #mirror-status { margin-right: auto; font-size: 12.5px; color: var(--soft); }
 `;
 
 /** The tabs on a phone: which pane shows, remembered in this browser and in the address (#tasks, #source, #agent). */
@@ -560,6 +605,34 @@ const TABS_SCRIPT = `
   show(tab);
 })();
 `;
+
+/** The GitHub mirror's dialog: the steps that turn it on (README, The GitHub mirror), shown while it's off; its state and Push now while it's on. */
+function mirrorDialog(c: SourcePageConfig): string {
+  const repo = /github\.com\/([^/]+\/[^/]+?)(\.git)?$/.exec(c.mirrorUrl)?.[1] ?? "koomen/erga";
+  const name = c.worker ? ` --name ${c.worker}` : " --name <this server's Worker>";
+  return `<dialog id="mirror-dlg" aria-labelledby="mirror-title">
+    <h2 id="mirror-title">GitHub sync</h2>
+    <div id="mirror-on" hidden>
+      <p id="mirror-state"></p>
+      <p id="mirror-where"></p>
+      <p class="error" id="mirror-error" hidden></p>
+      <p>After each push or merge, Erga pushes staging and main to GitHub by itself. Push now does it at once.</p>
+    </div>
+    <div id="mirror-off" hidden>
+      <p>GitHub sync is off: this server has no <code>GITHUB_MIRROR_TOKEN</code>. With a token, Erga pushes staging and main to <a href="https://github.com/${esc(repo)}" target="_blank" rel="noopener">github.com/${esc(repo)}</a> after each push or merge. To turn it on:</p>
+      <ol>
+        <li>Make a fine-grained token on GitHub: <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">github.com/settings/personal-access-tokens/new</a>.
+          <p>Resource owner: <code>${esc(repo.split("/")[0])}</code>. Repository access: only <code>${esc(repo)}</code>. Permissions: Contents, read and write. You must be able to push to that repository.</p></li>
+        <li>Set the token as a secret on this server's Worker. Paste the token when the command asks for it:
+          <pre><code>bunx cf workers secrets update GITHUB_MIRROR_TOKEN${esc(name)}</code></pre>
+          <p>Do this when no deploy runs: a new secret restarts the deploy pipeline.</p></li>
+        <li>Come back to this page. The status changes to "GitHub: not pushed yet". Click it, then click Push now.</li>
+      </ol>
+      <p>To sync to a different repository, set <code>GITHUB_MIRROR_URL</code> in the deploy's environment, then deploy again. If GitHub's main has commits that Erga's main does not have, the sync stops for main. Pull those commits into Erga's main, and it continues.</p>
+    </div>
+    <div class="buttons"><span id="mirror-status" role="status" aria-live="polite"></span><button type="button" class="primary" id="mirror-push" hidden>Push now</button><button type="button" id="mirror-close" autofocus>Close</button></div>
+  </dialog>`;
+}
 
 /** /admin/source: the factory's board, the source and deploy dashboard, and the factory's agent, on one page (admins, unlocked). */
 export function adminSourcePage(c: SourcePageConfig): Response {
@@ -606,6 +679,7 @@ export function adminSourcePage(c: SourcePageConfig): Response {
     <ul id="share-tokens"><li class="none">None yet.</li></ul>
     <p style="margin-top:10px">A token ends by itself; Revoke ends it now. Revoking the admin key you unlocked with ends it too.</p>
   </dialog>
+  ${c.ready ? mirrorDialog(c) : ""}
 </main>
 <script>${TABS_SCRIPT}</script>
 <script>${BOARD_SCRIPT}</script>
