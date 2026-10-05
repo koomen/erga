@@ -1390,7 +1390,7 @@ and each target's status in the column's head, from `GET /api/deploys`;
 clicking it opens that deploy's log, live (`GET /api/deploys/<name>/log`,
 then `{ "type": "deploy-log" }` events). Merge moves main to staging's head;
 hovering a commit only on staging offers Merge to here. Also the mirror's
-status (with Push now), the last moves, and the `git remote add` lines. It
+status: clicking it opens the GitHub sync dialog, with Push now while the mirror is on, or the steps that turn it on (the token, the `GITHUB_MIRROR_TOKEN` secret on this server's Worker) while it is off (`bun tests/source-mirror.ts` tests it). Then the last moves, and the `git remote add` lines. It
 updates by itself, on the deploy pipeline's event stream, `GET /api/events`
 (one hub for admins' pages, `worker/deploys.ts`): `{ "type": "source" }` when
 a branch moves or the mirror's status changes (`publishEvent` in
