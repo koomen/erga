@@ -18,9 +18,9 @@
 // .dev.vars; see .dev.vars.example). The key lives only here, in the host:
 //   ANTHROPIC_API_KEY          required (locally a real one in .dev.vars, else
 //                              the dev server's environment: dev/agent-key.ts)
-//   ERGA_AGENT_MODEL    the model a session starts on: sonnet (default,
-//                              Claude Sonnet 5.5) or opus-fast (Claude Opus 5.5
-//                              in fast mode); each person can switch in the panel
+//   ERGA_AGENT_MODEL    the model a session starts on: opus-fast
+//                              (default, Claude Opus 5.5 in fast mode) or sonnet
+//                              (Claude Sonnet 5.5); each person can switch in the panel
 //   ERGA_AGENT_EFFORT   low | medium (default) | high | xhigh | max
 //
 // ERGA_AGENT_MODEL=script swaps the model for a scripted one (see
@@ -54,7 +54,7 @@ export const MODELS = {
   "opus-fast": { id: "claude-opus-5-5", label: "Opus 5.5 fast", fast: true, cost: { input: 8, output: 40, cacheRead: 0.8, cacheWrite: 10 } },
 } as const;
 export type ModelChoice = keyof typeof MODELS;
-export const DEFAULT_MODEL: ModelChoice = "sonnet";
+export const DEFAULT_MODEL: ModelChoice = "opus-fast";
 export const isModelChoice = (s: string): s is ModelChoice => Object.hasOwn(MODELS, s);
 
 export interface AgentConfig {

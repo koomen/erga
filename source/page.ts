@@ -3,7 +3,8 @@
 // the factory. Three parts, on one page: the factory's task board
 // (factory/page.ts), the source and deploy dashboard (below), and the
 // factory's agent (factory/agent.ts; its panel is src/page/factory-agent.ts,
-// built to /factory-agent.js), with "Share with agent" for an outside agent.
+// built to /factory-agent.js), with "Share with agent" for an outside agent
+// (the icon in the header bar, upper right, as in the editor).
 // On a wide window the agent sits on the left, as in the editor, and the
 // board and the dashboard are beside it, one above the other; narrower, tabs
 // show one at a time. Each part's stylesheet is scoped to its pane
@@ -23,11 +24,12 @@
 // Only the live deploy has a background. Each target's status is in its column's head. Any deploy opens
 // its log, past or live (GET /api/deploys/<name>/log?deploy=<id>, then
 // { type: "deploy-log" } events). Merge moves main forward to staging's
-// head, or to the commit a row's "Merge to here" names. Also the GitHub
-// mirror and how to clone and push. It updates by itself (/api/events) and
+// head, or to the commit a row's "Merge to here" names. Also how to clone and
+// push, and the GitHub mirror's status (in the board's status row; a click
+// pushes now). It updates by itself (/api/events) and
 // follows the system's light or dark.
 
-import { appPage, esc, type Session } from "../front";
+import { appPage, esc, ICON, type Session } from "../front";
 import { BOARD_SCRIPT, BOARD_STYLE, boardMarkup } from "../factory/page";
 
 export interface SourcePageConfig {
@@ -46,12 +48,14 @@ const SOURCE_STYLE = `
   @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --on-main: #4cc38a; --only-staging: #f0a742; --bad: #ff8a65; } }
   :root[data-theme="dark"] { --on-main: #4cc38a; --only-staging: #f0a742; --bad: #ff8a65; }
   .pane-head { justify-content: space-between; }
+  .head-actions { display: flex; align-items: center; gap: 10px; margin-left: auto; }
   .merge-row { display: flex; align-items: center; gap: 10px; }
   .merge-row .count { font-size: 13px; color: var(--soft); white-space: nowrap; }
+  .merge-row[hidden], #merge-hint:empty { display: none; }
   #merge-hint { margin: -4px 0 10px; font-size: 13.5px; text-align: right; }
   #merge-hint.error { color: var(--bad); }
   @media (max-width: 640px) { .pane-head { flex-direction: column; align-items: stretch; gap: 10px; } .merge-row { justify-content: space-between; } .merge-row .count { white-space: normal; flex: 1; min-width: 0; } #merge-hint { margin-top: -6px; text-align: left; } }
-  .card { border: 1px solid var(--rule); border-radius: 12px; padding: 6px 10px 10px; min-width: 0; background: var(--bg); }
+  .card { padding: 0 0 10px; min-width: 0; background: var(--bg); }
   .legend { display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 6px 4px 6px; font-size: 12px; color: var(--soft); }
   .legend span { display: inline-flex; align-items: center; gap: 6px; }
   /* The dots: circles only. Hollow orange, only on staging; solid green, on main. */
@@ -112,12 +116,9 @@ const SOURCE_STYLE = `
   .dep.building .w::before, .dep.deploying .w::before { content: ""; flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--only-staging); animation: pulse 1.2s ease-in-out infinite; }
   @keyframes pulse { 50% { opacity: .25; } }
   .none { padding: 18px 4px; font-size: 13.5px; color: var(--soft); grid-column: 1 / -1; }
-  .older { grid-column: 1 / -1; padding: 8px 4px 0; font-size: 12px; color: var(--soft); display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; }
-  .older span { display: inline-flex; align-items: center; gap: 6px; }
-  .older .dep { display: inline-grid; width: auto; }
   @media (max-width: 760px) { .grid { grid-template-columns: 22px minmax(0, 1fr) auto 80px 80px; } .who, .grid > .head.who-h, .row time, .grid > .head.time-h { display: none; } .target { max-width: 82px; } .target b { font-size: 10.5px; } .target .st span { display: none; }
     .dep { font-size: 11.5px; padding: 0 5px; } .dep .at { display: none; } }
-  .boxes { display: grid; grid-template-columns: 1fr 1.3fr; gap: 18px; margin-top: 18px; }
+  .boxes { display: grid; grid-template-columns: 1fr; gap: 18px; margin-top: 18px; }
   @media (max-width: 760px) { .boxes { grid-template-columns: 1fr; } }
   .box { border: 1px solid var(--rule); border-radius: 12px; padding: 14px 16px; min-width: 0; }
   .box h2 { display: flex; align-items: center; gap: 8px; margin: 0 0 6px; font-size: 14px; font-weight: 600; color: var(--fg-strong); }
@@ -125,14 +126,7 @@ const SOURCE_STYLE = `
   .box p { margin: 0 0 6px; font-size: 13.5px; color: var(--soft); overflow-wrap: anywhere; }
   .box p.error { color: var(--bad); }
   .box a { color: inherit; }
-  .state { display: inline-flex; align-items: center; gap: 6px; font-size: 13.5px; color: var(--fg); }
-  .state i { width: 7px; height: 7px; border-radius: 50%; background: var(--on-main); }
-  .state.error i { background: var(--bad); }
-  .state.off i { background: var(--chrome); }
-  .state.pushing i { background: transparent; border: 2px solid var(--on-main); border-right-color: transparent; width: 5px; height: 5px; animation: spin .8s linear infinite; }
   pre { margin: 6px 0 8px; padding: 10px 12px; border-radius: 8px; background: var(--code-bg); color: var(--fg-strong); font: 12.5px/1.6 var(--font-mono); overflow-x: auto; white-space: pre; }
-  .moves { margin: 18px 2px 0; font-size: 12.5px; color: var(--soft); }
-  .moves b { font-weight: 600; color: var(--fg); }
   .setup ol { margin: 8px 0 0; padding-left: 20px; font-size: 14px; color: var(--fg); }
   .setup li { margin: 4px 0; }
   .setup code, .box code { font: 12.5px var(--font-mono); }
@@ -149,10 +143,10 @@ const SOURCE_STYLE = `
   #deploy-log pre .s { color: var(--soft); }
 `;
 
-/** The source pane: the commits with their deploys, Merge, the mirror, how to clone; or how to set it up. */
+/** The source pane: the commits with their deploys, Merge, how to clone; or how to set it up. */
 function sourceMarkup(c: SourcePageConfig): string {
   if (!c.ready) {
-    return `<div class="pane-head"><div><h2>Source and deploys</h2><p class="sub">Erga's own repository and its deploys.</p></div></div>
+    return `<div class="pane-head"><h2>Source and deploys</h2></div>
   <div class="box setup"><h2>Not set up on this server</h2><p>The repository lives in Cloudflare Artifacts, which this server isn't bound to yet. README.md (Erga's own source) has the steps:</p>
   <ol><li>Make the Artifacts repo <code>erga</code> in the namespace <code>erga</code>.</li><li>Deploy with <code>ERGA_ARTIFACTS_NAMESPACE=erga</code>, which adds the binding.</li><li>Push the history in: <code>bun source/import.ts</code>.</li></ol></div>`;
   }
@@ -160,8 +154,8 @@ function sourceMarkup(c: SourcePageConfig): string {
   const target = (name: string, label: string) => `<div class="head deploy"><button class="target" type="button" id="target-${name}" data-target="${name}" disabled title="Deploys aren't set up yet"><b>${label}</b><span class="st"><i></i><span>not set up</span></span></button></div>`;
   return `
   <div class="pane-head">
-    <div><h2>Source and deploys</h2><p class="sub">Push to staging, or merge a task: staging deploys itself. Then move main up to it: main deploys to production.</p></div>
-    <div class="merge-row"><span class="count" id="ahead"></span><button class="new" id="merge" disabled>Merge staging into main</button></div>
+    <h2>Source and deploys</h2>
+    <div class="head-actions"><div class="merge-row" id="merge-row" hidden><span class="count" id="ahead"></span><button class="new" id="merge" disabled>Merge staging into main</button></div><button class="pill" id="clone-copy" type="button" data-clone="git clone ${esc(remote)}" title="Copy: git clone ${esc(remote)}">Clone</button></div>
   </div>
   <p class="hint" id="merge-hint" role="status"></p>
   <section class="card" aria-label="Commits">
@@ -174,12 +168,6 @@ function sourceMarkup(c: SourcePageConfig): string {
     </div>
   </section>
   <section class="boxes">
-    <div class="box" id="mirror">
-      <h2>GitHub mirror <button class="pill" id="mirror-now" type="button" hidden>Push now</button></h2>
-      <p><span class="state off" id="mirror-state"><i></i><span class="what">Loading…</span></span></p>
-      <p id="mirror-url">${esc(c.mirrorUrl)}</p>
-      <p class="error" id="mirror-error" hidden></p>
-    </div>
     <div class="box" id="clone">
       <h2>Clone and push</h2>
       <pre><code>git remote add erga ${esc(remote)}
@@ -188,7 +176,6 @@ git push erga HEAD:staging</code></pre>
       <p>Git asks for a username and password: any username, and an agent token from <a href="/settings">Settings</a> as the password (admins only). main only follows staging: merge here, or push one of staging's commits to main.</p>
     </div>
   </section>
-  <p class="moves" id="moves"></p>
   <dialog id="deploy-log" aria-labelledby="log-title">
     <div class="top"><h2 id="log-title">Deploy log</h2><span class="meta" id="log-meta"></span><button class="pill close" type="button" id="log-close">Close</button></div>
     <pre id="log-lines"></pre>
@@ -264,7 +251,6 @@ const SOURCE_SCRIPT = `
     const want = new Set(commits.map((x) => x.sha));
     for (const [sha, r] of rows) if (!want.has(sha)) r.remove();
     grid.querySelector(".none.empty")?.remove();
-    grid.querySelector(".older")?.remove();
     if (!commits.length) { grid.insertAdjacentHTML("beforeend", '<div class="none empty">No commits yet. Push one: git push erga HEAD:staging</div>'); }
     let prev = null;
     commits.forEach((x, i) => {
@@ -283,26 +269,21 @@ const SOURCE_SCRIPT = `
       grid.insertBefore(r, prev ? prev.nextSibling : document.getElementById("target-production").parentElement.nextSibling);
       prev = r;
     });
-    // Deploys of commits further down than the list goes, and where a target is live if it's there.
-    const older = TARGETS.map((n) => {
-      const t = targetOf(n), away = [...groups[n].entries()].filter(([sha]) => !want.has(sha));
-      if (!t) return "";
-      if (away.length) return '<span><b>' + esc(n) + "</b> " + away.length + " older commit" + (away.length == 1 ? "" : "s") + " deployed, latest " + badge(n, shown(away[0][1])) + "</span>";
-      const live = t.deployed ?? (t.state == "deployed" ? t.commit : null);
-      return live && !want.has(live) && !t.history ? "<span>" + esc(n) + " is live on " + esc(live.slice(0, 7)) + ", further down</span>" : "";
-    }).filter(Boolean);
-    if (older.length && commits.length) grid.insertAdjacentHTML("beforeend", '<div class="older">' + older.join("") + "</div>");
     drawn = true;
     const ahead = staging?.ahead ?? 0, mergeBtn = document.getElementById("merge");
-    if (!busy) mergeBtn.disabled = !ahead;
-    document.getElementById("ahead").textContent = !staging?.commit ? "" : ahead ? ahead + " commit" + (ahead == 1 ? "" : "s") + " to merge" : "main is at staging";
-    const m = view.mirror, st = document.getElementById("mirror-state"), err = document.getElementById("mirror-error");
-    st.className = "state " + (m.state == "off" ? "off" : m.state == "pushing" ? "pushing" : m.error ? "error" : "ok");
-    st.querySelector(".what").textContent = m.state == "off" ? "Off: the server has no GITHUB_MIRROR_TOKEN" : m.state == "pushing" ? "Pushing…" : m.error ? "Behind" + (m.lastPushAt ? " · last pushed " + ago(m.lastPushAt) : "") : m.lastPushAt ? "Up to date · pushed " + ago(m.lastPushAt) : "Not pushed yet";
-    document.getElementById("mirror-url").innerHTML = String(m.url || "").includes("/__github/") ? "A pretend GitHub, in the dev server (local development never pushes to the real one)" : /^https?:/.test(m.url || "") ? '<a href="' + esc(String(m.url).replace(/\\.git$/, "")) + '">' + esc(String(m.url).replace(/^https?:\\/\\//, "").replace(/\\.git$/, "")) + "</a>" : esc(m.url || "");
-    err.hidden = !m.error; err.textContent = m.error || "";
-    document.getElementById("mirror-now").hidden = m.state == "off";
-    document.getElementById("moves").innerHTML = view.moves.slice(0, 3).map((mv) => "<b>" + esc(mv.branch) + "</b> moved to " + mv.new.slice(0, 7) + " by " + esc(mv.by) + " (" + (mv.how == "merge" ? "merge" : "push") + ") " + ago(mv.at)).join(" · ");
+    // Nothing at all while main is at staging: no count, no button, no space. While a merge runs the button stays, disabled.
+    if (!busy) mergeBtn.disabled = document.getElementById("merge-row").hidden = !ahead;
+    document.getElementById("ahead").textContent = !staging?.commit ? "" : ahead ? ahead + " commit" + (ahead == 1 ? "" : "s") + " to merge" : "";
+    // The GitHub mirror: the fourth status in the board's row (factory/page.ts). Its title has the URL and any error; a click pushes now.
+    const m = view.mirror, mp = document.getElementById("mirror-pill");
+    if (mp) {
+      mp.hidden = false;
+      mp.className = "pill " + (m.state == "off" ? "" : m.state == "pushing" ? "pushing" : m.error ? "off" : "on");
+      mp.textContent = "GitHub: " + (m.state == "off" ? "off" : m.state == "pushing" ? "pushing…" : m.error ? "behind" : m.lastPushAt ? "up to date" : "not pushed yet");
+      const where = String(m.url || "").includes("/__github/") ? "A pretend GitHub, in the dev server (local development never pushes to the real one)" : String(m.url || "").replace(/^https?:\\/\\//, "").replace(/\\.git$/, "");
+      mp.title = (m.state == "off" ? "Off: the server has no GITHUB_MIRROR_TOKEN" : (m.lastPushAt ? "Last pushed " + ago(m.lastPushAt) : "Not pushed yet") + (m.error ? ". " + m.error : "") + ". Click to push now.") + (where ? "\\n" + where : "");
+      mp.disabled = m.state == "off";
+    }
   }
 
   function renderTargets() {
@@ -334,7 +315,9 @@ const SOURCE_SCRIPT = `
     if (asking) { again = true; return asking; }
     asking = (async () => {
       const r = await fetch("/api/deploys?history=100", { headers: { Accept: "application/json" } }).catch(() => null);
-      deploys = r && r.ok ? await r.json().catch(() => null) : null;
+      // No answer, or a 5xx (a server restarting into its new version): keep what's shown, and the poll below asks again.
+      const body = r && r.ok ? await r.json().catch(() => null) : null;
+      if (body || (r && r.status < 500)) deploys = body;
       renderTargets();
       if (open && !open.pinned) { const t = targetOf(open.target); if (t?.deployId && t.deployId != open.deployId) refreshLog(false); }
       await new Promise((ok) => setTimeout(ok, 500));
@@ -405,33 +388,52 @@ const SOURCE_SCRIPT = `
       const r = await fetch("/api/source/merge", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ from: "staging", to: "main", ...(commit ? { commit } : {}) }) });
       const body = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(body.error || "The merge failed (HTTP " + r.status + ").");
-      hint.textContent = body.upToDate ? "Nothing to merge: main is there already." : "Merged: main is now " + body.commit.slice(0, 7) + ".";
+      hint.textContent = "";
     } catch (e) { hint.className = "hint error"; hint.textContent = e.message; }
     busy = false;
     await load();
   }
   mergeBtn.addEventListener("click", () => merge(null));
   grid.addEventListener("click", (e) => { const b = e.target.closest("button[data-merge]"); if (b) merge(b.dataset.merge); });
-  document.getElementById("mirror-now").addEventListener("click", async (e) => {
-    e.target.disabled = true;
+  // Clone: copies the git clone command; the button says so for a moment.
+  const cloneBtn = document.getElementById("clone-copy");
+  cloneBtn.addEventListener("click", async () => {
+    const ok = await navigator.clipboard.writeText(cloneBtn.dataset.clone).then(() => true, () => false);
+    cloneBtn.textContent = ok ? "Copied" : "Couldn't copy";
+    setTimeout(() => { cloneBtn.textContent = "Clone"; }, 1500);
+  });
+  document.getElementById("mirror-pill")?.addEventListener("click", async (e) => {
+    e.currentTarget.disabled = true;
     await fetch("/api/source/mirror", { method: "POST" }).catch(() => {});
-    e.target.disabled = false;
     load();
   });
 
-  // Live: an event says what changed; a reconnect reloads everything.
-  const events = new EventSource("/api/events");
-  events.onopen = () => { load(); loadDeploys(); };
-  events.onmessage = (e) => {
-    let ev; try { ev = JSON.parse(e.data); } catch { return; }
-    if (ev.type == "source") load();
-    if (ev.type == "deploys") loadDeploys();
-    if (ev.type == "deploy-log" && open && ev.target == open.target) {
-      if (ev.deployId == open.deployId) { open.heard = Date.now(); append(ev.lines || []); open.shown += (ev.lines || []).length; }
-      else if (!open.pinned) { open.heard = Date.now(); refreshLog(false); }
-    }
-  };
+  // Live: an event says what changed; a reconnect reloads everything. A stream the server answers with an error
+  // (a server restarting into its new version) the browser closes for good: open it again.
+  let heard = 0;
+  function listen() {
+    const events = new EventSource("/api/events");
+    events.onopen = () => { load(); loadDeploys(); };
+    events.onerror = () => { if (events.readyState == EventSource.CLOSED) setTimeout(listen, 3000); };
+    events.onmessage = (e) => {
+      let ev; try { ev = JSON.parse(e.data); } catch { return; }
+      if (ev.type == "source") { load(); loadDeploys(); } // a move starts a deploy, here or on another server
+      if (ev.type == "deploys") { heard = Date.now(); loadDeploys(); }
+      if (ev.type == "deploy-log" && open && ev.target == open.target) {
+        if (ev.deployId == open.deployId) { open.heard = Date.now(); append(ev.lines || []); open.shown += (ev.lines || []).length; }
+        else if (!open.pinned) { open.heard = Date.now(); refreshLog(false); }
+      }
+    };
+  }
+  listen();
   load(); loadDeploys();
+  // Events don't tell everything: another server's deploy (erga.dev's page shows staging's, run by staging's server)
+  // sends this page none, and a server that deploys itself cuts the stream and can miss its last change. So while
+  // a deploy shows running (or the status didn't load) and no event came lately, ask for the status every two seconds.
+  setInterval(() => {
+    if (asking || Date.now() - heard < 2500) return;
+    if (!deploys || deploys.targets?.some((t) => running(t.state) || t.history?.some((r) => running(r.state)))) loadDeploys();
+  }, 2000);
   setInterval(() => { render(); renderTargets(); }, 30000);
 })();
 `;
@@ -492,6 +494,8 @@ const PAGE_STYLE = `
   .crumbs a.here-link:hover { color: var(--fg-strong); }
   .crumbs > :not(.brand)::before { content: "›"; margin: 0 9px 0 10px; color: var(--chrome); opacity: 0.55; font-weight: 400; }
   .crumbs .here { display: flex; align-items: center; font-size: 13.5px; font-weight: 500; color: var(--fg); }
+  /* The header bar: left of your avatar (account.ts), as the editor's icons are; it scrolls with the page, as the avatar does. */
+  .chrome-top { position: absolute; right: calc(max(16px, env(safe-area-inset-right)) + 38px); }
   /* The agent on the left, as in the editor; the board and the dashboard beside it, one above the other. */
   .workspace { display: grid; grid-template-columns: minmax(300px, 370px) minmax(0, 1fr); gap: 20px; align-items: start; }
   .agent-pane { position: sticky; top: 16px; height: calc(100vh - 78px); height: calc(100dvh - 78px); min-height: 420px; display: flex; flex-direction: column; min-width: 0;
@@ -504,8 +508,6 @@ const PAGE_STYLE = `
   .pane-head h2 { margin: 0; font-size: 18px; line-height: 1.3; font-weight: 650; letter-spacing: -0.01em; color: var(--fg-strong); }
   .pane-head .sub { margin: 2px 0 0; font-size: 13px; }
   .pane-note { margin: -4px 0 10px; font-size: 13px; color: var(--soft); }
-  #tasks .share-btn { margin-left: auto; height: 30px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--fg-strong); background: var(--fg-strong); color: var(--bg); font: 550 12.5px var(--font-text); cursor: pointer; }
-  #tasks .share-btn:hover { opacity: 0.86; }
   .tabs { display: none; }
   /* Narrower, one at a time: tabs for the board, the dashboard and the agent. */
   @media (max-width: 999.98px) {
@@ -562,9 +564,12 @@ const TABS_SCRIPT = `
 /** /admin/source: the factory's board, the source and deploy dashboard, and the factory's agent, on one page (admins, unlocked). */
 export function adminSourcePage(c: SourcePageConfig): Response {
   const crumbs = `<nav class="crumbs" aria-label="Breadcrumbs"><a class="brand" href="/">Erga</a><a class="here-link" href="/admin">Admin</a><span class="here" aria-current="page">Source</span></nav>`;
-  const page = (body: string, status = 200) => new Response(appPage("Source", PAGE_STYLE + scopeCss(BOARD_STYLE, "#tasks") + scopeCss(SOURCE_STYLE, "#source-pane"), `${crumbs}${body}`), { status, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
+  // The header bar, upper right, as the editor's (page.html, .chrome-top): Share with agent, the same icon button.
+  const bar = `<div class="chrome chrome-top" role="toolbar" aria-label="Controls"><button type="button" class="icon-btn" id="btn-share" aria-label="Share the factory with an agent" data-tip="Share with an agent" aria-haspopup="dialog" aria-expanded="false" aria-controls="share-dlg">${ICON.agent}</button></div>`;
+  const page = (body: string, status = 200) => new Response(appPage("Source", PAGE_STYLE + scopeCss(BOARD_STYLE, "#tasks") + scopeCss(SOURCE_STYLE, "#source-pane"), `${crumbs}${body}`, false), { status, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
   if (!c.admin) return page(`<main><p class="empty">There's nothing here. <a href="/">Back to the start</a>.</p></main>`, 404);
-  return page(`<main class="admin">
+  return page(`${bar}
+<main class="admin">
   <div class="tabs" role="tablist" aria-label="Show"><button type="button" role="tab" data-tab="tasks">Tasks</button><button type="button" role="tab" data-tab="source">Source</button><button type="button" role="tab" data-tab="agent">Agent</button></div>
   <div class="workspace">
   <aside class="agent-pane" id="agent" aria-label="Agent">

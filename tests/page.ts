@@ -11,6 +11,7 @@ import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { AsyncLocalStorage } from "node:async_hooks";
+import { availableParallelism } from "node:os";
 
 const keep = process.argv.includes("--keep");
 const only = process.argv.find((a) => a == "html" || a == "md" || a == "agent" || a == "format" || a == "reload");
@@ -519,8 +520,9 @@ async function agentEmptyScenario(browser: Browser) {
 
   // The pane's open or closed state survives a reload.
   const paneOpen = () => p.eval<boolean>(`document.body.classList.contains("agent-open") && !document.getElementById("agent").inert`);
-  await p.eval(`location.reload()`);
-  await Bun.sleep(150);
+  // Checked as soon as the new page's script has run (not after a fixed pause: on a busy machine the reload can take longer).
+  await p.eval(`window.__beforeReload = true; location.reload()`);
+  await until(() => p.eval<boolean>(`!window.__beforeReload && !!window.ergaPage`), 5000);
   check("an open pane is still open after a reload, from the first frame", await paneOpen());
   await loaded(p);
   await p.key("j", MOD.Meta);
@@ -611,7 +613,7 @@ async function noEditScenario(browser: Browser) {
   await s.close();
 }
 
-/** The model menu: Sonnet 5.5 by default, switchable to Opus 5.5 fast; the person's other tabs and a reload follow. */
+/** The model menu: Opus 5.5 fast by default, switchable to Sonnet 5.5; the person's other tabs and a reload follow. */
 async function modelScenario(browser: Browser) {
   say("\nAgent model");
   const s = await session(browser, "noedit", "index.html", { ANTHROPIC_API_KEY: "sk-ant-test-not-used", ERGA_AGENT_MODEL: "" });
@@ -619,17 +621,17 @@ async function modelScenario(browser: Browser) {
   const sel = (q: typeof p) => q.eval<{ value: string; text: string; options: string[] } | null>(`(() => { const s = document.getElementById("agent-model-select"); return s && { value: s.value, text: s.selectedOptions[0]?.text, options: [...s.options].map((o) => o.text) }; })()`);
   await until(async () => !!(await sel(p)));
   const first = await sel(p);
-  check("the agent starts on Sonnet 5.5, with Opus 5.5 fast to pick", first?.value == "sonnet" && first.options.join("|") == "Sonnet 5.5|Opus 5.5 fast", first);
+  check("the agent starts on Opus 5.5 fast, with Sonnet 5.5 to pick", first?.value == "opus-fast" && first.options.join("|") == "Sonnet 5.5|Opus 5.5 fast", first);
   const q = await browser.page();
   await q.open(`${s.base}#edit`, { clear: false, width: 900, height: 700 });
-  await until(async () => (await sel(q))?.value == "sonnet");
-  await p.eval(`(() => { const s = document.getElementById("agent-model-select"); s.value = "opus-fast"; s.dispatchEvent(new Event("change")); })()`);
-  check("picking Opus 5.5 fast switches it", await until(async () => (await (await fetch(`${s.base}/api/agent`)).json() as { choice: string }).choice == "opus-fast"));
-  check("the person's other tab follows", await until(async () => (await sel(q))?.value == "opus-fast"));
+  await until(async () => (await sel(q))?.value == "opus-fast");
+  await p.eval(`(() => { const s = document.getElementById("agent-model-select"); s.value = "sonnet"; s.dispatchEvent(new Event("change")); })()`);
+  check("picking Sonnet 5.5 switches it", await until(async () => (await (await fetch(`${s.base}/api/agent`)).json() as { choice: string }).choice == "sonnet"));
+  check("the person's other tab follows", await until(async () => (await sel(q))?.value == "sonnet"));
   q.close();
   await p.eval(`location.reload()`);
   await until(async () => !!(await sel(p)));
-  check("and a reload keeps it", (await sel(p))?.value == "opus-fast");
+  check("and a reload keeps it", (await sel(p))?.value == "sonnet");
   check("no page errors", p.errors.length == 0, p.errors.join("\n"));
   await s.close();
 }
@@ -785,7 +787,11 @@ try {
     console.log(out.getStore()!.join("\n"));
   });
   if (keep) for (const sc of chosen) await runOne(sc);
-  else await Promise.all(chosen.map(runOne));
+  else {
+    // A few at a time (each has a dev server of its own): all fifteen at once overload a laptop, and the timing checks fail.
+    const queue = [...chosen], at = Math.max(2, Number(process.env.PAGE_JOBS) || Math.floor(availableParallelism() / 2));
+    await Promise.all(Array.from({ length: at }, async () => { for (let sc; (sc = queue.shift());) await runOne(sc); }));
+  }
 } finally {
   if (!keep) browser.close();
 }

@@ -22,7 +22,7 @@
 
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
-import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { createServer, type AddressInfo } from "node:net";
 import { homedir } from "node:os";
@@ -276,6 +276,10 @@ function simRunner(stateDir: string, log: (line: string) => void): Runner {
       const name = `task-${task}-${randomBytes(3).toString("hex")}`;
       mkdirSync(join(root, name, "home"), { recursive: true });
       mkdirSync(join(root, name, "work"), { recursive: true });
+      // Tests (tests/factory.ts, ERGA_FACTORY_SIM_NO_SCRIPTS) skip packages' install scripts, by the VM's own Bun settings
+      // (its HOME's .bunfig.toml): they cost seconds a VM (a Mac checks each fresh copy of workerd's and esbuild's
+      // binaries on its first run), and a simulated VM's preview, a static one, runs neither.
+      if (process.env.ERGA_FACTORY_SIM_NO_SCRIPTS) writeFileSync(join(root, name, "home", ".bunfig.toml"), "[install]\nignoreScripts = true\n");
       const port = await freePort();
       ports.set(`sim:${name}`, port);
       log(`factory: simulated VM ${name} (no Docker), preview port ${port}`);

@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 // Admin SSH keys end to end (admin-keys.ts, admin-access.ts), on a dev server
-// without local development's shortcut (ERGA_ADMIN_UNLOCKED off), so it's
+// with admin keys required (ERGA_ADMIN_KEYS_REQUIRED=1) and without local
+// development's shortcut (ERGA_ADMIN_UNLOCKED off), so it's
 // the real thing, keys made and signatures signed with the real ssh-keygen:
 //
 //   - locked, every surface that administers, edits or deploys the server
@@ -35,7 +36,7 @@ const checks: string[] = [];
 const ok = (what: string) => { checks.push(what); console.log(`ok   ${what}`); };
 const keep = process.argv.includes("--keep");
 
-const host = await startHost(null, { env: { ERGA_ADMIN_UNLOCKED: "" }, port: keep ? Number(process.env.PORT) || undefined : undefined });
+const host = await startHost(null, { env: { ERGA_ADMIN_UNLOCKED: "", ERGA_ADMIN_KEYS_REQUIRED: "1" }, port: keep ? Number(process.env.PORT) || undefined : undefined });
 const root = host.root;
 const get = (path: string, init: RequestInit = {}) => fetch(root + path, { redirect: "manual", ...init });
 const post = (path: string, body: unknown, headers: Record<string, string> = {}) =>

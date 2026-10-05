@@ -101,13 +101,16 @@ export async function startHost(target: string | null, opts: { port?: number; en
     async start() {
       // Its own process group, so stopping it outright takes the server with it.
       const p = proc = Bun.spawn(["bun", join(ROOT, "dev.ts"), ...(target ? [target] : []), "--port", String(port), "--no-open"], { env, stdout: "pipe", stderr: "pipe", detached: true });
+      running.add(p.pid);
+      p.exited.then(() => running.delete(p.pid));
       for (const s of [p.stdout, p.stderr] as ReadableStream<Uint8Array>[]) (async () => { for await (const c of s) output = (output + new TextDecoder().decode(c)).slice(-20000); })();
       // Usually ~2s; the margin is for a machine busy running everything else at once (./test.sh starts many
       // servers together, each optimizing Vite's dependencies in a cache of its own: on a loaded machine, 30s wasn't enough).
       for (const until = Date.now() + 120_000; Date.now() < until;) {
         if (p.exitCode != null) break;
         const at = target ? new RegExp(`editing .*: http://localhost:${port}(/[a-z0-9-]+/[a-z0-9-]+)`).exec(output)?.[1] : "";
-        try { if (at != null && (await fetch(target ? `${root}${at}/api/doc` : `${root}/style.css`)).ok) { host.base = root + at; return; } } catch { /* not up yet */ }
+        // Up once a page that reads the database answers: the server migrates it as it starts, and until then those fail.
+        try { if (at != null && (await fetch(target ? `${root}${at}/api/doc` : `${root}/docs`, { redirect: "manual" })).ok) { host.base = root + at; return; } } catch { /* not up yet */ }
         await Bun.sleep(25);
       }
       throw new Error(`dev server didn't start:\n${output}`);
@@ -144,7 +147,18 @@ function descendants(pid: number): number[] {
 
 /** Every host's scratch folder this process made and hasn't disposed of: what's left running from them goes when it exits. */
 const scratches = new Set<string>();
-process.on("exit", () => { for (const dir of scratches) killLeftovers(dir); });
+/**
+ * Every dev server (dev.ts) still running, by pid: killed with everything under it when this process exits, as a test
+ * that fails half-way never disposes of its hosts. killLeftovers can't find them: their command line names the
+ * document's folder, and their working directory is the checkout.
+ */
+const running = new Set<number>();
+process.on("exit", () => {
+  for (const pid of running) for (const p of [pid, ...descendants(pid)]) { try { process.kill(p, "SIGKILL"); } catch { /* gone */ } }
+  for (const dir of scratches) killLeftovers(dir);
+});
+// Stopped from outside (Ctrl-C, timeout): exit, so the above runs.
+for (const sig of ["SIGINT", "SIGTERM"] as const) process.once(sig, () => process.exit(130));
 
 /**
  * Kills what is still running from a host's scratch folder. A factory job's preview (factory/vm/task.ts serve-static,

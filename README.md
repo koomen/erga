@@ -63,7 +63,7 @@ serves the app's routes (`front.ts`). Its pages:
   it (see [Documents with many pages](#documents-with-many-pages)).
 - **Settings**, `/settings`: your agent tokens (`/tokens` redirects there).
 - **Admin settings**, `/admin`: the server's settings and users, for admins
-  who have unlocked admin access with their SSH key.
+  (and, with admin keys required, only once they've unlocked admin access with their SSH key).
 - **Admin keys**, `/admin/keys`: an admin's SSH keys, and unlocking admin
   access with them (see [Admin SSH keys](#admin-ssh-keys)).
 - **Deploy your own**, `/deploy`: anyone signed in, by default (see
@@ -368,8 +368,9 @@ their row the first time they do; they can't be demoted or removed except by
 taking them out of `ADMINS` and deploying. Every other admin is a row, made
 by an admin. Locally, `DEV_LOGIN` is a bootstrap admin too, and everyone
 signed in gets a row as they come. Being an admin says who *may* administer
-the server; doing it also needs admin access unlocked with an SSH key the
-admin added themselves (see [Admin SSH keys](#admin-ssh-keys)). An admin's
+the server; with admin keys required (off by default), doing it also needs
+admin access unlocked with an SSH key the admin added themselves (see
+[Admin SSH keys](#admin-ssh-keys)). An admin's
 agent can do it all for them with an admin token (see [Agents configure the
 server](#agents-configure-the-server)): ask Claude Code, with one, to add a user.
 
@@ -586,6 +587,19 @@ The token signs in test people (Ada, Bo, ...) who can open only test documents
 (`/<you>/test....`), where the scripted agent stands in for the model.
 
 ### Admin SSH keys
+
+**Off by default.** Unless the deploy sets `ERGA_ADMIN_KEYS_REQUIRED=1`
+(`cloudflare.config.ts`), a signed-in admin is enough: every signed-in
+session carries an unlock that names no key (`SIGN_IN_KEY`, made in
+`worker/auth.ts` and `front.ts`'s `withTokens`), so the admin check
+(`Users.isAdmin`) is the only one left. Non-admins and people signed out are
+refused as before. An admin's agent token works as an admin token does
+(the admin tools, the Git endpoint), and `/admin/keys` says no key is
+needed. The keys, the challenges and admin tokens still work; to turn the
+requirement back on, make `ERGA_ADMIN_KEYS_REQUIRED`'s default `"1"` in
+`cloudflare.config.ts` (`tests/admin-keys.ts` runs with it on;
+`tests/admin-open.ts` checks it off). Everything below describes the
+requirement while it's on.
 
 Everything that administers, edits or deploys the server itself needs more
 than a GitHub sign-in: an admin must also have **unlocked admin access**, by
@@ -1459,8 +1473,8 @@ fine for Erga's thousands but not for millions.
 
 The factory is the task queue (`development/task-queue/`) inside Erga, on
 `/admin/source` (with the source dashboard and the factory's agent;
-`/admin/factory` redirects there): the same board (Queued, Working, Ready to merge, Merging,
-Merged, and `needs agent` cards in Merging), but each task is done by Claude Code in a VM of its own, not on
+`/admin/factory` redirects there): the same board (Queued, Working, Ready to merge and Merging,
+with `needs agent` cards in Merging; merged tasks leave the board), but each task is done by Claude Code in a VM of its own, not on
 this machine: on staging.erga.dev and erga.dev a Cloudflare Container
 ([On Cloudflare](#on-cloudflare), below). It's a prototype: admins only, and
 off until an admin sets the `factory` setting to `on` (`/admin`). It does
@@ -1624,7 +1638,11 @@ stopped; the same VM's stand-in resolves it and the merge goes on to
 merged), a merge step that hangs (killed at its limit with its process
 tree, needs agent, then merged) and an install that hangs (the stand-in is
 told and installs again). `tests/factory.test.ts` tests the branch names and
-the git tokens' rules.
+the git tokens' rules. `tests/factory-cards.ts` checks that the board's cards
+stay compact, on a board of fixture tasks: a title on one line (the full
+title in its tooltip), no branch name (the detail has it), the last update
+as a short time on the title's line ("5m"), small buttons on one row, and
+the thumbnails.
 
 **How it fits together.**
 
@@ -1736,8 +1754,8 @@ the git tokens' rules.
    request to the VM's port 4401 as if to localhost (the dev server in the
    VM signs everyone in as its `DEV_LOGIN`, on localhost only, so the
    ticket is what keeps it to admins).
-6. *The board* is the local one's, without live mode or the Branches column
-   (Merged shows the last 20 merged tasks; the Source page shows staging).
+6. *The board* is the local one's, without live mode, the Merged column or
+   the Branches column (merged tasks leave the board; the Source page shows staging).
 
 **Risks.**
 
@@ -2190,12 +2208,12 @@ had made when it asked (a Yjs state vector). No browser runs on the server:
 whoever has the editor open is the agent's eyes, and with none of their tabs
 open the tool says so. The panel shows a thumbnail of what it saw.
 
-The agent runs on Claude Sonnet 5.5 by default, at medium effort; the model
-name in the panel's header is a menu that switches it to Claude Opus 5.5 in
-fast mode and back. The choice is per person (all their tabs follow, and a
+The agent runs on Claude Opus 5.5 in fast mode by default, at medium effort;
+the model name in the panel's header is a menu that switches it to Claude
+Sonnet 5.5 and back. The choice is per person (all their tabs follow, and a
 reload keeps it) and applies from the next message, so a running turn
-finishes on the model it started with. `ERGA_AGENT_MODEL=opus-fast`
-starts everyone on Opus instead. Set it up with `ANTHROPIC_API_KEY`: locally
+finishes on the model it started with. `ERGA_AGENT_MODEL=sonnet`
+starts everyone on Sonnet instead. Set it up with `ANTHROPIC_API_KEY`: locally
 exported before `bun start` or in `.dev.vars`; a secret on erga.dev. pi's model catalogue
 predates the 5.5 models, so `agent.ts` describes them itself (`MODELS`) and
 rewrites each request for adaptive thinking, effort and, on Opus fast,
@@ -2628,12 +2646,16 @@ and the editor's timers (how long notes stay up, how marks fade) run at a
 fraction of real time under test (`window.__ergaTimescale`, `ms` in
 `src/page/editor.ts`).
 
-    ./test.sh          # page editor, isolation, front door + multiplayer: ~25s
+    ./test.sh          # every test file: ~3.5 minutes on a 10-core Mac
     bun run typecheck  # tsc over the host, the editor and the suite
 
-Each file also runs alone: `bun tests/page.ts` (~7s), `bun tests/suite/run.ts`
-(~11s; `--suite`, `--grep` and `--seed` narrow it, `--long` for the big slow
-version), `bun test tests/` (under a second).
+`./test.sh` runs the files in a pool, the longest first: half the CPU count
+at a time (`TEST_JOBS=n` changes it), as each file has dev servers and a
+Chrome of its own, and more at once only slows them all. Each file prints its
+time. Each file also runs alone: `bun tests/page.ts` (~30s; `PAGE_JOBS=n`
+scenarios at a time), `bun tests/suite/run.ts` (~22s; `--suite`, `--grep` and
+`--seed` narrow it, `--long` for the big slow version), `bun tests/factory.ts`
+(~57s), `bun test tests/` (~11s).
 
 `bun tests/agent.ts` asks the real agent for edits through the panel and checks
 they reach the open page without a reload and then the disk, that the agent

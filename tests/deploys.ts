@@ -81,7 +81,7 @@ try {
   await until(async () => (await stagingOf()).state == "deployed", 60_000, "staging builds and deploys itself", async () => JSON.stringify(await stagingOf(), null, 1));
   const done = await stagingOf();
   expect(done.commit == SHA1 && done.deployed == SHA1 && done.error == null, "the commit is live", done);
-  expect(done.steps.map((s: any) => s.id).join() == "build,account,database,data,migrations,assets,worker,address,pages,live,documents" && done.steps.every((s: any) => s.status == "done"), "every step done, copying production's data included", done.steps);
+  expect(done.steps.map((s: any) => s.id).join() == "build,account,database,data,migrations,assets,image,worker,vms,address,pages,live,documents" && done.steps.every((s: any) => s.status == "done"), "every step done, copying production's data included", done.steps);
   expect(done.steps.find((s: any) => s.id == "documents").detail.includes("3 documents copied"), "production's documents copied", done.steps);
   expect(done.log.some((l: string) => l.includes("build: $ bun install --frozen-lockfile")) && done.log.at(-1).includes(`deployed ${SHA1.slice(0, 12)}`), "the log says what happened, step by step", done.log);
   await until(() => events.filter((e) => e == "deploys").length > 8, 5000, "an event on each change", () => events.join());
@@ -92,7 +92,7 @@ try {
   expect(log.commit == SHA1 && log.state == "deployed" && log.deployId.includes(SHA1.slice(0, 7)), "GET /api/deploys/staging/log: the latest deploy", log);
   expect(log.lines.every((l: any) => typeof l.at == "number" && typeof l.text == "string"), "each line with its time", log.lines.slice(0, 3));
   const steps = new Set(log.lines.map((l: any) => l.step).filter(Boolean));
-  expect(["build", "account", "database", "data", "migrations", "assets", "worker", "address", "pages", "live", "documents"].every((x) => steps.has(x)), "and its step", [...steps]);
+  expect(["build", "account", "database", "data", "migrations", "assets", "image", "worker", "vms", "address", "pages", "live", "documents"].every((x) => steps.has(x)), "and its step", [...steps]);
   await until(() => logEvents.flatMap((e) => e.lines).length >= log.lines.length, 5000, "the same lines came as events");
   expect(logEvents.every((e) => e.target == "staging" && e.deployId == log.deployId), "{type: \"deploy-log\", target, deployId, lines}", logEvents[0]);
   expect(JSON.stringify(logEvents.flatMap((e) => e.lines)) == JSON.stringify(log.lines), "in order, none missing", { events: logEvents.flatMap((e) => e.lines).length, log: log.lines.length });
