@@ -1,5 +1,5 @@
 // The factory's agent panel on /admin/source (source/page.ts), and its
-// "Share with agent" dialog. The panel is the editor's (the same markup,
+// "Share with agent" card. The panel is the editor's (the same markup,
 // styles and conversation, agent-chat.ts), talking to the admin's own agent
 // session in the Factory object (factory/agent.ts, worker/factory.ts):
 //
@@ -8,15 +8,15 @@
 //   POST /api/factory/agent/abort|reset|model
 //   /api/factory/events                { type: "agent", ev } for this admin's agent (the board's events too)
 //
-// Share with agent makes a factory token (POST /api/factory/tokens) and a
-// prompt to paste into an outside agent; the dialog lists the tokens and
-// revokes them. Built by build.sh to factory-agent.js.
+// Share with agent is the editor's card (share-agent.ts), with a factory
+// token (POST /api/factory/tokens) in the prompt to paste into an outside
+// agent; New token revokes the old one. Built by build.sh to factory-agent.js.
 
-import { chat, escapeHtml } from "./agent-chat";
+import { chat } from "./agent-chat";
+import { shareWithAgent } from "./share-agent";
 import type { Log, LogEvent } from "./agent-log";
 
 interface AgentState { enabled: boolean; reason?: string; model?: string | null; choice?: string | null; models?: { id: string; label: string }[]; log?: Log }
-interface TokenView { id: string; login: string; label: string; created: number; expires: number; revoked: number | null; revokedBy: string | null; lastUsed: number | null }
 declare global { interface Window { ergaBoard?: { openTask(): number | null; title(id: number): string | null; open(id: number): void } } }
 
 const $ = (id: string) => document.getElementById(id)!;
@@ -162,9 +162,31 @@ load().then(connect);
 
 // ---------------------------------------------------------------- Share with agent
 
-const dlg = $("share-dlg") as HTMLDialogElement;
-const prompt = $("share-prompt") as HTMLTextAreaElement, status = $("share-status"), copy = $("share-copy") as HTMLButtonElement;
-const make = $("share-make") as HTMLButtonElement;
+// A factory token is shown once (the server keeps only its hash): this page keeps it until New token, which revokes it.
+const HOURS = 12;
+let shared: string | null = null, expires = 0;
+shareWithAgent({
+  button: $("btn-share"),
+  title: "Share the factory with an agent",
+  intro: "Paste this into an agent that can run commands (Claude Code, Codex…), then explain what you want it to do.",
+  note: `Anyone with this token can queue tasks, read them and send them more instructions, as your agent, for ${HOURS} hours. It can't merge, discard or start tasks, push or deploy. New token turns the old one off; so does revoking the admin key you unlocked with.`,
+  async token(rotate) {
+    if (rotate && shared) {
+      const r = await fetch(`/api/factory/tokens/${shared}`, { method: "DELETE" }).catch(() => null);
+      if (!r?.ok) throw new Error(r ? `the old one wasn't revoked (the server answered ${r.status})` : "the server didn't answer");
+      shared = null;
+    }
+    const r = await fetch("/api/factory/tokens", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ label: "Share button", hours: HOURS }), signal: AbortSignal.timeout(10_000) })
+      .then(async (r) => ({ ok: r.ok, status: r.status, body: await r.json().catch(() => ({})) as { token?: string; id?: string; expires?: number; error?: string } }))
+      .catch((e: Error) => { throw new Error(e.name == "TimeoutError" ? "the server didn't answer in time" : "the server didn't answer"); });
+    if (!r.ok || !r.body.token) throw new Error(r.body.error ?? `the server answered ${r.status}`);
+    shared = r.body.id!;
+    expires = r.body.expires!;
+    return r.body.token;
+  },
+  prompt: (token) => promptFor(token, expires),
+  dismiss: true,
+});
 
 function promptFor(token: string, expires: number): string {
   const origin = location.origin;
@@ -180,71 +202,3 @@ curl -s -H "Authorization: Bearer ${token}" ${origin}/api/factory/guide
 
 Once you've read the guide, await further instructions.`;
 }
-
-const until = (t: number) => {
-  const m = Math.round((t - Date.now()) / 60000);
-  return m <= 0 ? "ended" : m < 60 ? `ends in ${m} min` : `ends in ${Math.round(m / 60)} h`;
-};
-function renderTokens(list: TokenView[]) {
-  const ul = $("share-tokens");
-  ul.textContent = "";
-  if (!list.length) { ul.innerHTML = `<li class="none">None yet.</li>`; return; }
-  for (const t of list) {
-    const live = t.revoked == null && t.expires > Date.now();
-    const li = document.createElement("li");
-    li.className = live ? "" : "ended";
-    li.dataset.token = t.id;
-    li.innerHTML = `<span class="what" title="${escapeHtml(`${t.label}, made by ${t.login} ${new Date(t.created).toLocaleString()}${t.lastUsed ? `; last used ${new Date(t.lastUsed).toLocaleString()}` : "; not used yet"}`)}">${escapeHtml(t.label)} <span class="when">· ${escapeHtml(t.login)}</span></span>` +
-      `<span class="when">${t.revoked != null ? `revoked${t.revokedBy ? ` by ${escapeHtml(t.revokedBy)}` : ""}` : until(t.expires)}</span>`;
-    if (live) {
-      const b = Object.assign(document.createElement("button"), { type: "button", textContent: "Revoke" });
-      b.addEventListener("click", async () => {
-        b.disabled = true;
-        const r = await fetch(`/api/factory/tokens/${t.id}`, { method: "DELETE" }).then((r) => r.json()).catch(() => null) as { tokens?: TokenView[]; error?: string } | null;
-        if (r?.tokens) { renderTokens(r.tokens); status.textContent = `Revoked “${t.label}”: it no longer works.`; }
-        else { b.disabled = false; status.textContent = `Couldn't revoke it: ${r?.error ?? "the server didn't answer"}.`; }
-      });
-      li.append(b);
-    }
-    ul.append(li);
-  }
-}
-async function loadTokens() {
-  const r = await fetch("/api/factory/tokens").then((r) => r.json()).catch(() => null) as { tokens?: TokenView[] } | null;
-  if (r?.tokens) renderTokens(r.tokens);
-}
-
-const shareBtn = $("btn-share");
-shareBtn.addEventListener("click", () => {
-  status.textContent = "";
-  if (!dlg.open) dlg.showModal();
-  shareBtn.setAttribute("aria-expanded", "true");
-  loadTokens();
-});
-$("share-close").addEventListener("click", () => dlg.close());
-dlg.addEventListener("close", () => shareBtn.setAttribute("aria-expanded", "false"));
-make.addEventListener("click", async () => {
-  make.disabled = true;
-  status.textContent = "Making a token…";
-  const label = ($("share-label") as HTMLInputElement).value, hours = Number(($("share-hours") as HTMLSelectElement).value);
-  const r = await fetch("/api/factory/tokens", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ label, hours }) })
-    .then(async (r) => ({ ok: r.ok, body: await r.json().catch(() => ({})) })).catch(() => ({ ok: false, body: { error: "the server didn't answer" } })) as { ok: boolean; body: { token?: string; expires?: number; error?: string } };
-  make.disabled = false;
-  if (!r.ok || !r.body.token) { status.textContent = `Couldn't make a token: ${r.body.error ?? "refused"}.`; return; }
-  prompt.value = promptFor(r.body.token, r.body.expires!);
-  prompt.hidden = false;
-  copy.hidden = false;
-  status.textContent = "Shown once: copy it now.";
-  loadTokens();
-});
-copy.addEventListener("click", async () => {
-  const ok = await navigator.clipboard.writeText(prompt.value).then(() => true, () => false);
-  if (!ok) { prompt.focus(); prompt.select(); }
-  status.textContent = ok ? "Copied" : "Couldn't reach the clipboard: the prompt is selected, press ⌘C.";
-});
-// A click on the backdrop (outside the dialog's box) closes it.
-dlg.addEventListener("click", (e) => {
-  if (e.target != dlg) return;
-  const r = dlg.getBoundingClientRect();
-  if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) dlg.close();
-});

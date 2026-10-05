@@ -26,7 +26,7 @@
 // 10. The factory's agent (the scripted model): it reads the board, queues a task with a dependency, reads it,
 //    looks at its screenshot, sends it instructions and changes its dependencies; it has no merge or discard
 //    tool; the conversation survives a reload.
-// 11. Share with agent: a factory token made in the dialog; with it an outside agent reads the guide and the
+// 11. Share with agent: a factory token in the editor's card (New token revokes the old one); with it an outside agent reads the guide and the
 //    tasks, queues a task (its name has a curly apostrophe and an emoji: the task's VM starts and pushes), changes dependencies and sends instructions, and nothing else (merge, discard, start,
 //    the Claude sign-in, the agent, tokens: 403); a bad token 401; Revoke ends it.
 // 12. Merges that need the task's own Claude Code (the stand-in, fake-claude.ts): a task that conflicts with staging
@@ -361,20 +361,28 @@ try {
   ok("the factory's agent: reads the board, queues a task with a dependency, reads it, looks at its screenshot, sends instructions, changes dependencies; no merge or discard");
 
   // ---------------------------------------------------------------- 11. Share with agent: a factory token
-  // An icon in the header bar, as the editor's (no button in the board's head); it says its dialog is open.
+  // An icon in the header bar, as the editor's (no button in the board's head); it opens the editor's card (share-agent.ts).
   expect(await p.eval(`!!document.querySelector(".chrome-top > #btn-share.icon-btn[data-tip] svg") && !document.querySelector("#tasks #btn-share, .share-btn")`), "Share with agent is an icon in the header bar");
   await click(p, "#btn-share");
-  await until(() => p.eval(`document.getElementById("share-dlg").open && document.getElementById("btn-share").getAttribute("aria-expanded") == "true"`), 5000, "Share with agent opens its dialog");
-  // A label with an emoji, beside the agent's curly apostrophe: the task's git token must carry both (it once failed: btoa).
-  await fill(p, "#share-label", "Claude Code 🤖");
-  await click(p, "#share-make");
+  await until(() => p.eval(`!document.getElementById("share").hidden && document.getElementById("share").matches(".help.share") && document.getElementById("btn-share").getAttribute("aria-expanded") == "true"`), 5000, "Share with agent opens the editor's card");
   await until(async () => (await p.eval<string>(`document.getElementById("share-prompt").value`)).includes("erga_factory_"), 10_000, "a token, in a prompt to paste");
   const sharePrompt = await p.eval<string>(`document.getElementById("share-prompt").value`);
-  const shared = /erga_factory_\S+/.exec(sharePrompt)![0];
+  const first = /erga_factory_\S+/.exec(sharePrompt)![0];
   expect(sharePrompt.includes(`${root}/api/factory/guide`) && sharePrompt.includes("Authorization: Bearer"), "the prompt: the guide, and how to send the token", sharePrompt);
-  await until(() => p.eval(`document.querySelectorAll("#share-tokens li[data-token]").length == 1`), 5000, "the dialog lists the token");
+  expect(await p.eval(`!!document.querySelector("#share #share-copy.share-primary") && !!document.querySelector("#share #share-rotate") && !!document.querySelector("#share .share-note")`), "the card's buttons and note are the editor's");
   await p.screenshot(join(SHOTS, "factory-share.png"));
   const as = (path: string, init: { method?: string; json?: unknown; token?: string } = {}) => fetch(`${root}/api/factory${path}`, { method: init.method ?? (init.json ? "POST" : "GET"), headers: { Authorization: `Bearer ${init.token ?? shared}`, ...(init.json ? { "Content-Type": "application/json" } : {}) }, body: init.json ? JSON.stringify(init.json) : undefined });
+  expect((await as("/tasks", { token: first })).ok, "the card's token works");
+  // New token turns the old one off.
+  await click(p, "#share-rotate");
+  await until(async () => { const v = await p.eval<string>(`document.getElementById("share-prompt").value`); return v.includes("erga_factory_") && !v.includes(first); }, 10_000, "New token: a new prompt");
+  expect((await as("/tasks", { token: first })).status == 401, "New token revokes the old one");
+  expect((await as("/tasks", { token: /erga_factory_\S+/.exec(await p.eval<string>(`document.getElementById("share-prompt").value`))![0] })).ok, "the new token works");
+  await p.eval(`document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }))`);
+  await until(() => p.eval(`document.getElementById("share").hidden && document.getElementById("btn-share").getAttribute("aria-expanded") == "false"`), 5000, "Escape closes the card");
+  // A label with an emoji, beside the agent's curly apostrophe: the task's git token must carry both (it once failed: btoa).
+  const minted = await p.eval<{ token: string; id: string }>(`fetch("/api/factory/tokens", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ label: "Claude Code 🤖", hours: 1 }) }).then((r) => r.json())`);
+  const shared = minted.token;
   const guide = await as("/guide");
   expect(guide.ok && (await guide.text()).includes("can't merge"), "the guide, for the outside agent");
   expect((await as("")).ok && (await as("/tasks")).ok && (await as(`/tasks/${next}`)).ok, "it reads the factory and its tasks");
@@ -391,11 +399,9 @@ try {
     expect(r.status == 403, `a factory token can't ${method} ${path}`, r.status);
   }
   expect((await as("/tasks", { token: shared.slice(0, -2) + "xx" })).status == 401, "a bad token: 401");
-  await click(p, "#share-tokens li[data-token] button");
-  await until(async () => (await as("/tasks")).status == 401, 5000, "Revoke ends it");
-  await until(() => p.eval(`!!document.querySelector("#share-tokens li.ended")`), 5000, "the dialog shows it revoked");
-  await p.screenshot(join(SHOTS, "factory-share-revoked.png"));
-  ok("Share with agent: a factory token creates, reads and instructs tasks, nothing else; Revoke ends it");
+  await p.eval(`fetch("/api/factory/tokens/${minted.id}", { method: "DELETE" }).then((r) => r.ok)`);
+  await until(async () => (await as("/tasks")).status == 401, 5000, "Revoking it ends it");
+  ok("Share with agent: the editor's card, with a factory token that creates, reads and instructs tasks, nothing else; New token and revoking end it");
 
   // ---------------------------------------------------------------- 12. merges that need the task's Claude Code
   const make = async (title: string, description: string) => { const r = await api("/tasks", { json: { title, description } }); expect(r.status == 201, `a task: ${title}`, r); return r.body.id as number; };
