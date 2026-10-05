@@ -494,7 +494,7 @@ const PAGE_STYLE = `
   .crumbs .here { display: flex; align-items: center; font-size: 13.5px; font-weight: 500; color: var(--fg); }
   /* The agent on the left, as in the editor; the board and the dashboard beside it, one above the other. */
   .workspace { display: grid; grid-template-columns: minmax(300px, 370px) minmax(0, 1fr); gap: 20px; align-items: start; }
-  .agent-pane { position: sticky; top: 16px; height: calc(100vh - 32px); height: calc(100dvh - 32px); min-height: 420px; display: flex; flex-direction: column; min-width: 0;
+  .agent-pane { position: sticky; top: 16px; height: calc(100vh - 78px); height: calc(100dvh - 78px); min-height: 420px; display: flex; flex-direction: column; min-width: 0;
     border: 1px solid var(--panel-border); border-radius: 18px; background: var(--bg); box-shadow: 0 12px 28px rgba(0, 0, 0, 0.07), 0 1px 3px rgba(0, 0, 0, 0.05); font: 14px/1.55 var(--font-text); color: var(--fg); overflow: hidden; }
   .agent-pane .agent-head .title { white-space: nowrap; }
   .agent-pane .agent-head .share { margin-left: auto; }

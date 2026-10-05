@@ -50,8 +50,8 @@ try {
   await get("/");
   const home = ((await (await get("/tester/landing/api/name")).json()) as { id: string }).id;
   expect((await get("/admin")).headers.get("location") == "/admin/keys?next=%2Fadmin", "/admin sends a locked admin to unlock");
-  expect((await get("/source")).headers.get("location") == "/admin/keys?next=%2Fsource", "/source does too");
-  expect((await get("/admin/factory")).headers.get("location") == "/admin/keys?next=%2Fadmin%2Ffactory", "the factory's board too");
+  expect((await get("/admin/source")).headers.get("location") == "/admin/keys?next=%2Fadmin%2Fsource", "/admin/source (the source, deploys and the factory) does too");
+  expect((await get("/source")).headers.get("location") == "/admin/source" && (await get("/admin/factory")).headers.get("location") == "/admin/source", "/source and the factory's old board go there");
   const lockedPosts: [string, Response][] = [
     ["POST /admin/settings", await get("/admin/settings", { method: "POST", headers: { Origin: root }, body: new URLSearchParams({ key: "delete_docs_after_hours", value: "5" }) })],
     ["POST /admin/users", await get("/admin/users", { method: "POST", headers: { Origin: root }, body: new URLSearchParams({ do: "add", login: "mallory", role: "admin" }) })],
@@ -61,6 +61,9 @@ try {
     ["GET /api/source/branches", await get("/api/source/branches")],
     ["POST /api/source/merge", await post("/api/source/merge", { from: "staging", to: "main" })],
     ["GET /api/factory/tasks", await get("/api/factory/tasks")],
+    ["GET /api/factory/agent", await get("/api/factory/agent")],
+    ["POST /api/factory/agent", await post("/api/factory/agent", { text: "Queue a task" })],
+    ["POST /api/factory/tokens", await post("/api/factory/tokens", { label: "x" })],
     ["POST /api/docs/<home>/home/deploy", await post(`/api/docs/${home}/home/deploy`, {})],
     ["POST /api/docs/<home>/home", await post(`/api/docs/${home}/home`, { isHome: false })],
   ];
@@ -74,7 +77,7 @@ try {
   expect(viewerHtml.includes(`/admin/keys?next=${encodeURIComponent("/tester/landing#edit")}`), "the front page's Edit goes by way of unlocking", viewerHtml.slice(-2500));
   const access = await (await get("/tester/landing/api/doc")).json() as { canEdit?: boolean };
   expect(access.canEdit === false, "a locked admin only views the homepage document", access);
-  ok("locked: /admin, /source and the factory send an admin to unlock; every admin, source, deploy, factory and homepage call refuses, saying why; the homepage is read-only");
+  ok("locked: /admin and /admin/source send an admin to unlock; every admin, source, deploy, factory (its agent and its tokens too) and homepage call refuses, saying why; the homepage is read-only");
 
   // An agent token isn't enough: no admin tools, refused if called, and the Git endpoint won't take it.
   const tokensPage = await (await get("/tokens/new", { method: "POST", body: new URLSearchParams({ label: "Admin keys test" }), headers: { Origin: root } })).text();
@@ -133,6 +136,14 @@ try {
   const strangerTry = await post("/api/admin/unlock", { nonce: c2.nonce, signature: runCommand(c2.command, stranger.path) });
   expect(strangerTry.status == 403, "a key that isn't one of yours doesn't unlock");
   ok("Lock now; a signed challenge unlocks; a replay and a stranger's key are refused");
+
+  // ---- a factory token (Share with agent on /admin/source): only an unlocked admin makes one, and it ends with the key
+  const minted = await post("/api/factory/tokens", { label: "Laptop agent", hours: 2 }, { Cookie: unlocked });
+  const factoryToken = ((await minted.json()) as { token?: string }).token ?? "";
+  expect(minted.status == 201 && factoryToken.startsWith("erga_factory_"), "an unlocked admin makes a factory token", minted.status);
+  expect((await get("/api/factory/tasks", { headers: bearer(factoryToken) })).status == 200, "it reads the factory's tasks");
+  expect((await post("/api/factory/tokens", { label: "again" }, { Authorization: `Bearer ${factoryToken}` })).status == 403, "it can't make another");
+  ok("a factory token: made by an unlocked admin, reads the factory, can't make another");
 
   // ---- an admin token, from admin-login.ts with an agent token and the key
   const cli = Bun.spawn(["bun", join(import.meta.dir, "..", "admin-login.ts"), root, "--key", laptop.path, "--hours", "2"], { env: { ...process.env, ERGA_TOKEN: agentToken }, stdout: "pipe", stderr: "pipe" });
@@ -204,8 +215,9 @@ try {
   expect(revoked.ok, "the key is revoked");
   expect((await get("/admin", { headers: { Cookie: unlocked } })).status == 302, "the browser's unlock ended with it");
   expect((await get("/api/deploys", { headers: bearer(adminToken) })).status == 401, "and so did the admin token");
+  expect((await get("/api/factory/tasks", { headers: bearer(factoryToken) })).status == 401, "and the factory token it made");
   expect((await (await get("/api/admin/keys")).json() as { bootstrap: boolean }).bootstrap, "with no key left, the next is a first key again");
-  ok("revoking the key ends the browser's unlock and the admin token at once");
+  ok("revoking the key ends the browser's unlock, the admin token and the factory token at once");
 
   // ---- in a browser: /admin leads to unlocking, the page's command signs it, and back to /admin
   const second = keygen("second");

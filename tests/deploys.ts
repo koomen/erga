@@ -10,7 +10,7 @@
 // /api/events follow it, and GET /api/deploys/staging/log has the whole log,
 // whose lines also arrive live as {type: "deploy-log"} events; Redeploy runs
 // it again; a build that fails says why, and the next push deploys.
-// /admin/deploys goes to /source (task #39's dashboard). Who may see and do
+// /admin/deploys goes to /admin/source (the dashboard of source and deploys). Who may see and do
 // what last.
 //
 //   bun tests/deploys.ts [--keep]     (--keep leaves the server running, with a deploy done)
@@ -111,10 +111,10 @@ try {
   expect(["building", "deploying", "deployed"].includes(midway), "(seen running)", midway);
   ok("Redeploy: a new deploy with its own log, its lines live");
 
-  // ---------------------------------------------------------------- the dashboard is /source
+  // ---------------------------------------------------------------- the dashboard is /admin/source
   const to = await fetch(`${host.root}/admin/deploys`, { redirect: "manual" });
-  expect(to.status == 302 && to.headers.get("location") == "/source", "/admin/deploys goes to /source", to.status);
-  ok("/admin/deploys redirects to /source, the source and deploys dashboard");
+  expect(to.status == 302 && to.headers.get("location") == "/admin/source", "/admin/deploys goes to /admin/source", to.status);
+  ok("/admin/deploys redirects to /admin/source, the source and deploys dashboard");
 
   // ---------------------------------------------------------------- a build that fails, then the next push
   await push(SHA2);

@@ -21,6 +21,14 @@
 //    merge is refused and Merge is off on the board; a merge queued behind a dependency's merge that
 //    fails is refused when its turn comes; a discarded dependency blocks; when a dependency merges,
 //    the task waiting for it starts by itself, and the board hears it.
+// 9. One page: /admin/source has the board, the source dashboard and the agent; /admin/factory, /source and
+//    /admin/deploys redirect there; tabs on a phone, with no sideways scrolling.
+// 10. The factory's agent (the scripted model): it reads the board, queues a task with a dependency, reads it,
+//    looks at its screenshot, sends it instructions and changes its dependencies; it has no merge or discard
+//    tool; the conversation survives a reload.
+// 11. Share with agent: a factory token made in the dialog; with it an outside agent reads the guide and the
+//    tasks, queues a task, changes dependencies and sends instructions, and nothing else (merge, discard, start,
+//    the Claude sign-in, the agent, tokens: 403); a bad token 401; Revoke ends it.
 // Screenshots land in tests/cdp.ts's SHOTS (factory-*.png).
 
 import { spawnSync } from "node:child_process";
@@ -35,7 +43,7 @@ import { expect, until } from "./suite/harness";
 const docker = process.argv.includes("--docker");
 const ok = (what: string) => console.log(`ok   ${what}`);
 const secret = `factory-test-${crypto.randomUUID()}`;
-const host = await startHost(null, { processEnv: { ERGA_FACTORY_RUNNER: docker ? "docker" : "sim", ERGA_LINK_SECRET: secret } });
+const host = await startHost(null, { env: { ERGA_AGENT_MODEL: "script" }, processEnv: { ERGA_FACTORY_RUNNER: docker ? "docker" : "sim", ERGA_LINK_SECRET: secret } });
 const browser = await Browser.launch();
 const root = host.root;
 const origin = { Origin: root };
@@ -53,17 +61,17 @@ const STEP = docker ? 300_000 : 60_000;
 try {
   // ---------------------------------------------------------------- 1. off
   const p = await browser.page(await browser.context());
-  await p.open(`${root}/admin/factory`, { width: 1400, height: 900, scale: 2 });
+  await p.open(`${root}/admin/source`, { width: 1400, height: 900, scale: 2 });
   await until(() => p.eval(`!!document.querySelector('[data-col="queued"]')`), 15_000, "the board renders");
   expect(await p.eval(`!document.getElementById("notice").hidden`), "the board says the factory is off");
   expect((await api("/tasks", { json: { title: "x" } })).status == 409, "adding a task is refused while it's off");
-  const other = await fetch(`${root}/admin/factory?user=bob`);
+  const other = await fetch(`${root}/admin/source?user=bob`);
   expect(other.status == 404, "someone who isn't an admin gets nothing", other.status);
   ok("off by default: the board says so, adding is refused, and non-admins get a 404");
 
   // ---------------------------------------------------------------- 2. a task, on the board
   expect((await setting("on")).ok, "the factory turns on");
-  await p.navigate(`${root}/admin/factory`);
+  await p.navigate(`${root}/admin/source`);
   await until(() => p.eval(`!!document.getElementById("new")`), 15_000, "a New task button");
   const info = (await api("")).body;
   expect(info.enabled && info.vms.runner == (docker ? "docker" : "sim") && !info.claude.signedIn, "the factory's state", info);
@@ -176,7 +184,7 @@ try {
   const t4 = await add({ title: "Build on the hello", description: "Change the hello note." });
   expect(t4.status == 201 && !t4.body.blockedBy, "#4, with no dependencies, starts", t4);
   // A dependency added in the detail view: #4 merges after #3.
-  await p.navigate(`${root}/admin/factory`);
+  await p.navigate(`${root}/admin/source`);
   await until(() => p.eval(`!!document.querySelector('[data-open="4"]')`), 10_000, "#4's card");
   await click(p, '[data-open="4"]');
   await until(() => p.eval(`!!document.getElementById("dep-kind")`), 5000, "the Dependencies section, with Add");
@@ -261,6 +269,107 @@ try {
   await until(async () => !!(await task(6)).vm, 15_000, "#6 starts by itself");
   await until(async () => (await task(5)).status == "complete" && (await task(6)).status == "complete", STEP, "#5 and #6 are ready");
   ok("unblocking: a dependency removed on the board; when one merges, the task waiting for it starts by itself, and the board hears it");
+
+  // ---------------------------------------------------------------- 9. one page: /admin/source
+  for (const old of ["/admin/factory", "/source", "/admin/deploys"]) {
+    const r = await fetch(`${root}${old}`, { redirect: "manual" });
+    expect(r.status == 302 && r.headers.get("location") == "/admin/source", `${old} redirects to /admin/source`, r.status);
+  }
+  await p.navigate(`${root}/admin/source`);
+  await until(() => p.eval(`!!document.querySelector('#tasks [data-col="queued"]') && !!document.querySelector("#source-pane .pane-head") && !!document.querySelector("#agent .agent-log")`), 10_000, "the board, the dashboard and the agent, on one page");
+  const box = (sel: string) => p.eval<{ left: number; right: number; top: number; bottom: number; width: number }>(`(() => { const r = document.querySelector(${JSON.stringify(sel)}).getBoundingClientRect(); return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, width: r.width }; })()`);
+  const [agentBox, tasksBox, sourceBox] = [await box("#agent"), await box("#tasks"), await box("#source-pane")];
+  expect(agentBox.right <= tasksBox.left && tasksBox.bottom <= sourceBox.top && agentBox.width >= 300 && agentBox.bottom <= 900, "on a wide window: the agent on the left, the board above the dashboard beside it", { agentBox, tasksBox, sourceBox });
+  expect(await p.eval(`getComputedStyle(document.querySelector("#tasks .board")).gridTemplateColumns.split(" ").length == 5`), "the board keeps its five columns beside the agent");
+  const phone = await browser.page(await browser.context());
+  await phone.open(`${root}/admin/source`, { width: 390, height: 844, scale: 2 });
+  await until(() => phone.eval(`!!document.querySelector('#tasks [data-col="queued"]')`), 10_000, "the page on a phone");
+  const shown = () => phone.eval<string[]>(`["#tasks", "#source-pane", "#agent"].filter((s) => document.querySelector(s).offsetParent !== null)`);
+  expect(JSON.stringify(await shown()) == '["#tasks"]', "a phone shows one pane at a time: the board first", await shown());
+  expect(await phone.eval(`document.documentElement.scrollWidth <= innerWidth`), "no sideways scrolling on a phone");
+  await phone.screenshot(join(SHOTS, "factory-phone-tasks.png"));
+  await click(phone, '.tabs [data-tab="agent"]');
+  expect(JSON.stringify(await shown()) == '["#agent"]', "the Agent tab shows the agent", await shown());
+  const phoneAgent = await phone.eval<{ bottom: number; input: number }>(`(() => ({ bottom: document.getElementById("agent").getBoundingClientRect().bottom, input: document.getElementById("agent-input").getBoundingClientRect().bottom }))()`);
+  expect(phoneAgent.bottom <= 844 && phoneAgent.input <= 844, "its box fits on the screen", phoneAgent);
+  await phone.screenshot(join(SHOTS, "factory-phone-agent.png"));
+  await click(phone, '.tabs [data-tab="source"]');
+  expect(JSON.stringify(await shown()) == '["#source-pane"]', "the Source tab shows the dashboard", await shown());
+  expect(await phone.eval(`document.documentElement.scrollWidth <= innerWidth`), "no sideways scrolling there either");
+  ok("one page, /admin/source: the agent beside the board and the dashboard; the old pages redirect; tabs on a phone");
+
+  // ---------------------------------------------------------------- 10. the factory's agent
+  const sayTo = (text: string) => p.eval(`(() => { const i = document.getElementById("agent-input"); i.value = ${JSON.stringify(text)}; i.dispatchEvent(new Event("input")); document.getElementById("agent-send").click(); return true; })()`);
+  const panel = () => p.eval<string>(`document.getElementById("agent-log").innerText`);
+  /** What the agent said (its replies only, not the messages sent to it). */
+  const replies = () => p.eval<string>(`[...document.querySelectorAll("#agent-log .msg-assistant")].map((e) => e.innerText).join(" | ")`);
+  await until(async () => (await p.eval<string>(`document.getElementById("agent-model").textContent`)).includes("script"), 10_000, "the agent panel connects");
+  const next = Math.max(...(await api("/tasks")).body.map((t: any) => t.id)) + 1;
+  await sayTo("Queue a footer note that merges after #5 @script " + JSON.stringify([
+    { tool: "list_tasks", args: {} },
+    { tool: "create_task", args: { title: "Add a footer note", description: "Put a short note in the front page's footer.", mergeAfter: [5] } },
+    { tool: "get_task", args: { id: next } },
+    { text: `Queued #${next}: it merges after #5.` },
+  ]));
+  await until(async () => (await replies()).includes(`Queued #${next}: it merges after #5.`), 15_000, "the agent answers", panel);
+  const queued = await task(next);
+  expect(queued.title == "Add a footer note" && JSON.stringify(queued.mergeAfter) == "[5]" && queued.by == "tester’s agent" && queued.log[0].message.startsWith("Added by tester’s agent"), "the agent queued a task, as the admin's agent, with its dependency", { queued, panel: await panel() });
+  const said = await panel();
+  expect(said.includes("Read the board") && said.includes("Queued Add a footer note") && said.includes(`Read #${next}`), "the panel shows each call, as the editor's does", said);
+  await until(async () => (await column(p, "queued")).includes("Add a footer note") || (await column(p, "working")).includes("Add a footer note") || (await column(p, "ready-to-merge")).includes("Add a footer note"), 10_000, "its card shows on the board");
+  await until(async () => (await task(next)).status == "complete", STEP, "the task is done", async () => (await task(next)).log.slice(-4));
+  // The admin opens the task: the panel tells the agent which one ("this task").
+  await click(p, `[data-open="${next}"]`);
+  expect(await p.eval(`window.ergaBoard.openTask() == ${next}`), "the board says which task is open, for the agent's context");
+  await click(p, '[data-act="close"]');
+  await sayTo("Look at it, ask for a shorter note, and drop the dependency @script " + JSON.stringify([
+    { tool: "view_screenshot", args: { id: next } },
+    { tool: "instruct_task", args: { id: next, instructions: "Make the note shorter." } },
+    { tool: "set_dependencies", args: { id: next, mergeAfter: null } },
+    { text: "Asked for a shorter note." },
+  ]));
+  await until(async () => (await replies()).includes("Asked for a shorter note."), 15_000, "the agent answers again", panel);
+  const revised = await task(next);
+  expect(revised.log.some((l: any) => l.message.startsWith("tester’s agent asked: Make the note shorter.")) && !revised.mergeAfter.length, "it sent instructions and dropped the dependency", revised.log.slice(-6));
+  expect(await p.eval(`!!document.querySelector("#agent-log .msg-tool.done img.shot")`), "the screenshot it looked at shows in the panel");
+  await until(async () => (await task(next)).status == "complete", STEP, "the task is ready again");
+  await sayTo("Merge it @script " + JSON.stringify([{ tool: "merge_task", args: { id: next } }, { tool: "discard_task", args: { id: next } }, { text: "I can't merge: you do." }]));
+  await until(async () => (await replies()).includes("I can't merge: you do."), 15_000, "the agent answers", panel);
+  expect((await task(next)).status == "complete" && (await panel()).includes("merge_task failed"), "it has no merge or discard tool: the task is still ready to merge, waiting for an admin", await panel());
+  await p.navigate(`${root}/admin/source`);
+  await until(async () => (await replies()).includes("I can't merge: you do."), 10_000, "a reload keeps the conversation");
+  await p.screenshot(join(SHOTS, "factory-agent.png"));
+  ok("the factory's agent: reads the board, queues a task with a dependency, reads it, looks at its screenshot, sends instructions, changes dependencies; no merge or discard");
+
+  // ---------------------------------------------------------------- 11. Share with agent: a factory token
+  await click(p, "#btn-share");
+  await until(() => p.eval(`document.getElementById("share-dlg").open`), 5000, "Share with agent opens its dialog");
+  await click(p, "#share-make");
+  await until(async () => (await p.eval<string>(`document.getElementById("share-prompt").value`)).includes("erga_factory_"), 10_000, "a token, in a prompt to paste");
+  const sharePrompt = await p.eval<string>(`document.getElementById("share-prompt").value`);
+  const shared = /erga_factory_\S+/.exec(sharePrompt)![0];
+  expect(sharePrompt.includes(`${root}/api/factory/guide`) && sharePrompt.includes("Authorization: Bearer"), "the prompt: the guide, and how to send the token", sharePrompt);
+  await until(() => p.eval(`document.querySelectorAll("#share-tokens li[data-token]").length == 1`), 5000, "the dialog lists the token");
+  await p.screenshot(join(SHOTS, "factory-share.png"));
+  const as = (path: string, init: { method?: string; json?: unknown; token?: string } = {}) => fetch(`${root}/api/factory${path}`, { method: init.method ?? (init.json ? "POST" : "GET"), headers: { Authorization: `Bearer ${init.token ?? shared}`, ...(init.json ? { "Content-Type": "application/json" } : {}) }, body: init.json ? JSON.stringify(init.json) : undefined });
+  const guide = await as("/guide");
+  expect(guide.ok && (await guide.text()).includes("can't merge"), "the guide, for the outside agent");
+  expect((await as("")).ok && (await as("/tasks")).ok && (await as(`/tasks/${next}`)).ok, "it reads the factory and its tasks");
+  const byShared = await as("/tasks", { json: { title: "Shared agent's task", description: "From outside.", startAfter: [next] } });
+  const sharedTask = await byShared.json() as any;
+  expect(byShared.status == 201 && sharedTask.by == "tester’s agent (shared: Claude Code)" && JSON.stringify(sharedTask.startAfter) == `[${next}]`, "it queues a task, with a dependency, as the admin's shared agent", sharedTask);
+  expect((await as(`/tasks/${sharedTask.id}`, { method: "PATCH", json: { startAfter: null, mergeAfter: [next] } })).status == 200, "it changes dependencies");
+  expect((await as(`/tasks/${next}/revise`, { json: { instructions: "One more word." } })).status == 200, "it sends instructions");
+  for (const [method, path] of [["POST", `/tasks/${next}/merge`], ["POST", `/tasks/${next}/discard`], ["POST", `/tasks/${sharedTask.id}/start`], ["PUT", "/claude"], ["DELETE", "/claude"], ["POST", "/agent"], ["GET", "/agent"], ["GET", "/events"], ["POST", "/tokens"], ["GET", "/tokens"]] as const) {
+    const r = await as(path, { method, json: method == "GET" || method == "DELETE" ? undefined : {} });
+    expect(r.status == 403, `a factory token can't ${method} ${path}`, r.status);
+  }
+  expect((await as("/tasks", { token: shared.slice(0, -2) + "xx" })).status == 401, "a bad token: 401");
+  await click(p, "#share-tokens li[data-token] button");
+  await until(async () => (await as("/tasks")).status == 401, 5000, "Revoke ends it");
+  await until(() => p.eval(`!!document.querySelector("#share-tokens li.ended")`), 5000, "the dialog shows it revoked");
+  await p.screenshot(join(SHOTS, "factory-share-revoked.png"));
+  ok("Share with agent: a factory token creates, reads and instructs tasks, nothing else; Revoke ends it");
 
   console.log("all factory checks pass");
 } finally {

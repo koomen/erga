@@ -29,7 +29,7 @@ export const BOARD_STYLE = `
   .notice a { color: var(--accent); }
   .board { display: grid; grid-template-columns: repeat(5, minmax(150px, 1fr)); gap: 10px; align-items: start; }
   @media (max-width: 900px) { .board { grid-template-columns: repeat(3, minmax(160px, 1fr)); } }
-  @media (max-width: 560px) { .board { grid-template-columns: 1fr; } }
+  @media (max-width: 560px) { .board { grid-template-columns: 1fr; } .col { min-height: 0; } }
   .col { background: var(--panel); border-radius: 10px; padding: 10px; min-height: 120px; }
   .col h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 2px 4px 10px; min-height: 26px; display: flex; justify-content: space-between; align-items: center; }
   .col h2 button { text-transform: none; letter-spacing: 0; }
