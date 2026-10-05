@@ -239,7 +239,7 @@ try {
   await until(async () => (await task(4)).status == "complete", STEP, "#4 is ready to merge");
   const merge4 = await api("/tasks/4/merge", { method: "POST" });
   expect(merge4.status == 409 && merge4.body.error.includes("can't merge until #3 merges"), "merging #4 is refused while #3 isn't merged", merge4);
-  await until(() => p.eval(`(() => { const c = document.querySelector('[data-col="ready-to-merge"] [data-open="4"]'); const b = c && [...c.querySelectorAll("button")].find((x) => x.textContent == "Merge"); return !!b && b.disabled && c.innerText.includes("Can't merge until #3 merges") && c.innerText.includes("merges after #3"); })()`), 5000, "#4's Merge is off, with the reason");
+  await until(() => p.eval(`(() => { const c = document.querySelector('[data-col="ready-to-merge"] [data-open="4"]'); const b = c && [...c.querySelectorAll("button")].find((x) => x.textContent == "Merge"); return !!b && b.disabled && b.title == "Can't merge until #3 merges" && c.innerText.includes("merges after #3"); })()`), 5000, "#4's Merge is off, with the reason");
   await p.settle();
   await p.screenshot(join(SHOTS, "factory-deps-board.png"));
   ok("a blocked merge: refused (409), and Merge is off on the board with the reason");
