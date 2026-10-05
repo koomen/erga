@@ -1141,6 +1141,7 @@ const STEPS_BOOT = `(() => {
   }
   // Under the page and over its right side, wherever the editor puts the frame (the agent beside it), out of sight with it.
   function place() {
+    if (!steps) return;
     const r = frame.getBoundingClientRect(), hidden = getComputedStyle(frame).visibility == "hidden" || !r.width;
     bar.style.visibility = panel.style.visibility = hidden ? "hidden" : "";
     bar.style.left = r.left + r.width / 2 + "px";
