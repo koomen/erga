@@ -214,7 +214,8 @@ function card(t) {
 function render() {
   $("board").innerHTML = COLUMNS.map((c) => {
     let list = tasks.filter((t) => c.statuses.includes(t.status));
-    list.sort((a, b) => (b.mergedAt || b.updatedAt).localeCompare(a.mergedAt || a.updatedAt));
+    // A stable order, by id (oldest first): a card moves only when its status changes, not as its task logs progress.
+    list.sort((a, b) => a.id - b.id);
     // Queued: the ones that can start first; the ones waiting on others below them.
     if (c.title == "Queued") list.sort((a, b) => waitsToStart(a) - waitsToStart(b));
     const add = c.title == "Queued" && info && info.enabled ? '<button id="new" data-act="new">New task</button>' : "";
