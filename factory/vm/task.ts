@@ -17,7 +17,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { api, CLONE, env, git, LIMITS, log, REPORTED, step, TASK } from "./common.ts";
+import { api, CLONE, env, git, LIMITS, log, REPORTED, runField, step, TASK } from "./common.ts";
 
 const PORT = () => Number(env("FACTORY_PREVIEW_PORT", "4400"));
 const PUBLIC = () => Number(env("FACTORY_PUBLIC_PORT", "4401"));
@@ -35,7 +35,7 @@ async function up(port: number): Promise<boolean> {
 }
 
 /** Where a daemon's process id is kept (`name`: preview, relay), so the merge can stop it (stopPreview). */
-const pidFile = (name: string) => join(env("FACTORY_WORK", "/work"), `${name}.pid`);
+export const pidFile = (name: string) => join(env("FACTORY_WORK", "/work"), `${name}.pid`);
 
 /** Starts something detached (its own session), so it outlives the job that started it; its pid goes in WORK/<name>.pid. */
 function daemon(name: string, cmd: string[], cwd: string, logFile: string, extra: Record<string, string> = {}) {
@@ -71,6 +71,39 @@ export async function stopPreview(): Promise<string[]> {
   for (const pattern of [`dev.ts --port ${port} `, `serve-static .* ${port}$`]) {
     if (spawnSync("pkill", ["-f", pattern], { stdio: "ignore" }).status == 0) stopped.push(pattern.split(" ")[0]);
   }
+  return stopped;
+}
+
+/** Whether a process (not a group) is there. */
+const running = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+/** Whether that process is a run.ts job (not another that got its pid since), where /proc can say. */
+const isRun = (pid: number) => { try { return readFileSync(`/proc/${pid}/cmdline`, "utf8").includes("run.ts"); } catch { return !existsSync("/proc/self"); } };
+
+/**
+ * Stops an earlier run of Claude Code (run.ts, pid in WORK/run.pid, and Claude Code's process group, WORK/claude.pid)
+ * that is still going: a merge, or another run, starts only when it has ended. It gets `grace` seconds to end by
+ * itself (after `task done` Claude Code still says its last words); then the job is killed first (so it reports
+ * nothing), and Claude Code with everything it started. Answers whether it had to stop something.
+ */
+export async function stopRun(grace = LIMITS.stopRun): Promise<boolean> {
+  const file = pidFile("run");
+  if (!existsSync(file)) return false;
+  const job = Number(readFileSync(file, "utf8"));
+  const claudeFile = pidFile("claude");
+  const group = existsSync(claudeFile) ? Number(readFileSync(claudeFile, "utf8")) : 0;
+  const left = () => (job > 0 && job != process.pid && running(job) && isRun(job)) || (group > 0 && alive(group));
+  for (let i = 0; i < grace * 10 && left(); i++) await Bun.sleep(100);
+  const stopped = left();
+  if (stopped) {
+    if (job > 0 && job != process.pid && isRun(job)) try { process.kill(job, "SIGKILL"); } catch { /* gone */ }
+    if (group > 0) {
+      try { process.kill(-group, "SIGTERM"); } catch { /* gone */ }
+      for (let i = 0; i < 50 && alive(group); i++) await Bun.sleep(100);
+      try { process.kill(-group, "SIGKILL"); } catch { /* gone */ }
+    }
+  }
+  rmSync(file, { force: true });
+  rmSync(claudeFile, { force: true });
   return stopped;
 }
 
@@ -155,12 +188,12 @@ export async function shot(target: string, caption: string, replace = false) {
 
 export async function done(summary: string) {
   const commit = await pushBranch();
-  await api("", { method: "PATCH", json: { status: "complete", summary, commit } });
+  await api("", { method: "PATCH", json: { status: "complete", summary, commit, ...runField() } });
   writeFileSync(REPORTED(), "complete");
 }
 
 export async function fail(why: string) {
-  await api("", { method: "PATCH", json: { status: "failed", error: why } });
+  await api("", { method: "PATCH", json: { status: "failed", error: why, ...runField() } });
   writeFileSync(REPORTED(), "failed");
 }
 

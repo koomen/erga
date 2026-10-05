@@ -32,7 +32,9 @@
 // 12. Merges that need the task's own Claude Code (the stand-in, fake-claude.ts): a task that conflicts with staging
 //    goes to "needs agent" (Merge off, the reason on the card, the preview stopped), the same VM's stand-in resolves
 //    it, and the merge goes on by itself to merged; a merge step that hangs (a test hook) is killed at its time
-//    limit, with its whole process tree, and the same happens; an install that hangs wakes the stand-in with the log.
+//    limit, with its whole process tree, and the same happens; an install that hangs wakes the stand-in with the log;
+//    a merge that conflicts twice in a row, while the first wake-up still ends, gets two wake-ups that each report
+//    their own end, and merges; a stand-in that gives up and goes on is stopped when the merge goes back to ready.
 // Screenshots land in tests/cdp.ts's SHOTS (factory-*.png).
 
 import { spawnSync } from "node:child_process";
@@ -464,6 +466,44 @@ try {
   await until(async () => (await statusOf(tC)) == "merged", STEP, "C is merged", async () => (await task(tC)).log.slice(-6));
   expect(vmStarts(await task(tC)) == 1, "one VM for C too");
   ok("a merge step that hangs: killed at its limit with its process tree, needs agent, the stand-in is woken, and the merge goes on to merged");
+
+  // E, F, G: a merge that conflicts twice in a row. F's stand-in goes on for 3 s after it says done, as Claude Code does
+  // while it says its last words: the merge that runs again waits for it, and the second wake-up gets its own report
+  // (on 2026-10-05 the first run, still ending, took the second conflict for its own failure, and failed the merge).
+  const tE = await make("Note E", "A note on the front page.");
+  const tF = await make("Note F, conflicts twice", "Another note. [factory-test: resolve once staging moves] [factory-test: linger 3]");
+  const tH = await make("Note H, gives up", "One more note. [factory-test: can't resolve] [factory-test: linger 120]");
+  await until(async () => (await statusOf(tE)) == "complete" && (await statusOf(tF)) == "complete" && (await statusOf(tH)) == "complete", STEP, "E, F and H are ready");
+  expect((await api(`/tasks/${tE}/merge`, { method: "POST" })).status == 202, "E merges");
+  await until(async () => (await statusOf(tE)) == "merged", STEP, "E is merged");
+  // G, made from the staging with E in it, merges while F's stand-in waits to resolve its first conflict: so F conflicts again.
+  const tG = await make("Note G", "A note on the front page.");
+  await until(async () => (await statusOf(tG)) == "complete", STEP, "G is ready");
+  expect((await api(`/tasks/${tF}/merge`, { method: "POST" })).status == 202, "F merges");
+  await until(async () => (await statusOf(tF)) == "needs agent", STEP, "F needs its agent", async () => (await task(tF)).log.slice(-4));
+  expect((await api(`/tasks/${tG}/merge`, { method: "POST" })).status == 202, "G merges");
+  await until(async () => (await statusOf(tG)) == "merged", STEP, "G is merged");
+  await until(async () => ["merged", "complete", "failed"].includes(await statusOf(tF)), STEP * 2, "F's merge ends", async () => (await task(tF)).log.slice(-6));
+  const fm = (await task(tF)).log.map((l: any) => l.message as string);
+  const at = (pred: (m: string) => boolean) => fm.map((m, i) => (pred(m) ? i : -1)).filter((i) => i >= 0);
+  const conflicts = at((m) => m.startsWith("Needs agent: The branch conflicts with staging"));
+  const ended = at((m) => m == "The stand-in ended, after its last words");
+  expect((await statusOf(tF)) == "merged", "F is merged, after two conflicts", fm.slice(-20));
+  expect(conflicts.length == 2 && at((m) => m.startsWith("Resolved the conflicts in landing/index.html")).length == 2, "two conflicts, each resolved by its own wake-up", fm.slice(-20));
+  expect(!fm.some((m) => m.startsWith("Merge failed") || m.startsWith("An earlier run")), "no run took another's conflict for its own failure", fm.slice(-20));
+  expect(ended.length == 2 && ended[0] < conflicts[1] && ended[1] < at((m) => m.startsWith("Merged into staging"))[0], "each merge after a wake-up waited for that run to end", fm.slice(-20));
+  const stagingNow = spawnSync("git", ["-C", repo, "show", "staging:landing/index.html"], { encoding: "utf8" }).stdout;
+  expect([tE, tF, tG].every((id) => stagingNow.includes(`task #${id}: `)) && !stagingNow.includes("<<<<<<<"), "staging has E's, F's and G's notes, and no conflict markers");
+  ok("a merge that conflicts twice in a row: each wake-up gets its own report, the merge waits for the run before it, and the task is merged");
+
+  // H: its stand-in gives up on the conflict, then goes on (120 s): the factory stops it when the merge goes back to ready to merge.
+  expect((await api(`/tasks/${tH}/merge`, { method: "POST" })).status == 202, "H merges");
+  await until(async () => (await statusOf(tH)) == "complete" && !!(await task(tH)).error, STEP, "H's merge fails", async () => (await task(tH)).log.slice(-4));
+  await until(async () => (await task(tH)).log.some((l: any) => l.message == "Claude Code was stopped"), 30_000, "the factory stops H's stand-in", async () => (await task(tH)).log.slice(-4));
+  const h = await task(tH);
+  const standIns = docker ? spawnSync("docker", ["exec", h.vm, "pgrep", "-f", "fake-claude.ts resolve"], { encoding: "utf8" }).stdout.trim() : spawnSync("pgrep", ["-f", "fake-claude.ts resolve"], { encoding: "utf8" }).stdout.trim();
+  expect(!standIns && h.error.includes("Claude Code couldn't finish the merge"), "H is back in ready to merge, and no stand-in still runs", standIns);
+  ok("a merge whose Claude Code gives up: back to ready to merge, and that Claude Code is stopped");
 
   console.log("all factory checks pass");
 } catch (e) {

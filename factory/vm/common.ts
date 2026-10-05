@@ -30,8 +30,16 @@ export const env = (name: string, fallback?: string): string => {
 export const TASK = () => Number(env("FACTORY_TASK"));
 export const WORK = () => env("FACTORY_WORK", "/work");
 export const CLONE = () => join(WORK(), "erga");
-/** Where a job notes that the task reported its end (task done or fail), so the job doesn't report again. */
-export const REPORTED = () => join(WORK(), ".reported");
+/**
+ * The run of Claude Code that this job is (run.ts sets it, from the factory's FACTORY_RUN), so that each run's
+ * report is its own: on 2026-10-05 a merge that conflicted twice woke Claude Code a second time while the first
+ * run was still ending, and that run read the second's conflict as its own failure.
+ */
+export const RUN = () => env("FACTORY_JOB_RUN", "run");
+/** Where a run notes that the task reported its end (task done or fail), so the job doesn't report again: one file for each run. */
+export const REPORTED = () => join(WORK(), `.reported-${RUN()}`);
+/** The run's id for the factory, which refuses a report from a run that isn't the task's current one (none from an older factory). */
+export const runField = (): { run?: string } => process.env.FACTORY_RUN ? { run: process.env.FACTORY_RUN } : {};
 
 /** The factory's API, for this task. */
 export async function api(path: string, init: { method?: string; json?: unknown; body?: BodyInit; type?: string } = {}): Promise<any> {
@@ -68,6 +76,8 @@ export const LIMITS = {
   /** Claude Code's run on a merge that needs it (a conflict, or a step that failed or hung). */
   resolve: 3600,
   preview: 150, shot: 60, stopPreview: 10,
+  /** An earlier run that is still going when a merge or another run starts: the time it gets to end by itself (it reported, and says its last words). */
+  stopRun: 30,
 };
 
 export interface StepResult { code: number; out: string; err: string; timedOut: boolean; secs: number; /** Its time limit, in seconds. */ limit: number }
@@ -78,7 +88,7 @@ export interface StepResult { code: number; out: string; err: string; timedOut: 
  * Only what a step put in a session of its own (the preview: task.ts, daemon) outlives it. Output is scrubbed of the
  * job's secrets; `echo` copies it to ours as it comes; `onLine` gets each line of stdout.
  */
-export function step(cmd: string[], opts: { name?: string; timeout: number; cwd?: string; env?: Record<string, string | undefined>; echo?: boolean; onLine?: (line: string) => void } ): Promise<StepResult> {
+export function step(cmd: string[], opts: { name?: string; timeout: number; cwd?: string; env?: Record<string, string | undefined>; echo?: boolean; onLine?: (line: string) => void; onStart?: (pid: number) => void } ): Promise<StepResult> {
   const started = Date.now();
   // A test of the timeouts (the scripted stand-in only): this step hangs, once.
   const hang = hangFor(opts.name);
@@ -87,6 +97,7 @@ export function step(cmd: string[], opts: { name?: string; timeout: number; cwd?
     const p = spawn(cmd[0], cmd.slice(1), { cwd: opts.cwd, env: { ...process.env, ...opts.env } as NodeJS.ProcessEnv, stdio: ["ignore", "pipe", "pipe"], detached: true });
     let out = "", err = "", buf = "", timedOut = false, settled = false;
     const group = (sig: NodeJS.Signals) => { try { process.kill(-p.pid!, sig); } catch { /* gone */ } };
+    if (p.pid) opts.onStart?.(p.pid);
     const take = (c: Buffer, isErr: boolean) => {
       const t = c.toString();
       if (isErr) err = (err + t).slice(-20000); else out = (out + t).slice(-20000);

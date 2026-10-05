@@ -6,11 +6,15 @@
 //   bun merge.ts merge BRANCH "TITLE"   merges staging into BRANCH in the task's clone, pushes BRANCH, then moves
 //                                       staging to a --no-ff merge commit ("Merge BRANCH: TITLE") and deletes BRANCH
 //   bun merge.ts discard BRANCH         deletes the branch
+//   bun merge.ts stop BRANCH            stops the task's Claude Code (run.ts) if it still runs 5 s later: the factory gave
+//                                       up on it (its merge went back to ready to merge)
 //
 // The merge works in the task's own clone, where its Claude Code session is,
 // so that the same Claude Code can be woken there to finish it. First it
 // stops the task's preview (a dev server that has run for hours can block a
-// build). Every step has a time limit (common.ts, LIMITS). When a step
+// build), and waits for the task's Claude Code to end, if it still runs (it
+// said done and says its last words): stopped after LIMITS.stopRun, so it
+// never works in the clone while the merge does, nor overlaps the next run. Every step has a time limit (common.ts, LIMITS). When a step
 // conflicts, fails or times out, the merge stops and answers `needsAgent`
 // with the reason and the log, and leaves the clone as it is (a conflict
 // stays in the working tree): the factory sets the task to "needs agent" and
@@ -21,7 +25,7 @@
 import { existsSync, mkdirSync, mkdtempSync } from "node:fs";
 import { join } from "node:path";
 import { api, CLONE, env, git, result, scrub, StepFailed, type StepResult, testHooks, WORK } from "./common.ts";
-import { stopPreview } from "./task.ts";
+import { stopPreview, stopRun } from "./task.ts";
 
 const [what, branch, title = ""] = process.argv.slice(2);
 
@@ -36,6 +40,7 @@ async function merge(): Promise<Record<string, unknown>> {
   process.env.FACTORY_HOOK_PREFIX = "merge:";
   const stopped = await stopPreview();
   if (stopped.length) console.log(`stopped the preview (${stopped.join(", ")})`);
+  if (await stopRun()) console.log("stopped the task's Claude Code: it was still going");
   const dir = CLONE();
   try {
     // The task's clone (a VM that was replaced has none: a new one).
@@ -97,6 +102,7 @@ async function discard(): Promise<Record<string, unknown>> {
   // No clone needed: a push that deletes the branch, from an empty repository.
   mkdirSync(WORK(), { recursive: true });
   await stopPreview();
+  await stopRun(0);
   const dir = mkdtempSync(join(WORK(), "discard-"));
   await git(["init", "--quiet"], dir);
   const r = await git(["push", "--quiet", env("REPO_URL"), `:refs/heads/${branch}`], dir, { quiet: true });
@@ -107,7 +113,7 @@ async function discard(): Promise<Record<string, unknown>> {
 
 if (!branch?.startsWith("task/")) { result({ ok: false, error: "name a task/ branch" }); process.exit(2); }
 try {
-  result(what == "merge" ? await merge() : what == "discard" ? await discard() : { ok: false, error: `${what}?` });
+  result(what == "merge" ? await merge() : what == "discard" ? await discard() : what == "stop" ? { ok: true, stopped: await stopRun(5) } : { ok: false, error: `${what}?` });
 } catch (e) {
   result({ ok: false, error: scrub((e as Error).message) });
 }
