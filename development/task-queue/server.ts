@@ -10,9 +10,9 @@
 // shows on its merge commit in Branches (main's latest commits).
 // Merge (on the board, or POST /api/tasks/:id/merge) puts the task in
 // Merging while it merges main into the task's branch, has `claude -p`
-// resolve any conflicts there, merges the branch into main and pushes (to
-// origin, then upstream: TASK_QUEUE_PUBLISH, Erga's own source); then
-// it's Done (merged), or back in Ready to merge with the reason if it failed. GET /api describes the whole API; AGENTS.md says how to use it.
+// resolve any conflicts there, merges the branch into main and pushes it
+// (to origin's staging branch, for Erga: Erga's own Git endpoint, which then
+// deploys staging.erga.dev by itself); then it's Done (merged), or back in Ready to merge with the reason if it failed. GET /api describes the whole API; AGENTS.md says how to use it.
 //
 // Its state is data/tasks.json (and data/screenshots/, data/logs/), beside
 // this file in the main checkout, whichever worktree it's started from.
@@ -22,12 +22,24 @@
 // command), TASK_QUEUE_RESOLVER (a shell command that resolves a conflicted
 // merge in its cwd, given the instructions in $PROMPT; `claude -p` if unset),
 // TASK_QUEUE_INSTALL=0 (don't set up node_modules in new worktrees),
-// TASK_QUEUE_FETCH (seconds between `git fetch origin main`, for the Branches
-// column's view of origin/main; 60, 0 for never), TASK_QUEUE_LIVE (live mode's
+// TASK_QUEUE_FETCH (seconds between `git fetch origin`, for the Branches
+// column's view of origin; 60, 0 for never), TASK_QUEUE_LIVE (live mode's
 // dev server command), TASK_QUEUE_CHROME and TASK_QUEUE_CHROME_HEADLESS (live
-// mode's Chrome window: chrome.ts), TASK_QUEUE_PUBLISH (where main goes after
-// origin: for Erga, its own source, which deploys it: `bun deploy/publish.ts`
-// when that file is in the repo; "" for nowhere).
+// mode's Chrome window: chrome.ts).
+//
+// Where merges go (README, Merging): main is pushed to origin's branch that
+// `git config remote.origin.push refs/heads/main:refs/heads/<branch>` names
+// (main if none). For Erga (source/git-credential.ts in the repo) the queue
+// sets the main checkout up itself, when no merge runs and it's clean on main:
+// origin is TASK_QUEUE_ORIGIN (https://erga.dev/git/erga.git; "" leaves the
+// remotes alone), the old origin is kept as `github`, main pushes to
+// TASK_QUEUE_PUSH_TO (staging), and Git signs in to origin with
+// TASK_QUEUE_ORIGIN_HELPER (the credential helper, source/git-credential.ts).
+// Before it talks to origin it runs TASK_QUEUE_LOGIN (`bun
+// source/git-credential.ts login <origin>`: an admin token, made with this
+// machine's SSH key; the first time, an agent token someone approves, shown on
+// the board and by `tq watch`). POST /api/release moves origin's main to its
+// staging (production, for Erga): a deliberate step, never part of a merge.
 //
 // Live tasks (live: true) are worked on by the user and an agent together, in
 // a session, not by a background worker: POST /api/tasks/:id/live runs the
@@ -71,15 +83,20 @@ const PREVIEW = process.env.TASK_QUEUE_PREVIEW ?? "bun start --port $PORT --no-o
 const LIVE = process.env.TASK_QUEUE_LIVE ?? "bun start --port $PORT --no-open --reload";
 const CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 const FETCH_EVERY = Number(process.env.TASK_QUEUE_FETCH ?? 60);
-/**
- * Where main goes after origin (README, Merging): a command run in the repo as `<cmd> fetch` (prints refs to merge into a
- * task's branch before it merges) and `<cmd> push <rev>` (puts <rev> there; exit 2: refused, the upstream has commits
- * <rev> lacks). For Erga, its own source in Cloudflare Artifacts, which deploys staging.erga.dev and erga.dev
- * (deploy/publish.ts; --or-deploy: erga.dev gets it from this machine if it can't deploy itself). TASK_QUEUE_PUBLISH=""
- * turns it off.
- */
-const PUBLISH = process.env.TASK_QUEUE_PUBLISH ?? (existsSync(join(REPO, "deploy/publish.ts")) ? "bun deploy/publish.ts --or-deploy" : "");
+/** Erga's credential helper for its Git endpoint: there, the queue sets origin up itself (README, Erga's own source). */
+const HELPER_FILE = join(REPO, "source/git-credential.ts");
+const ERGA = existsSync(HELPER_FILE);
+/** What the main checkout's origin should be ("": leave the remotes alone), the old origin's new name, and where main goes there. */
+const ORIGIN_URL = process.env.TASK_QUEUE_ORIGIN ?? (ERGA ? "https://erga.dev/git/erga.git" : "");
+const OLD_ORIGIN = "github";
+const PUSH_TO = process.env.TASK_QUEUE_PUSH_TO ?? (ORIGIN_URL ? "staging" : "");
+const ORIGIN_HELPER = process.env.TASK_QUEUE_ORIGIN_HELPER ?? (ERGA ? `!bun ${HELPER_FILE}` : "");
+const httpOrigin = (url: string) => { try { const u = new URL(url); return /^https?:$/.test(u.protocol) ? u.origin : ""; } catch { return ""; } };
+/** Run before talking to origin, so Git's credential helper has a token without asking anyone ("" for nothing to do). */
+const LOGIN = process.env.TASK_QUEUE_LOGIN ?? (ERGA && httpOrigin(ORIGIN_URL) ? `bun ${HELPER_FILE} login ${httpOrigin(ORIGIN_URL)}` : "");
 const LOOKS = join(DATA, "looks");
+/** Where the credential helper says, while it waits, which link approves this machine's agent token. */
+const LOGIN_NOTICE = join(DATA, "origin-login.json");
 for (const dir of [SHOTS, LOGS, LOOKS]) mkdirSync(dir, { recursive: true });
 
 // Started by a self-restart: wait for the old server to save, exit and let go of the port, then read the state.
@@ -328,29 +345,52 @@ interface Commit { sha: string; short: string; subject: string; at: string; task
 interface History {
   /** The latest SHOWN commits on main's first-parent line (its merges and direct commits), newest first. */
   commits: Commit[];
-  /** Each done task's merge commit among main's latest MATCHED: its place (0 = newest) and whether origin/main has it. */
+  /** Each done task's merge commit among main's latest MATCHED: its place (0 = newest) and whether origin has it (on the branch main goes to). */
   tasks: Record<number, { sha: string; short: string; index: number; remote: boolean }>;
-  /** Commits on main that origin/main doesn't have yet, and the other way round. */
+  /** Commits on main that origin's branch doesn't have yet, and the other way round. */
   unpushed: number;
   behind: number;
   origin: boolean;
+  /** The branch on origin main is pushed to (staging, for Erga), and its head. */
+  originBranch: string;
   main?: string;
   originMain?: string;
+  /** When main goes to another branch: commits on origin's branch that origin's main (production) doesn't have yet. */
+  unreleased?: number;
+  /** The last push to origin, and the last release ({at, commit, ok, said}). */
+  pushed?: Outcome;
+  released?: Outcome;
+  /** Signing in to origin: a link someone must open to approve this machine, or why it failed. */
+  login?: Login;
 }
+interface Outcome { at: string; commit?: string; ok: boolean; said: string }
+interface Login { approve_url?: string; user_code?: string; expires?: string; error?: string }
 
-let history: History = { commits: [], tasks: {}, unpushed: 0, behind: 0, origin: false };
+let history: History = { commits: [], tasks: {}, unpushed: 0, behind: 0, origin: false, originBranch: MAIN };
 let historyKey = "";
+let pushed: Outcome | undefined, released: Outcome | undefined;
 
 const ref = async (name: string) => (await run(["git", "rev-parse", "-q", "--verify", name], REPO)).out || undefined;
+const hasOrigin = async () => (await run(["git", "remote", "get-url", "origin"], REPO)).ok;
 
-/** Reads main and origin/main again when either moved, and sends the board the new history. */
+/** The branch on origin that main goes to: remote.origin.push's refs/heads/main:refs/heads/<branch>, else main. */
+async function pushBranch(): Promise<string> {
+  const specs = (await run(["git", "config", "--get-all", "remote.origin.push"], REPO)).out.split("\n");
+  for (const s of specs) { const m = s.trim().match(new RegExp(`^\\+?(?:refs/heads/)?${MAIN}:(?:refs/heads/)?(.+)$`)); if (m) return m[1]; }
+  return MAIN;
+}
+
+/** Reads main and origin's branch again when either moved, and sends the board the new history. */
 async function refreshHistory() {
-  const [main, originMain] = await Promise.all([ref(`refs/heads/${MAIN}`), ref(`refs/remotes/origin/${MAIN}`)]);
-  const key = `${main} ${originMain}`;
+  const branch = await pushBranch();
+  const [main, originMain, originProd] = await Promise.all([ref(`refs/heads/${MAIN}`), ref(`refs/remotes/origin/${branch}`), branch == MAIN ? undefined : ref(`refs/remotes/origin/${MAIN}`)]);
+  const login = readLogin();
+  const key = JSON.stringify([branch, main, originMain, originProd, pushed, released, login]);
   if (key == historyKey) return;
   const log = main ? (await run(["git", "log", "--first-parent", `-n${MATCHED}`, "--format=%H%x1f%h%x1f%cI%x1f%s", main], REPO)).out : "";
   const unpushed = new Set(originMain && main ? (await run(["git", "rev-list", "--first-parent", `${originMain}..${main}`], REPO)).out.split("\n").filter(Boolean) : []);
   const behind = originMain && main ? Number((await run(["git", "rev-list", "--first-parent", "--count", `${main}..${originMain}`], REPO)).out) || 0 : 0;
+  const unreleased = originMain && originProd ? Number((await run(["git", "rev-list", "--count", `${originProd}..${originMain}`], REPO)).out) || 0 : undefined;
   const commits: Commit[] = log.split("\n").filter(Boolean).map((line) => {
     const [sha, short, at, subject] = line.split("\x1f");
     // The queue's merges say whose they are ("Merge task/7-...: title"); else the commit the queue recorded.
@@ -361,7 +401,8 @@ async function refreshHistory() {
   const tasks: History["tasks"] = {};
   commits.forEach((c, index) => { if (c.task != null && !(c.task in tasks)) tasks[c.task] = { sha: c.sha, short: c.short, index, remote: c.remote }; });
   historyKey = key;
-  history = { commits: commits.slice(0, SHOWN), tasks, unpushed: originMain ? unpushed.size : commits.length, behind, origin: !!originMain, main, originMain };
+  history = { commits: commits.slice(0, SHOWN), tasks, unpushed: originMain ? unpushed.size : commits.length, behind, origin: !!originMain, originBranch: branch, main, originMain,
+    ...(unreleased != undefined ? { unreleased } : {}), ...(pushed ? { pushed } : {}), ...(released ? { released } : {}), ...(login ? { login } : {}) };
   broadcast("history", history);
 }
 
@@ -371,42 +412,151 @@ const refresh = () => { pending++; return (reading = reading.then(refreshHistory
 refresh();
 setInterval(() => { if (!pending) refresh(); }, 1500);
 
-/** origin/main only moves on a fetch or a push: fetch now and then (between merges, which fetch and push themselves). */
-async function fetchOrigin() {
-  if (!(await run(["git", "remote", "get-url", "origin"], REPO)).ok) return;
-  const p = Bun.spawn(["git", "fetch", "-q", "origin", MAIN], { cwd: REPO, env: { ...process.env, GIT_TERMINAL_PROMPT: "0" }, stdout: "ignore", stderr: "ignore" });
-  const timer = setTimeout(() => p.kill(), 30_000);
-  await p.exited;
+// ---- origin: setting it up, signing in, fetching ----------------------------
+
+/** Git talking to origin: never a prompt; the credential helper says where to approve this machine in LOGIN_NOTICE. */
+const ORIGIN_ENV = { GIT_TERMINAL_PROMPT: "0", ERGA_LOGIN_NOTICE: LOGIN_NOTICE };
+async function originGit(args: string[], { cachedOnly = false, timeout = 120_000 } = {}) {
+  const p = Bun.spawn(["git", ...args], { cwd: REPO, env: { ...process.env, ...ORIGIN_ENV, ...(cachedOnly ? { ERGA_CREDENTIAL_CACHED_ONLY: "1" } : {}) }, stdout: "pipe", stderr: "pipe" });
+  const timer = setTimeout(() => p.kill(), timeout);
+  const [out, err, code] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited]);
   clearTimeout(timer);
+  return { ok: code == 0, out: out.trim(), err: err.trim(), all: (out + err).trim() };
+}
+
+let loginError = "";
+function readLogin(): Login | undefined {
+  try { return JSON.parse(readFileSync(LOGIN_NOTICE, "utf8")); } catch {}
+  return loginError ? { error: loginError } : undefined;
+}
+
+/** TASK_QUEUE_LOGIN, one at a time (it may wait for someone to approve this machine): whether Git can now sign in to origin. */
+let loggingIn: Promise<boolean> | null = null;
+function login(): Promise<boolean> {
+  if (!LOGIN) return Promise.resolve(true);
+  return (loggingIn ??= (async () => {
+    const r = await run(["bash", "-c", LOGIN], REPO, ORIGIN_ENV);
+    loginError = r.ok ? "" : (r.all.split("\n").filter(Boolean).at(-1) ?? `exit ${r.code}`);
+    if (!r.ok) console.log(`origin login failed: ${r.all}`);
+    rmSync(LOGIN_NOTICE, { force: true });
+    refresh();
+    return r.ok;
+  })().finally(() => { loggingIn = null; }));
+}
+
+/** Why origin isn't set up yet (logged once per reason). */
+let originWaits = "";
+let originReady = !ORIGIN_URL;
+
+/**
+ * Points the main checkout's origin at ORIGIN_URL, once no merge is running or waiting and the checkout is clean on
+ * main: the old origin becomes OLD_ORIGIN (kept, a mirror), main pushes to PUSH_TO there, and Git signs in to it
+ * with ORIGIN_HELPER only (no other credential helper for that host). Only remote and credential config changes.
+ * Runs inside mergeLock. Whether origin is ready.
+ */
+async function ensureOrigin(): Promise<boolean> {
+  if (!ORIGIN_URL) return true;
+  const say = (why: string) => { if (why != originWaits) console.log(`origin: ${why}`); originWaits = why; };
+  const current = await run(["git", "remote", "get-url", "origin"], REPO);
+  if (current.out != ORIGIN_URL) {
+    if (store.tasks.some((t) => t.status == "merging")) { say("a task is merging: setting origin up after it"); return false; }
+    const head = (await run(["git", "rev-parse", "--abbrev-ref", "HEAD"], REPO)).out;
+    if (head != MAIN) { say(`${REPO} is on ${head}, not ${MAIN}: setting origin up once it's back on ${MAIN}`); return false; }
+    if ((await run(["git", "status", "--porcelain", "--untracked-files=no"], REPO)).out) { say(`${REPO} has uncommitted changes: setting origin up once it's clean`); return false; }
+    if (current.ok) {
+      if ((await run(["git", "remote", "get-url", OLD_ORIGIN], REPO)).ok) await git(REPO, "remote", "remove", "origin");
+      else await git(REPO, "remote", "rename", "origin", OLD_ORIGIN);
+    }
+    await git(REPO, "remote", "add", "origin", ORIGIN_URL);
+    say(`origin is now ${ORIGIN_URL}${current.ok ? ` (it was ${current.out}: that's ${OLD_ORIGIN} now)` : ""}`);
+  }
+  if (PUSH_TO && (await pushBranch()) != PUSH_TO) {
+    await run(["git", "config", "--unset-all", "remote.origin.push"], REPO);
+    await git(REPO, "config", "remote.origin.push", `refs/heads/${MAIN}:refs/heads/${PUSH_TO}`);
+  }
+  const site = httpOrigin(ORIGIN_URL);
+  if (ORIGIN_HELPER && site) {
+    const key = `credential.${site}.helper`;
+    if (Bun.spawnSync(["git", "config", "--get-all", key], { cwd: REPO }).stdout.toString() != `\n${ORIGIN_HELPER}\n`) {
+      await run(["git", "config", "--unset-all", key], REPO);
+      await git(REPO, "config", "--add", key, ""); // no other helper for this host: it would keep an ended token
+      await git(REPO, "config", "--add", key, ORIGIN_HELPER);
+    }
+  }
+  originWaits = "";
+  return true;
+}
+
+/** Fetches origin; main then tracks origin's branch. cachedOnly: only with a token Git has already (background fetches). */
+async function fetchOriginNow(cachedOnly: boolean) {
+  const f = await originGit(["fetch", "-q", "--prune", "origin"], { cachedOnly, timeout: 60_000 });
+  if (f.ok) {
+    const branch = await pushBranch();
+    if ((await run(["git", "config", "branch." + MAIN + ".remote"], REPO)).out != "origin" && (await ref(`refs/remotes/origin/${branch}`)))
+      await run(["git", "branch", `--set-upstream-to=origin/${branch}`, MAIN], REPO);
+  }
+  return f;
+}
+
+/** Pushes main to origin's branch: what origin said (Erga: "remote: Erga: staging is now ..."). */
+async function pushMain(): Promise<Outcome> {
+  const branch = await pushBranch();
+  const commit = (await ref(`refs/heads/${MAIN}`))?.slice(0, 12);
+  const p = await originGit(["push", "origin", `refs/heads/${MAIN}:refs/heads/${branch}`]);
+  const said = p.all.split("\n").map((l) => l.replace(/^remote:\s*/, "").trim()).filter((l) => l && !/^(To |Everything up-to-date)/.test(l)).join(" ") || (p.ok ? `origin's ${branch} is at ${commit}` : "the push failed");
+  pushed = { at: new Date().toISOString(), commit, ok: p.ok, said };
+  console.log(`push ${MAIN} -> origin/${branch}: ${said}`);
+  return pushed;
+}
+
+/**
+ * Between merges (TASK_QUEUE_FETCH): sets origin up if it isn't yet, fetches it (with a token Git already has: a
+ * background fetch never makes one), and pushes main when it's a queue merge that origin's branch doesn't have but
+ * could take as a fast-forward (its push failed, or the queue restarted before it, as after merging its own code).
+ */
+async function fetchOrigin({ cachedOnly = true } = {}) {
+  if (!originReady) {
+    originReady = await ensureOrigin();
+    if (!originReady) return;
+    cachedOnly = false;
+  }
+  if (!(await hasOrigin())) return;
+  if (!cachedOnly && !(await login())) return;
+  const f = await fetchOriginNow(cachedOnly);
   await refresh();
-  await publishOrigin();
+  if (!f.ok) return;
+  const branch = await pushBranch(), main = await ref(`refs/heads/${MAIN}`), there = await ref(`refs/remotes/origin/${branch}`);
+  const subject = main ? (await run(["git", "log", "-1", "--format=%s", main], REPO)).out : "";
+  if (!main || main == there || !/^Merge task\//.test(subject)) return;
+  if (there && !(await run(["git", "merge-base", "--is-ancestor", there, main], REPO)).ok) return;
+  if (pushed && !pushed.ok && pushed.commit == main.slice(0, 12) && cachedOnly) return; // tried already: next merge, or a restart
+  if (cachedOnly && !(await login())) return;
+  await pushMain();
+  await fetchOriginNow(true);
+  await refresh();
 }
-if (FETCH_EVERY > 0) setInterval(() => { mergeLock = mergeLock.then(fetchOrigin); }, FETCH_EVERY * 1000);
+if (FETCH_EVERY > 0) setInterval(() => { locked(() => fetchOrigin()); }, FETCH_EVERY * 1000);
 
-// ---- the upstream (PUBLISH) -----------------------------------------------
-
-/** The origin/main last put upstream (or found there, or refused: tried once until it moves). */
-let published = "";
-let upstream: { at?: string; commit?: string; ok?: boolean; said?: string } = {};
-
-/** Puts `rev` upstream: what the command said, and whether it worked. */
-async function publish(rev: string): Promise<{ ok: boolean; said: string }> {
-  const r = await run(["bash", "-c", `${PUBLISH} push "$REV"`], REPO, { REV: rev });
-  const said = r.all.split("\n").filter(Boolean).join(" ") || (r.ok ? "done" : `exit ${r.code}`);
-  upstream = { at: new Date().toISOString(), commit: (await ref(rev))?.slice(0, 12), ok: r.ok, said };
-  console.log(`publish ${rev}: ${said}`);
-  return { ok: r.ok, said };
+/** POST /api/release: origin's main to its staging head (or to `commit`, one of staging's commits): a fast-forward, never forced. */
+async function release(commit?: string): Promise<Outcome> {
+  const branch = await pushBranch();
+  const done = (ok: boolean, said: string, c?: string): Outcome => { released = { at: new Date().toISOString(), commit: c?.slice(0, 12), ok, said }; console.log(`release: ${said}`); refresh(); return released; };
+  if (branch == MAIN) return done(false, `main goes straight to origin's ${MAIN}: there's nothing to release`);
+  if (!(await hasOrigin())) return done(false, "no origin");
+  if (!(await login())) return done(false, `couldn't sign in to origin: ${loginError}`);
+  const f = await fetchOriginNow(false);
+  if (!f.ok) return done(false, `couldn't fetch origin: ${f.all}`);
+  const target = commit ? (await run(["git", "rev-parse", "-q", "--verify", `${commit}^{commit}`], REPO)).out : await ref(`refs/remotes/origin/${branch}`);
+  if (!target) return done(false, commit ? `not a commit here: ${commit}` : `origin has no ${branch}`);
+  const tip = await ref(`refs/remotes/origin/${branch}`);
+  if (!tip || !(await run(["git", "merge-base", "--is-ancestor", target, tip], REPO)).ok) return done(false, `${target.slice(0, 12)} isn't on origin's ${branch}`);
+  const prod = await ref(`refs/remotes/origin/${MAIN}`);
+  if (prod == target || (prod && (await run(["git", "merge-base", "--is-ancestor", target, prod], REPO)).ok)) return done(true, `origin's ${MAIN} has ${target.slice(0, 12)} already`, target);
+  const p = await originGit(["push", "origin", `${target}:refs/heads/${MAIN}`]);
+  await fetchOriginNow(true);
+  const said = p.all.split("\n").map((l) => l.replace(/^remote:\s*/, "").trim()).filter((l) => l && !/^To /.test(l)).join(" ");
+  return done(p.ok, said || (p.ok ? `origin's ${MAIN} is at ${target.slice(0, 12)}` : "the push failed"), target);
 }
-
-/** origin/main upstream when it moved (someone pushed main, or a merge's own publish failed): GitHub's main and the upstream's agree. */
-async function publishOrigin() {
-  if (!PUBLISH) return;
-  const sha = await ref(`origin/${MAIN}`);
-  if (!sha || sha == published) return;
-  published = sha;
-  await publish(`origin/${MAIN}`);
-}
-
 
 // ---- screenshots ----------------------------------------------------------
 
@@ -470,8 +620,18 @@ async function capture(url: string, file: string, { width = 1280, height = 800, 
 // ---- merging --------------------------------------------------------------
 
 let mergeLock = Promise.resolve();
-// Upstream once at start (a restart after merging the queue's own code publishes that merge).
-if (PUBLISH) mergeLock = mergeLock.then(fetchOrigin);
+/** Runs `fn` on mergeLock, after what's queued there; an error is logged and doesn't stop the work queued after it. */
+function locked<T>(fn: () => Promise<T>): Promise<T> {
+  const p = mergeLock.then(fn);
+  mergeLock = p.then(() => {}, (e) => { console.log(`error: ${(e as Error).message}`); });
+  return p;
+}
+// Origin at start: set it up if need be, sign in (maybe waiting for an approval, outside the lock, so merges can queue),
+// fetch, and push a merge origin's branch doesn't have yet (a restart after merging the queue's own code).
+locked(async () => {
+  originReady = await ensureOrigin();
+  if (originReady && (await hasOrigin())) login().then((ok) => { if (ok) locked(() => fetchOrigin({ cachedOnly: false })); });
+});
 
 const resolverPrompt = (task: Task, ref: string) => `You are resolving a git merge conflict in ${task.worktree}, on branch ${task.branch}.
 ${ref} was merged into the branch and some files conflict. The branch's task:
@@ -518,33 +678,32 @@ async function merge(task: Task) {
     if (await git(wt, "status", "--porcelain", "--untracked-files=no")) throw new Error(`${wt} has uncommitted changes: commit them (or ask the task's agent to) and merge again`);
     const head = await git(REPO, "rev-parse", "--abbrev-ref", "HEAD");
     if (head != MAIN) throw new Error(`${REPO} is on ${head}, not ${MAIN}: switch it back to merge`);
-    const origin = (await run(["git", "remote", "get-url", "origin"], REPO)).ok;
+    if (!originReady) originReady = await ensureOrigin();
+    const origin = await hasOrigin(), branch = await pushBranch();
     const before = await git(REPO, "rev-parse", "HEAD");
-    // Main (local and pushed) into the branch first, where conflicts can be settled away from the main checkout...
-    if (origin) { await git(REPO, "fetch", "origin", MAIN); await mergeInto(task, `origin/${MAIN}`); }
-    await mergeInto(task, MAIN);
-    // ...and the upstream's newer commits (Erga's staging: a merge on /source, a factory task), so main can go there as a fast-forward.
-    if (PUBLISH) {
-      const f = await run(["bash", "-c", `${PUBLISH} fetch`], REPO);
-      if (!f.ok) throw new Error(`couldn't read the upstream (${PUBLISH} fetch): ${f.all}`);
-      for (const r of f.out.split("\n").map((l) => l.trim()).filter(Boolean)) await mergeInto(task, r);
+    // Origin's branch (Erga's staging: also a merge on /source, a factory task) and main into the branch first, where
+    // conflicts can be settled away from the main checkout...
+    if (origin) {
+      if (!(await login())) throw new Error(`couldn't sign in to origin: ${loginError || "see data/server.log"}`);
+      const f = await fetchOriginNow(false);
+      if (!f.ok) throw new Error(`git fetch origin failed:\n${f.all}`);
+      if (await ref(`refs/remotes/origin/${branch}`)) await mergeInto(task, `origin/${branch}`);
     }
+    await mergeInto(task, MAIN);
     // ...so merging the branch into main can't conflict, and pushing it is a fast-forward.
     await git(REPO, "merge", "--no-ff", "-m", `Merge ${task.branch}: ${task.title}\n\nTask ${task.id} from the task queue.`, task.branch!);
     const commit = await git(REPO, "rev-parse", "--short", "HEAD");
     await refresh(); // on the board at once, as not pushed yet
-    if (origin) await git(REPO, "push", "origin", MAIN);
-    touch(task, { status: "merged", commit, mergedAt: new Date().toISOString() }, `Merged into ${MAIN} as ${commit}${origin ? " and pushed" : ""}`);
+    // To origin's branch (Erga: staging, which deploys staging.erga.dev by itself). A refused push undoes nothing: the
+    // merge is in main, the log says why, and it's pushed again between merges (fetchOrigin) or with the next one.
+    const p = origin ? await pushMain() : undefined;
+    if (origin) await fetchOriginNow(true);
+    touch(task, { status: "merged", commit, mergedAt: new Date().toISOString() },
+      `Merged into ${MAIN} as ${commit}${!p ? "" : p.ok ? ` and pushed to origin's ${branch}: ${p.said}` : `, but origin's ${branch} didn't take it: ${p.said}`}`);
     tellDependents(task);
     await refresh();
     await cleanUp(task, false);
     console.log(`#${task.id} merged as ${commit}`);
-    // Then upstream, last (Erga: its source, which deploys it; maybe minutes, with a deploy from here). A failure doesn't undo the merge: it's on the task's log, and tried again when origin/main next moves.
-    if (PUBLISH) {
-      const p = await publish(origin ? `origin/${MAIN}` : MAIN);
-      if (origin) published = (await ref(`origin/${MAIN}`)) ?? "";
-      touch(task, {}, p.ok ? `Upstream: ${p.said}` : `Upstream didn't take it: ${p.said}`);
-    }
     const changed = await queueCodeChanged(before, "HEAD");
     if (changed.length) { restartWanted = true; console.log(`#${task.id} changed the queue's code (${changed.join(", ")}): restarting once nothing else is merging`); }
   } catch (e) {
@@ -641,9 +800,10 @@ const API = {
     "POST /api/tasks/:id/screenshots": "attach a screenshot: a raw image body (Content-Type image/png, ?caption=...), or JSON {path, caption?} (a file on disk), or JSON {url, caption?, width?, height?, wait?: ms after load, fullPage?} (the queue takes it with headless Chrome)",
     "DELETE /api/tasks/:id/screenshots/:file": "remove one screenshot (by its file name, or its 1-based index) and delete its file; any status but merging",
     "DELETE /api/tasks/:id/screenshots": "remove all the task's screenshots and delete their files (for a fresh pass); any status but merging",
-    "POST /api/tasks/:id/merge": "for a complete (or failed) task whose dependencies are merged (else 409 with the reason; dependencies that are merging, ahead of it, are fine): status merging at once (202), then, in the background and one merge at a time, merge main into the branch (claude -p resolves conflicts), merge the branch into main, push, and remove the worktree and branch: status merged. A failed merge goes back to complete with error. Watch the task.",
+    "POST /api/tasks/:id/merge": "for a complete (or failed) task whose dependencies are merged (else 409 with the reason; dependencies that are merging, ahead of it, are fine): status merging at once (202), then, in the background and one merge at a time, merge origin's branch and main into the branch (claude -p resolves conflicts), merge the branch into main, push main to origin's branch (see origin), and remove the worktree and branch: status merged. A failed merge goes back to complete with error. Watch the task.",
     "POST /api/tasks/:id/discard": "drop the task: stops its preview (and a live task's Chrome window), removes its worktree and deletes its branch",
-    "GET /api/history": `main's history, for the board's Branches column: {commits: the latest ${SHOWN} on main's first-parent line, newest first, each {sha, short, subject, at, task?: the task whose merge it is, remote: whether origin/main has it}, tasks: {id: {sha, short, index, remote}} for tasks merged in main's latest ${MATCHED}, unpushed, behind, origin, upstream?: the last push upstream {at, commit, ok, said}}. origin/main is fetched every ${FETCH_EVERY || "(never)"}s (TASK_QUEUE_FETCH), and put upstream when it moves (TASK_QUEUE_PUBLISH: ${PUBLISH || "off"}).`,
+    "GET /api/history": `main's history, for the board's Branches column: {commits: the latest ${SHOWN} on main's first-parent line, newest first, each {sha, short, subject, at, task?: the task whose merge it is, remote: whether origin's branch has it}, tasks: {id: {sha, short, index, remote}} for tasks merged in main's latest ${MATCHED}, unpushed, behind, origin, originBranch: the branch on origin main is pushed to, unreleased?: commits on it that origin's main lacks, pushed?, released?: the last push and release {at, commit, ok, said}, login?: {approve_url, user_code, expires} while signing in to origin waits for someone to approve this machine, or {error}}. Origin is fetched every ${FETCH_EVERY || "(never)"}s (TASK_QUEUE_FETCH).`,
+    "POST /api/release {commit?}": "moves origin's main to its branch's head (or to commit, one of that branch's commits): for Erga, production (erga.dev) to staging. A fast-forward, never forced, and never part of a merge: only when someone asks. Answers {ok, said, commit}",
     "GET /api/events": "server-sent events: a `version` event (the board's own, which reloads when it changes), a `tasks` event with every task and a `history` event with GET /api/history, on connect and on each change",
   },
 };
@@ -665,7 +825,12 @@ async function handle(req: Request): Promise<Response> {
 
   if (path == "/" && req.method == "GET") return new Response(Bun.file(join(HERE, "index.html")), { headers: { "content-type": "text/html; charset=utf-8" } });
   if (path == "/api" && req.method == "GET") return json(API);
-  if (path == "/api/history" && req.method == "GET") { await refresh(); return json({ ...history, ...(PUBLISH ? { upstream } : {}) }); }
+  if (path == "/api/history" && req.method == "GET") { await refresh(); return json(history); }
+  if (path == "/api/release" && req.method == "POST") {
+    const { commit } = await body();
+    const r = await locked(() => release(typeof commit == "string" && commit ? commit : undefined)).catch((e) => ({ at: new Date().toISOString(), ok: false, said: (e as Error).message }) as Outcome);
+    return json(r, r.ok ? 200 : 409);
+  }
   if (path.startsWith("/shots/") && req.method == "GET") {
     const file = join(SHOTS, basename(path));
     return existsSync(file) ? new Response(Bun.file(file)) : fail(404, "no such screenshot");

@@ -28,13 +28,16 @@
 //   tq merge ID [--wait]                 what the board's Merge does: status merging, then merged (or back
 //                                        to complete, with the reason); --wait waits and exits 1 if it failed
 //   tq discard ID                        what the board's Discard does
+//   tq release [COMMIT]                  move origin's main to its staging head (or to COMMIT, one of staging's
+//                                        commits): for Erga, production (erga.dev) to staging. Only when someone asks
 //   tq get ID | tq list [STATUS]         read (list shows each task's dependencies, and what blocks it)
 //   tq serve                             just make sure the server is up; prints the board's address
 //   tq watch [--state FILE]              stay running, printing one line per task status change
 //                                        ("#3 merged: title", "#4 failed: title: why"), and when a task's
 //                                        dependencies change it ("#14 unblocked: title (#12 merged)": start it;
 //                                        "#15 unblocked for merge: title (#12 merged)"; "#16 blocked: title: why"),
-//                                        and nothing else;
+//                                        and when signing in to origin needs someone ("origin sign-in: open URL
+//                                        and approve it (code ABCD)": tell the user), and nothing else;
 //                                        reconnects (restarting the queue if need be) when the server goes away.
 //                                        --state keeps what it has seen in FILE, so a new watch (say, re-armed
 //                                        after a Monitor timeout) reports what changed in between
@@ -154,6 +157,12 @@ switch (cmd) {
     if (t.status != "merged") { console.log(JSON.stringify(t, (k, v) => (k == "log" && Array.isArray(v) ? v.slice(-5) : v), 2)); console.error(`merge failed: ${t.error ?? t.status}`); process.exit(1); }
     break;
   }
+  case "release": {
+    const res = await fetch(`${BASE}/api/release`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(id ? { commit: id } : {}) });
+    const r = await res.json();
+    console.log(r.said ?? JSON.stringify(r));
+    process.exit(r.ok ? 0 : 1);
+  }
   case "discard": need(id, "discard ID"); out = await call("POST", `/api/tasks/${id}/discard`); break;
   case "get": need(id, "get ID"); out = await call("GET", `/api/tasks/${id}`); break;
   case "list": out = (await call("GET", `/api/tasks${id ? `?status=${id}` : ""}`)).map((t: any) => ({ id: t.id, status: t.status, title: t.title, url: t.url, branch: t.branch,
@@ -203,6 +212,13 @@ async function watch(stateFile?: string): Promise<never> {
       else if (key.startsWith("x:") && !was.blocked.startsWith("x:")) say(`#${t.id} blocked: ${t.title}: ${t.blockedBy.reason}`);
     }
   };
+  // Signing in to origin waits for someone to approve this machine: say where, once per request.
+  let toldLogin = "";
+  const loginNews = (login: any) => {
+    const url = login?.approve_url ?? "";
+    if (url && url != toldLogin) say(`origin sign-in: open ${url} and approve it (code ${login.user_code}), so the queue can fetch and push`);
+    toldLogin = url;
+  };
   for (let misses = 0; ; ) {
     const ctrl = new AbortController();
     let quiet: Timer | undefined;
@@ -224,6 +240,7 @@ async function watch(stateFile?: string): Promise<never> {
           const chunk = buf.slice(0, i); buf = buf.slice(i + 2);
           const data = chunk.split("\n").filter((l) => l.startsWith("data: ")).map((l) => l.slice(6)).join("\n");
           if (data && /^event: tasks$/m.test(chunk)) changed(JSON.parse(data));
+          if (data && /^event: history$/m.test(chunk)) loginNews(JSON.parse(data).login);
         }
       }
     } catch {}
