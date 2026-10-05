@@ -171,7 +171,7 @@ try {
   expect(moved.status == 302 && moved.headers.get("location") == "/admin/source", "/source redirects to /admin/source", moved.status);
   browser = await Browser.launch();
   const p: Page = await browser.page(await browser.context());
-  const state = () => p.eval<{ rows: { subject: string; sha: string; staging: string; live: string[] }[]; heads: string[]; dots: number; ahead: string; merge: boolean; mirror: string; title: string; targets: string[] }>(`(() => {
+  const state = () => p.eval<{ rows: { subject: string; sha: string; staging: string; live: string[] }[]; heads: string[]; dots: number; ahead: string; merge: boolean; mergeShown: boolean; mirror: string; title: string; targets: string[] }>(`(() => {
     const dot = (el) => {
       if (!el) return "none";
       const s = getComputedStyle(el);
@@ -184,6 +184,7 @@ try {
       heads: [...document.querySelectorAll("#grid > .head")].map((h) => h.textContent.trim()),
       dots: Math.max(...[...document.querySelectorAll("#grid .row")].map((r) => r.querySelectorAll(".dot").length)),
       ahead: document.getElementById("ahead").textContent, merge: !document.getElementById("merge").disabled,
+      mergeShown: getComputedStyle(document.getElementById("merge")).display != "none",
       mirror: document.getElementById("mirror-state").textContent, title: document.title,
       targets: [...document.querySelectorAll(".target")].map((t) => t.textContent.replace(/\\s+/g, " ").trim()),
     };
@@ -191,7 +192,7 @@ try {
   await p.open(`${root}/admin/source`, { width: 1280, height: 900, scale: 2, clear: false });
   await until(async () => (await state()).rows.length > 0, 10_000, "the list draws");
   let s = await state();
-  expect(s.rows.map((x) => x.subject).join() == "Fifth,Fourth,Third,Second,First" && s.title.startsWith("Source") && !s.merge && s.ahead.includes("main is at staging"), "one list: staging's commits, newest first; nothing to merge", s);
+  expect(s.rows.map((x) => x.subject).join() == "Fifth,Fourth,Third,Second,First" && s.title.startsWith("Source") && !s.merge && !s.mergeShown && s.ahead.includes("main is at staging"), "one list: staging's commits, newest first; nothing to merge, so no Merge button", s);
   expect(s.heads[0] == "" && s.heads[1] == "Commit" && s.dots == 1, "one dot column, with no header", s);
   expect(await p.eval(`document.querySelector(".crumbs .brand").textContent == "Erga" && document.querySelector(".crumbs .here").textContent == "Source" && !!document.querySelector("[data-erga-account]")`), "breadcrumbs (Erga › Source) and the avatar");
   expect(s.targets.length == 2 && s.targets[0].startsWith("staging") && s.targets[0].includes("live") && s.targets[1].startsWith("production"), "the deploy columns' heads: each target's status", s.targets);
@@ -203,7 +204,7 @@ try {
   const sixth = must(b, "rev-parse", "HEAD");
   await until(async () => (await state()).rows[0]?.subject == "Staging only, live", 10_000, "the push shows up by itself", state);
   s = await state();
-  expect(s.merge && s.ahead.startsWith("1 commit"), "and Merge lights up", s);
+  expect(s.merge && s.mergeShown && s.ahead.startsWith("1 commit"), "and the Merge button shows, enabled", s);
   // The dots: circles only; hollow orange for only on staging, solid green for on main.
   const [top, below] = s.rows;
   const [, , topBg, topBorder] = top.staging.split("|"), [, , belowBg, belowBorder] = below.staging.split("|");
