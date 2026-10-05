@@ -2208,12 +2208,12 @@ had made when it asked (a Yjs state vector). No browser runs on the server:
 whoever has the editor open is the agent's eyes, and with none of their tabs
 open the tool says so. The panel shows a thumbnail of what it saw.
 
-The agent runs on Claude Sonnet 5.5 by default, at medium effort; the model
-name in the panel's header is a menu that switches it to Claude Opus 5.5 in
-fast mode and back. The choice is per person (all their tabs follow, and a
+The agent runs on Claude Opus 5.5 in fast mode by default, at medium effort;
+the model name in the panel's header is a menu that switches it to Claude
+Sonnet 5.5 and back. The choice is per person (all their tabs follow, and a
 reload keeps it) and applies from the next message, so a running turn
-finishes on the model it started with. `ERGA_AGENT_MODEL=opus-fast`
-starts everyone on Opus instead. Set it up with `ANTHROPIC_API_KEY`: locally
+finishes on the model it started with. `ERGA_AGENT_MODEL=sonnet`
+starts everyone on Sonnet instead. Set it up with `ANTHROPIC_API_KEY`: locally
 exported before `bun start` or in `.dev.vars`; a secret on erga.dev. pi's model catalogue
 predates the 5.5 models, so `agent.ts` describes them itself (`MODELS`) and
 rewrites each request for adaptive thinking, effort and, on Opus fast,
