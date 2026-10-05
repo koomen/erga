@@ -64,7 +64,7 @@ export interface AgentConfig {
   effort: string;
 }
 
-const isScript = (cfg: AgentConfig) => cfg.model == "script";
+export const isScript = (cfg: AgentConfig) => cfg.model == "script";
 
 const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
 
@@ -94,7 +94,7 @@ export const agentConfigFrom = (provider: ConfigProvider.ConfigProvider): Effect
  * Fast mode (Opus only) is the `fast-mode-2026-02-01` beta plus `speed: "fast"`
  * in the request body (added in `patchPayload`).
  */
-function describeModel(choice: ModelChoice): Model<"anthropic-messages"> {
+export function describeModel(choice: ModelChoice): Model<"anthropic-messages"> {
   const m = MODELS[choice];
   return {
     id: m.id,
@@ -117,7 +117,7 @@ function describeModel(choice: ModelChoice): Model<"anthropic-messages"> {
  * request: adaptive thinking with summaries (so the panel can show them),
  * explicit effort, and fast mode when the current model has it.
  */
-function patchPayload(cfg: AgentConfig, current: () => ModelChoice) {
+export function patchPayload(cfg: AgentConfig, current: () => ModelChoice) {
   return (payload: unknown) => {
     const p = payload as Record<string, unknown>;
     return {
@@ -142,7 +142,7 @@ function patchPayload(cfg: AgentConfig, current: () => ModelChoice) {
  * between two tool calls). Once the steps run out it says "(script done)".
  */
 let script: ReturnType<typeof registerFauxProvider> | null = null;
-function scriptModel(): Model<string> {
+export function scriptModel(): Model<string> {
   script ??= registerFauxProvider({ provider: "script", models: [{ id: "script", name: "script (test model)", input: ["text", "image"] }] });
   if (script.getPendingResponseCount() < 100) script.appendResponses(Array.from({ length: 1000 }, () => scriptStep));
   return script.getModel();
@@ -1002,19 +1002,19 @@ ${DOCUMENT_RULES.replace(/^(#+) /gm, "#$1 ")}
 `;
 }
 
-function toolPath(args: unknown): string | null {
+export function toolPath(args: unknown): string | null {
   const a = args as { path?: unknown; from?: unknown } | null;
   return typeof a?.path == "string" ? a.path : typeof a?.from == "string" ? a.from : null;
 }
 
 /** A tool result's image (view_page's screenshot), as a data URL for the panel. */
-function resultImage(result: unknown): string | undefined {
+export function resultImage(result: unknown): string | undefined {
   const r = result as { content?: { type: string; data?: string; mimeType?: string }[] } | null;
   const img = r?.content?.find((c) => c.type == "image" && c.data);
   return img ? `data:${img.mimeType ?? "image/png"};base64,${img.data}` : undefined;
 }
 
-function resultText(result: unknown): string {
+export function resultText(result: unknown): string {
   const r = result as { content?: { type: string; text?: string }[] } | null;
   return (r?.content ?? []).map((c) => c.text ?? "").join("\n").trim();
 }

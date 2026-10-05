@@ -1,54 +1,46 @@
-// The factory's board, /admin/factory (experimental): the local task
-// queue's board (development/task-queue/index.html) inside Erga. Columns
+// The factory's board (experimental), a part of /admin/source (source/page.ts,
+// which puts it beside the source dashboard and the factory's agent): the
+// local task queue's board (development/task-queue/index.html) inside Erga. Columns
 // Queued, Working, Ready to merge, Merging and Merged; a card per task, its
 // detail on a click (the ask, the summary, the preview, the branch, the log,
 // the screenshots), with Merge, Discard and new instructions; live, over
 // /api/factory/events. Dependencies between tasks as on the local board: a
 // chip on the card ("waiting for #12"), blocked tasks at the bottom of
 // Queued, Merge (and Start) off with the reason, and a Dependencies section
-// in the detail view to add and remove them. The header says where the VMs run and whether a
+// in the detail view to add and remove them. The pane's head says where the VMs run and whether a
 // Claude plan is signed in, and signs one in (a `claude setup-token` token).
+//
+// The parts: BOARD_STYLE (scoped to the board's pane by source/page.ts, in Erga's own colours),
+// boardMarkup and BOARD_SCRIPT. The script tells the page's agent panel which task is open
+// (window.ergaBoard).
 
-const STYLE = `
-  :root {
-    --bg: #f7f8fa; --panel: #eceef2; --card: #ffffff; --ink: #1b2330; --muted: #5b6676; --line: #dde2ea;
-    --accent: #1f5f8b; --ok: #1f7a4d; --warn: #b26a00; --bad: #b3261e; --shadow: 0 1px 2px rgba(20,28,40,.06), 0 2px 8px rgba(20,28,40,.04);
-    color-scheme: light;
-  }
-  @media (prefers-color-scheme: dark) {
-    :root:not([data-theme="light"]) { --bg: #12161d; --panel: #1a2029; --card: #222a35; --ink: #e4e8ee; --muted: #9aa5b4; --line: #2c3440;
-      --accent: #7fb6e0; --ok: #4cc38a; --warn: #f0a742; --bad: #ff7b72; --shadow: 0 1px 2px rgba(0,0,0,.4); color-scheme: dark; }
-  }
-  * { box-sizing: border-box; }
-  body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.45 ui-sans-serif, -apple-system, "Segoe UI", sans-serif; }
-  header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; padding: 14px 72px 8px 24px; min-height: 56px; }
-  .crumbs { display: flex; align-items: baseline; gap: 8px; font-size: 15px; }
-  .crumbs a { color: var(--muted); text-decoration: none; } .crumbs a:hover { color: var(--ink); }
-  .crumbs .brand { font-weight: 700; color: var(--ink); }
-  .crumbs .sep { color: var(--muted); }
-  .crumbs .here { font-weight: 600; }
-  .tag { font: 600 10px/1 ui-sans-serif, -apple-system, sans-serif; text-transform: uppercase; letter-spacing: .06em; color: var(--warn); border: 1px solid currentColor; border-radius: 999px; padding: 3px 7px; }
-  .pills { display: flex; flex-wrap: wrap; gap: 8px; margin-left: auto; align-items: center; }
-  .pill { font-size: 12px; color: var(--muted); display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); border-radius: 999px; padding: 3px 10px; background: var(--card); }
+export const BOARD_STYLE = `
+  :root { --ink: var(--fg-strong); --muted: var(--soft); --line: var(--rule); --card: var(--bg); --panel: color-mix(in srgb, var(--chrome) 9%, var(--bg));
+    --accent: var(--caret); --ok: #1f7a4d; --warn: #b26a00; --bad: #b3261e; --shadow: 0 1px 2px rgba(0,0,0,.05); }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --ok: #4cc38a; --warn: #f0a742; --bad: #ff7b72; --shadow: 0 1px 2px rgba(0,0,0,.4); } }
+  :root[data-theme="dark"] { --ok: #4cc38a; --warn: #f0a742; --bad: #ff7b72; --shadow: 0 1px 2px rgba(0,0,0,.4); }
+  .tag { font: 600 10px/1 var(--font-text); text-transform: uppercase; letter-spacing: .06em; color: var(--warn); border: 1px solid currentColor; border-radius: 999px; padding: 3px 7px; }
+  .pills { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .pill { height: 26px; font-size: 12px; font-weight: 500; color: var(--muted); display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); border-radius: 999px; padding: 0 10px; background: var(--card); box-shadow: none; }
   .pill::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
   .pill.on::before { background: var(--ok); } .pill.off::before { background: var(--bad); }
   button.pill { cursor: pointer; font: inherit; font-size: 12px; } button.pill:hover { border-color: var(--muted); color: var(--ink); }
-  .notice { margin: 4px 24px 8px; padding: 10px 14px; border-radius: 8px; background: var(--panel); color: var(--muted); font-size: 13px; }
+  .notice { margin: 0 0 10px; padding: 10px 14px; border-radius: 8px; background: var(--panel); color: var(--muted); font-size: 13px; }
   .notice a { color: var(--accent); }
-  main { display: grid; grid-template-columns: repeat(5, minmax(180px, 1fr)); gap: 14px; padding: 8px 24px 24px; align-items: start; }
-  @media (max-width: 1150px) { main { grid-template-columns: repeat(3, minmax(200px, 1fr)); } }
-  @media (max-width: 760px) { main { grid-template-columns: 1fr; padding: 8px 16px 16px; } header { padding: 12px 64px 8px 16px; } .pills { margin-left: 0; } .notice { margin: 4px 16px 8px; } }
+  .board { display: grid; grid-template-columns: repeat(5, minmax(150px, 1fr)); gap: 10px; align-items: start; }
+  @media (max-width: 900px) { .board { grid-template-columns: repeat(3, minmax(160px, 1fr)); } }
+  @media (max-width: 560px) { .board { grid-template-columns: 1fr; } }
   .col { background: var(--panel); border-radius: 10px; padding: 10px; min-height: 120px; }
   .col h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 2px 4px 10px; min-height: 26px; display: flex; justify-content: space-between; align-items: center; }
   .col h2 button { text-transform: none; letter-spacing: 0; }
-  .empty { color: var(--muted); font-size: 12px; padding: 8px 4px; }
+  .empty { color: var(--muted); font-size: 12px; padding: 8px 4px; border: 0; text-align: left; }
   .card { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; box-shadow: var(--shadow); cursor: pointer; }
   .card:hover { border-color: var(--muted); }
   .card.failed { border-left: 3px solid var(--bad); }
   .card.merging { border-left: 3px solid var(--warn); }
   .top { display: flex; gap: 8px; align-items: baseline; }
   .id { color: var(--muted); font: 12px ui-monospace, monospace; }
-  .title { font-weight: 600; flex: 1; overflow-wrap: anywhere; }
+  .title { font-weight: 600; flex: 1; overflow-wrap: anywhere; white-space: normal; color: var(--ink); }
   .meta { color: var(--muted); font-size: 12px; margin-top: 4px; display: flex; flex-wrap: wrap; gap: 4px 10px; }
   .meta code, .branch { font: 11px ui-monospace, monospace; }
   .last { color: var(--muted); font-size: 12px; margin-top: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -60,12 +52,14 @@ const STYLE = `
   button:hover, .btn:hover { border-color: var(--muted); }
   button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
   @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) button.primary { color: #0d1218; } }
+  :root[data-theme="dark"] button.primary { color: #0d1218; }
   button.danger { color: var(--bad); }
   button.confirm { background: var(--bad); border-color: var(--bad); color: #fff; }
   button:disabled { opacity: .5; cursor: default; }
   .spin { display: inline-block; width: 10px; height: 10px; border: 2px solid var(--warn); border-right-color: transparent; border-radius: 50%; animation: s .8s linear infinite; }
   @keyframes s { to { transform: rotate(360deg); } }
-  dialog { border: 1px solid var(--line); border-radius: 12px; background: var(--card); color: var(--ink); width: min(900px, calc(100vw - 32px)); max-height: calc(100vh - 48px); padding: 0; }
+  dialog { border: 1px solid var(--line); border-radius: 12px; background: var(--card); color: var(--ink); width: min(900px, calc(100vw - 32px)); max-height: calc(100vh - 48px); padding: 0; font-size: 14px; }
+  dialog h3 { color: var(--ink); }
   dialog.small { width: min(560px, calc(100vw - 32px)); }
   dialog::backdrop { background: rgba(0,0,0,.35); }
   .dlg { padding: 18px 22px 22px; }
@@ -83,9 +77,9 @@ const STYLE = `
   .shots figure { margin: 0; } .shots img { width: 100%; border: 1px solid var(--line); border-radius: 6px; }
   .shots figcaption { color: var(--muted); font-size: 12px; margin-top: 4px; }
   .log { font: 12px/1.5 ui-monospace, monospace; max-height: 260px; overflow: auto; background: var(--panel); border-radius: 6px; padding: 8px 10px; }
-  .log div { white-space: pre-wrap; overflow-wrap: anywhere; } .log time { color: var(--muted); margin-right: 8px; }
+  .log div { white-space: pre-wrap; overflow-wrap: anywhere; } .log time { color: var(--muted); margin: 0 8px 0 0; font-size: inherit; }
   label { display: block; font-size: 12px; color: var(--muted); margin: 12px 0 4px; }
-  input, textarea { width: 100%; font: inherit; font-size: 14px; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 7px 9px; }
+  input, textarea { flex: none; width: 100%; font: inherit; font-size: 14px; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 7px 9px; }
   textarea { min-height: 110px; resize: vertical; }
   input:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
   .row { display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px; align-items: center; }
@@ -113,7 +107,7 @@ const STYLE = `
   .dep .x { border: 0; background: none; color: var(--muted); font-size: 15px; padding: 0 4px; cursor: pointer; }
   .dep .x:hover { color: var(--bad); }
   .dep-add { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
-  select { font: inherit; font-size: 12px; border: 1px solid var(--line); background: var(--card); color: var(--ink); border-radius: 6px; padding: 4px 6px; max-width: 100%; }
+  select { appearance: auto; font: inherit; font-size: 12px; border: 1px solid var(--line); background: var(--card); color: var(--ink); border-radius: 6px; padding: 4px 6px; max-width: 100%; }
   .dep-add select.which { flex: 1; min-width: 160px; }
   .deps-note { font-size: 12px; color: var(--muted); margin-top: 6px; }
   .deps-note a { color: var(--accent); cursor: pointer; }
@@ -121,10 +115,11 @@ const STYLE = `
   .new-deps { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; }
   .new-deps select { width: 100%; font-size: 13px; padding: 6px; }
   @media (max-width: 560px) { .new-deps { grid-template-columns: 1fr; } }
-  #toast { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); max-width: calc(100vw - 32px); background: var(--ink); color: var(--bg); font-size: 13px; padding: 8px 14px; border-radius: 8px; box-shadow: var(--shadow); z-index: 10; }
+  #toast { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); max-width: calc(100vw - 32px); background: var(--ink); color: var(--bg); font-size: 13px; padding: 8px 14px; border-radius: 8px; box-shadow: var(--shadow); z-index: 30; }
 `;
 
-const SCRIPT = `
+export const BOARD_SCRIPT = `
+(() => {
 const COLUMNS = [
   { title: "Queued", statuses: ["queued"] },
   { title: "Working", statuses: ["working", "failed"] },
@@ -132,7 +127,8 @@ const COLUMNS = [
   { title: "Merging", statuses: ["merging"] },
   { title: "Merged", statuses: ["merged"] },
 ];
-let tasks = [], info = null, openId = null, depError = null;
+let tasks = [], info = null, openId = null, depError = null, live = "connecting";
+const showLive = () => { const el = $("live"); if (el) { el.textContent = live; el.classList.toggle("on", live == "live"); } };
 const STATUS = { queued: "queued", working: "working", complete: "ready to merge", merging: "merging", merged: "merged", failed: "failed", discarded: "discarded" };
 const ids = (list) => list.map((id) => "#" + id).join(", ").replace(/, ([^,]*)$/, " and $1");
 const armed = new Set();
@@ -214,8 +210,9 @@ function render() {
 function renderInfo() {
   if (!info) return;
   const vms = info.vms.runner == "docker" ? "VMs: Docker" : info.vms.runner == "sim" ? "VMs: simulated" : info.vms.runner ? "VMs: " + info.vms.runner : "No VMs";
-  $("pills").innerHTML = '<span class="pill ' + (info.vms.runner ? "on" : "off") + '" title="' + esc(info.vms.why || "Where each task's VM runs") + '">' + esc(vms) + '</span>' +
+  $("pills").innerHTML = '<span class="pill" id="live">' + ($("live")?.textContent || "connecting") + '</span>' + '<span class="pill ' + (info.vms.runner ? "on" : "off") + '" title="' + esc(info.vms.why || "Where each task's VM runs") + '">' + esc(vms) + '</span>' +
     '<button class="pill ' + (info.claude.signedIn ? "on" : "off") + '" id="claude-pill" data-act="claude">' + (info.claude.signedIn ? "Claude: signed in" : "Claude: not signed in") + '</button>';
+  showLive();
   $("notice").hidden = info.enabled;
   render();
 }
@@ -239,8 +236,8 @@ function renderDialog() {
     '<section><h4>The ask</h4><div class="text">' + esc(t.description) + '</div></section>' +
     (revisable ? '<section><h4>More instructions</h4><textarea id="instructions" placeholder="What Claude Code should change next">' + esc(keep) + '</textarea><div class="row"><span class="why" id="revise-why"></span><button class="primary" data-act="revise" data-id="' + t.id + '">Send to Claude Code</button></div></section>' : "") +
     (shots ? '<section><h4>Screenshots</h4><div class="shots">' + shots + '</div></section>' : "") +
-    '<section><h4>Log</h4><div class="log" id="log">' + log + '</div></section></div>';
-  const l = $("log"); if (l) l.scrollTop = l.scrollHeight;
+    '<section><h4>Log</h4><div class="log" id="task-log">' + log + '</div></section></div>';
+  const l = $("task-log"); if (l) l.scrollTop = l.scrollHeight;
   if (!d.open) d.showModal();
 }
 
@@ -339,7 +336,7 @@ function upsert(t) {
 
 document.addEventListener("click", async (e) => {
   const el = e.target.closest("[data-act], [data-open]");
-  if (!el) { if (e.target.tagName == "DIALOG") e.target.close(); return; }
+  if (!el) { if (e.target.id == "dlg" || e.target.id == "form") e.target.close(); return; }
   if (el.dataset.open && !el.dataset.act) { openId = Number(el.dataset.open); renderDialog(); return; }
   e.stopPropagation();
   const id = Number(el.dataset.id), act = el.dataset.act;
@@ -374,8 +371,8 @@ async function load() {
 }
 function connect() {
   const es = new EventSource("/api/factory/events");
-  es.onopen = () => { $("live").classList.add("on"); $("live").textContent = "live"; load(); };
-  es.onerror = () => { $("live").classList.remove("on"); $("live").textContent = "reconnecting"; };
+  es.onopen = () => { live = "live"; showLive(); load(); };
+  es.onerror = () => { live = "reconnecting"; showLive(); };
   es.onmessage = (e) => {
     const m = JSON.parse(e.data);
     if (m.type == "task") upsert(m.task);
@@ -384,31 +381,19 @@ function connect() {
 }
 load().then(connect);
 setInterval(render, 30000);
+// The page's agent panel (src/page/factory-agent.ts) asks which task is open, so "this task" means something to the agent.
+window.ergaBoard = { openTask: () => openId, title: (id) => tasks.find((x) => x.id == id)?.title ?? null, open: (id) => { openId = id; renderDialog(); } };
+})();
 `;
 
-export function factoryPage(opts: { enabled: boolean; dev: boolean }): Response {
-  const html = `<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Factory · Erga</title>
-<style>${STYLE}</style>
-</head>
-<body>
-<header>
-  <nav class="crumbs"><a class="brand" href="/docs">Erga</a><span class="sep">›</span><a href="/admin">Admin</a><span class="sep">›</span><span class="here">Factory</span></nav>
-  <span class="tag">Experimental</span>
-  <span class="pill" id="live">connecting</span>
-  <div class="pills" id="pills"></div>
-</header>
+/** The board's pane: its head (where VMs run, the Claude sign-in, Share with agent), the notice, the columns, its dialogs. */
+export function boardMarkup(opts: { enabled: boolean }): string {
+  return `<div class="pane-head"><h2>Tasks</h2><span class="tag">Experimental</span><div class="pills" id="pills"><span class="pill" id="live">connecting</span></div>
+  <button type="button" class="share-btn" id="btn-share" aria-haspopup="dialog">Share with agent</button></div>
 <div class="notice" id="notice" ${opts.enabled ? "hidden" : ""}>The factory is off. An admin turns it on with the <code>factory</code> setting on <a href="/admin">Admin settings</a>.</div>
-<main id="board"></main>
+<p class="pane-note">Each task is a branch made from staging, done by Claude Code in a VM. Merge merges it into staging, which deploys itself.</p>
+<div class="board" id="board"></div>
 <dialog id="dlg"></dialog>
 <dialog id="form" class="small"></dialog>
-<div id="toast" role="status" hidden></div>
-<script>${SCRIPT}</script>
-</body>
-</html>`;
-  return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
+<div id="toast" role="status" hidden></div>`;
 }

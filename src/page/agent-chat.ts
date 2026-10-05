@@ -1,0 +1,164 @@
+// The agent panel's conversation, as both agents' panels draw it: the
+// editor's (main.ts) and the factory's on /admin/source (factory-agent.ts).
+// It renders the transcript (agent-log.ts) into the panel's log, keeps it
+// following the agent's output as a terminal does, and shows a message the
+// moment it's sent, dimmed until the agent's host echoes it back (or with
+// "Not sent" and a way to try again). The styles are style.css's (.agent-log,
+// .msg-*), so both panels look the same.
+
+import { emptyLog, reduce, type Log, type LogEvent, type LogItem } from "./agent-log";
+
+export const escapeHtml = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
+const inline = (s: string) => escapeHtml(s).replace(/`([^`\n]+)`/g, "<code>$1</code>").replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>");
+
+export interface ChatOptions {
+  /** The log's element (#agent-log) and its "Jump to latest" button. */
+  logEl: HTMLElement;
+  jump: HTMLButtonElement;
+  /** What a tool call says while it runs, and once done: [doing, done]; others show their name. */
+  verbs: Record<string, [string, string]>;
+  /** The tooltip on a call an outside agent made (the share button's), as "External agent:". */
+  externalTip?: string;
+  /** The alt text of a picture a tool returned. */
+  imageAlt?: string;
+}
+
+export interface Chat {
+  /** The transcript as drawn. */
+  readonly log: Log;
+  /** Draws the whole log again (a tab that just loaded, a reset), at the bottom. */
+  render(): void;
+  /** One event from the agent's host: the transcript and the log follow it. */
+  apply(ev: LogEvent): void;
+  /** Follow the output (on), or stop (reading back). */
+  follow(on: boolean): void;
+  /** Keeps the log at the bottom while following. */
+  pin(): void;
+  /** A message just sent: shown dimmed until the host echoes it; `fail` says it wasn't sent, with Try again. */
+  pending(text: string): { fail(reason: string, retry: () => void): void };
+}
+
+export function chat(opts: ChatOptions): Chat {
+  const { logEl, jump, verbs } = opts;
+  const log: Log = emptyLog();
+  let els: HTMLElement[] = [];
+
+  /** A failed tool call that a later call on the same file got past is history, not an error. */
+  const retried = (i: number) => {
+    const item = log.items[i];
+    if (item.kind != "tool" || item.status != "error") return false;
+    return log.items.slice(i + 1).some((x) => x.kind == "tool" && x.status == "done" && x.path == item.path && (x.name == item.name || x.name == "write"));
+  };
+  function renderItem(item: LogItem, i: number): HTMLElement {
+    const el = document.createElement("div");
+    el.className = "msg-" + item.kind;
+    if (item.kind == "user" || item.kind == "thinking" || item.kind == "error") el.textContent = item.text;
+    else if (item.kind == "assistant") el.innerHTML = inline(item.text);
+    else {
+      const [doing, done] = verbs[item.name] ?? [item.name, item.name];
+      const what = item.path ? ` <code>${escapeHtml(item.path)}</code>` : "";
+      // A call from an agent you shared the page with (the share button) says so.
+      const via = item.via == "external" ? `<span class="via" title="${escapeHtml(opts.externalTip ?? "An outside agent, working as your agent")}">External agent:</span> ` : "";
+      if (retried(i)) {
+        el.classList.add("retried");
+        el.title = item.detail ?? "";
+        el.innerHTML = `<span>${via}${doing}${what} didn't apply; retried</span>`;
+      } else {
+        el.classList.add(item.status);
+        el.innerHTML = `<span>${via}${item.status == "running" ? doing : item.status == "error" ? `${doing} failed:` : done}${what}${item.detail ? `<span class="detail">${escapeHtml(item.detail)}</span>` : ""}${item.image ? `<img class="shot" alt="${escapeHtml(opts.imageAlt ?? "What the agent saw")}" src="${item.image}">` : ""}</span>`;
+      }
+    }
+    return el;
+  }
+
+  // The log follows the agent's output, as a terminal does, until you
+  // scroll back to read something; scrolling to the bottom again (or the
+  // "Jump to latest" button, or sending a message) picks it back up. It's
+  // kept pinned whenever the log's content changes size, not just when an
+  // event arrives, so text that wraps later or a screenshot that loads after
+  // its event doesn't leave it behind.
+  let following = true, lastScrollTop = 0;
+  const atBottom = () => logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight <= 8;
+  function pin() {
+    if (following) logEl.scrollTop = logEl.scrollHeight;
+    else if (!atBottom()) jump.hidden = false;
+  }
+  function follow(on: boolean) {
+    following = on;
+    if (on) jump.hidden = true;
+    pin();
+  }
+  // A wheel or touch moving up is you reading back: stop following at once,
+  // before the next pin can pull you down again.
+  logEl.addEventListener("wheel", (e) => { if (e.deltaY < 0 && logEl.scrollHeight > logEl.clientHeight) following = false; }, { passive: true });
+  logEl.addEventListener("touchmove", () => { if (!atBottom()) following = false; }, { passive: true });
+  logEl.addEventListener("keydown", (e) => { if (["ArrowUp", "PageUp", "Home"].includes(e.key)) following = false; });
+  logEl.addEventListener("scroll", () => {
+    if (atBottom()) follow(true);
+    else if (following && logEl.scrollTop < lastScrollTop) following = false; // dragged the scrollbar up
+    lastScrollTop = logEl.scrollTop;
+  }, { passive: true });
+  new MutationObserver(() => pin()).observe(logEl, { childList: true, subtree: true, characterData: true });
+  new ResizeObserver(() => pin()).observe(logEl);
+  logEl.addEventListener("load", () => pin(), true); // screenshots arrive after their event
+  jump.addEventListener("click", () => follow(true));
+
+  function render() {
+    logEl.textContent = "";
+    els = log.items.map((it, i) => renderItem(it, i));
+    logEl.append(...els);
+    follow(true);
+  }
+
+  // A message shows in the log the moment it's sent, dimmed until the host
+  // echoes it back as the conversation's (which replaces it).
+  const sends: { text: string; el: HTMLElement }[] = [];
+  function apply(ev: LogEvent) {
+    // The host's copy of a message sent from this tab takes the place of the dimmed one.
+    if (ev.t == "user") {
+      const i = sends.findIndex((p) => p.text == ev.text);
+      if (i >= 0) { sends[i].el.remove(); sends.splice(i, 1); }
+    }
+    const before = log.items.length;
+    const i = reduce(log, ev);
+    if (ev.t == "reset") { render(); return; }
+    if (i >= 0) {
+      const el = renderItem(log.items[i], i);
+      if (i < before) { els[i].replaceWith(el); els[i] = el; }
+      else { logEl.append(el); els[i] = el; }
+    }
+    // A success may turn earlier failures on the same file into retries.
+    if (ev.t == "tool" && ev.status == "done") {
+      for (let j = 0; j < i; j++) if (retried(j) && !els[j].classList.contains("retried")) { const el = renderItem(log.items[j], j); els[j].replaceWith(el); els[j] = el; }
+    }
+    pin();
+  }
+
+  function pending(text: string) {
+    const el = document.createElement("div");
+    el.className = "msg-user pending";
+    el.textContent = text;
+    logEl.append(el);
+    const p = { text, el };
+    sends.push(p);
+    // Asking something means you want to see the answer.
+    follow(true);
+    return {
+      fail(reason: string, retry: () => void) {
+        const at = sends.indexOf(p);
+        if (at >= 0) sends.splice(at, 1);
+        el.classList.replace("pending", "failed");
+        const note = document.createElement("span");
+        note.className = "send-failed";
+        note.textContent = `Not sent: ${reason}. `;
+        const again = Object.assign(document.createElement("button"), { type: "button", textContent: "Try again" });
+        again.addEventListener("click", () => { el.remove(); retry(); });
+        note.append(again);
+        el.append(note);
+        pin();
+      },
+    };
+  }
+
+  return { log, render, apply, follow, pin, pending };
+}

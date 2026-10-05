@@ -24,7 +24,8 @@ import { colorFor, files, type Author } from "../room/doc";
 import type { mountTree, TreeHandle } from "./tree";
 import { analyzeMarkdown } from "./markdown";
 import TurndownService from "turndown";
-import { emptyLog, reduce, type Log, type LogEvent, type LogItem, type ViewRequest, type ViewResult } from "./agent-log";
+import { type Log, type LogEvent, type ViewRequest, type ViewResult } from "./agent-log";
+import { chat, escapeHtml } from "./agent-chat";
 import type { AgentState, DocInfo, DocName, ModelState } from "../../api";
 import { BASE } from "./base";
 import type { Settings } from "./settings";
@@ -1314,8 +1315,6 @@ Once you've read the guide, await further instructions.`;
   const agentLog = $("agent-log");
   const agentInput = $("agent-input") as HTMLTextAreaElement;
   const agentSend = $("agent-send") as HTMLButtonElement;
-  const log: Log = emptyLog();
-  let logEls: HTMLElement[] = [];
   const agentHint = $("agent-hint");
   // Why the agent can't take a message right now, shown in the panel until it can.
   let agentOff: string | null = "Connecting to the agent…";
@@ -1323,80 +1322,18 @@ Once you've read the guide, await further instructions.`;
   let voice: { rec: Recognition; before: string; sent: number; results: number; heard: string; partial: boolean; timer: number } | null = null;
   let hintTimer = 0;
 
-  const escapeHtml = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
-  const inline = (s: string) => escapeHtml(s).replace(/`([^`\n]+)`/g, "<code>$1</code>").replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>");
-  const TOOL_VERBS: Record<string, [string, string]> = {
-    read: ["Reading", "Read"], edit: ["Editing", "Edited"], write: ["Writing", "Wrote"],
-    ls: ["Listing", "Listed"], find: ["Finding files", "Found files"], grep: ["Searching", "Searched"],
-    view_page: ["Looking at the page", "Looked at the page"],
-  };
-  /** A failed tool call that a later call on the same file got past is history, not an error. */
-  const retried = (i: number) => {
-    const item = log.items[i];
-    if (item.kind != "tool" || item.status != "error") return false;
-    return log.items.slice(i + 1).some((x) => x.kind == "tool" && x.status == "done" && x.path == item.path && (x.name == item.name || x.name == "write"));
-  };
-  function renderItem(item: LogItem, i: number): HTMLElement {
-    const el = document.createElement("div");
-    el.className = "msg-" + item.kind;
-    if (item.kind == "user" || item.kind == "thinking" || item.kind == "error") el.textContent = item.text;
-    else if (item.kind == "assistant") el.innerHTML = inline(item.text);
-    else {
-      const [doing, done] = TOOL_VERBS[item.name] ?? [item.name, item.name];
-      const what = item.path ? ` <code>${escapeHtml(item.path)}</code>` : "";
-      // A call from an agent you shared the page with (the share button) says so.
-      const via = item.via == "external" ? `<span class="via" title="An agent you shared this page with, working as your agent">External agent:</span> ` : "";
-      if (retried(i)) {
-        el.classList.add("retried");
-        el.title = item.detail ?? "";
-        el.innerHTML = `<span>${via}${doing}${what} didn't apply; retried</span>`;
-      } else {
-        el.classList.add(item.status);
-        el.innerHTML = `<span>${via}${item.status == "running" ? doing : item.status == "error" ? `${doing} failed:` : done}${what}${item.detail ? `<span class="detail">${escapeHtml(item.detail)}</span>` : ""}${item.image ? `<img class="shot" alt="What the agent saw" src="${item.image}">` : ""}</span>`;
-      }
-    }
-    return el;
-  }
+  // The conversation as the log shows it (agent-chat.ts, which the factory's panel on /admin/source shares).
+  const agentChat = chat({
+    logEl: agentLog, jump: $("agent-jump") as HTMLButtonElement,
+    verbs: { read: ["Reading", "Read"], edit: ["Editing", "Edited"], write: ["Writing", "Wrote"], ls: ["Listing", "Listed"], find: ["Finding files", "Found files"], grep: ["Searching", "Searched"], view_page: ["Looking at the page", "Looked at the page"] },
+    externalTip: "An agent you shared this page with, working as your agent",
+  });
+  const log: Log = agentChat.log;
+  const follow = agentChat.follow;
   function renderLog() {
-    agentLog.textContent = "";
-    logEls = log.items.map((it, i) => renderItem(it, i));
-    agentLog.append(...logEls);
-    follow(true);
+    agentChat.render();
     renderBusy();
   }
-
-  // The log follows the agent's output, as a terminal does, until you
-  // scroll back to read something; scrolling to the bottom again (or the
-  // "Jump to latest" button, or sending a message) picks it back up. It's
-  // kept pinned whenever the log's content changes size, not just when an
-  // event arrives, so text that wraps later or a screenshot that loads after
-  // its event doesn't leave it behind.
-  const agentJump = $("agent-jump") as HTMLButtonElement;
-  let following = true, lastScrollTop = 0;
-  const atBottom = () => agentLog.scrollHeight - agentLog.scrollTop - agentLog.clientHeight <= 8;
-  function pin() {
-    if (following) agentLog.scrollTop = agentLog.scrollHeight;
-    else if (!atBottom()) agentJump.hidden = false;
-  }
-  function follow(on: boolean) {
-    following = on;
-    if (on) agentJump.hidden = true;
-    pin();
-  }
-  // A wheel or touch moving up is you reading back: stop following at once,
-  // before the next pin can pull you down again.
-  agentLog.addEventListener("wheel", (e) => { if (e.deltaY < 0 && agentLog.scrollHeight > agentLog.clientHeight) following = false; }, { passive: true });
-  agentLog.addEventListener("touchmove", () => { if (!atBottom()) following = false; }, { passive: true });
-  agentLog.addEventListener("keydown", (e) => { if (["ArrowUp", "PageUp", "Home"].includes(e.key)) following = false; });
-  agentLog.addEventListener("scroll", () => {
-    if (atBottom()) follow(true);
-    else if (following && agentLog.scrollTop < lastScrollTop) following = false; // dragged the scrollbar up
-    lastScrollTop = agentLog.scrollTop;
-  }, { passive: true });
-  new MutationObserver(() => pin()).observe(agentLog, { childList: true, subtree: true, characterData: true });
-  new ResizeObserver(() => pin()).observe(agentLog);
-  agentLog.addEventListener("load", () => pin(), true); // screenshots arrive after their event
-  agentJump.addEventListener("click", () => follow(true));
   /** Why Send can't send right now, or null if it can. Never a silent no. */
   function sendBlocker(): string | null {
     if (agentOff) return agentOff;
@@ -1432,26 +1369,9 @@ Once you've read the guide, await further instructions.`;
     agentHint.classList.remove("sticky");
   }
   function agentEvent(ev: LogEvent) {
-    // The host's copy of a message sent from this tab takes the place of the dimmed one.
-    if (ev.t == "user") {
-      const i = pendingSends.findIndex((p) => p.text == ev.text);
-      if (i >= 0) { pendingSends[i].el.remove(); pendingSends.splice(i, 1); }
-    }
-    const before = log.items.length;
-    const i = reduce(log, ev);
+    agentChat.apply(ev);
     if (ev.t == "busy") setAgentBusy(ev.busy || busyAgents().length > 0);
     if (ev.t == "undoable") renderUndo();
-    if (ev.t == "reset") { renderLog(); return; }
-    if (i >= 0) {
-      const el = renderItem(log.items[i], i);
-      if (i < before) { logEls[i].replaceWith(el); logEls[i] = el; }
-      else { agentLog.append(el); logEls[i] = el; }
-    }
-    // A success may turn earlier failures on the same file into retries.
-    if (ev.t == "tool" && ev.status == "done") {
-      for (let j = 0; j < i; j++) if (retried(j) && !logEls[j].classList.contains("retried")) { const el = renderItem(log.items[j], j); logEls[j].replaceWith(el); logEls[j] = el; }
-    }
-    pin();
     renderBusy();
   }
 
@@ -1490,31 +1410,14 @@ Once you've read the guide, await further instructions.`;
   // echoes it back as the conversation's (which replaces it). If it can't be
   // sent, it says so, with a way to try again: never a send that silently
   // goes nowhere.
-  const pendingSends: { text: string; el: HTMLElement }[] = [];
   async function ask(text: string, context: string | null) {
-    const el = document.createElement("div");
-    el.className = "msg-user pending";
-    el.textContent = text;
-    agentLog.append(el);
-    const pending = { text, el };
-    pendingSends.push(pending);
-    // Asking something means you want to see the answer.
-    follow(true);
+    const sent = agentChat.pending(text);
     // The agent reads the shared doc; `after` makes the host wait until the
     // room has every edit this tab had made (they travel over the WebSocket).
     const res = await fetch(api("/api/agent"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text, context, after: collab.vector() }), signal: AbortSignal.timeout(15_000) }).catch((e: Error) => e);
     if (!(res instanceof Response) || !res.ok) {
       const reason = res instanceof Response ? ((await res.json().catch(() => null)) as { reason?: string } | null)?.reason ?? `the host answered ${res.status}` : res.name == "TimeoutError" ? "the editor's host didn't answer in time" : "the editor's host didn't answer";
-      pendingSends.splice(pendingSends.indexOf(pending), 1);
-      el.classList.replace("pending", "failed");
-      const note = document.createElement("span");
-      note.className = "send-failed";
-      note.textContent = `Not sent: ${reason}. `;
-      const retry = Object.assign(document.createElement("button"), { type: "button", textContent: "Try again" });
-      retry.addEventListener("click", () => { el.remove(); ask(text, context); });
-      note.append(retry);
-      el.append(note);
-      pin();
+      sent.fail(reason, () => ask(text, context));
     }
     renderBusy();
   }

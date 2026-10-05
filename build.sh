@@ -2,7 +2,8 @@
 # Builds page.js (the page editor's shell, from src/page/) as a classic script
 # that page.html loads, frame.js (the editor itself, which runs on each
 # document's own origin), settings.js (document settings) and pages-tree.js (a
-# document's pages), both loaded on demand. Usage: ./build.sh
+# document's pages), both loaded on demand, and factory-agent.js (the agent
+# panel on /admin/source). Usage: ./build.sh
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 cd "$here"
@@ -23,4 +24,8 @@ echo "built settings.js ($(wc -c < settings.js | tr -d " ") bytes)"
 bun build src/page/tree.ts --format iife --minify --outfile ".pages-tree.js.$$" \
   --banner "/* Built by build.sh from src/page/. Erga page editor, the pages tree. */"
 mv -f ".pages-tree.js.$$" pages-tree.js
+# The factory's agent panel on /admin/source (src/page/factory-agent.ts): the editor's agent panel, for factory tasks.
+bun build src/page/factory-agent.ts --format iife --minify --outfile ".factory-agent.js.$$" \
+  --banner "/* Built by build.sh from src/page/. Erga, the factory's agent panel. */"
+mv -f ".factory-agent.js.$$" factory-agent.js
 echo "built page.js ($(wc -c < page.js | tr -d " ") bytes), frame.js ($(wc -c < frame.js | tr -d " ") bytes), pages-tree.js ($(wc -c < pages-tree.js | tr -d " ") bytes)"
