@@ -391,9 +391,14 @@ async function processesIn(dir: string): Promise<[number, string][]> {
  * server, a build or a test an agent left behind) stopped too, so nothing in the worktree waits on it. Logged.
  */
 async function quietWorktree(task: Task) {
-  const wt = task.worktree!;
   if (task.preview && !(await stopPreviewAndWait(task))) touch(task, {}, `The preview didn't stop in ${TIMEOUTS.stop}s`);
-  const left = await processesIn(wt);
+  await stopLeftovers(task);
+}
+
+/** Stops whatever still runs in the task's worktree (SIGTERM, then SIGKILL after TIMEOUTS.stop), and logs it. */
+async function stopLeftovers(task: Task) {
+  if (!task.worktree || !existsSync(task.worktree)) return;
+  const left = await processesIn(task.worktree);
   if (!left.length) return;
   for (const [pid] of left) try { process.kill(pid, "SIGTERM"); } catch {}
   for (const end = Date.now() + TIMEOUTS.stop * 1000; left.some(([pid]) => alive(pid)) && Date.now() < end; ) await Bun.sleep(100);
@@ -951,8 +956,9 @@ async function restartIfWanted() {
 
 /** Stops the preview and removes the worktree and branch (force: even unmerged, for a discarded task). */
 async function cleanUp(task: Task, force: boolean) {
-  stopPreview(task);
+  await stopPreviewAndWait(task);
   await closeChrome(task);
+  await stopLeftovers(task); // nothing left running in a folder about to go
   if (task.worktree && existsSync(task.worktree)) {
     const r = await run(["git", "worktree", "remove", "--force", task.worktree], REPO);
     touch(task, {}, r.ok ? "Worktree removed" : `Couldn't remove worktree: ${r.all}`);
