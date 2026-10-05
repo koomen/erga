@@ -14,6 +14,9 @@
 //   --builder                              (deploy the builder again, e.g. after deploy/builder/ changed)
 //   --no-deploy                            (skip staging's deploy from this machine)
 //   bun deploy/setup.ts --hook-secret      (only a new DEPLOY_HOOK_SECRET on both Workers; not kept anywhere else)
+//   bun deploy/setup.ts --factory          (only the factory's VMs on staging, or with --production on erga.dev too:
+//                                           FACTORY_KEY made if it's missing; the image built, pushed and prepared;
+//                                           the container application made. Needs Docker if the image is new.)
 //
 // The credential is yours, never a server's: CLOUDFLARE_API_TOKEN if set,
 // else the cf CLI's login (deploy/credential.ts). It needs Workers, D1,
@@ -37,8 +40,9 @@ import { randomBytes } from "node:crypto";
 import { Cloudflare, DeployError, zoneIdOf, type Fetch } from "./cloudflare";
 import { machineCredential } from "./credential";
 import { MOCK_HOOK_SECRET, mockCloudflare } from "./mock";
+import { ensureFactoryApp, factoryNamespace, imageRef, prepareImage } from "./containers";
 import { ask, deployFromMachine } from "./run";
-import { BUILDER, SOURCE, TARGETS } from "./targets";
+import { BUILDER, FACTORY, SOURCE, TARGETS } from "./targets";
 import { checkToken, createToken, describePlan, diagnoseMaker, olderTokens, permissionIds, policiesFor, tokenPlan, type TokenPlan } from "./tokens";
 
 const args = process.argv.slice(2);
@@ -58,7 +62,7 @@ const PLAN = [
   `Staging's GitHub OAuth app: its Client ID in deploy/targets.json (homepage https://${STAGING.host}, callback https://${STAGING.host}/auth/github/callback).`,
   `A certificate for *.${STAGING.pages.domain} (documents' pages on staging): ${UNIVERSAL ? `the zone's free Universal SSL certificate covers it (it covers *.${STAGING.pages.zone}).` : `Universal SSL covers only *.${STAGING.pages.zone}. An advanced certificate is paid: ordered only with --certificate.`}`,
   `The builder Worker (${BUILDER}, deploy/builder/): deployed with \`bunx ${WRANGLER} deploy\` there (Docker builds its image) if it isn't there, or with --builder.`,
-  `Staging's secrets: a SESSION_SECRET (kept if it has one), its GitHub app's client secret, an Anthropic key if you want the agent, and two shared with production: SNAPSHOT_TOKEN and DEPLOY_HOOK_SECRET.`,
+  `Staging's secrets: a SESSION_SECRET and a FACTORY_KEY (each kept if it has one), its GitHub app's client secret, an Anthropic key if you want the agent, and two shared with production: SNAPSHOT_TOKEN and DEPLOY_HOOK_SECRET.`,
   `Production's Worker (${PROD.worker}): set SNAPSHOT_TOKEN and DEPLOY_HOOK_SECRET on it (a new version of the same code; nothing else changes), so staging can read its documents and production can pass staging's pushes on.`,
   `The staging deploy, from this machine: build HEAD, make ${STAGING.worker} and its database ${STAGING.database} with a copy of production's data, ${STAGING.host}, *.${STAGING.pages.domain}.`,
   `Staging's deploy token (${tokenPlan("staging").name}): Editor on ${tokenPlan("staging").workers.join(", ")} only, D1, read on its zones. Made, checked with itself, stored on ${STAGING.worker} as CLOUDFLARE_DEPLOY_TOKEN.`,
@@ -81,6 +85,49 @@ if (flag("--hook-secret")) {
     console.log(`Set on ${worker}.`);
   }
   process.exit(0);
+}
+
+// --factory: the factory's VMs (README, The factory) on staging, and with --production on erga.dev: what a deploy token
+// may not do itself (deploy/tokens.ts gives it no Containers permission). Each step only if it's missing.
+if (flag("--factory")) {
+  const accountId = mock ? "0123456789abcdef0123456789abcdef" : process.env.CLOUDFLARE_ACCOUNT_ID?.trim() ?? "";
+  const cred = mock ? { token: "mock-setup-token", from: "the mock" } : machineCredential();
+  if (!/^[0-9a-f]{32}$/.test(accountId) || !cred) { console.error("--factory: set CLOUDFLARE_ACCOUNT_ID and log in with `bunx cf auth login`."); process.exit(1); }
+  const cf = new Cloudflare(cred.token, mock ? mockCloudflare({ fleet: true }).fetch : globalThis.fetch.bind(globalThis));
+  const workers = [STAGING.worker, ...(withProduction ? [PROD.worker] : [])];
+  console.log(`The factory's VMs on ${workers.join(" and ")}:`);
+  console.log(`  1. FACTORY_KEY (encrypts the stored Claude token, signs the VMs' tokens): made and set if a Worker has none (a new version of the same code).`);
+  console.log(`  2. The image ${FACTORY.image}: in the registry and prepared for Containers (built and pushed with Docker if it's missing).`);
+  console.log(`  3. The container application for each Worker's FactoryVm namespace: made if it's missing.`);
+  if (dry) { console.log("--dry-run: nothing done."); process.exit(0); }
+  if (!ask("Go on?", yes)) process.exit(1);
+  try {
+    for (const worker of workers) {
+      const had = ((await cf.call<{ name: string }[]>("GET", `/accounts/${accountId}/workers/scripts/${worker}/secrets`, `list ${worker}'s secrets`)) ?? []).map((x) => x.name);
+      if (had.includes("FACTORY_KEY")) console.log(`1. ${worker}: FACTORY_KEY is there (kept).`);
+      else {
+        await cf.call("PUT", `/accounts/${accountId}/workers/scripts/${worker}/secrets`, `set FACTORY_KEY on ${worker}`, { name: "FACTORY_KEY", text: randomBytes(32).toString("base64"), type: "secret_text" });
+        console.log(`1. ${worker}: FACTORY_KEY made and set (not printed, not kept here).`);
+      }
+    }
+    if (!mock) {
+      const { pushImage } = await import("../factory/vm/push");
+      const image = await pushImage(cf, accountId, (l) => console.log(`   ${l}`), FACTORY.image);
+      if (image != FACTORY.image) throw new DeployError(`The registry's image is ${image}, but deploy/targets.json names ${FACTORY.image}: run bun factory/vm/push.ts, commit deploy/targets.json, and deploy.`);
+    }
+    await prepareImage(cf, accountId, imageRef(accountId, FACTORY.image));
+    console.log(`2. ${FACTORY.image}: in the registry, prepared.`);
+    for (const worker of workers) {
+      const ns = await factoryNamespace(cf, accountId, worker);
+      if (!ns) { console.log(`3. ${worker}: no FactoryVm namespace yet. Deploy a release with it (this code), then run this again.`); continue; }
+      console.log(`3. ${worker}: the container application ${await ensureFactoryApp(cf, accountId, worker, ns) == "made" ? "made" : "is there"} (${ns}).`);
+    }
+    console.log("Done. On /admin set factory to on, then open /admin/source: VMs should say cloudflare.");
+    process.exit(0);
+  } catch (e) {
+    console.error(`Stopped: ${(e as Error).message}`);
+    process.exit(1);
+  }
 }
 
 console.log(`Setting up ${STAGING.host}${mock ? " (the mock Cloudflare: nothing real)" : ""}${tokensOnly ? ", the deploy tokens only" : ""}. The steps:\n`);
@@ -195,12 +242,12 @@ try {
     const had = scripts.includes(STAGING.worker)
       ? ((await cf.call<{ name: string }[]>("GET", `${acc}/workers/scripts/${STAGING.worker}/secrets`, `list ${STAGING.worker}'s secrets`).catch(() => [])) ?? []).map((s) => s.name)
       : [];
-    const secrets: Record<string, string> = { ...(had.includes("SESSION_SECRET") ? {} : { SESSION_SECRET: secret() }), ...shared };
+    const secrets: Record<string, string> = { ...(had.includes("SESSION_SECRET") ? {} : { SESSION_SECRET: secret() }), ...(had.includes("FACTORY_KEY") ? {} : { FACTORY_KEY: randomBytes(32).toString("base64") }), ...shared };
     const github = read("GITHUB_CLIENT_SECRET", "mock-staging-github-client-secret");
     if (github) secrets.GITHUB_CLIENT_SECRET = github;
     const anthropic = read("ANTHROPIC_API_KEY");
     if (anthropic) secrets.ANTHROPIC_API_KEY = anthropic;
-    console.log(`   Ready: ${Object.keys(secrets).join(", ")}${had.includes("SESSION_SECRET") ? " (SESSION_SECRET kept as it is)" : ""} (new ones made here; none are printed).`);
+    console.log(`   Ready: ${Object.keys(secrets).join(", ")}${had.includes("SESSION_SECRET") ? " (SESSION_SECRET kept as it is)" : ""}${had.includes("FACTORY_KEY") ? " (FACTORY_KEY kept as it is)" : ""} (new ones made here; none are printed).`);
 
     step(7);
     if (ask(`   Set SNAPSHOT_TOKEN and DEPLOY_HOOK_SECRET on ${PROD.worker} (production)?`, yes)) {
@@ -231,6 +278,7 @@ try {
   const version = await (await net(`https://${STAGING.host}/api/deploys/version`)).json().catch(() => null) as { version?: string; target?: string } | null;
   console.log(`   https://${STAGING.host} runs ${version?.version ?? "(no answer)"}; it says it's ${version?.target ?? "?"}.`);
   const bound = ((await cf.call<{ bindings?: { name: string; type: string; namespace?: string }[] }>("GET", `${acc}/workers/scripts/${STAGING.worker}/settings`, `read ${STAGING.worker}'s settings`).catch(() => null))?.bindings ?? []).find((b) => b.type == "artifacts");
+  console.log(`   The factory's VMs: bun deploy/setup.ts --factory makes what a deploy token can't (the container application, the image's preparation).`);
   console.log(bound ? `   ${STAGING.worker} has the Artifacts binding (${bound.name}, namespace ${bound.namespace}): its Git endpoint, and so the factory, can write Erga's source.` : `   ${STAGING.worker} has no Artifacts binding: it has no Git endpoint, and the factory can't push. Deploy it again from a build that binds it.`);
   console.log(`\nDone. Next: push the staging branch (git push https://${STAGING.host}/git/erga.git staging) and watch https://${STAGING.host}/source (or /api/deploys/staging/log).`);
 } catch (e) {

@@ -11,6 +11,7 @@ import { deployHook, publishEvent } from "../deploy/index";
 import { SourceError, SourceRepo, type Actor } from "../source/repo";
 import { artifactsRemote, githubRemote } from "./artifacts";
 import type { Env } from "./env";
+import type { GitGrant } from "../factory/git-grant";
 
 export class SourceHost extends DurableObject<Env> {
   private origin = "";
@@ -44,13 +45,15 @@ export class SourceHost extends DurableObject<Env> {
     if (!actor) return new Response("Who's pushing?", { status: 400 });
     const repo = this.at(request.headers.get("x-erga-origin") ?? "");
     try {
-      return new Response(await repo.receive(new Uint8Array(await request.arrayBuffer()), actor) as BodyInit, { headers: { "Content-Type": "application/x-git-receive-pack-result" } });
+      // The Worker checked the factory token's signature (worker/source.ts) before it sent the grant here.
+      const grant = JSON.parse(request.headers.get("x-erga-grant") ?? "null") as GitGrant | null;
+      return new Response(await repo.receive(new Uint8Array(await request.arrayBuffer()), actor, grant ?? undefined) as BodyInit, { headers: { "Content-Type": "application/x-git-receive-pack-result" } });
     } catch (e) {
       return new Response(`${(e as Error).message}\n`, { status: e instanceof SourceError ? e.status : 502 });
     }
   }
 
-  advertise(origin: string) { return this.at(origin).advertise(); }
+  advertise(origin: string, grant?: GitGrant) { return this.at(origin).advertise(grant); }
   branches(origin: string) { return this.at(origin).branches(); }
   mirrorNow(origin: string) { return this.at(origin).mirror(); }
   files(origin: string, commit: string) { return this.at(origin).files(commit); }

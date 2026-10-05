@@ -46,7 +46,8 @@
 
 import { ALL_STEPS, Cloudflare, DeployError, runPipeline, stepsFor, workerVersion, type Carry, type Fetch, type Release, type StepId, type Target } from "./cloudflare";
 import { sourceFor, type Source } from "./source";
-import { BUILDER, isTargetName, PRODUCTION, SOURCE, TARGETS, targetNames, type TargetName, type TargetSpec } from "./targets";
+import { imageRef } from "./containers";
+import { BUILDER, FACTORY, isTargetName, PRODUCTION, SOURCE, TARGETS, targetNames, type TargetName, type TargetSpec } from "./targets";
 
 export type DeployState = "idle" | "building" | "deploying" | "deployed" | "failed" | "cancelled";
 export interface StepStatus { id: StepId | "build"; title: string; status: "pending" | "running" | "done" | "skipped" | "failed" | "cancelled"; detail?: string }
@@ -601,7 +602,7 @@ export class BranchDeploys {
     if (run.cursor == "worker" && run.carry.version) {
       const target = targetOf(TARGETS[name], this.deps.env);
       const there = await workerVersion(new Cloudflare(this.deps.env.CLOUDFLARE_DEPLOY_TOKEN!.trim(), this.deps.net), target.accountId, target.workerName).catch(() => null);
-      if (there == run.carry.version) { step(s, "worker", "done", `${target.workerName}, release ${there}`); this.line(s, `Upload the Worker, with its settings and secrets: done (release ${there} is up)`, "worker"); run.cursor = "address"; }
+      if (there == run.carry.version) { step(s, "worker", "done", `${target.workerName}, release ${there}`); this.line(s, `Upload the Worker, with its settings and secrets: done (release ${there} is up)`, "worker"); const ids = stepsFor(target).map((x) => x.id); run.cursor = ids[ids.indexOf("worker") + 1] ?? null; }
     }
     const past = run.cursor != null && order.indexOf(run.cursor) > order.indexOf("worker");
     if (!past) {
@@ -727,5 +728,7 @@ export function targetOf(spec: TargetSpec, env: DeployEnv): Target {
     production: spec.name == "production",
     guard: { ...PRODUCTION, accountId },
     ...(from ? { snapshot: { databaseName: from.database, origin: `https://${from.host}`, token: env.SNAPSHOT_TOKEN?.trim() ?? "" } } : {}),
+    // The factory's VMs (factory/cloudflare.ts): its image in this account's registry, previews on the pages' domain.
+    ...(spec.factory ? { factory: { image: imageRef(accountId, FACTORY.image), previews: spec.pages.domain } } : {}),
   };
 }

@@ -76,6 +76,8 @@ export interface MockState {
   failNext: string | null;
   /** Account API tokens made through the API (their values aren't here: only the tests read them, from `tokenValues`). */
   tokens: { id: string; name: string; policies: TokenPolicy[] }[];
+  /** Containers (the factory's VMs, deploy/containers.ts): images prepared, and applications by id (= their namespace's id). */
+  containers: { prepared: string[]; apps: Record<string, { name: string; scheduling_policy: string; durable_objects: { namespace_id: string } }> };
 }
 
 interface TokenPolicy { effect: string; permission_groups: { id: string; name?: string }[]; resources: Record<string, string | Record<string, string>> }
@@ -93,6 +95,8 @@ const GROUPS: Record<string, string> = {
 
 /** A Worker's tag (its id in GET /workers/scripts, and in a token's resources): fixed by its name, here. */
 export const scriptTag = (name: string) => createHash("md5").update(`script:${name}`).digest("hex");
+/** A Durable Object namespace's id: fixed by its Worker and class, here. */
+export const namespaceId = (script: string, className: string) => createHash("md5").update(`ns:${script}:${className}`).digest("hex");
 
 const ACCOUNT_ID = "0123456789abcdef0123456789abcdef";
 
@@ -117,13 +121,19 @@ export function mockCloudflare(opts: {
   onUpload?: (script: string, metadata: Record<string, any>) => void;
   /** A Worker's own answer, before the mock's (the tests route /api/deploys/... to the servers they run). */
   sites?: (req: Request, script: string) => Promise<Response | null> | Response | null;
+  /**
+   * Whether a token made through the API (mock-scoped-…, Editor on its Workers only, no Containers permission) may
+   * upload a version that names a container image. Cloudflare's answer isn't known yet: "refuse" (the default)
+   * plays the cautious one, and the pipeline then deploys without the factory's VMs.
+   */
+  scopedContainers?: "refuse" | "accept";
 } = {}): { fetch: Fetch; state: MockState; tokenValues: Map<string, string> } {
   const state: MockState = {
     account: { id: ACCOUNT_ID, name: "Ada's account" },
     subdomain: "ada-mock",
     zones: [{ id: "zone0000000000000000000000000001", name: "ada-example.com", status: "active" }, { id: "zone0000000000000000000000000002", name: "ada-pages.net", status: "active" }],
     databases: [], scripts: {}, assets: { manifest: {}, uploaded: [] }, domains: [], routes: {}, dns: {}, registrations: [], calls: [], revoked: 0,
-    secrets: {}, docs: {}, versions: {}, deletedDatabases: [], failNext: null, tokens: [],
+    secrets: {}, docs: {}, versions: {}, deletedDatabases: [], failNext: null, tokens: [], containers: { prepared: [], apps: {} },
   };
   /** Tokens' values, by token id (never in `state`). */
   const tokenValues = new Map<string, string>();
@@ -326,6 +336,12 @@ export function mockCloudflare(opts: {
         const modules = [...form.keys()].filter((k) => k != "metadata");
         if (!modules.includes(meta.main_module)) return fail(400, 10021, `No such module "${meta.main_module}"`);
         if (meta.migrations && meta.exports) return fail(400, 10021, "migrations and Durable Object exports can't be used together");
+        // A version naming container images (the factory's): each prepared first, its class one of the version's Durable Objects.
+        for (const c of meta.containers ?? []) {
+          if (token.startsWith("mock-scoped-") && (opts.scopedContainers ?? "refuse") == "refuse") return fail(403, 10000, "Authentication error: containers");
+          if (!c.class_name || !meta.exports?.[c.class_name]) return fail(400, 10021, `container ${c.name}: no Durable Object class ${c.class_name}`);
+          for (const ref of Object.values(c.images ?? {}) as string[]) if (!state.containers.prepared.includes(ref)) return fail(400, 10021, `container ${c.name}: image ${ref} isn't prepared`);
+        }
         const prev = state.scripts[r[1]];
         // Durable Objects: a namespace per class in exports, made the first time, matched after.
         const namespaces = [...new Set([...(prev?.namespaces ?? []), ...Object.entries(meta.exports ?? {}).filter(([, e]: [string, any]) => e.type == "durable-object" && e.storage == "sqlite").map(([n]) => n)])];
@@ -354,7 +370,8 @@ export function mockCloudflare(opts: {
       }
       if (m == "GET" && (r = /^\/workers\/scripts\/([^/]+)\/settings$/.exec(rest))) {
         if (!state.scripts[r[1]]) return fail(404, 10007, "This Worker does not exist on your account.");
-        return ok({ bindings: state.scripts[r[1]].metadata.bindings ?? [], compatibility_date: state.scripts[r[1]].metadata.compatibility_date });
+        const bindings = (state.scripts[r[1]].metadata.bindings ?? []).map((b: any) => (b.type == "durable_object_namespace" && !b.script_name ? { ...b, namespace_id: namespaceId(r![1], b.class_name) } : b));
+        return ok({ bindings, compatibility_date: state.scripts[r[1]].metadata.compatibility_date });
       }
       if ((r = /^\/workers\/scripts\/([^/]+)\/secrets$/.exec(rest))) {
         if (!state.scripts[r[1]]) return fail(404, 10007, "This Worker does not exist on your account.");
@@ -368,6 +385,25 @@ export function mockCloudflare(opts: {
           state.versions[r[1]] = (state.versions[r[1]] ?? 0) + 1;
           return ok({ name: b.name, type: "secret_text" });
         }
+      }
+      // Containers: images prepared (any in this account's registry), and the factory's application.
+      if (m == "POST" && rest == "/containers/image-preparations") {
+        const b = await body();
+        if (typeof b?.image != "string" || !b.image.startsWith(`registry.cloudflare.com/${ACCOUNT_ID}/`) || !/@sha256:[0-9a-f]{64}$/.test(b.image)) return fail(400, 1000, "image must be digest-pinned and hosted in a supported managed registry");
+        if (!state.containers.prepared.includes(b.image)) state.containers.prepared.push(b.image);
+        return ok({ status: "ready" });
+      }
+      if (m == "GET" && (r = /^\/containers\/applications\/([0-9a-f]+)$/.exec(rest))) {
+        const app = state.containers.apps[r[1]];
+        return app ? ok({ id: r[1], ...app }) : fail(404, 1404, "application not found");
+      }
+      if (m == "POST" && rest == "/containers/applications") {
+        const b = await body();
+        const ns = b?.durable_objects?.namespace_id;
+        if (b?.scheduling_policy != "durable_object" || !ns || !b.name) return fail(400, 10021, "name, scheduling_policy durable_object and durable_objects.namespace_id are required");
+        if (state.containers.apps[ns]) return fail(409, 10409, "an application for that namespace exists");
+        state.containers.apps[ns] = { name: b.name, scheduling_policy: b.scheduling_policy, durable_objects: { namespace_id: ns } };
+        return ok({ id: ns, ...state.containers.apps[ns] });
       }
       if (m == "GET" && (r = /^\/artifacts\/namespaces\/([^/]+)\/repos\/([^/]+)$/.exec(rest))) {
         if (!opts.fleet || r[1] != "erga" || r[2] != "erga") return fail(404, 10404, "repo not found");
@@ -532,6 +568,8 @@ function stepOf(method: string, path: string): string {
   if (/\/d1\/database(\?|$)/.test(path) || (method == "DELETE" && /\/d1\/database\/[^/]+$/.test(path))) return "database";
   if (/\/d1\/database\/[^/]+\/query/.test(path)) return "migrations";
   if (/assets/.test(path)) return "assets";
+  if (/\/containers\/image-preparations$/.test(path)) return "image";
+  if (/\/containers\/applications/.test(path)) return "vms";
   if (/\/workers\/scripts\/[^/]+$/.test(path) && !/-pages$/.test(path) && method == "PUT") return "worker";
   if (/\/workers\/domains|\/workers\/scripts\/[^/]+\/subdomain/.test(path) && !/-pages\/subdomain/.test(path)) return "address";
   if (/\/dns_records|\/workers\/routes|-pages/.test(path)) return "pages";

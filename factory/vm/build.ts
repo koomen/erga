@@ -6,15 +6,24 @@
 //   bun factory/vm/build.ts --print    print the tag it would have, build nothing
 //
 // The context is staged in a temporary folder: the Dockerfile, package.json
-// and bun.lock (the dependencies the image caches), and the VM's scripts
-// (factory/vm/*.ts, as /opt/factory in the image). Nothing else of the repo
-// goes in: a task clones the source when it starts.
+// and bun.lock (the dependencies the image caches), and the VM's agent
+// (factory/vm/agent.ts, as /opt/factory/agent.ts). Nothing else of the repo
+// goes in: a task clones the source when it starts, and the jobs' scripts
+// come with each job (factory/vm/scripts.ts on Cloudflare, dev/factory.ts
+// locally).
+//
+// The tag is a hash of the Dockerfile, the agent and the Bun version only:
+// the dependencies in the image are a cache (a clone's `bun install` fetches
+// whatever it lacks), so a new lockfile doesn't need a new image. On
+// Cloudflare the image is pushed to the account's registry (`--push`,
+// factory/vm/push.ts) and named in deploy/targets.json (factory.image),
+// which tests/factory.test.ts keeps equal to this tag.
 //
 // Node's APIs only, not Bun's: the dev server (Vite, under Node) uses it too.
 
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -29,16 +38,19 @@ function inputs(): Record<string, string> {
     "package.json": join(ROOT, "package.json"),
     "bun.lock": join(ROOT, "bun.lock"),
   };
-  for (const name of readdirSync(VM).sort()) if (name.endsWith(".ts") && name != "build.ts") files[`scripts/${name}`] = join(VM, name);
+  files["scripts/agent.ts"] = join(VM, "agent.ts");
   return files;
 }
 
-/** The image's tag: erga-factory:<the first 12 hex of a hash of its inputs, and the Bun version>. */
+/** What names the image (the dependencies are only a cache). */
+const TAGGED = ["Dockerfile", "scripts/agent.ts"];
+
+/** The image's tag: erga-factory:<the first 12 hex of a hash of the Dockerfile, the agent and the Bun version>. */
 export function imageTag(): string {
   const h = createHash("sha256");
   const bun = readFileSync(join(ROOT, ".bun-version"), "utf8").trim();
   h.update(`bun ${bun}\n`);
-  for (const [path, file] of Object.entries(inputs())) h.update(`${path}\n`).update(readFileSync(file)).update("\n");
+  for (const [path, file] of Object.entries(inputs())) if (TAGGED.includes(path)) h.update(`${path}\n`).update(readFileSync(file)).update("\n");
   return `${IMAGE}:${h.digest("hex").slice(0, 12)}`;
 }
 
@@ -50,19 +62,22 @@ export function dockerUp(): boolean {
 /** Builds under way, by tag: VMs started at once wait for one build. */
 const building = new Map<string, Promise<string>>();
 
-/** The image, built if there isn't one with this tag yet. `log` hears Docker's output. */
-export function ensureImage(log: (line: string) => void = () => {}): Promise<string> {
-  const tag = imageTag();
+/**
+ * The image, built if there isn't one with this tag yet. `log` hears Docker's output. `platform`: another
+ * machine's (Cloudflare runs linux/amd64), tagged <tag>-<arch> here.
+ */
+export function ensureImage(log: (line: string) => void = () => {}, platform?: string): Promise<string> {
+  const tag = platform ? `${imageTag()}-${platform.split("/").pop()}` : imageTag();
   let b = building.get(tag);
   if (!b) {
-    building.set(tag, b = build(tag, log));
+    building.set(tag, b = build(tag, log, platform));
     b.finally(() => building.delete(tag)).catch(() => {});
   }
   return b;
 }
 
-async function build(tag: string, log: (line: string) => void): Promise<string> {
-  if (spawnSync("docker", ["image", "inspect", tag], { stdio: "ignore" }).status == 0) return tag;
+async function build(tag: string, log: (line: string) => void, platform?: string): Promise<string> {
+  if (spawnSync("docker", ["image", "inspect", tag], { stdio: "ignore" }).status == 0 && !process.env.ERGA_FACTORY_REBUILD) return tag;
   const ctx = mkdtempSync(join(tmpdir(), "erga-factory-image-"));
   try {
     for (const [path, file] of Object.entries(inputs())) {
@@ -71,7 +86,8 @@ async function build(tag: string, log: (line: string) => void): Promise<string> 
     }
     const bun = readFileSync(join(ROOT, ".bun-version"), "utf8").trim();
     log(`building ${tag} (the first build downloads Chromium and Claude Code: a few minutes)`);
-    const p = spawn("docker", ["build", "--build-arg", `BUN_VERSION=${bun}`, "-t", tag, "-t", `${IMAGE}:latest`, ctx], { stdio: ["ignore", "pipe", "pipe"] });
+    // For Cloudflare: one image, not an index with a provenance attestation beside it (Containers can't start those), as wrangler builds.
+    const p = spawn("docker", ["build", ...(platform ? ["--platform", platform, "--provenance=false"] : ["-t", `${IMAGE}:latest`]), "--build-arg", `BUN_VERSION=${bun}`, "-t", tag, ctx], { stdio: ["ignore", "pipe", "pipe"] });
     let tail = "";
     const take = (c: Buffer) => { const t = c.toString(); tail = (tail + t).slice(-4000); for (const l of t.split("\n")) if (l.trim()) log(l); };
     p.stdout.on("data", take);
