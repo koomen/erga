@@ -17,6 +17,12 @@
 //   4. If Claude Code ended without saying done or failed: pushes what's
 //      committed and reports it, or fails the task with why.
 //
+// Each run has its id (FACTORY_RUN, from the factory), which goes with its
+// reports, and a report marker of its own (common.ts, RUN). One run at a
+// time: a run, or a merge, that starts while an earlier run still goes (its
+// Claude Code said done, and says its last words) waits for it to end, then
+// stops it (task.ts, stopRun).
+//
 // Every step has a time limit (common.ts, LIMITS). A step that times out has
 // its process tree killed. The clone is tried twice, then the task fails (no
 // Claude Code has worked on it yet). A failed or hung install wakes Claude
@@ -24,10 +30,10 @@
 // runs past its limit is stopped and woken once (--continue) to finish; a
 // second time, the task fails.
 
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { api, claudeLog, CLONE, env, git, LIMITS, log, MODEL, modelError, prepareClaude, realClaude, REPORTED, scrub, step, stepError, testHooks, WORK } from "./common.ts";
-import { pushBranch } from "./task.ts";
+import { api, claudeLog, CLONE, env, git, LIMITS, log, MODEL, modelError, prepareClaude, realClaude, REPORTED, runField, scrub, step, stepError, testHooks, WORK } from "./common.ts";
+import { pidFile, pushBranch, stopRun } from "./task.ts";
 
 const job = (process.argv[2] ?? "work") as Job;
 const started = Date.now();
@@ -36,11 +42,21 @@ const secs = () => `${((Date.now() - started) / 1000).toFixed(1)}s`;
 interface Brief { title: string; branch: string; base: string; prompt: string; instructions?: string | null; maxTurns?: number }
 type Job = "work" | "revise" | "resolve";
 
+/** This job's pid file goes when it ends, unless another run has it now. */
+process.on("exit", () => {
+  try { if (readFileSync(pidFile("run"), "utf8") == String(process.pid)) { rmSync(pidFile("run"), { force: true }); rmSync(pidFile("claude"), { force: true }); } } catch { /* none */ }
+});
+
 async function main() {
   const brief = await api("/brief") as Brief;
   testHooks(brief.prompt);
   mkdirSync(WORK(), { recursive: true });
+  // This run's own id (the factory's, else one of its own), for its report (common.ts, RUN).
+  process.env.FACTORY_JOB_RUN = process.env.FACTORY_RUN || crypto.randomUUID().slice(0, 8);
   rmSync(REPORTED(), { force: true });
+  // One run at a time: an earlier one still going (it said done, and the merge woke Claude Code again) ends first.
+  if (await stopRun()) await log(`An earlier run of Claude Code was still going after ${LIMITS.stopRun}s: stopped, with everything it started`);
+  writeFileSync(pidFile("run"), String(process.pid));
   // `task` on the PATH, for Claude Code (and the stand-in).
   const bin = join(WORK(), "bin");
   mkdirSync(bin, { recursive: true });
@@ -100,7 +116,7 @@ async function main() {
     await log(`Claude Code ran past its limit (${limit / 60} min): stopped, with everything it started. Waking it to finish.`);
     res = await claude(brief, "", Math.min(limit, 3600), true);
     if (res.timedOut && !existsSync(REPORTED())) {
-      await api("", { method: "PATCH", json: { status: "failed", error: `Claude Code ran past its limit twice (${limit / 60} min, then ${Math.min(limit, 3600) / 60} min) and was stopped.${res.lastText ? ` Its last words: ${scrub(res.lastText).slice(0, 600)}` : ""}` } });
+      await api("", { method: "PATCH", json: { ...runField(), status: "failed", error: `Claude Code ran past its limit twice (${limit / 60} min, then ${Math.min(limit, 3600) / 60} min) and was stopped.${res.lastText ? ` Its last words: ${scrub(res.lastText).slice(0, 600)}` : ""}` } });
       return;
     }
   }
@@ -108,15 +124,18 @@ async function main() {
   // 4. Claude Code ended: did it report?
   if (existsSync(REPORTED())) return;
   // A model the plan can't use (the factory_model setting): said plainly.
-  if (res.code != 0 && res.badModel) { await api("", { method: "PATCH", json: { status: "failed", error: scrub(res.badModel) } }); return; }
+  if (res.code != 0 && res.badModel) { await api("", { method: "PATCH", json: { ...runField(), status: "failed", error: scrub(res.badModel) } }); return; }
   const unmerged = (await git(["diff", "--name-only", "--diff-filter=U"], CLONE(), { quiet: true })).out;
   if (res.code == 0 && !unmerged) {
     const commit = await pushBranch();
-    await api("", { method: "PATCH", json: { status: "complete", commit, summary: res.lastText ? `Claude Code ended without a summary. Its last words:\n\n${scrub(res.lastText).slice(0, 2000)}` : "Claude Code ended without a summary." } });
+    await api("", { method: "PATCH", json: { ...runField(), status: "complete", commit, summary: res.lastText ? `Claude Code ended without a summary. Its last words:\n\n${scrub(res.lastText).slice(0, 2000)}` : "Claude Code ended without a summary." } });
   } else {
-    await api("", { method: "PATCH", json: { status: "failed", error: `Claude Code stopped (exit ${res.code}) without reporting${unmerged ? `, with conflicts left in ${unmerged.split("\n").join(", ")}` : ""}.${res.lastText ? ` Its last words: ${scrub(res.lastText).slice(0, 600)}` : ""}` } });
+    await api("", { method: "PATCH", json: { ...runField(), status: "failed", error: `Claude Code stopped (exit ${res.code}) without reporting${unmerged ? `, with conflicts left in ${unmerged.split("\n").join(", ")}` : ""}.${res.lastText ? ` Its last words: ${scrub(res.lastText).slice(0, 600)}` : ""}` } });
   }
 }
+
+/** Claude Code's process group, so that a merge or the next run can stop it (task.ts, stopRun). */
+const claudeStarted = (pid: number) => writeFileSync(pidFile("claude"), String(pid));
 
 /**
  * One run of Claude Code (or the stand-in), as a step with a time limit. `woken`: it ran past its limit before,
@@ -127,7 +146,7 @@ async function claude(brief: Brief, wake: string, limit: number, woken: boolean)
   const late = `You were stopped: you ran for more than ${limit / 60} minutes, the factory's limit, and everything you had started was killed. Something probably hung (a dev server, a test or a build that waits forever). Don't run it again without a time limit (task run --timeout SECONDS -- CMD). Finish now: commit, then task done "summary" (or task fail "why").`;
   if (!realClaude()) {
     if (!woken) await log(process.env.CLAUDE_CODE_OAUTH_TOKEN ? "The scripted stand-in runs (FACTORY_FAKE=1)" : "No Claude sign-in: the scripted stand-in runs instead of Claude Code");
-    const r = await step(["bun", join(import.meta.dirname, "fake-claude.ts"), woken ? "woken" : job, "--model", MODEL()], { name: "claude", timeout: limit, cwd: CLONE(), echo: true });
+    const r = await step(["bun", join(import.meta.dirname, "fake-claude.ts"), woken ? "woken" : job, "--model", MODEL()], { name: "claude", timeout: limit, cwd: CLONE(), echo: true, onStart: claudeStarted });
     return { code: r.code, timedOut: r.timedOut, lastText: "" };
   }
   prepareClaude();
@@ -145,7 +164,7 @@ async function claude(brief: Brief, wake: string, limit: number, woken: boolean)
   const board = claudeLog();
   const quiet = setInterval(() => { for (const l of board.tick()) log(l); }, 5000);
   const r = await step(["claude", "-p", prompt, ...(continuing ? ["--continue"] : []), "--model", MODEL(), "--dangerously-skip-permissions", "--output-format", "stream-json", "--verbose", "--max-turns", String(brief.maxTurns ?? 200)], {
-    name: "claude", timeout: limit, cwd: CLONE(), echo: true,
+    name: "claude", timeout: limit, cwd: CLONE(), echo: true, onStart: claudeStarted,
     onLine: (line) => {
       let ev: any;
       try { ev = JSON.parse(line); } catch { badModel ??= modelError(line); return; }
@@ -162,6 +181,6 @@ async function claude(brief: Brief, wake: string, limit: number, woken: boolean)
 main().catch(async (e) => {
   const why = scrub((e as Error).message);
   console.error(why);
-  await api("", { method: "PATCH", json: { status: "failed", error: `The VM's job failed: ${why}` } }).catch(() => {});
+  await api("", { method: "PATCH", json: { ...runField(), status: "failed", error: `The VM's job failed: ${why}` } }).catch(() => {});
   process.exit(1);
 });

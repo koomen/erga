@@ -14,7 +14,12 @@
 // check under a time limit (`task run`), and says done, so the merge goes on.
 // A task whose ask says "[factory-test: can't resolve]" makes it give up
 // (`task fail`), and "[factory-test: resolve after N]" makes it wait N
-// seconds first (to see the card in "needs agent"). `woken` (it ran past its
+// seconds first (to see the card in "needs agent"), "[factory-test: resolve
+// once staging moves]" makes its first wake-up wait (60 s at most) until
+// another merge moves staging (so the merge conflicts again), and "[factory-test: linger
+// N]" makes it go on for N seconds after it says done (or fails), as Claude
+// Code does while it says its last words (the merge must wait for it, or stop
+// it, before it runs again). `woken` (it ran past its
 // limit): it says done.
 //
 // Run in the clone, as the job's last step (run.ts).
@@ -22,7 +27,7 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
-import { api, CLONE, git, log, TASK } from "./common.ts";
+import { api, CLONE, git, log, TASK, WORK } from "./common.ts";
 import { done, fail, preview, shot } from "./task.ts";
 
 // Takes Claude Code's --model (the factory_model setting) like the real one, and says which.
@@ -32,7 +37,12 @@ const model = m >= 0 ? args.splice(m, 2)[1] : undefined;
 const job = args[0] ?? "work";
 const brief = await api("/brief") as { title: string; prompt: string; instructions?: string | null };
 if (model) await log(`The stand-in runs in place of Claude Code with --model ${model}`);
-if (job == "resolve") { await resolve(); process.exit(0); }
+if (job == "resolve") {
+  await resolve();
+  const linger = /\[factory-test: linger (\d+)\]/.exec(brief.prompt);
+  if (linger) { await Bun.sleep(Number(linger[1]) * 1000); await log("The stand-in ended, after its last words"); }
+  process.exit(0);
+}
 if (job == "woken") { await done("The stand-in was woken after its limit, and finished."); process.exit(0); }
 // The dependencies, if the factory's install failed or hung (it says so in Claude Code's instructions): again, under a limit.
 if (!existsSync(join(CLONE(), "node_modules"))) {
@@ -75,6 +85,14 @@ async function resolve() {
   await log(`The stand-in reads the merge's instructions: ${(brief.instructions ?? "").split("\n")[0].slice(0, 200)}`);
   const wait = /\[factory-test: resolve after (\d+)\]/.exec(brief.prompt);
   if (wait) await Bun.sleep(Number(wait[1]) * 1000);
+  const once = join(WORK(), ".waited-for-staging");
+  if (brief.prompt.includes("[factory-test: resolve once staging moves]") && !existsSync(once)) {
+    writeFileSync(once, "");
+    const seen = (await git(["rev-parse", "origin/staging"], CLONE(), { quiet: true })).out;
+    const staging = async () => (await git(["ls-remote", "origin", "refs/heads/staging"], CLONE(), { quiet: true })).out.split(/\s/)[0];
+    for (let i = 0; i < 120 && (await staging()) == seen; i++) await Bun.sleep(500);
+    await log("The stand-in saw staging move");
+  }
   const files = (await git(["diff", "--name-only", "--diff-filter=U"], CLONE(), { quiet: true })).out.split("\n").filter(Boolean);
   if (brief.prompt.includes("[factory-test: can't resolve]")) {
     await fail(files.length ? `The branch conflicts with staging in ${files.join(", ")}, and the stand-in can't resolve it.` : "The stand-in can't finish the merge.");

@@ -53,13 +53,16 @@
 //   POST  /api/factory/tasks/<id>/branch        { base }: the branch is made (from staging at base)
 //   POST  /api/factory/tasks/<id>/preview       { path }: the preview is up
 //   POST  /api/factory/tasks/<id>/screenshots   a PNG body, ?caption=&replace=1
-//   PATCH /api/factory/tasks/<id>               { status: "complete" | "failed", summary, error, commit }
+//   PATCH /api/factory/tasks/<id>               { status: "complete" | "failed", summary, error, commit, run }:
+//                                               `run` (FACTORY_RUN) names the run of Claude Code; one that isn't
+//                                               the task's current run (woken again since, or given up on) is refused
 //
 // Merge works in the task's own VM, in its clone (factory/vm/merge.ts): staging merged into the branch, then
 // staging moved to a --no-ff merge commit. A conflict, or a step that fails or times out, sets the task to
 // "needs agent" (Merge off, the reason on the card) and wakes the task's own Claude Code (run.ts resolve, the
 // same session: --continue) with instructions to resolve, test under time limits and commit. When it says
-// done, the merge runs again by itself; when it fails, the task goes back to ready to merge with its reason.
+// done, the merge runs again by itself (stopping that Claude Code first, if it is still saying its last words);
+// when it fails, the task goes back to ready to merge with its reason, and its Claude Code is stopped.
 //
 // Dependencies between tasks are the local task queue's (development/task-queue/deps.ts,
 // README, The factory): startAfter and mergeAfter, a computed blockedBy, a
@@ -232,6 +235,8 @@ type Row = {
   start_after: string | null; merge_after: string | null;
   /** Who pressed Merge, while the merge goes on (it continues by itself after "needs agent"). */
   merge_by: string | null;
+  /** The id of the task's current run of Claude Code (run.ts): a report from another run is refused. */
+  run: string | null;
 };
 
 /** A factory token: erga_factory_<id>_<secret>. */
@@ -272,7 +277,7 @@ export class Factory extends DurableObject<Env> {
       unlock_key TEXT NOT NULL, created INTEGER NOT NULL, expires INTEGER NOT NULL, revoked INTEGER, revoked_by TEXT, last_used INTEGER)`);
     // Dependencies (#49), on a table made before them.
     const cols = this.sql.exec<{ name: string }>("PRAGMA table_info(tasks)").toArray().map((c) => c.name);
-    for (const c of ["start_after", "merge_after", "merge_by"]) if (!cols.includes(c)) this.sql.exec(`ALTER TABLE tasks ADD COLUMN ${c} TEXT`);
+    for (const c of ["start_after", "merge_after", "merge_by", "run"]) if (!cols.includes(c)) this.sql.exec(`ALTER TABLE tasks ADD COLUMN ${c} TEXT`);
     // A merge the object was stopped in the middle of goes back to ready to merge, saying so.
     for (const r of this.sql.exec<Row>("SELECT * FROM tasks WHERE status = 'merging'").toArray()) {
       this.update(r.id, { status: "complete", error: "The merge was stopped in the middle (the factory restarted). Merge again." });
@@ -412,7 +417,10 @@ export class Factory extends DurableObject<Env> {
         this.update(id, { vm, preview_origin: started.preview, preview_path: null, status }, `VM ${vm} started in ${((Date.now() - t) / 1000).toFixed(1)}s`);
         this.keepAlive();
       } else this.update(id, { status });
-      await host.job(vm, "run.ts", [job], await this.jobEnv(id, "task"), false);
+      // Each run has an id of its own: only its reports count (an earlier run, still ending, can't fail this one).
+      const run = crypto.randomUUID().slice(0, 8);
+      this.update(id, { run });
+      await host.job(vm, "run.ts", [job], { ...(await this.jobEnv(id, "task")), FACTORY_RUN: run }, false);
     } catch (e) {
       if (job == "resolve") return this.backToReady(id, `The merge needs Claude Code, but it couldn't be woken: ${(e as Error).message}`);
       this.update(id, { status: "failed", error: `The VM didn't start: ${(e as Error).message}` }, `Failed: the VM didn't start: ${(e as Error).message}`);
@@ -420,9 +428,28 @@ export class Factory extends DurableObject<Env> {
     }
   }
 
-  /** A merge that ended without merging: back to ready to merge, with the reason (as the local queue does). */
+  /**
+   * A merge that ended without merging: back to ready to merge, with the reason (as the local queue does). When the
+   * task's Claude Code was woken for it, it's stopped in its VM (merge.ts stop), so it doesn't work on.
+   */
   private backToReady(id: number, error: string) {
-    this.update(id, { status: "complete", error, merge_by: null }, `Merge failed: ${error.slice(0, 600)}`);
+    const r = this.row(id);
+    const woken = r?.status == "needs agent";
+    this.update(id, { status: "complete", error, merge_by: null, ...(woken ? { run: null } : {}) }, `Merge failed: ${error.slice(0, 600)}`);
+    if (woken && r.vm) this.ctx.waitUntil(this.stopClaude(id, r.vm));
+  }
+
+  /** Stops the task's Claude Code in its VM (it may say its last words first), once the factory has given up on it. */
+  private async stopClaude(id: number, vm: string) {
+    const r = this.row(id)!;
+    const host = vmHost(this.env, r.origin);
+    if (typeof host == "string") return;
+    try {
+      const res = resultOf(await host.job(vm, "merge.ts", ["stop", r.branch], await this.jobEnv(id, "task"), true));
+      if (res.ok && res.stopped) this.note(id, "Claude Code was stopped");
+    } catch (e) {
+      this.note(id, `Couldn't stop Claude Code: ${(e as Error).message}`);
+    }
   }
 
   /** What a job in the task's VM gets: where to report and with what, the repository, and the Claude token when there is one. */
@@ -459,6 +486,11 @@ export class Factory extends DurableObject<Env> {
       case "preview": this.update(id, { preview_path: String(body.path || "/") }, `Preview up: ${r.preview_origin}${body.path || "/"}`); break;
       case "status": {
         if (r.status == "merging") return { ok: false, error: "the task is merging" };
+        // A run of Claude Code that the factory has woken again since (or given up on): its word is old.
+        if (body.run && String(body.run) != r.run) {
+          this.note(id, `An earlier run of Claude Code said ${body.status == "failed" ? "it failed" : String(body.status)}: ignored`);
+          return { ok: false, error: "This run of Claude Code isn't the task's current one: it was woken again, or stopped. Stop now." };
+        }
         if (r.status == "needs agent") {
           // The task's Claude Code finished the merge's problem: the merge goes on by itself. Or it couldn't.
           if (body.status == "complete") {
@@ -821,7 +853,7 @@ export class Factory extends DurableObject<Env> {
 }
 
 /** A merge or discard job's result: its output's FACTORY-RESULT line. */
-function resultOf(out: { code: number; output: string } | null): { ok: boolean; error?: string; commit?: string; needsAgent?: boolean; kind?: string; step?: string; files?: string[] } {
+function resultOf(out: { code: number; output: string } | null): { ok: boolean; error?: string; commit?: string; needsAgent?: boolean; kind?: string; step?: string; files?: string[]; stopped?: boolean } {
   const line = out?.output.split("\n").reverse().find((l) => l.startsWith("FACTORY-RESULT "));
   if (!line) return { ok: false, error: `the job ended without a result (exit ${out?.code}): ${out?.output.slice(-400) ?? ""}` };
   return JSON.parse(line.slice("FACTORY-RESULT ".length));
