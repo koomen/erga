@@ -144,7 +144,8 @@ export interface Deps {
   waitMs?: number;
 }
 
-interface Run { deployId: string; commit: string; started: number; cursor: StepId | null; carry: Carry }
+/** `attempt`: 1 for a deploy as asked for; 2 and on when it runs again by itself after a restart stopped it before the upload. */
+interface Run { deployId: string; commit: string; started: number; cursor: StepId | null; carry: Carry; attempt?: number }
 
 /** One line of a deploy's log: when (ms since the epoch), what, and which step it belongs to. */
 export interface LogLine { at: number; text: string; step?: StepId | "build" }
@@ -155,7 +156,7 @@ interface StoredLog { deployId: string; commit: string; lines: LogLine[] }
 const LOG_KEEP = 5000;
 interface Stored { status: TargetStatus; run: Run | null; oldDocs: string[] }
 /** The branch's head and what's waiting (and what asked for it), kept apart from the run's record (a hook can come while a deploy runs and saves its own). */
-interface Queue { head: string | null; pending: string | null; trigger?: string | null }
+interface Queue { head: string | null; pending: string | null; trigger?: string | null; attempt?: number | null }
 
 /** Why a deploy was cancelled: a newer one for its target came. */
 export class Superseded extends Error {
@@ -165,6 +166,13 @@ export class Superseded extends Error {
 const LOG_LINES = 200;
 /** How long after the Worker's upload the new version is woken to finish a deploy its upload interrupted. */
 export const RESUME_MS = 20_000;
+/**
+ * How many times a deploy runs, in all, when restarts of the server stop it
+ * before its upload (Cloudflare resets a Durable Object now and then: a new
+ * version, a secret changed, its isolate at its memory limit). Each time it
+ * starts again from the top by itself, with nobody to press Redeploy.
+ */
+export const ATTEMPTS = 3;
 const key = (name: TargetName) => `target:${name}`;
 const queueKey = (name: TargetName) => `queue:${name}`;
 const logKey = (name: TargetName, id: string) => `log:${name}:${id}`;
@@ -487,7 +495,7 @@ export class BranchDeploys {
 
   private async enqueue(name: TargetName, commit: string, why: string, trigger: string): Promise<void> {
     const wrong = this.notReady(name);
-    await this.setQueue(name, { head: commit, pending: wrong ? null : commit, trigger: wrong ? null : trigger });
+    await this.setQueue(name, { head: commit, pending: wrong ? null : commit, trigger: wrong ? null : trigger, attempt: null });
     // The running deploy's own record, if it's this target's (so its next save doesn't undo this one's).
     const cur = this.current?.name == name ? this.current : null;
     const s = cur?.s ?? await this.load(name);
@@ -532,10 +540,11 @@ export class BranchDeploys {
     const steps: StepStatus[] = [{ id: "build", title: "Build the commit", status: "running" }, ...stepsFor(targetOf(spec, this.deps.env)).map((x) => ({ id: x.id, title: x.title, status: "pending" as const }))];
     const q = await this.queue(name);
     const trigger = (q.pending == commit ? q.trigger : null) ?? "deploy";
-    if (q.pending == commit) await this.setQueue(name, { pending: null, trigger: null });
+    const attempt = (q.pending == commit ? q.attempt : null) ?? 1;
+    if (q.pending == commit) await this.setQueue(name, { pending: null, trigger: null, attempt: null });
     const deployId = `${this.now().toString(36)}-${commit.slice(0, 7)}`;
     s.status = { ...s.status, state: "building", commit, deployId, at: this.now(), error: null, pending: (await this.queue(name)).pending, steps };
-    s.run = { deployId, commit, started: this.now(), cursor: null, carry: { oldDocs: s.oldDocs } };
+    s.run = { deployId, commit, started: this.now(), cursor: null, carry: { oldDocs: s.oldDocs }, ...(attempt > 1 ? { attempt } : {}) };
     const abort = new AbortController();
     this.current = { name, deployId, commit, abort, s };
     await this.openLog(name, s.run, true);
@@ -546,7 +555,7 @@ export class BranchDeploys {
     list.unshift({ id: deployId, target: name, commit, state: "building", started: this.now(), ended: null, trigger, error: null });
     await this.putRecords(name, list);
     if (replaced) await this.appendTo(name, replaced.id, `replaced by deploy ${deployId} (${commit.slice(0, 12)}, ${trigger})`);
-    this.line(s, `deploying ${commit.slice(0, 12)} (${spec.branch}) to ${spec.host}: ${trigger}${replaced ? `, in place of the cancelled deploy ${replaced.id}` : ""}`);
+    this.line(s, `deploying ${commit.slice(0, 12)} (${spec.branch}) to ${spec.host}: ${trigger}${replaced ? `, in place of the cancelled deploy ${replaced.id}` : ""}${attempt > 1 ? ` (attempt ${attempt} of ${ATTEMPTS})` : ""}`);
     await this.save(s);
     try {
       const cf = new Cloudflare(this.deps.env.CLOUDFLARE_DEPLOY_TOKEN!.trim(), this.deps.net);
@@ -596,8 +605,16 @@ export class BranchDeploys {
     }
     const past = run.cursor != null && order.indexOf(run.cursor) > order.indexOf("worker");
     if (!past) {
-      this.line(s, "interrupted before the new version was uploaded (the server restarted): nothing changed. Redeploy to try again.");
-      await this.failed(s, new DeployError("The deploy was interrupted before the new version went up (the server restarted). Redeploy to try again."));
+      // Nothing went up: run it again from the top, by itself, unless it has had all its attempts.
+      const attempt = run.attempt ?? 1;
+      const again = attempt < ATTEMPTS;
+      this.line(s, `interrupted before the new version was uploaded (the server restarted): nothing changed. ${again ? `Trying again (attempt ${attempt + 1} of ${ATTEMPTS}).` : `That was attempt ${attempt} of ${ATTEMPTS}: Redeploy to try again.`}`);
+      await this.failed(s, new DeployError(`The deploy was interrupted before the new version went up (the server restarted). ${again ? "It runs again by itself." : `It was tried ${ATTEMPTS} times: Redeploy to try again.`}`));
+      if (again) {
+        const trigger = (await this.records(name)).find((r) => r.id == run.deployId)?.trigger ?? "deploy";
+        await this.setQueue(name, { pending: run.commit, trigger: trigger.endsWith(", again after a restart") ? trigger : `${trigger}, again after a restart`, attempt: attempt + 1 });
+        await this.save(s);
+      }
       return;
     }
     this.running = name;
