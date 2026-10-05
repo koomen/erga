@@ -186,7 +186,7 @@ try {
       ahead: document.getElementById("ahead").textContent, merge: !document.getElementById("merge").disabled,
       mergeShown: getComputedStyle(document.getElementById("merge")).display != "none" && getComputedStyle(document.getElementById("merge-row")).display != "none",
       headGap: (() => { const r = document.getElementById("merge-row").getBoundingClientRect(); return r.width + r.height; })(),
-      mirror: document.getElementById("mirror-state").textContent, title: document.title,
+      mirror: document.getElementById("mirror-pill").textContent, title: document.title,
       targets: [...document.querySelectorAll(".target")].map((t) => t.textContent.replace(/\\s+/g, " ").trim()),
     };
   })()`);
@@ -319,7 +319,12 @@ try {
   expect(looks.every((l) => l.state.includes("live") == (l.bg != "rgba(0, 0, 0, 0)")), "only the live deploy has a background", looks);
   expect(!(await p.eval(`!!document.querySelector("#grid .more, #grid .sub")`)), "no counts, nothing to open");
   ok("deploy history: a push while a deploy runs cancels it; a failed build; past logs; one entry per commit per target");
-  await until(async () => (await state()).mirror.includes("Up to date"), 10_000, "the mirror catches up", state);
+  await until(async () => (await state()).mirror == "GitHub: up to date", 10_000, "the mirror catches up", state);
+  // The status row: four statuses (the connection, the VMs, Claude, the GitHub mirror), each a dot and a label, no outline.
+  const statuses = await p.eval<{ text: string; border: string; bg: string; dot: string }[]>(`[...document.querySelectorAll("#pills .pill")].filter((e) => !e.hidden).map((e) => { const c = getComputedStyle(e); return { text: e.textContent, border: c.borderTopStyle, bg: c.backgroundColor, dot: getComputedStyle(e, "::before").borderRadius }; })`);
+  expect(statuses.length == 4 && statuses[3].text == "GitHub: up to date" && statuses[2].text.startsWith("Claude"), "four statuses in the row, the GitHub mirror last", statuses);
+  expect(statuses.every((s) => s.border == "none" && s.bg == "rgba(0, 0, 0, 0)" && s.dot == "50%"), "each status is a dot and a label, with no outline", statuses);
+  expect(!(await p.eval(`!!document.getElementById("mirror")`)), "no GitHub mirror box in the source pane");
   await p.open(`${root}/admin/source`, { width: 1280, height: 900, scale: 2, clear: false, dark: true });
   await until(async () => (await state()).rows.length > 0, 10_000, "the list draws (dark)");
   const bg = await p.eval<string>(`getComputedStyle(document.body).backgroundColor`);

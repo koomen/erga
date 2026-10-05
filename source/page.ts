@@ -24,8 +24,9 @@
 // Only the live deploy has a background. Each target's status is in its column's head. Any deploy opens
 // its log, past or live (GET /api/deploys/<name>/log?deploy=<id>, then
 // { type: "deploy-log" } events). Merge moves main forward to staging's
-// head, or to the commit a row's "Merge to here" names. Also the GitHub
-// mirror and how to clone and push. It updates by itself (/api/events) and
+// head, or to the commit a row's "Merge to here" names. Also how to clone and
+// push, and the GitHub mirror's status (in the board's status row; a click
+// pushes now). It updates by itself (/api/events) and
 // follows the system's light or dark.
 
 import { appPage, esc, ICON, type Session } from "../front";
@@ -117,7 +118,7 @@ const SOURCE_STYLE = `
   .none { padding: 18px 4px; font-size: 13.5px; color: var(--soft); grid-column: 1 / -1; }
   @media (max-width: 760px) { .grid { grid-template-columns: 22px minmax(0, 1fr) auto 80px 80px; } .who, .grid > .head.who-h, .row time, .grid > .head.time-h { display: none; } .target { max-width: 82px; } .target b { font-size: 10.5px; } .target .st span { display: none; }
     .dep { font-size: 11.5px; padding: 0 5px; } .dep .at { display: none; } }
-  .boxes { display: grid; grid-template-columns: 1fr 1.3fr; gap: 18px; margin-top: 18px; }
+  .boxes { display: grid; grid-template-columns: 1fr; gap: 18px; margin-top: 18px; }
   @media (max-width: 760px) { .boxes { grid-template-columns: 1fr; } }
   .box { border: 1px solid var(--rule); border-radius: 12px; padding: 14px 16px; min-width: 0; }
   .box h2 { display: flex; align-items: center; gap: 8px; margin: 0 0 6px; font-size: 14px; font-weight: 600; color: var(--fg-strong); }
@@ -125,11 +126,6 @@ const SOURCE_STYLE = `
   .box p { margin: 0 0 6px; font-size: 13.5px; color: var(--soft); overflow-wrap: anywhere; }
   .box p.error { color: var(--bad); }
   .box a { color: inherit; }
-  .state { display: inline-flex; align-items: center; gap: 6px; font-size: 13.5px; color: var(--fg); }
-  .state i { width: 7px; height: 7px; border-radius: 50%; background: var(--on-main); }
-  .state.error i { background: var(--bad); }
-  .state.off i { background: var(--chrome); }
-  .state.pushing i { background: transparent; border: 2px solid var(--on-main); border-right-color: transparent; width: 5px; height: 5px; animation: spin .8s linear infinite; }
   pre { margin: 6px 0 8px; padding: 10px 12px; border-radius: 8px; background: var(--code-bg); color: var(--fg-strong); font: 12.5px/1.6 var(--font-mono); overflow-x: auto; white-space: pre; }
   .setup ol { margin: 8px 0 0; padding-left: 20px; font-size: 14px; color: var(--fg); }
   .setup li { margin: 4px 0; }
@@ -147,7 +143,7 @@ const SOURCE_STYLE = `
   #deploy-log pre .s { color: var(--soft); }
 `;
 
-/** The source pane: the commits with their deploys, Merge, the mirror, how to clone; or how to set it up. */
+/** The source pane: the commits with their deploys, Merge, how to clone; or how to set it up. */
 function sourceMarkup(c: SourcePageConfig): string {
   if (!c.ready) {
     return `<div class="pane-head"><h2>Source and deploys</h2></div>
@@ -172,12 +168,6 @@ function sourceMarkup(c: SourcePageConfig): string {
     </div>
   </section>
   <section class="boxes">
-    <div class="box" id="mirror">
-      <h2>GitHub mirror <button class="pill" id="mirror-now" type="button" hidden>Push now</button></h2>
-      <p><span class="state off" id="mirror-state"><i></i><span class="what">Loading…</span></span></p>
-      <p id="mirror-url">${esc(c.mirrorUrl)}</p>
-      <p class="error" id="mirror-error" hidden></p>
-    </div>
     <div class="box" id="clone">
       <h2>Clone and push</h2>
       <pre><code>git remote add erga ${esc(remote)}
@@ -284,12 +274,16 @@ const SOURCE_SCRIPT = `
     // Nothing at all while main is at staging: no count, no button, no space. While a merge runs the button stays, disabled.
     if (!busy) mergeBtn.disabled = document.getElementById("merge-row").hidden = !ahead;
     document.getElementById("ahead").textContent = !staging?.commit ? "" : ahead ? ahead + " commit" + (ahead == 1 ? "" : "s") + " to merge" : "";
-    const m = view.mirror, st = document.getElementById("mirror-state"), err = document.getElementById("mirror-error");
-    st.className = "state " + (m.state == "off" ? "off" : m.state == "pushing" ? "pushing" : m.error ? "error" : "ok");
-    st.querySelector(".what").textContent = m.state == "off" ? "Off: the server has no GITHUB_MIRROR_TOKEN" : m.state == "pushing" ? "Pushing…" : m.error ? "Behind" + (m.lastPushAt ? " · last pushed " + ago(m.lastPushAt) : "") : m.lastPushAt ? "Up to date · pushed " + ago(m.lastPushAt) : "Not pushed yet";
-    document.getElementById("mirror-url").innerHTML = String(m.url || "").includes("/__github/") ? "A pretend GitHub, in the dev server (local development never pushes to the real one)" : /^https?:/.test(m.url || "") ? '<a href="' + esc(String(m.url).replace(/\\.git$/, "")) + '">' + esc(String(m.url).replace(/^https?:\\/\\//, "").replace(/\\.git$/, "")) + "</a>" : esc(m.url || "");
-    err.hidden = !m.error; err.textContent = m.error || "";
-    document.getElementById("mirror-now").hidden = m.state == "off";
+    // The GitHub mirror: the fourth status in the board's row (factory/page.ts). Its title has the URL and any error; a click pushes now.
+    const m = view.mirror, mp = document.getElementById("mirror-pill");
+    if (mp) {
+      mp.hidden = false;
+      mp.className = "pill " + (m.state == "off" ? "" : m.state == "pushing" ? "pushing" : m.error ? "off" : "on");
+      mp.textContent = "GitHub: " + (m.state == "off" ? "off" : m.state == "pushing" ? "pushing…" : m.error ? "behind" : m.lastPushAt ? "up to date" : "not pushed yet");
+      const where = String(m.url || "").includes("/__github/") ? "A pretend GitHub, in the dev server (local development never pushes to the real one)" : String(m.url || "").replace(/^https?:\\/\\//, "").replace(/\\.git$/, "");
+      mp.title = (m.state == "off" ? "Off: the server has no GITHUB_MIRROR_TOKEN" : (m.lastPushAt ? "Last pushed " + ago(m.lastPushAt) : "Not pushed yet") + (m.error ? ". " + m.error : "") + ". Click to push now.") + (where ? "\\n" + where : "");
+      mp.disabled = m.state == "off";
+    }
   }
 
   function renderTargets() {
@@ -408,10 +402,9 @@ const SOURCE_SCRIPT = `
     cloneBtn.textContent = ok ? "Copied" : "Couldn't copy";
     setTimeout(() => { cloneBtn.textContent = "Clone"; }, 1500);
   });
-  document.getElementById("mirror-now").addEventListener("click", async (e) => {
-    e.target.disabled = true;
+  document.getElementById("mirror-pill")?.addEventListener("click", async (e) => {
+    e.currentTarget.disabled = true;
     await fetch("/api/source/mirror", { method: "POST" }).catch(() => {});
-    e.target.disabled = false;
     load();
   });
 

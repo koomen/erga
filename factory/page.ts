@@ -22,11 +22,13 @@ export const BOARD_STYLE = `
   @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --ok: #4cc38a; --warn: #f0a742; --bad: #ff7b72; --shadow: 0 1px 2px rgba(0,0,0,.4); } }
   :root[data-theme="dark"] { --ok: #4cc38a; --warn: #f0a742; --bad: #ff7b72; --shadow: 0 1px 2px rgba(0,0,0,.4); }
   .tag { font: 600 10px/1 var(--font-text); text-transform: uppercase; letter-spacing: .06em; color: var(--warn); border: 1px solid currentColor; border-radius: 999px; padding: 3px 7px; }
-  .pills { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-  .pill { height: 26px; font-size: 12px; font-weight: 500; color: var(--muted); display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); border-radius: 999px; padding: 0 10px; background: var(--card); box-shadow: none; }
+  .pills { display: flex; flex-wrap: wrap; gap: 4px 16px; align-items: center; }
+  .pill { height: 26px; font-size: 12px; font-weight: 500; color: var(--muted); display: inline-flex; align-items: center; gap: 6px; border: 0; border-radius: 0; padding: 0; background: none; box-shadow: none; }
   .pill::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
   .pill.on::before { background: var(--ok); } .pill.off::before { background: var(--bad); }
-  button.pill { cursor: pointer; font: inherit; font-size: 12px; } button.pill:hover { border-color: var(--muted); color: var(--ink); }
+  .pill.pushing::before { width: 5px; height: 5px; background: transparent; border: 2px solid var(--ok); border-right-color: transparent; animation: pill-spin .8s linear infinite; }
+  @keyframes pill-spin { to { transform: rotate(360deg); } }
+  button.pill { cursor: pointer; font: inherit; font-size: 12px; } button.pill:hover { color: var(--ink); }
   .notice { margin: 0 0 10px; padding: 10px 14px; border-radius: 8px; background: var(--panel); color: var(--muted); font-size: 13px; }
   .notice a { color: var(--accent); }
   .board { display: grid; grid-template-columns: repeat(4, minmax(150px, 1fr)); gap: 10px; align-items: start; }
@@ -227,9 +229,12 @@ function render() {
 
 function renderInfo() {
   if (!info) return;
+  const mirror = $("mirror-pill");
   const vms = info.vms.runner == "docker" ? "VMs: Docker" : info.vms.runner == "sim" ? "VMs: simulated" : info.vms.runner ? "VMs: " + info.vms.runner : "No VMs";
   $("pills").innerHTML = '<span class="pill" id="live">' + ($("live")?.textContent || "connecting") + '</span>' + '<span class="pill ' + (info.vms.runner ? "on" : "off") + '" title="' + esc(info.vms.why || "Where each task's VM runs") + '">' + esc(vms) + '</span>' +
     '<button class="pill ' + (info.claude.signedIn ? "on" : "off") + '" id="claude-pill" data-act="claude">' + (info.claude.signedIn ? "Claude: signed in" : "Claude: not signed in") + '</button>';
+  // The fourth status, the GitHub mirror: the source pane's script keeps it up to date.
+  if (mirror) $("pills").append(mirror);
   showLive();
   $("notice").hidden = info.enabled;
   render();
@@ -406,7 +411,7 @@ window.ergaBoard = { openTask: () => openId, title: (id) => tasks.find((x) => x.
 
 /** The board's pane: its head (where VMs run, the Claude sign-in), the notice, the columns, its dialogs. */
 export function boardMarkup(opts: { enabled: boolean }): string {
-  return `<div class="pane-head"><h2>Tasks</h2><span class="tag">Experimental</span><div class="pills" id="pills"><span class="pill" id="live">connecting</span></div></div>
+  return `<div class="pane-head"><h2>Tasks</h2><span class="tag">Experimental</span><div class="pills" id="pills"><span class="pill" id="live">connecting</span><button class="pill" id="mirror-pill" type="button" hidden>GitHub: loading…</button></div></div>
 <div class="notice" id="notice" ${opts.enabled ? "hidden" : ""}>The factory is off. An admin turns it on with the <code>factory</code> setting on <a href="/admin">Admin settings</a>.</div>
 <div class="board" id="board"></div>
 <dialog id="dlg"></dialog>
