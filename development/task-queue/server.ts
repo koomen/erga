@@ -75,9 +75,10 @@ const FETCH_EVERY = Number(process.env.TASK_QUEUE_FETCH ?? 60);
  * Where main goes after origin (README, Merging): a command run in the repo as `<cmd> fetch` (prints refs to merge into a
  * task's branch before it merges) and `<cmd> push <rev>` (puts <rev> there; exit 2: refused, the upstream has commits
  * <rev> lacks). For Erga, its own source in Cloudflare Artifacts, which deploys staging.erga.dev and erga.dev
- * (deploy/publish.ts). TASK_QUEUE_PUBLISH="" turns it off.
+ * (deploy/publish.ts; --or-deploy: erga.dev gets it from this machine if it can't deploy itself). TASK_QUEUE_PUBLISH=""
+ * turns it off.
  */
-const PUBLISH = process.env.TASK_QUEUE_PUBLISH ?? (existsSync(join(REPO, "deploy/publish.ts")) ? "bun deploy/publish.ts" : "");
+const PUBLISH = process.env.TASK_QUEUE_PUBLISH ?? (existsSync(join(REPO, "deploy/publish.ts")) ? "bun deploy/publish.ts --or-deploy" : "");
 const LOOKS = join(DATA, "looks");
 for (const dir of [SHOTS, LOGS, LOOKS]) mkdirSync(dir, { recursive: true });
 
