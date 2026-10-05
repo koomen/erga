@@ -102,6 +102,8 @@ export const BOARD_STYLE = `
   input:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
   .row { display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px; align-items: center; }
   .row .why { color: var(--bad); font-size: 12px; margin-right: auto; }
+  .row .why.sent { color: var(--muted); }
+  .dlg .hint { color: var(--muted); font-size: 13px; margin: 0 0 8px; }
   ol.steps { margin: 8px 0 0; padding-left: 1.3em; color: var(--ink); } ol.steps li { margin: 4px 0; }
   code { font: 12px ui-monospace, monospace; background: var(--panel); border-radius: 4px; padding: 1px 4px; }
   .fine { color: var(--muted); font-size: 12px; margin-top: 10px; }
@@ -278,7 +280,9 @@ function renderDialog() {
   // Click a screenshot to enlarge it to the modal's width (on the first row), again to put it back in the grid.
   const shots = t.screenshots.map((s) => '<figure data-act="shot" data-file="' + esc(s.file) + '"' + (s.file == bigShot ? ' class="big"' : "") + ' title="' + (s.file == bigShot ? "Click to shrink" : "Click to enlarge") + '"><img src="/api/factory/shots/' + esc(s.file) + '" alt=""><figcaption>' + esc(s.caption) + '</figcaption></figure>').join("");
   const log = t.log.map((l) => '<div><time>' + new Date(l.at).toLocaleTimeString() + '</time>' + esc(l.message) + '</div>').join("");
-  const revisable = ["complete", "failed"].includes(t.status);
+  // A working task takes them too: its Claude Code gets them when its current step ends.
+  const revisable = ["complete", "failed", "working"].includes(t.status);
+  const working = t.status == "working";
   const keep = d.querySelector("#instructions")?.value || "";
   // A redraw of the open task (a live update) keeps what the user is doing in it: see keepState.
   const restore = d.open && d.dataset.task == String(t.id) ? keepState(d) : () => {};
@@ -293,7 +297,7 @@ function renderDialog() {
     depsSection(t) +
     (t.summary ? '<section><h4>Summary</h4><div class="text">' + esc(t.summary) + '</div></section>' : "") +
     '<section><h4>The ask</h4><div class="text">' + esc(t.description) + '</div></section>' +
-    (revisable ? '<section><h4>More instructions</h4><textarea id="instructions" placeholder="What Claude Code should change next">' + esc(keep) + '</textarea><div class="row"><span class="why" id="revise-why"></span><button class="primary" data-act="revise" data-id="' + t.id + '">Send to Claude Code</button></div></section>' : "") +
+    (revisable ? '<section><h4>More instructions</h4>' + (working ? '<p class="hint">Claude Code works on this task now. It gets these instructions when its current step ends, and keeps its work.' + (t.waiting ? ' ' + t.waiting + (t.waiting == 1 ? ' instruction waits' : ' instructions wait') + ' for it now.' : '') + '</p>' : '') + '<textarea id="instructions" placeholder="What Claude Code should change next">' + esc(keep) + '</textarea><div class="row"><span class="why" id="revise-why"></span><button class="primary" data-act="revise" data-id="' + t.id + '">Send to Claude Code</button></div></section>' : "") +
     '<section><h4>Log</h4><div class="log" id="task-log">' + log + '</div></section></div>';
   const l = $("task-log"); if (l) l.scrollTop = l.scrollHeight;
   if (!d.open) d.showModal();
@@ -449,7 +453,12 @@ document.addEventListener("click", async (e) => {
       el.disabled = true;
       await setDeps(id, { [kind]: act == "dep" ? [...now, dep] : now.filter((x) => x != dep) });
     }
-    else if (act == "revise") upsert(await api("/tasks/" + id + "/revise", { method: "POST", json: { instructions: $("instructions").value } }));
+    else if (act == "revise") {
+      const was = tasks.find((x) => x.id == id)?.status;
+      upsert(await api("/tasks/" + id + "/revise", { method: "POST", json: { instructions: $("instructions").value } }));
+      // Sent to a working task: the box stays, empty, and says so.
+      if (was == "working" && $("instructions")) { $("instructions").value = ""; $("revise-why").textContent = "Sent. Claude Code gets them when its current step ends."; $("revise-why").classList.add("sent"); }
+    }
   } catch (err) {
     if (act == "revise") $("revise-why").textContent = err.message; else alert(err.message);
   }

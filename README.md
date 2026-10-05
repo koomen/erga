@@ -1493,6 +1493,22 @@ preview`: `bun start` in the VM), takes screenshots with headless Chromium
 branch and moves the card to Ready to merge. Then the VM waits: its preview
 stays up, and the detail view takes more instructions ("Send to Claude
 Code"), which run Claude Code again on the same branch (`--continue`).
+The detail view takes instructions **while the task works**, too (the API's
+`revise`, the agent's `instruct_task`): the factory keeps them for the task
+(its log says "<who> asked, while it works: ..."), and its Claude Code gets
+them when its current step ends, in the same session, with all its work.
+`run.ts` asks the factory every 5 seconds whether some wait; Claude Code's
+hooks (`task.ts hook`, after each tool call and when it would stop, set in
+`~/.claude/settings.json` by `common.ts`, `prepareClaude`) then take them,
+each one once, and the log says "Claude Code got the instructions from
+...". If one command still runs a minute after they came
+(`LIMITS.instructionsWait`), `run.ts` stops that command only (the
+processes Claude Code started for it, not Claude Code), and Claude Code
+gets them with a line that says which command was stopped, so it can run it
+again if it still needs it. A subagent's tool calls don't take them: the
+main Claude Code gets them when the subagent ends. A run that says done or
+fails before it got them doesn't finish the task: the factory gives them
+to a new run, on the same branch (`--continue`).
 **Restart** (on a failed task, or one ready to merge) runs the task again
 on the same branch with no new instructions: the old VM stops, and a fresh
 VM, with a fresh git token, starts Claude Code with the task's prompt.
@@ -1562,8 +1578,8 @@ own agent session (`factory/agent.ts`), one per admin, in the `Factory`
 Durable Object, so it keeps working when the tab closes and a reload keeps the
 conversation. It queues up work the way the local outer agent uses the task
 queue (AGENTS.md): `create_task` (title, ask, `startAfter`, `mergeAfter`),
-`set_dependencies`, `instruct_task` (more instructions for a task that's
-ready to merge or failed), and reads with `list_tasks`, `get_task` (the ask,
+`set_dependencies`, `instruct_task` (more instructions for a task that
+works, is ready to merge or failed), and reads with `list_tasks`, `get_task` (the ask,
 summary, error, preview URL, log) and `view_screenshot`; it sees `needs
 agent` cards and why, and what the task's Claude Code is doing (its words and
 the commands it runs go on the task's log, "Claude: …", "Claude runs Bash:

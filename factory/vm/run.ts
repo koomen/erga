@@ -29,10 +29,18 @@
 // Code with its log, as the first thing in its instructions. Claude Code that
 // runs past its limit is stopped and woken once (--continue) to finish; a
 // second time, the task fails.
+//
+// Instructions sent while Claude Code works (the factory keeps them for the
+// task) reach it when its current step ends: this job asks the factory every
+// 5 seconds whether some wait, and Claude Code's hooks (task.ts hook, after
+// each tool call and when it would stop) then take them. When one command
+// still runs LIMITS.instructionsWait after they came, that command (only it,
+// not Claude Code) is stopped, so they reach Claude Code anyway, with why.
 
+import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { api, claudeLog, CLONE, env, git, LIMITS, log, MODEL, modelError, prepareClaude, realClaude, REPORTED, runField, scrub, step, stepError, testHooks, WORK } from "./common.ts";
+import { api, claudeLog, CLONE, env, git, INBOX, LIMITS, log, MODEL, modelError, prepareClaude, realClaude, REPORTED, runField, scrub, step, stepError, STOPPED, testHooks, WORK } from "./common.ts";
 import { pidFile, pushBranch, stopRun } from "./task.ts";
 
 const job = (process.argv[2] ?? "work") as Job;
@@ -146,7 +154,9 @@ async function claude(brief: Brief, wake: string, limit: number, woken: boolean)
   const late = `You were stopped: you ran for more than ${limit / 60} minutes, the factory's limit, and everything you had started was killed. Something probably hung (a dev server, a test or a build that waits forever). Don't run it again without a time limit (task run --timeout SECONDS -- CMD). Finish now: commit, then task done "summary" (or task fail "why").`;
   if (!realClaude()) {
     if (!woken) await log(process.env.CLAUDE_CODE_OAUTH_TOKEN ? "The scripted stand-in runs (FACTORY_FAKE=1)" : "No Claude sign-in: the scripted stand-in runs instead of Claude Code");
-    const r = await step(["bun", join(import.meta.dirname, "fake-claude.ts"), woken ? "woken" : job, "--model", MODEL()], { name: "claude", timeout: limit, cwd: CLONE(), echo: true, onStart: claudeStarted });
+    const inbox = watchInbox();
+    const r = await step(["bun", join(import.meta.dirname, "fake-claude.ts"), woken ? "woken" : job, "--model", MODEL()], { name: "claude", timeout: limit, cwd: CLONE(), echo: true, onStart: inbox.started, onLine: (line) => { try { inbox.event(JSON.parse(line)); } catch { /* its own words */ } } });
+    inbox.stop();
     return { code: r.code, timedOut: r.timedOut, lastText: "" };
   }
   prepareClaude();
@@ -163,19 +173,102 @@ async function claude(brief: Brief, wake: string, limit: number, woken: boolean)
   // Each line once; a quiet run says "still working" at most once a minute.
   const board = claudeLog();
   const quiet = setInterval(() => { for (const l of board.tick()) log(l); }, 5000);
+  const inbox = watchInbox();
   const r = await step(["claude", "-p", prompt, ...(continuing ? ["--continue"] : []), "--model", MODEL(), "--dangerously-skip-permissions", "--output-format", "stream-json", "--verbose", "--max-turns", String(brief.maxTurns ?? 200)], {
-    name: "claude", timeout: limit, cwd: CLONE(), echo: true, onStart: claudeStarted,
+    name: "claude", timeout: limit, cwd: CLONE(), echo: true, onStart: inbox.started,
     onLine: (line) => {
       let ev: any;
       try { ev = JSON.parse(line); } catch { badModel ??= modelError(line); return; }
       if (ev.type == "assistant") for (const c of ev.message?.content ?? []) if (c.type == "text" && c.text?.trim()) lastText = c.text.trim();
       for (const l of board.event(ev)) log(l);
+      inbox.event(ev);
       if (ev.type == "result" && typeof ev.result == "string") { lastText = ev.result.trim(); if (ev.is_error) badModel ??= modelError(lastText); }
     },
   });
   clearInterval(quiet);
+  inbox.stop();
   if (r.err) process.stderr.write(r.err.slice(-4000) + "\n");
   return { code: r.code, timedOut: r.timedOut, lastText, badModel };
+}
+
+/**
+ * The instructions sent while Claude Code works: every 5 s, whether some wait (then INBOX tells its hook to take them,
+ * when the current step ends). Claude Code's commands are followed from its events (`event`: its Bash tool calls, and
+ * their results); one that still runs LIMITS.instructionsWait after instructions came, and has run that long, is
+ * stopped with what it started (Claude Code itself goes on), so that its tool call ends and the hook gives them.
+ */
+function watchInbox() {
+  const hooked = /\[factory-test: instructions wait (\d+)\]/.exec(process.env.FACTORY_TEST_HOOKS ?? "");
+  const wait = (hooked ? Number(hooked[1]) : LIMITS.instructionsWait) * 1000;
+  const commands = new Map<string, { since: number; what: string; stopped?: boolean }>();
+  let claudePid = 0, since = 0, busy = false;
+  const poll = setInterval(async () => {
+    if (busy || existsSync(REPORTED())) return;
+    busy = true;
+    try {
+      const { waiting } = await api("/inbox") as { waiting: unknown[] };
+      if (!waiting.length) { since = 0; rmSync(INBOX(), { force: true }); return; }
+      since ||= Date.now();
+      writeFileSync(INBOX(), String(waiting.length));
+      if (Date.now() - since < wait || !claudePid) return;
+      for (const c of commands.values()) {
+        if (c.stopped || Date.now() - c.since < wait) continue;
+        c.stopped = true;
+        const secs = Math.round((Date.now() - c.since) / 1000);
+        const doomed = startedSince(claudePid, c.since);
+        if (!doomed.length) continue;
+        // Said first: the hook takes the instructions as soon as the command ends.
+        writeFileSync(STOPPED(), `The factory stopped your command (${c.what}) after it ran for ${secs}s, so that these instructions reach you. If you still need it, run it again, under a time limit.`);
+        await kill(doomed);
+        await log(`Claude Code's command ran for ${secs}s while instructions waited: stopped, so they reach Claude Code (${c.what})`);
+      }
+    } catch (e) { console.error(`inbox: ${(e as Error).message}`); } finally { busy = false; }
+  }, 5000);
+  return {
+    started(pid: number) { claudePid = pid; claudeStarted(pid); },
+    event(ev: any) {
+      // The main Claude Code's own commands (a subagent's end with its Task tool call).
+      if (ev?.type == "assistant" && !ev.parent_tool_use_id) {
+        for (const c of ev.message?.content ?? []) if (c.type == "tool_use" && c.name == "Bash" && c.id && !commands.has(c.id)) commands.set(c.id, { since: Date.now(), what: `Bash: ${String(c.input?.command ?? "").replace(/\s+/g, " ").slice(0, 200)}` });
+      }
+      if (ev?.type == "user") for (const c of ev.message?.content ?? []) if (c?.type == "tool_result") commands.delete(c.tool_use_id);
+    },
+    stop() { clearInterval(poll); rmSync(INBOX(), { force: true }); },
+  };
+}
+
+/**
+ * What Claude Code (process `root`) started since `since` (ms), with everything under it: its command that runs now,
+ * not what ran before (a background shell).
+ */
+function startedSince(root: number, since: number): number[] {
+  const ps = spawnSync("ps", ["-A", "-o", "pid=,ppid=,etime="], { encoding: "utf8" }).stdout ?? "";
+  const procs = ps.trim().split("\n").map((l) => l.trim().split(/\s+/)).filter((f) => f.length == 3).map(([pid, ppid, etime]) => {
+    // etime: [[dd-]hh:]mm:ss
+    const [d, rest] = etime.includes("-") ? etime.split("-") : ["0", etime];
+    const secs = rest.split(":").map(Number).reduce((a, n) => a * 60 + n, 0) + Number(d) * 86400;
+    return { pid: Number(pid), ppid: Number(ppid), started: Date.now() - secs * 1000 };
+  });
+  const kids = (pid: number) => procs.filter((p) => p.ppid == pid);
+  // The oldest processes that are new (started with the command, give or take the clock's seconds), and all under them.
+  const doomed: number[] = [];
+  const walk = (pid: number, isNew: boolean) => {
+    for (const k of kids(pid)) {
+      const n = isNew || k.started >= since - 2000;
+      if (n) doomed.push(k.pid);
+      walk(k.pid, n);
+    }
+  };
+  walk(root, false);
+  return doomed;
+}
+
+/** Those processes stopped: TERM, then KILL 3 s later. */
+async function kill(doomed: number[]) {
+  const signal = (sig: NodeJS.Signals) => { for (const pid of doomed) try { process.kill(pid, sig); } catch { /* gone */ } };
+  signal("SIGTERM");
+  await Bun.sleep(3000);
+  signal("SIGKILL");
 }
 
 main().catch(async (e) => {
