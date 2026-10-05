@@ -219,8 +219,8 @@ function watchInbox() {
         if (!doomed.length) continue;
         // Said first: the hook takes the instructions as soon as the command ends.
         writeFileSync(STOPPED(), `The factory stopped your command (${c.what}) after it ran for ${secs}s, so that these instructions reach you. If you still need it, run it again, under a time limit.`);
-        await kill(doomed);
         await log(`Claude Code's command ran for ${secs}s while instructions waited: stopped, so they reach Claude Code (${c.what})`);
+        await kill(doomed);
       }
     } catch (e) { console.error(`inbox: ${(e as Error).message}`); } finally { busy = false; }
   }, 5000);

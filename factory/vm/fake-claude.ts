@@ -58,8 +58,9 @@ if (!existsSync(join(CLONE(), "node_modules"))) {
 }
 // Work that takes a while: one command, as Claude Code's Bash tool runs it.
 const long = /\[factory-test: long command (\d+)\]/.exec(brief.prompt);
-if (long) {
+if (long && job == "work") {
   console.log(JSON.stringify({ type: "assistant", message: { id: "stand-in-1", content: [{ type: "tool_use", id: "sleep-1", name: "Bash", input: { command: `sleep ${long[1]}` } }] } }));
+  await log(`The stand-in runs a long command: sleep ${long[1]}`);
   const code = await new Promise((resolve) => spawn("sleep", [long[1]], { stdio: "ignore" }).on("close", (c, sig) => resolve(sig ?? c)));
   console.log(JSON.stringify({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "sleep-1", content: `exit ${code}` }] } }));
   await log(`The stand-in's command ended (sleep ${long[1]}: ${code})`);
