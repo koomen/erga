@@ -1,7 +1,8 @@
 // The factory's board (experimental), a part of /admin/source (source/page.ts,
 // which puts it beside the source dashboard and the factory's agent): the
 // local task queue's board (development/task-queue/index.html) inside Erga. Columns
-// Queued, Working, Ready to merge, Merging and Merged; a card per task, its
+// Queued, Working, Ready to merge, Merging (with "needs agent": a merge the task's Claude Code
+// is finishing, Merge off, with the reason) and Merged; a card per task, its
 // detail on a click (the ask, the summary, the preview, the branch, the log,
 // the screenshots), with Merge, Discard and new instructions; live, over
 // /api/factory/events. Dependencies between tasks as on the local board: a
@@ -38,6 +39,8 @@ export const BOARD_STYLE = `
   .card:hover { border-color: var(--muted); }
   .card.failed { border-left: 3px solid var(--bad); }
   .card.merging { border-left: 3px solid var(--warn); }
+  .card.needs-agent { border-left: 3px solid var(--bad); }
+  .card .agent-now { margin-top: 6px; font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
   .top { display: flex; gap: 8px; align-items: baseline; }
   .id { color: var(--muted); font: 12px ui-monospace, monospace; }
   .title { font-weight: 600; flex: 1; overflow-wrap: anywhere; white-space: normal; color: var(--ink); }
@@ -66,7 +69,7 @@ export const BOARD_STYLE = `
   .dlg-head { display: flex; align-items: flex-start; gap: 12px; }
   .dlg h3 { margin: 0; font-size: 18px; line-height: 1.3; flex: 1; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
   .status { font: 600 11px/1 ui-sans-serif, -apple-system, sans-serif; text-transform: uppercase; letter-spacing: .05em; padding: 4px 8px; border-radius: 999px; border: 1px solid currentColor; color: var(--muted); white-space: nowrap; }
-  .status.working { color: var(--accent); } .status.complete, .status.merged { color: var(--ok); } .status.merging { color: var(--warn); } .status.failed { color: var(--bad); }
+  .status.working { color: var(--accent); } .status.complete, .status.merged { color: var(--ok); } .status.merging { color: var(--warn); } .status.failed, .status.needs-agent { color: var(--bad); }
   .links { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; margin-top: 8px; font-size: 13px; }
   .links a { color: var(--accent); text-decoration: none; } .links a:hover { text-decoration: underline; }
   .links .muted { color: var(--muted); font-size: 12px; }
@@ -124,12 +127,14 @@ const COLUMNS = [
   { title: "Queued", statuses: ["queued"] },
   { title: "Working", statuses: ["working", "failed"] },
   { title: "Ready to merge", statuses: ["complete"] },
-  { title: "Merging", statuses: ["merging"] },
+  { title: "Merging", statuses: ["merging", "needs agent"] },
   { title: "Merged", statuses: ["merged"] },
 ];
 let tasks = [], info = null, openId = null, depError = null, live = "connecting";
 const showLive = () => { const el = $("live"); if (el) { el.textContent = live; el.classList.toggle("on", live == "live"); } };
-const STATUS = { queued: "queued", working: "working", complete: "ready to merge", merging: "merging", merged: "merged", failed: "failed", discarded: "discarded" };
+const STATUS = { queued: "queued", working: "working", complete: "ready to merge", merging: "merging", "needs agent": "needs agent", merged: "merged", failed: "failed", discarded: "discarded" };
+/** A status as a class name ("needs agent": needs-agent). */
+const cls = (s) => String(s || "").replace(/ /g, "-");
 const ids = (list) => list.map((id) => "#" + id).join(", ").replace(/, ([^,]*)$/, " and $1");
 const armed = new Set();
 const $ = (id) => document.getElementById(id);
@@ -176,6 +181,7 @@ function actions(t, inDialog) {
     const why = mergeBlocked(t);
     b.push(why ? '<button class="primary" disabled title="' + esc(why) + '">Merge</button><span class="why">' + esc(why) + '</span>' : '<button class="primary" data-act="merge" data-id="' + t.id + '">Merge</button>');
   }
+  if (t.status == "needs agent") b.push('<button class="primary" disabled title="Claude Code is finishing the merge">Merge</button><span class="why">Needs agent: the task’s Claude Code is finishing the merge, which then goes on by itself</span>');
   if (t.status == "merging") b.push('<button disabled><span class="spin"></span> ' + (t.log.at(-1)?.message.includes("waiting for") ? "Waiting to merge…" : "Merging…") + '</button>');
   if (!["merging", "merged", "discarded"].includes(t.status))
     b.push(armed.has(t.id) ? '<button class="confirm" data-act="discard" data-id="' + t.id + '">Discard branch?</button>' : '<button class="danger" data-act="arm" data-id="' + t.id + '">Discard</button>');
@@ -185,10 +191,10 @@ function actions(t, inDialog) {
 function card(t) {
   const last = t.log[t.log.length - 1];
   const thumbs = t.screenshots.slice(-3).map((s) => '<img src="/api/factory/shots/' + esc(s.file) + '" alt="' + esc(s.caption) + '" loading="lazy">').join("");
-  return '<div class="card ' + t.status + (waitsToStart(t) ? " blocked" : "") + '" data-open="' + t.id + '">' +
+  return '<div class="card ' + cls(t.status) + (waitsToStart(t) ? " blocked" : "") + '" data-open="' + t.id + '">' +
     '<div class="top"><span class="id">#' + t.id + '</span><span class="title">' + esc(t.title) + '</span></div>' +
-    '<div class="meta">' + depChip(t) + '<code>' + esc(t.branch) + '</code><span>' + (t.status == "merged" ? "merged " + ago(t.mergedAt) : ago(t.updatedAt)) + '</span>' + (t.status == "failed" ? "<span>failed</span>" : "") + '</div>' +
-    (t.error ? '<div class="err">' + esc(t.error) + '</div>' : last && t.status != "merged" && !waitsToStart(t) ? '<div class="last">' + esc(last.message) + '</div>' : "") +
+    '<div class="meta">' + depChip(t) + '<code>' + esc(t.branch) + '</code><span>' + (t.status == "merged" ? "merged " + ago(t.mergedAt) : ago(t.updatedAt)) + '</span>' + (t.status == "failed" ? "<span>failed</span>" : "") + (t.status == "needs agent" ? '<span class="status needs-agent">needs agent</span>' : "") + '</div>' +
+    (t.error ? '<div class="err">' + esc(t.error) + '</div>' + (t.status == "needs agent" && last ? '<div class="agent-now">Now: ' + esc(last.message.length > 160 ? last.message.slice(0, 160) + "…" : last.message) + '</div>' : "") : last && t.status != "merged" && !waitsToStart(t) ? '<div class="last">' + esc(last.message) + '</div>' : "") +
     (thumbs && t.status != "merged" ? '<div class="thumbs">' + thumbs + '</div>' : "") +
     actions(t, false) + '</div>';
 }
@@ -225,7 +231,7 @@ function renderDialog() {
   const log = t.log.map((l) => '<div><time>' + new Date(l.at).toLocaleTimeString() + '</time>' + esc(l.message) + '</div>').join("");
   const revisable = ["complete", "failed"].includes(t.status);
   const keep = d.querySelector("#instructions")?.value || "";
-  d.innerHTML = '<div class="dlg"><div class="dlg-head"><h3><span class="id">#' + t.id + '</span>' + esc(t.title) + ' <span class="status ' + t.status + '">' + (t.status == "complete" ? "ready to merge" : t.status) + '</span></h3><button data-act="close">Close</button></div>' +
+  d.innerHTML = '<div class="dlg"><div class="dlg-head"><h3><span class="id">#' + t.id + '</span>' + esc(t.title) + ' <span class="status ' + cls(t.status) + '">' + esc(STATUS[t.status] || t.status) + '</span></h3><button data-act="close">Close</button></div>' +
     '<div class="links">' + (t.url && t.status != "merged" ? '<a href="/api/factory/tasks/' + t.id + '/open" target="_blank">Open preview ↗</a><span class="muted">' + esc(t.url) + '</span>' : "") +
     '<span class="branch">' + esc(t.branch) + (t.base ? " from staging at " + esc(t.base.slice(0, 10)) : "") + '</span>' +
     (t.mergeCommit ? '<span class="muted">merged as ' + esc(t.mergeCommit.slice(0, 10)) + '</span>' : "") + (t.vm ? '<span class="muted">VM ' + esc(t.vm) + '</span>' : "") + '</div>' +
@@ -253,7 +259,7 @@ function depsSection(t) {
   const row = ([kind, id]) => {
     const d = tasks.find((x) => x.id == id);
     return '<div class="dep"><span class="kind">' + (kind == "startAfter" ? "Starts after" : "Merges after") + '</span><a data-open="' + id + '" title="Open #' + id + '"><span class="id">#' + id + '</span> ' + esc(d ? d.title : "(unknown task)") + '</a>' +
-      (d && d.status == "merged" ? '<span class="met" title="Merged: met">✓ merged</span>' : '<span class="status ' + (d ? d.status : "") + '">' + (d ? STATUS[d.status] : "gone") + '</span>') +
+      (d && d.status == "merged" ? '<span class="met" title="Merged: met">✓ merged</span>' : '<span class="status ' + (d ? cls(d.status) : "") + '">' + (d ? STATUS[d.status] : "gone") + '</span>') +
       (editable ? '<button class="x" data-act="undep" data-id="' + t.id + '" data-kind="' + kind + '" data-dep="' + id + '" title="Remove this dependency" aria-label="Remove this dependency">×</button>' : "") + '</div>';
   };
   const taken = new Set([t.id, ...(t.startAfter || []), ...(t.mergeAfter || [])]);

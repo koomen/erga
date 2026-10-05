@@ -29,10 +29,14 @@
 // 11. Share with agent: a factory token made in the dialog; with it an outside agent reads the guide and the
 //    tasks, queues a task (its name has a curly apostrophe and an emoji: the task's VM starts and pushes), changes dependencies and sends instructions, and nothing else (merge, discard, start,
 //    the Claude sign-in, the agent, tokens: 403); a bad token 401; Revoke ends it.
+// 12. Merges that need the task's own Claude Code (the stand-in, fake-claude.ts): a task that conflicts with staging
+//    goes to "needs agent" (Merge off, the reason on the card, the preview stopped), the same VM's stand-in resolves
+//    it, and the merge goes on by itself to merged; a merge step that hangs (a test hook) is killed at its time
+//    limit, with its whole process tree, and the same happens; an install that hangs wakes the stand-in with the log.
 // Screenshots land in tests/cdp.ts's SHOTS (factory-*.png).
 
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readdirSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { branches, dockerLabel, mintGitToken } from "../dev/factory";
@@ -97,7 +101,7 @@ try {
 
   // A second and third task, by the API, while we look at the first.
   expect((await api("/tasks", { json: { title: "Drop me", description: "To be discarded." } })).status == 201, "a second task");
-  expect((await api("/tasks", { json: { title: "Change me twice", description: "To be revised." } })).status == 201, "a third task");
+  expect((await api("/tasks", { json: { title: "Change me twice", description: "To be revised. [factory-test: can't resolve]" } })).status == 201, "a third task");
   await click(p, '[data-open="1"]');
   await until(() => p.eval(`document.getElementById("dlg").open && document.querySelector("#dlg .shots img")?.complete`), 5000, "the detail opens, with the screenshot");
   const detail = (await p.eval<string>(`document.getElementById("dlg").innerText`)).toLowerCase();
@@ -245,8 +249,9 @@ try {
   expect(queued4.status == 202 && queued4.body.status == "merging", "#4's merge may be asked for while #3 merges ahead of it", queued4);
   await until(async () => (await task(3)).status == "complete" && (await task(4)).status == "complete", STEP, "both merges end", async () => [await task(3), await task(4)].map((t) => ({ s: t.status, e: t.error })));
   const [r3, r4] = [await task(3), await task(4)];
-  expect(r3.error?.includes("conflicts with staging"), "#3's merge failed (a conflict, no Claude plan to resolve it)", r3.error);
-  expect(r4.error?.includes("Can't merge until #3 merges") && r4.error.includes("#3 is complete"), "#4's merge was refused when its turn came", r4.error);
+  expect(r3.error?.includes("Claude Code couldn't finish the merge") && r3.error.includes("conflicts with staging in landing/index.html"), "#3's merge failed (a conflict its stand-in gave up on)", r3.error);
+  expect(r3.log.some((l: any) => l.message.startsWith("Needs agent: The branch conflicts with staging")), "#3 needed its agent first", r3.log.slice(-8));
+  expect(r4.error?.includes("Can't merge until #3 merges") && /#3 is (complete|needs agent)/.test(r4.error), "#4's merge was refused when its turn came", r4.error);
   expect(!branches(host.state).staging || branches(host.state).staging == merged.mergeCommit, "staging didn't move");
   ok("a merge queued behind its dependency's: checked again when it runs, and refused when the dependency didn't merge");
 
@@ -389,12 +394,85 @@ try {
   await p.screenshot(join(SHOTS, "factory-share-revoked.png"));
   ok("Share with agent: a factory token creates, reads and instructs tasks, nothing else; Revoke ends it");
 
+  // ---------------------------------------------------------------- 12. merges that need the task's Claude Code
+  const make = async (title: string, description: string) => { const r = await api("/tasks", { json: { title, description } }); expect(r.status == 201, `a task: ${title}`, r); return r.body.id as number; };
+  const statusOf = async (id: number) => (await task(id)).status;
+  const vmStarts = (t: any) => t.log.filter((l: any) => /^VM \S+ started/.test(l.message)).length;
+  const tA = await make("Note A", "A note on the front page.");
+  const tB = await make("Note B, in conflict", "Another note on the front page. [factory-test: resolve after 8]");
+  const tD = await make("Note D, install hangs", "A note, with an install that hangs. [factory-test: hang install 2]");
+  await until(async () => (await statusOf(tA)) == "complete" && (await statusOf(tB)) == "complete" && (await statusOf(tD)) == "complete", STEP, "A, B and D are ready", () => Promise.all([tA, tB, tD].map(async (id) => (await task(id)).log.slice(-3))));
+  const d = await task(tD);
+  expect(d.log.some((l: any) => l.message.startsWith("`bun install` timed out after 2s (its processes were killed): Claude Code is told")) && d.log.some((l: any) => l.message.startsWith("The stand-in ran bun install again")), "an install that hangs: killed at its limit, and the stand-in is told and installs again", d.log.map((l: any) => l.message));
+  expect((await api(`/tasks/${tA}/merge`, { method: "POST" })).status == 202, "A merges");
+  await until(async () => (await statusOf(tA)) == "merged", STEP, "A is merged");
+  // B was made from the staging before A: both put a note under the heading, so merging staging into B conflicts.
+  const b0 = await task(tB);
+  const previewB = b0.url.replace("//localhost:", "//127.0.0.1:");
+  expect((await fetch(previewB).catch(() => null))?.ok, "B's preview is up before the merge");
+  await p.navigate(`${root}/admin/source`);
+  await until(() => p.eval(`!!document.querySelector('[data-col="ready-to-merge"] [data-open="${tB}"] [data-act="merge"]')`), 10_000, "B's Merge button");
+  await click(p, `[data-col="ready-to-merge"] [data-open="${tB}"] [data-act="merge"]`);
+  await until(async () => (await statusOf(tB)) == "needs agent", STEP, "B needs its agent", async () => (await task(tB)).log.slice(-4));
+  const nb1 = await task(tB);
+  expect(nb1.error.includes("The branch conflicts with staging in landing/index.html") && !nb1.url, "the reason, and no preview link", nb1);
+  expect(!(await fetch(previewB, { signal: AbortSignal.timeout(3000) }).then((r) => r.ok).catch(() => false)), "the preview was stopped before the merge work");
+  expect((await api(`/tasks/${tB}/merge`, { method: "POST" })).status == 409 && (await api(`/tasks/${tB}/revise`, { json: { instructions: "x" } })).status == 409, "Merge and new instructions are refused while it needs its agent");
+  const cardB = `[data-col="merging"] [data-open="${tB}"]`;
+  await until(() => p.eval(`(() => { const c = document.querySelector(${JSON.stringify(cardB)}); const b = c && [...c.querySelectorAll("button")].find((x) => x.textContent == "Merge"); return !!b && b.disabled && c.classList.contains("needs-agent") && c.innerText.toLowerCase().includes("needs agent") && c.innerText.includes("conflicts with staging in landing/index.html"); })()`), 5000, "B's card: in Merging, needs agent, the reason, Merge off", () => p.eval(`document.querySelector('[data-col="merging"]')?.innerText`));
+  await p.settle();
+  await p.screenshot(join(SHOTS, "factory-needs-agent.png"));
+  await click(p, `[data-open="${tB}"]`);
+  await until(() => p.eval(`document.getElementById("dlg").open && document.querySelector("#dlg .status.needs-agent")?.textContent == "needs agent"`), 5000, "B's detail says needs agent");
+  await p.screenshot(join(SHOTS, "factory-needs-agent-detail.png"));
+  await click(p, '[data-act="close"]');
+  // The agent panel's tools see it too (list_tasks with the status).
+  const replyCount = (await replies()).split(" | ").length;
+  await sayTo("What needs its agent? @script " + JSON.stringify([{ tool: "list_tasks", args: { status: "needs agent" } }, { tool: "get_task", args: { id: tB, log: 5 } }, { text: "B needs its agent." }]));
+  await until(async () => (await replies()).split(" | ").length > replyCount && (await replies()).includes("B needs its agent."), 15_000, "the agent answers", panel);
+  expect(!/(list_tasks|get_task) failed/.test(await panel()), "its reads of a needs agent task work", await panel());
+  await until(async () => (await statusOf(tB)) == "merged", STEP, "B's merge goes on by itself, and B is merged", async () => (await task(tB)).log.slice(-6));
+  const nb2 = await task(tB);
+  const msgs = nb2.log.map((l: any) => l.message);
+  expect(msgs.some((m: string) => m.startsWith("Claude Code is woken to finish the merge")) && msgs.some((m: string) => m.startsWith("Resolved the conflicts in landing/index.html")) && msgs.includes("The merge goes on"), "the stand-in resolved it, and the merge went on", msgs.slice(-14));
+  expect(vmStarts(nb2) == 1, "one VM, from start to merge: the same agent", msgs.filter((m: string) => m.startsWith("VM ")));
+  const stagingHtml = spawnSync("git", ["-C", repo, "show", "staging:landing/index.html"], { encoding: "utf8" }).stdout;
+  expect(stagingHtml.includes(`task #${tA}: Note A`) && stagingHtml.includes(`task #${tB}: Note B, in conflict`) && !stagingHtml.includes("<<<<<<<"), "staging has both notes, and no conflict markers");
+  expect(branches(host.state).staging == nb2.mergeCommit && !branches(host.state)[nb2.branch], "staging is B's merge commit; B's branch is gone");
+  ok("a conflict: needs agent (Merge off, the reason, the preview stopped), the same VM's stand-in resolves it, and the merge goes on to merged");
+
+  // C: the merge's push hangs once (a test hook, 3 s limit): killed with its process tree, needs agent, then merged.
+  const tC = await make("Note C, push hangs", "A third note. [factory-test: hang merge:push 3]");
+  await until(async () => (await statusOf(tC)) == "complete", STEP, "C is ready");
+  expect((await api(`/tasks/${tC}/merge`, { method: "POST" })).status == 202, "C merges");
+  await until(async () => (await statusOf(tC)) == "needs agent", STEP, "C needs its agent", async () => (await task(tC)).log.slice(-4));
+  const c1 = await task(tC);
+  expect(c1.error.startsWith("Pushing task/") && c1.error.includes("timed out after 3s (its processes were killed)"), "the reason: the push timed out", c1.error);
+  // Its whole process tree was killed (two sleeps: the step's and its child's), in the VM that is still up.
+  const hung = `sleep ${3000 + tC}`;
+  const left = docker ? spawnSync("docker", ["exec", c1.vm, "pgrep", "-f", hung], { encoding: "utf8" }).stdout.trim() : spawnSync("pgrep", ["-f", hung], { encoding: "utf8" }).stdout.trim();
+  expect(!left, "nothing of the hung step is left running", left);
+  await until(async () => (await statusOf(tC)) == "merged", STEP, "C is merged", async () => (await task(tC)).log.slice(-6));
+  expect(vmStarts(await task(tC)) == 1, "one VM for C too");
+  ok("a merge step that hangs: killed at its limit with its process tree, needs agent, the stand-in is woken, and the merge goes on to merged");
+
   console.log("all factory checks pass");
+} catch (e) {
+  // What the VMs said (the simulation's logs; Docker's are saved when a VM stops), to see why.
+  const vms = join(host.state, "factory", "vms");
+  if (existsSync(vms)) for (const n of readdirSync(vms)) {
+    const f = join(vms, n, "vm.log");
+    if (existsSync(f)) console.error(`--- ${n}/vm.log (tail)\n${readFileSync(f, "utf8").slice(-1500)}`);
+  }
+  console.error(`--- the dev server (tail)\n${host.output().slice(-3000)}`);
+  throw e;
 } finally {
   browser.close();
   // Docker VMs this server started (the label is its state folder's).
   if (docker) for (const id of spawnSync("docker", ["ps", "-aq", "--filter", `label=erga.factory=${dockerLabel(host.state)}`], { encoding: "utf8" }).stdout.split("\n").filter(Boolean)) {
     spawnSync("docker", ["rm", "-f", id], { stdio: "ignore" });
   }
+  // The simulated VMs' previews run detached, as in a VM (task.ts, daemon): stopped by their folder, under this server's state.
+  if (!docker) spawnSync("pkill", ["-f", join(host.state, "factory", "vms")], { stdio: "ignore" });
   await host.dispose();
 }

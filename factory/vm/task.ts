@@ -8,50 +8,88 @@
 //   task shot URL|FILE "caption" [--replace]   a screenshot (headless Chromium for a URL); --replace drops the old ones first
 //   task done "summary"                   pushes the branch, then marks the task ready to merge
 //   task fail "why"                       marks the task failed
+//   task run [--timeout SECONDS] -- CMD...  runs a command with a time limit (default 600 s): on timeout its whole
+//                                         process tree is killed and it exits 124; nothing it started stays behind
 //
 // A URL given to `task shot` on localhost is the VM's own (the preview).
 
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { api, CLONE, env, git, log, REPORTED, TASK } from "./common.ts";
+import { api, CLONE, env, git, LIMITS, log, REPORTED, step, TASK } from "./common.ts";
 
 const PORT = () => Number(env("FACTORY_PREVIEW_PORT", "4400"));
 const PUBLIC = () => Number(env("FACTORY_PUBLIC_PORT", "4401"));
 
 /** Pushes the task's branch (whatever is committed) and says where it is. */
-export function pushBranch(): string {
-  const branch = git(["rev-parse", "--abbrev-ref", "HEAD"]).out;
+export async function pushBranch(): Promise<string> {
+  const branch = (await git(["rev-parse", "--abbrev-ref", "HEAD"])).out;
   if (!branch.startsWith("task/")) throw new Error(`the clone is on ${branch}, not the task's branch`);
-  git(["push", "--quiet", "origin", `HEAD:refs/heads/${branch}`]);
-  return git(["rev-parse", "HEAD"]).out;
+  await git(["push", "--quiet", "origin", `HEAD:refs/heads/${branch}`]);
+  return (await git(["rev-parse", "HEAD"])).out;
 }
 
 async function up(port: number): Promise<boolean> {
   try { await fetch(`http://127.0.0.1:${port}/`, { signal: AbortSignal.timeout(2000) }); return true; } catch { return false; }
 }
 
-/** Starts something detached (its own session), so it outlives the job that started it. */
-function daemon(cmd: string[], cwd: string, logFile: string, extra: Record<string, string> = {}) {
+/** Where a daemon's process id is kept (`name`: preview, relay), so the merge can stop it (stopPreview). */
+const pidFile = (name: string) => join(env("FACTORY_WORK", "/work"), `${name}.pid`);
+
+/** Starts something detached (its own session), so it outlives the job that started it; its pid goes in WORK/<name>.pid. */
+function daemon(name: string, cmd: string[], cwd: string, logFile: string, extra: Record<string, string> = {}) {
   // The preview gets none of the job's secrets.
-  const { CLAUDE_CODE_OAUTH_TOKEN, REPO_TOKEN, FACTORY_TOKEN, ...rest } = process.env;
+  const { CLAUDE_CODE_OAUTH_TOKEN, REPO_TOKEN, FACTORY_TOKEN, FACTORY_TEST_HOOKS, ...rest } = process.env;
   const p = spawn("sh", ["-c", `exec ${cmd.map((a) => `'${a.replace(/'/g, `'\\''`)}'`).join(" ")} >>'${logFile}' 2>&1`], { cwd, detached: true, stdio: "ignore", env: { ...rest, ...extra } });
+  if (p.pid) writeFileSync(pidFile(name), String(p.pid));
   p.unref();
+}
+
+const alive = (pid: number) => { try { process.kill(-pid, 0); return true; } catch { return false; } };
+
+/**
+ * Stops the preview and its relay, with everything they started (their process groups), so nothing of a dev server
+ * that has run for hours can block a build or hold a port while the merge works (on 2026-10-05 a 3-hour-old dev
+ * server blocked `vite build` in the local queue). Answers what it stopped.
+ */
+export async function stopPreview(): Promise<string[]> {
+  const stopped: string[] = [];
+  for (const name of ["preview", "relay"]) {
+    const file = pidFile(name);
+    if (!existsSync(file)) continue;
+    const pid = Number(readFileSync(file, "utf8"));
+    rmSync(file, { force: true });
+    if (!pid || !alive(pid)) continue;
+    try { process.kill(-pid, "SIGTERM"); } catch { /* gone */ }
+    for (let i = 0; i < LIMITS.stopPreview * 10 && alive(pid); i++) await Bun.sleep(100);
+    if (alive(pid)) try { process.kill(-pid, "SIGKILL"); } catch { /* gone */ }
+    stopped.push(name);
+  }
+  // A preview started before pid files (an older script): by its command line, on this VM's port.
+  const port = String(PORT());
+  for (const pattern of [`dev.ts --port ${port} `, `serve-static .* ${port}$`]) {
+    if (spawnSync("pkill", ["-f", pattern], { stdio: "ignore" }).status == 0) stopped.push(pattern.split(" ")[0]);
+  }
+  return stopped;
 }
 
 export async function preview(path = "/", staticDir?: string) {
   const port = PORT(), pub = PUBLIC();
   if (!(await up(port))) {
     const logFile = join(env("FACTORY_WORK", "/work"), "preview.log");
-    if (staticDir) daemon(["bun", import.meta.path, "serve-static", resolve(CLONE(), staticDir), String(port)], CLONE(), logFile);
-    else daemon(["bun", "dev.ts", "--port", String(port), "--no-open"], CLONE(), logFile);
-    for (let i = 0; i < 600 && !(await up(port)); i++) await Bun.sleep(250);
-    if (!(await up(port))) throw new Error(`the preview didn't start: ${readFileSync(logFile, "utf8").slice(-1500)}`);
+    if (staticDir) daemon("preview", ["bun", import.meta.path, "serve-static", resolve(CLONE(), staticDir), String(port)], CLONE(), logFile);
+    else daemon("preview", ["bun", "dev.ts", "--port", String(port), "--no-open"], CLONE(), logFile);
+    for (let i = 0; i < LIMITS.preview * 4 && !(await up(port)); i++) await Bun.sleep(250);
+    if (!(await up(port))) {
+      // Not left half-started: its processes are stopped.
+      await stopPreview();
+      throw new Error(`the preview didn't start in ${LIMITS.preview}s (stopped): ${readFileSync(logFile, "utf8").slice(-1500)}`);
+    }
   }
   // The VM's loopback isn't reachable from outside it: a relay on the public port, when that is another one.
   if (pub != port && !(await up(pub))) {
-    daemon(["socat", `TCP-LISTEN:${pub},fork,reuseaddr`, `TCP:127.0.0.1:${port}`], CLONE(), join(env("FACTORY_WORK", "/work"), "relay.log"));
+    daemon("relay", ["socat", `TCP-LISTEN:${pub},fork,reuseaddr`, `TCP:127.0.0.1:${port}`], CLONE(), join(env("FACTORY_WORK", "/work"), "relay.log"));
     for (let i = 0; i < 40 && !(await up(pub)); i++) await Bun.sleep(100);
   }
   await api("/preview", { json: { path } });
@@ -73,7 +111,7 @@ function chromeShot(url: string, file: string, profile: string): Promise<string>
   return new Promise((resolve) => {
     const p = spawn(chrome(), ["--headless", "--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage", "--hide-scrollbars", "--no-first-run",
       `--user-data-dir=${profile}`, "--window-size=1280,860", "--virtual-time-budget=10000", `--screenshot=${file}`, url], {
-      stdio: ["ignore", "ignore", "pipe"],
+      stdio: ["ignore", "ignore", "pipe"], detached: true,
       // The local simulation gives jobs a HOME of their own, in which Chrome on a Mac hangs: it gets the real one (CHROME_HOME), and its own profile.
       env: process.env.CHROME_HOME ? { ...process.env, HOME: process.env.CHROME_HOME } : process.env,
     });
@@ -83,7 +121,8 @@ function chromeShot(url: string, file: string, profile: string): Promise<string>
       if (settled) return;
       settled = true;
       clearInterval(poll); clearTimeout(limit);
-      try { p.kill("SIGKILL"); } catch { /* gone */ }
+      // Chromium and its helpers: the whole group.
+      try { process.kill(-p.pid!, "SIGKILL"); } catch { try { p.kill("SIGKILL"); } catch { /* gone */ } }
       resolve(/Page load failed[^\n]*/.exec(stderr)?.[0] ?? stderr.slice(-800));
     };
     const poll = setInterval(() => {
@@ -91,7 +130,7 @@ function chromeShot(url: string, file: string, profile: string): Promise<string>
       if (size > 0 && size == last) done();
       last = size;
     }, 300);
-    const limit = setTimeout(done, 60_000);
+    const limit = setTimeout(done, LIMITS.shot * 1000);
     p.on("close", done);
   });
 }
@@ -115,7 +154,7 @@ export async function shot(target: string, caption: string, replace = false) {
 }
 
 export async function done(summary: string) {
-  const commit = pushBranch();
+  const commit = await pushBranch();
   await api("", { method: "PATCH", json: { status: "complete", summary, commit } });
   writeFileSync(REPORTED(), "complete");
 }
@@ -136,6 +175,15 @@ if (import.meta.main) {
       case "shot": { const replace = has("--replace"); await shot(rest[0], rest.slice(1).join(" ") || "", replace); console.log("screenshot added"); break; }
       case "done": await done(rest.join(" ")); console.log(`task #${TASK()} is ready to merge`); break;
       case "fail": await fail(rest.join(" ")); break;
+      case "run": {
+        // A command under a time limit: its output as it comes; on timeout, its whole tree killed (exit 124).
+        const t = Number(flag("--timeout") ?? 600);
+        const cmdline = rest[0] == "--" ? rest.slice(1) : rest;
+        if (!cmdline.length || !(t > 0)) throw new Error('say what to run: task run --timeout SECONDS -- CMD...');
+        const r = await step(cmdline, { name: "run", timeout: t, cwd: process.cwd(), echo: true });
+        if (r.timedOut) console.error(`task run: ${cmdline.join(" ")} timed out after ${t}s; its processes were killed`);
+        process.exit(r.code);
+      }
       case "serve-static": {
         // The light preview (the local simulation's): a folder's files.
         const [dir, port] = rest;

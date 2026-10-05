@@ -56,12 +56,109 @@ export async function api(path: string, init: { method?: string; json?: unknown;
 
 export const log = (message: string) => api("/log", { json: { message } }).catch((e) => console.error(String(e)));
 
-/** git, in `cwd`, with the repository's token as a header (from the environment, never on the command line or in output). */
-export function git(args: string[], cwd = CLONE(), opts: { quiet?: boolean } = {}): { code: number; out: string; err: string } {
-  const r = spawnSync("git", args, { cwd, encoding: "utf8", env: { ...process.env, ...gitAuth() } });
-  const res = { code: r.status ?? 1, out: (r.stdout ?? "").trim(), err: scrub((r.stderr ?? "").trim()) };
-  if (res.code != 0 && !opts.quiet) throw new Error(`git ${args[0]}: ${res.err || res.out}`);
-  return res;
+/**
+ * How long each step of a job may take, in seconds, before its processes are killed (the whole tree) and the
+ * task's Claude Code is woken with the logs (README, The factory, "Timeouts"). Nothing in a job waits forever.
+ */
+export const LIMITS = {
+  clone: 300, fetch: 120, push: 120, git: 60,
+  install: 600,
+  /** Claude Code's run on a task (and on more instructions); then it's woken once to finish. */
+  claude: 3 * 3600,
+  /** Claude Code's run on a merge that needs it (a conflict, or a step that failed or hung). */
+  resolve: 3600,
+  preview: 150, shot: 60, stopPreview: 10,
+};
+
+export interface StepResult { code: number; out: string; err: string; timedOut: boolean; secs: number; /** Its time limit, in seconds. */ limit: number }
+
+/**
+ * Runs a command as a step with a time limit, in a process group of its own: when it times out, the whole tree is
+ * killed (TERM, then KILL 5 seconds later), and when it ends, whatever it left running in its group is killed too.
+ * Only what a step put in a session of its own (the preview: task.ts, daemon) outlives it. Output is scrubbed of the
+ * job's secrets; `echo` copies it to ours as it comes; `onLine` gets each line of stdout.
+ */
+export function step(cmd: string[], opts: { name?: string; timeout: number; cwd?: string; env?: Record<string, string | undefined>; echo?: boolean; onLine?: (line: string) => void } ): Promise<StepResult> {
+  const started = Date.now();
+  // A test of the timeouts (the scripted stand-in only): this step hangs, once.
+  const hang = hangFor(opts.name);
+  if (hang) { cmd = ["sh", "-c", `sleep ${hang.sleep} & sleep ${hang.sleep}; wait`]; opts = { ...opts, timeout: hang.timeout }; }
+  return new Promise((resolve) => {
+    const p = spawn(cmd[0], cmd.slice(1), { cwd: opts.cwd, env: { ...process.env, ...opts.env } as NodeJS.ProcessEnv, stdio: ["ignore", "pipe", "pipe"], detached: true });
+    let out = "", err = "", buf = "", timedOut = false, settled = false;
+    const group = (sig: NodeJS.Signals) => { try { process.kill(-p.pid!, sig); } catch { /* gone */ } };
+    const take = (c: Buffer, isErr: boolean) => {
+      const t = c.toString();
+      if (isErr) err = (err + t).slice(-20000); else out = (out + t).slice(-20000);
+      if (opts.echo) (isErr ? process.stderr : process.stdout).write(scrub(t));
+      if (isErr || !opts.onLine) return;
+      buf += t;
+      const lines = buf.split("\n");
+      buf = lines.pop()!;
+      for (const l of lines) opts.onLine(l);
+    };
+    p.stdout!.on("data", (c) => take(c, false));
+    p.stderr!.on("data", (c) => take(c, true));
+    let kill: ReturnType<typeof setTimeout> | undefined;
+    const limit = setTimeout(() => { timedOut = true; group("SIGTERM"); kill = setTimeout(() => group("SIGKILL"), 5000); }, opts.timeout * 1000);
+    const end = (code: number) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(limit);
+      if (kill) clearTimeout(kill);
+      // Nothing of the step's own stays behind.
+      group("SIGKILL");
+      if (buf && opts.onLine) opts.onLine(buf);
+      resolve({ code: timedOut ? 124 : code, out: scrub(out).trim(), err: scrub(err).trim(), timedOut, secs: Math.round((Date.now() - started) / 100) / 10, limit: opts.timeout });
+    };
+    p.on("error", (e) => { err += String(e); end(127); });
+    p.on("close", (code) => end(code ?? 1));
+  });
+}
+
+/** A step's failure, in a line, with the tail of its output: for logs, errors and Claude Code's instructions. */
+export function stepError(what: string, r: StepResult): string {
+  const tail = (r.err + (r.err && r.out ? "\n" : "") + r.out).split("\n").slice(-40).join("\n").slice(-3000);
+  return `${what} ${r.timedOut ? `timed out after ${r.limit}s (its processes were killed)` : `failed (exit ${r.code})`}${tail ? `:\n${tail}` : ""}`;
+}
+
+/** Thrown for a git step that failed, with what it said. */
+export class StepFailed extends Error {
+  constructor(message: string, readonly result: StepResult, readonly stepName: string) { super(message); }
+}
+
+/** git, in `cwd`, as a step with a time limit (fetch, push and clone get longer), with the repository's token as a header (from the environment, never on the command line or in output). */
+export async function git(args: string[], cwd = CLONE(), opts: { quiet?: boolean; name?: string } = {}): Promise<StepResult> {
+  const timeout = args[0] == "clone" ? LIMITS.clone : args[0] == "fetch" ? LIMITS.fetch : args[0] == "push" ? LIMITS.push : LIMITS.git;
+  const name = opts.name ?? args[0];
+  const r = await step(["git", ...args], { name, timeout, cwd, env: gitAuth() });
+  if (r.code != 0 && !opts.quiet) throw new StepFailed(stepError(`git ${args[0]}`, r), r, name);
+  return r;
+}
+
+/**
+ * The stand-in's tests of the timeouts: a task whose ask says "[factory-test: hang STEP SECONDS]" makes that step
+ * (by name: push, fetch, merge, install, ...) hang once, with a limit of SECONDS. Honoured only when the scripted
+ * stand-in does the work (no Claude plan), so a real task never hangs on purpose. The brief is read by the job
+ * (FACTORY_TEST_HOOKS, set from it in run.ts and merge.ts). The merge's steps are "merge:<name>" (merge:push).
+ */
+function hangFor(step?: string): { timeout: number; sleep: number } | null {
+  const hooks = process.env.FACTORY_TEST_HOOKS;
+  if (!step || !hooks) return null;
+  const name = `${process.env.FACTORY_HOOK_PREFIX ?? ""}${step}`;
+  const m = new RegExp(`\\[factory-test: hang ${name} (\\d+)\\]`).exec(hooks);
+  if (!m) return null;
+  const once = join(WORK(), `.hung-${name}`);
+  if (existsSync(once)) return null;
+  writeFileSync(once, "");
+  return { timeout: Number(m[1]), sleep: 3000 + TASK() };
+}
+
+/** The test hooks in a task's ask, for the stand-in only (hangFor). */
+export function testHooks(prompt: string) {
+  if (realClaude()) return;
+  const hooks = prompt.match(/\[factory-test: [^\]]+\]/g);
+  if (hooks) process.env.FACTORY_TEST_HOOKS = hooks.join(" ");
 }
 
 /** The token as an HTTP header for git, through its environment config (GIT_CONFIG_*), so it never shows in `ps` or in .git/config. */
@@ -78,27 +175,6 @@ export function scrub(s: string): string {
     if (v && v.length > 8) s = s.split(v).join(`[${name}]`);
   }
   return s;
-}
-
-/** Runs a command, its output to ours; resolves with its exit code. */
-export function run(cmd: string[], opts: { cwd?: string; env?: Record<string, string | undefined>; onLine?: (line: string) => void } = {}): Promise<number> {
-  return new Promise((resolve) => {
-    const p = spawn(cmd[0], cmd.slice(1), { cwd: opts.cwd, env: { ...process.env, ...opts.env } as NodeJS.ProcessEnv, stdio: ["ignore", "pipe", "pipe"] });
-    let buf = "";
-    const take = (c: Buffer, err: boolean) => {
-      const t = c.toString();
-      (err ? process.stderr : process.stdout).write(scrub(t));
-      if (!opts.onLine) return;
-      buf += t;
-      const lines = buf.split("\n");
-      buf = lines.pop()!;
-      for (const l of lines) opts.onLine(l);
-    };
-    p.stdout.on("data", (c) => take(c, false));
-    p.stderr.on("data", (c) => take(c, true));
-    p.on("error", () => resolve(127));
-    p.on("close", (code) => { if (buf && opts.onLine) opts.onLine(buf); resolve(code ?? 1); });
-  });
 }
 
 /** Claude Code's first-run state, so `claude -p` starts without asking anything (the token itself stays in the environment). */
