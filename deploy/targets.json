@@ -6,7 +6,7 @@
   },
   "builder": "erga-builder",
   "factory": {
-    "image": "erga-factory:af90e5f77efc@sha256:4cae9e16ff52c1850d9a1d1e3a5c001dcb4a2fc53a65c51f7a0fae15570a6329"
+    "image": "erga-factory:af90e5f77efc@sha256:4cb143014ddefdf79a33846adf27435e9de9258bf3dee403e35e5d7945ba0a8d"
   },
   "targets": {
     "production": {

@@ -174,9 +174,9 @@ function localHost(env: Env, origin: string): VmHost {
 /** The VMs of this server, or null with why there are none. */
 function vmHost(env: Env, origin: string): VmHost | string {
   if (env.ERGA_LINK_SECRET && env.DEV_LOGIN) return localHost(env, origin);
-  // On Cloudflare: Containers (factory/cloudflare.ts), once the runbook's steps are done.
+  // On Cloudflare: Containers (factory/cloudflare.ts), which the deploy declares (deploy/cloudflare.ts, deploy/targets.json).
   if (env.FACTORY_VM && env.FACTORY_PREVIEW_DOMAIN) return containersHost(env, origin);
-  return "This server has no VMs for the factory yet: see README, The factory, Runbook.";
+  return "This server has no VMs for the factory yet: its deploy declares them (README, The factory, On Cloudflare).";
 }
 
 /** What the dev server says about its VMs: Docker or simulated (local only). */
@@ -539,7 +539,7 @@ export class Factory extends DurableObject<Env> {
   async setClaude(token: string | null, by: string): Promise<{ ok: boolean; error?: string }> {
     if (token == null) { this.sql.exec("DELETE FROM secrets WHERE name = 'claude'"); return { ok: true }; }
     token = token.trim();
-    if (!factoryKey(this.env)) return { ok: false, error: "This server has no FACTORY_KEY to encrypt the token with: set it first (README, The factory, Runbook)." };
+    if (!factoryKey(this.env)) return { ok: false, error: "This server has no FACTORY_KEY to encrypt the token with: bun deploy/setup.ts --factory makes it (README, The factory, On Cloudflare)." };
     if (!/^sk-ant-[A-Za-z0-9_-]{20,}$/.test(token)) return { ok: false, error: "That isn't a Claude Code token. Run `claude setup-token` and paste the token it prints (sk-ant-…)." };
     const iv = crypto.getRandomValues(new Uint8Array(12));
     const data = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv }, await aes(this.env), enc.encode(token)));

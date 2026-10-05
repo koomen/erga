@@ -397,6 +397,15 @@ export async function runPipeline(cf: Cloudflare, release: Release | null, targe
   if (release) carry.version = release.version;
   let existing = false;
 
+  /** The Worker's upload: its modules, and its metadata (with the factory's image when `vms`). */
+  const uploadWorker = async (rel: Release, assetsJwt: string, vms: boolean) => {
+    const metadata = workerMetadata(rel, target, { dbId: carry.dbId!, assetsJwt, pagesHost, existing, vms });
+    const form = new FormData();
+    form.set("metadata", JSON.stringify(metadata));
+    for (const [name, bytes] of Object.entries(rel.modules)) form.append(name, new File([new Uint8Array(bytes)], name, { type: "application/javascript+module" }));
+    await cf.call("PUT", `${acc}/workers/scripts/${target.workerName}`, "upload the Worker", form);
+  };
+
   const run: Record<StepId, () => Promise<string | undefined>> = {
     // The account, its workers.dev subdomain (made if it has none and the target names one), and whether the Worker is Erga's.
     async account() {
@@ -508,22 +517,15 @@ export async function runPipeline(cf: Cloudflare, release: Release | null, targe
       const rel = needRelease();
       const assetsJwt = (carry as Carry & { assetsJwt?: string }).assetsJwt;
       if (!assetsJwt) throw new DeployError("The editor's files weren't uploaded first: deploy again.");
-      const upload = async (vms: boolean) => {
-        const metadata = workerMetadata(rel, target, { dbId: carry.dbId!, assetsJwt, pagesHost, existing, vms });
-        const form = new FormData();
-        form.set("metadata", JSON.stringify(metadata));
-        for (const [name, bytes] of Object.entries(rel.modules)) form.append(name, new File([new Uint8Array(bytes)], name, { type: "application/javascript+module" }));
-        await cf.call("PUT", `${acc}/workers/scripts/${target.workerName}`, "upload the Worker", form);
-      };
       delete carry.noVms;
       try {
-        await upload(!!target.factory);
+        await uploadWorker(rel, assetsJwt, !!target.factory);
       } catch (e) {
         // A deploy token that may not name a container image: the version goes up without the factory's VMs (the rest of
         // Erga is unchanged), and the log says how to give them back.
         if (!(target.factory && target.keepSecrets && e instanceof DeployError && e.status == 403)) throw e;
         carry.noVms = e.message;
-        await upload(false);
+        await uploadWorker(rel, assetsJwt, false);
       }
       delete (carry as Carry & { assetsJwt?: string }).assetsJwt;
       return `${target.workerName}, release ${rel.version}${carry.noVms ? "; without the factory's VMs: this deploy's token may not name a container image (README, The factory)" : ""}`;
@@ -536,7 +538,12 @@ export async function runPipeline(cf: Cloudflare, release: Release | null, targe
       if (!ns) return `skipped: ${target.workerName} has no ${FACTORY_CLASS} Durable Object (this release doesn't export it)`;
       try {
         const r = await ensureFactoryApp(cf, target.accountId, target.workerName, ns);
-        return `${factoryAppName(target.workerName)} (${ns}), ${r == "made" ? "made" : "already there"}`;
+        if (r == "there") return `${factoryAppName(target.workerName)} (${ns}), already there`;
+        // A version uploaded before its application isn't tied to it (Cloudflare: "no container application assigned"):
+        // the same version again, now that it's there.
+        if (!release) return `${factoryAppName(target.workerName)} (${ns}), made; deploy again so the version is tied to it`;
+        await uploadWorker(release, await uploadAssets(cf, acc, target.workerName, release.assets), true);
+        return `${factoryAppName(target.workerName)} (${ns}), made, and the version uploaded again to be tied to it`;
       } catch (e) {
         if (target.keepSecrets && e instanceof DeployError && (e.status == 401 || e.status == 403)) return `skipped: this deploy's token may not use Containers, so it can't check ${factoryAppName(target.workerName)}. It's made once from a machine (bun deploy/setup.ts --factory); until then the factory's VMs don't start`;
         throw e;

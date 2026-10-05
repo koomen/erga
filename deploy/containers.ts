@@ -23,10 +23,15 @@ export const FACTORY_IMAGE_NAME = "factory";
 export const factoryAppName = (worker: string) => `${worker}-${FACTORY_CLASS.toLowerCase()}`;
 
 /**
- * An image's full reference in the account's registry, from its name: erga-factory:<tag>@sha256:<digest>
- * (Containers takes only digest-pinned images; the tag says which build it is).
+ * An image's full reference in the account's registry, from its name: erga-factory:<tag>@sha256:<digest> (the tag
+ * says which build it is) becomes registry.cloudflare.com/<account>/erga-factory@sha256:<digest>, the digest only:
+ * Containers takes only digest-pinned images, and starts them by digest alone, as wrangler names them.
  */
-export const imageRef = (accountId: string, image: string) => (image.startsWith(`${REGISTRY}/`) ? image : `${REGISTRY}/${accountId}/${image}`);
+export function imageRef(accountId: string, image: string): string {
+  const full = image.startsWith(`${REGISTRY}/`) ? image : `${REGISTRY}/${accountId}/${image}`;
+  const { repo, tag, digest } = imageParts(full);
+  return digest ? `${repo}@${digest}` : tag ? `${repo}:${tag}` : repo;
+}
 
 /** An image name's parts: repository, tag and digest (each may be missing). */
 export function imageParts(image: string): { repo: string; tag?: string; digest?: string } {
@@ -44,7 +49,7 @@ export async function registryCredentials(cf: Cloudflare, accountId: string, per
 
 /** The registry's digest for this image (by its digest if it names one, else its tag), or null if it hasn't it; over its HTTP API. */
 export async function registryDigest(cf: Cloudflare, accountId: string, image: string, fetcher: (input: string, init?: RequestInit) => Promise<Response> = fetch): Promise<string | null> {
-  const { repo, tag, digest } = imageParts(imageRef(accountId, image).slice(REGISTRY.length + 1));
+  const { repo, tag, digest } = imageParts((image.startsWith(`${REGISTRY}/`) ? image : `${REGISTRY}/${accountId}/${image}`).slice(REGISTRY.length + 1));
   const { username, password } = await registryCredentials(cf, accountId, ["pull"]);
   const r = await fetcher(`https://${REGISTRY}/v2/${repo}/manifests/${digest ?? tag ?? "latest"}`, {
     method: "HEAD",

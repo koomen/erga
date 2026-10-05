@@ -193,7 +193,8 @@ describe("production", () => {
     expect(steps).toContain("database:done using Erga's database from before (" + PROD_DB + ")");
     expect(mock.state.databases.length).toBe(1);
     expect(mock.state.deletedDatabases).toEqual([]);
-    expect(mock.state.versions.erga).toBe(2);
+    // Its upload, and the same version again once its factory's container application was made (the first time only).
+    expect(mock.state.versions.erga).toBe(3);
     expect(mock.state.secrets.erga).toEqual(secrets);
     const b = bindingsOf(mock.state, "erga");
     expect(b.DB.database_id).toBe(PROD_DB);
@@ -442,7 +443,8 @@ describe("branches deploy themselves", () => {
       expect(server.logs.every((e) => e.deployId == mid.run.deployId)).toBe(true);
       expect(server.logs.flatMap((e) => e.lines)).toEqual(log.lines.slice(before));
       expect([...mock.state.docs["erga-staging"].docs.keys()].sort()).toEqual([...PROD_DOCS].sort());
-      expect(mock.state.versions["erga-staging"]).toBe(2 + i);
+      // The bootstrap's two (its upload, and again once the factory's container application was made), then one each.
+      expect(mock.state.versions["erga-staging"]).toBe(3 + i);
     }
     expect(builder.built).toEqual([SHA2, SHA3]);
     expect(writesToProduction(mock.state)).toEqual([]);
@@ -714,7 +716,7 @@ describe("the factory's VMs (Containers)", () => {
   test("staging: the image prepared, named on the version for FactoryVm, the application made once, previews on the pages domain", async () => {
     const mock = mockCloudflare({ fleet: true });
     const target = staging({ secrets: stagingSecrets });
-    expect(target.factory).toEqual({ image: `registry.cloudflare.com/${FLEET_ACCOUNT}/${FACTORY.image}`, previews: "erga-pages-staging.dev" });
+    expect(target.factory).toEqual({ image: `registry.cloudflare.com/${FLEET_ACCOUNT}/erga-factory@${FACTORY.image.split("@")[1]}`, previews: "erga-pages-staging.dev" });
     const { steps } = await deployTo(target, mock);
     expect(steps).toContain(`image:done ${target.factory!.image}, ready`);
     expect(mock.state.containers.prepared).toEqual([target.factory!.image]);
@@ -727,10 +729,14 @@ describe("the factory's VMs (Containers)", () => {
     expect(b.FACTORY_IMAGE.text).toBe(target.factory!.image);
     const ns = namespaceId("erga-staging", "FactoryVm");
     expect(mock.state.containers.apps[ns]).toEqual({ name: "erga-staging-factoryvm", scheduling_policy: "durable_object", durable_objects: { namespace_id: ns } });
-    expect(steps.find((x) => x.startsWith("vms:done"))).toContain("made");
-    // Again: the same application, found, not made twice.
+    // Made, and the version uploaded again: one uploaded before its application isn't tied to it (as on Cloudflare).
+    expect(steps.find((x) => x.startsWith("vms:done"))).toContain("made, and the version uploaded again");
+    expect(mock.state.calls.filter((c) => c == "PUT /accounts/0123456789abcdef0123456789abcdef/workers/scripts/erga-staging").length).toBe(2);
+    // Again: the same application, found, not made twice, and one upload.
+    const before = mock.state.versions["erga-staging"];
     const again = await deployTo(staging({ secrets: stagingSecrets }), mock);
     expect(again.steps.find((x) => x.startsWith("vms:done"))).toContain("already there");
+    expect(mock.state.versions["erga-staging"]).toBe(before + 1);
     expect(Object.keys(mock.state.containers.apps)).toEqual([ns]);
   });
 

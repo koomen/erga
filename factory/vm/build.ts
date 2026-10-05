@@ -77,7 +77,7 @@ export function ensureImage(log: (line: string) => void = () => {}, platform?: s
 }
 
 async function build(tag: string, log: (line: string) => void, platform?: string): Promise<string> {
-  if (spawnSync("docker", ["image", "inspect", tag], { stdio: "ignore" }).status == 0) return tag;
+  if (spawnSync("docker", ["image", "inspect", tag], { stdio: "ignore" }).status == 0 && !process.env.ERGA_FACTORY_REBUILD) return tag;
   const ctx = mkdtempSync(join(tmpdir(), "erga-factory-image-"));
   try {
     for (const [path, file] of Object.entries(inputs())) {
@@ -86,7 +86,8 @@ async function build(tag: string, log: (line: string) => void, platform?: string
     }
     const bun = readFileSync(join(ROOT, ".bun-version"), "utf8").trim();
     log(`building ${tag} (the first build downloads Chromium and Claude Code: a few minutes)`);
-    const p = spawn("docker", ["build", ...(platform ? ["--platform", platform] : ["-t", `${IMAGE}:latest`]), "--build-arg", `BUN_VERSION=${bun}`, "-t", tag, ctx], { stdio: ["ignore", "pipe", "pipe"] });
+    // For Cloudflare: one image, not an index with a provenance attestation beside it (Containers can't start those), as wrangler builds.
+    const p = spawn("docker", ["build", ...(platform ? ["--platform", platform, "--provenance=false"] : ["-t", `${IMAGE}:latest`]), "--build-arg", `BUN_VERSION=${bun}`, "-t", tag, ctx], { stdio: ["ignore", "pipe", "pipe"] });
     let tail = "";
     const take = (c: Buffer) => { const t = c.toString(); tail = (tail + t).slice(-4000); for (const l of t.split("\n")) if (l.trim()) log(l); };
     p.stdout.on("data", take);

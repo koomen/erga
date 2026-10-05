@@ -1426,9 +1426,11 @@ fine for Erga's thousands but not for millions.
 The factory is the task queue (`development/task-queue/`) inside Erga, at
 `/admin/factory`: the same board (Queued, Working, Ready to merge, Merging,
 Merged), but each task is done by Claude Code in a VM of its own, not on
-this machine. It's a prototype: admins only, and off until an admin sets the
-`factory` setting to `on` (`/admin`). It does background tasks only; live
-mode stays on the user's own computer, with the local queue.
+this machine: on staging.erga.dev and erga.dev a Cloudflare Container
+([On Cloudflare](#on-cloudflare), below). It's a prototype: admins only, and
+off until an admin sets the `factory` setting to `on` (`/admin`). It does
+background tasks only; live mode stays on the user's own computer, with the
+local queue.
 
 **A task is a branch.** Adding a task names its branch
 `task/<id>-<slug>` (as the local queue does) and starts a VM. In the VM
@@ -1445,8 +1447,10 @@ Code"), which run Claude Code again on the same branch (`--continue`).
 **Merge** merges the branch into staging (`--no-ff`, "Merge task/…:
 title"; a conflict goes to Claude Code to resolve, as the local queue does,
 or fails, naming the files), pushes staging, deletes the branch and stops
-the VM; merges run one at a time. Staging's own deploy (task #40) then
-deploys staging.erga.dev. **Discard** deletes the branch and stops the VM.
+the VM; merges run one at a time. The push goes through Erga's Git endpoint,
+which tells the deploy pipeline (`deployHook`) as for any push to staging:
+staging.erga.dev deploys itself, and the move is recorded as the push of the
+admin who pressed Merge. **Discard** deletes the branch and stops the VM.
 Branches live only as long as their task, and the Source page (task #39)
 shows only staging and main, so they never appear there.
 
@@ -1513,16 +1517,20 @@ the git tokens' rules.
   VMs. The board (`factory/page.ts`) updates live from its event stream.
 - A `VmHost` starts and stops VMs and runs jobs in them. Locally it's the
   dev server (`dev/factory.ts`: Docker or the simulation, and the
-  repository); on Cloudflare, Containers (`factory/cloudflare.ts`), once set
-  up (the runbook, below).
+  repository); on Cloudflare, Containers (`factory/cloudflare.ts`,
+  [On Cloudflare](#on-cloudflare)).
 - The image (`factory/vm/Dockerfile`): Bun (`.bun-version`), Node (Vite runs
   on it), git, Chromium, socat, Claude Code (pinned: 2.1.285; its flags and
-  events change between releases), and the repo's dependencies in Bun's
-  cache, about 2.2 GB. `bun factory/vm/build.ts` builds it, tagged
-  `erga-factory:<hash>` of its inputs (the Dockerfile, `package.json`,
-  `bun.lock`, the VM's scripts), so a new lockfile makes a new image and an
-  unchanged one is reused. Not root: Claude Code refuses to skip its prompts
-  as root.
+  events change between releases), the VM's agent, and the repo's
+  dependencies in Bun's cache, about 2.2 GB. `bun factory/vm/build.ts`
+  builds it, tagged `erga-factory:<hash>` of the Dockerfile, the agent and
+  the Bun version: the dependencies are only a cache (a clone's `bun install`
+  fetches what it lacks), and the jobs' scripts (`run.ts`, `merge.ts`,
+  `task.ts`, `fake-claude.ts`, `common.ts`) come with each job, from the
+  server's own version (`factory/vm/scripts.ts`; locally the dev server reads
+  them from the checkout). So a change to a script ships with the next deploy,
+  and the image changes only when its Dockerfile or agent does. Not root:
+  Claude Code refuses to skip its prompts as root.
 - The VM's agent (`factory/vm/agent.ts`, the image's main process, port
   8080) runs the jobs when the factory asks, so the platform needs only an
   HTTP port: locally Docker publishes it on the loopback; on Cloudflare the
@@ -1530,8 +1538,13 @@ the git tokens' rules.
   relay to the app's 4400, as the app listens on the VM's loopback).
 - Each job gets, in its environment only: the factory's API and the task's
   own token for it (`fct…`: it reports on that task only), the repository and
-  a git token (`fgt…`) that pushes that task's branch only (a merge's also
-  moves staging, never deletes it), and the Claude token, if there is one.
+  a git token (`fgt…`, `factory/git-grant.ts`) that pushes that task's branch
+  only (a merge's also moves staging, under staging's rules, never deletes
+  it), and the Claude token, if there is one. On Cloudflare the repository
+  is Erga's Git endpoint (`/git/erga.git`), which takes these tokens beside
+  admin tokens (`worker/source.ts`, `SourceRepo.receive`): a task branch
+  (`task/<id>-<slug>`) is made, moved and deleted only with its own task's
+  token, never shown on the Source page, mirrored or deployed.
   Scripts take tokens out of anything they log; git gets its token through
   its environment, never its command line or `.git/config`; the preview gets
   none of them.
@@ -1591,8 +1604,14 @@ the git tokens' rules.
    endpoint (#39), which then also sees staging move and starts its deploy.
 5. *Previews* run in the task's VM, from the clone, and stay up until the
    merge or discard. Locally Docker publishes them on a port of the
-   loopback. On Cloudflare each VM has a host, `<vm>.<FACTORY_PREVIEW_DOMAIN>`
-   (a wildcard route to this Worker): the board's "Open preview" goes
+   loopback. On Cloudflare each VM has a host, `<vm>.<FACTORY_PREVIEW_DOMAIN>`,
+   under the documents' pages domain (`task-7-1a2b3c.erga-pages-staging.dev`):
+   its wildcard route, DNS record and free Universal SSL certificate (one
+   label under the zone) already reach the Worker, so previews need nothing
+   new and nothing bought. The Worker tells them from documents' pages by
+   their name (`task-<id>-<6 hex>`; a document's is `<8 characters>-<owner>`),
+   and refuses a request from another host of the domain (`Sec-Fetch-Site:
+   same-site`, a document's page). The board's "Open preview" goes
    through `/api/factory/tasks/<id>/open`, which gives a 12-hour ticket for
    that host only; the Worker trades it for a cookie there, then sends each
    request to the VM's port 4401 as if to localhost (the dev server in the
@@ -1626,13 +1645,12 @@ about 10 seconds with the stand-in; merge into staging and the branch
 deleted; discard; more instructions on the same branch; tokens scoped to
 one task and one branch; the Claude token stored encrypted and never shown.
 
-Uncertain: the container API's exact names (the code uses only `running`,
-`start`, `getTcpPort(...).fetch` and `destroy`, and is not yet run on
-Cloudflare); the image's 2.2 GB on first push and pull; whether the Durable
-Object keeps a long merge going (it should resume from an alarm); the
-in-VM Chromium's memory with the dev server and Claude Code; the preview's
-documents (they run on `*.localhost` origins in the VM's dev server, which
-the preview host doesn't reach yet: the app opens, documents' pages don't).
+Uncertain: whether a server's own deploy token (no Containers permission)
+may upload a version that names the image (the pipeline then deploys without
+the VMs, and says so: [On Cloudflare](#on-cloudflare)); the in-VM Chromium's
+memory with the dev server and Claude Code; the preview's documents (they run
+on `*.localhost` origins in the VM's dev server, which the preview host
+doesn't reach yet: the app opens, documents' pages don't).
 
 Might not work: real Claude Code never ran here (no sign-in on this machine
 was used, by design), so its first run may need prompt and flag fixes;
@@ -1641,42 +1659,86 @@ of memory, on even a standard-4 VM (the prompt may have to ask for the
 tests that cover the change only); and the plan's usage limits with several
 tasks at once.
 
-**Runbook: the first real run.**
+### On Cloudflare
 
-1. #39 (Erga's own source) and #40 (staging deploys itself) are in. Change
-   one thing in code: `containersHost`'s repository must be #39's
-   `/git/erga.git` (Erga's own source, above), which must accept the
-   factory's git tokens with the rules in `dev/factory.ts` (`checkGitToken`,
-   `refsAllowed`) and allow `task/*` branches; today it refuses any branch
-   but staging and main. `/source` must still show only staging and main.
-   #39's endpoint calls `deployHook` itself on every push that moves
-   staging, so then drop the factory's own `deployHook("staging", commit)`
-   call after a merge.
-2. Set the key: `openssl rand -base64 32 | bunx cf workers secrets update FACTORY_KEY`
-   (on the account's Workers Paid plan, which has Containers).
-3. Build the image: `bun factory/vm/build.ts`, then push it to Cloudflare's
-   registry (`bunx wrangler containers push erga-factory:<tag>`).
-4. Declare the container in `cloudflare.config.ts`: export `FactoryVm`
-   (from `factory/cloudflare.ts`, re-exported in `worker/index.ts`) as a
-   Durable Object with a container (the image's registry tag, instance type
-   `standard-3`, at most 5 instances, internet on), the binding `FACTORY_VM`
-   to it, and `FACTORY_PREVIEW_DOMAIN` as text.
-5. Previews: a zone for them (e.g. `erga-factory.dev`) with a proxied
-   wildcard record (`*` AAAA `100::`) and a route `*.erga-factory.dev/*` to
-   the Worker; set `FACTORY_PREVIEW_DOMAIN` to it.
-6. Deploy to staging first (staging.erga.dev), never straight to erga.dev.
-7. On `/admin`, set `factory` to `on`; open `/admin/factory`. "VMs" should
-   say cloudflare.
-8. On your computer, run `claude setup-token`, sign in with your plan, and
-   paste the token on the board (Claude: not signed in, then Save).
-9. Add a small task (e.g. "Change the footer's wording"). Watch the log: VM
-   started, branch made, dependencies installed, Claude Code's progress,
-   preview, screenshots, ready to merge. Open the preview.
-10. Merge it. Check that staging has the merge commit, the branch is gone,
-    the VM stopped, and staging.erga.dev deployed it.
-11. If anything goes wrong: discard the task, set `factory` to `off`, and
-    "Sign out" on the board (which deletes the stored token); revoke the
-    token on claude.ai if it may have leaked.
+Task #7 put the factory on Cloudflare: the README's old runbook ("the first
+real run") is code now, and staging.erga.dev runs it.
+
+- **The image** is in the account's container registry,
+  `registry.cloudflare.com/<account>/erga-factory:<tag>@sha256:<digest>`
+  (Containers takes only digest-pinned images), and `deploy/targets.json`
+  names it (`factory.image`; a test keeps its tag equal to
+  `factory/vm/build.ts`'s). `bun factory/vm/push.ts` builds it for
+  Cloudflare's machines (linux/amd64, with Docker), pushes it (a 15-minute
+  registry password, in a Docker config folder of its own), prepares it for
+  Containers, and writes its name into `deploy/targets.json`. A deploy from a
+  machine (`deploy/run.ts`) does the same if the registry lacks it. A
+  Worker can't run Docker, so a server deploying itself uses the image
+  `deploy/targets.json` names: a new Dockerfile or agent needs `push.ts`
+  run, and its commit, before it deploys.
+- **The deploy pipeline** (`runPipeline`, `deploy/containers.ts`) has two
+  more steps on Erga's own targets (`factory: true` in
+  `deploy/targets.json`): "image" (prepared for Containers) before the
+  Worker's upload, and "vms" after it. The upload names the image on the
+  version (`containers: [{ name: "<worker>-factoryvm", class_name:
+  "FactoryVm", images: { factory: <ref> } }]`, the `durable_object`
+  scheduling policy, as `wrangler deploy` sends it) and sets
+  `FACTORY_PREVIEW_DOMAIN` (the pages domain) and `FACTORY_IMAGE`; "vms" makes
+  the container application for the Worker's FactoryVm namespace once (its id
+  is the namespace's). `cloudflare.config.ts` declares `FactoryVm` and its
+  binding `FACTORY_VM` on every build; elsewhere (locally, `/deploy`) it's an
+  object nothing uses. A release without FactoryVm (an older commit) skips
+  both steps.
+- **The deploy tokens are unchanged.** Cloudflare's narrowest container
+  permission is account-wide (Workers Containers Read or Write), and making a
+  token needs a token maker, which no longer exists. So the tokens get no
+  Containers permission, and what needs one is done once from a machine with
+  your own login (the cf CLI's has `containers:write`): `bun deploy/setup.ts
+  --factory` makes `FACTORY_KEY` on the Worker if it has none, pushes and
+  prepares the image, and makes the container application (with
+  `--production`, on erga.dev too). A server deploying itself then needs
+  none: the image is prepared, the application is there, and the version only
+  names the image. If Cloudflare refuses a token's upload that names an image
+  (403), the pipeline uploads the version without the VMs (the rest of Erga
+  as it should be), and the deploy's log says so. Then the only way back to
+  VMs on self-deploys is a token with Workers Containers Read and Write: one
+  token maker, made by you once (`CLOUDFLARE_TOKEN_MAKER=… bun
+  deploy/setup.ts --tokens`, after adding the permission to
+  `deploy/tokens.ts`).
+- **A VM** (`factory/cloudflare.ts`) is a container of a FactoryVm object
+  named `task-<id>-<6 hex>`: started from `ctx.container.images.factory`,
+  instance type `standard-3` (2 vCPU, 8 GiB; `FACTORY_VM_INSTANCE` overrides
+  it), internet on. A container stops a while after its object last heard
+  from anyone, so each call sets that to the most Cloudflare allows (six
+  hours), and the factory's alarm asks every VM whether it's up every 20
+  minutes while any task has one. A VM that stopped anyway is noted on its
+  task; more instructions or a merge start a new one.
+- **`bun factory/vm/probe.ts`** checks the image on Cloudflare for real, with
+  no server involved: a throwaway Worker (`erga-factory-probe`, on
+  workers.dev) starts a container exactly as FactoryVm does, runs one task
+  with the stand-in in it (a small repository made in the VM; the real
+  `run.ts`, `task.ts` and `fake-claude.ts`; the preview on 4401; a screenshot
+  with the VM's Chromium) against a pretend factory API, then deletes the
+  container, its application and the Worker.
+
+Done on erga.dev's account (task #7): the image pushed and prepared;
+`FACTORY_KEY` on `erga-staging`; staging deployed from a machine with this
+code (`bun deploy/run.ts staging --no-snapshot`, keeping its data), which made
+its container application `erga-staging-factoryvm`. To finish:
+
+1. Merge it (staging then deploys itself with its own token: watch its
+   "worker" and "vms" steps on `/source`).
+2. **Sign in to Claude** *(you)*: on your computer, `claude setup-token`,
+   then paste the token on the board (Claude: not signed in, then Save).
+   Without it the scripted stand-in does each task.
+3. On staging, `/admin`, set `factory` to `on`; open `/admin/factory`; add a
+   small task. Staging needs its GitHub OAuth app to sign in (the deploys
+   runbook, step 2).
+4. erga.dev: after a release, `bun deploy/setup.ts --factory --production`
+   (its `FACTORY_KEY` and container application).
+5. If anything goes wrong: discard the task, set `factory` to `off`, and
+   "Sign out" on the board (which deletes the stored token); revoke the
+   token on claude.ai if it may have leaked.
 
 ## Local development
 
@@ -2561,8 +2623,10 @@ back, merging edits from disk, the agent's exact-match edits and attribution.
   `worker/deployer.ts`: `/deploy`, deploying Erga to your own Cloudflare account (the page, the
   release, the pretend Cloudflare the tests use, Erga's own account included)
 - `factory/`, `worker/factory.ts`, `dev/factory.ts`: the factory (experimental), tasks done by
-  Claude Code in VMs: the board and prompt, the VM's image and scripts (`factory/vm/`), the
-  Containers host, the API and Durable Object, and the local repository and VMs
+  Claude Code in VMs: the board and prompt, the VM's image and scripts (`factory/vm/`: its build,
+  push to Cloudflare's registry and probe), the git tokens' rules (`factory/git-grant.ts`), the
+  Containers host, the API and Durable Object, and the local repository and VMs;
+  `deploy/containers.ts`, the pipeline's Containers calls
 - `account.ts`: who you are in the upper right of every page (avatar and menu, or sign in)
 - `directory.ts`: the directory of documents (addresses, titles, permissions, who may do what), over
   `Sql`; `worker/d1.ts` puts it on D1; its tables in `migrations/`, which the deploy pipeline applies to
