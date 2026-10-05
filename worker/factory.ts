@@ -80,7 +80,7 @@ import type { Unlock } from "../admin-keys";
 import { type Blocked, dependents, depRules, depsNote, type DepStatus, type DepTask, ids } from "../development/task-queue/deps";
 import { factoryGuide, factoryTools, startFactoryAgent, type FactoryAgent, type FactoryOps } from "../factory/agent";
 import { containersHost } from "../factory/cloudflare";
-import { branchName, resolvePrompt, taskPrompt } from "../factory/prompt";
+import { branchName, claudeToken, resolvePrompt, taskPrompt } from "../factory/prompt";
 import { whoOf } from "../front";
 import { LOCKED } from "../users";
 import { isDev, sessionOf } from "./auth";
@@ -629,9 +629,10 @@ export class Factory extends DurableObject<Env> {
 
   async setClaude(token: string | null, by: string): Promise<{ ok: boolean; error?: string }> {
     if (token == null) { this.sql.exec("DELETE FROM secrets WHERE name = 'claude'"); return { ok: true }; }
-    token = token.trim();
     if (!factoryKey(this.env)) return { ok: false, error: "This server has no FACTORY_KEY to encrypt the token with: bun deploy/setup.ts --factory makes it (README, The factory, On Cloudflare)." };
-    if (!/^sk-ant-[A-Za-z0-9_-]{20,}$/.test(token)) return { ok: false, error: "That isn't a Claude Code token. Run `claude setup-token` and paste the token it prints (sk-ant-…)." };
+    const checked = claudeToken(token);
+    if ("error" in checked) return { ok: false, error: checked.error };
+    token = checked.token;
     const iv = crypto.getRandomValues(new Uint8Array(12));
     const data = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv }, await aes(this.env), enc.encode(token)));
     this.sql.exec("INSERT OR REPLACE INTO secrets (name, iv, data, by_login, at) VALUES ('claude', ?, ?, ?, ?)", iv, data, by, now());

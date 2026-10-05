@@ -1,12 +1,28 @@
 // What Claude Code is told, in a task's VM: AGENTS.md's worker prompt
 // ("The subagent's prompt"), with the factory's ways in place of the local
 // task queue's: a clone on the task's branch instead of a worktree, `task`
-// instead of `tq`, and the VM's own preview port.
+// instead of `tq`, and the VM's own preview port. Also the check on a
+// pasted Claude token (claudeToken), which the server and its tests share.
 
 /** A task's branch: task/<id>-<slug of the title>, as the local task queue names them. */
 export function branchName(id: number, title: string): string {
   const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40).replace(/-+$/, "");
   return `task/${id}-${slug || "task"}`;
+}
+
+/**
+ * A `claude setup-token` token as pasted: the terminal wraps it, so a copy can
+ * carry spaces or line breaks inside it. They go; then the token is checked.
+ * The error says what is wrong, and never repeats the token.
+ */
+export function claudeToken(raw: string): { token: string } | { error: string } {
+  const token = raw.replace(/\s+/g, "");
+  const again = " Run `claude setup-token` and paste the token it prints (sk-ant-…).";
+  if (!token) return { error: "Paste the token first." + again };
+  if (!token.startsWith("sk-ant-")) return { error: "That isn't a Claude Code token: it doesn't start with sk-ant-." + again };
+  if (/[^A-Za-z0-9_-]/.test(token)) return { error: "That isn't a Claude Code token: it has characters other than letters, digits, - and _." + again };
+  if (token.length < 27) return { error: "That isn't a Claude Code token: it's too short. Copy all of it." + again };
+  return { token };
 }
 
 export function taskPrompt(t: { id: number; title: string; description: string; branch: string; base: string }): string {

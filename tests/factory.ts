@@ -168,14 +168,25 @@ try {
   await fill(p, "#c-token", "not a token");
   await click(p, "#c-save");
   await until(async () => (await p.eval<string>(`document.getElementById("c-why").textContent`)).includes("isn't a Claude Code token"), 3000, "a bad token is refused");
+  await fill(p, "#c-token", "sk-ant-oat01-abc$def!0123456789012345");
+  await click(p, "#c-save");
+  await until(async () => (await p.eval<string>(`document.getElementById("c-why").textContent`)).includes("characters other than letters"), 3000, "the refusal says what is wrong");
   const fake = `sk-ant-oat01-${"x".repeat(40)}`;
+  await fill(p, "#c-token", `${fake.slice(0, 25)}  ${fake.slice(25)} `); // as the terminal wraps it
+  await click(p, "#c-save");
+  await until(() => p.eval(`document.getElementById("claude-pill").textContent == "Claude: signed in"`), 3000, "signed in with a wrapped token");
+  const wrapped = await api("/claude", { method: "PUT", json: { token: `${fake.slice(0, 30)}\n${fake.slice(30)}` } });
+  expect(wrapped.status == 200 && wrapped.body.signedIn, "the server takes a token with a line break in it", wrapped);
+  expect((await api("/claude", { method: "DELETE" })).body.signedIn == false, "signed out, to sign in again");
+  await click(p, "#claude-pill");
+  await until(() => p.eval(`!!document.getElementById("c-token")`), 3000, "the sign-in dialog, again");
   await fill(p, "#c-token", fake);
   await click(p, "#c-save");
   await until(() => p.eval(`document.getElementById("claude-pill").textContent == "Claude: signed in"`), 3000, "signed in");
   for (const path of ["", "/claude", "/tasks"]) expect(!JSON.stringify((await api(path)).body).includes(fake), `${path || "/"} never shows the token`);
   expect(!(await p.eval<string>(`document.documentElement.outerHTML`)).includes(fake.slice(14)), "the page never shows it");
   expect((await api("/claude", { method: "DELETE" })).body.signedIn == false, "signed out");
-  ok("the Claude sign-in: a bad token refused, a good one stored and never shown, then signed out");
+  ok("the Claude sign-in: a bad token refused with the reason, a wrapped one accepted, a good one stored and never shown, then signed out");
 
   // ---------------------------------------------------------------- 8. dependencies
   // Now: #1 merged, #2 discarded, #3 ready to merge (made from staging before #1 merged, so it conflicts with it).
