@@ -74,6 +74,7 @@ import type { Unlock } from "../admin-keys";
 import { type Blocked, dependents, depRules, depsNote, type DepTask, ids } from "../development/task-queue/deps";
 import { factoryGuide, factoryTools, startFactoryAgent, type FactoryAgent, type FactoryOps } from "../factory/agent";
 import { containersHost } from "../factory/cloudflare";
+import { b64url } from "../factory/git-grant";
 import { branchName, claudeToken, taskPrompt } from "../factory/prompt";
 import { whoOf } from "../front";
 import { LOCKED } from "../users";
@@ -105,7 +106,6 @@ export interface Task {
 const enc = new TextEncoder();
 const now = () => new Date().toISOString();
 const hex = (b: ArrayBuffer | Uint8Array) => Array.from(new Uint8Array(b), (x) => x.toString(16).padStart(2, "0")).join("");
-const b64url = (s: string) => btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 
 async function hmac(key: Uint8Array | string, data: string): Promise<Uint8Array> {
   const k = await crypto.subtle.importKey("raw", typeof key == "string" ? enc.encode(key) : key, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
@@ -674,7 +674,7 @@ export class Factory extends DurableObject<Env> {
   /** A new token for an outside agent: shown once. `key` is the admin key that unlocked the admin: revoking it ends the token. */
   async mintToken(login: string, name: string, key: string, label: string, hours: number): Promise<{ token: string } & TokenView> {
     const id = hex(crypto.getRandomValues(new Uint8Array(9)));
-    const secret = b64url(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(24))));
+    const secret = b64url(crypto.getRandomValues(new Uint8Array(24)));
     const ms = Math.round(Math.max(1, Math.min(12, hours || 4)) * 3600_000);
     const at = Date.now();
     this.sql.exec("INSERT INTO agent_tokens (id, hash, login, name, label, unlock_key, created, expires) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",

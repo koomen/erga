@@ -56,3 +56,26 @@ test("git tokens: signed, scoped to a task branch, and expiring", () => {
   expect(checkGitToken("s", mintGitToken("s", { scope: "task", branch: "task/1-x", exp: 1 }))).toBeNull();
   expect(checkGitToken("s", mintGitToken("s", { scope: "merge", branch: "staging", exp }))).toBeNull();
 });
+
+test("a git token carries any text: a shared agent's name with a curly apostrophe and an emoji", async () => {
+  const { b64url, fromB64url, verifyGitToken } = await import("../factory/git-grant");
+  const secret = "s3cret";
+  const by = "koomen’s agent (shared: Claude Code) 🤖 — é";
+  const exp = Math.floor(Date.now() / 1000) + 600;
+  expect(fromB64url(b64url(by))).toBe(by);
+  expect(b64url(new Uint8Array([0xfb, 0xff, 0xfe]))).toBe("-__-");
+  // Minted as the Worker does (factory/git-grant.ts b64url), read by the Git endpoint and the dev server's stand-in.
+  const key = new Uint8Array(await crypto.subtle.sign("HMAC", await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]), new TextEncoder().encode("erga-factory-git")));
+  const sign = async (body: string) => Array.from(new Uint8Array(await crypto.subtle.sign("HMAC", await crypto.subtle.importKey("raw", key, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]), new TextEncoder().encode(body))), (x) => x.toString(16).padStart(2, "0")).join("");
+  const grant = { scope: "task" as const, branch: "task/1-a-task", exp, by };
+  const body = b64url(JSON.stringify(grant));
+  const token = `fgt.${body}.${await sign(body)}`;
+  expect(await verifyGitToken(secret, token)).toEqual(grant);
+  expect(checkGitToken(secret, token)).toEqual(grant);
+  // The dev server mints the same token, byte for byte.
+  expect(mintGitToken(secret, grant)).toBe(token);
+  // An older token (btoa alone, Latin-1 text) still reads.
+  const old = { scope: "task" as const, branch: "task/1-a-task", exp, by: "José’s".replace("’", "'") };
+  const oldBody = btoa(JSON.stringify(old)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  expect(await verifyGitToken(secret, `fgt.${oldBody}.${await sign(oldBody)}`)).toEqual(old);
+});
