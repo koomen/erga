@@ -517,7 +517,7 @@ const PAGE_STYLE = `
     .panes { display: block; }
     .pane, .agent-pane { display: none; }
     body[data-tab="tasks"] #tasks, body[data-tab="source"] #source-pane { display: block; }
-    body[data-tab="agent"] .agent-pane { display: flex; position: static; height: calc(100dvh - 130px); min-height: 360px; }
+    body[data-tab="agent"] .agent-pane { display: flex; position: static; height: calc(100dvh - 150px); min-height: 360px; }
   }
   /* Share with agent: the factory token's dialog. */
   dialog#share-dlg { width: min(560px, calc(100vw - 32px)); }
