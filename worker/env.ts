@@ -26,7 +26,7 @@ export interface Env {
   FACTORY_PREVIEW_DOMAIN?: string;
   /** The factory's image as the deploy declared it (a registry reference), if the container API doesn't list it under `images`. */
   FACTORY_IMAGE?: string;
-  /** A VM's instance type (factory/cloudflare.ts: standard-3 when unset). */
+  /** A VM's instance type (factory/cloudflare.ts: standard-4 when unset). */
   FACTORY_VM_INSTANCE?: string;
   /** The server's database: users, settings and the directory of documents (directory.ts, users.ts, config.ts; migrations/). */
   DB: D1Database;
