@@ -5,7 +5,7 @@
 //                               an admin token (admin-keys.ts, admin-login.ts) as the password. main takes fast-forwards only.
 //                               A factory VM's git token (fgt.…, factory/git-grant.ts) reaches its own task's branch only
 //                               (and staging, for a merge).
-//   GET  /api/source/branches   staging and main: each head and its last 25 commits, and the mirror's status
+//   GET  /api/source/branches   staging and main: each head and its last 25 commits (staging: also the 5 just after main), and the mirror's status
 //   POST /api/source/merge      { from: "staging", to: "main", commit? }: main fast-forwards to staging's head (or to
 //                               that staging commit): { commit } or 4xx { error } (admins)
 //   POST /api/source/mirror     brings the GitHub mirror up to date now (admins)
