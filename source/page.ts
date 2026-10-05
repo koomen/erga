@@ -336,7 +336,9 @@ const SOURCE_SCRIPT = `
     if (asking) { again = true; return asking; }
     asking = (async () => {
       const r = await fetch("/api/deploys?history=100", { headers: { Accept: "application/json" } }).catch(() => null);
-      deploys = r && r.ok ? await r.json().catch(() => null) : null;
+      // No answer, or a 5xx (a server restarting into its new version): keep what's shown, and the poll below asks again.
+      const body = r && r.ok ? await r.json().catch(() => null) : null;
+      if (body || (r && r.status < 500)) deploys = body;
       renderTargets();
       if (open && !open.pinned) { const t = targetOf(open.target); if (t?.deployId && t.deployId != open.deployId) refreshLog(false); }
       await new Promise((ok) => setTimeout(ok, 500));
@@ -421,19 +423,32 @@ const SOURCE_SCRIPT = `
     load();
   });
 
-  // Live: an event says what changed; a reconnect reloads everything.
-  const events = new EventSource("/api/events");
-  events.onopen = () => { load(); loadDeploys(); };
-  events.onmessage = (e) => {
-    let ev; try { ev = JSON.parse(e.data); } catch { return; }
-    if (ev.type == "source") load();
-    if (ev.type == "deploys") loadDeploys();
-    if (ev.type == "deploy-log" && open && ev.target == open.target) {
-      if (ev.deployId == open.deployId) { open.heard = Date.now(); append(ev.lines || []); open.shown += (ev.lines || []).length; }
-      else if (!open.pinned) { open.heard = Date.now(); refreshLog(false); }
-    }
-  };
+  // Live: an event says what changed; a reconnect reloads everything. A stream the server answers with an error
+  // (a server restarting into its new version) the browser closes for good: open it again.
+  let heard = 0;
+  function listen() {
+    const events = new EventSource("/api/events");
+    events.onopen = () => { load(); loadDeploys(); };
+    events.onerror = () => { if (events.readyState == EventSource.CLOSED) setTimeout(listen, 3000); };
+    events.onmessage = (e) => {
+      let ev; try { ev = JSON.parse(e.data); } catch { return; }
+      if (ev.type == "source") { load(); loadDeploys(); } // a move starts a deploy, here or on another server
+      if (ev.type == "deploys") { heard = Date.now(); loadDeploys(); }
+      if (ev.type == "deploy-log" && open && ev.target == open.target) {
+        if (ev.deployId == open.deployId) { open.heard = Date.now(); append(ev.lines || []); open.shown += (ev.lines || []).length; }
+        else if (!open.pinned) { open.heard = Date.now(); refreshLog(false); }
+      }
+    };
+  }
+  listen();
   load(); loadDeploys();
+  // Events don't tell everything: another server's deploy (erga.dev's page shows staging's, run by staging's server)
+  // sends this page none, and a server that deploys itself cuts the stream and can miss its last change. So while
+  // a deploy shows running (or the status didn't load) and no event came lately, ask for the status every two seconds.
+  setInterval(() => {
+    if (asking || Date.now() - heard < 2500) return;
+    if (!deploys || deploys.targets?.some((t) => running(t.state) || t.history?.some((r) => running(r.state)))) loadDeploys();
+  }, 2000);
   setInterval(() => { render(); renderTargets(); }, 30000);
 })();
 `;
