@@ -895,11 +895,15 @@ Worker's upload, and the new version picks the deploy up where the old one
 stopped (it checks the Worker's `ERGA_VERSION` to know the upload went
 through): the address, the pages, waiting for the new release, copying the
 documents. A deploy stopped before the upload is marked failed
-("interrupted"), and Redeploy runs it again from the top. Every step is safe
-to repeat. Changing a secret on the Worker (`bunx cf workers secrets update`,
+("interrupted") and runs again from the top by itself, up to three times in
+all (`ATTEMPTS` in `deploy/branches.ts`); after that, Redeploy runs it
+again. Every step is safe to repeat. The build's release (~15 MB, one line
+of the builder's stream) is read in one pass and its files decoded natively:
+reading it the slow way reset the `Pipeline` object right after each build
+(13 to 23 s of CPU and hundreds of MB of garbage in its 128 MB isolate). Changing a secret on the Worker (`bunx cf workers secrets update`,
 the setup) is a new version too, and resets the `Pipeline` object up to a
 minute later: change secrets when no deploy runs, or the running one is
-marked interrupted and needs a Redeploy.
+interrupted and starts again from the top.
 
 **Staging's snapshot of production.** On each staging deploy:
 

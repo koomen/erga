@@ -17,11 +17,11 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "fs";
 import { join } from "path";
-import { BranchDeploys, HISTORY_KEEP, RESUME_MS, targetOf, type DeployEnv, type DeployRecord, type Deps, type LogLine, type TargetStatus } from "../deploy/branches";
-import { unpackRelease } from "../deploy/bundle";
+import { ATTEMPTS, BranchDeploys, HISTORY_KEEP, RESUME_MS, targetOf, type DeployEnv, type DeployRecord, type Deps, type LogLine, type TargetStatus } from "../deploy/branches";
+import { fromBase64, unpackRelease } from "../deploy/bundle";
 import { packRelease } from "../deploy/builder/build";
 import { handle as builderServer } from "../deploy/builder/server";
-import { containerBuilder } from "../deploy/builder/client";
+import { containerBuilder, ndjsonLines } from "../deploy/builder/client";
 import { ALL_STEPS, Cloudflare, guardTarget, loadRelease, runPipeline, type Release, type Target } from "../deploy/cloudflare";
 import { FLEET_ACCOUNT, MOCK_HOOK_SECRET, MOCK_SNAPSHOT_TOKEN, mockBuilder, mockCloudflare, PROD_DB, PROD_DOCS, type MockState } from "../deploy/mock";
 import { memoryStore, snapshotDoor } from "../deploy/snapshot";
@@ -448,22 +448,52 @@ describe("branches deploy themselves", () => {
     expect(productionOf(mock.state)).toBe(before);
   });
 
-  test("interrupted before the upload: marked failed (nothing changed), and Redeploy finishes it", async () => {
+  test("interrupted before the upload (the object reset, as on 2026-10-05): it runs again by itself, with nobody to press Redeploy", async () => {
     const mock = mockCloudflare({ fleet: true });
     await bootstrap(mock);
     const builder = mockBuilder(async () => release);
     const server = new Server(mock, builder, "erga-staging");
     const s = server;
-    // The server restarts (for any reason) while the assets go up.
-    const calls = mock.state.calls;
-    const watch = setInterval(() => { if (calls.some((c) => c.includes("assets-upload-session"))) s.alive.on = false; }, 0);
-    await s.instance.hook("staging", SHA2);
+    // The server restarts (for any reason) right after the build, at "Check your Cloudflare account".
+    const seen = mock.state.calls.length;
+    const watch = setInterval(() => { if (mock.state.calls.slice(seen).some((c) => /\/workers\/scripts(\?|$)/.test(c))) s.alive.on = false; }, 0);
+    await s.instance.hook("staging", SHA2, "push from the task queue");
     s.scheduled = [];
-    await s.instance.alarm();
+    await s.instance.alarm().catch(() => {});
     clearInterval(watch);
+    // The alarm that the reset threw out of runs again (Cloudflare retries it) on the new object.
     server.start();
     await server.instance.alarm();
-    expect(await server.status("staging")).toMatchObject({ state: "failed", error: expect.stringContaining("interrupted before the new version went up") });
+    await server.settle();
+    expect(await server.status("staging")).toMatchObject({ state: "deployed", deployed: SHA2 });
+    expect(server.version()).toBe(SHA2.slice(0, 12));
+    const history = (await server.instance.historyOf("staging"))!;
+    expect(history.map((r) => r.state)).toEqual(["deployed", "failed"]);
+    expect(history[1].error).toContain("It runs again by itself");
+    expect(history[0].trigger).toBe("push from the task queue, again after a restart");
+    expect((await server.instance.logOf("staging"))!.lines.map((l) => l.text)).toContainEqual(expect.stringContaining("(attempt 2 of 3)"));
+    expect(builder.built).toEqual([SHA2, SHA2]);
+  });
+
+  test(`interrupted before the upload ${ATTEMPTS} times: it stops trying, says so, and Redeploy finishes it`, async () => {
+    const mock = mockCloudflare({ fleet: true });
+    await bootstrap(mock);
+    const builder = mockBuilder(async () => release);
+    const server = new Server(mock, builder, "erga-staging");
+    await server.instance.hook("staging", SHA2);
+    for (let i = 0; i < ATTEMPTS; i++) {
+      // The server restarts after the build, every time.
+      const seen = mock.state.calls.length;
+      const s = server;
+      const watch = setInterval(() => { if (mock.state.calls.slice(seen).some((c) => /\/workers\/scripts(\?|$)/.test(c))) s.alive.on = false; }, 0);
+      server.scheduled = [];
+      await server.instance.alarm().catch(() => {});
+      clearInterval(watch);
+      server.start();
+    }
+    await server.instance.alarm();
+    expect(await server.status("staging")).toMatchObject({ state: "failed", pending: null, error: expect.stringContaining(`tried ${ATTEMPTS} times: Redeploy`) });
+    expect(builder.built).toEqual(Array(ATTEMPTS).fill(SHA2));
     expect(server.version()).toBe(SHA1.slice(0, 12));
     await server.instance.redeploy("staging");
     await server.settle();
@@ -694,6 +724,32 @@ describe("the builder", () => {
     // A failed build says why.
     const failing = { fetch: (async (input: RequestInfo | URL, init?: RequestInit) => builderServer(new Request(new URL(String(input)), init), (async () => { throw new Error("bun install failed (exit 1)"); }) as never)) as typeof fetch };
     await expect(containerBuilder(failing).build({ commit: SHA2, branch: "staging", source: { cloneUrl: "x", token: "t" } }, () => {})).rejects.toThrow(/The build failed: bun install failed/);
+  });
+
+  test("the release, one line of ~15 MB in small chunks, is read in one pass (it reset the Pipeline object on 2026-10-05)", async () => {
+    const bundle = packRelease(join(ROOT, ".site/release"));
+    const text = `${JSON.stringify({ log: "é and ✓" })}\n${JSON.stringify({ bundle: new TextDecoder().decode(bundle) })}\n`;
+    const bytes = new TextEncoder().encode(text);
+    // 1 KB chunks, so a character's bytes and the newlines fall across them.
+    const chunks = async function* () { for (let i = 0; i < bytes.length; i += 1021) yield bytes.subarray(i, i + 1021); };
+    const t = performance.now();
+    const lines: string[] = [];
+    for await (const l of ndjsonLines(chunks())) lines.push(l);
+    expect(lines.length).toBe(2);
+    expect(JSON.parse(lines[0]).log).toBe("é and ✓");
+    expect(JSON.parse(lines[1]).bundle.length).toBe(new TextDecoder().decode(bundle).length);
+    // Before, each chunk joined and split the whole line so far: quadratic (seconds for this, and much more on a Worker).
+    expect(performance.now() - t).toBeLessThan(2000);
+    const fetcher = { fetch: (async () => new Response(new ReadableStream({ async start(c) { for await (const x of chunks()) c.enqueue(x.slice()); c.close(); } }))) as unknown as typeof fetch };
+    const built = await containerBuilder(fetcher).build({ commit: SHA2, branch: "staging", source: { cloneUrl: "x", token: "t" } }, () => {});
+    for (const [n, b] of Object.entries(release.modules)) expect(built.modules[n]).toEqual(b);
+    for (const [p, b] of Object.entries(release.assets)) expect(built.assets[p]).toEqual(b);
+    // A last line with no newline is read too; base64 decodes the same on every path.
+    const tail: string[] = [];
+    for await (const l of ndjsonLines((async function* () { yield new TextEncoder().encode('{"a":1}\n{"b"'); yield new TextEncoder().encode(":2}"); })())) tail.push(l);
+    expect(tail).toEqual(['{"a":1}', '{"b":2}']);
+    const raw = crypto.getRandomValues(new Uint8Array(1000));
+    expect(fromBase64(Buffer.from(raw).toString("base64"))).toEqual(raw);
   });
 
   test("a cancelled deploy stops its build: the client asks the container to cancel, and the build's commands are killed", async () => {
