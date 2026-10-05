@@ -1454,7 +1454,7 @@ fine for Erga's thousands but not for millions.
 The factory is the task queue (`development/task-queue/`) inside Erga, on
 `/admin/source` (with the source dashboard and the factory's agent;
 `/admin/factory` redirects there): the same board (Queued, Working, Ready to merge, Merging,
-Merged), but each task is done by Claude Code in a VM of its own, not on
+Merged, and `needs agent` cards in Merging), but each task is done by Claude Code in a VM of its own, not on
 this machine: on staging.erga.dev and erga.dev a Cloudflare Container
 ([On Cloudflare](#on-cloudflare), below). It's a prototype: admins only, and
 off until an admin sets the `factory` setting to `on` (`/admin`). It does
@@ -1473,15 +1473,44 @@ preview`: `bun start` in the VM), takes screenshots with headless Chromium
 branch and moves the card to Ready to merge. Then the VM waits: its preview
 stays up, and the detail view takes more instructions ("Send to Claude
 Code"), which run Claude Code again on the same branch (`--continue`).
-**Merge** merges the branch into staging (`--no-ff`, "Merge task/…:
-title"; a conflict goes to Claude Code to resolve, as the local queue does,
-or fails, naming the files), pushes staging, deletes the branch and stops
-the VM; merges run one at a time. The push goes through Erga's Git endpoint,
+**Merge** works in the task's own VM, in its clone (`factory/vm/merge.ts`):
+it stops the preview, merges staging into the branch and pushes it, then
+moves staging to a `--no-ff` merge commit of it ("Merge task/…: title"),
+deletes the branch and stops the VM; merges run one at a time. A task uses
+the same agent from start until merge: when the merge conflicts, or one of
+its steps fails or times out, the card goes to **needs agent** (in Merging,
+with Merge off and the reason) and the factory wakes the task's own Claude
+Code (`run.ts resolve`: the same session, `--continue`, as "Send to Claude
+Code" does) with the reason, the log and instructions to resolve, test under
+time limits and commit (`factory/prompt.ts`, `resolvePrompt`). When it says
+`task done`, the merge runs again by itself; when it says `task fail`, the
+task goes back to Ready to merge with its reason. No fresh Claude Code that
+doesn't know the task resolves anything. (A VM that was replaced has no
+session: then Claude Code gets the task's whole brief first.) The push goes through Erga's Git endpoint,
 which tells the deploy pipeline (`deployHook`) as for any push to staging:
 staging.erga.dev deploys itself, and the move is recorded as the push of the
 admin who pressed Merge. **Discard** deletes the branch and stops the VM.
 Branches live only as long as their task, and the Source page (task #39)
 shows only staging and main, so they never appear there.
+
+**Timeouts.** Nothing in a VM waits forever. Every step of a job has a
+time limit (`factory/vm/common.ts`, `LIMITS`): git (clone 5 min, fetch and
+push 2 min, the rest 1 min), `bun install` 10 min, the preview's start
+150 s, a screenshot 60 s, Claude Code's run 3 hours (on a merge, 1 hour).
+Each step runs in a process group of its own (`step`): at its limit the
+whole tree is killed (TERM, then KILL), and when it ends, whatever it left
+in its group is killed too; only the preview (`task preview`, in a session
+of its own) outlives it, until the merge stops it. Then the task's Claude
+Code is woken with the log: a merge step makes the card `needs agent`
+(above); a failed or hung install goes first in Claude Code's instructions;
+Claude Code itself, past its limit, is stopped and woken once (`--continue`)
+to finish, and the task fails the second time. A clone that fails twice
+fails the task (no Claude Code has worked on it yet). The factory waits at
+most 30 minutes for a merge job's answer. Claude Code is told
+(`factory/prompt.ts`) to run builds, tests and servers under a limit with
+`task run --timeout SECONDS -- CMD` (the same process-tree kill, exit 124),
+and to leave no processes behind. The merge stops the preview first: on
+2026-10-05 a 3-hour-old dev server blocked `vite build` in the local queue.
 
 **Dependencies between tasks** are the local queue's (task #49; the rules
 are one file, `development/task-queue/deps.ts`, that both use). A task has
@@ -1512,7 +1541,10 @@ conversation. It queues up work the way the local outer agent uses the task
 queue (AGENTS.md): `create_task` (title, ask, `startAfter`, `mergeAfter`),
 `set_dependencies`, `instruct_task` (more instructions for a task that's
 ready to merge or failed), and reads with `list_tasks`, `get_task` (the ask,
-summary, error, preview URL, log) and `view_screenshot`; `factory_status`
+summary, error, preview URL, log) and `view_screenshot`; it sees `needs
+agent` cards and why, and what the task's Claude Code is doing (its words and
+the commands it runs go on the task's log, "Claude: …", "Claude runs Bash:
+…", at most every 5 seconds); `factory_status`
 says whether the factory is on. It can't merge, discard or start a task:
 an admin approves each merge by hand on the board, and Merge merges into
 staging, which deploys itself. Each message carries the task open on the
@@ -1540,6 +1572,13 @@ agent, tokens, events.
 Without a signed-in Claude plan, a scripted stand-in (`factory/vm/fake-claude.ts`)
 does each task the same way, with a change known in advance (a note under
 the front page's heading), so all of it can be tried and tested for free.
+It also finishes merges that need it (it resolves conflicts by keeping both
+sides' lines, checks under a limit, and says done). For tests, a task's ask
+can steer it, with the stand-in only: `[factory-test: hang STEP SECONDS]`
+makes a step hang once with that limit (`install`, or a merge step:
+`merge:fetch`, `merge:merge`, `merge:push`), `[factory-test: can't resolve]`
+makes it give up on a merge, and `[factory-test: resolve after SECONDS]`
+makes it wait first.
 
 **Try it locally:** `bun start`, set `factory` to `on` on `/admin`, open
 `/admin/source`, and add a task (or ask the agent to). With Docker running (OrbStack or Docker
@@ -1572,8 +1611,13 @@ with no VM, a blocked merge, the merge-time check, a discarded dependency,
 the automatic start on unblock), then `/admin/source` itself (the layout, the
 old pages' redirects, a phone's tabs), the factory's agent with the scripted
 model (it queues a task with a dependency, reads it, looks at its screenshot,
-sends instructions, has no merge or discard tool) and factory tokens (what
-they may and may not do, Revoke). `tests/factory.test.ts` tests the branch names and
+sends instructions, has no merge or discard tool), factory tokens (what
+they may and may not do, Revoke), and merges that need the task's agent: a
+conflict (needs agent on the board, Merge off, the reason, the preview
+stopped; the same VM's stand-in resolves it and the merge goes on to
+merged), a merge step that hangs (killed at its limit with its process
+tree, needs agent, then merged) and an install that hangs (the stand-in is
+told and installs again). `tests/factory.test.ts` tests the branch names and
 the git tokens' rules.
 
 **How it fits together.**

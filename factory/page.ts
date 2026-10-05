@@ -194,7 +194,7 @@ function card(t) {
   return '<div class="card ' + cls(t.status) + (waitsToStart(t) ? " blocked" : "") + '" data-open="' + t.id + '">' +
     '<div class="top"><span class="id">#' + t.id + '</span><span class="title">' + esc(t.title) + '</span></div>' +
     '<div class="meta">' + depChip(t) + '<code>' + esc(t.branch) + '</code><span>' + (t.status == "merged" ? "merged " + ago(t.mergedAt) : ago(t.updatedAt)) + '</span>' + (t.status == "failed" ? "<span>failed</span>" : "") + (t.status == "needs agent" ? '<span class="status needs-agent">needs agent</span>' : "") + '</div>' +
-    (t.error ? '<div class="err">' + esc(t.error) + '</div>' + (t.status == "needs agent" && last ? '<div class="agent-now">Now: ' + esc(last.message) + '</div>' : "") : last && t.status != "merged" && !waitsToStart(t) ? '<div class="last">' + esc(last.message) + '</div>' : "") +
+    (t.error ? '<div class="err">' + esc(t.error) + '</div>' + (t.status == "needs agent" && last ? '<div class="agent-now">Now: ' + esc(last.message.length > 160 ? last.message.slice(0, 160) + "…" : last.message) + '</div>' : "") : last && t.status != "merged" && !waitsToStart(t) ? '<div class="last">' + esc(last.message) + '</div>' : "") +
     (thumbs && t.status != "merged" ? '<div class="thumbs">' + thumbs + '</div>' : "") +
     actions(t, false) + '</div>';
 }

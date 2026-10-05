@@ -454,5 +454,7 @@ try {
   if (docker) for (const id of spawnSync("docker", ["ps", "-aq", "--filter", `label=erga.factory=${dockerLabel(host.state)}`], { encoding: "utf8" }).stdout.split("\n").filter(Boolean)) {
     spawnSync("docker", ["rm", "-f", id], { stdio: "ignore" });
   }
+  // The simulated VMs' previews run detached, as in a VM (task.ts, daemon): stopped by their folder, under this server's state.
+  if (!docker) spawnSync("pkill", ["-f", join(host.state, "factory", "vms")], { stdio: "ignore" });
   await host.dispose();
 }
