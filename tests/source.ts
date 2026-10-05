@@ -236,32 +236,47 @@ try {
   await p.screenshot(join(SHOTS, "source-log.png"));
   await click("#log-close");
   await p.screenshot(join(SHOTS, "source-light.png"));
-  // With no events (a deploy run by another server), the open log polls: a page whose /api/events is blocked still follows.
-  const q: Page = await browser.page(await browser.context());
-  await q.send("Network.enable");
-  await q.send("Network.setBlockedURLs", { urls: ["*/api/events*"] });
-  await q.open(`${root}/admin/source`, { width: 1280, height: 900, clear: false });
-  await until(async () => q.eval(`document.querySelectorAll("#grid .row").length > 0 && !document.getElementById("target-staging").disabled`), 10_000, "the page loads without events");
+  // With no events (a deploy run by another server: erga.dev's page shows staging's, and staging's events stay on
+  // staging's server), the page still follows: a page whose /api/events is blocked, opened while a deploy builds,
+  // shows it live when it's done, without a reload; and its open log polls for new lines.
   must(b, "commit", "-q", "--allow-empty", "-m", "Polled");
   must(b, "push", "-q", "origin", "staging");
   const polled = must(b, "rev-parse", "HEAD");
-  await until(async () => (await (await api("/api/deploys/staging/log")).json()).commit == polled, 20_000, "the next deploy starts");
+  await until(async () => { const t = await stagingTarget(); return t.commit == polled && ["building", "deploying"].includes(t.state); }, 20_000, "the next deploy starts", stagingTarget);
+  const q: Page = await browser.page(await browser.context());
+  await q.send("Network.enable");
+  await q.send("Network.setBlockedURLs", { urls: ["*/api/events*"] });
+  await q.open(`${root}/admin/source`, { width: 1280, height: 900, scale: 2, clear: false });
+  const qStaging = () => q.eval<{ head: string; badge: string }>(`({ head: document.getElementById("target-staging").textContent.replace(/\\s+/g, " ").trim(),
+    badge: document.querySelector('#grid .row[data-sha="${polled}"] .deps[data-target=staging] .dep .w')?.textContent ?? "" })`);
+  await until(async () => /^(building|deploying)$/.test((await qStaging()).badge), 10_000, "the page, without events, opens on the deploy running", qStaging);
+  expect(/building|deploying/.test((await qStaging()).head), "its column's head says so too", await qStaging());
+  await q.screenshot(join(SHOTS, "source-no-events-building.png"));
+  await q.eval(`window.__marker = 1`);
+  await until(async () => (await qStaging()).badge == "live", 60_000, "and shows it live when it's done, by itself", qStaging);
+  expect((await qStaging()).head.includes("live") && await q.eval<boolean>(`window.__marker === 1`), "the head says live, and the page never reloaded", await qStaging());
+  await q.screenshot(join(SHOTS, "source-no-events-live.png"));
+  // The open log polls too: the next deploy, on a page without events.
+  must(b, "commit", "-q", "--allow-empty", "-m", "Polled again");
+  must(b, "push", "-q", "origin", "staging");
+  const polled2 = must(b, "rev-parse", "HEAD");
+  await until(async () => (await (await api("/api/deploys/staging/log")).json()).commit == polled2, 20_000, "the next deploy starts");
   const qat = await q.eval<{ x: number; y: number }>(`(() => { const r = document.getElementById("target-staging").getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })()`);
   await q.click(qat.x, qat.y);
   const qlog = () => q.eval<string>(`document.getElementById("log-lines").textContent`);
-  await until(async () => (await qlog()).includes(polled.slice(0, 12)), 10_000, "its log opens", qlog);
+  await until(async () => (await qlog()).includes(polled2.slice(0, 12)), 10_000, "its log opens", qlog);
   const at0 = (await qlog()).split("\n").length;
   await until(async () => (await qlog()).split("\n").length > at0 || (await qlog()).includes("deployed"), 30_000, "and polls for new lines", qlog);
-  await until(async () => (await stagingTarget()).deployed == polled, 60_000, "that deploy finishes");
+  await until(async () => (await stagingTarget()).deployed == polled2, 60_000, "that deploy finishes");
   // Merge to a chosen commit from the page: hover the row, click "Merge to here".
   const rowAt = await p.eval<{ x: number; y: number }>(`(() => { const r = document.querySelector("#grid .row .subj").getBoundingClientRect(); return { x: r.x + 40, y: r.y + r.height / 2 }; })()`);
   await p.mouse("mouseMoved", rowAt.x, rowAt.y);
   await until(async () => p.eval(`getComputedStyle(document.querySelector("#grid .row button.here")).display != "none"`), 5_000, "hovering a staging-only commit offers Merge to here");
   await click("#grid .row button.here");
-  await until(async () => (await state()).rows.find((x) => x.sha == polled)?.kind.includes("on-main"), 10_000, "Merge to here moves main to that commit", state);
+  await until(async () => (await state()).rows.find((x) => x.sha == polled2)?.kind.includes("on-main"), 10_000, "Merge to here moves main to that commit", state);
   expect((await p.eval<string>(`document.getElementById("merge-hint").textContent`)).includes("Merged: main is now"), "and says so");
   // Every move of main deploys production (its server is played in the mock: deploy/mock.ts, worker/pipeline.ts's peer).
-  await until(async () => (await state()).rows.find((x) => x.sha == polled)?.live[1] == "live", 60_000, "and production deploys it", state);
+  await until(async () => (await state()).rows.find((x) => x.sha == polled2)?.live[1] == "live", 60_000, "and production deploys it", state);
   ok("every move of staging deploys staging, every move of main deploys production");
 
   // ---- Deploy history: a push while a deploy runs cancels it; a build that fails --------------
@@ -276,7 +291,7 @@ try {
   const hist = await (await api("/api/deploys/staging/history?limit=50")).json() as { deploys: { id: string; commit: string; state: string; trigger: string; replacedBy?: string; live: boolean; started: number; ended: number }[] };
   const [failedRec, cancelledRec] = hist.deploys;
   expect(failedRec.commit == failing && failedRec.state == "failed" && cancelledRec.commit == superseded && cancelledRec.state == "cancelled" && cancelledRec.replacedBy == failedRec.id, "the history: the first cancelled, replaced by the newer one, which failed", hist.deploys.slice(0, 3));
-  expect(cancelledRec.trigger == "push by tester" && cancelledRec.ended >= cancelledRec.started && hist.deploys.filter((d) => d.live).length == 1 && hist.deploys.find((d) => d.live)!.commit == polled, "each with what started it and when; one live, the last that worked", hist.deploys.slice(0, 4));
+  expect(cancelledRec.trigger == "push by tester" && cancelledRec.ended >= cancelledRec.started && hist.deploys.filter((d) => d.live).length == 1 && hist.deploys.find((d) => d.live)!.commit == polled2, "each with what started it and when; one live, the last that worked", hist.deploys.slice(0, 4));
   const pastLog = await (await api(`/api/deploys/staging/log?deploy=${cancelledRec.id}`)).json() as { deployId: string; state: string; lines: { text: string }[] };
   expect(pastLog.deployId == cancelledRec.id && pastLog.state == "cancelled" && pastLog.lines.some((l) => l.text.startsWith("cancelled:")), "a past deploy's log, by its id", pastLog.lines.slice(-3));
   expect((await api("/api/deploys/staging/log?deploy=nope")).status == 404, "a deploy the history doesn't have: 404");
