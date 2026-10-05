@@ -433,6 +433,11 @@ export function mockCloudflare(opts: {
         if (m == "GET") return ok(list);
         if (m == "POST") { const d = await body(); list.push({ pattern: d.pattern, script: d.script }); return ok({ id: hex(16), ...d }); }
       }
+      // Every zone's free Universal SSL certificate: the zone and one level down.
+      if (rest == "/ssl/certificate_packs" && m == "GET") {
+        const name = state.zones.find((z) => z.id == zone)!.name;
+        return ok([{ type: "universal", hosts: [name, `*.${name}`], status: "active" }]);
+      }
     }
     return fail(404, 7003, `No route for that URI (${m} ${path})`);
   }

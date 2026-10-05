@@ -9,7 +9,8 @@
 //
 //   D1 Write                        the account's databases (Cloudflare has no per-database scope)
 //   Zone Read, Workers Routes Read,
-//   DNS Read                        erga.dev and erga-pages.dev only: read, never write
+//   DNS Read                        its targets' zones only (staging's: erga.dev and erga-pages-staging.dev;
+//                                   production's: those and erga-pages.dev): read, never write
 //
 // What each permission is for (deploy/cloudflare.ts, runPipeline):
 //
@@ -80,7 +81,7 @@ export function tokenPlan(name: TargetName): TokenPlan {
     target: name,
     storedOn: spec.worker,
     workers: deploys.map((t) => t.worker),
-    zones: [...new Set([...deploys.flatMap((t) => [t.zone, t.pages.zone]), ...(spec.tokenZones ?? [])])],
+    zones: [...new Set(deploys.flatMap((t) => [t.zone, t.pages.zone]))],
     notWorkers: all.map((t) => t.worker).filter((w) => !deploys.some((t) => t.worker == w)),
   };
 }

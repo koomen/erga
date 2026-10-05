@@ -26,9 +26,6 @@
       "deploys": [
         "production",
         "staging"
-      ],
-      "tokenZones": [
-        "erga-pages-staging.dev"
       ]
     },
     "staging": {
@@ -39,8 +36,8 @@
       "host": "staging.erga.dev",
       "zone": "erga.dev",
       "pages": {
-        "zone": "erga-pages.dev",
-        "domain": "staging.erga-pages.dev"
+        "zone": "erga-pages-staging.dev",
+        "domain": "erga-pages-staging.dev"
       },
       "vars": {
         "GITHUB_CLIENT_ID": "",
