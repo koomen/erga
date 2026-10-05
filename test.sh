@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Runs the tests, as fast as they'll go: test files run several at a time (a
-# pool, half the CPU count by default; TEST_JOBS=n picks it), the longest
+# pool, one per two usable cores by default, tests/cores.ts; TEST_JOBS=n
+# picks it, TEST_CORES_PER_JOB=c tunes it), the longest
 # first, and each prints its own block, with its time, when it finishes. More
 # at once only slows each one down, and their timing checks with it.
 #
@@ -31,14 +32,13 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 start=$(date +%s)
-if [[ $# -gt 0 ]]; then echo "usage: ./test.sh   (TEST_JOBS=n: how many slots at once)" >&2; exit 2; fi
+if [[ $# -gt 0 ]]; then echo "usage: ./test.sh   (TEST_JOBS=n: how many slots at once; TEST_CORES_PER_JOB=c: one per c cores, default 2; tests/cores.ts)" >&2; exit 2; fi
 # The editor's files, once, for every dev server the tests start.
 ./site.sh >/dev/null
 export ERGA_BUILT=1
 
-cpus=$(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 2)
-jobs=${TEST_JOBS:-$(( cpus / 2 ))}
-(( jobs >= 2 )) || jobs=2
+# How many at once: tests/cores.ts (the cgroup's CPU quota in a container, memory; TEST_JOBS, TEST_CORES_PER_JOB).
+read -r jobs cpus why <<<"$(bun tests/cores.ts)"
 tmp=$(mktemp -d)
 names=(); weights=(); used=0; failed=()
 # Stopped half-way (Ctrl-C, a timeout): the tests still running go too; each one's hosts go with it (tests/host.ts).
@@ -69,7 +69,7 @@ collect() { # waits for everything running
   while (( ${#names[@]} > 0 )); do sleep 0.2; reap; done
 }
 
-echo "$jobs slots ($cpus CPUs)"
+echo "$jobs slots: $why"
 # Longest first (seconds each takes alone on a Mac, in brackets), so the pool ends together. A weight over 1: a file
 # that runs many servers at once itself (tests/page.ts's scenarios; the multiplayer suite runs a test per CPU).
 # The factory (experimental), with simulated VMs; `bun tests/factory.ts --docker` runs real containers, by hand.

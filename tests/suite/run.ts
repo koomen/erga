@@ -13,10 +13,10 @@
 //   bun tests/suite/run.ts --remote             against ERGA_TARGET_DOC (see target.ts)
 //   bun tests/suite/run.ts --live-agent         local, with the real model instead of the script
 //   bun tests/suite/run.ts --json out.json      also write the results as JSON
-//   bun tests/suite/run.ts --jobs 4             how many tests at once (default: one per CPU core, 4 to 16)
+//   bun tests/suite/run.ts --jobs 4             how many tests at once (default: one per usable core, tests/cores.ts, 2 to 16)
 
 import { writeFileSync } from "fs";
-import { availableParallelism } from "os";
+import { testJobs } from "../cores";
 import { runTests, type Result, type Test } from "./harness";
 import { LocalTarget, RemoteTarget, type Target } from "./target";
 import { sync } from "./suites/sync";
@@ -58,7 +58,7 @@ try {
   for (let r = 0; r < repeat; r++) {
     const seed = firstSeed + r;
     console.log(`=== seed ${seed}${repeat > 1 ? ` (run ${r + 1} of ${repeat})` : ""}${has("--long") ? ", long" : ""}`);
-    const results = await runTests(target, suites, { seed, long: has("--long"), filter: opt("--grep") ? new RegExp(opt("--grep")!, "i") : undefined, verbose: has("--verbose"), jobs: Number(opt("--jobs") ?? Math.min(16, Math.max(4, availableParallelism()))) });
+    const results = await runTests(target, suites, { seed, long: has("--long"), filter: opt("--grep") ? new RegExp(opt("--grep")!, "i") : undefined, verbose: has("--verbose"), jobs: Number(opt("--jobs") ?? Math.min(16, Math.max(2, testJobs().cores))) });
     all.push(...results.map((x) => ({ ...x, seed })));
   }
 } finally {
