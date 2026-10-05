@@ -125,7 +125,8 @@ try {
   const subject = spawnSync("git", ["-C", repo, "log", "-1", "--format=%s %P", "staging"], { encoding: "utf8" }).stdout.trim();
   expect(subject.startsWith("Merge task/1-say-hello-on-the-front-page: Say hello on the front page") && subject.split(" ").length > 3, "a --no-ff merge commit named after the task", subject);
   expect(!merged.vm && !merged.url, "the VM is stopped, and the preview gone", merged);
-  await until(async () => (await column(p, "merged")).includes("Say hello"), 15_000, "the card moves to Merged");
+  await until(async () => !(await p.eval<string>(`document.getElementById("board")?.innerText ?? ""`)).includes("Say hello"), 15_000, "the card leaves the board (no Merged column)");
+  expect(!(await p.eval<boolean>(`!!document.querySelector('[data-col="merged"]')`)) && (await p.eval<number>(`document.querySelectorAll("#board .col").length`)) == 4, "the board has four columns, and no Merged one");
   ok("merge: into staging as a merge commit, the branch deleted, the VM stopped");
 
   // ---------------------------------------------------------------- 4. discard
@@ -238,7 +239,7 @@ try {
   await until(async () => (await task(4)).status == "complete", STEP, "#4 is ready to merge");
   const merge4 = await api("/tasks/4/merge", { method: "POST" });
   expect(merge4.status == 409 && merge4.body.error.includes("can't merge until #3 merges"), "merging #4 is refused while #3 isn't merged", merge4);
-  await until(() => p.eval(`(() => { const c = document.querySelector('[data-col="ready-to-merge"] [data-open="4"]'); const b = c && [...c.querySelectorAll("button")].find((x) => x.textContent == "Merge"); return !!b && b.disabled && c.innerText.includes("Can't merge until #3 merges") && c.innerText.includes("merges after #3"); })()`), 5000, "#4's Merge is off, with the reason");
+  await until(() => p.eval(`(() => { const c = document.querySelector('[data-col="ready-to-merge"] [data-open="4"]'); const b = c && [...c.querySelectorAll("button")].find((x) => x.textContent == "Merge"); return !!b && b.disabled && b.title == "Can't merge until #3 merges" && c.innerText.includes("merges after #3"); })()`), 5000, "#4's Merge is off, with the reason");
   await p.settle();
   await p.screenshot(join(SHOTS, "factory-deps-board.png"));
   ok("a blocked merge: refused (409), and Merge is off on the board with the reason");
@@ -298,7 +299,7 @@ try {
   const box = (sel: string) => p.eval<{ left: number; right: number; top: number; bottom: number; width: number }>(`(() => { const r = document.querySelector(${JSON.stringify(sel)}).getBoundingClientRect(); return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, width: r.width }; })()`);
   const [agentBox, tasksBox, sourceBox] = [await box("#agent"), await box("#tasks"), await box("#source-pane")];
   expect(agentBox.right <= tasksBox.left && tasksBox.bottom <= sourceBox.top && agentBox.width >= 300 && agentBox.bottom <= 900, "on a wide window: the agent on the left, the board above the dashboard beside it", { agentBox, tasksBox, sourceBox });
-  expect(await p.eval(`getComputedStyle(document.querySelector("#tasks .board")).gridTemplateColumns.split(" ").length == 5`), "the board keeps its five columns beside the agent");
+  expect(await p.eval(`getComputedStyle(document.querySelector("#tasks .board")).gridTemplateColumns.split(" ").length == 4`), "the board keeps its four columns beside the agent");
   const phone = await browser.page(await browser.context());
   await phone.open(`${root}/admin/source`, { width: 390, height: 844, scale: 2 });
   await until(() => phone.eval(`!!document.querySelector('#tasks [data-col="queued"]')`), 10_000, "the page on a phone");
@@ -360,8 +361,10 @@ try {
   ok("the factory's agent: reads the board, queues a task with a dependency, reads it, looks at its screenshot, sends instructions, changes dependencies; no merge or discard");
 
   // ---------------------------------------------------------------- 11. Share with agent: a factory token
+  // An icon in the header bar, as the editor's (no button in the board's head); it says its dialog is open.
+  expect(await p.eval(`!!document.querySelector(".chrome-top > #btn-share.icon-btn[data-tip] svg") && !document.querySelector("#tasks #btn-share, .share-btn")`), "Share with agent is an icon in the header bar");
   await click(p, "#btn-share");
-  await until(() => p.eval(`document.getElementById("share-dlg").open`), 5000, "Share with agent opens its dialog");
+  await until(() => p.eval(`document.getElementById("share-dlg").open && document.getElementById("btn-share").getAttribute("aria-expanded") == "true"`), 5000, "Share with agent opens its dialog");
   // A label with an emoji, beside the agent's curly apostrophe: the task's git token must carry both (it once failed: btoa).
   await fill(p, "#share-label", "Claude Code 🤖");
   await click(p, "#share-make");

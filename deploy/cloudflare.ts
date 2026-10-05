@@ -539,7 +539,7 @@ export async function runPipeline(cf: Cloudflare, release: Release | null, targe
       try {
         const r = await ensureFactoryApp(cf, target.accountId, target.workerName, ns);
         // Made after the upload, as wrangler does: the version that names the image is tied to it from then on.
-        return `${factoryAppName(target.workerName)} (${ns}), ${r == "made" ? "made" : "already there"}`;
+        return `${factoryAppName(target.workerName)} (${ns}), ${r == "made" ? "made" : r == "updated" ? "already there, its instance type updated" : "already there"}`;
       } catch (e) {
         if (target.keepSecrets && e instanceof DeployError && (e.status == 401 || e.status == 403)) return `skipped: this deploy's token may not use Containers, so it can't check ${factoryAppName(target.workerName)}. It's made once from a machine (bun deploy/setup.ts --factory); until then the factory's VMs don't start`;
         throw e;

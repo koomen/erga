@@ -78,16 +78,27 @@ export async function factoryNamespace(cf: Cloudflare, accountId: string, worker
 }
 
 /**
- * The container application for the Worker's FactoryVm namespace: made if it's missing, checked if it's there.
- * "made" or "there"; throws if an application of that id isn't the factory's.
+ * The VMs' instance type: Cloudflare's largest (factory/cloudflare.ts INSTANCE, which picks it at each start). The
+ * durable_object application normally declares none; one that declares another is updated to this.
  */
-export async function ensureFactoryApp(cf: Cloudflare, accountId: string, worker: string, namespaceId: string): Promise<"made" | "there"> {
+export const FACTORY_INSTANCE = "standard-4";
+
+/**
+ * The container application for the Worker's FactoryVm namespace: made if it's missing, checked if it's there (its instance type
+ * set to FACTORY_INSTANCE if it declares another). "made", "there" or "updated"; throws if an application of that id isn't the factory's.
+ */
+export async function ensureFactoryApp(cf: Cloudflare, accountId: string, worker: string, namespaceId: string): Promise<"made" | "there" | "updated"> {
   const acc = `/accounts/${accountId}/containers/applications`;
   const name = factoryAppName(worker);
-  const found = await cf.call<{ id: string; name: string; scheduling_policy?: string; durable_objects?: { namespace_id?: string } }>("GET", `${acc}/${namespaceId}`, "read the factory's container application", undefined, { allow404: true });
+  const found = await cf.call<{ id: string; name: string; scheduling_policy?: string; durable_objects?: { namespace_id?: string }; configuration?: { instance_type?: string } }>("GET", `${acc}/${namespaceId}`, "read the factory's container application", undefined, { allow404: true });
   if (found) {
     if (found.name != name || found.scheduling_policy != "durable_object" || found.durable_objects?.namespace_id != namespaceId) {
       throw new DeployError(`The container application ${namespaceId} is ${found.name} (${found.scheduling_policy}), not the factory's ${name}: it stops here.`);
+    }
+    const had = found.configuration?.instance_type;
+    if (had && had != FACTORY_INSTANCE) {
+      await cf.call("PATCH", `${acc}/${namespaceId}`, `set the factory's container application to ${FACTORY_INSTANCE}`, { configuration: { instance_type: FACTORY_INSTANCE } });
+      return "updated";
     }
     return "there";
   }

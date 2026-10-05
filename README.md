@@ -63,7 +63,7 @@ serves the app's routes (`front.ts`). Its pages:
   it (see [Documents with many pages](#documents-with-many-pages)).
 - **Settings**, `/settings`: your agent tokens (`/tokens` redirects there).
 - **Admin settings**, `/admin`: the server's settings and users, for admins
-  who have unlocked admin access with their SSH key.
+  (and, with admin keys required, only once they've unlocked admin access with their SSH key).
 - **Admin keys**, `/admin/keys`: an admin's SSH keys, and unlocking admin
   access with them (see [Admin SSH keys](#admin-ssh-keys)).
 - **Deploy your own**, `/deploy`: anyone signed in, by default (see
@@ -368,8 +368,9 @@ their row the first time they do; they can't be demoted or removed except by
 taking them out of `ADMINS` and deploying. Every other admin is a row, made
 by an admin. Locally, `DEV_LOGIN` is a bootstrap admin too, and everyone
 signed in gets a row as they come. Being an admin says who *may* administer
-the server; doing it also needs admin access unlocked with an SSH key the
-admin added themselves (see [Admin SSH keys](#admin-ssh-keys)). An admin's
+the server; with admin keys required (off by default), doing it also needs
+admin access unlocked with an SSH key the admin added themselves (see
+[Admin SSH keys](#admin-ssh-keys)). An admin's
 agent can do it all for them with an admin token (see [Agents configure the
 server](#agents-configure-the-server)): ask Claude Code, with one, to add a user.
 
@@ -586,6 +587,19 @@ The token signs in test people (Ada, Bo, ...) who can open only test documents
 (`/<you>/test....`), where the scripted agent stands in for the model.
 
 ### Admin SSH keys
+
+**Off by default.** Unless the deploy sets `ERGA_ADMIN_KEYS_REQUIRED=1`
+(`cloudflare.config.ts`), a signed-in admin is enough: every signed-in
+session carries an unlock that names no key (`SIGN_IN_KEY`, made in
+`worker/auth.ts` and `front.ts`'s `withTokens`), so the admin check
+(`Users.isAdmin`) is the only one left. Non-admins and people signed out are
+refused as before. An admin's agent token works as an admin token does
+(the admin tools, the Git endpoint), and `/admin/keys` says no key is
+needed. The keys, the challenges and admin tokens still work; to turn the
+requirement back on, make `ERGA_ADMIN_KEYS_REQUIRED`'s default `"1"` in
+`cloudflare.config.ts` (`tests/admin-keys.ts` runs with it on;
+`tests/admin-open.ts` checks it off). Everything below describes the
+requirement while it's on.
 
 Everything that administers, edits or deploys the server itself needs more
 than a GitHub sign-in: an admin must also have **unlocked admin access**, by
@@ -821,7 +835,11 @@ with Artifacts Read, which the deploy tokens don't have), and the container fetc
 only GitHub and GitLab repos, and Artifacts' own build-on-push guide runs a
 Workflow whose steps are container sandboxes (`@cloudflare/ci`), which is the
 same thing with more parts; the builder can move there later without the
-pipeline changing. A machine builds the same way (`deploy/run.ts`, in a
+pipeline changing. Each build has a container of its own (the pipeline
+names it, and up to 4 run at once), so staging and production can build at
+the same moment; the container is destroyed when its build ends or is
+cancelled. If no container starts (503), the pipeline logs "waiting for the
+builder" and tries again, with backoff, for about 5 minutes. A machine builds the same way (`deploy/run.ts`, in a
 scratch worktree, with the checkout's packages linked).
 
 **Branches deploy themselves** (`deploy/branches.ts`, in one Durable Object
@@ -1455,8 +1473,8 @@ fine for Erga's thousands but not for millions.
 
 The factory is the task queue (`development/task-queue/`) inside Erga, on
 `/admin/source` (with the source dashboard and the factory's agent;
-`/admin/factory` redirects there): the same board (Queued, Working, Ready to merge, Merging,
-Merged, and `needs agent` cards in Merging), but each task is done by Claude Code in a VM of its own, not on
+`/admin/factory` redirects there): the same board (Queued, Working, Ready to merge and Merging,
+with `needs agent` cards in Merging; merged tasks leave the board), but each task is done by Claude Code in a VM of its own, not on
 this machine: on staging.erga.dev and erga.dev a Cloudflare Container
 ([On Cloudflare](#on-cloudflare), below). It's a prototype: admins only, and
 off until an admin sets the `factory` setting to `on` (`/admin`). It does
@@ -1620,7 +1638,11 @@ stopped; the same VM's stand-in resolves it and the merge goes on to
 merged), a merge step that hangs (killed at its limit with its process
 tree, needs agent, then merged) and an install that hangs (the stand-in is
 told and installs again). `tests/factory.test.ts` tests the branch names and
-the git tokens' rules.
+the git tokens' rules. `tests/factory-cards.ts` checks that the board's cards
+stay compact, on a board of fixture tasks: a title on one line (the full
+title in its tooltip), no branch name (the detail has it), the last update
+as a short time on the title's line ("5m"), small buttons on one row, and
+the thumbnails.
 
 **How it fits together.**
 
@@ -1673,7 +1695,8 @@ the git tokens' rules.
    factory uses the plain container API and its own agent. Instance types go
    up to standard-4 (4 vCPU, 12 GiB, 20 GB disk); the factory wants
    standard-3 (2 vCPU, 8 GiB) or more: Claude Code alone wants 4 GB, plus
-   the dev server and Chromium. Starts: "often 1–3 seconds"; Cloudflare's
+   the dev server and Chromium. It uses standard-4, the largest (custom
+   types go no higher: 4 vCPU, 12 GiB, 20 GB). Starts: "often 1–3 seconds"; Cloudflare's
    `durable_object` scheduling (blog, 2026-09-30) reports a median of
    0.65 s and lets the image and instance type be chosen at start. Disk is
    ephemeral; filesystem snapshots (beta, `durable_object` policy only,
@@ -1684,7 +1707,7 @@ the git tokens' rules.
    code. Pricing on Workers Paid: $0.000020 per vCPU-second, $0.0000025 per
    GiB-second, $0.00000007 per GB-second of disk, egress $0.025/GB after
    1 TB, with 375 vCPU-minutes and 25 GiB-hours included each month: a
-   standard-3 VM costs at most about $0.22 an hour while it runs. No fixed
+   standard-4 VM costs at most about $0.40 an hour while it runs. No fixed
    lifetime; an inactivity timeout up to 6 hours. Browser Rendering could
    take screenshots instead of Chromium in the VM, but it would need the
    preview on a public URL; Chromium in the image is simpler.
@@ -1731,8 +1754,8 @@ the git tokens' rules.
    request to the VM's port 4401 as if to localhost (the dev server in the
    VM signs everyone in as its `DEV_LOGIN`, on localhost only, so the
    ticket is what keeps it to admins).
-6. *The board* is the local one's, without live mode or the Branches column
-   (Merged shows the last 20 merged tasks; the Source page shows staging).
+6. *The board* is the local one's, without live mode, the Merged column or
+   the Branches column (merged tasks leave the board; the Source page shows staging).
 
 **Risks.**
 
@@ -1825,8 +1848,9 @@ real run") is code now, and staging.erga.dev runs it.
   `deploy/tokens.ts`).
 - **A VM** (`factory/cloudflare.ts`) is a container of a FactoryVm object
   named `task-<id>-<6 hex>`: started from `ctx.container.images.factory`,
-  instance type `standard-3` (2 vCPU, 8 GiB; `FACTORY_VM_INSTANCE` overrides
-  it), internet on. A container stops a while after its object last heard
+  instance type `standard-4` (4 vCPU, 12 GiB, 20 GB disk, Cloudflare's
+  largest; chosen at each start, so the container application has none of
+  its own; `FACTORY_VM_INSTANCE` overrides it), internet on. A container stops a while after its object last heard
   from anyone, so each call sets that to the most Cloudflare allows (six
   hours), and the factory's alarm asks every VM whether it's up every 20
   minutes while any task has one. A VM that stopped anyway is noted on its
@@ -1843,7 +1867,10 @@ real run") is code now, and staging.erga.dev runs it.
   after a new image was pushed and prepared, starts failed with "There is no
   container instance that can be provided" (Cloudflare still putting the
   image on its machines, it seems); later the same image started at once. So
-  push a new image a while before it's needed.
+  push a new image a while before it's needed. (The Dockerfile installs
+  `lsof`, which images before it lack; tests/host.ts doesn't need it: on
+  Linux it reads `/proc/*/cwd`. The next image built picks it up; there's
+  no need to push one just for that.)
 
 Done on erga.dev's account (task #7): the image pushed and prepared;
 `FACTORY_KEY` on `erga-staging`; staging deployed from a machine with this
@@ -2181,12 +2208,12 @@ had made when it asked (a Yjs state vector). No browser runs on the server:
 whoever has the editor open is the agent's eyes, and with none of their tabs
 open the tool says so. The panel shows a thumbnail of what it saw.
 
-The agent runs on Claude Sonnet 5.5 by default, at medium effort; the model
-name in the panel's header is a menu that switches it to Claude Opus 5.5 in
-fast mode and back. The choice is per person (all their tabs follow, and a
+The agent runs on Claude Opus 5.5 in fast mode by default, at medium effort;
+the model name in the panel's header is a menu that switches it to Claude
+Sonnet 5.5 and back. The choice is per person (all their tabs follow, and a
 reload keeps it) and applies from the next message, so a running turn
-finishes on the model it started with. `ERGA_AGENT_MODEL=opus-fast`
-starts everyone on Opus instead. Set it up with `ANTHROPIC_API_KEY`: locally
+finishes on the model it started with. `ERGA_AGENT_MODEL=sonnet`
+starts everyone on Sonnet instead. Set it up with `ANTHROPIC_API_KEY`: locally
 exported before `bun start` or in `.dev.vars`; a secret on erga.dev. pi's model catalogue
 predates the 5.5 models, so `agent.ts` describes them itself (`MODELS`) and
 rewrites each request for adaptive thinking, effort and, on Opus fast,

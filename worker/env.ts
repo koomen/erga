@@ -26,7 +26,7 @@ export interface Env {
   FACTORY_PREVIEW_DOMAIN?: string;
   /** The factory's image as the deploy declared it (a registry reference), if the container API doesn't list it under `images`. */
   FACTORY_IMAGE?: string;
-  /** A VM's instance type (factory/cloudflare.ts: standard-3 when unset). */
+  /** A VM's instance type (factory/cloudflare.ts: standard-4 when unset). */
   FACTORY_VM_INSTANCE?: string;
   /** The server's database: users, settings and the directory of documents (directory.ts, users.ts, config.ts; migrations/). */
   DB: D1Database;
@@ -92,6 +92,8 @@ export interface Env {
   ERGA_DEPLOY_MOCK?: string;
   /** Local development only: sign in as this login without GitHub (honoured only on localhost). */
   DEV_LOGIN?: string;
+  /** "1": admin power needs an unlock with an admin SSH key (admin-keys.ts). Empty: a signed-in admin is enough (worker/auth.ts, keysRequired). */
+  ERGA_ADMIN_KEYS_REQUIRED?: string;
   /** Local development only: "1" counts every admin as having unlocked admin access (admin-keys.ts), for the tests that aren't about it (tests/host.ts sets it). Honoured only on localhost. */
   ERGA_ADMIN_UNLOCKED?: string;
   /** "script" for the test suite's scripted agent; unset on erga.dev. */

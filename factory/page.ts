@@ -1,8 +1,9 @@
 // The factory's board (experimental), a part of /admin/source (source/page.ts,
 // which puts it beside the source dashboard and the factory's agent): the
 // local task queue's board (development/task-queue/index.html) inside Erga. Columns
-// Queued, Working, Ready to merge, Merging (with "needs agent": a merge the task's Claude Code
-// is finishing, Merge off, with the reason) and Merged; a card per task, its
+// Queued, Working, Ready to merge and Merging (with "needs agent": a merge the task's Claude Code
+// is finishing, Merge off, with the reason; merged tasks leave the board, and the Source page
+// shows staging); a card per task, its
 // detail on a click (the ask, the summary, the preview, the branch, the log,
 // the screenshots), with Merge, Discard and new instructions; live, over
 // /api/factory/events. Dependencies between tasks as on the local board: a
@@ -21,36 +22,43 @@ export const BOARD_STYLE = `
   @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --ok: #4cc38a; --warn: #f0a742; --bad: #ff7b72; --shadow: 0 1px 2px rgba(0,0,0,.4); } }
   :root[data-theme="dark"] { --ok: #4cc38a; --warn: #f0a742; --bad: #ff7b72; --shadow: 0 1px 2px rgba(0,0,0,.4); }
   .tag { font: 600 10px/1 var(--font-text); text-transform: uppercase; letter-spacing: .06em; color: var(--warn); border: 1px solid currentColor; border-radius: 999px; padding: 3px 7px; }
-  .pills { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-  .pill { height: 26px; font-size: 12px; font-weight: 500; color: var(--muted); display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); border-radius: 999px; padding: 0 10px; background: var(--card); box-shadow: none; }
+  .pills { display: flex; flex-wrap: wrap; gap: 4px 16px; align-items: center; }
+  .pill { height: 26px; font-size: 12px; font-weight: 500; color: var(--muted); display: inline-flex; align-items: center; gap: 6px; border: 0; border-radius: 0; padding: 0; background: none; box-shadow: none; }
   .pill::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
   .pill.on::before { background: var(--ok); } .pill.off::before { background: var(--bad); }
-  button.pill { cursor: pointer; font: inherit; font-size: 12px; } button.pill:hover { border-color: var(--muted); color: var(--ink); }
+  .pill.pushing::before { width: 5px; height: 5px; background: transparent; border: 2px solid var(--ok); border-right-color: transparent; animation: pill-spin .8s linear infinite; }
+  @keyframes pill-spin { to { transform: rotate(360deg); } }
+  button.pill { cursor: pointer; font: inherit; font-size: 12px; } button.pill:hover { color: var(--ink); }
   .notice { margin: 0 0 10px; padding: 10px 14px; border-radius: 8px; background: var(--panel); color: var(--muted); font-size: 13px; }
   .notice a { color: var(--accent); }
-  .board { display: grid; grid-template-columns: repeat(5, minmax(150px, 1fr)); gap: 10px; align-items: start; }
-  @media (max-width: 900px) { .board { grid-template-columns: repeat(3, minmax(160px, 1fr)); } }
+  .board { display: grid; grid-template-columns: repeat(4, minmax(150px, 1fr)); gap: 10px; align-items: start; }
+  @media (max-width: 900px) { .board { grid-template-columns: repeat(2, minmax(160px, 1fr)); } }
   @media (max-width: 560px) { .board { grid-template-columns: 1fr; } .col { min-height: 0; } }
   .col { background: var(--panel); border-radius: 10px; padding: 10px; min-height: 120px; }
   .col h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 2px 4px 10px; min-height: 26px; display: flex; justify-content: space-between; align-items: center; }
   .col h2 button { text-transform: none; letter-spacing: 0; }
   .empty { color: var(--muted); font-size: 12px; padding: 8px 4px; border: 0; text-align: left; }
-  .card { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; box-shadow: var(--shadow); cursor: pointer; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 6px; margin-bottom: 6px; min-width: 0; box-shadow: var(--shadow); cursor: pointer; }
   .card:hover { border-color: var(--muted); }
   .card.failed { border-left: 3px solid var(--bad); }
   .card.merging { border-left: 3px solid var(--warn); }
   .card.needs-agent { border-left: 3px solid var(--bad); }
-  .card .agent-now { margin-top: 6px; font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
-  .top { display: flex; gap: 8px; align-items: baseline; }
-  .id { color: var(--muted); font: 12px ui-monospace, monospace; }
-  .title { font-weight: 600; flex: 1; overflow-wrap: anywhere; white-space: normal; color: var(--ink); }
-  .meta { color: var(--muted); font-size: 12px; margin-top: 4px; display: flex; flex-wrap: wrap; gap: 4px 10px; }
-  .meta code, .branch { font: 11px ui-monospace, monospace; }
-  .last { color: var(--muted); font-size: 12px; margin-top: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .err { color: var(--bad); font-size: 12px; margin-top: 6px; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 7.5em; overflow: hidden; }
-  .thumbs { display: flex; gap: 6px; margin-top: 8px; overflow: hidden; }
-  .thumbs img { height: 54px; border-radius: 4px; border: 1px solid var(--line); object-fit: cover; max-width: 96px; }
+  .card .agent-now { margin-top: 2px; font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .top { display: flex; gap: 6px; align-items: baseline; min-width: 0; }
+  .id { color: var(--muted); font: 11px ui-monospace, monospace; flex: none; }
+  .title { font-weight: 600; flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--ink); }
+  .card .title { font-size: 13px; }
+  /* On the card's title line: failed or needs agent, and the last update as a short time ("5m"). */
+  .when { flex: none; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+  .flag { flex: none; color: var(--bad); font-size: 11px; font-weight: 600; }
+  .last { color: var(--muted); font-size: 12px; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .last .chip { margin-right: 6px; vertical-align: 1px; }
+  .err { color: var(--bad); font-size: 12px; margin-top: 2px; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .thumbs { display: flex; gap: 4px; margin-top: 4px; overflow: hidden; }
+  .thumbs img { height: 40px; border-radius: 4px; border: 1px solid var(--line); object-fit: cover; max-width: 72px; }
   .actions { display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; }
+  .card .actions { gap: 3px; margin-top: 4px; }
+  .card .actions button, .card .actions .btn { font-size: 11px; line-height: 16px; padding: 1px 4px; border-radius: 5px; }
   button, .btn { font: inherit; font-size: 12px; border: 1px solid var(--line); background: var(--card); color: var(--ink); border-radius: 6px; padding: 4px 10px; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; gap: 5px; }
   button:hover, .btn:hover { border-color: var(--muted); }
   button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
@@ -128,7 +136,6 @@ const COLUMNS = [
   { title: "Working", statuses: ["working", "failed"] },
   { title: "Ready to merge", statuses: ["complete"] },
   { title: "Merging", statuses: ["merging", "needs agent"] },
-  { title: "Merged", statuses: ["merged"] },
 ];
 let tasks = [], info = null, openId = null, depError = null, live = "connecting";
 const showLive = () => { const el = $("live"); if (el) { el.textContent = live; el.classList.toggle("on", live == "live"); } };
@@ -140,6 +147,8 @@ const armed = new Set();
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 const ago = (iso) => { const s = (Date.now() - new Date(iso)) / 1000; return s < 60 ? "just now" : s < 3600 ? Math.floor(s / 60) + "m ago" : s < 86400 ? Math.floor(s / 3600) + "h ago" : new Date(iso).toLocaleDateString(); };
+/** A short time since, for a card: "now", "5m", "3h", "2d", then the date. */
+const short = (iso) => { const s = (Date.now() - new Date(iso)) / 1000; return s < 60 ? "now" : s < 3600 ? Math.floor(s / 60) + "m" : s < 86400 ? Math.floor(s / 3600) + "h" : s < 7 * 86400 ? Math.floor(s / 86400) + "d" : new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" }); };
 const api = async (path, opts = {}) => {
   const r = await fetch("/api/factory" + path, { method: opts.method || "GET", headers: opts.json !== undefined ? { "Content-Type": "application/json" } : {}, body: opts.json !== undefined ? JSON.stringify(opts.json) : undefined });
   const body = await r.json().catch(() => ({}));
@@ -170,18 +179,20 @@ const waitsToStart = (t) => t.status == "queued" && !!(t.blockedBy?.start.length
 
 function actions(t, inDialog) {
   const b = [];
-  if (t.url && !inDialog && !["merged", "discarded"].includes(t.status)) b.push('<a class="btn" href="/api/factory/tasks/' + t.id + '/open" target="_blank" onclick="event.stopPropagation()">Open preview</a>');
+  // On a card, why a button is off is its tooltip (and the chip or the error says it); the detail spells it out.
+  const why = (text) => inDialog ? '<span class="why">' + esc(text) + '</span>' : "";
+  if (t.url && !inDialog && !["merged", "discarded"].includes(t.status)) b.push('<a class="btn" href="/api/factory/tasks/' + t.id + '/open" target="_blank" title="Open the preview" onclick="event.stopPropagation()">Preview</a>');
   if (t.status == "queued" && !t.vm) {
-    const why = t.blockedBy?.start.length ? (t.blockedBy.stuck.length ? t.blockedBy.reason[0].toUpperCase() + t.blockedBy.reason.slice(1) : "Starts when " + ids(t.blockedBy.start) + " merge" + (t.blockedBy.start.length == 1 ? "s" : "")) : null;
-    if (why) b.push('<button disabled title="' + esc(why) + '">Start</button><span class="why">' + esc(why) + '</span>');
+    const off = t.blockedBy?.start.length ? (t.blockedBy.stuck.length ? t.blockedBy.reason[0].toUpperCase() + t.blockedBy.reason.slice(1) : "Starts when " + ids(t.blockedBy.start) + " merge" + (t.blockedBy.start.length == 1 ? "s" : "")) : null;
+    if (off) b.push('<button disabled title="' + esc(off) + '">Start</button>' + why(off));
     else if (t.starting) b.push('<button disabled><span class="spin"></span> Starting…</button>');
     else b.push('<button class="primary" data-act="start" data-id="' + t.id + '">Start</button>');
   }
   if (t.status == "complete") {
-    const why = mergeBlocked(t);
-    b.push(why ? '<button class="primary" disabled title="' + esc(why) + '">Merge</button><span class="why">' + esc(why) + '</span>' : '<button class="primary" data-act="merge" data-id="' + t.id + '">Merge</button>');
+    const off = mergeBlocked(t);
+    b.push(off ? '<button class="primary" disabled title="' + esc(off) + '">Merge</button>' + why(off) : '<button class="primary" data-act="merge" data-id="' + t.id + '">Merge</button>');
   }
-  if (t.status == "needs agent") b.push('<button class="primary" disabled title="Claude Code is finishing the merge">Merge</button><span class="why">Needs agent: the task’s Claude Code is finishing the merge, which then goes on by itself</span>');
+  if (t.status == "needs agent") b.push('<button class="primary" disabled title="Claude Code is finishing the merge">Merge</button>' + why("Needs agent: the task’s Claude Code is finishing the merge, which then goes on by itself"));
   if (t.status == "merging") b.push('<button disabled><span class="spin"></span> ' + (t.log.at(-1)?.message.includes("waiting for") ? "Waiting to merge…" : "Merging…") + '</button>');
   if (!["merging", "merged", "discarded"].includes(t.status))
     b.push(armed.has(t.id) ? '<button class="confirm" data-act="discard" data-id="' + t.id + '">Discard branch?</button>' : '<button class="danger" data-act="arm" data-id="' + t.id + '">Discard</button>');
@@ -190,11 +201,14 @@ function actions(t, inDialog) {
 
 function card(t) {
   const last = t.log[t.log.length - 1];
+  const when = t.status == "merged" && t.mergedAt ? t.mergedAt : t.updatedAt;
   const thumbs = t.screenshots.slice(-3).map((s) => '<img src="/api/factory/shots/' + esc(s.file) + '" alt="' + esc(s.caption) + '" loading="lazy">').join("");
   return '<div class="card ' + cls(t.status) + (waitsToStart(t) ? " blocked" : "") + '" data-open="' + t.id + '">' +
-    '<div class="top"><span class="id">#' + t.id + '</span><span class="title">' + esc(t.title) + '</span></div>' +
-    '<div class="meta">' + depChip(t) + '<code>' + esc(t.branch) + '</code><span>' + (t.status == "merged" ? "merged " + ago(t.mergedAt) : ago(t.updatedAt)) + '</span>' + (t.status == "failed" ? "<span>failed</span>" : "") + (t.status == "needs agent" ? '<span class="status needs-agent">needs agent</span>' : "") + '</div>' +
-    (t.error ? '<div class="err">' + esc(t.error) + '</div>' + (t.status == "needs agent" && last ? '<div class="agent-now">Now: ' + esc(last.message.length > 160 ? last.message.slice(0, 160) + "…" : last.message) + '</div>' : "") : last && t.status != "merged" && !waitsToStart(t) ? '<div class="last">' + esc(last.message) + '</div>' : "") +
+    '<div class="top"><span class="id">#' + t.id + '</span><span class="title" title="' + esc(t.title) + '">' + esc(t.title) + '</span>' +
+    (t.status == "failed" ? '<span class="flag">failed</span>' : t.status == "needs agent" ? '<span class="flag">needs agent</span>' : "") +
+    '<span class="when" title="' + esc((when == t.mergedAt ? "Merged " : "Last update ") + new Date(when).toLocaleString()) + '">' + short(when) + '</span></div>' +
+    (t.error ? (depChip(t) ? '<div class="last">' + depChip(t) + '</div>' : "") + '<div class="err" title="' + esc(t.error) + '">' + esc(t.error) + '</div>' + (t.status == "needs agent" && last ? '<div class="agent-now" title="' + esc(last.message) + '">Now: ' + esc(last.message) + '</div>' : "")
+      : depChip(t) || (last && t.status != "merged") ? '<div class="last"' + (last ? ' title="' + esc(last.message) + '"' : "") + '>' + depChip(t) + (last && t.status != "merged" && !waitsToStart(t) ? esc(last.message) : "") + '</div>' : "") +
     (thumbs && t.status != "merged" ? '<div class="thumbs">' + thumbs + '</div>' : "") +
     actions(t, false) + '</div>';
 }
@@ -202,8 +216,8 @@ function card(t) {
 function render() {
   $("board").innerHTML = COLUMNS.map((c) => {
     let list = tasks.filter((t) => c.statuses.includes(t.status));
-    list.sort((a, b) => (b.mergedAt || b.updatedAt).localeCompare(a.mergedAt || a.updatedAt));
-    if (c.title == "Merged") list = list.slice(0, 20);
+    // A stable order, by id (oldest first): a card moves only when its status changes, not as its task logs progress.
+    list.sort((a, b) => a.id - b.id);
     // Queued: the ones that can start first; the ones waiting on others below them.
     if (c.title == "Queued") list.sort((a, b) => waitsToStart(a) - waitsToStart(b));
     const add = c.title == "Queued" && info && info.enabled ? '<button id="new" data-act="new">New task</button>' : "";
@@ -215,9 +229,12 @@ function render() {
 
 function renderInfo() {
   if (!info) return;
+  const mirror = $("mirror-pill");
   const vms = info.vms.runner == "docker" ? "VMs: Docker" : info.vms.runner == "sim" ? "VMs: simulated" : info.vms.runner ? "VMs: " + info.vms.runner : "No VMs";
   $("pills").innerHTML = '<span class="pill" id="live">' + ($("live")?.textContent || "connecting") + '</span>' + '<span class="pill ' + (info.vms.runner ? "on" : "off") + '" title="' + esc(info.vms.why || "Where each task's VM runs") + '">' + esc(vms) + '</span>' +
     '<button class="pill ' + (info.claude.signedIn ? "on" : "off") + '" id="claude-pill" data-act="claude">' + (info.claude.signedIn ? "Claude: signed in" : "Claude: not signed in") + '</button>';
+  // The fourth status, the GitHub mirror: the source pane's script keeps it up to date.
+  if (mirror) $("pills").append(mirror);
   showLive();
   $("notice").hidden = info.enabled;
   render();
@@ -392,12 +409,10 @@ window.ergaBoard = { openTask: () => openId, title: (id) => tasks.find((x) => x.
 })();
 `;
 
-/** The board's pane: its head (where VMs run, the Claude sign-in, Share with agent), the notice, the columns, its dialogs. */
+/** The board's pane: its head (where VMs run, the Claude sign-in), the notice, the columns, its dialogs. */
 export function boardMarkup(opts: { enabled: boolean }): string {
-  return `<div class="pane-head"><h2>Tasks</h2><span class="tag">Experimental</span><div class="pills" id="pills"><span class="pill" id="live">connecting</span></div>
-  <button type="button" class="share-btn" id="btn-share" aria-haspopup="dialog">Share with agent</button></div>
+  return `<div class="pane-head"><h2>Tasks</h2><span class="tag">Experimental</span><div class="pills" id="pills"><span class="pill" id="live">connecting</span><button class="pill" id="mirror-pill" type="button" hidden>GitHub: loading…</button></div></div>
 <div class="notice" id="notice" ${opts.enabled ? "hidden" : ""}>The factory is off. An admin turns it on with the <code>factory</code> setting on <a href="/admin">Admin settings</a>.</div>
-<p class="pane-note">Each task is a branch made from staging, done by Claude Code in a VM. Merge merges it into staging, which deploys itself.</p>
 <div class="board" id="board"></div>
 <dialog id="dlg"></dialog>
 <dialog id="form" class="small"></dialog>

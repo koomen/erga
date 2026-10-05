@@ -13,17 +13,29 @@ export function containerBuilder(fetcher: { fetch: typeof fetch }, o: { sleep?: 
   return {
     async build({ commit, branch, source }, log, signal): Promise<Release> {
       let r: Response | null = null;
+      // The build's own name: the Worker gives it a container of its own, and a cancel reaches that one.
+      const id = crypto.randomUUID();
       // Cancelled: the container stops this build (its commands killed), and the stream is dropped.
-      const stop = () => { fetcher.fetch("http://builder/cancel", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ commit }) }).catch(() => {}); };
+      const stop = () => { fetcher.fetch(`http://builder/cancel?id=${id}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ commit }) }).catch(() => {}); };
       signal?.addEventListener("abort", stop, { once: true });
       try {
-      // Another build in the container: wait for it (up to ~10 minutes).
-      for (let i = 0; i < 120; i++) {
+      // Another build in the container (409), or no container free to start (503, "didn't start"):
+      // wait and try again, up to ~10 minutes for 409s and ~5 minutes for 503s.
+      let busy = 0, waited = 0;
+      for (let i = 0; i < 200; i++) {
         signal?.throwIfAborted();
-        r = await fetcher.fetch("http://builder/build", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ source, commit, branch }), signal });
-        if (r.status != 409) break;
-        if (i == 0) log("the builder is busy with another build: waiting");
-        await sleep(5000);
+        r = await fetcher.fetch(`http://builder/build?id=${id}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ source, commit, branch }), signal });
+        if (r.status == 409 && busy < 120) {
+          if (busy++ == 0) log("the builder is busy with another build: waiting");
+          await sleep(5000);
+        } else if (r.status == 503 && waited < 5 * 60_000) {
+          const why = (await r.text().catch(() => "")).slice(0, 200);
+          const ms = Math.min(30_000, 5000 * 2 ** Math.min(3, i));
+          log(`waiting for the builder (it answered 503${why ? `: ${why}` : ""}); trying again in ${ms / 1000} s`);
+          waited += ms;
+          await sleep(ms);
+          r = null;
+        } else break;
       }
       if (!r || !r.ok || !r.body) throw new DeployError(`The builder didn't take the build (it answered ${r?.status ?? "nothing"}${r ? `: ${(await r.text().catch(() => "")).slice(0, 300)}` : ""}).`);
       let bundle: string | null = null, error: string | null = null;

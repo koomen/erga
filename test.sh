@@ -13,6 +13,7 @@
 #                     branches deploying themselves, in the Worker (tests/deploys.ts),
 #                     who you are in every page's corner (tests/account.ts),
 #                     admin SSH keys and unlocking admin access with them (tests/admin-keys.ts),
+#                     admin power for a signed-in admin while keys aren't required (tests/admin-open.ts),
 #                     the viewer's controls fading while you read (tests/fade.ts),
 #                     a document's pages tree (tests/tree.ts),
 #                     the first switch into editing on a slow network (tests/switch.ts),
@@ -20,6 +21,7 @@
 #                     versions and publishing (tests/versions.ts),
 #                     document settings (tests/settings.ts),
 #                     the factory, with simulated VMs (tests/factory.ts),
+#                     the factory board's compact cards (tests/factory-cards.ts),
 #                     live reload (tests/reload.ts, in a copy of the checkout)
 #                     and the multiplayer suite, each
 #                     against dev servers of its own (tests/host.ts)
@@ -86,6 +88,8 @@ run 1 pages bun tests/pages.ts                           # [17]
 run 1 switch bun tests/switch.ts                         # [17]
 run 1 deploy bun tests/deploy.ts                         # [16]
 run 1 admin-keys bun tests/admin-keys.ts                 # [16]
+run 1 factory-cards bun tests/factory-cards.ts           # [?]
+run 1 admin-open bun tests/admin-open.ts                 # [?]
 run 1 landing bun tests/landing.ts                       # [14]
 run 1 versions bun tests/versions.ts                     # [13]
 run 2 unit bun test ./tests/                             # [11]
