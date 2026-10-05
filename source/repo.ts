@@ -40,6 +40,8 @@ const REF = (b: Branch) => `refs/heads/${b}`;
 const QUARANTINE = "refs/heads/erga-incoming/";
 /** How many commits each branch shows. */
 export const LOG = 25;
+/** How many of staging's commits just after main's head the Source page gets (BranchInfo.afterMain). */
+export const AFTER_MAIN = 5;
 
 export interface Db { exec<T = Record<string, unknown>>(sql: string, ...params: (string | number | null)[]): T[] }
 
@@ -59,7 +61,13 @@ export interface MirrorStatus {
 }
 
 export interface CommitInfo { sha: string; subject: string; author: string; email: string; at: number; parents: string[]; /** Reachable from main. */ inMain: boolean }
-export interface BranchInfo { name: Branch; commit: string | null; commits: CommitInfo[]; /** Commits on it that main doesn't have (staging only). */ ahead?: number }
+export interface BranchInfo {
+  name: Branch; commit: string | null; commits: CommitInfo[];
+  /** Commits on it that main doesn't have (staging only). */
+  ahead?: number;
+  /** The AFTER_MAIN commits only on staging that come just after main's head, newest first (staging only): the Source page shows them below its break, when staging is far ahead. */
+  afterMain?: CommitInfo[];
+}
 export interface Move { branch: Branch; old: string; new: string; how: "push" | "merge"; by: string; at: number }
 
 export class SourceError extends Error {
@@ -183,13 +191,23 @@ export class SourceRepo {
 
   /** The newest `limit` commits behind `tip`, newest first (by commit time, as `git log` lists them). */
   log(tip: string, limit = LOG): Row[] {
+    return this.rows(this.order(tip, (order) => order.length >= limit));
+  }
+
+  /** The commits behind `tip`, newest first, as log lists them, until `done` says so. */
+  private order(tip: string, done: (order: string[]) => boolean): string[] {
     const nodes = this.nodes(), seen = new Set<string>([tip]), frontier = [tip], order: string[] = [];
-    while (frontier.length && order.length < limit) {
+    while (frontier.length && !done(order)) {
       frontier.sort((x, y) => (nodes.get(x)?.committed ?? 0) - (nodes.get(y)?.committed ?? 0));
       const s = frontier.pop()!;
       order.push(s);
       for (const p of nodes.get(s)?.parents ?? []) if (!seen.has(p) && nodes.has(p)) { seen.add(p); frontier.push(p); }
     }
+    return order;
+  }
+
+  /** The commits' rows, in the order asked. */
+  private rows(order: string[]): Row[] {
     if (!order.length) return [];
     const rows = this.deps.db.exec<Row>(`SELECT * FROM commits WHERE sha IN (${order.map(() => "?").join(",")})`, ...order);
     const by = new Map(rows.map((r) => [r.sha, r]));
@@ -210,9 +228,16 @@ export class SourceRepo {
     const onMain = heads.main ? this.ancestors(heads.main) : new Set<string>();
     const branches = BRANCHES.map((name): BranchInfo => {
       const tip = heads[name];
-      const commits = tip ? this.log(tip).map((r) => ({ sha: r.sha, subject: r.subject, author: r.author, email: r.email, at: r.at, parents: r.parents ? r.parents.split(" ") : [], inMain: onMain.has(r.sha) })) : [];
+      const commit = (r: Row): CommitInfo => ({ sha: r.sha, subject: r.subject, author: r.author, email: r.email, at: r.at, parents: r.parents ? r.parents.split(" ") : [], inMain: onMain.has(r.sha) });
+      const commits = tip ? this.log(tip).map(commit) : [];
       const info: BranchInfo = { name, commit: tip, commits };
-      if (name == "staging" && tip) info.ahead = [...this.ancestors(tip)].filter((s) => !onMain.has(s)).length;
+      if (name == "staging" && tip) {
+        const ahead = info.ahead = [...this.ancestors(tip)].filter((s) => !onMain.has(s)).length;
+        // The last of staging's own commits, in log's order, until it has listed them all: those just after main's head.
+        let seen = 0;
+        const only = this.order(tip, (order) => { if (order.length && !onMain.has(order[order.length - 1])) seen++; return seen >= ahead; }).filter((s) => !onMain.has(s));
+        info.afterMain = this.rows(only.slice(-AFTER_MAIN)).map(commit);
+      }
       return info;
     });
     return { branches, mirror: this.mirrorStatus(), moves: this.moves(10) };
