@@ -493,6 +493,8 @@ const PAGE_STYLE = `
   .crumbs a.here-link:hover { color: var(--fg-strong); }
   .crumbs > :not(.brand)::before { content: "›"; margin: 0 9px 0 10px; color: var(--chrome); opacity: 0.55; font-weight: 400; }
   .crumbs .here { display: flex; align-items: center; font-size: 13.5px; font-weight: 500; color: var(--fg); }
+  /* The header bar: left of your avatar (account.ts), as the editor's icons are; it scrolls with the page, as the avatar does. */
+  .chrome-top { position: absolute; right: calc(max(16px, env(safe-area-inset-right)) + 38px); }
   /* The agent on the left, as in the editor; the board and the dashboard beside it, one above the other. */
   .workspace { display: grid; grid-template-columns: minmax(300px, 370px) minmax(0, 1fr); gap: 20px; align-items: start; }
   .agent-pane { position: sticky; top: 16px; height: calc(100vh - 78px); height: calc(100dvh - 78px); min-height: 420px; display: flex; flex-direction: column; min-width: 0;

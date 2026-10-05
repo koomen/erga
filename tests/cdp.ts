@@ -5,7 +5,8 @@ import { mkdtempSync, readFileSync, rmSync } from "fs";
 import { availableParallelism, tmpdir } from "os";
 import { join } from "path";
 
-const CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
+// $CHROME where it is set (Linux, the factory's VMs), else macOS's Chrome.
+const CHROME = process.env.CHROME || "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 
 export const ROOT = new URL("..", import.meta.url).pathname;
 /**

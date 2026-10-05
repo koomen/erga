@@ -360,8 +360,10 @@ try {
   ok("the factory's agent: reads the board, queues a task with a dependency, reads it, looks at its screenshot, sends instructions, changes dependencies; no merge or discard");
 
   // ---------------------------------------------------------------- 11. Share with agent: a factory token
+  // An icon in the header bar, as the editor's (no button in the board's head); it says its dialog is open.
+  expect(await p.eval(`!!document.querySelector(".chrome-top > #btn-share.icon-btn[data-tip] svg") && !document.querySelector("#tasks #btn-share, .share-btn")`), "Share with agent is an icon in the header bar");
   await click(p, "#btn-share");
-  await until(() => p.eval(`document.getElementById("share-dlg").open`), 5000, "Share with agent opens its dialog");
+  await until(() => p.eval(`document.getElementById("share-dlg").open && document.getElementById("btn-share").getAttribute("aria-expanded") == "true"`), 5000, "Share with agent opens its dialog");
   // A label with an emoji, beside the agent's curly apostrophe: the task's git token must carry both (it once failed: btoa).
   await fill(p, "#share-label", "Claude Code 🤖");
   await click(p, "#share-make");
