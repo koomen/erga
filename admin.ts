@@ -2,7 +2,7 @@
 // admins (users.ts), for admins only. Everyone else gets "not found": they
 // can't see the page, nor that there is one.
 //
-//   /admin                     the page
+//   /admin                     the page; ?changes=all shows every change to the settings, not just the latest
 //   POST /admin/settings       key, and value (JSON; null for never) to set it, or reset=1 to put it back to its default
 //   POST /admin/users          do=add (login, role), do=role (login, role) or do=remove (login)
 //
@@ -14,7 +14,7 @@
 // (admin-keys.ts): until then /admin sends them to /admin/keys to do it. A setting the deploy locks is shown, read-only,
 // and so is a bootstrap admin (ADMINS), who can't be demoted or removed here.
 
-import { ConfigError, type ConfigEntry, type Settings } from "./config.ts";
+import { ConfigError, type ConfigEntry, type Settings, type SettingsVersion } from "./config.ts";
 import { appPage, brand, esc, ICON, link, page, type Platform, type Session, TIMES_SCRIPT, whoOf } from "./front.ts";
 import { LOCKED, NotAllowed, type ServerRole, type User } from "./users.ts";
 import { unlockFirst } from "./admin-access.ts";
@@ -34,7 +34,7 @@ export async function adminDoor(platform: Platform, request: Request): Promise<R
   if (url.pathname == "/admin") {
     if (!admin || request.method != "GET") return notFound();
     if (!unlocked) return unlockFirst("/admin", session!);
-    return adminPage(platform, session!);
+    return adminPage(platform, session!, url.searchParams.get("changes") == "all");
   }
   if (request.method != "POST") return notFound();
   if (!admin) return Response.json({ error: "Only an admin can do that." }, { status: session ? 403 : 401 });
@@ -125,6 +125,27 @@ function settingRow(e: Shown, session: Session, never: boolean): string {
   </li>`;
 }
 
+/** How many changes the page lists, unless it's asked for all. */
+const CHANGES = 20;
+
+/**
+ * One version of the settings in the change log: when, who, and each
+ * setting's value from and to. `docs`: a document's address and title by id,
+ * for a setting that names one.
+ */
+function changeRow(v: SettingsVersion, kinds: Record<string, string | undefined>, docs: Map<string, { address: string; title: string }>): string {
+  const at = new Date(v.at).toISOString();
+  const value = (key: string, x: unknown) => {
+    const doc = kinds[key] == "document" && x != null ? docs.get(String(x)) : undefined;
+    return `<span class="was">${esc(doc ? doc.address : shown(x, kinds[key]))}</span>`;
+  };
+  const what = v.changes.map((c) => `<li><span class="key">${esc(c.key)}</span> ${value(c.key, c.from)} <span class="to" aria-label="to">→</span> ${value(c.key, c.to)}${c.reset ? ` <span class="badge">reset</span>` : ""}</li>`).join("");
+  return `  <li class="change" data-n="${v.n}">
+    <div class="when"><time datetime="${at}">${at.slice(0, 16).replace("T", " ")} UTC</time><span class="by">${esc(v.by)}</span></div>
+    <ul class="what">${what}</ul>
+  </li>`;
+}
+
 function userRow(u: User, session: Session): string {
   const me = u.login == session.login.toLowerCase();
   const seen = u.lastSeen != null ? `<time datetime="${new Date(u.lastSeen).toISOString()}">${new Date(u.lastSeen).toISOString().slice(0, 10)}</time>` : `<time class="never">never signed in</time>`;
@@ -137,15 +158,26 @@ function userRow(u: User, session: Session): string {
   </li>`;
 }
 
-async function adminPage(platform: Platform, session: Session): Promise<Response> {
+async function adminPage(platform: Platform, session: Session, allChanges: boolean): Promise<Response> {
   const who = whoOf(session);
-  const [entries, users] = await Promise.all([platform.directory.config.list(who), platform.directory.users.list(who)]);
+  const [entries, users, history] = await Promise.all([
+    platform.directory.config.list(who),
+    platform.directory.users.list(who),
+    platform.directory.config.history(who, { limit: allChanges ? 1000 : CHANGES }),
+  ]);
   // A setting naming a document shows it by its address now, linked.
   const settings: Shown[] = await Promise.all(entries.map(async (e) => {
     if (e.kind != "document" || e.value == null) return e;
     const doc = await platform.directory.find(String(e.value));
     return { ...e, doc: doc && { address: `/${doc.owner}/${doc.slug}`, title: doc.title } };
   }));
+  // The change log names a document by its address now, as the settings do.
+  const kinds = Object.fromEntries(entries.map((e) => [e.key, e.kind]));
+  const ids = new Set(history.versions.flatMap((v) => v.changes.filter((c) => kinds[c.key] == "document").flatMap((c) => [c.from, c.to]).filter((x) => x != null).map(String)));
+  const docs = new Map((await Promise.all([...ids].map(async (id) => {
+    const doc = await platform.directory.find(id);
+    return doc ? [[id, { address: `/${doc.owner}/${doc.slug}`, title: doc.title }] as const] : [];
+  }))).flat());
   const admins = users.filter((u) => u.role == "admin").length;
   // Whether a setting takes null (never) as well as its kind of value.
   const takesNever = (key: string) => { try { return (platform.directory.config.settings as Settings)[key]?.parse(null) === null; } catch { return false; } };
@@ -174,13 +206,25 @@ async function adminPage(platform: Platform, session: Session): Promise<Response
   .setting .value .unit { font-size: 13.5px; color: var(--soft); }
   .setting .hint { grid-column: 1 / -1; margin: 0; }
   .mono { font-family: var(--font-mono); font-size: 12.5px; }
+  h3 { margin: 22px 0 6px; font-size: 14px; font-weight: 600; color: var(--fg-strong); }
+  h3 small { margin-left: 6px; font-size: 13px; font-weight: 400; color: var(--soft); }
+  .changes { list-style: none; margin: 0; padding: 0; }
+  .changes > li.change { display: grid; grid-template-columns: 11em 1fr; gap: 2px 16px; padding: 7px 2px; border-top: 1px solid var(--rule); font-size: 13px; }
+  .changes .when { display: flex; flex-direction: column; color: var(--soft); }
+  .changes .when time { margin: 0; font-size: inherit; color: var(--fg); }
+  .changes .what { list-style: none; margin: 0; padding: 0; min-width: 0; overflow-wrap: anywhere; }
+  .changes .key { font-family: var(--font-mono); font-size: 12.5px; color: var(--fg-strong); margin-right: 4px; }
+  .changes .was { font-feature-settings: "tnum"; }
+  .changes .to { color: var(--soft); margin: 0 3px; }
+  .changes .badge { margin: 0 0 0 4px; }
+  .changes-empty, .changes-more { margin: 6px 2px 0; font-size: 13px; color: var(--soft); }
   .add-user { display: flex; gap: 8px; margin: 0 0 14px; }
   .add-user .input { flex: 1; }
   #users-hint { margin: -6px 0 12px; }
   ol.rows > li .doc { cursor: default; }
   .never { font-style: italic; }
   .role { margin-left: 8px; }
-  @media (max-width: 520px) { ol.rows > li.setting { grid-template-columns: 1fr; } .setting .value { justify-content: flex-end; } }
+  @media (max-width: 520px) { ol.rows > li.setting { grid-template-columns: 1fr; } .setting .value { justify-content: flex-end; } .changes > li.change { grid-template-columns: 1fr; } .changes .when { flex-direction: row; gap: 8px; } }
 `;
   const deployOn = (await platform.directory.config.get("deploy_page")) != "off";
   const factoryOn = (await platform.directory.config.get("factory")) == "on";
@@ -194,6 +238,11 @@ async function adminPage(platform: Platform, session: Session): Promise<Response
     <ol class="rows">
 ${settings.map((e) => settingRow(e, session, takesNever(e.key))).join("\n")}
     </ol>
+    <h3 id="changes">Changes <small>${history.total ? `${history.total} · newest first` : ""}</small></h3>
+    ${history.total ? `<ol class="changes">
+${history.versions.map((v) => changeRow(v, kinds, docs)).join("\n")}
+    </ol>` : `<p class="changes-empty">No setting has changed yet.</p>`}
+    ${history.total > history.versions.length ? `<p class="changes-more">${history.versions.length} of ${history.total} shown · <a href="${esc(link("/admin?changes=all", session))}#changes">Show all</a></p>` : ""}
   </section>
   <section aria-labelledby="users-title">
     <h2 id="users-title">Users <small>${users.length} · ${admins} admin${admins == 1 ? "" : "s"}</small></h2>

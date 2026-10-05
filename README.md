@@ -381,7 +381,10 @@ setting compactly (its key, a one-line description, its value with Save
 and Reset; a small "set by whom" note, with when and the default on hover, or a
 "Locked" badge for one the deploy fixes, whose value is shown read-only), and every user (last seen, who added them,
 a User/Admin role menu and a remove button; a bootstrap admin's are
-disabled), with a box to add one by GitHub login. Underneath it's `POST
+disabled), with a box to add one by GitHub login. Under the settings is their
+change log (Changes): the latest 20 changes, newest first, each with when,
+who, and each setting's value from and to (`/admin?changes=all` lists them
+all). Underneath it's `POST
 /admin/settings` (`key` and `value` as JSON, or `reset=1`) and `POST
 /admin/users` (`do=add|role|remove`, `login`, `role`), answering JSON, from
 this site's pages only.
@@ -400,6 +403,15 @@ shows it by address, and the directory checks who may set it (`checks`).
 `"never"`) for never; the admin page offers it as "After [n] hours" or
 "Never". Anyone's request may read a setting (the server reads them
 to do its work); only admins list and change them.
+
+**Settings' versions.** Each change to a setting, however it's made (the
+admin page, an agent, the homepage's switch, the server's own write), keeps
+a version of the settings, as a document keeps versions: a row in
+`server_config_versions` (numbered 1, 2, 3...) with who made it, when, and
+what changed (`[{ key, from, to, reset? }]`, each value as it applied
+before and after; a default when it had no row). It's written with the
+change, in one batch. A change that changes nothing (the same value again, a
+reset of a default) makes no version. Only admins read them.
 
 **Settings the deploy fixes.** A setting can also be fixed in the repo, in
 `server.config.ts`:
@@ -437,7 +449,8 @@ applies, so local development is locked the same way as erga.dev.
   login)`;
 - settings: `dir.config.get(key)` (typed by `SETTINGS`), `entry(key)`,
   `isLocked(key)`, and, admins only, `list(by)`, `set(by, key, value)`,
-  `reset(by, key)`. An entry (`ConfigEntry`) has the key, its description,
+  `reset(by, key)`, `history(by, { before?, limit? })` (the settings' versions,
+  newest first, and their `total`). An entry (`ConfigEntry`) has the key, its description,
   `value` (what applies now), `default`, `source` (`default`, `set` or
   `locked`), `locked` (true when the deploy fixes it: show it read-only),
   `deployed` (the deploy's value, only when locked) and who set it and when.
