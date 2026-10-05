@@ -2007,6 +2007,21 @@ resumed, so only the editor answers clicks. The page has to support it
 (DOCUMENT_PROMPT.md, rule 10); on one that doesn't, the button is disabled,
 and hovering it explains, with a **Fix with agent** button.
 
+A presentation (slides, a walkthrough) can tell Erga its steps, through
+`window.ergaSteps` (DOCUMENT_PROMPT.md, rule 11 and "Presentations": the
+contract, with a minimal example). Viewing and editing alike, the page then
+gets back and forward buttons under it, with the step it's at, and the arrow
+keys step too, except in text being edited. The button on the left opens a
+list of the steps over the page's right side: the page's own pictures of
+them (its `image()`), kept until the document changes, else each step's
+number and label; a click goes to that step. The frame's host page reads the
+contract from the page shown and relays it (`HOST_SCRIPT`: `erga-steps`,
+`erga-step`, `erga-step-image`, the pictures as Blobs), and the document's
+page draws the controls (`STEPS_BOOT` in `front.ts`), outside the editor's
+own, so they're the same in both; an edit (`ergaHost.changed`, `frame.ts`)
+makes the pictures out of date. `bun tests/steps.ts` checks it all, viewing
+and editing (`--shots` keeps pictures).
+
 On a phone the controls make room: the breadcrumbs shrink to a back arrow,
 avatars overlap, the agent covers the page instead
 of pushing it aside, and the style bar sits below a selection (the system's
