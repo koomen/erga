@@ -167,9 +167,11 @@ itself, is [Deploys: staging and production](#deploys-staging-and-production).
 In short: `main` in Erga's own source (Cloudflare Artifacts) deploys
 erga.dev, and `staging` deploys staging.erga.dev; each server builds and
 deploys its own branch when it moves. A push to GitHub deploys nothing
-(Workers Builds is off for `erga` since task #3). The task queue puts `main`
-into Erga's source after each merge (`deploy/publish.ts`), so a merge on the
-board deploys erga.dev. The deploy pipeline applies `migrations/` to the
+(Workers Builds is off for `erga` since task #3). The main checkout's
+`origin` is Erga's own Git endpoint (`https://erga.dev/git/erga.git`), and the
+task queue pushes each merge to its `staging`, so a merge on the board
+deploys staging.erga.dev. erga.dev moves only when someone moves `main` to
+staging: Merge on erga.dev/source, or `tq release`. The deploy pipeline applies `migrations/` to the
 database before it uploads the Worker.
 
 A migration lands just before the Worker that needs it, so it must keep working with the one still deployed (add tables
@@ -642,6 +644,10 @@ in `migrations/0110_admin_keys.sql`):
   cookie; signing out does too. A session carries the unlock as
   `Session.unlocked`, `whoOf` passes it on, and the directory's admin-only
   calls check it (`Users.mustAdmin`, `isUnlocked`).
+- *Git, unattended.* `source/git-credential.ts`, Git's credential helper for
+  the Git endpoint, makes the admin token at the moment Git asks, with the
+  SSH key (through ssh-agent) and an agent token kept in the macOS keychain;
+  see [Erga's own source](#ergas-own-source).
 - *Agents and scripts.* `ERGA_TOKEN=<agent token> bun admin-login.ts
   https://erga.dev [--key ~/.ssh/id_ed25519] [--hours 1]` asks for a
   challenge, signs it with `ssh-keygen` and prints an admin token. So an
@@ -683,13 +689,13 @@ borrowed from git (the namespace). A database leak gives no working unlock
    revokes all of theirs) can sign in, add their own key to GitHub and
    bootstrap. Add a key soon after becoming an admin.
 2. *A machine with Cloudflare credentials deploys erga.dev without an Erga
-   key*: `bun run deploy`, `deploy/publish.ts` (the task queue's push of
-   `main` into Erga's source, with a write token from the machine's own
-   Cloudflare login, then the servers told with `DEPLOY_HOOK_SECRET`, kept in
-   `~/.config/erga/deploy-hook-secret`), `wrangler`, and the Cloudflare
-   dashboard. Pushes to GitHub no longer deploy anything (Workers Builds is
-   off for `erga`). The Cloudflare account, `SESSION_SECRET` and the machine
-   that runs the task queue remain roots of trust outside this scheme.
+   key*: `bun run deploy`, `wrangler`, and the Cloudflare dashboard. Pushes
+   to GitHub deploy nothing (Workers Builds is off for `erga`), and the task
+   queue's pushes go through Erga's Git endpoint with an admin token like
+   anyone's. The machine that runs the task queue keeps an agent token in its
+   keychain (`source/git-credential.ts`): with that machine's SSH key, it
+   pushes to staging. The Cloudflare account and `SESSION_SECRET` remain
+   roots of trust outside this scheme.
 8. *The deploy tokens are bearer credentials in the Workers* ([Deploys: the
    deploy tokens](#deploys-staging-and-production)). Anyone who runs code in
    a Worker (code merged to its branch, or a dependency it pulls in) can read
@@ -825,38 +831,62 @@ deploys itself only with `CLOUDFLARE_DEPLOY_TOKEN` set: without it a push is
 noted in its log and nothing is deployed. Both have theirs (staging since
 task #2, production since task #3).
 
-**Pushes from this machine: the task queue** (`deploy/publish.ts`). The task
-queue merges into the main checkout's `main` and pushes it to GitHub
-(`origin`), as before; then it puts that commit into Erga's source and tells
-the servers, so the merge deploys staging.erga.dev and erga.dev. So `main`
-on GitHub and `main` in Erga's source stay the same commit:
+**Pushes from this machine: the task queue.** The main checkout's `origin` is
+Erga's Git endpoint, `https://erga.dev/git/erga.git` (GitHub is the `github`
+remote, a mirror Erga keeps itself). The queue merges into the main
+checkout's `main` and pushes it to Erga's `staging`; that push deploys
+staging.erga.dev, as any push to staging does. It never moves `main`:
 
-1. Before a merge, the queue fetches Erga's `staging` (`publish.ts fetch`,
-   into `erga/staging`) and merges it into the task's branch with
-   `origin/main` and `main`. Commits made in Erga (a merge on /source, a
-   factory task) so come back to `main`, and `main` can go to Erga as a
+1. Before a merge, the queue fetches origin and merges `origin/staging`
+   into the task's branch with `main`. Commits made in Erga (a factory task,
+   a push from elsewhere) so come back to `main`, and the push is a
    fast-forward.
-2. After the merge and the push to GitHub, `publish.ts push origin/main`
-   moves Erga's `staging`, then `main`, to it: plain pushes, only forward,
-   with a 15-minute write token for the one repo made with this machine's
-   Cloudflare login (never printed). If Erga's `staging` has commits it
-   lacks, nothing moves and it says so; if Erga is ahead already, there's
-   nothing to do.
-3. It tells each server whose branch moved (`POST
-   /api/deploys/<name>/hook` with `DEPLOY_HOOK_SECRET`, which this machine
-   keeps in `~/.config/erga/deploy-hook-secret`, mode 600; `bun
-   deploy/setup.ts --hook-secret` makes a new one and sets it on both
-   Workers). Production deploys `main`'s head as its own repository has it.
-4. If erga.dev doesn't take it (it's down, or can't read its repository, or
-   has no token) and doesn't run that commit yet, the queue deploys it to
-   erga.dev from this machine (`--or-deploy`: `deploy/run.ts`'s pipeline,
-   with a build made here).
+2. After the merge, it pushes `main` to `staging`
+   (`remote.origin.push` is `refs/heads/main:refs/heads/staging`, so a plain
+   `git push` in the main checkout does the same). The task's log has what
+   Erga said (`Erga: staging is now 1a2b3c4`). A refused push undoes
+   nothing: the merge stays in `main`, the log says why, and the queue
+   pushes again by itself between merges (a queue merge that staging can
+   take as a fast-forward) or with the next merge.
+3. **Production is a deliberate step**: Merge on erga.dev/source, or `tq
+   release` (`POST /api/release` on the queue: Erga's `main` to `staging`'s
+   head, or `tq release <commit>`, one of staging's commits). Agents run it
+   only when the user asks. The board's Branches column counts the commits
+   that staging has and production doesn't ("2 not released").
 
-The queue also puts `origin/main` into Erga when it starts and whenever a
-fetch finds it moved (someone pushed `main` to GitHub by hand). A failure
-never undoes a merge: it's on the task's log and in `GET /api/history`
-(`upstream`), and it's tried again when `origin/main` next moves.
-`TASK_QUEUE_PUBLISH=""` turns all this off.
+**Signing in, unattended** (`source/git-credential.ts`, within [Admin SSH
+keys](#admin-ssh-keys)). Git asks the credential helper for the password,
+and it answers an admin token: an hour long, made by `admin-login.ts` at
+that moment, with the SSH key (`~/.ssh/id_ed25519` through ssh-agent, so a
+key with a passphrase signs with no prompt) and an agent token. Both tokens
+are kept in the macOS keychain, never in a file or on a command line: the
+agent token until it's revoked (on its own it can't administer anything),
+the admin token until five minutes before it ends. The queue signs in
+(`git-credential.ts login`) before it talks to origin, and its background
+fetches use only a token Git already has, so it makes at most one admin
+token an hour, and only while it merges or releases. The first time on a
+machine there's no agent token: the helper asks erga.dev for one (the device
+flow), and the board and `tq watch` show the link to approve it ("origin
+sign-in: open https://erga.dev/tokens/approve?code=… and approve it"). That
+one approval is the only step a person takes; after it, nothing asks again
+unless the token is revoked (then it asks again, the same way).
+`bun source/git-credential.ts status` says what it holds; `forget` drops it.
+
+The queue sets the main checkout up itself, when it starts (or at its next
+fetch, if it can't yet): only when no merge runs and the checkout is clean
+on `main`, and only its remotes and credential settings change. `origin`
+becomes Erga's endpoint and the old `origin` is renamed `github` (refs
+included); `main` pushes to and tracks `origin/staging`; Git uses only the
+helper for erga.dev (`credential.https://erga.dev.helper`, set to `""` then
+the helper, so the keychain's own helper never keeps an ended token).
+`TASK_QUEUE_ORIGIN=""` leaves the remotes alone.
+
+Why erga.dev's endpoint and not staging's: the admin keys and agent tokens
+are production's (staging's database is a copy, with its own
+`SESSION_SECRET`, so production's tokens don't work there), and a bad
+staging deploy can't break the way pushes reach it. Both servers proxy the
+same repository, and production's pipeline tells staging of the push (or
+deploys it itself).
 
 A server deploying itself is restarted by its own new version part way
 through: Cloudflare resets a Worker's Durable Objects when a version goes
@@ -1083,13 +1113,14 @@ Still to do are the steps marked *(you)*.
    - Workers Builds' trigger for `erga` deleted (`bunx cf builds triggers
      list --external-script-id <erga's tag>`, then `bunx cf builds triggers
      delete <uuid>`): a push to GitHub deploys nothing now.
-   - A new `DEPLOY_HOOK_SECRET` on both Workers, kept on the machine that
-     runs the task queue (`bun deploy/setup.ts --hook-secret`).
+   - A new `DEPLOY_HOOK_SECRET` on both Workers (`bun deploy/setup.ts
+     --hook-secret`; since task #5 nothing on a machine needs it).
    - erga.dev deployed once from a machine (`bun run deploy`, which asks you
      to type "production"): the pipeline adds the `BUILDER` and `ARTIFACTS`
      bindings and `ERGA_VERSION`.
-   - Erga's `staging` and `main` brought to GitHub's `main`
-     (`bun deploy/publish.ts push origin/main`).
+   - Erga's `staging` and `main` brought to GitHub's `main` (with
+     `deploy/publish.ts`, removed in task #5: the queue now pushes to Erga's
+     Git endpoint itself).
    - Production's deploy token made with a short-lived token maker, checked
      and stored on `erga` (`CLOUDFLARE_TOKEN_MAKER=… bun deploy/setup.ts
      --tokens --production`, answering no to staging's token). It also reads
@@ -1237,6 +1268,10 @@ a user who isn't an admin: 403).
     git fetch erga
     git push erga HEAD:staging
 
+Or let Git make the admin token itself, each time it needs one, with
+`source/git-credential.ts` as its credential helper (below, "Pushes from this
+machine"): the main checkout is set up so.
+
 Clones and fetches stream straight through to Artifacts with a read token.
 A push is Erga's (`source/repo.ts`, `SourceRepo.receive`, in one Durable
 Object, `SourceHost`, `worker/source-host.ts`, so pushes and merges happen
@@ -1353,8 +1388,15 @@ Merge to here, light, dark and a phone; `--keep` leaves it running).
 4. Seed it with the whole history, through Erga: `ERGA_TOKEN=<an admin
    token> bun source/import.ts https://erga.dev` (from GitHub's main).
    It refuses if main is already there.
-5. Point your checkouts at it (`git remote add erga https://erga.dev/git/erga.git`)
-   and push there. GitHub follows.
+5. Point your checkouts at it and push there; GitHub follows. The task queue
+   does this for the main checkout itself ([Pushes from this
+   machine](#deploys-staging-and-production)); by hand:
+
+       git remote rename origin github
+       git remote add origin https://erga.dev/git/erga.git
+       git config remote.origin.push refs/heads/main:refs/heads/staging
+       git config credential.https://erga.dev.helper ""
+       git config --add credential.https://erga.dev.helper "!bun $PWD/source/git-credential.ts"
 
 Limits: a push is read whole into memory (at most 100MB); a clone during a push can briefly see the
 quarantine branch; the commit index loads every commit's parents, which is
@@ -2493,7 +2535,7 @@ back, merging edits from disk, the agent's exact-match edits and attribution.
   pipeline's side of it (`client.ts`); `deploy/bundle.ts`, a release as one file; `deploy/source.ts`, the
   source repo in Artifacts
 - `deploy/run.ts`, `deploy/setup.ts`: a deploy from a machine, and staging's one-time setup
-- `deploy/publish.ts`: the task queue's push of `main` into Erga's source, and the servers told (tests: `tests/publish.test.ts`)
+- `source/git-credential.ts`: Git's credential helper for Erga's Git endpoint: admin tokens from the SSH key, the agent token in the keychain (tests: `tests/admin-keys.ts`)
 - `deploy/tokens.ts`, `deploy/credential.ts`: the servers' narrow deploy tokens (planned, made,
   checked), and the person's own credential the setup uses
 - `deploy/page.ts`, `deploy/release.ts`, `deploy/mock.ts`, `deploy/seal.ts`, `worker/deploy.ts`,
