@@ -107,6 +107,11 @@ try {
   const detail = (await p.eval<string>(`document.getElementById("dlg").innerText`)).toLowerCase();
   expect(detail.includes("task/1-say-hello-on-the-front-page") && detail.includes("summary") && detail.includes("more instructions") && detail.includes("open preview"), "the detail: branch, summary, instructions, preview", detail.slice(0, 800));
   await p.screenshot(join(SHOTS, "factory-detail.png"));
+  // The detail's buttons: the cards' order, Merge on the right; the ones that don't apply (Start, for a task that ran) off, with why.
+  const dlgButtons = await p.eval<{ keys: string[]; on: string[]; offWhy: string[] }>(`(() => { const bs = [...document.querySelectorAll("#dlg .actions > *")];
+    return { keys: bs.map((b) => b.dataset.btn), on: bs.filter((b) => !b.disabled && b.dataset.act).map((b) => b.dataset.btn), offWhy: bs.filter((b) => b.disabled).map((b) => b.title) }; })()`);
+  expect(dlgButtons.keys.join() == "preview,start,restart,discard,merge" && dlgButtons.on.join() == "restart,discard,merge" && dlgButtons.offWhy.length == 1 && dlgButtons.offWhy[0] == "The task has started already",
+    "the detail: Preview, Start (off, with why), Restart, Discard, Merge", dlgButtons);
   await click(p, '[data-act="close"]');
   await until(async () => (await task(2)).status == "complete" && (await task(3)).status == "complete", STEP, "the other two are ready", async () => [await task(2), await task(3)].map((t) => ({ status: t.status, error: t.error, log: t.log.slice(-5).map((l: any) => l.message) })));
   const t2model = await task(2);

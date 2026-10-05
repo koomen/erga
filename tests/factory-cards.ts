@@ -9,6 +9,8 @@
 // - The last update is a short time on the title's line ("5m"), its date in a tooltip.
 // - A plain card (no thumbnails, no error) is at most two lines of text and a row of buttons.
 // - The thumbnails stay.
+// - Every card has Preview, Start, Restart, Discard and Merge, in that order, on one row; the ones that don't apply
+//   are off (a dashed border), with a tooltip that says why.
 // - Each column is in id order, oldest first, so a card moves only when its status changes.
 // Screenshots land in tests/cdp.ts's SHOTS (factory-cards.png, factory-cards-dark.png). --html saves the board as one
 // static page (styles and images inlined, no scripts), to look at without a server.
@@ -66,6 +68,9 @@ try {
     await p.eval(`document.getElementById("tasks").scrollIntoView()`);
     await Bun.sleep(300);
     await p.screenshot(join(SHOTS, dark ? "factory-cards-dark.png" : "factory-cards.png"));
+    // An off Merge reads as off, as the other off buttons do: the same faint text, in light and dark.
+    const [merge, start] = await p.eval<string[]>(`["merge", "start"].map((k) => getComputedStyle(document.querySelector("[data-open='3'] [data-btn='" + k + "']")).color)`);
+    expect(merge == start, `an off Merge has the off text (${dark ? "dark" : "light"})`, { merge, start });
   }
   const cards = await p.eval<{ id: number; text: string; titleLines: number; titleTip: string; titleCut: boolean; time: string; timeTip: string; height: number; thumbs: number; lineH: number }[]>(`[...document.querySelectorAll("#board .card")].map((c) => {
     const title = c.querySelector(".title"), time = c.querySelector(".when");
@@ -88,12 +93,33 @@ try {
   // The title's line, the last update's line, and the buttons: about 70px at 12-14px type.
   expect(plain.height <= 80, "a plain card is short", plain.height);
   ok(`a plain card is ${Math.round(plain.height)}px high`);
-  expect(await p.eval(`(() => { const b = [...document.querySelectorAll("[data-open='6'] .actions > *")].map((e) => e.getBoundingClientRect().top); return b.length == 4 && b.every((y) => y == b[0]); })()`), "Preview, Merge, Restart and Discard fit on one row");
-  ok("Preview, Merge, Restart and Discard fit on one row");
-  // Restart on a failed task and on one ready to merge, and nowhere else.
-  const restarts = await p.eval<number[]>(`[...document.querySelectorAll("#board [data-act='restart']")].map((b) => Number(b.dataset.id)).sort((a, b) => a - b)`);
-  expect(JSON.stringify(restarts) == JSON.stringify([5, 6, 7]), "Restart on the failed and the ready tasks only", restarts);
-  ok("Restart on the failed and the ready tasks only");
+  // Every card: the same five buttons, in one order, on one row inside the card, Merge on the right. The ones that don't
+  // apply are off, with a tooltip that says why.
+  const rows = await p.eval<{ id: number; keys: string[]; oneRow: boolean; inside: boolean; mergeRight: boolean; on: string[]; offUntitled: string[] }[]>(`[...document.querySelectorAll("#board .card")].map((c) => {
+    const bs = [...c.querySelectorAll(".actions > *")], box = c.getBoundingClientRect(), r = bs.map((e) => e.getBoundingClientRect());
+    const merge = r.at(-1), pad = parseFloat(getComputedStyle(c).paddingRight);
+    return { id: Number(c.dataset.open), keys: bs.map((e) => e.dataset.btn), oneRow: r.every((x) => Math.abs(x.top - r[0].top) < 1), inside: r.every((x) => x.left >= box.left && x.right <= box.right),
+      mergeRight: Math.abs(box.right - pad - 1 - merge.right) < 3 || Math.abs(box.right - pad - merge.right) < 3,
+      on: bs.filter((e) => !e.disabled).map((e) => e.dataset.btn), offUntitled: bs.filter((e) => e.disabled && !e.title).map((e) => e.dataset.btn) };
+  })`);
+  for (const r of rows) {
+    expect(r.keys.join() == "preview,start,restart,discard,merge", "the five buttons, in order", r);
+    expect(r.oneRow && r.inside, "they fit on one row, inside the card", r);
+    expect(r.mergeRight, "Merge is on the right", r);
+    expect(!r.offUntitled.length, "an off button says why", r);
+  }
+  ok("every card: Preview, Start, Restart, Discard, Merge, on one row, Merge on the right; an off button says why");
+  const enabled = (id: number) => rows.find((r) => r.id == id)!.on.join();
+  expect(enabled(3) == "discard" && enabled(4) == "discard", "a working task: only Discard", rows);
+  expect(enabled(5) == "restart,discard", "a failed task: Restart and Discard", enabled(5));
+  expect(enabled(6) == "preview,restart,discard,merge", "a task ready to merge: all but Start", enabled(6));
+  expect(enabled(7) == "preview,restart,discard", "a ready task whose Merge waits for #3: Merge off", enabled(7));
+  expect(enabled(8) == "start,discard" && enabled(9) == "discard", "queued: Start, unless it waits for another task", [enabled(8), enabled(9)]);
+  expect(enabled(10) == "discard", "needs agent: only Discard", enabled(10));
+  ok("the buttons that work: only Discard while working; Restart once failed or ready; Merge when it can merge");
+  const offLook = await p.eval<{ border: string; cursor: string }>(`(() => { const s = getComputedStyle(document.querySelector("[data-open='3'] [data-btn='merge']")); return { border: s.borderStyle, cursor: s.cursor }; })()`);
+  expect(offLook.border == "dashed" && offLook.cursor == "not-allowed", "an off button looks off", offLook);
+  ok("an off button looks off: a dashed border, no fill");
   // Discard's text is black (the page's ink), not red; in light mode at least.
   await p.open(`${host.root}/admin/source`, { width: 1400, height: 900 });
   for (const end = Date.now() + 15_000; !(await p.eval(`document.querySelectorAll("#board .card").length`)) && Date.now() < end;) await Bun.sleep(50);
