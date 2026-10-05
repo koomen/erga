@@ -408,7 +408,6 @@ window.ergaBoard = { openTask: () => openId, title: (id) => tasks.find((x) => x.
 export function boardMarkup(opts: { enabled: boolean }): string {
   return `<div class="pane-head"><h2>Tasks</h2><span class="tag">Experimental</span><div class="pills" id="pills"><span class="pill" id="live">connecting</span></div></div>
 <div class="notice" id="notice" ${opts.enabled ? "hidden" : ""}>The factory is off. An admin turns it on with the <code>factory</code> setting on <a href="/admin">Admin settings</a>.</div>
-<p class="pane-note">Each task is a branch made from staging, done by Claude Code in a VM. Merge merges it into staging, which deploys itself.</p>
 <div class="board" id="board"></div>
 <dialog id="dlg"></dialog>
 <dialog id="form" class="small"></dialog>
