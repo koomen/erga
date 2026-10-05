@@ -125,7 +125,8 @@ try {
   const subject = spawnSync("git", ["-C", repo, "log", "-1", "--format=%s %P", "staging"], { encoding: "utf8" }).stdout.trim();
   expect(subject.startsWith("Merge task/1-say-hello-on-the-front-page: Say hello on the front page") && subject.split(" ").length > 3, "a --no-ff merge commit named after the task", subject);
   expect(!merged.vm && !merged.url, "the VM is stopped, and the preview gone", merged);
-  await until(async () => (await column(p, "merged")).includes("Say hello"), 15_000, "the card moves to Merged");
+  await until(async () => !(await p.eval<string>(`document.getElementById("board")?.innerText ?? ""`)).includes("Say hello"), 15_000, "the card leaves the board (no Merged column)");
+  expect(!(await p.eval<boolean>(`!!document.querySelector('[data-col="merged"]')`)) && (await p.eval<number>(`document.querySelectorAll("#board .col").length`)) == 4, "the board has four columns, and no Merged one");
   ok("merge: into staging as a merge commit, the branch deleted, the VM stopped");
 
   // ---------------------------------------------------------------- 4. discard
