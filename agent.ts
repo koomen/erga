@@ -187,8 +187,9 @@ function beyondPrompt(owner: string, names: string[]): string {
   may; leave out "document" for this one. Share only when ${owner} asks you to.`);
   if (names.includes("list_settings")) lines.push(`- ${owner} is an admin of this Erga server, so you can configure it for them:
   list_settings, set_setting and reset_setting for the server's settings (a setting the
-  deploy locks can't be changed: say so), and list_users, add_user, set_user_role and
-  remove_user for who may sign in and who's an admin. These change the whole server, for
+  deploy locks can't be changed: say so), and list_users, add_user, set_user_role,
+  set_user_deploy and remove_user for who may sign in, who's an admin and who has the
+  deploy role. These change the whole server, for
   everyone: use them only when ${owner} asks, and say exactly what you changed.`);
   return lines.length ? `\n${lines.join("\n")}` : "";
 }

@@ -97,7 +97,7 @@ export const SETTINGS = {
     },
   }),
   deploy_page: setting<"off" | "admins" | "users">({
-    description: "Who may use /deploy, to deploy Erga to their own Cloudflare account: off, admins or users (anyone signed in).",
+    description: "Who may use /deploy, to deploy Erga to their own Cloudflare account: off, admins (and users with the deploy role, on /admin/users) or users (anyone signed in).",
     default: "users",
     parse: (v) => {
       const s = typeof v == "string" ? v.trim().toLowerCase() : v;
