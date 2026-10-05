@@ -214,12 +214,15 @@ async function loadTokens() {
   if (r?.tokens) renderTokens(r.tokens);
 }
 
-$("btn-share").addEventListener("click", () => {
+const shareBtn = $("btn-share");
+shareBtn.addEventListener("click", () => {
   status.textContent = "";
   if (!dlg.open) dlg.showModal();
+  shareBtn.setAttribute("aria-expanded", "true");
   loadTokens();
 });
 $("share-close").addEventListener("click", () => dlg.close());
+dlg.addEventListener("close", () => shareBtn.setAttribute("aria-expanded", "false"));
 make.addEventListener("click", async () => {
   make.disabled = true;
   status.textContent = "Making a token…";
