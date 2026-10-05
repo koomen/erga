@@ -766,8 +766,9 @@ describe("the factory's VMs (Containers)", () => {
     expect(mock.state.scripts["erga-staging"].metadata.containers).toBeUndefined();
   });
 
-  test("factory.image in deploy/targets.json is the image factory/vm/build.ts tags", () => {
-    expect(FACTORY.image).toBe(imageTag());
+  test("factory.image in deploy/targets.json is the image factory/vm/build.ts tags, pinned by its digest", () => {
+    expect(FACTORY.image).toMatch(/^erga-factory:[0-9a-f]{12}@sha256:[0-9a-f]{64}$/);
+    expect(FACTORY.image.split("@")[0]).toBe(imageTag());
   });
 });
 

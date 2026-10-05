@@ -2,7 +2,7 @@
 // text, bundled into the Worker: FactoryVm (factory/cloudflare.ts) sends them
 // with each job, and the image's agent runs them (factory/vm/agent.ts). So a
 // change to a script ships with the Worker's version, and the image changes
-// only with its Dockerfile and agent (factory/vm/build.ts, imageTag).
+// only with its Dockerfile and agent (factory/vm/build.ts, imageTag; deploy/targets.json, factory.image).
 //
 // Vite's ?raw imports: the Worker's build and the dev server only (Bun runs
 // the scripts from the files themselves).

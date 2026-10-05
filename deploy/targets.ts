@@ -85,8 +85,9 @@ export const BUILDER: string = data.builder;
 
 /**
  * The factory's VM image (factory/vm/Dockerfile): its name in the account's container registry,
- * erga-factory:<tag>, with the tag factory/vm/build.ts gives it (tests/factory.test.ts checks they're equal).
- * A new Dockerfile or agent needs a new image pushed (bun factory/vm/push.ts, or a deploy from a machine).
+ * erga-factory:<tag>@sha256:<digest>, with the tag factory/vm/build.ts gives it (tests/pipeline.test.ts checks
+ * they're equal) and the digest the push got (Containers takes only digest-pinned images). A new Dockerfile or
+ * agent needs a new image: `bun factory/vm/push.ts` builds, pushes and prepares it, and writes its name here.
  */
 export const FACTORY: { image: string } = data.factory;
 

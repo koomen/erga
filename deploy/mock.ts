@@ -389,7 +389,7 @@ export function mockCloudflare(opts: {
       // Containers: images prepared (any in this account's registry), and the factory's application.
       if (m == "POST" && rest == "/containers/image-preparations") {
         const b = await body();
-        if (typeof b?.image != "string" || !b.image.startsWith(`registry.cloudflare.com/${ACCOUNT_ID}/`)) return fail(400, 10021, `image ${b?.image}: not in this account's registry`);
+        if (typeof b?.image != "string" || !b.image.startsWith(`registry.cloudflare.com/${ACCOUNT_ID}/`) || !/@sha256:[0-9a-f]{64}$/.test(b.image)) return fail(400, 1000, "image must be digest-pinned and hosted in a supported managed registry");
         if (!state.containers.prepared.includes(b.image)) state.containers.prepared.push(b.image);
         return ok({ status: "ready" });
       }

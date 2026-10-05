@@ -22,8 +22,18 @@ export const FACTORY_IMAGE_NAME = "factory";
 /** The container application's name: as wrangler names one (<worker>-<class, lowercase>). */
 export const factoryAppName = (worker: string) => `${worker}-${FACTORY_CLASS.toLowerCase()}`;
 
-/** An image's full reference in the account's registry, from its name (erga-factory:<tag>). */
+/**
+ * An image's full reference in the account's registry, from its name: erga-factory:<tag>@sha256:<digest>
+ * (Containers takes only digest-pinned images; the tag says which build it is).
+ */
 export const imageRef = (accountId: string, image: string) => (image.startsWith(`${REGISTRY}/`) ? image : `${REGISTRY}/${accountId}/${image}`);
+
+/** An image name's parts: repository, tag and digest (each may be missing). */
+export function imageParts(image: string): { repo: string; tag?: string; digest?: string } {
+  const [named, digest] = image.split("@");
+  const slash = named.lastIndexOf("/"), colon = named.lastIndexOf(":");
+  return colon > slash ? { repo: named.slice(0, colon), tag: named.slice(colon + 1), digest } : { repo: named, digest };
+}
 
 /** A short-lived password for the account's registry. */
 export async function registryCredentials(cf: Cloudflare, accountId: string, permissions: ("push" | "pull")[]): Promise<{ username: string; password: string }> {
@@ -32,19 +42,17 @@ export async function registryCredentials(cf: Cloudflare, accountId: string, per
   return { username: c.username ?? c.user ?? "v1", password: c.password };
 }
 
-/** Whether the registry has this image (a manifest by that tag), asked over its HTTP API. */
-export async function registryHas(cf: Cloudflare, accountId: string, image: string, fetcher: (input: string, init?: RequestInit) => Promise<Response> = fetch): Promise<boolean> {
-  const ref = imageRef(accountId, image).slice(REGISTRY.length + 1);
-  const at = ref.lastIndexOf(":");
-  const [repo, tag] = [ref.slice(0, at), ref.slice(at + 1)];
+/** The registry's digest for this image (by its digest if it names one, else its tag), or null if it hasn't it; over its HTTP API. */
+export async function registryDigest(cf: Cloudflare, accountId: string, image: string, fetcher: (input: string, init?: RequestInit) => Promise<Response> = fetch): Promise<string | null> {
+  const { repo, tag, digest } = imageParts(imageRef(accountId, image).slice(REGISTRY.length + 1));
   const { username, password } = await registryCredentials(cf, accountId, ["pull"]);
-  const r = await fetcher(`https://${REGISTRY}/v2/${repo}/manifests/${tag}`, {
+  const r = await fetcher(`https://${REGISTRY}/v2/${repo}/manifests/${digest ?? tag ?? "latest"}`, {
     method: "HEAD",
     headers: { Authorization: `Basic ${btoa(`${username}:${password}`)}`, Accept: "application/vnd.oci.image.manifest.v1+json, application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.v2+json, application/vnd.docker.distribution.manifest.list.v2+json" },
   });
-  if (r.status == 404) return false;
+  if (r.status == 404) return null;
   if (!r.ok) throw new DeployError(`The container registry answered ${r.status} for ${image}.`);
-  return true;
+  return r.headers.get("docker-content-digest") ?? digest ?? null;
 }
 
 /** Prepares an image for Containers (polled until it's ready): needed once per image before a version can name it. */
