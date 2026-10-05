@@ -1812,20 +1812,24 @@ real run") is code now, and staging.erga.dev runs it.
   with an attestation beside the image, which Containers can't start, "There
   is no container instance that can be provided"), pushes it (a 15-minute
   registry password, in a Docker config folder of its own), prepares it for
-  Containers, and writes its name into `deploy/targets.json`. A deploy from a
-  machine (`deploy/run.ts`) does the same if the registry lacks it. A
-  Worker can't run Docker, so a server deploying itself uses the image
-  `deploy/targets.json` names: a new Dockerfile or agent needs `push.ts`
-  run, and its commit, before it deploys. But wait before the commit: a new image
-  can take about an hour after its preparation before Containers starts
-  it ("There is no container instance that can be provided to this Durable
-  Object"; for task #21's image, refused 11 minutes after it, started
-  after 28), and a deploy that names it in that time has
-  VMs that don't start. So push it, keep `deploy/targets.json`'s new line
-  uncommitted, and run `bun factory/vm/probe.ts` (it reads that line) every
-  ten minutes or so until it says PROBE OK; then commit. The probe uses a
-  Worker of its own, so running tasks keep the old image meanwhile. The
-  test that compares the tags says the same when they differ.
+  Containers, starts a container from it (`probeImage`, `factory/vm/probe.ts`),
+  and only then writes its name into `deploy/targets.json` (`updatePin`):
+  commit that. A new image can take up to an hour after its preparation
+  before Containers starts it ("There is no container instance that can be
+  provided to this Durable Object"; task #21's: refused after 11 minutes,
+  started after 28), and a version that names it in that time has VMs that
+  don't start. So the pin moves only after a real start, and until then
+  every deploy keeps the old image; `push.ts --wait` tries the start again
+  every 10 minutes, for up to 90. It does nothing when the tags already
+  match. A deploy from a machine (`deploy/run.ts`) deploys with the pinned
+  image (pushing it first if the registry lacks it), then does the same as `push.ts` (once, without waiting) and says
+  what came of it: a new pin to commit (`run.ts` won't deploy an uncommitted
+  checkout, so it isn't forgotten), "pushed, not started yet: try again
+  later", or what it lacks (Docker, a login that may use Containers). A
+  Worker can't run Docker, so a server deploying itself always uses the
+  image `deploy/targets.json` names; the test that compares the tags fails
+  until the pin follows a new Dockerfile or agent, and says how. The probe
+  uses a Worker of its own, so running tasks keep the old image meanwhile.
 - **The deploy pipeline** (`runPipeline`, `deploy/containers.ts`) has two
   more steps on Erga's own targets (`factory: true` in
   `deploy/targets.json`): "image" (prepared for Containers) before the

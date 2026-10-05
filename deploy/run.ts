@@ -127,6 +127,13 @@ export async function deployFromMachine(o: MachineDeploy): Promise<boolean> {
     ...(mock ? { sleep: async () => {}, waitMs: 2000 } : {}),
   });
   log(`Deployed ${commit.slice(0, 12)} to https://${targetHost(target)}.`);
+  // Then, if this checkout builds another factory image than the pinned one the deploy used: push and prepare it,
+  // start a container from it, and move the pin (deploy/targets.json, to commit) only if that works (factory/vm/push.ts).
+  if (!mock && spec.factory && commit == git("rev-parse", "HEAD")) {
+    const { updatePin } = await import("../factory/vm/push");
+    const pin = await updatePin(cf, accountId, (l) => log(`factory image: ${l}`));
+    if (pin.status != "same") log(`Factory image: ${pin.message}`);
+  }
   return true;
 }
 
