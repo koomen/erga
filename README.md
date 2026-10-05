@@ -1816,7 +1816,16 @@ real run") is code now, and staging.erga.dev runs it.
   machine (`deploy/run.ts`) does the same if the registry lacks it. A
   Worker can't run Docker, so a server deploying itself uses the image
   `deploy/targets.json` names: a new Dockerfile or agent needs `push.ts`
-  run, and its commit, before it deploys.
+  run, and its commit, before it deploys. But wait before the commit: a new image
+  can take about an hour after its preparation before Containers starts
+  it ("There is no container instance that can be provided to this Durable
+  Object"; for task #21's image, refused 11 minutes after it, started
+  after 28), and a deploy that names it in that time has
+  VMs that don't start. So push it, keep `deploy/targets.json`'s new line
+  uncommitted, and run `bun factory/vm/probe.ts` (it reads that line) every
+  ten minutes or so until it says PROBE OK; then commit. The probe uses a
+  Worker of its own, so running tasks keep the old image meanwhile. The
+  test that compares the tags says the same when they differ.
 - **The deploy pipeline** (`runPipeline`, `deploy/containers.ts`) has two
   more steps on Erga's own targets (`factory: true` in
   `deploy/targets.json`): "image" (prepared for Containers) before the
