@@ -326,7 +326,7 @@ removes the worktree and branch: the task is Done (`merged`). Last, it puts
 which deploys staging.erga.dev and **erga.dev** (`deploy/publish.ts`; README,
 "Pushes from this machine"). Before the merge it also merges Erga's `staging`
 into the task's branch, so commits made in Erga come back to `main`. A push
-to GitHub alone deploys nothing: never deploy erga.dev another way. A merge that
+to GitHub alone deploys nothing. A merge that
 fails (uncommitted changes, unresolved conflicts, the main checkout not on
 `main`, or a `--merge-after` task that didn't merge first) goes back to Ready to merge (`complete`) with the reason on the card,
 as does one the queue was stopped in the middle of, when it starts again.
