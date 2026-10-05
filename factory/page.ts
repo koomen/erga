@@ -323,7 +323,7 @@ function claudeDialog() {
   d.showModal();
   $("claude-form").onsubmit = async (e) => {
     e.preventDefault();
-    try { info.claude = await api("/claude", { method: "PUT", json: { token: $("c-token").value } }); d.close(); renderInfo(); }
+    try { info.claude = await api("/claude", { method: "PUT", json: { token: $("c-token").value.replace(/\\s+/g, "") } }); d.close(); renderInfo(); }
     catch (err) { $("c-why").textContent = err.message; }
   };
 }
