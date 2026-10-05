@@ -185,8 +185,8 @@ try {
       dots: Math.max(...[...document.querySelectorAll("#grid .row")].map((r) => r.querySelectorAll(".dot").length)),
       ahead: document.getElementById("ahead").textContent, merge: !document.getElementById("merge").disabled,
       mergeShown: getComputedStyle(document.getElementById("merge")).display != "none" && getComputedStyle(document.getElementById("merge-row")).display != "none",
-      headGap: (() => { const h = document.getElementById("merge-row").parentElement; return h.getBoundingClientRect().height - h.firstElementChild.getBoundingClientRect().height; })(),
-      mirror: document.getElementById("mirror-state").textContent, title: document.title,
+      headGap: (() => { const r = document.getElementById("merge-row").getBoundingClientRect(); return r.width + r.height; })(),
+      mirror: document.getElementById("mirror-pill").textContent, title: document.title,
       targets: [...document.querySelectorAll(".target")].map((t) => t.textContent.replace(/\\s+/g, " ").trim()),
     };
   })()`);
@@ -195,6 +195,10 @@ try {
   let s = await state();
   expect(s.rows.map((x) => x.subject).join() == "Fifth,Fourth,Third,Second,First" && s.title.startsWith("Source") && !s.merge && !s.mergeShown && s.ahead == "" && s.headGap < 1, "one list: staging's commits, newest first; nothing to merge, so no Merge button, no text and no space for them", s);
   await p.screenshot(join(SHOTS, "source-at-staging.png"));
+  // The page is plain: no notes under the headings, no summary lines, no footer; Clone copies the clone command.
+  const plain = await p.eval<{ notes: number; extra: number; clone: string }>(`({ notes: document.querySelectorAll(".pane-head .sub, .pane-note").length,
+    extra: document.querySelectorAll("#grid .older, #moves, .site-foot").length, clone: document.getElementById("clone-copy")?.dataset.clone ?? "" })`);
+  expect(!plain.notes && !plain.extra && plain.clone == "git clone " + origin + "/git/erga.git", "no notes, summary lines or footer; Clone copies git clone", plain);
   await p.open(`${root}/admin/source#source`, { width: 390, height: 844, scale: 2, clear: false });
   await until(async () => (await state()).rows.length > 0, 10_000, "the list draws (phone, main at staging)");
   await p.eval(`document.querySelector(".tabs [data-tab=source]").click()`);
@@ -315,7 +319,12 @@ try {
   expect(looks.every((l) => l.state.includes("live") == (l.bg != "rgba(0, 0, 0, 0)")), "only the live deploy has a background", looks);
   expect(!(await p.eval(`!!document.querySelector("#grid .more, #grid .sub")`)), "no counts, nothing to open");
   ok("deploy history: a push while a deploy runs cancels it; a failed build; past logs; one entry per commit per target");
-  await until(async () => (await state()).mirror.includes("Up to date"), 10_000, "the mirror catches up", state);
+  await until(async () => (await state()).mirror == "GitHub: up to date", 10_000, "the mirror catches up", state);
+  // The status row: four statuses (the connection, the VMs, Claude, the GitHub mirror), each a dot and a label, no outline.
+  const statuses = await p.eval<{ text: string; border: string; bg: string; dot: string }[]>(`[...document.querySelectorAll("#pills .pill")].filter((e) => !e.hidden).map((e) => { const c = getComputedStyle(e); return { text: e.textContent, border: c.borderTopStyle, bg: c.backgroundColor, dot: getComputedStyle(e, "::before").borderRadius }; })`);
+  expect(statuses.length == 4 && statuses[3].text == "GitHub: up to date" && statuses[2].text.startsWith("Claude"), "four statuses in the row, the GitHub mirror last", statuses);
+  expect(statuses.every((s) => s.border == "none" && s.bg == "rgba(0, 0, 0, 0)" && s.dot == "50%"), "each status is a dot and a label, with no outline", statuses);
+  expect(!(await p.eval(`!!document.getElementById("mirror")`)), "no GitHub mirror box in the source pane");
   await p.open(`${root}/admin/source`, { width: 1280, height: 900, scale: 2, clear: false, dark: true });
   await until(async () => (await state()).rows.length > 0, 10_000, "the list draws (dark)");
   const bg = await p.eval<string>(`getComputedStyle(document.body).backgroundColor`);

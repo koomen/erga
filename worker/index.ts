@@ -36,7 +36,7 @@ import { accountOf, withAccount } from "../account";
 import { idShaped, slugify, type Route } from "../directory";
 import { frontDoor, OWNER, whoOf, withTokens, type Platform } from "../front";
 import { serverApi, tokensDoor } from "../server-api";
-import { devUnlocked, finishSignIn, isDev, lockCookie, mintTestToken, sessionOf, signOut, startSignIn, testSignIn, unlockCookie } from "./auth";
+import { devUnlocked, finishSignIn, isDev, keysRequired, lockCookie, mintTestToken, sessionOf, signOut, startSignIn, testSignIn, unlockCookie } from "./auth";
 import { adminKeysOf, directoryOf, tokensOf } from "./d1";
 import { adminAccess, isAdminAccessPath } from "../admin-access";
 import { deployDoor } from "./deploy";
@@ -214,6 +214,7 @@ const platform = (env: Env): Platform => {
     tokens: tokensOf(env),
     adminKeys: adminKeysOf(env),
     devUnlocked: (url) => devUnlocked(env, url),
+    keysRequired: () => keysRequired(env),
     testToken: (login) => mintTestToken(env, login),
     docs: {
       create: (doc, files, index, opts) => counted("doc", () => host(doc).create(doc.owner, doc.id, files, index, opts)),
