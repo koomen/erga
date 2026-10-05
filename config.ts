@@ -78,6 +78,24 @@ export const SETTINGS = {
       throw new ConfigError('must be "off" or "on"');
     },
   }),
+  factory_model: setting<string>({
+    description: "The model the factory's Claude Code uses (claude --model): an alias such as opus or sonnet, or a full model name. Each job reads it when it starts, so no new image is needed.",
+    default: "opus",
+    parse: (v) => {
+      const s = typeof v == "string" ? v.trim() : v;
+      if (typeof s == "string" && /^[A-Za-z0-9][A-Za-z0-9._\[\]-]{0,99}$/.test(s)) return s;
+      throw new ConfigError("must be a model alias (opus, sonnet) or a model name");
+    },
+  }),
+  factory_fast: setting<"off" | "on">({
+    description: "Whether the factory's Claude Code runs in fast mode (its fastMode setting). on or off. Each job reads it when it starts.",
+    default: "on",
+    parse: (v) => {
+      const s = typeof v == "string" ? v.trim().toLowerCase() : v === true ? "on" : v === false ? "off" : v;
+      if (s === "off" || s === "on") return s;
+      throw new ConfigError('must be "off" or "on"');
+    },
+  }),
   deploy_page: setting<"off" | "admins" | "users">({
     description: "Who may use /deploy, to deploy Erga to their own Cloudflare account: off, admins or users (anyone signed in).",
     default: "users",

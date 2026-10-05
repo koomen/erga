@@ -2,7 +2,7 @@
 // (worker/source.ts, source/repo.ts) and the dev server's stand-in does
 // (dev/factory.ts). The Worker mints them (worker/factory.ts, gitToken):
 //
-//   fgt.<base64url JSON { scope, branch, exp, by? }>.<hex HMAC-SHA256 of that, with HMAC(secret, "erga-factory-git")>
+//   fgt.<base64url of the UTF-8 JSON { scope, branch, exp, by? }>.<hex HMAC-SHA256 of that, with HMAC(secret, "erga-factory-git")>
 //
 // A task's token reads the repository and pushes its own branch (task/…),
 // deleting it included. A merge token also moves staging forward, never
@@ -28,8 +28,18 @@ async function hmac(key: Uint8Array<ArrayBuffer> | string, data: string): Promis
   return crypto.subtle.sign("HMAC", k, enc.encode(data));
 }
 
-/** base64url of UTF-8 JSON, as text. */
-const fromB64url = (s: string) => new TextDecoder().decode(Uint8Array.from(atob(s.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - (s.length % 4)) % 4)), (c) => c.charCodeAt(0)));
+/** base64url, unpadded, of bytes or of a text's UTF-8 bytes: what a token's body is. btoa alone throws on text past Latin-1 (a curly apostrophe, an emoji). */
+export function b64url(s: string | Uint8Array): string {
+  let bin = "";
+  for (const b of typeof s == "string" ? enc.encode(s) : s) bin += String.fromCharCode(b);
+  return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+/** The text in a base64url body: its bytes as UTF-8 (as the Worker mints them now), or, if they aren't valid UTF-8, as Latin-1 (as older tokens were, with btoa alone). */
+export function fromB64url(s: string): string {
+  const bin = atob(s.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - (s.length % 4)) % 4));
+  try { return new TextDecoder("utf-8", { fatal: true }).decode(Uint8Array.from(bin, (c) => c.charCodeAt(0))); } catch { return bin; }
+}
 
 /** The grant a token carries, if `secret` signed it, it names a task branch, and it hasn't ended; else null. */
 export async function verifyGitToken(secret: string, token: string): Promise<GitGrant | null> {

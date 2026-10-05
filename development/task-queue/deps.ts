@@ -8,7 +8,7 @@
 // tasks, not discarded ones, and a cycle (through either list) is refused.
 // blockedBy is derived, never stored. README.md, "Dependencies", has the rest.
 
-export type DepStatus = "queued" | "working" | "complete" | "merging" | "merged" | "failed" | "discarded";
+export type DepStatus = "queued" | "working" | "complete" | "merging" | "needs-agent" | "merged" | "failed" | "discarded";
 
 /** What the model needs of a task. */
 export interface DepTask {

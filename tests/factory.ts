@@ -27,7 +27,7 @@
 //    looks at its screenshot, sends it instructions and changes its dependencies; it has no merge or discard
 //    tool; the conversation survives a reload.
 // 11. Share with agent: a factory token made in the dialog; with it an outside agent reads the guide and the
-//    tasks, queues a task, changes dependencies and sends instructions, and nothing else (merge, discard, start,
+//    tasks, queues a task (its name has a curly apostrophe and an emoji: the task's VM starts and pushes), changes dependencies and sends instructions, and nothing else (merge, discard, start,
 //    the Claude sign-in, the agent, tokens: 403); a bad token 401; Revoke ends it.
 // 12. Merges that need the task's own Claude Code (the stand-in, fake-claude.ts): a task that conflicts with staging
 //    goes to "needs agent" (Merge off, the reason on the card, the preview stopped), the same VM's stand-in resolves
@@ -109,6 +109,8 @@ try {
   await p.screenshot(join(SHOTS, "factory-detail.png"));
   await click(p, '[data-act="close"]');
   await until(async () => (await task(2)).status == "complete" && (await task(3)).status == "complete", STEP, "the other two are ready", async () => [await task(2), await task(3)].map((t) => ({ status: t.status, error: t.error, log: t.log.slice(-5).map((l: any) => l.message) })));
+  const t2model = await task(2);
+  expect(t2model.log.some((l: any) => l.message.includes("--model opus")), "the job passes Claude Code the factory_model setting (opus)", t2model.log.map((l: any) => l.message));
   await p.settle();
   await p.screenshot(join(SHOTS, "factory-board.png"));
 
@@ -360,6 +362,8 @@ try {
   // ---------------------------------------------------------------- 11. Share with agent: a factory token
   await click(p, "#btn-share");
   await until(() => p.eval(`document.getElementById("share-dlg").open`), 5000, "Share with agent opens its dialog");
+  // A label with an emoji, beside the agent's curly apostrophe: the task's git token must carry both (it once failed: btoa).
+  await fill(p, "#share-label", "Claude Code 🤖");
   await click(p, "#share-make");
   await until(async () => (await p.eval<string>(`document.getElementById("share-prompt").value`)).includes("erga_factory_"), 10_000, "a token, in a prompt to paste");
   const sharePrompt = await p.eval<string>(`document.getElementById("share-prompt").value`);
@@ -373,8 +377,11 @@ try {
   expect((await as("")).ok && (await as("/tasks")).ok && (await as(`/tasks/${next}`)).ok, "it reads the factory and its tasks");
   const byShared = await as("/tasks", { json: { title: "Shared agent's task", description: "From outside.", startAfter: [next] } });
   const sharedTask = await byShared.json() as any;
-  expect(byShared.status == 201 && sharedTask.by == "tester’s agent (shared: Claude Code)" && JSON.stringify(sharedTask.startAfter) == `[${next}]`, "it queues a task, with a dependency, as the admin's shared agent", sharedTask);
+  expect(byShared.status == 201 && sharedTask.by == "tester’s agent (shared: Claude Code 🤖)" && JSON.stringify(sharedTask.startAfter) == `[${next}]`, "it queues a task, with a dependency, as the admin's shared agent", sharedTask);
   expect((await as(`/tasks/${sharedTask.id}`, { method: "PATCH", json: { startAfter: null, mergeAfter: [next] } })).status == 200, "it changes dependencies");
+  // Free of its start dependency, it starts by itself: its VM gets a git token with the agent's name, and the stand-in pushes with it.
+  await until(async () => (await task(sharedTask.id)).status == "complete", STEP, "the shared agent's task starts its VM, pushes its branch and is ready to merge", async () => { const t = await task(sharedTask.id); return { status: t.status, error: t.error, log: t.log.slice(-4) }; });
+  expect(!!branches(host.state)[(await task(sharedTask.id)).branch], "its branch reached the repository, pushed with its git token", branches(host.state));
   expect((await as(`/tasks/${next}/revise`, { json: { instructions: "One more word." } })).status == 200, "it sends instructions");
   for (const [method, path] of [["POST", `/tasks/${next}/merge`], ["POST", `/tasks/${next}/discard`], ["POST", `/tasks/${sharedTask.id}/start`], ["PUT", "/claude"], ["DELETE", "/claude"], ["POST", "/agent"], ["GET", "/agent"], ["GET", "/events"], ["POST", "/tokens"], ["GET", "/tokens"]] as const) {
     const r = await as(path, { method, json: method == "GET" || method == "DELETE" ? undefined : {} });

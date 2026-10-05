@@ -26,7 +26,7 @@
 
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { api, CLONE, env, git, LIMITS, log, prepareClaude, realClaude, REPORTED, scrub, step, stepError, testHooks, WORK } from "./common.ts";
+import { api, CLONE, env, git, LIMITS, log, MODEL, modelError, prepareClaude, realClaude, REPORTED, scrub, step, stepError, testHooks, WORK } from "./common.ts";
 import { pushBranch } from "./task.ts";
 
 const job = (process.argv[2] ?? "work") as Job;
@@ -107,6 +107,8 @@ async function main() {
 
   // 4. Claude Code ended: did it report?
   if (existsSync(REPORTED())) return;
+  // A model the plan can't use (the factory_model setting): said plainly.
+  if (res.code != 0 && res.badModel) { await api("", { method: "PATCH", json: { status: "failed", error: scrub(res.badModel) } }); return; }
   const unmerged = (await git(["diff", "--name-only", "--diff-filter=U"], CLONE(), { quiet: true })).out;
   if (res.code == 0 && !unmerged) {
     const commit = await pushBranch();
@@ -121,11 +123,11 @@ async function main() {
  * and is told so, in the same session. Claude Code's words and the commands it runs go on the board, at most
  * every 5 seconds, so the board (and the factory's agent) can see what it's doing.
  */
-async function claude(brief: Brief, wake: string, limit: number, woken: boolean): Promise<{ code: number; timedOut: boolean; lastText: string }> {
+async function claude(brief: Brief, wake: string, limit: number, woken: boolean): Promise<{ code: number; timedOut: boolean; lastText: string; badModel?: string | null }> {
   const late = `You were stopped: you ran for more than ${limit / 60} minutes, the factory's limit, and everything you had started was killed. Something probably hung (a dev server, a test or a build that waits forever). Don't run it again without a time limit (task run --timeout SECONDS -- CMD). Finish now: commit, then task done "summary" (or task fail "why").`;
   if (!realClaude()) {
     if (!woken) await log(process.env.CLAUDE_CODE_OAUTH_TOKEN ? "The scripted stand-in runs (FACTORY_FAKE=1)" : "No Claude sign-in: the scripted stand-in runs instead of Claude Code");
-    const r = await step(["bun", join(import.meta.dirname, "fake-claude.ts"), woken ? "woken" : job], { name: "claude", timeout: limit, cwd: CLONE(), echo: true });
+    const r = await step(["bun", join(import.meta.dirname, "fake-claude.ts"), woken ? "woken" : job, "--model", MODEL()], { name: "claude", timeout: limit, cwd: CLONE(), echo: true });
     return { code: r.code, timedOut: r.timedOut, lastText: "" };
   }
   prepareClaude();
@@ -138,21 +140,22 @@ async function claude(brief: Brief, wake: string, limit: number, woken: boolean)
   const prompt = woken ? late : continuing ? wake + asked : `${brief.prompt}\n\n${wake}${job == "work" ? "" : asked}`;
   if (!woken) await log(job == "revise" ? "Claude Code is working on the new instructions" : job == "resolve" ? "Claude Code is working on the merge" : "Claude Code started");
   let lastText = "", lastLog = 0;
+  let badModel: string | null = null;
   const say = (line: string) => { if (Date.now() - lastLog > 5000) { lastLog = Date.now(); log(scrub(line).slice(0, 300)); } };
-  const r = await step(["claude", "-p", prompt, ...(continuing ? ["--continue"] : []), "--dangerously-skip-permissions", "--output-format", "stream-json", "--verbose", "--max-turns", String(brief.maxTurns ?? 200)], {
+  const r = await step(["claude", "-p", prompt, ...(continuing ? ["--continue"] : []), "--model", MODEL(), "--dangerously-skip-permissions", "--output-format", "stream-json", "--verbose", "--max-turns", String(brief.maxTurns ?? 200)], {
     name: "claude", timeout: limit, cwd: CLONE(), echo: true,
     onLine: (line) => {
       let ev: any;
-      try { ev = JSON.parse(line); } catch { return; }
+      try { ev = JSON.parse(line); } catch { badModel ??= modelError(line); return; }
       if (ev.type == "assistant") for (const c of ev.message?.content ?? []) {
         if (c.type == "text" && c.text.trim()) { lastText = c.text.trim(); say(`Claude: ${lastText}`); }
         if (c.type == "tool_use") say(`Claude runs ${c.name}: ${String(c.input?.command ?? c.input?.file_path ?? c.input?.pattern ?? c.input?.description ?? "").replace(/\s+/g, " ")}`);
       }
-      if (ev.type == "result" && typeof ev.result == "string") lastText = ev.result.trim();
+      if (ev.type == "result" && typeof ev.result == "string") { lastText = ev.result.trim(); if (ev.is_error) badModel ??= modelError(lastText); }
     },
   });
   if (r.err) process.stderr.write(r.err.slice(-4000) + "\n");
-  return { code: r.code, timedOut: r.timedOut, lastText };
+  return { code: r.code, timedOut: r.timedOut, lastText, badModel };
 }
 
 main().catch(async (e) => {

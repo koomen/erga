@@ -9,19 +9,32 @@
 // Merging as the agent doing it reports in and the user merges it, and then
 // shows on its merge commit in Branches (main's latest commits).
 // Merge (on the board, or POST /api/tasks/:id/merge) puts the task in
-// Merging while it merges main into the task's branch, has `claude -p`
-// resolve any conflicts there, merges the branch into main and pushes it
-// (to origin's staging branch, for Erga: Erga's own Git endpoint, which then
-// deploys staging.erga.dev by itself); then it's Done (merged), or back in Ready to merge with the reason if it failed. GET /api describes the whole API; AGENTS.md says how to use it.
+// Merging: the queue stops the task's preview (and anything else still
+// running in its worktree), merges origin's branch and main into the task's
+// branch, runs TASK_QUEUE_CHECK there if set, merges the branch into main and
+// pushes it (to origin's staging branch, for Erga: Erga's own Git endpoint,
+// which then deploys staging.erga.dev by itself); then it's Done (merged).
+//
+// One agent per task, from start to merge: the task records its agent (agent,
+// set by the outer agent: tq start ID --agent AGENT, tq agent ID AGENT). When
+// a merge needs work (a conflict, uncommitted changes, a check that fails, a
+// step that times out), the queue never settles it itself: it puts the
+// worktree back on the branch's last commit and the task in Needs agent
+// (needs-agent, with needsAgent {step, reason, output, files}); tq watch says
+// so, the outer agent wakes the task's agent, which fixes it in the worktree
+// and runs tq continue ID, and the merge runs again. Every step the queue runs
+// has a time limit (TIMEOUTS) and runs in its own process group, killed whole
+// when the time is up. GET /api describes the whole API; AGENTS.md says how to use it.
 //
 // Its state is data/tasks.json (and data/screenshots/, data/logs/), beside
 // this file in the main checkout, whichever worktree it's started from.
 //
 // Settings, all optional: TASK_QUEUE_PORT (4700), TASK_QUEUE_REPO (the repo
 // this file is in), TASK_QUEUE_DATA, TASK_QUEUE_PREVIEW (the default preview
-// command), TASK_QUEUE_RESOLVER (a shell command that resolves a conflicted
-// merge in its cwd, given the instructions in $PROMPT; `claude -p` if unset),
-// TASK_QUEUE_INSTALL=0 (don't set up node_modules in new worktrees),
+// command), TASK_QUEUE_CHECK (a command run in the worktree before the branch
+// goes into main, after origin's branch and main are merged into it; none if
+// unset), TASK_QUEUE_TIMEOUT_<STEP> (seconds: each step's time limit, see
+// TIMEOUTS), TASK_QUEUE_INSTALL=0 (don't set up node_modules in new worktrees),
 // TASK_QUEUE_FETCH (seconds between `git fetch origin`, for the Branches
 // column's view of origin; 60, 0 for never), TASK_QUEUE_LIVE (live mode's
 // dev server command), TASK_QUEUE_CHROME and TASK_QUEUE_CHROME_HEADLESS (live
@@ -48,12 +61,14 @@
 // GET /api/tasks/:id/look says what that window shows. Merging or discarding
 // the task stops the dev server and closes the window.
 //
-// After a merge that changes the queue's own code (in this directory: not
-// docs, mod/ or its tests), the queue restarts itself, so it runs the new
-// code: once nothing else is merging and no request is in flight, it spawns
-// a fresh server (detached, logging to data/server.log) and exits; the new
-// one waits for the old to be gone before it reads the state and listens.
-// Previews run in their own process groups, so they carry on through it.
+// When the queue's own code changes on disk (a merge, or anything else: the
+// files in this directory that the server, the board or tq run; not docs,
+// mod/ or its tests), the queue restarts itself, so it runs the new code:
+// once nothing is merging and no request is in flight, and the new code
+// builds, it spawns a fresh server (detached, logging to data/server.log) and
+// exits; the new one waits for the old to be gone before it reads the state
+// and listens. Previews run in their own process groups, so they carry on
+// through it. GET /api says which code runs (running: {version, stale}).
 //
 // Dependencies between tasks: startAfter (don't start until these are merged)
 // and mergeAfter (don't merge until these are merged; startAfter ones count
@@ -64,7 +79,7 @@
 // someone removes or changes it. GET /api, "dependencies", has the details.
 
 import { spawn as spawnDetached } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, extname, join, resolve } from "node:path";
 import * as chrome from "./chrome.ts";
@@ -79,6 +94,22 @@ const SHOTS = join(DATA, "screenshots");
 const LOGS = join(DATA, "logs");
 const WORKTREES = join(REPO, ".claude/worktrees");
 const PREVIEW = process.env.TASK_QUEUE_PREVIEW ?? "bun start --port $PORT --no-open";
+/** Run in the worktree before the branch goes into main (after origin's branch and main are merged into it): "" for nothing. */
+const CHECK = process.env.TASK_QUEUE_CHECK ?? "";
+/**
+ * Each step's time limit, in seconds (TASK_QUEUE_TIMEOUT_<STEP> overrides one). A step that runs out of time is
+ * killed with its whole process group; during a merge, the task then goes to its agent (needs-agent).
+ */
+const TIMEOUTS = Object.fromEntries(Object.entries({
+  git: 120, // a local git command: merge, commit, reset, worktree add/remove, ...
+  origin: 120, // git fetch and push to origin (with its credential helper)
+  login: 300, // TASK_QUEUE_LOGIN: it may wait for someone to approve this machine
+  check: 240, // TASK_QUEUE_CHECK (a task builds, tests and merges in under 5 minutes: AGENTS.md)
+  install: 180, // node_modules for a new worktree
+  stop: 15, // a preview, or a process left in the worktree, stopping (SIGTERM, then SIGKILL)
+  screenshot: 60, // a headless Chrome screenshot
+  build: 60, // the new code built before a self-restart
+}).map(([k, v]) => [k, Number(process.env[`TASK_QUEUE_TIMEOUT_${k.toUpperCase()}`] ?? v)])) as Record<"git" | "origin" | "login" | "check" | "install" | "stop" | "screenshot" | "build", number>;
 /** Live mode's dev server: tabs reload by themselves on every edit (dev/reload.ts). */
 const LIVE = process.env.TASK_QUEUE_LIVE ?? "bun start --port $PORT --no-open --reload";
 const CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
@@ -110,8 +141,8 @@ if (restartedFrom) {
   if (!(await portFree(PORT))) { console.log(`restart: something already listens on ${PORT}; leaving it be`); process.exit(0); }
 }
 
-type Status = "queued" | "working" | "complete" | "merging" | "merged" | "failed" | "discarded";
-/** What an agent may set; the rest the queue sets itself (merging and merged on merge, discarded on discard). */
+type Status = "queued" | "working" | "complete" | "merging" | "needs-agent" | "merged" | "failed" | "discarded";
+/** What an agent may set; the rest the queue sets itself (merging, needs-agent and merged on merge, discarded on discard). */
 const AGENT_STATUSES: Status[] = ["queued", "working", "complete", "failed"];
 
 interface Task {
@@ -137,10 +168,20 @@ interface Task {
   chrome?: chrome.LiveChrome;
   chromeUp?: boolean;
   error?: string;
+  /** The agent doing the task, from start to merge (the Agent tool's agent id): the one to wake when the merge needs work. */
+  agent?: string;
+  /** Why the merge stopped and waits for the task's agent (status needs-agent): the step, why, its output's tail, conflicted files. */
+  needsAgent?: NeedsAgentInfo;
+  /** The branch's last commit when the merge running now began: the worktree goes back to it if the merge stops. */
+  mergeFrom?: string;
   commit?: string;
   createdAt: string;
   updatedAt: string;
   mergedAt?: string;
+  /** When it first went to working, when it was last set complete, and when its last merge began: the board shows the times. */
+  workingAt?: string;
+  completeAt?: string;
+  mergeStartedAt?: string;
   /** Don't start until these tasks are merged. */
   startAfter?: number[];
   /** Don't merge until these tasks are merged (the startAfter ones too). */
@@ -148,6 +189,8 @@ interface Task {
   /** Computed on every change (not stored): what the task waits for, if anything. */
   blockedBy?: Blocked;
 }
+
+interface NeedsAgentInfo { step: string; reason: string; output?: string; files?: string[]; at: string }
 
 // ---- state ----------------------------------------------------------------
 
@@ -169,7 +212,12 @@ function broadcast(event: string, data: unknown) {
 }
 
 function touch(task: Task, changes: Partial<Task> = {}, message?: string) {
-  Object.assign(task, changes, { updatedAt: new Date().toISOString() });
+  const now = new Date().toISOString();
+  if (changes.status && changes.status != task.status) {
+    if (changes.status == "working" && !task.workingAt) changes.workingAt = now;
+    if (changes.status == "complete" && task.status != "merging") changes.completeAt = now;
+  }
+  Object.assign(task, changes, { updatedAt: now });
   if (message) task.log.push({ at: task.updatedAt, message });
   save();
 }
@@ -196,11 +244,15 @@ function tellDependents(dep: Task) {
 computeBlocked();
 
 // A merge that was running when the queue stopped will never finish: put it
-// back in Ready to merge, its worktree out of the half-done merge.
+// back in Ready to merge, its worktree out of the half-done merge and back on
+// the branch's last commit.
 for (const t of store.tasks.filter((t) => t.status == "merging")) {
-  if (t.worktree && existsSync(join(t.worktree, ".git"))) Bun.spawnSync(["git", "merge", "--abort"], { cwd: t.worktree, stderr: "ignore" });
+  if (t.worktree && existsSync(join(t.worktree, ".git"))) {
+    Bun.spawnSync(["git", "merge", "--abort"], { cwd: t.worktree, stderr: "ignore" });
+    if (t.mergeFrom) Bun.spawnSync(["git", "reset", "-q", "--hard", t.mergeFrom], { cwd: t.worktree, stderr: "ignore" });
+  }
   const error = "The task queue stopped while this was merging; merge it again.";
-  touch(t, { status: "complete", error }, `Merge interrupted: ${error}`);
+  touch(t, { status: "complete", error, mergeFrom: undefined }, `Merge interrupted: ${error}`);
 }
 
 // ---- git and processes ----------------------------------------------------
@@ -211,14 +263,63 @@ function gitSync(cwd: string, ...args: string[]): string {
   return r.stdout.toString().trim();
 }
 
-async function run(cmd: string[], cwd: string, env: Record<string, string> = {}) {
-  const p = Bun.spawn(cmd, { cwd, env: { ...process.env, ...env }, stdout: "pipe", stderr: "pipe" });
-  const [out, err, code] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited]);
-  return { ok: code == 0, code, out: out.trim(), err: err.trim(), all: (out + err).trim() };
+interface Ran { ok: boolean; code: number | null; out: string; err: string; all: string; timedOut: boolean; seconds: number }
+
+/** Every process the queue runs now (their process groups), killed if the queue is told to stop. */
+const running = new Set<number>();
+
+/** Kills a process group: SIGTERM, then SIGKILL after `grace` ms if anything in it is left. */
+function killGroup(pid: number, grace = 3000) {
+  try { process.kill(-pid, "SIGTERM"); } catch { return; }
+  setTimeout(() => { try { process.kill(-pid, "SIGKILL"); } catch {} }, grace).unref();
 }
+const groupAlive = (pid: number) => { try { process.kill(-pid, 0); return true; } catch { return false; } };
+
+/**
+ * Runs a command in its own process group, with a time limit (seconds): when it runs out, the whole group (the
+ * command and everything it started) is killed, and timedOut says so. Never throws.
+ */
+function run(cmd: string[], cwd: string, env: Record<string, string> = {}, timeout = TIMEOUTS.git): Promise<Ran> {
+  const started = Date.now();
+  return new Promise((done) => {
+    let out = "", err = "", timedOut = false, finished = false;
+    const child = spawnDetached(cmd[0], cmd.slice(1), { cwd, env: { ...process.env, ...env }, detached: true, stdio: ["ignore", "pipe", "pipe"] });
+    const keep = (s: string, more: string) => (s.length > 2_000_000 ? s.slice(-1_000_000) : s) + more;
+    child.stdout!.on("data", (d) => (out = keep(out, String(d))));
+    child.stderr!.on("data", (d) => (err = keep(err, String(d))));
+    if (child.pid) running.add(child.pid);
+    const timer = setTimeout(() => { timedOut = true; if (child.pid) killGroup(child.pid); }, timeout * 1000);
+    const finish = (code: number | null) => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timer);
+      if (child.pid) running.delete(child.pid);
+      done({ ok: code == 0 && !timedOut, code, out: out.trim(), err: err.trim(), all: (out + err).trim(), timedOut, seconds: Math.round((Date.now() - started) / 1000) });
+    };
+    child.on("error", (e) => { err += String(e.message); finish(-1); });
+    // close: it exited and its output ended. A process it left behind holding the output open doesn't keep us waiting.
+    child.on("close", (code) => finish(code));
+    child.on("exit", (code) => setTimeout(() => finish(code), 500));
+  });
+}
+
+/** The files in `git status --porcelain` output (trimmed or not). */
+const changedFiles = (porcelain: string) => porcelain.split("\n").map((l) => l.trim().replace(/^\S+\s+/, "")).filter(Boolean).join(", ");
+
+/** The last lines of a command's output, for a log or the agent. */
+const tail = (s: string, lines = 40) => s.split("\n").slice(-lines).join("\n").slice(-6000);
+
+/** A merge that needs the task's agent: the queue stops, puts the worktree back, and the task goes to needs-agent. */
+class NeedsAgent extends Error {
+  constructor(public step: string, reason: string, public output?: string, public files?: string[]) { super(reason); }
+}
+
+/** A step that ran out of time, as a NeedsAgent (its output's tail with it). */
+const timeoutError = (step: string, r: Ran, timeout: number) => new NeedsAgent(step, `${step} timed out after ${timeout}s`, tail(r.all));
 
 async function git(cwd: string, ...args: string[]) {
   const r = await run(["git", ...args], cwd);
+  if (r.timedOut) throw timeoutError(`git ${args[0]}`, r, TIMEOUTS.git);
   if (!r.ok) throw new Error(`git ${args.join(" ")} failed:\n${r.all}`);
   return r.out;
 }
@@ -251,8 +352,8 @@ async function setUpWorktree(task: Task) {
   for (const f of [".dev.vars"]) if (existsSync(join(REPO, f))) copyFileSync(join(REPO, f), join(worktree, f));
   // Packages: a copy-on-write clone of the main checkout's (seconds, no extra disk), else an install.
   if (process.env.TASK_QUEUE_INSTALL != "0" && existsSync(join(worktree, "package.json"))) {
-    const cloned = existsSync(join(REPO, "node_modules")) && (await run(["cp", "-cR", join(REPO, "node_modules"), join(worktree, "node_modules")], REPO)).ok;
-    const r = cloned ? undefined : await run(["bun", "install", "--frozen-lockfile"], worktree);
+    const cloned = existsSync(join(REPO, "node_modules")) && (await run(["cp", "-cR", join(REPO, "node_modules"), join(worktree, "node_modules")], REPO, {}, TIMEOUTS.install)).ok;
+    const r = cloned ? undefined : await run(["bun", "install", "--frozen-lockfile"], worktree, {}, TIMEOUTS.install);
     touch(task, {}, cloned ? "node_modules cloned from the main checkout" : r!.ok ? "bun install: done" : `bun install failed:\n${r!.all}`);
   }
 }
@@ -262,12 +363,58 @@ const stopping = new Set<number>();
 
 function stopPreview(task: Task) {
   if (!task.preview) return;
-  try { process.kill(-task.preview.pid, "SIGTERM"); } catch {}
   const { pid } = task.preview;
+  killGroup(pid, 5000);
   stopping.add(pid);
-  setTimeout(() => { try { process.kill(-pid, "SIGKILL"); } catch {} stopping.delete(pid); }, 5000);
+  setTimeout(() => stopping.delete(pid), 5500);
   touch(task, { preview: undefined, previewUp: false }, "Preview stopped");
 }
+
+/** Stops the preview and waits (TIMEOUTS.stop) until its whole process group is gone: whether it is. */
+async function stopPreviewAndWait(task: Task) {
+  const pid = task.preview?.pid;
+  stopPreview(task);
+  if (!pid) return true;
+  for (const end = Date.now() + TIMEOUTS.stop * 1000; groupAlive(pid) && Date.now() < end; ) await Bun.sleep(100);
+  return !groupAlive(pid);
+}
+
+/** The processes (but this one) whose working directory is in `dir`: [pid, command]. */
+async function processesIn(dir: string): Promise<[number, string][]> {
+  const dirs = [dir, ...(() => { try { const real = realpathSync(dir); return real == dir ? [] : [real]; } catch { return []; } })()]; // lsof says /private/var/..., not /var/...
+  const inside = (path: string) => dirs.some((d) => path == d || path.startsWith(d + "/"));
+  const r = await run(["lsof", "-n", "-w", "-d", "cwd", "-F", "pn"], "/", {}, 30);
+  const pids: number[] = [];
+  let pid = 0;
+  for (const line of r.out.split("\n")) {
+    if (line[0] == "p") pid = Number(line.slice(1));
+    else if (line[0] == "n" && pid && pid != process.pid && inside(line.slice(1))) pids.push(pid);
+  }
+  if (!pids.length) return [];
+  const ps = await run(["ps", "-o", "pid=,command=", "-p", pids.join(",")], "/", {}, 10);
+  return ps.out.split("\n").map((l) => l.trim().match(/^(\d+)\s+(.*)$/)).filter(Boolean).map((m) => [Number(m![1]), m![2]]);
+}
+
+/**
+ * Before any merge work in a task's worktree: its preview stopped, and anything else still running there (a dev
+ * server, a build or a test an agent left behind) stopped too, so nothing in the worktree waits on it. Logged.
+ */
+async function quietWorktree(task: Task) {
+  if (task.preview && !(await stopPreviewAndWait(task))) touch(task, {}, `The preview didn't stop in ${TIMEOUTS.stop}s`);
+  await stopLeftovers(task);
+}
+
+/** Stops whatever still runs in the task's worktree (SIGTERM, then SIGKILL after TIMEOUTS.stop), and logs it. */
+async function stopLeftovers(task: Task) {
+  if (!task.worktree || !existsSync(task.worktree)) return;
+  const left = await processesIn(task.worktree);
+  if (!left.length) return;
+  for (const [pid] of left) try { process.kill(pid, "SIGTERM"); } catch {}
+  for (const end = Date.now() + TIMEOUTS.stop * 1000; left.some(([pid]) => alive(pid)) && Date.now() < end; ) await Bun.sleep(100);
+  for (const [pid] of left) if (alive(pid)) try { process.kill(pid, "SIGKILL"); } catch {}
+  touch(task, {}, `Stopped ${left.length} process${left.length == 1 ? "" : "es"} left running in the worktree: ${left.map(([pid, cmd]) => `${pid} (${cmd.slice(0, 80)})`).join(", ")}`);
+}
+const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
 
 /** Runs the preview in its own process group, so it outlives this server and stops as one. */
 async function startPreview(task: Task, command = PREVIEW, path = "/") {
@@ -416,12 +563,8 @@ setInterval(() => { if (!pending) refresh(); }, 1500);
 
 /** Git talking to origin: never a prompt; the credential helper says where to approve this machine in LOGIN_NOTICE. */
 const ORIGIN_ENV = { GIT_TERMINAL_PROMPT: "0", ERGA_LOGIN_NOTICE: LOGIN_NOTICE };
-async function originGit(args: string[], { cachedOnly = false, timeout = 120_000 } = {}) {
-  const p = Bun.spawn(["git", ...args], { cwd: REPO, env: { ...process.env, ...ORIGIN_ENV, ...(cachedOnly ? { ERGA_CREDENTIAL_CACHED_ONLY: "1" } : {}) }, stdout: "pipe", stderr: "pipe" });
-  const timer = setTimeout(() => p.kill(), timeout);
-  const [out, err, code] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited]);
-  clearTimeout(timer);
-  return { ok: code == 0, out: out.trim(), err: err.trim(), all: (out + err).trim() };
+async function originGit(args: string[], { cachedOnly = false } = {}) {
+  return run(["git", ...args], REPO, { ...ORIGIN_ENV, ...(cachedOnly ? { ERGA_CREDENTIAL_CACHED_ONLY: "1" } : {}) }, TIMEOUTS.origin);
 }
 
 let loginError = "";
@@ -431,14 +574,15 @@ function readLogin(): Login | undefined {
 }
 
 /** TASK_QUEUE_LOGIN, one at a time (it may wait for someone to approve this machine): whether Git can now sign in to origin. */
-let loggingIn: Promise<boolean> | null = null, loginAt = 0;
+let loggingIn: Promise<boolean> | null = null, loginAt = 0, loginTimedOut: Ran | undefined;
 function login(): Promise<boolean> {
   if (!LOGIN) return Promise.resolve(true);
   return (loggingIn ??= (async () => {
     loginAt = Date.now();
-    const r = await run(["bash", "-c", LOGIN], REPO, ORIGIN_ENV);
-    loginError = r.ok ? "" : (r.all.split("\n").filter(Boolean).at(-1) ?? `exit ${r.code}`);
-    if (!r.ok) console.log(`origin login failed: ${r.all}`);
+    const r = await run(["bash", "-c", LOGIN], REPO, ORIGIN_ENV, TIMEOUTS.login);
+    loginTimedOut = r.timedOut ? r : undefined;
+    loginError = r.ok ? "" : r.timedOut ? `the sign-in timed out after ${TIMEOUTS.login}s` : (r.all.split("\n").filter(Boolean).at(-1) ?? `exit ${r.code}`);
+    if (!r.ok) console.log(`origin login failed: ${r.timedOut ? loginError + "\n" : ""}${r.all}`);
     rmSync(LOGIN_NOTICE, { force: true });
     refresh();
     return r.ok;
@@ -490,7 +634,7 @@ async function ensureOrigin(): Promise<boolean> {
 
 /** Fetches origin; main then tracks origin's branch. cachedOnly: only with a token Git has already (background fetches). */
 async function fetchOriginNow(cachedOnly: boolean) {
-  const f = await originGit(["fetch", "-q", "--prune", "origin"], { cachedOnly, timeout: 60_000 });
+  const f = await originGit(["fetch", "-q", "--prune", "origin"], { cachedOnly });
   if (f.ok) {
     const branch = await pushBranch();
     if ((await run(["git", "config", "branch." + MAIN + ".remote"], REPO)).out != "origin" && (await ref(`refs/remotes/origin/${branch}`)))
@@ -508,7 +652,7 @@ async function pushMain(): Promise<Outcome> {
   const branch = await pushBranch();
   const commit = (await ref(`refs/heads/${MAIN}`))?.slice(0, 12);
   const p = await originGit(["push", "origin", `refs/heads/${MAIN}:refs/heads/${branch}`]);
-  const said = pushSaid(p) || (p.ok ? `origin's ${branch} is at ${commit}` : "the push failed");
+  const said = p.timedOut ? `the push timed out after ${TIMEOUTS.origin}s: ${pushSaid(p) || tail(p.all, 3)}` : pushSaid(p) || (p.ok ? `origin's ${branch} is at ${commit}` : "the push failed");
   pushed = { at: new Date().toISOString(), commit, ok: p.ok, said };
   console.log(`push ${MAIN} -> origin/${branch}: ${said}`);
   return pushed;
@@ -564,7 +708,7 @@ async function release(commit?: string): Promise<Outcome> {
   if (prod == target || (prod && (await run(["git", "merge-base", "--is-ancestor", target, prod], REPO)).ok)) return done(true, `origin's ${MAIN} has ${target.slice(0, 12)} already`, target);
   const p = await originGit(["push", "origin", `${target}:refs/heads/${MAIN}`]);
   await fetchOriginNow(true);
-  const said = pushSaid(p);
+  const said = p.timedOut ? `the push timed out after ${TIMEOUTS.origin}s` : pushSaid(p);
   return done(p.ok, said || (p.ok ? `origin's ${MAIN} is at ${target.slice(0, 12)}` : "the push failed"), target);
 }
 
@@ -586,43 +730,48 @@ async function capture(url: string, file: string, { width = 1280, height = 800, 
   const profile = mkdtempSync(join(tmpdir(), "tq-chrome-"));
   const chrome = Bun.spawn([CHROME, "--headless=new", "--remote-debugging-port=0", `--user-data-dir=${profile}`, "--no-first-run",
     "--no-default-browser-check", "--hide-scrollbars", "about:blank"], { stdout: "ignore", stderr: "ignore" });
-  let ws: WebSocket | undefined;
+  let ws: WebSocket | undefined, timer: Timer | undefined;
   try {
-    let port = 0;
-    for (let i = 0; i < 200 && !port; i++) {
-      await Bun.sleep(50);
-      try { port = Number(readFileSync(join(profile, "DevToolsActivePort"), "utf8").split("\n")[0]); } catch {}
-    }
-    if (!port) throw new Error("Chrome did not start");
-    const target = await (await fetch(`http://127.0.0.1:${port}/json/new?about:blank`, { method: "PUT" })).json();
-    ws = new WebSocket(target.webSocketDebuggerUrl);
-    await new Promise((ok, no) => { ws!.onopen = ok; ws!.onerror = no; });
-    let seq = 0;
-    const pending = new Map<number, (r: any) => void>();
-    let loaded: () => void;
-    const load = new Promise<void>((r) => (loaded = r));
-    ws.onmessage = (e) => {
-      const msg = JSON.parse(String(e.data));
-      if (msg.method == "Page.loadEventFired") loaded();
-      pending.get(msg.id)?.(msg);
-    };
-    const send = (method: string, params = {}) => new Promise<any>((ok, no) => {
-      const id = ++seq;
-      pending.set(id, (m) => (m.error ? no(new Error(`${method}: ${m.error.message}`)) : ok(m.result)));
-      ws!.send(JSON.stringify({ id, method, params }));
-    });
-    await send("Page.enable");
-    await send("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 2, mobile: false });
-    const nav = await send("Page.navigate", { url });
-    if (nav.errorText) throw new Error(`couldn't load ${url}: ${nav.errorText}`);
-    await Promise.race([load, Bun.sleep(15000)]);
-    await Bun.sleep(wait);
-    const size = fullPage ? (await send("Page.getLayoutMetrics")).cssContentSize : undefined;
-    const { data } = await send("Page.captureScreenshot", { format: "png", ...(size ? { captureBeyondViewport: true, clip: { x: 0, y: 0, width: size.width, height: size.height, scale: 1 } } : {}) });
-    await Bun.write(file, Buffer.from(data, "base64"));
+    // The whole screenshot within TIMEOUTS.screenshot: else Chrome is killed (below) and it fails.
+    const limit = new Promise<never>((_, no) => { timer = setTimeout(() => no(new Error(`the screenshot timed out after ${TIMEOUTS.screenshot}s`)), TIMEOUTS.screenshot * 1000); });
+    await Promise.race([limit, (async () => {
+      let port = 0;
+      for (let i = 0; i < 200 && !port; i++) {
+        await Bun.sleep(50);
+        try { port = Number(readFileSync(join(profile, "DevToolsActivePort"), "utf8").split("\n")[0]); } catch {}
+      }
+      if (!port) throw new Error("Chrome did not start");
+      const target = await (await fetch(`http://127.0.0.1:${port}/json/new?about:blank`, { method: "PUT" })).json();
+      ws = new WebSocket(target.webSocketDebuggerUrl);
+      await new Promise((ok, no) => { ws!.onopen = ok; ws!.onerror = no; });
+      let seq = 0;
+      const pending = new Map<number, (r: any) => void>();
+      let loaded: () => void;
+      const load = new Promise<void>((r) => (loaded = r));
+      ws.onmessage = (e) => {
+        const msg = JSON.parse(String(e.data));
+        if (msg.method == "Page.loadEventFired") loaded();
+        pending.get(msg.id)?.(msg);
+      };
+      const send = (method: string, params = {}) => new Promise<any>((ok, no) => {
+        const id = ++seq;
+        pending.set(id, (m) => (m.error ? no(new Error(`${method}: ${m.error.message}`)) : ok(m.result)));
+        ws!.send(JSON.stringify({ id, method, params }));
+      });
+      await send("Page.enable");
+      await send("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 2, mobile: false });
+      const nav = await send("Page.navigate", { url });
+      if (nav.errorText) throw new Error(`couldn't load ${url}: ${nav.errorText}`);
+      await Promise.race([load, Bun.sleep(15000)]);
+      await Bun.sleep(wait);
+      const size = fullPage ? (await send("Page.getLayoutMetrics")).cssContentSize : undefined;
+      const { data } = await send("Page.captureScreenshot", { format: "png", ...(size ? { captureBeyondViewport: true, clip: { x: 0, y: 0, width: size.width, height: size.height, scale: 1 } } : {}) });
+      await Bun.write(file, Buffer.from(data, "base64"));
+    })()]);
   } finally {
+    clearTimeout(timer);
     ws?.close();
-    chrome.kill();
+    chrome.kill("SIGKILL");
     setTimeout(() => rmSync(profile, { recursive: true, force: true }), 2000);
   }
 }
@@ -643,124 +792,182 @@ locked(async () => {
   if (originReady && (await hasOrigin())) login().then((ok) => { if (ok) locked(() => fetchOrigin({ cachedOnly: false })); });
 });
 
-const resolverPrompt = (task: Task, ref: string) => `You are resolving a git merge conflict in ${task.worktree}, on branch ${task.branch}.
-${ref} was merged into the branch and some files conflict. The branch's task:
-
-  ${task.title}
-  ${task.description}
-
-Resolve every conflict so that both the branch's work and ${ref}'s changes are kept and work together
-(read both sides' commits: git log --oneline --left-right HEAD...MERGE_HEAD). Then run the tests that
-cover the files involved (see AGENTS.md; ./test.sh for the whole suite) and fix what fails. Finally
-\`git add\` the resolved files and \`git commit --no-edit\` to conclude the merge. Do not push, do not
-touch any other checkout, and do not abort the merge.`;
-
-/** Merges `ref` into the worktree's branch, having the resolver settle any conflicts. */
+/** Merges `ref` into the worktree's branch. A conflict (or any failure) aborts it, and the task goes to its agent. */
 async function mergeInto(task: Task, ref: string) {
   const wt = task.worktree!;
   const r = await run(["git", "merge", "--no-edit", ref], wt);
+  if (r.timedOut) throw timeoutError(`git merge ${ref}`, r, TIMEOUTS.git);
   if (r.ok) { if (!r.out.includes("Already up to date")) touch(task, {}, `Merged ${ref} into ${task.branch}`); return; }
-  const conflicted = await git(wt, "diff", "--name-only", "--diff-filter=U");
-  if (!conflicted) throw new Error(`git merge ${ref} failed:\n${r.all}`);
-  touch(task, {}, `Conflicts merging ${ref}: ${conflicted.split("\n").join(", ")}. Resolving with ${process.env.TASK_QUEUE_RESOLVER ? "TASK_QUEUE_RESOLVER" : "claude -p"}…`);
-  const prompt = resolverPrompt(task, ref);
-  const res = process.env.TASK_QUEUE_RESOLVER
-    ? await run(["bash", "-c", process.env.TASK_QUEUE_RESOLVER], wt, { PROMPT: prompt })
-    : await run(["claude", "-p", prompt, "--dangerously-skip-permissions"], wt);
-  writeFileSync(join(LOGS, `task-${task.id}-resolve.log`), res.all);
-  const left = (await run(["git", "diff", "--name-only", "--diff-filter=U"], wt)).out;
-  if (left) {
-    await run(["git", "merge", "--abort"], wt);
-    throw new Error(`Conflicts left unresolved in ${left.split("\n").join(", ")} (resolver log: data/logs/task-${task.id}-resolve.log). Merge aborted.`);
-  }
-  if ((await run(["git", "rev-parse", "-q", "--verify", "MERGE_HEAD"], wt)).ok) await git(wt, "commit", "--no-edit");
-  touch(task, {}, `Conflicts resolved (log: data/logs/task-${task.id}-resolve.log)`);
+  const conflicted = (await run(["git", "diff", "--name-only", "--diff-filter=U"], wt)).out.split("\n").filter(Boolean);
+  if (!conflicted.length) throw new NeedsAgent(`git merge ${ref}`, `git merge ${ref} failed`, tail(r.all));
+  throw new NeedsAgent(`git merge ${ref}`, `conflicts merging ${ref}: ${conflicted.join(", ")}`, tail(r.all), conflicted);
 }
 
+/** TASK_QUEUE_CHECK in the worktree, within TIMEOUTS.check: a failure or a timeout goes to the task's agent. */
+async function runCheck(task: Task) {
+  if (!CHECK) return;
+  touch(task, {}, `Check: ${CHECK}`);
+  const r = await run(["bash", "-c", CHECK], task.worktree!, task.port ? { PORT: String(task.port) } : {}, TIMEOUTS.check);
+  writeFileSync(join(LOGS, `task-${task.id}-check.log`), r.all);
+  if (r.timedOut) throw timeoutError(`the check (${CHECK})`, r, TIMEOUTS.check);
+  if (!r.ok) throw new NeedsAgent("check", `the check failed (${CHECK}: exit ${r.code}; log data/logs/task-${task.id}-check.log)`, tail(r.all));
+  touch(task, {}, `Check passed in ${r.seconds}s`);
+}
+
+/**
+ * The merge, on mergeLock. Its worktree quiet first (preview and leftovers stopped); then origin's branch and main
+ * into the task's branch, the check, the branch into main, the push and the clean-up. If anything in the task's
+ * worktree needs work (uncommitted changes, a conflict, a failed check) or any step times out, the worktree goes
+ * back to the branch's last commit and the task to its agent (needs-agent), which fixes it and runs tq continue.
+ * Anything else (a dependency not merged, the main checkout off main) goes back to complete with the reason.
+ */
 async function merge(task: Task) {
-  touch(task, {}, "Merging");
+  touch(task, { mergeStartedAt: new Date().toISOString() }, "Merging");
+  const wt = task.worktree!;
+  const preview = task.preview?.command;
+  let from: string | undefined, inMain = false;
   try {
     // A dependency that hasn't merged (its merge, queued ahead of this one, failed; or one added meanwhile).
     const waiting = mergeTimeRefusal(task);
     if (waiting) throw new Error(waiting);
-    const wt = task.worktree;
     if (!wt || !existsSync(wt)) throw new Error("the task's worktree is gone");
-    if (await git(wt, "status", "--porcelain", "--untracked-files=no")) throw new Error(`${wt} has uncommitted changes: commit them (or ask the task's agent to) and merge again`);
     const head = await git(REPO, "rev-parse", "--abbrev-ref", "HEAD");
     if (head != MAIN) throw new Error(`${REPO} is on ${head}, not ${MAIN}: switch it back to merge`);
+    await quietWorktree(task);
+    if ((await run(["git", "rev-parse", "-q", "--verify", "MERGE_HEAD"], wt)).ok) throw new NeedsAgent("unfinished merge", "the worktree is in the middle of a merge: finish it (commit) or abort it");
+    const dirty = await git(wt, "status", "--porcelain", "--untracked-files=no");
+    if (dirty) throw new NeedsAgent("uncommitted changes", `uncommitted changes in the worktree: ${changedFiles(dirty)}`, dirty);
+    from = await git(wt, "rev-parse", "HEAD");
+    touch(task, { mergeFrom: from });
     if (!originReady) originReady = await ensureOrigin();
     const origin = await hasOrigin(), branch = await pushBranch();
-    const before = await git(REPO, "rev-parse", "HEAD");
     // Origin's branch (Erga's staging: also a merge on /source, a factory task) and main into the branch first, where
-    // conflicts can be settled away from the main checkout...
+    // conflicts can be settled by the task's agent, away from the main checkout...
     if (origin) {
-      if (!(await login())) throw new Error(`couldn't sign in to origin: ${loginError || "see data/server.log"}`);
+      if (!(await login())) {
+        if (loginTimedOut) throw timeoutError("origin sign-in (TASK_QUEUE_LOGIN)", loginTimedOut, TIMEOUTS.login);
+        throw new Error(`couldn't sign in to origin: ${loginError || "see data/server.log"}`);
+      }
       const f = await fetchOriginNow(false);
+      if (f.timedOut) throw timeoutError("git fetch origin", f, TIMEOUTS.origin);
       if (!f.ok) throw new Error(`git fetch origin failed:\n${f.all}`);
       if (await ref(`refs/remotes/origin/${branch}`)) await mergeInto(task, `origin/${branch}`);
     }
     await mergeInto(task, MAIN);
+    await runCheck(task);
     // ...so merging the branch into main can't conflict, and pushing it is a fast-forward.
-    await git(REPO, "merge", "--no-ff", "-m", `Merge ${task.branch}: ${task.title}\n\nTask ${task.id} from the task queue.`, task.branch!);
+    const into = await run(["git", "merge", "--no-ff", "-m", `Merge ${task.branch}: ${task.title}\n\nTask ${task.id} from the task queue.`, task.branch!], REPO);
+    if (!into.ok) {
+      await run(["git", "merge", "--abort"], REPO);
+      if (into.timedOut) throw timeoutError(`git merge ${task.branch} into ${MAIN}`, into, TIMEOUTS.git);
+      throw new Error(`git merge ${task.branch} into ${MAIN} failed (aborted):\n${into.all}`);
+    }
+    inMain = true;
     const commit = await git(REPO, "rev-parse", "--short", "HEAD");
     await refresh(); // on the board at once, as not pushed yet
-    // To origin's branch (Erga: staging, which deploys staging.erga.dev by itself). A refused push undoes nothing: the
-    // merge is in main, the log says why, and it's pushed again between merges (fetchOrigin) or with the next one.
+    // To origin's branch (Erga: staging, which deploys staging.erga.dev by itself). A refused (or timed out) push undoes
+    // nothing: the merge is in main, the log says why, and it's pushed again between merges (fetchOrigin) or with the next one.
     const p = origin ? await pushMain() : undefined;
     if (origin) await fetchOriginNow(true);
-    touch(task, { status: "merged", commit, mergedAt: new Date().toISOString() },
+    touch(task, { status: "merged", commit, mergedAt: new Date().toISOString(), mergeFrom: undefined, needsAgent: undefined, error: undefined },
       `Merged into ${MAIN} as ${commit}${!p ? "" : p.ok ? ` and pushed to origin's ${branch}: ${p.said}` : `, but origin's ${branch} didn't take it: ${p.said}`}`);
     tellDependents(task);
     await refresh();
     await cleanUp(task, false);
     console.log(`#${task.id} merged as ${commit}`);
-    const changed = await queueCodeChanged(before, "HEAD");
+    const changed = codeChangedSinceLastLook();
     if (changed.length) { restartWanted = true; console.log(`#${task.id} changed the queue's code (${changed.join(", ")}): restarting once nothing else is merging`); }
   } catch (e) {
-    touch(task, { status: "complete", error: (e as Error).message }, `Merge failed: ${(e as Error).message}`);
+    const err = e as Error;
+    if (inMain) { touch(task, {}, `After the merge: ${err.message}`); return; }
+    // The worktree back on the branch's last commit: no half-done merge, none of the queue's merge commits.
+    if (from && existsSync(wt)) {
+      await run(["git", "merge", "--abort"], wt);
+      const reset = await run(["git", "reset", "-q", "--hard", from], wt);
+      if (!reset.ok) touch(task, {}, `Couldn't put the worktree back on ${from.slice(0, 12)}: ${reset.all}`);
+    }
+    if (err instanceof NeedsAgent) {
+      const needsAgent: NeedsAgentInfo = { step: err.step, reason: err.message, at: new Date().toISOString(), ...(err.output ? { output: err.output } : {}), ...(err.files ? { files: err.files } : {}) };
+      touch(task, { status: "needs-agent", error: err.message, needsAgent, mergeFrom: undefined },
+        `Needs agent: ${err.message}. ${task.agent ? `Its agent (${task.agent}) fixes it in the worktree` : "No agent is recorded: a new one fixes it in the worktree"}, then runs tq continue ${task.id}.${err.output ? `\n${tail(err.output, 20)}` : ""}`);
+    } else touch(task, { status: "complete", error: err.message, mergeFrom: undefined }, `Merge failed: ${err.message}`);
+    // The preview back, so the user can still look at the work (the agent stops it if it gets in its way).
+    if (preview && existsSync(wt)) await startPreview(task, preview).catch((x) => touch(task, {}, `Preview not restarted: ${(x as Error).message}`));
   }
 }
 
-// ---- restarting after a merge of the queue's own code ----------------------
-
-/** This directory, relative to the main checkout, if the server runs from there (else a merge can't change the code it runs). */
-const CODE_DIR = (() => {
-  try { return gitSync(HERE, "rev-parse", "--show-toplevel") == gitSync(REPO, "rev-parse", "--show-toplevel") ? gitSync(HERE, "rev-parse", "--show-prefix") : undefined; } catch { return undefined; }
-})();
+// ---- restarting when the queue's own code changes ---------------------------
 
 /** Files the server, the board or tq run: everything here but docs, the Claude Code mod, the tests and the sample, and the data. */
-const isQueueCode = (file: string) => !/\.md$/i.test(file) && !/^(mod|data)\//.test(file) && !["test.ts", "sample.ts", ".gitignore"].includes(file);
+const isQueueCode = (file: string) => !/\.md$/i.test(file) && !/^(mod|data)(\/|$)/.test(file) && !["test.ts", "sample.ts", ".gitignore"].includes(file);
 
-async function queueCodeChanged(from: string, to: string) {
-  if (!CODE_DIR) return [];
-  const r = await run(["git", "diff", "--name-only", `${from}..${to}`, "--", CODE_DIR], REPO);
-  return r.out.split("\n").filter(Boolean).map((f) => f.slice(CODE_DIR.length)).filter(isQueueCode);
+/** The queue's code files in this directory, each with a hash of its content. */
+function codeFiles(): Record<string, string> {
+  const files: Record<string, string> = {};
+  for (const f of readdirSync(HERE).sort()) {
+    if (!isQueueCode(f)) continue;
+    try { if (statSync(join(HERE, f)).isFile()) files[f] = Bun.hash(readFileSync(join(HERE, f))).toString(36); } catch {}
+  }
+  return files;
+}
+const differ = (a: Record<string, string>, b: Record<string, string>) => [...new Set([...Object.keys(a), ...Object.keys(b)])].filter((f) => a[f] != b[f]).sort();
+/** What this server runs: its code files' hashes when it started, and a version made of them. */
+const startedWith = codeFiles();
+const CODE_VERSION = Bun.hash(JSON.stringify(startedWith)).toString(36);
+let lastSeen = startedWith;
+/** The queue's code files that changed since the last look. */
+function codeChangedSinceLastLook() {
+  const now = codeFiles(), changed = differ(lastSeen, now);
+  lastSeen = now;
+  return changed;
 }
 
-let restartWanted = false, restarting = false, inFlight = 0;
+let restartWanted = false, restartForced = false, restarting = false, inFlight = 0;
+
+// The code changed on disk some other way (a commit, a pull, an edit in the main checkout): the same. Not while a
+// merge runs: a merge says itself whether it changed the code.
+setInterval(() => {
+  if (restarting || store.tasks.some((t) => t.status == "merging")) return;
+  const changed = codeChangedSinceLastLook();
+  if (!changed.length) return;
+  console.log(`the queue's code changed (${changed.join(", ")}): restarting once nothing is merging`);
+  restartWanted = true;
+  locked(restartIfWanted);
+}, 3000);
 
 /**
- * Runs after every merge (on mergeLock): once a merge has changed the queue's
- * code and nothing else is merging, waits for requests in flight and previews
- * being stopped, then starts a fresh server and exits.
+ * Runs after every merge (on mergeLock), and when the code changes: once the queue's code has changed and nothing
+ * is merging, waits for requests in flight and previews being stopped, checks the new code builds, then starts a
+ * fresh server and exits.
  */
 async function restartIfWanted() {
   if (!restartWanted || restarting || store.tasks.some((t) => t.status == "merging")) return;
+  // Changed back to what this server runs (say, a broken edit undone): nothing to restart for.
+  if (!restartForced && !differ(startedWith, codeFiles()).length) { restartWanted = false; return; }
   restarting = true;
+  const out = mkdtempSync(join(tmpdir(), "tq-build-"));
+  const built = await run([process.execPath, "build", join(HERE, "server.ts"), "--target=bun", `--outdir=${out}`], HERE, {}, TIMEOUTS.build);
+  rmSync(out, { recursive: true, force: true });
+  if (!built.ok) {
+    console.log(`not restarting: the new code doesn't build${built.timedOut ? ` (timed out after ${TIMEOUTS.build}s)` : ""}; still running the old code (pid ${process.pid}):\n${tail(built.all, 20)}`);
+    restartWanted = restartForced = restarting = false;
+    return;
+  }
   for (let i = 0; i < 300 && (inFlight > 0 || stopping.size); i++) await Bun.sleep(100);
   if (store.tasks.some((t) => t.status == "merging")) { restarting = false; return; } // one was asked for meanwhile: after it
   console.log(`restarting with the new code (pid ${process.pid})`);
   save();
-  const out = openSync(join(DATA, "server.log"), "a");
-  spawnDetached(process.execPath, [join(HERE, "server.ts")], { cwd: process.cwd(), detached: true, stdio: ["ignore", out, out], env: { ...process.env, TASK_QUEUE_RESTARTED_FROM: String(process.pid) } }).unref();
+  const log = openSync(join(DATA, "server.log"), "a");
+  spawnDetached(process.execPath, [join(HERE, "server.ts")], { cwd: process.cwd(), detached: true, stdio: ["ignore", log, log], env: { ...process.env, TASK_QUEUE_RESTARTED_FROM: String(process.pid) } }).unref();
   for (const c of clients) try { c.close(); } catch {}
   process.exit(0);
 }
 
 /** Stops the preview and removes the worktree and branch (force: even unmerged, for a discarded task). */
 async function cleanUp(task: Task, force: boolean) {
-  stopPreview(task);
+  await stopPreviewAndWait(task);
   await closeChrome(task);
+  await stopLeftovers(task); // nothing left running in a folder about to go
   if (task.worktree && existsSync(task.worktree)) {
     const r = await run(["git", "worktree", "remove", "--force", task.worktree], REPO);
     touch(task, {}, r.ok ? "Worktree removed" : `Couldn't remove worktree: ${r.all}`);
@@ -779,8 +986,9 @@ const API = {
   statuses: {
     queued: "registered, not started",
     working: "an agent is on it",
-    complete: "done and tested, waiting for the user to merge (also where a failed merge lands, with error)",
-    merging: "being merged: main into the branch (claude -p settling conflicts), then the branch into main, pushed and cleaned up; set by POST /api/tasks/:id/merge, ends merged or back at complete with error",
+    complete: "done and tested, waiting for the user to merge (also where a merge that failed for a reason outside the worktree lands, with error)",
+    merging: "being merged: the worktree quieted (preview stopped), origin's branch and main into the branch, TASK_QUEUE_CHECK, then the branch into main, pushed and cleaned up; set by POST /api/tasks/:id/merge (or .../continue), ends merged, needs-agent, or back at complete with error",
+    "needs-agent": "the merge stopped and waits for the task's own agent (agent): a conflict, uncommitted changes, a failed check, or a step that timed out. needsAgent {step, reason, output, files, at} says what; the worktree is back on the branch's last commit. The agent fixes it in the worktree, commits, and POST /api/tasks/:id/continue (tq continue ID) merges again. Merge is off meanwhile",
     merged: "in main and pushed (on its merge commit in the board's Branches column)",
     failed: "the agent couldn't finish (see error)",
     discarded: "dropped by the user",
@@ -788,20 +996,23 @@ const API = {
   board: `http://localhost:${PORT}/`,
   pid: process.pid,
   live: "a live task (live: true) is worked on in a session with the user, not by a background worker: POST /api/tasks/:id/live runs its dev server with live reload and opens a Chrome window of its own on it (chrome: {pid, port, profile, target}); GET /api/tasks/:id/look says what that window shows; merge and discard stop both",
-  restart: "after a merge that changes the queue's own code, it restarts itself (new pid) once nothing else is merging; tasks and previews carry on",
+  restart: "when the queue's own code changes on disk (a merge, or anything else), it restarts itself (new pid) once nothing is merging and the new code builds; tasks and previews carry on. POST /api/restart asks for one",
+  running: { version: CODE_VERSION, get stale() { return differ(startedWith, codeFiles()); } },
+  agent: "a task records the agent doing it (agent: the Agent tool's agent id; PATCH {agent}, tq start ID --agent AGENT, tq agent ID AGENT). The same agent keeps the task until it merges: when the merge needs work (needs-agent), the outer agent wakes that agent (SendMessage to it), and only starts a new one if it is gone",
+  timeouts: Object.fromEntries(Object.entries(TIMEOUTS).map(([k, v]) => [k, `${v}s (TASK_QUEUE_TIMEOUT_${k.toUpperCase()})`])),
   dependencies: {
     startAfter: "task ids: don't start this task until they are merged. PATCH status working (tq start) and POST /live answer 409, with the reason, until then",
     mergeAfter: "task ids: don't merge this task until they are merged. POST /merge (the board's Merge, tq merge) answers 409 until then; the startAfter tasks count too. A merge may be asked for while the dependencies are merging (queued ahead of it); if one of them doesn't merge, this merge fails back to complete with the reason",
     blockedBy: "computed on every read and event, absent when nothing blocks the task: {start: startAfter ids not merged (queued tasks only), merge: startAfter and mergeAfter ids not merged, stuck: those discarded or failed, reason: e.g. 'waiting for #12 to merge', 'can't merge until #12 merges', 'blocked: #12 was discarded; remove or change the dependency'}",
     rules: "set them in POST /api/tasks or change them with PATCH (a list of ids, or null / [] to clear; not while merging or once done). Each id must be another task that isn't discarded; a cycle is refused (400). When a dependency merges, its dependents' logs say so and the tasks event fires; tq watch prints '#14 unblocked: title (#12 merged)'. A discarded or failed dependency blocks its dependents until someone removes or changes it",
   },
-  columns: { Queued: ["queued"], Working: ["working", "failed"], "Ready to merge": ["complete"], Merging: ["merging"], Branches: "main's latest commits (GET /api/history): a merged task shows on its merge commit; older merged tasks and discarded ones aren't shown" },
+  columns: { Queued: ["queued"], Working: ["working", "failed"], "Needs agent": ["needs-agent"], "Ready to merge": ["complete"], Merging: ["merging"], Branches: "main's latest commits (GET /api/history): a merged task shows on its merge commit; older merged tasks and discarded ones aren't shown" },
   endpoints: {
     "GET /api": "this description",
     "GET /api/tasks[?status=complete]": "all tasks, oldest first",
     "GET /api/tasks/:id": "one task",
     "POST /api/tasks {title, description?, worktree?: true, live?: false, startAfter?: [ids], mergeAfter?: [ids]}": "register a task: makes branch task/<id>-<slug> and worktree .claude/worktrees/task-<id> from main (node_modules cloned from the main checkout) and assigns a preview port. live marks it a live task; startAfter and mergeAfter are its dependencies (see dependencies). Returns the task.",
-    "PATCH /api/tasks/:id {status?, url?, summary?, error?, title?, description?, live?, startAfter?, mergeAfter?, message?}": `update a task; status is one of ${AGENT_STATUSES.join(", ")} (working is refused, 409, while a startAfter task isn't merged); startAfter and mergeAfter replace its dependencies (see dependencies); message is appended to its log`,
+    "PATCH /api/tasks/:id {status?, url?, summary?, error?, title?, description?, live?, agent?, startAfter?, mergeAfter?, message?}": `update a task; status is one of ${AGENT_STATUSES.join(", ")} (working is refused, 409, while a startAfter task isn't merged); agent records the agent doing it (see agent); startAfter and mergeAfter replace its dependencies (see dependencies); message is appended to its log`,
     "POST /api/tasks/:id/log {message}": "append a progress line to the task's log",
     "POST /api/tasks/:id/preview {command?, path?}": `start the task's preview server in its worktree with $PORT set (default command: ${PREVIEW}); it outlives the agent and is stopped on merge. Sets url to http://localhost:<port><path> unless url is already set.`,
     "DELETE /api/tasks/:id/preview": "stop the preview server",
@@ -810,13 +1021,22 @@ const API = {
     "POST /api/tasks/:id/screenshots": "attach a screenshot: a raw image body (Content-Type image/png, ?caption=...), or JSON {path, caption?} (a file on disk), or JSON {url, caption?, width?, height?, wait?: ms after load, fullPage?} (the queue takes it with headless Chrome)",
     "DELETE /api/tasks/:id/screenshots/:file": "remove one screenshot (by its file name, or its 1-based index) and delete its file; any status but merging",
     "DELETE /api/tasks/:id/screenshots": "remove all the task's screenshots and delete their files (for a fresh pass); any status but merging",
-    "POST /api/tasks/:id/merge": "for a complete (or failed) task whose dependencies are merged (else 409 with the reason; dependencies that are merging, ahead of it, are fine): status merging at once (202), then, in the background and one merge at a time, merge origin's branch and main into the branch (claude -p resolves conflicts), merge the branch into main, push main to origin's branch (see origin), and remove the worktree and branch: status merged. A failed merge goes back to complete with error. Watch the task.",
+    "POST /api/tasks/:id/merge": "for a complete (or failed) task whose dependencies are merged (else 409 with the reason; dependencies that are merging, ahead of it, are fine): status merging at once (202), then, in the background and one merge at a time: stop the task's preview and anything else running in its worktree, merge origin's branch and main into the branch, run TASK_QUEUE_CHECK there if set, merge the branch into main, push main to origin's branch (see origin), and remove the worktree and branch: status merged. A conflict, uncommitted changes, a failed check or a step that times out (see timeouts) puts the worktree back on the branch's last commit and the task in needs-agent; any other failure goes back to complete with error. Watch the task.",
+    "POST /api/tasks/:id/continue": "for a needs-agent task, once its agent has fixed what stopped the merge and committed (409 while the worktree has uncommitted changes or an unfinished merge): the merge runs again, as POST .../merge (202, merging)",
+    "POST /api/restart": "restart the queue with the code on disk, once nothing is merging (202)",
     "POST /api/tasks/:id/discard": "drop the task: stops its preview (and a live task's Chrome window), removes its worktree and deletes its branch",
     "GET /api/history": `main's history, for the board's Branches column: {commits: the latest ${SHOWN} on main's first-parent line, newest first, each {sha, short, subject, at, task?: the task whose merge it is, remote: whether origin's branch has it}, tasks: {id: {sha, short, index, remote}} for tasks merged in main's latest ${MATCHED}, unpushed, behind, origin, originBranch: the branch on origin main is pushed to, unreleased?: commits on it that origin's main lacks, pushed?, released?: the last push and release {at, commit, ok, said}, login?: {approve_url, user_code, expires} while signing in to origin waits for someone to approve this machine, or {error}}. Origin is fetched every ${FETCH_EVERY || "(never)"}s (TASK_QUEUE_FETCH).`,
     "POST /api/release {commit?}": "moves origin's main to its branch's head (or to commit, one of that branch's commits): for Erga, production (erga.dev) to staging. A fast-forward, never forced, and never part of a merge: only when someone asks. Answers {ok, said, commit}",
     "GET /api/events": "server-sent events: a `version` event (the board's own, which reloads when it changes), a `tasks` event with every task and a `history` event with GET /api/history, on connect and on each change",
   },
 };
+
+/** Merging: status merging at once, the merge itself queued on mergeLock, one at a time, in the order asked for. */
+function enqueueMerge(task: Task, message: string) {
+  const ahead = store.tasks.filter((t) => t.status == "merging").map((t) => `#${t.id}`);
+  touch(task, { status: "merging", error: undefined, needsAgent: undefined }, ahead.length ? `${message}: waiting for ${ahead.join(", ")} to merge first` : message);
+  mergeLock = mergeLock.then(() => merge(task)).then(restartIfWanted);
+}
 
 const json = (data: unknown, status = 200) => Response.json(data, { status });
 const fail = (status: number, error: string) => json({ error }, status);
@@ -836,6 +1056,12 @@ async function handle(req: Request): Promise<Response> {
   if (path == "/" && req.method == "GET") return new Response(Bun.file(join(HERE, "index.html")), { headers: { "content-type": "text/html; charset=utf-8" } });
   if (path == "/api" && req.method == "GET") return json(API);
   if (path == "/api/history" && req.method == "GET") { await refresh(); return json(history); }
+  if (path == "/api/restart" && req.method == "POST") {
+    restartWanted = restartForced = true;
+    console.log("restart asked for (POST /api/restart)");
+    locked(restartIfWanted);
+    return json({ restarting: true, pid: process.pid, after: store.tasks.filter((t) => t.status == "merging").map((t) => t.id) }, 202);
+  }
   if (path == "/api/release" && req.method == "POST") {
     const { commit } = await body();
     const r = await locked(() => release(typeof commit == "string" && commit ? commit : undefined)).catch((e) => ({ at: new Date().toISOString(), ok: false, said: (e as Error).message }) as Outcome);
@@ -896,9 +1122,11 @@ async function handle(req: Request): Promise<Response> {
     const changes: Partial<Task> = { ...deps };
     for (const k of ["status", "url", "summary", "error", "title", "description"] as const) if (k in b) (changes as any)[k] = b[k] ?? undefined;
     if ("live" in b) changes.live = !!b.live || undefined;
+    if ("agent" in b) changes.agent = b.agent ? String(b.agent).trim() : undefined;
     if (b.status && b.status != "failed" && !("error" in b)) changes.error = undefined;
+    if (b.status && task.status == "needs-agent") changes.needsAgent = undefined;
     const was = task.status;
-    const message = [b.message ?? (b.status && b.status != task.status ? `Status: ${b.status}` : undefined), depsAsked ? `Dependencies: ${depsNote({ ...task, ...changes }).replace(/^ \(|\)$/g, "") || "none"}` : undefined].filter(Boolean).join("; ");
+    const message = [b.message ?? (b.status && b.status != task.status ? `Status: ${b.status}` : undefined), "agent" in b && changes.agent != task.agent ? `Agent: ${changes.agent ?? "none"}` : undefined, depsAsked ? `Dependencies: ${depsNote({ ...task, ...changes }).replace(/^ \(|\)$/g, "") || "none"}` : undefined].filter(Boolean).join("; ");
     touch(task, changes, message || undefined);
     if (task.status == "failed" && was != "failed") tellDependents(task);
     return json(task);
@@ -971,14 +1199,24 @@ async function handle(req: Request): Promise<Response> {
   }
   if (task && action == "merge" && req.method == "POST") {
     if (task.status == "merging") return fail(409, `task ${task.id} is already merging`);
+    if (task.status == "needs-agent") return fail(409, `task ${task.id} needs its agent: ${task.error}. The agent fixes it and runs tq continue ${task.id}`);
     if (!["complete", "failed"].includes(task.status) && !(task.status == "working" && url.searchParams.has("force"))) return fail(409, `task ${task.id} is ${task.status}, not complete`);
     if (!task.branch) return fail(409, "task has no branch");
     // Its dependencies merged, or merging now (queued ahead of it, checked again when its turn comes).
     const why = mergeRefusal(task);
     if (why) return fail(409, why);
-    const ahead = store.tasks.filter((t) => t.status == "merging").map((t) => `#${t.id}`);
-    touch(task, { status: "merging", error: undefined }, ahead.length ? `Merge requested: waiting for ${ahead.join(", ")} to merge first` : "Merge requested");
-    mergeLock = mergeLock.then(() => merge(task)).then(restartIfWanted);
+    enqueueMerge(task, "Merge requested");
+    return json(task, 202);
+  }
+  if (task && action == "continue" && req.method == "POST") {
+    if (task.status != "needs-agent") return fail(409, `task ${task.id} is ${task.status}: tq continue is for a task whose merge waits for its agent (needs-agent)`);
+    const why = mergeRefusal(task);
+    if (why) return fail(409, why);
+    if (!task.worktree || !existsSync(task.worktree)) return fail(409, "the task's worktree is gone");
+    if ((await run(["git", "rev-parse", "-q", "--verify", "MERGE_HEAD"], task.worktree)).ok) return fail(409, `${task.worktree} is in the middle of a merge: commit it (or abort it) first`);
+    const dirty = (await run(["git", "status", "--porcelain", "--untracked-files=no"], task.worktree)).out;
+    if (dirty) return fail(409, `${task.worktree} has uncommitted changes (${changedFiles(dirty)}): commit them first`);
+    enqueueMerge(task, `Continued${task.agent ? ` by its agent (${task.agent})` : ""}: merging again`);
     return json(task, 202);
   }
   if (task && action == "discard" && req.method == "POST") {

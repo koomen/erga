@@ -10,6 +10,7 @@ repo's root.
     development/task-queue/tq live ID         # live mode: the task's dev server (live reload) and a Chrome window of its own
     development/task-queue/tq look ID         # what that window shows (--shot, --console)
     bun development/task-queue/test.ts        # its end-to-end test
+    claude plugin test development/task-queue/mod   # the mod's tests
     bun development/task-queue/sample.ts      # a sample board on :4507 (a throwaway repo; --tick N for live commits)
 
 `server.ts` is the server and API, `index.html` the board, `tq` the CLI,
@@ -35,14 +36,35 @@ itself: see the main README, "Pushes from this machine: the task queue"
 (origin, the push to staging, signing in with `source/git-credential.ts`,
 and `tq release` for production).
 
-After a merge that changes the queue's own code (not docs, `mod/`, or the
-tests), the server restarts itself once nothing else is merging: it spawns
-a fresh, detached `server.ts` (logging to `data/server.log`) and exits; the
-new one waits for the old one to be gone, then reads `data/` and listens.
-Previews run in their own process groups and carry on. The board's event
-stream sends its version first, so an open board reloads when `index.html`
-changed. If it doesn't restart, kill whatever listens on 4700 and run any
-`tq` command.
+Merging (AGENTS.md, "Merging") never resolves anything itself. The queue
+stops the task's preview and anything still running in its worktree
+(`lsof -d cwd`), merges origin's branch and `main` into the task's branch,
+runs `TASK_QUEUE_CHECK` there if set, then merges into `main` and pushes. A
+conflict, uncommitted changes, a failed check, or any step that runs out of
+time puts the worktree back on the branch's last commit (`mergeFrom`) and
+the task in `needs-agent` (`needsAgent: {step, reason, output, files}`):
+its own column on the board, Merge off, and a `tq watch` line naming the
+task's agent (`agent`, recorded with `tq start ID --agent` or `tq agent`).
+That agent fixes it, commits and runs `tq continue ID`; the merge runs
+again. The board's detail view shows the reason, the files and the output.
+
+Every command the queue runs goes through `run()`: its own process group
+and a time limit (`TIMEOUTS`, each set with `TASK_QUEUE_TIMEOUT_<STEP>`),
+killing the whole group (SIGTERM, then SIGKILL) at the limit. Screenshots
+have a limit too, and previews stop as a group and are waited for.
+
+When the queue's own code changes on disk (not docs, `mod/`, or the tests),
+by a merge or otherwise, the server restarts itself once nothing is merging:
+it hashes its code files at start and compares after each merge and every
+3s, checks that the new code builds (`bun build`), spawns a fresh, detached
+`server.ts` (logging to `data/server.log`) and exits; the new one waits for
+the old one to be gone, then reads `data/` and listens. `GET /api` has
+`running: {version, stale}`; `tq restart` (`POST /api/restart`) asks for
+one. Previews run in their own process groups and carry on. The board's
+event stream sends its version first, so an open board reloads when
+`index.html` changed. A server too old to report `running` is restarted by
+`tq` itself (when nothing is merging). If it still doesn't restart, kill
+whatever listens on 4700 and run any `tq` command.
 
 Live tasks (`live: true`, `tq add --live`) are worked on in a session with
 the user rather than by a background worker (AGENTS.md, "Live mode"). Their

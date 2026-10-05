@@ -80,6 +80,7 @@ import type { Unlock } from "../admin-keys";
 import { type Blocked, dependents, depRules, depsNote, type DepStatus, type DepTask, ids } from "../development/task-queue/deps";
 import { factoryGuide, factoryTools, startFactoryAgent, type FactoryAgent, type FactoryOps } from "../factory/agent";
 import { containersHost } from "../factory/cloudflare";
+import { b64url } from "../factory/git-grant";
 import { branchName, claudeToken, resolvePrompt, taskPrompt } from "../factory/prompt";
 import { whoOf } from "../front";
 import { LOCKED } from "../users";
@@ -115,7 +116,6 @@ export interface Task {
 const enc = new TextEncoder();
 const now = () => new Date().toISOString();
 const hex = (b: ArrayBuffer | Uint8Array) => Array.from(new Uint8Array(b), (x) => x.toString(16).padStart(2, "0")).join("");
-const b64url = (s: string) => btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 
 async function hmac(key: Uint8Array | string, data: string): Promise<Uint8Array> {
   const k = await crypto.subtle.importKey("raw", typeof key == "string" ? enc.encode(key) : key, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
@@ -135,8 +135,7 @@ export const gitSecret = (env: Env) => env.ERGA_LINK_SECRET || factoryKey(env);
 export async function gitToken(env: Env, scope: "task" | "merge", branch: string, by?: string): Promise<string> {
   const secret = gitSecret(env);
   if (!secret) throw new Error("FACTORY_KEY isn't set");
-  // UTF-8 first: `by` can be "tester’s agent" (btoa takes Latin-1 only, and threw, so an agent's task never started).
-  const body = b64url(String.fromCharCode(...enc.encode(JSON.stringify({ scope, branch, exp: Math.floor(Date.now() / 1000) + 7200, ...(by ? { by } : {}) }))));
+  const body = b64url(JSON.stringify({ scope, branch, exp: Math.floor(Date.now() / 1000) + 7200, ...(by ? { by } : {}) }));
   return `fgt.${body}.${hex(await hmac(await hmac(secret, "erga-factory-git"), body))}`;
 }
 
@@ -433,6 +432,8 @@ export class Factory extends DurableObject<Env> {
     return {
       FACTORY_API: `${r.origin}/api/factory`, FACTORY_TASK: String(id), FACTORY_TOKEN: await taskToken(this.env, id),
       REPO_URL: host.repo(r.origin), REPO_TOKEN: await gitToken(this.env, scope, r.branch, by ?? r.by_login),
+      FACTORY_MODEL: String((await directoryOf(this.env).config.get("factory_model")) ?? "opus"),
+      FACTORY_FAST: (await directoryOf(this.env).config.get("factory_fast")) == "off" ? "0" : "1",
       ...(claude ? { CLAUDE_CODE_OAUTH_TOKEN: claude } : {}),
     };
   }
@@ -728,7 +729,7 @@ export class Factory extends DurableObject<Env> {
   /** A new token for an outside agent: shown once. `key` is the admin key that unlocked the admin: revoking it ends the token. */
   async mintToken(login: string, name: string, key: string, label: string, hours: number): Promise<{ token: string } & TokenView> {
     const id = hex(crypto.getRandomValues(new Uint8Array(9)));
-    const secret = b64url(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(24))));
+    const secret = b64url(crypto.getRandomValues(new Uint8Array(24)));
     const ms = Math.round(Math.max(1, Math.min(12, hours || 4)) * 3600_000);
     const at = Date.now();
     this.sql.exec("INSERT INTO agent_tokens (id, hash, login, name, label, unlock_key, created, expires) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",

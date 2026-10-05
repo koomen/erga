@@ -25,8 +25,13 @@ import { join } from "node:path";
 import { api, CLONE, git, log, TASK } from "./common.ts";
 import { done, fail, preview, shot } from "./task.ts";
 
-const job = process.argv[2] ?? "work";
+// Takes Claude Code's --model (the factory_model setting) like the real one, and says which.
+const args = process.argv.slice(2);
+const m = args.indexOf("--model");
+const model = m >= 0 ? args.splice(m, 2)[1] : undefined;
+const job = args[0] ?? "work";
 const brief = await api("/brief") as { title: string; prompt: string; instructions?: string | null };
+if (model) await log(`The stand-in runs in place of Claude Code with --model ${model}`);
 if (job == "resolve") { await resolve(); process.exit(0); }
 if (job == "woken") { await done("The stand-in was woken after its limit, and finished."); process.exit(0); }
 // The dependencies, if the factory's install failed or hung (it says so in Claude Code's instructions): again, under a limit.
