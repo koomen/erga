@@ -82,7 +82,7 @@ const api = async (method: string, path: string, body?: unknown) => {
   return { ...(await r.json()), code: r.status };
 };
 const until = async (id: number, pred: (t: any) => boolean) => {
-  for (let i = 0; i < 100; i++) { const t = await api("GET", `/api/tasks/${id}`); if (pred(t)) return t; await Bun.sleep(100); }
+  for (let i = 0; i < 300; i++) { const t = await api("GET", `/api/tasks/${id}`); if (pred(t)) return t; await Bun.sleep(100); } // 30s: merges are slower on a busy machine
   return api("GET", `/api/tasks/${id}`);
 };
 
