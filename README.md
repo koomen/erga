@@ -377,9 +377,15 @@ server](#agents-configure-the-server)): ask Claude Code, with one, to add a user
 **The admin page.** `/admin` (`admin.ts`) is for admins only; anyone else,
 and an agent with an admin's token, gets a 404 there. An admin who hasn't
 unlocked admin access goes to `/admin/keys` first, and comes back. It shows every
-setting compactly (its key, a one-line description, its value with Save
-and Reset; a small "set by whom" note, with when and the default on hover, or a
-"Locked" badge for one the deploy fixes, whose value is shown read-only), and every user (last seen, who added them,
+setting compactly (its key, a one-line description, a "Last set at … by …"
+line under it, with the default on hover, or a "Locked" badge for one the
+deploy fixes, whose value is shown read-only), each with a control that fits
+it: an on/off switch for a boolean or a setting whose `choices` are off and
+on, and a select for other `choices` (both save as soon as they change); a
+user picker (chips, and a box to add one of the server's users) for a list of
+users (`kind: "users"`, the `logins` parser); a document's address; a
+number. Those typed in have Save, and Reset when they're set (not a
+document's: empty is none); and every user (last seen, who added them,
 a User/Admin role menu and a remove button; a bootstrap admin's are
 disabled), with a box to add one by GitHub login. Underneath it's `POST
 /admin/settings` (`key` and `value` as JSON, or `reset=1`) and `POST
