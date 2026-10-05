@@ -88,8 +88,18 @@ try {
   // The title's line, the last update's line, and the buttons: about 70px at 12-14px type.
   expect(plain.height <= 80, "a plain card is short", plain.height);
   ok(`a plain card is ${Math.round(plain.height)}px high`);
-  expect(await p.eval(`(() => { const b = [...document.querySelectorAll("[data-open='6'] .actions > *")].map((e) => e.getBoundingClientRect().top); return b.length == 3 && b.every((y) => y == b[0]); })()`), "Preview, Merge and Discard fit on one row");
-  ok("Preview, Merge and Discard fit on one row");
+  expect(await p.eval(`(() => { const b = [...document.querySelectorAll("[data-open='6'] .actions > *")].map((e) => e.getBoundingClientRect().top); return b.length == 4 && b.every((y) => y == b[0]); })()`), "Preview, Merge, Restart and Discard fit on one row");
+  ok("Preview, Merge, Restart and Discard fit on one row");
+  // Restart on a failed task and on one ready to merge, and nowhere else.
+  const restarts = await p.eval<number[]>(`[...document.querySelectorAll("#board [data-act='restart']")].map((b) => Number(b.dataset.id)).sort((a, b) => a - b)`);
+  expect(JSON.stringify(restarts) == JSON.stringify([5, 6, 7]), "Restart on the failed and the ready tasks only", restarts);
+  ok("Restart on the failed and the ready tasks only");
+  // Discard's text is black (the page's ink), not red; in light mode at least.
+  await p.open(`${host.root}/admin/source`, { width: 1400, height: 900 });
+  for (const end = Date.now() + 15_000; !(await p.eval(`document.querySelectorAll("#board .card").length`)) && Date.now() < end;) await Bun.sleep(50);
+  const discard = await p.eval<string>(`getComputedStyle(document.querySelector("[data-open='5'] [data-act='arm']")).color`);
+  expect(discard == "rgb(13, 13, 15)", "Discard's text is black", discard);
+  ok("Discard's text is black");
   expect(card(6).thumbs == 2, "the thumbnails stay", card(6));
   ok("the thumbnails stay");
   // Each column in id order (oldest first), not by last update: #7 updated after #6, yet stays below it.

@@ -13,7 +13,7 @@
 //    changes a file, previews, screenshots, pushes, and the card is ready to merge.
 // 3. Merge: the branch is merged into staging (a merge commit) and deleted.
 // 4. Discard: the branch is deleted, nothing reaches staging.
-// 5. More instructions on a finished task: it works again, on the same branch.
+// 5. More instructions on a finished task: it works again, on the same branch. Restart: again, in a fresh VM.
 // 6. Tokens: a VM's token reaches its own task only; a task's git token can't push staging.
 // 7. The Claude sign-in: stored, never shown, signed out again.
 // 8. Dependencies (development/task-queue/deps.ts): bad ids and cycles refused; one added on the
@@ -150,6 +150,17 @@ try {
   expect(log3.includes("Revise task #3") && log3.includes("Factory task #3"), "both commits are on the branch", log3);
   expect(t3b.log.some((l: any) => l.message.includes("asked: Say it again.")), "the log says what was asked");
   ok("more instructions: the task works again on its branch, and is ready to merge again");
+
+  // Restart, on the board: the same branch, a fresh VM, no new instructions.
+  await until(() => p.eval(`!!document.querySelector('[data-open="3"] [data-act="restart"]')`), 5000, "task 3's card has Restart");
+  await click(p, '[data-open="3"] [data-act="restart"]');
+  await until(async () => { const t = await task(3); return t.status == "complete" && t.commit != t3b.commit && !!t.vm && t.vm != t3b.vm; }, STEP, "task 3 is ready again, from a fresh VM", async () => JSON.stringify((await task(3)).log.slice(-6)));
+  const t3c = await task(3);
+  const log3c = spawnSync("git", ["-C", repo, "log", "--format=%s", `staging..${t3c.branch}`], { encoding: "utf8" }).stdout;
+  expect(log3c.includes("Revise task #3") && log3c.split("\n").filter((l) => l.startsWith("Factory task #3")).length == 2, "the restart worked on the same branch", log3c);
+  expect(t3c.log.some((l: any) => l.message.startsWith("Restarted by")) && t3c.log.some((l: any) => l.message.includes("checked out at")), "the log says it restarted, on the branch", t3c.log.slice(-12));
+  expect((await api("/tasks/2/restart", { method: "POST" })).status == 409, "a discarded task doesn't restart");
+  ok("restart: the task runs again on its branch, in a fresh VM, and is ready to merge again");
 
   // ---------------------------------------------------------------- 6. tokens
   const brief = await fetch(`${root}/api/factory/tasks/3/brief`, { headers: { Authorization: "Bearer fct.1.9999999999." + "0".repeat(64) } });

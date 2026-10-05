@@ -17,6 +17,7 @@
 //                                          a dependency isn't merged (or merging ahead of it)
 //   POST /api/factory/tasks/<id>/discard   the branch deleted, the VM stopped
 //   POST /api/factory/tasks/<id>/revise    { instructions }: Claude Code works on the task again
+//   POST /api/factory/tasks/<id>/restart   a failed or ready task runs again on its branch: a fresh VM and git token
 //   PUT  /api/factory/claude               { token }: the Claude plan's token (claude setup-token), stored encrypted
 //   DELETE /api/factory/claude             forgets it
 //   GET  /api/factory/events               server-sent events: { type: "task", task } on each change, and
@@ -500,6 +501,24 @@ export class Factory extends DurableObject<Env> {
     return { ok: true };
   }
 
+  /** A failed or ready task runs again, as revise does but with no new instructions: on its branch, in a fresh VM (a fresh git token). */
+  async restart(id: number, by: string, origin?: string): Promise<{ ok: boolean; error?: string }> {
+    // The server as the person asking reaches it now (it can move: another port locally).
+    if (origin) this.sql.exec("UPDATE tasks SET origin = ? WHERE id = ?", origin, id);
+    const r = this.row(id);
+    if (!r) return { ok: false, error: "no such task" };
+    if (!["complete", "failed"].includes(r.status)) return { ok: false, error: `task #${id} is ${r.status}: it restarts when it's ready to merge or failed` };
+    const why = this.deps.startRefusal(depOf(r));
+    if (why) return { ok: false, error: why };
+    this.update(id, { status: "working", error: null, vm: null, preview_origin: null, preview_path: null }, `Restarted by ${by}: a fresh VM`);
+    this.ctx.waitUntil((async () => {
+      const host = vmHost(this.env, r.origin);
+      if (r.vm && typeof host != "string") await host.stop(r.vm).catch(() => {});
+      await this.launch(id, "work");
+    })());
+    return { ok: true };
+  }
+
   async merge(id: number, by: string, origin?: string): Promise<{ ok: boolean; error?: string }> {
     // The server as the person asking reaches it now (it can move: another port locally).
     if (origin) this.sql.exec("UPDATE tasks SET origin = ? WHERE id = ?", origin, id);
@@ -877,7 +896,7 @@ async function sharedAgentApi(request: Request, env: Env, url: URL, raw: string,
 /** /api/factory/... */
 export async function factoryApi(request: Request, env: Env, url: URL): Promise<Response> {
   const path = url.pathname.replace(/\/$/, "");
-  const m = /^\/api\/factory\/tasks\/(\d+)(?:\/(brief|log|branch|preview|screenshots|merge|discard|revise|open|start))?$/.exec(path);
+  const m = /^\/api\/factory\/tasks\/(\d+)(?:\/(brief|log|branch|preview|screenshots|merge|discard|revise|restart|open|start))?$/.exec(path);
   const id = m ? Number(m[1]) : null, action = m?.[2] ?? "";
 
   // An outside agent, with a factory token.
@@ -978,10 +997,10 @@ export async function factoryApi(request: Request, env: Env, url: URL): Promise<
     const r = await f.setDeps(id, body as Record<string, unknown>, admin.login, url.origin);
     return r.ok ? json(await f.task(id)) : json({ error: r.error }, r.status ?? 409);
   }
-  if (id != null && request.method == "POST" && ["merge", "discard", "revise", "start"].includes(action)) {
+  if (id != null && request.method == "POST" && ["merge", "discard", "revise", "restart", "start"].includes(action)) {
     const body = action == "revise" ? await request.json().catch(() => ({})) as { instructions?: string } : {};
     const r = action == "merge" ? await f.merge(id, admin.login, url.origin) : action == "discard" ? await f.discard(id, admin.login, url.origin)
-      : action == "start" ? await f.start(id, admin.login, url.origin) : await f.revise(id, String(body.instructions ?? ""), admin.login, url.origin);
+      : action == "start" ? await f.start(id, admin.login, url.origin) : action == "restart" ? await f.restart(id, admin.login, url.origin) : await f.revise(id, String(body.instructions ?? ""), admin.login, url.origin);
     return r.ok ? json(await f.task(id), action == "merge" ? 202 : 200) : json(r, 409);
   }
   return json({ error: "Not found" }, 404);

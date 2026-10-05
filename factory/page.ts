@@ -64,6 +64,7 @@ export const BOARD_STYLE = `
   @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) button.primary { color: #0d1218; } }
   :root[data-theme="dark"] button.primary { color: #0d1218; }
   button.danger { color: var(--bad); }
+  button.danger[data-act="arm"] { color: var(--ink); }
   button.confirm { background: var(--bad); border-color: var(--bad); color: #fff; }
   button:disabled { opacity: .5; cursor: default; }
   .spin { display: inline-block; width: 10px; height: 10px; border: 2px solid var(--warn); border-right-color: transparent; border-radius: 50%; animation: s .8s linear infinite; }
@@ -193,6 +194,7 @@ function actions(t, inDialog) {
   }
   if (t.status == "needs agent") b.push('<button class="primary" disabled title="Claude Code is finishing the merge">Merge</button>' + why("Needs agent: the task’s Claude Code is finishing the merge, which then goes on by itself"));
   if (t.status == "merging") b.push('<button disabled><span class="spin"></span> ' + (t.log.at(-1)?.message.includes("waiting for") ? "Waiting to merge…" : "Merging…") + '</button>');
+  if (["complete", "failed"].includes(t.status)) b.push('<button data-act="restart" data-id="' + t.id + '" title="Run the task again on its branch, in a fresh VM">Restart</button>');
   if (!["merging", "merged", "discarded"].includes(t.status))
     b.push(armed.has(t.id) ? '<button class="confirm" data-act="discard" data-id="' + t.id + '">Discard branch?</button>' : '<button class="danger" data-act="arm" data-id="' + t.id + '">Discard</button>');
   return b.length ? '<div class="actions">' + b.join("") + '</div>' : "";
@@ -370,6 +372,7 @@ document.addEventListener("click", async (e) => {
     else if (act == "forget") { info.claude = await api("/claude", { method: "DELETE" }); $("form").close(); renderInfo(); }
     else if (act == "arm") { armed.add(id); render(); setTimeout(() => { armed.delete(id); render(); }, 4000); }
     else if (act == "discard") { armed.delete(id); upsert(await api("/tasks/" + id + "/discard", { method: "POST" })); }
+    else if (act == "restart") { el.disabled = true; upsert(await api("/tasks/" + id + "/restart", { method: "POST" })); }
     else if (act == "merge") upsert(await api("/tasks/" + id + "/merge", { method: "POST" }));
     else if (act == "start") { el.disabled = true; upsert(await api("/tasks/" + id + "/start", { method: "POST" })); }
     else if (act == "dep" || act == "undep") {
