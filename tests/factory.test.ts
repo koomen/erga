@@ -132,3 +132,26 @@ test("the worker brief asks for targeted tests in a 5-minute budget, not the who
   expect(p).not.toContain("--timeout 900");
   expect(p).not.toContain("for the whole suite)");
 });
+
+test("a long Claude Code run with no new output repeats no line on the board; it says it is still working, at most once a minute", async () => {
+  const { claudeLog } = await import("../factory/vm/common");
+  let t = 1_000_000;
+  const board = claudeLog(() => t);
+  const lines: string[] = [];
+  const text = { type: "text", text: "While the suite runs, I'll work out how to give the preview a seeded repository." };
+  const tool = { type: "tool_use", id: "toolu_1", name: "Bash", input: { command: "./test.sh" } };
+  // Claude Code sends the message again, with more in it, and the same text block again, seconds apart.
+  lines.push(...board.event({ type: "assistant", message: { id: "msg_1", content: [text] } }));
+  t += 6000; lines.push(...board.event({ type: "assistant", message: { id: "msg_1", content: [text, tool] } }));
+  t += 6000; lines.push(...board.event({ type: "assistant", message: { id: "msg_1", content: [text, tool] } }));
+  t += 6000; lines.push(...board.event({ type: "assistant", message: { id: "msg_2", content: [text] } }));
+  // Ten quiet minutes, a tick every 15 s.
+  for (let i = 0; i < 40; i++) { t += 15_000; lines.push(...board.tick()); }
+  const words = lines.filter((l) => l.startsWith("Claude:"));
+  expect(words).toEqual([`Claude: ${text.text}`]);
+  expect(lines.filter((l) => l.startsWith("Claude runs"))).toEqual(["Claude runs Bash: ./test.sh"]);
+  const still = lines.filter((l) => l.includes("still working"));
+  expect(still.length).toBeGreaterThan(0);
+  expect(still.length).toBeLessThanOrEqual(10);
+  expect(new Set(lines).size).toBe(lines.length);
+});
