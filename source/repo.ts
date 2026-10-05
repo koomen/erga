@@ -32,6 +32,7 @@ import {
   toSideBand, utf8, ZERO, type Commit,
 } from "./git.ts";
 import { fetchPack, lsRefs, receiveAdvert, receivePack, RemoteError, type RefUpdate, type Remote } from "./remote.ts";
+import { refsAllowed, type GitGrant } from "../factory/git-grant.ts";
 
 export const BRANCHES = ["staging", "main"] as const;
 export type Branch = (typeof BRANCHES)[number];
@@ -230,18 +231,27 @@ export class SourceRepo {
 
   // ---- Pushes (git push, through Erga's /git endpoint) ------------------------------
 
-  /** The receive-pack advertisement Erga gives a pusher: only staging and main, and what Erga's receive-pack does. */
-  async advertise(): Promise<Uint8Array> {
+  /**
+   * The receive-pack advertisement Erga gives a pusher: only staging and main, and what Erga's receive-pack does.
+   * A factory VM's token (`grant`) also sees its own task's branch, which it may push and delete.
+   */
+  async advertise(grant?: GitGrant): Promise<Uint8Array> {
     const remote = await this.deps.artifacts();
     const { refs } = await lsRefs(remote);
-    const caps = "report-status side-band-64k quiet ofs-delta agent=erga";
-    const lines = BRANCHES.filter((b) => refs.has(REF(b))).map((b) => `${refs.get(REF(b))} ${REF(b)}`);
+    const caps = "report-status side-band-64k quiet ofs-delta delete-refs agent=erga";
+    const names = [...BRANCHES.map(REF), ...(grant ? [`refs/heads/${grant.branch}`] : [])];
+    const lines = names.filter((r) => refs.has(r)).map((r) => `${refs.get(r)} ${r}`);
     if (!lines.length) lines.push(`${ZERO} capabilities^{}`);
     return concat([pkt("# service=git-receive-pack\n"), FLUSH, ...lines.map((l, i) => pkt(`${l}${i == 0 ? `\0${caps}` : ""}\n`)), FLUSH]);
   }
 
-  /** A `git push`: the receive-pack request's body in, the report out (in side-band if the client asked). */
-  async receive(body: Uint8Array, who: Actor): Promise<Uint8Array> {
+  /**
+   * A `git push`: the receive-pack request's body in, the report out (in side-band if the client asked).
+   * An admin pushes staging and main. A factory VM (`grant`, its git token: factory/git-grant.ts) pushes
+   * its own task's branch (and may delete it), and a merge's token moves staging too, under staging's rules.
+   * Task branches are never shown, mirrored or deployed: only staging and main are Erga's branches.
+   */
+  async receive(body: Uint8Array, who: Actor, grant?: GitGrant): Promise<Uint8Array> {
     const { pkts, end } = readPkts(body, 0, (p) => p.kind == "flush");
     const commands: RefUpdate[] = [];
     let caps = new Set<string>();
@@ -262,9 +272,17 @@ export class SourceRepo {
       const { refs } = await lsRefs(remote);
       const statuses = new Map<string, string>();
       const accepted: (RefUpdate & { branch: Branch })[] = [];
+      const taskRef = grant ? `refs/heads/${grant.branch}` : null;
+      const tasks: RefUpdate[] = [];
       for (const c of commands) {
         const branch = BRANCHES.find((b) => REF(b) == c.ref);
-        if (!branch) statuses.set(c.ref, "Erga has two branches, staging and main: push to one of those");
+        const refused = grant ? refsAllowed(grant, [{ next: c.new, ref: c.ref }]) : null;
+        if (refused) statuses.set(c.ref, refused);
+        else if (c.ref == taskRef) {
+          if ((refs.get(c.ref) ?? ZERO) != c.old) statuses.set(c.ref, "stale info: it moved since you fetched; fetch first");
+          else tasks.push(c);
+        }
+        else if (!branch) statuses.set(c.ref, "Erga has two branches, staging and main: push to one of those");
         else if (c.new == ZERO) statuses.set(c.ref, `${branch} can't be deleted`);
         else if ((refs.get(c.ref) ?? ZERO) != c.old) statuses.set(c.ref, "stale info: it moved since you fetched; fetch first");
         else accepted.push({ ...c, branch });
@@ -302,6 +320,17 @@ export class SourceRepo {
         }
       } else if (leftovers.length) {
         await receivePack(remote, leftovers, null).catch(() => {});
+      }
+      // A factory task's branch: no rules but its token's (above), so straight to Artifacts, objects and all.
+      if (tasks.length && unpack == "ok") {
+        const writes = tasks.some((c) => c.new != ZERO);
+        const r = await receivePack(remote, tasks, writes ? (pack.length ? pack : await emptyPack()) : null);
+        if (r.unpack != "ok") unpack = r.unpack;
+        for (const c of tasks) {
+          const said = r.unpack != "ok" ? `Artifacts couldn't take the objects: ${r.unpack}` : r.refs.get(c.ref) ?? "no answer";
+          statuses.set(c.ref, said);
+          if (said == "ok") messages.push(c.new == ZERO ? `Erga: ${c.ref.slice(11)} deleted.` : `Erga: ${c.ref.slice(11)} is now ${c.new.slice(0, 7)}.`);
+        }
       }
       return { unpack, statuses };
     });

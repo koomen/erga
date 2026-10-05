@@ -5,6 +5,9 @@
     "repo": "erga"
   },
   "builder": "erga-builder",
+  "factory": {
+    "image": "erga-factory:af90e5f77efc"
+  },
   "targets": {
     "production": {
       "name": "production",
@@ -26,7 +29,8 @@
       "deploys": [
         "production",
         "staging"
-      ]
+      ],
+      "factory": true
     },
     "staging": {
       "name": "staging",
@@ -49,7 +53,8 @@
       ],
       "deploys": [
         "staging"
-      ]
+      ],
+      "factory": true
     }
   }
 }

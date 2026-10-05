@@ -50,6 +50,7 @@ import { counted, simulateLatency, tallied } from "./timing";
 export { Deployer } from "./deployer";
 export { DocHost } from "./doc-host";
 export { Factory } from "./factory";
+export { FactoryVm } from "../factory/cloudflare";
 export { Pipeline } from "./pipeline";
 export { SourceHost } from "./source-host";
 export { Home } from "./home";

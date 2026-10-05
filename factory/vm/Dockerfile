@@ -6,10 +6,12 @@
 # `bun install` in a fresh clone takes seconds.
 #
 # Built by factory/vm/build.ts, which stages the context (this file,
-# package.json, bun.lock and the scripts in factory/vm/) and tags the image
-# erga-factory:<hash of those>, so a new lockfile or script makes a new image
-# and an unchanged one is reused. Locally Docker runs it; on Cloudflare it is
-# the Sandbox's image (README, The factory).
+# package.json, bun.lock and the VM's agent) and tags the image
+# erga-factory:<hash of this file, the agent and the Bun version>; the
+# dependencies are only a cache. The jobs' scripts come with each job.
+# Locally Docker runs it; on Cloudflare it is pushed to the account's
+# registry (factory/vm/push.ts) and each task's container starts from it
+# (README, The factory).
 ARG BUN_VERSION=1.4.2
 FROM node:24-bookworm-slim AS node
 

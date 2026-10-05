@@ -22,8 +22,12 @@ export interface Env {
   FACTORY_KEY?: string;
   /** The factory's VMs on Cloudflare: a container-backed Durable Object per VM (factory/cloudflare.ts). Absent until the runbook declares it. */
   FACTORY_VM?: DurableObjectNamespace<FactoryVm>;
-  /** Where the VMs' previews show: <vm>.<FACTORY_PREVIEW_DOMAIN>, a wildcard route to this Worker. */
+  /** Where the VMs' previews show: <vm>.<FACTORY_PREVIEW_DOMAIN>, a wildcard route to this Worker (the documents' pages domain). */
   FACTORY_PREVIEW_DOMAIN?: string;
+  /** The factory's image as the deploy declared it (a registry reference), if the container API doesn't list it under `images`. */
+  FACTORY_IMAGE?: string;
+  /** A VM's instance type (factory/cloudflare.ts: standard-3 when unset). */
+  FACTORY_VM_INSTANCE?: string;
   /** The server's database: users, settings and the directory of documents (directory.ts, users.ts, config.ts; migrations/). */
   DB: D1Database;
   /** The editor's own files (page.html as editor.html, page.js, style.css, fonts). */

@@ -29,6 +29,7 @@
 
 
 import { createHash } from "node:crypto";
+import { ensureFactoryApp, FACTORY_CLASS, FACTORY_IMAGE_NAME, factoryAppName, factoryNamespace, prepareImage } from "./containers";
 import { copyDocuments } from "./snapshot";
 
 export const API = "https://api.cloudflare.com/client/v4";
@@ -217,17 +218,22 @@ export const STEPS = [
   { id: "live", title: "Wait for it to answer" },
 ] as const;
 
-/** Every step the pipeline knows, in order: a target that copies another's data (staging) has all of them. */
+/** Every step the pipeline knows, in order: a target that copies another's data (staging) and runs the factory has all of them. */
 export const ALL_STEPS = [
   STEPS[0], STEPS[1],
   { id: "data", title: "Copy production's database into it" },
-  STEPS[2], STEPS[3], STEPS[4], STEPS[5], STEPS[6], STEPS[7],
+  STEPS[2], STEPS[3],
+  { id: "image", title: "Get the factory's image ready (Containers)" },
+  STEPS[4],
+  { id: "vms", title: "Connect the factory's VMs (Containers)" },
+  STEPS[5], STEPS[6], STEPS[7],
   { id: "documents", title: "Copy production's documents into it" },
 ] as const;
 export type StepId = (typeof ALL_STEPS)[number]["id"];
 
-/** A target's steps: the deploy page's, and the two copying steps for one with a snapshot. */
-export const stepsFor = (t: Pick<Target, "snapshot">) => ALL_STEPS.filter((s) => t.snapshot || (s.id != "data" && s.id != "documents"));
+/** A target's steps: the deploy page's, the two copying steps for one with a snapshot, and the factory's two for one with a factory. */
+export const stepsFor = (t: Pick<Target, "snapshot" | "factory">) => ALL_STEPS.filter((s) =>
+  (t.snapshot || (s.id != "data" && s.id != "documents")) && (t.factory || (s.id != "image" && s.id != "vms")));
 
 export type Report = (step: StepId, status: "running" | "done" | "skipped", detail?: string) => void;
 
@@ -290,14 +296,23 @@ export interface Target {
    * authorized with `token`. Nothing is ever written to the source.
    */
   snapshot?: { databaseName: string; origin: string; token: string };
+  /**
+   * The factory's VMs (factory/cloudflare.ts): Cloudflare Containers owned by the FactoryVm Durable Object, started
+   * from `image` (a reference in the account's registry, deploy/containers.ts), with previews on <vm>.<previews>
+   * (the documents' pages domain, whose wildcard route and certificate already reach this Worker).
+   */
+  factory?: { image: string; previews: string };
   /** This is production (erga.dev): only then may the target use production's names. */
   production?: boolean;
   /** Production's names (deploy/targets.ts PRODUCTION): a target that isn't production and uses one stops before it starts. */
   guard?: { worker: string; database: string; host: string; pages: string; accountId?: string };
 }
 
-/** What runs on from one step to the next (and across a restart, deploy/branches.ts keeps it): the database, the version, and the documents staging had before. */
-export interface Carry { dbId?: string; version?: string; oldDocs?: string[] }
+/**
+ * What runs on from one step to the next (and across a restart, deploy/branches.ts keeps it): the database, the version,
+ * the documents staging had before, and why the version went up without the factory's containers (if it did).
+ */
+export interface Carry { dbId?: string; version?: string; oldDocs?: string[]; noVms?: string }
 
 export const targetHost = (t: Pick<Target, "app" | "workerName" | "subdomain">) => (t.app.kind == "domain" ? t.app.hostname : `${t.workerName}.${t.subdomain}.workers.dev`);
 export const targetSharedPagesHost = (t: Pick<Target, "workerName" | "subdomain">) => `${t.workerName}-pages.${t.subdomain}.workers.dev`;
@@ -360,6 +375,8 @@ export async function runPipeline(cf: Cloudflare, release: Release | null, targe
   from?: StepId; carry?: Carry; checkpoint?: (done: StepId, carry: Carry) => Promise<void> | void;
   /** Stops the run between steps, throwing the signal's reason: a step that has begun always ends first. */
   signal?: AbortSignal;
+  /** A machine's deploy (deploy/run.ts): makes sure the registry has the factory's image (building and pushing it with Docker). */
+  pushImage?: (ref: string) => Promise<void>;
 }): Promise<Deployed> {
   const { report, signal } = opts;
   const site = opts.site ?? globalThis.fetch;
@@ -471,18 +488,59 @@ export async function runPipeline(cf: Cloudflare, release: Release | null, targe
       return `${Object.keys(rel.assets).length} files`;
     },
 
-    // The Worker: modules, bindings (from the build's config, made the target's own), secrets, its Durable Objects.
+    // The factory's image: in the registry (a machine's deploy pushes it if it's missing) and prepared for Containers.
+    // A server's own deploy token may not use Containers (deploy/tokens.ts): then the image's push prepared it already.
+    async image() {
+      const f = target.factory!;
+      if (!needRelease().worker.exports?.[FACTORY_CLASS]) return `skipped: this release has no ${FACTORY_CLASS} (an older commit)`;
+      await opts.pushImage?.(f.image);
+      try {
+        await prepareImage(cf, target.accountId, f.image, sleep);
+      } catch (e) {
+        if (target.keepSecrets && e instanceof DeployError && (e.status == 401 || e.status == 403)) return `${f.image} (this deploy's token may not use Containers: the image was prepared when it was pushed, factory/vm/push.ts)`;
+        throw e;
+      }
+      return `${f.image}, ready`;
+    },
+
+    // The Worker: modules, bindings (from the build's config, made the target's own), secrets, its Durable Objects, the factory's image.
     async worker() {
       const rel = needRelease();
       const assetsJwt = (carry as Carry & { assetsJwt?: string }).assetsJwt;
       if (!assetsJwt) throw new DeployError("The editor's files weren't uploaded first: deploy again.");
-      const metadata = workerMetadata(rel, target, { dbId: carry.dbId!, assetsJwt, pagesHost, existing });
-      const form = new FormData();
-      form.set("metadata", JSON.stringify(metadata));
-      for (const [name, bytes] of Object.entries(rel.modules)) form.append(name, new File([new Uint8Array(bytes)], name, { type: "application/javascript+module" }));
-      await cf.call("PUT", `${acc}/workers/scripts/${target.workerName}`, "upload the Worker", form);
+      const upload = async (vms: boolean) => {
+        const metadata = workerMetadata(rel, target, { dbId: carry.dbId!, assetsJwt, pagesHost, existing, vms });
+        const form = new FormData();
+        form.set("metadata", JSON.stringify(metadata));
+        for (const [name, bytes] of Object.entries(rel.modules)) form.append(name, new File([new Uint8Array(bytes)], name, { type: "application/javascript+module" }));
+        await cf.call("PUT", `${acc}/workers/scripts/${target.workerName}`, "upload the Worker", form);
+      };
+      delete carry.noVms;
+      try {
+        await upload(!!target.factory);
+      } catch (e) {
+        // A deploy token that may not name a container image: the version goes up without the factory's VMs (the rest of
+        // Erga is unchanged), and the log says how to give them back.
+        if (!(target.factory && target.keepSecrets && e instanceof DeployError && e.status == 403)) throw e;
+        carry.noVms = e.message;
+        await upload(false);
+      }
       delete (carry as Carry & { assetsJwt?: string }).assetsJwt;
-      return `${target.workerName}, release ${rel.version}`;
+      return `${target.workerName}, release ${rel.version}${carry.noVms ? "; without the factory's VMs: this deploy's token may not name a container image (README, The factory)" : ""}`;
+    },
+
+    // The factory's container application, made once for the Worker's FactoryVm namespace (deploy/containers.ts).
+    async vms() {
+      if (carry.noVms) return `skipped: the version has no factory image (${carry.noVms})`;
+      const ns = await factoryNamespace(cf, target.accountId, target.workerName);
+      if (!ns) return `skipped: ${target.workerName} has no ${FACTORY_CLASS} Durable Object (this release doesn't export it)`;
+      try {
+        const r = await ensureFactoryApp(cf, target.accountId, target.workerName, ns);
+        return `${factoryAppName(target.workerName)} (${ns}), ${r == "made" ? "made" : "already there"}`;
+      } catch (e) {
+        if (target.keepSecrets && e instanceof DeployError && (e.status == 401 || e.status == 403)) return `skipped: this deploy's token may not use Containers, so it can't check ${factoryAppName(target.workerName)}. It's made once from a machine (bun deploy/setup.ts --factory); until then the factory's VMs don't start`;
+        throw e;
+      }
     },
 
     // Its address.
@@ -571,7 +629,7 @@ export async function runPipeline(cf: Cloudflare, release: Release | null, targe
     signal?.throwIfAborted();
     report(id, "running");
     const detail = await run[id]();
-    const skipped = id == "documents" && detail?.startsWith("skipped");
+    const skipped = (id == "documents" || id == "vms" || id == "image") && !!detail?.startsWith("skipped");
     report(id, skipped ? "skipped" : "done", detail);
     await opts.checkpoint?.(id, carry);
   }
@@ -597,10 +655,13 @@ export const PAGES_PROXY = `export default { fetch: (request, env) => env.APP.fe
  * as `cf build` wrote it), each made the target's own: its database, its
  * text settings, its secrets, its services and where its pages run.
  */
-export function workerMetadata(release: Release, target: Target, o: { dbId: string; assetsJwt: string; pagesHost: string | null; existing?: boolean }) {
+export function workerMetadata(release: Release, target: Target, o: { dbId: string; assetsJwt: string; pagesHost: string | null; existing?: boolean; vms?: boolean }) {
   const w = release.worker;
+  // The factory's VMs (factory/cloudflare.ts): their previews' domain and image (the image also as the version's container, below).
+  const vms = o.vms ?? !!target.factory;
+  const factory: Record<string, string> = target.factory && vms ? { FACTORY_PREVIEW_DOMAIN: target.factory.previews, FACTORY_IMAGE: target.factory.image } : {};
   // Which release this is (GET /api/deploys/version answers it), and which account the server is in (for its own branch deploys).
-  const text: Record<string, string> = { ERGA_VERSION: release.version, CLOUDFLARE_ACCOUNT_ID: target.accountId, ...target.vars };
+  const text: Record<string, string> = { ERGA_VERSION: release.version, CLOUDFLARE_ACCOUNT_ID: target.accountId, ...target.vars, ...factory };
   const secrets = target.secrets;
   const bindings: Record<string, unknown>[] = [];
   const named = new Set<string>();
@@ -642,6 +703,9 @@ export function workerMetadata(release: Release, target: Target, o: { dbId: stri
     },
     observability: { enabled: !!w.observability?.enabled, logs: { enabled: !!w.observability?.logs?.enabled, invocation_logs: !!w.observability?.logs?.invocationLogs } },
     ...(Object.keys(exports).length ? { exports } : {}),
+    // The factory's image, by name, on this version: FactoryVm starts each VM from it (ctx.container.images.factory),
+    // with the `durable_object` scheduling policy (deploy/containers.ts).
+    ...(target.factory && vms && exports[FACTORY_CLASS] ? { containers: [{ name: factoryAppName(target.workerName), class_name: FACTORY_CLASS, images: { [FACTORY_IMAGE_NAME]: target.factory.image } }] } : {}),
     tags: [WORKER_TAG],
   };
 }
