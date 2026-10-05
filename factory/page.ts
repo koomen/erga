@@ -21,7 +21,6 @@ export const BOARD_STYLE = `
     --accent: var(--caret); --ok: #1f7a4d; --warn: #b26a00; --bad: #b3261e; --shadow: 0 1px 2px rgba(0,0,0,.05); }
   @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --ok: #4cc38a; --warn: #f0a742; --bad: #ff7b72; --shadow: 0 1px 2px rgba(0,0,0,.4); } }
   :root[data-theme="dark"] { --ok: #4cc38a; --warn: #f0a742; --bad: #ff7b72; --shadow: 0 1px 2px rgba(0,0,0,.4); }
-  .tag { font: 600 10px/1 var(--font-text); text-transform: uppercase; letter-spacing: .06em; color: var(--warn); border: 1px solid currentColor; border-radius: 999px; padding: 3px 7px; }
   .pills { display: flex; flex-wrap: wrap; gap: 4px 16px; align-items: center; }
   .pill { height: 26px; font-size: 12px; font-weight: 500; color: var(--muted); display: inline-flex; align-items: center; gap: 6px; border: 0; border-radius: 0; padding: 0; background: none; box-shadow: none; }
   .pill::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
@@ -411,7 +410,7 @@ window.ergaBoard = { openTask: () => openId, title: (id) => tasks.find((x) => x.
 
 /** The board's pane: its head (where VMs run, the Claude sign-in), the notice, the columns, its dialogs. */
 export function boardMarkup(opts: { enabled: boolean }): string {
-  return `<div class="pane-head"><h2>Tasks</h2><span class="tag">Experimental</span><div class="pills" id="pills"><span class="pill" id="live">connecting</span><button class="pill" id="mirror-pill" type="button" hidden>GitHub: loading…</button></div></div>
+  return `<div class="pane-head"><h2>Tasks</h2><div class="pills" id="pills"><span class="pill" id="live">connecting</span><button class="pill" id="mirror-pill" type="button" hidden>GitHub: loading…</button></div></div>
 <div class="notice" id="notice" ${opts.enabled ? "hidden" : ""}>The factory is off. An admin turns it on with the <code>factory</code> setting on <a href="/admin">Admin settings</a>.</div>
 <div class="board" id="board"></div>
 <dialog id="dlg"></dialog>

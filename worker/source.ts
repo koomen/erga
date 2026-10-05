@@ -23,6 +23,7 @@ import { tar } from "../source/git";
 import { gitHttp } from "../source/http";
 import type { Actor } from "../source/repo";
 import { adminSourcePage } from "../source/page";
+import { isTargetName, TARGETS, type TargetName } from "../deploy/targets";
 import { factoryEnabled } from "./factory";
 import { artifactsRemote, githubUrl, hasSource } from "./artifacts";
 import { adminKeysOf, directoryOf, tokensOf } from "./d1";
@@ -129,7 +130,7 @@ export async function sourceDoor(request: Request, env: Env, platform: Platform,
   const users = directoryOf(env).users;
   const admin = !session.test && (await users.isAdmin(whoOf(session)));
   if (admin && !(await users.isUnlocked(whoOf(session)))) return unlockFirst("/admin/source", session);
-  return adminSourcePage({ session, admin, factory: admin && (await factoryEnabled(env)), ready: hasSource(env), origin: url.origin, mirrorUrl: githubUrl(env) });
+  return adminSourcePage({ session, admin, factory: admin && (await factoryEnabled(env)), ready: hasSource(env), origin: url.origin, mirrorUrl: githubUrl(env), worker: isTargetName(env.DEPLOY_TARGET ?? "") ? TARGETS[env.DEPLOY_TARGET as TargetName].worker : null });
 }
 
 /**
