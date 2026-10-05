@@ -278,7 +278,7 @@ try {
   await until(async () => p.eval(`getComputedStyle(document.querySelector("#grid .row button.here")).display != "none"`), 5_000, "hovering a staging-only commit offers Merge to here");
   await click("#grid .row button.here");
   await until(async () => (await state()).rows.find((x) => x.sha == polled2)?.kind.includes("on-main"), 10_000, "Merge to here moves main to that commit", state);
-  expect((await p.eval<string>(`document.getElementById("merge-hint").textContent`)).includes("Merged: main is now"), "and says so");
+  expect((await p.eval<string>(`document.getElementById("merge-hint").textContent`)) == "", "and leaves no message after it");
   // Every move of main deploys production (its server is played in the mock: deploy/mock.ts, worker/pipeline.ts's peer).
   await until(async () => (await state()).rows.find((x) => x.sha == polled2)?.live[1] == "live", 60_000, "and production deploys it", state);
   ok("every move of staging deploys staging, every move of main deploys production");

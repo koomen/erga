@@ -388,7 +388,7 @@ const SOURCE_SCRIPT = `
       const r = await fetch("/api/source/merge", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ from: "staging", to: "main", ...(commit ? { commit } : {}) }) });
       const body = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(body.error || "The merge failed (HTTP " + r.status + ").");
-      hint.textContent = body.upToDate ? "Nothing to merge: main is there already." : "Merged: main is now " + body.commit.slice(0, 7) + ".";
+      hint.textContent = "";
     } catch (e) { hint.className = "hint error"; hint.textContent = e.message; }
     busy = false;
     await load();
