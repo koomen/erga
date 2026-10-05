@@ -11,6 +11,25 @@ The task queue (`development/task-queue/`) is a local board at
 commits, where merged tasks show), live, and merges it
 with one click. It runs only on this machine.
 
+### Standing rules: one agent per task, and time limits
+
+These two rules come from the user. They hold for every task, in task mode
+and in live mode, and for the queue itself:
+
+1. **A task keeps the same agent from start until it merges.** The outer
+   agent records the task's agent on the task (`tq agent <id> <agentId>`).
+   When a merge needs work, the queue wakes nobody itself and never starts a
+   fresh, context-free agent: it stops, and the outer agent wakes the task's
+   own agent (SendMessage). Only if that agent is gone (a new session, say)
+   does a new agent take the task over, with the task's log and summary.
+2. **Anything that could hang runs under a time limit**: builds, tests, git,
+   pushes, previews, screenshots, every step the queue runs. When the limit
+   is reached, the whole process tree is killed and the task's agent is woken
+   to resolve the issue. Agents run their own builds and tests under
+   `timeout` (e.g. `timeout 600 ./test.sh`), stop their own preview when it
+   gets in the way of a build in the worktree, and never leave processes
+   behind.
+
 ### Watch the queue, always
 
 At the start of every session, before anything else, the outer agent starts
@@ -24,7 +43,8 @@ a description like "task queue status changes"). It starts the queue if it
 isn't running, then prints one line per task status change, and nothing
 else: `#3 working: title`, `#3 ready to merge: title`, `#3 merging: title`,
 `#3 merged: title`, `#4 failed: title: why`, `#5 merge failed, back to
-ready to merge: title: why`, `#6 discarded: title`; and, for
+ready to merge: title: why`, `#6 discarded: title`, `#8 needs agent:
+title: why (agent <agentId>)` (or `(no agent recorded)`); and, for
 [dependencies](#dependencies-between-tasks), `#7 unblocked: title (#3
 merged)`, `#8 unblocked for merge: title (#3 merged)` and `#9 blocked:
 title: why`; and `origin sign-in: open <url> and approve it (code …)` when
@@ -44,7 +64,28 @@ On each line, act without being asked:
   **unblocked for merge**: tell the user it can be merged now.
 - **blocked**: a dependency was discarded or failed. Tell the user, and
   change the dependency (`tq deps`) if they agree.
-- **merge failed**: tell the user why, and what would fix it.
+- **merge failed**: tell the user why, and what would fix it. (This is a
+  failure outside the task's worktree: the main checkout off `main`, a
+  dependency that didn't merge, origin's sign-in. The task is back in Ready
+  to merge.)
+- **needs agent**: the merge stopped for something in the task's worktree:
+  a conflict (`conflicts merging origin/staging: README.md, worker/factory.ts`),
+  uncommitted changes, a failed check, or a step that timed out (`git fetch
+  origin timed out after 180s`). The queue put the worktree back on the
+  branch's last commit; Merge is off. Do this, without being asked:
+  1. Tell the user in a line.
+  2. Wake the task's own agent: SendMessage to the agent id in the line
+     (`tq get <id>` has it as `agent`), with the reason and the output
+     (`tq get <id>`: `error`, `needsAgent.output`), and ask it to merge
+     origin's branch and `main` into its branch, resolve, test under a time
+     limit, commit, and run `tq continue <id>`.
+  3. Only if no agent is recorded, or SendMessage fails (the agent is gone),
+     start a new subagent with the prompt below, plus the task's summary,
+     its log (`tq get <id>`) and the reason, and record its id
+     (`tq agent <id> <agentId>`).
+  4. Never resolve or merge it yourself (except for a live task, below).
+  The merge then runs again by itself after `tq continue`; the watch prints
+  `merging`, then `merged`, or `needs agent` again.
 - **origin sign-in**: the queue needs the user to approve this machine's
   sign-in to Erga's Git endpoint, once. Give them the link at once.
 
@@ -81,13 +122,21 @@ When the user asks for a change to this repo (and not live):
 
 2. **Hand it to a subagent, in the background**, with the prompt below
    (Agent tool, `run_in_background: true`, no `isolation`: the queue already
-   made the worktree). Then tell the user, in a line, that it's on the board
+   made the worktree). **Record the subagent as the task's agent** at once,
+   with the agent id from the Agent tool's result (a subagent doesn't know
+   its own id):
+
+       development/task-queue/tq agent <id> <agentId>
+
+   That agent keeps the task until it merges. Then tell the user, in a line, that it's on the board
    as #id, and **stay free**: the outer agent does no implementation, testing
    or merging itself (except in live mode, below), and waits for the next instruction. Several tasks can
    be in flight at once, each in its own worktree.
 
 3. When a subagent reports back, relay its result in a sentence or two
    (the task's URL, and anything the user must know). Don't redo its work.
+   The subagent stays the task's agent after it reports: if the merge needs
+   work, wake it (SendMessage) as the watch section says.
 
 ### Dependencies between tasks
 
@@ -140,7 +189,11 @@ Fill in the brackets:
 > 3. Test it thoroughly: the tests that cover what you changed (`./test.sh`
 >    for the whole suite) and new ones where they belong. Verify in a real
 >    browser with **headless Chrome only** (`tests/cdp.ts` drives it; never
->    open or drive the user's own browser).
+>    open or drive the user's own browser). Run every build and test under a
+>    time limit (`timeout 600 ./test.sh`, `timeout 300 bun tests/x.ts`). If
+>    your own preview gets in the way of a build in the worktree, stop it
+>    first (`tq preview [id] --stop`) and start it again after. Never leave
+>    processes behind (dev servers, watchers, browsers): stop what you start.
 > 4. Make the result visible at one URL: `tq preview [id] [/path]` runs the
 >    app from the worktree on the task's port ([port]) and keeps it running
 >    after you finish. Pick the page that shows the change best, with any
@@ -153,7 +206,10 @@ Fill in the brackets:
 >    (`tq unshot [id] FILE|INDEX`, or `tq unshot [id] --all`), or add
 >    `--replace` to the first `tq shot` of a fresh set. The card must show
 >    only current screenshots.
-> 6. Commit everything (the queue won't merge uncommitted work), then
+> 6. Merge origin's branch and main into your branch yourself (`git fetch
+>    origin`, `git merge origin/staging`, `git merge main`), resolve
+>    anything, test, and commit, so the queue's merge finds no conflicts.
+>    Commit everything (the queue won't merge uncommitted work), then
 >    `tq done [id] "summary" [url]`. Write the summary, and your final
 >    reply, in ASD-STE100 (Simplified Technical English), as AGENTS.md
 >    ("Task summaries") shows: what changed for the user, results, limits,
@@ -164,6 +220,13 @@ Fill in the brackets:
 > ask says this task merges after #[n], build against the contract it gives,
 > as the real thing; if you find an unnamed dependency, say so
 > (`tq fail [id] "why"`) rather than stub it.
+>
+> You are this task's agent until it merges: stay available after you
+> finish. If the merge needs you (a conflict, uncommitted changes, a failed
+> check, a step that timed out), the outer agent messages you with the
+> reason. Then, in the worktree: merge origin's branch and main into your
+> branch, resolve, test under a time limit, commit, and run
+> `tq continue [id]`. The merge then runs again by itself.
 >
 > Don't merge or push: the user merges from the board. Finish by replying
 > with the task's URL and a two-line summary.
@@ -224,6 +287,9 @@ watching. Step by step:
    user merges from the board as usual: a live task merges like any other,
    and merging or discarding it stops its dev server and closes its window.
    If the user drops it instead, `tq fail <id> "why"` (or they discard it).
+   A live task's agent is the outer agent itself: if its merge needs an
+   agent (the watch prints `needs agent`), the outer agent resolves it in
+   the worktree, as a task's agent would, and runs `tq continue <id>`.
 
 **The outer agent's other duties carry on during live mode.** The queue
 watch stays armed (re-arm it when the Monitor expires) and its lines are
@@ -241,16 +307,18 @@ you (`claude --plugin-dir development/task-queue/mod`). It puts the workflow
 in the main agent's system prompt and gives it one tool,
 `mcp__task-queue__task_create`, which registers the task and starts a
 `task-queue:worker` subagent in the worktree with the prompt above built in.
+It records the worker as the task's agent (the id `$.agent.spawn`
+returns), so it is the one to wake when the merge needs work.
 The worker reports with `task_log`, `task_preview`, `task_screenshot`
 (`replace: true` for a fresh set), `task_unscreenshot`, `task_done` and
-`task_fail`. `task_create` also takes `after` and `mergeAfter`
+`task_fail`, and runs `task_continue` after it fixes what stopped its merge. `task_create` also takes `after` and `mergeAfter`
 (dependencies, as above): a task with `after` gets no worker until its
 dependencies merge, and then `task_start` starts it; `task_deps` changes
-them. `/tasks` opens a live pane with Open, Merge
+them. `/tasks` opens a live pane (with a Needs agent group) with Open, Merge
 and Discard buttons (no Merge or Discard while a task is merging), and
-`/tasks board` opens the browser board. The status line counts working, ready
-and merging tasks (and those waiting on others), and toasts say when one is
-ready, starts merging, is merged, fails to merge, fails, is unblocked or is
+`/tasks board` opens the browser board. The status line counts working, ready,
+merging and need-agent tasks (and those waiting on others), and toasts say when one is
+ready, starts merging, needs its agent, is merged, fails to merge, fails, is unblocked or is
 blocked. With the mod loaded, use its tools instead of `tq` (but still watch the queue with `tq watch` under Monitor, as above: the mod's toasts tell the user, not the agent; its system prompt says so too). Live mode has no tool of its own: use `tq add --live`, `tq live` and `tq look`, as above (the mod's system prompt says so).
 
 ## Task summaries
@@ -320,9 +388,18 @@ with the reason, while a task's dependencies (`--after`, `--merge-after`)
 aren't merged; a dependency that is merging just ahead of it is fine. The task goes
 straight to **Merging** (status `merging`, its own column), and stays there
 while the queue works; merges run one at a time, in the order they were
-asked for, and a card waiting its turn says so. The queue merges `origin/staging` and `main` into the task's branch, in its
-worktree; if that conflicts, it runs `claude -p` there to resolve the
-conflicts, run the tests and commit. Then it merges the branch into `main`
+asked for, and a card waiting its turn says so. First the queue stops the
+task's preview and anything else still running in its worktree (a dev
+server, a build, a test left behind), and logs what it stopped. Then it
+merges `origin/staging` and `main` into the task's branch, in its worktree,
+and runs `TASK_QUEUE_CHECK` there if one is set. If anything needs work
+there (a conflict, uncommitted changes, a failed check) or any step runs out
+of time, the queue never resolves it itself: it puts the worktree back on
+the branch's last commit and sets the task to **Needs agent** (status
+`needs-agent`, its own column, Merge off), with the reason, the conflicted
+files and the output (`needsAgent`). The task's agent fixes it and runs `tq
+continue <id>`, and the merge runs again (Watch the queue, "needs agent").
+Then it merges the branch into `main`
 (`--no-ff`, "Merge task/…: title"), pushes `main` to `origin`'s `staging`,
 stops the preview and removes the worktree and branch: the task is Done
 (`merged`). `origin` is Erga's own Git endpoint
@@ -342,25 +419,46 @@ the checkout is clean on `main`). The first time on a machine, signing in
 needs one approval: `tq watch` prints `origin sign-in: open <url> and approve
 it (code …)`, and the board shows it. Tell the user at once; nothing can be
 fetched or pushed until they approve. A merge that
-fails (uncommitted changes, unresolved conflicts, the main checkout not on
-`main`, or a `--merge-after` task that didn't merge first) goes back to Ready to merge (`complete`) with the reason on the card,
+fails for a reason outside the task's worktree (the main checkout not on
+`main`, a `--merge-after` task that didn't merge first, origin's sign-in
+refused) goes back to Ready to merge (`complete`) with the reason on the card,
 as does one the queue was stopped in the middle of, when it starts again.
-Agents can't set `merging` or `merged`, nor change a merging task's status. Discard drops a task: preview stopped,
+Agents can't set `merging`, `needs-agent` or `merged`, nor change a merging task's status.
+
+**Time limits.** Every step the queue runs has one, and runs in a process
+group of its own; at the limit the whole group is killed. The limits, in
+seconds (each one is changed with `TASK_QUEUE_TIMEOUT_<STEP>`; `GET /api`
+lists them): `git` 120 (local git), `origin` 180 (fetch and push, with the
+credential helper), `login` 600 (the sign-in to origin), `check` 1200
+(`TASK_QUEUE_CHECK`), `install` 300 (a new worktree's `node_modules`),
+`stop` 15 (a preview or a leftover process stopping), `screenshot` 60, and
+`build` 60 (the new code built before a restart). During a merge a step
+that times out sends the task to its agent (`needs agent: git fetch origin
+timed out after 180s`, with the output's tail). A push that times out is
+like a refused push: the merge stays, and the queue pushes again later. Discard drops a task: preview stopped,
 worktree removed, branch deleted. A live task's Chrome window is closed on
 merge and on discard, as its dev server (the preview) is stopped.
 
-### The queue restarts itself after merging its own code
+### The queue restarts itself when its own code changes
 
-When a merge changes the queue's own code (files under
+When the queue's own code changes on disk (files in
 `development/task-queue/` that the server, the board or `tq` run; not docs,
-`mod/` or its tests), the queue restarts itself so it runs the new code. It
-waits until nothing else is merging and that merge's bookkeeping is done
-(merged, pushed, worktree removed), then starts a fresh server and exits
-(the new pid is in `GET /api`). Tasks are kept, previews carry on, and boards
+`mod/` or its tests), by a merge or any other way (a commit or a pull in the
+main checkout), the queue restarts itself so it runs the new code. It
+compares its files with what it started with, after each merge and every
+3 seconds. It waits until nothing is merging and that merge's bookkeeping is
+done (merged, pushed, worktree removed), checks that the new code builds
+(if not, it keeps running and logs why), then starts a fresh server and
+exits (the new pid is in `GET /api`; `running: {version, stale}` there says
+which code runs, and which files changed since). `tq restart` asks for a
+restart. Tasks are kept, previews carry on, and boards
 and `tq watch` reconnect (a board reloads if the board itself changed).
 
-If it ever doesn't (`curl -s localhost:4700/api` still answers with the old
-code), the outer agent restarts it by hand: kill the server listening on 4700
+(On 2026-10-04 it didn't restart after #2 and #3: the server that ran then
+was older than the self-restart code itself, so it had no way to restart.
+`tq` now restarts a server too old to report `running`, when nothing is
+merging.) If it ever doesn't (`running.stale` in `curl -s localhost:4700/api`
+isn't empty), the outer agent restarts it by hand: kill the server listening on 4700
 (`kill $(lsof -ti tcp:4700 -sTCP:LISTEN)`), then any `tq` command starts it
 again.
 
@@ -374,15 +472,17 @@ print the task as JSON.
 |---|---|
 | `POST /api/tasks {title, description, live?, startAfter?, mergeAfter?}` | register (branch, worktree, port); `live: true` for a live task; `startAfter`, `mergeAfter`: task ids it depends on |
 | `GET /api/tasks[?status=…]`, `GET /api/tasks/:id` | read |
-| `PATCH /api/tasks/:id {status, url, summary, error, live, startAfter, mergeAfter, message}` | update; `status` is `queued`, `working`, `complete` or `failed` (`merging`, `merged` and `discarded` are the queue's; `working` is a 409 while a `startAfter` task isn't merged); `message` goes on the log. Reads carry `blockedBy {start, merge, stuck, reason}` while something blocks the task |
+| `PATCH /api/tasks/:id {status, url, summary, error, live, agent, startAfter, mergeAfter, message}` | update; `agent` records the task's agent (`tq start <id> --agent <agentId>`, `tq agent <id> <agentId>`); `status` is `queued`, `working`, `complete` or `failed` (`merging`, `needs-agent`, `merged` and `discarded` are the queue's; `working` is a 409 while a `startAfter` task isn't merged); `message` goes on the log. Reads carry `blockedBy {start, merge, stuck, reason}` while something blocks the task |
 | `POST /api/tasks/:id/log {message}` | a progress line |
 | `POST /api/tasks/:id/preview {command?, path?}` | run the preview (default `bun start --port $PORT --no-open`) in the worktree; sets `url` |
-| `DELETE /api/tasks/:id/preview` | stop it |
+| `DELETE /api/tasks/:id/preview` | stop it (`tq preview <id> --stop`) |
 | `POST /api/tasks/:id/live {path?, command?}` | live mode: mark it live, run the dev server with live reload, open (or bring back) its Chrome window; records `chrome` |
 | `GET /api/tasks/:id/look[?shot=1&console=1]` | what that window shows: `url`, `title`, `tabs`, `selection`, `console`, `screenshot` |
 | `POST /api/tasks/:id/screenshots` | an image body, or `{path}`, or `{url}` (headless Chrome), with `caption` |
 | `DELETE /api/tasks/:id/screenshots/:file`, `DELETE /api/tasks/:id/screenshots` | remove one screenshot (by file name or 1-based index), or all, and delete the files; not while merging. The board's detail view has a × on each screenshot (on hover) |
-| `POST /api/tasks/:id/merge`, `POST /api/tasks/:id/discard` | the board's buttons; merge answers 202 with the task `merging`, or 409 while its dependencies aren't merged |
+| `POST /api/tasks/:id/merge`, `POST /api/tasks/:id/discard` | the board's buttons; merge answers 202 with the task `merging`, or 409 while its dependencies aren't merged or it needs its agent |
+| `POST /api/tasks/:id/continue` | `tq continue <id> [--wait]`: the task's agent, once it has fixed what stopped the merge (`needs-agent`) and committed: the merge runs again (202); 409 while the worktree has uncommitted changes or an unfinished merge |
+| `POST /api/restart` | `tq restart`: restart the queue with the code on disk, once nothing is merging |
 | `POST /api/release {commit?}` | `tq release`: Erga's `main` (production) to `staging`'s head, or to `commit`; only when the user asks |
 | `GET /api/history` | main's latest commits (the Branches column), what was pushed and released, and `login` while a sign-in waits for approval |
 | `GET /api/events` | server-sent events: every task, on each change |
