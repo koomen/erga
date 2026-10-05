@@ -241,9 +241,11 @@ makes `/<DEV_LOGIN>/landing`. Test servers too, when a test asks for `/`.
 The + button (New document) makes a new document. It is in the viewer's
 controls, beside Clone and Edit (on a document's page and on the front page,
 served directly or not), and in the editor's top row, beside the pencil. It
-opens a picker of templates, under the button: **Page** (a blank document),
-the **Presentation** group (no templates yet, it says so), and **Demo page**
-(a copy of the repo's `landing/`). Each template is a link to
+opens a picker of templates, under the button: **Page** (a blank document)
+and the **Presentation** group (no templates yet, it says so). The demo page
+is no template: Clone, on the front page, copies it. Every option and group
+heading is in the app's typeface, Inter, at one size and weight (the picker
+loads `/fonts/inter.css` on a page that hasn't it). Each template is a link to
 `/new?template=<id>`, which makes the document and opens it in the editor.
 Signed out, the picker says you sign in first; `/new` sends you to sign in
 and back to `/new?template=<id>`, which asks you to confirm (the way back from
@@ -257,7 +259,7 @@ and the editor). To add a template:
 
 1. Put its starting document in a folder of its own, `templates/<name>/`,
    with `index.html` (or `index.md`) and the text files beside it (the
-   Worker reads them as text; only `landing` may hold fonts and images).
+   Worker reads them as text).
 2. Add one entry to `TEMPLATES` in `templates.ts`, where it should show in
    the picker:
 
@@ -270,7 +272,7 @@ and the editor). To add a template:
 3. A new group goes in `TEMPLATE_GROUPS`, with the template it comes after.
 
 `bun tests/new-doc.ts` checks it in headless Chrome: each template's
-document, the picker in the viewer, the editor and the signed-out front page,
+document, the picker and its typeface in the viewer, the editor and the signed-out front page,
 and the way to sign in.
 
 ### The homepage, served directly

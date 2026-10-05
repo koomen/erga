@@ -1129,9 +1129,9 @@ export const VIEW_STYLE = `
   }
 </style>`;
 
-/** A template's starting files (templates.ts: a folder under templates/, or the repo's landing/), and its page; null if this server hasn't them. */
+/** A template's starting files (templates.ts: a folder under templates/), and its page; null if this server hasn't them. */
 export function templateFiles(platform: Platform, template: Template): { files: Record<string, string | Uint8Array>; index: string } | null {
-  const files = template.files == "landing" ? platform.landing?.files : platform.templates[template.files.slice("templates/".length)];
+  const files = platform.templates[template.files.slice("templates/".length)];
   if (!files) return null;
   const index = files["index.html"] != null ? "index.html" : files["index.md"] != null ? "index.md" : null;
   return index ? { files: { ...files }, index } : null;

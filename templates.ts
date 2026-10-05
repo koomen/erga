@@ -14,11 +14,10 @@ export interface Template {
   /** A line under its name. */
   description: string;
   /**
-   * The starting document: a folder of the repo, copied whole, whose page is
-   * its index.html (or index.md). Either templates/<name> (text files only)
-   * or landing (the repo's demo page, fonts and images too).
+   * The starting document: a folder of the repo, templates/<name>, copied
+   * whole (text files only), whose page is its index.html (or index.md).
    */
-  files: `templates/${string}` | "landing";
+  files: `templates/${string}`;
 }
 
 /** A group of templates in the picker, placed after the template `after` names (or first, without). Empty, it says so. */
@@ -30,7 +29,6 @@ export interface TemplateGroup {
 /** The templates, in the picker's order. The first is what /new makes when no template is named. */
 export const TEMPLATES: Template[] = [
   { id: "page", name: "Page", description: "A blank document.", files: "templates/doc" },
-  { id: "demo", name: "Demo page", description: "Erga's demo page, to see what a page can do.", files: "landing" },
 ];
 
 export const TEMPLATE_GROUPS: TemplateGroup[] = [
@@ -79,19 +77,22 @@ export const NEW_DOC_STYLE = `<style>
     box-shadow: 0 8px 30px rgba(0, 0, 0, .12), 0 1px 2px rgba(0, 0, 0, .05); font: 400 14px/1.35 "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
   html.page-dark .erga-new-menu { --nm-bg: #1f1f23; --nm-fg: #ececf1; --nm-soft: #8f8f99; --nm-ring: #2f2f35; --nm-hover: rgba(161, 161, 169, .16); }
   .erga-new-menu[hidden] { display: none; }
+  /* One typeface throughout, the app's (Inter, which the script loads where the page hasn't it): every option and group
+     heading in the same size and weight; the lines under them, smaller and quieter. */
+  .erga-new-menu * { font: inherit; letter-spacing: normal; text-transform: none; }
   .erga-new-menu p { margin: 0; }
-  .erga-new-title { padding: 6px 10px 6px; color: var(--nm-soft); font-size: 12px; font-weight: 500; }
+  .erga-new-title { padding: 6px 10px 6px; color: var(--nm-soft); font-size: 12.5px; }
   .erga-new-menu a { display: grid; gap: 1px; padding: 7px 10px; border-radius: 7px; color: var(--nm-fg); text-decoration: none; }
-  .erga-new-menu a b { font-weight: 600; font-size: 14px; }
-  .erga-new-menu a span { color: var(--nm-soft); font-size: 12.5px; }
+  .erga-new-menu a b, .erga-new-group-name { font-weight: 600; font-size: 14px; color: var(--nm-fg); }
+  .erga-new-menu a span, .erga-new-empty, .erga-new-note { color: var(--nm-soft); font-size: 12.5px; }
   .erga-new-menu a:hover, .erga-new-menu a:focus-visible { background: var(--nm-hover); outline: none; }
   .erga-new-group { margin-top: 4px; padding-top: 4px; border-top: 1px solid var(--nm-ring); }
   .erga-new-group + a { margin-top: 4px; position: relative; }
   .erga-new-group + a::before { content: ""; position: absolute; top: -4px; left: 0; right: 0; border-top: 1px solid var(--nm-ring); }
-  .erga-new-group-name { padding: 6px 10px 2px; font-weight: 600; font-size: 12px; letter-spacing: .02em; color: var(--nm-soft); }
+  .erga-new-group-name { padding: 7px 10px 1px; }
   .erga-new-group a { padding-left: 18px; }
-  .erga-new-empty { padding: 4px 18px 8px; color: var(--nm-soft); font-size: 12.5px; font-style: italic; }
-  .erga-new-note { margin-top: 4px !important; padding: 8px 10px 4px; border-top: 1px solid var(--nm-ring); color: var(--nm-soft); font-size: 12.5px; }
+  .erga-new-empty { padding: 0 10px 8px; }
+  .erga-new-note { margin-top: 4px !important; padding: 8px 10px 4px; border-top: 1px solid var(--nm-ring); }
   .erga-view-button.erga-new-btn { margin: 0; padding: 0; border: 0; background-color: transparent; font: inherit; cursor: pointer; }
   .erga-view-button.erga-new-btn:hover { background-color: color-mix(in srgb, var(--chrome) 12%, transparent); }
   .erga-new-btn:focus-visible { outline: 2px solid #3b7cf0; outline-offset: 1px; }
@@ -111,7 +112,14 @@ export const NEW_DOC_SCRIPT = `window.ergaNewDoc = function (root) {
   if (!menu) return;
   let btn = null;
   const items = () => [...menu.querySelectorAll("a")];
+  // The app's typeface, on a page that hasn't it (the viewer, the homepage): fetched as the pointer or focus comes to a + button.
+  const font = () => {
+    if (document.querySelector('link[rel="stylesheet"][href="/fonts/inter.css"]')) return;
+    document.head.append(Object.assign(document.createElement("link"), { rel: "stylesheet", href: "/fonts/inter.css" }));
+  };
+  for (const type of ["pointerover", "focusin"]) root.addEventListener(type, (e) => { if (e.target.closest && e.target.closest(".erga-new-btn")) font(); });
   const show = (b) => {
+    if (b) font();
     if (btn) btn.setAttribute("aria-expanded", "false");
     btn = b;
     menu.hidden = !b;
