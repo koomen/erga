@@ -171,7 +171,7 @@ try {
   expect(moved.status == 302 && moved.headers.get("location") == "/admin/source", "/source redirects to /admin/source", moved.status);
   browser = await Browser.launch();
   const p: Page = await browser.page(await browser.context());
-  const state = () => p.eval<{ rows: { subject: string; sha: string; staging: string; live: string[] }[]; heads: string[]; dots: number; ahead: string; merge: boolean; mergeShown: boolean; mirror: string; title: string; targets: string[] }>(`(() => {
+  const state = () => p.eval<{ rows: { subject: string; sha: string; staging: string; live: string[] }[]; heads: string[]; dots: number; ahead: string; merge: boolean; mergeShown: boolean; headGap: number; mirror: string; title: string; targets: string[] }>(`(() => {
     const dot = (el) => {
       if (!el) return "none";
       const s = getComputedStyle(el);
@@ -184,7 +184,8 @@ try {
       heads: [...document.querySelectorAll("#grid > .head")].map((h) => h.textContent.trim()),
       dots: Math.max(...[...document.querySelectorAll("#grid .row")].map((r) => r.querySelectorAll(".dot").length)),
       ahead: document.getElementById("ahead").textContent, merge: !document.getElementById("merge").disabled,
-      mergeShown: getComputedStyle(document.getElementById("merge")).display != "none",
+      mergeShown: getComputedStyle(document.getElementById("merge")).display != "none" && getComputedStyle(document.getElementById("merge-row")).display != "none",
+      headGap: (() => { const h = document.getElementById("merge-row").parentElement; return h.getBoundingClientRect().height - h.firstElementChild.getBoundingClientRect().height; })(),
       mirror: document.getElementById("mirror-state").textContent, title: document.title,
       targets: [...document.querySelectorAll(".target")].map((t) => t.textContent.replace(/\\s+/g, " ").trim()),
     };
@@ -192,8 +193,16 @@ try {
   await p.open(`${root}/admin/source`, { width: 1280, height: 900, scale: 2, clear: false });
   await until(async () => (await state()).rows.length > 0, 10_000, "the list draws");
   let s = await state();
-  expect(s.rows.map((x) => x.subject).join() == "Fifth,Fourth,Third,Second,First" && s.title.startsWith("Source") && !s.merge && !s.mergeShown && s.ahead.includes("main is at staging"), "one list: staging's commits, newest first; nothing to merge, so no Merge button", s);
+  expect(s.rows.map((x) => x.subject).join() == "Fifth,Fourth,Third,Second,First" && s.title.startsWith("Source") && !s.merge && !s.mergeShown && s.ahead == "" && s.headGap < 1, "one list: staging's commits, newest first; nothing to merge, so no Merge button, no text and no space for them", s);
   await p.screenshot(join(SHOTS, "source-at-staging.png"));
+  await p.open(`${root}/admin/source#source`, { width: 390, height: 844, scale: 2, clear: false });
+  await until(async () => (await state()).rows.length > 0, 10_000, "the list draws (phone, main at staging)");
+  await p.eval(`document.querySelector(".tabs [data-tab=source]").click()`);
+  s = await state();
+  expect(!s.mergeShown && s.ahead == "" && s.headGap < 1 && await p.eval<boolean>(`document.getElementById("merge-row").parentElement.getBoundingClientRect().height > 0`), "on a phone too: no count, no button and no space for them", s);
+  await p.screenshot(join(SHOTS, "source-at-staging-phone.png"));
+  await p.open(`${root}/admin/source`, { width: 1280, height: 900, scale: 2, clear: false });
+  await until(async () => (await state()).rows.length > 0, 10_000, "the list draws again");
   expect(s.heads[0] == "" && s.heads[1] == "Commit" && s.dots == 1, "one dot column, with no header", s);
   expect(await p.eval(`document.querySelector(".crumbs .brand").textContent == "Erga" && document.querySelector(".crumbs .here").textContent == "Source" && !!document.querySelector("[data-erga-account]")`), "breadcrumbs (Erga › Source) and the avatar");
   expect(s.targets.length == 2 && s.targets[0].startsWith("staging") && s.targets[0].includes("live") && s.targets[1].startsWith("production"), "the deploy columns' heads: each target's status", s.targets);
@@ -299,6 +308,12 @@ try {
   await p.screenshot(join(SHOTS, "source-dark.png"));
   await p.open(`${root}/admin/source#source`, { width: 390, height: 844, scale: 2, clear: false });
   await until(async () => (await state()).rows.length > 0, 10_000, "the list draws (phone)");
+  s = await state();
+  await p.eval(`document.querySelector(".tabs [data-tab=source]").click()`);
+  s = await state();
+  expect(s.mergeShown ? s.ahead != "" : s.ahead == "" && s.headGap < 1 && await p.eval<boolean>(`document.getElementById("merge-row").parentElement.getBoundingClientRect().height > 0`), "on a phone too: the count and the button, or nothing and no space", s);
+  await p.screenshot(join(SHOTS, "source-phone-source.png"));
+  await p.eval(`document.querySelector(".tabs [data-tab=tasks]").click()`);
   expect(await p.eval(`document.documentElement.scrollWidth <= innerWidth`), "no sideways scrolling on a phone", await p.eval(`[...document.querySelectorAll("body *")].filter((e) => e.getBoundingClientRect().right > innerWidth + 1).slice(0, 6).map((e) => e.tagName + "." + e.className + " " + e.id)`));
   await p.screenshot(join(SHOTS, "source-phone.png"));
   expect(!p.errors.length, "no errors on the page", p.errors);
