@@ -145,11 +145,14 @@ test("a long Claude Code run with no new output repeats no line on the board; it
   t += 6000; lines.push(...board.event({ type: "assistant", message: { id: "msg_1", content: [text, tool] } }));
   t += 6000; lines.push(...board.event({ type: "assistant", message: { id: "msg_1", content: [text, tool] } }));
   t += 6000; lines.push(...board.event({ type: "assistant", message: { id: "msg_2", content: [text] } }));
-  // Ten quiet minutes, a tick every 15 s.
-  for (let i = 0; i < 40; i++) { t += 15_000; lines.push(...board.tick()); }
+  // As Claude Code sends them now: one block in each event, a command in the same millisecond as the words.
+  t += 6000; lines.push(...board.event({ type: "assistant", message: { id: "msg_3", content: [{ type: "text", text: "Now the build." }] } }));
+  lines.push(...board.event({ type: "assistant", message: { id: "msg_3", content: [{ type: "tool_use", id: "toolu_2", name: "Bash", input: { command: "bun run build" } }] } }));
+  // Ten quiet minutes, a tick every 5 s.
+  for (let i = 0; i < 120; i++) { t += 5000; lines.push(...board.tick()); }
   const words = lines.filter((l) => l.startsWith("Claude:"));
-  expect(words).toEqual([`Claude: ${text.text}`]);
-  expect(lines.filter((l) => l.startsWith("Claude runs"))).toEqual(["Claude runs Bash: ./test.sh"]);
+  expect(words).toEqual([`Claude: ${text.text}`, "Claude: Now the build."]);
+  expect(lines.filter((l) => l.startsWith("Claude runs"))).toEqual(["Claude runs Bash: ./test.sh", "Claude runs Bash: bun run build"]);
   const still = lines.filter((l) => l.includes("still working"));
   expect(still.length).toBeGreaterThan(0);
   expect(still.length).toBeLessThanOrEqual(10);

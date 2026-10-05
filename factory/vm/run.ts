@@ -143,7 +143,7 @@ async function claude(brief: Brief, wake: string, limit: number, woken: boolean)
   let badModel: string | null = null;
   // Each line once; a quiet run says "still working" at most once a minute.
   const board = claudeLog();
-  const quiet = setInterval(() => { for (const l of board.tick()) log(l); }, 15_000);
+  const quiet = setInterval(() => { for (const l of board.tick()) log(l); }, 5000);
   const r = await step(["claude", "-p", prompt, ...(continuing ? ["--continue"] : []), "--model", MODEL(), "--dangerously-skip-permissions", "--output-format", "stream-json", "--verbose", "--max-turns", String(brief.maxTurns ?? 200)], {
     name: "claude", timeout: limit, cwd: CLONE(), echo: true,
     onLine: (line) => {

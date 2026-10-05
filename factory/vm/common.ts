@@ -215,17 +215,21 @@ export const result = (value: Record<string, unknown>) => console.log(`FACTORY-R
  * The board's lines for Claude Code's stream-json events: each of its words and the commands it runs, once.
  * Claude Code can send one message again, with more in it (the same text, then a tool call), so a block it
  * has seen (by message id and place), words it has said before, or a line the same as the one before it, give nothing. A run that goes
- * quiet says "still working" at most once a minute (`tick`, with the time now). Lines come at most every 5 s.
+ * quiet says "still working" at most once a minute. Lines come at most every 5 s; one that comes too soon waits
+ * for the next `tick` (every 5 s), so a command right after Claude Code's words isn't lost.
  */
 export function claudeLog(now = () => Date.now()) {
   const seen = new Set<string>();
   const started = now();
-  let last = "", lastAt = 0, quietSince = started;
+  let last = "", lastAt = 0, quietSince = started, pending = "";
   const said = new Set<string>();
   const out = (line: string): string[] => {
     line = scrub(line).slice(0, 300);
     // Its words: once in the run. A command: not twice in a row (it can run the tests again, later).
-    if (line == last || (line.startsWith("Claude: ") && said.has(line)) || now() - lastAt < 5000) return [];
+    if (line == last || (line.startsWith("Claude: ") && said.has(line))) return [];
+    // Too soon after the last line: it waits for the next tick (only the newest one waits).
+    if (now() - lastAt < 5000) { pending = line; return []; }
+    pending = "";
     if (said.size > 500) said.clear();
     said.add(line);
     last = line; lastAt = quietSince = now();
@@ -245,6 +249,7 @@ export function claudeLog(now = () => Date.now()) {
       return lines;
     },
     tick(): string[] {
+      if (pending && now() - lastAt >= 5000) return out(pending);
       if (now() - quietSince < 60_000) return [];
       return out(`Claude Code is still working, ${Math.round((now() - started) / 1000)}s`);
     },
