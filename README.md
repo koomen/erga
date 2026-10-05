@@ -752,22 +752,22 @@ which `cloudflare.config.ts` reads for production's names too:
 | app | erga.dev | staging.erga.dev |
 | Worker (so its Durable Objects) | `erga` | `erga-staging` |
 | D1 | `erga` | `erga-staging`, made afresh from production's on each deploy |
-| documents' pages | `<id>-<owner>.erga-pages.dev` | `<id>-<owner>.staging.erga-pages.dev` |
+| documents' pages | `<id>-<owner>.erga-pages.dev` | `<id>-<owner>.erga-pages-staging.dev` |
 | secrets | its own, kept | its own (SESSION_SECRET, its own GitHub app, its own deploy token), kept |
 
-Both are in the same account. Staging's pages origin is a wildcard one level
-down on erga-pages.dev: a route `*.staging.erga-pages.dev/*` to
-`erga-staging` (more specific than production's `*.erga-pages.dev/*`, so it
-wins), a proxied `*.staging` AAAA `100::` record (the pipeline makes both),
-and an advanced certificate for `*.staging.erga-pages.dev`, since Universal
-SSL covers only one level (`deploy/setup.ts --certificate` orders it; it needs
-Advanced Certificate Manager, which is paid, so it isn't ordered yet: until it
-is, documents' pages on staging don't load over HTTPS, and the editor and
-viewer on staging can't show a document's page). staging.erga.dev is a Workers custom domain,
-whose DNS record and certificate Cloudflare makes. A deploy to anything but
-production that would use production's Worker, database or addresses stops
-before it calls Cloudflare (`guardTarget`), and a snapshot never goes into
-its own source.
+Both are in the same account. Staging's documents' pages have a zone of
+their own, erga-pages-staging.dev (task #4): a route
+`*.erga-pages-staging.dev/*` to `erga-staging` and a proxied `*` AAAA
+`100::` record there (the setup's first deploy makes both), and the zone's
+free Universal SSL certificate, which covers `*.erga-pages-staging.dev`.
+(Universal SSL covers only one level below a zone, so staging's pages
+couldn't be `*.staging.erga-pages.dev` without a paid advanced certificate:
+`deploy/setup.ts --certificate` would order one for a domain deeper in its
+zone.) staging.erga.dev is a Workers custom domain, whose DNS record and
+certificate Cloudflare makes. A deploy to anything but production that would
+use production's Worker, database or addresses, or put its pages on or under
+production's pages domain, stops before it calls Cloudflare (`guardTarget`),
+and a snapshot never goes into its own source.
 
 The steps: check the account; find or make the database (for staging:
 delete its old copy and make a new one); copy production's database in
@@ -911,7 +911,7 @@ staging and production, staging's may deploy staging only.
 |---|---|---|---|
 | Individual Workers Editor (Specified Workers) | `erga-staging` | `erga`, `erga-staging` | upload and deploy versions, secrets (kept), static assets, settings; its Durable Objects inherit it. It can't make or delete a Worker |
 | D1 Write | the account | the account | staging's database deleted and made afresh from production's export; migrations |
-| Zone Read, Workers Routes Read, DNS Read | erga.dev, erga-pages.dev | erga.dev, erga-pages.dev, erga-pages-staging.dev (`tokenZones`) | find the zones; check the custom domain, the pages' route and DNS record are there and point at the Worker |
+| Zone Read, Workers Routes Read, DNS Read | erga.dev, erga-pages-staging.dev | erga.dev, erga-pages.dev, erga-pages-staging.dev | find the zones; check the custom domain, the pages' route and DNS record are there and point at the Worker |
 
 **Writing Erga's source (the factory).** No token carries an Artifacts
 permission, on purpose: each server writes Erga's Artifacts repository
@@ -1026,8 +1026,8 @@ login is older than the `account_api_tokens:create` scope).
 Done on erga.dev's account (2026-10-04, task #2): the Artifacts repo
 `erga/erga`, the builder, staging's secrets, SNAPSHOT_TOKEN and
 DEPLOY_HOOK_SECRET on production, `erga-staging` with its own D1 copy of
-production's data, staging.erga.dev and the `*.staging.erga-pages.dev`
-route and DNS record, staging's deploy token (made with a short-lived token
+production's data, staging.erga.dev and its pages' route and DNS record
+(on erga-pages-staging.dev since task #4, step 9), staging's deploy token (made with a short-lived token
 maker, then deleted), and staging deploying itself on a push to its branch.
 Still to do are the steps marked *(you)*.
 
@@ -1049,9 +1049,9 @@ Still to do are the steps marked *(you)*.
    DEPLOY_HOOK_SECRET new, set on production's Worker too: a new version of
    the same code); builds HEAD here and deploys staging (`erga-staging`, its
    D1 made afresh with production's data, staging.erga.dev,
-   `*.staging.erga-pages.dev`); then makes **staging's deploy token**,
-   checks it and stores it on `erga-staging` (above). It orders the paid
-   certificate only with `--certificate`.
+   `*.erga-pages-staging.dev`); then makes **staging's deploy token**,
+   checks it and stores it on `erga-staging` (above). Staging's pages need
+   no certificate of their own: the zone's Universal SSL covers them.
 4. **Staging's deploy token** *(you, if step 3 stopped there)*. The cf
    CLI's OAuth login can't make API tokens (Cloudflare doesn't grant it that
    scope), so make a short-lived **token maker** on the dashboard: Manage
@@ -1093,9 +1093,8 @@ Still to do are the steps marked *(you)*.
    - Production's deploy token made with a short-lived token maker, checked
      and stored on `erga` (`CLOUDFLARE_TOKEN_MAKER=… bun deploy/setup.ts
      --tokens --production`, answering no to staging's token). It also reads
-     `erga-pages-staging.dev` (`tokenZones` in `deploy/targets.json`), for
-     staging's pages from task #4. The maker is kept for task #4, then
-     deleted.
+     `erga-pages-staging.dev`, staging's pages zone (task #4). The maker
+     was kept for task #4, then deleted.
    - `migrate.ts` and the `WORKERS_CI` lines in `site.sh` removed.
 
    To go back to Workers Builds (if ever): make the trigger again (build

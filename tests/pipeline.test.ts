@@ -70,7 +70,7 @@ describe("staging", () => {
     const { result, steps } = await deployTo(staging({ secrets: stagingSecrets }), mock);
     expect(steps.filter((s) => s.endsWith(":running")).map((s) => s.split(":")[0])).toEqual(ALL_STEPS.map((s) => s.id));
     expect(result.url).toBe("https://staging.erga.dev");
-    expect(result.pages).toBe("*.staging.erga-pages.dev");
+    expect(result.pages).toBe("*.erga-pages-staging.dev");
 
     // Its own database: a new one, with production's rows and migrations.
     const db = mock.state.databases.find((d) => d.name == "erga-staging")!;
@@ -87,7 +87,7 @@ describe("staging", () => {
     expect(b.DOCS.script_name).toBeUndefined();
     expect(b.DEPLOY_TARGET.text).toBe("staging");
     expect(b.SNAPSHOT_IMPORT.text).toBe("1");
-    expect(b.PAGES_DOMAIN.text).toBe("staging.erga-pages.dev");
+    expect(b.PAGES_DOMAIN.text).toBe("erga-pages-staging.dev");
     expect(b.ERGA_VERSION.text).toBe(release.version);
     expect(b.CLOUDFLARE_ACCOUNT_ID.text).toBe(FLEET_ACCOUNT);
     expect(b.BUILDER).toEqual({ type: "service", name: "BUILDER", service: "erga-builder" });
@@ -100,11 +100,14 @@ describe("staging", () => {
     expect(Object.keys(meta.exports).sort()).toEqual(Object.entries(release.worker.exports!).filter(([, e]) => e.state != "deleted").map(([n]) => n).sort());
     expect(mock.state.scripts["erga-staging"].namespaces.sort()).toEqual(Object.keys(meta.exports).sort());
 
-    // Its addresses: staging.erga.dev, and documents' pages one level down on erga-pages.dev, routed ahead of production's wildcard.
+    // Its addresses: staging.erga.dev, and documents' pages on a zone of their own (erga-pages-staging.dev: its Universal SSL covers them).
     expect(mock.state.domains).toContainEqual({ hostname: "staging.erga.dev", service: "erga-staging", zone_id: "zone00000000000000000000000e7ga1" });
-    const pagesZone = "zone00000000000000000000000e7ga2";
-    expect(mock.state.routes[pagesZone]).toEqual([{ pattern: "*.erga-pages.dev/*", script: "erga" }, { pattern: "*.staging.erga-pages.dev/*", script: "erga-staging" }]);
-    expect(mock.state.dns[pagesZone].map((r) => r.name)).toEqual(["*.erga-pages.dev", "*.staging.erga-pages.dev"]);
+    const pagesZone = "zone00000000000000000000000e7ga3";
+    expect(mock.state.routes[pagesZone]).toEqual([{ pattern: "*.erga-pages-staging.dev/*", script: "erga-staging" }]);
+    expect(mock.state.dns[pagesZone].map((r) => r.name)).toEqual(["*.erga-pages-staging.dev"]);
+    // Production's pages zone: nothing of staging's.
+    expect(mock.state.routes["zone00000000000000000000000e7ga2"]).toEqual([{ pattern: "*.erga-pages.dev/*", script: "erga" }]);
+    expect(mock.state.dns["zone00000000000000000000000e7ga2"].map((r) => r.name)).toEqual(["*.erga-pages.dev"]);
 
     // Production's documents, every key and alarm, in staging's Durable Objects.
     const ours = mock.state.docs["erga-staging"].docs, theirs = mock.state.docs.erga.docs;
@@ -209,6 +212,11 @@ describe("production", () => {
     expect(guardTarget({ ...g, databaseName: "erga" })).toMatch(/production's database/);
     expect(guardTarget({ ...g, app: { kind: "domain", zoneName: "erga.dev", hostname: "erga.dev" } })).toMatch(/production's address/);
     expect(guardTarget({ ...g, pages: { kind: "zone", zoneName: "erga-pages.dev" } })).toMatch(/production's address/);
+    expect(guardTarget({ ...g, pages: { kind: "zone", zoneName: "erga-pages.dev", domain: "staging.erga-pages.dev" } })).toMatch(/under production's pages domain/);
+    expect(guardTarget({ ...g, pages: { kind: "zone", zoneName: "erga-pages.dev", domain: "a.b.ERGA-PAGES.dev" } })).toMatch(/under production's pages domain/);
+    // Not under it: a name that only ends the same way.
+    expect(guardTarget({ ...g, pages: { kind: "zone", zoneName: "my-erga-pages.dev" } })).toBeNull();
+    expect(g.pages).toEqual({ kind: "zone", zoneName: "erga-pages-staging.dev", domain: "erga-pages-staging.dev" });
     expect(guardTarget({ ...g, snapshot: { ...g.snapshot!, databaseName: "erga-staging" } })).toMatch(/can't go into the database it's copied from/);
     expect(guardTarget({ ...targetOf(TARGETS.production, env()), snapshot: g.snapshot })).toMatch(/Production never takes a copy/);
     // A server /deploy made in someone else's account may be called erga: the guard is production's account's.
@@ -728,7 +736,9 @@ describe("the one-time setup", () => {
     expect(run.exitCode).toBe(0);
     expect(out).toContain("(the mock Cloudflare: nothing real)");
     expect(out).toContain("secrets set: SESSION_SECRET, SNAPSHOT_TOKEN, DEPLOY_HOOK_SECRET, GITHUB_CLIENT_SECRET\n");
-    expect(out).toContain("Made and checked: it deploys erga-staging, reads erga.dev and erga-pages.dev, and can't reach erga or write DNS and routes.");
+    expect(out).toContain("the zone's free Universal SSL certificate covers it (it covers *.erga-pages-staging.dev).");
+    expect(out).toContain("There's one already (Universal SSL).");
+    expect(out).toContain("Made and checked: it deploys erga-staging, reads erga.dev and erga-pages-staging.dev, and can't reach erga or write DNS and routes.");
     expect(out).toContain("Stored on erga-staging as CLOUDFLARE_DEPLOY_TOKEN (not printed).");
     expect(out).not.toContain("mock-scoped-");
     expect(out).toContain("Copy production's documents into it: done, 3 documents copied");
