@@ -727,7 +727,7 @@ describe("the factory's VMs (Containers)", () => {
     expect(b.FACTORY_IMAGE.text).toBe(target.factory!.image);
     const ns = namespaceId("erga-staging", "FactoryVm");
     expect(mock.state.containers.apps[ns]).toEqual({ name: "erga-staging-factoryvm", scheduling_policy: "durable_object", durable_objects: { namespace_id: ns } });
-    // Made after the upload, as wrangler does, and the version not uploaded again (that left the VMs unable to start).
+    // Made after the upload, as wrangler does: one upload.
     expect(steps.find((x) => x.startsWith("vms:done"))).toContain("made");
     expect(mock.state.calls.filter((c) => c == "PUT /accounts/0123456789abcdef0123456789abcdef/workers/scripts/erga-staging").length).toBe(1);
     // Again: the same application, found, not made twice, and one upload.

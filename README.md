@@ -1689,8 +1689,7 @@ real run") is code now, and staging.erga.dev runs it.
   scheduling policy, as `wrangler deploy` sends it) and sets
   `FACTORY_PREVIEW_DOMAIN` (the pages domain) and `FACTORY_IMAGE`; "vms" makes
   the container application for the Worker's FactoryVm namespace once (its id
-  is the namespace's), after the upload, as wrangler does. (Uploading the same
-  version again after that left VMs unable to start: don't.) `cloudflare.config.ts` declares `FactoryVm` and its
+  is the namespace's), after the upload, as wrangler does. `cloudflare.config.ts` declares `FactoryVm` and its
   binding `FACTORY_VM` on every build; elsewhere (locally, `/deploy`) it's an
   object nothing uses. A release without FactoryVm (an older commit) skips
   both steps.
@@ -1726,7 +1725,11 @@ real run") is code now, and staging.erga.dev runs it.
   with the VM's Chromium) against a pretend factory API, then deletes the
   container, its application and the Worker. On 2026-10-05 it passed: the
   agent answered 1.7 s after `start()`, and the whole task (clone, branch,
-  change, preview, screenshot, report) took 3.4 s more.
+  change, preview, screenshot, report) took 3.4 s more. In the first hour
+  after a new image was pushed and prepared, starts failed with "There is no
+  container instance that can be provided" (Cloudflare still putting the
+  image on its machines, it seems); later the same image started at once. So
+  push a new image a while before it's needed.
 
 Done on erga.dev's account (task #7): the image pushed and prepared;
 `FACTORY_KEY` on `erga-staging`; staging deployed from a machine with this
