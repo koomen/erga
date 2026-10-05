@@ -280,6 +280,9 @@ function renderDialog() {
   const log = t.log.map((l) => '<div><time>' + new Date(l.at).toLocaleTimeString() + '</time>' + esc(l.message) + '</div>').join("");
   const revisable = ["complete", "failed"].includes(t.status);
   const keep = d.querySelector("#instructions")?.value || "";
+  // A redraw of the open task (a live update) keeps what the user is doing in it: see keepState.
+  const restore = d.open && d.dataset.task == String(t.id) ? keepState(d) : () => {};
+  d.dataset.task = t.id;
   d.innerHTML = '<div class="dlg"><div class="dlg-head"><h3><span class="id">#' + t.id + '</span>' + esc(t.title) + ' <span class="status ' + cls(t.status) + '">' + esc(STATUS[t.status] || t.status) + '</span></h3><button data-act="close">Close</button></div>' +
     '<div class="links">' + (t.url && t.status != "merged" ? '<a href="/api/factory/tasks/' + t.id + '/open" target="_blank">Open preview ↗</a><span class="muted">' + esc(t.url) + '</span>' : "") +
     '<span class="branch">' + esc(t.branch) + (t.base ? " from staging at " + esc(t.base.slice(0, 10)) : "") + '</span>' +
@@ -294,6 +297,37 @@ function renderDialog() {
     '<section><h4>Log</h4><div class="log" id="task-log">' + log + '</div></section></div>';
   const l = $("task-log"); if (l) l.scrollTop = l.scrollHeight;
   if (!d.open) d.showModal();
+  restore();
+}
+
+/**
+ * What the user has under way in the detail view, before a redraw: each field's text or choice (the instructions,
+ * the dependency's kind and task), its size, scroll and selection, which field or button has the focus, the
+ * dialog's scroll and why a send failed. Returns a function that puts it all back in the new view, so a live
+ * update doesn't take the cursor out of the text the user is typing.
+ */
+function keepState(d) {
+  const key = (el) => el.id ? "#" + el.id : el.dataset.act ? '[data-act="' + el.dataset.act + '"]' + (el.dataset.id ? '[data-id="' + el.dataset.id + '"]' : "") + (el.dataset.dep ? '[data-dep="' + el.dataset.dep + '"][data-kind="' + el.dataset.kind + '"]' : "") : null;
+  const fields = [...d.querySelectorAll("input[id], textarea[id], select[id]")].map((el) => ({ key: key(el), value: el.value, height: el.style.height, top: el.scrollTop,
+    sel: el.selectionStart != null ? [el.selectionStart, el.selectionEnd, el.selectionDirection] : null }));
+  const active = d.contains(document.activeElement) ? key(document.activeElement) : null;
+  const why = d.querySelector("#revise-why")?.textContent || "";
+  const top = d.scrollTop;
+  return () => {
+    for (const f of fields) {
+      const el = d.querySelector(f.key);
+      if (!el) continue;
+      // A choice that is gone (a task that left the list) leaves the new view's default.
+      if (el.tagName != "SELECT" || [...el.options].some((o) => o.value == f.value)) el.value = f.value;
+      if (f.height) el.style.height = f.height;
+      if (f.sel) el.setSelectionRange(...f.sel);
+      el.scrollTop = f.top;
+    }
+    const w = d.querySelector("#revise-why"); if (w && why) w.textContent = why;
+    const el = active && d.querySelector(active);
+    if (el) el.focus({ preventScroll: true });
+    d.scrollTop = top;
+  };
 }
 
 /**
