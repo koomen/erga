@@ -4,7 +4,7 @@
 // folder, it links that as a document and `base` is the document's address;
 // without one, `base` is the app's root, and `open` links them as needed.
 
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "fs";
+import { mkdirSync, mkdtempSync, readdirSync, readlinkSync, realpathSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 
@@ -151,15 +151,34 @@ process.on("exit", () => { for (const dir of scratches) killLeftovers(dir); });
  * or bun dev.ts), started detached in a simulated VM's clone there, outlives the server that started it: without
  * this, each test run leaves some behind. Found by command line (the folder in it) and by working directory.
  */
-function killLeftovers(dir: string) {
+export function killLeftovers(dir: string) {
   const dirs = [...new Set([dir, (() => { try { return realpathSync(dir); } catch { return dir; } })()])]; // /var/... is /private/var/... on a Mac
   const pids = new Set<number>();
-  for (const d of dirs) for (const line of Bun.spawnSync(["pgrep", "-f", d]).stdout.toString().split("\n")) if (Number(line)) pids.add(Number(line));
-  let pid = 0;
-  for (const line of Bun.spawnSync(["lsof", "-n", "-w", "-d", "cwd", "-F", "pn"]).stdout.toString().split("\n")) {
-    if (line[0] == "p") pid = Number(line.slice(1));
-    else if (line[0] == "n" && dirs.some((d) => line.slice(1) == d || line.slice(1).startsWith(d + "/"))) pids.add(pid);
-  }
+  for (const d of dirs) for (const line of run(["pgrep", "-f", d]).split("\n")) if (Number(line)) pids.add(Number(line));
+  const inside = (cwd: string) => dirs.some((d) => cwd == d || cwd.startsWith(d + "/"));
+  for (const [pid, cwd] of cwds()) if (inside(cwd)) pids.add(pid);
   pids.delete(process.pid);
   for (const p of pids) try { process.kill(p, "SIGKILL"); } catch { /* gone */ }
+}
+
+/** A command's output, or "" when it isn't installed (a factory VM's image may lack lsof) or fails to start. */
+function run(cmd: string[]): string {
+  try { return Bun.spawnSync(cmd, { stderr: "ignore" }).stdout.toString(); } catch { return ""; }
+}
+
+/** Every process's working directory: /proc/<pid>/cwd on Linux, lsof elsewhere (none if lsof is missing). */
+function cwds(): [number, string][] {
+  const out: [number, string][] = [];
+  if (process.platform == "linux") {
+    let entries: string[] = [];
+    try { entries = readdirSync("/proc"); } catch { /* no /proc */ }
+    for (const e of entries) if (/^\d+$/.test(e)) try { out.push([Number(e), readlinkSync(`/proc/${e}/cwd`)]); } catch { /* gone, or not ours */ }
+    return out;
+  }
+  let pid = 0;
+  for (const line of run(["lsof", "-n", "-w", "-d", "cwd", "-F", "pn"]).split("\n")) {
+    if (line[0] == "p") pid = Number(line.slice(1));
+    else if (line[0] == "n") out.push([pid, line.slice(1)]);
+  }
+  return out;
 }
