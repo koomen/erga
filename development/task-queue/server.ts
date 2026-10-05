@@ -498,12 +498,16 @@ async function fetchOriginNow(cachedOnly: boolean) {
   return f;
 }
 
+/** What a push's output says that matters: origin's own lines ("remote: ..."), and why it failed. */
+const pushSaid = (p: { ok: boolean; all: string }) => p.all.split("\n").map((l) => l.trim())
+  .filter((l) => l.startsWith("remote:") || (!p.ok && /^(!|error:|fatal:)/.test(l))).map((l) => l.replace(/^remote:\s*/, "")).filter(Boolean).join(" ");
+
 /** Pushes main to origin's branch: what origin said (Erga: "remote: Erga: staging is now ..."). */
 async function pushMain(): Promise<Outcome> {
   const branch = await pushBranch();
   const commit = (await ref(`refs/heads/${MAIN}`))?.slice(0, 12);
   const p = await originGit(["push", "origin", `refs/heads/${MAIN}:refs/heads/${branch}`]);
-  const said = p.all.split("\n").map((l) => l.replace(/^remote:\s*/, "").trim()).filter((l) => l && !/^(To |Everything up-to-date)/.test(l)).join(" ") || (p.ok ? `origin's ${branch} is at ${commit}` : "the push failed");
+  const said = pushSaid(p) || (p.ok ? `origin's ${branch} is at ${commit}` : "the push failed");
   pushed = { at: new Date().toISOString(), commit, ok: p.ok, said };
   console.log(`push ${MAIN} -> origin/${branch}: ${said}`);
   return pushed;
@@ -529,7 +533,8 @@ async function fetchOrigin({ cachedOnly = true } = {}) {
   const subject = main ? (await run(["git", "log", "-1", "--format=%s", main], REPO)).out : "";
   if (!main || main == there || !/^Merge task\//.test(subject)) return;
   if (there && !(await run(["git", "merge-base", "--is-ancestor", there, main], REPO)).ok) return;
-  if (pushed && !pushed.ok && pushed.commit == main.slice(0, 12) && cachedOnly) return; // tried already: next merge, or a restart
+  // Refused already: again, but not more often than every five fetches.
+  if (cachedOnly && pushed && !pushed.ok && pushed.commit == main.slice(0, 12) && Date.now() - Date.parse(pushed.at) < 5 * FETCH_EVERY * 1000) return;
   if (cachedOnly && !(await login())) return;
   await pushMain();
   await fetchOriginNow(true);
@@ -554,7 +559,7 @@ async function release(commit?: string): Promise<Outcome> {
   if (prod == target || (prod && (await run(["git", "merge-base", "--is-ancestor", target, prod], REPO)).ok)) return done(true, `origin's ${MAIN} has ${target.slice(0, 12)} already`, target);
   const p = await originGit(["push", "origin", `${target}:refs/heads/${MAIN}`]);
   await fetchOriginNow(true);
-  const said = p.all.split("\n").map((l) => l.replace(/^remote:\s*/, "").trim()).filter((l) => l && !/^To /.test(l)).join(" ");
+  const said = pushSaid(p);
   return done(p.ok, said || (p.ok ? `origin's ${MAIN} is at ${target.slice(0, 12)}` : "the push failed"), target);
 }
 
