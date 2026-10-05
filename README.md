@@ -2646,12 +2646,16 @@ and the editor's timers (how long notes stay up, how marks fade) run at a
 fraction of real time under test (`window.__ergaTimescale`, `ms` in
 `src/page/editor.ts`).
 
-    ./test.sh          # page editor, isolation, front door + multiplayer: ~25s
+    ./test.sh          # every test file: ~3.5 minutes on a 10-core Mac
     bun run typecheck  # tsc over the host, the editor and the suite
 
-Each file also runs alone: `bun tests/page.ts` (~7s), `bun tests/suite/run.ts`
-(~11s; `--suite`, `--grep` and `--seed` narrow it, `--long` for the big slow
-version), `bun test tests/` (under a second).
+`./test.sh` runs the files in a pool, the longest first: half the CPU count
+at a time (`TEST_JOBS=n` changes it), as each file has dev servers and a
+Chrome of its own, and more at once only slows them all. Each file prints its
+time. Each file also runs alone: `bun tests/page.ts` (~30s; `PAGE_JOBS=n`
+scenarios at a time), `bun tests/suite/run.ts` (~22s; `--suite`, `--grep` and
+`--seed` narrow it, `--long` for the big slow version), `bun tests/factory.ts`
+(~57s), `bun test tests/` (~11s).
 
 `bun tests/agent.ts` asks the real agent for edits through the panel and checks
 they reach the open page without a reload and then the disk, that the agent

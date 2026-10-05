@@ -11,6 +11,7 @@ import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { AsyncLocalStorage } from "node:async_hooks";
+import { availableParallelism } from "node:os";
 
 const keep = process.argv.includes("--keep");
 const only = process.argv.find((a) => a == "html" || a == "md" || a == "agent" || a == "format" || a == "reload");
@@ -519,8 +520,9 @@ async function agentEmptyScenario(browser: Browser) {
 
   // The pane's open or closed state survives a reload.
   const paneOpen = () => p.eval<boolean>(`document.body.classList.contains("agent-open") && !document.getElementById("agent").inert`);
-  await p.eval(`location.reload()`);
-  await Bun.sleep(150);
+  // Checked as soon as the new page's script has run (not after a fixed pause: on a busy machine the reload can take longer).
+  await p.eval(`window.__beforeReload = true; location.reload()`);
+  await until(() => p.eval<boolean>(`!window.__beforeReload && !!window.ergaPage`), 5000);
   check("an open pane is still open after a reload, from the first frame", await paneOpen());
   await loaded(p);
   await p.key("j", MOD.Meta);
@@ -785,7 +787,11 @@ try {
     console.log(out.getStore()!.join("\n"));
   });
   if (keep) for (const sc of chosen) await runOne(sc);
-  else await Promise.all(chosen.map(runOne));
+  else {
+    // A few at a time (each has a dev server of its own): all fifteen at once overload a laptop, and the timing checks fail.
+    const queue = [...chosen], at = Math.max(2, Number(process.env.PAGE_JOBS) || Math.floor(availableParallelism() / 2));
+    await Promise.all(Array.from({ length: at }, async () => { for (let sc; (sc = queue.shift());) await runOne(sc); }));
+  }
 } finally {
   if (!keep) browser.close();
 }
