@@ -48,6 +48,7 @@ const SOURCE_STYLE = `
   .pane-head { justify-content: space-between; }
   .merge-row { display: flex; align-items: center; gap: 10px; }
   .merge-row .count { font-size: 13px; color: var(--soft); white-space: nowrap; }
+  .merge-row[hidden], #merge-hint:empty { display: none; }
   #merge-hint { margin: -4px 0 10px; font-size: 13.5px; text-align: right; }
   #merge-hint.error { color: var(--bad); }
   @media (max-width: 640px) { .pane-head { flex-direction: column; align-items: stretch; gap: 10px; } .merge-row { justify-content: space-between; } .merge-row .count { white-space: normal; flex: 1; min-width: 0; } #merge-hint { margin-top: -6px; text-align: left; } }
@@ -161,7 +162,7 @@ function sourceMarkup(c: SourcePageConfig): string {
   return `
   <div class="pane-head">
     <div><h2>Source and deploys</h2><p class="sub">Push to staging, or merge a task: staging deploys itself. Then move main up to it: main deploys to production.</p></div>
-    <div class="merge-row"><span class="count" id="ahead"></span><button class="new" id="merge" disabled>Merge staging into main</button></div>
+    <div class="merge-row" id="merge-row" hidden><span class="count" id="ahead"></span><button class="new" id="merge" disabled>Merge staging into main</button></div>
   </div>
   <p class="hint" id="merge-hint" role="status"></p>
   <section class="card" aria-label="Commits">
@@ -294,8 +295,9 @@ const SOURCE_SCRIPT = `
     if (older.length && commits.length) grid.insertAdjacentHTML("beforeend", '<div class="older">' + older.join("") + "</div>");
     drawn = true;
     const ahead = staging?.ahead ?? 0, mergeBtn = document.getElementById("merge");
-    if (!busy) mergeBtn.disabled = !ahead;
-    document.getElementById("ahead").textContent = !staging?.commit ? "" : ahead ? ahead + " commit" + (ahead == 1 ? "" : "s") + " to merge" : "main is at staging";
+    // Nothing at all while main is at staging: no count, no button, no space. While a merge runs the button stays, disabled.
+    if (!busy) mergeBtn.disabled = document.getElementById("merge-row").hidden = !ahead;
+    document.getElementById("ahead").textContent = !staging?.commit ? "" : ahead ? ahead + " commit" + (ahead == 1 ? "" : "s") + " to merge" : "";
     const m = view.mirror, st = document.getElementById("mirror-state"), err = document.getElementById("mirror-error");
     st.className = "state " + (m.state == "off" ? "off" : m.state == "pushing" ? "pushing" : m.error ? "error" : "ok");
     st.querySelector(".what").textContent = m.state == "off" ? "Off: the server has no GITHUB_MIRROR_TOKEN" : m.state == "pushing" ? "Pushing…" : m.error ? "Behind" + (m.lastPushAt ? " · last pushed " + ago(m.lastPushAt) : "") : m.lastPushAt ? "Up to date · pushed " + ago(m.lastPushAt) : "Not pushed yet";
