@@ -14,6 +14,9 @@
 // - Each column is in id order, oldest first, so a card moves only when its status changes.
 // - The detail view shows the screenshots first, three in a row; a click enlarges one to the modal's width, a
 //   second click puts it back (factory-detail-shots.png, factory-detail-shot-big.png).
+// - Live updates of the open task don't disturb what the user does in its detail view: the instructions keep
+//   the focus, the cursor, the selection and the text typed while the updates arrive; a dependency's kind keeps
+//   its choice (factory-detail-typing.png).
 // Screenshots land in tests/cdp.ts's SHOTS (factory-cards.png, factory-cards-dark.png). --html saves the board as one
 // static page (styles and images inlined, no scripts), to look at without a server.
 
@@ -46,6 +49,14 @@ const tasks = [
   t("Resolve the merge with staging", "needs agent", 3, "Merging origin/staging into the branch", { error: "conflicts merging origin/staging: README.md" }),
 ];
 const info = { enabled: true, vms: { runner: "sim" }, claude: { signedIn: true, canStore: true } };
+// The events: none, until the typing test sends task #6's updates, one each time the page reconnects (every 150 ms).
+let updates = 0, sending = false;
+const update = () => {
+  const task = tasks[5];
+  task.log.push({ at: new Date().toISOString(), message: "update " + ++updates });
+  task.updatedAt = new Date().toISOString();
+  return "retry: 150\n\ndata: " + JSON.stringify({ type: "task", task }) + "\n\n";
+};
 const host = await startHost(null);
 const browser = await Browser.launch();
 try {
@@ -63,7 +74,7 @@ try {
   p.onEvent("Fetch.requestPaused", ({ requestId, request }) => {
     const path = new URL(request.url).pathname.replace(/^\/api\/factory/, "");
     const reply = (body: string | Uint8Array, type: string) => p.send("Fetch.fulfillRequest", { requestId, responseCode: 200, responseHeaders: [{ name: "Content-Type", value: type }], body: Buffer.from(body).toString("base64") }).catch(() => {});
-    if (path == "/events") reply("retry: 600000\n\n", "text/event-stream");
+    if (path == "/events") reply(sending ? update() : "retry: 150\n\n", "text/event-stream");
     else if (path.startsWith("/shots/")) reply(pngs[path.slice(7)] ?? png, "image/png");
     else if (path == "/tasks") reply(JSON.stringify(tasks), "application/json");
     else if (path == "") reply(JSON.stringify(info), "application/json");
@@ -169,6 +180,40 @@ try {
   d = await detail();
   expect(d.boxes.every((b) => !b.big) && d.boxes[0].y == d.boxes[2].y, "a second click puts it back in the grid", d.boxes);
   ok("a second click shrinks it back into the grid");
+  // Typing in the instructions while live updates of the task arrive: the focus, the cursor, the selection and
+  // the text stay, and what is typed next lands where the cursor is.
+  const box = await p.eval<{ x: number; y: number }>(`(() => { const t = document.getElementById("instructions"); t.scrollIntoView({ block: "center" }); const r = t.getBoundingClientRect(); return { x: r.x + 20, y: r.y + 20 }; })()`);
+  await p.click(box.x, box.y);
+  await p.type("Make the button ");
+  sending = true;
+  const waitFor = async (n: number) => {
+    const end = updates + n;
+    for (const stop = Date.now() + 10_000; updates < end && Date.now() < stop;) await Bun.sleep(20);
+    await p.eval(`new Promise((r) => setTimeout(r, 50))`);
+    expect(updates >= end, `${n} live updates arrive`, updates);
+  };
+  await waitFor(1);
+  await p.type("blue", 120);
+  await waitFor(2);
+  const field = () => p.eval<{ focus: string; value: string; sel: number[]; log: string }>(`(() => { const t = document.getElementById("instructions"); return { focus: document.activeElement.id, value: t.value, sel: [t.selectionStart, t.selectionEnd], log: document.getElementById("task-log").textContent }; })()`);
+  let f = await field();
+  expect(f.log.includes("update " + (updates - 1)), "the detail view shows the updates", f.log);
+  expect(f.focus == "instructions" && f.value == "Make the button blue" && f.sel.join() == "20,20", "the instructions keep the focus, the text and the cursor", f);
+  ok(`typing through ${updates} live updates: the focus, the text and the cursor stay`);
+  await p.eval(`document.getElementById("instructions").setSelectionRange(5, 8)`);
+  await waitFor(2);
+  f = await field();
+  expect(f.focus == "instructions" && f.sel.join() == "5,8", "a selection stays through an update", f);
+  await p.type("a");
+  expect((await field()).value == "Make a button blue", "the next key replaces the selection", await field());
+  ok("a selection stays through live updates; the next key replaces it");
+  await p.eval(`(() => { const k = document.getElementById("dep-kind"); k.value = "mergeAfter"; document.getElementById("instructions").focus(); })()`);
+  await waitFor(2);
+  const kind = await p.eval<string>(`document.getElementById("dep-kind").value`);
+  expect(kind == "mergeAfter", "a dependency's kind keeps its choice through an update", kind);
+  ok("the dependency's kind keeps its choice through live updates");
+  sending = false;
+  await p.screenshot(join(SHOTS, "factory-detail-typing.png"));
   await p.eval(`document.querySelector("#dlg [data-act=close]").click()`);
   expect(!p.errors.length, "no errors in the page", p.errors);
   const html = process.argv[process.argv.indexOf("--html") + 1];
