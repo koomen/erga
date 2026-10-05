@@ -1677,7 +1677,8 @@ the git tokens' rules.
    factory uses the plain container API and its own agent. Instance types go
    up to standard-4 (4 vCPU, 12 GiB, 20 GB disk); the factory wants
    standard-3 (2 vCPU, 8 GiB) or more: Claude Code alone wants 4 GB, plus
-   the dev server and Chromium. Starts: "often 1–3 seconds"; Cloudflare's
+   the dev server and Chromium. It uses standard-4, the largest (custom
+   types go no higher: 4 vCPU, 12 GiB, 20 GB). Starts: "often 1–3 seconds"; Cloudflare's
    `durable_object` scheduling (blog, 2026-09-30) reports a median of
    0.65 s and lets the image and instance type be chosen at start. Disk is
    ephemeral; filesystem snapshots (beta, `durable_object` policy only,
@@ -1688,7 +1689,7 @@ the git tokens' rules.
    code. Pricing on Workers Paid: $0.000020 per vCPU-second, $0.0000025 per
    GiB-second, $0.00000007 per GB-second of disk, egress $0.025/GB after
    1 TB, with 375 vCPU-minutes and 25 GiB-hours included each month: a
-   standard-3 VM costs at most about $0.22 an hour while it runs. No fixed
+   standard-4 VM costs at most about $0.40 an hour while it runs. No fixed
    lifetime; an inactivity timeout up to 6 hours. Browser Rendering could
    take screenshots instead of Chromium in the VM, but it would need the
    preview on a public URL; Chromium in the image is simpler.
@@ -1829,8 +1830,9 @@ real run") is code now, and staging.erga.dev runs it.
   `deploy/tokens.ts`).
 - **A VM** (`factory/cloudflare.ts`) is a container of a FactoryVm object
   named `task-<id>-<6 hex>`: started from `ctx.container.images.factory`,
-  instance type `standard-3` (2 vCPU, 8 GiB; `FACTORY_VM_INSTANCE` overrides
-  it), internet on. A container stops a while after its object last heard
+  instance type `standard-4` (4 vCPU, 12 GiB, 20 GB disk, Cloudflare's
+  largest; chosen at each start, so the container application has none of
+  its own; `FACTORY_VM_INSTANCE` overrides it), internet on. A container stops a while after its object last heard
   from anyone, so each call sets that to the most Cloudflare allows (six
   hours), and the factory's alarm asks every VM whether it's up every 20
   minutes while any task has one. A VM that stopped anyway is noted on its

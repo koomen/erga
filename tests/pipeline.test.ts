@@ -736,6 +736,11 @@ describe("the factory's VMs (Containers)", () => {
     expect(again.steps.find((x) => x.startsWith("vms:done"))).toContain("already there");
     expect(mock.state.versions["erga-staging"]).toBe(before + 1);
     expect(Object.keys(mock.state.containers.apps)).toEqual([ns]);
+    // An application that declares a smaller instance type is set to standard-4.
+    mock.state.containers.apps[ns].configuration = { instance_type: "standard-3" };
+    const third = await deployTo(staging({ secrets: stagingSecrets }), mock);
+    expect(third.steps.find((x) => x.startsWith("vms:done"))).toContain("instance type updated");
+    expect(mock.state.containers.apps[ns].configuration).toEqual({ instance_type: "standard-4" });
   });
 
   test("a deploy token that may not use Containers: the version goes up without the VMs, and the log says why", async () => {
