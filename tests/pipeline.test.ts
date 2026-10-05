@@ -849,6 +849,50 @@ describe("the builder", () => {
     await expect(spawnRunner(["sleep", "5"], { cwd: ROOT, log: () => {}, signal: kill.signal })).rejects.toThrow("cancelled");
     expect(Date.now() - started).toBeLessThan(2000);
   });
+
+  test("two builds at once each get a container of their own, and both succeed; a 503 (no container free) is waited out (it failed staging's deploy on 2026-10-05)", async () => {
+    const bundle = new TextDecoder().decode(packRelease(join(ROOT, ".site/release")));
+    // The Worker in front, as a mock: one container per build id (each busy with one build), and the first start of one build finds none free.
+    const busy = new Set<string>(), ids: string[] = [], cancels: string[] = [];
+    let refused = 0, inFlight = 0, most = 0;
+    const fetcher = { fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input)), id = url.searchParams.get("id")!;
+      if (url.pathname == "/cancel") { cancels.push(id); return Response.json({ stopped: busy.has(id) }); }
+      ids.push(id);
+      if (refused++ == 0) return Response.json({ error: "The build container didn't start." }, { status: 503 });
+      if (busy.has(id)) return Response.json({ error: "A build is already running." }, { status: 409 });
+      busy.add(id); most = Math.max(most, ++inFlight);
+      await new Promise((r) => setTimeout(r, 20));
+      busy.delete(id); inFlight--;
+      return new Response(`${JSON.stringify({ log: `built ${id.slice(0, 4)}` })}\n${JSON.stringify({ bundle })}\n`);
+    }) as typeof fetch };
+    const slept: number[] = [];
+    const builder = containerBuilder(fetcher, { sleep: async (ms) => { slept.push(ms); } });
+    const lines: string[][] = [[], []];
+    const [a, b] = await Promise.all([0, 1].map((n) => builder.build({ commit: SHA2, branch: n ? "main" : "staging", source: { cloneUrl: "x", token: "t" } }, (l) => lines[n].push(l))));
+    expect(a.version).toBe(SHA2.slice(0, 12));
+    expect(b.version).toBe(SHA2.slice(0, 12));
+    expect(most).toBe(2);
+    expect(new Set(ids).size).toBe(2);
+    expect(slept).toEqual([5000]);
+    expect(lines.flat().filter((l) => l.startsWith("waiting for the builder"))).toHaveLength(1);
+    // A 503 that doesn't clear gives up after ~5 minutes, with backoff, and says why.
+    const down = { fetch: (async () => Response.json({ error: "The build container didn't start." }, { status: 503 })) as unknown as typeof fetch };
+    const waits: number[] = [];
+    await expect(containerBuilder(down, { sleep: async (ms) => { waits.push(ms); } }).build({ commit: SHA2, branch: "staging", source: { cloneUrl: "x", token: "t" } }, () => {})).rejects.toThrow(/answered 503: .*didn't start/);
+    expect(waits.slice(0, 4)).toEqual([5000, 10000, 20000, 30000]);
+    expect(waits.reduce((x, y) => x + y, 0)).toBeGreaterThanOrEqual(300_000);
+    // A cancel reaches the build's own container.
+    const abort = new AbortController();
+    const hang = { fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input));
+      if (url.pathname == "/cancel") { cancels.push(url.searchParams.get("id")!); return Response.json({ stopped: true }); }
+      ids.push(url.searchParams.get("id")!);
+      return new Response(new ReadableStream({ start(c) { c.enqueue(new TextEncoder().encode(`${JSON.stringify({ log: "go" })}\n`)); } }));
+    }) as typeof fetch };
+    await expect(containerBuilder(hang).build({ commit: SHA2, branch: "staging", source: { cloneUrl: "x", token: "t" } }, () => abort.abort(new Error("superseded")), abort.signal)).rejects.toThrow("superseded");
+    expect(cancels).toEqual([ids.at(-1)]);
+  });
 });
 
 describe("the one-time setup", () => {

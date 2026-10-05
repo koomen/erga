@@ -18,7 +18,7 @@ FROM node:24-bookworm-slim AS node
 FROM oven/bun:${BUN_VERSION}-debian
 COPY --from=node /usr/local/bin/node /usr/local/bin/node
 RUN apt-get update \
- && apt-get install -y --no-install-recommends git ca-certificates curl chromium fonts-liberation fonts-noto-color-emoji socat procps \
+ && apt-get install -y --no-install-recommends git ca-certificates curl chromium fonts-liberation fonts-noto-color-emoji socat procps lsof \
  && rm -rf /var/lib/apt/lists/* \
  && mkdir -p /opt/erga-deps /opt/factory /work \
  && chown -R bun:bun /opt/erga-deps /opt/factory /work

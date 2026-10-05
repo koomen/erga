@@ -821,7 +821,11 @@ with Artifacts Read, which the deploy tokens don't have), and the container fetc
 only GitHub and GitLab repos, and Artifacts' own build-on-push guide runs a
 Workflow whose steps are container sandboxes (`@cloudflare/ci`), which is the
 same thing with more parts; the builder can move there later without the
-pipeline changing. A machine builds the same way (`deploy/run.ts`, in a
+pipeline changing. Each build has a container of its own (the pipeline
+names it, and up to 4 run at once), so staging and production can build at
+the same moment; the container is destroyed when its build ends or is
+cancelled. If no container starts (503), the pipeline logs "waiting for the
+builder" and tries again, with backoff, for about 5 minutes. A machine builds the same way (`deploy/run.ts`, in a
 scratch worktree, with the checkout's packages linked).
 
 **Branches deploy themselves** (`deploy/branches.ts`, in one Durable Object
@@ -1845,7 +1849,10 @@ real run") is code now, and staging.erga.dev runs it.
   after a new image was pushed and prepared, starts failed with "There is no
   container instance that can be provided" (Cloudflare still putting the
   image on its machines, it seems); later the same image started at once. So
-  push a new image a while before it's needed.
+  push a new image a while before it's needed. (The Dockerfile installs
+  `lsof`, which images before it lack; tests/host.ts doesn't need it: on
+  Linux it reads `/proc/*/cwd`. The next image built picks it up; there's
+  no need to push one just for that.)
 
 Done on erga.dev's account (task #7): the image pushed and prepared;
 `FACTORY_KEY` on `erga-staging`; staging deployed from a machine with this
