@@ -28,6 +28,7 @@ import { type Log, type LogEvent, type ViewRequest, type ViewResult } from "./ag
 import { chat, escapeHtml } from "./agent-chat";
 import type { AgentState, DocInfo, DocName, ModelState } from "../../api";
 import { BASE } from "./base";
+import { shareWithAgent } from "./share-agent";
 import type { Settings } from "./settings";
 import { dirOf, isPage, pageUrl } from "../../tree";
 
@@ -808,10 +809,7 @@ type TreeModule = { mountTree: typeof mountTree };
   // agent token (tokens.ts: the share button's, the same until rotated), which
   // lets the agent call your agent's tools here (host.ts, /api/ext) and act
   // as you on the rest of the server (server-api.ts).
-  const share = $("share"), shareBtn = $("btn-share");
-  const sharePrompt = $("share-prompt") as HTMLTextAreaElement, shareStatus = $("share-status");
-  const shareCopy = $("share-copy"), shareRotate = $("share-rotate");
-  let shareToken: string | null = null;
+  const shareBtn = $("btn-share");
   function promptFor(token: string): string {
     const api = `${location.origin}${BASE}/api/ext`;
     return `I'd like your help editing "${info?.path ?? info?.name ?? "the document"}", an Erga document I have open in my editor. You can read and change it through the editor's API, working as my agent: your edits show up in my editor as you make them.
@@ -827,49 +825,17 @@ The same token works for the rest of Erga as me (my other documents, new ones, p
 
 Once you've read the guide, await further instructions.`;
   }
-  async function loadShare(rotate: boolean) {
-    for (const b of [shareCopy, shareRotate]) { b.setAttribute("aria-disabled", "true"); b.title = "Getting a token…"; }
-    shareStatus.textContent = rotate ? "Making a new token…" : "";
-    const res = await fetch(api("/api/share"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ rotate }), signal: AbortSignal.timeout(10_000) })
+  const { el: share, toggle: toggleShare } = shareWithAgent({
+    button: shareBtn,
+    title: "Let another agent edit this page",
+    intro: "Paste this into an agent that can run commands on this computer (Claude Code, Codex…), then explain what you want it to do.",
+    note: `Anyone with this token can act as you on Erga: edit this document as your agent, and your other documents too. New token turns the old one off; <a href="/settings" target="_blank">your settings</a> lists and revokes them all.`,
+    token: (rotate) => fetch(api("/api/share"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ rotate }), signal: AbortSignal.timeout(10_000) })
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`the host answered ${r.status}`))) as Promise<{ token: string }>)
-      .catch((e: Error) => e);
-    if (res instanceof Error) {
-      shareToken = null;
-      sharePrompt.value = "";
-      shareStatus.textContent = `Couldn't get a token: ${res.name == "TimeoutError" ? "the editor's host didn't answer" : res.message}.`;
-      shareCopy.title = "There's no prompt to copy: getting a token failed.";
-      shareRotate.removeAttribute("aria-disabled");
-      shareRotate.title = "Try again";
-      return;
-    }
-    shareToken = res.token;
-    sharePrompt.value = promptFor(res.token);
-    for (const b of [shareCopy, shareRotate]) { b.removeAttribute("aria-disabled"); b.title = ""; }
-    shareRotate.title = "Turn this token off and make a new one";
-    shareStatus.textContent = rotate ? "New token: the old one no longer works." : "";
-  }
-  function toggleShare(force?: boolean) {
-    const open = typeof force == "boolean" ? force : share.hidden;
-    share.hidden = !open;
-    shareBtn.setAttribute("aria-expanded", String(open));
-    if (!open) return;
-    showChrome();
-    toggleHelp(false);
-    toggleSharing(false);
-    toggleNaming(false);
-    togglePages(false);
-    toggleAccount(false);
-    docSettings?.toggle(false);
-    if (!shareToken) loadShare(false);
-  }
-  shareBtn.addEventListener("click", () => toggleShare());
-  shareCopy.addEventListener("click", async () => {
-    if (!shareToken) { shareStatus.textContent = shareCopy.title || "Getting a token…"; return; }
-    const copied = await navigator.clipboard.writeText(sharePrompt.value).then(() => true, () => false);
-    if (!copied) { sharePrompt.focus(); sharePrompt.select(); }
-    shareStatus.textContent = copied ? "Copied" : "Couldn't reach the clipboard: the prompt is selected, press ⌘C.";
+      .then((r) => r.token, (e: Error) => Promise.reject(e.name == "TimeoutError" ? new Error("the editor's host didn't answer") : e)),
+    prompt: promptFor,
+    onOpen: () => { showChrome(); toggleHelp(false); toggleSharing(false); toggleNaming(false); togglePages(false); toggleAccount(false); docSettings?.toggle(false); },
   });
-  shareRotate.addEventListener("click", () => { if (shareRotate.getAttribute("aria-disabled") != "true") loadShare(true); });
 
   // Share with people: who may view or edit the document, and anyone signed
   // in with the link. Only its owner may (the front door says where, meta
