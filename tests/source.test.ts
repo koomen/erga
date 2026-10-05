@@ -212,4 +212,49 @@ describe("Erga's Git endpoint", () => {
     const files = await f.repo.files(main.commit!);
     expect(files.map((x) => x.path)).toContain("e.txt");
   });
+
+  test("a factory VM's token: its own task branch (made, moved, deleted), staging only for a merge, never main; task branches stay out of sight", async () => {
+    const moves = f.moves.length;
+    const task = f.factory({ scope: "task", branch: "task/7-the-factory" });
+    const c = scratch();
+    await must(c, "clone", "-q", task, "vm");
+    const vm = join(c, "vm");
+    await must(vm, "checkout", "-q", "-b", "task/7-the-factory", "origin/staging");
+    writeFileSync(join(vm, "task.txt"), "made by the factory\n");
+    await must(vm, "add", "."); await must(vm, "commit", "-qm", "Factory work");
+    // Its branch: made, then moved.
+    const made = await git(vm, "push", "origin", "HEAD:refs/heads/task/7-the-factory");
+    expect(made.ok).toBe(true);
+    expect(made.err).toContain("Erga: task/7-the-factory is now");
+    writeFileSync(join(vm, "task.txt"), "more\n");
+    await must(vm, "commit", "-qam", "More factory work");
+    expect((await git(vm, "push", "origin", "HEAD:refs/heads/task/7-the-factory")).ok).toBe(true);
+    // Nothing else: not staging, not main, not another task's branch.
+    expect((await git(vm, "push", "origin", "HEAD:staging")).err).toContain("may push task/7-the-factory only");
+    expect((await git(vm, "push", "origin", "HEAD:main")).ok).toBe(false);
+    expect((await git(vm, "push", "origin", "HEAD:refs/heads/task/8-other")).err).toContain("not refs/heads/task/8-other");
+    // An admin's view doesn't show it; the Source page lists staging and main only; no moves, no deploys.
+    expect(await must(src, "ls-remote", "erga")).toContain("refs/heads/task/7-the-factory"); // a clone sees every branch Artifacts has
+    expect((await f.repo.branches()).branches.map((b) => b.name)).toEqual(["staging", "main"]);
+    expect(f.moves.length).toBe(moves);
+    // A bad or other secret's token: refused.
+    expect((await git(vm, "push", task.replace(/fgt\.[^.]+\.[0-9a-f]{4}/, (m) => m.slice(0, -4) + "0000"), "HEAD:refs/heads/task/7-the-factory")).ok).toBe(false);
+    // The merge: a merge token moves staging forward (staging's rules hold), recorded as the admin's push; never deletes it.
+    const merge = f.factory({ scope: "merge", branch: "task/7-the-factory", by: "ada" });
+    await must(vm, "fetch", "-q", "origin");
+    await must(vm, "checkout", "-q", "-B", "staging", "origin/staging");
+    await must(vm, "merge", "-q", "--no-ff", "-m", "Merge task/7-the-factory: the factory", "origin/task/7-the-factory");
+    expect((await git(vm, "push", merge, "HEAD:refs/heads/staging")).ok).toBe(true);
+    expect(f.moves.at(-1)).toMatchObject({ branch: "staging", how: "push", by: "ada" });
+    expect((await git(vm, "push", merge, ":refs/heads/staging")).ok).toBe(false);
+    expect((await git(vm, "push", merge, "HEAD:main")).ok).toBe(false);
+    // Then the task's branch is deleted, and gone.
+    const del = await git(vm, "push", task, "--delete", "task/7-the-factory");
+    expect(del.ok).toBe(true);
+    expect(await must(src, "ls-remote", "erga")).not.toContain("task/7-the-factory");
+    expect(f.moves.filter((m) => m.branch != "staging" && m.branch != "main")).toEqual([]);
+    // The tests after this one carry on from staging as the merge left it.
+    await must(src, "fetch", "-q", "erga");
+    await must(src, "reset", "-q", "--hard", "erga/staging");
+  });
 });

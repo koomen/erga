@@ -25,6 +25,7 @@ import { targetOf } from "./branches";
 import { buildIn } from "./builder/build";
 import { unpackRelease } from "./bundle";
 import { ALL_STEPS, Cloudflare, guardTarget, loadRelease, runPipeline, stepsFor, targetHost, type Fetch, type Release, type Target } from "./cloudflare";
+import { imageRef } from "./containers";
 import { machineCredential } from "./credential";
 import { FLEET_ACCOUNT, MOCK_SNAPSHOT_TOKEN, mockCloudflare } from "./mock";
 import { isTargetName, TARGETS, type TargetName } from "./targets";
@@ -108,8 +109,15 @@ export async function deployFromMachine(o: MachineDeploy): Promise<boolean> {
 
   const release = await buildHere(commit, log, mock);
   const net = o.net ?? (mock ? mockCloudflare({ fleet: true }).fetch : globalThis.fetch.bind(globalThis));
-  await runPipeline(new Cloudflare(token, net), release, target, {
+  const cf = new Cloudflare(token, net);
+  await runPipeline(cf, release, target, {
     site: net,
+    // The factory's image: built and pushed from here if the registry hasn't it (Docker), as deploy/targets.json names it.
+    ...(mock ? {} : { pushImage: async (ref: string) => {
+      const { pushImage } = await import("../factory/vm/push");
+      const got = imageRef(accountId, await pushImage(cf, accountId, (l) => log(`image: ${l}`), ref));
+      if (got != ref) throw new Error(`The factory's image is ${got} now, not ${ref} as deploy/targets.json says: run bun factory/vm/push.ts, commit deploy/targets.json, and deploy again.`);
+    } }),
     report: (id, status, detail) => log(`${ALL_STEPS.find((s) => s.id == id)?.title}${status == "running" ? "…" : `: ${status}${detail ? `, ${detail}` : ""}`}`),
     ...(mock ? { sleep: async () => {}, waitMs: 2000 } : {}),
   });

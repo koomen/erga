@@ -854,7 +854,7 @@ describe("the one-time setup", () => {
     const out = run.stdout.toString();
     expect(run.exitCode).toBe(0);
     expect(out).toContain("(the mock Cloudflare: nothing real)");
-    expect(out).toContain("secrets set: SESSION_SECRET, SNAPSHOT_TOKEN, DEPLOY_HOOK_SECRET, GITHUB_CLIENT_SECRET\n");
+    expect(out).toContain("secrets set: SESSION_SECRET, FACTORY_KEY, SNAPSHOT_TOKEN, DEPLOY_HOOK_SECRET, GITHUB_CLIENT_SECRET\n");
     expect(out).toContain("the zone's free Universal SSL certificate covers it (it covers *.erga-pages-staging.dev).");
     expect(out).toContain("There's one already (Universal SSL).");
     expect(out).toContain("Made and checked: it deploys erga-staging, reads erga.dev and erga-pages-staging.dev, and can't reach erga or write DNS and routes.");
