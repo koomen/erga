@@ -725,7 +725,7 @@ exit 64
     check((await api3("GET", "/api/history")).upstream?.ok === true, "GET /api/history says how the last push upstream went");
 
     // A commit made upstream (a merge on Erga's /source): merged into the task's branch, so main goes there as a fast-forward.
-    const other = join(tmp, "other");
+    const other = join(tmp, "up-clone");
     sh(`git clone -q ${up} ${other} && cd ${other} && git config user.email t@t && git config user.name t && git checkout -q staging && echo upstream > up.txt && git add . && git commit -qm "Made upstream" && git push -q origin HEAD:staging`, tmp);
     const t = await api3("POST", "/api/tasks", { title: "Upstream task" });
     sh(`echo task > task.txt && git add . && git commit -qm "The task"`, t.worktree);
