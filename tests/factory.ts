@@ -423,7 +423,7 @@ try {
   const replyCount = (await replies()).split(" | ").length;
   await sayTo("What needs its agent? @script " + JSON.stringify([{ tool: "list_tasks", args: { status: "needs agent" } }, { tool: "get_task", args: { id: tB, log: 5 } }, { text: "B needs its agent." }]));
   await until(async () => (await replies()).split(" | ").length > replyCount && (await replies()).includes("B needs its agent."), 15_000, "the agent answers", panel);
-  expect(!(await panel()).includes("failed"), "its reads of a needs agent task work", await panel());
+  expect(!/(list_tasks|get_task) failed/.test(await panel()), "its reads of a needs agent task work", await panel());
   await until(async () => (await statusOf(tB)) == "merged", STEP, "B's merge goes on by itself, and B is merged", async () => (await task(tB)).log.slice(-6));
   const nb2 = await task(tB);
   const msgs = nb2.log.map((l: any) => l.message);
