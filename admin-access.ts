@@ -16,7 +16,7 @@
 // A POST from a browser must come from this site's own pages (its Origin);
 // one with a token is its own proof.
 
-import { CHALLENGE_MS, KeyError, NAMESPACE, TOKEN_MAX_MS, UNLOCK_MS, type AdminKey, type AdminKeys, type LogEntry, type Unlock } from "./admin-keys.ts";
+import { CHALLENGE_MS, KeyError, NAMESPACE, SIGN_IN_KEY, TOKEN_MAX_MS, UNLOCK_MS, type AdminKey, type AdminKeys, type LogEntry, type Unlock } from "./admin-keys.ts";
 import { appPage, brand, esc, fromElsewhere, ICON, link, page, safeNext, type Platform, type Session, TIMES_SCRIPT, whoOf } from "./front.ts";
 
 /** What the Worker hands in: the erga_admin cookie (worker/auth.ts), and whether this is local development (GitHub isn't asked about a first key). */
@@ -140,7 +140,7 @@ async function bodyOf(request: Request): Promise<Record<string, unknown>> {
 
 interface State {
   login: string;
-  unlocked: { until: string; key: ReturnType<typeof shownKey> | { id: "local"; name: string } } | null;
+  unlocked: { until: string; key: ReturnType<typeof shownKey> | { id: "local" | "sign-in"; name: string } } | null;
   keys: ReturnType<typeof shownKey>[];
   /** No key that works: the next one must be on GitHub (github.com/<login>.keys). */
   bootstrap: boolean;
@@ -152,7 +152,9 @@ interface State {
 async function state(keys: AdminKeys, login: string, unlocked: Unlock | null): Promise<State> {
   const mine = await keys.list(login);
   const live = mine.filter((k) => !k.revoked);
-  const key = unlocked && (unlocked.key == "local" ? { id: "local" as const, name: "local development (ERGA_ADMIN_UNLOCKED)" } : mine.find((k) => k.id == unlocked.key));
+  const key = unlocked && (unlocked.key == "local" ? { id: "local" as const, name: "local development (ERGA_ADMIN_UNLOCKED)" }
+    : unlocked.key == SIGN_IN_KEY ? { id: "sign-in" as const, name: "your sign-in (this server doesn't require admin SSH keys)" }
+    : mine.find((k) => k.id == unlocked.key));
   return {
     login,
     unlocked: unlocked && key ? { until: new Date(unlocked.until).toISOString(), key: "fingerprint" in key ? shownKey(key) : key } : null,
@@ -186,7 +188,9 @@ function keysPage(session: Session, url: URL, s: State, next: string | null): Re
   const back = next && next != "/" && next != "/admin/keys" ? next : null;
   const live = s.keys.filter((k) => !k.revoked), revoked = s.keys.filter((k) => k.revoked);
   const usingId = s.unlocked?.key.id;
-  const status = s.unlocked
+  const status = s.unlocked?.key.id == "sign-in"
+    ? `<div class="lockstate on" role="status"><div><b>Admin access is open.</b> This server doesn't require admin SSH keys: signing in as an admin is enough.${back ? ` <a href="${esc(back)}" class="go">Continue to ${esc(back.split("#")[0])}</a>` : ""}</div></div>`
+    : s.unlocked
     ? `<div class="lockstate on" role="status"><div><b>Admin access is unlocked</b> until <span data-time="${esc(s.unlocked.until)}">${esc(s.unlocked.until.slice(11, 16))} UTC</span>, with ${esc(s.unlocked.key.name)}.${back ? ` <a href="${esc(back)}" class="go">Continue to ${esc(back.split("#")[0])}</a>` : ""}</div><button type="button" class="pill" id="lock">Lock now</button></div>`
     : `<div class="lockstate" role="status"><div><b>Admin access is locked.</b> ${s.bootstrap ? "Add your first admin SSH key below: it must be one of your keys on GitHub." : "Sign a challenge with one of your admin SSH keys to unlock it for an hour."}</div></div>`;
   const style = `
@@ -247,7 +251,7 @@ function keysPage(session: Session, url: URL, s: State, next: string | null): Re
       <div class="actions"><button type="button" class="new" id="unlock-go">Unlock</button><p class="hint" id="unlock-hint" role="status"></p></div>
     </div>
   </section>` : "";
-  const canAdd = !!s.unlocked || s.bootstrap;
+  const canAdd = (!!s.unlocked && s.unlocked.key.id != "sign-in") || s.bootstrap;
   const addSection = canAdd ? `
   <section aria-labelledby="add-title" id="add">
     <h2 id="add-title">${s.bootstrap ? "Add your first admin key" : "Add a key"}</h2>

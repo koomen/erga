@@ -11,7 +11,7 @@
 // (ids starting "test"), so the test suite can run against erga.dev.
 
 import type { Unlock } from "../admin-keys";
-import { confirmAction, DEV_UNLOCK, fromElsewhere, page, safeNext, type Session } from "../front";
+import { confirmAction, DEV_UNLOCK, SIGN_IN_UNLOCK, fromElsewhere, page, safeNext, type Session } from "../front";
 import { adminKeysOf, directoryOf } from "./d1";
 import type { Env } from "./env";
 
@@ -77,15 +77,23 @@ async function findSession(env: Env, request: Request): Promise<Session | null> 
     : (await signedIn(env, request, dev)) ?? (dev && !cookies(request).has(SIGNED_OUT) ? { login: env.DEV_LOGIN!, name: env.DEV_LOGIN! } : null);
   // Locally everyone may sign in, and gets a user's row the first time (last seen, the next).
   if (session && !session.test) await users(env).signedIn(session.login, dev ? session.name : null, { create: dev });
-  // Admin access, if they unlocked it with their SSH key (or local development's shortcut, ERGA_ADMIN_UNLOCKED=1).
+  // Admin access, if they unlocked it with their SSH key (or local development's shortcut, ERGA_ADMIN_UNLOCKED=1);
+  // while admin keys aren't required (keysRequired), signing in is enough.
   if (session && !session.test) {
     const raw = cookies(request).get(ADMIN_COOKIE);
     const unlocked = raw ? await adminKeysOf(env).readCookie(raw, session.login).catch(() => null) : null;
     if (unlocked) session.unlocked = unlocked;
     else if (devUnlocked(env, url)) session.unlocked = DEV_UNLOCK();
+    else if (!keysRequired(env)) session.unlocked = SIGN_IN_UNLOCK();
   }
   return session;
 }
+
+/**
+ * Whether admin power needs an unlock with an admin SSH key (admin-keys.ts; README, Admin SSH keys). Off unless
+ * ERGA_ADMIN_KEYS_REQUIRED=1 (cloudflare.config.ts): a signed-in admin is enough, the admin check itself unchanged.
+ */
+export const keysRequired = (env: Env) => env.ERGA_ADMIN_KEYS_REQUIRED == "1";
 
 /** Local development's shortcut: every admin counts as unlocked (ERGA_ADMIN_UNLOCKED=1, which tests/host.ts sets), on localhost only. */
 export const devUnlocked = (env: Env, url: URL) => isDev(env, url) && env.ERGA_ADMIN_UNLOCKED == "1";

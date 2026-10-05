@@ -42,7 +42,7 @@ import { OWN_ACCOUNT } from "./account.ts";
 import { adminDoor } from "./admin.ts";
 import { type Directory, type DocRow, type Grant, type Permission, type Role, type Route, type Who, NotAllowed, roleMay, UNTITLED } from "./directory.ts";
 import type { AgentToken, Tokens } from "./tokens.ts";
-import { ADMIN_TOKEN_PREFIX, type AdminKeys, type Unlock } from "./admin-keys.ts";
+import { ADMIN_TOKEN_PREFIX, SIGN_IN_KEY, UNLOCK_MS, type AdminKeys, type Unlock } from "./admin-keys.ts";
 import type { PublishRequest, PublishResult, Version, VersionsState } from "./versions.ts";
 import { pageAddress, resolvePage } from "./tree.ts";
 
@@ -133,6 +133,11 @@ export interface Platform {
    * every admin counts as unlocked, on localhost only.
    */
   devUnlocked?(url: URL): boolean;
+  /**
+   * Whether admin power needs an unlock with an admin SSH key (ERGA_ADMIN_KEYS_REQUIRED=1). If not (the
+   * default), every signed-in session carries SIGN_IN_UNLOCK, so a signed-in admin is enough.
+   */
+  keysRequired?(): boolean;
   /** A test token for the test suite, minted by `login` (shown on /tokens), where the platform makes them. */
   testToken?(login: string): Promise<{ token: string; expires: Date }>;
   docs: {
@@ -294,6 +299,7 @@ export function withTokens(platform: Platform, url: URL): Platform {
       const session: Session = { login: token.login, name: token.name, agent: token, ...(token.testBy ? { test: { by: token.testBy } } : {}) };
       if (token.testBy) return (await users.allowed(token.testBy)) ? session : null;
       if (platform.devUnlocked?.(url)) session.unlocked = DEV_UNLOCK();
+      else if (platform.keysRequired && !platform.keysRequired()) session.unlocked = SIGN_IN_UNLOCK();
       return platform.dev(url) || (await users.allowed(token.login)) ? session : null;
     },
   };
@@ -308,6 +314,9 @@ export const whoOf = (session: Session): Who => ({ login: session.login.toLowerC
 
 /** Local development's shortcut unlock (Platform.devUnlocked): an hour from now, by no key. */
 export const DEV_UNLOCK = (): Unlock => ({ key: "local", until: Date.now() + 60 * 60 * 1000 });
+
+/** The unlock every signed-in session carries while admin keys aren't required (Platform.keysRequired): an hour from now, by no key. */
+export const SIGN_IN_UNLOCK = (): Unlock => ({ key: SIGN_IN_KEY, until: Date.now() + UNLOCK_MS });
 
 const refused = (session: Session) => session.test
   ? page("Test documents only", "Test people can open only test documents.", 403)
