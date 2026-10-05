@@ -279,6 +279,7 @@ try {
   await click("#grid .row button.here");
   await until(async () => (await state()).rows.find((x) => x.sha == polled2)?.kind.includes("on-main"), 10_000, "Merge to here moves main to that commit", state);
   expect((await p.eval<string>(`document.getElementById("merge-hint").textContent`)) == "", "and leaves no message after it");
+  await p.screenshot(join(SHOTS, "source-after-merge.png"));
   // Every move of main deploys production (its server is played in the mock: deploy/mock.ts, worker/pipeline.ts's peer).
   await until(async () => (await state()).rows.find((x) => x.sha == polled2)?.live[1] == "live", 60_000, "and production deploys it", state);
   ok("every move of staging deploys staging, every move of main deploys production");
