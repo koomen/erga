@@ -92,6 +92,8 @@ export interface Env {
   ERGA_DEPLOY_MOCK?: string;
   /** Local development only: sign in as this login without GitHub (honoured only on localhost). */
   DEV_LOGIN?: string;
+  /** "1": admin power needs an unlock with an admin SSH key (admin-keys.ts). Empty: a signed-in admin is enough (worker/auth.ts, keysRequired). */
+  ERGA_ADMIN_KEYS_REQUIRED?: string;
   /** Local development only: "1" counts every admin as having unlocked admin access (admin-keys.ts), for the tests that aren't about it (tests/host.ts sets it). Honoured only on localhost. */
   ERGA_ADMIN_UNLOCKED?: string;
   /** "script" for the test suite's scripted agent; unset on erga.dev. */

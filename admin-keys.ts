@@ -35,13 +35,19 @@ export const TOKEN_MAX_MS = 12 * 60 * 60 * 1000;
 /** How long a challenge waits to be signed. */
 export const CHALLENGE_MS = 5 * 60 * 1000;
 export const ADMIN_TOKEN_PREFIX = "erga_admin_";
+/**
+ * The key an unlock names when admin keys aren't required (ERGA_ADMIN_KEYS_REQUIRED unset, worker/auth.ts):
+ * every signed-in session carries such an unlock, so a signed-in admin is enough. It names no SSH key, so it
+ * stops counting the moment the keys are required again.
+ */
+export const SIGN_IN_KEY = "sign-in";
 /** How long a key that's there is trusted before asking the database again (a revoke here is seen at once). */
 const REMEMBER_MS = 10_000;
 const NAME_MAX = 60;
 
 /** An unlock, as a session carries it (front.ts, Session.unlocked) to the directory's admin-only calls (users.ts). */
 export interface Unlock {
-  /** The key that unlocked it ("local" for local development's shortcut, ERGA_ADMIN_UNLOCKED). */
+  /** The key that unlocked it ("local" for local development's shortcut, ERGA_ADMIN_UNLOCKED; SIGN_IN_KEY while admin keys aren't required). */
   key: string;
   /** When it ends (ms since the epoch). */
   until: number;

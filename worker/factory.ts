@@ -76,7 +76,7 @@ import { DurableObject } from "cloudflare:workers";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import { agentConfigFrom, isModelChoice, MODELS, type AgentConfig } from "../agent";
-import type { Unlock } from "../admin-keys";
+import { SIGN_IN_KEY, type Unlock } from "../admin-keys";
 import { type Blocked, dependents, depRules, depsNote, type DepStatus, type DepTask, ids } from "../development/task-queue/deps";
 import { factoryGuide, factoryTools, startFactoryAgent, type FactoryAgent, type FactoryOps } from "../factory/agent";
 import { containersHost } from "../factory/cloudflare";
@@ -84,7 +84,7 @@ import { b64url } from "../factory/git-grant";
 import { branchName, claudeToken, resolvePrompt, taskPrompt } from "../factory/prompt";
 import { whoOf } from "../front";
 import { LOCKED } from "../users";
-import { isDev, sessionOf } from "./auth";
+import { isDev, keysRequired, sessionOf } from "./auth";
 import { agentName } from "../src/room/doc";
 import { adminKeysOf, directoryOf } from "./d1";
 import type { Env } from "./env";
@@ -658,7 +658,7 @@ export class Factory extends DurableObject<Env> {
    */
   private async refusal(login: string, unlock: Unlock): Promise<string | null> {
     if (!(unlock.until > Date.now())) return LOCKED;
-    const keyOk = unlock.key == "local" ? !!(this.env.DEV_LOGIN && this.env.ERGA_LINK_SECRET) : (await adminKeysOf(this.env).ownerOf(unlock.key)) == login;
+    const keyOk = unlock.key == "local" ? !!(this.env.DEV_LOGIN && this.env.ERGA_LINK_SECRET) : unlock.key == SIGN_IN_KEY ? !keysRequired(this.env) : (await adminKeysOf(this.env).ownerOf(unlock.key)) == login;
     if (!keyOk) return LOCKED;
     if (!(await directoryOf(this.env).users.isAdmin(login))) return "Only admins can use the factory.";
     return null;
@@ -840,7 +840,7 @@ export const factoryEnabled = enabled;
 async function sharedAgentApi(request: Request, env: Env, url: URL, raw: string, path: string, id: number | null, action: string): Promise<Response> {
   const f = factory(env);
   const t = await f.readToken(raw);
-  const keyOk = t && (t.key == "local" ? isDev(env, url) : (await adminKeysOf(env).ownerOf(t.key)) == t.login);
+  const keyOk = t && (t.key == "local" ? isDev(env, url) : t.key == SIGN_IN_KEY ? !keysRequired(env) : (await adminKeysOf(env).ownerOf(t.key)) == t.login);
   if (!t || !keyOk || !(await directoryOf(env).users.isAdmin(t.login))) {
     return json({ error: "That factory token doesn't work: it ended, was revoked, or the admin key that made it was. Ask an admin for a new one (Share with agent, on /admin/source)." }, 401);
   }

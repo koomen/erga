@@ -63,7 +63,7 @@ serves the app's routes (`front.ts`). Its pages:
   it (see [Documents with many pages](#documents-with-many-pages)).
 - **Settings**, `/settings`: your agent tokens (`/tokens` redirects there).
 - **Admin settings**, `/admin`: the server's settings and users, for admins
-  who have unlocked admin access with their SSH key.
+  (and, with admin keys required, only once they've unlocked admin access with their SSH key).
 - **Admin keys**, `/admin/keys`: an admin's SSH keys, and unlocking admin
   access with them (see [Admin SSH keys](#admin-ssh-keys)).
 - **Deploy your own**, `/deploy`: anyone signed in, by default (see
@@ -368,8 +368,9 @@ their row the first time they do; they can't be demoted or removed except by
 taking them out of `ADMINS` and deploying. Every other admin is a row, made
 by an admin. Locally, `DEV_LOGIN` is a bootstrap admin too, and everyone
 signed in gets a row as they come. Being an admin says who *may* administer
-the server; doing it also needs admin access unlocked with an SSH key the
-admin added themselves (see [Admin SSH keys](#admin-ssh-keys)). An admin's
+the server; with admin keys required (off by default), doing it also needs
+admin access unlocked with an SSH key the admin added themselves (see
+[Admin SSH keys](#admin-ssh-keys)). An admin's
 agent can do it all for them with an admin token (see [Agents configure the
 server](#agents-configure-the-server)): ask Claude Code, with one, to add a user.
 
@@ -586,6 +587,19 @@ The token signs in test people (Ada, Bo, ...) who can open only test documents
 (`/<you>/test....`), where the scripted agent stands in for the model.
 
 ### Admin SSH keys
+
+**Off by default.** Unless the deploy sets `ERGA_ADMIN_KEYS_REQUIRED=1`
+(`cloudflare.config.ts`), a signed-in admin is enough: every signed-in
+session carries an unlock that names no key (`SIGN_IN_KEY`, made in
+`worker/auth.ts` and `front.ts`'s `withTokens`), so the admin check
+(`Users.isAdmin`) is the only one left. Non-admins and people signed out are
+refused as before. An admin's agent token works as an admin token does
+(the admin tools, the Git endpoint), and `/admin/keys` says no key is
+needed. The keys, the challenges and admin tokens still work; to turn the
+requirement back on, make `ERGA_ADMIN_KEYS_REQUIRED`'s default `"1"` in
+`cloudflare.config.ts` (`tests/admin-keys.ts` runs with it on;
+`tests/admin-open.ts` checks it off). Everything below describes the
+requirement while it's on.
 
 Everything that administers, edits or deploys the server itself needs more
 than a GitHub sign-in: an admin must also have **unlocked admin access**, by
