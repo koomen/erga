@@ -299,7 +299,7 @@ try {
   const box = (sel: string) => p.eval<{ left: number; right: number; top: number; bottom: number; width: number }>(`(() => { const r = document.querySelector(${JSON.stringify(sel)}).getBoundingClientRect(); return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, width: r.width }; })()`);
   const [agentBox, tasksBox, sourceBox] = [await box("#agent"), await box("#tasks"), await box("#source-pane")];
   expect(agentBox.right <= tasksBox.left && tasksBox.bottom <= sourceBox.top && agentBox.width >= 300 && agentBox.bottom <= 900, "on a wide window: the agent on the left, the board above the dashboard beside it", { agentBox, tasksBox, sourceBox });
-  expect(await p.eval(`getComputedStyle(document.querySelector("#tasks .board")).gridTemplateColumns.split(" ").length == 5`), "the board keeps its five columns beside the agent");
+  expect(await p.eval(`getComputedStyle(document.querySelector("#tasks .board")).gridTemplateColumns.split(" ").length == 4`), "the board keeps its four columns beside the agent");
   const phone = await browser.page(await browser.context());
   await phone.open(`${root}/admin/source`, { width: 390, height: 844, scale: 2 });
   await until(() => phone.eval(`!!document.querySelector('#tasks [data-col="queued"]')`), 10_000, "the page on a phone");
