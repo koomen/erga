@@ -193,6 +193,7 @@ try {
   await until(async () => (await state()).rows.length > 0, 10_000, "the list draws");
   let s = await state();
   expect(s.rows.map((x) => x.subject).join() == "Fifth,Fourth,Third,Second,First" && s.title.startsWith("Source") && !s.merge && !s.mergeShown && s.ahead.includes("main is at staging"), "one list: staging's commits, newest first; nothing to merge, so no Merge button", s);
+  await p.screenshot(join(SHOTS, "source-at-staging.png"));
   expect(s.heads[0] == "" && s.heads[1] == "Commit" && s.dots == 1, "one dot column, with no header", s);
   expect(await p.eval(`document.querySelector(".crumbs .brand").textContent == "Erga" && document.querySelector(".crumbs .here").textContent == "Source" && !!document.querySelector("[data-erga-account]")`), "breadcrumbs (Erga › Source) and the avatar");
   expect(s.targets.length == 2 && s.targets[0].startsWith("staging") && s.targets[0].includes("live") && s.targets[1].startsWith("production"), "the deploy columns' heads: each target's status", s.targets);
