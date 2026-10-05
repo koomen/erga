@@ -1819,7 +1819,8 @@ real run") is code now, and staging.erga.dev runs it.
   run, and its commit, before it deploys. But wait before the commit: a new image
   can take about an hour after its preparation before Containers starts
   it ("There is no container instance that can be provided to this Durable
-  Object"; task #21 saw this), and a deploy that names it in that time has
+  Object"; for task #21's image, refused 11 minutes after it, started
+  after 28), and a deploy that names it in that time has
   VMs that don't start. So push it, keep `deploy/targets.json`'s new line
   uncommitted, and run `bun factory/vm/probe.ts` (it reads that line) every
   ten minutes or so until it says PROBE OK; then commit. The probe uses a
