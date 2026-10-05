@@ -10,7 +10,7 @@
 //   bun deploy/setup.ts --dry-run          (says what it would do, asks nothing, changes nothing)
 //   bun deploy/setup.ts --tokens           (only the deploy tokens: make them again, check them, store them)
 //   bun deploy/setup.ts --production       (also production's deploy token, stored on erga: task #3's switch)
-//   --certificate                          (order the advanced certificate for staging's pages: paid)
+//   --certificate                          (order an advanced certificate for staging's pages, if Universal SSL can't cover them: paid)
 //   --builder                              (deploy the builder again, e.g. after deploy/builder/ changed)
 //   --no-deploy                            (skip staging's deploy from this machine)
 //   bun deploy/setup.ts --hook-secret      (only a new DEPLOY_HOOK_SECRET on both Workers; not kept anywhere else)
@@ -47,6 +47,8 @@ const dry = flag("--dry-run"), yes = flag("--yes"), tokensOnly = flag("--tokens"
 const mock = process.env.ERGA_DEPLOY_MOCK == "1";
 const STAGING = TARGETS.staging, PROD = TARGETS.production;
 const secret = () => randomBytes(32).toString("hex");
+/** Staging's pages are the zone's own wildcard (*.erga-pages-staging.dev), which the zone's free Universal SSL certificate covers. */
+const UNIVERSAL = STAGING.pages.domain == STAGING.pages.zone;
 /** The wrangler that deploys the builder (its containers need a recent one). */
 export const WRANGLER = "wrangler@4.147.0";
 
@@ -54,7 +56,7 @@ const PLAN = [
   `Check the credential, the account, and its zones ${STAGING.zone} and ${STAGING.pages.zone} (reads only).`,
   `Erga's source: the Artifacts repo ${SOURCE.namespace}/${SOURCE.repo} (made if it isn't there). Servers reach it through their Artifacts binding, not a token.`,
   `Staging's GitHub OAuth app: its Client ID in deploy/targets.json (homepage https://${STAGING.host}, callback https://${STAGING.host}/auth/github/callback).`,
-  `A certificate for *.${STAGING.pages.domain} (documents' pages on staging): Universal SSL covers only *.${STAGING.pages.zone}. An advanced certificate is paid: ordered only with --certificate.`,
+  `A certificate for *.${STAGING.pages.domain} (documents' pages on staging): ${UNIVERSAL ? `the zone's free Universal SSL certificate covers it (it covers *.${STAGING.pages.zone}).` : `Universal SSL covers only *.${STAGING.pages.zone}. An advanced certificate is paid: ordered only with --certificate.`}`,
   `The builder Worker (${BUILDER}, deploy/builder/): deployed with \`bunx ${WRANGLER} deploy\` there (Docker builds its image) if it isn't there, or with --builder.`,
   `Staging's secrets: a SESSION_SECRET (kept if it has one), its GitHub app's client secret, an Anthropic key if you want the agent, and two shared with production: SNAPSHOT_TOKEN and DEPLOY_HOOK_SECRET.`,
   `Production's Worker (${PROD.worker}): set SNAPSHOT_TOKEN and DEPLOY_HOOK_SECRET on it (a new version of the same code; nothing else changes), so staging can read its documents and production can pass staging's pushes on.`,
@@ -166,7 +168,8 @@ try {
     step(4);
     const packs = (await cf.call<{ hosts?: string[]; status?: string }[]>("GET", `/zones/${pagesZone}/ssl/certificate_packs?status=all`, "list the certificates").catch(() => [])) ?? [];
     const covered = packs.some((p) => p.hosts?.includes(`*.${STAGING.pages.domain}`));
-    if (covered) console.log("   There's one already.");
+    if (covered) console.log(`   There's one already${UNIVERSAL ? " (Universal SSL)" : ""}.`);
+    else if (UNIVERSAL) console.log(`   None active yet: Cloudflare issues the zone's Universal SSL certificate itself, a few minutes after the zone is active. Nothing to order.`);
     else if (!flag("--certificate")) console.log(`   None, and none ordered (it costs money: --certificate orders it). Documents' pages on staging won't load over HTTPS until there's one.`);
     else if (ask(`   Order an advanced certificate for ${STAGING.pages.domain} and *.${STAGING.pages.domain}? (It needs Advanced Certificate Manager, which costs money.)`, yes)) {
       await cf.call("POST", `/zones/${pagesZone}/ssl/certificate_packs/order`, "order the certificate", {

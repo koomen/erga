@@ -322,13 +322,15 @@ export function targetOfPlan(plan: DeployPlan, sessionSecret: string): Target {
   };
 }
 
-/** Why a target mustn't be deployed, or null: one that isn't production may not touch production's names, and a snapshot never goes into its own source. */
+/** Why a target mustn't be deployed, or null: one that isn't production may not touch production's names (nor put its pages under production's), and a snapshot never goes into its own source. */
 export function guardTarget(t: Target): string | null {
   const g = t.guard;
   const host = t.app.kind == "domain" ? t.app.hostname.toLowerCase() : null;
   const pages = t.pages.kind == "zone" ? (t.pages.domain ?? t.pages.zoneName).toLowerCase() : null;
   if (g && !t.production) {
     if (host == g.host || pages == g.pages) return `This deploy (${t.label}) would put a server on production's address (${host == g.host ? g.host : `*.${g.pages}`}). It stops here: production is deployed only as production.`;
+    // Pages under production's (*.x.erga-pages.dev): a route on production's pages zone, which only production uses.
+    if (pages?.endsWith(`.${g.pages}`)) return `This deploy (${t.label}) would put documents' pages under production's pages domain (*.${pages}, in ${g.pages}). It stops here: give it a pages domain of its own.`;
     const sameAccount = !g.accountId || g.accountId == t.accountId;
     if (sameAccount && t.workerName == g.worker) return `This deploy (${t.label}) would replace production's Worker (${g.worker}). It stops here.`;
     if (sameAccount && t.databaseName == g.database) return `This deploy (${t.label}) would use production's database (${g.database}). It stops here.`;

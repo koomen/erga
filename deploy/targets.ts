@@ -4,7 +4,7 @@
 // each into a target to deploy to (deploy/branches.ts, deploy/run.ts).
 //
 //   production   branch main      erga.dev           Worker erga          D1 erga           pages *.erga-pages.dev
-//   staging      branch staging   staging.erga.dev   Worker erga-staging  D1 erga-staging   pages *.staging.erga-pages.dev
+//   staging      branch staging   staging.erga.dev   Worker erga-staging  D1 erga-staging   pages *.erga-pages-staging.dev
 //
 // Both are in the same Cloudflare account (its id is the Worker's
 // CLOUDFLARE_ACCOUNT_ID, or the environment's for deploy/run.ts). Staging
@@ -38,9 +38,11 @@ export interface TargetSpec {
   /**
    * Documents' pages, one origin each: <id>-<owner>.<domain>, through a
    * wildcard route (*.<domain>/*) and a proxied wildcard DNS record
-   * (* AAAA 100::) on `zone`. A wildcard one level down (staging's) needs a
-   * certificate that covers it: Universal SSL covers *.erga-pages.dev only
-   * (deploy/setup.ts orders an advanced certificate, after asking).
+   * (* AAAA 100::) on `zone`. Each target's pages have a zone of their own
+   * (erga-pages.dev, erga-pages-staging.dev), with `domain` the zone itself:
+   * the zone's free Universal SSL certificate covers *.<zone>, one level
+   * down only. A domain deeper in a zone would need an advanced certificate,
+   * which is paid (deploy/setup.ts --certificate).
    */
   pages: { zone: string; domain: string };
   /** Text bindings this target sets over the build's (cloudflare.config.ts). */
@@ -62,12 +64,6 @@ export interface TargetSpec {
    * down, or can't deploy itself): deploy/branches.ts.
    */
   deploys: TargetName[];
-  /**
-   * More zones this server's deploy token may read, beyond its targets' own
-   * (production's: erga-pages-staging.dev, staging's pages zone from task #4,
-   * so production can deploy staging there too).
-   */
-  tokenZones?: string[];
 }
 
 import data from "./targets.json";

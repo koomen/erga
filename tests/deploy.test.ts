@@ -244,6 +244,12 @@ describe("around it", () => {
     const own = { pagesDomain: () => "erga-pages.dev" } as unknown as Platform;
     expect(pagesOrigin("Ada", "abcd2345", app, own)).toBe("https://abcd2345-ada.erga-pages.dev");
     expect(pagesHost(new URL("https://abcd2345-ada.erga-pages.dev/t/x/"), own)).toEqual({ owner: "ada", id: "abcd2345" });
+    // As staging.erga.dev: an origin each on its own pages zone, one level down (its Universal SSL certificate covers it).
+    const staging = { pagesDomain: () => "erga-pages-staging.dev" } as unknown as Platform;
+    expect(pagesOrigin("Ada", "abcd2345", new URL("https://staging.erga.dev/ada/notes"), staging)).toBe("https://abcd2345-ada.erga-pages-staging.dev");
+    expect(pagesHost(new URL("https://abcd2345-ada.erga-pages-staging.dev/t/x/"), staging)).toEqual({ owner: "ada", id: "abcd2345" });
+    expect(pagesHost(new URL("https://abcd2345-ada.erga-pages.dev/t/x/"), staging)).toBeNull();
+    expect(pagesHost(new URL("https://abcd2345-ada.staging.erga-pages-staging.dev/t/x/"), staging)).toBeNull();
   });
 
   test("DeployError carries Cloudflare's status", () => {
