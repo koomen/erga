@@ -128,7 +128,7 @@ if (import.meta.main) {
         { type: "secret_text", name: "PROBE_TASK_TOKEN", text: taskToken }, { type: "plain_text", name: "PROBE_ORIGIN", text: origin },
         { type: "plain_text", name: "PROBE_WAIT_MS", text: String(Number(args.includes("--wait") ? args[args.indexOf("--wait") + 1] : 240) * 1000) },
         { type: "plain_text", name: "PROBE_INSTANCE", text: args.includes("--instance") ? args[args.indexOf("--instance") + 1] : "standard-3" }],
-      ...(args.includes("--migrations") ? { migrations: { new_tag: "v1", new_sqlite_classes: [CLASS] } } : { exports: { [CLASS]: { type: "durable-object", storage: "sqlite" } } }),
+      exports: { [CLASS]: { type: "durable-object", storage: "sqlite" } },
       containers: [{ name: `${WORKER}-${CLASS.toLowerCase()}`, class_name: CLASS, images: { factory: ref } }],
       tags: ["erga-factory-probe"],
     });
@@ -143,8 +143,6 @@ if (import.meta.main) {
     const settings = await cf.call<{ bindings: { type: string; class_name?: string; namespace_id?: string }[] }>("GET", `${acc}/workers/scripts/${WORKER}/settings`, "read its settings");
     appId = settings!.bindings.find((b) => b.class_name == CLASS)!.namespace_id!;
     await cf.call("POST", `${acc}/containers/applications`, "make its container application", { name: `${WORKER}-${CLASS.toLowerCase()}`, scheduling_policy: "durable_object", durable_objects: { namespace_id: appId } });
-    // Again, now that the application is there: a version uploaded before it isn't tied to it.
-    if (!args.includes("--once")) await upload();
     say(`${origin}: up, with its container application ${appId}`);
     const vm = join(import.meta.dirname);
     const scripts = Object.fromEntries(readdirSync(vm).filter((n) => ["common.ts", "fake-claude.ts", "merge.ts", "run.ts", "task.ts"].includes(n)).map((n) => [n, readFileSync(join(vm, n), "utf8")]));

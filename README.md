@@ -1668,8 +1668,12 @@ real run") is code now, and staging.erga.dev runs it.
   `registry.cloudflare.com/<account>/erga-factory:<tag>@sha256:<digest>`
   (Containers takes only digest-pinned images), and `deploy/targets.json`
   names it (`factory.image`; a test keeps its tag equal to
-  `factory/vm/build.ts`'s). `bun factory/vm/push.ts` builds it for
-  Cloudflare's machines (linux/amd64, with Docker), pushes it (a 15-minute
+  `factory/vm/build.ts`'s; Cloudflare is given the digest alone,
+  `…/erga-factory@sha256:<digest>`, as wrangler names images). `bun
+  factory/vm/push.ts` builds it for Cloudflare's machines (linux/amd64, with
+  Docker, and `--provenance=false`: Docker Desktop otherwise pushes an index
+  with an attestation beside the image, which Containers can't start, "There
+  is no container instance that can be provided"), pushes it (a 15-minute
   registry password, in a Docker config folder of its own), prepares it for
   Containers, and writes its name into `deploy/targets.json`. A deploy from a
   machine (`deploy/run.ts`) does the same if the registry lacks it. A
@@ -1685,7 +1689,8 @@ real run") is code now, and staging.erga.dev runs it.
   scheduling policy, as `wrangler deploy` sends it) and sets
   `FACTORY_PREVIEW_DOMAIN` (the pages domain) and `FACTORY_IMAGE`; "vms" makes
   the container application for the Worker's FactoryVm namespace once (its id
-  is the namespace's). `cloudflare.config.ts` declares `FactoryVm` and its
+  is the namespace's), after the upload, as wrangler does. (Uploading the same
+  version again after that left VMs unable to start: don't.) `cloudflare.config.ts` declares `FactoryVm` and its
   binding `FACTORY_VM` on every build; elsewhere (locally, `/deploy`) it's an
   object nothing uses. A release without FactoryVm (an older commit) skips
   both steps.
@@ -1719,12 +1724,17 @@ real run") is code now, and staging.erga.dev runs it.
   with the stand-in in it (a small repository made in the VM; the real
   `run.ts`, `task.ts` and `fake-claude.ts`; the preview on 4401; a screenshot
   with the VM's Chromium) against a pretend factory API, then deletes the
-  container, its application and the Worker.
+  container, its application and the Worker. On 2026-10-05 it passed: the
+  agent answered 1.7 s after `start()`, and the whole task (clone, branch,
+  change, preview, screenshot, report) took 3.4 s more.
 
 Done on erga.dev's account (task #7): the image pushed and prepared;
 `FACTORY_KEY` on `erga-staging`; staging deployed from a machine with this
 code (`bun deploy/run.ts staging --no-snapshot`, keeping its data), which made
-its container application `erga-staging-factoryvm`. To finish:
+its container application `erga-staging-factoryvm`; the probe passed. Not
+tested on staging itself: a task added on its board, since nobody can sign in
+to staging yet (no GitHub OAuth app), and the factory's API takes a signed-in
+admin only. To finish:
 
 1. Merge it (staging then deploys itself with its own token: watch its
    "worker" and "vms" steps on `/source`).

@@ -193,8 +193,7 @@ describe("production", () => {
     expect(steps).toContain("database:done using Erga's database from before (" + PROD_DB + ")");
     expect(mock.state.databases.length).toBe(1);
     expect(mock.state.deletedDatabases).toEqual([]);
-    // Its upload, and the same version again once its factory's container application was made (the first time only).
-    expect(mock.state.versions.erga).toBe(3);
+    expect(mock.state.versions.erga).toBe(2);
     expect(mock.state.secrets.erga).toEqual(secrets);
     const b = bindingsOf(mock.state, "erga");
     expect(b.DB.database_id).toBe(PROD_DB);
@@ -443,8 +442,7 @@ describe("branches deploy themselves", () => {
       expect(server.logs.every((e) => e.deployId == mid.run.deployId)).toBe(true);
       expect(server.logs.flatMap((e) => e.lines)).toEqual(log.lines.slice(before));
       expect([...mock.state.docs["erga-staging"].docs.keys()].sort()).toEqual([...PROD_DOCS].sort());
-      // The bootstrap's two (its upload, and again once the factory's container application was made), then one each.
-      expect(mock.state.versions["erga-staging"]).toBe(3 + i);
+      expect(mock.state.versions["erga-staging"]).toBe(2 + i);
     }
     expect(builder.built).toEqual([SHA2, SHA3]);
     expect(writesToProduction(mock.state)).toEqual([]);
@@ -729,9 +727,9 @@ describe("the factory's VMs (Containers)", () => {
     expect(b.FACTORY_IMAGE.text).toBe(target.factory!.image);
     const ns = namespaceId("erga-staging", "FactoryVm");
     expect(mock.state.containers.apps[ns]).toEqual({ name: "erga-staging-factoryvm", scheduling_policy: "durable_object", durable_objects: { namespace_id: ns } });
-    // Made, and the version uploaded again: one uploaded before its application isn't tied to it (as on Cloudflare).
-    expect(steps.find((x) => x.startsWith("vms:done"))).toContain("made, and the version uploaded again");
-    expect(mock.state.calls.filter((c) => c == "PUT /accounts/0123456789abcdef0123456789abcdef/workers/scripts/erga-staging").length).toBe(2);
+    // Made after the upload, as wrangler does, and the version not uploaded again (that left the VMs unable to start).
+    expect(steps.find((x) => x.startsWith("vms:done"))).toContain("made");
+    expect(mock.state.calls.filter((c) => c == "PUT /accounts/0123456789abcdef0123456789abcdef/workers/scripts/erga-staging").length).toBe(1);
     // Again: the same application, found, not made twice, and one upload.
     const before = mock.state.versions["erga-staging"];
     const again = await deployTo(staging({ secrets: stagingSecrets }), mock);

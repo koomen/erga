@@ -538,12 +538,9 @@ export async function runPipeline(cf: Cloudflare, release: Release | null, targe
       if (!ns) return `skipped: ${target.workerName} has no ${FACTORY_CLASS} Durable Object (this release doesn't export it)`;
       try {
         const r = await ensureFactoryApp(cf, target.accountId, target.workerName, ns);
-        if (r == "there") return `${factoryAppName(target.workerName)} (${ns}), already there`;
-        // A version uploaded before its application isn't tied to it (Cloudflare: "no container application assigned"):
-        // the same version again, now that it's there.
-        if (!release) return `${factoryAppName(target.workerName)} (${ns}), made; deploy again so the version is tied to it`;
-        await uploadWorker(release, await uploadAssets(cf, acc, target.workerName, release.assets), true);
-        return `${factoryAppName(target.workerName)} (${ns}), made, and the version uploaded again to be tied to it`;
+        // Made after the upload, as wrangler does: the version that names the image is tied to it from then on.
+        // (Uploading the same version again after it was made left the VMs unable to start, on 2026-10-05.)
+        return `${factoryAppName(target.workerName)} (${ns}), ${r == "made" ? "made" : "already there"}`;
       } catch (e) {
         if (target.keepSecrets && e instanceof DeployError && (e.status == 401 || e.status == 403)) return `skipped: this deploy's token may not use Containers, so it can't check ${factoryAppName(target.workerName)}. It's made once from a machine (bun deploy/setup.ts --factory); until then the factory's VMs don't start`;
         throw e;
