@@ -189,7 +189,8 @@ try {
     };
   })()`);
   await p.open(`${root}/admin/source`, { width: 1280, height: 900, scale: 2, clear: false });
-  await until(async () => (await state()).rows.length > 0, 10_000, "the list draws");
+  // The deploy columns come from a request of their own (they say "not set up" until it answers).
+  await until(async () => { const s = await state(); return s.rows.length > 0 && s.targets.length == 2 && s.targets.every((t) => !t.includes("not set up")); }, 10_000, "the list and the deploy columns draw", state);
   let s = await state();
   expect(s.rows.map((x) => x.subject).join() == "Fifth,Fourth,Third,Second,First" && s.title.startsWith("Source") && !s.merge && s.ahead.includes("main is at staging"), "one list: staging's commits, newest first; nothing to merge", s);
   expect(s.heads[0] == "" && s.heads[1] == "Commit" && s.dots == 1, "one dot column, with no header", s);

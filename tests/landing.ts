@@ -81,7 +81,7 @@ try {
   await p.click(at.x, at.y);
   await Bun.sleep(100);
   await p.type(" home");
-  await until(async () => (await (await get(`/d/${id}/doc/index.html`)).text()).includes("<h1>Erga home</h1>"), 10_000, "the edit is saved");
+  await until(async () => (await (await get(`/d/${id}/doc/index.html`)).text()).includes("<h1>Erga home</h1>"), 10_000, "the edit is saved", async () => ({ disk: (await (await get(`/d/${id}/doc/index.html`)).text()).match(/<h1>.*?<\/h1>/)?.[0], page: await p.frame<string>(`${F}.querySelector("h1")?.outerHTML`), errors: p.errors }));
   await p.screenshot(join(SHOTS, "landing-editor.png"));
   let after = "";
   await until(async () => (after = await (await get("/")).text()).includes("<title>Erga home</title>"), 10_000, "/ follows the edit", () => after.slice(0, 600));

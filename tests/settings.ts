@@ -91,7 +91,14 @@ const rect = (p: Page, sel: string) => p.eval<{ x: number; y: number; w: number;
   `(() => { const r = document.querySelector(${JSON.stringify(sel)})?.getBoundingClientRect(); return r && r.width ? { x: r.x + r.width / 2, y: r.y + r.height / 2, w: r.width, h: r.height, top: r.top, right: r.right, bottom: r.bottom, left: r.left } : null; })()`);
 async function clickOn(p: Page, sel: string) {
   await p.eval(`document.querySelector(${JSON.stringify(sel)})?.scrollIntoView({ block: "nearest" }), true`);
-  const r = await rect(p, sel);
+  // Where it is once it holds still (a list that scrolls or grows moves it): a busy machine is slow to lay out.
+  let r = await rect(p, sel);
+  for (let i = 0; i < 20; i++) {
+    await p.eval(`new Promise((ok) => requestAnimationFrame(() => requestAnimationFrame(() => ok(true))))`);
+    const again = await rect(p, sel);
+    if (r && again && again.x == r.x && again.y == r.y) break;
+    r = again;
+  }
   expect(r, `${sel} is on the page`);
   await p.click(r.x, r.y);
 }
