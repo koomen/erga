@@ -5,7 +5,8 @@
 // in D1) and the documents themselves (Durable Objects).
 //
 //   /                          the front page: the viewer on the landing document (a setting), for anyone
-//   /new                       a blank document for you, in the editor (signs you in first); /new?from=landing a copy
+//   /new                       a blank document for you, in the editor (signs you in first); /new?template=<id> one from
+//                              a template (templates.ts); /new?from=landing a copy
 //                              of the front page's, /new?from=<id> of another you may open (the viewer's Clone)
 //   /docs                      your documents, latest edit first; POST /docs/delete deletes one,
 //                              /docs/share shares one (or stops sharing it), GET /docs/share?id= says with whom
@@ -45,6 +46,7 @@ import type { AgentToken, Tokens } from "./tokens.ts";
 import { ADMIN_TOKEN_PREFIX, SIGN_IN_KEY, UNLOCK_MS, type AdminKeys, type Unlock } from "./admin-keys.ts";
 import type { PublishRequest, PublishResult, Version, VersionsState } from "./versions.ts";
 import { pageAddress, resolvePage } from "./tree.ts";
+import { NEW_DOC_SCRIPT, NEW_DOC_STYLE, newDocButton, newDocMenu, templateById, TEMPLATES, type Template } from "./templates.ts";
 
 /** Who's signed in. */
 export interface Session {
@@ -769,7 +771,7 @@ async function viewDocument(platform: Platform, request: Request, opened: { doc:
 ${meta}${backdrop}${opening}<style>${BAND_STYLE}</style>
 <body>${editable ? `<script>${EDITING_BODY}</script>` : ""}
 ${frame}${editable ? `<script>${FRAME_SRC}</script>` : ""}
-<div class="erga-view-buttons">${clone}${edit}</div>${VIEW_STYLE}<script>${NAV_SCRIPT}</script><script>${BAND_BOOT}</script><script>${FADE_BOOT}</script>${editable ? `<script>${EDIT_BOOT}</script>` : ""}
+<div class="erga-view-buttons">${newDocButton("erga-view-button")}${clone}${edit}</div>${newDocMenu((path) => link(path, session), !!session && !session.test && !session.agent)}${VIEW_STYLE}${NEW_DOC_STYLE}<script>${NEW_DOC_SCRIPT}ergaNewDoc(document);</script><script>${NAV_SCRIPT}</script><script>${BAND_BOOT}</script><script>${FADE_BOOT}</script>${editable ? `<script>${EDIT_BOOT}</script>` : ""}
 </body>
 </html>`, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "Referrer-Policy": "no-referrer", Link: `<${origin}>; rel=preconnect` } });
 }
@@ -1127,13 +1129,22 @@ export const VIEW_STYLE = `
   }
 </style>`;
 
+/** A template's starting files (templates.ts: a folder under templates/, or the repo's landing/), and its page; null if this server hasn't them. */
+export function templateFiles(platform: Platform, template: Template): { files: Record<string, string | Uint8Array>; index: string } | null {
+  const files = template.files == "landing" ? platform.landing?.files : platform.templates[template.files.slice("templates/".length)];
+  if (!files) return null;
+  const index = files["index.html"] != null ? "index.html" : files["index.md"] != null ? "index.md" : null;
+  return index ? { files: { ...files }, index } : null;
+}
+
 /**
  * What a new document starts from: a copy of the front page's document
- * (`landing`), of another document by id (one `who` may open), or a blank
- * page (templates/doc). Null if there's nothing there to copy.
+ * (`landing`), of another document by id (one `who` may open), or a
+ * template's files (templates.ts; the first, a blank page, by default).
+ * Null if there's nothing there to copy.
  */
-export async function startingFiles(platform: Platform, from: string | null, who?: Who): Promise<{ files: Record<string, string | Uint8Array>; index: string } | null> {
-  if (!from) return { files: { ...platform.templates.doc }, index: "index.html" };
+export async function startingFiles(platform: Platform, from: string | null, who?: Who, template?: Template): Promise<{ files: Record<string, string | Uint8Array>; index: string } | null> {
+  if (!from) return templateFiles(platform, template ?? TEMPLATES[0]);
   const doc = from == "landing" ? await landingDocument(platform) : ID.test(from) && who ? await platform.directory.get(from) : null;
   if (!doc || (from != "landing" && !(await platform.directory.may(who!, "open", doc)))) return null;
   // A copy of what they may see: someone who may not edit it copies its published version (the same in "latest" mode).
@@ -1141,21 +1152,24 @@ export async function startingFiles(platform: Platform, from: string | null, who
   return platform.docs.snapshot(doc, { published: !editor });
 }
 
-/** A new document for the signed-in person, at /<login>/<id>: blank (templates/doc), or a copy of the front page's (?from=landing). */
+/** A new document for the signed-in person, at /<login>/<id>: blank (templates/doc), from a template (?template=<id>, templates.ts), or a copy of the front page's (?from=landing). */
 async function newDoc(platform: Platform, request: Request): Promise<Response> {
   const session = await platform.sessionOf(request);
   const url = new URL(request.url);
   const params = url.searchParams;
   if (!session) return signInFirst(`/new${params.size ? `?${params}` : ""}`);
+  const named = params.get("template");
+  const template = named ? templateById(named) : undefined;
+  if (named && !template) return page("No such template", "There's no template by that name. <a href=\"/new\">Make a blank document</a>.", 404);
   // Another site may not make documents for you (nor an unconfirmed sign-in on the way back from GitHub).
   if (request.method == "POST" ? request.headers.get("origin") != url.origin : fromElsewhere(request)) {
-    return confirmAction("New document", params.get("from") ? "Make your copy of this page" : "Make a new document", `/new${url.search}`);
+    return confirmAction("New document", params.get("from") ? "Make your copy of this page" : template ? `Make a new document: ${template.name}` : "Make a new document", `/new${url.search}`);
   }
   const wanted = params.get("id");
   const from = params.get("from");
-  const start = await startingFiles(platform, from, whoOf(session));
+  const start = await startingFiles(platform, from, whoOf(session), template);
   if (!start) return page("Nothing to copy", from == "landing" ? "This server has no front page to copy. <a href=\"/new\">Make a blank document</a>." : "There's no document here you can copy. <a href=\"/new\">Make a blank document</a>.", 404);
-  const template = start.files, index = start.index;
+  const files = start.files, index = start.index;
   // A test person makes (or reuses) a test document under the address of whoever minted their token.
   // Its address is its id, which never follows the title (the suite addresses it by id).
   if (session.test) {
@@ -1163,7 +1177,7 @@ async function newDoc(platform: Platform, request: Request): Promise<Response> {
     const owner = session.test.by.toLowerCase();
     const known = await platform.directory.route(wanted);
     if (known && (known.owner != owner || !known.test)) return page("Taken", "That test document's id is someone else's: pick another.", 409);
-    if (!known) await makeDoc(platform, owner, wanted, template, { test: true, index });
+    if (!known) await makeDoc(platform, owner, wanted, files, { test: true, index });
     return new Response(null, { status: 302, headers: { Location: `/${owner}/${wanted}#edit` } });
   }
   // Local development may name the document (the test suite wants "test" in its address),
@@ -1172,7 +1186,7 @@ async function newDoc(platform: Platform, request: Request): Promise<Response> {
   const unedited = (dev && Number(params.get("unedited"))) || undefined;
   for (let tries = 0; tries < 5; tries++) {
     const id = wanted && dev && ID.test(wanted) ? wanted : newId();
-    const made = await makeDoc(platform, session.login.toLowerCase(), id, template, { unedited, index });
+    const made = await makeDoc(platform, session.login.toLowerCase(), id, files, { unedited, index });
     if (made) return new Response(null, { status: 302, headers: { Location: `${link(`/${made.owner}/${made.slug}`, session)}#edit` } });
   }
   return page("Couldn't make a document", "Something went wrong picking an address. <a href=\"/new\">Try again</a>.", 500);
