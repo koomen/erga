@@ -26,7 +26,7 @@
 
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { api, CLONE, env, git, LIMITS, log, MODEL, modelError, prepareClaude, realClaude, REPORTED, scrub, step, stepError, testHooks, WORK } from "./common.ts";
+import { api, claudeLog, CLONE, env, git, LIMITS, log, MODEL, modelError, prepareClaude, realClaude, REPORTED, scrub, step, stepError, testHooks, WORK } from "./common.ts";
 import { pushBranch } from "./task.ts";
 
 const job = (process.argv[2] ?? "work") as Job;
@@ -139,21 +139,22 @@ async function claude(brief: Brief, wake: string, limit: number, woken: boolean)
     : brief.instructions!;
   const prompt = woken ? late : continuing ? wake + asked : `${brief.prompt}\n\n${wake}${job == "work" ? "" : asked}`;
   if (!woken) await log(job == "revise" ? "Claude Code is working on the new instructions" : job == "resolve" ? "Claude Code is working on the merge" : "Claude Code started");
-  let lastText = "", lastLog = 0;
+  let lastText = "";
   let badModel: string | null = null;
-  const say = (line: string) => { if (Date.now() - lastLog > 5000) { lastLog = Date.now(); log(scrub(line).slice(0, 300)); } };
+  // Each line once; a quiet run says "still working" at most once a minute.
+  const board = claudeLog();
+  const quiet = setInterval(() => { for (const l of board.tick()) log(l); }, 15_000);
   const r = await step(["claude", "-p", prompt, ...(continuing ? ["--continue"] : []), "--model", MODEL(), "--dangerously-skip-permissions", "--output-format", "stream-json", "--verbose", "--max-turns", String(brief.maxTurns ?? 200)], {
     name: "claude", timeout: limit, cwd: CLONE(), echo: true,
     onLine: (line) => {
       let ev: any;
       try { ev = JSON.parse(line); } catch { badModel ??= modelError(line); return; }
-      if (ev.type == "assistant") for (const c of ev.message?.content ?? []) {
-        if (c.type == "text" && c.text.trim()) { lastText = c.text.trim(); say(`Claude: ${lastText}`); }
-        if (c.type == "tool_use") say(`Claude runs ${c.name}: ${String(c.input?.command ?? c.input?.file_path ?? c.input?.pattern ?? c.input?.description ?? "").replace(/\s+/g, " ")}`);
-      }
+      if (ev.type == "assistant") for (const c of ev.message?.content ?? []) if (c.type == "text" && c.text?.trim()) lastText = c.text.trim();
+      for (const l of board.event(ev)) log(l);
       if (ev.type == "result" && typeof ev.result == "string") { lastText = ev.result.trim(); if (ev.is_error) badModel ??= modelError(lastText); }
     },
   });
+  clearInterval(quiet);
   if (r.err) process.stderr.write(r.err.slice(-4000) + "\n");
   return { code: r.code, timedOut: r.timedOut, lastText, badModel };
 }

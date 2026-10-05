@@ -210,3 +210,43 @@ export function modelError(text: string): string | null {
 
 /** The last line of a job's output: its result, as JSON, for the factory (merge and discard). */
 export const result = (value: Record<string, unknown>) => console.log(`FACTORY-RESULT ${JSON.stringify(value)}`);
+
+/**
+ * The board's lines for Claude Code's stream-json events: each of its words and the commands it runs, once.
+ * Claude Code can send one message again, with more in it (the same text, then a tool call), so a block it
+ * has seen (by message id and place), words it has said before, or a line the same as the one before it, give nothing. A run that goes
+ * quiet says "still working" at most once a minute (`tick`, with the time now). Lines come at most every 5 s.
+ */
+export function claudeLog(now = () => Date.now()) {
+  const seen = new Set<string>();
+  const started = now();
+  let last = "", lastAt = 0, quietSince = started;
+  const said = new Set<string>();
+  const out = (line: string): string[] => {
+    line = scrub(line).slice(0, 300);
+    // Its words: once in the run. A command: not twice in a row (it can run the tests again, later).
+    if (line == last || (line.startsWith("Claude: ") && said.has(line)) || now() - lastAt < 5000) return [];
+    if (said.size > 500) said.clear();
+    said.add(line);
+    last = line; lastAt = quietSince = now();
+    return [line];
+  };
+  return {
+    event(ev: any): string[] {
+      if (ev?.type != "assistant") return [];
+      const lines: string[] = [];
+      (ev.message?.content ?? []).forEach((c: any, i: number) => {
+        const key = `${ev.message?.id ?? ""}:${i}:${c.id ?? c.text ?? ""}`;
+        if (seen.has(key)) return;
+        seen.add(key);
+        if (c.type == "text" && c.text?.trim()) lines.push(...out(`Claude: ${c.text.trim()}`));
+        if (c.type == "tool_use") lines.push(...out(`Claude runs ${c.name}: ${String(c.input?.command ?? c.input?.file_path ?? c.input?.pattern ?? c.input?.description ?? "").replace(/\s+/g, " ")}`));
+      });
+      return lines;
+    },
+    tick(): string[] {
+      if (now() - quietSince < 60_000) return [];
+      return out(`Claude Code is still working, ${Math.round((now() - started) / 1000)}s`);
+    },
+  };
+}
