@@ -144,7 +144,8 @@ export class SourceRepo {
     const missing = [...new Set(tips.filter((t) => t != ZERO && !this.known(t)))];
     if (!missing.length) return;
     const haves = [...new Set([...this.heads(), ...Object.values(this.state<Record<string, string>>("tips") ?? {})])].filter((s) => this.known(s));
-    const objects = await readPack(await fetchPack(remote, { wants: missing, haves }), (t) => t == "commit");
+    // No files (the index needs commits only): far smaller, where the remote takes a filter (Artifacts takes blob:none).
+    const objects = await readPack(await fetchPack(remote, { wants: missing, haves, filter: "blob:none" }), (t) => t == "commit");
     for (const [sha, o] of objects) this.index(sha, parseCommit(o.data));
     const still = missing.filter((t) => !this.known(t));
     if (still.length) throw new SourceError(`Artifacts didn't send commit ${still[0].slice(0, 7)}`, 502);
