@@ -9,7 +9,8 @@
 //   POST /api/source/merge      { from: "staging", to: "main", commit? }: main fast-forwards to staging's head (or to
 //                               that staging commit): { commit } or 4xx { error } (admins)
 //   POST /api/source/mirror     brings the GitHub mirror up to date now (admins)
-//   /source                     the Source page (admins)
+//   /admin/source               the Source page (admins): the factory's board, this dashboard and the factory's agent
+//   /source                     redirects to /admin/source
 //
 // The API takes the app's session or an admin token ("Authorization:
 // Bearer erga_admin_..."), an admin's either way, with admin access unlocked
@@ -21,7 +22,8 @@ import { whoOf, withTokens } from "../front";
 import { tar } from "../source/git";
 import { gitHttp } from "../source/http";
 import type { Actor } from "../source/repo";
-import { sourcePage } from "../source/page";
+import { adminSourcePage } from "../source/page";
+import { factoryEnabled } from "./factory";
 import { artifactsRemote, githubUrl, hasSource } from "./artifacts";
 import { adminKeysOf, directoryOf, tokensOf } from "./d1";
 import { devUnlocked } from "./auth";
@@ -119,14 +121,15 @@ export async function sourceApi(request: Request, env: Env, platform: Platform, 
   return json({ error: "Not found" }, 404);
 }
 
-/** /source: the page, for admins in a browser. */
+/** /admin/source: the page, for admins in a browser (/source redirects here). */
 export async function sourceDoor(request: Request, env: Env, platform: Platform, url: URL): Promise<Response> {
+  if (url.pathname != "/admin/source") return new Response(null, { status: 302, headers: { Location: "/admin/source" } });
   const session = await platform.sessionOf(request);
-  if (!session) return new Response(null, { status: 302, headers: { Location: `/auth/github?next=${encodeURIComponent("/source")}` } });
+  if (!session) return new Response(null, { status: 302, headers: { Location: `/auth/github?next=${encodeURIComponent("/admin/source")}` } });
   const users = directoryOf(env).users;
   const admin = !session.test && (await users.isAdmin(whoOf(session)));
-  if (admin && !(await users.isUnlocked(whoOf(session)))) return unlockFirst("/source", session);
-  return sourcePage({ session, admin, ready: hasSource(env), origin: url.origin, mirrorUrl: githubUrl(env) });
+  if (admin && !(await users.isUnlocked(whoOf(session)))) return unlockFirst("/admin/source", session);
+  return adminSourcePage({ session, admin, factory: admin && (await factoryEnabled(env)), ready: hasSource(env), origin: url.origin, mirrorUrl: githubUrl(env) });
 }
 
 /**

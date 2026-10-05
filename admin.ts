@@ -211,7 +211,7 @@ ${users.map((u) => userRow(u, session)).join("\n")}
   </section>
   <section aria-labelledby="source-title">
     <h2 id="source-title">Source and deploys</h2>
-    <p class="lede">Erga's own repository, hosted here, and its branches deploying themselves: staging to staging.erga.dev, main to erga.dev. Commits, merging, deploys and their logs, and the GitHub mirror: <a href="${esc(link("/source", session))}">Source</a>.</p>
+    <p class="lede">Erga's own repository, hosted here, and its branches deploying themselves: staging to staging.erga.dev, main to erga.dev. Commits, merging, deploys and their logs, the GitHub mirror, and the factory's tasks and agent: <a href="${esc(link("/admin/source", session))}">Source</a>.</p>
   </section>
   ${deployOn ? `<section aria-labelledby="deploy-title">
     <h2 id="deploy-title">Deploy your own</h2>
@@ -219,7 +219,7 @@ ${users.map((u) => userRow(u, session)).join("\n")}
   </section>` : ""}
   ${factoryOn ? `<section aria-labelledby="factory-title">
     <h2 id="factory-title">Factory</h2>
-    <p class="lede">Tasks that Claude Code does in VMs, each a branch merged into staging (experimental): <a href="${esc(link("/admin/factory", session))}">Open the factory</a>. The factory setting turns it off.</p>
+    <p class="lede">Tasks that Claude Code does in VMs, each a branch merged into staging (experimental): <a href="${esc(link("/admin/source", session))}">Open the factory</a>. The factory setting turns it off.</p>
   </section>` : ""}
 </main>
 <script>

@@ -166,7 +166,9 @@ try {
   ok("each move of staging and main reaches the deploy pipeline (deployHook), which deploys it");
 
   // ---- The Source page ------------------------------------------------------------------------------
-  expect((await get("/source?user=Bo")).status == 404, "the Source page is for admins only");
+  expect((await get("/admin/source?user=Bo")).status == 404, "the Source page is for admins only");
+  const moved = await get("/source");
+  expect(moved.status == 302 && moved.headers.get("location") == "/admin/source", "/source redirects to /admin/source", moved.status);
   browser = await Browser.launch();
   const p: Page = await browser.page(await browser.context());
   const state = () => p.eval<{ rows: { subject: string; sha: string; staging: string; live: string[] }[]; heads: string[]; dots: number; ahead: string; merge: boolean; mirror: string; title: string; targets: string[] }>(`(() => {
@@ -186,7 +188,7 @@ try {
       targets: [...document.querySelectorAll(".target")].map((t) => t.textContent.replace(/\\s+/g, " ").trim()),
     };
   })()`);
-  await p.open(`${root}/source`, { width: 1280, height: 900, scale: 2, clear: false });
+  await p.open(`${root}/admin/source`, { width: 1280, height: 900, scale: 2, clear: false });
   await until(async () => (await state()).rows.length > 0, 10_000, "the list draws");
   let s = await state();
   expect(s.rows.map((x) => x.subject).join() == "Fifth,Fourth,Third,Second,First" && s.title.startsWith("Source") && !s.merge && s.ahead.includes("main is at staging"), "one list: staging's commits, newest first; nothing to merge", s);
@@ -215,7 +217,7 @@ try {
   };
   await until(async () => (await state()).targets[0].match(/building|deploying/), 20_000, "staging's column shows the deploy running", state);
   await click("#target-staging");
-  const logText = () => p.eval<string>(`document.getElementById("log").open ? document.getElementById("log-lines").textContent : "(closed)"`);
+  const logText = () => p.eval<string>(`document.getElementById("deploy-log").open ? document.getElementById("log-lines").textContent : "(closed)"`);
   await until(async () => (await logText()).includes(sixth.slice(0, 12)), 10_000, "the log opens on the running deploy", logText);
   const opened = (await logText()).split("\n").length;
   await until(async () => (await logText()).split("\n").length > opened + 2, 30_000, "new lines show up in the open log by themselves", logText);
@@ -227,7 +229,7 @@ try {
   const q: Page = await browser.page(await browser.context());
   await q.send("Network.enable");
   await q.send("Network.setBlockedURLs", { urls: ["*/api/events*"] });
-  await q.open(`${root}/source`, { width: 1280, height: 900, clear: false });
+  await q.open(`${root}/admin/source`, { width: 1280, height: 900, clear: false });
   await until(async () => q.eval(`document.querySelectorAll("#grid .row").length > 0 && !document.getElementById("target-staging").disabled`), 10_000, "the page loads without events");
   must(b, "commit", "-q", "--allow-empty", "-m", "Polled");
   must(b, "push", "-q", "origin", "staging");
@@ -288,12 +290,12 @@ try {
   expect(!(await p.eval(`!!document.querySelector("#grid .more, #grid .sub")`)), "no counts, nothing to open");
   ok("deploy history: a push while a deploy runs cancels it; a failed build; past logs; one entry per commit per target");
   await until(async () => (await state()).mirror.includes("Up to date"), 10_000, "the mirror catches up", state);
-  await p.open(`${root}/source`, { width: 1280, height: 900, scale: 2, clear: false, dark: true });
+  await p.open(`${root}/admin/source`, { width: 1280, height: 900, scale: 2, clear: false, dark: true });
   await until(async () => (await state()).rows.length > 0, 10_000, "the list draws (dark)");
   const bg = await p.eval<string>(`getComputedStyle(document.body).backgroundColor`);
   expect(bg != "rgb(255, 255, 255)", "dark follows the system", bg);
   await p.screenshot(join(SHOTS, "source-dark.png"));
-  await p.open(`${root}/source`, { width: 390, height: 844, scale: 2, clear: false });
+  await p.open(`${root}/admin/source#source`, { width: 390, height: 844, scale: 2, clear: false });
   await until(async () => (await state()).rows.length > 0, 10_000, "the list draws (phone)");
   expect(await p.eval(`document.documentElement.scrollWidth <= innerWidth`), "no sideways scrolling on a phone", await p.eval(`[...document.querySelectorAll("body *")].filter((e) => e.getBoundingClientRect().right > innerWidth + 1).slice(0, 6).map((e) => e.tagName + "." + e.className + " " + e.id)`));
   await p.screenshot(join(SHOTS, "source-phone.png"));
@@ -301,7 +303,7 @@ try {
   ok(`the Source page: one list with circle dots, deploy columns and their live log, Merge to here, light, dark and a phone (screenshots in ${SHOTS})`);
 } finally {
   browser?.close();
-  if (keep) console.log(`kept: ${root}/source (Ctrl-C to stop)`);
+  if (keep) console.log(`kept: ${root}/admin/source (Ctrl-C to stop)`);
   else await host.dispose();
 }
 if (keep) await new Promise(() => {});

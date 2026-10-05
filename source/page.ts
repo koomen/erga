@@ -1,5 +1,15 @@
-// The Source page, /source (worker/source.ts), for admins: the one place to
-// manage Erga's own source and its deploys.
+// The Source page, /admin/source (worker/source.ts), for admins with admin
+// access unlocked: the one place to manage Erga's own source, its deploys and
+// the factory. Three parts, on one page: the factory's task board
+// (factory/page.ts), the source and deploy dashboard (below), and the
+// factory's agent (factory/agent.ts; its panel is src/page/factory-agent.ts,
+// built to /factory-agent.js), with "Share with agent" for an outside agent.
+// On a wide window the agent sits on the left, as in the editor, and the
+// board and the dashboard are beside it, one above the other; narrower, tabs
+// show one at a time. Each part's stylesheet is scoped to its pane
+// (scopeCss). /source, /admin/factory and /admin/deploys redirect here.
+//
+// The dashboard:
 //
 // One list: staging's history, newest first (staging is always at or ahead
 // of main, so it holds every commit main has). Beside it, one dot column,
@@ -18,31 +28,29 @@
 // follows the system's light or dark.
 
 import { appPage, esc, type Session } from "../front";
+import { BOARD_SCRIPT, BOARD_STYLE, boardMarkup } from "../factory/page";
 
 export interface SourcePageConfig {
   session: Session;
   admin: boolean;
+  /** Whether the factory is on (the `factory` setting). */
+  factory: boolean;
   /** Whether this server has a repository (an Artifacts binding, or local development's stand-in). */
   ready: boolean;
   origin: string;
   mirrorUrl: string;
 }
 
-const STYLE = `
-  main { max-width: 1120px; }
-  .crumbs { position: absolute; top: max(14px, env(safe-area-inset-top)); left: max(20px, env(safe-area-inset-left)); height: 30px; display: flex; align-items: center; gap: 0; }
-  .crumbs .brand { position: static; }
-  .crumbs .here { display: flex; align-items: center; font-size: 13.5px; font-weight: 500; color: var(--fg); }
-  .crumbs .here::before { content: "›"; margin: 0 9px 0 10px; color: var(--chrome); opacity: 0.55; font-weight: 400; }
+const SOURCE_STYLE = `
   :root { --on-main: #1f7a4d; --only-staging: #c26a00; --bad: #c2410c; --row: 32px; }
   @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --on-main: #4cc38a; --only-staging: #f0a742; --bad: #ff8a65; } }
   :root[data-theme="dark"] { --on-main: #4cc38a; --only-staging: #f0a742; --bad: #ff8a65; }
-  header { align-items: center; margin-bottom: 24px; }
+  .pane-head { justify-content: space-between; }
   .merge-row { display: flex; align-items: center; gap: 10px; }
   .merge-row .count { font-size: 13px; color: var(--soft); white-space: nowrap; }
-  #merge-hint { margin: -12px 0 14px; font-size: 13.5px; text-align: right; }
+  #merge-hint { margin: -4px 0 10px; font-size: 13.5px; text-align: right; }
   #merge-hint.error { color: var(--bad); }
-  @media (max-width: 640px) { header { flex-direction: column; align-items: stretch; gap: 14px; } .merge-row { justify-content: space-between; } .merge-row .count { white-space: normal; flex: 1; min-width: 0; } #merge-hint { margin-top: -6px; text-align: left; } }
+  @media (max-width: 640px) { .pane-head { flex-direction: column; align-items: stretch; gap: 10px; } .merge-row { justify-content: space-between; } .merge-row .count { white-space: normal; flex: 1; min-width: 0; } #merge-hint { margin-top: -6px; text-align: left; } }
   .card { border: 1px solid var(--rule); border-radius: 12px; padding: 6px 10px 10px; min-width: 0; background: var(--bg); }
   .legend { display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 6px 4px 6px; font-size: 12px; color: var(--soft); }
   .legend span { display: inline-flex; align-items: center; gap: 6px; }
@@ -128,35 +136,33 @@ const STYLE = `
   .setup ol { margin: 8px 0 0; padding-left: 20px; font-size: 14px; color: var(--fg); }
   .setup li { margin: 4px 0; }
   .setup code, .box code { font: 12.5px var(--font-mono); }
-  dialog#log { width: min(820px, calc(100vw - 32px)); padding: 0; }
-  #log .top { display: flex; align-items: center; gap: 10px; padding: 14px 16px 10px; border-bottom: 1px solid var(--rule); }
-  #log h2 { margin: 0; font-size: 15px; }
-  #log .meta { font-size: 12.5px; color: var(--soft); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  #log .meta b { font-weight: 600; }
-  #log .meta .live-on { color: var(--on-main); }
-  #log .meta .bad { color: var(--bad); }
-  #log .close { margin-left: auto; height: 30px; }
-  #log pre { margin: 0; border-radius: 0 0 12px 12px; height: min(60vh, 520px); overflow: auto; font-size: 12px; line-height: 1.55; white-space: pre-wrap; }
-  #log pre .t { color: var(--chrome); }
-  #log pre .s { color: var(--soft); }
+  dialog#deploy-log { width: min(820px, calc(100vw - 32px)); padding: 0; }
+  #deploy-log .top { display: flex; align-items: center; gap: 10px; padding: 14px 16px 10px; border-bottom: 1px solid var(--rule); }
+  #deploy-log h2 { margin: 0; font-size: 15px; }
+  #deploy-log .meta { font-size: 12.5px; color: var(--soft); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #deploy-log .meta b { font-weight: 600; }
+  #deploy-log .meta .live-on { color: var(--on-main); }
+  #deploy-log .meta .bad { color: var(--bad); }
+  #deploy-log .close { margin-left: auto; height: 30px; }
+  #deploy-log pre { margin: 0; border-radius: 0 0 12px 12px; height: min(60vh, 520px); overflow: auto; font-size: 12px; line-height: 1.55; white-space: pre-wrap; }
+  #deploy-log pre .t { color: var(--chrome); }
+  #deploy-log pre .s { color: var(--soft); }
 `;
 
-export function sourcePage(c: SourcePageConfig): Response {
-  const crumbs = `<nav class="crumbs" aria-label="Breadcrumbs"><a class="brand" href="/">Erga</a><span class="here" aria-current="page">Source</span></nav>`;
-  const html = (body: string, status = 200) => new Response(appPage("Source", STYLE, `${crumbs}<main>${body}</main>`), { status, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
-  if (!c.admin) return html(`<p class="empty">There's nothing here. <a href="/">Back to the start</a>.</p>`, 404);
+/** The source pane: the commits with their deploys, Merge, the mirror, how to clone; or how to set it up. */
+function sourceMarkup(c: SourcePageConfig): string {
   if (!c.ready) {
-    return html(`<header><div><h1>Source</h1><p class="sub">Erga's own repository and its deploys.</p></div></header>
+    return `<div class="pane-head"><div><h2>Source and deploys</h2><p class="sub">Erga's own repository and its deploys.</p></div></div>
   <div class="box setup"><h2>Not set up on this server</h2><p>The repository lives in Cloudflare Artifacts, which this server isn't bound to yet. README.md (Erga's own source) has the steps:</p>
-  <ol><li>Make the Artifacts repo <code>erga</code> in the namespace <code>erga</code>.</li><li>Deploy with <code>ERGA_ARTIFACTS_NAMESPACE=erga</code>, which adds the binding.</li><li>Push the history in: <code>bun source/import.ts</code>.</li></ol></div>`);
+  <ol><li>Make the Artifacts repo <code>erga</code> in the namespace <code>erga</code>.</li><li>Deploy with <code>ERGA_ARTIFACTS_NAMESPACE=erga</code>, which adds the binding.</li><li>Push the history in: <code>bun source/import.ts</code>.</li></ol></div>`;
   }
   const remote = `${c.origin}/git/erga.git`;
   const target = (name: string, label: string) => `<div class="head deploy"><button class="target" type="button" id="target-${name}" data-target="${name}" disabled title="Deploys aren't set up yet"><b>${label}</b><span class="st"><i></i><span>not set up</span></span></button></div>`;
-  return html(`
-  <header>
-    <div><h1>Source</h1><p class="sub">Erga's own repository and its deploys. Push to staging; staging deploys itself. Then move main up to it: main deploys to production.</p></div>
+  return `
+  <div class="pane-head">
+    <div><h2>Source and deploys</h2><p class="sub">Push to staging, or merge a task: staging deploys itself. Then move main up to it: main deploys to production.</p></div>
     <div class="merge-row"><span class="count" id="ahead"></span><button class="new" id="merge" disabled>Merge staging into main</button></div>
-  </header>
+  </div>
   <p class="hint" id="merge-hint" role="status"></p>
   <section class="card" aria-label="Commits">
     <div class="legend"><span><i class="dot staging-only"></i>only on staging</span><span><i class="dot on-main"></i>on main too</span></div>
@@ -183,11 +189,14 @@ git push erga HEAD:staging</code></pre>
     </div>
   </section>
   <p class="moves" id="moves"></p>
-  <dialog id="log" aria-labelledby="log-title">
+  <dialog id="deploy-log" aria-labelledby="log-title">
     <div class="top"><h2 id="log-title">Deploy log</h2><span class="meta" id="log-meta"></span><button class="pill close" type="button" id="log-close">Close</button></div>
     <pre id="log-lines"></pre>
   </dialog>
-<script>
+`;
+}
+
+const SOURCE_SCRIPT = `
 (() => {
   const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[ch]);
   const rtf = new Intl.RelativeTimeFormat(undefined, { numeric: "auto", style: "narrow" });
@@ -336,7 +345,7 @@ git push erga HEAD:staging</code></pre>
   }
 
   // A deploy's log: the latest one's from a column's head (it follows the next deploy), or any one's from its badge.
-  const dlg = document.getElementById("log"), pre = document.getElementById("log-lines");
+  const dlg = document.getElementById("deploy-log"), pre = document.getElementById("log-lines");
   let open = null; // { target, deployId, pinned: a chosen deploy, shown: lines shown, state, heard: when an event last came }
   const line = (l) => '<span class="t">' + esc(new Date(l.at).toLocaleTimeString()) + "</span> " + (l.step ? '<span class="s">[' + esc(l.step) + "]</span> " : "") + esc(l.text) + "\\n";
   function append(lines) {
@@ -425,5 +434,176 @@ git push erga HEAD:staging</code></pre>
   load(); loadDeploys();
   setInterval(() => { render(); renderTargets(); }, 30000);
 })();
-</script>`);
+`;
+
+/** Splits a selector list at its top-level commas (not those inside :is(...) and the like). */
+function selectors(list: string): string[] {
+  const out: string[] = [];
+  let depth = 0, start = 0;
+  for (let i = 0; i < list.length; i++) {
+    const ch = list[i];
+    if (ch == "(" || ch == "[") depth++;
+    else if (ch == ")" || ch == "]") depth--;
+    else if (ch == "," && !depth) { out.push(list.slice(start, i).trim()); start = i + 1; }
+  }
+  out.push(list.slice(start).trim());
+  return out.filter(Boolean);
+}
+
+/** One selector, inside `scope`: ":root" and "body" become the scope itself (":root:not(...) x" keeps its test on the root). */
+function scoped(sel: string, scope: string): string {
+  if (sel.startsWith(":root") || sel == "body" || sel.startsWith("body ")) {
+    const sp = sel.search(/\s/);
+    const head = sp < 0 ? sel : sel.slice(0, sp), rest = sp < 0 ? "" : sel.slice(sp);
+    return head == ":root" || head == "body" ? `${scope}${rest}` : `${head} ${scope}${rest}`;
+  }
+  return `${scope} ${sel}`;
+}
+
+/**
+ * A pane's stylesheet, scoped to the pane (`scope`, an id selector), so the board's and the dashboard's rules
+ * (both have a .card, a .row, a .dep...) never meet. A width query measures the pane, not the window
+ * (@media max-width becomes @container), as the pane is narrower beside the agent. @keyframes stay as they are.
+ */
+export function scopeCss(css: string, scope: string): string {
+  css = css.replace(/\/\*[\s\S]*?\*\//g, "");
+  const out: string[] = [];
+  let i = 0;
+  while (i < css.length) {
+    const open = css.indexOf("{", i);
+    if (open < 0) break;
+    const prelude = css.slice(i, open).trim();
+    let depth = 1, j = open + 1;
+    while (depth && j < css.length) { if (css[j] == "{") depth++; else if (css[j] == "}") depth--; j++; }
+    const body = css.slice(open + 1, j - 1);
+    if (prelude.startsWith("@keyframes")) out.push(`${prelude} {${body}}`);
+    else if (prelude.startsWith("@media")) out.push(`${prelude.replace(/^@media\s*\(((?:max|min)-width)/, "@container ($1")} {${scopeCss(body, scope)}}`);
+    else if (prelude) out.push(`${selectors(prelude).map((s) => scoped(s, scope)).join(", ")} {${body}}`);
+    i = j;
+  }
+  return out.join("\n");
+}
+
+const PAGE_STYLE = `
+  main.admin { max-width: none; padding: 62px max(16px, env(safe-area-inset-right)) 24px max(16px, env(safe-area-inset-left)); }
+  .crumbs { position: absolute; top: max(14px, env(safe-area-inset-top)); left: max(20px, env(safe-area-inset-left)); height: 30px; display: flex; align-items: center; gap: 0; }
+  .crumbs .brand { position: static; }
+  .crumbs a.here-link { color: var(--soft); text-decoration: none; font-size: 13.5px; font-weight: 500; display: flex; align-items: center; }
+  .crumbs a.here-link:hover { color: var(--fg-strong); }
+  .crumbs > :not(.brand)::before { content: "›"; margin: 0 9px 0 10px; color: var(--chrome); opacity: 0.55; font-weight: 400; }
+  .crumbs .here { display: flex; align-items: center; font-size: 13.5px; font-weight: 500; color: var(--fg); }
+  /* The agent on the left, as in the editor; the board and the dashboard beside it, one above the other. */
+  .workspace { display: grid; grid-template-columns: minmax(300px, 370px) minmax(0, 1fr); gap: 20px; align-items: start; }
+  .agent-pane { position: sticky; top: 16px; height: calc(100vh - 78px); height: calc(100dvh - 78px); min-height: 420px; display: flex; flex-direction: column; min-width: 0;
+    border: 1px solid var(--panel-border); border-radius: 18px; background: var(--bg); box-shadow: 0 12px 28px rgba(0, 0, 0, 0.07), 0 1px 3px rgba(0, 0, 0, 0.05); font: 14px/1.55 var(--font-text); color: var(--fg); overflow: hidden; }
+  .agent-pane .agent-head .title { white-space: nowrap; }
+  .agent-pane .agent-head .share { margin-left: auto; }
+  .panes { min-width: 0; display: flex; flex-direction: column; gap: 28px; }
+  .pane { container-type: inline-size; min-width: 0; }
+  .pane-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-bottom: 10px; }
+  .pane-head h2 { margin: 0; font-size: 18px; line-height: 1.3; font-weight: 650; letter-spacing: -0.01em; color: var(--fg-strong); }
+  .pane-head .sub { margin: 2px 0 0; font-size: 13px; }
+  .pane-note { margin: -4px 0 10px; font-size: 13px; color: var(--soft); }
+  #tasks .share-btn { margin-left: auto; height: 30px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--fg-strong); background: var(--fg-strong); color: var(--bg); font: 550 12.5px var(--font-text); cursor: pointer; }
+  #tasks .share-btn:hover { opacity: 0.86; }
+  .tabs { display: none; }
+  /* Narrower, one at a time: tabs for the board, the dashboard and the agent. */
+  @media (max-width: 999.98px) {
+    main.admin { padding-top: 58px; }
+    .workspace { display: block; }
+    .tabs { display: flex; gap: 4px; padding: 4px; margin: 0 0 14px; border: 1px solid var(--rule); border-radius: 12px; background: var(--bg); position: sticky; top: max(8px, env(safe-area-inset-top)); z-index: 6; }
+    .tabs button { flex: 1; height: 34px; border: 0; border-radius: 9px; background: transparent; color: var(--soft); font: 550 13.5px var(--font-text); cursor: pointer; }
+    .tabs button[aria-selected="true"] { background: var(--fg-strong); color: var(--bg); }
+    .panes { display: block; }
+    .pane, .agent-pane { display: none; }
+    body[data-tab="tasks"] #tasks, body[data-tab="source"] #source-pane { display: block; }
+    body[data-tab="agent"] .agent-pane { display: flex; position: static; height: calc(100dvh - 150px); min-height: 360px; }
+  }
+  /* Share with agent: the factory token's dialog. */
+  dialog#share-dlg { width: min(560px, calc(100vw - 32px)); }
+  #share-dlg p { margin: 0 0 12px; font-size: 13.5px; color: var(--soft); }
+  #share-dlg .make { display: grid; grid-template-columns: 1fr auto auto; gap: 8px; align-items: end; margin-bottom: 12px; }
+  #share-dlg .make label { margin: 0; }
+  #share-dlg .make input, #share-dlg .make select { width: 100%; height: 34px; box-sizing: border-box; border: 1px solid var(--rule); border-radius: 8px; padding: 0 10px; background: var(--bg); color: var(--fg-strong); font: inherit; font-size: 13.5px; }
+  #share-dlg .make select { padding-right: 26px; }
+  @media (max-width: 520px) { #share-dlg .make { grid-template-columns: 1fr 1fr; } #share-dlg .make .grow { grid-column: 1 / -1; } }
+  #share-prompt { display: block; width: 100%; height: 170px; box-sizing: border-box; margin: 0 0 10px; padding: 10px 12px; border: 1px solid var(--rule); border-radius: 8px; background: var(--code-bg); color: var(--fg); font: 12px/1.5 var(--font-mono); resize: vertical; }
+  #share-prompt[hidden] { display: none; }
+  #share-dlg .buttons { align-items: center; }
+  #share-status { margin-right: auto; font-size: 12.5px; color: var(--soft); }
+  #share-dlg h3 { margin: 16px 0 6px; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--soft); }
+  #share-tokens { list-style: none; margin: 0; padding: 0; font-size: 13px; }
+  #share-tokens li { display: flex; align-items: center; gap: 8px; padding: 7px 0; border-top: 1px solid var(--rule); }
+  #share-tokens li .what { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg-strong); }
+  #share-tokens li .when { color: var(--soft); font-size: 12px; white-space: nowrap; }
+  #share-tokens li.ended .what { color: var(--soft); text-decoration: line-through; }
+  #share-tokens li button { height: 26px; padding: 0 10px; font-size: 12px; }
+  #share-tokens .none { color: var(--soft); border: 0; }
+`;
+
+/** The tabs on a phone: which pane shows, remembered in this browser and in the address (#tasks, #source, #agent). */
+const TABS_SCRIPT = `
+(() => {
+  const tabs = ["tasks", "source", "agent"];
+  let tab = location.hash.slice(1);
+  if (!tabs.includes(tab)) { try { tab = localStorage.getItem("erga:admin-source-tab") || "tasks"; } catch { tab = "tasks"; } }
+  if (!tabs.includes(tab)) tab = "tasks";
+  const show = (t) => {
+    document.body.dataset.tab = t;
+    for (const b of document.querySelectorAll(".tabs [data-tab]")) b.setAttribute("aria-selected", String(b.dataset.tab == t));
+    try { localStorage.setItem("erga:admin-source-tab", t); } catch {}
+    if (t == "agent") window.dispatchEvent(new Event("erga:agent-shown"));
+  };
+  for (const b of document.querySelectorAll(".tabs [data-tab]")) b.addEventListener("click", () => { show(b.dataset.tab); history.replaceState(null, "", "#" + b.dataset.tab); });
+  show(tab);
+})();
+`;
+
+/** /admin/source: the factory's board, the source and deploy dashboard, and the factory's agent, on one page (admins, unlocked). */
+export function adminSourcePage(c: SourcePageConfig): Response {
+  const crumbs = `<nav class="crumbs" aria-label="Breadcrumbs"><a class="brand" href="/">Erga</a><a class="here-link" href="/admin">Admin</a><span class="here" aria-current="page">Source</span></nav>`;
+  const page = (body: string, status = 200) => new Response(appPage("Source", PAGE_STYLE + scopeCss(BOARD_STYLE, "#tasks") + scopeCss(SOURCE_STYLE, "#source-pane"), `${crumbs}${body}`), { status, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
+  if (!c.admin) return page(`<main><p class="empty">There's nothing here. <a href="/">Back to the start</a>.</p></main>`, 404);
+  return page(`<main class="admin">
+  <div class="tabs" role="tablist" aria-label="Show"><button type="button" role="tab" data-tab="tasks">Tasks</button><button type="button" role="tab" data-tab="source">Source</button><button type="button" role="tab" data-tab="agent">Agent</button></div>
+  <div class="workspace">
+  <aside class="agent-pane" id="agent" aria-label="Agent">
+    <div class="agent-head">
+      <span class="title">Agent</span><span class="model" id="agent-model"></span>
+      <button type="button" class="icon-btn" id="agent-reset" aria-label="New conversation" data-tip="New conversation">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+      </button>
+    </div>
+    <div class="agent-log" id="agent-log" data-empty="Say what you want built. The agent queues it as factory tasks, with their dependencies, and can read tasks, their logs, previews and screenshots, and send them more instructions. You merge." aria-live="polite" tabindex="-1"></div>
+    <button type="button" class="agent-jump" id="agent-jump" hidden>↓ Jump to latest</button>
+    <p class="agent-hint" id="agent-hint" role="status" hidden></p>
+    <form class="agent-compose" id="agent-form">
+      <div class="agent-field" id="agent-field"><textarea id="agent-input" rows="1" placeholder="Ask the agent…" aria-label="Message the agent"></textarea></div>
+      <button type="submit" class="agent-send" id="agent-send">Send</button>
+    </form>
+  </aside>
+  <div class="panes">
+    <section class="pane" id="tasks" aria-label="Tasks">${boardMarkup({ enabled: c.factory })}</section>
+    <section class="pane" id="source-pane" aria-label="Source and deploys">${sourceMarkup(c)}</section>
+  </div>
+  </div>
+  <dialog id="share-dlg" aria-labelledby="share-title">
+    <h2 id="share-title">Share the factory with an agent</h2>
+    <p>Make a token, then paste the prompt into an agent that can run commands (Claude Code, Codex…). It can queue tasks, read them and send them more instructions, as your agent. It can't merge, discard or start tasks, push or deploy.</p>
+    <div class="make">
+      <label class="grow">Label<input id="share-label" maxlength="60" value="Claude Code" autocomplete="off"></label>
+      <label>Lasts<select id="share-hours"><option value="1">1 hour</option><option value="4" selected>4 hours</option><option value="12">12 hours</option></select></label>
+      <button type="button" class="primary" id="share-make">Make token</button>
+    </div>
+    <textarea id="share-prompt" readonly spellcheck="false" aria-label="Prompt for the other agent" hidden></textarea>
+    <div class="buttons"><span id="share-status" role="status" aria-live="polite"></span><button type="button" id="share-copy" hidden>Copy prompt</button><button type="button" id="share-close">Close</button></div>
+    <h3>Factory tokens</h3>
+    <ul id="share-tokens"><li class="none">None yet.</li></ul>
+    <p style="margin-top:10px">A token ends by itself; Revoke ends it now. Revoking the admin key you unlocked with ends it too.</p>
+  </dialog>
+</main>
+<script>${TABS_SCRIPT}</script>
+<script>${BOARD_SCRIPT}</script>
+${c.ready ? `<script>${SOURCE_SCRIPT}</script>` : ""}
+<script src="/factory-agent.js" defer></script>`);
 }
