@@ -431,10 +431,11 @@ function readLogin(): Login | undefined {
 }
 
 /** TASK_QUEUE_LOGIN, one at a time (it may wait for someone to approve this machine): whether Git can now sign in to origin. */
-let loggingIn: Promise<boolean> | null = null;
+let loggingIn: Promise<boolean> | null = null, loginAt = 0;
 function login(): Promise<boolean> {
   if (!LOGIN) return Promise.resolve(true);
   return (loggingIn ??= (async () => {
+    loginAt = Date.now();
     const r = await run(["bash", "-c", LOGIN], REPO, ORIGIN_ENV);
     loginError = r.ok ? "" : (r.all.split("\n").filter(Boolean).at(-1) ?? `exit ${r.code}`);
     if (!r.ok) console.log(`origin login failed: ${r.all}`);
@@ -540,7 +541,11 @@ async function fetchOrigin({ cachedOnly = true } = {}) {
   await fetchOriginNow(true);
   await refresh();
 }
-if (FETCH_EVERY > 0) setInterval(() => { locked(() => fetchOrigin()); }, FETCH_EVERY * 1000);
+if (FETCH_EVERY > 0) setInterval(() => {
+  // A sign-in that failed (nobody approved it in time): again every 15 minutes, outside the lock, so the board keeps a live link.
+  if (LOGIN && loginError && !loggingIn && Date.now() - loginAt > 15 * 60_000) login();
+  locked(() => fetchOrigin());
+}, FETCH_EVERY * 1000);
 
 /** POST /api/release: origin's main to its staging head (or to `commit`, one of staging's commits): a fast-forward, never forced. */
 async function release(commit?: string): Promise<Outcome> {
