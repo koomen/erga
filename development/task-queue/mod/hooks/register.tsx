@@ -7,11 +7,13 @@ import type { Task } from '../types'
 // truth and the browser board; this mod is its front end in Claude Code:
 //   - task_create: registers a task and starts a worker in its worktree, in one call (unless its
 //     dependencies hold it: then task_start starts it once they've merged); task_deps changes them
-//   - task_log / task_preview / task_screenshot / task_unscreenshot / task_done / task_fail: the worker's reports
+//   - task_log / task_preview / task_screenshot / task_unscreenshot / task_done / task_fail: the worker's reports;
+//     task_continue: the worker, after fixing what stopped its merge (needs-agent)
+//   - one agent per task until it merges: task_create and task_start record the worker's agent id on the task
 //   - the worker agent type, its instructions built in
 //   - the workflow rule in the main agent's system prompt
 //   - a Tasks pane (/tasks) with Open / Merge / Discard, a status entry, toasts
-//     (ready to merge, merging, merged, merge failed, failed, unblocked, blocked)
+//     (ready to merge, merging, needs agent, merged, merge failed, failed, unblocked, blocked)
 // It does nothing in a repo without development/task-queue/server.ts.
 
 const QUEUE = 'http://127.0.0.1:4700'
@@ -37,9 +39,21 @@ Watch the queue for the whole session, so you hear when each task changes state 
 start of the session, run \`development/task-queue/tq watch --state /tmp/tq-watch-<a name for this session>.json\` under
 the Monitor tool (timeout_ms at the maximum), and re-arm it with the same command whenever it expires (--state
 reports what changed in between). It prints one line per status change ("#3 ready to merge: title", "#3 merged:
-title", "#4 failed: title: why", "#5 merge failed, back to ready to merge: title: why") and nothing else. Act on each
-without being asked: relay a ready or failed task the worker hasn't already reported, say why a merge failed, and
-when a task merges, start any task it unblocks (below).
+title", "#4 failed: title: why", "#5 merge failed, back to ready to merge: title: why", "#6 needs agent: title: why
+(agent ID)") and nothing else. Act on each without being asked: relay a ready or failed task the worker hasn't
+already reported, say why a merge failed, and when a task merges, start any task it unblocks (below).
+
+One agent per task, from start until merge. task_create and task_start record the worker's agent id on the task
+(the queue's agent field). A worker that finishes stays that task's agent until the task merges. When a merge needs
+work, the queue stops it, puts the worktree back on the branch's last commit, and sets the task to needs-agent:
+a conflict, uncommitted changes, a failed check, or a step that timed out. The watch prints "#6 needs agent: title:
+conflicts merging origin/staging: README.md (agent a1b2c3)". Then, without being asked: tell the user in a line, and
+wake that task's own agent with SendMessage (to the agent id in the line, or tq get <id>'s agent), saying what
+stopped the merge (tq get <id>: error, needsAgent.output). The agent fixes it in the worktree, tests under a time
+limit, commits, and calls task_continue; the merge then runs again by itself. Only if that agent is gone (a new
+session, or SendMessage fails), start a new task-queue:worker on the task with the Agent tool, its prompt holding
+the task's ask, summary and log (tq get <id>), and record its agent id with \`development/task-queue/tq agent <id>
+<agentId>\`. Never merge or resolve it yourself.
 
 Dependencies: when you split work into several tasks, say how they depend on each other, so the queue enforces it.
 Pass after: [ids] to task_create when a task truly needs another one merged first (it stays queued, with no worker,
@@ -90,6 +104,16 @@ worktree, and report on the board as you go. Your first message names the task, 
   internal names or arrow chains. Shape: one sentence on what the task changes for the user, then results (with
   numbers), changes, limits, tests, and what the user must do.
 - Never merge or push: the user merges from the board.
+- Run every build and test under a time limit (e.g. \`timeout 600 ./test.sh\`), and never leave processes behind
+  (dev servers, watchers, browsers): stop what you start. If your own preview gets in the way of a build in the
+  worktree (a dev server that the build waits on), stop it first (\`development/task-queue/tq preview <id> --stop\`),
+  and start it again after.
+- You are the task's agent until it merges: after task_done, stay available. If the merge needs work, the main agent
+  wakes you with what stopped it (a conflict, uncommitted changes, a failed check, a step that timed out). Then, in
+  the worktree: \`git fetch origin\`, merge origin's branch (origin/staging for Erga) and main into the branch, resolve
+  any conflicts keeping both sides' intent, test under a time limit, commit everything, and call task_continue. The
+  merge then runs again by itself. Before task_done, do the same merge yourself, so the queue finds nothing to
+  conflict.
 - Dependencies: if your task needs another task's work that isn't merged yet, don't build against a stand-in, stub
   or mock of it that someone must later replace. If your task merges after another (mergeAfter), build against the
   contract the ask describes, as the real thing. If you find a dependency the ask doesn't name, say so with
@@ -157,6 +181,11 @@ const TOOLS = [
     inputSchema: { type: 'object', properties: { id: { type: 'number' }, summary: { type: 'string', description: 'For the user, in ASD-STE100 (Simplified Technical English, see AGENTS.md "Task summaries"): what changed for the user, results, changes, limits, tests, what the user must do' }, url: { type: 'string', description: 'Where to look, if not the preview URL already set' } }, required: ['id', 'summary'] },
   },
   { name: 'task_fail', description: "Mark a task failed, with why.", inputSchema: { type: 'object', properties: { id: { type: 'number' }, reason: { type: 'string' } }, required: ['id', 'reason'] } },
+  {
+    name: 'task_continue',
+    description: "After fixing what stopped the task's merge (status needs-agent: a conflict, uncommitted changes, a failed check, a step that timed out) and committing everything in the worktree: merge it again. Refused while the worktree has uncommitted changes or an unfinished merge.",
+    inputSchema: { type: 'object', properties: { id: { type: 'number' } }, required: ['id'] },
+  },
   { name: 'task_list', description: 'List the tasks in the queue that are not done.', inputSchema: { type: 'object', properties: {} } },
 ]
 
@@ -178,7 +207,7 @@ async function api($: EngineInterface, method: string, path: string, body?: unkn
 
 const brief = (t: any): Task => ({
   id: t.id, title: t.title, status: t.status, branch: t.branch, url: t.url, previewUp: t.previewUp, live: t.live,
-  error: t.error, commit: t.commit, updatedAt: t.updatedAt, last: t.log?.[t.log.length - 1]?.message,
+  error: t.error, commit: t.commit, updatedAt: t.updatedAt, last: t.log?.[t.log.length - 1]?.message, agent: t.agent,
   startAfter: t.startAfter, mergeAfter: t.mergeAfter, blockedBy: t.blockedBy,
 })
 
@@ -242,6 +271,7 @@ async function poll($: EngineInterface) {
     if (t.status === 'merging') $.ui.toast(`Task #${t.id} merging: ${t.title}`)
     if (t.status === 'complete' && before !== 'merging') $.ui.toast(`Task #${t.id} ready to merge: ${t.title}`)
     if (t.status === 'complete' && before === 'merging') $.ui.toast(`Task #${t.id} merge failed: ${t.error ?? ''}`.slice(0, 200))
+    if (t.status === 'needs-agent') $.ui.toast(`Task #${t.id} needs its agent${t.agent ? ` (${t.agent})` : ''}: ${t.error ?? ''}`.slice(0, 200))
     if (t.status === 'merged') $.ui.toast(`Task #${t.id} merged and pushed (${t.commit})`)
     if (t.status === 'failed') $.ui.toast(`Task #${t.id} failed: ${t.error ?? ''}`.slice(0, 200))
   }
@@ -252,6 +282,7 @@ async function poll($: EngineInterface) {
     [waiting, 'waiting'],
     [count(['complete']), 'ready'],
     [count(['merging']), 'merging'],
+    [count(['needs-agent']), 'need agent'],
     [count(['failed']), 'failed'],
   ].filter(([n]) => n).map(([n, label]) => `${n} ${label}`)
   $.ui.status(parts.length ? `tasks: ${parts.join(' · ')}` : undefined)
@@ -279,6 +310,9 @@ async function startWorker($: EngineInterface, t: any) {
     await api($, 'PATCH', `/api/tasks/${t.id}`, { status: 'queued', message: `Worker didn't start: ${spawned.deny}` })
     return say(`Task #${t.id} is on the board, but its worker didn't start (${spawned.deny}). Start one yourself: Agent tool, subagent_type "${WORKER}", run_in_background, prompt:\n\n${workerTask(t)}`)
   }
+  // One agent per task until it merges: the one to wake if its merge needs work.
+  const agentId = (spawned as { agentId?: string }).agentId
+  if (agentId) await api($, 'PATCH', `/api/tasks/${t.id}`, { agent: agentId })
   await api($, 'POST', `/api/tasks/${t.id}/log`, { message: 'Worker started' })
   return say(`Task #${t.id} is on the board (http://localhost:4700) and its worker has started in ${t.worktree}. Tell the user in one line and stay free; the worker reports back when it's done.`)
 }
@@ -401,6 +435,12 @@ export const register: Register = on => {
     return say(r.ok ? `Task #${id} marked failed.` : `Failed: ${r.error}`)
   })
 
+  on('tool.call', { tool: 'mcp__task-queue__task_continue' }, async ($, e) => {
+    const { id } = e as unknown as { id: number }
+    const r = await api($, 'POST', `/api/tasks/${id}/continue`)
+    return say(r.ok ? `Task #${id} is merging again. If it stops again, the main agent tells you why.` : `Failed: ${r.error}`)
+  })
+
   on('tool.call', { tool: 'mcp__task-queue__task_list' }, async $ => {
     const r = await api($, 'GET', '/api/tasks')
     if (!r.ok) return say(`Failed: ${r.error}`)
@@ -418,6 +458,7 @@ export const register: Register = on => {
     const open = (url: string) => () => { void $.process.run(['open', url]) }
     const groups: [string, Task['status'][]][] = [
       ['Working', ['queued', 'working', 'failed']],
+      ['Needs agent', ['needs-agent']],
       ['Ready to merge', ['complete']],
       ['Merging', ['merging']],
       ['Done', ['merged']],
@@ -437,8 +478,8 @@ export const register: Register = on => {
               {rows.length === 0 && <Text dimColor>  nothing</Text>}
               {rows.map(t => (
                 <Box key={`t${t.id}`} flexDirection="column">
-                  <Text color={t.status === 'failed' ? 'red' : undefined}>
-                    #{t.id} {t.title}{t.live ? ' · live' : ''}{t.status === 'failed' ? ' (failed)' : ''}{t.status === 'merged' ? ` · ${t.commit ?? ''}` : ''}
+                  <Text color={t.status === 'failed' ? 'red' : t.status === 'needs-agent' ? 'magenta' : undefined}>
+                    #{t.id} {t.title}{t.live ? ' · live' : ''}{t.status === 'failed' ? ' (failed)' : ''}{t.status === 'needs-agent' ? ` · agent ${t.agent ?? 'none recorded'}` : ''}{t.status === 'merged' ? ` · ${t.commit ?? ''}` : ''}
                   </Text>
                   {t.blockedBy && <Text color={t.blockedBy.stuck.length ? 'red' : 'yellow'}>  {t.blockedBy.reason}</Text>}
                   {t.status !== 'merged' && (t.error || t.last) && <Text dimColor>  {(t.error ?? t.last ?? '').split('\n')[0]?.slice(0, 100)}</Text>}

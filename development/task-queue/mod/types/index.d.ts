@@ -2,13 +2,15 @@
 export type Task = {
   id: number
   title: string
-  status: 'queued' | 'working' | 'complete' | 'merging' | 'merged' | 'failed' | 'discarded'
+  status: 'queued' | 'working' | 'complete' | 'merging' | 'needs-agent' | 'merged' | 'failed' | 'discarded'
   branch?: string
   url?: string
   previewUp?: boolean
   /** Worked on live, in a session with the user (its own dev server and Chrome window), not by a worker. */
   live?: boolean
   error?: string
+  /** The agent doing the task, from start until merge: the one to wake when its merge needs work (needs-agent). */
+  agent?: string
   last?: string
   commit?: string
   updatedAt: string
