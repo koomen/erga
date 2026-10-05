@@ -4,7 +4,7 @@
 // folder, it links that as a document and `base` is the document's address;
 // without one, `base` is the app's root, and `open` links them as needed.
 
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 
@@ -64,6 +64,7 @@ export async function startHost(target: string | null, opts: { port?: number; en
   await build();
   const port = opts.port ?? freePort();
   const scratch = mkdtempSync(join(tmpdir(), "erga-host-"));
+  scratches.add(scratch);
   const state = join(scratch, "state"), envDir = join(scratch, "env");
   mkdirSync(envDir);
   const vars: Record<string, string> = { DEV_LOGIN: "tester", SESSION_SECRET: crypto.randomUUID(), ...opts.env };
@@ -122,6 +123,8 @@ export async function startHost(target: string | null, opts: { port?: number; en
     },
     async dispose() {
       await host.stop();
+      killLeftovers(scratch);
+      scratches.delete(scratch);
       rmSync(scratch, { recursive: true, force: true });
     },
   };
@@ -137,4 +140,26 @@ function descendants(pid: number): number[] {
     if (child) out.push(child, ...descendants(child));
   }
   return out;
+}
+
+/** Every host's scratch folder this process made and hasn't disposed of: what's left running from them goes when it exits. */
+const scratches = new Set<string>();
+process.on("exit", () => { for (const dir of scratches) killLeftovers(dir); });
+
+/**
+ * Kills what is still running from a host's scratch folder. A factory job's preview (factory/vm/task.ts serve-static,
+ * or bun dev.ts), started detached in a simulated VM's clone there, outlives the server that started it: without
+ * this, each test run leaves some behind. Found by command line (the folder in it) and by working directory.
+ */
+function killLeftovers(dir: string) {
+  const dirs = [...new Set([dir, (() => { try { return realpathSync(dir); } catch { return dir; } })()])]; // /var/... is /private/var/... on a Mac
+  const pids = new Set<number>();
+  for (const d of dirs) for (const line of Bun.spawnSync(["pgrep", "-f", d]).stdout.toString().split("\n")) if (Number(line)) pids.add(Number(line));
+  let pid = 0;
+  for (const line of Bun.spawnSync(["lsof", "-n", "-w", "-d", "cwd", "-F", "pn"]).stdout.toString().split("\n")) {
+    if (line[0] == "p") pid = Number(line.slice(1));
+    else if (line[0] == "n" && dirs.some((d) => line.slice(1) == d || line.slice(1).startsWith(d + "/"))) pids.add(pid);
+  }
+  pids.delete(process.pid);
+  for (const p of pids) try { process.kill(p, "SIGKILL"); } catch { /* gone */ }
 }
