@@ -1289,7 +1289,7 @@ Once you've read the guide, await further instructions.`;
   let voice: { rec: Recognition; before: string; sent: number; results: number; heard: string; partial: boolean; timer: number } | null = null;
   let hintTimer = 0;
 
-  // The conversation as the log shows it (agent-chat.ts, which the factory's panel on /admin/source shares).
+  // The conversation as the log shows it (agent-chat.ts, which the factory's panel on /admin/factory shares).
   const agentChat = chat({
     logEl: agentLog, jump: $("agent-jump") as HTMLButtonElement,
     verbs: { read: ["Reading", "Read"], edit: ["Editing", "Edited"], write: ["Writing", "Wrote"], ls: ["Listing", "Listed"], find: ["Finding files", "Found files"], grep: ["Searching", "Searched"], view_page: ["Looking at the page", "Looked at the page"] },

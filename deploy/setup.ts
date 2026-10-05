@@ -122,7 +122,7 @@ if (flag("--factory")) {
       if (!ns) { console.log(`3. ${worker}: no FactoryVm namespace yet. Deploy a release with it (this code), then run this again.`); continue; }
       console.log(`3. ${worker}: the container application ${({ made: "made", there: "is there", updated: "is there, its instance type set to standard-4" } as const)[await ensureFactoryApp(cf, accountId, worker, ns)]} (${ns}).`);
     }
-    console.log("Done. On /admin set factory to on, then open /admin/source: VMs should say cloudflare.");
+    console.log("Done. On /admin set factory to on, then open /admin/factory: VMs should say cloudflare.");
     process.exit(0);
   } catch (e) {
     console.error(`Stopped: ${(e as Error).message}`);

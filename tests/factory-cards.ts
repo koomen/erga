@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-// The factory board's cards on /admin/source, compact: a board of fixture tasks (the page's
+// The factory board's cards on /admin/factory, compact: a board of fixture tasks (the page's
 // /api/factory requests answered over DevTools, so no VM runs), in headless Chrome.
 //
 //   bun tests/factory-cards.ts [--html FILE]
@@ -36,7 +36,7 @@ const t = (title: string, status: string, min: number, log: string, extra: Recor
 const tasks = [
   t("Say hello on the front page", "merged", 300, "merged", { mergedAt: ago(290), mergeCommit: "fedcba9876543210" }),
   t("Builder: concurrent builds don't collide", "merged", 30, "merged", { mergedAt: ago(25), mergeCommit: "fedcba9876543211" }),
-  t("Make factory task cards on /admin/source more compact and easier to scan", "working", 2, "Reading the code"),
+  t("Make factory task cards on /admin/factory more compact and easier to scan", "working", 2, "Reading the code"),
   t("Tests run in the factory VM without lsof", "working", 12, "Running tests/factory.ts under a time limit of 180 seconds"),
   t("Dark mode for the outline panel", "failed", 45, "failed", { error: "The build failed: src/page/outline.ts(12,3): Property 'x' does not exist." }),
   t("Show word counts in the document list, with a total for each folder", "complete", 70, "ready to merge", { url: "http://localhost:4400/", screenshots: [shot("a.png"), shot("b.png"), shot("c.png"), shot("d.png")] }),
@@ -70,7 +70,7 @@ try {
     else p.send("Fetch.continueRequest", { requestId }).catch(() => {});
   });
   for (const dark of [false, true]) {
-    await p.open(`${host.root}/admin/source`, { width: 1400, height: 900, scale: 2, dark });
+    await p.open(`${host.root}/admin/factory`, { width: 1400, height: 900, scale: 2, dark });
     const deadline = Date.now() + 15_000;
     while (!(await p.eval(`document.querySelectorAll("#board .card").length`)) && Date.now() < deadline) await Bun.sleep(50);
     await p.eval(`document.getElementById("tasks").scrollIntoView()`);
@@ -129,7 +129,7 @@ try {
   expect(offLook.border == "dashed" && offLook.cursor == "not-allowed", "an off button looks off", offLook);
   ok("an off button looks off: a dashed border, no fill");
   // Discard's text is black (the page's ink), not red; in light mode at least.
-  await p.open(`${host.root}/admin/source`, { width: 1400, height: 900 });
+  await p.open(`${host.root}/admin/factory`, { width: 1400, height: 900 });
   for (const end = Date.now() + 15_000; !(await p.eval(`document.querySelectorAll("#board .card").length`)) && Date.now() < end;) await Bun.sleep(50);
   const discard = await p.eval<string>(`getComputedStyle(document.querySelector("[data-open='5'] [data-act='arm']")).color`);
   expect(discard == "rgb(13, 13, 15)", "Discard's text is black", discard);
@@ -173,7 +173,7 @@ try {
   expect(!p.errors.length, "no errors in the page", p.errors);
   const html = process.argv[process.argv.indexOf("--html") + 1];
   if (process.argv.includes("--html") && html) {
-    await p.open(`${host.root}/admin/source`, { width: 1400, height: 900 });
+    await p.open(`${host.root}/admin/factory`, { width: 1400, height: 900 });
     while (!(await p.eval(`document.querySelectorAll("#board .card").length`))) await Bun.sleep(50);
     await Bun.sleep(300);
     writeFileSync(html, await p.eval<string>(`(async () => {
