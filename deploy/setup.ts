@@ -13,7 +13,7 @@
 //   --certificate                          (order an advanced certificate for staging's pages, if Universal SSL can't cover them: paid)
 //   --builder                              (deploy the builder again, e.g. after deploy/builder/ changed)
 //   --no-deploy                            (skip staging's deploy from this machine)
-//   bun deploy/setup.ts --hook-secret      (only a new DEPLOY_HOOK_SECRET on both Workers, kept on this machine for deploy/publish.ts)
+//   bun deploy/setup.ts --hook-secret      (only a new DEPLOY_HOOK_SECRET on both Workers; not kept anywhere else)
 //
 // The credential is yours, never a server's: CLOUDFLARE_API_TOKEN if set,
 // else the cf CLI's login (deploy/credential.ts). It needs Workers, D1,
@@ -67,17 +67,15 @@ const PLAN = [
 ];
 const TOKEN_STEPS = [1, 9, 10, 11];
 
-// --hook-secret: a new DEPLOY_HOOK_SECRET, set on both Workers and kept on this machine (deploy/publish.ts reads it there
-// to tell the servers of a push it made). Each Worker gets a new version of the same code, which resets its Pipeline object:
-// do it when no deploy runs.
+// --hook-secret: a new DEPLOY_HOOK_SECRET, set on both Workers, for the servers to tell each other of a push. Not kept
+// on this machine: nothing here needs it (pushes go through Erga's Git endpoint, which tells the servers itself). Each
+// Worker gets a new version of the same code, which resets its Pipeline object: do it when no deploy runs.
 if (flag("--hook-secret")) {
-  const { hookSecretFile, saveHookSecret } = await import("./publish");
   const accountId = process.env.CLOUDFLARE_ACCOUNT_ID?.trim() ?? "", cred = mock ? null : machineCredential();
   if (mock || !/^[0-9a-f]{32}$/.test(accountId) || !cred) { console.error("--hook-secret: set CLOUDFLARE_ACCOUNT_ID and log in with `bunx cf auth login` (not under the mock)."); process.exit(1); }
-  console.log(`A new DEPLOY_HOOK_SECRET for ${STAGING.worker} and ${PROD.worker}, kept in ${hookSecretFile()} (mode 600, not printed).`);
+  console.log(`A new DEPLOY_HOOK_SECRET for ${STAGING.worker} and ${PROD.worker} (not printed, not kept here).`);
   if (!ask("Go on?", yes)) process.exit(1);
   const value = secret(), cf = new Cloudflare(cred.token);
-  saveHookSecret(value);
   for (const worker of [STAGING.worker, PROD.worker]) {
     await cf.call("PUT", `/accounts/${accountId}/workers/scripts/${worker}/secrets`, `set DEPLOY_HOOK_SECRET on ${worker}`, { name: "DEPLOY_HOOK_SECRET", text: value, type: "secret_text" });
     console.log(`Set on ${worker}.`);

@@ -21,13 +21,19 @@ repo's root.
 The board's last column, Branches, is where merged tasks go: main's latest
 25 commits (its first-parent line: the queue's merges and direct commits),
 newest at the top. A task's merge commit shows the task (#id and title) and
-opens it on a click. The left lane is local main, the right origin/main: a
+opens it on a click. The left lane is local main, the right origin's branch
+that main is pushed to (`remote.origin.push`; origin/staging for Erga): a
 filled dot where origin has the commit, a hollow one where it isn't pushed
 yet, and the header counts those. Merged tasks older than that, and
 discarded ones, aren't shown (GET /api/tasks still has them). The server
-re-reads main and origin/main every 1.5s and right after a merge, fetches
+re-reads main and origin's branch every 1.5s and right after a merge, fetches
 origin every 60s (`TASK_QUEUE_FETCH`), and sends changes to the board
 (`GET /api/history`, and a `history` event on `/api/events`).
+
+For Erga, origin is Erga's own Git endpoint, and the queue sets that up
+itself: see the main README, "Pushes from this machine: the task queue"
+(origin, the push to staging, signing in with `source/git-credential.ts`,
+and `tq release` for production).
 
 After a merge that changes the queue's own code (not docs, `mod/`, or the
 tests), the server restarts itself once nothing else is merging: it spawns

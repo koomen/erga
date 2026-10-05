@@ -10,6 +10,9 @@
 //     setting and deploy, and editing the homepage itself;
 //   - the first key (locally, without GitHub), which unlocks; Lock now;
 //     unlocking again with a challenge, once; a replay refused;
+//   - Git's credential helper (source/git-credential.ts): an agent token
+//     from the device flow once, then admin tokens from the key; git clones
+//     and pushes to staging with nobody asked; erase makes it mint again;
 //   - an admin token from admin-login.ts: the admin tools and the Git
 //     endpoint take it, an agent token doesn't;
 //   - revoking the key ends the browser's unlock and the admin token at once;
@@ -20,6 +23,8 @@
 //
 //   bun tests/admin-keys.ts [--keep]   (--keep: leave the server running, unlocked, with a key)
 
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "fs";
+import { tmpdir } from "os";
 import { join } from "path";
 import { Browser, SHOTS } from "./cdp";
 import { startHost } from "./host";
@@ -145,6 +150,51 @@ try {
   const chained = await post("/api/admin/unlock", { nonce: "x", signature: "y" }, bearer(adminToken));
   expect(chained.status == 400, "an admin token can't make another");
   ok("admin-login.ts: an admin token from an agent token and the key; the admin tools, deploys and Git take it");
+
+  // ---- Git's credential helper (source/git-credential.ts): unattended fetches and pushes with the key
+  {
+    const helper = join(import.meta.dir, "..", "source/git-credential.ts");
+    const store = mkdtempSync(join(tmpdir(), "erga-cred-")), notice = join(store, "notice.json"), work = mkdtempSync(join(tmpdir(), "erga-cred-git-"));
+    const env: Record<string, string> = { ...process.env as Record<string, string>, ERGA_CREDENTIAL_DIR: store, ERGA_KEY: laptop.path, ERGA_LOGIN_NOTICE: notice, GIT_TERMINAL_PROMPT: "0" };
+    delete env.ERGA_TOKEN; delete env.ERGA_CREDENTIAL_CACHED_ONLY;
+    const run = async (cmd: string[], extra: Record<string, string> = {}, stdin?: string) => {
+      const p = Bun.spawn(cmd, { cwd: work, env: { ...env, ...extra }, stdin: stdin ? new TextEncoder().encode(stdin) : "ignore", stdout: "pipe", stderr: "pipe" });
+      const [out, err, code] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited]);
+      return { ok: code == 0, out: out.trim(), err: err.trim() };
+    };
+    const ask = `protocol=http\nhost=${new URL(root).host}\npath=git/erga.git\n\n`;
+    // Nothing kept yet, and only cached tokens wanted (the queue's background fetch): no answer, and nobody asked.
+    const cachedOnly = await run(["bun", helper, "get"], { ERGA_CREDENTIAL_CACHED_ONLY: "1" }, ask);
+    expect(cachedOnly.ok && cachedOnly.out == "" && !existsSync(notice), "with nothing kept, a cached-only ask gets no answer and starts no sign-in", cachedOnly);
+    // The first time: the device flow. It says where to approve, the person approves, and it carries on by itself.
+    const login = run(["bun", helper, "login", root]);
+    await until(() => existsSync(notice), 15000, "the helper says where to approve");
+    const waiting = JSON.parse(readFileSync(notice, "utf8")) as { approve_url: string; user_code: string };
+    expect(waiting.approve_url.startsWith(`${root}/tokens/approve?code=`) && waiting.user_code, "the notice has the link to approve and its code", waiting);
+    const approve = await get("/tokens/approve", { method: "POST", headers: { Origin: root }, body: new URLSearchParams({ code: new URL(waiting.approve_url).searchParams.get("code")! }) });
+    expect(approve.ok, "the person approves it", approve.status);
+    const loggedIn = await login;
+    expect(loggedIn.ok && /Ready/.test(loggedIn.out) && !existsSync(notice), "the helper takes the agent token, makes an admin token with the key, and the notice goes", loggedIn);
+    const status = JSON.parse((await run(["bun", helper, "status", root])).out) as { agentToken: boolean; adminTokenUsable: boolean };
+    expect(status.agentToken && status.adminTokenUsable, "it keeps both (status never shows them)", status);
+    const kept = readdirSync(store).map((f) => readFileSync(join(store, f), "utf8"));
+    expect(kept.some((v) => v.startsWith("erga_") && !v.startsWith("erga_admin_")) && kept.some((v) => / erga_admin_/.test(v)), "the agent token, and the admin token with when it ends", kept.length);
+    // git with the helper: clone, push to staging; Erga's own lines come back.
+    const cfg = ["-c", `credential.${root}.helper=`, "-c", `credential.${root}.helper=!bun ${helper}`];
+    const clone = await run(["git", ...cfg, "clone", "-q", `${root}/git/erga.git`, "c"]);
+    expect(clone.ok, "git clones through the helper, with nobody asked", clone);
+    const c = join(work, "c");
+    await run(["bash", "-c", `cd ${c} && git config user.email t@t && git config user.name t && git checkout -q -B mine && echo hi > helper.txt && git add . && git commit -qm "Pushed with the helper"`]);
+    const push = await run(["bash", "-c", `cd ${c} && git ${cfg.map((a) => `'${a}'`).join(" ")} push origin HEAD:staging`]);
+    expect(push.ok && /Erga: staging is now/.test(push.err), "and pushes to staging", push);
+    // A 401 makes git erase the token: the next ask makes a new one, with the kept agent token (no approval).
+    const before = (await run(["bun", helper, "get"], {}, ask)).out;
+    await run(["bun", helper, "erase"], {}, `${ask.trim()}\nusername=admin\n${before.split("\n")[1]}\n\n`);
+    const after = await run(["bun", helper, "get"], {}, ask);
+    expect(after.out.startsWith("username=admin\npassword=erga_admin_") && after.out != before && !existsSync(notice), "after git erases it, the next ask makes a new admin token without a new approval", after);
+    rmSync(store, { recursive: true, force: true }); rmSync(work, { recursive: true, force: true });
+    ok("source/git-credential.ts: a device-flow agent token once, then admin tokens from the key; git clones and pushes to staging with nobody asked");
+  }
 
   // ---- revoking the key ends every unlock made with it
   const keysNow = await (await get("/api/admin/keys", { headers: { Cookie: unlocked } })).json() as { keys: { id: string; name: string }[]; log: { action: string }[] };
