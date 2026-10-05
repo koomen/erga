@@ -911,7 +911,7 @@ staging and production, staging's may deploy staging only.
 |---|---|---|---|
 | Individual Workers Editor (Specified Workers) | `erga-staging` | `erga`, `erga-staging` | upload and deploy versions, secrets (kept), static assets, settings; its Durable Objects inherit it. It can't make or delete a Worker |
 | D1 Write | the account | the account | staging's database deleted and made afresh from production's export; migrations |
-| Zone Read, Workers Routes Read, DNS Read | erga.dev, erga-pages.dev | erga.dev, erga-pages.dev | find the zones; check the custom domain, the pages' route and DNS record are there and point at the Worker |
+| Zone Read, Workers Routes Read, DNS Read | erga.dev, erga-pages.dev | erga.dev, erga-pages.dev, erga-pages-staging.dev (`tokenZones`) | find the zones; check the custom domain, the pages' route and DNS record are there and point at the Worker |
 
 **Writing Erga's source (the factory).** No token carries an Artifacts
 permission, on purpose: each server writes Erga's Artifacts repository
@@ -1092,8 +1092,10 @@ Still to do are the steps marked *(you)*.
      (`bun deploy/publish.ts push origin/main`).
    - Production's deploy token made with a short-lived token maker, checked
      and stored on `erga` (`CLOUDFLARE_TOKEN_MAKER=… bun deploy/setup.ts
-     --tokens --production`, answering no to staging's token), then the
-     maker deleted.
+     --tokens --production`, answering no to staging's token). It also reads
+     `erga-pages-staging.dev` (`tokenZones` in `deploy/targets.json`), for
+     staging's pages from task #4. The maker is kept for task #4, then
+     deleted.
    - `migrate.ts` and the `WORKERS_CI` lines in `site.sh` removed.
 
    To go back to Workers Builds (if ever): make the trigger again (build
