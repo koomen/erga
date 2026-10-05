@@ -47,7 +47,7 @@ import { expect, until } from "./suite/harness";
 const docker = process.argv.includes("--docker");
 const ok = (what: string) => console.log(`ok   ${what}`);
 const secret = `factory-test-${crypto.randomUUID()}`;
-const host = await startHost(null, { env: { ERGA_AGENT_MODEL: "script" }, processEnv: { ERGA_FACTORY_RUNNER: docker ? "docker" : "sim", ERGA_LINK_SECRET: secret } });
+const host = await startHost(null, { env: { ERGA_AGENT_MODEL: "script" }, processEnv: { ERGA_FACTORY_RUNNER: docker ? "docker" : "sim", ERGA_LINK_SECRET: secret, ERGA_FACTORY_SIM_NO_SCRIPTS: "1" } });
 const browser = await Browser.launch();
 const root = host.root;
 const origin = { Origin: root };

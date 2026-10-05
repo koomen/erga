@@ -191,7 +191,8 @@ try {
     };
   })()`);
   await p.open(`${root}/admin/source`, { width: 1280, height: 900, scale: 2, clear: false });
-  await until(async () => (await state()).rows.length > 0, 10_000, "the list draws");
+  // The deploy columns come from a request of their own (they say "not set up" until it answers).
+  await until(async () => { const s = await state(); return s.rows.length > 0 && s.targets.length == 2 && s.targets.every((t) => !t.includes("not set up")); }, 10_000, "the list and the deploy columns draw", state);
   let s = await state();
   expect(s.rows.map((x) => x.subject).join() == "Fifth,Fourth,Third,Second,First" && s.title.startsWith("Source") && !s.merge && !s.mergeShown && s.ahead == "" && s.headGap < 1, "one list: staging's commits, newest first; nothing to merge, so no Merge button, no text and no space for them", s);
   await p.screenshot(join(SHOTS, "source-at-staging.png"));
@@ -278,7 +279,8 @@ try {
   await until(async () => p.eval(`getComputedStyle(document.querySelector("#grid .row button.here")).display != "none"`), 5_000, "hovering a staging-only commit offers Merge to here");
   await click("#grid .row button.here");
   await until(async () => (await state()).rows.find((x) => x.sha == polled2)?.kind.includes("on-main"), 10_000, "Merge to here moves main to that commit", state);
-  expect((await p.eval<string>(`document.getElementById("merge-hint").textContent`)).includes("Merged: main is now"), "and says so");
+  expect((await p.eval<string>(`document.getElementById("merge-hint").textContent`)) == "", "and leaves no message after it");
+  await p.screenshot(join(SHOTS, "source-after-merge.png"));
   // Every move of main deploys production (its server is played in the mock: deploy/mock.ts, worker/pipeline.ts's peer).
   await until(async () => (await state()).rows.find((x) => x.sha == polled2)?.live[1] == "live", 60_000, "and production deploys it", state);
   ok("every move of staging deploys staging, every move of main deploys production");

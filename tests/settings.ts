@@ -89,9 +89,20 @@ async function newDoc(title: string, style?: string): Promise<{ address: string;
 
 const rect = (p: Page, sel: string) => p.eval<{ x: number; y: number; w: number; h: number; top: number; right: number; bottom: number; left: number } | null>(
   `(() => { const r = document.querySelector(${JSON.stringify(sel)})?.getBoundingClientRect(); return r && r.width ? { x: r.x + r.width / 2, y: r.y + r.height / 2, w: r.width, h: r.height, top: r.top, right: r.right, bottom: r.bottom, left: r.left } : null; })()`);
+/** Where it is once it holds still (a list that scrolls or grows, or a toolbar that lays out, moves it): a busy machine is slow to lay out. */
+async function steadyRect(p: Page, sel: string) {
+  let r = await rect(p, sel);
+  for (let i = 0; i < 20; i++) {
+    await p.eval(`new Promise((ok) => requestAnimationFrame(() => requestAnimationFrame(() => ok(true))))`);
+    const again = await rect(p, sel);
+    if (r && again && again.x == r.x && again.y == r.y) break;
+    r = again;
+  }
+  return r;
+}
 async function clickOn(p: Page, sel: string) {
   await p.eval(`document.querySelector(${JSON.stringify(sel)})?.scrollIntoView({ block: "nearest" }), true`);
-  const r = await rect(p, sel);
+  const r = await steadyRect(p, sel);
   expect(r, `${sel} is on the page`);
   await p.click(r.x, r.y);
 }
@@ -146,9 +157,9 @@ try {
 
   // Lazy: nothing of the settings until the gear is reached for.
   expect(!(await p.eval<boolean>(`!!window.ergaSettings || !!document.querySelector('script[src="/settings.js"]')`)), "the settings' code isn't loaded with the editor");
-  const gear = (await rect(p, "#btn-settings"))!;
+  const gear = (await steadyRect(p, "#btn-settings"))!;
   await p.mouse("mouseMoved", gear.x, gear.y);
-  await until(() => p.eval<boolean>("!!window.ergaSettings"), 5_000, "hovering the gear loads the settings' code");
+  await until(() => p.eval<boolean>("!!window.ergaSettings"), 10_000, "hovering the gear loads the settings' code");
   ok("the settings' code loads only when the gear is reached for");
 
   // Open: a popover hanging from the gear, not a dialog in the middle.
