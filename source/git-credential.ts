@@ -136,6 +136,9 @@ export async function adminToken(o: Options): Promise<string | null> {
   const login = (agent: string) => adminLogin({ origin: o.origin, agentToken: agent, key: o.key ?? process.env.ERGA_KEY, hours: 1, net: o.net, say });
   let unlocked;
   try { unlocked = await login(await agentToken(o)); } catch (e) {
+    // The key isn't one of the admin's keys there: say how to add it (a person, in a browser: README, Admin SSH keys).
+    if (e instanceof AdminLoginError && e.status == 403 && /admin keys/.test(e.message))
+      throw new Error(`${e.message} Add this computer's key once, in a browser: ${o.origin}/admin/keys (a key on your GitHub account counts as a first key).`);
     // The agent token was revoked (401): forget it, ask for a new one, once.
     if (!(e instanceof AdminLoginError && e.status == 401) || process.env.ERGA_TOKEN) throw e;
     o.store.remove(AGENT, account(o.origin));
