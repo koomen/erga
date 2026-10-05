@@ -568,7 +568,7 @@ const PAGE_STYLE = `
     .panes { display: block; }
     .pane, .agent-pane { display: none; }
     body[data-tab="tasks"] #tasks, body[data-tab="source"] #source-pane { display: block; }
-    body[data-tab="agent"] .agent-pane { display: flex; position: static; height: calc(100dvh - 150px); min-height: 360px; }
+    body[data-tab="agent"] .agent-pane { display: flex; position: static; height: calc(100dvh - 180px); min-height: 360px; }
   }
   /* The GitHub mirror: its state and Push now, or how to turn it on. */
   dialog#mirror-dlg { width: min(600px, calc(100vw - 32px)); }

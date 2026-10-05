@@ -312,12 +312,15 @@ try {
     const r = await fetch(`${root}${old}`, { redirect: "manual" });
     expect(r.status == 302 && r.headers.get("location") == "/admin/factory", `${old} redirects to /admin/factory`, r.status);
   }
+  // The admin sidebar collapsed (admin-layout.ts), as an admin does to give the board the width: tests/admin-layout.ts tests the toggle.
+  await p.eval(`localStorage.setItem("erga:admin-sidebar", "closed")`);
   await p.navigate(`${root}/admin/factory`);
   await until(() => p.eval(`!!document.querySelector('#tasks [data-col="queued"]') && !!document.querySelector("#source-pane .pane-head") && !!document.querySelector("#agent .agent-log")`), 10_000, "the board, the dashboard and the agent, on one page");
   const box = (sel: string) => p.eval<{ left: number; right: number; top: number; bottom: number; width: number }>(`(() => { const r = document.querySelector(${JSON.stringify(sel)}).getBoundingClientRect(); return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, width: r.width }; })()`);
   const [agentBox, tasksBox, sourceBox] = [await box("#agent"), await box("#tasks"), await box("#source-pane")];
   expect(agentBox.right <= tasksBox.left && tasksBox.bottom <= sourceBox.top && agentBox.width >= 300 && agentBox.bottom <= 900, "on a wide window: the agent on the left, the board above the dashboard beside it", { agentBox, tasksBox, sourceBox });
-  expect(await p.eval(`getComputedStyle(document.querySelector("#tasks .board")).gridTemplateColumns.split(" ").length == 4`), "the board keeps its four columns beside the agent");
+  expect(await p.eval(`getComputedStyle(document.querySelector("#tasks .board")).gridTemplateColumns.split(" ").length == 4`), "the board keeps its four columns beside the agent, with the sidebar collapsed");
+  await p.eval(`localStorage.removeItem("erga:admin-sidebar")`);
   const phone = await browser.page(await browser.context());
   await phone.open(`${root}/admin/factory`, { width: 390, height: 844, scale: 2 });
   await until(() => phone.eval(`!!document.querySelector('#tasks [data-col="queued"]')`), 10_000, "the page on a phone");
