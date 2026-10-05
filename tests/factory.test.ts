@@ -4,7 +4,7 @@
 
 import { expect, test } from "bun:test";
 import { checkGitToken, mintGitToken, pushedRefs, refsAllowed } from "../dev/factory";
-import { branchName, claudeToken } from "../factory/prompt";
+import { branchName, claudeToken, taskPrompt } from "../factory/prompt";
 
 test("branch names follow the task queue's", () => {
   expect(branchName(46, "Experimental: the task queue inside Erga, with Claude Code in Cloudflare VMs")).toBe("task/46-experimental-the-task-queue-inside-erga");
@@ -120,4 +120,15 @@ test("fast mode: on by default in Claude Code's settings; the factory_fast setti
   }
   expect(SETTINGS.factory_fast.default).toBe("on");
   expect(SETTINGS.factory_fast.parse(false)).toBe("off");
+});
+
+test("the worker brief asks for targeted tests in a 5-minute budget, not the whole suite", () => {
+  const p = taskPrompt({ id: 1, title: "T", description: "D", branch: "task/1-t", base: "staging" });
+  expect(p).toContain("under 5 minutes");
+  expect(p).toContain("only the tests that cover what you changed");
+  expect(p).toContain("task run --timeout 180 -- bun test");
+  expect(p).toContain("shared infrastructure");
+  expect(p).toContain("never by default");
+  expect(p).not.toContain("--timeout 900");
+  expect(p).not.toContain("for the whole suite)");
 });
