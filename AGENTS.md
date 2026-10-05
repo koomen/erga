@@ -27,7 +27,8 @@ else: `#3 working: title`, `#3 ready to merge: title`, `#3 merging: title`,
 ready to merge: title: why`, `#6 discarded: title`; and, for
 [dependencies](#dependencies-between-tasks), `#7 unblocked: title (#3
 merged)`, `#8 unblocked for merge: title (#3 merged)` and `#9 blocked:
-title: why`. It rides out the server
+title: why`; and `origin sign-in: open <url> and approve it (code …)` when
+the queue needs the user to approve its sign-in to Erga. It rides out the server
 restarting (and starts it again if it stays down). When the Monitor
 expires, **re-arm it** with the same command: `--state` remembers what it
 had seen, so changes made in between are reported then.
@@ -44,6 +45,8 @@ On each line, act without being asked:
 - **blocked**: a dependency was discarded or failed. Tell the user, and
   change the dependency (`tq deps`) if they agree.
 - **merge failed**: tell the user why, and what would fix it.
+- **origin sign-in**: the queue needs the user to approve this machine's
+  sign-in to Erga's Git endpoint, once. Give them the link at once.
 
 ### Two modes: task mode and live mode
 
@@ -317,16 +320,28 @@ with the reason, while a task's dependencies (`--after`, `--merge-after`)
 aren't merged; a dependency that is merging just ahead of it is fine. The task goes
 straight to **Merging** (status `merging`, its own column), and stays there
 while the queue works; merges run one at a time, in the order they were
-asked for, and a card waiting its turn says so. The queue merges `origin/main` and `main` into the task's branch, in its
+asked for, and a card waiting its turn says so. The queue merges `origin/staging` and `main` into the task's branch, in its
 worktree; if that conflicts, it runs `claude -p` there to resolve the
 conflicts, run the tests and commit. Then it merges the branch into `main`
-(`--no-ff`, "Merge task/…: title"), pushes to `origin`, stops the preview and
-removes the worktree and branch: the task is Done (`merged`). Last, it puts
-`main` into Erga's own source (Cloudflare Artifacts) and tells the servers,
-which deploys staging.erga.dev and **erga.dev** (`deploy/publish.ts`; README,
-"Pushes from this machine"). Before the merge it also merges Erga's `staging`
-into the task's branch, so commits made in Erga come back to `main`. A push
-to GitHub alone deploys nothing. A merge that
+(`--no-ff`, "Merge task/…: title"), pushes `main` to `origin`'s `staging`,
+stops the preview and removes the worktree and branch: the task is Done
+(`merged`). `origin` is Erga's own Git endpoint
+(`https://erga.dev/git/erga.git`; GitHub is the `github` remote, a mirror
+Erga keeps), so the push deploys **staging.erga.dev** by itself. The push
+signs in with no one at the keyboard (`source/git-credential.ts`: an admin
+token from this machine's SSH key; README, "Pushes from this machine"). A
+refused push doesn't undo the merge: the log says why, and the queue pushes
+again by itself.
+
+**Production (erga.dev) is a deliberate step, never part of a merge**:
+Merge on erga.dev/source, or `tq release` (Erga's `main` to `staging`'s
+head). Agents run `tq release` only when the user asks for it.
+
+The queue sets the main checkout's remotes up itself (when no merge runs and
+the checkout is clean on `main`). The first time on a machine, signing in
+needs one approval: `tq watch` prints `origin sign-in: open <url> and approve
+it (code …)`, and the board shows it. Tell the user at once; nothing can be
+fetched or pushed until they approve. A merge that
 fails (uncommitted changes, unresolved conflicts, the main checkout not on
 `main`, or a `--merge-after` task that didn't merge first) goes back to Ready to merge (`complete`) with the reason on the card,
 as does one the queue was stopped in the middle of, when it starts again.
@@ -368,6 +383,8 @@ print the task as JSON.
 | `POST /api/tasks/:id/screenshots` | an image body, or `{path}`, or `{url}` (headless Chrome), with `caption` |
 | `DELETE /api/tasks/:id/screenshots/:file`, `DELETE /api/tasks/:id/screenshots` | remove one screenshot (by file name or 1-based index), or all, and delete the files; not while merging. The board's detail view has a × on each screenshot (on hover) |
 | `POST /api/tasks/:id/merge`, `POST /api/tasks/:id/discard` | the board's buttons; merge answers 202 with the task `merging`, or 409 while its dependencies aren't merged |
+| `POST /api/release {commit?}` | `tq release`: Erga's `main` (production) to `staging`'s head, or to `commit`; only when the user asks |
+| `GET /api/history` | main's latest commits (the Branches column), what was pushed and released, and `login` while a sign-in waits for approval |
 | `GET /api/events` | server-sent events: every task, on each change |
 
 If the queue isn't running, any `tq` command starts it (or
