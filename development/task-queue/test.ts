@@ -7,9 +7,15 @@
 // Registers tasks, commits in their worktrees, runs a preview, attaches
 // screenshots (one taken by headless Chrome), removes them (one, all, tq shot
 // --replace; not while merging; the board's ×), merges and pushes (through the
-// merging status), merges a conflicting task with a stand-in resolver, fails
-// a merge back to complete (with tq merge --wait), recovers a merge cut off by
-// a restart, and discards one; tq watch follows it all, through the restart.
+// merging status), and discards one; tq watch follows it all, through a restart.
+// One agent per task: tq start --agent and tq agent record it; a conflicting
+// merge stops (its preview and a process left in the worktree stopped first),
+// puts the worktree back and goes to needs-agent (tq watch, the board's Needs
+// agent column, Merge refused), the "agent" resolves and commits, tq continue
+// merges it; uncommitted changes go to the agent too; a hung check times out,
+// its whole process tree killed, and goes to the agent; a merge that fails for
+// a reason outside the worktree goes back to complete (with tq merge --wait),
+// and one cut off by a restart too.
 // Then main's history (the Branches column):
 // its order, which commits are only local, done tasks matched to their merge
 // commits, live updates on a commit, a push, a fetch and a merge, and the
@@ -17,7 +23,8 @@
 // Last, a queue run from a throwaway repo's own copy of its code: merging a
 // change to that code restarts it with the new code (after the merge queued
 // behind, once), keeping tasks, previews and a board connected in headless
-// Chrome (which loads the new board); other merges don't restart it.
+// Chrome (which loads the new board); other merges don't restart it; a change
+// on disk without a merge restarts it too, but not one that doesn't build.
 // And live mode: tq add --live, tq live (the dev server, and a Chrome window of
 // its own, launched headless here, reattached, relaunched when closed), tq look
 // (url, title, selection, console, a screenshot), the board's live badge, and
@@ -55,9 +62,11 @@ sh(`git init -q -b main ${repo} && cd ${repo} && git config user.email t@t && gi
 
 const port = 4790 + Math.floor(Math.random() * 9);
 const base = `http://127.0.0.1:${port}`;
-// The stand-in for claude -p: keeps both sides of every conflict (taking a moment, so the merge is seen merging).
-const resolver = `sleep 1; for f in $(git diff --name-only --diff-filter=U); do grep -v -e '^<<<<<<<' -e '^=======' -e '^>>>>>>>' "$f" > "$f.x" && mv "$f.x" "$f" && git add "$f"; done; git commit -q --no-edit`;
-const env = { ...process.env, TASK_QUEUE_PORT: String(port), TASK_QUEUE_REPO: repo, TASK_QUEUE_DATA: data, TASK_QUEUE_RESOLVER: resolver, TASK_QUEUE_INSTALL: "0", TASK_QUEUE_FETCH: "2", TASK_QUEUE_CHROME_HEADLESS: "1" };
+// What the task's agent does with a conflict here: keeps both sides of every conflicted file, and commits.
+const resolve = `for f in $(git diff --name-only --diff-filter=U); do grep -v -e '^<<<<<<<' -e '^=======' -e '^>>>>>>>' "$f" > "$f.x" && mv "$f.x" "$f" && git add "$f"; done; git commit -q --no-edit`;
+// The pre-merge check: a task's own check.sh, if it has one (to slow a merge, fail it, or hang it), within 3 seconds.
+const env = { ...process.env, TASK_QUEUE_PORT: String(port), TASK_QUEUE_REPO: repo, TASK_QUEUE_DATA: data, TASK_QUEUE_INSTALL: "0", TASK_QUEUE_FETCH: "2", TASK_QUEUE_CHROME_HEADLESS: "1",
+  TASK_QUEUE_CHECK: "if [ -f check.sh ]; then bash check.sh; fi", TASK_QUEUE_TIMEOUT_CHECK: "3" };
 const startServer = () => Bun.spawn(["bun", join(import.meta.dir, "server.ts")], { env, stdout: "pipe", stderr: "inherit" });
 const waitUp = async () => { for (let i = 0; i < 50; i++) { try { await fetch(base + "/api"); return; } catch { await Bun.sleep(100); } } };
 let server = startServer();
@@ -180,9 +189,19 @@ try {
   // Two tasks changing the same line: the second conflicts with main once the first is in.
   const t2 = await api("POST", "/api/tasks", { title: "Line b, one way" });
   const t3 = await api("POST", "/api/tasks", { title: "Line b, another" });
+  // One agent per task: recorded when it starts (tq start --agent), changed with tq agent.
+  const st = JSON.parse(tq("start", String(t3.id), "--agent", "agent-x").out || "{}");
+  check(st.status == "working" && st.agent == "agent-x" && st.log.at(-1).message == "Started; Agent: agent-x", "tq start --agent records the task's agent");
+  const ag = JSON.parse(tq("agent", String(t3.id), "agent-3").out || "{}");
+  check(ag.agent == "agent-3" && ag.log.at(-1).message == "Agent: agent-3", "tq agent changes it");
   sh(`sed -i '' 's/^b$/b two/' notes.txt && git commit -qam two`, t2.worktree);
   sh(`sed -i '' 's/^b$/b three/' notes.txt && git commit -qam three`, t3.worktree);
+  const head3 = sh("git rev-parse HEAD", t3.worktree);
   for (const id of [t2.id, t3.id]) await api("PATCH", `/api/tasks/${id}`, { status: "complete" });
+  // t3's preview runs, and something its agent left behind runs in its worktree: both must stop before the merge.
+  await api("POST", `/api/tasks/${t3.id}/preview`, { command: `bun -e 'Bun.serve({port: Number(process.env.PORT), fetch: () => new Response("three")})'` });
+  await until(t3.id, (t) => t.previewUp);
+  const stray = Bun.spawn(["sleep", "300"], { cwd: t3.worktree });
   await api("POST", `/api/tasks/${t2.id}/merge`);
   const q3 = await api("POST", `/api/tasks/${t3.id}/merge`); // queued behind t2's
   check(q3.status == "merging" && q3.log.at(-1).message.includes(`waiting for #${t2.id}`), "a merge queued behind another is merging, and says what it waits for");
@@ -191,20 +210,73 @@ try {
   check((await api("PATCH", `/api/tasks/${t3.id}`, { status: "complete" })).code == 409, "an agent can't change a merging task's status");
   check((await api("POST", `/api/tasks/${t3.id}/discard`)).code == 409, "a merging task can't be discarded");
   check((await api("DELETE", `/api/tasks/${t3.id}/screenshots`)).code == 409 && tq("unshot", String(t3.id), "1").code == 1, "a merging task's screenshots can't be removed");
-  const m3 = await until(t3.id, (t) => t.status != "merging" && t.status != "complete");
-  check(m3.status == "merged", `the conflicting task merged (${m3.error ?? m3.commit})`);
-  check(m3.log.some((l: any) => l.message.startsWith("Conflicts merging")), "the conflict went to the resolver");
+  const m3 = await until(t3.id, (t) => t.status != "merging");
+  check((await api("GET", `/api/tasks/${t2.id}`)).status == "merged", "the first task merged");
+  check(m3.status == "needs-agent" && m3.error == "conflicts merging origin/main: notes.txt" && m3.needsAgent?.files?.join() == "notes.txt" && m3.needsAgent.step == "git merge origin/main" && /CONFLICT/.test(m3.needsAgent.output ?? ""),
+    `the conflict stops the merge: needs-agent, with the files and git's output (${m3.status}: ${m3.error})`);
+  check(m3.log.some((l: any) => l.message.startsWith("Needs agent: conflicts merging origin/main: notes.txt. Its agent (agent-3) fixes it")), "the log says so, and names the agent");
+  check(sh("git rev-parse HEAD", t3.worktree) == head3 && !sh("git status --porcelain", t3.worktree) && !existsSync(join(sh("git rev-parse --absolute-git-dir", t3.worktree), "MERGE_HEAD")), "the worktree is back on the branch's last commit, clean, with no merge under way");
+  check(m3.log.some((l: any) => l.message == "Preview stopped") && m3.log.some((l: any) => /^Stopped 1 process left running in the worktree: \d+ \(sleep 300\)/.test(l.message)), "the merge stopped the preview, and the process left in the worktree, first");
+  check(stray.exitCode != null || stray.signalCode != null || (await Promise.race([stray.exited.then(() => true), Bun.sleep(3000).then(() => false)])), "that process is gone");
+  check((await until(t3.id, (t) => t.previewUp)).previewUp && m3.log.some((l: any) => l.message.startsWith("Preview started")), "and the preview runs again, for the user to look at");
+  for (let i = 0; i < 30 && !watchLines.some((l) => l.startsWith(`#${t3.id} needs agent`)); i++) await Bun.sleep(100);
+  check(watchLines.includes(`#${t3.id} needs agent: Line b, another: conflicts merging origin/main: notes.txt (agent agent-3)`), `tq watch says it needs its agent, and which (${watchLines.filter((l) => l.includes("needs agent"))})`);
+  const refused = await api("POST", `/api/tasks/${t3.id}/merge`);
+  check(refused.code == 409 && refused.error.includes(`tq continue ${t3.id}`), `Merge is refused while it waits for its agent (${refused.error})`);
+  check((await api("POST", `/api/tasks/${t2.id}/continue`)).code == 409, "tq continue is only for a task that needs its agent");
+
+  // The board: its own column, the agent, Merge off, and why in the detail view.
+  const browserNA = await Browser.launch();
+  try {
+    const page = await browserNA.page();
+    await page.open(base + "/", { width: 1700, height: 900, clear: false });
+    await Bun.sleep(600);
+    const v = await page.eval(`(() => { const c = document.querySelector('[data-col="needs-agent"] .card[data-open="${t3.id}"]'); const m = c?.querySelector(".actions button.primary");
+      return { inCol: !!c, chip: c?.querySelector(".chip.agent")?.textContent, err: c?.querySelector(".err")?.textContent, off: m?.disabled, n: document.querySelector('[data-col="needs-agent"] .n')?.textContent,
+        cols: [...document.querySelectorAll("main section")].map((x) => x.dataset.col).join(",") }; })()`);
+    check(v.cols == "queued,working,needs-agent,ready-to-merge,merging,branches", `the board has a Needs agent column, after Working (${v.cols})`);
+    check(v.inCol && v.chip == "agent agent-3" && v.err == "conflicts merging origin/main: notes.txt" && v.off && v.n == "1", `the card is in it, with its agent, why, and Merge off (${JSON.stringify(v)})`);
+    if (process.env.TQ_SHOTS) await page.screenshot(join(process.env.TQ_SHOTS, "needs-agent-board.png"));
+    await page.eval(`document.querySelector('.card[data-open="${t3.id}"] .title').click(), true`);
+    await page.settle();
+    const d = await page.eval(`({ status: document.querySelector("#dlg .status")?.textContent, reason: document.querySelector("#dlg .stop .reason")?.textContent, files: [...document.querySelectorAll("#dlg .stop .files li")].map((l) => l.textContent).join(), next: document.querySelector("#dlg .stop .next")?.textContent ?? "", out: document.querySelector("#dlg .stop .out")?.textContent ?? "" })`);
+    check(d.status == "Needs agent" && d.reason == "conflicts merging origin/main: notes.txt" && d.files == "notes.txt" && d.next.includes(`tq continue ${t3.id}`) && d.next.includes("agent-3") && /CONFLICT/.test(d.out), `the detail view says why, the files, what comes next, and git's output (${JSON.stringify(d).slice(0, 200)})`);
+    if (process.env.TQ_SHOTS) await page.screenshot(join(process.env.TQ_SHOTS, "needs-agent-detail.png"));
+    await page.eval(`document.querySelector('#dlg [data-act="close"]').click(), true`);
+    check(page.errors.length == 0, `no errors on the board (${page.errors})`);
+  } finally { browserNA.close(); }
+
+  // The agent merges main itself, resolves, and commits; tq continue then merges it.
+  sh(`git merge -q main || true`, t3.worktree);
+  check(tq("continue", String(t3.id)).code == 1 && /middle of a merge/.test(tq("continue", String(t3.id)).err), "tq continue refuses an unfinished merge in the worktree");
+  sh(resolve, t3.worktree);
+  const c3 = tq("continue", String(t3.id), "--wait");
+  const m3b = JSON.parse(c3.out || "{}");
+  check(c3.code == 0 && m3b.status == "merged", `after the agent resolves and commits, tq continue merges it (${m3b.error ?? m3b.status}${c3.err})`);
+  check((await api("GET", `/api/tasks/${t3.id}`)).log.some((l: any) => l.message == "Continued by its agent (agent-3): merging again"), "the log says the agent continued it");
   const notes = sh(`git --git-dir=${origin} show main:notes.txt`);
   check(notes.includes("b two") && notes.includes("b three"), "both sides are in origin/main");
+  for (let i = 0; i < 30 && !watchLines.includes(`#${t3.id} merged: Line b, another`); i++) await Bun.sleep(100);
+  check(watchLines.slice(watchLines.indexOf(`#${t3.id} needs agent: Line b, another: conflicts merging origin/main: notes.txt (agent agent-3)`)).join("|").includes(`#${t3.id} merging: Line b, another|#${t3.id} merged: Line b, another`), "tq watch: needs agent, then merging, then merged");
 
-  // Uncommitted work blocks a merge, with a message.
+  // Uncommitted changes: the agent's too.
   const t4 = await api("POST", "/api/tasks", { title: "Dirty" });
   writeFileSync(join(t4.worktree, "notes.txt"), "dirty\n");
   await api("PATCH", `/api/tasks/${t4.id}`, { status: "complete" });
   const w4 = tq("merge", String(t4.id), "--wait");
-  check(w4.code == 1 && /merge failed: .*uncommitted/.test(w4.err), "tq merge --wait waits, and exits 1 when the merge fails");
+  check(w4.code == 1 && /needs agent: uncommitted changes in the worktree: notes.txt/.test(w4.err), `tq merge --wait waits, and exits 1 when the merge needs the agent (${w4.err.trim()})`);
   const m4 = await api("GET", `/api/tasks/${t4.id}`);
-  check(m4.status == "complete" && /uncommitted/.test(m4.error), "uncommitted changes stop a merge, back to complete, and say so");
+  check(m4.status == "needs-agent" && readFileSync(join(t4.worktree, "notes.txt"), "utf8") == "dirty\n", "uncommitted changes stop a merge, for the agent, and stay as they were");
+  for (let i = 0; i < 30 && !watchLines.some((l) => l.startsWith(`#${t4.id} needs agent`)); i++) await Bun.sleep(100);
+  check(watchLines.includes(`#${t4.id} needs agent: Dirty: uncommitted changes in the worktree: notes.txt (no agent recorded)`), "tq watch says when no agent is recorded");
+  check(tq("continue", String(t4.id)).code == 1, "tq continue refuses while the worktree has uncommitted changes");
+
+  // A merge that fails for a reason outside the worktree goes back to Ready to merge.
+  sh(`git -C ${t4.worktree} commit -qam dirty && git checkout -q -b elsewhere`);
+  const w4b = tq("continue", String(t4.id), "--wait");
+  const m4b = await api("GET", `/api/tasks/${t4.id}`);
+  check(w4b.code == 1 && /merge failed: .* is on elsewhere, not main/.test(w4b.err) && m4b.status == "complete", `the main checkout off main: back to complete, saying why (${m4b.status}: ${m4b.error})`);
+  sh("git checkout -q main && git branch -q -D elsewhere");
 
   // A merge cut off by the queue stopping goes back to Ready to merge when it starts again.
   server.kill(); await server.exited;
@@ -214,12 +286,36 @@ try {
   server = startServer(); await waitUp();
   const r4 = await api("GET", `/api/tasks/${t4.id}`);
   check(r4.status == "complete" && /stopped while this was merging/.test(r4.error), "a merge interrupted by a restart is back at complete, saying why");
-  check(watchLines.includes(`#${t4.id} merge failed, back to ready to merge: Dirty: ${m4.error.replace(/\s+/g, " ")}`), "tq watch says when a merge failed, with why");
+  check(watchLines.includes(`#${t4.id} merge failed, back to ready to merge: Dirty: ${m4b.error.replace(/\s+/g, " ")}`), "tq watch says when a merge failed, with why");
   const d4 = await api("POST", `/api/tasks/${t4.id}/discard`);
   check(d4.status == "discarded" && !existsSync(t4.worktree) && !sh("git branch --list task/4-*"), "discard removes worktree and branch");
   for (let i = 0; i < 50 && watchLines.at(-1) != `#${t4.id} discarded: Dirty`; i++) await Bun.sleep(100);
   check(watchLines.at(-1) == `#${t4.id} discarded: Dirty`, `tq watch reconnects after the server restarts (${watchLines.at(-1)})`);
   check(!watchLines.some((l) => !/^#\d+ [a-z ,]+: /.test(l)), "tq watch prints nothing but status lines");
+
+  // A step that hangs: the check (and what it started) runs out of time, is killed whole, and the task goes to its agent.
+  const th = await api("POST", "/api/tasks", { title: "Hangs" });
+  const grandchild = join(tmp, "grandchild.pid");
+  writeFileSync(join(th.worktree, "check.sh"), `sleep 301 &\necho $! > ${grandchild}\nsleep 302\n`);
+  sh(`git add check.sh && git commit -qm "A check that hangs"`, th.worktree);
+  sh(`echo more >> notes.txt && git commit -qam "main moves on"`); // so the queue makes a merge commit on the branch before the check
+  const headH = sh("git rev-parse HEAD", th.worktree);
+  tq("agent", String(th.id), "agent-h");
+  await api("PATCH", `/api/tasks/${th.id}`, { status: "complete" });
+  const t0 = Date.now();
+  await api("POST", `/api/tasks/${th.id}/merge`);
+  const mh = await until(th.id, (t) => t.status != "merging");
+  const gpid = Number(readFileSync(grandchild, "utf8"));
+  check(mh.status == "needs-agent" && mh.error == "the check (if [ -f check.sh ]; then bash check.sh; fi) timed out after 3s" && mh.needsAgent?.step == "the check (if [ -f check.sh ]; then bash check.sh; fi)" && Date.now() - t0 < 9000,
+    `a hung check times out after 3s and goes to the agent (${mh.status}: ${mh.error}, ${Date.now() - t0}ms)`);
+  await Bun.sleep(3500); // SIGTERM, then SIGKILL 3s later for what's left
+  check(!(() => { try { process.kill(gpid, 0); return true; } catch { return false; } })(), `the check's whole process tree is killed, the process it started too (pid ${gpid})`);
+  check(sh("git rev-parse HEAD", th.worktree) == headH, "the worktree is back on the branch's last commit (the queue's merge of main undone)");
+  for (let i = 0; i < 30 && !watchLines.some((l) => l.startsWith(`#${th.id} needs agent`)); i++) await Bun.sleep(100);
+  check(watchLines.includes(`#${th.id} needs agent: Hangs: the check (if [ -f check.sh ]; then bash check.sh; fi) timed out after 3s (agent agent-h)`), "tq watch says which step timed out, and after how long");
+  sh(`git rm -q check.sh && git commit -qm "No hang" && git merge -q --no-edit main`, th.worktree);
+  const ch = JSON.parse(tq("continue", String(th.id), "--wait").out || "{}");
+  check(ch.status == "merged", `fixed by the agent, it merges (${ch.error ?? ch.status})`);
 
   // A watch started again (re-armed) reports what changed while none was running.
   watcher.kill(); await watcher.exited;
@@ -233,7 +329,7 @@ try {
   watcher.kill();
   await api("POST", `/api/tasks/${t5.id}/discard`);
 
-  check(JSON.parse(readFileSync(join(data, "tasks.json"), "utf8")).tasks.length == 5, "tasks are saved to disk");
+  check(JSON.parse(readFileSync(join(data, "tasks.json"), "utf8")).tasks.length == 6, "tasks are saved to disk");
 
   // Main's history: the Branches column.
   const histories: any[] = [];
@@ -254,10 +350,10 @@ try {
   })();
   const seen = async (pred: (h: any) => boolean) => { for (let i = 0; i < 100; i++) { if (histories.length && pred(histories.at(-1))) return histories.at(-1); await Bun.sleep(100); } return histories.at(-1) ?? {}; };
   const h0 = await api("GET", "/api/history");
-  check(h0.commits.map((c: any) => c.task ?? c.subject).join(",") == "3,2,1,init", `history is main's first-parent line, newest first, merges matched to tasks (${h0.commits.map((c: any) => c.task ?? c.subject)})`);
+  check(h0.commits.map((c: any) => c.task ?? c.subject).join(",") == `${th.id},main moves on,3,2,1,init`, `history is main's first-parent line, newest first, merges matched to tasks (${h0.commits.map((c: any) => c.task ?? c.subject)})`);
   check(h0.commits.every((c: any) => c.remote) && h0.unpushed == 0 && h0.behind == 0 && h0.origin, "everything merged is on origin/main");
-  check(h0.tasks[1]?.sha.startsWith(m1.commit) && h0.tasks[3]?.index == 0 && h0.tasks[2]?.index == 1 && !h0.tasks[4], "done tasks map to their merge commits and places; a discarded one has none");
-  check((await seen((h) => h.commits?.length == 4)).commits?.length == 4, "the event stream sends the history on connect");
+  check(h0.tasks[1]?.sha.startsWith(m1.commit) && h0.tasks[th.id]?.index == 0 && h0.tasks[3]?.index == 2 && h0.tasks[2]?.index == 3 && !h0.tasks[4], "done tasks map to their merge commits and places; a discarded one has none");
+  check((await seen((h) => h.commits?.length == 6)).commits?.length == 6, "the event stream sends the history on connect");
 
   sh(`echo local >> notes.txt && git commit -qam "A local commit"`);
   const h1 = await seen((h) => h.commits[0].subject == "A local commit");
@@ -276,7 +372,7 @@ try {
   // Only the latest 25 show; older merges still match their tasks.
   sh(`for i in $(seq 1 26); do git commit -q --allow-empty -m "filler $i"; done`);
   const h4 = await seen((h) => h.commits[0].subject == "filler 26");
-  check(h4.commits?.length == 25 && h4.unpushed == 26 && h4.tasks?.[1]?.index == 30 && h4.tasks[1].remote, `25 commits shown, the 26 unpushed counted, older task merges still matched (${h4.commits?.length}, ${h4.unpushed}, ${h4.tasks?.[1]?.index})`);
+  check(h4.commits?.length == 25 && h4.unpushed == 26 && h4.tasks?.[1]?.index == 32 && h4.tasks[1].remote, `25 commits shown, the 26 unpushed counted, older task merges still matched (${h4.commits?.length}, ${h4.unpushed}, ${h4.tasks?.[1]?.index})`);
 
   // The board: no Done column; Branches after Merging, a row per commit, live, a task's row opening it.
   const browser = await Browser.launch();
@@ -287,7 +383,7 @@ try {
       await Bun.sleep(500);
       const b = await page.eval(`({ rows: document.querySelectorAll("#graph li").length, unpushed: document.querySelectorAll("#graph .lane.o.no").length,
         cols: [...document.querySelectorAll("main section")].map((c) => c.dataset.col).join(","), n: document.getElementById("branches-n").textContent })`);
-      check(b.cols == "queued,working,ready-to-merge,merging,branches", `${dark ? "dark" : "light"}: no Done column; Branches comes after Merging (${b.cols})`);
+      check(b.cols == "queued,working,needs-agent,ready-to-merge,merging,branches", `${dark ? "dark" : "light"}: no Done column; Branches comes after Merging (${b.cols})`);
       check(b.rows == 25 && b.unpushed == 25 && b.n.startsWith("26 not pushed"), `${dark ? "dark" : "light"}: Branches shows 25 commits, all 25 hollow on origin (${b.rows}, ${b.unpushed}, ${b.n})`);
     }
     sh("git push -q origin main");
@@ -521,6 +617,31 @@ try {
     await Bun.sleep(1500);
     check((await pidNow()) == pid1, "and a merge that leaves its code alone doesn't restart it");
     check(page.errors.length == 0, `no errors on the board (${page.errors})`);
+
+    // The code changed on disk without a merge (a commit in the main checkout, say): it restarts all the same.
+    const serverLog2 = () => readFileSync(join(data2, "server.log"), "utf8");
+    sh(`echo "// changed by hand" >> development/task-queue/tq && git commit -qam "tq, by hand"`, repo2);
+    let pid2 = 0;
+    for (let i = 0; i < 150; i++) { pid2 = await pidNow(); if (pid2 && pid2 != pid1) break; await Bun.sleep(100); }
+    check(pid2 && pid2 != pid1 && /the queue's code changed \(tq\): restarting/.test(serverLog2()), `a change to its code on disk, without a merge, restarts it too (pid ${pid1} → ${pid2})`);
+    selfPid = pid2 || selfPid;
+    const about3 = await api2("GET", "/api");
+    check(about3.running?.version && about3.running.stale?.length == 0, `GET /api says which code runs, and that it's what's on disk (${JSON.stringify(about3.running)})`);
+    // New code that doesn't build: it keeps running the old code, and says why.
+    const srv = join(code2, "server.ts"), good = readFileSync(srv, "utf8");
+    writeFileSync(srv, good + "\nthis is not ( code\n");
+    for (let i = 0; i < 100 && !serverLog2().includes("not restarting: the new code doesn't build"); i++) await Bun.sleep(100);
+    const about4 = await api2("GET", "/api");
+    check(serverLog2().includes("not restarting: the new code doesn't build") && about4.pid == pid2 && about4.running?.stale?.join() == "server.ts", `code that doesn't build doesn't restart it; GET /api says what changed (${about4.running?.stale})`);
+    writeFileSync(srv, good);
+    await Bun.sleep(4000);
+    check((await pidNow()) == pid2, "the change undone: nothing to restart for");
+    // tq restart asks for one.
+    const asked = Bun.spawnSync([join(import.meta.dir, "tq"), "restart"], { env: env2, stdout: "pipe", stderr: "pipe" });
+    let pid3 = 0;
+    for (let i = 0; i < 150; i++) { pid3 = await pidNow(); if (pid3 && pid3 != pid2) break; await Bun.sleep(100); }
+    check(asked.exitCode == 0 && pid3 && pid3 != pid2, `tq restart restarts it (pid ${pid2} → ${pid3})`);
+    selfPid = pid3 || selfPid;
   } finally { browser2.close(); }
   await api2("POST", `/api/tasks/${k.id}/discard`);
 } catch (e) {
@@ -659,8 +780,7 @@ async function dependencies() {
     const g = await api("POST", "/api/tasks", { title: "Dep G: slow" });
     const e = await api("POST", "/api/tasks", { title: "Dep E: dirty" });
     const f = await api("POST", "/api/tasks", { title: "Dep F: after E", mergeAfter: [e.id] });
-    sh(`echo g >> notes.txt && git commit -qam g`, g.worktree);
-    sh(`echo main >> notes.txt && git commit -qam main`); // so G conflicts, and its merge takes the resolver's second
+    sh(`echo "sleep 1" > check.sh && git add check.sh && git commit -qm g`, g.worktree); // so G's merge takes a second (its check)
     commit(e, "e"); writeFileSync(join(e.worktree, "notes.txt"), "dirty\n");
     commit(f, "f");
     for (const t of [g, e, f]) await api("PATCH", `/api/tasks/${t.id}`, { status: "complete" });
@@ -670,7 +790,7 @@ async function dependencies() {
     check(qf.code == 202 && qf.log.at(-1).message.includes(`#${e.id}`), "a merge may be asked for while its dependency is merging (queued ahead of it)");
     const f2 = await until(f.id, (t) => t.status != "merging");
     const e2 = await api("GET", `/api/tasks/${e.id}`);
-    check((await api("GET", `/api/tasks/${g.id}`)).status == "merged" && e2.status == "complete", `G merges, E's merge fails (${e2.status})`);
+    check((await api("GET", `/api/tasks/${g.id}`)).status == "merged" && e2.status == "needs-agent", `G merges, E's merge stops for its agent (${e2.status})`);
     check(f2.status == "complete" && f2.error?.includes(`Can't merge until #${e.id} merges`), `when F's turn comes, E isn't merged: F's merge fails back to ready to merge, saying why (${f2.error})`);
 
     // E discarded: F is blocked for good, until its dependency changes.

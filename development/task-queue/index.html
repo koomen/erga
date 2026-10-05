@@ -8,11 +8,11 @@
   :root {
     --bg: #f6f5f1; --panel: #ecebe5; --card: #ffffff; --ink: #1d1c1a; --muted: #6f6c64; --line: #dcd9d0;
     --accent: #2f5bd3; --ok: #1f7a4d; --warn: #b26a00; --bad: #b3261e; --shadow: 0 1px 2px rgba(0,0,0,.06), 0 2px 8px rgba(0,0,0,.04);
-    --live-task: #c2255c;
+    --live-task: #c2255c; --agent: #7b3fc4;
   }
   @media (prefers-color-scheme: dark) {
     :root { --bg: #151514; --panel: #1d1d1b; --card: #252523; --ink: #ecebe6; --muted: #9a978e; --line: #34332f;
-      --accent: #7ea0ff; --ok: #4cc38a; --warn: #f0a742; --bad: #ff7b72; --shadow: 0 1px 2px rgba(0,0,0,.4); --live-task: #f06595; }
+      --accent: #7ea0ff; --ok: #4cc38a; --warn: #f0a742; --bad: #ff7b72; --shadow: 0 1px 2px rgba(0,0,0,.4); --live-task: #f06595; --agent: #b794f6; }
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.45 ui-sans-serif, -apple-system, "Segoe UI", sans-serif; }
@@ -22,9 +22,9 @@
   .live::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--bad); }
   .live.on::before { background: var(--ok); }
   header a { margin-left: auto; color: var(--muted); font-size: 12px; }
-  main { display: grid; grid-template-columns: repeat(4, minmax(200px, 1fr)) minmax(240px, 1.1fr); gap: 14px; padding: 10px 24px 24px; align-items: start; }
+  main { display: grid; grid-template-columns: repeat(5, minmax(180px, 1fr)) minmax(240px, 1.1fr); gap: 14px; padding: 10px 24px 24px; align-items: start; }
   #cols { display: contents; }
-  @media (max-width: 1150px) { main { grid-template-columns: repeat(3, minmax(220px, 1fr)); } }
+  @media (max-width: 1400px) { main { grid-template-columns: repeat(3, minmax(220px, 1fr)); } }
   @media (max-width: 900px) { main { grid-template-columns: 1fr; padding: 10px 16px; } header { padding: 16px; } }
   .col { background: var(--panel); border-radius: 10px; padding: 10px; min-height: 120px; }
   .col h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 2px 4px 10px; display: flex; justify-content: space-between; }
@@ -36,6 +36,18 @@
   .col.merging h2 .n.busy { color: var(--warn); }
   .col.merging h2 .n.busy::before { content: ""; display: inline-block; vertical-align: -1px; margin-right: 6px; width: 8px; height: 8px; border: 2px solid var(--warn); border-right-color: transparent; border-radius: 50%; animation: s .8s linear infinite; }
   .card.merging .last { color: var(--warn); }
+  /* Needs agent: the merge stopped and waits for the task's own agent to fix something (a conflict, a timeout). */
+  .card.needs-agent { border-left: 3px solid var(--agent); }
+  .card.needs-agent .err { color: var(--agent); }
+  .col.needs-agent h2 .n.busy { color: var(--agent); font-weight: 700; }
+  .chip.agent { color: var(--agent); border-color: color-mix(in srgb, var(--agent) 45%, var(--line)); font: 11px/1 ui-monospace, monospace; }
+  .chip.agent::before { display: none; }
+  .chip.agent.none { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 45%, var(--line)); font-family: inherit; }
+  .stop { border: 1px solid color-mix(in srgb, var(--agent) 45%, var(--line)); border-radius: 8px; padding: 10px 12px; }
+  .stop .reason { color: var(--agent); font-weight: 600; overflow-wrap: anywhere; }
+  .stop .files { margin: 6px 0 0; padding-left: 18px; font: 12px/1.5 ui-monospace, monospace; }
+  .stop .next { color: var(--muted); font-size: 12px; margin-top: 6px; }
+  .stop .out { font: 12px/1.45 ui-monospace, monospace; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 220px; overflow: auto; background: var(--panel); border-radius: 6px; padding: 8px 10px; margin-top: 8px; }
   .card.discarded { opacity: .55; }
   /* A live task: worked on in a session with the user (its own dev server and Chrome window), not by a background worker. */
   .card.is-live { border-left: 3px solid var(--live-task); }
@@ -74,6 +86,7 @@
   .status.complete, .status.merged { color: var(--ok); }
   .status.merging { color: var(--warn); }
   .status.failed { color: var(--bad); }
+  .status.needs-agent { color: var(--agent); }
   .branch { font: 12px ui-monospace, monospace; color: var(--muted); margin-top: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .links { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; margin-top: 8px; font-size: 13px; }
   .links a, .links button.link { color: var(--accent); text-decoration: none; display: inline-flex; align-items: center; gap: 5px; }
@@ -173,6 +186,7 @@
 const COLUMNS = [
   { title: "Queued", statuses: ["queued"] },
   { title: "Working", statuses: ["working", "failed"] },
+  { title: "Needs agent", statuses: ["needs-agent"] },
   { title: "Ready to merge", statuses: ["complete"] },
   { title: "Merging", statuses: ["merging"] },
 ]; // then Branches: main's latest commits, where merged tasks show (renderBranches)
@@ -196,7 +210,11 @@ function actions(t, inDialog = false) {
     const why = mergeBlocked(t);
     b.push(why ? `<button class="primary" disabled title="${esc(why)}">Merge</button><span class="why">${esc(why)}</span>` : `<button class="primary" data-act="merge" data-id="${t.id}">Merge</button>`);
   }
-  if (t.status == "merging") b.push(`<button disabled><span class="spin"></span> ${t.log.at(-1)?.message.startsWith("Merge requested: waiting") ? "Waiting to merge…" : "Merging…"}</button>`);
+  if (t.status == "needs-agent") {
+    const why = `Waiting for its agent: it fixes this in the worktree, then runs tq continue ${t.id}`;
+    b.push(`<button class="primary" disabled title="${esc(why)}">Merge</button><span class="why">waiting for its agent</span>`);
+  }
+  if (t.status == "merging") b.push(`<button disabled><span class="spin"></span> ${/: waiting for #\d+/.test(t.log.at(-1)?.message ?? "") ? "Waiting to merge…" : "Merging…"}</button>`);
   if (!["merging", "merged", "discarded"].includes(t.status))
     b.push(armed.has(t.id) ? `<button class="confirm" data-act="discard" data-id="${t.id}">Discard branch?</button>` : `<button class="danger" data-act="arm" data-id="${t.id}">Discard</button>`);
   return b.length ? `<div class="actions">${b.join("")}</div>` : "";
@@ -229,18 +247,21 @@ function card(t) {
   const blocked = t.status == "queued" && (t.blockedBy?.start.length || t.blockedBy?.stuck.length);
   return `<div class="card ${t.status} ${t.live ? "is-live" : ""} ${blocked ? "blocked" : ""}" data-open="${t.id}">
     <div class="top"><span class="id">#${t.id}</span><span class="title">${esc(t.title)}</span>${liveBadge(t)}</div>
-    <div class="meta">${depChip(t)}${t.branch ? `<code>${esc(t.branch)}</code>` : ""}<span>${t.status == "merged" ? `merged ${ago(t.mergedAt)}` : t.status == "merging" ? `merging · ${ago(t.updatedAt)}` : ago(t.updatedAt)}</span>${t.status == "failed" ? "<span>failed</span>" : ""}${t.status == "discarded" ? "<span>discarded</span>" : ""}</div>
+    <div class="meta">${depChip(t)}${agentChip(t)}${t.branch ? `<code>${esc(t.branch)}</code>` : ""}<span>${t.status == "merged" ? `merged ${ago(t.mergedAt)}` : t.status == "merging" ? `merging · ${ago(t.updatedAt)}` : ago(t.updatedAt)}</span>${t.status == "failed" ? "<span>failed</span>" : ""}${t.status == "discarded" ? "<span>discarded</span>" : ""}</div>
     ${t.error ? `<div class="err">${esc(t.error)}</div>` : last && !["merged", "discarded"].includes(t.status) ? `<div class="last">${esc(last.message)}</div>` : ""}
     ${thumbs && t.status != "discarded" ? `<div class="thumbs">${thumbs}</div>` : ""}
     ${actions(t)}
   </div>`;
 }
 
+/** A task that needs its agent: which agent (the one to wake), or that none is recorded. */
+const agentChip = (t) => t.status != "needs-agent" ? "" : t.agent ? `<span class="chip agent" title="The task's agent: the outer agent wakes it (SendMessage)">agent ${esc(t.agent)}</span>` : `<span class="chip agent none" title="No agent recorded: the outer agent starts a new one with the task's log">no agent recorded</span>`;
+
 /** A live task's badge: pulsing while its dev server and Chrome window are up. */
 const liveBadge = (t) => t.live ? `<span class="badge-live ${t.previewUp && t.chromeUp && !["merged", "discarded"].includes(t.status) ? "on" : ""}" title="Live: worked on in a session with you, with its own dev server and Chrome window">Live</span>` : "";
 
 /** When a merging task's merge was asked for: they run one at a time, in that order. */
-const requested = (t) => t.log.findLast((l) => l.message.startsWith("Merge requested"))?.at ?? t.updatedAt;
+const requested = (t) => t.log.findLast((l) => /^(Merge requested|Continued)/.test(l.message))?.at ?? t.updatedAt;
 
 function render() {
   document.getElementById("cols").innerHTML = COLUMNS.map((c) => {
@@ -251,7 +272,7 @@ function render() {
     // Queued: the ones that can start first; the ones waiting on others below them.
     if (c.title == "Queued") list.sort((a, b) => !!a.blockedBy?.start.length - !!b.blockedBy?.start.length);
     const slug = c.title.toLowerCase().replace(/\W+/g, "-");
-    return `<section class="col ${slug}" data-col="${slug}"><h2><span>${c.title}</span><span class="n ${c.title == "Merging" && list.length ? "busy" : ""}">${list.length}</span></h2>${list.map(card).join("") || `<div class="empty">Nothing here</div>`}</section>`;
+    return `<section class="col ${slug}" data-col="${slug}"><h2><span>${c.title}</span><span class="n ${["Merging", "Needs agent"].includes(c.title) && list.length ? "busy" : ""}">${list.length}</span></h2>${list.map(card).join("") || `<div class="empty">Nothing here</div>`}</section>`;
   }).join("");
   if (openId != null) renderDialog();
 }
@@ -314,7 +335,7 @@ document.addEventListener("mouseover", (e) => showTip(e.target.closest?.("#graph
 document.addEventListener("scroll", () => showTip(null), true);
 
 let dlgError = null; // {id, msg}: a Merge or Discard request from the detail view that failed
-const STATUS = { queued: "Queued", working: "Working", complete: "Ready to merge", merging: "Merging", merged: "Merged", failed: "Failed", discarded: "Discarded" };
+const STATUS = { queued: "Queued", working: "Working", complete: "Ready to merge", merging: "Merging", "needs-agent": "Needs agent", merged: "Merged", failed: "Failed", discarded: "Discarded" };
 const expanded = new Set(); // "<id>:ask" / "<id>:summary" texts shown in full
 /** The ask or the summary: a few lines, with "Show all" when it runs longer. */
 function textSection(t, key, title, text) {
@@ -344,6 +365,7 @@ function renderDialog() {
     t.worktree && live ? `<button class="link" data-act="copy" data-text="${esc(t.worktree)}" title="Copy ${esc(t.worktree)}">worktree</button>` : "",
     t.url && live ? `<a href="${esc(t.url)}" target="_blank" title="${esc(t.url)}"><span class="dot ${t.previewUp ? "up" : ""}"></span>preview</a>${t.previewUp ? "" : ` <span class="muted">(not running)</span>`}` : "",
     t.chrome && live ? `<span class="muted" title="Its own profile: ${esc(t.chrome.profile)}"><span class="dot ${t.chromeUp ? "up" : ""}"></span> Chrome window ${t.chromeUp ? `open · DevTools port ${esc(t.chrome.port)}` : "closed"}</span>` : "",
+    t.agent && live ? `<button class="link" data-act="copy" data-text="${esc(t.agent)}" title="The task's agent (copy its id): the one to wake if the merge needs work">agent <code>${esc(t.agent)}</code></button>` : "",
     t.commit ? `<code>${esc(t.commit)}</code>` : "",
   ].filter(Boolean);
   const picked = { kind: dlg.querySelector("#dep-kind")?.value, dep: dlg.querySelector("#dep-id")?.value }; // kept across updates
@@ -356,7 +378,7 @@ function renderDialog() {
     ${links.length ? `<div class="links">${links.join("")}</div>` : ""}
     ${actions(t, true)}
     ${dlgError?.id == t.id ? `<div class="err" style="max-height:none">${esc(dlgError.msg)}</div>` : ""}
-    ${t.error ? `<section><h4>Error</h4><div class="err" style="max-height:none">${esc(t.error)}</div></section>` : ""}
+    ${t.status == "needs-agent" && t.needsAgent ? stopSection(t) : t.error ? `<section><h4>Error</h4><div class="err" style="max-height:none">${esc(t.error)}</div></section>` : ""}
     ${depsSection(t)}
     ${t.description ? textSection(t, "ask", "Ask", t.description) : ""}
     ${t.summary ? textSection(t, "summary", "Summary", t.summary) : ""}
@@ -369,6 +391,17 @@ function renderDialog() {
   if (atBottom) nl.scrollTop = nl.scrollHeight;
   if (!dlg.open) dlg.showModal();
   dlg.scrollTop = scroll;
+}
+
+/** Why the merge stopped and waits for the task's agent: the reason, the files, what happens next, and the output. */
+function stopSection(t) {
+  const n = t.needsAgent;
+  return `<section><h4>Needs its agent</h4><div class="stop">
+    <div class="reason">${esc(n.reason)}</div>
+    ${n.files?.length ? `<ul class="files">${n.files.map((f) => `<li>${esc(f)}</li>`).join("")}</ul>` : ""}
+    <div class="next">${t.agent ? `The outer agent wakes the task's agent (<code>${esc(t.agent)}</code>).` : "No agent is recorded: the outer agent starts a new one with this log."} The agent fixes it in the worktree, commits, and runs <code>tq continue ${t.id}</code>. The worktree is back on the branch's last commit.</div>
+    ${n.output ? `<div class="out">${esc(n.output)}</div>` : ""}
+  </div></section>`;
 }
 
 /**
