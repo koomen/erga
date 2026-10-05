@@ -1103,6 +1103,22 @@ Still to do are the steps marked *(you)*.
    `bunx cf workers deployments create --worker erga --strategy percentage
    --versions '[{"version_id":"<id>","percentage":100}]'` (ids from `bunx cf
    workers versions list --worker-id erga`).
+9. **Staging's pages on their own zone** (done on erga.dev, 2026-10-04,
+   task #4): `erga-pages-staging.dev`, bought for it, so the zone's free
+   Universal SSL certificate covers `*.erga-pages-staging.dev`.
+   - `targets.staging.pages` in `deploy/targets.json`: zone and domain
+     `erga-pages-staging.dev`. `guardTarget` refuses a non-production
+     target whose pages are on or under `erga-pages.dev`.
+   - Staging's deploy token made again with read on the new zone. Until
+     staging ran this code it also read erga-pages.dev (an older commit's
+     deploy, resumed on its own code, reads its old pages zone); after the
+     merge it was made again without (`setup.ts --tokens`).
+   - Staging deployed once from a machine with the task's code (the
+     pipeline without the snapshot, keeping staging's data), which made the
+     `*.erga-pages-staging.dev/*` route to `erga-staging` and the proxied
+     `*` AAAA `100::` record on the new zone.
+   - After the merge, the old `*.staging.erga-pages.dev/*` route and DNS
+     record on erga-pages.dev deleted.
 
 ### Deploy your own
 
