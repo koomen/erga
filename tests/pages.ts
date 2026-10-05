@@ -18,7 +18,9 @@ import { startHost } from "./host";
 import { expect, until } from "./suite/harness";
 
 const keep = process.argv.includes("--keep");
-const host = await startHost(null, { env: { ERGA_AGENT_MODEL: "script" }, ...(process.env.PAGES_PORT ? { port: Number(process.env.PAGES_PORT) } : {}) });
+// The viewer shows a document's published version, cut once edits pause (30 s by default): a second here, so the
+// browser part sees the pages the API part wrote however fast it gets there.
+const host = await startHost(null, { env: { ERGA_AGENT_MODEL: "script", ERGA_VERSION_IDLE_MS: "1000" }, ...(process.env.PAGES_PORT ? { port: Number(process.env.PAGES_PORT) } : {}) });
 const base = host.root;
 const origin = new URL(base).origin;
 const login = "tester";
@@ -271,6 +273,9 @@ await write("about.html", PAGE("About", `<nav data-erga-noedit><a href="index.ht
 
 {
   await treeOp({ op: "new_folder", path: "empty" });
+  // Stored first: stopping the dev server loses what the room hasn't written to storage yet (only documents linked
+  // to disk are flushed on the way out, dev.ts). Without this, a run fast enough lost blog/post.html's text here.
+  await until(async () => (await (await get(`/d/${doc.id}/api/stored/blog/post.html`)).text()).includes("<h1>A post</h1>"), 15_000, "blog/post.html is stored before the restart");
   await host.stop();
   await host.start();
   const t = await readTree();
@@ -308,7 +313,8 @@ try {
 
   // Into the editor from there: that page's editor, at /blog#edit.
   const where = () => p.eval<string>("location.pathname + location.hash").catch(() => "");
-  const ready = () => p.eval<boolean>(`document.body.classList.contains("erga-editor-ready") && document.body.classList.contains("erga-editing")`).catch(() => false);
+  // Ready, and listening: open_page and new_page reach only the tabs whose event channel is up (erga-listening).
+  const ready = () => p.eval<boolean>(`["erga-editor-ready", "erga-editing", "erga-listening"].every((c) => document.body.classList.contains(c))`).catch(() => false);
   await p.eval(`document.querySelector(".erga-edit-button").click()`);
   await until(async () => (await where()) == `${address}/blog#edit` && await ready(), 15_000, "the pencil opens the editor on the page shown, at /blog#edit", where);
   const editedPage = () => p.frame<{ h1: string; color: string } | null>(`(() => { const h = document.getElementById("page")?.contentDocument?.querySelector("h1"); return h ? { h1: h.textContent, color: getComputedStyle(h).color } : null; })()`);
