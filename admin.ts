@@ -2,7 +2,8 @@
 // admins (users.ts), for admins only. Everyone else gets "not found": they
 // can't see the page, nor that there is one.
 //
-//   /admin                     the page; ?changes=all shows every change to the settings, not just the latest
+//   /admin                     the page
+//   /admin/changes             the change log: the settings' versions, newest first; ?before=n for older ones
 //   POST /admin/settings       key, and value (JSON; null for never) to set it, or reset=1 to put it back to its default
 //   POST /admin/users          do=add (login, role), do=role (login, role) or do=remove (login)
 //
@@ -23,8 +24,8 @@ import { unlockFirst } from "./admin-access.ts";
 export async function adminDoor(platform: Platform, request: Request): Promise<Response> {
   const session = await platform.sessionOf(request);
   const url = new URL(request.url);
-  if (!session && url.pathname == "/admin" && request.method == "GET") {
-    return new Response(null, { status: 302, headers: { Location: `/auth/github?next=${encodeURIComponent("/admin")}` } });
+  if (!session && (url.pathname == "/admin" || url.pathname == "/admin/changes") && request.method == "GET") {
+    return new Response(null, { status: 302, headers: { Location: `/auth/github?next=${encodeURIComponent(url.pathname)}` } });
   }
   const who = session && whoOf(session);
   // Only the person themselves, in a browser: an agent with their token isn't an admin here.
@@ -34,7 +35,13 @@ export async function adminDoor(platform: Platform, request: Request): Promise<R
   if (url.pathname == "/admin") {
     if (!admin || request.method != "GET") return notFound();
     if (!unlocked) return unlockFirst("/admin", session!);
-    return adminPage(platform, session!, url.searchParams.get("changes") == "all");
+    return adminPage(platform, session!);
+  }
+  if (url.pathname == "/admin/changes") {
+    if (!admin || request.method != "GET") return notFound();
+    if (!unlocked) return unlockFirst("/admin/changes", session!);
+    const before = Number(url.searchParams.get("before"));
+    return changesPage(platform, session!, Number.isInteger(before) && before > 0 ? before : undefined);
   }
   if (request.method != "POST") return notFound();
   if (!admin) return Response.json({ error: "Only an admin can do that." }, { status: session ? 403 : 401 });
@@ -125,8 +132,8 @@ function settingRow(e: Shown, session: Session, never: boolean): string {
   </li>`;
 }
 
-/** How many changes the page lists, unless it's asked for all. */
-const CHANGES = 20;
+/** How many changes the change log lists on a page. */
+const CHANGES = 50;
 
 /**
  * One version of the settings in the change log: when, who, and each
@@ -158,26 +165,15 @@ function userRow(u: User, session: Session): string {
   </li>`;
 }
 
-async function adminPage(platform: Platform, session: Session, allChanges: boolean): Promise<Response> {
+async function adminPage(platform: Platform, session: Session): Promise<Response> {
   const who = whoOf(session);
-  const [entries, users, history] = await Promise.all([
-    platform.directory.config.list(who),
-    platform.directory.users.list(who),
-    platform.directory.config.history(who, { limit: allChanges ? 1000 : CHANGES }),
-  ]);
+  const [entries, users] = await Promise.all([platform.directory.config.list(who), platform.directory.users.list(who)]);
   // A setting naming a document shows it by its address now, linked.
   const settings: Shown[] = await Promise.all(entries.map(async (e) => {
     if (e.kind != "document" || e.value == null) return e;
     const doc = await platform.directory.find(String(e.value));
     return { ...e, doc: doc && { address: `/${doc.owner}/${doc.slug}`, title: doc.title } };
   }));
-  // The change log names a document by its address now, as the settings do.
-  const kinds = Object.fromEntries(entries.map((e) => [e.key, e.kind]));
-  const ids = new Set(history.versions.flatMap((v) => v.changes.filter((c) => kinds[c.key] == "document").flatMap((c) => [c.from, c.to]).filter((x) => x != null).map(String)));
-  const docs = new Map((await Promise.all([...ids].map(async (id) => {
-    const doc = await platform.directory.find(id);
-    return doc ? [[id, { address: `/${doc.owner}/${doc.slug}`, title: doc.title }] as const] : [];
-  }))).flat());
   const admins = users.filter((u) => u.role == "admin").length;
   // Whether a setting takes null (never) as well as its kind of value.
   const takesNever = (key: string) => { try { return (platform.directory.config.settings as Settings)[key]?.parse(null) === null; } catch { return false; } };
@@ -206,25 +202,13 @@ async function adminPage(platform: Platform, session: Session, allChanges: boole
   .setting .value .unit { font-size: 13.5px; color: var(--soft); }
   .setting .hint { grid-column: 1 / -1; margin: 0; }
   .mono { font-family: var(--font-mono); font-size: 12.5px; }
-  h3 { margin: 22px 0 6px; font-size: 14px; font-weight: 600; color: var(--fg-strong); }
-  h3 small { margin-left: 6px; font-size: 13px; font-weight: 400; color: var(--soft); }
-  .changes { list-style: none; margin: 0; padding: 0; }
-  .changes > li.change { display: grid; grid-template-columns: 11em 1fr; gap: 2px 16px; padding: 7px 2px; border-top: 1px solid var(--rule); font-size: 13px; }
-  .changes .when { display: flex; flex-direction: column; color: var(--soft); }
-  .changes .when time { margin: 0; font-size: inherit; color: var(--fg); }
-  .changes .what { list-style: none; margin: 0; padding: 0; min-width: 0; overflow-wrap: anywhere; }
-  .changes .key { font-family: var(--font-mono); font-size: 12.5px; color: var(--fg-strong); margin-right: 4px; }
-  .changes .was { font-feature-settings: "tnum"; }
-  .changes .to { color: var(--soft); margin: 0 3px; }
-  .changes .badge { margin: 0 0 0 4px; }
-  .changes-empty, .changes-more { margin: 6px 2px 0; font-size: 13px; color: var(--soft); }
   .add-user { display: flex; gap: 8px; margin: 0 0 14px; }
   .add-user .input { flex: 1; }
   #users-hint { margin: -6px 0 12px; }
   ol.rows > li .doc { cursor: default; }
   .never { font-style: italic; }
   .role { margin-left: 8px; }
-  @media (max-width: 520px) { ol.rows > li.setting { grid-template-columns: 1fr; } .setting .value { justify-content: flex-end; } .changes > li.change { grid-template-columns: 1fr; } .changes .when { flex-direction: row; gap: 8px; } }
+  @media (max-width: 520px) { ol.rows > li.setting { grid-template-columns: 1fr; } .setting .value { justify-content: flex-end; } }
 `;
   const deployOn = (await platform.directory.config.get("deploy_page")) != "off";
   const factoryOn = (await platform.directory.config.get("factory")) == "on";
@@ -238,11 +222,6 @@ async function adminPage(platform: Platform, session: Session, allChanges: boole
     <ol class="rows">
 ${settings.map((e) => settingRow(e, session, takesNever(e.key))).join("\n")}
     </ol>
-    <h3 id="changes">Changes <small>${history.total ? `${history.total} · newest first` : ""}</small></h3>
-    ${history.total ? `<ol class="changes">
-${history.versions.map((v) => changeRow(v, kinds, docs)).join("\n")}
-    </ol>` : `<p class="changes-empty">No setting has changed yet.</p>`}
-    ${history.total > history.versions.length ? `<p class="changes-more">${history.versions.length} of ${history.total} shown · <a href="${esc(link("/admin?changes=all", session))}#changes">Show all</a></p>` : ""}
   </section>
   <section aria-labelledby="users-title">
     <h2 id="users-title">Users <small>${users.length} · ${admins} admin${admins == 1 ? "" : "s"}</small></h2>
@@ -340,5 +319,50 @@ ${users.map((u) => userRow(u, session)).join("\n")}
       catch (err) { say(usersHint, err.message, true); }
     });
   }
+</script>`), { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
+}
+
+/** /admin/changes: the change log, every change to the settings, newest first (`before`: only those older than version n). */
+async function changesPage(platform: Platform, session: Session, before?: number): Promise<Response> {
+  const who = whoOf(session), config = platform.directory.config;
+  const history = await config.history(who, { before, limit: CHANGES });
+  // A setting that names a document shows it by its address now, as /admin does.
+  const kinds: Record<string, string | undefined> = Object.fromEntries(Object.entries(config.settings as Settings).map(([k, s]) => [k, s.kind]));
+  const ids = new Set(history.versions.flatMap((v) => v.changes.filter((c) => kinds[c.key] == "document").flatMap((c) => [c.from, c.to])).filter((x) => x != null).map(String));
+  const docs = new Map((await Promise.all([...ids].map(async (id) => {
+    const doc = await platform.directory.find(id);
+    return doc ? [[id, { address: `/${doc.owner}/${doc.slug}`, title: doc.title }] as const] : [];
+  }))).flat());
+  const last = history.versions.at(-1);
+  const older = last && last.n > 1 && history.versions.length == CHANGES;
+  const style = `
+  .lede { margin: 0 0 16px; font-size: 13.5px; color: var(--soft); }
+  .back { font-size: 13px; color: var(--chrome); text-decoration: none; }
+  .back:hover { color: var(--chrome-hover); }
+  .changes { list-style: none; margin: 0; padding: 0; }
+  .changes > li.change { display: grid; grid-template-columns: 11em 1fr; gap: 2px 16px; padding: 7px 2px; border-top: 1px solid var(--rule); font-size: 13px; }
+  .changes .when { display: flex; flex-direction: column; color: var(--soft); }
+  .changes .when time { margin: 0; font-size: inherit; color: var(--fg); }
+  .changes .what { list-style: none; margin: 0; padding: 0; min-width: 0; overflow-wrap: anywhere; }
+  .changes .key { font-family: var(--font-mono); font-size: 12.5px; color: var(--fg-strong); margin-right: 4px; }
+  .changes .was { font-feature-settings: "tnum"; }
+  .changes .to { color: var(--soft); margin: 0 3px; }
+  .changes .badge { margin: 0 0 0 4px; }
+  .changes-empty, .changes-more { margin: 6px 2px 0; font-size: 13px; color: var(--soft); }
+  @media (max-width: 520px) { .changes > li.change { grid-template-columns: 1fr; } .changes .when { flex-direction: row; gap: 8px; } }
+`;
+  return new Response(appPage("Change log", style, `${brand(session)}<main>
+  <header>
+    <h1>Change log</h1>
+    <a class="back" href="${esc(link("/admin", session))}">‹ Admin</a>
+  </header>
+  <p class="lede">Every change to the server's settings, newest first: when, who, and each setting's value from and to.${history.total ? ` ${history.total} change${history.total == 1 ? "" : "s"}.` : ""}</p>
+  ${history.versions.length ? `<ol class="changes">
+${history.versions.map((v) => changeRow(v, kinds, docs)).join("\n")}
+  </ol>` : `<p class="changes-empty">${before ? "No older changes." : "No setting has changed yet."}</p>`}
+  ${before || older ? `<p class="changes-more">${before ? `<a href="${esc(link("/admin/changes", session))}">Newest</a>` : ""}${before && older ? " · " : ""}${older ? `<a href="${esc(link(`/admin/changes?before=${last!.n}`, session))}">Older changes</a>` : ""}</p>` : ""}
+</main>
+<script>
+  ${TIMES_SCRIPT}
 </script>`), { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
 }

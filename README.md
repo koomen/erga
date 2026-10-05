@@ -381,10 +381,10 @@ setting compactly (its key, a one-line description, its value with Save
 and Reset; a small "set by whom" note, with when and the default on hover, or a
 "Locked" badge for one the deploy fixes, whose value is shown read-only), and every user (last seen, who added them,
 a User/Admin role menu and a remove button; a bootstrap admin's are
-disabled), with a box to add one by GitHub login. Under the settings is their
-change log (Changes): the latest 20 changes, newest first, each with when,
-who, and each setting's value from and to (`/admin?changes=all` lists them
-all). Underneath it's `POST
+disabled), with a box to add one by GitHub login. `/admin/changes`, the
+**Change log**, is a page of its own, for admins only too: every change to
+the settings, newest first, each with when, who, and each setting's value
+from and to (a reset badged), 50 at a time (Older changes: `?before=<n>`). Underneath it's `POST
 /admin/settings` (`key` and `value` as JSON, or `reset=1`) and `POST
 /admin/users` (`do=add|role|remove`, `login`, `role`), answering JSON, from
 this site's pages only.
