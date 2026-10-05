@@ -11,7 +11,7 @@ import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { AsyncLocalStorage } from "node:async_hooks";
-import { availableParallelism } from "node:os";
+import { testJobs } from "./cores";
 
 const keep = process.argv.includes("--keep");
 const only = process.argv.find((a) => a == "html" || a == "md" || a == "agent" || a == "format" || a == "reload");
@@ -788,8 +788,8 @@ try {
   });
   if (keep) for (const sc of chosen) await runOne(sc);
   else {
-    // A few at a time (each has a dev server of its own): all fifteen at once overload a laptop, and the timing checks fail.
-    const queue = [...chosen], at = Math.max(2, Number(process.env.PAGE_JOBS) || Math.floor(availableParallelism() / 2));
+    // A few at a time (each has a dev server of its own; tests/cores.ts, or PAGE_JOBS): all fifteen at once overload a laptop, and the timing checks fail.
+    const queue = [...chosen], at = Number(process.env.PAGE_JOBS) || testJobs().jobs;
     await Promise.all(Array.from({ length: at }, async () => { for (let sc; (sc = queue.shift());) await runOne(sc); }));
   }
 } finally {

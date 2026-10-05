@@ -2662,9 +2662,14 @@ fraction of real time under test (`window.__ergaTimescale`, `ms` in
     ./test.sh          # every test file: ~3.5 minutes on a 10-core Mac
     bun run typecheck  # tsc over the host, the editor and the suite
 
-`./test.sh` runs the files in a pool, the longest first: half the CPU count
-at a time (`TEST_JOBS=n` changes it), as each file has dev servers and a
-Chrome of its own, and more at once only slows them all. Each file prints its
+`./test.sh` runs the files in a pool, the longest first: one for every two
+usable cores, as each file has dev servers and a Chrome of its own, and more
+at once only slows them all. `tests/cores.ts` decides, for test.sh,
+`tests/page.ts`'s scenarios and `tests/cdp.ts`'s browsers alike: the cores
+are the fewest of what the OS reports and the container's CPU quota (cgroup
+v2 or v1), and memory caps it (1 GB a file). `TEST_JOBS=n` sets it exactly;
+`TEST_CORES_PER_JOB=c` tunes it (the factory's VMs set 3: Claude Code and the
+preview share their 4 cores). test.sh prints what it found. Each file prints its
 time. Each file also runs alone: `bun tests/page.ts` (~30s; `PAGE_JOBS=n`
 scenarios at a time), `bun tests/suite/run.ts` (~22s; `--suite`, `--grep` and
 `--seed` narrow it, `--long` for the big slow version), `bun tests/factory.ts`

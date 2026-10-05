@@ -2,7 +2,8 @@
 // Chrome, opens pages and sends real input events.
 import { spawn, type Subprocess } from "bun";
 import { mkdtempSync, readFileSync, rmSync } from "fs";
-import { availableParallelism, tmpdir } from "os";
+import { tmpdir } from "os";
+import { testJobs } from "./cores";
 import { join } from "path";
 
 const CHROME = process.env.CHROME || "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
@@ -89,7 +90,7 @@ export class Browser {
  * Separate browsers, not tabs, because pages on the same file:// origin share
  * localStorage, which the editor tests seed and read. Results keep `items`' order.
  */
-export async function pool<T, R>(items: T[], run: (item: T, browser: Browser) => Promise<R>, workers = Math.min(8, Math.max(2, availableParallelism() - 2))): Promise<R[]> {
+export async function pool<T, R>(items: T[], run: (item: T, browser: Browser) => Promise<R>, workers = Math.min(8, testJobs().jobs)): Promise<R[]> {
   const out: R[] = new Array(items.length);
   let next = 0;
   await Promise.all(Array.from({ length: Math.min(workers, items.length) }, async () => {

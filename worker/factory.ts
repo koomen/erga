@@ -434,6 +434,9 @@ export class Factory extends DurableObject<Env> {
       REPO_URL: host.repo(r.origin), REPO_TOKEN: await gitToken(this.env, scope, r.branch, by ?? r.by_login),
       FACTORY_MODEL: String((await directoryOf(this.env).config.get("factory_model")) ?? "opus"),
       FACTORY_FAST: (await directoryOf(this.env).config.get("factory_fast")) == "off" ? "0" : "1",
+      // ./test.sh and the browser tests, in a 4-vCPU VM that Claude Code and the preview share: one test file at a
+      // time (tests/cores.ts). A container may not see its own share of the host's cores, so it's said here.
+      TEST_CORES_PER_JOB: "3",
       ...(claude ? { CLAUDE_CODE_OAUTH_TOKEN: claude } : {}),
     };
   }
