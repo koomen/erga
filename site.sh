@@ -13,10 +13,3 @@ mkdir -p .site/fonts
 put() { local tmp; tmp="$(dirname ".site/$2")/.$(basename "$2").$$"; cp "$1" "$tmp" && mv -f "$tmp" ".site/$2"; }
 put page.html editor.html
 for f in page.js frame.js settings.js pages-tree.js style.css fonts/*; do put "$f" "$f"; done
-# Workers Builds runs this, then `bunx cf deploy`: bring erga.dev's directory
-# database (D1) up to date with migrations/ first, making it if it's new.
-# Only there (WORKERS_CI is set on Workers Builds); `bun run deploy` does it itself.
-if [[ -n "${WORKERS_CI:-}" ]]; then bun migrate.ts; fi
-# The release the deploy page (/deploy) deploys to other people's accounts: this build, into .site/release/
-# (deploy/release.ts). Only for a deploy; one that fails leaves /deploy saying there's none, and the deploy goes on.
-if [[ -n "${WORKERS_CI:-}" ]]; then bun deploy/release.ts || echo "site.sh: no release for /deploy (deploy/release.ts failed)" >&2; fi

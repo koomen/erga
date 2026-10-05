@@ -48,6 +48,36 @@ describe("Git's formats", () => {
     expect(commits.size).toBe(3);
   });
 
+  test("reads deltas whose base comes later, named by id and itself a delta (Artifacts sends such packs)", async () => {
+    const d = await seedRepo();
+    // Each version changes the next 40 of 400 lines, so each is nearest the one before: chains of deltas.
+    const lines = Array.from({ length: 400 }, (_, i) => `line ${i} ${"x".repeat(i % 50)}`);
+    for (let i = 0; i < 6; i++) {
+      for (let j = i * 40; j < (i + 1) * 40; j++) lines[j] = `changed ${i} ${j} ${"y".repeat((j * 7) % 60)}`;
+      writeFileSync(join(d, "c.txt"), lines.join("\n") + "\n");
+      await must(d, "add", "c.txt"); await must(d, "commit", "-qm", `More ${i}`);
+    }
+    const revs = (await must(d, "rev-list", "--objects", "--all")).split("\n").map((l) => l.split(" ")[0]);
+    // No --delta-base-offset: every delta names its base by id (REF_DELTA).
+    const pack = new Uint8Array(spawnSync("git", ["pack-objects", "--stdout", "--depth=10"], { cwd: d, input: revs.join("\n") + "\n" }).stdout);
+    // Each object's place in the pack, from git itself; then the same objects, in reverse order: every base after its deltas.
+    const idx = join(d, "p.idx");
+    writeFileSync(join(d, "p.pack"), pack);
+    await must(d, "index-pack", "-o", idx, join(d, "p.pack"));
+    const rows = (await must(d, "verify-pack", "-v", idx)).split("\n").map((l) => l.split(/\s+/)).filter((c) => /^[0-9a-f]{40}$/.test(c[0]) && c.length >= 5);
+    expect(rows.some((c) => Number(c[5]) >= 2)).toBe(true); // some deltas are over a delta
+    const parts = rows.map((c) => pack.subarray(Number(c[4]), Number(c[4]) + Number(c[3]))).reverse();
+    const reordered = new Uint8Array(12 + parts.reduce((n, p) => n + p.length, 0) + 20);
+    reordered.set(pack.subarray(0, 12));
+    let at = 12;
+    for (const p of parts) { reordered.set(p, at); at += p.length; }
+    const objects = await readPack(reordered);
+    expect([...objects.keys()].sort()).toEqual([...revs].sort());
+    // Keeping commits only, the rest dropped unread.
+    const commits = await readPack(reordered, (t) => t == "commit");
+    expect(commits.size).toBe(9);
+  });
+
   test("git takes a pack Erga writes", async () => {
     const d = scratch();
     await must(d, "init", "-q", "--bare");

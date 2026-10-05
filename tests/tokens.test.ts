@@ -72,7 +72,7 @@ function server(mock: Mock, script: string, builder: ReturnType<typeof mockBuild
 describe("the deploy tokens' plans", () => {
   test("staging's may deploy erga-staging only; production's erga and erga-staging; both read the two zones", () => {
     expect(tokenPlan("staging")).toEqual({ name: "erga-deploy-staging", target: "staging", storedOn: "erga-staging", workers: ["erga-staging"], zones: ["erga.dev", "erga-pages.dev"], notWorkers: ["erga"] });
-    expect(tokenPlan("production")).toEqual({ name: "erga-deploy-production", target: "production", storedOn: "erga", workers: ["erga", "erga-staging"], zones: ["erga.dev", "erga-pages.dev"], notWorkers: [] });
+    expect(tokenPlan("production")).toEqual({ name: "erga-deploy-production", target: "production", storedOn: "erga", workers: ["erga", "erga-staging"], zones: ["erga.dev", "erga-pages.dev", "erga-pages-staging.dev"], notWorkers: [] });
   });
 
   test("the policies: Editor on the Workers by tag, D1 on the account, read on the zones; nothing else", async () => {

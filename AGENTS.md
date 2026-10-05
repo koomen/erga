@@ -321,7 +321,12 @@ asked for, and a card waiting its turn says so. The queue merges `origin/main` a
 worktree; if that conflicts, it runs `claude -p` there to resolve the
 conflicts, run the tests and commit. Then it merges the branch into `main`
 (`--no-ff`, "Merge task/…: title"), pushes to `origin`, stops the preview and
-removes the worktree and branch: the task is Done (`merged`). A merge that
+removes the worktree and branch: the task is Done (`merged`). Last, it puts
+`main` into Erga's own source (Cloudflare Artifacts) and tells the servers,
+which deploys staging.erga.dev and **erga.dev** (`deploy/publish.ts`; README,
+"Pushes from this machine"). Before the merge it also merges Erga's `staging`
+into the task's branch, so commits made in Erga come back to `main`. A push
+to GitHub alone deploys nothing. A merge that
 fails (uncommitted changes, unresolved conflicts, the main checkout not on
 `main`, or a `--merge-after` task that didn't merge first) goes back to Ready to merge (`complete`) with the reason on the card,
 as does one the queue was stopped in the middle of, when it starts again.

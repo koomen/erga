@@ -10,7 +10,8 @@
 // shows on its merge commit in Branches (main's latest commits).
 // Merge (on the board, or POST /api/tasks/:id/merge) puts the task in
 // Merging while it merges main into the task's branch, has `claude -p`
-// resolve any conflicts there, merges the branch into main and pushes; then
+// resolve any conflicts there, merges the branch into main and pushes (to
+// origin, then upstream: TASK_QUEUE_PUBLISH, Erga's own source); then
 // it's Done (merged), or back in Ready to merge with the reason if it failed. GET /api describes the whole API; AGENTS.md says how to use it.
 //
 // Its state is data/tasks.json (and data/screenshots/, data/logs/), beside
@@ -24,7 +25,9 @@
 // TASK_QUEUE_FETCH (seconds between `git fetch origin main`, for the Branches
 // column's view of origin/main; 60, 0 for never), TASK_QUEUE_LIVE (live mode's
 // dev server command), TASK_QUEUE_CHROME and TASK_QUEUE_CHROME_HEADLESS (live
-// mode's Chrome window: chrome.ts).
+// mode's Chrome window: chrome.ts), TASK_QUEUE_PUBLISH (where main goes after
+// origin: for Erga, its own source, which deploys it: `bun deploy/publish.ts`
+// when that file is in the repo; "" for nowhere).
 //
 // Live tasks (live: true) are worked on by the user and an agent together, in
 // a session, not by a background worker: POST /api/tasks/:id/live runs the
@@ -68,6 +71,14 @@ const PREVIEW = process.env.TASK_QUEUE_PREVIEW ?? "bun start --port $PORT --no-o
 const LIVE = process.env.TASK_QUEUE_LIVE ?? "bun start --port $PORT --no-open --reload";
 const CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 const FETCH_EVERY = Number(process.env.TASK_QUEUE_FETCH ?? 60);
+/**
+ * Where main goes after origin (README, Merging): a command run in the repo as `<cmd> fetch` (prints refs to merge into a
+ * task's branch before it merges) and `<cmd> push <rev>` (puts <rev> there; exit 2: refused, the upstream has commits
+ * <rev> lacks). For Erga, its own source in Cloudflare Artifacts, which deploys staging.erga.dev and erga.dev
+ * (deploy/publish.ts; --or-deploy: erga.dev gets it from this machine if it can't deploy itself). TASK_QUEUE_PUBLISH=""
+ * turns it off.
+ */
+const PUBLISH = process.env.TASK_QUEUE_PUBLISH ?? (existsSync(join(REPO, "deploy/publish.ts")) ? "bun deploy/publish.ts --or-deploy" : "");
 const LOOKS = join(DATA, "looks");
 for (const dir of [SHOTS, LOGS, LOOKS]) mkdirSync(dir, { recursive: true });
 
@@ -186,7 +197,7 @@ function gitSync(cwd: string, ...args: string[]): string {
 async function run(cmd: string[], cwd: string, env: Record<string, string> = {}) {
   const p = Bun.spawn(cmd, { cwd, env: { ...process.env, ...env }, stdout: "pipe", stderr: "pipe" });
   const [out, err, code] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited]);
-  return { ok: code == 0, out: out.trim(), err: err.trim(), all: (out + err).trim() };
+  return { ok: code == 0, code, out: out.trim(), err: err.trim(), all: (out + err).trim() };
 }
 
 async function git(cwd: string, ...args: string[]) {
@@ -368,8 +379,34 @@ async function fetchOrigin() {
   await p.exited;
   clearTimeout(timer);
   await refresh();
+  await publishOrigin();
 }
 if (FETCH_EVERY > 0) setInterval(() => { mergeLock = mergeLock.then(fetchOrigin); }, FETCH_EVERY * 1000);
+
+// ---- the upstream (PUBLISH) -----------------------------------------------
+
+/** The origin/main last put upstream (or found there, or refused: tried once until it moves). */
+let published = "";
+let upstream: { at?: string; commit?: string; ok?: boolean; said?: string } = {};
+
+/** Puts `rev` upstream: what the command said, and whether it worked. */
+async function publish(rev: string): Promise<{ ok: boolean; said: string }> {
+  const r = await run(["bash", "-c", `${PUBLISH} push "$REV"`], REPO, { REV: rev });
+  const said = r.all.split("\n").filter(Boolean).join(" ") || (r.ok ? "done" : `exit ${r.code}`);
+  upstream = { at: new Date().toISOString(), commit: (await ref(rev))?.slice(0, 12), ok: r.ok, said };
+  console.log(`publish ${rev}: ${said}`);
+  return { ok: r.ok, said };
+}
+
+/** origin/main upstream when it moved (someone pushed main, or a merge's own publish failed): GitHub's main and the upstream's agree. */
+async function publishOrigin() {
+  if (!PUBLISH) return;
+  const sha = await ref(`origin/${MAIN}`);
+  if (!sha || sha == published) return;
+  published = sha;
+  await publish(`origin/${MAIN}`);
+}
+
 
 // ---- screenshots ----------------------------------------------------------
 
@@ -433,6 +470,8 @@ async function capture(url: string, file: string, { width = 1280, height = 800, 
 // ---- merging --------------------------------------------------------------
 
 let mergeLock = Promise.resolve();
+// Upstream once at start (a restart after merging the queue's own code publishes that merge).
+if (PUBLISH) mergeLock = mergeLock.then(fetchOrigin);
 
 const resolverPrompt = (task: Task, ref: string) => `You are resolving a git merge conflict in ${task.worktree}, on branch ${task.branch}.
 ${ref} was merged into the branch and some files conflict. The branch's task:
@@ -484,6 +523,12 @@ async function merge(task: Task) {
     // Main (local and pushed) into the branch first, where conflicts can be settled away from the main checkout...
     if (origin) { await git(REPO, "fetch", "origin", MAIN); await mergeInto(task, `origin/${MAIN}`); }
     await mergeInto(task, MAIN);
+    // ...and the upstream's newer commits (Erga's staging: a merge on /source, a factory task), so main can go there as a fast-forward.
+    if (PUBLISH) {
+      const f = await run(["bash", "-c", `${PUBLISH} fetch`], REPO);
+      if (!f.ok) throw new Error(`couldn't read the upstream (${PUBLISH} fetch): ${f.all}`);
+      for (const r of f.out.split("\n").map((l) => l.trim()).filter(Boolean)) await mergeInto(task, r);
+    }
     // ...so merging the branch into main can't conflict, and pushing it is a fast-forward.
     await git(REPO, "merge", "--no-ff", "-m", `Merge ${task.branch}: ${task.title}\n\nTask ${task.id} from the task queue.`, task.branch!);
     const commit = await git(REPO, "rev-parse", "--short", "HEAD");
@@ -494,6 +539,12 @@ async function merge(task: Task) {
     await refresh();
     await cleanUp(task, false);
     console.log(`#${task.id} merged as ${commit}`);
+    // Then upstream, last (Erga: its source, which deploys it; maybe minutes, with a deploy from here). A failure doesn't undo the merge: it's on the task's log, and tried again when origin/main next moves.
+    if (PUBLISH) {
+      const p = await publish(origin ? `origin/${MAIN}` : MAIN);
+      if (origin) published = (await ref(`origin/${MAIN}`)) ?? "";
+      touch(task, {}, p.ok ? `Upstream: ${p.said}` : `Upstream didn't take it: ${p.said}`);
+    }
     const changed = await queueCodeChanged(before, "HEAD");
     if (changed.length) { restartWanted = true; console.log(`#${task.id} changed the queue's code (${changed.join(", ")}): restarting once nothing else is merging`); }
   } catch (e) {
@@ -592,7 +643,7 @@ const API = {
     "DELETE /api/tasks/:id/screenshots": "remove all the task's screenshots and delete their files (for a fresh pass); any status but merging",
     "POST /api/tasks/:id/merge": "for a complete (or failed) task whose dependencies are merged (else 409 with the reason; dependencies that are merging, ahead of it, are fine): status merging at once (202), then, in the background and one merge at a time, merge main into the branch (claude -p resolves conflicts), merge the branch into main, push, and remove the worktree and branch: status merged. A failed merge goes back to complete with error. Watch the task.",
     "POST /api/tasks/:id/discard": "drop the task: stops its preview (and a live task's Chrome window), removes its worktree and deletes its branch",
-    "GET /api/history": `main's history, for the board's Branches column: {commits: the latest ${SHOWN} on main's first-parent line, newest first, each {sha, short, subject, at, task?: the task whose merge it is, remote: whether origin/main has it}, tasks: {id: {sha, short, index, remote}} for tasks merged in main's latest ${MATCHED}, unpushed, behind, origin}. origin/main is fetched every ${FETCH_EVERY || "(never)"}s (TASK_QUEUE_FETCH).`,
+    "GET /api/history": `main's history, for the board's Branches column: {commits: the latest ${SHOWN} on main's first-parent line, newest first, each {sha, short, subject, at, task?: the task whose merge it is, remote: whether origin/main has it}, tasks: {id: {sha, short, index, remote}} for tasks merged in main's latest ${MATCHED}, unpushed, behind, origin, upstream?: the last push upstream {at, commit, ok, said}}. origin/main is fetched every ${FETCH_EVERY || "(never)"}s (TASK_QUEUE_FETCH), and put upstream when it moves (TASK_QUEUE_PUBLISH: ${PUBLISH || "off"}).`,
     "GET /api/events": "server-sent events: a `version` event (the board's own, which reloads when it changes), a `tasks` event with every task and a `history` event with GET /api/history, on connect and on each change",
   },
 };
@@ -614,7 +665,7 @@ async function handle(req: Request): Promise<Response> {
 
   if (path == "/" && req.method == "GET") return new Response(Bun.file(join(HERE, "index.html")), { headers: { "content-type": "text/html; charset=utf-8" } });
   if (path == "/api" && req.method == "GET") return json(API);
-  if (path == "/api/history" && req.method == "GET") { await refresh(); return json(history); }
+  if (path == "/api/history" && req.method == "GET") { await refresh(); return json({ ...history, ...(PUBLISH ? { upstream } : {}) }); }
   if (path.startsWith("/shots/") && req.method == "GET") {
     const file = join(SHOTS, basename(path));
     return existsSync(file) ? new Response(Bun.file(file)) : fail(404, "no such screenshot");

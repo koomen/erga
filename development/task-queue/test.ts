@@ -29,6 +29,10 @@
 // blocked lines, tq add --after/--merge-after and tq deps, and the board (the
 // chip, Merge disabled with the reason, adding and removing one in the detail
 // view) in headless Chrome. DEPS_ONLY=1 runs just this part.
+// The upstream (TASK_QUEUE_PUBLISH, Erga's own source): origin/main put there
+// at start, the upstream's newer commits merged into a task's branch before it
+// merges, main put there after, and a refusal on the task's log without
+// undoing the merge. UPSTREAM_ONLY=1 runs just this part.
 
 import { existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -76,6 +80,7 @@ let selfPid = 0;
 try {
   await waitUp();
   if (process.env.DEPS_ONLY) { await dependencies(); throw "done"; }
+  if (process.env.UPSTREAM_ONLY) { await upstreamPart(); throw "done"; }
   const about = await api("GET", "/api");
   check(about.endpoints, "GET /api describes the API");
   check(about.statuses.merging && about.columns.Merging?.[0] == "merging", "GET /api describes the merging status and its column");
@@ -336,6 +341,7 @@ try {
   } finally { browser.close(); }
 
   await dependencies();
+  await upstreamPart();
 
   // ---- Live mode -------------------------------------------------------------
   const running = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
@@ -685,4 +691,64 @@ async function dependencies() {
     for (const t of [h, i, b]) await api("POST", `/api/tasks/${t.id}/discard`);
     check(!lines.some((l) => !/^#\d+ [a-z ,]+: /.test(l)), `tq watch prints nothing but its lines (${lines.filter((l) => !/^#\d+ [a-z ,]+: /.test(l))})`);
   } finally { w.kill(); }
+}
+
+/** The upstream (TASK_QUEUE_PUBLISH), on a queue of its own over a third throwaway repo, with a stand-in for deploy/publish.ts. */
+async function upstreamPart() {
+  const repo3 = join(tmp, "repo3"), origin3 = join(tmp, "origin3.git"), up = join(tmp, "up.git"), data3 = join(tmp, "data3"), calls = join(tmp, "up-calls.txt");
+  sh(`git init -q --bare -b main ${origin3} && git init -q --bare -b main ${up}`, tmp);
+  sh(`git init -q -b main ${repo3} && cd ${repo3} && git config user.email t@t && git config user.name t && echo app > app.txt && git add . && git commit -qm init && git remote add origin ${origin3} && git push -q origin main`, tmp);
+  // The stand-in: fetch prints the ref to merge; push moves staging then main, only forward (exit 2 when staging has commits REV lacks).
+  const stub = join(tmp, "publish.sh");
+  writeFileSync(stub, `#!/bin/bash
+echo "$*" >> ${calls}
+if [ "$1" = fetch ]; then git fetch -q ${up} '+refs/heads/*:refs/remotes/up/*' && git rev-parse -q --verify up/staging >/dev/null && echo up/staging; exit 0; fi
+if [ "$1" = push ]; then
+  s=$(git ls-remote ${up} refs/heads/staging | cut -f1)
+  if [ -n "$s" ] && ! git merge-base --is-ancestor "$s" "$2" 2>/dev/null; then echo "upstream staging has commits $2 lacks"; exit 2; fi
+  git push -q ${up} "$2:refs/heads/staging" "$2:refs/heads/main" && echo "upstream at $(git rev-parse --short "$2")"; exit $?
+fi
+exit 64
+`, { mode: 0o755 });
+  const port3 = port == 4790 ? 4798 : port - 1, base3 = `http://127.0.0.1:${port3}`;
+  const env3 = { ...env, TASK_QUEUE_PORT: String(port3), TASK_QUEUE_REPO: repo3, TASK_QUEUE_DATA: data3, TASK_QUEUE_PUBLISH: stub };
+  const api3 = async (method: string, path: string, body?: unknown) => {
+    const r = await fetch(base3 + path, { method, headers: { "content-type": "application/json" }, body: body ? JSON.stringify(body) : undefined });
+    return { ...(await r.json()), code: r.status };
+  };
+  const upHead = (b: string) => Bun.spawnSync(["git", "rev-parse", "-q", "--verify", `refs/heads/${b}`], { cwd: up }).stdout.toString().trim();
+  const q = Bun.spawn(["bun", join(import.meta.dir, "server.ts")], { env: env3, stdout: "ignore", stderr: "ignore" });
+  try {
+    let up0 = "";
+    for (let i = 0; i < 100 && !(up0 = upHead("main")); i++) await Bun.sleep(100);
+    check(up0 == sh("git rev-parse origin/main", repo3), "at start, the queue puts origin/main upstream");
+    check((await api3("GET", "/api/history")).upstream?.ok === true, "GET /api/history says how the last push upstream went");
+
+    // A commit made upstream (a merge on Erga's /source): merged into the task's branch, so main goes there as a fast-forward.
+    const other = join(tmp, "up-clone");
+    sh(`git clone -q ${up} ${other} && cd ${other} && git config user.email t@t && git config user.name t && git checkout -q staging && echo upstream > up.txt && git add . && git commit -qm "Made upstream" && git push -q origin HEAD:staging`, tmp);
+    const t = await api3("POST", "/api/tasks", { title: "Upstream task" });
+    sh(`echo task > task.txt && git add . && git commit -qm "The task"`, t.worktree);
+    await api3("PATCH", `/api/tasks/${t.id}`, { status: "complete" });
+    await api3("POST", `/api/tasks/${t.id}/merge`);
+    let done: any;
+    const settled = (x: any) => x.status != "merging" && (x.status != "merged" || x.log.some((l: any) => l.message.startsWith("Upstream")));
+    for (let i = 0; i < 200; i++) { done = await api3("GET", `/api/tasks/${t.id}`); if (settled(done)) break; await Bun.sleep(100); }
+    const main3 = sh("git rev-parse main", repo3);
+    check(done.status == "merged", `the task merges (${done.status}: ${done.error ?? ""})`);
+    check(existsSync(join(repo3, "up.txt")) && existsSync(join(repo3, "task.txt")), "main has the task and the upstream's commit");
+    check(upHead("main") == main3 && upHead("staging") == main3 && sh("git rev-parse origin/main", repo3) == main3, "upstream's staging and main, and origin's main, are main");
+    check(done.log.some((l: any) => l.message.startsWith("Upstream: upstream at")), "the task's log says it went upstream");
+
+    // Upstream refuses (staging moved on meanwhile, in a way the merge didn't see): merged and pushed all the same, and the log says why.
+    const t2 = await api3("POST", "/api/tasks", { title: "Refused upstream" });
+    sh(`echo two > two.txt && git add . && git commit -qm "Second task"`, t2.worktree);
+    writeFileSync(stub, readFileSync(stub, "utf8").replace('if [ "$1" = push ]; then', 'if [ "$1" = push ]; then echo "upstream says no"; exit 2;'));
+    await api3("PATCH", `/api/tasks/${t2.id}`, { status: "complete" });
+    await api3("POST", `/api/tasks/${t2.id}/merge`);
+    for (let i = 0; i < 200; i++) { done = await api3("GET", `/api/tasks/${t2.id}`); if (settled(done)) break; await Bun.sleep(100); }
+    check(done.status == "merged" && sh("git rev-parse origin/main", repo3) == sh("git rev-parse main", repo3), "a refusal upstream doesn't undo the merge or the push to origin");
+    check(done.log.at(-1).message == "Upstream didn't take it: upstream says no", `and the task's log says so (${done.log.at(-1).message})`);
+    check(readFileSync(calls, "utf8").split("\n").filter((l) => l.startsWith("fetch")).length == 2, "each merge fetched the upstream first");
+  } finally { q.kill(); }
 }

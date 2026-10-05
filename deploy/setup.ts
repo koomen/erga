@@ -13,6 +13,7 @@
 //   --certificate                          (order the advanced certificate for staging's pages: paid)
 //   --builder                              (deploy the builder again, e.g. after deploy/builder/ changed)
 //   --no-deploy                            (skip staging's deploy from this machine)
+//   bun deploy/setup.ts --hook-secret      (only a new DEPLOY_HOOK_SECRET on both Workers, kept on this machine for deploy/publish.ts)
 //
 // The credential is yours, never a server's: CLOUDFLARE_API_TOKEN if set,
 // else the cf CLI's login (deploy/credential.ts). It needs Workers, D1,
@@ -63,6 +64,24 @@ const PLAN = [
   `Check it: https://${STAGING.host}/api/deploys/version answers this release, and staging says it can deploy itself.`,
 ];
 const TOKEN_STEPS = [1, 9, 10, 11];
+
+// --hook-secret: a new DEPLOY_HOOK_SECRET, set on both Workers and kept on this machine (deploy/publish.ts reads it there
+// to tell the servers of a push it made). Each Worker gets a new version of the same code, which resets its Pipeline object:
+// do it when no deploy runs.
+if (flag("--hook-secret")) {
+  const { hookSecretFile, saveHookSecret } = await import("./publish");
+  const accountId = process.env.CLOUDFLARE_ACCOUNT_ID?.trim() ?? "", cred = mock ? null : machineCredential();
+  if (mock || !/^[0-9a-f]{32}$/.test(accountId) || !cred) { console.error("--hook-secret: set CLOUDFLARE_ACCOUNT_ID and log in with `bunx cf auth login` (not under the mock)."); process.exit(1); }
+  console.log(`A new DEPLOY_HOOK_SECRET for ${STAGING.worker} and ${PROD.worker}, kept in ${hookSecretFile()} (mode 600, not printed).`);
+  if (!ask("Go on?", yes)) process.exit(1);
+  const value = secret(), cf = new Cloudflare(cred.token);
+  saveHookSecret(value);
+  for (const worker of [STAGING.worker, PROD.worker]) {
+    await cf.call("PUT", `/accounts/${accountId}/workers/scripts/${worker}/secrets`, `set DEPLOY_HOOK_SECRET on ${worker}`, { name: "DEPLOY_HOOK_SECRET", text: value, type: "secret_text" });
+    console.log(`Set on ${worker}.`);
+  }
+  process.exit(0);
+}
 
 console.log(`Setting up ${STAGING.host}${mock ? " (the mock Cloudflare: nothing real)" : ""}${tokensOnly ? ", the deploy tokens only" : ""}. The steps:\n`);
 PLAN.forEach((p, i) => { if (!tokensOnly || TOKEN_STEPS.includes(i + 1)) console.log(`  ${i + 1}. ${p}`); });

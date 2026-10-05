@@ -80,7 +80,7 @@ export function tokenPlan(name: TargetName): TokenPlan {
     target: name,
     storedOn: spec.worker,
     workers: deploys.map((t) => t.worker),
-    zones: [...new Set(deploys.flatMap((t) => [t.zone, t.pages.zone]))],
+    zones: [...new Set([...deploys.flatMap((t) => [t.zone, t.pages.zone]), ...(spec.tokenZones ?? [])])],
     notWorkers: all.map((t) => t.worker).filter((w) => !deploys.some((t) => t.worker == w)),
   };
 }

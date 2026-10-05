@@ -271,7 +271,7 @@ const MIGRATIONS = import.meta.glob("../migrations/*.sql", { query: "?raw", impo
 /**
  * Local development: brings the local D1 up to date with migrations/ when
  * the dev server starts, recording each in d1_migrations as the cf CLI does
- * (erga.dev's is migrated before each deploy, migrate.ts). Returns what it applied.
+ * (erga.dev's is migrated by the deploy pipeline before each deploy). Returns what it applied.
  */
 async function migrate(db: D1Database): Promise<string[]> {
   await db.prepare("CREATE TABLE IF NOT EXISTS d1_migrations (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL)").run();

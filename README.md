@@ -82,7 +82,7 @@ keeps its files and Yjs state in its own storage and serves the
 per-document host (`host.ts`), agent included.
 
 Everything else the server knows is in one D1 database (`DB`; its tables in
-`migrations/`, applied by `migrate.ts`): its users and admins, its settings,
+`migrations/`, applied by the deploy pipeline): its users and admins, its settings,
 and the directory of documents with their permissions.
 
 **Addresses, titles and the directory.** Every document has a title and an
@@ -164,15 +164,15 @@ the server's API](#agent-tokens-and-the-servers-api) (`/llms.txt`,
 
 How erga.dev and staging.erga.dev are deployed, and how a branch deploys
 itself, is [Deploys: staging and production](#deploys-staging-and-production).
-Until production is switched over to deploying itself (the runbook's last
-step), pushes of `main` to GitHub still deploy erga.dev the old way: Workers
-Builds runs `./site.sh` then `bunx cf deploy`, with `BUN_VERSION` set to
-match `.bun-version`. On Workers Builds (`WORKERS_CI` set), `site.sh` also
-runs `bun migrate.ts`, which finds the D1 database `erga` by name and applies
-`migrations/` to it before the deploy.
+In short: `main` in Erga's own source (Cloudflare Artifacts) deploys
+erga.dev, and `staging` deploys staging.erga.dev; each server builds and
+deploys its own branch when it moves. A push to GitHub deploys nothing
+(Workers Builds is off for `erga` since task #3). The task queue puts `main`
+into Erga's source after each merge (`deploy/publish.ts`), so a merge on the
+board deploys erga.dev. The deploy pipeline applies `migrations/` to the
+database before it uploads the Worker.
 
-A migration lands just before the Worker that needs it (in either way of
-deploying), so it must keep working with the one still deployed (add tables
+A migration lands just before the Worker that needs it, so it must keep working with the one still deployed (add tables
 and columns; don't rename or drop). New ones: `bunx cf d1 migrations create
 <message>`. `0001_erga.sql` is the exception: it started the database afresh
 (it drops whatever was there before, the first directory and its backfill
@@ -682,12 +682,14 @@ borrowed from git (the namespace). A database leak gives no working unlock
    GitHub account before the admin adds a key (or after another admin
    revokes all of theirs) can sign in, add their own key to GitHub and
    bootstrap. Add a key soon after becoming an admin.
-2. *Pushes to GitHub still deploy erga.dev* until production deploys itself
-   (Deploys, the runbook's step 8): Workers Builds deploys `main` from
-   github.com/koomen/erga, which no Erga key protects. So do `bun run deploy`
-   and `wrangler` from a machine with Cloudflare credentials, and the
-   Cloudflare dashboard. The Cloudflare account, `SESSION_SECRET` and the
-   GitHub repository remain roots of trust outside this scheme.
+2. *A machine with Cloudflare credentials deploys erga.dev without an Erga
+   key*: `bun run deploy`, `deploy/publish.ts` (the task queue's push of
+   `main` into Erga's source, with a write token from the machine's own
+   Cloudflare login, then the servers told with `DEPLOY_HOOK_SECRET`, kept in
+   `~/.config/erga/deploy-hook-secret`), `wrangler`, and the Cloudflare
+   dashboard. Pushes to GitHub no longer deploy anything (Workers Builds is
+   off for `erga`). The Cloudflare account, `SESSION_SECRET` and the machine
+   that runs the task queue remain roots of trust outside this scheme.
 8. *The deploy tokens are bearer credentials in the Workers* ([Deploys: the
    deploy tokens](#deploys-staging-and-production)). Anyone who runs code in
    a Worker (code merged to its branch, or a dependency it pulls in) can read
@@ -818,11 +820,43 @@ staging's server doesn't take a move or a redeploy passed on to it (it's
 down, its last deploy broke it, or it can't deploy itself), production runs
 the same pipeline on staging's Worker, from its own `Pipeline` object, and
 says so in staging's log and history (`…, deployed by erga.dev`). Staging
-never deploys production, whatever it hears (its token can't). A
-server
-deploys itself only with `CLOUDFLARE_DEPLOY_TOKEN` set: until then a push is
-noted in its log and nothing is deployed, so merging this changes nothing on
-erga.dev by itself.
+never deploys production, whatever it hears (its token can't). A server
+deploys itself only with `CLOUDFLARE_DEPLOY_TOKEN` set: without it a push is
+noted in its log and nothing is deployed. Both have theirs (staging since
+task #2, production since task #3).
+
+**Pushes from this machine: the task queue** (`deploy/publish.ts`). The task
+queue merges into the main checkout's `main` and pushes it to GitHub
+(`origin`), as before; then it puts that commit into Erga's source and tells
+the servers, so the merge deploys staging.erga.dev and erga.dev. So `main`
+on GitHub and `main` in Erga's source stay the same commit:
+
+1. Before a merge, the queue fetches Erga's `staging` (`publish.ts fetch`,
+   into `erga/staging`) and merges it into the task's branch with
+   `origin/main` and `main`. Commits made in Erga (a merge on /source, a
+   factory task) so come back to `main`, and `main` can go to Erga as a
+   fast-forward.
+2. After the merge and the push to GitHub, `publish.ts push origin/main`
+   moves Erga's `staging`, then `main`, to it: plain pushes, only forward,
+   with a 15-minute write token for the one repo made with this machine's
+   Cloudflare login (never printed). If Erga's `staging` has commits it
+   lacks, nothing moves and it says so; if Erga is ahead already, there's
+   nothing to do.
+3. It tells each server whose branch moved (`POST
+   /api/deploys/<name>/hook` with `DEPLOY_HOOK_SECRET`, which this machine
+   keeps in `~/.config/erga/deploy-hook-secret`, mode 600; `bun
+   deploy/setup.ts --hook-secret` makes a new one and sets it on both
+   Workers). Production deploys `main`'s head as its own repository has it.
+4. If erga.dev doesn't take it (it's down, or can't read its repository, or
+   has no token) and doesn't run that commit yet, the queue deploys it to
+   erga.dev from this machine (`--or-deploy`: `deploy/run.ts`'s pipeline,
+   with a build made here).
+
+The queue also puts `origin/main` into Erga when it starts and whenever a
+fetch finds it moved (someone pushed `main` to GitHub by hand). A failure
+never undoes a merge: it's on the task's log and in `GET /api/history`
+(`upstream`), and it's tried again when `origin/main` next moves.
+`TASK_QUEUE_PUBLISH=""` turns all this off.
 
 A server deploying itself is restarted by its own new version part way
 through: Cloudflare resets a Worker's Durable Objects when a version goes
@@ -877,7 +911,7 @@ staging and production, staging's may deploy staging only.
 |---|---|---|---|
 | Individual Workers Editor (Specified Workers) | `erga-staging` | `erga`, `erga-staging` | upload and deploy versions, secrets (kept), static assets, settings; its Durable Objects inherit it. It can't make or delete a Worker |
 | D1 Write | the account | the account | staging's database deleted and made afresh from production's export; migrations |
-| Zone Read, Workers Routes Read, DNS Read | erga.dev, erga-pages.dev | erga.dev, erga-pages.dev | find the zones; check the custom domain, the pages' route and DNS record are there and point at the Worker |
+| Zone Read, Workers Routes Read, DNS Read | erga.dev, erga-pages.dev | erga.dev, erga-pages.dev, erga-pages-staging.dev (`tokenZones`) | find the zones; check the custom domain, the pages' route and DNS record are there and point at the Worker |
 
 **Writing Erga's source (the factory).** No token carries an Artifacts
 permission, on purpose: each server writes Erga's Artifacts repository
@@ -981,7 +1015,7 @@ build). The other target's server (production, here) is played in the same
 Durable Object, at its host in the mock, so a merge to main on /source
 deploys "production" too, and both columns fill.
 
-#### Runbook: staging, and its deploy token
+#### Runbook: staging and production, and their deploy tokens
 
 Each step is yours to run or approve; `deploy/setup.ts` asks before each
 change, and `--dry-run` shows the plan (and exactly what each token grants)
@@ -997,8 +1031,8 @@ route and DNS record, staging's deploy token (made with a short-lived token
 maker, then deleted), and staging deploying itself on a push to its branch.
 Still to do are the steps marked *(you)*.
 
-1. **Merge this to `main`.** Workers Builds deploys erga.dev from GitHub as
-   before; branch deploys stay off there (no `CLOUDFLARE_DEPLOY_TOKEN`).
+1. **Merge this to `main`** (task #2; then Workers Builds still deployed
+   erga.dev from GitHub, until step 8).
 2. **Staging's GitHub OAuth app** *(you: GitHub has no API for OAuth apps)*.
    At github.com/settings/applications/new: homepage
    `https://staging.erga.dev`, callback
@@ -1045,14 +1079,31 @@ Still to do are the steps marked *(you)*.
    builds it, the pipeline deploys it with staging's own token, the server
    restarts into the new version and finishes, and `/api/deploys/version`
    says the new commit.
-8. **Later, production** (task #3, not part of this): `bun deploy/setup.ts
-   --tokens --production` makes production's token (Editor on `erga` and
-   `erga-staging`) and stores it on `erga`; deploy it once from a machine
-   (`bun run deploy`: it adds the `BUILDER` binding, and
-   `ERGA_ARTIFACTS_NAMESPACE=erga` adds the source), then turn off Workers
-   Builds' trigger for `erga` and remove `migrate.ts` and the `WORKERS_CI`
-   lines in `site.sh`. From then on `main` deploys itself, and production
-   can deploy staging when staging can't.
+8. **Production deploys itself** (done on erga.dev, 2026-10-04, task #3):
+   - Workers Builds' trigger for `erga` deleted (`bunx cf builds triggers
+     list --external-script-id <erga's tag>`, then `bunx cf builds triggers
+     delete <uuid>`): a push to GitHub deploys nothing now.
+   - A new `DEPLOY_HOOK_SECRET` on both Workers, kept on the machine that
+     runs the task queue (`bun deploy/setup.ts --hook-secret`).
+   - erga.dev deployed once from a machine (`bun run deploy`, which asks you
+     to type "production"): the pipeline adds the `BUILDER` and `ARTIFACTS`
+     bindings and `ERGA_VERSION`.
+   - Erga's `staging` and `main` brought to GitHub's `main`
+     (`bun deploy/publish.ts push origin/main`).
+   - Production's deploy token made with a short-lived token maker, checked
+     and stored on `erga` (`CLOUDFLARE_TOKEN_MAKER=… bun deploy/setup.ts
+     --tokens --production`, answering no to staging's token). It also reads
+     `erga-pages-staging.dev` (`tokenZones` in `deploy/targets.json`), for
+     staging's pages from task #4. The maker is kept for task #4, then
+     deleted.
+   - `migrate.ts` and the `WORKERS_CI` lines in `site.sh` removed.
+
+   To go back to Workers Builds (if ever): make the trigger again (build
+   `./site.sh`, deploy `bunx cf deploy`, branch `main`) and set
+   `TASK_QUEUE_PUBLISH=""`. To roll erga.dev back to an earlier version:
+   `bunx cf workers deployments create --worker erga --strategy percentage
+   --versions '[{"version_id":"<id>","percentage":100}]'` (ids from `bunx cf
+   workers versions list --worker-id erga`).
 
 ### Deploy your own
 
@@ -2442,6 +2493,7 @@ back, merging edits from disk, the agent's exact-match edits and attribution.
   pipeline's side of it (`client.ts`); `deploy/bundle.ts`, a release as one file; `deploy/source.ts`, the
   source repo in Artifacts
 - `deploy/run.ts`, `deploy/setup.ts`: a deploy from a machine, and staging's one-time setup
+- `deploy/publish.ts`: the task queue's push of `main` into Erga's source, and the servers told (tests: `tests/publish.test.ts`)
 - `deploy/tokens.ts`, `deploy/credential.ts`: the servers' narrow deploy tokens (planned, made,
   checked), and the person's own credential the setup uses
 - `deploy/page.ts`, `deploy/release.ts`, `deploy/mock.ts`, `deploy/seal.ts`, `worker/deploy.ts`,
@@ -2452,7 +2504,7 @@ back, merging edits from disk, the agent's exact-match edits and attribution.
   Containers host, the API and Durable Object, and the local repository and VMs
 - `account.ts`: who you are in the upper right of every page (avatar and menu, or sign in)
 - `directory.ts`: the directory of documents (addresses, titles, permissions, who may do what), over
-  `Sql`; `worker/d1.ts` puts it on D1; its tables in `migrations/`, which `migrate.ts` applies to
+  `Sql`; `worker/d1.ts` puts it on D1; its tables in `migrations/`, which the deploy pipeline applies to
   erga.dev's D1 (the dev server applies them locally)
 - `users.ts`, `config.ts`: the server's users and admins, and its settings, on the same database
 - `tokens.ts`: agent tokens (one kind, standing for a person everywhere), in

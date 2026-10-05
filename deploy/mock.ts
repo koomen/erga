@@ -563,7 +563,7 @@ function applySql(db: MockState["databases"][number], sql: string) {
 function seedFleet(state: MockState) {
   state.account = { id: ACCOUNT_ID, name: "Erga" };
   state.subdomain = "erga";
-  state.zones = [{ id: "zone00000000000000000000000e7ga1", name: "erga.dev", status: "active" }, { id: "zone00000000000000000000000e7ga2", name: "erga-pages.dev", status: "active" }];
+  state.zones = [{ id: "zone00000000000000000000000e7ga1", name: "erga.dev", status: "active" }, { id: "zone00000000000000000000000e7ga2", name: "erga-pages.dev", status: "active" }, { id: "zone00000000000000000000000e7ga3", name: "erga-pages-staging.dev", status: "active" }];
   const tables = ["d1_migrations", "users", "server_config", "documents", "permissions", "slug_history", "agent_tokens", "token_requests", "admin_keys", "admin_challenges", "admin_log"];
   state.databases.push({
     uuid: PROD_DB, name: "erga", statements: [], tables,

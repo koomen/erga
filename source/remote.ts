@@ -81,13 +81,20 @@ export function parseAdvert(body: Uint8Array): { refs: Map<string, string>; caps
  * self-contained (no thin pack), so every delta's base is in it. With
  * `deepen`, only that many commits deep from each want.
  */
-export async function fetchPack(remote: Remote, opts: { wants: string[]; haves?: string[]; deepen?: number }): Promise<Uint8Array> {
+export async function fetchPack(remote: Remote, opts: { wants: string[]; haves?: string[]; deepen?: number; filter?: string }): Promise<Uint8Array> {
   if (!opts.wants.length) return new Uint8Array();
+  // A filter (partial clone: "blob:none", no files) where the remote takes one; a remote that doesn't is asked again without.
+  if (opts.filter) return fetchPackWith(remote, opts, opts.filter).catch(() => fetchPackWith(remote, opts));
+  return fetchPackWith(remote, opts);
+}
+
+async function fetchPackWith(remote: Remote, opts: { wants: string[]; haves?: string[]; deepen?: number }, filter?: string): Promise<Uint8Array> {
   const args = [
     pkt("no-progress\n"), pkt("ofs-delta\n"),
     ...opts.wants.map((w) => pkt(`want ${w}\n`)),
     ...(opts.haves ?? []).map((h) => pkt(`have ${h}\n`)),
     ...(opts.deepen ? [pkt(`deepen ${opts.deepen}\n`)] : []),
+    ...(filter ? [pkt(`filter ${filter}\n`)] : []),
     pkt("done\n"),
   ];
   const body = concat([pkt("command=fetch\n"), pkt("agent=erga\n"), DELIM, ...args, FLUSH]);

@@ -349,25 +349,31 @@ export async function readPack(pack: Uint8Array, keep: (type: ObjectType) => boo
     entries.push(e);
     byOffset.set(offset, e);
   }
-  // Deltas, each over its base (itself perhaps a delta).
-  const resolve = async (e: Entry): Promise<{ type: ObjectType; data: Uint8Array } | null> => {
-    if (e.type) return e.data ? { type: e.type, data: e.data } : null;
-    if (!e.data) return null;
-    const b = typeof e.base == "number" ? byOffset.get(e.base) : bySha.get(e.base!);
-    if (!b) throw new Error(`a delta's base ${e.base} isn't in the pack`);
-    const base = await resolve(b);
-    if (!base) return null;
-    const data = applyDelta(base.data, e.data);
-    e.type = base.type; e.data = data; e.root = base.type;
-    e.sha = await hashObject({ type: base.type, data });
-    bySha.set(e.sha, e);
-    return { type: base.type, data };
-  };
-  for (const e of entries) {
-    if (e.type) continue;
-    const r = await resolve(e);
-    if (r && keep(r.type)) objects.set(e.sha!, r);
+  // Deltas, each over its base (itself perhaps a delta), in passes: a base named by its id may be a delta itself, which
+  // has no id until it's resolved, and may come anywhere in the pack. Each pass resolves the deltas whose base is ready.
+  const dead = new Set<Entry>();
+  let waiting = entries.filter((e) => !e.type);
+  for (let progress = true; waiting.length && progress;) {
+    progress = false;
+    const next: Entry[] = [];
+    for (const e of waiting) {
+      if (!e.data) { dead.add(e); progress = true; continue; }
+      const b = typeof e.base == "number" ? byOffset.get(e.base) : bySha.get(e.base!);
+      if (!b || (!b.type && !dead.has(b))) { next.push(e); continue; }
+      progress = true;
+      if (dead.has(b) || !b.data) { dead.add(e); e.data = null; continue; }
+      const data = applyDelta(b.data, e.data);
+      e.type = b.type; e.root = b.type; e.data = data;
+      e.sha = await hashObject({ type: e.type!, data });
+      bySha.set(e.sha, e);
+      if (keep(e.type!)) objects.set(e.sha, { type: e.type!, data });
+      else e.data = null;
+    }
+    waiting = next;
   }
+  // Left over: a base that's not in the pack. Fine if deltas of a type we drop were dropped unread (it's one of them, so
+  // these are that type too: a delta is its base's type); otherwise the pack is incomplete.
+  if (waiting.length && !dead.size) throw new Error(`a delta's base ${waiting[0].base} isn't in the pack`);
   return objects;
 }
 
