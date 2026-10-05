@@ -79,3 +79,45 @@ test("a git token carries any text: a shared agent's name with a curly apostroph
   const oldBody = btoa(JSON.stringify(old)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
   expect(await verifyGitToken(secret, `fgt.${oldBody}.${await sign(oldBody)}`)).toEqual(old);
 });
+
+test("Claude Code's model: the factory_model setting, default opus; a model it refuses fails with the model and the setting named", async () => {
+  const { MODEL, modelError } = await import("../factory/vm/common");
+  const { SETTINGS: settings } = await import("../config");
+  const was = process.env.FACTORY_MODEL;
+  delete process.env.FACTORY_MODEL;
+  expect(MODEL()).toBe("opus");
+  process.env.FACTORY_MODEL = "sonnet";
+  expect(MODEL()).toBe("sonnet");
+  const why = modelError("There's an issue with the selected model (claude-sonnet-5-5). It may not exist or you may not have access to it. Run --model to pick a different model.");
+  expect(why).toContain('"sonnet"');
+  expect(why).toContain("factory_model");
+  expect(modelError("Done: the footer is in.")).toBeNull();
+  if (was == null) delete process.env.FACTORY_MODEL; else process.env.FACTORY_MODEL = was;
+  expect(settings.factory_model.default).toBe("opus");
+  expect(settings.factory_model.parse(" claude-opus-5-5 ")).toBe("claude-opus-5-5");
+  expect(() => settings.factory_model.parse("opus; rm -rf /")).toThrow();
+});
+
+test("fast mode: on by default in Claude Code's settings; the factory_fast setting turns it off", async () => {
+  const { prepareClaude } = await import("../factory/vm/common");
+  const { SETTINGS } = await import("../config");
+  const { mkdtempSync, readFileSync } = await import("node:fs");
+  const { join } = await import("node:path");
+  const { tmpdir } = await import("node:os");
+  const home = process.env.HOME, fast = process.env.FACTORY_FAST;
+  process.env.HOME = mkdtempSync(join(tmpdir(), "fast-"));
+  try {
+    delete process.env.FACTORY_FAST;
+    prepareClaude();
+    const file = join(process.env.HOME, ".claude", "settings.json");
+    expect(JSON.parse(readFileSync(file, "utf8")).fastMode).toBe(true);
+    process.env.FACTORY_FAST = "0";
+    prepareClaude();
+    expect(JSON.parse(readFileSync(file, "utf8")).fastMode).toBe(false);
+  } finally {
+    process.env.HOME = home;
+    if (fast == null) delete process.env.FACTORY_FAST; else process.env.FACTORY_FAST = fast;
+  }
+  expect(SETTINGS.factory_fast.default).toBe("on");
+  expect(SETTINGS.factory_fast.parse(false)).toBe("off");
+});

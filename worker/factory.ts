@@ -411,6 +411,8 @@ export class Factory extends DurableObject<Env> {
     return {
       FACTORY_API: `${r.origin}/api/factory`, FACTORY_TASK: String(id), FACTORY_TOKEN: await taskToken(this.env, id),
       REPO_URL: host.repo(r.origin), REPO_TOKEN: await gitToken(this.env, scope, r.branch, by ?? r.by_login),
+      FACTORY_MODEL: String((await directoryOf(this.env).config.get("factory_model")) ?? "opus"),
+      FACTORY_FAST: (await directoryOf(this.env).config.get("factory_fast")) == "off" ? "0" : "1",
       ...(claude ? { CLAUDE_CODE_OAUTH_TOKEN: claude } : {}),
     };
   }

@@ -16,7 +16,7 @@
 
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { api, CLONE, env, git, log, prepareClaude, realClaude, REPORTED, run, scrub, WORK } from "./common.ts";
+import { api, CLONE, env, git, log, MODEL, modelError, prepareClaude, realClaude, REPORTED, run, scrub, WORK } from "./common.ts";
 import { pushBranch } from "./task.ts";
 
 const job = process.argv[2] ?? "work";
@@ -64,20 +64,25 @@ async function main() {
     const prompt = job == "revise" ? (continuing ? brief.instructions! : `${brief.prompt}\n\nThe user looked at your work and asks for more:\n\n${brief.instructions}`) : brief.prompt;
     await log(job == "revise" ? "Claude Code is working on the new instructions" : "Claude Code started");
     let lastLog = 0;
-    code = await run(["claude", "-p", prompt, ...(continuing ? ["--continue"] : []), "--dangerously-skip-permissions", "--output-format", "stream-json", "--verbose", "--max-turns", String(brief.maxTurns ?? 200)], {
+    let badModel: string | null = null;
+    code = await run(["claude", "-p", prompt, ...(continuing ? ["--continue"] : []), "--model", MODEL(), "--dangerously-skip-permissions", "--output-format", "stream-json", "--verbose", "--max-turns", String(brief.maxTurns ?? 200)], {
       cwd: CLONE(),
       onLine: (line) => {
         // Claude Code's events: what it says goes on the board, at most every 5 seconds.
         let ev: any;
-        try { ev = JSON.parse(line); } catch { return; }
+        try { ev = JSON.parse(line); } catch { badModel ??= modelError(line); return; }
         if (ev.type == "assistant") for (const c of ev.message?.content ?? []) if (c.type == "text" && c.text.trim()) lastText = c.text.trim();
-        if (ev.type == "result" && typeof ev.result == "string") lastText = ev.result.trim();
+        if (ev.type == "result" && typeof ev.result == "string") { lastText = ev.result.trim(); if (ev.is_error) badModel ??= modelError(lastText); }
         if (lastText && Date.now() - lastLog > 5000) { lastLog = Date.now(); log(`Claude: ${scrub(lastText).slice(0, 300)}`); }
       },
     });
+    if (code != 0 && badModel && !existsSync(REPORTED())) {
+      await api("", { method: "PATCH", json: { status: "failed", error: scrub(badModel) } });
+      return;
+    }
   } else {
     await log(process.env.CLAUDE_CODE_OAUTH_TOKEN ? "The scripted stand-in runs (FACTORY_FAKE=1)" : "No Claude sign-in: the scripted stand-in runs instead of Claude Code");
-    code = await run(["bun", join(import.meta.dirname, "fake-claude.ts"), job], { cwd: CLONE() });
+    code = await run(["bun", join(import.meta.dirname, "fake-claude.ts"), job, "--model", MODEL()], { cwd: CLONE() });
   }
 
   // 4. Claude Code ended: did it report?

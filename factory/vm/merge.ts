@@ -13,7 +13,7 @@
 
 import { existsSync, mkdirSync, mkdtempSync } from "node:fs";
 import { join } from "node:path";
-import { CLONE, env, git, prepareClaude, realClaude, result, run, scrub, WORK } from "./common.ts";
+import { CLONE, env, git, MODEL, modelError, prepareClaude, realClaude, result, run, scrub, WORK } from "./common.ts";
 
 const [what, branch, title = ""] = process.argv.slice(2);
 
@@ -35,11 +35,12 @@ async function merge(): Promise<Record<string, unknown>> {
         return { ok: false, error: `The branch conflicts with staging in ${files.join(", ")}. No Claude plan is signed in to resolve it.` };
       }
       prepareClaude();
-      const code = await run(["claude", "-p", `Merging ${branch} into staging conflicts in: ${files.join(", ")}. Resolve the conflicts, keeping both sides' intent. Run the tests that cover those files. Then commit the merge (git commit --no-edit). Don't push.`, "--dangerously-skip-permissions", "--max-turns", "80"], { cwd: dir });
+      let badModel: string | null = null;
+      const code = await run(["claude", "-p", `Merging ${branch} into staging conflicts in: ${files.join(", ")}. Resolve the conflicts, keeping both sides' intent. Run the tests that cover those files. Then commit the merge (git commit --no-edit). Don't push.`, "--model", MODEL(), "--dangerously-skip-permissions", "--max-turns", "80"], { cwd: dir, onLine: (l) => { badModel ??= modelError(l); } });
       const left = git(["diff", "--name-only", "--diff-filter=U"], dir, { quiet: true }).out;
       if (code != 0 || left || git(["rev-parse", "-q", "--verify", "MERGE_HEAD"], dir, { quiet: true }).code == 0) {
         git(["merge", "--abort"], dir, { quiet: true });
-        return { ok: false, error: `Claude Code couldn't resolve the conflicts in ${files.join(", ")}.` };
+        return { ok: false, error: badModel ?? `Claude Code couldn't resolve the conflicts in ${files.join(", ")}.` };
       }
     }
     const commit = git(["rev-parse", "HEAD"], dir).out;

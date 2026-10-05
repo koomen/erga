@@ -105,6 +105,8 @@ try {
   await p.screenshot(join(SHOTS, "factory-detail.png"));
   await click(p, '[data-act="close"]');
   await until(async () => (await task(2)).status == "complete" && (await task(3)).status == "complete", STEP, "the other two are ready", async () => [await task(2), await task(3)].map((t) => ({ status: t.status, error: t.error, log: t.log.slice(-5).map((l: any) => l.message) })));
+  const t2model = await task(2);
+  expect(t2model.log.some((l: any) => l.message.includes("--model opus")), "the job passes Claude Code the factory_model setting (opus)", t2model.log.map((l: any) => l.message));
   await p.settle();
   await p.screenshot(join(SHOTS, "factory-board.png"));
 

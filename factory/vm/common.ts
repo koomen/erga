@@ -8,6 +8,8 @@
 //   FACTORY_TOKEN    the task's own token for that API: it reports on this task only
 //   REPO_URL         Erga's repository (Git over HTTPS)
 //   REPO_TOKEN       a token for it that may push this task's branch only (the merge job's may also move staging)
+//   FACTORY_MODEL    the model for `claude --model` (the factory_model setting); absent: opus
+//   FACTORY_FAST     "0": Claude Code without fast mode (the factory_fast setting); else fast mode on
 //   FACTORY_WORK     where the clone goes (/work in the image)
 //   FACTORY_PREVIEW_PORT   the port the task's preview listens on, inside the VM (4400)
 //   FACTORY_PUBLIC_PORT    the port the VM shows it on (4401: a relay to it, as the VM's own loopback isn't reachable)
@@ -16,7 +18,7 @@
 // Tokens are never printed: git gets REPO_TOKEN as a header in its config.
 
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 export const env = (name: string, fallback?: string): string => {
@@ -105,12 +107,29 @@ export function prepareClaude() {
   const file = join(home, ".claude.json");
   if (!existsSync(file)) writeFileSync(file, JSON.stringify({ hasCompletedOnboarding: true, bypassPermissionsModeAccepted: true }, null, 2));
   mkdirSync(join(home, ".claude"), { recursive: true });
+  // Fast mode, from the factory_fast setting: Claude Code's own settings key (it has no flag for it).
+  const settings = join(home, ".claude", "settings.json");
+  let now: Record<string, unknown> = {};
+  try { now = JSON.parse(readFileSync(settings, "utf8")); } catch {}
+  writeFileSync(settings, JSON.stringify({ ...now, fastMode: FAST() }, null, 2));
 }
+
+/** Fast mode for Claude Code: on, unless the factory_fast setting is off (FACTORY_FAST=0). */
+export const FAST = () => process.env.FACTORY_FAST != "0";
 
 /** Whether the real Claude Code can run: a token, and the command, and no request for the scripted stand-in. */
 export function realClaude(): boolean {
   if (process.env.FACTORY_FAKE == "1" || !process.env.CLAUDE_CODE_OAUTH_TOKEN) return false;
   return spawnSync("claude", ["--version"], { stdio: "ignore" }).status == 0;
+}
+
+/** The model for `claude --model`: the factory_model setting (FACTORY_MODEL), default opus. */
+export const MODEL = () => process.env.FACTORY_MODEL?.trim() || "opus";
+
+/** Claude Code's complaint that it can't use the model, made plain: which model, and the setting that picks it. */
+export function modelError(text: string): string | null {
+  if (!/issue with the selected model|model.{0,40}(not exist|not found|access)|invalid model/i.test(text)) return null;
+  return `Claude Code can't use the model "${MODEL()}" (the factory_model setting, /admin). Pick another model there, e.g. opus or sonnet. Claude Code said: ${text.trim().slice(0, 300)}`;
 }
 
 /** The last line of a job's output: its result, as JSON, for the factory (merge and discard). */
