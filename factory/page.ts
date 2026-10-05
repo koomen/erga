@@ -216,7 +216,8 @@ function card(t) {
 function render() {
   $("board").innerHTML = COLUMNS.map((c) => {
     let list = tasks.filter((t) => c.statuses.includes(t.status));
-    list.sort((a, b) => (b.mergedAt || b.updatedAt).localeCompare(a.mergedAt || a.updatedAt));
+    // A stable order, by id (oldest first): a card moves only when its status changes, not as its task logs progress.
+    list.sort((a, b) => a.id - b.id);
     // Queued: the ones that can start first; the ones waiting on others below them.
     if (c.title == "Queued") list.sort((a, b) => waitsToStart(a) - waitsToStart(b));
     const add = c.title == "Queued" && info && info.enabled ? '<button id="new" data-act="new">New task</button>' : "";
@@ -412,7 +413,6 @@ window.ergaBoard = { openTask: () => openId, title: (id) => tasks.find((x) => x.
 export function boardMarkup(opts: { enabled: boolean }): string {
   return `<div class="pane-head"><h2>Tasks</h2><span class="tag">Experimental</span><div class="pills" id="pills"><span class="pill" id="live">connecting</span><button class="pill" id="mirror-pill" type="button" hidden>GitHub: loading…</button></div></div>
 <div class="notice" id="notice" ${opts.enabled ? "hidden" : ""}>The factory is off. An admin turns it on with the <code>factory</code> setting on <a href="/admin">Admin settings</a>.</div>
-<p class="pane-note">Each task is a branch made from staging, done by Claude Code in a VM. Merge merges it into staging, which deploys itself.</p>
 <div class="board" id="board"></div>
 <dialog id="dlg"></dialog>
 <dialog id="form" class="small"></dialog>

@@ -48,13 +48,14 @@ const SOURCE_STYLE = `
   @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --on-main: #4cc38a; --only-staging: #f0a742; --bad: #ff8a65; } }
   :root[data-theme="dark"] { --on-main: #4cc38a; --only-staging: #f0a742; --bad: #ff8a65; }
   .pane-head { justify-content: space-between; }
+  .head-actions { display: flex; align-items: center; gap: 10px; margin-left: auto; }
   .merge-row { display: flex; align-items: center; gap: 10px; }
   .merge-row .count { font-size: 13px; color: var(--soft); white-space: nowrap; }
   .merge-row[hidden], #merge-hint:empty { display: none; }
   #merge-hint { margin: -4px 0 10px; font-size: 13.5px; text-align: right; }
   #merge-hint.error { color: var(--bad); }
   @media (max-width: 640px) { .pane-head { flex-direction: column; align-items: stretch; gap: 10px; } .merge-row { justify-content: space-between; } .merge-row .count { white-space: normal; flex: 1; min-width: 0; } #merge-hint { margin-top: -6px; text-align: left; } }
-  .card { border: 1px solid var(--rule); border-radius: 12px; padding: 6px 10px 10px; min-width: 0; background: var(--bg); }
+  .card { padding: 0 0 10px; min-width: 0; background: var(--bg); }
   .legend { display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 6px 4px 6px; font-size: 12px; color: var(--soft); }
   .legend span { display: inline-flex; align-items: center; gap: 6px; }
   /* The dots: circles only. Hollow orange, only on staging; solid green, on main. */
@@ -115,9 +116,6 @@ const SOURCE_STYLE = `
   .dep.building .w::before, .dep.deploying .w::before { content: ""; flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--only-staging); animation: pulse 1.2s ease-in-out infinite; }
   @keyframes pulse { 50% { opacity: .25; } }
   .none { padding: 18px 4px; font-size: 13.5px; color: var(--soft); grid-column: 1 / -1; }
-  .older { grid-column: 1 / -1; padding: 8px 4px 0; font-size: 12px; color: var(--soft); display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; }
-  .older span { display: inline-flex; align-items: center; gap: 6px; }
-  .older .dep { display: inline-grid; width: auto; }
   @media (max-width: 760px) { .grid { grid-template-columns: 22px minmax(0, 1fr) auto 80px 80px; } .who, .grid > .head.who-h, .row time, .grid > .head.time-h { display: none; } .target { max-width: 82px; } .target b { font-size: 10.5px; } .target .st span { display: none; }
     .dep { font-size: 11.5px; padding: 0 5px; } .dep .at { display: none; } }
   .boxes { display: grid; grid-template-columns: 1fr; gap: 18px; margin-top: 18px; }
@@ -129,8 +127,6 @@ const SOURCE_STYLE = `
   .box p.error { color: var(--bad); }
   .box a { color: inherit; }
   pre { margin: 6px 0 8px; padding: 10px 12px; border-radius: 8px; background: var(--code-bg); color: var(--fg-strong); font: 12.5px/1.6 var(--font-mono); overflow-x: auto; white-space: pre; }
-  .moves { margin: 18px 2px 0; font-size: 12.5px; color: var(--soft); }
-  .moves b { font-weight: 600; color: var(--fg); }
   .setup ol { margin: 8px 0 0; padding-left: 20px; font-size: 14px; color: var(--fg); }
   .setup li { margin: 4px 0; }
   .setup code, .box code { font: 12.5px var(--font-mono); }
@@ -150,7 +146,7 @@ const SOURCE_STYLE = `
 /** The source pane: the commits with their deploys, Merge, how to clone; or how to set it up. */
 function sourceMarkup(c: SourcePageConfig): string {
   if (!c.ready) {
-    return `<div class="pane-head"><div><h2>Source and deploys</h2><p class="sub">Erga's own repository and its deploys.</p></div></div>
+    return `<div class="pane-head"><h2>Source and deploys</h2></div>
   <div class="box setup"><h2>Not set up on this server</h2><p>The repository lives in Cloudflare Artifacts, which this server isn't bound to yet. README.md (Erga's own source) has the steps:</p>
   <ol><li>Make the Artifacts repo <code>erga</code> in the namespace <code>erga</code>.</li><li>Deploy with <code>ERGA_ARTIFACTS_NAMESPACE=erga</code>, which adds the binding.</li><li>Push the history in: <code>bun source/import.ts</code>.</li></ol></div>`;
   }
@@ -158,8 +154,8 @@ function sourceMarkup(c: SourcePageConfig): string {
   const target = (name: string, label: string) => `<div class="head deploy"><button class="target" type="button" id="target-${name}" data-target="${name}" disabled title="Deploys aren't set up yet"><b>${label}</b><span class="st"><i></i><span>not set up</span></span></button></div>`;
   return `
   <div class="pane-head">
-    <div><h2>Source and deploys</h2><p class="sub">Push to staging, or merge a task: staging deploys itself. Then move main up to it: main deploys to production.</p></div>
-    <div class="merge-row" id="merge-row" hidden><span class="count" id="ahead"></span><button class="new" id="merge" disabled>Merge staging into main</button></div>
+    <h2>Source and deploys</h2>
+    <div class="head-actions"><div class="merge-row" id="merge-row" hidden><span class="count" id="ahead"></span><button class="new" id="merge" disabled>Merge staging into main</button></div><button class="pill" id="clone-copy" type="button" data-clone="git clone ${esc(remote)}" title="Copy: git clone ${esc(remote)}">Clone</button></div>
   </div>
   <p class="hint" id="merge-hint" role="status"></p>
   <section class="card" aria-label="Commits">
@@ -180,7 +176,6 @@ git push erga HEAD:staging</code></pre>
       <p>Git asks for a username and password: any username, and an agent token from <a href="/settings">Settings</a> as the password (admins only). main only follows staging: merge here, or push one of staging's commits to main.</p>
     </div>
   </section>
-  <p class="moves" id="moves"></p>
   <dialog id="deploy-log" aria-labelledby="log-title">
     <div class="top"><h2 id="log-title">Deploy log</h2><span class="meta" id="log-meta"></span><button class="pill close" type="button" id="log-close">Close</button></div>
     <pre id="log-lines"></pre>
@@ -256,7 +251,6 @@ const SOURCE_SCRIPT = `
     const want = new Set(commits.map((x) => x.sha));
     for (const [sha, r] of rows) if (!want.has(sha)) r.remove();
     grid.querySelector(".none.empty")?.remove();
-    grid.querySelector(".older")?.remove();
     if (!commits.length) { grid.insertAdjacentHTML("beforeend", '<div class="none empty">No commits yet. Push one: git push erga HEAD:staging</div>'); }
     let prev = null;
     commits.forEach((x, i) => {
@@ -275,15 +269,6 @@ const SOURCE_SCRIPT = `
       grid.insertBefore(r, prev ? prev.nextSibling : document.getElementById("target-production").parentElement.nextSibling);
       prev = r;
     });
-    // Deploys of commits further down than the list goes, and where a target is live if it's there.
-    const older = TARGETS.map((n) => {
-      const t = targetOf(n), away = [...groups[n].entries()].filter(([sha]) => !want.has(sha));
-      if (!t) return "";
-      if (away.length) return '<span><b>' + esc(n) + "</b> " + away.length + " older commit" + (away.length == 1 ? "" : "s") + " deployed, latest " + badge(n, shown(away[0][1])) + "</span>";
-      const live = t.deployed ?? (t.state == "deployed" ? t.commit : null);
-      return live && !want.has(live) && !t.history ? "<span>" + esc(n) + " is live on " + esc(live.slice(0, 7)) + ", further down</span>" : "";
-    }).filter(Boolean);
-    if (older.length && commits.length) grid.insertAdjacentHTML("beforeend", '<div class="older">' + older.join("") + "</div>");
     drawn = true;
     const ahead = staging?.ahead ?? 0, mergeBtn = document.getElementById("merge");
     // Nothing at all while main is at staging: no count, no button, no space. While a merge runs the button stays, disabled.
@@ -299,7 +284,6 @@ const SOURCE_SCRIPT = `
       mp.title = (m.state == "off" ? "Off: the server has no GITHUB_MIRROR_TOKEN" : (m.lastPushAt ? "Last pushed " + ago(m.lastPushAt) : "Not pushed yet") + (m.error ? ". " + m.error : "") + ". Click to push now.") + (where ? "\\n" + where : "");
       mp.disabled = m.state == "off";
     }
-    document.getElementById("moves").innerHTML = view.moves.slice(0, 3).map((mv) => "<b>" + esc(mv.branch) + "</b> moved to " + mv.new.slice(0, 7) + " by " + esc(mv.by) + " (" + (mv.how == "merge" ? "merge" : "push") + ") " + ago(mv.at)).join(" · ");
   }
 
   function renderTargets() {
@@ -411,6 +395,13 @@ const SOURCE_SCRIPT = `
   }
   mergeBtn.addEventListener("click", () => merge(null));
   grid.addEventListener("click", (e) => { const b = e.target.closest("button[data-merge]"); if (b) merge(b.dataset.merge); });
+  // Clone: copies the git clone command; the button says so for a moment.
+  const cloneBtn = document.getElementById("clone-copy");
+  cloneBtn.addEventListener("click", async () => {
+    const ok = await navigator.clipboard.writeText(cloneBtn.dataset.clone).then(() => true, () => false);
+    cloneBtn.textContent = ok ? "Copied" : "Couldn't copy";
+    setTimeout(() => { cloneBtn.textContent = "Clone"; }, 1500);
+  });
   document.getElementById("mirror-pill")?.addEventListener("click", async (e) => {
     e.currentTarget.disabled = true;
     await fetch("/api/source/mirror", { method: "POST" }).catch(() => {});
@@ -575,7 +566,7 @@ export function adminSourcePage(c: SourcePageConfig): Response {
   const crumbs = `<nav class="crumbs" aria-label="Breadcrumbs"><a class="brand" href="/">Erga</a><a class="here-link" href="/admin">Admin</a><span class="here" aria-current="page">Source</span></nav>`;
   // The header bar, upper right, as the editor's (page.html, .chrome-top): Share with agent, the same icon button.
   const bar = `<div class="chrome chrome-top" role="toolbar" aria-label="Controls"><button type="button" class="icon-btn" id="btn-share" aria-label="Share the factory with an agent" data-tip="Share with an agent" aria-haspopup="dialog" aria-expanded="false" aria-controls="share-dlg">${ICON.agent}</button></div>`;
-  const page = (body: string, status = 200) => new Response(appPage("Source", PAGE_STYLE + scopeCss(BOARD_STYLE, "#tasks") + scopeCss(SOURCE_STYLE, "#source-pane"), `${crumbs}${body}`), { status, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
+  const page = (body: string, status = 200) => new Response(appPage("Source", PAGE_STYLE + scopeCss(BOARD_STYLE, "#tasks") + scopeCss(SOURCE_STYLE, "#source-pane"), `${crumbs}${body}`, false), { status, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
   if (!c.admin) return page(`<main><p class="empty">There's nothing here. <a href="/">Back to the start</a>.</p></main>`, 404);
   return page(`${bar}
 <main class="admin">

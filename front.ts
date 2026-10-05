@@ -1394,7 +1394,7 @@ export const ICON = {
 };
 
 /** The page around a view (/docs, /admin): its title, the shared look and the view's own style. */
-export const appPage = (title: string, style: string, body: string) => `<!doctype html>
+export const appPage = (title: string, style: string, body: string, footer = true) => `<!doctype html>
 <html lang="en">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -1403,7 +1403,7 @@ export const appPage = (title: string, style: string, body: string) => `<!doctyp
 <link rel="stylesheet" href="/style.css">
 <style>${APP_STYLE}${style}</style>
 ${body}
-${siteFooter()}
+${footer ? siteFooter() : ""}
 </html>`;
 
 /** Who a document is shared with, as its row in the list says it (the owner's own view). */
