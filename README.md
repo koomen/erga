@@ -464,7 +464,18 @@ with a factory token: `admin-share.js`, built from
 sidebar collapses to a rail of icons, and expands again, with an animation,
 so the factory's board gets the full width; the browser remembers which
 (`localStorage`, `erga:admin-sidebar`). On a phone the links are a row above
-the page.
+the page. Share with agent is on every admin page, `/admin/keys` too: while
+admin access is locked, its card says to unlock first.
+
+**The admin's agent** ([the factory's agent](#the-factory-experimental),
+below) is on every admin page too, in a column between the sidebar and the
+page, with the conversation it had on the others (one session per admin). It
+collapses to a round button in the lower left, as the editor's agent does
+(its collapse button, Esc in the panel, or ⌘J), and expands out of it again;
+the page takes the room. The browser remembers which (`localStorage`,
+`erga:admin-agent`). Narrower than 1000px it starts collapsed and covers the
+page while it's open. Each message says which admin page is open (and, on
+the Factory page, which task), so "this page" means something.
 
 Every `/admin` route is for admins only, checked on the server: the Worker
 asks the server's role (`Users.isAdmin`) before any of them answers
@@ -1753,7 +1764,7 @@ carry a computed `stalled {since, quietMs}`, and `list_tasks` and `get_task`
 tell the factory's agent how long the task has been quiet. "Stalled" is not
 "blocked": a blocked task waits for its dependencies.
 
-**The factory's agent.** Beside the board, an agent panel like the editor's
+**The factory's agent.** Beside the board (and on every admin page), an agent panel like the editor's
 (the same panel and conversation, `src/page/agent-chat.ts`; its own code is
 `src/page/factory-agent.ts`, built to `factory-agent.js`) talks to the admin's
 own agent session (`factory/agent.ts`), one per admin, in the `Factory`

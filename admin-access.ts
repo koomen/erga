@@ -272,8 +272,8 @@ function keysPage(session: Session, url: URL, s: State, next: string | null): Re
       <div class="actions"><button type="button" class="new" id="add-go">Add key</button><p class="hint" id="add-hint" role="status"></p></div>
     </div>
   </section>` : "";
-  // The layout every admin page shares (admin-layout.ts); Share with agent only once admin access is open (it needs it).
-  const html = adminLayout({ session, title: "Keys", share: !!s.unlocked, style, body: `
+  // The layout every admin page shares (admin-layout.ts), Share with agent and the agent too: while locked, they say to unlock first.
+  const html = adminLayout({ session, title: "Keys", style, body: `
   ${status}
   ${unlockSection}
   <section aria-labelledby="mine-title">
