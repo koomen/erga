@@ -14,6 +14,7 @@ import { chat } from "./agent-chat";
 import { fileRefs, type Attachment } from "./attach";
 import { attachments } from "./attach-ui";
 import type { Log, LogEvent } from "./agent-log";
+import { mountPaneLayout } from "./layout";
 
 interface AgentState { enabled: boolean; reason?: string; model?: string | null; choice?: string | null; models?: { id: string; label: string }[]; log?: Log }
 declare global { interface Window { ergaBoard?: { openTask(): number | null; title(id: number): string | null; open(id: number): void } } }
@@ -33,6 +34,10 @@ const VERBS: Record<string, [string, string]> = {
   set_dependencies: ["Changing the dependencies of", "Changed the dependencies of"],
   instruct_task: ["Sending instructions to", "Sent instructions to"],
 };
+
+// Which side the agent is on, and how wide: dragged by its head and its inner edge, as in the editor (layout.ts).
+// Off where the page shows tabs instead (source/page.ts, PAGE_STYLE).
+mountPaneLayout($("workspace"), $("agent-dock"), $("panes"), $("agent").querySelector<HTMLElement>(".agent-head")!, matchMedia("(max-width: 999.98px)"));
 
 const input = $("agent-input") as HTMLTextAreaElement, send = $("agent-send") as HTMLButtonElement, hint = $("agent-hint");
 const talk = chat({ logEl: $("agent-log"), jump: $("agent-jump") as HTMLButtonElement, verbs: VERBS, imageAlt: "The screenshot the agent looked at" });

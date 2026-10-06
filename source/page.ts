@@ -7,7 +7,9 @@
 // (admin-layout.ts): the breadcrumb, Share with agent (upper right, as in the
 // editor) and the sidebar, which collapses so the board gets the full width.
 // On a wide window the agent sits on the left, as in the editor, and the
-// board and the dashboard are beside it, one above the other; narrower, tabs
+// board and the dashboard are beside it, one above the other; as in the
+// editor, the user drags the agent by its head to the right, and its inner
+// edge to resize it (src/page/layout.ts, mountPaneLayout); narrower, tabs
 // show one at a time. Each part's stylesheet is scoped to its pane
 // (scopeCss). /source, /admin/source and /admin/deploys redirect here.
 //
@@ -608,9 +610,21 @@ export function scopeCss(css: string, scope: string): string {
 }
 
 const PAGE_STYLE = `
-  /* The agent on the left, as in the editor; the board and the dashboard beside it, one above the other. */
-  .workspace { display: grid; grid-template-columns: minmax(300px, 370px) minmax(0, 1fr); gap: 20px; align-items: start; }
-  .agent-pane { position: sticky; top: 16px; height: calc(100vh - 78px); height: calc(100dvh - 78px); min-height: 420px; display: flex; flex-direction: column; min-width: 0;
+  /* The agent on the left, as in the editor, or on the right; the board and the dashboard beside it, one above the other.
+     The user drags the agent by its head to the other side, and its inner edge to resize it (src/page/layout.ts, mountPaneLayout,
+     sets --agent-w and .agent-right; the grip and the ghost are style.css's). */
+  .workspace { --agent-w: 380px; display: grid; grid-template-columns: var(--agent-w) minmax(0, 1fr); gap: 20px; align-items: start; }
+  .workspace.agent-right { grid-template-columns: minmax(0, 1fr) var(--agent-w); }
+  .agent-dock { grid-row: 1; grid-column: 1; position: sticky; top: 16px; height: calc(100vh - 78px); height: calc(100dvh - 78px); min-height: 420px; min-width: 0; }
+  .panes { grid-row: 1; grid-column: 2; }
+  .workspace.agent-right .agent-dock { grid-column: 2; }
+  .workspace.agent-right .panes { grid-column: 1; }
+  .agent-dock.layout-dragged { position: fixed; z-index: 40; }
+  .agent-dock.layout-dragged .agent-pane { box-shadow: 0 24px 48px rgba(0, 0, 0, 0.2), 0 2px 6px rgba(0, 0, 0, 0.08); }
+  .agent-dock .agent-head { cursor: grab; user-select: none; touch-action: none; }
+  body.layout-resizing .workspace, body.layout-resizing .workspace * { transition: none !important; }
+  body.layout-resizing iframe, body.layout-dragging iframe { pointer-events: none; }
+  .agent-pane { height: 100%; display: flex; flex-direction: column; min-width: 0;
     border: 1px solid var(--panel-border); border-radius: 18px; background: var(--bg); box-shadow: 0 12px 28px rgba(0, 0, 0, 0.07), 0 1px 3px rgba(0, 0, 0, 0.05); font: 14px/1.55 var(--font-text); color: var(--fg); overflow: hidden; }
   .agent-pane .agent-head .title { white-space: nowrap; }
   .panes { min-width: 0; display: flex; flex-direction: column; gap: 28px; }
@@ -627,9 +641,11 @@ const PAGE_STYLE = `
     .tabs button { flex: 1; height: 34px; border: 0; border-radius: 9px; background: transparent; color: var(--soft); font: 550 13.5px var(--font-text); cursor: pointer; }
     .tabs button[aria-selected="true"] { background: var(--fg-strong); color: var(--bg); }
     .panes { display: block; }
-    .pane, .agent-pane { display: none; }
+    .pane, .agent-dock { display: none; }
+    .agent-dock .agent-head { cursor: auto; }
+    .agent-dock .agent-resize { display: none; }
     body[data-tab="tasks"] #tasks, body[data-tab="source"] #source-pane { display: block; }
-    body[data-tab="agent"] .agent-pane { display: flex; position: static; height: calc(100dvh - 180px); min-height: 360px; }
+    body[data-tab="agent"] .agent-dock { display: block; position: static; height: calc(100dvh - 180px); min-height: 360px; }
   }
   /* The GitHub mirror: its state and Push now, or how to turn it on. */
   dialog#mirror-dlg { width: min(600px, calc(100vw - 32px)); }
@@ -697,7 +713,8 @@ export function adminFactoryPage(c: SourcePageConfig): Response {
   if (!c.admin) return plainPage("Not found", "There's nothing here. <a href=\"/\">Back to the start</a>.", 404);
   return adminResponse({ session: c.session, title: "Factory", here: "factory", wide: true, style: PAGE_STYLE + scopeCss(BOARD_STYLE, "#tasks") + scopeCss(SOURCE_STYLE, "#source-pane"), body: `
   <div class="tabs" role="tablist" aria-label="Show"><button type="button" role="tab" data-tab="tasks">Tasks</button><button type="button" role="tab" data-tab="source">Source</button><button type="button" role="tab" data-tab="agent">Agent</button></div>
-  <div class="workspace">
+  <div class="workspace" id="workspace">
+  <div class="agent-dock" id="agent-dock">
   <aside class="agent-pane" id="agent" aria-label="Agent">
     <div class="agent-head">
       <span class="title">Agent</span><span class="model" id="agent-model"></span>
@@ -713,7 +730,8 @@ export function adminFactoryPage(c: SourcePageConfig): Response {
       <button type="submit" class="agent-send" id="agent-send">Send</button>
     </form>
   </aside>
-  <div class="panes">
+  </div>
+  <div class="panes" id="panes">
     <section class="pane" id="tasks" aria-label="Tasks">${boardMarkup({ enabled: c.factory })}</section>
     <section class="pane" id="source-pane" aria-label="Source and deploys">${sourceMarkup(c)}</section>
   </div>

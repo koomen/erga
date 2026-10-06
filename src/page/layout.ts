@@ -9,6 +9,9 @@
  *
  * The first half is the layout's state and geometry, pure (tests/layout.test.ts);
  * mountLayout puts it on the page, as CSS variables page.html's rules read.
+ *
+ * /admin/factory's agent panel has the same grip and drag (mountGrip,
+ * dragToDock), in a grid of two: mountPaneLayout, PaneLayout.
  */
 
 export type Panel = "agent" | "picker";
@@ -127,14 +130,19 @@ export function magnets(layout: Layout, panel: Panel, view: View, shown: Shown):
 export function pickSlot(marks: number[], x: number, current: number | null, hysteresis = HYSTERESIS): number {
   const dist = marks.map((m) => Math.abs(x - m));
   let best = 0;
-  for (const i of [2, 1]) if (dist[i] < dist[best]) best = i;
+  for (let i = marks.length - 1; i > 0; i--) if (dist[i] < dist[best]) best = i;
   if (current != null && dist[current] <= dist[best] + hysteresis) return current;
   return best;
 }
 
+/** A panel's width after dragging its inner edge (the edge that faces the page) by `dx`. */
+export function resizedTo(start: number, dx: number, side: Side, min: number, max: number): number {
+  return Math.round(clamp(side == "left" ? start + dx : start - dx, min, max));
+}
+
 /** The agent's width after dragging its inner edge by `dx` (the edge that faces the document). */
 export function resized(start: number, dx: number, side: Side, view: View, pickerShown: boolean): number {
-  return Math.round(clamp(side == "left" ? start + dx : start - dx, AGENT_MIN, agentMax(view, pickerShown)));
+  return resizedTo(start, dx, side, AGENT_MIN, agentMax(view, pickerShown));
 }
 
 export function load(storage: Pick<Storage, "getItem"> | null): Layout {
@@ -145,11 +153,188 @@ export function save(storage: Pick<Storage, "setItem"> | null, layout: Layout) {
   try { storage?.setItem(KEY, JSON.stringify(layout)); } catch {}
 }
 
+// ---------------------------------------------------------------- /admin/factory's agent panel
+
+/**
+ * /admin/factory's agent panel (source/page.ts, src/page/factory-agent.ts): the
+ * same grip and drag as the editor's agent, in a grid of two, the agent and
+ * the board's column, either way round. Kept in this browser (PANE_KEY).
+ */
+export const PANE_KEY = "erga:factory-layout:v1";
+export interface PaneLayout { side: Side; width: number }
+export const PANE_DEFAULT: PaneLayout = { side: "left", width: AGENT_DEFAULT };
+/** The narrowest the board and the dashboard get while the agent is resized, and the gap between them and the agent. */
+export const PANES_MIN = 480, PANE_GAP = 20;
+
+export function normalizePane(raw: unknown): PaneLayout {
+  const r = (raw && typeof raw == "object" ? raw : {}) as Partial<PaneLayout>;
+  const side = r.side == "right" ? "right" : "left";
+  const width = typeof r.width == "number" && Number.isFinite(r.width) ? clamp(Math.round(r.width), AGENT_MIN, AGENT_MAX) : PANE_DEFAULT.width;
+  return { side, width };
+}
+
+/** The agent's widest in a workspace `room` wide: the board keeps PANES_MIN. */
+export function paneMax(room: number): number {
+  return Math.max(AGENT_MIN, Math.min(AGENT_MAX, room - PANE_GAP - PANES_MIN));
+}
+
+export function paneWidth(layout: PaneLayout, room: number): number {
+  return clamp(layout.width, AGENT_MIN, paneMax(room));
+}
+
+export function loadPane(storage: Pick<Storage, "getItem"> | null): PaneLayout {
+  try { return normalizePane(JSON.parse(storage?.getItem(PANE_KEY) || "null")); } catch { return normalizePane(null); }
+}
+
+export function savePane(storage: Pick<Storage, "setItem"> | null, layout: PaneLayout) {
+  try { storage?.setItem(PANE_KEY, JSON.stringify(layout)); } catch {}
+}
+
 // ---------------------------------------------------------------- on the page
 
 const FAB = 44;
 /** How far the pointer moves on a head before it's a drag, not a click. */
 const DRAG_START = 5;
+const px = (n: number) => Math.round(n) + "px";
+const localStore = () => { try { return localStorage; } catch { return null; } };
+
+export interface GripOptions {
+  /** The width and the side when a resize starts; null when the panel can't be resized now (a narrow window). */
+  start(): { width: number; side: Side } | null;
+  /** The widest the panel can be now. */
+  max(): number;
+  /** Shows the panel at this width. */
+  set(width: number): void;
+  /** Let go, or a double-click: keep the width. */
+  done(): void;
+}
+export interface Grip { el: HTMLElement; show(side: Side, width: number, max: number): void }
+
+/**
+ * The handle on a panel's inner edge (style.css's .agent-resize), in `parent`:
+ * drag it to resize the panel, from AGENT_MIN to `max()`; a double-click
+ * goes back to AGENT_DEFAULT.
+ */
+export function mountGrip(parent: HTMLElement, o: GripOptions): Grip {
+  const body = document.body;
+  const grip = document.createElement("div");
+  grip.className = "agent-resize";
+  grip.setAttribute("role", "separator");
+  grip.setAttribute("aria-orientation", "vertical");
+  grip.setAttribute("aria-label", "Agent width");
+  grip.title = "Drag to resize, double-click for the default width";
+  grip.tabIndex = -1;
+  parent.append(grip);
+  grip.addEventListener("pointerdown", (e) => {
+    const s = e.button == 0 ? o.start() : null;
+    if (!s) return;
+    e.preventDefault();
+    grip.setPointerCapture(e.pointerId);
+    const startX = e.clientX;
+    body.classList.add("layout-resizing");
+    const move = (m: PointerEvent) => o.set(resizedTo(s.width, m.clientX - startX, s.side, AGENT_MIN, o.max()));
+    const end = () => {
+      grip.removeEventListener("pointermove", move);
+      body.classList.remove("layout-resizing");
+      o.done();
+    };
+    grip.addEventListener("pointermove", move);
+    grip.addEventListener("pointerup", end, { once: true });
+    grip.addEventListener("pointercancel", end, { once: true });
+  });
+  grip.addEventListener("dblclick", () => { o.set(AGENT_DEFAULT); o.done(); });
+  return {
+    el: grip,
+    show(side, width, max) {
+      grip.dataset.side = side;
+      grip.setAttribute("aria-valuenow", String(width));
+      grip.setAttribute("aria-valuemin", String(AGENT_MIN));
+      grip.setAttribute("aria-valuemax", String(max));
+    },
+  };
+}
+
+/** The ghost that shows where a dragged panel will land (style.css's .dock-ghost). */
+export function mountGhost(): HTMLElement {
+  const ghost = document.createElement("div");
+  ghost.className = "dock-ghost";
+  ghost.hidden = true;
+  document.body.append(ghost);
+  return ghost;
+}
+
+export interface DockOptions {
+  /** The panel, what it's dragged by (its head), and the ghost. */
+  el: HTMLElement; handle: HTMLElement; ghost: HTMLElement;
+  /** The slots' magnets, left to right (window x), and the slot the panel is in. */
+  marks: number[]; slot: number;
+  /** Lays the page out as if the panel were in `slot`; where the panel goes there. */
+  preview(slot: number): Box;
+  /** Let go over `slot`, or put back (null: Escape, or the pointer lost). */
+  drop(slot: number | null): void;
+  /** When the drag starts (before the panel is lifted: .layout-dragged). */
+  lift?(): void;
+  /** After it's let go, from where it was (`from`); the editor's panels ease into place by themselves. */
+  land?(from: DOMRect): void;
+}
+
+/**
+ * A panel dragged by its head, from a pointerdown: past DRAG_START it follows
+ * the pointer, the nearest slot (pickSlot) shows as the ghost and the page
+ * lays itself out around it; let go, it drops there; Escape puts it back.
+ */
+export function dragToDock(e: PointerEvent, o: DockOptions) {
+  if (e.button != 0) return;
+  if ((e.target as Element).closest("button, select, input, a, textarea")) return;
+  const { el, handle, ghost } = o, body = document.body;
+  handle.setPointerCapture(e.pointerId);
+  const startX = e.clientX, startY = e.clientY, vw = document.documentElement.clientWidth || innerWidth;
+  let slot = o.slot, dragging = false, grab = 0, w = 0;
+  const move = (m: PointerEvent) => {
+    if (!dragging) {
+      if (Math.hypot(m.clientX - startX, m.clientY - startY) < DRAG_START) return;
+      dragging = true;
+      const r = el.getBoundingClientRect();
+      grab = startX - r.left; w = r.width;
+      o.lift?.();
+      el.classList.add("layout-dragged");
+      body.classList.add("layout-dragging");
+      ghost.hidden = false;
+    }
+    el.style.left = px(clamp(m.clientX - grab, -w / 2, vw - w / 2));
+    const next = pickSlot(o.marks, m.clientX, slot);
+    if (next != slot || ghost.dataset.at == null) {
+      slot = next;
+      const b = o.preview(slot);
+      ghost.dataset.at = String(slot);
+      ghost.style.left = px(b.x);
+      ghost.style.width = px(b.w);
+    }
+  };
+  const end = (cancel: boolean) => {
+    handle.removeEventListener("pointermove", move);
+    handle.removeEventListener("pointerup", up);
+    handle.removeEventListener("pointercancel", cancelled);
+    removeEventListener("keydown", key, true);
+    if (!dragging) return;
+    const from = el.getBoundingClientRect();
+    o.drop(cancel ? null : slot);
+    // From where it was let go to its slot: the inline left goes, and the transition to the slot's runs.
+    el.classList.remove("layout-dragged");
+    void el.offsetWidth;
+    el.style.left = "";
+    body.classList.remove("layout-dragging");
+    ghost.hidden = true;
+    delete ghost.dataset.at;
+    o.land?.(from);
+  };
+  const up = () => end(false), cancelled = () => end(true);
+  const key = (k: KeyboardEvent) => { if (k.key == "Escape" && dragging) { k.preventDefault(); k.stopPropagation(); end(true); } };
+  handle.addEventListener("pointermove", move);
+  handle.addEventListener("pointerup", up);
+  handle.addEventListener("pointercancel", cancelled);
+  addEventListener("keydown", key, true);
+}
 
 export interface LayoutHandle { refresh(): void; get layout(): Layout }
 
@@ -162,10 +347,11 @@ export interface LayoutHandle { refresh(): void; get layout(): Layout }
  */
 export function mountLayout(agent: HTMLElement, agentHead: HTMLElement): LayoutHandle {
   const root = document.documentElement, body = document.body;
-  const storage = (() => { try { return localStorage; } catch { return null; } })();
+  const storage = localStore();
   let layout = load(storage);
   const picker = () => document.querySelector<HTMLElement>(".erga-steps-panel");
   const editing = () => body.classList.contains("erga-editing");
+  const narrow = () => body.classList.contains("layout-narrow");
 
   // The notch's insets, as CSS has them.
   const probe = document.createElement("div");
@@ -184,20 +370,14 @@ export function mountLayout(agent: HTMLElement, agentHead: HTMLElement): LayoutH
   };
 
   // The inner edge's handle, and the ghost where a dragged panel will land.
-  const grip = document.createElement("div");
-  grip.className = "agent-resize";
-  grip.setAttribute("role", "separator");
-  grip.setAttribute("aria-orientation", "vertical");
-  grip.setAttribute("aria-label", "Agent width");
-  grip.title = "Drag to resize, double-click for the default width";
-  grip.tabIndex = -1;
-  agent.append(grip);
-  const ghost = document.createElement("div");
-  ghost.className = "dock-ghost";
-  ghost.hidden = true;
-  body.append(ghost);
+  const grip = mountGrip(agent, {
+    start: () => narrow() ? null : { width: agentWidth(layout, view(), shown().picker), side: sideOf(layout.order, "agent") },
+    max: () => agentMax(view(), shown().picker),
+    set: (agentWidth) => { layout = { ...layout, agentWidth }; apply(); },
+    done: () => save(storage, layout),
+  });
+  const ghost = mountGhost();
 
-  const px = (n: number) => Math.round(n) + "px";
   function apply(l: Layout = layout, s: Shown = shown()) {
     const v = view(), g = geometry(l, v, s), agentSide = sideOf(l.order, "agent");
     const fabX = agentSide == "left" ? g.agent.x : g.agent.x + g.agent.w - FAB;
@@ -216,87 +396,24 @@ export function mountLayout(agent: HTMLElement, agentHead: HTMLElement): LayoutH
       p.classList.toggle("erga-docked", editing() && !g.narrow);
       p.classList.toggle("erga-docked-right", sideOf(l.order, "picker") == "right");
     }
-    grip.dataset.side = agentSide;
-    grip.setAttribute("aria-valuenow", String(g.agent.w));
-    grip.setAttribute("aria-valuemin", String(AGENT_MIN));
-    grip.setAttribute("aria-valuemax", String(agentMax(v, s.picker)));
+    grip.show(agentSide, g.agent.w, agentMax(v, s.picker));
     return g;
   }
 
-  // ---- resizing: the agent's inner edge
-  grip.addEventListener("pointerdown", (e) => {
-    if (e.button != 0 || body.classList.contains("layout-narrow")) return;
-    e.preventDefault();
-    grip.setPointerCapture(e.pointerId);
-    const startX = e.clientX, start = agentWidth(layout, view(), shown().picker), side = sideOf(layout.order, "agent");
-    body.classList.add("layout-resizing");
-    const move = (m: PointerEvent) => {
-      layout = { ...layout, agentWidth: resized(start, m.clientX - startX, side, view(), shown().picker) };
-      apply();
-    };
-    const end = () => {
-      grip.removeEventListener("pointermove", move);
-      body.classList.remove("layout-resizing");
-      save(storage, layout);
-    };
-    grip.addEventListener("pointermove", move);
-    grip.addEventListener("pointerup", end, { once: true });
-    grip.addEventListener("pointercancel", end, { once: true });
-  });
-  grip.addEventListener("dblclick", () => { layout = { ...layout, agentWidth: AGENT_DEFAULT }; apply(); save(storage, layout); });
-
   // ---- docking: a panel dragged by its head
   function startDrag(panel: Panel, el: HTMLElement, handle: HTMLElement, e: PointerEvent) {
-    if (e.button != 0 || body.classList.contains("layout-narrow")) return;
-    if ((e.target as Element).closest("button, select, input, a, textarea")) return;
-    handle.setPointerCapture(e.pointerId);
-    const startX = e.clientX, startY = e.clientY;
-    const from = layout, s = shown(), v = view();
-    const marks = magnets(from, panel, v, s);
-    let slot = from.order.indexOf(panel), dragging = false, grab = 0, w = 0;
-    const move = (m: PointerEvent) => {
-      if (!dragging) {
-        if (Math.hypot(m.clientX - startX, m.clientY - startY) < DRAG_START) return;
-        dragging = true;
-        const r = el.getBoundingClientRect();
-        grab = startX - r.left; w = r.width;
-        el.classList.add("layout-dragged");
-        body.classList.add("layout-dragging");
-        ghost.hidden = false;
-      }
-      el.style.left = px(clamp(m.clientX - grab, -w / 2, v.width - w / 2));
-      const next = pickSlot(marks, m.clientX, slot);
-      if (next != slot || ghost.dataset.at == null) {
-        slot = next;
-        const order = insertAt(from.order, panel, slot), g = apply({ ...from, order }, s);
-        ghost.dataset.at = String(slot);
-        ghost.style.left = px(g[panel].x);
-        ghost.style.width = px(g[panel].w);
-      }
-    };
-    const end = (cancel: boolean) => {
-      handle.removeEventListener("pointermove", move);
-      handle.removeEventListener("pointerup", up);
-      handle.removeEventListener("pointercancel", cancelled);
-      removeEventListener("keydown", key, true);
-      if (!dragging) return;
-      layout = cancel ? from : { ...from, order: insertAt(from.order, panel, slot) };
-      apply();
-      save(storage, layout);
-      // From where it was let go to its slot, eased: the inline left goes, and the transition to the slot's runs.
-      el.classList.remove("layout-dragged");
-      void el.offsetWidth;
-      el.style.left = "";
-      body.classList.remove("layout-dragging");
-      ghost.hidden = true;
-      delete ghost.dataset.at;
-    };
-    const up = () => end(false), cancelled = () => end(true);
-    const key = (k: KeyboardEvent) => { if (k.key == "Escape" && dragging) { k.preventDefault(); k.stopPropagation(); end(true); } };
-    handle.addEventListener("pointermove", move);
-    handle.addEventListener("pointerup", up);
-    handle.addEventListener("pointercancel", cancelled);
-    addEventListener("keydown", key, true);
+    if (narrow()) return;
+    const from = layout, s = shown();
+    dragToDock(e, {
+      el, handle, ghost,
+      marks: magnets(from, panel, view(), s), slot: from.order.indexOf(panel),
+      preview: (slot) => apply({ ...from, order: insertAt(from.order, panel, slot) }, s)[panel],
+      drop: (slot) => {
+        layout = slot == null ? from : { ...from, order: insertAt(from.order, panel, slot) };
+        apply();
+        save(storage, layout);
+      },
+    });
   }
   agentHead.addEventListener("pointerdown", (e) => startDrag("agent", agent, agentHead, e));
   // The steps list's head (front.ts makes it, before the editor loads).
@@ -322,4 +439,72 @@ export function mountLayout(agent: HTMLElement, agentHead: HTMLElement): LayoutH
   addEventListener("resize", refresh);
   apply();
   return { refresh: () => { watch(); refresh(); }, get layout() { return layout; } };
+}
+
+/** Slides `el` from where it was (`from`) to where it is now. */
+function slide(el: HTMLElement, from: DOMRect) {
+  const to = el.getBoundingClientRect(), dx = from.left - to.left, dy = from.top - to.top;
+  if (Math.abs(dx) < 1 && Math.abs(dy) < 1) return;
+  if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  el.animate([{ transform: `translate(${dx}px, ${dy}px)` }, { transform: "none" }], { duration: 420, easing: "cubic-bezier(0.45, 0, 0.15, 1)" });
+}
+
+/**
+ * Puts PaneLayout on /admin/factory: --agent-w on the workspace (a grid of
+ * the agent's `dock` and the board's column, `panes`), .agent-right on it when
+ * the agent is right of the board, the grip on the dock's inner edge, and the
+ * dock dragged by the agent's head. Off where the window is `narrow` (tabs).
+ */
+export function mountPaneLayout(workspace: HTMLElement, dock: HTMLElement, panes: HTMLElement, head: HTMLElement, narrow: MediaQueryList) {
+  const storage = localStore();
+  let layout = loadPane(storage);
+  const room = () => workspace.clientWidth;
+  const grip = mountGrip(dock, {
+    start: () => narrow.matches ? null : { width: paneWidth(layout, room()), side: layout.side },
+    max: () => paneMax(room()),
+    set: (width) => { layout = { ...layout, width }; apply(); },
+    done: () => savePane(storage, layout),
+  });
+  const ghost = mountGhost();
+  function apply(l: PaneLayout = layout) {
+    const w = paneWidth(l, room());
+    workspace.style.setProperty("--agent-w", px(w));
+    // The board slides across when the agent changes sides.
+    const before = workspace.classList.contains("agent-right") != (l.side == "right") ? panes.getBoundingClientRect() : null;
+    workspace.classList.toggle("agent-right", l.side == "right");
+    if (before) slide(panes, before);
+    grip.show(l.side, w, paneMax(room()));
+    return w;
+  }
+  head.addEventListener("pointerdown", (e) => {
+    if (narrow.matches) return;
+    const from = layout, box = () => workspace.getBoundingClientRect();
+    const b = box();
+    dragToDock(e, {
+      el: dock, handle: head, ghost,
+      marks: [b.left, b.right], slot: from.side == "right" ? 1 : 0,
+      lift: () => {
+        // Out of the grid while dragged, where it was; the ghost the same height.
+        const r = dock.getBoundingClientRect();
+        Object.assign(dock.style, { top: px(r.top), height: px(r.height), width: px(r.width) });
+        Object.assign(ghost.style, { top: px(r.top), height: px(r.height) });
+      },
+      preview: (slot) => {
+        const w = apply({ ...from, side: slot == 1 ? "right" : "left" }), b = box();
+        return { x: slot == 1 ? b.right - w : b.left, w };
+      },
+      drop: (slot) => {
+        layout = slot == null ? from : { ...from, side: slot == 1 ? "right" : "left" };
+        apply();
+        savePane(storage, layout);
+      },
+      land: (from) => {
+        Object.assign(dock.style, { top: "", height: "", width: "" });
+        slide(dock, from);
+      },
+    });
+  });
+  new ResizeObserver(() => apply()).observe(workspace);
+  apply();
+  return { get layout() { return layout; } };
 }
