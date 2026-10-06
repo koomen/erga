@@ -165,10 +165,33 @@ try {
   const bo = await signIn("bo");
   const asBo = await fetch(`${host.root}/deploy`, { headers: { Cookie: bo }, redirect: "manual" });
   expect(asBo.status == 200, "by default anyone signed in may (deploy_page: users)", asBo.status);
+  // A page of its own, not an admin one: its old address under /admin goes there, and admin settings don't list it.
+  const old = await fetch(`${host.root}/admin/deploy`, { headers: { Cookie: bo }, redirect: "manual" });
+  expect(old.status == 301 && old.headers.get("location") == "/deploy", "/admin/deploy redirects to /deploy", [old.status, old.headers.get("location")]);
+  const adminHtml = await p.eval<string>(`fetch("/admin").then((r) => r.text())`);
+  expect(adminHtml.includes('aria-label="Settings"') && !adminHtml.includes('id="deploy-title"'), "admin settings no longer list it");
+  const boHtml = await asBo.text();
+  expect(boHtml.includes('href="/deploy">Deploy your own</a>') && !boHtml.includes("Admin settings"), "Bo's menu has Deploy your own, and no Admin settings", boHtml.slice(-1200));
+  // Bo may deploy, and nothing more: admin settings, users, the source and the factory stay closed to them.
+  for (const [method, path, body] of [
+    ["GET", "/admin", null], ["POST", "/admin/settings", { key: "deploy_page", value: '"off"' }], ["POST", "/admin/users", { do: "add", login: "eve", role: "admin" }],
+    ["GET", "/admin/source", null], ["GET", "/api/factory", null], ["GET", "/admin/keys", null],
+  ] as const) {
+    const r = await fetch(`${host.root}${path}`, { method, headers: { Cookie: bo, Origin: host.root, Accept: "application/json" }, redirect: "manual", ...(body ? { body: new URLSearchParams(body) } : {}) });
+    const text = await r.text();
+    expect(r.status != 200 || (path == "/admin/keys" && !text.includes("users-title")), `Bo can't use ${method} ${path}`, [r.status, text.slice(0, 300)]);
+  }
+  const still = await fetch(`${host.root}/deploy`, { headers: { Cookie: bo }, redirect: "manual" });
+  expect(still.status == 200, "the deploy_page setting is unchanged", still.status);
+  const users = await p.eval<string>(`fetch("/admin").then((r) => r.text())`);
+  expect(!users.includes('data-login="eve"'), "and no user was added");
+  ok("/deploy is a page of its own: /admin/deploy redirects there; Bo may deploy without being an admin, and gets no admin rights");
   const admins = await p.eval<number>(`fetch("/admin/settings", { method: "POST", body: new URLSearchParams({ key: "deploy_page", value: '"admins"' }) }).then((r) => r.status)`);
   expect(admins == 200, "an admin limits it to admins", admins);
   const notBo = await fetch(`${host.root}/deploy`, { headers: { Cookie: bo }, redirect: "manual" });
   expect(notBo.status == 404, "then someone who isn't an admin gets not found", notBo.status);
+  const boMenu = await (await fetch(`${host.root}/docs`, { headers: { Cookie: bo } })).text();
+  expect(!boMenu.includes("Deploy your own"), "and their menu has no Deploy your own", boMenu.slice(-1200));
   const api = await fetch(`${host.root}/deploy/api/session`, { headers: { Cookie: bo } });
   expect(api.status == 404, "and so does its API", api.status);
   // (Locally, a request with no cookie is DEV_LOGIN, an admin: but only this site's pages may post.)

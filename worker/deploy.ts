@@ -1,7 +1,8 @@
 // /deploy: deploy Erga to your own Cloudflare account, from erga.dev, with
 // the same settings erga.dev has (deploy/cloudflare.ts). Who may use it is
 // the deploy_page setting (anyone signed in by default; "admins" for admins
-// only, "off" hides it); anyone else gets "not found".
+// and users with the deploy role, users.ts; "off" hides it); anyone else
+// gets "not found".
 //
 //   /deploy                                the page (deploy/page.ts)
 //   /deploy/auth/cloudflare[/callback]     "Authorize with Cloudflare": OAuth with PKCE, when the server has a client
@@ -22,7 +23,7 @@
 import { DEFAULT_OAUTH_SCOPES, OAUTH, tokenPermissions, tokenTemplateUrl, type DeployPlan } from "../deploy/cloudflare";
 import { mockCloudflare } from "../deploy/mock";
 import { deployPage, mockConsentPage } from "../deploy/page";
-import { page, whoOf, type Platform, type Session } from "../front";
+import { mayDeploy, page, whoOf, type Platform } from "../front";
 import { isDev } from "./auth";
 import type { Env } from "./env";
 
@@ -33,7 +34,7 @@ export async function deployDoor(request: Request, env: Env, platform: Platform)
   const path = url.pathname.replace(/\/+$/, "") || "/";
   const session = await platform.sessionOf(request);
   if (!session && path == "/deploy" && request.method == "GET") return new Response(null, { status: 302, headers: { Location: `/auth/github?next=${encodeURIComponent("/deploy")}` } });
-  if (!(await allowed(platform, session))) return path.startsWith("/deploy/api/") ? Response.json({ ok: false, error: "Not found" }, { status: 404 }) : page("Not found", "There's nothing here. <a href=\"/\">Back to the start</a>.", 404);
+  if (!(await mayDeploy(platform.directory, session))) return path.startsWith("/deploy/api/") ? Response.json({ ok: false, error: "Not found" }, { status: 404 }) : page("Not found", "There's nothing here. <a href=\"/\">Back to the start</a>.", 404);
   const owner = whoOf(session!).login;
   const mock = env.ERGA_DEPLOY_MOCK == "1" && isDev(env, url);
   const oauth = mock || !!env.CLOUDFLARE_OAUTH_CLIENT_ID?.trim();
@@ -106,14 +107,6 @@ export async function deployDoor(request: Request, env: Env, platform: Platform)
   })();
   if (!answer) return Response.json({ ok: false, error: "Not found" }, { status: 404 });
   return Response.json(answer, { status: answer.ok ? 200 : 400 });
-}
-
-/** Who may use /deploy: the deploy_page setting (off, admins or users), and never a test person or an agent's token. */
-async function allowed(platform: Platform, session: Session | null): Promise<boolean> {
-  if (!session || session.test || session.agent) return false;
-  const mode = await platform.directory.config.get("deploy_page");
-  if (mode == "users") return true;
-  return mode == "admins" && (await platform.directory.users.isAdmin(whoOf(session)));
 }
 
 const back = (error: string, ...setCookies: string[]) => {

@@ -1,5 +1,5 @@
 // The agent panel's conversation, as both agents' panels draw it: the
-// editor's (main.ts) and the factory's on /admin/source (factory-agent.ts).
+// editor's (main.ts) and the factory's on /admin/factory (factory-agent.ts).
 // It renders the transcript (agent-log.ts) into the panel's log, keeps it
 // following the agent's output as a terminal does, and shows a message the
 // moment it's sent, dimmed until the agent's host echoes it back (or with

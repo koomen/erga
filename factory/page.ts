@@ -1,11 +1,11 @@
-// The factory's board (experimental), a part of /admin/source (source/page.ts,
+// The factory's board (experimental), a part of /admin/factory (source/page.ts,
 // which puts it beside the source dashboard and the factory's agent): the
 // local task queue's board (development/task-queue/index.html) inside Erga. Columns
 // Queued, Working, Ready to merge and Merging (with "needs agent": a merge the task's Claude Code
-// is finishing, Merge off, with the reason; merged tasks leave the board, and the Source page
+// is finishing, Merge off, with the reason; merged tasks leave the board, and the Factory page
 // shows staging); a card per task, its
 // detail on a click (the ask, the summary, the preview, the branch, the log,
-// the screenshots, at the top in a grid, a click to enlarge one), with Merge, Discard and new instructions; live, over
+// the screenshots, at the top in a grid, a click to enlarge one, the arrow keys for the previous and next one, Escape to shrink it), with Merge, Discard and new instructions; live, over
 // /api/factory/events. Dependencies between tasks as on the local board: a
 // chip on the card ("waiting for #12"), blocked tasks at the bottom of
 // Queued, Merge (and Start) off with the reason, and a Dependencies section
@@ -93,6 +93,7 @@ export const BOARD_STYLE = `
   .shots figure:not(.big) img { aspect-ratio: 16 / 10; object-fit: cover; object-position: top; }
   .shots figure.big { grid-column: 1 / -1; grid-row: 1; cursor: zoom-out; }
   .shots figure.big img { max-height: calc(100vh - 140px); object-fit: contain; background: var(--panel); }
+  .shots figure:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 6px; }
   .shots figcaption { color: var(--muted); font-size: 12px; margin-top: 4px; }
   .log { font: 12px/1.5 ui-monospace, monospace; max-height: 260px; overflow: auto; background: var(--panel); border-radius: 6px; padding: 8px 10px; }
   .log div { white-space: pre-wrap; overflow-wrap: anywhere; } .log time { color: var(--muted); margin: 0 8px 0 0; font-size: inherit; }
@@ -102,6 +103,8 @@ export const BOARD_STYLE = `
   input:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
   .row { display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px; align-items: center; }
   .row .why { color: var(--bad); font-size: 12px; margin-right: auto; }
+  .row .why.sent { color: var(--muted); }
+  .dlg .hint { color: var(--muted); font-size: 13px; margin: 0 0 8px; }
   ol.steps { margin: 8px 0 0; padding-left: 1.3em; color: var(--ink); } ol.steps li { margin: 4px 0; }
   code { font: 12px ui-monospace, monospace; background: var(--panel); border-radius: 4px; padding: 1px 4px; }
   .fine { color: var(--muted); font-size: 12px; margin-top: 10px; }
@@ -280,9 +283,12 @@ function renderDialog() {
   const d = $("dlg");
   if (!t) { d.close(); return; }
   // Click a screenshot to enlarge it to the modal's width (on the first row), again to put it back in the grid.
-  const shots = t.screenshots.map((s) => '<figure data-act="shot" data-file="' + esc(s.file) + '"' + (s.file == bigShot ? ' class="big"' : "") + ' title="' + (s.file == bigShot ? "Click to shrink" : "Click to enlarge") + '"><img src="/api/factory/shots/' + esc(s.file) + '" alt=""><figcaption>' + esc(s.caption) + '</figcaption></figure>').join("");
+  // The arrow keys go to the previous and next one, enlarged or not (see shotKey).
+  const shots = t.screenshots.map((s) => '<figure data-act="shot" data-file="' + esc(s.file) + '" tabindex="0" role="button"' + (s.file == bigShot ? ' class="big"' : "") + ' title="' + (s.file == bigShot ? "Click or Escape to shrink" : "Click to enlarge") + ', arrow keys for the others"><img src="/api/factory/shots/' + esc(s.file) + '" alt=""><figcaption>' + esc(s.caption) + '</figcaption></figure>').join("");
   const log = t.log.map((l) => '<div><time>' + new Date(l.at).toLocaleTimeString() + '</time>' + esc(l.message) + '</div>').join("");
-  const revisable = ["complete", "failed"].includes(t.status);
+  // A working task takes them too: its Claude Code gets them when its current step ends.
+  const revisable = ["complete", "failed", "working"].includes(t.status);
+  const working = t.status == "working";
   const keep = d.querySelector("#instructions")?.value || "";
   // A redraw of the open task (a live update) keeps what the user is doing in it: see keepState.
   const restore = d.open && d.dataset.task == String(t.id) ? keepState(d) : () => {};
@@ -297,7 +303,7 @@ function renderDialog() {
     depsSection(t) +
     (t.summary ? '<section><h4>Summary</h4><div class="text">' + esc(t.summary) + '</div></section>' : "") +
     '<section><h4>The ask</h4><div class="text">' + esc(t.description) + '</div></section>' +
-    (revisable ? '<section><h4>More instructions</h4><textarea id="instructions" placeholder="What Claude Code should change next">' + esc(keep) + '</textarea><div class="row"><span class="why" id="revise-why"></span><button class="primary" data-act="revise" data-id="' + t.id + '">Send to Claude Code</button></div></section>' : "") +
+    (revisable ? '<section><h4>More instructions</h4>' + (working ? '<p class="hint">Claude Code works on this task now. It gets these instructions when its current step ends, and keeps its work.' + (t.waiting ? ' ' + t.waiting + (t.waiting == 1 ? ' instruction waits' : ' instructions wait') + ' for it now.' : '') + '</p>' : '') + '<textarea id="instructions" placeholder="What Claude Code should change next">' + esc(keep) + '</textarea><div class="row"><span class="why" id="revise-why"></span><button class="primary" data-act="revise" data-id="' + t.id + '">Send to Claude Code</button></div></section>' : "") +
     '<section><h4>Log</h4><div class="log" id="task-log">' + log + '</div></section></div>';
   const l = $("task-log"); if (l) l.scrollTop = l.scrollHeight;
   if (!d.open) d.showModal();
@@ -311,7 +317,7 @@ function renderDialog() {
  * update doesn't take the cursor out of the text the user is typing.
  */
 function keepState(d) {
-  const key = (el) => el.id ? "#" + el.id : el.dataset.act ? '[data-act="' + el.dataset.act + '"]' + (el.dataset.id ? '[data-id="' + el.dataset.id + '"]' : "") + (el.dataset.dep ? '[data-dep="' + el.dataset.dep + '"][data-kind="' + el.dataset.kind + '"]' : "") : null;
+  const key = (el) => el.id ? "#" + el.id : el.dataset.act ? '[data-act="' + el.dataset.act + '"]' + (el.dataset.file ? '[data-file="' + CSS.escape(el.dataset.file) + '"]' : "") + (el.dataset.id ? '[data-id="' + el.dataset.id + '"]' : "") + (el.dataset.dep ? '[data-dep="' + el.dataset.dep + '"][data-kind="' + el.dataset.kind + '"]' : "") : null;
   const fields = [...d.querySelectorAll("input[id], textarea[id], select[id]")].map((el) => ({ key: key(el), value: el.value, height: el.style.height, top: el.scrollTop,
     sel: el.selectionStart != null ? [el.selectionStart, el.selectionEnd, el.selectionDirection] : null }));
   const active = d.contains(document.activeElement) ? key(document.activeElement) : null;
@@ -453,12 +459,50 @@ document.addEventListener("click", async (e) => {
       el.disabled = true;
       await setDeps(id, { [kind]: act == "dep" ? [...now, dep] : now.filter((x) => x != dep) });
     }
-    else if (act == "revise") upsert(await api("/tasks/" + id + "/revise", { method: "POST", json: { instructions: $("instructions").value } }));
+    else if (act == "revise") {
+      const was = tasks.find((x) => x.id == id)?.status;
+      upsert(await api("/tasks/" + id + "/revise", { method: "POST", json: { instructions: $("instructions").value } }));
+      // Sent to a working task: the box stays, empty, and says so.
+      if (was == "working" && $("instructions")) { $("instructions").value = ""; $("revise-why").textContent = "Sent. Claude Code gets them when its current step ends."; $("revise-why").classList.add("sent"); }
+    }
   } catch (err) {
     if (act == "revise") $("revise-why").textContent = err.message; else alert(err.message);
   }
 });
 $("dlg").addEventListener("close", () => { openId = null; bigShot = null; });
+$("dlg").addEventListener("keydown", shotKey);
+
+/**
+ * The detail view's keys for its screenshots. Left and right go to the previous and next screenshot, around at
+ * the ends: the enlarged one changes if one is enlarged, else the focus moves along the grid. Enter or Space
+ * enlarges (or shrinks) the one that has the focus. Escape shrinks the enlarged one (it doesn't close the view).
+ * The arrows do nothing in a field (the instructions, a choice), so they still move the cursor there.
+ */
+function shotKey(e) {
+  const t = tasks.find((x) => x.id == openId);
+  if (!t || !t.screenshots.length || e.altKey || e.ctrlKey || e.metaKey) return;
+  const d = $("dlg");
+  const show = (file, focus) => {
+    bigShot = file; renderDialog();
+    const f = d.querySelector('.shots figure[data-file="' + CSS.escape(focus) + '"]');
+    if (f) { f.focus({ preventScroll: true }); f.scrollIntoView({ block: "nearest" }); }
+  };
+  if (e.key == "Escape") {
+    if (!bigShot) return;
+    e.preventDefault();
+    show(null, bigShot);
+    return;
+  }
+  const fig = e.target.closest(".shots figure");
+  if ((e.key == "Enter" || e.key == " ") && fig) { e.preventDefault(); show(bigShot == fig.dataset.file ? null : fig.dataset.file, fig.dataset.file); return; }
+  if (e.key != "ArrowLeft" && e.key != "ArrowRight" || e.target.closest("input, textarea, select, [contenteditable]")) return;
+  const files = t.screenshots.map((s) => s.file), step = e.key == "ArrowRight" ? 1 : -1;
+  const from = files.indexOf(bigShot || fig?.dataset.file);
+  const next = files[from < 0 ? (step > 0 ? 0 : files.length - 1) : (from + step + files.length) % files.length];
+  e.preventDefault();
+  if (bigShot) show(next, next);
+  else { const f = d.querySelector('.shots figure[data-file="' + CSS.escape(next) + '"]'); f.focus(); f.scrollIntoView({ block: "nearest" }); }
+}
 
 async function load() {
   [info, tasks] = await Promise.all([api(""), api("/tasks")]);
@@ -484,7 +528,7 @@ window.ergaBoard = { openTask: () => openId, title: (id) => tasks.find((x) => x.
 /** The board's pane: its head (where VMs run, the Claude sign-in), the notice, the columns, its dialogs. */
 export function boardMarkup(opts: { enabled: boolean }): string {
   return `<div class="pane-head"><h2>Tasks</h2><div class="pills" id="pills"><span class="pill" id="live">connecting</span><button class="pill" id="mirror-pill" type="button" hidden>GitHub: loading…</button></div></div>
-<div class="notice" id="notice" ${opts.enabled ? "hidden" : ""}>The factory is off. An admin turns it on with the <code>factory</code> setting on <a href="/admin">Admin settings</a>.</div>
+<div class="notice" id="notice" ${opts.enabled ? "hidden" : ""}>The factory is off. An admin turns it on with the <code>factory</code> setting on <a href="/admin">Settings</a>.</div>
 <div class="board" id="board"></div>
 <dialog id="dlg"></dialog>
 <dialog id="form" class="small"></dialog>

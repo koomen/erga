@@ -1,4 +1,4 @@
-// The factory's own agent, on /admin/source: an agent panel like the
+// The factory's own agent, on /admin/factory: an agent panel like the
 // editor's (the same transcript, src/page/agent-log.ts, and the same panel,
 // src/page/agent-chat.ts), with tools that queue and read factory tasks the
 // way the local outer agent uses the task queue (AGENTS.md): add a task
@@ -114,7 +114,7 @@ export function factoryTools(ops: FactoryOps, guard: () => Promise<void>): Agent
         if (!r.ok) throw new Error(r.error ?? "refused");
         return text(brief((await ops.task(Number(a.id)))!));
       }),
-    tool("instruct_task", "Send instructions", "Sends more instructions to a task that is ready to merge or failed: Claude Code works on it again, on the same branch, and it comes back to ready to merge. Say plainly what to change.",
+    tool("instruct_task", "Send instructions", "Sends more instructions to a task that is working, ready to merge or failed. A working task's Claude Code gets them when its current step ends, and keeps its work (a command that still runs a minute later is stopped, so they reach it). A task that is ready to merge or failed works again, on the same branch, and comes back to ready to merge. The task's log shows the instructions, and when Claude Code got them. Say plainly what to change.",
       Type.Object({ id: Type.Integer({ description: "The task's id" }), instructions: Type.String({ description: "What Claude Code should change next" }) }),
       async (a) => {
         const r = await ops.revise(Number(a.id), String(a.instructions ?? ""));
@@ -136,7 +136,7 @@ export const FACTORY_TOOL_VERBS: Record<string, [string, string]> = {
 };
 
 const systemPrompt = (owner: string) => `
-You are ${agentName(owner)}, embedded in Erga's admin page for its source (/admin/source).
+You are ${agentName(owner)}, embedded in Erga's Factory page (/admin/factory).
 ${owner} is an admin of this Erga server, and has the page open: the factory's task
 board, the source and deploy dashboard (staging and main, and their deploys), and you.
 
@@ -160,7 +160,7 @@ how tasks depend on each other, and tell them how tasks are doing.
   land in order. Never queue a task that builds against a stand-in for another task's
   unmerged work, followed by one to "connect it to the real thing": use startAfter, or
   write the contract and use mergeAfter. set_dependencies changes them later.
-- instruct_task sends more instructions to a task that is ready to merge or failed.
+- instruct_task sends more instructions to a task that is working (its Claude Code gets them when its current step ends), ready to merge or failed.
 - A task that "needs agent" is in the middle of its merge: a conflict, or a step that
   failed or timed out, woke the task's own Claude Code to finish it, and the merge then
   goes on by itself. Its error says why; get_task's log shows what Claude Code is doing.
@@ -288,7 +288,7 @@ ${o.owner}, an admin of the Erga server at ${o.origin}, has given you a factory 
 ("${o.label}", until ${new Date(o.expires).toISOString()}). With it you can queue up
 tasks in the factory, read them, and send them more instructions, as ${o.owner}'s agent.
 Nothing else: the token can't merge, discard or start tasks, push code, deploy, read
-documents, or change settings. ${o.owner} merges each task by hand on ${o.origin}/admin/source;
+documents, or change settings. ${o.owner} merges each task by hand on ${o.origin}/admin/factory;
 Merge merges its branch into staging, which deploys itself.
 
 The factory is Erga's task queue: each task is a branch of Erga's own repository,
@@ -310,7 +310,7 @@ Send the token on every request:
                                           url (its preview), startAfter, mergeAfter, blockedBy, log, screenshots
     POST  ${api}/tasks                    {title, description, startAfter?, mergeAfter?}: a new task (201)
     PATCH ${api}/tasks/<id>               {startAfter?, mergeAfter?}: change its dependencies (lists of ids, or null)
-    POST  ${api}/tasks/<id>/revise        {instructions}: more instructions, for a task that is complete or failed
+    POST  ${api}/tasks/<id>/revise        {instructions}: more instructions, for a task that is working (its Claude Code gets them when its current step ends), complete or failed
     GET   ${api}/shots/<file>             a screenshot (PNG), by the file name a task lists
 
 For example:

@@ -22,10 +22,17 @@
 // it, before it runs again). `woken` (it ran past its
 // limit): it says done.
 //
+// Instructions sent while it works: it asks for them as Claude Code's hooks do
+// (task.ts hook) after each of its steps, and puts the first of them in its
+// note. "[factory-test: long command N]" makes it run `sleep N` first, as a
+// Bash tool call that it reports in Claude Code's stream-json events (so
+// run.ts can stop it), and "[factory-test: deaf]" makes it never ask (the
+// factory then gives them to a new run when it says done).
+//
 // Run in the clone, as the job's last step (run.ts).
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { api, CLONE, git, log, TASK, WORK } from "./common.ts";
 import { done, fail, preview, shot } from "./task.ts";
@@ -57,17 +64,27 @@ if (!existsSync(join(CLONE(), "node_modules"))) {
   const r = spawnSync("task", ["run", "--timeout", "600", "--", "bun", "install"], { cwd: CLONE(), stdio: "inherit" });
   await log(`The stand-in ran bun install again (exit ${r.status})`);
 }
+// Work that takes a while: one command, as Claude Code's Bash tool runs it.
+const long = /\[factory-test: long command (\d+)\]/.exec(brief.prompt);
+if (long && job == "work") {
+  console.log(JSON.stringify({ type: "assistant", message: { id: "stand-in-1", content: [{ type: "tool_use", id: "sleep-1", name: "Bash", input: { command: `sleep ${long[1]}` } }] } }));
+  await log(`The stand-in runs a long command: sleep ${long[1]}`);
+  const code = await new Promise((resolve) => spawn("sleep", [long[1]], { stdio: "ignore" }).on("close", (c, sig) => resolve(sig ?? c)));
+  console.log(JSON.stringify({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "sleep-1", content: `exit ${code}` }] } }));
+  await log(`The stand-in's command ended (sleep ${long[1]}: ${code})`);
+}
+const asked = await between("Bash");
 const file = join(CLONE(), "landing/index.html");
 const html = readFileSync(file, "utf8");
-const n = job == "revise" ? "revised " : "";
-const line = `<p class="factory-note" style="margin:0;padding:10px 14px;border:1px dashed var(--accent);border-radius:8px;font-family:var(--mono);font-size:13px">Made by the factory, ${n}task #${TASK()}: ${escape(brief.title)}</p>`;
+const n = asked ? "instructed " : job == "revise" ? "revised " : "";
+const line = `<p class="factory-note" style="margin:0;padding:10px 14px;border:1px dashed var(--accent);border-radius:8px;font-family:var(--mono);font-size:13px">Made by the factory, ${n}task #${TASK()}: ${escape(brief.title)}${asked ? ` (asked while it worked: ${escape(asked.slice(0, 120))})` : ""}</p>`;
 // After the first heading (or at the top of the body).
 const at = html.search(/<\/h1>/i);
 const next = html.replace(/<p class="factory-note"[^]*?<\/p>\n?/g, "");
 const changed = at >= 0 ? next.replace(/<\/h1>/i, `</h1>\n${line}`) : next.replace(/<body[^>]*>/i, (b) => `${b}\n${line}`);
 writeFileSync(file, changed);
 await git(["add", "landing/index.html"]);
-await git(["commit", "--quiet", "--allow-empty", "-m", `${job == "revise" ? "Revise" : "Factory"} task #${TASK()}: a note on the front page`]);
+await git(["commit", "--quiet", "--allow-empty", "-m", `${asked ? "Instructed" : job == "revise" ? "Revise" : "Factory"} task #${TASK()}: a note on the front page`]);
 await log("Changed landing/index.html and committed it");
 
 const statics = process.env.FACTORY_PREVIEW == "static";
@@ -85,6 +102,17 @@ await done([
   ``,
   `To see it: open the preview.`,
 ].join("\n"));
+
+/** A step ends: the instructions that wait, as Claude Code's hook gives them (task.ts hook), noted on the board. */
+async function between(tool: string): Promise<string> {
+  if (brief.prompt.includes("[factory-test: deaf]")) return "";
+  const r = spawnSync("bun", [join(import.meta.dirname, "task.ts"), "hook"], { input: JSON.stringify({ hook_event_name: "PostToolUse", tool_name: tool }), encoding: "utf8" });
+  if (!r.stdout.trim()) return "";
+  const said: string = JSON.parse(r.stdout).hookSpecificOutput.additionalContext;
+  const ask = /asks: (.*)/.exec(said)?.[1] ?? said;
+  await log(`The stand-in got the instructions: ${ask.slice(0, 200)}${said.includes("The factory stopped your command") ? " (its command was stopped for them)" : ""}`);
+  return ask;
+}
 
 function escape(s: string) { return s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!); }
 
