@@ -96,7 +96,7 @@ import { whoOf } from "../front";
 import { LOCKED } from "../users";
 import { isDev, keysRequired, sessionOf } from "./auth";
 import { agentName } from "../src/room/doc";
-import { adminKeysOf, directoryOf } from "./d1";
+import { adminKeysOf, directoryOf, factoryKey, withKeys } from "./d1";
 import type { Env } from "./env";
 
 /** "needs agent": a merge stopped (a conflict, or a step that failed or timed out) and the task's Claude Code is finishing it. */
@@ -138,11 +138,6 @@ async function hmac(key: Uint8Array | string, data: string): Promise<Uint8Array>
   return new Uint8Array(await crypto.subtle.sign("HMAC", k, enc.encode(data)));
 }
 
-/** What signs the VMs' task tokens and encrypts the Claude token: FACTORY_KEY, or locally the session secret. */
-function factoryKey(env: Env): string | null {
-  if (env.FACTORY_KEY?.trim()) return env.FACTORY_KEY.trim();
-  return env.ERGA_LINK_SECRET && env.DEV_LOGIN ? `local:${env.SESSION_SECRET}` : null;
-}
 
 /** What the repository checks the VMs' git tokens with: locally the dev server's secret (dev/factory.ts checks them); on Cloudflare FACTORY_KEY (worker/source.ts). */
 export const gitSecret = (env: Env) => env.ERGA_LINK_SECRET || factoryKey(env);
@@ -269,7 +264,8 @@ export class Factory extends DurableObject<Env> {
   private clients = new Map<WritableStreamDefaultWriter<Uint8Array>, string | null>();
   /** Each admin's agent (factory/agent.ts), with the unlock their page sent last and where the server is. */
   private agents = new Map<string, { agent: FactoryAgent; unlock: Unlock; origin: string }>();
-  private agentCfg: Promise<AgentConfig | { missing: string }> | null = null;
+  /** The agent's settings, read again after a minute, so a key an admin changes on /admin reaches it. */
+  private agentCfg: { at: number; cfg: Promise<AgentConfig | { missing: string }> } | null = null;
   private beat: ReturnType<typeof setInterval> | null = null;
   /** Merges run one at a time, in the order they were asked for. */
   private merges: Promise<void> = Promise.resolve();
@@ -824,7 +820,10 @@ export class Factory extends DurableObject<Env> {
   // -- the factory's own agent (factory/agent.ts), one per admin
 
   private config(): Promise<AgentConfig | { missing: string }> {
-    return this.agentCfg ??= Effect.runPromise(agentConfigFrom(ConfigProvider.fromUnknown(this.env)));
+    if (!this.agentCfg || Date.now() - this.agentCfg.at > 60_000) {
+      this.agentCfg = { at: Date.now(), cfg: withKeys(this.env).then((env) => Effect.runPromise(agentConfigFrom(ConfigProvider.fromUnknown(env)))) };
+    }
+    return this.agentCfg.cfg;
   }
 
   /**

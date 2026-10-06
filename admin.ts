@@ -7,6 +7,11 @@
 //   /admin/users               the Users page: their roles (admin, deploy) as switches, when they joined, add and remove
 //   POST /admin/settings       key, and value (JSON; null for never) to set it, or reset=1 to put it back to its default
 //   POST /admin/users          do=add (login, role), do=role (login, role), do=deploy (login, deploy: 1 or 0) or do=remove (login)
+//   POST /admin/credentials    name (anthropic, openai), and value to set or replace its API key, or clear=1 to remove it
+//
+// The Settings page starts with the API keys (credentials.ts): whether each
+// is set, its last four characters, and who set it when. The page never gets
+// a saved key back, nor does any answer here.
 //
 // Both pages have the layout every admin page shares (admin-layout.ts): the
 // breadcrumb, Share with agent, and the sidebar to Settings, Change log, Users and Factory.
@@ -25,6 +30,7 @@ import { esc, ICON, link, page, type Platform, type Session, TIMES_SCRIPT, whoOf
 import { adminResponse } from "./admin-layout.ts";
 import { LOCKED, NotAllowed, type ServerRole, type User } from "./users.ts";
 import { unlockFirst } from "./admin-access.ts";
+import { CredentialError, type CredentialEntry } from "./credentials.ts";
 
 /** /admin and its POSTs. */
 export async function adminDoor(platform: Platform, request: Request): Promise<Response> {
@@ -41,7 +47,7 @@ export async function adminDoor(platform: Platform, request: Request): Promise<R
   const unlocked = admin && (await platform.directory.users.isUnlocked(who!));
   if (read) {
     if (!admin) return notFound();
-    if (url.pathname == "/admin/settings") return new Response(null, { status: 302, headers: { Location: link("/admin", session!) } });
+    if (url.pathname == "/admin/settings" || url.pathname == "/admin/credentials") return new Response(null, { status: 302, headers: { Location: link("/admin", session!) } });
     if (!unlocked) return unlockFirst(url.pathname, session!);
     if (url.pathname == "/admin/changes") {
       const before = Number(url.searchParams.get("before"));
@@ -56,6 +62,11 @@ export async function adminDoor(platform: Platform, request: Request): Promise<R
   const form = await request.formData();
   const field = (name: string) => String(form.get(name) ?? "");
   try {
+    if (url.pathname == "/admin/credentials") {
+      const credentials = platform.directory.credentials, name = field("name");
+      // The answer says what the page shows: never the key.
+      return Response.json({ credential: form.get("clear") ? await credentials.clear(who!, name) : await credentials.set(who!, name, field("value")) });
+    }
     if (url.pathname == "/admin/settings") {
       const key = field("key");
       if (form.get("reset")) return Response.json({ entry: await platform.directory.config.reset(who!, key) });
@@ -81,7 +92,7 @@ export async function adminDoor(platform: Platform, request: Request): Promise<R
     }
   } catch (e) {
     if (e instanceof NotAllowed) return Response.json({ error: e.message }, { status: 403 });
-    if (e instanceof ConfigError) return Response.json({ error: e.message }, { status: 400 });
+    if (e instanceof ConfigError || e instanceof CredentialError) return Response.json({ error: e.message }, { status: 400 });
     throw e;
   }
 }
@@ -181,6 +192,31 @@ export function settingRow(e: Shown, session: Session, never: boolean): string {
   </li>`;
 }
 
+/**
+ * An API key's row: its name, what uses it, whether it is set (its last four
+ * characters, when and by whom) or what stands in for it, a box to paste a
+ * new one, and Clear. The box is always empty: the page never has the key.
+ */
+export function credentialRow(c: CredentialEntry, session: Session): string {
+  const id = `key-${c.name}`;
+  const state = c.set
+    ? `<span class="on">Set</span> · ends in <span class="last4">…${esc(c.last4 ?? "")}</span>${c.updated != null ? ` · updated ${esc(setAt(c.updated))}${c.updatedBy ? ` by ${esc(c.updatedBy)}` : ""}` : ""}`
+    : c.fallback ? `Not set here. The server uses ${esc(c.env)} from the deploy.` : "Not set.";
+  const cannot = !c.canStore ? ` <b>This server has no FACTORY_KEY, so it can't store a key.</b>` : "";
+  return `  <li class="setting credential" data-name="${esc(c.name)}" data-label="${esc(c.label)}" data-env="${esc(c.env)}"${c.fallback ? ` data-fallback="1"` : ""}>
+    <div class="about">
+      <div class="head"><label class="key" for="${id}">${esc(c.label)}</label><span class="meta">${esc(c.env)}</span></div>
+      <p class="desc">${esc(c.description)}</p>
+      <p class="state-line">${state}${cannot}</p>
+    </div>
+    <form class="value" method="post" action="${esc(link("/admin/credentials", session))}">
+      <input class="input secret" type="password" name="value" id="${id}" aria-label="${esc(c.label)}" placeholder="${c.set ? "Paste a new key" : "Paste the key"}" autocomplete="off" autocapitalize="off" spellcheck="false"${c.canStore ? "" : " disabled"}>
+      <button class="pill save" disabled>${c.set ? "Replace" : "Save"}</button>${c.set ? `<button type="button" class="pill clear">Clear</button>` : ""}
+    </form>
+    <p class="hint" role="status"></p>
+  </li>`;
+}
+
 /** How many changes the change log lists on a page. */
 const CHANGES = 50;
 
@@ -195,7 +231,7 @@ function changeRow(v: SettingsVersion, kinds: Record<string, string | undefined>
     const doc = kinds[key] == "document" && x != null ? docs.get(String(x)) : undefined;
     return `<span class="was">${esc(doc ? doc.address : shown(x, kinds[key]))}</span>`;
   };
-  const what = v.changes.map((c) => `<li><span class="key">${esc(c.key)}</span> ${value(c.key, c.from)} <span class="to" aria-label="to">→</span> ${value(c.key, c.to)}${c.reset ? ` <span class="badge">reset</span>` : ""}</li>`).join("");
+  const what = v.changes.map((c) => c.credential ? `<li><span class="key">${esc(c.key)}</span> key ${esc(c.credential)} <span class="badge">secret</span></li>` : `<li><span class="key">${esc(c.key)}</span> ${value(c.key, c.from)} <span class="to" aria-label="to">→</span> ${value(c.key, c.to)}${c.reset ? ` <span class="badge">reset</span>` : ""}</li>`).join("");
   return `  <li class="change" data-n="${v.n}">
     <div class="when"><time datetime="${at}">${at.slice(0, 16).replace("T", " ")} UTC</time><span class="by">${esc(v.by)}</span></div>
     <ul class="what">${what}</ul>
@@ -223,7 +259,7 @@ const POST_SCRIPT = `
 /** /admin: the server's settings, and Deploy your own. */
 async function settingsPage(platform: Platform, session: Session): Promise<Response> {
   const who = whoOf(session);
-  const [entries, users] = await Promise.all([platform.directory.config.list(who), platform.directory.users.list(who)]);
+  const [entries, users, credentials] = await Promise.all([platform.directory.config.list(who), platform.directory.users.list(who), platform.directory.credentials.list(who)]);
   // A setting naming a document shows it by its address now, linked.
   const settings: Shown[] = await Promise.all(entries.map(async (e) => {
     if (e.kind != "document" || e.value == null) return e;
@@ -271,8 +307,19 @@ async function settingsPage(platform: Platform, session: Session): Promise<Respo
   .setting .value .input.pick { width: 9em; }
   .mono { font-family: var(--font-mono); font-size: 12.5px; }
   @media (max-width: 520px) { ol.rows > li.setting { grid-template-columns: 1fr; } .setting .value { justify-content: flex-end; } }
+  .setting .state-line { margin: 3px 0 0; font-size: 12px; color: var(--chrome); }
+  .setting .state-line .on { color: var(--fg-strong); font-weight: 600; }
+  .setting .state-line .last4 { font-family: var(--font-mono); font-size: 11.5px; color: var(--fg); }
+  .setting .value .input.secret { width: 15em; font-family: var(--font-mono); font-size: 12.5px; }
 `;
   return adminResponse({ session, title: "Settings", here: "settings", style, body: `
+  <section aria-labelledby="keys-head" class="credentials">
+    <h2 id="keys-head">API keys</h2>
+    <p class="lede">The server keeps each key encrypted, and shows it to nobody, this page included: only whether it is set, its last four characters, and who set it when. Without a key here, the server uses the deploy's Worker secret of the same name, if it has one.</p>
+    <ol class="rows">
+${credentials.map((c) => credentialRow(c, session)).join("\n")}
+    </ol>
+  </section>
   <section aria-label="Settings">
     <ol class="rows">
 ${settings.map((e) => settingRow(e, session, takesNever(e.key))).join("\n")}
@@ -282,6 +329,22 @@ ${settings.map((e) => settingRow(e, session, takesNever(e.key))).join("\n")}
 <script>
   ${TIMES_SCRIPT}
   ${POST_SCRIPT}
+  // API keys: Save sets or replaces the key typed in, Clear removes it. The answer never holds the key; the page reloads to show what it is now.
+  for (const li of document.querySelectorAll("li.credential")) {
+    const form = li.querySelector("form"), input = form.elements.value, save = li.querySelector(".save"), clear = li.querySelector(".clear"), hint = li.querySelector(".hint");
+    if (input.disabled) continue;
+    input.addEventListener("input", () => { save.disabled = !input.value.trim(); say(hint, ""); });
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      say(hint, "Saving\u2026");
+      try { await post(form.action, { name: li.dataset.name, value: input.value }); input.value = ""; location.reload(); } catch (err) { say(hint, err.message, true); }
+    });
+    clear?.addEventListener("click", async () => {
+      if (!confirm("Clear the " + li.dataset.label + "? " + (li.dataset.fallback ? "The server goes back to the deploy's " + li.dataset.env + "." : "What uses it stops until someone sets a key again."))) return;
+      say(hint, "Clearing\u2026");
+      try { await post(form.action, { name: li.dataset.name, clear: "1" }); location.reload(); } catch (err) { say(hint, err.message, true); }
+    });
+  }
   // Settings: a switch or a choice saves as soon as it changes; for the rest, Save lights up once the value differs from what's saved.
   // Each is checked by the server, which says what's wrong.
   const chipHtml = ${JSON.stringify(chip("LOGIN", false))};
