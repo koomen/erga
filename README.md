@@ -492,7 +492,16 @@ Admin and Deploy, and a remove button, and a box to add one by GitHub
 login. Roles change only with the switches, never typed text. `/admin/changes`,
 the **Change log**, lists every change to the settings, newest first, each
 with when, who, and each setting's value from and to (a reset badged), 50 at
-a time (Older changes: `?before=<n>`). A bootstrap admin's Admin switch and
+a time (Older changes: `?before=<n>`). It lists three more kinds of entry,
+each with who and when: a factory task added (its id and title), a factory
+task merged into staging (its id, title and merge commit), and main moved
+forward to staging, the production deploy (main's old and new head, and the
+commits it brought: the newest 50, of how many). An entry for something an
+agent did names the admin who prompted it, never the agent, with "via the
+factory's agent" or "via a shared agent (its label)". The factory
+(`worker/factory.ts`) and the repository (`worker/source-host.ts`) write
+them with `ServerConfig.record`, as versions whose changes have `task`,
+`release` and `via` (`SettingChange`). A bootstrap admin's Admin switch and
 remove button are off, and so are the last admin's, saying why. Underneath it's `POST
 /admin/settings` (`key` and `value` as JSON, or `reset=1`) and `POST
 /admin/users` (`do=add|role|deploy|remove`, `login`, `role`, `deploy`: 1

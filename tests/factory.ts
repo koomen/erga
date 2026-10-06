@@ -440,6 +440,24 @@ try {
   await until(async () => (await as("/tasks")).status == 401, 5000, "Revoking it ends it");
   ok("Share with agent: the editor's card, with a factory token that creates, reads and instructs tasks, nothing else; New token and revoking end it");
 
+  // ---------------------------------------------------------------- the change log
+  // Tasks added (on the board, by the agent, by a shared agent: each credited to the admin), and task #1's merge.
+  // (The production deploy, main moved: tests/source-gap.ts.)
+  await p.navigate(`${root}/admin/changes`);
+  await until(() => p.eval(`!!document.querySelector("li.change")`), 10_000, "the change log lists changes");
+  const log = await p.eval<{ by: string; what: string }[]>(`[...document.querySelectorAll("li.change")].map((li) => ({ by: li.querySelector(".by").textContent, what: li.querySelector(".what").textContent.replace(/\\s+/g, " ").trim() }))`);
+  const find = (start: string) => log.find((l) => l.what.startsWith(start));
+  expect(find("task #1 added: Say hello on the front page")?.by == "tester", "a task added on the board, by its admin", log);
+  expect(find(`task #1 merged into staging as ${merged.mergeCommit.slice(0, 7)}: Say hello on the front page`)?.by == "tester", "task #1's merge, by who merged it", log);
+  const byAgent = find(`task #${next} added: Add a footer note`);
+  expect(byAgent?.by == "tester" && byAgent.what.endsWith("via the factory's agent"), "a task the agent added: credited to the admin who prompted it, via the agent", byAgent);
+  const sharedLine = find(`task #${sharedTask.id} added: Shared agent's task`);
+  expect(sharedLine?.by == "tester" && sharedLine.what.includes("via a shared agent (Claude Code 🤖)"), "a task a shared agent added: credited to the token's admin", sharedLine);
+  await p.screenshot(join(SHOTS, "factory-change-log.png"));
+  await p.navigate(`${root}/admin/factory`);
+  await until(() => p.eval(`!!document.querySelector('[data-col="queued"]')`), 15_000, "back on the board");
+  ok("the change log: tasks added (by the admin, their agent or a shared agent: credited to the admin), and merged");
+
   // ---------------------------------------------------------------- 12. merges that need the task's Claude Code
   const make = async (title: string, description: string) => { const r = await api("/tasks", { json: { title, description } }); expect(r.status == 201, `a task: ${title}`, r); return r.body.id as number; };
   const statusOf = async (id: number) => (await task(id)).status;

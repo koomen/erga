@@ -171,6 +171,13 @@ describe("Erga's Git endpoint", () => {
     await expect(f.repo.merge(ada, "0".repeat(39) + "1")).rejects.toThrow(/isn't one of staging's commits/);
     r = await f.repo.merge(ada);
     expect(r.commit).toBe(await must(src, "rev-parse", "HEAD"));
+    // What that move brought main, newest first (the change log's production deploy): at most `limit`, of how many.
+    const moved = f.moves.at(-1)!;
+    expect([moved.branch, moved.old, moved.new]).toEqual(["main", sixth, r.commit]);
+    const seventh = await must(src, "rev-parse", "HEAD~1");
+    expect(f.repo.newCommits(moved.old, moved.new)).toEqual({ commits: [{ sha: r.commit, subject: "Eighth, amended" }, { sha: seventh, subject: "Seventh" }], total: 2 });
+    expect(f.repo.newCommits(moved.old, moved.new, 1)).toEqual({ commits: [{ sha: r.commit, subject: "Eighth, amended" }], total: 2 });
+    expect(f.repo.newCommits("0".repeat(40), moved.new, 3).total).toBeGreaterThan(3);
     expect((await f.repo.merge(ada)).upToDate).toBe(true);
     const c = scratch();
     await must(c, "clone", "-q", f.erga, "copy");
