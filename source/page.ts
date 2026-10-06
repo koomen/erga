@@ -644,7 +644,7 @@ export function adminFactoryPage(c: SourcePageConfig): Response {
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
       </button>
     </div>
-    <div class="agent-log" id="agent-log" data-empty="Say what you want built. The agent queues it as factory tasks, with their dependencies, and can read tasks, their logs, previews and screenshots, and send them more instructions. You merge." aria-live="polite" tabindex="-1"></div>
+    <div class="agent-log" id="agent-log" data-empty="Say what you want built, or what to change on the server. The agent queues factory tasks and follows them, and reads and changes the settings and users for you: each change is in the change log under your name. You merge." aria-live="polite" tabindex="-1"></div>
     <button type="button" class="agent-jump" id="agent-jump" hidden>↓ Jump to latest</button>
     <p class="agent-hint" id="agent-hint" role="status" hidden></p>
     <form class="agent-compose" id="agent-form">
