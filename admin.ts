@@ -539,7 +539,7 @@ function userRow(u: User, session: Session, lastAdmin: boolean): string {
     ${joined}
     ${seen}
     ${roleSwitch(u, "admin", u.role == "admin", fixedAdmin)}
-    ${roleSwitch(u, "deploy", u.deploy, "")}
+    ${roleSwitch(u, "deploy", u.mayDeploy, u.role == "admin" ? "An admin: admins may always deploy" : "")}
     <button type="button" class="act remove" aria-label="Remove ${esc(u.login)}" title="${esc(fixedAdmin || "Remove: they can't sign in any more")}"${fixedAdmin ? " disabled" : ""}>${ICON.delete}</button>
   </li>`;
 }
@@ -548,9 +548,9 @@ function userRow(u: User, session: Session, lastAdmin: boolean): string {
 async function usersPage(platform: Platform, session: Session): Promise<Response> {
   const users = await platform.directory.users.list(whoOf(session));
   const admins = users.filter((u) => u.role == "admin");
-  const deployers = users.filter((u) => u.deploy).length;
+  const deployers = users.filter((u) => u.mayDeploy).length;
   const deployPage = await platform.directory.config.get("deploy_page");
-  const deployNote = deployPage == "admins" ? "Users with the deploy role may use /deploy, as admins may."
+  const deployNote = deployPage == "admins" ? "Admins and users with the deploy role may use /deploy."
     : deployPage == "users" ? "Now anyone signed in may use /deploy (deploy_page is users): the deploy role matters only when deploy_page is admins."
     : "/deploy is off now (deploy_page is off): the deploy role matters only when deploy_page is admins.";
   const style = PAGE_STYLE + `

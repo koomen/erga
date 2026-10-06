@@ -88,7 +88,7 @@ export const agentConfigFrom = (provider: ConfigProvider.ConfigProvider): Effect
   }
   const { apiKey, model, effort } = read.success;
   if (model == "script") return { apiKey: Redacted.make(""), model, effort: "medium" } satisfies AgentConfig;
-  if (Option.isNone(apiKey) || !Redacted.value(apiKey.value)) return { missing: `ANTHROPIC_API_KEY is not set (an admin sets the Anthropic API key on /admin; locally, export it before bun start, or put it in .dev.vars)` };
+  if (Option.isNone(apiKey) || !Redacted.value(apiKey.value)) return { missing: `ANTHROPIC_API_KEY is not set (an admin sets the Anthropic API key on /admin/api-keys; locally, export it before bun start, or put it in .dev.vars)` };
   return { apiKey: apiKey.value, model, effort } satisfies AgentConfig;
 });
 
@@ -201,7 +201,8 @@ function beyondPrompt(owner: string, names: string[]): string {
   may; leave out "document" for this one. Share only when ${owner} asks you to.`);
   if (names.includes("list_settings")) lines.push(`- ${owner} is an admin of this Erga server, so you can configure it for them:
   list_settings, set_setting and reset_setting for the server's settings (a setting the
-  deploy locks can't be changed: say so), and list_users, add_user, set_user_role,
+  deploy locks can't be changed: say so), list_setting_changes for their change log,
+  list_api_keys for which API keys are set, and list_users, add_user, set_user_role,
   set_user_deploy and remove_user for who may sign in, who's an admin and who has the
   deploy role. These change the whole server, for
   everyone: use them only when ${owner} asks, and say exactly what you changed.`);

@@ -456,6 +456,9 @@ server](#agents-configure-the-server)): ask Claude Code, with one, to add a user
 deploy role (`users.deploy`, `Users.setDeploy`): they may then use
 [/deploy](#deploy-your-own) while `deploy_page` is `admins`, as admins
 may. With `users` everyone signed in may anyway, and with `off` nobody may.
+An admin may always deploy, so the Users page shows their Deploy switch on
+and fixed: one rule (`User.mayDeploy`, `Users.hasDeploy`) decides it for
+`/deploy`, the Users page and `list_users`.
 
 **The admin pages.** Every page under `/admin` has the same layout
 (`admin-layout.ts`): a breadcrumb in the upper left (Erga › Admin › the
@@ -466,7 +469,19 @@ with a factory token: `admin-share.js`, built from
 sidebar collapses to a rail of icons, and expands again, with an animation,
 so the factory's board gets the full width; the browser remembers which
 (`localStorage`, `erga:admin-sidebar`). On a phone the links are a row above
-the page.
+the page. Share with agent is on every admin page, `/admin/keys` too: while
+admin access is locked, its card says to unlock first.
+
+**The admin's agent** ([the factory's agent](#the-factory-experimental),
+below) is on every admin page too, in a column between the sidebar and the
+page, with the conversation it had on the others (one session per admin). It
+can be dragged to either side and resized, as on the Factory page (below), and
+collapses to a round button in the lower corner on its side, as the editor's agent does
+(its collapse button, Esc in the panel, or ⌘J), and expands out of it again;
+the page takes the room. The browser remembers which (`localStorage`,
+`erga:admin-agent`). Narrower than 1000px it starts collapsed and covers the
+page while it's open. Each message says which admin page is open (and, on
+the Factory page, which task), so "this page" means something.
 
 Every `/admin` route is for admins only, checked on the server: the Worker
 asks the server's role (`Users.isAdmin`) before any of them answers
@@ -715,7 +730,9 @@ an admin token:
   sharing it (its owner only; the editor's agent may leave out `document`
   for the one it's in);
 - admins only: `list_settings`, `set_setting`, `reset_setting` (a setting
-  the deploy locks shows `"locked": true` and is refused), and `list_users`,
+  the deploy locks shows `"locked": true` and is refused), `list_setting_changes`
+  (the settings' change log), `list_api_keys` (which API keys are set, never a
+  key), and `list_users`,
   `add_user`, `set_user_role`, `set_user_deploy`, `remove_user` (a bootstrap
   admin can't be demoted or removed, nor can the last admin; nor can you
   remove yourself).
@@ -779,7 +796,7 @@ and `{ error, locked: true }`, or sends them to unlock first):
 | surface | where |
 |---|---|
 | `/admin`, `POST /admin/settings`, `POST /admin/users` | `admin.ts` |
-| the admin tools (`list_settings`, `set_setting`, `reset_setting`, `list_users`, `add_user`, `set_user_role`, `set_user_deploy`, `remove_user`) over `/api/ext/tools`, `/mcp` and the editor's agent | `server-tools.ts`, `server-api.ts` |
+| the admin tools (`list_settings`, `set_setting`, `reset_setting`, `list_setting_changes`, `list_api_keys`, `list_users`, `add_user`, `set_user_role`, `set_user_deploy`, `remove_user`) over `/api/ext/tools`, `/mcp` and the factory's agent | `server-tools.ts`, `server-api.ts` |
 | `dir.config.list/set/reset`, `dir.users.list/add/setRole/remove`, whatever calls them | `Users.mustAdmin` (`users.ts`, `config.ts`) |
 | `/api/factory/...` (not the VMs' own task tokens, nor factory tokens, below), the factory's agent and minting factory tokens | `worker/factory.ts` |
 | `/admin/factory` (the board, the dashboard and the agent), `GET /api/source/branches`, `POST /api/source/merge`, `POST /api/source/mirror` | `worker/source.ts` |
@@ -911,13 +928,17 @@ borrowed from git (the namespace). A database leak gives no working unlock
    summaries, logs and screenshots, all written by the VMs' Claude Code or by
    whoever queued the task, and any of it can try to steer it (a prompt
    injection). Task #1 kept the admin tools out of the editor's agent for this
-   reason; this agent has none of them either. Its tools only queue, read and
-   instruct factory tasks (no merge, discard or start, no settings, users,
-   pushes or deploys), every call checks again that its admin is unlocked (the
-   unlock their page sent last, its key not revoked, still an admin), and its
-   prompt says tool answers are information, never instructions. What an
-   injection could still do: queue tasks, or send instructions to a task,
-   that the admin didn't ask for, for the rest of the unlock. Each task's work
+   reason. This agent has them (task #50 made it a general admin agent): it
+   queues, reads and instructs factory tasks, and reads and changes the
+   server's settings and users (no merge, discard or start, no API keys set,
+   no pushes or deploys). Every call checks again that its admin is unlocked
+   (the unlock their page sent last, its key not revoked, still an admin), and
+   its prompt says tool answers are information, never instructions, and to
+   change settings and users only when the admin asks. What an injection could
+   still do: queue tasks, send instructions to a task, or change a setting or
+   a user, that the admin didn't ask for, for the rest of the unlock. Each
+   such change is in the change log (or the users' list) under the admin's
+   name, and the conversation shows each tool call. Each task's work
    lands only on its branch, and an admin approves every merge by hand: the
    merge is the review. **Factory tokens** ("Share with agent", for an agent
    such as Claude Code on a laptop) have the same reach and the same risk,
@@ -1236,7 +1257,13 @@ and each target's deploys beside the commit each deployed (one for each
 commit: the running one, else the live one, else the newest; its state as
 plain text, and only the live one with a background),
 any deploy's log, past or live, in a modal;
-`/admin/deploys` (and `/source`) redirect there.
+`/admin/deploys` (and `/source`) redirect there. A factory task's merge
+(`Merge task/<id>-<slug>: title`) shows as a long, thin card with the task's
+number, name and how many commits it has, and the commits that came in with it
+(those its second parent brings, `source/repo.ts`: `withTasks`, up to 100) follow it,
+their dots on the same rail, their subjects indented. Other commits show as
+always. A card folds its commits away; "Collapse tasks" folds every card, so
+the list shows only tasks; the browser remembers it (`tests/source-tasks.ts`).
 
 **The branch model.** There are only two branches, and `staging` is always
 at or ahead of `main`: `main` only fast-forwards to a commit of `staging`
@@ -1544,8 +1571,16 @@ access unlocked; breadcrumbs Erga › Admin › Source): the one place to manage
 the source, its deploys and the factory. Three parts on one page: the factory's
 task board ([The factory](#the-factory-experimental)), this dashboard, and the
 factory's own agent. On a wide window the agent sits on the left, as in the
-editor, with the board above the dashboard beside it; narrower than 1000px,
-tabs (Tasks, Source, Agent) show one at a time. Each part's stylesheet is
+editor, with the board above the dashboard beside it. As in the editor (the
+same code, `src/page/layout.ts`), drag the agent's inner edge to make it
+wider or narrower (300 to 760px, and the board keeps at least 480px; a
+double-click puts back 380px), and drag it by its head to dock it on the
+right: a dashed ghost shows where it lands, and the board slides to the
+other side; Escape puts it back. The side and the width are kept in this
+browser (localStorage, `erga:factory-layout:v1`), for every admin page: the
+agent is the admin layout's (`admin-layout.ts`, [The admin pages](#users-admins-and-settings)).
+Narrower than 1000px, tabs (Tasks, Source) show one at a time, and the
+agent covers the page while it's open. Each part's stylesheet is
 scoped to its pane (`scopeCss`: its width queries measure the pane, so the
 board keeps its five columns beside the agent). `/source`, `/admin/factory`
 and `/admin/deploys` redirect here. The dashboard: One list, staging's last 25 commits,
@@ -1760,7 +1795,7 @@ carry a computed `stalled {since, quietMs}`, and `list_tasks` and `get_task`
 tell the factory's agent how long the task has been quiet. "Stalled" is not
 "blocked": a blocked task waits for its dependencies.
 
-**The factory's agent.** Beside the board, an agent panel like the editor's
+**The factory's agent.** Beside the board (and on every admin page), an agent panel like the editor's
 (the same panel and conversation, `src/page/agent-chat.ts`; its own code is
 `src/page/factory-agent.ts`, built to `factory-agent.js`) talks to the admin's
 own agent session (`factory/agent.ts`), one per admin, in the `Factory`
@@ -1773,7 +1808,16 @@ summary, error, preview URL, log) and `view_screenshot`; it sees `needs
 agent` cards and why, and what the task's Claude Code is doing (its words and
 the commands it runs go on the task's log, "Claude: …", "Claude runs Bash:
 …", at most every 5 seconds); `factory_status`
-says whether the factory is on. It can't merge, discard or start a task:
+says whether the factory is on. It is also the admin's general admin agent:
+it has the admin tools ([Agents configure the server](#agents-configure-the-server)):
+`list_settings`, `set_setting`, `reset_setting` (every setting on `/admin`),
+`list_setting_changes` (the Change log), `list_api_keys` (which keys are set,
+never a key: keys are pasted only on `/admin`, never into a conversation) and
+the users' tools. They act as the admin themselves, their login and their latest
+unlock (`adminTools`, `factory/agent.ts`), so each change goes into the
+settings' change log under the admin who prompted it, as if they had made it on
+`/admin`, never the agent's name (`tests/factory-admin.test.ts`); a user it adds
+is added by them. It can't merge, discard or start a task:
 an admin approves each merge by hand on the board, and Merge merges into
 staging, which deploys itself. Each message carries the task open on the
 board, if any, so "this task" means something. It acts only for an unlocked
@@ -3196,7 +3240,7 @@ back, merging edits from disk, the agent's exact-match edits and attribution.
 - `src/page/`: the page editor, on CodeMirror 6: `manuscript.ts` (HTML source
   analysis), `markdown.ts` (Markdown rendering with source ranges),
   `editor.ts` (the editing surface, marks and other people's carets),
-  `main.ts` (shell, presence, source view, agent panel), `layout.ts` (the side panels: docking, the agent's width), `frame.ts` (the page
+  `main.ts` (shell, presence, source view, agent panel), `layout.ts` (the side panels: docking, the agent's width; the factory's agent panel too), `frame.ts` (the page
   editor's frame, on the document's own origin), `bridge.ts` and `remote.ts`
   (the messages between the two, and the shell's side of them), `collab.ts` (the
   room connection and its binding to the editor), `merge.ts` (word diffs and

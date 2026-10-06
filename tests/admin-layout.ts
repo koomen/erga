@@ -44,10 +44,11 @@ try {
     const links = [...side.matchAll(/<a href="([^"]+)"( aria-current="page")?>[^]*?<span class="label">([^<]+)<\/span>/g)].map((m) => `${m[3]} ${m[1]}${m[2] ? " *" : ""}`);
     expect(links.join() == ["Settings /admin", "Change log /admin/changes", "Users /admin/users", "Factory /admin/factory"].map((l) => l.startsWith(current ?? "-") ? `${l} *` : l).join(), `${path}: the sidebar's links, this page's marked`, links);
     expect(html.includes('id="btn-share"') && html.includes('<script src="/admin-share.js" defer>'), `${path}: Share with agent in the header`);
+    expect(html.includes('<aside class="admin-agent" id="agent"') && html.includes('id="agent-fab"') && html.includes('id="agent-close"') && html.includes('<script src="/factory-agent.js" defer>'), `${path}: the admin's agent, with its collapse button and its round button`);
     expect(!html.includes('class="back"') && !/<h1>Admin/.test(html) && !html.includes("‹ Documents"), `${path}: no "Admin" title and no back link`);
   }
   expect((await get("/admin-share.js")).status == 200, "admin-share.js is served");
-  ok("every admin page: the breadcrumb, Share with agent and the sidebar, and no old title or back link");
+  ok("every admin page: the breadcrumb, Share with agent, the agent and the sidebar, and no old title or back link");
 
   for (const [from, to] of [["/admin/source", "/admin/factory"], ["/source", "/admin/factory"], ["/admin/deploys", "/admin/factory"], ["/admin/settings", "/admin"]]) {
     const r = await get(from);
@@ -129,13 +130,38 @@ try {
   await until(() => p.eval<boolean>(`document.getElementById("share-prompt").value.includes("erga_factory_") || document.getElementById("share-status").textContent.length > 0`), 10_000, "the card gets a token, or says why not");
   await p.screenshot(join(SHOTS, "admin-users-share.png"));
   expect(p.errors.length == 0, "no errors in the console", p.errors);
+  // The agent: open beside the page; collapsed to a round button in the lower left (its button, Esc, ⌘J), remembered.
+  const agent = () => p.eval<{ width: number; mainLeft: number; closed: boolean; fab: { left: number; bottom: number; opacity: string }; inert: boolean; expanded: string | null }>(`(() => { const f = document.getElementById("agent-fab"), fb = f.getBoundingClientRect();
+    return { width: document.getElementById("agent").getBoundingClientRect().width, mainLeft: document.querySelector("main").getBoundingClientRect().left, closed: document.documentElement.classList.contains("agent-closed"),
+      fab: { left: fb.left, bottom: fb.bottom, opacity: getComputedStyle(f).opacity }, inert: document.getElementById("agent").inert, expanded: f.getAttribute("aria-expanded") }; })()`);
+  await until(async () => (await p.eval<string>(`document.getElementById("agent-model").textContent`)).length > 0, 10_000, "the agent panel connects on /admin/users");
+  const agentOpen = await agent();
+  expect(!agentOpen.closed && agentOpen.width >= 300 && !agentOpen.inert && agentOpen.expanded == "true", "the agent is open beside the page on /admin/users", agentOpen);
+  await p.eval(`document.getElementById("agent-close").click()`);
+  await until(async () => (await agent()).width == 0 && (await agent()).fab.opacity == "1", 3000, "it collapses to its round button");
+  const agentClosed = await agent();
+  expect(agentClosed.closed && agentClosed.inert && agentClosed.fab.left <= 24 && agentClosed.fab.bottom >= 900 - 24 && agentClosed.mainLeft < agentOpen.mainLeft, "collapsed: a round button in the lower left, and the page takes the room", { agentOpen, agentClosed });
+  await p.screenshot(join(SHOTS, "admin-agent-collapsed.png"));
+  await p.navigate(`${root}/admin/changes`);
+  await until(() => p.eval<boolean>(`!!document.getElementById("agent-fab")`), 10_000, "/admin/changes opens");
+  expect((await agent()).closed, "the next admin page opens with it collapsed");
+  await p.eval(`document.dispatchEvent(new KeyboardEvent("keydown", { key: "j", metaKey: true, bubbles: true }))`);
+  await until(async () => (await agent()).width >= 300, 3000, "⌘J expands it");
+  expect(await p.eval<string>(`document.activeElement?.id ?? ""`) == "agent-input" && await p.eval<string>(`localStorage.getItem("erga:admin-agent")`) == "open", "with the box focused, and remembered");
+  await p.eval(`document.getElementById("agent-input").dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }))`);
+  await until(async () => (await agent()).closed, 3000, "Esc in the panel collapses it");
+  await p.eval(`document.getElementById("agent-fab").click()`);
+  await until(async () => (await agent()).width >= 300, 3000, "the round button expands it again");
+  await p.screenshot(join(SHOTS, "admin-agent-open.png"));
+  expect(p.errors.length == 0, "no errors in the console", p.errors);
   // A phone: the links in a row above the page, with their labels.
   await p.open(`${root}/admin`, { width: 390, height: 844, scale: 2, clear: false });
   await until(() => p.eval<boolean>(`!!document.getElementById("admin-side")`), 10_000, "/admin opens on a phone");
   const row = await p.eval<{ tops: number[]; toggle: string; fits: boolean }>(`({ tops: [...document.querySelectorAll(".admin-side a")].map((a) => Math.round(a.getBoundingClientRect().top)), toggle: getComputedStyle(document.getElementById("side-toggle")).display, fits: document.documentElement.scrollWidth <= innerWidth })`);
   expect(new Set(row.tops).size == 1 && row.toggle == "none" && row.fits, "a phone: the links in one row, no toggle, no sideways scroll", row);
+  expect(await p.eval<boolean>(`document.documentElement.classList.contains("agent-closed")`), "a phone starts with the agent collapsed, so the page shows");
   await p.screenshot(join(SHOTS, "admin-phone.png"));
-  ok(`in Chrome: the sidebar collapses and expands with an animation, is remembered, Share with agent opens, and a phone has a row (screenshots in ${SHOTS})`);
+  ok(`in Chrome: the sidebar collapses and expands with an animation, is remembered, Share with agent opens, the agent collapses to a round button and back, and a phone has a row (screenshots in ${SHOTS})`);
   console.log("\nadmin-layout: all passed");
 } finally {
   browser?.close();

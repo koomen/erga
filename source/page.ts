@@ -6,9 +6,11 @@
 // built to /factory-agent.js). It has the layout every admin page shares
 // (admin-layout.ts): the breadcrumb, Share with agent (upper right, as in the
 // editor) and the sidebar, which collapses so the board gets the full width.
-// On a wide window the agent sits on the left, as in the editor, and the
-// board and the dashboard are beside it, one above the other; narrower, tabs
-// show one at a time. Each part's stylesheet is scoped to its pane
+// The agent is the layout's, as on every admin page: on a wide window it sits
+// on the left, as in the editor, and the board and the dashboard are beside
+// it, one above the other; as in the editor, the user drags the agent by its
+// head to the right, and its inner edge to resize it (admin-layout.ts;
+// src/page/layout.ts, mountPaneLayout); narrower, tabs show one at a time. Each part's stylesheet is scoped to its pane
 // (scopeCss). /source, /admin/source and /admin/deploys redirect here.
 //
 // The dashboard:
@@ -101,7 +103,8 @@ const SOURCE_STYLE = `
   .subj span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13.5px; color: var(--fg-strong); }
   .row.on-main .subj span { color: var(--fg); }
   .subj .here { flex: none; display: none; height: 22px; padding: 0 8px; border: 1px solid var(--rule); border-radius: 6px; background: var(--bg); color: var(--fg-strong); font: 550 12px var(--font-text); cursor: pointer; }
-  .row.staging-only:hover .subj .here, .subj .here:focus-visible { display: inline-flex; align-items: center; }
+  .task-card .here { flex: none; display: none; height: 20px; padding: 0 8px; border: 1px solid var(--rule); border-radius: 6px; background: var(--bg); color: var(--fg-strong); font: 550 12px var(--font-text); cursor: pointer; }
+  .row.staging-only:hover .subj .here, .subj .here:focus-visible, .row.staging-only:hover .task-card .here, .task-card .here:focus-visible { display: inline-flex; align-items: center; }
   .who { padding: 0 8px; font-size: 12px; color: var(--soft); max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .sha { padding: 0 6px; font: 11.5px var(--font-mono); color: var(--chrome); }
   .row time { margin: 0; justify-content: flex-end; padding-right: 8px; font-size: 12px; color: var(--soft); }
@@ -123,13 +126,38 @@ const SOURCE_STYLE = `
   .dep.building .w, .dep.deploying .w { color: var(--only-staging); }
   .dep.building .w::before, .dep.deploying .w::before { content: ""; flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--only-staging); animation: pulse 1.2s ease-in-out infinite; }
   @keyframes pulse { 50% { opacity: .25; } }
+  /* A factory task: its merge commit is a long, thin card on its own line (the task's name, number and how many commits),
+     its commits under it, their dots on the same rail, their subjects indented, a thin line down the indent.
+     The card folds them away; "Collapse tasks" in the legend folds every task, so the list shows only tasks. */
+  .row > .task-card { grid-column: 2 / span 4; display: grid; grid-template-columns: subgrid; align-items: center; height: 26px; align-self: center; margin: 0 4px 0 2px;
+    border: 1px solid var(--rule); border-radius: 7px; background: color-mix(in srgb, var(--chrome) 7%, var(--bg)); cursor: pointer; }
+  .row:hover > .task-card { background: color-mix(in srgb, var(--chrome) 13%, var(--bg)); }
+  .task-card > * { display: flex; align-items: center; height: 100%; }
+  .task-card .who, .task-card .sha { background: none; }
+  .task-card .task-name { min-width: 0; gap: 7px; padding: 0 8px 0 4px; }
+  .task-card .fold { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; padding: 0; border: 0; border-radius: 4px; background: transparent; color: var(--soft); cursor: pointer; }
+  .task-card .fold:hover { background: color-mix(in srgb, var(--chrome) 16%, transparent); }
+  .task-card .fold:focus-visible { outline: 2px solid var(--caret); outline-offset: 0; }
+  .task-card .fold svg { transition: transform .15s; }
+  .row.folded .task-card .fold svg { transform: rotate(-90deg); }
+  .task-card .num { flex: none; font: 600 11.5px var(--font-mono); color: var(--soft); }
+  .task-card .name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13.5px; font-weight: 600; color: var(--fg-strong); }
+  .task-card .n { flex: none; margin-left: auto; font-size: 11.5px; color: var(--soft); white-space: nowrap; }
+  .task-card time { margin: 0; justify-content: flex-end; padding-right: 8px; font-size: 12px; color: var(--soft); }
+  .row.in-task .subj { position: relative; padding-left: 26px; }
+  .row.in-task .subj::before { content: ""; position: absolute; left: 13px; top: 0; bottom: 0; border-left: 1px solid var(--rule); }
+  .row.in-task.last .subj::before { bottom: 50%; }
+  .row.in-task.hide { display: none; }
+  .legend .fold-all { margin-left: auto; height: 22px; padding: 0 8px; border: 1px solid var(--rule); border-radius: 6px; background: var(--bg); color: var(--fg); font: 500 12px var(--font-text); cursor: pointer; }
+  .legend .fold-all:hover { background: color-mix(in srgb, var(--chrome) 10%, var(--bg)); }
+  .legend .fold-all[hidden] { display: none; }
   /* The break, when staging is far ahead of main: a dashed rail and how many commits it leaves out. */
   .gap { display: contents; }
   .gap > * { height: var(--row); display: flex; align-items: center; }
   .gap .rail::before { content: ""; position: absolute; left: calc(50% - 1px); top: 0; bottom: 0; width: 0; height: auto; display: block; border-left: 2px dashed var(--only-staging); background: none; opacity: .5; }
   .gap .gap-text { grid-column: 2 / -1; padding: 0 6px; font: 12.5px var(--font-text); color: var(--soft); border-block: 1px dashed var(--rule); box-sizing: border-box; }
   .none { padding: 18px 4px; font-size: 13.5px; color: var(--soft); grid-column: 1 / -1; }
-  @media (max-width: 760px) { .grid { grid-template-columns: 22px minmax(0, 1fr) auto 80px 80px; } .who, .grid > .head.who-h, .row time, .grid > .head.time-h { display: none; } .target { max-width: 82px; } .target b { font-size: 10.5px; } .target .st span { display: none; }
+  @media (max-width: 760px) { .grid { grid-template-columns: 22px minmax(0, 1fr) auto 80px 80px; } .who, .grid > .head.who-h, .row time, .grid > .head.time-h { display: none; } .target { max-width: 82px; } .row > .task-card { grid-column: 2 / span 2; } .target b { font-size: 10.5px; } .target .st span { display: none; }
     .dep { font-size: 11.5px; padding: 0 5px; } .dep .at { display: none; } }
   .boxes { display: grid; grid-template-columns: 1fr; gap: 18px; margin-top: 18px; }
   @media (max-width: 760px) { .boxes { grid-template-columns: 1fr; } }
@@ -172,7 +200,7 @@ function sourceMarkup(c: SourcePageConfig): string {
   </div>
   <p class="hint" id="merge-hint" role="status"></p>
   <section class="card" aria-label="Commits">
-    <div class="legend"><span><i class="dot staging-only"></i>only on staging</span><span><i class="dot on-main"></i>on main too</span></div>
+    <div class="legend"><span><i class="dot staging-only"></i>only on staging</span><span><i class="dot on-main"></i>on main too</span><button class="fold-all" type="button" id="fold-all" hidden>Collapse tasks</button></div>
     <div class="grid" id="grid">
       <div class="head"></div>
       <div class="head" style="padding-left:6px">Commit</div><div class="head who-h"></div><div class="head"></div><div class="head time-h"></div>
@@ -213,6 +241,18 @@ const SOURCE_SCRIPT = `
   /** When staging is far ahead of main: how many of its newest commits show above the break, and how many of main's below it. */
   const GAP_TOP = 11, GAP_MAIN = 6;
   let view = null, deploys = null, busy = false, drawn = false;
+  // Which task cards are folded, kept in the browser: every task, or none (all), except those flipped one by one.
+  // So after "Collapse tasks", a task merged later comes folded too.
+  const FOLDS = "erga:source-folded-tasks";
+  let folds = { all: false, flip: [] };
+  try { folds = { ...folds, ...JSON.parse(localStorage.getItem(FOLDS) || "{}") }; } catch {}
+  const isFolded = (sha) => folds.all != folds.flip.includes(sha);
+  const setFolded = (sha, on) => {
+    folds.flip = folds.flip.filter((s) => s != sha);
+    if (on != folds.all) folds.flip.push(sha);
+    folds.flip = folds.flip.slice(-200);
+    try { localStorage.setItem(FOLDS, JSON.stringify(folds)); } catch {}
+  };
   const grid = document.getElementById("grid");
   const running = (state) => state == "building" || state == "deploying";
   const short = (t) => {
@@ -262,7 +302,9 @@ const SOURCE_SCRIPT = `
     // the commits just after main's head (afterMain), then main's head and the GAP_MAIN - 1 behind it, so the list shows
     // where production is. The break only when commits are left out; else staging's log, as always.
     const recent = staging?.commits ?? [], ahead = staging?.ahead ?? 0, after = staging?.afterMain ?? [];
-    const top = recent.filter((x) => !x.inMain).slice(0, GAP_TOP);
+    const only = recent.filter((x) => !x.inMain), top = only.slice(0, GAP_TOP);
+    // Never cut a task's card in two: the commits of a task above the break go with it.
+    while (top.length < only.length && only[top.length].inTask && top.some((x) => x.sha == only[top.length].inTask)) top.push(only[top.length]);
     const hidden = Math.max(0, ahead - top.length - after.length);
     const commits = hidden && after.length ? [...top, ...after.map((x) => ({ ...x, inMain: false })), ...(main?.commits ?? []).slice(0, GAP_MAIN).map((x) => ({ ...x, inMain: true }))] : recent;
     document.getElementById("loading")?.remove();
@@ -275,18 +317,28 @@ const SOURCE_SCRIPT = `
     grid.querySelector(".gap")?.remove();
     if (!commits.length) { grid.insertAdjacentHTML("beforeend", '<div class="none empty">No commits yet. Push one: git push erga HEAD:staging</div>'); }
     let prev = null;
+    const cards = new Set(commits.filter((x) => x.task && !x.inTask).map((x) => x.sha));
+    const foldAll = document.getElementById("fold-all");
+    foldAll.hidden = !cards.size;
+    foldAll.textContent = cards.size && [...cards].every(isFolded) ? "Expand tasks" : "Collapse tasks";
     commits.forEach((x, i) => {
       let r = rows.get(x.sha);
       if (!r) { r = document.createElement("div"); r.dataset.sha = x.sha; }
       const kind = x.inMain ? "on-main" : "staging-only";
-      r.className = "row " + kind;
-      const next = commits[i + 1];
+      const next = commits[i + 1], card = x.task && !x.inTask, member = x.inTask && cards.has(x.inTask);
+      r.className = "row " + kind + (card ? " task-row" + (isFolded(x.sha) ? " folded" : "") : "") +
+        (member ? " in-task" + (isFolded(x.inTask) ? " hide" : "") + (next?.inTask == x.inTask ? "" : " last") : "");
+      if (member) r.dataset.task = x.inTask; else delete r.dataset.task;
       const up = i > 0, down = !!next || x.parents.length > 0, gapAfter = hidden && after.length && i == top.length - 1;
       const title = x.subject + "\\n" + x.sha.slice(0, 10) + " · " + x.author + " · " + new Date(x.at).toLocaleString() + (x.inMain ? " · on main" : " · only on staging");
+      const n = card ? x.task.commits.length : 0;
+      const tail = '<span class="who">' + esc(x.author) + '</span><code class="sha">' + x.sha.slice(0, 7) + '</code><time datetime="' + new Date(x.at).toISOString() + '">' + ago(x.at) + "</time>";
       r.innerHTML =
         '<span class="rail ' + (up ? "up " : "") + (down ? "down " : "") + (x.inMain ? "on-main" : "") + '"><i class="dot ' + kind + '" title="' + (x.inMain ? "On main (and staging)" : "Only on staging") + '"></i></span>' +
-        '<span class="subj" title="' + esc(title) + '"><span>' + esc(x.subject) + "</span>" + (x.inMain ? "" : '<button class="here" type="button" data-merge="' + x.sha + '" title="Move main forward to this commit">Merge to here</button>') + "</span>" +
-        '<span class="who">' + esc(x.author) + '</span><code class="sha">' + x.sha.slice(0, 7) + '</code><time datetime="' + new Date(x.at).toISOString() + '">' + ago(x.at) + "</time>" +
+        (card
+          ? '<span class="task-card" data-fold="' + x.sha + '" title="' + esc(title) + '"><span class="task-name"><button class="fold" type="button" data-fold="' + x.sha + '" aria-expanded="' + !isFolded(x.sha) + '" aria-label="' + (isFolded(x.sha) ? "Expand" : "Collapse") + " task " + x.task.id + '"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 3.5 5 6.5 8 3.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></button>' +
+            '<span class="num">#' + x.task.id + '</span><span class="name">' + esc(x.task.title) + '</span>' + (x.inMain ? "" : '<button class="here" type="button" data-merge="' + x.sha + '" title="Move main forward to this commit">Merge to here</button>') + '<span class="n">' + n + " commit" + (n == 1 ? "" : "s") + "</span></span>" + tail + "</span>"
+          : '<span class="subj" title="' + esc(title) + '"><span>' + esc(x.subject) + "</span>" + (x.inMain ? "" : '<button class="here" type="button" data-merge="' + x.sha + '" title="Move main forward to this commit">Merge to here</button>') + "</span>" + tail) +
         TARGETS.map((n) => '<span class="deps" data-target="' + n + '">' + deployCell(n, x.sha, groups[n]) + "</span>").join("");
       grid.insertBefore(r, prev ? prev.nextSibling : document.getElementById("target-production").parentElement.nextSibling);
       prev = r;
@@ -443,7 +495,18 @@ const SOURCE_SCRIPT = `
     await load();
   }
   mergeBtn.addEventListener("click", () => merge(null));
-  grid.addEventListener("click", (e) => { const b = e.target.closest("button[data-merge]"); if (b) merge(b.dataset.merge); });
+  grid.addEventListener("click", (e) => {
+    const b = e.target.closest("button[data-merge]");
+    if (b) return merge(b.dataset.merge);
+    const f = e.target.closest("[data-fold]");
+    if (f) { const sha = f.dataset.fold; setFolded(sha, !isFolded(sha)); render(); }
+  });
+  document.getElementById("fold-all").addEventListener("click", () => {
+    const cards = [...grid.querySelectorAll(".row.task-row")].map((r) => r.dataset.sha);
+    folds = { all: !cards.every(isFolded), flip: [] };
+    try { localStorage.setItem(FOLDS, JSON.stringify(folds)); } catch {}
+    render();
+  });
   // Clone: copies the git clone command; the button says so for a moment.
   const cloneBtn = document.getElementById("clone-copy");
   cloneBtn.addEventListener("click", async () => {
@@ -547,11 +610,7 @@ export function scopeCss(css: string, scope: string): string {
 }
 
 const PAGE_STYLE = `
-  /* The agent on the left, as in the editor; the board and the dashboard beside it, one above the other. */
-  .workspace { display: grid; grid-template-columns: minmax(300px, 370px) minmax(0, 1fr); gap: 20px; align-items: start; }
-  .agent-pane { position: sticky; top: 16px; height: calc(100vh - 78px); height: calc(100dvh - 78px); min-height: 420px; display: flex; flex-direction: column; min-width: 0;
-    border: 1px solid var(--panel-border); border-radius: 18px; background: var(--bg); box-shadow: 0 12px 28px rgba(0, 0, 0, 0.07), 0 1px 3px rgba(0, 0, 0, 0.05); font: 14px/1.55 var(--font-text); color: var(--fg); overflow: hidden; }
-  .agent-pane .agent-head .title { white-space: nowrap; }
+  /* The board and the dashboard, one above the other, beside the agent (admin-layout.ts). */
   .panes { min-width: 0; display: flex; flex-direction: column; gap: 28px; }
   .pane { container-type: inline-size; min-width: 0; }
   .pane-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-bottom: 10px; }
@@ -559,16 +618,14 @@ const PAGE_STYLE = `
   .pane-head .sub { margin: 2px 0 0; font-size: 13px; }
   .pane-note { margin: -4px 0 10px; font-size: 13px; color: var(--soft); }
   .tabs { display: none; }
-  /* Narrower, one at a time: tabs for the board, the dashboard and the agent. */
+  /* Narrower, one at a time: tabs for the board and the dashboard (the agent covers the page, from its button). */
   @media (max-width: 999.98px) {
-    .workspace { display: block; }
     .tabs { display: flex; gap: 4px; padding: 4px; margin: 0 0 14px; border: 1px solid var(--rule); border-radius: 12px; background: var(--bg); position: sticky; top: max(8px, env(safe-area-inset-top)); z-index: 6; }
     .tabs button { flex: 1; height: 34px; border: 0; border-radius: 9px; background: transparent; color: var(--soft); font: 550 13.5px var(--font-text); cursor: pointer; }
     .tabs button[aria-selected="true"] { background: var(--fg-strong); color: var(--bg); }
     .panes { display: block; }
-    .pane, .agent-pane { display: none; }
+    .pane { display: none; }
     body[data-tab="tasks"] #tasks, body[data-tab="source"] #source-pane { display: block; }
-    body[data-tab="agent"] .agent-pane { display: flex; position: static; height: calc(100dvh - 180px); min-height: 360px; }
   }
   /* The GitHub mirror: its state and Push now, or how to turn it on. */
   dialog#mirror-dlg { width: min(600px, calc(100vw - 32px)); }
@@ -585,18 +642,18 @@ const PAGE_STYLE = `
   #mirror-status { margin-right: auto; font-size: 12.5px; color: var(--soft); }
 `;
 
-/** The tabs on a phone: which pane shows, remembered in this browser and in the address (#tasks, #source, #agent). */
+/** The tabs on a phone: which pane shows, remembered in this browser and in the address (#tasks, #source; #agent opens the agent). */
 const TABS_SCRIPT = `
 (() => {
-  const tabs = ["tasks", "source", "agent"];
+  const tabs = ["tasks", "source"];
   let tab = location.hash.slice(1);
+  if (tab == "agent") addEventListener("DOMContentLoaded", () => window.ergaAgent?.show(true));
   if (!tabs.includes(tab)) { try { tab = localStorage.getItem("erga:admin-factory-tab") || "tasks"; } catch { tab = "tasks"; } }
   if (!tabs.includes(tab)) tab = "tasks";
   const show = (t) => {
     document.body.dataset.tab = t;
     for (const b of document.querySelectorAll(".tabs [data-tab]")) b.setAttribute("aria-selected", String(b.dataset.tab == t));
     try { localStorage.setItem("erga:admin-factory-tab", t); } catch {}
-    if (t == "agent") window.dispatchEvent(new Event("erga:agent-shown"));
   };
   for (const b of document.querySelectorAll(".tabs [data-tab]")) b.addEventListener("click", () => { show(b.dataset.tab); history.replaceState(null, "", "#" + b.dataset.tab); });
   show(tab);
@@ -635,31 +692,13 @@ function mirrorDialog(c: SourcePageConfig): string {
 export function adminFactoryPage(c: SourcePageConfig): Response {
   if (!c.admin) return plainPage("Not found", "There's nothing here. <a href=\"/\">Back to the start</a>.", 404);
   return adminResponse({ session: c.session, title: "Factory", here: "factory", wide: true, style: PAGE_STYLE + scopeCss(BOARD_STYLE, "#tasks") + scopeCss(SOURCE_STYLE, "#source-pane"), body: `
-  <div class="tabs" role="tablist" aria-label="Show"><button type="button" role="tab" data-tab="tasks">Tasks</button><button type="button" role="tab" data-tab="source">Source</button><button type="button" role="tab" data-tab="agent">Agent</button></div>
-  <div class="workspace">
-  <aside class="agent-pane" id="agent" aria-label="Agent">
-    <div class="agent-head">
-      <span class="title">Agent</span><span class="model" id="agent-model"></span>
-      <button type="button" class="icon-btn" id="agent-reset" aria-label="New conversation" data-tip="New conversation">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
-      </button>
-    </div>
-    <div class="agent-log" id="agent-log" data-empty="Say what you want built. The agent queues it as factory tasks, with their dependencies, and can read tasks, their logs, previews and screenshots, and send them more instructions. You merge." aria-live="polite" tabindex="-1"></div>
-    <button type="button" class="agent-jump" id="agent-jump" hidden>↓ Jump to latest</button>
-    <p class="agent-hint" id="agent-hint" role="status" hidden></p>
-    <form class="agent-compose" id="agent-form">
-      <div class="agent-field" id="agent-field"><textarea id="agent-input" rows="1" placeholder="Ask the agent…" aria-label="Message the agent"></textarea></div>
-      <button type="submit" class="agent-send" id="agent-send">Send</button>
-    </form>
-  </aside>
+  <div class="tabs" role="tablist" aria-label="Show"><button type="button" role="tab" data-tab="tasks">Tasks</button><button type="button" role="tab" data-tab="source">Source</button></div>
   <div class="panes">
     <section class="pane" id="tasks" aria-label="Tasks">${boardMarkup({ enabled: c.factory })}</section>
     <section class="pane" id="source-pane" aria-label="Source and deploys">${sourceMarkup(c)}</section>
   </div>
-  </div>
   ${c.ready ? mirrorDialog(c) : ""}
 <script>${TABS_SCRIPT}</script>
 <script>${BOARD_SCRIPT}</script>
-${c.ready ? `<script>${SOURCE_SCRIPT}</script>` : ""}
-<script src="/factory-agent.js" defer></script>` });
+${c.ready ? `<script>${SOURCE_SCRIPT}</script>` : ""}` });
 }

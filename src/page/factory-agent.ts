@@ -1,9 +1,11 @@
-// The factory's agent panel on /admin/factory (source/page.ts). The panel is the editor's (the same markup,
+// The admin's agent panel, on every admin page (admin-layout.ts has its markup, and collapses it to a round
+// button in the lower left), first made for /admin/factory. The panel is the editor's (the same markup,
 // styles and conversation, agent-chat.ts), talking to the admin's own agent
 // session in the Factory object (factory/agent.ts, worker/factory.ts):
 //
 //   GET  /api/factory/agent            the state: on or off (and why), the model, the conversation so far
-//   POST /api/factory/agent            { text, context }: a message; context says which task is open on the board
+//   POST /api/factory/agent            { text, context }: a message; context says which admin page is open,
+//                                      and on the factory's, which task is open on the board
 //   POST /api/factory/agent/abort|reset|model
 //   /api/factory/events                { type: "agent", ev } for this admin's agent (the board's events too)
 //
@@ -14,6 +16,7 @@ import { chat } from "./agent-chat";
 import { fileRefs, type Attachment } from "./attach";
 import { attachments } from "./attach-ui";
 import type { Log, LogEvent } from "./agent-log";
+import { mountPaneLayout } from "./layout";
 
 interface AgentState { enabled: boolean; reason?: string; model?: string | null; choice?: string | null; models?: { id: string; label: string }[]; log?: Log }
 declare global { interface Window { ergaBoard?: { openTask(): number | null; title(id: number): string | null; open(id: number): void } } }
@@ -32,7 +35,21 @@ const VERBS: Record<string, [string, string]> = {
   create_task: ["Queueing", "Queued"],
   set_dependencies: ["Changing the dependencies of", "Changed the dependencies of"],
   instruct_task: ["Sending instructions to", "Sent instructions to"],
+  list_settings: ["Reading the settings", "Read the settings"],
+  set_setting: ["Changing", "Changed"],
+  reset_setting: ["Resetting", "Reset"],
+  list_setting_changes: ["Reading the change log", "Read the change log"],
+  list_api_keys: ["Reading the API keys' status", "Read the API keys' status"],
+  list_users: ["Listing the users", "Listed the users"],
+  add_user: ["Adding", "Added"],
+  set_user_role: ["Changing the role of", "Changed the role of"],
+  set_user_deploy: ["Changing the deploy role of", "Changed the deploy role of"],
+  remove_user: ["Removing", "Removed"],
 };
+
+// Which side the agent is on, and how wide: dragged by its head and its inner edge, as in the editor (layout.ts).
+// Off on a narrow window, where the agent covers the page instead (admin-layout.ts).
+mountPaneLayout($("workspace"), $("agent-dock"), $("admin-panes"), $("agent").querySelector<HTMLElement>(".agent-head")!, matchMedia("(max-width: 999.98px)"));
 
 const input = $("agent-input") as HTMLTextAreaElement, send = $("agent-send") as HTMLButtonElement, hint = $("agent-hint");
 const talk = chat({ logEl: $("agent-log"), jump: $("agent-jump") as HTMLButtonElement, verbs: VERBS, imageAlt: "The screenshot the agent looked at" });
@@ -68,15 +85,18 @@ function renderBusy() {
   send.classList.toggle("stop", stop);
   send.setAttribute("aria-disabled", String(!!why));
   send.title = why ?? (stop ? "Stop the agent" : log.busy ? "Send (Enter); the agent will take it into account as it works" : "Send (Enter)");
+  $("agent-fab").classList.toggle("busy", log.busy);
   input.placeholder = off ? "The agent is off" : log.busy ? "Add to what the agent is doing…" : "Ask the agent…";
   if (off) showHint(off, true);
   else if (hint.classList.contains("sticky")) hideHint();
 }
 
-/** What the admin has open, so "this task" means something to the agent. */
+/** What the admin has open, so "this task" or "this page" means something to the agent. */
 function context(): string | null {
   const id = window.ergaBoard?.openTask() ?? null;
-  return id != null ? `The admin has task #${id} open on the board: ${window.ergaBoard?.title(id) ?? ""}` : null;
+  if (id != null) return `The admin has task #${id} open on the board: ${window.ergaBoard?.title(id) ?? ""}`;
+  const here = document.querySelector(".crumbs .here")?.textContent?.trim();
+  return `The admin has the ${here ?? "admin"} page open (${location.pathname}).`;
 }
 
 async function ask(text: string, ctx: string | null, files: Attachment[] = []) {
@@ -144,7 +164,7 @@ function renderModel(m: AgentState | null) {
 }
 
 async function load() {
-  const a = await fetch("/api/factory/agent").then((r) => r.ok ? r.json() : Promise.reject(new Error(`the server answered ${r.status}`))).catch((e: Error) => ({ enabled: false, reason: e.message })) as AgentState;
+  const a = await fetch("/api/factory/agent").then(async (r) => r.ok ? r.json() : Promise.reject(new Error(((await r.json().catch(() => null)) as { error?: string } | null)?.error?.replace(/\.$/, "") ?? `the server answered ${r.status}`))).catch((e: Error) => ({ enabled: false, reason: e.message })) as AgentState;
   off = a.enabled ? null : `The agent is off: ${a.reason ?? "the server did not start it"}.`;
   renderModel(a);
   if (a.log) { log.items = a.log.items; log.busy = a.log.busy; log.undoable = a.log.undoable; }
