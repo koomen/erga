@@ -1,8 +1,19 @@
 // The layout every admin page shares (/admin, /admin/changes, /admin/users, /admin/factory,
 // /admin/keys): a breadcrumb in the upper left (Erga › Admin › the page),
 // Share with agent in the header bar upper right (the editor's button and
-// card: admin-share.js, built from src/page/admin-share.ts), and, on the
-// left, a sidebar that links to Settings, Change log, Users and Factory. The sidebar
+// card: admin-share.js, built from src/page/admin-share.ts), the admin's agent
+// (the factory's agent, factory/agent.ts: its panel is factory-agent.js, built
+// from src/page/factory-agent.ts) in a column left of the page, and, on the
+// left, a sidebar that links to Settings, Change log, Users and Factory.
+//
+// As in the editor, the user drags the agent by its head to the right of the
+// page, and its inner edge to resize it (src/page/layout.ts, mountPaneLayout;
+// kept in this browser). It collapses to a round button in the lower corner
+// on its side, as the editor's does (its own button, Esc in the panel, or
+// ⌘J), and expands from it again;
+// this browser remembers which (localStorage "erga:admin-agent"), set before
+// it paints. Narrower than 1000px it covers the page while it's open, and
+// starts collapsed. The sidebar
 // collapses to a rail of icons and expands again, with an animation, and
 // this browser remembers which (localStorage "erga:admin-sidebar"), set
 // before the sidebar paints, so it doesn't jump. On a phone it is a row of
@@ -36,9 +47,29 @@ export interface AdminLayout {
   body: string;
   /** The page uses the whole width (the factory's board); otherwise a column. */
   wide?: boolean;
-  /** Share with agent in the header bar (off only where admin access is still locked, /admin/keys). */
-  share?: boolean;
 }
+
+/** The agent's panel: the editor's markup (page.html), with a button that collapses it. factory-agent.js runs it. */
+const AGENT_ICON = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5c.4 3.9 2.6 6.1 6.5 6.5-3.9.4-6.1 2.6-6.5 6.5-.4-3.9-2.6-6.1-6.5-6.5 3.9-.4 6.1-2.6 6.5-6.5Z"/><path d="M18.5 15.5c.2 1.6 1 2.4 2.5 2.5-1.5.2-2.3 1-2.5 2.5-.2-1.5-1-2.3-2.5-2.5 1.5-.1 2.3-.9 2.5-2.5Z"/></svg>`;
+const AGENT = `<div class="agent-dock" id="agent-dock"><aside class="admin-agent" id="agent" aria-label="Agent"><div class="agent-card">
+    <div class="agent-head">
+      <span class="title">Agent</span><span class="model" id="agent-model"></span>
+      <button type="button" class="icon-btn" id="agent-reset" aria-label="New conversation" data-tip="New conversation">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+      </button>
+      <button type="button" class="icon-btn" id="agent-close" aria-label="Collapse (Esc)" data-tip="Collapse  Esc" aria-controls="agent">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 19.5 10 14M10 14H5.5M10 14v4.5M19.5 4.5 14 10M14 10h4.5M14 10V5.5"/></svg>
+      </button>
+    </div>
+    <div class="agent-log" id="agent-log" data-empty="Say what you want built, or what to change on the server. The agent queues factory tasks and follows them, and reads and changes the settings and users for you: each change is in the change log under your name. You merge." aria-live="polite" tabindex="-1"></div>
+    <button type="button" class="agent-jump" id="agent-jump" hidden>↓ Jump to latest</button>
+    <p class="agent-hint" id="agent-hint" role="status" hidden></p>
+    <form class="agent-compose" id="agent-form">
+      <div class="agent-field" id="agent-field"><textarea id="agent-input" rows="1" placeholder="Ask the agent…" aria-label="Message the agent"></textarea></div>
+      <button type="submit" class="agent-send" id="agent-send">Send</button>
+    </form>
+  </div></aside></div>
+<button type="button" class="agent-fab admin-fab" id="agent-fab" aria-label="Open the agent (⌘J)" title="Agent  ⌘J" aria-expanded="true" aria-controls="agent">${AGENT_ICON}</button>`;
 
 export const LAYOUT_STYLE = `
   /* The header: the breadcrumb upper left, on the line of the account corner (account.ts) upper right; Share with agent left of it. */
@@ -69,8 +100,66 @@ export const LAYOUT_STYLE = `
   /* No animation as the page opens in the state it remembers: only when it's toggled. */
   :root:not(.side-ready) .admin-side, :root:not(.side-ready) .admin-side .label { transition: none; }
   @media (prefers-reduced-motion: reduce) { .admin-side, .admin-side .label { transition: none; } }
-  main.admin-main { flex: 1; min-width: 0; max-width: 880px; margin: 0 auto; padding: 8px 24px 96px; }
+  /* The admin's agent and the page: a grid of two, the agent on the left, as the editor's card, or on the right. As in the
+     editor, the user drags the agent by its head to the other side, and its inner edge to resize it (src/page/layout.ts,
+     mountPaneLayout, sets --agent-w and .agent-right; the grip and the ghost are style.css's). Collapsed, the agent is a
+     round button in the lower corner on its side; expanding grows the card out of that corner (a clip-path from the
+     button's circle), and the page slides over. */
+  :root { --agent-fab: 44px; --agent-ms: 480ms; --agent-ease: cubic-bezier(0.45, 0, 0.15, 1); }
+  .admin-work { --agent-w: 380px; flex: 1; min-width: 0; display: grid; grid-template-columns: var(--agent-w) minmax(0, 1fr); column-gap: 20px; align-items: start;
+    transition: grid-template-columns var(--agent-ms) var(--agent-ease), column-gap var(--agent-ms) var(--agent-ease); }
+  .admin-work.agent-right { grid-template-columns: minmax(0, 1fr) var(--agent-w); }
+  .agent-closed .admin-work { grid-template-columns: 0px minmax(0, 1fr); column-gap: 0px; }
+  .agent-closed .admin-work.agent-right { grid-template-columns: minmax(0, 1fr) 0px; }
+  .agent-dock { grid-row: 1; grid-column: 1; position: sticky; top: 12px; height: calc(100vh - 78px); height: calc(100dvh - 78px); min-height: 420px; min-width: 0; }
+  .admin-work > main { grid-row: 1; grid-column: 2; }
+  .admin-work.agent-right .agent-dock { grid-column: 2; }
+  .admin-work.agent-right > main { grid-column: 1; }
+  .agent-dock.layout-dragged { position: fixed; z-index: 40; }
+  .agent-dock.layout-dragged .agent-card { box-shadow: 0 24px 48px rgba(0, 0, 0, 0.2), 0 2px 6px rgba(0, 0, 0, 0.08); }
+  .agent-dock .agent-head { cursor: grab; user-select: none; touch-action: none; }
+  .agent-closed .agent-dock .agent-resize { display: none; }
+  body.layout-resizing :is(.admin-work, .admin-work *), body.layout-dragging .admin-work { transition: none !important; }
+  body.layout-resizing iframe, body.layout-dragging iframe { pointer-events: none; }
+  .admin-agent { position: absolute; inset: 0; filter: drop-shadow(0 12px 28px rgba(0, 0, 0, 0.09)) drop-shadow(0 1px 3px rgba(0, 0, 0, 0.05)); transition: visibility 0s; }
+  .admin-agent .agent-card { position: absolute; top: 0; bottom: 0; left: 0; width: var(--agent-w); display: flex; flex-direction: column; box-sizing: border-box;
+    background: var(--bg); border: 1px solid var(--panel-border); border-radius: 18px; font: 14px/1.55 var(--font-text); color: var(--fg); overflow: hidden;
+    clip-path: inset(0 0 0 0 round 18px); opacity: 1; transition: clip-path var(--agent-ms) var(--agent-ease), opacity 0s; }
+  .agent-right .admin-agent .agent-card { left: auto; right: 0; }
+  .admin-agent .agent-head .title { white-space: nowrap; }
+  .admin-agent .agent-card > * { transition: opacity 280ms ease 200ms; }
+  .agent-closed .admin-agent { visibility: hidden; transition: visibility 0s linear var(--agent-ms); }
+  .agent-closed .admin-agent .agent-card { clip-path: inset(calc(100% - var(--agent-fab)) calc(100% - var(--agent-fab)) 0 0 round calc(var(--agent-fab) / 2)); opacity: 0;
+    transition: clip-path var(--agent-ms) var(--agent-ease), opacity 180ms ease 200ms; }
+  .agent-closed .agent-right .admin-agent .agent-card { clip-path: inset(calc(100% - var(--agent-fab)) 0 0 calc(100% - var(--agent-fab)) round calc(var(--agent-fab) / 2)); }
+  .agent-closed .admin-agent .agent-card > * { opacity: 0; transition: opacity 120ms ease; }
+  .admin-fab { position: fixed; left: max(16px, env(safe-area-inset-left)); bottom: max(16px, env(safe-area-inset-bottom)); z-index: 21;
+    width: var(--agent-fab); height: var(--agent-fab); border-radius: 50%; border: 1px solid var(--panel-border); display: grid; place-items: center; padding: 0; cursor: pointer;
+    background: var(--panel-bg, var(--bg)); color: var(--chrome-hover); box-shadow: var(--shadow, 0 6px 24px rgba(0, 0, 0, 0.1)); opacity: 0; pointer-events: none; transition: opacity 200ms ease, box-shadow 200ms ease; }
+  .agent-right .admin-fab { left: auto; right: max(16px, env(safe-area-inset-right)); }
+  .admin-fab:hover { box-shadow: 0 10px 34px rgba(0, 0, 0, 0.14), 0 1px 2px rgba(0, 0, 0, 0.06); }
+  .admin-fab:focus-visible { outline: 2px solid var(--caret); outline-offset: 2px; }
+  .admin-fab svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+  .admin-fab.busy::after { content: ""; position: absolute; inset: -3px; border-radius: 50%; border: 2px solid transparent; border-top-color: var(--caret); animation: admin-agent-spin 0.9s linear infinite; }
+  @keyframes admin-agent-spin { to { transform: rotate(360deg); } }
+  .agent-closed .admin-fab { opacity: 1; pointer-events: auto; transition: opacity 200ms ease 220ms, box-shadow 200ms ease; }
+  :root:not(.agent-ready) :is(.admin-work, .admin-agent, .admin-agent .agent-card, .admin-agent .agent-card > *, .admin-fab) { transition: none !important; }
+  @media (prefers-reduced-motion: reduce) { :is(.admin-work, .admin-agent, .admin-agent .agent-card, .admin-agent .agent-card > *, .admin-fab) { transition: none !important; } }
+  /* Narrower, it covers the page while it's open, from the lower left; no dragging or resizing. */
+  @media (max-width: 999.98px) {
+    .admin-work, .admin-work.agent-right { display: block; }
+    .agent-dock, .agent-closed .agent-dock { position: fixed; z-index: 22; top: max(56px, env(safe-area-inset-top)); bottom: max(12px, env(safe-area-inset-bottom)); left: max(12px, env(safe-area-inset-left));
+      width: min(380px, calc(100vw - 24px)); height: auto; min-height: 0; }
+    .agent-dock .agent-head { cursor: auto; }
+    .agent-dock .agent-resize { display: none; }
+    .admin-agent .agent-card, .agent-right .admin-agent .agent-card { width: 100%; left: 0; right: auto; }
+    .agent-closed .agent-right .admin-agent .agent-card { clip-path: inset(calc(100% - var(--agent-fab)) calc(100% - var(--agent-fab)) 0 0 round calc(var(--agent-fab) / 2)); }
+    .agent-right .admin-fab { left: max(16px, env(safe-area-inset-left)); right: auto; }
+  }
+  main.admin-main { min-width: 0; max-width: 880px; margin: 0 auto; padding: 8px 24px 96px; }
   main.admin-main.wide { max-width: none; margin: 0; padding: 0 max(16px, env(safe-area-inset-right)) 24px 8px; }
+  /* Room on the right, for the agent docked there; the wide page (the factory's) has none of its own then. */
+  @media (min-width: 1000px) { .admin-body { padding-right: max(16px, env(safe-area-inset-right)); } main.admin-main.wide { padding-right: 0; } }
   main.admin-main > header { margin-bottom: 24px; }
   /* A phone: the links in a row above the page, always with their labels. */
   @media (max-width: 720px) {
@@ -84,7 +173,33 @@ export const LAYOUT_STYLE = `
 `;
 
 /** Remembered state, before the sidebar paints; the toggle; and the animation only from then on. */
-const EARLY_SCRIPT = `<script>try { if (localStorage.getItem("erga:admin-sidebar") == "closed") document.documentElement.classList.add("side-closed"); } catch {}</script>`;
+const EARLY_SCRIPT = `<script>try { if (localStorage.getItem("erga:admin-sidebar") == "closed") document.documentElement.classList.add("side-closed"); } catch {}
+try { if (matchMedia("(max-width: 999.98px)").matches || localStorage.getItem("erga:admin-agent") == "closed") document.documentElement.classList.add("agent-closed"); } catch {}</script>`;
+
+/** The agent's collapse and expand: its button, the round one, Esc in the panel, ⌘J; remembered on a wide window. */
+const AGENT_SCRIPT = `<script>
+(() => {
+  const root = document.documentElement, pane = document.getElementById("agent"), fab = document.getElementById("agent-fab");
+  const narrow = matchMedia("(max-width: 999.98px)");
+  const sync = () => { const open = !root.classList.contains("agent-closed"); pane.inert = !open; fab.setAttribute("aria-expanded", String(open)); };
+  const show = (open) => {
+    root.classList.toggle("agent-closed", !open);
+    if (!narrow.matches) try { localStorage.setItem("erga:admin-agent", open ? "open" : "closed"); } catch {}
+    sync();
+    if (open) window.dispatchEvent(new Event("erga:agent-shown"));
+    else fab.focus();
+  };
+  window.ergaAgent = { show, open: () => !root.classList.contains("agent-closed") };
+  document.getElementById("agent-close").addEventListener("click", () => show(false));
+  fab.addEventListener("click", () => show(true));
+  pane.addEventListener("keydown", (e) => { if (e.key == "Escape" && !e.defaultPrevented) { e.preventDefault(); show(false); } });
+  document.addEventListener("keydown", (e) => {
+    if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() == "j") { e.preventDefault(); show(root.classList.contains("agent-closed")); }
+  });
+  sync();
+  requestAnimationFrame(() => requestAnimationFrame(() => root.classList.add("agent-ready")));
+})();
+</script>`;
 const SIDEBAR_SCRIPT = `<script>
 (() => {
   const root = document.documentElement, toggle = document.getElementById("side-toggle");
@@ -109,19 +224,24 @@ const SIDEBAR_SCRIPT = `<script>
 export function adminLayout(o: AdminLayout): string {
   const crumbs = `<nav class="crumbs" aria-label="Breadcrumbs"><a class="brand" href="${esc(link("/", o.session))}">Erga</a><a class="here-link" href="${esc(link("/admin", o.session))}">Admin</a><h1 class="here" aria-current="page">${esc(o.title)}</h1></nav>`;
   // Share with agent: the editor's icon button (page.html, .chrome-top), the card from admin-share.js.
-  const bar = o.share === false ? "" : `<div class="chrome chrome-top" role="toolbar" aria-label="Controls"><button type="button" class="icon-btn" id="btn-share" aria-label="Share with an agent" data-tip="Share with an agent" aria-expanded="false" aria-controls="share">${ICON.agent}</button></div>`;
+  const bar = `<div class="chrome chrome-top" role="toolbar" aria-label="Controls"><button type="button" class="icon-btn" id="btn-share" aria-label="Share with an agent" data-tip="Share with an agent" aria-expanded="false" aria-controls="share">${ICON.agent}</button></div>`;
   const links = SECTIONS.map((s) => `<li><a href="${esc(link(s.path, o.session))}"${s.key == o.here ? ` aria-current="page"` : ""}>${s.icon}<span class="label">${s.label}</span></a></li>`).join("");
   const side = `<nav class="admin-side" id="admin-side" aria-label="Admin"><button type="button" class="side-toggle" id="side-toggle" aria-controls="admin-side" aria-expanded="true" aria-label="Collapse the sidebar">${TOGGLE_ICON}</button><ul>${links}</ul></nav>`;
   return appPage(o.title, LAYOUT_STYLE + (o.style ?? ""), `${EARLY_SCRIPT}
 ${crumbs}${bar}
 <div class="admin-body">
 ${side}
-<main class="admin-main${o.wide ? " wide" : ""}">
+<div class="admin-work" id="workspace">
+${AGENT}
+<main class="admin-main${o.wide ? " wide" : ""}" id="admin-panes">
 ${o.body}
 </main>
 </div>
+</div>
 ${SIDEBAR_SCRIPT}
-${o.share === false ? "" : `<script src="/admin-share.js" defer></script>`}`, false);
+${AGENT_SCRIPT}
+<script src="/admin-share.js" defer></script>
+<script src="/factory-agent.js" defer></script>`, false);
 }
 
 /** adminLayout as a response. */

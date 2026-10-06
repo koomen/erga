@@ -10,7 +10,7 @@
  * The first half is the layout's state and geometry, pure (tests/layout.test.ts);
  * mountLayout puts it on the page, as CSS variables page.html's rules read.
  *
- * /admin/factory's agent panel has the same grip and drag (mountGrip,
+ * The admin pages' agent panel (admin-layout.ts) has the same grip and drag (mountGrip,
  * dragToDock), in a grid of two: mountPaneLayout, PaneLayout.
  */
 
@@ -153,10 +153,10 @@ export function save(storage: Pick<Storage, "setItem"> | null, layout: Layout) {
   try { storage?.setItem(KEY, JSON.stringify(layout)); } catch {}
 }
 
-// ---------------------------------------------------------------- /admin/factory's agent panel
+// ---------------------------------------------------------------- the admin pages' agent panel
 
 /**
- * /admin/factory's agent panel (source/page.ts, src/page/factory-agent.ts): the
+ * The admin pages' agent panel (admin-layout.ts, src/page/factory-agent.ts): the
  * same grip and drag as the editor's agent, in a grid of two, the agent and
  * the board's column, either way round. Kept in this browser (PANE_KEY).
  */

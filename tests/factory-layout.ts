@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-// /admin/factory's agent panel (src/page/layout.ts, mountPaneLayout), in a
+// The admin pages' agent panel (admin-layout.ts; src/page/layout.ts, mountPaneLayout), in a
 // real browser: the editor's grip and drag, on the factory's page.
 //
 //   - the agent on the left to start with, the board right of it;
@@ -7,7 +7,7 @@
 //   - dragging it by its head shows a ghost on the right, and docks it there,
 //     the board on its left; Escape puts it back;
 //   - a reload keeps the side and the width;
-//   - on a phone (tabs) there is no grip, and the agent tab still shows it.
+//   - on a phone (tabs) there is no grip, and #agent opens the agent over the page.
 //
 //   bun tests/factory-layout.ts            the checks
 //   bun tests/factory-layout.ts --shots    and screenshots, in tests/cdp.ts's SHOTS
@@ -38,7 +38,7 @@ type Where = { agent: R; panes: R; ws: R; ghost: R | null; grip: string | null; 
 const where = (p: Page) => p.eval<Where>(`(() => {
   const r = (el) => { const b = el.getBoundingClientRect(); return { x: Math.round(b.left), w: Math.round(b.width), r: Math.round(b.right) }; };
   const g = document.querySelector(".dock-ghost"), grip = document.querySelector("#agent-dock .agent-resize");
-  return { agent: r(document.getElementById("agent")), panes: r(document.getElementById("panes")), ws: r(document.getElementById("workspace")),
+  return { agent: r(document.getElementById("agent")), panes: r(document.getElementById("admin-panes")), ws: r(document.getElementById("workspace")),
     ghost: g && !g.hidden ? r(g) : null, grip: grip && grip.offsetParent ? grip.dataset.side : null, stored: localStorage.getItem(${JSON.stringify(PANE_KEY)}) };
 })()`);
 async function still(p: Page) {
@@ -123,11 +123,11 @@ try {
   expect(w.agent.r == w.ws.r && w.agent.w == kept, "after a reload, the same side and width", w);
   ok("a reload keeps the side and the width");
 
-  // On a phone: tabs, no grip; the agent tab still shows the panel.
+  // On a phone: tabs, no grip; #agent opens the agent over the page.
   await p.open(`${host.root}/admin/factory#agent`, { width: 390, height: 800 });
   await until(() => p.eval<boolean>(`!!document.querySelector("#agent-dock .agent-resize")`), 15_000, "the phone page");
   w = await where(p);
-  expect(w.grip == null && w.agent.w > 300, "a phone: the agent tab shows the panel, with no grip", w);
+  expect(w.grip == null && w.agent.w > 300, "a phone: #agent opens the panel, with no grip", w);
   ok("on a phone, tabs as before, no grip");
 } catch (e) {
   failed = true;

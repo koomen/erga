@@ -329,19 +329,21 @@ try {
   const phone = await browser.page(await browser.context());
   await phone.open(`${root}/admin/factory`, { width: 390, height: 844, scale: 2 });
   await until(() => phone.eval(`!!document.querySelector('#tasks [data-col="queued"]')`), 10_000, "the page on a phone");
-  const shown = () => phone.eval<string[]>(`["#tasks", "#source-pane", "#agent"].filter((s) => document.querySelector(s).offsetParent !== null)`);
+  const shown = () => phone.eval<string[]>(`["#tasks", "#source-pane", "#agent"].filter((s) => { const e = document.querySelector(s); return e.getBoundingClientRect().width > 0 && getComputedStyle(e).visibility != "hidden"; })`);
   expect(JSON.stringify(await shown()) == '["#tasks"]', "a phone shows one pane at a time: the board first", await shown());
   expect(await phone.eval(`document.documentElement.scrollWidth <= innerWidth`), "no sideways scrolling on a phone");
   await phone.screenshot(join(SHOTS, "factory-phone-tasks.png"));
-  await click(phone, '.tabs [data-tab="agent"]');
-  expect(JSON.stringify(await shown()) == '["#agent"]', "the Agent tab shows the agent", await shown());
+  await click(phone, "#agent-fab");
+  await until(async () => JSON.stringify(await shown()) == '["#tasks","#agent"]', 3000, "the agent's round button opens it over the board", shown);
   const phoneAgent = await phone.eval<{ bottom: number; input: number }>(`(() => ({ bottom: document.getElementById("agent").getBoundingClientRect().bottom, input: document.getElementById("agent-input").getBoundingClientRect().bottom }))()`);
   expect(phoneAgent.bottom <= 844 && phoneAgent.input <= 844, "its box fits on the screen", phoneAgent);
   await phone.screenshot(join(SHOTS, "factory-phone-agent.png"));
+  await click(phone, "#agent-close");
+  await until(async () => JSON.stringify(await shown()) == '["#tasks"]', 3000, "and collapses again", shown);
   await click(phone, '.tabs [data-tab="source"]');
   expect(JSON.stringify(await shown()) == '["#source-pane"]', "the Source tab shows the dashboard", await shown());
   expect(await phone.eval(`document.documentElement.scrollWidth <= innerWidth`), "no sideways scrolling there either");
-  ok("one page, /admin/factory: the agent beside the board and the dashboard; the old pages redirect; tabs on a phone");
+  ok("one page, /admin/factory: the agent beside the board and the dashboard; the old pages redirect; tabs on a phone, and the agent over them");
 
   // ---------------------------------------------------------------- 10. the factory's agent
   const sayTo = (text: string) => p.eval(`(() => { const i = document.getElementById("agent-input"); i.value = ${JSON.stringify(text)}; i.dispatchEvent(new Event("input")); document.getElementById("agent-send").click(); return true; })()`);

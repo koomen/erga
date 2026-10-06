@@ -87,7 +87,8 @@ import * as Effect from "effect/Effect";
 import { agentConfigFrom, isModelChoice, MODELS, type AgentConfig } from "../agent";
 import { SIGN_IN_KEY, type Unlock } from "../admin-keys";
 import { type Blocked, dependents, depRules, depsNote, type DepStatus, type DepTask, ids } from "../development/task-queue/deps";
-import { factoryGuide, factoryTools, startFactoryAgent, type FactoryAgent, type FactoryOps } from "../factory/agent";
+import type { ToolWho } from "../server-tools";
+import { adminTools, factoryGuide, factoryTools, startFactoryAgent, type FactoryAgent, type FactoryOps } from "../factory/agent";
 import { containersHost } from "../factory/cloudflare";
 import { b64url } from "../factory/git-grant";
 import { branchName, claudeToken, hideTokens, resolvePrompt, restartPrompt, taskPrompt } from "../factory/prompt";
@@ -873,7 +874,9 @@ export class Factory extends DurableObject<Env> {
       const why = await this.refusal(login, state.unlock);
       if (why) throw new Error(why);
     };
-    const agent = startFactoryAgent({ cfg, owner: login, tools: factoryTools(ops, guard) });
+    // The admin tools act as the admin, with their latest unlock: the settings' change log names them, not the agent.
+    const as = (): ToolWho => ({ dir: directoryOf(this.env), who: { login, unlocked: state.unlock }, origin: state.origin });
+    const agent = startFactoryAgent({ cfg, owner: login, tools: [...factoryTools(ops, guard), ...adminTools(as, guard)] });
     agent.subscribe((ev) => this.event({ type: "agent", ev }, login));
     s = Object.assign(state, { agent });
     this.agents.set(login, s);

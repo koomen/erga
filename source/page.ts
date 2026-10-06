@@ -6,11 +6,11 @@
 // built to /factory-agent.js). It has the layout every admin page shares
 // (admin-layout.ts): the breadcrumb, Share with agent (upper right, as in the
 // editor) and the sidebar, which collapses so the board gets the full width.
-// On a wide window the agent sits on the left, as in the editor, and the
-// board and the dashboard are beside it, one above the other; as in the
-// editor, the user drags the agent by its head to the right, and its inner
-// edge to resize it (src/page/layout.ts, mountPaneLayout); narrower, tabs
-// show one at a time. Each part's stylesheet is scoped to its pane
+// The agent is the layout's, as on every admin page: on a wide window it sits
+// on the left, as in the editor, and the board and the dashboard are beside
+// it, one above the other; as in the editor, the user drags the agent by its
+// head to the right, and its inner edge to resize it (admin-layout.ts;
+// src/page/layout.ts, mountPaneLayout); narrower, tabs show one at a time. Each part's stylesheet is scoped to its pane
 // (scopeCss). /source, /admin/source and /admin/deploys redirect here.
 //
 // The dashboard:
@@ -610,23 +610,7 @@ export function scopeCss(css: string, scope: string): string {
 }
 
 const PAGE_STYLE = `
-  /* The agent on the left, as in the editor, or on the right; the board and the dashboard beside it, one above the other.
-     The user drags the agent by its head to the other side, and its inner edge to resize it (src/page/layout.ts, mountPaneLayout,
-     sets --agent-w and .agent-right; the grip and the ghost are style.css's). */
-  .workspace { --agent-w: 380px; display: grid; grid-template-columns: var(--agent-w) minmax(0, 1fr); gap: 20px; align-items: start; }
-  .workspace.agent-right { grid-template-columns: minmax(0, 1fr) var(--agent-w); }
-  .agent-dock { grid-row: 1; grid-column: 1; position: sticky; top: 16px; height: calc(100vh - 78px); height: calc(100dvh - 78px); min-height: 420px; min-width: 0; }
-  .panes { grid-row: 1; grid-column: 2; }
-  .workspace.agent-right .agent-dock { grid-column: 2; }
-  .workspace.agent-right .panes { grid-column: 1; }
-  .agent-dock.layout-dragged { position: fixed; z-index: 40; }
-  .agent-dock.layout-dragged .agent-pane { box-shadow: 0 24px 48px rgba(0, 0, 0, 0.2), 0 2px 6px rgba(0, 0, 0, 0.08); }
-  .agent-dock .agent-head { cursor: grab; user-select: none; touch-action: none; }
-  body.layout-resizing .workspace, body.layout-resizing .workspace * { transition: none !important; }
-  body.layout-resizing iframe, body.layout-dragging iframe { pointer-events: none; }
-  .agent-pane { height: 100%; display: flex; flex-direction: column; min-width: 0;
-    border: 1px solid var(--panel-border); border-radius: 18px; background: var(--bg); box-shadow: 0 12px 28px rgba(0, 0, 0, 0.07), 0 1px 3px rgba(0, 0, 0, 0.05); font: 14px/1.55 var(--font-text); color: var(--fg); overflow: hidden; }
-  .agent-pane .agent-head .title { white-space: nowrap; }
+  /* The board and the dashboard, one above the other, beside the agent (admin-layout.ts). */
   .panes { min-width: 0; display: flex; flex-direction: column; gap: 28px; }
   .pane { container-type: inline-size; min-width: 0; }
   .pane-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-bottom: 10px; }
@@ -634,18 +618,14 @@ const PAGE_STYLE = `
   .pane-head .sub { margin: 2px 0 0; font-size: 13px; }
   .pane-note { margin: -4px 0 10px; font-size: 13px; color: var(--soft); }
   .tabs { display: none; }
-  /* Narrower, one at a time: tabs for the board, the dashboard and the agent. */
+  /* Narrower, one at a time: tabs for the board and the dashboard (the agent covers the page, from its button). */
   @media (max-width: 999.98px) {
-    .workspace { display: block; }
     .tabs { display: flex; gap: 4px; padding: 4px; margin: 0 0 14px; border: 1px solid var(--rule); border-radius: 12px; background: var(--bg); position: sticky; top: max(8px, env(safe-area-inset-top)); z-index: 6; }
     .tabs button { flex: 1; height: 34px; border: 0; border-radius: 9px; background: transparent; color: var(--soft); font: 550 13.5px var(--font-text); cursor: pointer; }
     .tabs button[aria-selected="true"] { background: var(--fg-strong); color: var(--bg); }
     .panes { display: block; }
-    .pane, .agent-dock { display: none; }
-    .agent-dock .agent-head { cursor: auto; }
-    .agent-dock .agent-resize { display: none; }
+    .pane { display: none; }
     body[data-tab="tasks"] #tasks, body[data-tab="source"] #source-pane { display: block; }
-    body[data-tab="agent"] .agent-dock { display: block; position: static; height: calc(100dvh - 180px); min-height: 360px; }
   }
   /* The GitHub mirror: its state and Push now, or how to turn it on. */
   dialog#mirror-dlg { width: min(600px, calc(100vw - 32px)); }
@@ -662,18 +642,18 @@ const PAGE_STYLE = `
   #mirror-status { margin-right: auto; font-size: 12.5px; color: var(--soft); }
 `;
 
-/** The tabs on a phone: which pane shows, remembered in this browser and in the address (#tasks, #source, #agent). */
+/** The tabs on a phone: which pane shows, remembered in this browser and in the address (#tasks, #source; #agent opens the agent). */
 const TABS_SCRIPT = `
 (() => {
-  const tabs = ["tasks", "source", "agent"];
+  const tabs = ["tasks", "source"];
   let tab = location.hash.slice(1);
+  if (tab == "agent") addEventListener("DOMContentLoaded", () => window.ergaAgent?.show(true));
   if (!tabs.includes(tab)) { try { tab = localStorage.getItem("erga:admin-factory-tab") || "tasks"; } catch { tab = "tasks"; } }
   if (!tabs.includes(tab)) tab = "tasks";
   const show = (t) => {
     document.body.dataset.tab = t;
     for (const b of document.querySelectorAll(".tabs [data-tab]")) b.setAttribute("aria-selected", String(b.dataset.tab == t));
     try { localStorage.setItem("erga:admin-factory-tab", t); } catch {}
-    if (t == "agent") window.dispatchEvent(new Event("erga:agent-shown"));
   };
   for (const b of document.querySelectorAll(".tabs [data-tab]")) b.addEventListener("click", () => { show(b.dataset.tab); history.replaceState(null, "", "#" + b.dataset.tab); });
   show(tab);
@@ -712,33 +692,13 @@ function mirrorDialog(c: SourcePageConfig): string {
 export function adminFactoryPage(c: SourcePageConfig): Response {
   if (!c.admin) return plainPage("Not found", "There's nothing here. <a href=\"/\">Back to the start</a>.", 404);
   return adminResponse({ session: c.session, title: "Factory", here: "factory", wide: true, style: PAGE_STYLE + scopeCss(BOARD_STYLE, "#tasks") + scopeCss(SOURCE_STYLE, "#source-pane"), body: `
-  <div class="tabs" role="tablist" aria-label="Show"><button type="button" role="tab" data-tab="tasks">Tasks</button><button type="button" role="tab" data-tab="source">Source</button><button type="button" role="tab" data-tab="agent">Agent</button></div>
-  <div class="workspace" id="workspace">
-  <div class="agent-dock" id="agent-dock">
-  <aside class="agent-pane" id="agent" aria-label="Agent">
-    <div class="agent-head">
-      <span class="title">Agent</span><span class="model" id="agent-model"></span>
-      <button type="button" class="icon-btn" id="agent-reset" aria-label="New conversation" data-tip="New conversation">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
-      </button>
-    </div>
-    <div class="agent-log" id="agent-log" data-empty="Say what you want built. The agent queues it as factory tasks, with their dependencies, and can read tasks, their logs, previews and screenshots, and send them more instructions. You merge." aria-live="polite" tabindex="-1"></div>
-    <button type="button" class="agent-jump" id="agent-jump" hidden>↓ Jump to latest</button>
-    <p class="agent-hint" id="agent-hint" role="status" hidden></p>
-    <form class="agent-compose" id="agent-form">
-      <div class="agent-field" id="agent-field"><textarea id="agent-input" rows="1" placeholder="Ask the agent…" aria-label="Message the agent"></textarea></div>
-      <button type="submit" class="agent-send" id="agent-send">Send</button>
-    </form>
-  </aside>
-  </div>
-  <div class="panes" id="panes">
+  <div class="tabs" role="tablist" aria-label="Show"><button type="button" role="tab" data-tab="tasks">Tasks</button><button type="button" role="tab" data-tab="source">Source</button></div>
+  <div class="panes">
     <section class="pane" id="tasks" aria-label="Tasks">${boardMarkup({ enabled: c.factory })}</section>
     <section class="pane" id="source-pane" aria-label="Source and deploys">${sourceMarkup(c)}</section>
-  </div>
   </div>
   ${c.ready ? mirrorDialog(c) : ""}
 <script>${TABS_SCRIPT}</script>
 <script>${BOARD_SCRIPT}</script>
-${c.ready ? `<script>${SOURCE_SCRIPT}</script>` : ""}
-<script src="/factory-agent.js" defer></script>` });
+${c.ready ? `<script>${SOURCE_SCRIPT}</script>` : ""}` });
 }
