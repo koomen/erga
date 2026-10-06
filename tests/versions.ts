@@ -6,7 +6,7 @@
 // the scripted model writes none); "latest" mode shows edits at once and
 // "manual" mode the chosen version, in the viewer (headless Chrome) and in
 // every file a viewer can ask for; only editors may publish; and the agent's
-// tools (list_versions, read_version, publish_version) over the API.
+// tools (list_versions, read_version, diff_versions, publish_version) over the API.
 //
 //   bun tests/versions.ts
 
@@ -180,7 +180,17 @@ try {
     const body = (await res.json()) as { ok: boolean; content?: { text?: string }[]; error?: string };
     return { status: res.status, text: body.content?.map((c) => c.text ?? "").join("\n") ?? body.error ?? "" };
   };
-  let t = await tool("list_versions", {});
+  // diff_versions: by default from where the owner's agent's last turn ended (the scripted turn above) to the document now.
+  let t = await tool("diff_versions", {});
+  expect(t.status == 200 && t.text.startsWith(`From ${agentVersion.id} (where your last turn ended) to current`) && t.text.includes("--- a/index.html\n+++ b/index.html\n@@ ") && /^\+.*live-now/m.test(t.text) && /^-.*agent-two/m.test(t.text), "diff_versions: since the agent's last turn, to the document now", t);
+  t = await tool("diff_versions", { from: "v1", to: "v2", path: "index.html", context: 0 });
+  expect(t.status == 200 && t.text.startsWith("From v1 to v2 in index.html: 1 file(s) differ") && /^\+.*burst5/m.test(t.text) && !t.text.includes("agent-one"), "diff_versions between two versions, for one file", t);
+  t = await tool("diff_versions", { from: "v2", to: "2" });
+  expect(t.status == 200 && t.text == "No changes from v2 to v2.", "diff_versions with nothing changed", t);
+  t = await tool("diff_versions", { from: "v99" });
+  expect(t.status != 200 && t.text.includes("no version \"v99\""), "diff_versions from a version that isn't there", t);
+  ok("diff_versions: unified diffs between versions, and since the agent's last turn");
+  t = await tool("list_versions", {});
   expect(t.status == 200 && t.text.includes("Published: latest") && t.text.includes("v2") && t.text.includes("Edited index.html"), "list_versions", t);
   t = await tool("read_version", { version: "v1" });
   expect(t.status == 200 && t.text.includes("index.html"), "read_version lists a version's files", t);
@@ -226,6 +236,40 @@ try {
   expect(t.status == 200 && s.current.description == "Restored version 1" && s.current.authors.some((a) => a.endsWith("agent")), "restore_version, by the agent", { t, current: s.current });
   await publish(id, { mode: "latest" });
   ok("restoring a version: a new current version, live in open editors, published version unchanged; also as an agent tool");
+
+  // One file only: the other files stay as they are, and the answer has the new text and version, to edit against at once.
+  t = await tool("write", { path: "notes.md", content: "# Notes\n\nnotes-one\n" });
+  expect(t.status == 200, "the agent writes a second file", t);
+  expect((await publish(id, { mode: "manual" })).ok, "which becomes a version");
+  const withNotes = (await state(id)).current;
+  await publish(id, { mode: "latest" });
+  t = await tool("write", { path: "notes.md", content: "# Notes\n\nnotes-two\n" });
+  bob.edit((t) => t.insert(t.toString().indexOf("</h1>"), " bob-keeps"));
+  await until(() => bob.str().includes("bob-keeps"), 2000, "Bo's edit lands");
+  t = await tool("restore_version", { version: withNotes.id, path: "notes.md" });
+  s = await state(id);
+  expect(t.status == 200 && s.current.description == `Restored notes.md from version ${withNotes.n}` && t.text.includes(`current version is now ${s.current.id}`) && t.text.includes("notes-one") && !t.text.includes("notes-two"), "restore_version with path: one file, its text and the new version in the answer", { t, current: s.current });
+  await sleep(300);
+  expect(bob.str().includes("bob-keeps"), "the other files stay as they are", bob.str().slice(0, 300));
+  t = await tool("edit", { path: "notes.md", edits: [{ oldText: "notes-one", newText: "notes-one-edited" }] });
+  expect(t.status == 200, "an edit against the restored text lands at once", t);
+  expect((await tool("read", { path: "notes.md" })).text.includes("notes-one-edited"), "and it's in the file");
+  t = await tool("restore_version", { version: withNotes.id, path: "nope.html" });
+  expect(t.status != 200 && t.text.includes("has no file nope.html"), "a file the version doesn't have can't be restored", t);
+  const one = await get(`/api/docs/${id}/versions/${withNotes.id}/restore`, { method: "POST", body: JSON.stringify({ path: "notes.md" }), headers: { Origin: origin, "Content-Type": "application/json" } });
+  const oneBody = (await one.json()) as { current: V; files: string[]; from: string };
+  expect(one.ok && oneBody.files.join() == "notes.md" && oneBody.from == withNotes.id && oneBody.current.description == `Restored notes.md from version ${withNotes.n}`, "the HTTP API restores one file too", oneBody);
+  ok("restoring one file: the others stay, the answer has its text and the new version, and an edit lands right after");
+
+  // An edit based on text a restore has since replaced: it says so plainly, with the current version.
+  expect((await tool("read", { path: "index.html" })).text.includes("bob-keeps"), "the agent reads index.html");
+  await sleep(20);
+  const back = (await (await get(`/api/docs/${id}/versions/v2/restore`, { method: "POST", headers: { Origin: origin } })).json()) as { current: V };
+  await until(() => !bob.str().includes("bob-keeps"), 3000, "the restore reaches the editor");
+  t = await tool("edit", { path: "index.html", edits: [{ oldText: "bob-keeps", newText: "bob-changed" }] });
+  expect(t.status != 200 && t.text.includes("the file changed since the text your edit was based on") && t.text.includes(`restored since: ${back.current.id}, "Restored version 2", by ${owner}`) && t.text.includes(`The current version is ${back.current.id}`) && !t.text.includes("someone could be editing"), "a stale edit names the restore and the current version", t);
+  console.log(`     ${t.text}`);
+  ok("an edit against text a restore replaced says the file changed since, by which restore, and the current version");
 
   bob.disconnect();
   ws.close();

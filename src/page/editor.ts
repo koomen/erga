@@ -289,6 +289,37 @@ function skeleton(src: string, units: M.Unit[]): string {
   return (out + src.slice(pos)).replace(/\s+/g, " ").replace(/\u0000( ?\u0000)+/g, "\u0000");
 }
 
+/** How many characters `drops` take out of the source before `pos`. */
+const dropped = (drops: { from: number; to: number }[], pos: number) => drops.reduce((n, d) => n + (d.to <= pos ? d.to - d.from : 0), 0);
+
+/** Elements that are content of their own, so a block holding one isn't empty. */
+const CONTENT_TAG = /<(br|img|svg|video|audio|canvas|input|iframe|object|embed|picture|hr|math)\b/i;
+
+/** Whether [from, to) of a unit holds nothing the reader sees: no text (a no-break space counts), no <br>, no image. */
+function emptyIn(src: string, u: M.Unit, from: number, to: number): boolean {
+  return !/\S|\u00a0/.test(textIn([u], from, to)) && !CONTENT_TAG.test(src.slice(from, to));
+}
+
+/**
+ * The <br> that holds an empty HTML block open, so it has a line's height
+ * on the page (`<p><br></p>`, maybe inside inline tags): the block's only
+ * content. Null when the block has anything else, or more than one <br>.
+ */
+function placeholderBr(src: string, u: M.Unit): { from: number; to: number } | null {
+  const inner = src.slice(u.contentFrom, u.contentTo);
+  const brs = [...inner.matchAll(/<br\s*\/?>/gi)];
+  if (brs.length != 1) return null;
+  const rest = inner.slice(0, brs[0].index) + inner.slice(brs[0].index! + brs[0][0].length);
+  if (CONTENT_TAG.test(rest) || /\S|\u00a0/.test(rest.replace(/<\/?[a-z][^>]*>/gi, ""))) return null;
+  const from = u.contentFrom + brs[0].index!;
+  return { from, to: from + brs[0][0].length };
+}
+
+/** Whether [from, to) of a unit holds content other than a placeholder <br> (a block with one has nothing else). */
+function contentIn(src: string, u: M.Unit, from: number, to: number): boolean {
+  return !placeholderBr(src, u) && !emptyIn(src, u, from, to);
+}
+
 /** The rendered text of [from, to) of the source, as the units hold it (markup contributes nothing). */
 function textIn(units: M.Unit[], from: number, to: number): string {
   let out = "";
@@ -1105,6 +1136,17 @@ export class PageEditor {
     const el = this.els[u.id];
     if (!el) return;
     const nodes = this.textNodes(el);
+    if (!u.runs.length && nodes.length) {
+      // An empty block: what the browser put there is all new, and takes the place of a placeholder <br>.
+      const text = norm(nodes.map((n) => n.nodeValue!).join(""));
+      if (!text) return;
+      const src = this.state.doc.toString(), br = this.kind == "html" ? placeholderBr(src, u) : null;
+      const head = this.state.selection.main.head;
+      const at = br ? br.from : head >= u.contentFrom && head <= u.contentTo ? head : u.contentFrom;
+      const insert = this.escape(u, at, text);
+      this.dispatch({ changes: { from: at, to: br ? br.to : at, insert }, selection: { anchor: at + insert.length }, userEvent });
+      return;
+    }
     if (nodes.length != u.runs.length) { this.render(); return; }
     const before = u.runs.map((r) => r.text).join("");
     const after = norm(nodes.map((n) => n.nodeValue!).join(""));
@@ -1282,7 +1324,9 @@ export class PageEditor {
     const src = this.state.doc.toString();
     const insert = text ? this.escape(a, from, text) : "";
     if (a == b) {
-      this.dispatch({ changes: { from, to, insert }, selection: { anchor: from + insert.length }, userEvent, scrollIntoView: true });
+      // Text typed, pasted or composed into an empty block takes the place of the <br> that held it open.
+      const drops = insert ? this.placeholderDrops(src, [a], from, to, true) : [];
+      this.dispatch({ changes: [{ from, to, insert }, ...drops], selection: { anchor: from + insert.length - dropped(drops, from) }, userEvent, scrollIntoView: true });
       return true;
     }
     // Across units.
@@ -1313,11 +1357,25 @@ export class PageEditor {
       return true;
     }
     const head = M.closeTags(M.inlineStackAt(src, a, from));
-    const changes = [{ from, to, insert: head + insert + M.openTags(M.inlineStackAt(src, b, to)) }];
+    const kept = !!insert || contentIn(src, a, a.contentFrom, from) || contentIn(src, b, to, b.contentTo);
+    const drops = this.placeholderDrops(src, [a, b], from, to, kept);
+    const changes = [{ from, to, insert: head + insert + M.openTags(M.inlineStackAt(src, b, to)) }, ...drops];
     // The joined unit is the first one's element: its close tag ends it.
     if (a.tag != b.tag) changes.push({ from: b.contentTo, to: b.to, insert: src.slice(a.contentTo, a.to) });
-    this.dispatch({ changes, selection: { anchor: from + head.length + insert.length }, userEvent, scrollIntoView: true });
+    this.dispatch({ changes, selection: { anchor: from + head.length + insert.length - dropped(drops, from) }, userEvent, scrollIntoView: true });
     return true;
+  }
+
+  /**
+   * Deletions for the placeholder <br>s of `units` that an edit leaves in
+   * place (outside [from, to)) in the one block they end up in. A <br> is
+   * kept only as the sole content of an otherwise empty block: when the
+   * block gets content (`hasContent`), all go; else all but the first.
+   */
+  private placeholderDrops(src: string, units: M.Unit[], from: number, to: number, hasContent: boolean): { from: number; to: number }[] {
+    if (this.kind != "html") return [];
+    const left = units.map((u) => placeholderBr(src, u)).filter((br) => br && (br.to <= from || br.from >= to)) as { from: number; to: number }[];
+    return hasContent ? left : left.slice(1);
   }
 
   /** Backspace / Delete with a caret. */
@@ -1364,7 +1422,9 @@ export class PageEditor {
       if (!M.adjacent(src, prev, next)) return false;
       if (!this.verify(prev) || !this.verify(next)) return false;
       const from = prev.contentTo, to = next.contentFrom;
-      this.dispatch({ changes: { from, to }, selection: { anchor: from }, userEvent: "delete.backward", scrollIntoView: true });
+      const kept = contentIn(src, prev, prev.contentFrom, from) || contentIn(src, next, to, next.contentTo);
+      const drops = this.placeholderDrops(src, [prev, next], from, to, kept);
+      this.dispatch({ changes: [{ from, to }, ...drops], selection: { anchor: from - dropped(drops, from) }, userEvent: "delete.backward", scrollIntoView: true });
       return true;
     }
     // Markdown: the blank line (or list marker) between the blocks.
@@ -1413,8 +1473,8 @@ export class PageEditor {
       && !list.children.some((c) => c.kind == "element" && c.from > u.from)) {
       const indent = M.lineIndent(src, list.from);
       const before = src.slice(0, u.from).replace(/\s*$/, "").length;
-      const para = `\n${indent}<p></p>`;
-      this.dispatch({ changes: [{ from: before, to: u.to }, { from: list.to, insert: para }], selection: { anchor: before + (list.to - u.to) + para.length - 4 }, userEvent: "input", scrollIntoView: true });
+      const para = `\n${indent}<p><br></p>`;
+      this.dispatch({ changes: [{ from: before, to: u.to }, { from: list.to, insert: para }], selection: { anchor: before + (list.to - u.to) + para.length - "<br></p>".length }, userEvent: "input", scrollIntoView: true });
       return true;
     }
     const stack = M.inlineStackAt(src, u, pos);
@@ -1422,14 +1482,17 @@ export class PageEditor {
     const openTag = HEADING.test(u.tag) && atEnd ? "<p>" : src.slice(u.openFrom, u.openTo);
     const newTag = HEADING.test(u.tag) && atEnd ? "p" : u.tag;
     const indent = M.lineIndent(src, u.openFrom);
+    // An empty half keeps a <br>, so it has a line's height on the page too; typing into it takes the <br> out (replaceRange).
+    const brBefore = emptyIn(src, u, u.contentFrom, pos) ? "<br>" : "";
+    const brAfter = newTag != u.tag || emptyIn(src, u, pos, u.contentTo) ? "<br>" : "";
     if (newTag != u.tag) {
       // The end of a heading: close it as it was written and start a new, empty paragraph.
-      const head = src.slice(pos, u.contentTo) + src.slice(u.contentTo, u.to) + `\n${indent}<${newTag}>`;
-      this.dispatch({ changes: { from: pos, to: u.to, insert: head + `</${newTag}>` }, selection: { anchor: pos + head.length }, userEvent: "input", scrollIntoView: true });
+      const head = brBefore + src.slice(pos, u.contentTo) + src.slice(u.contentTo, u.to) + `\n${indent}<${newTag}>`;
+      this.dispatch({ changes: { from: pos, to: u.to, insert: head + `${brAfter}</${newTag}>` }, selection: { anchor: pos + head.length }, userEvent: "input", scrollIntoView: true });
       return true;
     }
-    const insert = M.closeTags(stack) + `</${u.tag}>\n${indent}` + openTag + M.openTags(stack);
-    insertAt(insert, pos + insert.length);
+    const insert = brBefore + M.closeTags(stack) + `</${u.tag}>\n${indent}` + openTag + M.openTags(stack);
+    insertAt(insert + brAfter, pos + insert.length);
     return true;
   }
 

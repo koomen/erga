@@ -27,8 +27,10 @@
 #                     the band the top controls sit on (tests/band.ts),
 #                     versions and publishing (tests/versions.ts),
 #                     document settings (tests/settings.ts),
+#                     what the agent's view_page sees: fonts, size, light or dark (tests/view-page.ts),
 #                     the factory, with simulated VMs (tests/factory.ts),
 #                     the factory board's compact cards (tests/factory-cards.ts),
+#                     files attached in the agent panel (tests/attach.ts),
 #                     instructions for a working task (tests/factory-instruct.ts),
 #                     live reload (tests/reload.ts, in a copy of the checkout)
 #                     and the multiplayer suite, each
@@ -104,12 +106,14 @@ run 1 landing bun tests/landing.ts                       # [14]
 run 1 factory-cards bun tests/factory-cards.ts           # [14]
 run 1 factory-instruct bun tests/factory-instruct.ts     # [70]
 run 1 versions bun tests/versions.ts                     # [13]
+run 1 attach bun tests/attach.ts                         # [10]
 run 2 unit bun test ./tests/                             # [11]
 run 1 deployed bun tests/server-config.ts                # [7]
 run 1 deploys bun tests/deploys.ts                       # [5]
 run 1 isolation bun tests/isolation.ts                   # [4]
 run 1 admin-open bun tests/admin-open.ts                 # [3]
 run 1 admin-layout bun tests/admin-layout.ts             # [8]
+run 1 view-page bun tests/view-page.ts                   # [9]
 collect
 # Latency is measured alone: other tests running would skew it.
 run 1 latency bun tests/suite/run.ts --suite latency     # [6]

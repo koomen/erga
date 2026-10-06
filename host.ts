@@ -17,14 +17,15 @@ import * as Path from "effect/Path";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { HttpApiBuilder, HttpApiMiddleware } from "effect/http-api";
 import { MODELS, externalGuide, isModelChoice, startSession, type AgentConfig, type AgentSession, type OpenResult, type PageTree } from "./agent";
-import { AgentOff, Api, BadRequest, ExplainBadRequests, ModelFixed, NameRefused, NoSuchModel, NoSuchTool, Person, PersonFromRequest, SessionFailed, ExternalAgent, ToolFailed, Unauthorized, type AgentState, type ModelState } from "./api";
+import { AgentOff, Api, BadAttachment, BadRequest, ExplainBadRequests, ModelFixed, NameRefused, NoSuchModel, NoSuchTool, Person, PersonFromRequest, SessionFailed, ExternalAgent, ToolFailed, Unauthorized, type AgentState, type ModelState } from "./api";
 import type { DocName, Naming } from "./directory";
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import { digest, StoreError, type FileStore, type Room } from "./room";
 import { titleOf } from "./front";
 import { checkNewName, cleanTreePath, isPage, pageAddress, parentsOf, resolvePage, TreeError, treeEntries, type TreeOp } from "./tree";
 import { ignored, isTextPath as isTextFile } from "./src/room/doc";
-import type { ViewRequest, ViewResult } from "./src/page/agent-log";
+import { viewWait, type ViewRequest, type ViewResult } from "./src/page/agent-log";
+import { checkAttachments } from "./src/page/attach";
 import type { VersionsAccess } from "./agent";
 
 export interface HostOptions {
@@ -60,8 +61,8 @@ export interface HostOptions {
   readonly naming?: (person: { id: string; name: string }) => Naming;
   /** The tools beyond the document a person's agent may use now (server-tools.ts: sharing; settings and users for an admin). */
   readonly serverTools?: (person: { id: string; name: string }) => Promise<AgentTool[]>;
-  /** An agent's turn ended (the embedded agent's, or an external agent's run of calls): a version is cut. */
-  readonly turnEnded?: () => void;
+  /** An agent's turn ended (the embedded agent's, or an external agent's run of calls): a version is cut; answers the version the document is at then. */
+  readonly turnEnded?: () => Promise<string | null> | void;
   /** The document's versions and publishing (versions.ts), for the agents' tools. */
   readonly versions?: VersionsAccess;
   /** A new page's text (templates/doc), by its path; a plain one if not given. */
@@ -156,7 +157,7 @@ export function makeHost(opts: HostOptions) {
     if (![...tabs].some((t) => t.user == user)) return Promise.resolve({ width: 0, height: 0, errors: [], error: "Your user has no editor tab open, so there's no browser to look at the page with." });
     const id = crypto.randomUUID();
     return new Promise((resolve) => {
-      const timer = setTimeout(() => { views.delete(id); resolve({ width: 0, height: 0, errors: [], error: "The editor didn't send a picture back in time." }); }, 20_000);
+      const timer = setTimeout(() => { views.delete(id); resolve({ width: 0, height: 0, errors: [], error: `The editor didn't send ${req.evaluate != null ? "the result" : "a picture"} back in time.` }); }, viewWait(req) + 2_000);
       views.set(id, (r) => { clearTimeout(timer); views.delete(id); resolve(r); });
       sendTo(user, { type: "view", id, req });
     });
@@ -266,8 +267,10 @@ export function makeHost(opts: HostOptions) {
     .handle("prompt", ({ payload }) => Effect.gen(function* () {
       const s = yield* agentSession;
       // The sender's last keystrokes travel over its WebSocket; let them land first.
+      const files = checkAttachments(payload.files);
+      if (typeof files == "string") return yield* new BadAttachment({ ok: false, reason: files });
       if (payload.after) yield* room.waitFor(payload.after);
-      s.prompt(payload.text, payload.context ?? null);
+      s.prompt(payload.text, payload.context ?? null, files);
       return { ok: true as const };
     }))
     .handle("model", ({ payload }) => Effect.gen(function* () {
@@ -278,8 +281,8 @@ export function makeHost(opts: HostOptions) {
       sendTo((yield* Person).id, { type: "model", ...state });
       return { ok: true as const, ...state };
     }))
-    .handle("view", ({ payload: { id, ...result } }) => Effect.sync(() => {
-      views.get(id)?.({ ...result, errors: [...result.errors] });
+    .handle("view", ({ payload: { id, errors, fonts, pending, ...result } }) => Effect.sync(() => {
+      views.get(id)?.({ ...result, errors: [...errors], ...(fonts ? { fonts: fonts.map((f) => ({ ...f, tags: [...f.tags] })) } : {}), ...(pending ? { pending: [...pending] } : {}) });
       return { ok: true as const };
     }))
     .handle("abort", () => Person.use((user) => session(user).pipe(
