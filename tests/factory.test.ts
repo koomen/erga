@@ -5,6 +5,7 @@
 import { expect, test } from "bun:test";
 import { checkGitToken, mintGitToken, pushedRefs, refsAllowed } from "../dev/factory";
 import { branchName, claudeToken, taskPrompt } from "../factory/prompt";
+import { quietFor, STALL_MS, stalledOf } from "../factory/stall";
 
 test("branch names follow the task queue's", () => {
   expect(branchName(46, "Experimental: the task queue inside Erga, with Claude Code in Cloudflare VMs")).toBe("task/46-experimental-the-task-queue-inside-erga");
@@ -157,4 +158,17 @@ test("a long Claude Code run with no new output repeats no line on the board; it
   expect(still.length).toBeGreaterThan(0);
   expect(still.length).toBeLessThanOrEqual(10);
   expect(new Set(lines).size).toBe(lines.length);
+});
+
+test("a task is stalled when it is working or needs agent, with no new log line in 5 minutes", () => {
+  const at = (min: number) => new Date(Date.UTC(2026, 9, 5, 12, 0) - min * 60_000).toISOString();
+  const now = Date.UTC(2026, 9, 5, 12, 0);
+  const t = (status: string, logMin: number | null, updatedMin = 0) => ({ status, updatedAt: at(updatedMin), log: logMin == null ? [] : [{ at: at(60) }, { at: at(logMin) }] });
+  expect(stalledOf(t("working", 4.9), now)).toBeNull();
+  expect(stalledOf(t("working", 5), now)).toEqual({ since: at(5), quietMs: STALL_MS });
+  expect(stalledOf(t("needs agent", 12), now)?.quietMs).toBe(12 * 60_000);
+  // No log: the last update counts.
+  expect(stalledOf(t("working", null, 7), now)?.since).toBe(at(7));
+  for (const s of ["queued", "complete", "merging", "failed", "merged", "discarded"]) expect(stalledOf(t(s, 30), now)).toBeNull();
+  expect([quietFor(5 * 60_000), quietFor(59 * 60_000 + 59_000), quietFor(60 * 60_000), quietFor(125 * 60_000)]).toEqual(["5 min", "59 min", "1 h", "2 h 5 min"]);
 });
