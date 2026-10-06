@@ -247,7 +247,8 @@ The + button (New document) makes a new document. It is in the viewer's
 controls, beside Clone and Edit (on a document's page and on the front page,
 served directly or not), and in the editor's top row, beside the pencil. It
 opens a picker of templates, under the button: **Page** (a blank document)
-and the **Presentation** group (no templates yet, it says so). The demo page
+and the **Presentation** group, with the **Solar system tour** (a group with no
+templates says so). The demo page
 is no template: Clone, on the front page, copies it. Every option and group
 heading is in the app's typeface, Inter, at one size and weight (the picker
 loads `/fonts/inter.css` on a page that hasn't it). Each template is a link to
@@ -279,6 +280,17 @@ and the editor). To add a template:
 `bun tests/new-doc.ts` checks it in headless Chrome: each template's
 document, the picker and its typeface in the viewer, the editor and the signed-out front page,
 and the way to sign in.
+
+**Solar system tour** (`templates/solar-system`) is a presentation
+(DOCUMENT_PROMPT.md, "Presentations") with no libraries: a canvas draws a
+small 3D model of the Sun and the eight planets, which go around it, among
+stars. Each `.note` section is a step, and its `data-planet` names the
+planet the camera goes to: the first, with none, is the overview. Going to a
+step flies the camera there in about two seconds (at once with reduced
+motion), over the Sun rather than through it, and the camera follows the
+planet. Each step's picture in the list (`image()`) is the view from that
+step's camera, now. The notes are the page's text, so they're edited like any
+other. `bun tests/solar-system.ts` checks it, viewing and editing.
 
 ### The homepage, served directly
 
