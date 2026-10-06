@@ -440,7 +440,7 @@ may. With `users` everyone signed in may anyway, and with `off` nobody may.
 page), Share with agent in the upper right (the editor's button and card,
 with a factory token: `admin-share.js`, built from
 `src/page/admin-share.ts`), and a sidebar on the left with Settings
-(`/admin`), Users (`/admin/users`) and Factory (`/admin/factory`). The
+(`/admin`), Change log (`/admin/changes`), Users (`/admin/users`) and Factory (`/admin/factory`). The
 sidebar collapses to a rail of icons, and expands again, with an animation,
 so the factory's board gets the full width; the browser remembers which
 (`localStorage`, `erga:admin-sidebar`). On a phone the links are a row above
@@ -469,7 +469,10 @@ number. Those typed in have Save, and Reset when they're set (not a
 document's: empty is none). `/admin/users` lists every user (who added
 them, when they joined and were last seen) with a switch for each role,
 Admin and Deploy, and a remove button, and a box to add one by GitHub
-login. Roles change only with the switches, never typed text. A bootstrap admin's Admin switch and
+login. Roles change only with the switches, never typed text. `/admin/changes`,
+the **Change log**, lists every change to the settings, newest first, each
+with when, who, and each setting's value from and to (a reset badged), 50 at
+a time (Older changes: `?before=<n>`). A bootstrap admin's Admin switch and
 remove button are off, and so are the last admin's, saying why. Underneath it's `POST
 /admin/settings` (`key` and `value` as JSON, or `reset=1`) and `POST
 /admin/users` (`do=add|role|deploy|remove`, `login`, `role`, `deploy`: 1
@@ -490,6 +493,17 @@ shows it by address, and the directory checks who may set it (`checks`).
 `"never"`) for never; the admin page offers it as "After [n] hours" or
 "Never". Anyone's request may read a setting (the server reads them
 to do its work); only admins list and change them.
+
+**Settings' versions.** Each change to a setting, however it's made (the
+admin page, an agent, the homepage's switch, the server's own write), keeps
+a version of the settings, as a document keeps versions: a row in
+`server_config_versions` (numbered 1, 2, 3...) with who made it, when, and
+what changed (`[{ key, from, to, reset? }]`, each value as it applied
+before and after; a default when it had no row). It's written with the
+change, in one batch, only while the row is still the one read (else it reads
+again), so a change saved twice at once is recorded once. A change that
+changes nothing (the same value again, a
+reset of a default) makes no version. Only admins read them.
 
 **Settings the deploy fixes.** A setting can also be fixed in the repo, in
 `server.config.ts`:
@@ -527,7 +541,8 @@ applies, so local development is locked the same way as erga.dev.
   login, deploy)`, `remove(by, login)`;
 - settings: `dir.config.get(key)` (typed by `SETTINGS`), `entry(key)`,
   `isLocked(key)`, and, admins only, `list(by)`, `set(by, key, value)`,
-  `reset(by, key)`. An entry (`ConfigEntry`) has the key, its description,
+  `reset(by, key)`, `history(by, { before?, limit? })` (the settings' versions,
+  newest first, and their `total`). An entry (`ConfigEntry`) has the key, its description,
   `value` (what applies now), `default`, `source` (`default`, `set` or
   `locked`), `locked` (true when the deploy fixes it: show it read-only),
   `deployed` (the deploy's value, only when locked) and who set it and when.
