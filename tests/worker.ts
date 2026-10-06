@@ -570,8 +570,8 @@ try {
     get(`${path}${who ? `?user=${who}` : ""}`, { method: "POST", body: new URLSearchParams(fields), headers: { Origin: origin, Accept: "application/json" } });
   expect((await adminPost("/admin/settings", { key: "delete_docs_after_hours", value: "48" }, null)).status == 403, "nor can they change a setting");
   if (adminName) {
-    const adminPage = await (await as(adminName, "/admin")).text();
-    expect(adminPage.includes("delete_docs_after_hours") && adminPage.includes(`data-login="${adminName}"`) && adminPage.includes(`data-login="${login}"`), "an admin sees the settings and the users", adminPage.slice(0, 300));
+    const adminPage = await (await as(adminName, "/admin")).text(), usersPage = await (await as(adminName, "/admin/users")).text();
+    expect(adminPage.includes("delete_docs_after_hours") && usersPage.includes(`data-login="${adminName}"`) && usersPage.includes(`data-login="${login}"`), "an admin sees the settings and the users", usersPage.slice(0, 300));
     expect((await (await as(adminName, "/docs")).text()).includes(`>Admin settings</a>`), "and their menu links to it");
     // Settings: set, refused with the reason, reset.
     let res = await adminPost("/admin/settings", { key: "delete_docs_after_hours", value: "48" });
@@ -642,6 +642,7 @@ try {
     expect(await at.eval<boolean>(`document.querySelector('li.setting[data-key=delete_docs_after_hours] select.mode').value == "never" && document.querySelector('li.setting[data-key=delete_docs_after_hours] .amount').hidden`), "the page shows Never after saving");
     await at.eval(`document.querySelector('li.setting[data-key=delete_docs_after_hours] .reset').click()`);
     await until(async () => await at.eval<boolean>(`document.readyState == "complete" && !document.querySelector('li.setting[data-key=delete_docs_after_hours] .set') && !document.querySelector('li.setting[data-key=delete_docs_after_hours] .reset')`), 5000, "reset from the page, again");
+    await at.open(`${base}/admin/users?user=${adminName}`);
     await at.eval(`(() => { const f = document.querySelector('form.add-user'); f.elements.login.value = "pagebie"; f.requestSubmit(); })()`);
     await until(async () => at.eval<boolean>(`!!document.querySelector('li[data-login="pagebie"]')`), 5000, "adding a user from the page lists them");
     at.close?.();

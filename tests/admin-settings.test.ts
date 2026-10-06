@@ -48,7 +48,7 @@ const server = Bun.serve({
   port: 0,
   fetch: async (r) => {
     const path = new URL(r.url).pathname;
-    if (path.startsWith("/admin")) return adminDoor(platform, r);
+    if (path == "/admin" || path.startsWith("/admin/")) return adminDoor(platform, r);
     const file = Bun.file(join(import.meta.dir, "..", path));
     return (path == "/style.css" || path.startsWith("/fonts/")) && !path.includes("..") && (await file.exists()) ? new Response(file) : new Response("", { status: 404 });
   },
