@@ -161,7 +161,7 @@ export const SERVER_TOOLS: ServerToolDef[] = [
     label: "Read the API keys' status",
     activity: "reading the API keys' status",
     admin: true,
-    description: "Admins only. The server's API keys (Anthropic, OpenAI), as /admin shows them: whether each is stored, its last four characters, who set it and when, and whether a Worker secret stands in. Never the key itself. An admin sets, replaces or clears a key only on /admin, so a key never goes through a conversation.",
+    description: "Admins only. The server's API keys (Anthropic, OpenAI, the GitHub mirror token, the Cloudflare deploy token), as /admin/api-keys shows them: whether each is stored, its last four characters, who set it and when, and whether a Worker secret stands in. Never the key itself. An admin sets, replaces or clears a key only on /admin/api-keys, so a key never goes through a conversation.",
     parameters: Type.Object({}),
     run: async (_args, { dir, who }) => (await dir.credentials.list(who)).map((c) => ({
       name: c.name, label: c.label, description: c.description, stored: c.set, last4: c.last4, updated: iso(c.updated), updatedBy: c.updatedBy, workerSecret: c.fallback,

@@ -52,17 +52,17 @@ database, the object or the Worker's settings through Cloudflare.
 ### `ANTHROPIC_API_KEY`
 - **For**: the editor's embedded agent (`agent.ts`), in each document's Durable Object.
 - **Without it**: the agent is off. Everything else works.
-- **Set**: an admin enters it on `/admin` ("API keys", the Anthropic API key), since factory task #38. The Worker secret is the fallback while none is stored there. Locally the fallback is `.dev.vars`, or the shell's environment (`dev/agent-key.ts`).
+- **Set**: an admin enters it on `/admin/api-keys` (the Anthropic API key), since factory task #38. The Worker secret is the fallback while none is stored there. Locally the fallback is `.dev.vars`, or the shell's environment (`dev/agent-key.ts`).
 - **At rest**: **encrypted** when an admin enters it: AES-GCM, a fresh IV each time, the key's name as additional data, key = SHA-256 of `erga-credentials:` + `FACTORY_KEY`, in D1's `credentials` table (`credentials.ts`). The Worker secret is only a Worker secret.
-- **Who reads it**: the document's Durable Object, the `Factory` Durable Object (its agent), and version descriptions (`versions.ts`), through `withKeys` (`worker/d1.ts`). It is read as a redacted value and never reaches a page, a log or the agent's tools. `/admin` shows only whether it is set, its last four characters, and who set it when.
+- **Who reads it**: the document's Durable Object, the `Factory` Durable Object (its agent), and version descriptions (`versions.ts`), through `withKeys` (`worker/d1.ts`). It is read as a redacted value and never reaches a page, a log or the agent's tools. `/admin/api-keys` shows only whether it is set, its last four characters, and who set it when.
 - **Admin panel?** **Admin panel** (it is there). See "Keys entered on the admin pages" below.
 
 ### `OPENAI_API_KEY`
 - **For**: models from OpenAI, beside Anthropic's. No code calls OpenAI yet. Code that does reads the key through `withKeys` (`worker/d1.ts`), as for `ANTHROPIC_API_KEY`.
 - **Without it**: those models are not offered.
-- **Set**: an admin enters it on `/admin` ("API keys", the OpenAI API key). The fallback is a Worker secret of the same name, if there is one.
+- **Set**: an admin enters it on `/admin/api-keys` (the OpenAI API key). The fallback is a Worker secret of the same name, if there is one.
 - **At rest**: **encrypted**, as `ANTHROPIC_API_KEY`, in the same table.
-- **Who reads it**: the server's own calls to OpenAI only. `/admin` shows only whether it is set, its last four characters, and who set it when.
+- **Who reads it**: the server's own calls to OpenAI only. `/admin/api-keys` shows only whether it is set, its last four characters, and who set it when.
 - **Admin panel?** **Admin panel** (it is there).
 
 ### `CLOUDFLARE_DEPLOY_TOKEN`
@@ -71,7 +71,7 @@ database, the object or the Worker's settings through Cloudflare.
 - **Set**: `bun deploy/setup.ts` makes it as narrow as Cloudflare allows (Workers edit on named Workers, D1 on the account, read on the zones), checks it, and stores it as a Worker secret, never printed. Staging's token is on `erga-staging`. Production's token is on `erga`, only with `--production`.
 - **At rest**: only as a Worker secret.
 - **Who reads it**: the Worker's code, so any code that runs on that server. Cloudflare has no per-database D1 scope, so staging's token can also write production's D1.
-- **Admin panel?** Deploy-time. `deploy/setup.ts --tokens` rotates it.
+- **Admin panel?** **Admin panel**, since factory task #51: an admin can enter it on `/admin/api-keys` (the Cloudflare deploy token), encrypted as `ANTHROPIC_API_KEY`. The Worker secret is the fallback. A wrong value breaks only the server's own deploys. `deploy/setup.ts --tokens` still rotates the Worker secret.
 
 ### `SNAPSHOT_TOKEN`
 - **For**: staging copying production's documents (`deploy/snapshot.ts`). The same value is on both servers. Production serves its read-only snapshot endpoint to it, and staging sends it.
@@ -93,14 +93,14 @@ database, the object or the Worker's settings through Cloudflare.
 - **Without it**: no mirror. The source on Erga's own Git endpoint is not affected.
 - **Set**: a Worker secret (`bunx cf workers secrets update GITHUB_MIRROR_TOKEN`), bound only when the deploy names an Artifacts namespace. A fine-grained GitHub token: Contents read and write, on the one repository.
 - **At rest**: only as a Worker secret. It goes to GitHub only in a header. Mirror errors show only the host.
-- **Admin panel?** Could be either. It expires every year and breaks only the mirror, so it is a good admin panel candidate.
+- **Admin panel?** **Admin panel**, since factory task #51: an admin can enter it on `/admin/api-keys` (the GitHub mirror token), encrypted as `ANTHROPIC_API_KEY`. The Worker secret is the fallback. It expires every year and breaks only the mirror.
 
 ## Kept by the app
 
 ### The Claude plan token (`CLAUDE_CODE_OAUTH_TOKEN`)
 - **For**: the factory's VMs run Claude Code on a Pro or Max plan (`claude setup-token` prints it: `sk-ant-oat01-…`, valid for one year).
 - **Without it**: the factory's VMs run a scripted stand-in.
-- **Set**: an admin pastes it on the board (`/admin/factory`, "Claude: not signed in"). An unlocked admin and a same-origin request are necessary.
+- **Set**: an admin pastes it on the board (`/admin/factory`, "Claude: not signed in") or on `/admin/api-keys` (the Claude plan token). An unlocked admin and a same-origin request are necessary.
 - **At rest**: **encrypted**, AES-GCM with a key from `FACTORY_KEY`, in the `Factory` Durable Object's `secrets` table.
 - **Who reads it**: no route returns it (`GET /api/factory/claude` says only whether there is one, who set it and when). Since this audit, only the jobs that run Claude Code get it in their environment. The merge, save, stop and discard jobs do not. Any command Claude Code runs in the VM can read it.
 - **Admin panel?** **Admin panel** (it is there already).
@@ -159,8 +159,10 @@ database, the object or the Worker's settings through Cloudflare.
 
 ## Keys entered on the admin pages
 
-`ANTHROPIC_API_KEY` and `OPENAI_API_KEY` are on the admin pages (`/admin`,
-"API keys"; `credentials.ts`, factory task #38). They are not ordinary settings. The settings
+`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GITHUB_MIRROR_TOKEN` and
+`CLOUDFLARE_DEPLOY_TOKEN` are on the admin pages (`/admin/api-keys`;
+`credentials.ts`, factory tasks #38 and #51). The page also lists the other
+deploy-time secrets, read-only: only whether the deploy has each. They are not ordinary settings. The settings
 (`server_config`) are plain JSON in D1. Every change is copied into the change
 log (`server_config_versions`), which admins read, and staging's database is a
 copy of production's. Do as the Claude token does instead:

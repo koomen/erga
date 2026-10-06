@@ -1,10 +1,10 @@
 // The layout every admin page shares (/admin, /admin/changes, /admin/users, /admin/factory,
-// /admin/keys): a breadcrumb in the upper left (Erga › Admin › the page),
+// /admin/api-keys, /admin/keys): a breadcrumb in the upper left (Erga › Admin › the page),
 // Share with agent in the header bar upper right (the editor's button and
 // card: admin-share.js, built from src/page/admin-share.ts), the admin's agent
 // (the factory's agent, factory/agent.ts: its panel is factory-agent.js, built
 // from src/page/factory-agent.ts) in a column left of the page, and, on the
-// left, a sidebar that links to Settings, Change log, Users and Factory.
+// left, a sidebar that links to Settings, API keys, Change log, Users and Factory.
 //
 // As in the editor, the user drags the agent by its head to the right of the
 // page, and its inner edge to resize it (src/page/layout.ts, mountPaneLayout;
@@ -24,10 +24,11 @@
 
 import { appPage, esc, ICON, link, page, type Platform, type Session, whoOf } from "./front.ts";
 
-export type AdminSection = "settings" | "changes" | "users" | "factory";
+export type AdminSection = "settings" | "keys" | "changes" | "users" | "factory";
 
 const SECTIONS: { key: AdminSection; label: string; path: string; icon: string }[] = [
   { key: "settings", label: "Settings", path: "/admin", icon: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg>` },
+  { key: "keys", label: "API keys", path: "/admin/api-keys", icon: `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="8" cy="15" r="4"/><path d="M11 12l8.5-8.5M16 7l2.5 2.5M14 9l2 2"/></svg>` },
   { key: "changes", label: "Change log", path: "/admin/changes", icon: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3"/><path d="M4 4.5v3.5h3.5"/><path d="M12 8v4.2l2.8 1.8"/></svg>` },
   { key: "users", label: "Users", path: "/admin/users", icon: `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9.5" cy="8.5" r="3.5"/><path d="M3.5 19c.6-3.2 3-5 6-5s5.4 1.8 6 5"/><path d="M16 5.2a3.5 3.5 0 0 1 0 6.6M18 14.4c1.4.8 2.3 2.4 2.5 4.6"/></svg>` },
   { key: "factory", label: "Factory", path: "/admin/factory", icon: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 20.5V10l5 3V10l5 3V10l5 3V4h2v16.5z"/><path d="M7 17h1.5M11 17h1.5M15 17h1.5"/></svg>` },
