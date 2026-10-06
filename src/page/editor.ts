@@ -109,6 +109,40 @@ const MD_STYLED = new Set(["Emphasis", "StrongEmphasis", "Strikethrough", "Inlin
 
 interface Analysis { units: M.Unit[]; html: string }
 
+/** Inline elements a copy keeps (see clipboard), by the name it writes them with; the rest give only their text. */
+const COPY_TAGS: Record<string, string> = { strong: "strong", b: "strong", em: "em", i: "em", code: "code", a: "a", sub: "sub", sup: "sup", s: "s", del: "s", strike: "s", br: "br" };
+
+/** A selected piece of one unit as plain text and as HTML with only COPY_TAGS, no attributes but a link's href. */
+function cleanInline(root: Node, pre: boolean): { html: string; text: string } {
+  let html = "", text = "";
+  const esc = (t: string) => t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const walk = (n: Node) => {
+    if (n.nodeType == 3) {
+      const t = pre ? n.nodeValue! : n.nodeValue!.replace(/\s+/g, " ");
+      html += esc(t); text += t;
+      return;
+    }
+    if (n.nodeType == 1) {
+      const el = n as Element, name = el.localName;
+      // Widgets and text the page doesn't let you edit, the editor's own marks, and what isn't text.
+      if (el.getAttribute("contenteditable") == "false" || name.startsWith("erga-") || /^(script|style|svg|canvas|img|video|audio|iframe|button|input|select|textarea|template)$/.test(name)) return;
+      const tag = COPY_TAGS[name];
+      if (tag == "br") { html += "<br>"; text += "\n"; return; }
+      if (tag) {
+        const href = tag == "a" ? (el as HTMLAnchorElement).href : "";
+        html += tag == "a" ? (href ? `<a href="${href.replace(/"/g, "&quot;")}">` : "") : `<${tag}>`;
+        el.childNodes.forEach(walk);
+        html += tag == "a" ? (href ? "</a>" : "") : `</${tag}>`;
+        return;
+      }
+    }
+    n.childNodes.forEach(walk);
+  };
+  walk(root);
+  if (!pre) text = text.replace(/ *\n */g, "\n");
+  return { html, text };
+}
+
 /** Units that go whole when a selection across units is deleted (replaceRange). */
 const WHOLE_BLOCKS = /^(p|h[1-6]|li|pre|blockquote|figcaption|dt|dd)$/;
 
@@ -793,6 +827,7 @@ export class PageEditor {
     on("selectionchange", () => this.selectionchange());
     on("paste", (e) => { if (this.ours(e) || this.spanning) this.paste(e); });
     on("cut", (e) => { if (this.ours(e) || this.spanning) this.cut(e); });
+    on("copy", (e) => { if (this.ours(e) || this.spanning) this.copy(e); });
     on("dragstart", (e) => { if (this.ours(e)) e.preventDefault(); });
     on("drop", (e) => { if (this.ours(e)) e.preventDefault(); });
     on("mousedown", (e) => this.mousedown(e));
@@ -1107,9 +1142,59 @@ export class PageEditor {
     e.preventDefault();
     const sel = this.currentSelection();
     if (!sel || sel.empty) return;
-    const text = this.doc!.getSelection()?.toString() ?? "";
-    e.clipboardData?.setData("text/plain", text);
+    this.copy(e);
     this.replaceRange(sel.from, sel.to, "", "delete.cut");
+  }
+
+  /** Copy: the selected manuscript text (see clipboard), never the widgets around it. */
+  private copy(e: ClipboardEvent): void {
+    const data = this.clipboard();
+    if (!data || !e.clipboardData) return;
+    e.preventDefault();
+    e.clipboardData.setData("text/plain", data.text);
+    e.clipboardData.setData("text/html", data.html);
+  }
+
+  /**
+   * What a copy puts on the clipboard: the text of the units in the
+   * selection, without the widgets and other page parts between them, nor
+   * anything in a unit that isn't editable text. The HTML is plain
+   * structure (paragraphs, headings, lists, bold, italic, code, links) with
+   * no classes or styles, so a paste elsewhere takes the text, not this
+   * page's fonts and colours.
+   */
+  private clipboard(): { text: string; html: string } | null {
+    const doc = this.doc, sel = doc?.getSelection();
+    if (!doc || !sel || sel.isCollapsed || !sel.rangeCount) return null;
+    const range = sel.getRangeAt(0);
+    const blocks: { tag: string; list: string | null; html: string; text: string }[] = [];
+    const taken: Element[] = [];
+    for (const u of this.units) {
+      const el = this.els[u.id];
+      if (!el?.isConnected || !range.intersectsNode(el) || taken.some((t) => t.contains(el))) continue;
+      taken.push(el);
+      const r = doc.createRange();
+      r.selectNodeContents(el);
+      if (r.comparePoint(range.startContainer, range.startOffset) == 0) r.setStart(range.startContainer, range.startOffset);
+      if (r.comparePoint(range.endContainer, range.endOffset) == 0) r.setEnd(range.endContainer, range.endOffset);
+      const pre = u.tag == "pre";
+      const out = cleanInline(r.cloneContents(), pre);
+      if (!out.text.trim()) continue;
+      const list = u.tag == "li" ? (el.parentElement?.localName == "ol" ? "ol" : "ul") : null;
+      blocks.push({ tag: u.tag, list, html: out.html, text: pre ? out.text : out.text.trim() });
+    }
+    if (!blocks.length) return null;
+    if (blocks.length == 1 && blocks[0].tag != "pre") return { text: blocks[0].text, html: blocks[0].html.trim() };
+    let html = "", text = "", open: string | null = null;
+    for (const [i, b] of blocks.entries()) {
+      if (open && b.list != open) { html += `</${open}>`; open = null; }
+      if (b.list && !open) { html += `<${b.list}>`; open = b.list; }
+      const tag = b.list ? "li" : /^(h[1-6]|pre|blockquote)$/.test(b.tag) ? b.tag : "p";
+      html += `<${tag}>${b.html.trim()}</${tag}>`;
+      text += (i == 0 ? "" : b.list && blocks[i - 1].list ? "\n" : "\n\n") + b.text;
+    }
+    if (open) html += `</${open}>`;
+    return { text, html };
   }
 
   // ------------------------------------------------------------ editing

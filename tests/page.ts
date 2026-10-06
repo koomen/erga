@@ -812,9 +812,13 @@ async function selectScenario(browser: Browser) {
   await until(async () => (await model()).text.includes("Faster"));
   check("Shift-click extends the selection into another unit", /^unch notes[\s\S]*What changed[\s\S]*Faster$/.test((await domText()).trim()), await domText());
   check("the editor's selection spans them", (await model()).text.startsWith("unch notes") && (await model()).text.endsWith("Faster"), await model());
-  // Copying: the browser copies the page's selected text; a cut takes it out too.
+  // Copying: only the document's text, as plain text and as HTML with no styles; a cut takes it out too.
+  const copied = await p.frame<{ text: string; html: string }>(`(() => { const d = new DataTransfer(); ${F}.body.dispatchEvent(new ClipboardEvent("copy", { clipboardData: d, bubbles: true, cancelable: true })); return { text: d.getData("text/plain"), html: d.getData("text/html") }; })()`);
+  check("a copy takes the units' text, a blank line between them", copied.text == "unch notes\n\nBuild cool things & ship them. This paragraph has a link and code.\n\n0clicks\n\nWhat changed\n\nFaster", copied.text);
+  check("and not the widget's button", !copied.text.includes("Bump") && !copied.html.includes("Bump"), copied);
+  check("its HTML is only structure: no classes, styles or ids", copied.html == `<h1>unch notes</h1><p>Build <em>cool</em> things &amp; ship them. This paragraph has <a href="https://example.com/">a link</a> and <code>code</code>.</p><p><strong>0</strong>clicks</p><h2>What changed</h2><ul><li>Faster</li></ul>`, copied.html);
   const cut = await p.frame<string>(`(() => { const d = new DataTransfer(); ${F}.body.dispatchEvent(new ClipboardEvent("cut", { clipboardData: d, bubbles: true, cancelable: true })); return d.getData("text/plain"); })()`);
-  check("a cut copies the text of every unit in it", /^unch notes[\s\S]*What changed[\s\S]*Faster$/.test(cut.trim()), cut);
+  check("a cut copies the same", cut == copied.text, cut);
   check("and deletes it from the source", await until(async () => /<h1>La<\/h1>[\s\S]*<li> builds<\/li>/.test(await s.source()) && !(await s.source()).includes("What changed")), (await s.source()).match(/<h1>[\s\S]*?<\/ul>/)?.[0]);
   await p.key("z", CMD);
   check("undo brings it back", await until(async () => (await s.source()).includes("<h1>Launch notes</h1>") && (await s.source()).includes("<li>Faster builds</li>")));
@@ -829,6 +833,10 @@ async function selectScenario(browser: Browser) {
   await until(async () => (await model()).text.includes("</h1>"));
   check("Shift+ArrowDown selects past the end of the heading", (await domText()).startsWith("unch notes") && /Build/.test(await domText()), await domText());
   check("the editor's selection follows", (await model()).text.startsWith("unch notes</h1>"), await model());
+  const one = await p.frame<{ text: string; html: string }>(`(() => { const t = ${F}.querySelector("p.lede").firstChild; ${F}.getSelection().setBaseAndExtent(t, 0, t, 5); const d = new DataTransfer(); ${F}.activeElement.dispatchEvent(new ClipboardEvent("copy", { clipboardData: d, bubbles: true, cancelable: true })); return { text: d.getData("text/plain"), html: d.getData("text/html") }; })()`);
+  check("a copy inside one paragraph is its text, with no block around it", one.text == "Build" && one.html == "Build", one);
+  await p.click(h.x, h.y);
+  for (const k of ["ArrowDown", "ArrowDown", "ArrowRight"]) await p.key(k, MOD.Shift);
   await p.key("ArrowLeft", MOD.Shift);
   await p.key("ArrowUp", MOD.Shift);
   await p.key("ArrowUp", MOD.Shift);
