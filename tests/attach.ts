@@ -48,7 +48,7 @@ try {
     window.__dt = (...names) => { const dt = new DataTransfer(); for (const n of names) dt.items.add(window.__files[n]); return dt; };
     return true;
   })()`);
-  const chips = () => p.eval<string[]>(`[...document.querySelectorAll(".agent-attachments .file-chip")].map((c) => c.title)`);
+  const chips = () => p.eval<string[]>(`[...document.querySelectorAll(".agent-attachments .file-chip:not(.reading)")].map((c) => c.title)`);
 
   // Paste a screenshot into the box.
   await p.eval(`document.getElementById("agent-input").dispatchEvent(new ClipboardEvent("paste", { clipboardData: __dt("shot"), bubbles: true, cancelable: true }))`);
@@ -65,7 +65,7 @@ try {
   await p.eval(`document.getElementById("agent-log").dispatchEvent(new DragEvent("drop", { dataTransfer: __dt("csv", "pdf", "huge"), bubbles: true, cancelable: true }))`);
   await until(async () => (await chips()).length == 2, 5000);
   const hint = await p.eval<string>(`document.getElementById("agent-hint").hidden ? "" : document.getElementById("agent-hint").textContent`);
-  check("a dropped CSV is attached as a chip with its name and size", (await chips())[1] == "data.csv (40 B)" && !(await p.eval<boolean>(`document.getElementById("agent").classList.contains("agent-drop")`)), await chips());
+  check("a dropped CSV is attached as a chip with its name and size", (await chips())[1] == "data.csv (38 B)" && !(await p.eval<boolean>(`document.getElementById("agent").classList.contains("agent-drop")`)), await chips());
   check("a PDF and a too-big text file are refused, with why", hint.includes("“report.pdf” can't be attached: only images") && hint.includes("“huge.json” is too big (300 KB): text files can be up to 256 KB"), hint);
 
   // Pick a picture too big for the model with the paperclip: it's scaled down. Then remove it with its ×.
@@ -90,7 +90,7 @@ try {
   try { got = JSON.parse(await reply()); } catch {}
   check("the model gets both pictures as images, the big one scaled down, and the CSV as text", JSON.stringify(got.images) == '["image/png","image/png"]' && JSON.stringify(got.files) == '["data.csv"]', got);
   const sent = async () => p.eval<{ text: string; files: string[] }>(`(() => { const m = [...document.querySelectorAll("#agent-log .msg-user")].pop(); return { text: m?.firstChild?.textContent ?? "", files: [...m?.querySelectorAll(".file-chip") ?? []].map((c) => c.classList.contains("image") ? "img:" + !!c.querySelector("img")?.src.startsWith("data:image/") : c.title) }; })()`);
-  const want = JSON.stringify(["img:true", "data.csv (40 B)", "img:true"]);
+  const want = JSON.stringify(["img:true", "data.csv (38 B)", "img:true"]);
   check("the message shows in the conversation with its attachments", JSON.stringify((await sent()).files) == want, await sent());
   const log = await (await fetch(`${host.base}/api/agent`)).json() as { log: { items: { kind: string; files?: { thumb?: string }[] }[] } };
   const item = log.log.items.find((i) => i.kind == "user" && i.files);

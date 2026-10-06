@@ -2474,6 +2474,21 @@ had made when it asked (a Yjs state vector). No browser runs on the server:
 whoever has the editor open is the agent's eyes, and with none of their tabs
 open the tool says so. The panel shows a thumbnail of what it saw.
 
+**Attachments.** A message can carry files, in this panel and the factory's
+(`src/page/attach-ui.ts`, one code for both): drop them anywhere on the panel
+(it lights up while they're dragged over it), paste them into the box (a
+screenshot from the clipboard), or pick them with the paperclip. They wait as
+chips above the box (thumbnails for images), each with its ×, and go with the
+next message, text or no text. Images (PNG, JPEG, GIF, WebP, up to 20 MB) go
+to the model as images, scaled down in the browser when they're over what it
+takes (5 MB, 2000 px); text files (code, Markdown, CSV, JSON, up to 256 KB)
+as text, after the message, each in `<file name="…">`. Anything else, too
+big, or more than 8 files is refused with a hint that says why. The rules are
+`src/page/attach.ts`, which the hosts check again (`POST /api/agent` and
+`/api/factory/agent`, `files`). The conversation shows each message's
+attachments, after a reload too: the transcript keeps a small thumbnail of an
+image (not the picture) and a text file's name and size.
+
 The agent runs on Claude Opus 5.5 in fast mode by default, at medium effort;
 the model name in the panel's header is a menu that switches it to Claude
 Sonnet 5.5 and back. The choice is per person (all their tabs follow, and a
@@ -2932,6 +2947,9 @@ scenarios at a time), `bun tests/suite/run.ts` (~22s; `--suite`, `--grep` and
 `--seed` narrow it, `--long` for the big slow version), `bun tests/factory.ts`
 (~57s), `bun test tests/` (~11s).
 
+`bun tests/attach.ts` attaches files in the editor's agent panel (pasted, dropped and
+picked; refusals; the drop highlight) and checks what the scripted model
+gets and what the conversation shows; `tests/attach.test.ts` covers the rules.
 `bun tests/agent.ts` asks the real agent for edits through the panel and checks
 they reach the open page without a reload and then the disk, that the agent
 shows up as a participant, and that its last change can be undone (it calls
@@ -3100,7 +3118,9 @@ back, merging edits from disk, the agent's exact-match edits and attribution.
   room connection and its binding to the editor), `merge.ts` (word diffs and
   rebasing as change sets), `agent-log.ts` (the agent transcript, shared by
   host and shell), `agent-chat.ts` (the agent panel's conversation, shared with
-  `factory-agent.ts`, the factory's panel on `/admin/factory`, built as `factory-agent.js`)
+  `factory-agent.ts`, the factory's panel on `/admin/factory`, built as `factory-agent.js`),
+  `attach.ts` and `attach-ui.ts` (files attached to a message: the rules, shared with
+  the hosts, and the panels' drop, paste, paperclip and chips)
 - `src/page/settings.ts`, `src/page/versions.ts`: document settings (the gear's
   popover: publishing, the homepage, versions), built on its own as `settings.js`
 - `package.json`: the pinned CodeMirror and Yjs packages the page editor bundles, and pi

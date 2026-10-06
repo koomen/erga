@@ -383,8 +383,19 @@ try {
   expect((await task(next)).status == "complete" && (await panel()).includes("merge_task failed"), "it has no merge or discard tool: the task is still ready to merge, waiting for an admin", await panel());
   await p.navigate(`${root}/admin/factory`);
   await until(async () => (await replies()).includes("I can't merge: you do."), 10_000, "a reload keeps the conversation");
+  // A screenshot pasted into the box goes to the agent as an image, as in the editor (src/page/attach-ui.ts; tests/attach.ts has the rest).
+  await p.eval(`(async () => {
+    const c = document.createElement("canvas"); c.width = 320; c.height = 200; const g = c.getContext("2d"); g.fillStyle = "#3a6ff0"; g.fillRect(0, 0, 320, 200);
+    const dt = new DataTransfer(); dt.items.add(new File([await new Promise((r) => c.toBlob(r, "image/png"))], "image.png", { type: "image/png" }));
+    document.getElementById("agent-input").dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+    return true;
+  })()`);
+  await until(() => p.eval(`!!document.querySelector(".agent-attachments .file-chip.image img")`), 5000, "a pasted screenshot waits above the box");
+  await sayTo(`What's this? @script [{"inputs": true}]`);
+  await until(async () => (await replies()).includes(`{"images":["image/png"],"files":[]}`), 15_000, "the agent gets the screenshot as an image", () => p.eval(`document.getElementById("agent-send").outerHTML + " hint: " + document.getElementById("agent-hint").textContent + " tray: " + document.querySelector(".agent-attachments").outerHTML.slice(0, 300) + " clips: " + document.querySelectorAll(".agent-attach").length + " log: " + document.getElementById("agent-log").innerHTML.slice(-600)`).then((s) => s + " errors: " + p.errors.join(" / ")));
+  expect(await p.eval(`!!document.querySelector("#agent-log .msg-user .msg-files .file-chip.image img")`), "and the conversation shows it");
   await p.screenshot(join(SHOTS, "factory-agent.png"));
-  ok("the factory's agent: reads the board, queues a task with a dependency, reads it, looks at its screenshot, sends instructions, changes dependencies; no merge or discard");
+  ok("the factory's agent: reads the board, queues a task with a dependency, reads it, looks at its screenshot, sends instructions, changes dependencies; no merge or discard; takes an attached screenshot");
 
   // ---------------------------------------------------------------- 11. Share with agent: a factory token
   // An icon in the header bar, as the editor's (no button in the board's head); it opens the editor's card (share-agent.ts).

@@ -118,22 +118,26 @@ export function chat(opts: ChatOptions): Chat {
   function render() {
     logEl.textContent = "";
     els = log.items.map((it, i) => renderItem(it, i));
-    logEl.append(...els);
+    // Messages on their way (or that weren't sent, with Try again) stay at the end: a reconnect mustn't lose them.
+    logEl.append(...els, ...loose);
     follow(true);
   }
 
   // A message shows in the log the moment it's sent, dimmed until the host
   // echoes it back as the conversation's (which replaces it).
   const sends: { text: string; el: HTMLElement }[] = [];
+  /** The dimmed and the failed messages, not part of the transcript. */
+  let loose: HTMLElement[] = [];
+  const drop = (el: HTMLElement) => { loose = loose.filter((x) => x != el); el.remove(); };
   function apply(ev: LogEvent) {
     // The host's copy of a message sent from this tab takes the place of the dimmed one.
     if (ev.t == "user") {
       const i = sends.findIndex((p) => p.text == ev.text);
-      if (i >= 0) { sends[i].el.remove(); sends.splice(i, 1); }
+      if (i >= 0) { drop(sends[i].el); sends.splice(i, 1); }
     }
     const before = log.items.length;
     const i = reduce(log, ev);
-    if (ev.t == "reset") { render(); return; }
+    if (ev.t == "reset") { for (const el of loose) if (el.classList.contains("failed")) drop(el); render(); return; }
     if (i >= 0) {
       const el = renderItem(log.items[i], i);
       if (i < before) { els[i].replaceWith(el); els[i] = el; }
@@ -151,6 +155,7 @@ export function chat(opts: ChatOptions): Chat {
     el.className = "msg-user pending";
     userMessage(el, text, files);
     logEl.append(el);
+    loose.push(el);
     const p = { text, el };
     sends.push(p);
     // Asking something means you want to see the answer.
@@ -164,7 +169,7 @@ export function chat(opts: ChatOptions): Chat {
         note.className = "send-failed";
         note.textContent = `Not sent: ${reason}. `;
         const again = Object.assign(document.createElement("button"), { type: "button", textContent: "Try again" });
-        again.addEventListener("click", () => { el.remove(); retry(); });
+        again.addEventListener("click", () => { drop(el); retry(); });
         note.append(again);
         el.append(note);
         pin();

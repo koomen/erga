@@ -161,7 +161,11 @@ async function scriptStep(context: Context) {
     const text = typeof m.content == "string" ? m.content : m.content.map((c) => (c.type == "text" ? c.text : "")).join("");
     const k = text.indexOf("@script");
     if (k < 0) continue;
-    try { steps = JSON.parse(text.slice(k + 7).trim()); } catch (e) { return fauxAssistantMessage(`bad script: ${(e as Error).message}`); }
+    // Attached files come after the message (src/page/attach.ts): the script ends at the first blank line, then.
+    const src = text.slice(k + 7).trim();
+    try { steps = JSON.parse(src); } catch (e) {
+      try { steps = JSON.parse(src.split("\n\n")[0]); } catch { return fauxAssistantMessage(`bad script: ${(e as Error).message}`); }
+    }
     at = i;
     break;
   }

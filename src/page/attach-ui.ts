@@ -92,8 +92,10 @@ export function fileChip(f: FileRef, remove?: () => void): HTMLElement {
 
 export function attachments(o: AttachOptions): Attachments {
   const { pane, form, input } = o;
-  let files: Attachment[] = [];
-  let reading = 0;
+  // In the order they were added; a slot with no file yet is still being read.
+  let slots: { file?: Attachment }[] = [];
+  const files = () => slots.flatMap((s) => s.file ? [s.file] : []);
+  const reading = () => slots.filter((s) => !s.file).length;
 
   const tray = document.createElement("div");
   tray.className = "agent-attachments";
@@ -110,9 +112,9 @@ export function attachments(o: AttachOptions): Attachments {
 
   function render() {
     tray.textContent = "";
-    tray.hidden = !files.length && !reading;
-    files.forEach((f, i) => tray.append(fileChip(fileRefs([f])[0], () => { files.splice(i, 1); render(); input.focus(); })));
-    if (reading) {
+    tray.hidden = !slots.length;
+    for (const s of slots) {
+      if (s.file) { tray.append(fileChip(fileRefs([s.file])[0], () => { slots = slots.filter((x) => x != s); render(); input.focus(); })); continue; }
       const r = document.createElement("span");
       r.className = "file-chip reading";
       r.textContent = "Reading…";
@@ -129,26 +131,28 @@ export function attachments(o: AttachOptions): Attachments {
       const name = file.name && file.name != "image.png" ? file.name : `Pasted image${file.type == "image/png" || !file.type ? ".png" : "." + (file.type.split("/")[1] ?? "png")}`;
       const no = refusal(name, file.type, file.size);
       if (no) { why.push(no); continue; }
-      if (files.length + reading + todo.length >= MAX_FILES) { why.push(`At most ${MAX_FILES} files can go with one message.`); break; }
+      if (slots.length + todo.length >= MAX_FILES) { why.push(`At most ${MAX_FILES} files can go with one message.`); break; }
       todo.push(new File([file], name, { type: file.type }));
     }
     if (why.length) o.hint(why.join(" "));
-    reading += todo.length;
+    const mine = todo.map(() => ({} as { file?: Attachment }));
+    slots.push(...mine);
     render();
-    await Promise.all(todo.map(async (file) => {
+    await Promise.all(todo.map(async (file, i) => {
       const c = classify(file.name, file.type)!;
       try {
-        if (c.kind == "image") files.push({ name: file.name, kind: "image", size: file.size, ...await readImage(file, c.mimeType) });
+        if (c.kind == "image") mine[i].file = { name: file.name, kind: "image", size: file.size, ...await readImage(file, c.mimeType) };
         else {
           const text = await file.text();
           if (text.includes("\u0000")) throw new Error("it isn't text");
-          files.push({ name: file.name, kind: "text", mimeType: c.mimeType, data: text, size: file.size });
+          mine[i].file = { name: file.name, kind: "text", mimeType: c.mimeType, data: text, size: file.size };
         }
       } catch (e) {
+        slots = slots.filter((x) => x != mine[i]);
         o.hint(`“${file.name}” can't be attached: ${e instanceof Error ? e.message : String(e)}.`);
-      } finally { reading--; }
+      }
+      render();
     }));
-    render();
   }
 
   // Dropping: the panel lights up while files are dragged over it. Drags
@@ -176,9 +180,9 @@ export function attachments(o: AttachOptions): Attachments {
   });
 
   return {
-    get files() { return files; },
-    get reading() { return reading; },
-    clear() { files = []; render(); },
+    get files() { return files(); },
+    get reading() { return reading(); },
+    clear() { slots = []; render(); },
     add,
   };
 }
