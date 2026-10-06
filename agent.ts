@@ -37,6 +37,7 @@ import * as Redacted from "effect/Redacted";
 import * as Y from "yjs";
 import { Awareness } from "y-protocols/awareness";
 import { fauxAssistantMessage, fauxText, fauxToolCall, registerFauxProvider, validateToolArguments, type Context, type Model } from "@mariozechner/pi-ai";
+import { fileRefs, messageContent, type Attachment } from "./src/page/attach";
 import { Agent as PiAgent, type AgentEvent, type AgentTool } from "@mariozechner/pi-agent-core";
 import { Type } from "typebox";
 import { emptyLog, reduce, type Log, type LogEvent } from "./src/page/agent-log";
@@ -139,6 +140,7 @@ export function patchPayload(cfg: AgentConfig, current: () => ModelChoice) {
  *   { "tool": "edit", "args": { ... } }   call a tool
  *   { "text": "Done." }                   reply and end the turn
  *   { "error": "overloaded" }             fail the request
+ *   { "inputs": true }                    reply with what the scripted message carried: {"images":["image/png"],"files":["a.csv"]}
  *
  * Any step may add "delay": ms, to wait before answering (so a test can act
  * between two tool calls). Once the steps run out it says "(script done)".
@@ -152,14 +154,18 @@ export function scriptModel(): Model<string> {
 
 async function scriptStep(context: Context) {
   const msgs = context.messages;
-  let at = -1, steps: { tool?: string; args?: Record<string, unknown>; text?: string; error?: string; delay?: number }[] = [];
+  let at = -1, steps: { tool?: string; args?: Record<string, unknown>; text?: string; error?: string; delay?: number; inputs?: boolean }[] = [];
   for (let i = msgs.length - 1; i >= 0; i--) {
     const m = msgs[i];
     if (m.role != "user") continue;
     const text = typeof m.content == "string" ? m.content : m.content.map((c) => (c.type == "text" ? c.text : "")).join("");
     const k = text.indexOf("@script");
     if (k < 0) continue;
-    try { steps = JSON.parse(text.slice(k + 7).trim()); } catch (e) { return fauxAssistantMessage(`bad script: ${(e as Error).message}`); }
+    // Attached files come after the message (src/page/attach.ts): the script ends at the first blank line, then.
+    const src = text.slice(k + 7).trim();
+    try { steps = JSON.parse(src); } catch (e) {
+      try { steps = JSON.parse(src.split("\n\n")[0]); } catch { return fauxAssistantMessage(`bad script: ${(e as Error).message}`); }
+    }
     at = i;
     break;
   }
@@ -169,6 +175,12 @@ async function scriptStep(context: Context) {
   if (!step) return fauxAssistantMessage("(script done)");
   if (step.error) return fauxAssistantMessage([], { stopReason: "error", errorMessage: step.error });
   if (step.tool) return fauxAssistantMessage([fauxToolCall(step.tool, step.args ?? {})], { stopReason: "toolUse" });
+  if (step.inputs) {
+    const m = msgs[at] as { content: string | { type: string; text?: string; mimeType?: string }[] };
+    const parts = typeof m.content == "string" ? [{ type: "text", text: m.content }] : m.content;
+    const text = parts.map((c) => c.text ?? "").join("");
+    return fauxAssistantMessage([fauxText(JSON.stringify({ images: parts.filter((c) => c.type == "image").map((c) => c.mimeType), files: [...text.matchAll(/<file name="([^"]*)">/g)].map((x) => x[1]) }))]);
+  }
   return fauxAssistantMessage([fauxText(step.text ?? "")]);
 }
 
@@ -760,8 +772,8 @@ export interface AgentSession {
   setModel(choice: ModelChoice): boolean;
   /** The transcript so far (for a tab that just loaded). */
   log(): Log;
-  /** Sends a message; while a turn is running it steers the current one. */
-  prompt(text: string, context: string | null): void;
+  /** Sends a message, with any files attached (src/page/attach.ts); while a turn is running it steers the current one. */
+  prompt(text: string, context: string | null, files?: Attachment[]): void;
   abort(): void;
   reset(): Promise<void>;
   /** Takes back the agent's most recent change (one tool call), if any. */
@@ -949,10 +961,10 @@ export async function startSession(opts: SessionOptions): Promise<AgentSession> 
       return true;
     },
     log: () => log,
-    prompt(text, context) {
-      emit({ t: "user", text });
+    prompt(text, context, files = []) {
+      emit(files.length ? { t: "user", text, files: fileRefs(files) } : { t: "user", text });
       if (!agent || !cfg) { emit({ t: "error", text: "The agent is off." }); return; }
-      const content = context ? `<editor>\n${context}\n</editor>\n\n${text}` : text;
+      const content = messageContent(context ? `<editor>\n${context}\n</editor>\n\n${text}` : text, files);
       if (isScript(cfg)) scriptModel();
       // A message sent while the turn is starting (its tools being looked up) steers it too.
       if (agent.state.isStreaming || starting) { agent.steer({ role: "user", content, timestamp: Date.now() }); return; }
@@ -962,7 +974,7 @@ export async function startSession(opts: SessionOptions): Promise<AgentSession> 
         agent.state.tools = [...tools, ...more];
         agent.state.systemPrompt = prompted(more);
       }) : Promise.resolve();
-      refresh.then(() => { starting = false; return agent.prompt(content); }).catch((err: unknown) => {
+      refresh.then(() => { starting = false; return agent.prompt({ role: "user", content, timestamp: Date.now() }); }).catch((err: unknown) => {
         starting = false;
         emit({ t: "error", text: err instanceof Error ? err.message : String(err) });
         busy.agent = false;

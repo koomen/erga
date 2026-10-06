@@ -96,6 +96,7 @@ import { whoOf } from "../front";
 import { LOCKED } from "../users";
 import { isDev, keysRequired, sessionOf } from "./auth";
 import { agentName } from "../src/room/doc";
+import { checkAttachments } from "../src/page/attach";
 import { adminKeysOf, directoryOf, factoryKey, withKeys } from "./d1";
 import type { Env } from "./env";
 
@@ -886,13 +887,15 @@ export class Factory extends DurableObject<Env> {
     return { enabled: true, model: s.agent.model, choice: s.agent.modelChoice, models, log: s.agent.log() };
   }
 
-  async agentPrompt(login: string, unlock: Unlock, origin: string, text: string, context: string | null): Promise<{ ok: boolean; reason?: string }> {
+  async agentPrompt(login: string, unlock: Unlock, origin: string, text: string, context: string | null, attached?: unknown): Promise<{ ok: boolean; reason?: string }> {
     const why = await this.refusal(login, unlock);
     if (why) return { ok: false, reason: why };
     const s = await this.session(login, unlock, origin);
     if (typeof s == "string") return { ok: false, reason: `the agent is off: ${s}` };
-    if (!text.trim()) return { ok: false, reason: "say something" };
-    s.agent.prompt(text.slice(0, 20000), context ? context.slice(0, 4000) : null);
+    const files = checkAttachments(attached);
+    if (typeof files == "string") return { ok: false, reason: files };
+    if (!text.trim() && !files.length) return { ok: false, reason: "say something" };
+    s.agent.prompt(text.slice(0, 20000), context ? context.slice(0, 4000) : null, files);
     return { ok: true };
   }
 
@@ -1098,8 +1101,8 @@ export async function factoryApi(request: Request, env: Env, url: URL): Promise<
   if (path == "/api/factory/agent") {
     if (request.method == "GET") return json(await f.agentState(admin.login, admin.unlock, url.origin));
     if (request.method == "POST") {
-      const body = await request.json().catch(() => ({})) as { text?: unknown; context?: unknown };
-      const r = await f.agentPrompt(admin.login, admin.unlock, url.origin, String(body.text ?? ""), typeof body.context == "string" ? body.context : null);
+      const body = await request.json().catch(() => ({})) as { text?: unknown; context?: unknown; files?: unknown };
+      const r = await f.agentPrompt(admin.login, admin.unlock, url.origin, String(body.text ?? ""), typeof body.context == "string" ? body.context : null, body.files);
       return json(r, r.ok ? 200 : 409);
     }
   }

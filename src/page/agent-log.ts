@@ -6,15 +6,18 @@
 // API (`via: "external"`) land in the same transcript. A transcript is private to one person and one document: their
 // tabs all show it, collaborators never see it.
 
+import type { FileRef } from "./attach";
+
 export type LogItem =
-  | { kind: "user"; text: string }
+  /** `files`: what was attached (attach.ts), as the log shows it. */
+  | { kind: "user"; text: string; files?: FileRef[] }
   | { kind: "assistant"; text: string }
   | { kind: "thinking"; text: string }
   | { kind: "tool"; id: string; name: string; path: string | null; status: "running" | "done" | "error"; detail?: string; image?: string; via?: "external" }
   | { kind: "error"; text: string };
 
 export type LogEvent =
-  | { t: "user"; text: string }
+  | { t: "user"; text: string; files?: FileRef[] }
   | { t: "text"; delta: string }
   | { t: "thinking"; delta: string }
   | { t: "tool"; id: string; name: string; path: string | null; status: "running" | "done" | "error"; detail?: string; image?: string; via?: "external" }
@@ -33,7 +36,7 @@ export function reduce(log: Log, ev: LogEvent): number {
   const items = log.items;
   const last = items[items.length - 1];
   switch (ev.t) {
-    case "user": items.push({ kind: "user", text: ev.text }); return items.length - 1;
+    case "user": items.push(ev.files?.length ? { kind: "user", text: ev.text, files: ev.files } : { kind: "user", text: ev.text }); return items.length - 1;
     case "text":
       if (last?.kind == "assistant") { last.text += ev.delta; return items.length - 1; }
       items.push({ kind: "assistant", text: ev.delta });

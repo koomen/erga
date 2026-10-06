@@ -17,7 +17,7 @@ import * as Path from "effect/Path";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { HttpApiBuilder, HttpApiMiddleware } from "effect/http-api";
 import { MODELS, externalGuide, isModelChoice, startSession, type AgentConfig, type AgentSession, type OpenResult, type PageTree } from "./agent";
-import { AgentOff, Api, BadRequest, ExplainBadRequests, ModelFixed, NameRefused, NoSuchModel, NoSuchTool, Person, PersonFromRequest, SessionFailed, ExternalAgent, ToolFailed, Unauthorized, type AgentState, type ModelState } from "./api";
+import { AgentOff, Api, BadAttachment, BadRequest, ExplainBadRequests, ModelFixed, NameRefused, NoSuchModel, NoSuchTool, Person, PersonFromRequest, SessionFailed, ExternalAgent, ToolFailed, Unauthorized, type AgentState, type ModelState } from "./api";
 import type { DocName, Naming } from "./directory";
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import { digest, StoreError, type FileStore, type Room } from "./room";
@@ -25,6 +25,7 @@ import { titleOf } from "./front";
 import { checkNewName, cleanTreePath, isPage, pageAddress, parentsOf, resolvePage, TreeError, treeEntries, type TreeOp } from "./tree";
 import { ignored, isTextPath as isTextFile } from "./src/room/doc";
 import { viewWait, type ViewRequest, type ViewResult } from "./src/page/agent-log";
+import { checkAttachments } from "./src/page/attach";
 import type { VersionsAccess } from "./agent";
 
 export interface HostOptions {
@@ -266,8 +267,10 @@ export function makeHost(opts: HostOptions) {
     .handle("prompt", ({ payload }) => Effect.gen(function* () {
       const s = yield* agentSession;
       // The sender's last keystrokes travel over its WebSocket; let them land first.
+      const files = checkAttachments(payload.files);
+      if (typeof files == "string") return yield* new BadAttachment({ ok: false, reason: files });
       if (payload.after) yield* room.waitFor(payload.after);
-      s.prompt(payload.text, payload.context ?? null);
+      s.prompt(payload.text, payload.context ?? null, files);
       return { ok: true as const };
     }))
     .handle("model", ({ payload }) => Effect.gen(function* () {

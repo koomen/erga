@@ -31,6 +31,8 @@ export class Unauthorized extends Schema.TaggedError<Unauthorized>()("Unauthoriz
 /** The embedded agent is off (no key), or its session didn't start. */
 export class AgentOff extends Schema.TaggedError<AgentOff>()("AgentOff", { ...failed, reason: Schema.String }, { httpApiStatus: 503 }) {}
 export class NoSuchModel extends Schema.TaggedError<NoSuchModel>()("NoSuchModel", { ...failed, reason: Schema.String }, { httpApiStatus: 400 }) {}
+/** A message's attachments that can't be sent (src/page/attach.ts says why). */
+export class BadAttachment extends Schema.TaggedError<BadAttachment>()("BadAttachment", { ...failed, reason: Schema.String }, { httpApiStatus: 400 }) {}
 /** The scripted test model can't be switched. */
 export class ModelFixed extends Schema.TaggedError<ModelFixed>()("ModelFixed", { ...failed, reason: Schema.String }, { httpApiStatus: 409 }) {}
 /** The person's agent session didn't start, so its tools can't run. */
@@ -143,9 +145,9 @@ export const Api = HttpApi.make("erga")
     .add(HttpApiEndpoint.get("state", "/api/agent", { success: AgentState }))
     /** A message for the person's agent; `after` is the sender's state vector, so its last keystrokes land first. */
     .add(HttpApiEndpoint.post("prompt", "/api/agent", {
-      payload: Schema.Struct({ text: Schema.String, context: Schema.optional(Schema.NullOr(Schema.String)), after: Schema.optional(Schema.String) }),
+      payload: Schema.Struct({ text: Schema.String, context: Schema.optional(Schema.NullOr(Schema.String)), after: Schema.optional(Schema.String), files: Schema.optional(Schema.Array(Schema.Unknown)) }),
       success: Ok,
-      error: AgentOff,
+      error: [AgentOff, BadAttachment],
     }))
     /** Switches the person's agent to another model, from its next turn; their other tabs follow. */
     .add(HttpApiEndpoint.post("model", "/api/agent/model", {
