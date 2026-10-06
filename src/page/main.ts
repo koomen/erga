@@ -713,11 +713,11 @@ type TreeModule = { mountTree: typeof mountTree };
     }
   }
   // Your avatar opens a small menu: who you are, Documents, Settings,
-  // Admin settings if you're an admin, Sign out (the same as every other page's upper
+  // Deploy your own if the deploy_page setting lets you, Admin settings if you're an admin, Sign out (the same as every other page's upper
   // right, account.ts). The front door says which links (meta erga-account).
   const account = $("account");
   const accountLinks = (() => {
-    try { return JSON.parse(document.querySelector<HTMLMetaElement>('meta[name="erga-account"]')?.content ?? "") as { docs?: string; settings?: string; admin?: string; signOut?: string }; } catch { return null; }
+    try { return JSON.parse(document.querySelector<HTMLMetaElement>('meta[name="erga-account"]')?.content ?? "") as { docs?: string; settings?: string; deploy?: string; admin?: string; signOut?: string }; } catch { return null; }
   })();
   let accountBtn: HTMLElement | null = null;
   function accountButton(b: HTMLElement) {
@@ -740,6 +740,7 @@ type TreeModule = { mountTree: typeof mountTree };
     const set = (id: string, href: string | undefined) => { const a = $(id) as HTMLAnchorElement; a.hidden = !href; if (href) a.href = href; };
     set("account-docs", me.user.startsWith("test-") ? undefined : accountLinks!.docs);
     set("account-settings", me.user.startsWith("test-") ? undefined : accountLinks!.settings);
+    set("account-deploy", accountLinks!.deploy);
     set("account-admin", accountLinks!.admin);
     set("account-out", accountLinks!.signOut);
   }
@@ -1289,7 +1290,7 @@ Once you've read the guide, await further instructions.`;
   let voice: { rec: Recognition; before: string; sent: number; results: number; heard: string; partial: boolean; timer: number } | null = null;
   let hintTimer = 0;
 
-  // The conversation as the log shows it (agent-chat.ts, which the factory's panel on /admin/source shares).
+  // The conversation as the log shows it (agent-chat.ts, which the factory's panel on /admin/factory shares).
   const agentChat = chat({
     logEl: agentLog, jump: $("agent-jump") as HTMLButtonElement,
     verbs: { read: ["Reading", "Read"], edit: ["Editing", "Edited"], write: ["Writing", "Wrote"], ls: ["Listing", "Listed"], find: ["Finding files", "Found files"], grep: ["Searching", "Searched"], view_page: ["Looking at the page", "Looked at the page"] },

@@ -4,7 +4,8 @@
 //   - signed in, your avatar (your GitHub picture, your initial if it doesn't
 //     load), on /docs, /admin, /settings, the front page (beside its Edit
 //     and Clone buttons), a page that isn't there; clicking it opens a menu:
-//     your name, Documents, Settings, Admin settings (admins only), Sign out;
+//     your name, Documents, Settings, Deploy your own (those the deploy_page
+//     setting lets in), Admin settings (admins only), Sign out;
 //   - in the editor, your avatar among its own controls opens the same menu;
 //   - signed out (locally: after Sign out), a person in a circle whose menu
 //     has only Sign in (with GitHub), which comes back to the same page, signed in;
@@ -78,7 +79,7 @@ try {
   expect(c.state == "in" && c.initial == "T" && c.rect && c.rect.x + c.rect.w > 1100 - 24 && c.rect.y < 24, "your avatar is in the upper right", c);
   await clickOn(p, "[data-erga-account] button");
   c = await corner(p);
-  expect(c.open && c.who.includes("tester") && c.links.map((l) => l.text).join() == "Documents,Settings,Admin settings,Sign out", "clicking it opens your menu", c);
+  expect(c.open && c.who.includes("tester") && c.links.map((l) => l.text).join() == "Documents,Settings,Deploy your own,Admin settings,Sign out", "clicking it opens your menu", c);
   await p.screenshot(join(SHOTS, "account-docs.png"));
   await p.key("Escape");
   expect(!(await corner(p)).open, "Escape closes it");
@@ -86,7 +87,7 @@ try {
   await p.eval(`document.querySelector("[data-erga-account] img")?.dispatchEvent(new Event("error")), true`);
   c = await corner(p);
   expect(!c.img && c.initial == "T" && (await p.eval<string>(`getComputedStyle(document.querySelector("[data-erga-account] button")).backgroundColor`)) != "rgba(0, 0, 0, 0)", "without the picture, your initial on your colour", c);
-  ok("on /docs, your avatar opens a menu: your name, Documents, Settings, Admin settings, Sign out");
+  ok("on /docs, your avatar opens a menu: your name, Documents, Settings, Deploy your own, Admin settings, Sign out");
 
   // Dark, and a phone.
   await p.open(`${root}/admin`, { width: 1100, height: 720, scale: 2, dark: true, clear: false });
@@ -119,7 +120,7 @@ try {
   expect(meRect.right > 1100 - 30 && meRect.top < 30 && meRect.img?.startsWith("https://avatars.githubusercontent.com/tester"), "far right of the editor's controls, with your GitHub picture", meRect);
   await clickOn(p, "#me .avatar");
   const menu = await p.eval<{ hidden: boolean; expanded: string | null; links: string[] }>(`({ hidden: document.getElementById("account").hidden, expanded: document.querySelector("#me .avatar").getAttribute("aria-expanded"), links: [...document.querySelectorAll("#account a:not([hidden])")].map((a) => a.textContent + " " + a.getAttribute("href")) })`);
-  expect(!menu.hidden && menu.expanded == "true" && menu.links.join() == "Documents /docs,Settings /settings,Admin settings /admin,Sign out /auth/logout", "clicking it opens your menu", menu);
+  expect(!menu.hidden && menu.expanded == "true" && menu.links.join() == "Documents /docs,Settings /settings,Deploy your own /deploy,Admin settings /admin,Sign out /auth/logout", "clicking it opens your menu", menu);
   await Bun.sleep(600);
   expect(!(await p.eval<boolean>(`document.getElementById("account").hidden`)), "and it stays open");
   await p.screenshot(join(SHOTS, "account-editor.png"));

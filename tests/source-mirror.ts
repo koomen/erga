@@ -36,7 +36,7 @@ try {
 
   // On: the pretend GitHub.
   const p = await browser.page(await browser.context());
-  await p.open(`${root}/admin/source`, { width: 1280, height: 900, scale: 2, clear: false });
+  await p.open(`${root}/admin/factory`, { width: 1280, height: 900, scale: 2, clear: false });
   await until(async () => (await pill(p)).startsWith("GitHub:") && !(await pill(p)).includes("loading"), 15_000, "the GitHub status shows", () => pill(p));
   await p.eval(`document.getElementById("mirror-pill").click()`);
   let s = await shown(p);
@@ -51,7 +51,7 @@ try {
   // Off: the steps.
   const q = await browser.page(await browser.context());
   await q.send("Page.addScriptToEvaluateOnNewDocument", { source: OFF });
-  await q.open(`${root}/admin/source`, { width: 1280, height: 900, scale: 2, clear: false });
+  await q.open(`${root}/admin/factory`, { width: 1280, height: 900, scale: 2, clear: false });
   await until(async () => (await pill(q)) == "GitHub: off", 15_000, "the GitHub status says off", () => pill(q));
   expect(!(await q.eval<boolean>(`document.getElementById("mirror-pill").disabled`)), "off: the status can still be clicked");
   await q.eval(`document.getElementById("mirror-pill").click()`);
@@ -60,11 +60,11 @@ try {
   for (const want of ["personal-access-tokens/new", "Contents, read and write", "koomen/erga", "bunx cf workers secrets update GITHUB_MIRROR_TOKEN --name erga-staging", "GITHUB_MIRROR_URL"])
     expect(s.text.includes(want) || (await q.eval<string>(`document.getElementById("mirror-dlg").innerHTML`)).includes(want), `the steps name ${want}`, s.text);
   await q.screenshot(join(SHOTS, "source-mirror-off.png"));
-  await q.open(`${root}/admin/source`, { width: 1280, height: 900, scale: 2, clear: false, dark: true });
+  await q.open(`${root}/admin/factory`, { width: 1280, height: 900, scale: 2, clear: false, dark: true });
   await until(async () => (await pill(q)) == "GitHub: off", 15_000, "the GitHub status says off (dark)", () => pill(q));
   await q.eval(`document.getElementById("mirror-pill").click()`);
   await q.screenshot(join(SHOTS, "source-mirror-off-dark.png"));
-  await q.open(`${root}/admin/source`, { width: 390, height: 844, scale: 2, clear: false });
+  await q.open(`${root}/admin/factory`, { width: 390, height: 844, scale: 2, clear: false });
   await until(async () => (await pill(q)) == "GitHub: off", 15_000, "the GitHub status says off (phone)", () => pill(q));
   await q.eval(`document.querySelector(".tabs [data-tab=tasks]").click(); document.getElementById("mirror-pill").click()`);
   s = await shown(q);

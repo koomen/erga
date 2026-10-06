@@ -1,4 +1,4 @@
-// The factory's own agent, on /admin/source: an agent panel like the
+// The factory's own agent, on /admin/factory: an agent panel like the
 // editor's (the same transcript, src/page/agent-log.ts, and the same panel,
 // src/page/agent-chat.ts), with tools that queue and read factory tasks the
 // way the local outer agent uses the task queue (AGENTS.md): add a task
@@ -136,7 +136,7 @@ export const FACTORY_TOOL_VERBS: Record<string, [string, string]> = {
 };
 
 const systemPrompt = (owner: string) => `
-You are ${agentName(owner)}, embedded in Erga's admin page for its source (/admin/source).
+You are ${agentName(owner)}, embedded in Erga's Factory page (/admin/factory).
 ${owner} is an admin of this Erga server, and has the page open: the factory's task
 board, the source and deploy dashboard (staging and main, and their deploys), and you.
 
@@ -288,7 +288,7 @@ ${o.owner}, an admin of the Erga server at ${o.origin}, has given you a factory 
 ("${o.label}", until ${new Date(o.expires).toISOString()}). With it you can queue up
 tasks in the factory, read them, and send them more instructions, as ${o.owner}'s agent.
 Nothing else: the token can't merge, discard or start tasks, push code, deploy, read
-documents, or change settings. ${o.owner} merges each task by hand on ${o.origin}/admin/source;
+documents, or change settings. ${o.owner} merges each task by hand on ${o.origin}/admin/factory;
 Merge merges its branch into staging, which deploys itself.
 
 The factory is Erga's task queue: each task is a branch of Erga's own repository,

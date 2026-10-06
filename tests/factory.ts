@@ -21,7 +21,7 @@
 //    merge is refused and Merge is off on the board; a merge queued behind a dependency's merge that
 //    fails is refused when its turn comes; a discarded dependency blocks; when a dependency merges,
 //    the task waiting for it starts by itself, and the board hears it.
-// 9. One page: /admin/source has the board, the source dashboard and the agent; /admin/factory, /source and
+// 9. One page: /admin/factory has the board, the source dashboard and the agent; /admin/source, /source and
 //    /admin/deploys redirect there; tabs on a phone, with no sideways scrolling.
 // 10. The factory's agent (the scripted model): it reads the board, queues a task with a dependency, reads it,
 //    looks at its screenshot, sends it instructions and changes its dependencies; it has no merge or discard
@@ -67,17 +67,17 @@ const STEP = docker ? 300_000 : 60_000;
 try {
   // ---------------------------------------------------------------- 1. off
   const p = await browser.page(await browser.context());
-  await p.open(`${root}/admin/source`, { width: 1400, height: 900, scale: 2 });
+  await p.open(`${root}/admin/factory`, { width: 1400, height: 900, scale: 2 });
   await until(() => p.eval(`!!document.querySelector('[data-col="queued"]')`), 15_000, "the board renders");
   expect(await p.eval(`!document.getElementById("notice").hidden`), "the board says the factory is off");
   expect((await api("/tasks", { json: { title: "x" } })).status == 409, "adding a task is refused while it's off");
-  const other = await fetch(`${root}/admin/source?user=bob`);
+  const other = await fetch(`${root}/admin/factory?user=bob`);
   expect(other.status == 404, "someone who isn't an admin gets nothing", other.status);
   ok("off by default: the board says so, adding is refused, and non-admins get a 404");
 
   // ---------------------------------------------------------------- 2. a task, on the board
   expect((await setting("on")).ok, "the factory turns on");
-  await p.navigate(`${root}/admin/source`);
+  await p.navigate(`${root}/admin/factory`);
   await until(() => p.eval(`!!document.getElementById("new")`), 15_000, "a New task button");
   const info = (await api("")).body;
   expect(info.enabled && info.vms.runner == (docker ? "docker" : "sim") && !info.claude.signedIn, "the factory's state", info);
@@ -220,7 +220,7 @@ try {
   const t4 = await add({ title: "Build on the hello", description: "Change the hello note." });
   expect(t4.status == 201 && !t4.body.blockedBy, "#4, with no dependencies, starts", t4);
   // A dependency added in the detail view: #4 merges after #3.
-  await p.navigate(`${root}/admin/source`);
+  await p.navigate(`${root}/admin/factory`);
   await until(() => p.eval(`!!document.querySelector('[data-open="4"]')`), 10_000, "#4's card");
   await click(p, '[data-open="4"]');
   await until(() => p.eval(`!!document.getElementById("dep-kind")`), 5000, "the Dependencies section, with Add");
@@ -307,19 +307,22 @@ try {
   await until(async () => (await task(5)).status == "complete" && (await task(6)).status == "complete", STEP, "#5 and #6 are ready");
   ok("unblocking: a dependency removed on the board; when one merges, the task waiting for it starts by itself, and the board hears it");
 
-  // ---------------------------------------------------------------- 9. one page: /admin/source
-  for (const old of ["/admin/factory", "/source", "/admin/deploys"]) {
+  // ---------------------------------------------------------------- 9. one page: /admin/factory
+  for (const old of ["/admin/source", "/source", "/admin/deploys"]) {
     const r = await fetch(`${root}${old}`, { redirect: "manual" });
-    expect(r.status == 302 && r.headers.get("location") == "/admin/source", `${old} redirects to /admin/source`, r.status);
+    expect(r.status == 302 && r.headers.get("location") == "/admin/factory", `${old} redirects to /admin/factory`, r.status);
   }
-  await p.navigate(`${root}/admin/source`);
+  // The admin sidebar collapsed (admin-layout.ts), as an admin does to give the board the width: tests/admin-layout.ts tests the toggle.
+  await p.eval(`localStorage.setItem("erga:admin-sidebar", "closed")`);
+  await p.navigate(`${root}/admin/factory`);
   await until(() => p.eval(`!!document.querySelector('#tasks [data-col="queued"]') && !!document.querySelector("#source-pane .pane-head") && !!document.querySelector("#agent .agent-log")`), 10_000, "the board, the dashboard and the agent, on one page");
   const box = (sel: string) => p.eval<{ left: number; right: number; top: number; bottom: number; width: number }>(`(() => { const r = document.querySelector(${JSON.stringify(sel)}).getBoundingClientRect(); return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, width: r.width }; })()`);
   const [agentBox, tasksBox, sourceBox] = [await box("#agent"), await box("#tasks"), await box("#source-pane")];
   expect(agentBox.right <= tasksBox.left && tasksBox.bottom <= sourceBox.top && agentBox.width >= 300 && agentBox.bottom <= 900, "on a wide window: the agent on the left, the board above the dashboard beside it", { agentBox, tasksBox, sourceBox });
-  expect(await p.eval(`getComputedStyle(document.querySelector("#tasks .board")).gridTemplateColumns.split(" ").length == 4`), "the board keeps its four columns beside the agent");
+  expect(await p.eval(`getComputedStyle(document.querySelector("#tasks .board")).gridTemplateColumns.split(" ").length == 4`), "the board keeps its four columns beside the agent, with the sidebar collapsed");
+  await p.eval(`localStorage.removeItem("erga:admin-sidebar")`);
   const phone = await browser.page(await browser.context());
-  await phone.open(`${root}/admin/source`, { width: 390, height: 844, scale: 2 });
+  await phone.open(`${root}/admin/factory`, { width: 390, height: 844, scale: 2 });
   await until(() => phone.eval(`!!document.querySelector('#tasks [data-col="queued"]')`), 10_000, "the page on a phone");
   const shown = () => phone.eval<string[]>(`["#tasks", "#source-pane", "#agent"].filter((s) => document.querySelector(s).offsetParent !== null)`);
   expect(JSON.stringify(await shown()) == '["#tasks"]', "a phone shows one pane at a time: the board first", await shown());
@@ -333,7 +336,7 @@ try {
   await click(phone, '.tabs [data-tab="source"]');
   expect(JSON.stringify(await shown()) == '["#source-pane"]', "the Source tab shows the dashboard", await shown());
   expect(await phone.eval(`document.documentElement.scrollWidth <= innerWidth`), "no sideways scrolling there either");
-  ok("one page, /admin/source: the agent beside the board and the dashboard; the old pages redirect; tabs on a phone");
+  ok("one page, /admin/factory: the agent beside the board and the dashboard; the old pages redirect; tabs on a phone");
 
   // ---------------------------------------------------------------- 10. the factory's agent
   const sayTo = (text: string) => p.eval(`(() => { const i = document.getElementById("agent-input"); i.value = ${JSON.stringify(text)}; i.dispatchEvent(new Event("input")); document.getElementById("agent-send").click(); return true; })()`);
@@ -373,7 +376,7 @@ try {
   await sayTo("Merge it @script " + JSON.stringify([{ tool: "merge_task", args: { id: next } }, { tool: "discard_task", args: { id: next } }, { text: "I can't merge: you do." }]));
   await until(async () => (await replies()).includes("I can't merge: you do."), 15_000, "the agent answers", panel);
   expect((await task(next)).status == "complete" && (await panel()).includes("merge_task failed"), "it has no merge or discard tool: the task is still ready to merge, waiting for an admin", await panel());
-  await p.navigate(`${root}/admin/source`);
+  await p.navigate(`${root}/admin/factory`);
   await until(async () => (await replies()).includes("I can't merge: you do."), 10_000, "a reload keeps the conversation");
   await p.screenshot(join(SHOTS, "factory-agent.png"));
   ok("the factory's agent: reads the board, queues a task with a dependency, reads it, looks at its screenshot, sends instructions, changes dependencies; no merge or discard");
@@ -437,7 +440,7 @@ try {
   const b0 = await task(tB);
   const previewB = b0.url.replace("//localhost:", "//127.0.0.1:");
   expect((await fetch(previewB).catch(() => null))?.ok, "B's preview is up before the merge");
-  await p.navigate(`${root}/admin/source`);
+  await p.navigate(`${root}/admin/factory`);
   await until(() => p.eval(`!!document.querySelector('[data-col="ready-to-merge"] [data-open="${tB}"] [data-act="merge"]')`), 10_000, "B's Merge button");
   await click(p, `[data-col="ready-to-merge"] [data-open="${tB}"] [data-act="merge"]`);
   await until(async () => (await statusOf(tB)) == "needs agent", STEP, "B needs its agent", async () => (await task(tB)).log.slice(-4));

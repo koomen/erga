@@ -5,7 +5,7 @@
 // Admins only, and only while the `factory` setting is "on". README, The
 // factory, has the design, the findings and the runbook.
 //
-//   /admin/factory                         redirects to /admin/source: the board is there now (factory/page.ts),
+//   /admin/factory                         the board (factory/page.ts), on the Factory page (worker/source.ts),
 //                                          with the source dashboard and the factory's own agent
 //   GET  /api/factory                      { enabled, vms, claude: { signedIn, at, by } }
 //   GET  /api/factory/tasks[/<id>]         the tasks, each with its log and screenshots
@@ -657,7 +657,7 @@ export class Factory extends DurableObject<Env> {
       // Staging moved. On Cloudflare the push went through Erga's Git endpoint, which tells the deploy pipeline itself
       // (worker/source-host.ts, deployHook): staging.erga.dev builds and deploys it. Locally the repository is the dev
       // server's own, which no deploy reads.
-      this.note(id, host.kind == "local" ? "Staging moved (the local repository: nothing deploys it)" : "Staging moved: staging.erga.dev deploys it now (see /admin/source)");
+      this.note(id, host.kind == "local" ? "Staging moved (the local repository: nothing deploys it)" : "Staging moved: staging.erga.dev deploys it now (see /admin/factory)");
     } catch (e) {
       this.backToReady(id, `The merge failed: ${(e as Error).message}`);
     }
@@ -928,11 +928,6 @@ async function adminOf(env: Env, request: Request): Promise<{ login: string; nam
   return (await users.isUnlocked(who)) && session.unlocked ? { login: session.login.toLowerCase(), name: session.name, unlock: session.unlocked } : "locked";
 }
 
-/** /admin/factory: the board is on /admin/source now, with the source dashboard and the factory's agent. */
-export function factoryDoor(): Response {
-  return new Response(null, { status: 302, headers: { Location: "/admin/source" } });
-}
-
 /** Whether the factory is on, for the page (worker/source.ts). */
 export const factoryEnabled = enabled;
 
@@ -945,7 +940,7 @@ async function sharedAgentApi(request: Request, env: Env, url: URL, raw: string,
   const t = await f.readToken(raw);
   const keyOk = t && (t.key == "local" ? isDev(env, url) : t.key == SIGN_IN_KEY ? !keysRequired(env) : (await adminKeysOf(env).ownerOf(t.key)) == t.login);
   if (!t || !keyOk || !(await directoryOf(env).users.isAdmin(t.login))) {
-    return json({ error: "That factory token doesn't work: it ended, was revoked, or the admin key that made it was. Ask an admin for a new one (Share with agent, on /admin/source)." }, 401);
+    return json({ error: "That factory token doesn't work: it ended, was revoked, or the admin key that made it was. Ask an admin for a new one (Share with agent, on /admin/factory)." }, 401);
   }
   const by = `${agentName(t.login)} (shared: ${t.label})`;
   const m = request.method;
@@ -962,7 +957,7 @@ async function sharedAgentApi(request: Request, env: Env, url: URL, raw: string,
     return data ? new Response(data, { headers: { "Content-Type": "image/png", "Cache-Control": "private, max-age=3600" } }) : json({ error: "Not found" }, 404);
   }
   const create = path == "/api/factory/tasks" && m == "POST", deps = id != null && !action && m == "PATCH", revise = id != null && action == "revise" && m == "POST";
-  if (!create && !deps && !revise) return json({ error: "A factory token can only create, read and instruct tasks (GET /api/factory/guide). Merging, discarding and starting are an admin's, on /admin/source." }, 403);
+  if (!create && !deps && !revise) return json({ error: "A factory token can only create, read and instruct tasks (GET /api/factory/guide). Merging, discarding and starting are an admin's, on /admin/factory." }, 403);
   if (!(await enabled(env))) return json({ error: "The factory is off: an admin turns it on with the factory setting (/admin)." }, 409);
   const body = await request.json().catch(() => null) as Record<string, unknown> | null;
   if (!body || typeof body != "object" || Array.isArray(body)) return json({ error: "Send JSON." }, 400);
