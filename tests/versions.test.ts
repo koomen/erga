@@ -3,7 +3,7 @@
 // the descriptions written when no model does.
 
 import { expect, test } from "bun:test";
-import { cleanDescription, fallbackDescription, firePublished, onPublished, versionNumber, Versions, type KV } from "../versions";
+import { cleanDescription, fallbackDescription, firePublished, onPublished, unifiedDiff, versionNumber, Versions, type KV } from "../versions";
 
 /** Durable Object storage's shape, in a Map, counting what's written. */
 function memory() {
@@ -106,4 +106,27 @@ test("published-version listeners: by document, and for every document", () => {
   off(); offAll();
   firePublished({ docId: "abcd2345", published: { mode: "latest", version }, files: async () => new Map() });
   expect(seen).toEqual(["one:v2", "all:abcd2345", "all:zzzz2345"]);
+});
+
+test("unified diffs between two file sets: changed, added, deleted, binary, one path, cut", () => {
+  const before = files({ "index.html": "one\ntwo\nthree\n", "old.css": "h1{}\n", "img.png": new Uint8Array([0xff, 0xfe]), "blog/a.md": "a\n", "same.txt": "x\n" });
+  const after = files({ "index.html": "one\n2\nthree\n", "new.md": "# Hi\n", "img.png": new Uint8Array([0xff, 0xfd, 1]), "blog/a.md": "b\n", "same.txt": "x\n" });
+  const d = unifiedDiff(before, after);
+  expect(d.files).toEqual(["blog/a.md", "img.png", "index.html", "new.md", "old.css"]);
+  expect(d.diff).toContain("--- a/index.html\n+++ b/index.html\n@@ -1,3 +1,3 @@\n one\n-two\n+2\n three");
+  expect(d.diff).toContain("new file new.md\n--- /dev/null\n+++ b/new.md\n@@ -0,0 +1,1 @@\n+# Hi");
+  expect(d.diff).toContain("deleted file old.css\n--- a/old.css\n+++ /dev/null");
+  expect(d.diff).toContain("Binary file img.png changed (2 -> 3 bytes)");
+  expect(d.diff).not.toContain("same.txt");
+  // Changed files first, then added, then deleted.
+  expect(d.diff.indexOf("index.html")).toBeLessThan(d.diff.indexOf("new.md"));
+  expect(d.diff.indexOf("new.md")).toBeLessThan(d.diff.indexOf("old.css"));
+  // One file, or a folder; context lines.
+  expect(unifiedDiff(before, after, { path: "./index.html", context: 0 }).diff).toBe("--- a/index.html\n+++ b/index.html\n@@ -2,1 +2,1 @@\n-two\n+2");
+  expect(unifiedDiff(before, after, { path: "blog/" }).files).toEqual(["blog/a.md"]);
+  expect(unifiedDiff(before, before)).toEqual({ files: [], diff: "" });
+  // Past maxChars it stops, and names the files it left out.
+  const big = unifiedDiff(files({ "a.txt": "a\n", "b.txt": "b\n" }), files({ "a.txt": "x".repeat(300) + "\n", "b.txt": "y\n" }), { maxChars: 200 });
+  expect(big.diff).toContain("a.txt's diff is cut here");
+  expect(big.diff).toContain("Not shown: b.txt");
 });
