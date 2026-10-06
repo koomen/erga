@@ -14,7 +14,8 @@
 //   /auth/github[/callback]    signing in; /auth/logout signs out
 //   /llms.txt, /api/..., /mcp  the server's API for agents, with an agent token (server-api.ts, tokens.ts)
 //   /settings, /tokens/...     your settings: agent tokens, and a test token for running the test suite against erga.dev
-//   /deploy                    deploy Erga to your own Cloudflare account (worker/deploy.ts; the deploy_page setting)
+//   /deploy                    deploy Erga to your own Cloudflare account (worker/deploy.ts; the deploy_page setting,
+//                              not an admin right); /admin/deploy redirects there
 //   /api/factory/...           the factory (experimental): tasks done by Claude Code in VMs, and its agent (worker/factory.ts)
 //   /api/deploys, /api/events  branch deploys' status and events, and deploy logs (worker/deploys.ts)
 //   /auth/test?token=&as=      a test person (Ada, Bo...) signed in with one; they open only test documents
@@ -36,7 +37,7 @@
 
 import { accountOf, withAccount } from "../account";
 import { idShaped, slugify, type Route } from "../directory";
-import { frontDoor, OWNER, whoOf, withTokens, type Platform } from "../front";
+import { frontDoor, mayDeploy, OWNER, whoOf, withTokens, type Platform } from "../front";
 import { serverApi, tokensDoor } from "../server-api";
 import { devUnlocked, finishSignIn, isDev, keysRequired, lockCookie, mintTestToken, sessionOf, signOut, startSignIn, testSignIn, unlockCookie } from "./auth";
 import { adminKeysOf, directoryOf, tokensOf } from "./d1";
@@ -94,7 +95,8 @@ export default {
       if (response.status == 101 || pagesSite(env, url)) return response;
       return withAccount(response, async () => {
         const session = await sessionOf(env, request);
-        return accountOf(session, !!session && !session.test && (await directoryOf(env).users.isAdmin(whoOf(session))));
+        const dir = directoryOf(env);
+        return accountOf(session, !!session && !session.test && (await dir.users.isAdmin(whoOf(session))), await mayDeploy(dir, session));
       }, url.pathname + url.search);
     });
     if (answer.status == 101) return answer;
@@ -149,6 +151,8 @@ async function route(request: Request, env: Env, url: URL, ctx: ExecutionContext
   if (assets || path == "/editor.html") return env.ASSETS.fetch(request);
   // Erga's own source: the Git endpoint, its page (the dashboard of source and deploys) and API (worker/source.ts).
   if (path == "/git/erga.git" || path.startsWith("/git/erga.git/")) return sourceGit(request, env, url);
+  // Its old address, from when admin settings linked to it: it's a page of its own now, not an admin one, so before the admins' gate.
+  if (path == "/admin/deploy" || path == "/admin/deploy/") return new Response(null, { status: 301, headers: { Location: "/deploy" } });
   // Every /admin route: the server's admins only, checked on the server before any of them answers.
   if (isAdminPath(path)) {
     const refused = await adminGate(platform(env), request);
