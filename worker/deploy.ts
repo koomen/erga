@@ -1,7 +1,8 @@
 // /deploy: deploy Erga to your own Cloudflare account, from erga.dev, with
 // the same settings erga.dev has (deploy/cloudflare.ts). Who may use it is
 // the deploy_page setting (anyone signed in by default; "admins" for admins
-// only, "off" hides it); anyone else gets "not found".
+// and users with the deploy role, users.ts; "off" hides it); anyone else
+// gets "not found".
 //
 //   /deploy                                the page (deploy/page.ts)
 //   /deploy/auth/cloudflare[/callback]     "Authorize with Cloudflare": OAuth with PKCE, when the server has a client
@@ -108,12 +109,13 @@ export async function deployDoor(request: Request, env: Env, platform: Platform)
   return Response.json(answer, { status: answer.ok ? 200 : 400 });
 }
 
-/** Who may use /deploy: the deploy_page setting (off, admins or users), and never a test person or an agent's token. */
+/** Who may use /deploy: the deploy_page setting (off, admins and those with the deploy role, or users), and never a test person or an agent's token. */
 async function allowed(platform: Platform, session: Session | null): Promise<boolean> {
   if (!session || session.test || session.agent) return false;
   const mode = await platform.directory.config.get("deploy_page");
   if (mode == "users") return true;
-  return mode == "admins" && (await platform.directory.users.isAdmin(whoOf(session)));
+  const users = platform.directory.users, who = whoOf(session);
+  return mode == "admins" && ((await users.isAdmin(who)) || (await users.hasDeploy(who)));
 }
 
 const back = (error: string, ...setCookies: string[]) => {
