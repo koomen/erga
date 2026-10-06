@@ -17,7 +17,7 @@
 //   GET  /api/deploys/status[?history=N] another of Erga's servers (DEPLOY_HOOK_SECRET): this server's own target
 //   POST /api/deploys/<name>/hook       another of Erga's servers (DEPLOY_HOOK_SECRET): {branch, commit} or {redeploy}
 //   POST /api/snapshot/docs[/import]    SNAPSHOT_TOKEN: read documents' storage (any server), write it (staging only)
-//   GET  /admin/deploys                 redirects to /admin/source: the dashboard of source and deploys
+//   GET  /admin/deploys                 redirects to /admin/factory: the dashboard of source and deploys
 //
 // "Admins" are the server's admins signed in, in a browser or with an agent
 // token; a test person never.
@@ -54,8 +54,8 @@ export async function deploysDoor(request: Request, env: Env, base: Platform): P
     })) ?? Response.json({ error: "Not found" }, { status: 404 });
   }
 
-  // The deploys' page is the source dashboard's now (/admin/source).
-  if (path == "/admin/deploys") return new Response(null, { status: 302, headers: { Location: "/admin/source" } });
+  // The deploys' page is the Factory page's dashboard now (/admin/factory).
+  if (path == "/admin/deploys") return new Response(null, { status: 302, headers: { Location: "/admin/factory" } });
 
   // A deploy's log, and a target's history: for admins, and for another of Erga's servers (production's dashboard shows staging's).
   const [, logOf] = /^\/api\/deploys\/([a-z]+)\/log$/.exec(path) ?? [];

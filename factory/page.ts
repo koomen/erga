@@ -1,8 +1,8 @@
-// The factory's board (experimental), a part of /admin/source (source/page.ts,
+// The factory's board (experimental), a part of /admin/factory (source/page.ts,
 // which puts it beside the source dashboard and the factory's agent): the
 // local task queue's board (development/task-queue/index.html) inside Erga. Columns
 // Queued, Working, Ready to merge and Merging (with "needs agent": a merge the task's Claude Code
-// is finishing, Merge off, with the reason; merged tasks leave the board, and the Source page
+// is finishing, Merge off, with the reason; merged tasks leave the board, and the Factory page
 // shows staging); a card per task, its
 // detail on a click (the ask, the summary, the preview, the branch, the log,
 // the screenshots, at the top in a grid, a click to enlarge one, the arrow keys for the previous and next one, Escape to shrink it), with Merge, Discard and new instructions; live, over
@@ -515,7 +515,7 @@ window.ergaBoard = { openTask: () => openId, title: (id) => tasks.find((x) => x.
 /** The board's pane: its head (where VMs run, the Claude sign-in), the notice, the columns, its dialogs. */
 export function boardMarkup(opts: { enabled: boolean }): string {
   return `<div class="pane-head"><h2>Tasks</h2><div class="pills" id="pills"><span class="pill" id="live">connecting</span><button class="pill" id="mirror-pill" type="button" hidden>GitHub: loading…</button></div></div>
-<div class="notice" id="notice" ${opts.enabled ? "hidden" : ""}>The factory is off. An admin turns it on with the <code>factory</code> setting on <a href="/admin">Admin settings</a>.</div>
+<div class="notice" id="notice" ${opts.enabled ? "hidden" : ""}>The factory is off. An admin turns it on with the <code>factory</code> setting on <a href="/admin">Settings</a>.</div>
 <div class="board" id="board"></div>
 <dialog id="dlg"></dialog>
 <dialog id="form" class="small"></dialog>
