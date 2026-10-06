@@ -5,6 +5,7 @@ import { parseDeployed } from "../config";
 import { Directory, type Param, type Sql } from "../directory";
 import { Tokens } from "../tokens";
 import { AdminKeys } from "../admin-keys";
+import { withCredentials } from "../credentials";
 import type { Env } from "./env";
 import { counted } from "./timing";
 
@@ -32,10 +33,22 @@ export function directoryOf(env: Env): Directory {
   if (directory?.db !== env.DB) {
     // A change to the homepage setting, however it's made (the admin page, an agent, the homepage's API, the first /), reaches its deploys (worker/home.ts).
     const changed = async (key: string) => { if (key == "landing_document" && env.HOME) await env.HOME.getByName("home").homeChanged(); };
-    directory = { db: env.DB, dir: new Directory(sqlOn(env.DB), { admins: adminsOf(env), locked: parseDeployed(env.SERVER_CONFIG), changed }) };
+    directory = { db: env.DB, dir: new Directory(sqlOn(env.DB), { admins: adminsOf(env), locked: parseDeployed(env.SERVER_CONFIG), changed, credentialSecret: factoryKey(env), fallback: (name) => !!String((env as unknown as Record<string, unknown>)[name] ?? "").trim() }) };
   }
   return directory.dir;
 }
+
+/**
+ * What signs the factory VMs' tokens and encrypts the Claude token (worker/factory.ts) and the API keys admins enter
+ * (credentials.ts), each with a key of its own derived from it: FACTORY_KEY, or locally the session secret.
+ */
+export function factoryKey(env: Env): string | null {
+  if (env.FACTORY_KEY?.trim()) return env.FACTORY_KEY.trim();
+  return env.ERGA_LINK_SECRET && env.DEV_LOGIN ? `local:${env.SESSION_SECRET}` : null;
+}
+
+/** The Worker's bindings with the API keys admins stored (credentials.ts) in place of the Worker secrets: what the code that calls Anthropic or OpenAI reads. */
+export const withKeys = (env: Env): Promise<Env> => withCredentials(env, env.DB ? directoryOf(env).credentials : null);
 
 /** Agent tokens (tokens.ts), on the same database. */
 export function tokensOf(env: Env): Tokens {

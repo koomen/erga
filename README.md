@@ -496,6 +496,21 @@ remove button are off, and so are the last admin's, saying why. Underneath it's 
 or 0), answering JSON, from this site's pages only. The directory checks on
 the server, for every one, that an admin asks (`Users.mustAdmin`).
 
+**API keys.** The Settings page starts with the server's API keys
+(`credentials.ts`): the Anthropic key (the editor's agent, the factory's
+agent, version descriptions) and the OpenAI key (ready for OpenAI's models;
+nothing calls OpenAI yet). An admin pastes one and saves it, replaces it, or
+clears it (`POST /admin/credentials`: `name` `anthropic` or `openai`,
+and `value`, or `clear=1`). The page shows only whether each is set, its
+last four characters, and who set it when, never the key. The key is in its
+own table (`credentials`), encrypted with AES-GCM under a key from
+`FACTORY_KEY` (locally the session secret), and the change log says only
+"ANTHROPIC_API_KEY key set" (or replaced, cleared). The code that calls
+Anthropic reads the stored key first (`withKeys` in `worker/d1.ts`), else
+the Worker secret of the same name (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`).
+An open document keeps the key it opened with until it closes; the factory's
+agent reads it again after a minute. docs/secrets.md has the details.
+
 **Settings.** `server_config` holds the server's settings, a JSON value per
 key with who set it and when (`config.ts`). Only the keys declared in
 `SETTINGS` exist, each with a description, a default and a parser that
@@ -2464,7 +2479,7 @@ the model name in the panel's header is a menu that switches it to Claude
 Sonnet 5.5 and back. The choice is per person (all their tabs follow, and a
 reload keeps it) and applies from the next message, so a running turn
 finishes on the model it started with. `ERGA_AGENT_MODEL=sonnet`
-starts everyone on Sonnet instead. Set it up with `ANTHROPIC_API_KEY`: locally
+starts everyone on Sonnet instead. Set it up with the Anthropic API key on `/admin` ([API keys](#users-admins-and-settings)), or `ANTHROPIC_API_KEY`: locally
 exported before `bun start` or in `.dev.vars`; a secret on erga.dev. pi's model catalogue
 predates the 5.5 models, so `agent.ts` describes them itself (`MODELS`) and
 rewrites each request for adaptive thinking, effort and, on Opus fast,

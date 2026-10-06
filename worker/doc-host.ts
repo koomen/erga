@@ -45,7 +45,7 @@ import { agentName, assets, authorOf, files as texts, folders, isTextPath, type 
 import { describeChange, fallbackDescription, firePublished, publicVersion, versionNumber, Versions, type KV, type Published, type PublishRequest, type PublishResult, type StoredVersion, type Version, type VersionsState } from "../versions";
 import * as Y from "yjs";
 import { decodeValue, encodeValue, type DocSnapshot } from "../deploy/snapshot";
-import { directoryOf } from "./d1";
+import { directoryOf, withKeys } from "./d1";
 import { DiskLink } from "./disk";
 import { publishedChanged } from "./published";
 import type { Env } from "./env";
@@ -761,7 +761,7 @@ export class DocHost extends DurableObject<Env> {
     // A test document's agent is the scripted one (agent.ts): free, and the same every run.
     const agent = meta.test
       ? { apiKey: Redacted.make(""), model: "script" as const, effort: "medium" }
-      : await Effect.runPromise(agentConfigFrom(ConfigProvider.fromUnknown(this.env)));
+      : await Effect.runPromise(agentConfigFrom(ConfigProvider.fromUnknown(await withKeys(this.env))));
     const host = makeHost({
       room, files, agent,
       doc: { name: meta.index, path: meta.index, kind: meta.index.endsWith(".md") ? "md" : "html", dir: meta.disk?.path ?? meta.owner },

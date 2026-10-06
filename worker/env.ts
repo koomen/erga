@@ -48,7 +48,10 @@ export interface Env {
   GITHUB_CLIENT_SECRET: string;
   /** Signs session cookies. */
   SESSION_SECRET: string;
+  /** The Anthropic key, a Worker secret: the fallback while an admin has stored none on /admin (credentials.ts; read through withKeys). */
   ANTHROPIC_API_KEY: string;
+  /** The OpenAI key, a Worker secret: the same fallback, for OpenAI's models. */
+  OPENAI_API_KEY?: string;
   /** The deploy page's sessions (/deploy, worker/deploy.ts): one Durable Object each, holding the Cloudflare token for the deploy only. */
   DEPLOYS: DurableObjectNamespace<Deployer>;
   /**

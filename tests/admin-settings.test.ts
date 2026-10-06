@@ -40,6 +40,7 @@ const platform = {
         return entries[0];
       },
     },
+    credentials: { list: async () => [] },
     find: async () => null,
   },
 } as unknown as Platform;
