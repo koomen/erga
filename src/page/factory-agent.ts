@@ -11,6 +11,8 @@
 // by build.sh to factory-agent.js.
 
 import { chat } from "./agent-chat";
+import { fileRefs, type Attachment } from "./attach";
+import { attachments } from "./attach-ui";
 import type { Log, LogEvent } from "./agent-log";
 
 interface AgentState { enabled: boolean; reason?: string; model?: string | null; choice?: string | null; models?: { id: string; label: string }[]; log?: Log }
@@ -37,6 +39,8 @@ const talk = chat({ logEl: $("agent-log"), jump: $("agent-jump") as HTMLButtonEl
 const log = talk.log;
 let off: string | null = "Connecting to the agent…";
 let hintTimer = 0;
+// Files to go with the next message: dropped on the panel, pasted, or picked (attach-ui.ts).
+const att = attachments({ pane: $("agent"), form: $("agent-form"), input, hint: (t) => showHint(t), changed: () => renderBusy() });
 
 function showHint(text: string, sticky = false) {
   clearTimeout(hintTimer);
@@ -53,11 +57,12 @@ function hideHint() {
 /** Why Send can't send right now, or null if it can. Never a silent no. */
 function blocker(): string | null {
   if (off) return off;
-  if (!log.busy && !input.value.trim()) return "Type a message to send it.";
+  if (att.reading) return "Reading the attached files…";
+  if (!log.busy && !input.value.trim() && !att.files.length) return "Type a message to send it.";
   return null;
 }
 function renderBusy() {
-  const stop = log.busy && !input.value.trim();
+  const stop = log.busy && !input.value.trim() && !att.files.length && !att.reading;
   const why = off ?? (stop ? null : blocker());
   send.textContent = stop ? "Stop" : "Send";
   send.classList.toggle("stop", stop);
@@ -74,23 +79,25 @@ function context(): string | null {
   return id != null ? `The admin has task #${id} open on the board: ${window.ergaBoard?.title(id) ?? ""}` : null;
 }
 
-async function ask(text: string, ctx: string | null) {
-  const sent = talk.pending(text);
-  const res = await fetch("/api/factory/agent", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text, context: ctx }), signal: AbortSignal.timeout(15_000) }).catch((e: Error) => e);
+async function ask(text: string, ctx: string | null, files: Attachment[] = []) {
+  const sent = talk.pending(text, fileRefs(files));
+  const res = await fetch("/api/factory/agent", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text, context: ctx, files }), signal: AbortSignal.timeout(files.length ? 60_000 : 15_000) }).catch((e: Error) => e);
   if (!(res instanceof Response) || !res.ok) {
     const reason = res instanceof Response ? ((await res.json().catch(() => null)) as { reason?: string; error?: string } | null)?.reason ?? `the server answered ${res.status}` : res.name == "TimeoutError" ? "the server didn't answer in time" : "the server didn't answer";
-    sent.fail(reason, () => ask(text, ctx));
+    sent.fail(reason, () => ask(text, ctx, files));
   }
   renderBusy();
 }
 function sendNow() {
   const text = input.value.trim();
+  const files = att.files;
   const why = blocker();
-  if (why || !text) { showHint(why ?? "Type a message to send it.", !!off); input.focus(); return; }
+  if (why || (!text && !files.length)) { showHint(why ?? "Type a message to send it.", !!off); input.focus(); return; }
   input.value = "";
   store.set(DRAFT, null);
+  att.clear();
   sizeInput();
-  ask(text, context());
+  ask(text, context(), files);
 }
 
 // The box sizes itself with field-sizing: content, and its wrapper eases to the new height (as in the editor).

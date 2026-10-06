@@ -23,6 +23,7 @@ import { Agent as PiAgent, type AgentEvent, type AgentTool } from "@mariozechner
 import * as Redacted from "effect/Redacted";
 import { Type } from "typebox";
 import { DEFAULT_MODEL, describeModel, isScript, MODELS, patchPayload, resultImage, resultText, scriptModel, type AgentConfig, type ModelChoice } from "../agent";
+import { fileRefs, messageContent, type Attachment } from "../src/page/attach";
 import { emptyLog, reduce, type Log, type LogEvent } from "../src/page/agent-log";
 import { agentName } from "../src/room/doc";
 import { quietFor } from "./stall";
@@ -193,7 +194,8 @@ export interface FactoryAgent {
   readonly modelChoice: ModelChoice | null;
   setModel(choice: ModelChoice): boolean;
   log(): Log;
-  prompt(text: string, context: string | null): void;
+  /** A message, with any files attached (src/page/attach.ts). */
+  prompt(text: string, context: string | null, files?: Attachment[]): void;
   abort(): void;
   reset(): Promise<void>;
   subscribe(listener: (ev: LogEvent) => void): () => void;
@@ -260,12 +262,12 @@ export function startFactoryAgent(opts: { cfg: AgentConfig; owner: string; tools
       return true;
     },
     log: () => log,
-    prompt(text, context) {
-      emit({ t: "user", text });
-      const content = context ? `<page>\n${context}\n</page>\n\n${text}` : text;
+    prompt(text, context, files = []) {
+      emit(files.length ? { t: "user", text, files: fileRefs(files) } : { t: "user", text });
+      const content = messageContent(context ? `<page>\n${context}\n</page>\n\n${text}` : text, files);
       if (isScript(cfg)) scriptModel();
       if (agent.state.isStreaming) { agent.steer({ role: "user", content, timestamp: Date.now() }); return; }
-      agent.prompt(content).catch((err: unknown) => {
+      agent.prompt({ role: "user", content, timestamp: Date.now() }).catch((err: unknown) => {
         emit({ t: "error", text: err instanceof Error ? err.message : String(err) });
         emit({ t: "busy", busy: false });
       });

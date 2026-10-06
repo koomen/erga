@@ -26,6 +26,8 @@ import { analyzeMarkdown } from "./markdown";
 import TurndownService from "turndown";
 import { type Log, type LogEvent, type ViewRequest, type ViewResult } from "./agent-log";
 import { chat, escapeHtml } from "./agent-chat";
+import { fileRefs, type Attachment } from "./attach";
+import { attachments } from "./attach-ui";
 import type { AgentState, DocInfo, DocName, ModelState } from "../../api";
 import { BASE } from "./base";
 import { shareWithAgent } from "./share-agent";
@@ -1298,6 +1300,8 @@ Once you've read the guide, await further instructions.`;
   });
   const log: Log = agentChat.log;
   const follow = agentChat.follow;
+  // Files to go with the next message: dropped on the panel, pasted, or picked (attach-ui.ts, as on /admin/factory).
+  const agentFiles = attachments({ pane: agentPanel, form: $("agent-form"), input: agentInput, hint: (t) => showHint(t), changed: () => renderBusy() });
   function renderLog() {
     agentChat.render();
     renderBusy();
@@ -1306,12 +1310,13 @@ Once you've read the guide, await further instructions.`;
   function sendBlocker(): string | null {
     if (agentOff) return agentOff;
     if (voice) return "Voice mode is on: what you say is sent when you pause.";
-    if (!log.busy && !agentInput.value.trim()) return "Type a message to send it.";
+    if (agentFiles.reading) return "Reading the attached files…";
+    if (!log.busy && !agentInput.value.trim() && !agentFiles.files.length) return "Type a message to send it.";
     return null;
   }
   function renderBusy() {
     // In voice mode the button can't send, so while the agent works it's Stop.
-    const stop = log.busy && (!!voice || !agentInput.value.trim());
+    const stop = log.busy && (!!voice || (!agentInput.value.trim() && !agentFiles.files.length && !agentFiles.reading));
     const why = agentOff ?? (stop ? null : sendBlocker());
     agentSend.textContent = stop ? "Stop" : "Send";
     agentSend.classList.toggle("stop", stop);
@@ -1363,29 +1368,31 @@ Once you've read the guide, await further instructions.`;
 
   async function sendToAgent() {
     const text = agentInput.value.trim();
+    const files = agentFiles.files;
     const why = sendBlocker();
-    if (why || !text) {
+    if (why || (!text && !files.length)) {
       showHint(why ?? "Type a message to send it.", !!agentOff);
       agentInput.focus();
       return;
     }
     agentInput.value = "";
     saveDraft();
+    agentFiles.clear();
     sizeInput();
-    await ask(text, editorContext());
+    await ask(text, editorContext(), files);
   }
   // A message shows in the log the moment it's sent, dimmed until the host
   // echoes it back as the conversation's (which replaces it). If it can't be
   // sent, it says so, with a way to try again: never a send that silently
   // goes nowhere.
-  async function ask(text: string, context: string | null) {
-    const sent = agentChat.pending(text);
+  async function ask(text: string, context: string | null, files: Attachment[] = []) {
+    const sent = agentChat.pending(text, fileRefs(files));
     // The agent reads the shared doc; `after` makes the host wait until the
     // room has every edit this tab had made (they travel over the WebSocket).
-    const res = await fetch(api("/api/agent"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text, context, after: collab.vector() }), signal: AbortSignal.timeout(15_000) }).catch((e: Error) => e);
+    const res = await fetch(api("/api/agent"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text, context, after: collab.vector(), files }), signal: AbortSignal.timeout(files.length ? 60_000 : 15_000) }).catch((e: Error) => e);
     if (!(res instanceof Response) || !res.ok) {
       const reason = res instanceof Response ? ((await res.json().catch(() => null)) as { reason?: string } | null)?.reason ?? `the host answered ${res.status}` : res.name == "TimeoutError" ? "the editor's host didn't answer in time" : "the editor's host didn't answer";
-      sent.fail(reason, () => ask(text, context));
+      sent.fail(reason, () => ask(text, context, files));
     }
     renderBusy();
   }
@@ -1447,8 +1454,10 @@ Once you've read the guide, await further instructions.`;
     v.heard = "";
     agentInput.value = "";
     saveDraft();
+    const files = agentFiles.files;
+    agentFiles.clear();
     sizeInput();
-    ask(text, editorContext());
+    ask(text, editorContext(), files);
     // Words sent before they were final would come back final: start afresh.
     if (v.partial) { v.partial = false; v.rec.abort(); }
     else v.sent = v.results;

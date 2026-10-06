@@ -7,6 +7,8 @@
 // .msg-*), so both panels look the same.
 
 import { emptyLog, reduce, type Log, type LogEvent, type LogItem } from "./agent-log";
+import type { FileRef } from "./attach";
+import { fileChip } from "./attach-ui";
 
 export const escapeHtml = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 const inline = (s: string) => escapeHtml(s).replace(/`([^`\n]+)`/g, "<code>$1</code>").replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>");
@@ -34,8 +36,8 @@ export interface Chat {
   follow(on: boolean): void;
   /** Keeps the log at the bottom while following. */
   pin(): void;
-  /** A message just sent: shown dimmed until the host echoes it; `fail` says it wasn't sent, with Try again. */
-  pending(text: string): { fail(reason: string, retry: () => void): void };
+  /** A message just sent (with what's attached): shown dimmed until the host echoes it; `fail` says it wasn't sent, with Try again. */
+  pending(text: string, files?: FileRef[]): { fail(reason: string, retry: () => void): void };
 }
 
 export function chat(opts: ChatOptions): Chat {
@@ -49,10 +51,20 @@ export function chat(opts: ChatOptions): Chat {
     if (item.kind != "tool" || item.status != "error") return false;
     return log.items.slice(i + 1).some((x) => x.kind == "tool" && x.status == "done" && x.path == item.path && (x.name == item.name || x.name == "write"));
   };
+  /** A message of yours: its text, and what was attached, as chips (thumbnails for images). */
+  function userMessage(el: HTMLElement, text: string, files?: FileRef[]) {
+    if (text) el.append(text);
+    if (!files?.length) return;
+    const list = document.createElement("span");
+    list.className = "msg-files";
+    for (const f of files) list.append(fileChip(f));
+    el.append(list);
+  }
   function renderItem(item: LogItem, i: number): HTMLElement {
     const el = document.createElement("div");
     el.className = "msg-" + item.kind;
-    if (item.kind == "user" || item.kind == "thinking" || item.kind == "error") el.textContent = item.text;
+    if (item.kind == "user") userMessage(el, item.text, item.files);
+    else if (item.kind == "thinking" || item.kind == "error") el.textContent = item.text;
     else if (item.kind == "assistant") el.innerHTML = inline(item.text);
     else {
       const [doing, done] = verbs[item.name] ?? [item.name, item.name];
@@ -134,10 +146,10 @@ export function chat(opts: ChatOptions): Chat {
     pin();
   }
 
-  function pending(text: string) {
+  function pending(text: string, files?: FileRef[]) {
     const el = document.createElement("div");
     el.className = "msg-user pending";
-    el.textContent = text;
+    userMessage(el, text, files);
     logEl.append(el);
     const p = { text, el };
     sends.push(p);
