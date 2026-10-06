@@ -6,7 +6,8 @@
 // a server role: "user", or "admin", who may see and change the server's
 // settings (config.ts) and its users. Apart from that, an admin may grant
 // anyone the deploy role: they may then use /deploy when the deploy_page
-// setting keeps it for admins (worker/deploy.ts). The server always keeps an
+// setting keeps it for admins (worker/deploy.ts). Admins may anyway: an
+// admin may always deploy (User.mayDeploy, hasDeploy). The server always keeps an
 // admin: nobody may demote or remove the last one. The first admins come from the
 // deploy: the logins in the ADMINS binding (cloudflare.config.ts; locally,
 // DEV_LOGIN too) are always admins and may always sign in, and get their row
@@ -30,8 +31,10 @@ export interface User {
   name: string;
   /** Their role on the server (a bootstrap admin's is always "admin"). */
   role: ServerRole;
-  /** The deploy role: they may use /deploy when deploy_page is "admins", as admins may. */
+  /** The deploy role as granted (users.deploy): what setDeploy sets. An admin may deploy without it (mayDeploy). */
   deploy: boolean;
+  /** Whether they may deploy: an admin, or granted the deploy role. The one answer hasDeploy, /deploy and the Users page use. */
+  mayDeploy: boolean;
   /** Listed in ADMINS: always an admin, and can't be demoted or removed here. */
   bootstrap: boolean;
   created: number;
@@ -102,11 +105,11 @@ export class Users {
     return (await this.get(actor.login))?.role == "admin";
   }
 
-  /** Whether `login` has the deploy role (a test person never has). */
+  /** Whether `login` may deploy: an admin, or granted the deploy role (User.mayDeploy; a test person never may). */
   async hasDeploy(who: Actor | string): Promise<boolean> {
     const actor = typeof who == "string" ? { login: who } : who;
     if (actor.test) return false;
-    return !!(await this.get(actor.login))?.deploy;
+    return !!(await this.get(actor.login))?.mayDeploy;
   }
 
   /**
@@ -230,15 +233,15 @@ export class Users {
   }
 
   private fromRow(r: Row): User {
-    const bootstrap = this.isBootstrapAdmin(r.login);
+    const bootstrap = this.isBootstrapAdmin(r.login), role = bootstrap ? "admin" : r.role;
     return {
-      login: r.login, name: r.name, role: bootstrap ? "admin" : r.role, deploy: !!r.deploy, bootstrap,
+      login: r.login, name: r.name, role, deploy: !!r.deploy, mayDeploy: role == "admin" || !!r.deploy, bootstrap,
       created: Number(r.created), addedBy: r.added_by, lastSeen: r.last_seen == null ? null : Number(r.last_seen),
     };
   }
 
   /** A bootstrap admin with no row yet (created 0: never signed in). */
   private bootstrapUser(login: string): User {
-    return { login, name: login, role: "admin", deploy: false, bootstrap: true, created: 0, addedBy: null, lastSeen: null };
+    return { login, name: login, role: "admin", deploy: false, mayDeploy: true, bootstrap: true, created: 0, addedBy: null, lastSeen: null };
   }
 }

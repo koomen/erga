@@ -40,6 +40,10 @@ const REF = (b: Branch) => `refs/heads/${b}`;
 const QUARANTINE = "refs/heads/erga-incoming/";
 /** How many commits each branch shows. */
 export const LOG = 25;
+/** At most how many commits a task's card holds. */
+export const TASK_COMMITS = 100;
+/** A task's merge commit, by the factory (factory/vm/merge.ts) or the task queue: "Merge task/<id>-<slug>: title". */
+const TASK_MERGE = /^Merge (task\/(\d+)-[^\s:]*): (.+)$/;
 /** How many of staging's commits just after main's head the Source page gets (BranchInfo.afterMain). */
 export const AFTER_MAIN = 5;
 
@@ -60,7 +64,13 @@ export interface MirrorStatus {
   refs?: Partial<Record<Branch, string>>;
 }
 
-export interface CommitInfo { sha: string; subject: string; author: string; email: string; at: number; parents: string[]; /** Reachable from main. */ inMain: boolean }
+export interface CommitInfo {
+  sha: string; subject: string; author: string; email: string; at: number; parents: string[]; /** Reachable from main. */ inMain: boolean;
+  /** A task's merge ("Merge task/<id>-<slug>: title"): the task, and the commits that came in with it (from its second parent's side), newest first. */
+  task?: { id: number; branch: string; title: string; commits: string[] };
+  /** One of a task's commits: the sha of the task's merge. */
+  inTask?: string;
+}
 export interface BranchInfo {
   name: Branch; commit: string | null; commits: CommitInfo[];
   /** Commits on it that main doesn't have (staging only). */
@@ -238,18 +248,55 @@ export class SourceRepo {
     const branches = BRANCHES.map((name): BranchInfo => {
       const tip = heads[name];
       const commit = (r: Row): CommitInfo => ({ sha: r.sha, subject: r.subject, author: r.author, email: r.email, at: r.at, parents: r.parents ? r.parents.split(" ") : [], inMain: onMain.has(r.sha) });
-      const commits = tip ? this.log(tip).map(commit) : [];
+      const commits = tip ? this.withTasks(this.log(tip).map(commit), commit) : [];
       const info: BranchInfo = { name, commit: tip, commits };
       if (name == "staging" && tip) {
         const ahead = info.ahead = [...this.ancestors(tip)].filter((s) => !onMain.has(s)).length;
         // The last of staging's own commits, in log's order, until it has listed them all: those just after main's head.
         let seen = 0;
         const only = this.order(tip, (order) => { if (order.length && !onMain.has(order[order.length - 1])) seen++; return seen >= ahead; }).filter((s) => !onMain.has(s));
-        info.afterMain = this.rows(only.slice(-AFTER_MAIN)).map(commit);
+        info.afterMain = this.withTasks(this.rows(only.slice(-AFTER_MAIN)).map(commit), commit, false);
       }
       return info;
     });
     return { branches, mirror: this.mirrorStatus(), moves: this.moves(10) };
+  }
+
+  /**
+   * Groups each task's commits under its merge: a task merge in `list` gets `task`, and its commits (those its second
+   * parent brings that its first parent doesn't have) follow it, newest first, marked `inTask`. With `complete`, the
+   * task's commits that `list` doesn't have are added, so a card holds all of them (up to TASK_COMMITS). Other commits
+   * keep their place.
+   */
+  private withTasks(list: CommitInfo[], commit: (r: Row) => CommitInfo, complete = true): CommitInfo[] {
+    const nodes = this.nodes(), claimed = new Map<string, string>(), members = new Map<string, string[]>();
+    for (const x of list) {
+      const m = TASK_MERGE.exec(x.subject);
+      if (!m || x.parents.length < 2 || claimed.has(x.sha)) continue;
+      const base = this.ancestors(x.parents[0]), seen = new Set<string>(), todo = [x.parents[1]];
+      while (todo.length && seen.size < TASK_COMMITS) {
+        const s = todo.pop()!;
+        if (seen.has(s) || base.has(s) || claimed.has(s) || !nodes.has(s)) continue;
+        seen.add(s);
+        todo.push(...nodes.get(s)!.parents);
+      }
+      const own = [...seen].sort((a, b) => nodes.get(b)!.committed - nodes.get(a)!.committed);
+      for (const s of own) claimed.set(s, x.sha);
+      members.set(x.sha, own);
+      x.task = { id: Number(m[2]), branch: m[1], title: m[3], commits: own };
+    }
+    if (!members.size) return list;
+    const by = new Map(list.map((x) => [x.sha, x]));
+    const out: CommitInfo[] = [];
+    for (const x of list) {
+      if (claimed.has(x.sha)) continue;
+      out.push(x);
+      const own = members.get(x.sha);
+      if (!own) continue;
+      const extra = new Map(complete ? this.rows(own.filter((s) => !by.has(s))).map((r) => [r.sha, commit(r)]) : []);
+      for (const s of own) { const c = by.get(s) ?? extra.get(s); if (c) out.push({ ...c, inTask: x.sha }); }
+    }
+    return out;
   }
 
   moves(limit: number): Move[] {
