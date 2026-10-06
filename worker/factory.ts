@@ -18,7 +18,9 @@
 //   POST /api/factory/tasks/<id>/discard   the branch deleted, the VM stopped
 //   POST /api/factory/tasks/<id>/revise    { instructions }: Claude Code works on the task again (ready to merge or
 //                                          failed), or, while it works, gets them when its current step ends
-//   POST /api/factory/tasks/<id>/restart   a failed or ready task runs again on its branch: a fresh VM and git token
+//   POST /api/factory/tasks/<id>/restart   any task not merged or discarded (working, merging, stuck too) runs again on its
+//                                          branch: its VM saves the work (merge.ts save) and stops; a fresh VM and git
+//                                          token start Claude Code with the task's prompt and every earlier instruction
 //   PUT  /api/factory/claude               { token }: the Claude plan's token (claude setup-token), stored encrypted
 //   DELETE /api/factory/claude             forgets it
 //   GET  /api/factory/events               server-sent events: { type: "task", task } on each change, and
@@ -88,7 +90,7 @@ import { type Blocked, dependents, depRules, depsNote, type DepStatus, type DepT
 import { factoryGuide, factoryTools, startFactoryAgent, type FactoryAgent, type FactoryOps } from "../factory/agent";
 import { containersHost } from "../factory/cloudflare";
 import { b64url } from "../factory/git-grant";
-import { branchName, claudeToken, resolvePrompt, taskPrompt } from "../factory/prompt";
+import { branchName, claudeToken, resolvePrompt, restartPrompt, taskPrompt } from "../factory/prompt";
 import { type Stalled, stalledOf } from "../factory/stall";
 import { whoOf } from "../front";
 import { LOCKED } from "../users";
@@ -102,6 +104,8 @@ export type Status = "queued" | "working" | "complete" | "merging" | "needs agen
 
 /** How long the factory waits for a merge job's answer (each of its steps has a shorter limit of its own: factory/vm/common.ts). */
 const MERGE_JOB_MS = 30 * 60_000;
+/** How long a restart waits for the old VM to save the work (stop Claude Code, commit, push) before it stops it anyway. */
+const SAVE_JOB_MS = 3 * 60_000;
 
 export interface Task {
   id: number; title: string; description: string; status: Status; branch: string; base: string | null;
@@ -245,6 +249,8 @@ type Row = {
   merge_by: string | null;
   /** The id of the task's current run of Claude Code (run.ts): a report from another run is refused. */
   run: string | null;
+  /** JSON: every instruction the user sent ("Send to Claude Code"), [{ at, by, text }], for a restart's brief. */
+  asked: string | null;
 };
 
 /** A factory token: erga_factory_<id>_<secret>. */
@@ -253,6 +259,7 @@ type TokenRow = { id: string; hash: string; login: string; name: string; label: 
 export interface TokenView { id: string; login: string; label: string; created: number; expires: number; revoked: number | null; revokedBy: string | null; lastUsed: number | null }
 
 const list = (json: string | null): number[] => { try { const v = JSON.parse(json ?? "[]"); return Array.isArray(v) ? v.map(Number) : []; } catch { return []; } };
+const asked = (r: Row): { at: string; by: string; text: string }[] => { try { const v = JSON.parse(r.asked ?? "[]"); return Array.isArray(v) ? v : []; } catch { return []; } };
 // "needs agent" is a merge that hasn't happened yet: to the dependency rules, a task that isn't merged or merging.
 const depOf = (r: Row): DepTask => ({ id: r.id, status: r.status as DepStatus, startAfter: list(r.start_after), mergeAfter: list(r.merge_after) });
 
@@ -266,6 +273,8 @@ export class Factory extends DurableObject<Env> {
   private beat: ReturnType<typeof setInterval> | null = null;
   /** Merges run one at a time, in the order they were asked for. */
   private merges: Promise<void> = Promise.resolve();
+  /** Each task's restarts in this object's life: a launch that a restart overtook stops the VM it started, and runs nothing. */
+  private epochs = new Map<number, number>();
   /** Queued tasks whose VM is being started (so a second Start doesn't start another). */
   private starting = new Set<number>();
   /** The dependency rules (development/task-queue/deps.ts), over this object's tasks. */
@@ -287,7 +296,7 @@ export class Factory extends DurableObject<Env> {
     this.sql.exec(`CREATE TABLE IF NOT EXISTS asks (n INTEGER PRIMARY KEY AUTOINCREMENT, task INTEGER NOT NULL, by_login TEXT NOT NULL, text TEXT NOT NULL, at TEXT NOT NULL, taken TEXT)`);
     // Dependencies (#49), on a table made before them.
     const cols = this.sql.exec<{ name: string }>("PRAGMA table_info(tasks)").toArray().map((c) => c.name);
-    for (const c of ["start_after", "merge_after", "merge_by", "run"]) if (!cols.includes(c)) this.sql.exec(`ALTER TABLE tasks ADD COLUMN ${c} TEXT`);
+    for (const c of ["start_after", "merge_after", "merge_by", "run", "asked"]) if (!cols.includes(c)) this.sql.exec(`ALTER TABLE tasks ADD COLUMN ${c} TEXT`);
     // A merge the object was stopped in the middle of goes back to ready to merge, saying so.
     for (const r of this.sql.exec<Row>("SELECT * FROM tasks WHERE status = 'merging'").toArray()) {
       this.update(r.id, { status: "complete", error: "The merge was stopped in the middle (the factory restarted). Merge again." });
@@ -438,7 +447,9 @@ export class Factory extends DurableObject<Env> {
   }
 
   /** A VM for the task (a new one unless it has one that's up), then the job. */
-  private async launch(id: number, job: "work" | "revise" | "resolve") {
+  private async launch(id: number, job: "work" | "revise" | "resolve" | "restart") {
+    const epoch = this.epochs.get(id) ?? 0;
+    const overtaken = () => (this.epochs.get(id) ?? 0) != epoch;
     // A merge that needs the agent stays "needs agent" while the task's Claude Code finishes it.
     const status = job == "resolve" ? "needs agent" : "working";
     const r = this.row(id)!;
@@ -451,14 +462,18 @@ export class Factory extends DurableObject<Env> {
         const t = Date.now();
         const started = await host.start(id);
         vm = started.vm;
+        // Restarted while this VM started: the restart's own VM does the work.
+        if (overtaken()) { await host.stop(vm).catch(() => {}); return; }
         this.update(id, { vm, preview_origin: started.preview, preview_path: null, status }, `VM ${vm} started in ${((Date.now() - t) / 1000).toFixed(1)}s`);
         this.keepAlive();
       } else this.update(id, { status });
       // Each run has an id of its own: only its reports count (an earlier run, still ending, can't fail this one).
       const run = crypto.randomUUID().slice(0, 8);
+      if (overtaken()) return;
       this.update(id, { run });
       await host.job(vm, "run.ts", [job], { ...(await this.jobEnv(id, "task")), FACTORY_RUN: run }, false);
     } catch (e) {
+      if (overtaken()) return;
       if (job == "resolve") return this.backToReady(id, `The merge needs Claude Code, but it couldn't be woken: ${(e as Error).message}`);
       this.update(id, { status: "failed", error: `The VM didn't start: ${(e as Error).message}` }, `Failed: the VM didn't start: ${(e as Error).message}`);
       this.tellDependents(id);
@@ -509,7 +524,7 @@ export class Factory extends DurableObject<Env> {
   async brief(id: number) {
     const r = this.row(id);
     if (!r) return null;
-    return { title: r.title, branch: r.branch, base: "staging", prompt: taskPrompt({ ...r, base: "staging" }), instructions: r.instructions, maxTurns: 200 };
+    return { title: r.title, branch: r.branch, base: "staging", prompt: taskPrompt({ ...r, base: "staging" }), instructions: r.instructions, restart: restartPrompt(r, asked(r)), maxTurns: 200 };
   }
 
   /** A VM's report on its task. */
@@ -575,6 +590,7 @@ export class Factory extends DurableObject<Env> {
     if (r.status == "working") {
       // Claude Code works on, and gets them when its current step ends (the VM's hook): nothing it did is lost.
       this.sql.exec("INSERT INTO asks (task, by_login, text, at) VALUES (?, ?, ?, ?)", id, by, instructions.trim().slice(0, 20000), now());
+      this.update(id, { asked: JSON.stringify([...asked(r), { at: now(), by, text: instructions.trim().slice(0, 20000) }]) });
       this.note(id, `${by} asked, while it works: ${instructions.trim().slice(0, 500)}`);
       return { ok: true };
     }
@@ -582,27 +598,66 @@ export class Factory extends DurableObject<Env> {
     if (why) return { ok: false, error: why };
     // Any sent while it worked that its Claude Code never got (its VM stopped first) go with them.
     const older = joinAsks(this.takeAsks(id));
-    this.update(id, { instructions: (older ? older + "\n\n" : "") + instructions.trim().slice(0, 20000), status: "working", error: null }, `${by} asked: ${instructions.trim().slice(0, 500)}`);
+    const text = instructions.trim().slice(0, 20000);
+    this.update(id, { instructions: (older ? older + "\n\n" : "") + text, asked: JSON.stringify([...asked(r), { at: now(), by, text }]), status: "working", error: null }, `${by} asked: ${instructions.trim().slice(0, 500)}`);
     this.ctx.waitUntil(this.launch(id, "revise"));
     return { ok: true };
   }
 
-  /** A failed or ready task runs again, as revise does but with no new instructions: on its branch, in a fresh VM (a fresh git token). */
+  /**
+   * Any task that isn't merged or discarded runs again on its branch, from the start, in a fresh VM (a fresh git token):
+   * while it works, while it merges or needs its agent, or when it's stuck. The old VM, if it's up, saves the work first
+   * (merge.ts save: Claude Code and the preview stopped, anything uncommitted committed, the branch pushed), then stops.
+   * Claude Code starts in a new session with the task's prompt and every instruction the user sent (restartPrompt).
+   */
   async restart(id: number, by: string, origin?: string): Promise<{ ok: boolean; error?: string }> {
     // The server as the person asking reaches it now (it can move: another port locally).
     if (origin) this.sql.exec("UPDATE tasks SET origin = ? WHERE id = ?", origin, id);
     const r = this.row(id);
     if (!r) return { ok: false, error: "no such task" };
-    if (!["complete", "failed"].includes(r.status)) return { ok: false, error: `task #${id} is ${r.status}: it restarts when it's ready to merge or failed` };
+    if (["merged", "discarded"].includes(r.status)) return { ok: false, error: `task #${id} is ${r.status}: it can't restart` };
     const why = this.deps.startRefusal(depOf(r));
     if (why) return { ok: false, error: why };
-    this.update(id, { status: "working", error: null, vm: null, preview_origin: null, preview_path: null }, `Restarted by ${by}: a fresh VM`);
+    // A queued task that never ran has nothing to restart: it starts.
+    if (r.status == "queued" && !r.vm) return this.start(id, by);
+    const epoch = (this.epochs.get(id) ?? 0) + 1;
+    this.epochs.set(id, epoch);
+    const was = r.status == "complete" ? "ready to merge" : r.status;
+    // Instructions sent while it worked, that the old Claude Code never got: in the restart's brief (asked), so taken here.
+    this.takeAsks(id);
+    // No run is current any more: the old Claude Code's reports are refused from now on. A merge that is running sees
+    // the task isn't merging any more, and does nothing with its answer.
+    this.update(id, { status: "working", error: null, run: null, merge_by: null, vm: null, preview_origin: null, preview_path: null },
+      `Restarted by ${by} (the task was ${was}): ${r.vm ? `the work in VM ${r.vm} is saved, then a fresh VM` : "a fresh VM"} starts Claude Code with the task's prompt and ${asked(r).length} earlier instruction${asked(r).length == 1 ? "" : "s"}`);
     this.ctx.waitUntil((async () => {
       const host = vmHost(this.env, r.origin);
-      if (r.vm && typeof host != "string") await host.stop(r.vm).catch(() => {});
-      await this.launch(id, "work");
+      if (r.vm && typeof host != "string") {
+        await this.save(id, r, host);
+        await host.stop(r.vm).catch(() => {});
+        this.note(id, `VM ${r.vm} stopped`);
+      }
+      // Restarted again meanwhile: that restart goes on instead.
+      if (this.epochs.get(id) == epoch) await this.launch(id, "restart");
     })());
     return { ok: true };
+  }
+
+  /** A restart's first step, in the old VM if it's still up: Claude Code stopped, the work committed and pushed (merge.ts save). */
+  private async save(id: number, r: Row, host: VmHost) {
+    if (!(await host.alive(r.vm!).catch(() => false))) return this.note(id, `VM ${r.vm} is gone: the restart uses what was pushed to ${r.branch}`);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const out = await Promise.race([
+        host.job(r.vm!, "merge.ts", ["save", r.branch], await this.jobEnv(id, "task"), true),
+        new Promise<never>((_, no) => { timer = setTimeout(() => no(new Error(`the VM didn't answer in ${SAVE_JOB_MS / 60_000} minutes`)), SAVE_JOB_MS); }),
+      ]).finally(() => clearTimeout(timer));
+      const res = resultOf(out);
+      const stopped = res.stopped ? "Claude Code was stopped; " : "";
+      if (res.ok) this.update(id, res.commit ? { commit_sha: String(res.commit) } : {}, `Saved before the restart: ${stopped}${res.saved}`);
+      else this.note(id, `Couldn't save all the work before the restart: ${stopped}${String(res.error).slice(0, 1500)}. The restart uses what was pushed to ${r.branch}.`);
+    } catch (e) {
+      this.note(id, `Couldn't save the work before the restart: ${(e as Error).message}. The restart uses what was pushed to ${r.branch}.`);
+    }
   }
 
   async merge(id: number, by: string, origin?: string): Promise<{ ok: boolean; error?: string }> {
@@ -664,6 +719,8 @@ export class Factory extends DurableObject<Env> {
       // server's own, which no deploy reads.
       this.note(id, host.kind == "local" ? "Staging moved (the local repository: nothing deploys it)" : "Staging moved: staging.erga.dev deploys it now (see /admin/factory)");
     } catch (e) {
+      // Restarted (or discarded) meanwhile: its VM was stopped under the merge.
+      if (this.row(id)?.status != "merging") return;
       this.backToReady(id, `The merge failed: ${(e as Error).message}`);
     }
   }
@@ -907,7 +964,7 @@ export class Factory extends DurableObject<Env> {
 }
 
 /** A merge or discard job's result: its output's FACTORY-RESULT line. */
-function resultOf(out: { code: number; output: string } | null): { ok: boolean; error?: string; commit?: string; needsAgent?: boolean; kind?: string; step?: string; files?: string[]; stopped?: boolean } {
+function resultOf(out: { code: number; output: string } | null): { ok: boolean; error?: string; commit?: string; needsAgent?: boolean; kind?: string; step?: string; files?: string[]; stopped?: boolean; saved?: string } {
   const line = out?.output.split("\n").reverse().find((l) => l.startsWith("FACTORY-RESULT "));
   if (!line) return { ok: false, error: `the job ended without a result (exit ${out?.code}): ${out?.output.slice(-400) ?? ""}` };
   return JSON.parse(line.slice("FACTORY-RESULT ".length));

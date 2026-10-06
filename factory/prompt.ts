@@ -62,3 +62,14 @@ Finish the merge:
 3. Commit${res.kind == "conflict" ? " the merge (git commit --no-edit)" : ""}. Don't push to staging or main, and don't start a merge of your own.
 4. Say \`task done "what you did, in one or two sentences"\`: the factory then runs the merge again by itself. If you can't finish it, \`task fail "why"\`: the task goes back to ready to merge, with your reason.`;
 }
+
+/**
+ * What a restarted task's Claude Code is told after the task's prompt (run.ts restart): a new session in a fresh VM,
+ * on the branch as the old VM saved it, with every instruction the user sent since the ask, in order.
+ */
+export function restartPrompt(t: { branch: string }, asked: { at: string; by: string; text: string }[]): string {
+  const earlier = asked.length
+    ? `\n\nSince the ask, the user sent these instructions, in this order. Do them too, unless the branch shows they are done:\n\n${asked.map((a, i) => `${i + 1}. (${a.by}, ${a.at.slice(0, 16).replace("T", " ")} UTC) ${a.text}`).join("\n\n")}`
+    : "";
+  return `The user restarted this task. An earlier Claude Code worked on it in another VM; the factory stopped it, committed what it had not committed, and pushed ${t.branch}. You are on that branch now. Look at what is there first (git log, git status, the last commit): a commit "Work in progress …, saved by the factory before a restart" can hold unfinished work. Then go on from there, and finish as the steps above say.${earlier}`;
+}

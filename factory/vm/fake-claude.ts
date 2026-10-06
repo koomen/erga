@@ -42,13 +42,21 @@ const args = process.argv.slice(2);
 const m = args.indexOf("--model");
 const model = m >= 0 ? args.splice(m, 2)[1] : undefined;
 const job = args[0] ?? "work";
-const brief = await api("/brief") as { title: string; prompt: string; instructions?: string | null };
+const brief = await api("/brief") as { title: string; prompt: string; instructions?: string | null; restart?: string };
 if (model) await log(`The stand-in runs in place of Claude Code with --model ${model}`);
 if (job == "resolve") {
   await resolve();
   const linger = /\[factory-test: linger (\d+)\]/.exec(brief.prompt);
   if (linger) { await Bun.sleep(Number(linger[1]) * 1000); await log("The stand-in ended, after its last words"); }
   process.exit(0);
+}
+// A restart: the brief says so, with every earlier instruction; then the work, as at the start.
+if (job == "restart") await log(`The stand-in was restarted. Its brief: ${(brief.restart ?? "").replace(/\s+/g, " ").slice(0, 1800)}`);
+// Still working, with work not committed, until something stops it (a restart's test).
+if (job == "work" && brief.prompt.includes("[factory-test: keep working]")) {
+  writeFileSync(join(CLONE(), "factory-wip.txt"), `Work in progress on task #${TASK()}, not committed\n`);
+  await log("The stand-in wrote factory-wip.txt, doesn't commit it, and keeps working");
+  await Bun.sleep(600_000);
 }
 if (job == "woken") { await done("The stand-in was woken after its limit, and finished."); process.exit(0); }
 // The dependencies, if the factory's install failed or hung (it says so in Claude Code's instructions): again, under a limit.

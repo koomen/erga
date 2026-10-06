@@ -4,7 +4,7 @@
 
 import { expect, test } from "bun:test";
 import { checkGitToken, mintGitToken, pushedRefs, refsAllowed } from "../dev/factory";
-import { branchName, claudeToken, taskPrompt } from "../factory/prompt";
+import { branchName, claudeToken, restartPrompt, taskPrompt } from "../factory/prompt";
 import { quietFor, STALL_MS, stalledOf } from "../factory/stall";
 
 test("branch names follow the task queue's", () => {
@@ -158,6 +158,17 @@ test("a long Claude Code run with no new output repeats no line on the board; it
   expect(still.length).toBeGreaterThan(0);
   expect(still.length).toBeLessThanOrEqual(10);
   expect(new Set(lines).size).toBe(lines.length);
+});
+
+test("a restarted task's Claude Code is told it was restarted, on its saved branch, with every earlier instruction in order", () => {
+  const none = restartPrompt({ branch: "task/7-x" }, []);
+  expect(none).toContain("restarted this task");
+  expect(none).toContain("pushed task/7-x");
+  expect(none).not.toContain("instructions, in this order");
+  const two = restartPrompt({ branch: "task/7-x" }, [{ at: "2026-10-05T10:00:00.000Z", by: "ada", text: "Make it blue." }, { at: "2026-10-05T11:30:00.000Z", by: "bo", text: "Now bigger." }]);
+  expect(two).toContain("1. (ada, 2026-10-05 10:00 UTC) Make it blue.");
+  expect(two).toContain("2. (bo, 2026-10-05 11:30 UTC) Now bigger.");
+  expect(two.indexOf("Make it blue.")).toBeLessThan(two.indexOf("Now bigger."));
 });
 
 test("a task is stalled when it is working or needs agent, with no new log line in 5 minutes", () => {

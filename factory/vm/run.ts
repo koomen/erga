@@ -1,7 +1,8 @@
 #!/usr/bin/env bun
 // A task's work, in its VM (the factory runs it as a job: `bun
-// /opt/factory/run.ts work`, `revise` for the user's further instructions, or
-// `resolve` when a merge needs the task's Claude Code). Settings:
+// /opt/factory/run.ts work`, `revise` for the user's further instructions,
+// `resolve` when a merge needs the task's Claude Code, or `restart` when the
+// user restarts the task: a fresh VM, the branch as the old one saved it). Settings:
 // factory/vm/common.ts.
 //
 //   1. Clones Erga's repository and makes the task's branch from staging
@@ -12,7 +13,9 @@
 //   3. Runs Claude Code with the task's prompt (the factory's brief), which
 //      works, tests, previews and screenshots, and reports with `task`. For
 //      `revise` and `resolve`, the same Claude Code session (--continue), with
-//      the new instructions. Without a signed-in Claude plan, the scripted
+//      the new instructions. For `restart`, a new session: the task's prompt,
+//      then the brief's `restart` (that it was restarted, and every earlier
+//      instruction). Without a signed-in Claude plan, the scripted
 //      stand-in (fake-claude.ts) does the same, with a change known in advance.
 //   4. If Claude Code ended without saying done or failed: pushes what's
 //      committed and reports it, or fails the task with why.
@@ -47,8 +50,8 @@ const job = (process.argv[2] ?? "work") as Job;
 const started = Date.now();
 const secs = () => `${((Date.now() - started) / 1000).toFixed(1)}s`;
 
-interface Brief { title: string; branch: string; base: string; prompt: string; instructions?: string | null; maxTurns?: number }
-type Job = "work" | "revise" | "resolve";
+interface Brief { title: string; branch: string; base: string; prompt: string; instructions?: string | null; restart?: string; maxTurns?: number }
+type Job = "work" | "revise" | "resolve" | "restart";
 
 /** This job's pid file goes when it ends, unless another run has it now. */
 process.on("exit", () => {
@@ -162,12 +165,13 @@ async function claude(brief: Brief, wake: string, limit: number, woken: boolean)
   prepareClaude();
   // The same session as before, when this VM has it (more instructions, a merge, a wake-up); else the task's whole brief first.
   const session = existsSync(join(process.env.HOME ?? "/home/bun", ".claude", "projects"));
-  const continuing = woken || (job != "work" && session);
+  const continuing = woken || (job != "work" && job != "restart" && session);
   const asked = job == "work" ? brief.prompt
+    : job == "restart" ? brief.restart ?? "The user restarted this task."
     : job == "revise" ? `The user looked at your work and asks for more:\n\n${brief.instructions}`
     : brief.instructions!;
   const prompt = woken ? late : continuing ? wake + asked : `${brief.prompt}\n\n${wake}${job == "work" ? "" : asked}`;
-  if (!woken) await log(job == "revise" ? "Claude Code is working on the new instructions" : job == "resolve" ? "Claude Code is working on the merge" : "Claude Code started");
+  if (!woken) await log(job == "revise" ? "Claude Code is working on the new instructions" : job == "resolve" ? "Claude Code is working on the merge" : job == "restart" ? "Claude Code started again, with the task's prompt and its earlier instructions" : "Claude Code started");
   let lastText = "";
   let badModel: string | null = null;
   // Each line once; a quiet run says "still working" at most once a minute.
