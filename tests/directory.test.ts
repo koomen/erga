@@ -183,8 +183,12 @@ test("users: the deploy role, and the server always keeps an admin", async () =>
   expect(await users.setDeploy(ada, "Bo", true)).toMatchObject({ login: "bo", role: "user", deploy: true });
   expect(await users.hasDeploy("bo")).toBe(true);
   expect(await users.hasDeploy({ login: "bo", test: true })).toBe(false);
-  expect((await users.list(ada)).map((u) => [u.login, u.role, u.deploy])).toEqual([["ada", "admin", false], ["bo", "user", true]]);
-  expect((await users.setDeploy(ada, "bo", false)).deploy).toBe(false);
+  expect((await users.list(ada)).map((u) => [u.login, u.role, u.deploy, u.mayDeploy])).toEqual([["ada", "admin", false, true], ["bo", "user", true, true]]);
+  expect(await users.setDeploy(ada, "bo", false)).toMatchObject({ deploy: false, mayDeploy: false });
+  // An admin may always deploy, granted or not: the one rule /deploy and the Users page read.
+  expect(await users.hasDeploy("ada")).toBe(true);
+  expect(await users.hasDeploy({ login: "ada", test: true })).toBe(false);
+  expect(await users.hasDeploy("bo")).toBe(false);
   await expect(users.setDeploy(ada, "nobody", true)).rejects.toThrow(/isn't a user/);
   // The last admin can't demote nor remove themselves.
   await expect(users.setRole(ada, "ada", "user")).rejects.toThrow(/You're the last admin/);
