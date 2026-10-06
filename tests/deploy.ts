@@ -167,9 +167,9 @@ try {
   expect(asBo.status == 200, "by default anyone signed in may (deploy_page: users)", asBo.status);
   // A page of its own, not an admin one: its old address under /admin goes there, and admin settings don't list it.
   const old = await fetch(`${host.root}/admin/deploy`, { headers: { Cookie: bo }, redirect: "manual" });
-  expect(old.status == 301 && old.headers.get("location") == "/deploy", "/admin/deploy redirects to /deploy", old.status, old.headers.get("location"));
+  expect(old.status == 301 && old.headers.get("location") == "/deploy", "/admin/deploy redirects to /deploy", [old.status, old.headers.get("location")]);
   const adminHtml = await p.eval<string>(`fetch("/admin").then((r) => r.text())`);
-  expect(adminHtml.includes('id="users-title"') && !adminHtml.includes('id="deploy-title"'), "admin settings no longer list it");
+  expect(adminHtml.includes('aria-label="Settings"') && !adminHtml.includes('id="deploy-title"'), "admin settings no longer list it");
   const boHtml = await asBo.text();
   expect(boHtml.includes('href="/deploy">Deploy your own</a>') && !boHtml.includes("Admin settings"), "Bo's menu has Deploy your own, and no Admin settings", boHtml.slice(-1200));
   // Bo may deploy, and nothing more: admin settings, users, the source and the factory stay closed to them.
@@ -179,7 +179,7 @@ try {
   ] as const) {
     const r = await fetch(`${host.root}${path}`, { method, headers: { Cookie: bo, Origin: host.root, Accept: "application/json" }, redirect: "manual", ...(body ? { body: new URLSearchParams(body) } : {}) });
     const text = await r.text();
-    expect(r.status != 200 || (path == "/admin/keys" && !text.includes("users-title")), `Bo can't use ${method} ${path}`, r.status, text.slice(0, 300));
+    expect(r.status != 200 || (path == "/admin/keys" && !text.includes("users-title")), `Bo can't use ${method} ${path}`, [r.status, text.slice(0, 300)]);
   }
   const still = await fetch(`${host.root}/deploy`, { headers: { Cookie: bo }, redirect: "manual" });
   expect(still.status == 200, "the deploy_page setting is unchanged", still.status);

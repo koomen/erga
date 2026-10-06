@@ -1,6 +1,6 @@
 // "Share with an agent": the card under the share button, in the editor
-// (main.ts: your agent token, for this document) and on /admin/source
-// (factory-agent.ts: a factory token). A prompt to paste into an outside
+// (main.ts: your agent token, for this document) and on every admin page
+// (admin-share.ts: a factory token). A prompt to paste into an outside
 // agent, with the token in it; Copy prompt, and New token, which turns the
 // old one off. Its styles are style.css's (.share), so both pages look the
 // same. The card is made here, as #share, at the end of the body.
