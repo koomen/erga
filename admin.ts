@@ -304,6 +304,7 @@ const SETTING_STYLE = PAGE_STYLE + `
   .setting .state-line .on { color: var(--fg-strong); font-weight: 600; }
   .setting .state-line .last4 { font-family: var(--font-mono); font-size: 11.5px; color: var(--fg); }
   .setting .value .input.secret { width: 15em; font-family: var(--font-mono); font-size: 12.5px; }
+  .setting .value [hidden] { display: none; }
 `;
 
 /** /admin: the server's settings. */

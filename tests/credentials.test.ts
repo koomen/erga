@@ -182,11 +182,12 @@ test("in the browser: paste a key and Save, then Clear it", async () => {
   // The Claude plan token, through the factory's API.
   const claudeRow = (expr: string) => p.eval<any>(`(() => { const li = document.querySelector('li.credential[data-name="claude"]'); return ${expr}; })()`);
   await until(async () => (await claudeRow(`li.querySelector(".state-line").textContent`)).startsWith("Not set"), 5000, "the Claude row asks the factory");
+  expect(await claudeRow(`getComputedStyle(li.querySelector(".clear")).display`)).toBe("none");
   const OAT = "sk-ant-oat01-" + "o".repeat(60);
   await claudeRow(`(() => { const input = li.querySelector("input"); input.value = ${JSON.stringify(OAT)}; input.dispatchEvent(new Event("input")); li.querySelector(".save").click(); })()`);
   await until(async () => claude.token == OAT, 5000, "the Claude token goes to the factory");
   await until(async () => (await claudeRow(`li.querySelector(".state-line").textContent`)).includes("by ada"), 5000, "the page shows it set");
-  expect(await claudeRow(`li.querySelector(".clear").hidden`)).toBe(false);
+  expect(await claudeRow(`getComputedStyle(li.querySelector(".clear")).display`)).not.toBe("none");
   await p.screenshot(join(SHOTS, "admin-credentials.png"));
   await p.eval(`window.confirm = () => true`);
   await row(`li.querySelector(".clear").click()`);
