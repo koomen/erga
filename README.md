@@ -454,6 +454,9 @@ server](#agents-configure-the-server)): ask Claude Code, with one, to add a user
 deploy role (`users.deploy`, `Users.setDeploy`): they may then use
 [/deploy](#deploy-your-own) while `deploy_page` is `admins`, as admins
 may. With `users` everyone signed in may anyway, and with `off` nobody may.
+An admin may always deploy, so the Users page shows their Deploy switch on
+and fixed: one rule (`User.mayDeploy`, `Users.hasDeploy`) decides it for
+`/deploy`, the Users page and `list_users`.
 
 **The admin pages.** Every page under `/admin` has the same layout
 (`admin-layout.ts`): a breadcrumb in the upper left (Erga › Admin › the
@@ -470,7 +473,8 @@ admin access is locked, its card says to unlock first.
 **The admin's agent** ([the factory's agent](#the-factory-experimental),
 below) is on every admin page too, in a column between the sidebar and the
 page, with the conversation it had on the others (one session per admin). It
-collapses to a round button in the lower left, as the editor's agent does
+can be dragged to either side and resized, as on the Factory page (below), and
+collapses to a round button in the lower corner on its side, as the editor's agent does
 (its collapse button, Esc in the panel, or ⌘J), and expands out of it again;
 the page takes the room. The browser remembers which (`localStorage`,
 `erga:admin-agent`). Narrower than 1000px it starts collapsed and covers the
@@ -1240,7 +1244,13 @@ and each target's deploys beside the commit each deployed (one for each
 commit: the running one, else the live one, else the newest; its state as
 plain text, and only the live one with a background),
 any deploy's log, past or live, in a modal;
-`/admin/deploys` (and `/source`) redirect there.
+`/admin/deploys` (and `/source`) redirect there. A factory task's merge
+(`Merge task/<id>-<slug>: title`) shows as a long, thin card with the task's
+number, name and how many commits it has, and the commits that came in with it
+(those its second parent brings, `source/repo.ts`: `withTasks`, up to 100) follow it,
+their dots on the same rail, their subjects indented. Other commits show as
+always. A card folds its commits away; "Collapse tasks" folds every card, so
+the list shows only tasks; the browser remembers it (`tests/source-tasks.ts`).
 
 **The branch model.** There are only two branches, and `staging` is always
 at or ahead of `main`: `main` only fast-forwards to a commit of `staging`
@@ -1548,8 +1558,16 @@ access unlocked; breadcrumbs Erga › Admin › Source): the one place to manage
 the source, its deploys and the factory. Three parts on one page: the factory's
 task board ([The factory](#the-factory-experimental)), this dashboard, and the
 factory's own agent. On a wide window the agent sits on the left, as in the
-editor, with the board above the dashboard beside it; narrower than 1000px,
-tabs (Tasks, Source, Agent) show one at a time. Each part's stylesheet is
+editor, with the board above the dashboard beside it. As in the editor (the
+same code, `src/page/layout.ts`), drag the agent's inner edge to make it
+wider or narrower (300 to 760px, and the board keeps at least 480px; a
+double-click puts back 380px), and drag it by its head to dock it on the
+right: a dashed ghost shows where it lands, and the board slides to the
+other side; Escape puts it back. The side and the width are kept in this
+browser (localStorage, `erga:factory-layout:v1`), for every admin page: the
+agent is the admin layout's (`admin-layout.ts`, [The admin pages](#users-admins-and-settings)).
+Narrower than 1000px, tabs (Tasks, Source) show one at a time, and the
+agent covers the page while it's open. Each part's stylesheet is
 scoped to its pane (`scopeCss`: its width queries measure the pane, so the
 board keeps its five columns beside the agent). `/source`, `/admin/factory`
 and `/admin/deploys` redirect here. The dashboard: One list, staging's last 25 commits,
@@ -3209,7 +3227,7 @@ back, merging edits from disk, the agent's exact-match edits and attribution.
 - `src/page/`: the page editor, on CodeMirror 6: `manuscript.ts` (HTML source
   analysis), `markdown.ts` (Markdown rendering with source ranges),
   `editor.ts` (the editing surface, marks and other people's carets),
-  `main.ts` (shell, presence, source view, agent panel), `layout.ts` (the side panels: docking, the agent's width), `frame.ts` (the page
+  `main.ts` (shell, presence, source view, agent panel), `layout.ts` (the side panels: docking, the agent's width; the factory's agent panel too), `frame.ts` (the page
   editor's frame, on the document's own origin), `bridge.ts` and `remote.ts`
   (the messages between the two, and the shell's side of them), `collab.ts` (the
   room connection and its binding to the editor), `merge.ts` (word diffs and

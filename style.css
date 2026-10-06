@@ -499,9 +499,29 @@ kbd {
   .chrome, .help, .toast { display: none !important; }
 }
 
+/* Resizing and docking an agent panel (src/page/layout.ts): the editor's and /admin/factory's. The grip on the
+   edge that faces the page shows its line on hover and while dragged; a panel dragged by its head is lifted,
+   and the ghost shows the slot it will land in. Where each panel sits is the page's own (page.html, source/page.ts). */
+.agent-resize { position: absolute; top: 18px; bottom: 18px; right: -9px; width: 12px; cursor: col-resize; touch-action: none; z-index: 1; }
+.agent-resize[data-side="right"] { right: auto; left: -9px; }
+.agent-resize::after { content: ""; position: absolute; top: 0; bottom: 0; left: 5px; width: 2px; border-radius: 1px; background: var(--caret); opacity: 0; transform: scaleY(0.6); transition: opacity 160ms ease, transform 260ms cubic-bezier(0.45, 0, 0.15, 1); }
+.agent-resize:hover::after, body.layout-resizing .agent-resize::after { opacity: 0.7; transform: none; transition-delay: 80ms; }
+body.layout-resizing, body.layout-resizing * { cursor: col-resize !important; user-select: none; }
+body.layout-dragging, body.layout-dragging * { cursor: grabbing !important; user-select: none; }
+.layout-dragged { z-index: 40 !important; transition: none !important; }
+.dock-ghost {
+  position: fixed; z-index: 19;
+  border: 2px dashed color-mix(in srgb, var(--caret) 55%, transparent); border-radius: 18px; box-sizing: border-box;
+  background: color-mix(in srgb, var(--caret) 9%, transparent); pointer-events: none;
+  transition: left 320ms cubic-bezier(0.45, 0, 0.15, 1), width 320ms cubic-bezier(0.45, 0, 0.15, 1), opacity 160ms ease;
+  animation: dock-ghost-in 200ms cubic-bezier(0.45, 0, 0.15, 1);
+}
+.dock-ghost[hidden] { display: none; }
+@keyframes dock-ghost-in { from { opacity: 0; transform: scale(0.97); } }
+
 /* ---------- The agent panel's insides ----------
    Its head, the conversation (src/page/agent-chat.ts) and the box: the editor's panel (page.html places it) and
-   the factory's on /admin/source (source/page.ts) both use them. */
+   the factory's on /admin/factory (source/page.ts) both use them. */
 
 .agent-head { display: flex; align-items: center; gap: 4px; padding: 10px 8px 6px 18px; }
 .agent-head .title { font-weight: 600; color: var(--fg-strong); }

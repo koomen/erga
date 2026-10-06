@@ -174,7 +174,7 @@ export const SERVER_TOOLS: ServerToolDef[] = [
     label: "List the server's users",
     activity: "listing the users",
     admin: true,
-    description: "Admins only. Everyone who may sign in to this server: login, name, role (user or admin), whether they have the deploy role (may use /deploy when deploy_page is admins), whether they're an admin by the deploy (bootstrap: can't be demoted or removed here), when they were added and by whom, and when they were last seen.",
+    description: "Admins only. Everyone who may sign in to this server: login, name, role (user or admin), whether they were granted the deploy role (deploy), whether they may deploy (mayDeploy: an admin, or granted the deploy role; may use /deploy when deploy_page is admins), whether they're an admin by the deploy (bootstrap: can't be demoted or removed here), when they were added and by whom, and when they were last seen.",
     parameters: Type.Object({}),
     run: async (_args, { dir, who }) => (await dir.users.list(who)).map(userOf),
   },
@@ -326,5 +326,5 @@ function entryOf(e: ConfigEntry) {
 }
 
 function userOf(u: User) {
-  return { login: u.login, name: u.name, role: u.role, deploy: u.deploy, bootstrap: u.bootstrap, added: u.created ? iso(u.created) : null, addedBy: u.addedBy, lastSeen: iso(u.lastSeen) };
+  return { login: u.login, name: u.name, role: u.role, deploy: u.deploy, mayDeploy: u.mayDeploy, bootstrap: u.bootstrap, added: u.created ? iso(u.created) : null, addedBy: u.addedBy, lastSeen: iso(u.lastSeen) };
 }

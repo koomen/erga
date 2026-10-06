@@ -281,8 +281,7 @@ export async function mayDeploy(directory: Directory, session: Session | null): 
   if (!session || session.test || session.agent) return false;
   const mode = await directory.config.get("deploy_page");
   if (mode == "users") return true;
-  const users = directory.users, who = whoOf(session);
-  return mode == "admins" && ((await users.isAdmin(who)) || (await users.hasDeploy(who)));
+  return mode == "admins" && (await directory.users.hasDeploy(whoOf(session)));
 }
 
 /** What the editor's menu on your avatar needs to know that the document doesn't (account.ts): the links it offers. */

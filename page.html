@@ -200,34 +200,21 @@
     body.agent-open .agent-card > * { opacity: 1; transform: none; transition: opacity 280ms ease 220ms, transform var(--agent-ms) var(--agent-ease) 120ms; }
     body.no-motion, body.no-motion * { transition: none !important; }
 
-    /* Resizing: the agent's edge that faces the page (layout.ts). The line shows on hover and while dragged. */
-    .agent-resize { position: absolute; top: 18px; bottom: 18px; right: -9px; width: 12px; cursor: col-resize; touch-action: none; z-index: 1; }
-    .agent-resize[data-side="right"] { right: auto; left: -9px; }
-    .agent-resize::after { content: ""; position: absolute; top: 0; bottom: 0; left: 5px; width: 2px; border-radius: 1px; background: var(--caret); opacity: 0; transform: scaleY(0.6); transition: opacity 160ms ease, transform 260ms var(--agent-ease); }
-    .agent-resize:hover::after, body.layout-resizing .agent-resize::after { opacity: 0.7; transform: none; transition-delay: 80ms; }
+    /* Resizing and docking (layout.ts; the grip, the ghost and the drag's look are style.css's): the editor's parts. */
     body.layout-narrow .agent-resize { display: none; }
-    body.layout-resizing, body.layout-resizing * { cursor: col-resize !important; user-select: none; }
     body.layout-resizing :is(#frame, #source, .agent, .agent-fab, .chrome-nav, .chrome-top, .chrome-bottom, .erga-steps-panel) { transition: none !important; }
     body.layout-resizing #frame, body.layout-dragging #frame { pointer-events: none; }
 
     /* Docking: a panel dragged by its head (the agent's, the steps list's) follows the pointer, lifted; the ghost shows the slot
        it will land in, and the page and the other panel slide aside to make room. Let go, it eases into the ghost's place. */
     body:not(.layout-narrow) .agent-head, body.erga-editing .erga-steps-panel.erga-docked .erga-steps-head { cursor: grab; user-select: none; touch-action: none; }
-    body.layout-dragging, body.layout-dragging * { cursor: grabbing !important; user-select: none; }
-    .layout-dragged { z-index: 40 !important; transition: none !important; }
     .agent.layout-dragged { filter: drop-shadow(0 24px 48px rgba(0, 0, 0, 0.2)) drop-shadow(0 2px 6px rgba(0, 0, 0, 0.08)); }
     .agent.layout-dragged .agent-card { transform: scale(0.985); transition: transform 200ms var(--agent-ease) !important; }
     .erga-steps-panel.layout-dragged { box-shadow: 0 0 0 1px rgba(0, 0, 0, .06), 0 24px 48px rgba(0, 0, 0, .2); }
     .dock-ghost {
-      position: fixed; z-index: 19; top: max(var(--agent-inset), env(safe-area-inset-top));
+      top: max(var(--agent-inset), env(safe-area-inset-top));
       bottom: max(var(--agent-inset), env(safe-area-inset-bottom), calc(var(--kb, 0px) + var(--agent-inset)));
-      border: 2px dashed color-mix(in srgb, var(--caret) 55%, transparent); border-radius: 18px; box-sizing: border-box;
-      background: color-mix(in srgb, var(--caret) 9%, transparent); pointer-events: none;
-      transition: left 320ms var(--agent-ease), width 320ms var(--agent-ease), opacity 160ms ease;
-      animation: dock-ghost-in 200ms var(--agent-ease);
     }
-    .dock-ghost[hidden] { display: none; }
-    @keyframes dock-ghost-in { from { opacity: 0; transform: scale(0.97); } }
 
     /* The steps list (front.ts, STEPS_BOOT), docked beside the page as a column while editing, on the side the user put it. */
     body.erga-editing .erga-steps-panel.erga-docked {
