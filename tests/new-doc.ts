@@ -40,7 +40,7 @@ const clickOn = async (p: Page, selector: string) => {
   await p.click(r.x, r.y);
   await p.settle();
 };
-const ROWS = "Page,Presentation,No templates here yet.";
+const ROWS = "Page,Presentation,Slides";
 /** Every option's and group heading's typeface, size and weight, as the page shows them (Inter loaded, not a fallback). */
 const typeface = async (p: Page) => {
   await until(() => p.eval<boolean>(`document.fonts.load("600 14px Inter").then((f) => f.some((x) => x.family.replace(/["']/g, "") == "Inter" && x.status == "loaded"))`), 5000, "Inter loads");
@@ -61,6 +61,10 @@ try {
   const pageAt = page.headers.get("location")!;
   expect(page.status == 302 && pageAt.endsWith("#edit"), "/new?template=page opens the new document in the editor", pageAt);
   expect((await (await get(`/d/${await idOf(pageAt)}/doc/index.html`)).text()) == readFileSync(join(ROOT, "templates/doc/index.html"), "utf8"), "Page is templates/doc");
+  for (const t of TEMPLATES.slice(1)) {
+    const made = (await get(`/new?template=${t.id}`)).headers.get("location")!;
+    expect((await (await get(`/d/${await idOf(made)}/doc/index.html`)).text()) == readFileSync(join(ROOT, t.files, "index.html"), "utf8"), `${t.name} is ${t.files}`, made);
+  }
   expect((await get("/new?template=nope")).status == 404 && (await get("/new?template=demo")).status == 404, "an unknown template is refused (the demo page is no template: Clone copies it)");
   expect(TEMPLATES[0].id == "page", "the first template is the blank page, as /new makes");
   ok("/new?template=<id> makes each template's document; an unknown one is a 404");
@@ -71,7 +75,7 @@ try {
   await until(async () => !!(await p.eval<boolean>(`!!document.querySelector(".erga-view-buttons .erga-new-btn")`)), 5000, "the viewer has +");
   await clickOn(p, ".erga-view-buttons .erga-new-btn");
   let m = await picker(p);
-  expect(m.open && m.rows.join() == ROWS && m.expanded == "New document" && !m.note, "+ opens the picker: Page and the Presentation group (empty)", m);
+  expect(m.open && m.rows.join() == ROWS && m.expanded == "New document" && !m.note, "+ opens the picker: Page and the Presentation group, with Slides", m);
   await sameTypeface(p, "the viewer");
   await p.screenshot(join(SHOTS, "new-doc-viewer.png"));
   await p.key("Escape");

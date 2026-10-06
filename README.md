@@ -247,7 +247,8 @@ The + button (New document) makes a new document. It is in the viewer's
 controls, beside Clone and Edit (on a document's page and on the front page,
 served directly or not), and in the editor's top row, beside the pencil. It
 opens a picker of templates, under the button: **Page** (a blank document)
-and the **Presentation** group (no templates yet, it says so). The demo page
+and the **Presentation** group, with **Slides** (below; an empty group says
+it has no templates yet). The demo page
 is no template: Clone, on the front page, copies it. Every option and group
 heading is in the app's typeface, Inter, at one size and weight (the picker
 loads `/fonts/inter.css` on a page that hasn't it). Each template is a link to
@@ -269,7 +270,7 @@ and the editor). To add a template:
    the picker:
 
        { id: "slides", name: "Slides", group: "Presentation",
-         description: "A deck you click through.", files: "templates/slides" },
+         description: "16:9 slides you step through.", files: "templates/slides" },
 
    `id` is its name in `/new?template=` (keep it once it's out: links name
    it), `group` one of `TEMPLATE_GROUPS` (or none, to stand on its own), and
@@ -279,6 +280,16 @@ and the editor). To add a template:
 `bun tests/new-doc.ts` checks it in headless Chrome: each template's
 document, the picker and its typeface in the viewer, the editor and the signed-out front page,
 and the way to sign in.
+
+**Slides** (`templates/slides`) is a deck of 16:9 slides, the shape of Google
+Slides', one at a time and as large as the window allows (everything in a
+slide is sized in `cqw`, hundredths of its width, so it all scales). It
+starts with two slides, each a title and "Hello". Each slide is a step
+(`window.ergaSteps`, below): its label is the slide's title, and its picture
+in the list of steps is the slide drawn small (a copy of it, with the page's
+styles, in an SVG). A slide is a `<section class="slide">` in `<body>`; add
+one and it counts. `bun tests/slides.ts` checks it, viewing and editing
+(`--shots` keeps pictures).
 
 ### The homepage, served directly
 
@@ -2125,6 +2136,8 @@ page draws the controls (`STEPS_BOOT` in `front.ts`), outside the editor's
 own, so they're the same in both; an edit (`ergaHost.changed`, `frame.ts`)
 makes the pictures out of date. `bun tests/steps.ts` checks it all, viewing
 and editing (`--shots` keeps pictures).
+The list's pictures take the frame's shape as it is, so they follow the
+window when it changes size.
 
 On a phone the controls make room: the breadcrumbs shrink to a back arrow,
 avatars overlap, the agent covers the page instead
