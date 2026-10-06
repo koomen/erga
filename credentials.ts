@@ -40,7 +40,7 @@ export const CREDENTIALS = {
  */
 export const DEPLOY_SECRETS = [
   { env: "SESSION_SECRET", service: "Erga", description: "Signs sessions, agent tokens and admin tokens. If it changes, everyone is signed out.", why: "It is the root key of every sign-in." },
-  { env: "FACTORY_KEY", service: "Erga", description: "Encrypts the keys on this page and the Claude plan token, and signs the factory's VM tokens.", why: "The keys on this page are encrypted with it. Locally, the session secret stands in for it." },
+  { env: "FACTORY_KEY", service: "Erga", description: "Encrypts the keys on this page and the Claude plan token, and signs the factory's VM tokens.", why: "The keys on this page are encrypted with it." },
   { env: "GITHUB_CLIENT_SECRET", service: "GitHub", description: "Signs people in with GitHub (the OAuth app).", why: "A wrong value stops every sign-in, the admin's too." },
   { env: "SNAPSHOT_TOKEN", service: "Erga", description: "Lets staging copy production's documents.", why: "Production and staging must have the same value." },
   { env: "DEPLOY_HOOK_SECRET", service: "Erga", description: "Lets production and staging tell each other that a branch moved.", why: "Production and staging must have the same value." },

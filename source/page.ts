@@ -620,7 +620,7 @@ function mirrorDialog(c: SourcePageConfig): string {
       <ol>
         <li>Make a fine-grained token on GitHub: <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">github.com/settings/personal-access-tokens/new</a>.
           <p>Resource owner: <code>${esc(repo.split("/")[0])}</code>. Repository access: only <code>${esc(repo)}</code>. Permissions: Contents, read and write. You must be able to push to that repository.</p></li>
-        <li>Set the token as a secret on this server's Worker. Paste the token when the command asks for it:
+        <li>Paste the token on <a href="/admin/api-keys">Admin › API keys</a> (GitHub mirror token). The server uses it within a minute. Or set it as a secret on this server's Worker. Paste the token when the command asks for it:
           <pre><code>bunx cf workers secrets update GITHUB_MIRROR_TOKEN${esc(name)}</code></pre>
           <p>Do this when no deploy runs: a new secret restarts the deploy pipeline.</p></li>
         <li>Come back to this page. The status changes to "GitHub: not pushed yet". Click it, then click Push now.</li>
