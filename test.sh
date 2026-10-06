@@ -17,6 +17,7 @@
 #                     admin power for a signed-in admin while keys aren't required (tests/admin-open.ts),
 #                     the admin pages' layout, and who may reach them (tests/admin-layout.ts),
 #                     the viewer's controls fading while you read (tests/fade.ts),
+#                     a presentation's steps, viewing and editing (tests/steps.ts),
 #                     a document's pages tree (tests/tree.ts),
 #                     the first switch into editing on a slow network (tests/switch.ts),
 #                     the band the top controls sit on (tests/band.ts),
@@ -85,6 +86,7 @@ run 3 suite bun tests/suite/run.ts --skip latency        # [22]
 run 1 fade bun tests/fade.ts                             # [20]
 run 1 front bun tests/worker.ts --local                  # [19]
 run 1 band bun tests/band.ts                             # [18]
+run 1 steps bun tests/steps.ts                           # [15]
 run 1 pages bun tests/pages.ts                           # [17]
 run 1 switch bun tests/switch.ts                         # [17]
 run 1 deploy bun tests/deploy.ts                         # [16]

@@ -105,6 +105,81 @@ rendered page:
     that doesn't react to input has nothing to pause and needs no
     `ergaPause`.
 
+11. **Let a presentation tell Erga its steps.** A page that shows one step at
+    a time (slides, a walkthrough, a story in parts) defines
+    `window.ergaSteps`. Erga then shows back and forward buttons under the
+    page, the step it is at ("3 / 12"), and a list of the steps that people
+    can open beside it, viewing and editing alike. The ← and → keys step too,
+    except while someone types in the page's text. See "Presentations" below.
+
+## Presentations
+
+A page is a presentation when `window.ergaSteps` is an object with these
+members. Steps are numbered from 0.
+
+| Member | Required | What it does |
+|---|---|---|
+| `count()` | yes | Answers how many steps there are. |
+| `current()` | yes | Answers the step shown now. |
+| `go(i)` | yes | Shows step `i`. |
+| `label(i)` | no | Answers a short name for step `i` (its title, say). Without it, the list says "Step 3". |
+| `next()`, `back()` | no | Step forward or back, for a page whose steps go further than `go` (a slide that builds up in parts). Without them, Erga calls `go` with the step after or before. |
+| `image(i, {width, height})` | no | Answers a small picture of step `i`, about `width` × `height` pixels: a `canvas`, a `Blob`, or an image's address (a `data:` URL, or one of the document's files). It may answer a Promise of one. Without it, or when it answers nothing, the list shows the step's number and label. |
+
+Whenever the step changes (by the page's own controls, a timer, anything) or
+the steps themselves change, the page tells Erga:
+`dispatchEvent(new Event("ergastep"))`. Erga also checks a few times a
+second, so a missed event only makes it slower to follow.
+
+Rules:
+
+- Erga handles ← and → (without modifier keys): don't handle them yourself,
+  or call `preventDefault()` on the ones you do handle, so a key moves one
+  step and not two.
+- Keep `count()`, `current()` and `label()` quick: Erga calls them often.
+- Erga keeps the pictures `image()` draws until the document changes (an edit,
+  a reload, other steps), so draw the step as it is, not from a cache of your
+  own.
+- `go(i)` must work while the page is paused (`ergaPause`, rule 10): people
+  step through the page to edit each step. Pause stops your own input
+  handlers and timers, not `go`.
+
+A minimal presentation: each `section` is a step.
+
+```html
+<section><h1>One</h1></section>
+<section><h1>Two</h1></section>
+<section><h1>Three</h1></section>
+<script>
+  const steps = [...document.querySelectorAll("section")];
+  let at = 0;
+  function show(i) {
+    at = Math.max(0, Math.min(steps.length - 1, i));
+    steps.forEach((s, k) => (s.hidden = k != at));
+    dispatchEvent(new Event("ergastep"));
+  }
+  window.ergaSteps = {
+    count: () => steps.length,
+    current: () => at,
+    go: show,
+    label: (i) => steps[i].querySelector("h1").textContent,
+    // Optional: a small picture of each step.
+    image(i, { width, height }) {
+      const c = document.createElement("canvas");
+      c.width = width; c.height = height;
+      const g = c.getContext("2d");
+      g.fillStyle = "#fff"; g.fillRect(0, 0, width, height);
+      g.fillStyle = "#000"; g.font = `${height / 5}px sans-serif`;
+      g.fillText(steps[i].querySelector("h1").textContent, width / 10, height / 2);
+      return c;
+    },
+  };
+  show(0);
+</script>
+```
+
+`tests/fixtures/steps/index.html` is a fuller example.
+
 ## Markdown documents
 
 - CommonMark with GitHub's extensions (tables, task lists, strikethrough).
