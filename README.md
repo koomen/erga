@@ -454,6 +454,9 @@ server](#agents-configure-the-server)): ask Claude Code, with one, to add a user
 deploy role (`users.deploy`, `Users.setDeploy`): they may then use
 [/deploy](#deploy-your-own) while `deploy_page` is `admins`, as admins
 may. With `users` everyone signed in may anyway, and with `off` nobody may.
+An admin may always deploy, so the Users page shows their Deploy switch on
+and fixed: one rule (`User.mayDeploy`, `Users.hasDeploy`) decides it for
+`/deploy`, the Users page and `list_users`.
 
 **The admin pages.** Every page under `/admin` has the same layout
 (`admin-layout.ts`): a breadcrumb in the upper left (Erga › Admin › the
@@ -1223,7 +1226,13 @@ and each target's deploys beside the commit each deployed (one for each
 commit: the running one, else the live one, else the newest; its state as
 plain text, and only the live one with a background),
 any deploy's log, past or live, in a modal;
-`/admin/deploys` (and `/source`) redirect there.
+`/admin/deploys` (and `/source`) redirect there. A factory task's merge
+(`Merge task/<id>-<slug>: title`) shows as a long, thin card with the task's
+number, name and how many commits it has, and the commits that came in with it
+(those its second parent brings, `source/repo.ts`: `withTasks`, up to 100) follow it,
+their dots on the same rail, their subjects indented. Other commits show as
+always. A card folds its commits away; "Collapse tasks" folds every card, so
+the list shows only tasks; the browser remembers it (`tests/source-tasks.ts`).
 
 **The branch model.** There are only two branches, and `staging` is always
 at or ahead of `main`: `main` only fast-forwards to a commit of `staging`
