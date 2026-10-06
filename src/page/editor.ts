@@ -109,6 +109,43 @@ const MD_STYLED = new Set(["Emphasis", "StrongEmphasis", "Strikethrough", "Inlin
 
 interface Analysis { units: M.Unit[]; html: string }
 
+/** Inline elements a copy keeps (see clipboard), by the name it writes them with; the rest give only their text. */
+const COPY_TAGS: Record<string, string> = { strong: "strong", b: "strong", em: "em", i: "em", code: "code", a: "a", sub: "sub", sup: "sup", s: "s", del: "s", strike: "s", br: "br" };
+
+/** A selected piece of one unit as plain text and as HTML with only COPY_TAGS, no attributes but a link's href. */
+function cleanInline(root: Node, pre: boolean): { html: string; text: string } {
+  let html = "", text = "";
+  const esc = (t: string) => t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const walk = (n: Node) => {
+    if (n.nodeType == 3) {
+      const t = pre ? n.nodeValue! : n.nodeValue!.replace(/\s+/g, " ");
+      html += esc(t); text += t;
+      return;
+    }
+    if (n.nodeType == 1) {
+      const el = n as Element, name = el.localName;
+      // Widgets and text the page doesn't let you edit, the editor's own marks, and what isn't text.
+      if (el.getAttribute("contenteditable") == "false" || name.startsWith("erga-") || /^(script|style|svg|canvas|img|video|audio|iframe|button|input|select|textarea|template)$/.test(name)) return;
+      const tag = COPY_TAGS[name];
+      if (tag == "br") { html += "<br>"; text += "\n"; return; }
+      if (tag) {
+        const href = tag == "a" ? (el as HTMLAnchorElement).href : "";
+        html += tag == "a" ? (href ? `<a href="${href.replace(/"/g, "&quot;")}">` : "") : `<${tag}>`;
+        el.childNodes.forEach(walk);
+        html += tag == "a" ? (href ? "</a>" : "") : `</${tag}>`;
+        return;
+      }
+    }
+    n.childNodes.forEach(walk);
+  };
+  walk(root);
+  if (!pre) text = text.replace(/ *\n */g, "\n");
+  return { html, text };
+}
+
+/** Units that go whole when a selection across units is deleted (replaceRange). */
+const WHOLE_BLOCKS = /^(p|h[1-6]|li|pre|blockquote|figcaption|dt|dd)$/;
+
 const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 
 /**
@@ -174,6 +211,7 @@ html { overscroll-behavior: none; }
 [data-erga-id].erga-locked { cursor: default; }
 [data-erga-id] [contenteditable="false"] { cursor: default; }
 [data-erga-id][contenteditable] a[href] { cursor: text; }
+html.erga-span [data-erga-id]:not(.erga-locked), html.erga-span [data-erga-id] a[href] { cursor: text; }
 @keyframes erga-flash { from { background-color: rgba(59, 124, 240, 0.24); } to { background-color: rgba(59, 124, 240, 0); } }
 [data-erga-id].erga-flash { animation: erga-flash 1.8s ease-out; border-radius: 3px; }
 ::highlight(erga-add-0) { background-color: rgba(34, 197, 94, 0.3); }
@@ -333,6 +371,12 @@ export class PageEditor {
   private cleanup: (() => void)[] = [];
   private composing = false;
   private writingSelection = false;
+  /** A selection spans units: none of them is an editing host meanwhile (see setSpanning). */
+  private spanning = false;
+  /** Where a drag that started in a unit started, while the button is down. */
+  private dragFrom: { node: Node; offset: number; el: Element } | null = null;
+  /** The selection the listeners last heard of. */
+  private told: SelectionRange | null = null;
   private renderToken = 0;
   private decoderCache = new Map<string, string>();
   private decoderBox = document.createElement("textarea");
@@ -453,6 +497,7 @@ export class PageEditor {
       // A new page starts live: tell it it's paused again, if it still can be.
       if (this.paused) { if (this.canPause) this.tellPause(); else this.paused = false; }
       this.rendering = false;
+      this.spanning = false;
       for (const el of this.els) if (el) this.prepareUnit(el);
       // Verified, never guessed: a unit whose DOM text doesn't match the
       // source is locked now, not when someone tries to type into it.
@@ -535,7 +580,7 @@ export class PageEditor {
 
   /** A unit element is its own editing host; anything atomic inside it stays a normal widget. */
   private prepareUnit(el: Element): void {
-    if (!el.classList.contains("erga-locked")) el.setAttribute("contenteditable", "true");
+    if (!el.classList.contains("erga-locked") && !this.spanning) el.setAttribute("contenteditable", "true");
     // No spellcheck: these are technical documents, full of names a dictionary flags.
     el.setAttribute("spellcheck", "false");
     for (const atom of el.querySelectorAll("*")) if (M.ATOMIC.has(atom.localName)) atom.setAttribute("contenteditable", "false");
@@ -666,14 +711,85 @@ export class PageEditor {
     return { node: nodes[i], offset: M.runOffset(u.runs[i], pos) };
   }
 
-  /** The DOM selection as a model selection, if it lies in manuscript. */
+  /**
+   * A source position for a DOM point outside every unit (between two
+   * paragraphs, on a widget): the start of the next unit, or the end of the one before.
+   */
+  private posNear(node: Node, offset: number, after: boolean): number | null {
+    const at = this.doc!.createRange();
+    try { at.setStart(node, offset); } catch { return null; }
+    const units = after ? this.units : [...this.units].reverse();
+    for (const u of units) {
+      const el = this.els[u.id];
+      if (!el?.isConnected) continue;
+      if (after ? at.comparePoint(el, 0) > 0 : at.comparePoint(el, el.childNodes.length) < 0) return after ? M.textStart(u) : M.textEnd(u);
+    }
+    return null;
+  }
+
+  /** The DOM selection as a model selection, if it lies in manuscript (or, across units, starts and ends near it). */
   readSelection(): EditorSelection | null {
     const sel = this.doc?.getSelection();
     if (!sel || !sel.anchorNode || !sel.focusNode) return null;
-    const anchor = this.posFromDOM(sel.anchorNode, sel.anchorOffset);
-    const head = this.posFromDOM(sel.focusNode, sel.focusOffset);
+    let anchor = this.posFromDOM(sel.anchorNode, sel.anchorOffset);
+    let head = this.posFromDOM(sel.focusNode, sel.focusOffset);
+    if (this.spanning && (anchor == null || head == null)) {
+      const r = this.doc!.createRange();
+      r.setStart(sel.anchorNode, sel.anchorOffset);
+      const forward = r.comparePoint(sel.focusNode, sel.focusOffset) >= 0;
+      anchor ??= this.posNear(sel.anchorNode, sel.anchorOffset, forward);
+      head ??= this.posNear(sel.focusNode, sel.focusOffset, !forward);
+      if (anchor != null && head != null && forward != anchor <= head) return null;
+    }
     if (anchor == null || head == null) return null;
     return EditorSelection.single(anchor, head);
+  }
+
+  /**
+   * The browser keeps a selection inside one editing host, and each unit is
+   * one. So while a selection spans units, none is a host: the page is plain
+   * text to the browser, which selects across it (by mouse, Shift-click and
+   * Shift with the arrow keys), and keydown turns typing, Backspace and Enter
+   * into edits of the whole range (spanKey). A selection back inside one unit
+   * makes the units hosts again.
+   */
+  private setSpanning(on: boolean): void {
+    if (on == this.spanning || !this.doc) return;
+    this.spanning = on;
+    this.doc.documentElement.classList.toggle("erga-span", on);
+    for (const el of this.els) {
+      if (!el || el.classList.contains("erga-locked")) continue;
+      if (on) el.removeAttribute("contenteditable");
+      else el.setAttribute("contenteditable", "true");
+    }
+  }
+
+  /** Whether the model's selection runs from one unit into another. */
+  private get across(): boolean {
+    const main = this.state.selection.main;
+    return !main.empty && M.unitAt(this.units, main.anchor) != M.unitAt(this.units, main.head);
+  }
+
+  /** Extends the DOM selection from `from` (the model's anchor if not given) to a point on the page, across units. */
+  private extendTo(x: number, y: number, from?: { node: Node; offset: number } | null): boolean {
+    const doc = this.doc!, sel = doc.getSelection();
+    const hit = doc.caretRangeFromPoint?.(x, y);
+    from ??= this.domAtPos(this.state.selection.main.anchor);
+    if (!sel || !hit || !from) return false;
+    this.setSpanning(true);
+    try { sel.setBaseAndExtent(from.node, from.offset, hit.startContainer, hit.startOffset); } catch { return false; }
+    return true;
+  }
+
+  /** The DOM selection into the model, and out of spanning when it's back inside one unit. */
+  private settleSpan(): void {
+    if (!this.spanning) return;
+    const sel = this.readSelection();
+    if (sel && !(sel.main.anchor == this.state.selection.main.anchor && sel.main.head == this.state.selection.main.head && this.told?.eq(sel.main))) {
+      this.state = this.state.update({ selection: sel, userEvent: "select" }).state;
+      this.notify({ docChanged: false, selectionSet: true, rendered: false, changes: null, remote: false });
+    }
+    if (!this.across) this.syncDOMSelection(true);
   }
 
   /** The unit element that has focus, if any. */
@@ -686,8 +802,10 @@ export class PageEditor {
   syncDOMSelection(force = false): void {
     const doc = this.doc;
     if (!doc || this.composing) return;
-    if (!force && !this.activeUnit) return;
+    if (!force && !this.activeUnit && !this.spanning) return;
     const main = this.state.selection.main;
+    const across = this.across;
+    this.setSpanning(across);
     const anchor = this.domAtPos(main.anchor, main.empty ? main.assoc || 1 : main.anchor < main.head ? 1 : -1);
     if (!anchor) return;
     const head = main.empty ? anchor : this.domAtPos(main.head, main.head > main.anchor ? -1 : 1) ?? anchor;
@@ -696,7 +814,7 @@ export class PageEditor {
     const host = (anchor.node.nodeType == 1 ? (anchor.node as Element) : anchor.node.parentElement)?.closest("[data-erga-id]") as HTMLElement | null;
     this.writingSelection = true;
     try {
-      if (host && host != doc.activeElement) host.focus({ preventScroll: true });
+      if (!across && host && host != doc.activeElement) host.focus({ preventScroll: true });
       sel.setBaseAndExtent(anchor.node, anchor.offset, head.node, head.offset);
     } catch { /* ignore */ }
     this.writingSelection = false;
@@ -708,7 +826,7 @@ export class PageEditor {
   }
 
   get hasFocus(): boolean {
-    return !!this.doc && this.doc.hasFocus() && !!this.activeUnit;
+    return !!this.doc && this.doc.hasFocus() && (!!this.activeUnit || this.spanning);
   }
 
   /** Screen rectangle (in the frame's coordinates) of the caret at a position. */
@@ -738,12 +856,14 @@ export class PageEditor {
     on("compositionstart", (e) => { if (this.ours(e)) this.composing = true; });
     on("compositionend", (e) => { if (this.ours(e)) this.compositionend(); });
     on("selectionchange", () => this.selectionchange());
-    on("paste", (e) => { if (this.ours(e)) this.paste(e); });
-    on("cut", (e) => { if (this.ours(e)) this.cut(e); });
+    on("paste", (e) => { if (this.ours(e) || this.spanning) this.paste(e); });
+    on("cut", (e) => { if (this.ours(e) || this.spanning) this.cut(e); });
+    on("copy", (e) => { if (this.ours(e) || this.spanning) this.copy(e); });
     on("dragstart", (e) => { if (this.ours(e)) e.preventDefault(); });
     on("drop", (e) => { if (this.ours(e)) e.preventDefault(); });
     on("mousedown", (e) => this.mousedown(e));
-    on("mousemove", (e) => this.config.onPointer?.(e), { passive: true });
+    on("mousemove", (e) => { this.drag(e); this.config.onPointer?.(e); });
+    on("mouseup", () => { if (this.dragFrom) { this.dragFrom = null; this.settleSpan(); } });
   }
 
   private unbind(): void {
@@ -757,6 +877,7 @@ export class PageEditor {
   }
 
   private notify(u: Omit<PageUpdate, "state">): void {
+    this.told = this.state.selection.main;
     for (const l of this.listeners) l({ state: this.state, ...u });
   }
 
@@ -782,6 +903,23 @@ export class PageEditor {
     if (fixed && !(e.target as Element).closest('button, a[href], input, textarea, select, label, canvas, svg, video, audio, iframe, [contenteditable="true"]')) {
       this.config.onNotice?.("This part of the page is marked as not editable by hand. Ask the agent to change it.");
     }
+    this.dragFrom = null;
+    if (e.button == 0) {
+      // Shift-click extends the selection, into other units too.
+      if (e.shiftKey && (this.spanning || this.ours(e))) {
+        const u = this.unitOf(this.doc!.caretRangeFromPoint?.(e.clientX, e.clientY)?.startContainer ?? (e.target as Node));
+        if (this.spanning || (u && u != M.unitAt(this.units, this.currentSelection().anchor))) {
+          e.preventDefault();
+          this.extendTo(e.clientX, e.clientY);
+          return;
+        }
+      }
+      // A plain click puts a caret in one unit: the units are hosts again.
+      if (this.spanning) this.setSpanning(false);
+      const hit = this.ours(e) && e.detail <= 1 ? this.doc!.caretRangeFromPoint?.(e.clientX, e.clientY) : null;
+      const host = hit && (e.target as Element).closest?.("[data-erga-id]");
+      if (hit && host) this.dragFrom = { node: hit.startContainer, offset: hit.startOffset, el: host };
+    }
     // Inside manuscript the browser doesn't follow links; Cmd-click does.
     if (!this.ours(e)) return;
     const a = (e.target as Element).closest?.("a[href]") as HTMLAnchorElement | null;
@@ -791,12 +929,27 @@ export class PageEditor {
     }
   }
 
+  /** A drag that leaves the unit it started in selects across units. */
+  private drag(e: MouseEvent): void {
+    const from = this.dragFrom;
+    if (!from || !(e.buttons & 1)) return;
+    const hit = this.doc!.caretRangeFromPoint?.(e.clientX, e.clientY);
+    if (!hit || (!this.spanning && from.el.contains(hit.startContainer))) return;
+    e.preventDefault();
+    this.extendTo(e.clientX, e.clientY, from);
+  }
+
   private selectionchange(): void {
     if (this.writingSelection || this.composing || !this.doc) return;
+    if (this.spanning && !this.dragFrom) { this.settleSpan(); return; }
     const sel = this.readSelection();
     if (!sel) return;
     const main = this.state.selection.main;
-    if (sel.main.anchor == main.anchor && sel.main.head == main.head) return;
+    // Already the model's (currentSelection reads the DOM's first, for the shell's snapshot say), but maybe not told yet.
+    if (sel.main.anchor == main.anchor && sel.main.head == main.head) {
+      if (!this.told?.eq(main)) this.notify({ docChanged: false, selectionSet: true, rendered: false, changes: null, remote: false });
+      return;
+    }
     if (this.sameSpot(sel.main, main)) return;
     this.state = this.state.update({ selection: sel, userEvent: "select" }).state;
     this.notify({ docChanged: false, selectionSet: true, rendered: false, changes: null, remote: false });
@@ -806,7 +959,8 @@ export class PageEditor {
     if (this.composing || e.isComposing) return;
     // App shortcuts work anywhere in the page; editing keys only in manuscript.
     if (this.config.onKey?.(e)) { e.preventDefault(); e.stopPropagation(); return; }
-    if (!this.activeUnit || !this.ours(e)) return;
+    if (this.spanning && this.spanKey(e)) { e.preventDefault(); e.stopPropagation(); return; }
+    if (!this.spanning && (!this.activeUnit || !this.ours(e))) return;
     const mod = isMac ? e.metaKey : e.ctrlKey;
     const key = e.key.toLowerCase();
     let handled = false;
@@ -825,9 +979,55 @@ export class PageEditor {
     }
   }
 
+  /**
+   * Keys while a selection spans units, where the browser edits nothing
+   * itself (see setSpanning): typing, Backspace, Delete and Enter replace the
+   * selection; an arrow without Shift collapses it. Shift and an arrow is the
+   * browser's, and so are shortcuts, which keydown handles as usual.
+   */
+  private spanKey(e: KeyboardEvent): boolean {
+    if (e.key.startsWith("Arrow")) {
+      if (e.shiftKey) return false;
+      const sel = this.currentSelection();
+      const back = e.key == "ArrowLeft" || e.key == "ArrowUp";
+      this.dispatch({ selection: { anchor: back ? sel.from : sel.to }, userEvent: "select", scrollIntoView: true });
+      return true;
+    }
+    if (e.ctrlKey || e.metaKey) return false;
+    if (e.key == "Backspace" || e.key == "Delete") { this.deleteChar(e.key == "Delete"); return true; }
+    if (e.key == "Enter") { this.enter(e.shiftKey); return true; }
+    if ([...e.key].length == 1) { this.insertText(e.key, null); return true; }
+    return false;
+  }
+
+  /**
+   * Shift and an arrow key: inside a unit the browser extends the selection;
+   * at its edge, where the browser stops, the selection carries on across
+   * units (setSpanning), and the browser extends it there.
+   */
+  private extendKey(e: KeyboardEvent): boolean {
+    const sel = this.doc!.getSelection();
+    if (!sel?.anchorNode || !sel.focusNode || (!isMac && e.metaKey) || (isMac && e.ctrlKey)) return false;
+    const vertical = e.key == "ArrowUp" || e.key == "ArrowDown";
+    const dir = e.key == "ArrowLeft" || e.key == "ArrowUp" ? "backward" : "forward";
+    const gran = isMac && e.metaKey ? (vertical ? "documentboundary" : "lineboundary")
+      : vertical ? (e.ctrlKey || e.altKey ? "paragraphboundary" : "line")
+      : (isMac ? e.altKey : e.ctrlKey) ? "word" : "character";
+    const { anchorNode, anchorOffset, focusNode, focusOffset } = sel;
+    if (gran != "documentboundary") {
+      sel.modify("extend", dir, gran);
+      if (sel.focusNode != focusNode || sel.focusOffset != focusOffset) return true;
+    }
+    this.setSpanning(true);
+    sel.setBaseAndExtent(anchorNode, anchorOffset, focusNode, focusOffset);
+    sel.modify("extend", dir, gran);
+    return true;
+  }
+
   /** Arrow keys at a unit's edge move the caret into the neighbouring unit, keeping the column. */
   private arrow(e: KeyboardEvent): boolean {
-    if (e.shiftKey || e.altKey || e.metaKey || e.ctrlKey) return false;
+    if (e.shiftKey) return this.extendKey(e);
+    if (e.altKey || e.metaKey || e.ctrlKey) return false;
     const sel = this.currentSelection();
     if (!sel.empty) return false;
     const u = M.unitAt(this.units, sel.head);
@@ -984,9 +1184,59 @@ export class PageEditor {
     e.preventDefault();
     const sel = this.currentSelection();
     if (!sel || sel.empty) return;
-    const text = this.doc!.getSelection()?.toString() ?? "";
-    e.clipboardData?.setData("text/plain", text);
+    this.copy(e);
     this.replaceRange(sel.from, sel.to, "", "delete.cut");
+  }
+
+  /** Copy: the selected manuscript text (see clipboard), never the widgets around it. */
+  private copy(e: ClipboardEvent): void {
+    const data = this.clipboard();
+    if (!data || !e.clipboardData) return;
+    e.preventDefault();
+    e.clipboardData.setData("text/plain", data.text);
+    e.clipboardData.setData("text/html", data.html);
+  }
+
+  /**
+   * What a copy puts on the clipboard: the text of the units in the
+   * selection, without the widgets and other page parts between them, nor
+   * anything in a unit that isn't editable text. The HTML is plain
+   * structure (paragraphs, headings, lists, bold, italic, code, links) with
+   * no classes or styles, so a paste elsewhere takes the text, not this
+   * page's fonts and colours.
+   */
+  private clipboard(): { text: string; html: string } | null {
+    const doc = this.doc, sel = doc?.getSelection();
+    if (!doc || !sel || sel.isCollapsed || !sel.rangeCount) return null;
+    const range = sel.getRangeAt(0);
+    const blocks: { tag: string; list: string | null; html: string; text: string }[] = [];
+    const taken: Element[] = [];
+    for (const u of this.units) {
+      const el = this.els[u.id];
+      if (!el?.isConnected || !range.intersectsNode(el) || taken.some((t) => t.contains(el))) continue;
+      taken.push(el);
+      const r = doc.createRange();
+      r.selectNodeContents(el);
+      if (r.comparePoint(range.startContainer, range.startOffset) == 0) r.setStart(range.startContainer, range.startOffset);
+      if (r.comparePoint(range.endContainer, range.endOffset) == 0) r.setEnd(range.endContainer, range.endOffset);
+      const pre = u.tag == "pre";
+      const out = cleanInline(r.cloneContents(), pre);
+      if (!out.text.trim()) continue;
+      const list = u.tag == "li" ? (el.parentElement?.localName == "ol" ? "ol" : "ul") : null;
+      blocks.push({ tag: u.tag, list, html: out.html, text: pre ? out.text : out.text.trim() });
+    }
+    if (!blocks.length) return null;
+    if (blocks.length == 1 && blocks[0].tag != "pre") return { text: blocks[0].text, html: blocks[0].html.trim() };
+    let html = "", text = "", open: string | null = null;
+    for (const [i, b] of blocks.entries()) {
+      if (open && b.list != open) { html += `</${open}>`; open = null; }
+      if (b.list && !open) { html += `<${b.list}>`; open = b.list; }
+      const tag = b.list ? "li" : /^(h[1-6]|pre|blockquote)$/.test(b.tag) ? b.tag : "p";
+      html += `<${tag}>${b.html.trim()}</${tag}>`;
+      text += (i == 0 ? "" : b.list && blocks[i - 1].list ? "\n" : "\n\n") + b.text;
+    }
+    if (open) html += `</${open}>`;
+    return { text, html };
   }
 
   // ------------------------------------------------------------ editing
@@ -1061,8 +1311,11 @@ export class PageEditor {
   /**
    * Replaces [from, to) of the manuscript with typed text. Within one unit
    * that is a splice; across units the inline elements open at each end are
-   * closed and reopened so the joined paragraph stays well-formed, and the
-   * join only happens when nothing but whitespace separates the units.
+   * closed and reopened so the joined paragraph stays well-formed, and it
+   * keeps the first unit's element (a heading joined with a paragraph stays
+   * a heading). The join only happens when nothing but whitespace (in
+   * Markdown, block marks) separates the units; otherwise the units in
+   * between go, and the two at the ends keep what's outside the range.
    */
   replaceRange(from: number, to: number, text: string, userEvent: string): boolean {
     const a = M.unitAt(this.units, from), b = M.unitAt(this.units, to);
@@ -1077,21 +1330,39 @@ export class PageEditor {
       return true;
     }
     // Across units.
-    const joinable = this.units.slice(a.id, b.id).every((u, i) => M.adjacent(src, u, this.units[a.id + i + 1]));
+    const between = this.units.slice(a.id, b.id + 1);
+    const joinable = this.kind == "md"
+      ? a.tag != "pre" && b.tag != "pre" && between.every((u, i) => i == 0 || /^[\s>*+#-]*(\d+[.)])?\s*$/.test(src.slice(between[i - 1].contentTo, u.contentFrom)))
+      : between.every((u, i) => i == 0 || M.adjacent(src, between[i - 1], u));
     if (!joinable) {
-      // Delete only the text inside the two end units; the middle stays.
-      const changes = [{ from, to: M.textEnd(a), insert }, { from: M.textStart(b), to }];
+      // The text inside the two end units goes, and so do the paragraphs,
+      // headings and list items in between; other units (a table's cells, a
+      // widget's label) only lose their text, so the page keeps its shape.
+      const changes = [{ from, to: M.textEnd(a), insert }];
+      let last = M.textEnd(a);
+      for (const u of between.slice(1, -1)) {
+        if (u.from < last || u.to > M.textStart(b)) continue;
+        if (this.kind == "md" || !WHOLE_BLOCKS.test(u.tag)) { changes.push({ from: u.contentFrom, to: u.contentTo, insert: "" }); last = u.contentTo; continue; }
+        // The whole element, with the indent and line break before it.
+        const indent = /\n[ \t]*$/.exec(src.slice(last, u.from));
+        changes.push({ from: indent ? u.from - indent[0].length : u.from, to: u.to, insert: "" });
+        last = u.to;
+      }
+      changes.push({ from: M.textStart(b), to, insert: "" });
       this.dispatch({ changes, selection: { anchor: from + insert.length }, userEvent, scrollIntoView: true });
       return true;
     }
-    let glue = "";
-    if (this.kind == "html") {
-      glue = M.closeTags(M.inlineStackAt(src, a, from)) + M.openTags(M.inlineStackAt(src, b, to));
+    if (this.kind == "md") {
+      this.dispatch({ changes: { from, to, insert }, selection: { anchor: from + insert.length }, userEvent, scrollIntoView: true });
+      return true;
     }
-    const head = this.kind == "html" ? M.closeTags(M.inlineStackAt(src, a, from)) : "";
+    const head = M.closeTags(M.inlineStackAt(src, a, from));
     const kept = !!insert || contentIn(src, a, a.contentFrom, from) || contentIn(src, b, to, b.contentTo);
     const drops = this.placeholderDrops(src, [a, b], from, to, kept);
-    this.dispatch({ changes: [{ from, to, insert: head + insert + glue.slice(head.length) }, ...drops], selection: { anchor: from + head.length + insert.length - dropped(drops, from) }, userEvent, scrollIntoView: true });
+    const changes = [{ from, to, insert: head + insert + M.openTags(M.inlineStackAt(src, b, to)) }, ...drops];
+    // The joined unit is the first one's element: its close tag ends it.
+    if (a.tag != b.tag) changes.push({ from: b.contentTo, to: b.to, insert: src.slice(a.contentTo, a.to) });
+    this.dispatch({ changes, selection: { anchor: from + head.length + insert.length - dropped(drops, from) }, userEvent, scrollIntoView: true });
     return true;
   }
 
