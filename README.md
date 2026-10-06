@@ -248,8 +248,11 @@ makes `/<DEV_LOGIN>/landing`. Test servers too, when a test asks for `/`.
 The + button (New document) makes a new document. It is in the viewer's
 controls, beside Clone and Edit (on a document's page and on the front page,
 served directly or not), and in the editor's top row, beside the pencil. It
-opens a picker of templates, under the button: **Page** (a blank document)
-and the **Presentation** group, with **Slides** (below), **Canvas
+opens a picker of templates, under the button: **Page** (a blank document:
+the base typography, Literata and Instrument Sans, in one reading column,
+and nothing more), **Design doc** (`templates/design-doc`: the same column
+with a header, flow diagrams, tables and boxed decisions with status chips;
+it was Page's starting point before) and the **Presentation** group, with **Slides** (below), **Canvas
 presentation** (`templates/canvas`, a Prezi-style talk: four frames on one
 large canvas, each a step with its label and picture; going to another step
 zooms out to the whole canvas, then in on that frame, and a click on a frame
