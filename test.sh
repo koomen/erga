@@ -16,7 +16,9 @@
 #                     the + button and its picker of templates (tests/new-doc.ts),
 #                     admin SSH keys and unlocking admin access with them (tests/admin-keys.ts),
 #                     admin power for a signed-in admin while keys aren't required (tests/admin-open.ts),
+#                     the admin pages' layout, and who may reach them (tests/admin-layout.ts),
 #                     the viewer's controls fading while you read (tests/fade.ts),
+#                     a presentation's steps, viewing and editing (tests/steps.ts),
 #                     a document's pages tree (tests/tree.ts),
 #                     the first switch into editing on a slow network (tests/switch.ts),
 #                     the band the top controls sit on (tests/band.ts),
@@ -86,6 +88,7 @@ run 1 fade bun tests/fade.ts                             # [20]
 run 1 front bun tests/worker.ts --local                  # [19]
 run 1 band bun tests/band.ts                             # [18]
 run 1 new-doc bun tests/new-doc.ts                       # [15]
+run 1 steps bun tests/steps.ts                           # [15]
 run 1 pages bun tests/pages.ts                           # [17]
 run 1 switch bun tests/switch.ts                         # [17]
 run 1 deploy bun tests/deploy.ts                         # [16]
@@ -98,6 +101,7 @@ run 1 deployed bun tests/server-config.ts                # [7]
 run 1 deploys bun tests/deploys.ts                       # [5]
 run 1 isolation bun tests/isolation.ts                   # [4]
 run 1 admin-open bun tests/admin-open.ts                 # [3]
+run 1 admin-layout bun tests/admin-layout.ts             # [8]
 collect
 # Latency is measured alone: other tests running would skew it.
 run 1 latency bun tests/suite/run.ts --suite latency     # [6]

@@ -51,8 +51,8 @@ try {
   await get("/");
   const home = ((await (await get("/tester/landing/api/name")).json()) as { id: string }).id;
   expect((await get("/admin")).headers.get("location") == "/admin/keys?next=%2Fadmin", "/admin sends a locked admin to unlock");
-  expect((await get("/admin/source")).headers.get("location") == "/admin/keys?next=%2Fadmin%2Fsource", "/admin/source (the source, deploys and the factory) does too");
-  expect((await get("/source")).headers.get("location") == "/admin/source" && (await get("/admin/factory")).headers.get("location") == "/admin/source", "/source and the factory's old board go there");
+  expect((await get("/admin/factory")).headers.get("location") == "/admin/keys?next=%2Fadmin%2Ffactory", "/admin/factory (the source, deploys and the factory) does too");
+  expect((await get("/source")).headers.get("location") == "/admin/factory" && (await get("/admin/source")).headers.get("location") == "/admin/factory", "/source and the old /admin/source go there");
   const lockedPosts: [string, Response][] = [
     ["POST /admin/settings", await get("/admin/settings", { method: "POST", headers: { Origin: root }, body: new URLSearchParams({ key: "delete_docs_after_hours", value: "5" }) })],
     ["POST /admin/users", await get("/admin/users", { method: "POST", headers: { Origin: root }, body: new URLSearchParams({ do: "add", login: "mallory", role: "admin" }) })],
@@ -78,7 +78,7 @@ try {
   expect(viewerHtml.includes(`/admin/keys?next=${encodeURIComponent("/tester/landing#edit")}`), "the front page's Edit goes by way of unlocking", viewerHtml.slice(-2500));
   const access = await (await get("/tester/landing/api/doc")).json() as { canEdit?: boolean };
   expect(access.canEdit === false, "a locked admin only views the homepage document", access);
-  ok("locked: /admin and /admin/source send an admin to unlock; every admin, source, deploy, factory (its agent and its tokens too) and homepage call refuses, saying why; the homepage is read-only");
+  ok("locked: /admin and /admin/factory send an admin to unlock; every admin, source, deploy, factory (its agent and its tokens too) and homepage call refuses, saying why; the homepage is read-only");
 
   // An agent token isn't enough: no admin tools, refused if called, and the Git endpoint won't take it.
   const tokensPage = await (await get("/tokens/new", { method: "POST", body: new URLSearchParams({ label: "Admin keys test" }), headers: { Origin: root } })).text();
@@ -138,7 +138,7 @@ try {
   expect(strangerTry.status == 403, "a key that isn't one of yours doesn't unlock");
   ok("Lock now; a signed challenge unlocks; a replay and a stranger's key are refused");
 
-  // ---- a factory token (Share with agent on /admin/source): only an unlocked admin makes one, and it ends with the key
+  // ---- a factory token (Share with agent on /admin/factory): only an unlocked admin makes one, and it ends with the key
   const minted = await post("/api/factory/tokens", { label: "Laptop agent", hours: 2 }, { Cookie: unlocked });
   const factoryToken = ((await minted.json()) as { token?: string }).token ?? "";
   expect(minted.status == 201 && factoryToken.startsWith("erga_factory_"), "an unlocked admin makes a factory token", minted.status);

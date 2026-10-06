@@ -170,6 +170,39 @@ test("users: who may sign in, bootstrap admins and server roles", async () => {
   expect(await users.signedIn("bo", "Bo", { create: true })).toMatchObject({ login: "bo", role: "user", addedBy: null });
 });
 
+test("users: the deploy role, and the server always keeps an admin", async () => {
+  // No bootstrap admins (ADMINS empty): the admins are rows, and the last one stays.
+  const sql = memory(), { users } = fresh({}, sql);
+  await sql.run("INSERT INTO users (login, name, role, created) VALUES ('ada', 'Ada', 'admin', 1)");
+  await users.signedIn("bo", "Bo", { create: true });
+  const ada = { login: "ada", unlocked: U };
+  // Users have no deploy role until an admin grants it; only an admin may.
+  expect(await users.hasDeploy("bo")).toBe(false);
+  await expect(users.setDeploy({ login: "bo", unlocked: U }, "bo", true)).rejects.toBeInstanceOf(NotAllowed);
+  await expect(users.setDeploy({ login: "ada" }, "bo", true)).rejects.toThrow(/locked/);
+  expect(await users.setDeploy(ada, "Bo", true)).toMatchObject({ login: "bo", role: "user", deploy: true });
+  expect(await users.hasDeploy("bo")).toBe(true);
+  expect(await users.hasDeploy({ login: "bo", test: true })).toBe(false);
+  expect((await users.list(ada)).map((u) => [u.login, u.role, u.deploy])).toEqual([["ada", "admin", false], ["bo", "user", true]]);
+  expect((await users.setDeploy(ada, "bo", false)).deploy).toBe(false);
+  await expect(users.setDeploy(ada, "nobody", true)).rejects.toThrow(/isn't a user/);
+  // The last admin can't demote nor remove themselves.
+  await expect(users.setRole(ada, "ada", "user")).rejects.toThrow(/You're the last admin/);
+  await expect(users.remove(ada, "ada")).rejects.toThrow(/You're the last admin/);
+  expect(await users.isAdmin("ada")).toBe(true);
+  // With a second admin, they may; then that one is the last.
+  await users.setRole(ada, "bo", "admin");
+  const bo = { login: "bo", unlocked: U };
+  expect((await users.setRole(ada, "ada", "user")).role).toBe("user");
+  await expect(users.remove(bo, "bo")).rejects.toThrow(/You're the last admin/);
+  // Bootstrap admins count, signed in or not; one may have the deploy role too.
+  const boot = fresh({ admins: ["root"] });
+  const root = { login: "root", unlocked: U };
+  await boot.users.add(root, "cy", { role: "admin" });
+  expect((await boot.users.setRole({ login: "cy", unlocked: U }, "cy", "user")).role).toBe("user");
+  expect(await boot.users.setDeploy(root, "root", true)).toMatchObject({ login: "root", role: "admin", bootstrap: true, deploy: true });
+});
+
 test("server config: defaults, admins set and reset, the deploy locks", async () => {
   const dir = fresh({ admins: ["root"] });
   const admin = { login: "root", unlocked: U }, user = { login: "bo" };

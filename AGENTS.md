@@ -420,7 +420,7 @@ refused push doesn't undo the merge: the log says why, and the queue pushes
 again by itself.
 
 **Production (erga.dev) is a deliberate step, never part of a merge**:
-Merge on erga.dev/admin/source, or `tq release` (Erga's `main` to `staging`'s
+Merge on erga.dev/admin/factory, or `tq release` (Erga's `main` to `staging`'s
 head). Agents run `tq release` only when the user asks for it.
 
 The queue sets the main checkout's remotes up itself (when no merge runs and

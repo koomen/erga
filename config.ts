@@ -27,8 +27,10 @@ export interface Setting<T = unknown> {
   default: T;
   /** A value as given (parsed JSON), checked: throws a ConfigError saying what's wrong. */
   parse(value: unknown): T;
-  /** What the value names, when it isn't just a number or text: "document" (one of the server's documents, by id). */
-  kind?: "document";
+  /** What the value names, when it isn't just a number or text: "document" (one of the server's documents, by id), "users" (a list of logins). */
+  kind?: "document" | "users";
+  /** The values the admin page offers, as a select (as a switch when they're "off" and "on"). The parser may take others too. */
+  choices?: string[];
 }
 
 /** A whole number from `min` to `max`. */
@@ -44,6 +46,15 @@ export const text = (max: number) => (v: unknown): string => {
 };
 /** Either null or what `inner` takes. */
 export const nullable = <T>(inner: (v: unknown) => T) => (v: unknown): T | null => (v === null ? null : inner(v));
+/** A list of GitHub logins (lowercased, no "@", each once); a string of them, split by commas or spaces, too. */
+export const logins = (v: unknown): string[] => {
+  const list = typeof v == "string" ? v.split(/[\s,]+/) : v;
+  if (!Array.isArray(list) || list.some((l) => typeof l != "string")) throw new ConfigError("must be a list of GitHub logins");
+  const out = [...new Set((list as string[]).map((l) => l.trim().replace(/^@/, "").toLowerCase()).filter(Boolean))];
+  const bad = out.find((l) => !/^[a-z0-9][a-z0-9-]{0,38}$/.test(l));
+  if (bad) throw new ConfigError(`has "${bad}", which isn't a GitHub login`);
+  return out;
+};
 export const boolean = (v: unknown): boolean => {
   if (typeof v != "boolean") throw new ConfigError("must be true or false");
   return v;
@@ -70,13 +81,14 @@ export const SETTINGS = {
     kind: "document",
   }),
   factory: setting<"off" | "on">({
-    description: "The factory (experimental): tasks that Claude Code does in VMs, each a branch merged into staging, on /admin/source. off or on.",
+    description: "The factory (experimental): tasks that Claude Code does in VMs, each a branch merged into staging, on /admin/factory. off or on.",
     default: "off",
     parse: (v) => {
       const s = typeof v == "string" ? v.trim().toLowerCase() : v === true ? "on" : v === false ? "off" : v;
       if (s === "off" || s === "on") return s;
       throw new ConfigError('must be "off" or "on"');
     },
+    choices: ["off", "on"],
   }),
   factory_model: setting<string>({
     description: "The model the factory's Claude Code uses (claude --model): an alias such as opus or sonnet, or a full model name. Each job reads it when it starts, so no new image is needed.",
@@ -86,6 +98,7 @@ export const SETTINGS = {
       if (typeof s == "string" && /^[A-Za-z0-9][A-Za-z0-9._\[\]-]{0,99}$/.test(s)) return s;
       throw new ConfigError("must be a model alias (opus, sonnet) or a model name");
     },
+    choices: ["opus", "sonnet", "haiku"],
   }),
   factory_fast: setting<"off" | "on">({
     description: "Whether the factory's Claude Code runs in fast mode (its fastMode setting). on or off. Each job reads it when it starts.",
@@ -95,15 +108,17 @@ export const SETTINGS = {
       if (s === "off" || s === "on") return s;
       throw new ConfigError('must be "off" or "on"');
     },
+    choices: ["off", "on"],
   }),
   deploy_page: setting<"off" | "admins" | "users">({
-    description: "Who may use /deploy, to deploy Erga to their own Cloudflare account: off, admins or users (anyone signed in).",
+    description: "Who may use /deploy, to deploy Erga to their own Cloudflare account: off, admins (and users with the deploy role, on /admin/users) or users (anyone signed in).",
     default: "users",
     parse: (v) => {
       const s = typeof v == "string" ? v.trim().toLowerCase() : v;
       if (s === "off" || s === "admins" || s === "users") return s;
       throw new ConfigError('must be "off", "admins" or "users"');
     },
+    choices: ["off", "admins", "users"],
   }),
 };
 
@@ -122,7 +137,9 @@ export interface ConfigEntry {
   /** Fixed by the deploy: nobody can set or reset it here (show it read-only). */
   locked: boolean;
   /** What the value names, if it isn't plain (Setting.kind). */
-  kind?: "document";
+  kind?: "document" | "users";
+  /** The values the admin page offers (Setting.choices). */
+  choices?: string[];
   /** The value the deploy fixes it to (only when it's locked; then it's `value` too). */
   deployed?: unknown;
   /** When it was last set, and by whom (null if it never was, or it's locked). */
@@ -211,7 +228,7 @@ export class ServerConfig<S extends Settings = typeof SETTINGS> {
   async entry(key: string): Promise<ConfigEntry> {
     const s = this.setting(key);
     const row = (await this.table()).get(key);
-    const base = { key, description: s.description, default: s.default, ...(s.kind ? { kind: s.kind } : {}) };
+    const base = { key, description: s.description, default: s.default, ...(s.kind ? { kind: s.kind } : {}), ...(s.choices ? { choices: s.choices } : {}) };
     // The deploy's value wins; a row set before it was locked stays in the table, and counts again once it isn't.
     if (this.isLocked(key)) return { ...base, value: this.locked[key], source: "locked", locked: true, deployed: this.locked[key], updated: null, updatedBy: null };
     if (row) {

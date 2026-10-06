@@ -166,9 +166,9 @@ try {
   ok("each move of staging and main reaches the deploy pipeline (deployHook), which deploys it");
 
   // ---- The Source page ------------------------------------------------------------------------------
-  expect((await get("/admin/source?user=Bo")).status == 404, "the Source page is for admins only");
+  expect((await get("/admin/factory?user=Bo")).status == 404, "the Source page is for admins only");
   const moved = await get("/source");
-  expect(moved.status == 302 && moved.headers.get("location") == "/admin/source", "/source redirects to /admin/source", moved.status);
+  expect(moved.status == 302 && moved.headers.get("location") == "/admin/factory", "/source redirects to /admin/factory", moved.status);
   browser = await Browser.launch();
   const p: Page = await browser.page(await browser.context());
   const state = () => p.eval<{ rows: { subject: string; sha: string; staging: string; live: string[] }[]; heads: string[]; dots: number; ahead: string; merge: boolean; mergeShown: boolean; headGap: number; mirror: string; title: string; targets: string[] }>(`(() => {
@@ -190,26 +190,26 @@ try {
       targets: [...document.querySelectorAll(".target")].map((t) => t.textContent.replace(/\\s+/g, " ").trim()),
     };
   })()`);
-  await p.open(`${root}/admin/source`, { width: 1280, height: 900, scale: 2, clear: false });
+  await p.open(`${root}/admin/factory`, { width: 1280, height: 900, scale: 2, clear: false });
   // The deploy columns come from a request of their own (they say "not set up" until it answers).
   await until(async () => { const s = await state(); return s.rows.length > 0 && s.targets.length == 2 && s.targets.every((t) => !t.includes("not set up")); }, 10_000, "the list and the deploy columns draw", state);
   let s = await state();
-  expect(s.rows.map((x) => x.subject).join() == "Fifth,Fourth,Third,Second,First" && s.title.startsWith("Source") && !s.merge && !s.mergeShown && s.ahead == "" && s.headGap < 1, "one list: staging's commits, newest first; nothing to merge, so no Merge button, no text and no space for them", s);
+  expect(s.rows.map((x) => x.subject).join() == "Fifth,Fourth,Third,Second,First" && s.title.startsWith("Factory") && !s.merge && !s.mergeShown && s.ahead == "" && s.headGap < 1, "one list: staging's commits, newest first; nothing to merge, so no Merge button, no text and no space for them", s);
   await p.screenshot(join(SHOTS, "source-at-staging.png"));
   // The page is plain: no notes under the headings, no summary lines, no footer; Clone copies the clone command.
   const plain = await p.eval<{ notes: number; extra: number; clone: string }>(`({ notes: document.querySelectorAll(".pane-head .sub, .pane-note").length,
     extra: document.querySelectorAll("#grid .older, #moves, .site-foot").length, clone: document.getElementById("clone-copy")?.dataset.clone ?? "" })`);
   expect(!plain.notes && !plain.extra && plain.clone == "git clone " + origin + "/git/erga.git", "no notes, summary lines or footer; Clone copies git clone", plain);
-  await p.open(`${root}/admin/source#source`, { width: 390, height: 844, scale: 2, clear: false });
+  await p.open(`${root}/admin/factory#source`, { width: 390, height: 844, scale: 2, clear: false });
   await until(async () => (await state()).rows.length > 0, 10_000, "the list draws (phone, main at staging)");
   await p.eval(`document.querySelector(".tabs [data-tab=source]").click()`);
   s = await state();
   expect(!s.mergeShown && s.ahead == "" && s.headGap < 1 && await p.eval<boolean>(`document.getElementById("merge-row").parentElement.getBoundingClientRect().height > 0`), "on a phone too: no count, no button and no space for them", s);
   await p.screenshot(join(SHOTS, "source-at-staging-phone.png"));
-  await p.open(`${root}/admin/source`, { width: 1280, height: 900, scale: 2, clear: false });
+  await p.open(`${root}/admin/factory`, { width: 1280, height: 900, scale: 2, clear: false });
   await until(async () => (await state()).rows.length > 0, 10_000, "the list draws again");
   expect(s.heads[0] == "" && s.heads[1] == "Commit" && s.dots == 1, "one dot column, with no header", s);
-  expect(await p.eval(`document.querySelector(".crumbs .brand").textContent == "Erga" && document.querySelector(".crumbs .here").textContent == "Source" && !!document.querySelector("[data-erga-account]")`), "breadcrumbs (Erga › Source) and the avatar");
+  expect(await p.eval(`document.querySelector(".crumbs .brand").textContent == "Erga" && document.querySelector(".crumbs .here").textContent == "Factory" && !!document.querySelector("[data-erga-account]")`), "breadcrumbs (Erga › Admin › Factory) and the avatar");
   expect(s.targets.length == 2 && s.targets[0].startsWith("staging") && s.targets[0].includes("live") && s.targets[1].startsWith("production"), "the deploy columns' heads: each target's status", s.targets);
   expect(s.rows[0].live[0] == "live" && s.rows[0].live[1] == "live", "each target's column marks the commit it has live (the import moved both branches: both deployed)", s.rows.map((x) => x.live));
   // Someone pushes to staging: the page shows it without a reload, and staging deploys it, live.
@@ -251,7 +251,7 @@ try {
   const q: Page = await browser.page(await browser.context());
   await q.send("Network.enable");
   await q.send("Network.setBlockedURLs", { urls: ["*/api/events*"] });
-  await q.open(`${root}/admin/source`, { width: 1280, height: 900, scale: 2, clear: false });
+  await q.open(`${root}/admin/factory`, { width: 1280, height: 900, scale: 2, clear: false });
   const qStaging = () => q.eval<{ head: string; badge: string }>(`({ head: document.getElementById("target-staging").textContent.replace(/\\s+/g, " ").trim(),
     badge: document.querySelector('#grid .row[data-sha="${polled}"] .deps[data-target=staging] .dep .w')?.textContent ?? "" })`);
   await until(async () => /^(building|deploying)$/.test((await qStaging()).badge), 10_000, "the page, without events, opens on the deploy running", qStaging);
@@ -327,12 +327,12 @@ try {
   expect(statuses.length == 4 && statuses[3].text == "GitHub: up to date" && statuses[2].text.startsWith("Claude"), "four statuses in the row, the GitHub mirror last", statuses);
   expect(statuses.every((s) => s.border == "none" && s.bg == "rgba(0, 0, 0, 0)" && s.dot == "50%"), "each status is a dot and a label, with no outline", statuses);
   expect(!(await p.eval(`!!document.getElementById("mirror")`)), "no GitHub mirror box in the source pane");
-  await p.open(`${root}/admin/source`, { width: 1280, height: 900, scale: 2, clear: false, dark: true });
+  await p.open(`${root}/admin/factory`, { width: 1280, height: 900, scale: 2, clear: false, dark: true });
   await until(async () => (await state()).rows.length > 0, 10_000, "the list draws (dark)");
   const bg = await p.eval<string>(`getComputedStyle(document.body).backgroundColor`);
   expect(bg != "rgb(255, 255, 255)", "dark follows the system", bg);
   await p.screenshot(join(SHOTS, "source-dark.png"));
-  await p.open(`${root}/admin/source#source`, { width: 390, height: 844, scale: 2, clear: false });
+  await p.open(`${root}/admin/factory#source`, { width: 390, height: 844, scale: 2, clear: false });
   await until(async () => (await state()).rows.length > 0, 10_000, "the list draws (phone)");
   s = await state();
   await p.eval(`document.querySelector(".tabs [data-tab=source]").click()`);
@@ -346,7 +346,7 @@ try {
   ok(`the Source page: one list with circle dots, deploy columns and their live log, Merge to here, light, dark and a phone (screenshots in ${SHOTS})`);
 } finally {
   browser?.close();
-  if (keep) console.log(`kept: ${root}/admin/source (Ctrl-C to stop)`);
+  if (keep) console.log(`kept: ${root}/admin/factory (Ctrl-C to stop)`);
   else await host.dispose();
 }
 if (keep) await new Promise(() => {});
