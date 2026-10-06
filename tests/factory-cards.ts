@@ -14,6 +14,8 @@
 // - Each column is in id order, oldest first, so a card moves only when its status changes.
 // - The detail view shows the screenshots first, three in a row; a click enlarges one to the modal's width, a
 //   second click puts it back (factory-detail-shots.png, factory-detail-shot-big.png).
+// - A task that is working or needs agent, with no new log line in 5 minutes, is stalled: a badge on its card and in
+//   its detail view says how long it has been quiet (factory-stalled.png); a new log line clears it.
 // - The left and right arrow keys go to the previous and next screenshot, around at the ends: along the grid (the
 //   focus moves; Enter enlarges) and in the enlarged view (factory-detail-shot-keys.png). Escape shrinks it and
 //   leaves the view open. In the instructions the arrows move the cursor.
@@ -54,6 +56,8 @@ const tasks = [
 const info = { enabled: true, vms: { runner: "sim" }, claude: { signedIn: true, canStore: true } };
 // The events: none, until the typing test sends task #6's updates, one each time the page reconnects (every 150 ms).
 let updates = 0, sending = false;
+// Other events, sent one each time the page reconnects (the stalled test's new log line).
+const pending: string[] = [];
 const update = () => {
   const task = tasks[5];
   task.log.push({ at: new Date().toISOString(), message: "update " + ++updates });
@@ -77,7 +81,7 @@ try {
   p.onEvent("Fetch.requestPaused", ({ requestId, request }) => {
     const path = new URL(request.url).pathname.replace(/^\/api\/factory/, "");
     const reply = (body: string | Uint8Array, type: string) => p.send("Fetch.fulfillRequest", { requestId, responseCode: 200, responseHeaders: [{ name: "Content-Type", value: type }], body: Buffer.from(body).toString("base64") }).catch(() => {});
-    if (path == "/events") reply(sending ? update() : "retry: 150\n\n", "text/event-stream");
+    if (path == "/events") reply(sending ? update() : pending.length ? "retry: 150\n\ndata: " + pending.shift() + "\n\n" : "retry: 150\n\n", "text/event-stream");
     else if (path.startsWith("/shots/")) reply(pngs[path.slice(7)] ?? png, "image/png");
     else if (path == "/tasks") reply(JSON.stringify(tasks), "application/json");
     else if (path == "") reply(JSON.stringify(info), "application/json");
@@ -154,6 +158,34 @@ try {
   const order = await p.eval<number[][]>(`[...document.querySelectorAll("#board .col")].map((c) => [...c.querySelectorAll(".card")].map((e) => Number(e.dataset.open)))`);
   for (const ids of order) expect(ids.every((id, i) => !i || ids[i - 1] < id), "each column is in id order", order);
   ok("each column is in id order, oldest first");
+  // Stalled: #4 is working and its last log line is 12 minutes old; #3 (2 minutes), #10 (needs agent, 3 minutes)
+  // and #5 (failed, 45 minutes) are not.
+  const badges = () => p.eval<Record<number, { badge: string; tip: string; cls: boolean }>>(`Object.fromEntries([...document.querySelectorAll("#board .card")].map((c) => {
+    const b = c.querySelector(".stalled-badge");
+    return [c.dataset.open, { badge: b?.textContent ?? "", tip: b?.title ?? "", cls: c.classList.contains("stalled") }];
+  }))`);
+  let st = await badges();
+  expect(st[4].badge == "stalled 12 min" && st[4].cls && st[4].tip.startsWith("No new log line for 12 min, since "), "a working task quiet for 12 minutes is stalled", st[4]);
+  expect(Object.entries(st).every(([id, s]) => id == "4" || (!s.badge && !s.cls)), "no other task is stalled", st);
+  expect(!(await p.eval(`document.querySelector("[data-open='4']").textContent.includes("blocked")`)), "a stalled card doesn't say blocked");
+  ok("a working task with no new log line in 12 minutes: a stalled badge on its card");
+  await p.eval(`window.ergaBoard.open(4)`);
+  await Bun.sleep(200);
+  const det = await p.eval<{ badge: string; note: string }>(`({ badge: document.querySelector("#dlg h3 .stalled-badge")?.textContent ?? "", note: document.getElementById("stalled-note")?.textContent ?? "" })`);
+  expect(det.badge == "stalled 12 min" && det.note.startsWith("Stalled: No new log line for 12 min"), "the detail view says it is stalled, and for how long", det);
+  await p.screenshot(join(SHOTS, "factory-stalled.png"));
+  ok("the detail view: a stalled badge and a note that says how long the log has been quiet");
+  // A new log line arrives: the badge clears, on the card and in the detail view.
+  tasks[3].log.push({ at: new Date().toISOString(), message: "Claude runs Bash: bun test" });
+  tasks[3].updatedAt = new Date().toISOString();
+  pending.push(JSON.stringify({ type: "task", task: tasks[3] }));
+  for (const end = Date.now() + 5000; pending.length && Date.now() < end;) await Bun.sleep(20);
+  await Bun.sleep(200);
+  st = await badges();
+  expect(!st[4].badge && !st[4].cls && !(await p.eval(`document.querySelector("#dlg .stalled-badge, #stalled-note")`)), "a new log line clears it", st[4]);
+  await p.eval(`document.querySelector("#dlg [data-act=close]").click()`);
+  await Bun.sleep(300);
+  ok("a new log line clears the stalled badge");
   // The detail view: the screenshots first, three in a row, a click to enlarge one and a click to put it back.
   await p.eval(`document.querySelector("#board .card[data-open='6']").click()`);
   await Bun.sleep(300);
