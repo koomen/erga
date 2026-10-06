@@ -20,7 +20,7 @@
 //   /api/deploys, /api/events  branch deploys' status and events, and deploy logs (worker/deploys.ts)
 //   /auth/test?token=&as=      a test person (Ada, Bo...) signed in with one; they open only test documents
 //   /git/erga.git/...          Erga's own repository, over Git smart HTTP (worker/source.ts; admin tokens)
-//   /admin, /admin/users       the server's settings and its users (admin.ts)
+//   /admin, /admin/changes, /admin/users   the server's settings, their change log, and its users (admin.ts)
 //   /admin/keys, /api/admin/...  admins' SSH keys, and unlocking admin access with them (admin-access.ts)
 //   /admin/factory, /api/source/...  the Factory page (the factory's board, the dashboard of source and deploys, and the
 //                              factory's agent; /source and /admin/source redirect there) and its API

@@ -3,7 +3,8 @@
 // the Worker (cloudflare.config.ts → SERVER_CONFIG → worker/d1.ts) and win:
 // a dev server started with delete_docs_after_hours locked to 3 says so on /docs and
 // gives a new document 3 hours, and /admin shows it read-only ("Locked"),
-// refusing a change; without the lock an admin sets it there. A value the
+// refusing a change; without the lock an admin sets it there, and the change
+// log (/admin/changes) lists it, for admins only. A value the
 // settings won't take stops the server from starting, saying why.
 // Screenshots of /admin both ways land in tests/cdp.ts's SHOTS.
 //
@@ -90,6 +91,34 @@ try {
   await p.settle();
   await p.screenshot(join(SHOTS, "admin-set.png"));
   ok("switches, selects and no Reset for the factory and landing document settings");
+
+  // The change log, a page of its own (/admin/changes): newest first, when, who, and from what to what.
+  await p.eval(`fetch("/admin/settings", { method: "POST", body: new URLSearchParams({ key: "factory_fast", value: '"off"' }) }).then((r) => r.ok)`);
+  await p.eval(`fetch("/admin/settings", { method: "POST", body: new URLSearchParams({ key: "delete_docs_after_hours", reset: "1" }) }).then((r) => r.ok)`);
+  await p.eval("location.reload(), true");
+  await until(() => at("factory_fast", `!!li && !li.querySelector("[name=value]").checked`), 10_000, "/admin shows the new value");
+  expect(await p.eval<boolean>(`!document.querySelector("ol.changes, #changes")`), "/admin itself has no change log");
+  await p.eval(`location.href = "/admin/changes", true`);
+  await until(() => p.eval<boolean>(`location.pathname == "/admin/changes" && document.querySelector("h1")?.textContent == "Change log"`), 10_000, "/admin/changes opens, titled Change log");
+  const side = await p.eval<string[]>(`[...document.querySelectorAll(".admin-side a")].map((a) => a.textContent + " " + a.getAttribute("href") + (a.getAttribute("aria-current") ? " *" : ""))`);
+  expect(JSON.stringify(side.slice(0, 2)) == JSON.stringify(["Settings /admin", "Change log /admin/changes *"]), "the sidebar has Change log right after Settings, marked as this page", side);
+  await until(() => p.eval<boolean>(`document.querySelectorAll("ol.changes > li.change").length == 5`), 10_000, "the change log lists the 5 changes");
+  const log = await p.eval<string[]>(`[...document.querySelectorAll("ol.changes > li.change")].map((li) => li.querySelector(".by").textContent + ": " + li.querySelector(".what").textContent.replace(/\\s+/g, " ").trim())`);
+  // The changes made above, newest first, each once (landing_document was none already: no change, no version).
+  expect(JSON.stringify(log) == JSON.stringify(["tester: delete_docs_after_hours 36 → 24 reset", "tester: factory_fast “on” → “off”", "tester: factory_model “opus” → “sonnet”", "tester: factory “off” → “on”", "tester: delete_docs_after_hours 24 → 36"]), "newest first, each once, with who and from what to what", log);
+  await until(() => p.eval<boolean>(`!!document.querySelector("ol.changes time[title]")`), 5_000, "the times are shown");
+  const times = await p.eval<string[]>(`[...document.querySelectorAll("ol.changes time[datetime]")].map((t) => t.textContent + "|" + t.title)`);
+  expect(times.every((t) => t.startsWith("just now|") && t.length > 10), "each says when", times);
+  await p.settle();
+  await p.screenshot(join(SHOTS, "admin-changes.png"));
+  // Only admins: someone signed in who isn't one gets nothing.
+  const other = await fetch(`${open.root}/auth/github?as=plain${Date.now().toString(36)}&next=/docs`, { redirect: "manual" });
+  const theirs = other.headers.getSetCookie().map((c) => c.split(";")[0]).find((c) => c.startsWith("erga_session="));
+  const notAdmin = await fetch(`${open.root}/admin/changes`, { redirect: "manual", headers: { Cookie: theirs! } });
+  expect(notAdmin.status == 404 && !(await notAdmin.text()).includes("factory_model"), "someone who isn't an admin can't see it", notAdmin.status);
+  const signedOut = await fetch(`${open.root}/admin/changes`, { redirect: "manual", headers: { Cookie: "erga_signed_out=1" } });
+  expect(signedOut.status == 302 && signedOut.headers.get("location")?.includes("next=%2Fadmin%2Fchanges"), "someone signed out is sent to sign in", signedOut.status);
+  ok("/admin/changes lists the settings' changes, newest first, with when, who and what; only for admins");
 } finally {
   await open.dispose();
   browser.close();

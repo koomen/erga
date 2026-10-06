@@ -229,6 +229,54 @@ test("server config: defaults, admins set and reset, the deploy locks", async ()
   expect(() => fresh({ locked: { nope: 1 } })).toThrow(ConfigError);
 });
 
+test("server config: each change is a version, with who, when, and from what to what", async () => {
+  const dir = fresh({ admins: ["root", "ada"] });
+  const root = { login: "Root", unlocked: U }, ada = { login: "ada", unlocked: U }, user = { login: "bo" };
+  const { config } = dir;
+  expect(await config.history(root)).toEqual({ versions: [], total: 0 });
+  await expect(config.history(user)).rejects.toBeInstanceOf(NotAllowed);
+
+  await config.set(root, "delete_docs_after_hours", 48);
+  // The same value again changes nothing, so it makes no version; nor does a refused one.
+  await config.set(root, "delete_docs_after_hours", 48);
+  await expect(config.set(root, "delete_docs_after_hours", 0)).rejects.toBeInstanceOf(ConfigError);
+  await config.set(ada, "delete_docs_after_hours", "never");
+  await config.set(ada, "factory", "on");
+  await config.reset(root, "delete_docs_after_hours");
+  await config.reset(root, "delete_docs_after_hours"); // already the default: no version
+  // The server's own write (a claim) is recorded too, and only the one that wins.
+  expect(await config.claim("factory_model", null, "sonnet", "Erga")).toBe(true);
+  expect(await config.claim("factory_model", null, "haiku", "erga")).toBe(false);
+
+  const { versions, total } = await config.history(root);
+  expect(total).toBe(5);
+  expect(versions.map((v) => [v.n, v.by, v.changes])).toEqual([
+    [5, "erga", [{ key: "factory_model", from: "opus", to: "sonnet" }]],
+    [4, "root", [{ key: "delete_docs_after_hours", from: null, to: 24, reset: true }]],
+    [3, "ada", [{ key: "factory", from: "off", to: "on" }]],
+    [2, "ada", [{ key: "delete_docs_after_hours", from: 48, to: null }]],
+    [1, "root", [{ key: "delete_docs_after_hours", from: 24, to: 48 }]],
+  ]);
+  for (const v of versions) expect(v.at).toBeGreaterThan(0);
+  // Newest first, a page at a time.
+  expect((await config.history(root, { limit: 2 })).versions.map((v) => v.n)).toEqual([5, 4]);
+  expect((await config.history(root, { before: 4, limit: 2 })).versions.map((v) => v.n)).toEqual([3, 2]);
+  // Two saves at once (a switch saved twice): one version. Two different ones: each says truly what it changed.
+  await Promise.all([config.set(root, "deploy_page", "admins"), config.set(root, "deploy_page", "admins")]);
+  await Promise.all([config.set(root, "factory_fast", "off"), config.set(ada, "factory_fast", "on"), config.reset(root, "factory_fast")]);
+  const raced = (await config.history(root)).versions.filter((v) => v.n > 5).reverse().map((v) => v.changes[0]);
+  expect(raced[0]).toEqual({ key: "deploy_page", from: "users", to: "admins" });
+  expect(raced.filter((c) => c.key == "deploy_page")).toHaveLength(1);
+  const fast = raced.filter((c) => c.key == "factory_fast");
+  for (let i = 1; i < fast.length; i++) expect(fast[i].from).toEqual(fast[i - 1].to);
+  expect(fast[0].from).toBe("on");
+  expect(fast.at(-1)?.to ?? "on").toBe(await config.get("factory_fast"));
+  // A locked key can't change, so it makes no version.
+  const locked = fresh({ admins: ["root"], locked: { factory: "on" } });
+  await expect(locked.config.set(root, "factory", "off")).rejects.toBeInstanceOf(NotAllowed);
+  expect((await locked.config.history(root)).total).toBe(0);
+});
+
 test("server config: delete_docs_after_hours can be never (null)", async () => {
   const admin = { login: "root", unlocked: U };
   const { config } = fresh({ admins: ["root"] });
