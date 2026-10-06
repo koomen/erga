@@ -84,6 +84,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, extname, join, resolve } from "node:path";
 import * as chrome from "./chrome.ts";
 import { type Blocked, dependents as dependentsIn, depRules, depsNote, ids } from "./deps.ts";
+import { foreign } from "./foreign.ts";
 
 const HERE = import.meta.dir;
 const PORT = Number(process.env.TASK_QUEUE_PORT ?? 4700);
@@ -1044,6 +1045,8 @@ const TYPES: Record<string, string> = { ".png": "image/png", ".jpg": "image/jpeg
 
 async function handle(req: Request): Promise<Response> {
   const url = new URL(req.url);
+  const refused = foreign(req, PORT);
+  if (refused) return fail(403, refused);
   const path = url.pathname.replace(/\/$/, "") || "/";
   const m = path.match(/^\/api\/tasks\/(\d+)(?:\/(\w+)(?:\/([^/]+))?)?$/);
   const task = m ? find(Number(m[1])) : undefined;
@@ -1051,7 +1054,8 @@ async function handle(req: Request): Promise<Response> {
   const sub = m?.[3] && decodeURIComponent(m[3]);
   if (sub && action != "screenshots") return fail(404, `no route ${req.method} ${path} (GET /api lists them)`);
   if (m && !task) return fail(404, `no task ${m[1]}`);
-  const body = async () => (req.headers.get("content-type")?.includes("json") ? await req.json() : {}) as Record<string, any>;
+  // JSON only when it says so exactly (a page's "text/plain;x=json" would skip the browser's preflight).
+  const body = async () => (/^application\/json\s*(;|$)/i.test(req.headers.get("content-type") ?? "") ? await req.json() : {}) as Record<string, any>;
 
   if (path == "/" && req.method == "GET") return new Response(Bun.file(join(HERE, "index.html")), { headers: { "content-type": "text/html; charset=utf-8" } });
   if (path == "/api" && req.method == "GET") return json(API);

@@ -94,7 +94,9 @@ export class Tokens {
   async verify(token: string): Promise<AgentToken | null> {
     if (!token.startsWith(TOKEN_PREFIX) || token.length > 200) return null;
     const [row] = await this.sql.all<Row>(`SELECT ${COLUMNS} FROM agent_tokens WHERE hash = ?1`, await sha256(token));
-    if (!row) return null;
+    // The row must be this server's: a copy of another server's database (staging takes production's) holds
+    // its tokens' hashes, but their tokens were made with that server's secret, not ours.
+    if (!row || await this.tokenFor(row.id) != token) return null;
     const now = Date.now();
     if (row.last_used == null || now - Number(row.last_used) > TOUCH_MS) {
       await this.sql.run("UPDATE agent_tokens SET last_used = ?2 WHERE id = ?1", row.id, now).catch(() => {});
