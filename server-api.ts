@@ -10,7 +10,7 @@
 //   POST /api/ext/tools/<name>     runs one, the body its arguments: {"ok": true, "content": [...]}
 //   POST /api/publish              a folder of files as a document (multipart or JSON), or into one
 //   GET  /api/docs/<id>/versions   a document's versions and what's published; POST .../publish sets it,
-//                                  POST .../versions/<versionId>/restore brings one back (versions.ts)
+//                                  POST .../versions/<versionId>/restore brings one back, or one file of it with {"path": ...} (versions.ts)
 //   POST /api/auth/request         an agent asks for a token: a link for its person to approve
 //   POST /api/auth/poll            ... and collects the token once they have
 //   POST /mcp                      the same tools as a stateless MCP server (Streamable HTTP, JSON answers)
@@ -420,8 +420,11 @@ async function versionsApi(request: Request, platform: Platform, session: Sessio
   if (what == "restore") {
     // An agent token's restore is its person's agent's; a person's is theirs.
     const by = session.agent ? `${session.login.toLowerCase()}’s agent` : session.login.toLowerCase();
-    const r = await platform.docs.restore(doc, versionRef ?? "", by);
-    return r.ok ? json({ current: r.current }) : fail(r.error, r.status);
+    // Optionally one file only: {"path": "blog/post.html"}.
+    const body = (await request.json().catch(() => null)) as { path?: unknown } | null;
+    const path = typeof body?.path == "string" && body.path ? body.path : null;
+    const r = await platform.docs.restore(doc, versionRef ?? "", by, path);
+    return r.ok ? json({ current: r.current, from: r.from, files: r.files }) : fail(r.error, r.status);
   }
   const body = (await request.json().catch(() => null)) as PublishRequest | null;
   if (!body || typeof body != "object") return fail("Send JSON: {\"mode\": \"latest\"} or {\"mode\": \"manual\", \"versionId\": \"v3\"}.", 400);
@@ -827,15 +830,17 @@ because someone changed the text meanwhile.
 Each document keeps versions: snapshots of all its files, cut after each burst
 of edits and each agent turn, with a five-word description. What its viewers
 see is either "latest" (the document as it is) or one version ("manual"). The
-document tools list_versions, read_version, restore_version and publish_version handle them; so
+document tools list_versions, read_version, diff_versions, restore_version and publish_version handle them; so
 does plain HTTP:
 
     curl -s ${origin}/api/docs/<id>/versions -H "Authorization: Bearer $ERGA_TOKEN"
     curl -s -X POST ${origin}/api/docs/<id>/publish -H "Authorization: Bearer $ERGA_TOKEN" -H "Content-Type: application/json" -d '{"mode": "manual", "versionId": "v3"}'
     curl -s -X POST ${origin}/api/docs/<id>/versions/v3/restore -H "Authorization: Bearer $ERGA_TOKEN"
+    curl -s -X POST ${origin}/api/docs/<id>/versions/v3/restore -H "Authorization: Bearer $ERGA_TOKEN" -H "Content-Type: application/json" -d '{"path": "blog/post.html"}'
 
 Only someone who may edit a document may publish it or restore a version (a
-restore writes the old version's files over the document, as a new version).
+restore writes the old version's files over the document, as a new version;
+with a path, only that file).
 Do either only when your person asks.
 
 ## The server's tools

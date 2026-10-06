@@ -60,8 +60,8 @@ export interface HostOptions {
   readonly naming?: (person: { id: string; name: string }) => Naming;
   /** The tools beyond the document a person's agent may use now (server-tools.ts: sharing; settings and users for an admin). */
   readonly serverTools?: (person: { id: string; name: string }) => Promise<AgentTool[]>;
-  /** An agent's turn ended (the embedded agent's, or an external agent's run of calls): a version is cut. */
-  readonly turnEnded?: () => void;
+  /** An agent's turn ended (the embedded agent's, or an external agent's run of calls): a version is cut; answers the version the document is at then. */
+  readonly turnEnded?: () => Promise<string | null> | void;
   /** The document's versions and publishing (versions.ts), for the agents' tools. */
   readonly versions?: VersionsAccess;
   /** A new page's text (templates/doc), by its path; a plain one if not given. */

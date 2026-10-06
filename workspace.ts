@@ -29,13 +29,15 @@ export interface Workspace {
   /** The folders made as such (empty ones too), sorted; folders holding files are in `paths` too. */
   folders(): string[];
   isText(path: string): boolean;
+  /** When the agent last saw the file (read or wrote it), as a timestamp; null if it hasn't. */
+  seenAt(path: string): number | null;
 }
 
 /** Where an edit landed: the first changed position, for the agent's cursor. */
 export interface EditResult { path: string; at: number; summary: string }
 
 export class WorkspaceError extends Schema.TaggedError<WorkspaceError>()("WorkspaceError", {
-  reason: Schema.Literals(["outside", "noPath", "binary", "missing", "noEdits", "emptyEdit", "notFound", "ambiguous", "overlap", "readOnly", "single"]),
+  reason: Schema.Literals(["outside", "noPath", "binary", "missing", "noEdits", "emptyEdit", "notFound", "changed", "ambiguous", "overlap", "readOnly", "single"]),
   message: Schema.String,
 }) {}
 
@@ -56,6 +58,7 @@ export function cleanPath(path: string): Effect.Effect<string, WorkspaceError> {
 export class YjsWorkspace implements Workspace {
   /** Each file as the agent last saw it (read or wrote): the base `write` merges from. */
   private seen = new Map<string, string>();
+  private seenWhen = new Map<string, number>();
 
   constructor(
     private doc: Y.Doc,
@@ -77,6 +80,14 @@ export class YjsWorkspace implements Workspace {
 
   isText(path: string): boolean { return files(this.doc).has(path); }
 
+  seenAt(path: string): number | null { return this.seenWhen.get(path) ?? null; }
+
+  /** What the agent now believes the file says, and since when. */
+  private see(path: string, text: string) {
+    this.seen.set(path, text);
+    this.seenWhen.set(path, Date.now());
+  }
+
   paths(): string[] {
     return [...files(this.doc).keys(), ...assets(this.doc).keys()].sort();
   }
@@ -90,7 +101,7 @@ export class YjsWorkspace implements Workspace {
     return Effect.gen(function* () {
       path = yield* cleanPath(path);
       const text = (yield* self.text(path)).toString();
-      self.seen.set(path, text);
+      self.see(path, text);
       return text;
     });
   }
@@ -109,7 +120,12 @@ export class YjsWorkspace implements Workspace {
         const label = edits.length > 1 ? `edits[${i}]` : "oldText";
         if (!e.oldText) return yield* fail("emptyEdit", `${label} is empty`);
         const at = current.indexOf(e.oldText);
-        if (at < 0) return yield* fail("notFound", `${label} isn't in the current text of ${path}. It may have just changed (someone could be editing it); read the file again and retry.`);
+        if (at < 0) {
+          // In the text the agent last saw, but not in the text now: the file changed under it (a restore, someone typing).
+          const seen = self.seen.get(path);
+          if (seen != null && seen != current && seen.includes(e.oldText)) return yield* fail("changed", `${label} isn't in the current text of ${path}: the file changed since the text your edit was based on (what you last read or wrote of it). Read ${path} again and retry.`);
+          return yield* fail("notFound", `${label} isn't in the current text of ${path}${seen == current ? ", which is the same as when you last read it: check oldText against it" : ""}. Read the file again and retry.`);
+        }
         if (current.indexOf(e.oldText, at + 1) >= 0) return yield* fail("ambiguous", `${label} matches more than once in ${path}; include more surrounding text to make it unique.`);
         spans.push({ from: at, to: at + e.oldText.length, insert: e.newText });
       }
@@ -140,7 +156,7 @@ export class YjsWorkspace implements Workspace {
     // What the agent now believes the file says: what it saw, with its edits.
     let seen: string | null = this.seen.get(path) ?? null;
     for (const e of edits) seen = seen != null && seen.split(e.oldText).length == 2 ? seen.replace(e.oldText, () => e.newText) : null;
-    this.seen.set(path, seen ?? t.toString());
+    this.see(path, seen ?? t.toString());
     const last = minimal[minimal.length - 1];
     const shift = minimal.slice(0, -1).reduce((n, c) => n + c.insert.length - (c.to - c.from), 0);
     return { path, at: last.from + shift + last.insert.length, summary: `Edited ${path} (${minimal.length} change${minimal.length > 1 ? "s" : ""}).` };
@@ -161,7 +177,7 @@ export class YjsWorkspace implements Workspace {
   private merge(path: string, content: string): EditResult {
     const t = files(this.doc).get(path);
     if (!t) {
-      this.seen.set(path, content);
+      this.see(path, content);
       this.doc.transact(() => {
         const nt = new Y.Text();
         nt.insert(0, content);
@@ -181,7 +197,7 @@ export class YjsWorkspace implements Workspace {
       const { inserted, deleted } = applyChanges(t, changes);
       if (deleted && !inserted) stamp(this.doc, this.me);
     }, this.origin);
-    this.seen.set(path, t.toString());
+    this.see(path, t.toString());
     return { path, at, summary: changes.empty ? `No change to ${path}.` : `Wrote ${path}.` };
   }
 
