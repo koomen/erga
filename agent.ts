@@ -16,8 +16,10 @@
 //
 // Configuration comes from the Worker's bindings (in local development,
 // .dev.vars; see .dev.vars.example). The key lives only here, in the host:
-//   ANTHROPIC_API_KEY          required (locally a real one in .dev.vars, else
-//                              the dev server's environment: dev/agent-key.ts)
+//   ANTHROPIC_API_KEY          required: the key an admin stored on /admin
+//                              (credentials.ts, through worker/d1.ts's withKeys),
+//                              else the Worker secret (locally a real one in
+//                              .dev.vars, else the dev server's environment: dev/agent-key.ts)
 //   ERGA_AGENT_MODEL    the model a session starts on: opus-fast
 //                              (default, Claude Opus 5.5 in fast mode) or sonnet
 //                              (Claude Sonnet 5.5); each person can switch in the panel
@@ -43,7 +45,7 @@ import { agentName, colorFor, files, hasSeen, introduce, stamp, stateVector, typ
 import { pageAddress, type TreeEntry, type TreeOp } from "./tree";
 import { joinLocal, type Room } from "./room";
 import type { Naming } from "./directory";
-import type { PublishRequest, PublishResult, Published, Version, VersionsState } from "./versions";
+import { unifiedDiff, type PublishRequest, type PublishResult, type Published, type Version, type VersionsState } from "./versions";
 import { SERVER_TOOL_ACTIVITY } from "./server-tools";
 import { YjsWorkspace, WorkspaceError, cleanPath, globToRegExp, type Workspace } from "./workspace";
 import documentPrompt from "./DOCUMENT_PROMPT.md" with { type: "text" };
@@ -85,7 +87,7 @@ export const agentConfigFrom = (provider: ConfigProvider.ConfigProvider): Effect
   }
   const { apiKey, model, effort } = read.success;
   if (model == "script") return { apiKey: Redacted.make(""), model, effort: "medium" } satisfies AgentConfig;
-  if (Option.isNone(apiKey) || !Redacted.value(apiKey.value)) return { missing: `ANTHROPIC_API_KEY is not set (locally, export it before bun start, or put it in .dev.vars)` };
+  if (Option.isNone(apiKey) || !Redacted.value(apiKey.value)) return { missing: `ANTHROPIC_API_KEY is not set (an admin sets the Anthropic API key on /admin; locally, export it before bun start, or put it in .dev.vars)` };
   return { apiKey: apiKey.value, model, effort } satisfies AgentConfig;
 });
 
@@ -236,8 +238,10 @@ ${PAGES_PROMPT}`}
   usually renames the document by itself. Use set_title when asked to rename it or
   change its address.
 - The document keeps versions (a snapshot of every file after each burst of edits, and
-  after each of your turns). list_versions and read_version show them; to bring an old
-  version back, use restore_version. publish_version chooses what viewers
+  after each of your turns). list_versions and read_version show them; diff_versions
+  shows what changed between two of them, or since your last turn (by default), as a
+  diff, so you needn't read whole files to compare. To bring an old version back, use
+  restore_version. publish_version chooses what viewers
   see: "latest" (the document as it is, the default) or one version. Only publish when
   asked.${beyondPrompt(owner, beyond)}
 - Keep replies short: say what you changed, not how. ${owner} can see the result.
@@ -277,6 +281,8 @@ function makeTools(ws: Workspace, opts: {
   edited: (path: string, at: number) => void;
   naming?: Naming;
   versions?: VersionsAccess;
+  /** The version the document was at when this agent's last turn ended (diff_versions' "last_turn"); null before its first turn ends. */
+  lastTurn?: () => Promise<string | null>;
   canEdit?: () => boolean;
   /** Who the agent's restores are by (its person's agent). */
   by?: string;
@@ -418,7 +424,7 @@ function makeTools(ws: Workspace, opts: {
     ...(opts.pages ? pageTools(opts.pages, opts.open) : []),
     ...(opts.tree ? treeTools(opts.tree, opts.open) : []),
     ...(opts.naming ? namingTools(opts.naming) : []),
-    ...(opts.versions ? versionTools(opts.versions, opts.canEdit ?? (() => true), opts.by ?? "agent") : []),
+    ...(opts.versions ? versionTools(opts.versions, opts.canEdit ?? (() => true), opts.by ?? "agent", opts.lastTurn ?? (async () => null)) : []),
   ] as AgentTool[];
 }
 
@@ -427,13 +433,17 @@ export interface VersionsAccess {
   state(opts: { before?: string | number | null; limit?: number }): Promise<VersionsState>;
   version(ref: string | number): Promise<(Version & { files: string[]; index: string }) | null>;
   file(ref: string | number, path: string): Promise<Uint8Array | null>;
+  /** Every file of a version (null if there's no such version). */
+  files(ref: string | number): Promise<Map<string, Uint8Array> | null>;
+  /** Every file as it is now, up to the keystroke. */
+  current(): Promise<Map<string, Uint8Array>>;
   publish(req: PublishRequest): Promise<PublishResult>;
   /** Brings a version back as a new current version, by `by` (a login). */
   restore(ref: string | number, by: string): Promise<{ ok: true; current: Version } | { ok: false; status: number; error: string }>;
 }
 
-/** list_versions, read_version and publish_version: what the person can do with versions and publishing, their agent can. */
-function versionTools(versions: VersionsAccess, canEdit: () => boolean, by: string): AgentTool[] {
+/** list_versions, read_version, diff_versions, restore_version and publish_version: what the person can do with versions and publishing, their agent can (and diff them). */
+function versionTools(versions: VersionsAccess, canEdit: () => boolean, by: string, lastTurn: () => Promise<string | null>): AgentTool[] {
   const text = (s: string) => ({ content: [{ type: "text" as const, text: s }], details: {} });
   const line = (v: Version) => `${v.id}  ${v.at}  ${v.authors.join(", ") || "(unknown)"}  ${v.description ?? "(description coming)"}`;
   const published = (p: Published) => p.mode == "latest" ? `Published: latest (viewers see the document as it is, up to the keystroke; that's ${p.version.id} plus any edits since)` : `Published: manual, ${p.version.id} (viewers see that version until someone publishes another)`;
@@ -479,6 +489,39 @@ function versionTools(versions: VersionsAccess, canEdit: () => boolean, by: stri
         while (out.length > MAX_BYTES && end > start + 1) { end = start + Math.max(1, Math.floor((end - start) / 2)); out = lines.slice(start, end).join("\n"); }
         if (end < lines.length) out += `\n\n[Showing lines ${start + 1}-${end} of ${lines.length}. Use offset=${end + 1} to continue.]`;
         return text(out);
+      },
+    },
+    {
+      name: "diff_versions",
+      label: "Diff versions",
+      description: `See what changed in the document between two versions, as a unified diff for each file (files added, deleted and changed; binary files only say they changed). from: a version's id ("v3"), or "last_turn", the document as it was when your last turn ended (the default), to see what others changed since (and what you changed in this turn). to: a version's id, or "current", the document as it is now, up to the keystroke (the default). path: only that file, or the files in that folder. Cut at about ${MAX_BYTES / 1024}KB: pass path for more. Use it instead of reading whole files to compare them.`,
+      parameters: Type.Object({
+        from: Type.Optional(Type.String({ description: "A version's id (\"v3\") or number, \"last_turn\" (the default) or \"current\"" })),
+        to: Type.Optional(Type.String({ description: "A version's id (\"v3\") or number, \"last_turn\" or \"current\" (the default)" })),
+        path: Type.Optional(Type.String({ description: "Only this file, or the files in this folder, relative to the document's folder" })),
+        context: Type.Optional(Type.Number({ description: "Lines of context around each change (default 3)" })),
+      }),
+      execute: async (_id, p: { from?: string; to?: string; path?: string; context?: number }) => {
+        /** A side of the diff: its name, as the answer says it, and its files. */
+        const side = async (ref: string) => {
+          const r = ref.trim().toLowerCase().replace(/[\s-]+/g, "_");
+          if (r == "current" || r == "now") return { name: "current (the document as it is now)", files: await versions.current() };
+          let id: string = ref;
+          if (r == "last_turn") {
+            const last = await lastTurn();
+            if (!last) throw new Error(`You have no last turn in this document yet (or it's been reopened since), so there's nothing to diff from: pass from with a version's id. ${(await versions.state({ limit: 1 })).current.id} is the latest version.`);
+            id = last;
+          }
+          const files = await versions.files(id);
+          if (!files) throw new Error(`There's no version "${ref}": list_versions shows them.`);
+          const v = (await versions.version(id))!;
+          return { name: r == "last_turn" ? `${v.id} (where your last turn ended)` : v.id, files };
+        };
+        const from = await side(p.from ?? "last_turn"), to = await side(p.to ?? "current");
+        const d = unifiedDiff(from.files, to.files, { path: p.path, context: p.context == null ? undefined : Math.max(0, Math.min(50, Math.floor(p.context))) });
+        const what = p.path ? ` in ${p.path.replace(/^\.?\//, "")}` : "";
+        if (!d.files.length) return text(`No changes${what} from ${from.name} to ${to.name}.`);
+        return text(`From ${from.name} to ${to.name}${what}: ${d.files.length} file(s) differ.\n\n${d.diff}`);
       },
     },
     {
@@ -638,7 +681,7 @@ function namingTools(naming: Naming): AgentTool[] {
 export function documentToolSpecs(): ToolSpec[] {
   const none = () => { throw new Error("no document"); };
   const naming = { get: none, set: none } as unknown as Naming;
-  const versions = { state: none, version: none, file: none, publish: none, restore: none } as unknown as VersionsAccess;
+  const versions = { state: none, version: none, file: none, files: none, current: none, publish: none, restore: none } as unknown as VersionsAccess;
   return makeTools(null as unknown as Workspace, { view: none, readAsset: none, edited: none, naming, tree: none, versions, pages: none, open: none })
     .map((t) => ({ name: t.name, description: t.description, parameters: JSON.parse(JSON.stringify(t.parameters)) }));
 }
@@ -704,13 +747,13 @@ export interface SessionOptions {
    * before each new prompt, so becoming (or stopping being) an admin shows.
    */
   serverTools?: () => Promise<AgentTool[]>;
-  /** The agent's turn ended (or an external agent's run of calls did): the document cuts a version. */
-  turnEnded?: () => void;
+  /** The agent's turn ended (or an external agent's run of calls did): the document cuts a version, and answers the version it's at then (diff_versions' "last_turn"). */
+  turnEnded?: () => Promise<string | null> | void;
   /** The document's versions and publishing; without it those tools are left out. */
   versions?: VersionsAccess;
 }
 
-const TOOL_ACTIVITY: Record<string, string> = { ...SERVER_TOOL_ACTIVITY, new_page: "making a page", list_pages: "looking at the pages", open_page: "opening a page", mkdir: "making a folder", mv: "moving", rm: "deleting", read: "reading", edit: "editing", write: "writing", ls: "looking around", find: "looking for files", grep: "searching", view_page: "looking at the page", get_title: "reading the title", set_title: "renaming the document", list_versions: "looking at versions", read_version: "reading an old version", restore_version: "restoring a version", publish_version: "publishing" };
+const TOOL_ACTIVITY: Record<string, string> = { ...SERVER_TOOL_ACTIVITY, new_page: "making a page", list_pages: "looking at the pages", open_page: "opening a page", mkdir: "making a folder", mv: "moving", rm: "deleting", read: "reading", edit: "editing", write: "writing", ls: "looking around", find: "looking for files", grep: "searching", view_page: "looking at the page", get_title: "reading the title", set_title: "renaming the document", list_versions: "looking at versions", read_version: "reading an old version", diff_versions: "comparing versions", restore_version: "restoring a version", publish_version: "publishing" };
 
 export async function startSession(opts: SessionOptions): Promise<AgentSession> {
   const { cfg, owner } = opts;
@@ -748,10 +791,15 @@ export async function startSession(opts: SessionOptions): Promise<AgentSession> 
   // it's thinking between calls and nothing says when it's done.
   const busy = { agent: false, ext: 0, extTimer: null as ReturnType<typeof setTimeout> | null };
   let wasBusy = false;
+  /** The version the document was at when this agent's last turn ended. */
+  let lastTurn: Promise<string | null> = Promise.resolve(null);
   const syncBusy = (activity?: string | null) => {
     const on = busy.agent || busy.ext > 0 || busy.extTimer != null;
     // A turn just ended: the document cuts a version of it.
-    if (wasBusy && !on) opts.turnEnded?.();
+    if (wasBusy && !on) {
+      const at = opts.turnEnded?.();
+      if (at) { const before = lastTurn; lastTurn = at.catch(() => before); }
+    }
     wasBusy = on;
     presence({ busy: on, activity: on ? activity ?? (awareness.getLocalState()?.activity as string | null) ?? "working" : null });
   };
@@ -767,6 +815,7 @@ export async function startSession(opts: SessionOptions): Promise<AgentSession> 
     readAsset: opts.readAsset,
     naming: opts.naming,
     versions: opts.versions,
+    lastTurn: () => lastTurn,
     canEdit: opts.canEdit,
     by: agentName(owner.id),
     pages: opts.pages,
@@ -980,7 +1029,9 @@ error says what to fix), 401 (bad token) or 404 (no such tool).
   changes.
 - The document keeps versions (a snapshot of every file after each burst of
   edits, and after each run of your calls). list_versions and read_version show
-  them, and restore_version brings one back as a new version; publish_version
+  them; diff_versions shows what changed between two of them, or since your last
+  run of calls (by default), as a unified diff for each file; restore_version
+  brings one back as a new version; publish_version
   chooses what viewers see: "latest" (the document as it is, the default) or one
   version. Only restore or publish when asked.
 - Follow the rules below whenever you create or change a page, so people can keep

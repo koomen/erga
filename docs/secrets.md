@@ -52,16 +52,18 @@ database, the object or the Worker's settings through Cloudflare.
 ### `ANTHROPIC_API_KEY`
 - **For**: the editor's embedded agent (`agent.ts`), in each document's Durable Object.
 - **Without it**: the agent is off. Everything else works.
-- **Set**: a Worker secret today. Locally: `.dev.vars`, or the shell's environment (`dev/agent-key.ts`).
-- **At rest**: only as a Worker secret.
-- **Who reads it**: the document's Durable Object. It is read as a redacted value and never reaches a page, a log or the agent's tools.
-- **Admin panel?** **Admin panel** (an upcoming task moves it there). See "Keys entered on the admin pages" below.
+- **Set**: an admin enters it on `/admin` ("API keys", the Anthropic API key), since factory task #38. The Worker secret is the fallback while none is stored there. Locally the fallback is `.dev.vars`, or the shell's environment (`dev/agent-key.ts`).
+- **At rest**: **encrypted** when an admin enters it: AES-GCM, a fresh IV each time, the key's name as additional data, key = SHA-256 of `erga-credentials:` + `FACTORY_KEY`, in D1's `credentials` table (`credentials.ts`). The Worker secret is only a Worker secret.
+- **Who reads it**: the document's Durable Object, the `Factory` Durable Object (its agent), and version descriptions (`versions.ts`), through `withKeys` (`worker/d1.ts`). It is read as a redacted value and never reaches a page, a log or the agent's tools. `/admin` shows only whether it is set, its last four characters, and who set it when.
+- **Admin panel?** **Admin panel** (it is there). See "Keys entered on the admin pages" below.
 
-### `OPENAI_API_KEY` (upcoming)
-- **For**: models from OpenAI, beside Anthropic's, once the upcoming task adds them.
+### `OPENAI_API_KEY`
+- **For**: models from OpenAI, beside Anthropic's. No code calls OpenAI yet. Code that does reads the key through `withKeys` (`worker/d1.ts`), as for `ANTHROPIC_API_KEY`.
 - **Without it**: those models are not offered.
-- **Set**: not yet. The upcoming task adds it to the admin pages.
-- **Admin panel?** **Admin panel**, as for `ANTHROPIC_API_KEY`.
+- **Set**: an admin enters it on `/admin` ("API keys", the OpenAI API key). The fallback is a Worker secret of the same name, if there is one.
+- **At rest**: **encrypted**, as `ANTHROPIC_API_KEY`, in the same table.
+- **Who reads it**: the server's own calls to OpenAI only. `/admin` shows only whether it is set, its last four characters, and who set it when.
+- **Admin panel?** **Admin panel** (it is there).
 
 ### `CLOUDFLARE_DEPLOY_TOKEN`
 - **For**: a server deploying itself when its branch moves (branch deploys, `deploy/branches.ts`, `worker/pipeline.ts`). With `CLOUDFLARE_ACCOUNT_ID` (not a secret).
@@ -147,7 +149,7 @@ database, the object or the Worker's settings through Cloudflare.
 
 - `DEV_LOGIN`: signs everyone in as this login, on localhost only. It is never bound on a hosted server.
 - `ERGA_LINK_SECRET`: the dev server proves itself with it to link files on disk to documents. The dev server makes it for each run.
-- `.dev.vars` (gitignored, as is `.dev.vars.*`): the local `SESSION_SECRET`, `ANTHROPIC_API_KEY`, `GITHUB_CLIENT_SECRET`.
+- `.dev.vars` (gitignored, as is `.dev.vars.*`): the local `SESSION_SECRET`, `ANTHROPIC_API_KEY` (and `OPENAI_API_KEY`, if you want one), `GITHUB_CLIENT_SECRET`. A key stored on the local `/admin` wins over them.
 
 ## On the operator's machine
 
@@ -157,8 +159,8 @@ database, the object or the Worker's settings through Cloudflare.
 
 ## Keys entered on the admin pages
 
-The upcoming task that moves `ANTHROPIC_API_KEY` and adds `OPENAI_API_KEY`
-to the admin pages must not keep them as ordinary settings. The settings
+`ANTHROPIC_API_KEY` and `OPENAI_API_KEY` are on the admin pages (`/admin`,
+"API keys"; `credentials.ts`, factory task #38). They are not ordinary settings. The settings
 (`server_config`) are plain JSON in D1. Every change is copied into the change
 log (`server_config_versions`), which admins read, and staging's database is a
 copy of production's. Do as the Claude token does instead:
@@ -171,6 +173,14 @@ copy of production's. Do as the Claude token does instead:
 4. Accept a change only from an unlocked admin, with a same-origin request.
 5. Keep the Worker secret as a fallback, so a server deployed without the
    admin pages' key still works.
+
+`credentials.ts` does all five. The encryption key comes from `FACTORY_KEY`
+(with its own derivation, `erga-credentials:`), so a server without
+`FACTORY_KEY` can't store a key and the page says so. Staging has its own
+`FACTORY_KEY`, so production's stored keys, copied into staging's database,
+do not open there: staging uses its own stored keys or its Worker secrets.
+The table keeps the last four characters in plain text, for the page.
+`tests/credentials.test.ts` tests each point.
 
 ## Audit of 2026-10-06: findings, by severity
 
