@@ -320,7 +320,8 @@ async function settingsPage(platform: Platform, session: Session): Promise<Respo
 ${credentials.map((c) => credentialRow(c, session)).join("\n")}
     </ol>
   </section>
-  <section aria-label="Settings">
+  <section aria-labelledby="settings-head">
+    <h2 id="settings-head">Settings</h2>
     <ol class="rows">
 ${settings.map((e) => settingRow(e, session, takesNever(e.key))).join("\n")}
     </ol>
