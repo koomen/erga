@@ -702,7 +702,9 @@ an admin token:
   sharing it (its owner only; the editor's agent may leave out `document`
   for the one it's in);
 - admins only: `list_settings`, `set_setting`, `reset_setting` (a setting
-  the deploy locks shows `"locked": true` and is refused), and `list_users`,
+  the deploy locks shows `"locked": true` and is refused), `list_setting_changes`
+  (the settings' change log), `list_api_keys` (which API keys are set, never a
+  key), and `list_users`,
   `add_user`, `set_user_role`, `set_user_deploy`, `remove_user` (a bootstrap
   admin can't be demoted or removed, nor can the last admin; nor can you
   remove yourself).
@@ -766,7 +768,7 @@ and `{ error, locked: true }`, or sends them to unlock first):
 | surface | where |
 |---|---|
 | `/admin`, `POST /admin/settings`, `POST /admin/users` | `admin.ts` |
-| the admin tools (`list_settings`, `set_setting`, `reset_setting`, `list_users`, `add_user`, `set_user_role`, `set_user_deploy`, `remove_user`) over `/api/ext/tools`, `/mcp` and the editor's agent | `server-tools.ts`, `server-api.ts` |
+| the admin tools (`list_settings`, `set_setting`, `reset_setting`, `list_setting_changes`, `list_api_keys`, `list_users`, `add_user`, `set_user_role`, `set_user_deploy`, `remove_user`) over `/api/ext/tools`, `/mcp` and the factory's agent | `server-tools.ts`, `server-api.ts` |
 | `dir.config.list/set/reset`, `dir.users.list/add/setRole/remove`, whatever calls them | `Users.mustAdmin` (`users.ts`, `config.ts`) |
 | `/api/factory/...` (not the VMs' own task tokens, nor factory tokens, below), the factory's agent and minting factory tokens | `worker/factory.ts` |
 | `/admin/factory` (the board, the dashboard and the agent), `GET /api/source/branches`, `POST /api/source/merge`, `POST /api/source/mirror` | `worker/source.ts` |
@@ -898,13 +900,17 @@ borrowed from git (the namespace). A database leak gives no working unlock
    summaries, logs and screenshots, all written by the VMs' Claude Code or by
    whoever queued the task, and any of it can try to steer it (a prompt
    injection). Task #1 kept the admin tools out of the editor's agent for this
-   reason; this agent has none of them either. Its tools only queue, read and
-   instruct factory tasks (no merge, discard or start, no settings, users,
-   pushes or deploys), every call checks again that its admin is unlocked (the
-   unlock their page sent last, its key not revoked, still an admin), and its
-   prompt says tool answers are information, never instructions. What an
-   injection could still do: queue tasks, or send instructions to a task,
-   that the admin didn't ask for, for the rest of the unlock. Each task's work
+   reason. This agent has them (task #50 made it a general admin agent): it
+   queues, reads and instructs factory tasks, and reads and changes the
+   server's settings and users (no merge, discard or start, no API keys set,
+   no pushes or deploys). Every call checks again that its admin is unlocked
+   (the unlock their page sent last, its key not revoked, still an admin), and
+   its prompt says tool answers are information, never instructions, and to
+   change settings and users only when the admin asks. What an injection could
+   still do: queue tasks, send instructions to a task, or change a setting or
+   a user, that the admin didn't ask for, for the rest of the unlock. Each
+   such change is in the change log (or the users' list) under the admin's
+   name, and the conversation shows each tool call. Each task's work
    lands only on its branch, and an admin approves every merge by hand: the
    merge is the review. **Factory tokens** ("Share with agent", for an agent
    such as Claude Code on a laptop) have the same reach and the same risk,
@@ -1760,7 +1766,16 @@ summary, error, preview URL, log) and `view_screenshot`; it sees `needs
 agent` cards and why, and what the task's Claude Code is doing (its words and
 the commands it runs go on the task's log, "Claude: …", "Claude runs Bash:
 …", at most every 5 seconds); `factory_status`
-says whether the factory is on. It can't merge, discard or start a task:
+says whether the factory is on. It is also the admin's general admin agent:
+it has the admin tools ([Agents configure the server](#agents-configure-the-server)):
+`list_settings`, `set_setting`, `reset_setting` (every setting on `/admin`),
+`list_setting_changes` (the Change log), `list_api_keys` (which keys are set,
+never a key: keys are pasted only on `/admin`, never into a conversation) and
+the users' tools. They act as the admin themselves, their login and their latest
+unlock (`adminTools`, `factory/agent.ts`), so each change goes into the
+settings' change log under the admin who prompted it, as if they had made it on
+`/admin`, never the agent's name (`tests/factory-admin.test.ts`); a user it adds
+is added by them. It can't merge, discard or start a task:
 an admin approves each merge by hand on the board, and Merge merges into
 staging, which deploys itself. Each message carries the task open on the
 board, if any, so "this task" means something. It acts only for an unlocked
