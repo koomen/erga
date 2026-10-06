@@ -2,9 +2,13 @@
 // admins (users.ts), for admins only. Everyone else gets "not found": they
 // can't see the page, nor that there is one.
 //
-//   /admin                     the page
+//   /admin                     the Settings page (GET /admin/settings redirects here)
+//   /admin/users               the Users page: their roles (admin, deploy) as switches, when they joined, add and remove
 //   POST /admin/settings       key, and value (JSON; null for never) to set it, or reset=1 to put it back to its default
-//   POST /admin/users          do=add (login, role), do=role (login, role) or do=remove (login)
+//   POST /admin/users          do=add (login, role), do=role (login, role), do=deploy (login, deploy: 1 or 0) or do=remove (login)
+//
+// Both pages have the layout every admin page shares (admin-layout.ts): the
+// breadcrumb, Share with agent, and the sidebar to Settings, Users and Factory.
 //
 // The POSTs answer JSON ({ entry } or { user } or { ok }, or { error } with
 // the message the directory gave, for a person to act on) and come only from
@@ -12,10 +16,12 @@
 // this file only shows it. An agent token (Session.agent) never gets in, even
 // an admin's. An admin must have unlocked admin access with their SSH key
 // (admin-keys.ts): until then /admin sends them to /admin/keys to do it. A setting the deploy locks is shown, read-only,
-// and so is a bootstrap admin (ADMINS), who can't be demoted or removed here.
+// and so is a bootstrap admin (ADMINS), who can't be demoted or removed here,
+// and the last admin, who can't be demoted or removed at all (users.ts).
 
 import { ConfigError, type ConfigEntry, type Settings } from "./config.ts";
-import { appPage, brand, esc, ICON, link, page, type Platform, type Session, TIMES_SCRIPT, whoOf } from "./front.ts";
+import { esc, ICON, link, page, type Platform, type Session, TIMES_SCRIPT, whoOf } from "./front.ts";
+import { adminResponse } from "./admin-layout.ts";
 import { LOCKED, NotAllowed, type ServerRole, type User } from "./users.ts";
 import { unlockFirst } from "./admin-access.ts";
 
@@ -23,18 +29,20 @@ import { unlockFirst } from "./admin-access.ts";
 export async function adminDoor(platform: Platform, request: Request): Promise<Response> {
   const session = await platform.sessionOf(request);
   const url = new URL(request.url);
-  if (!session && url.pathname == "/admin" && request.method == "GET") {
-    return new Response(null, { status: 302, headers: { Location: `/auth/github?next=${encodeURIComponent("/admin")}` } });
+  const read = request.method == "GET" || request.method == "HEAD";
+  if (!session && read) {
+    return new Response(null, { status: 302, headers: { Location: `/auth/github?next=${encodeURIComponent(url.pathname)}` } });
   }
   const who = session && whoOf(session);
   // Only the person themselves, in a browser: an agent with their token isn't an admin here.
   const admin = !!who && !session?.agent && (await platform.directory.users.isAdmin(who));
   // An admin who hasn't unlocked admin access with their SSH key (admin-keys.ts) unlocks it first.
   const unlocked = admin && (await platform.directory.users.isUnlocked(who!));
-  if (url.pathname == "/admin") {
-    if (!admin || request.method != "GET") return notFound();
-    if (!unlocked) return unlockFirst("/admin", session!);
-    return adminPage(platform, session!);
+  if (read) {
+    if (!admin) return notFound();
+    if (url.pathname == "/admin/settings") return new Response(null, { status: 302, headers: { Location: link("/admin", session!) } });
+    if (!unlocked) return unlockFirst(url.pathname, session!);
+    return url.pathname == "/admin/users" ? usersPage(platform, session!) : settingsPage(platform, session!);
   }
   if (request.method != "POST") return notFound();
   if (!admin) return Response.json({ error: "Only an admin can do that." }, { status: session ? 403 : 401 });
@@ -58,8 +66,13 @@ export async function adminDoor(platform: Platform, request: Request): Promise<R
         return Response.json({ user: await users.add(who!, login, { role: role || "user" }) });
       }
       case "role": return Response.json({ user: await users.setRole(who!, login, role || "user") });
+      case "deploy": {
+        const deploy = field("deploy");
+        if (deploy != "1" && deploy != "0") throw new NotAllowed("deploy= 1 to grant the deploy role, or 0 to revoke it.");
+        return Response.json({ user: await users.setDeploy(who!, login, deploy == "1") });
+      }
       case "remove": await users.remove(who!, login); return Response.json({ ok: true });
-      default: return Response.json({ error: "do= add, role or remove" }, { status: 400 });
+      default: return Response.json({ error: "do= add, role, deploy or remove" }, { status: 400 });
     }
   } catch (e) {
     if (e instanceof NotAllowed) return Response.json({ error: e.message }, { status: 403 });
@@ -74,15 +87,36 @@ const notFound = () => page("Not found", "There's nothing here. <a href=\"/\">Ba
 type Shown = ConfigEntry & { doc?: { address: string; title: string } | null };
 
 /**
- * How a setting's value is typed in: by its kind, else the kind of its
- * default. A document is typed by its address (kept by id, which a rename
- * never changes), empty for none. A number that can also be never (null,
- * e.g. delete_docs_after_hours) gets a choice of "After [n] hours" or
- * "Never" in front of it.
+ * The control a setting's value is set with: by its kind, its choices, else
+ * the kind of its default. A boolean, or a setting whose choices are "off"
+ * and "on", is a switch; other choices are a select (with the value now
+ * among them, if the parser took another). A document is typed by its
+ * address (kept by id, which a rename never changes), empty for none. A list
+ * of users is a picker: a chip for each, and a box to add one from the
+ * server's users. A number that can also be never (null, e.g.
+ * delete_docs_after_hours) gets a choice of "After [n] hours" or "Never" in
+ * front of it.
  */
 function valueInput(e: Shown, never: boolean): string {
   const locked = e.locked;
   const attrs = `name="value" id="set-${esc(e.key)}" aria-label="${esc(e.key)}"${locked ? " disabled" : ""}`;
+  const control = controlOf(e);
+  if (control == "switch") {
+    const text = typeof e.default != "boolean", on = text ? e.value == "on" : e.value === true;
+    return `<label class="switch"><input type="checkbox" role="switch" ${attrs} data-kind="${text ? "switch-text" : "switch"}"${on ? " checked" : ""}><span class="track" aria-hidden="true"></span><span class="state" aria-hidden="true">${on ? "On" : "Off"}</span></label>`;
+  }
+  if (control == "choice") {
+    const choices = e.choices!.includes(String(e.value)) ? e.choices! : [...e.choices!, String(e.value)];
+    return `<select ${attrs} data-kind="string">${choices.map((c) => `<option value="${esc(c)}"${c == e.value ? " selected" : ""}>${esc(c)}</option>`).join("")}</select>`;
+  }
+  if (control == "users") {
+    const list = Array.isArray(e.value) ? (e.value as string[]) : [];
+    return `<div class="picker">
+        <ul class="chips" aria-label="${esc(e.key)}">${list.map((l) => chip(l, locked)).join("")}</ul>
+        ${locked ? "" : `<input class="input pick" list="user-logins" placeholder="Add a user" aria-label="Add a user to ${esc(e.key)}" autocomplete="off" autocapitalize="off" spellcheck="false">`}
+        <input type="hidden" ${attrs} data-kind="users" value="${esc(JSON.stringify(list))}">
+      </div>`;
+  }
   if (e.kind == "document") {
     const value = e.doc ? e.doc.address : e.value == null ? "" : String(e.value);
     return `<input class="input" ${attrs} data-kind="document" value="${esc(value)}" placeholder="/owner/slug" autocomplete="off" spellcheck="false">`;
@@ -92,52 +126,76 @@ function valueInput(e: Shown, never: boolean): string {
     return `<select class="mode" name="mode" aria-label="${esc(e.key)}: after a time, or never"${locked ? " disabled" : ""}><option value="after"${off ? "" : " selected"}>After</option><option value="never"${off ? " selected" : ""}>Never</option></select>
       <span class="amount"${off ? " hidden" : ""}><input class="input" type="number" step="1" min="1" ${attrs} data-kind="number-or-never" value="${esc(String(off ? e.default : e.value))}"${off ? "" : " required"}>${unit ? ` <span class="unit">${unit}</span>` : ""}</span>`;
   }
-  if (typeof e.default == "boolean") {
-    return `<select ${attrs} data-kind="boolean"><option value="true"${e.value === true ? " selected" : ""}>On</option><option value="false"${e.value === false ? " selected" : ""}>Off</option></select>`;
-  }
   if (typeof e.default == "number") return `<input class="input" type="number" step="1" ${attrs} data-kind="number" value="${esc(String(e.value))}" required>`;
   if (typeof e.default == "string") return `<input class="input" ${attrs} data-kind="string" value="${esc(String(e.value))}" autocomplete="off" spellcheck="false">`;
   return `<input class="input mono" ${attrs} data-kind="json" value="${esc(JSON.stringify(e.value))}" autocomplete="off" spellcheck="false">`;
 }
 
-const shown = (v: unknown, kind?: string) => (v === null ? (kind == "document" ? "none" : "never") : typeof v == "boolean" ? (v ? "on" : "off") : typeof v == "string" ? `“${v}”` : JSON.stringify(v));
+/** How a setting is set: "switch" and "choice" save as soon as they change; the rest have Save. */
+function controlOf(e: Shown): "switch" | "choice" | "users" | "typed" {
+  if (e.kind == "users") return "users";
+  if (typeof e.default == "boolean" || (e.choices?.length == 2 && e.choices.includes("off") && e.choices.includes("on"))) return "switch";
+  if (e.choices?.length) return "choice";
+  return "typed";
+}
 
-function settingRow(e: Shown, session: Session, never: boolean): string {
+/** A user in a users setting's picker, with a button to take them out. */
+const chip = (login: string, locked: boolean) => `<li class="chip" data-login="${esc(login)}">${esc(login)}${locked ? "" : `<button type="button" class="unpick" aria-label="Take out ${esc(login)}" title="Take out ${esc(login)}">${ICON.close}</button>`}</li>`;
+
+const shown = (v: unknown, kind?: string) => (v === null ? (kind == "document" ? "none" : "never") : typeof v == "boolean" ? (v ? "on" : "off") : typeof v == "string" ? `“${v}”` : Array.isArray(v) && kind == "users" ? (v.length ? v.join(", ") : "nobody") : JSON.stringify(v));
+
+/** When a setting was last set, as the admin page says it: "2026-10-05 14:03 UTC". */
+const setAt = (at: number) => `${new Date(at).toISOString().slice(0, 16).replace("T", " ")} UTC`;
+
+export function settingRow(e: Shown, session: Session, never: boolean): string {
   const def = `default ${shown(e.default, e.kind)}`;
-  const when = e.updated != null ? `Set ${new Date(e.updated).toISOString().slice(0, 16).replace("T", " ")} UTC · ` : "";
-  const meta = e.locked ? `<span class="badge" title="Locked by the deploy (server.config.ts or ERGA_SERVER_CONFIG) · ${esc(def)}">Locked</span>`
-    : e.source == "set" ? `<span title="${esc(when + def)}">set${e.updatedBy ? ` by ${esc(e.updatedBy)}` : ""}</span>`
-    : "";
+  const control = controlOf(e);
+  const meta = e.locked ? `<span class="badge" title="Locked by the deploy (server.config.ts or ERGA_SERVER_CONFIG) · ${esc(def)}">Locked</span>` : "";
   const doc = e.kind == "document" && e.value != null
     ? e.doc ? `<a class="open-doc" href="${esc(link(e.doc.address, session))}">${esc(e.doc.title)}</a>` : `<span class="gone" title="No such document now: the front page is the plain one">missing</span>`
     : "";
-  return `  <li class="setting" data-key="${esc(e.key)}">
+  // Under each setting: when it was last set, and by whom (its default on hover).
+  const set = e.source == "set" && e.updated != null
+    ? `<p class="set" title="${esc(def)}">Last set at ${esc(setAt(e.updated))}${e.updatedBy ? ` by ${esc(e.updatedBy)}` : ""}</p>`
+    : "";
+  // Save for what's typed in; Reset only where the control can't simply pick the default (a switch, a choice, an empty document can).
+  const buttons = e.locked || control == "switch" || control == "choice" ? ""
+    : `<button class="pill save" disabled>Save</button>${e.source == "set" && e.kind != "document" ? `<button type="button" class="pill reset" title="Back to ${esc(shown(e.default, e.kind))}">Reset</button>` : ""}`;
+  return `  <li class="setting" data-key="${esc(e.key)}" data-control="${control}">
     <div class="about">
       <div class="head"><label class="key" for="set-${esc(e.key)}">${esc(e.key)}</label>${meta || doc ? `<span class="meta">${[meta, doc].filter(Boolean).join(`<span aria-hidden="true">·</span>`)}</span>` : ""}</div>
       <p class="desc">${esc(e.description)}</p>
+      ${set}
     </div>
     <form class="value" method="post" action="${esc(link("/admin/settings", session))}">
       <input type="hidden" name="key" value="${esc(e.key)}">
       ${valueInput(e, never)}
-      ${e.locked ? "" : `<button class="pill save" disabled>Save</button>${e.source == "set" ? `<button type="button" class="pill reset" title="Back to ${esc(shown(e.default, e.kind))}">Reset</button>` : ""}`}
+      ${buttons}
     </form>
     <p class="hint" role="status"></p>
   </li>`;
 }
 
-function userRow(u: User, session: Session): string {
-  const me = u.login == session.login.toLowerCase();
-  const seen = u.lastSeen != null ? `<time datetime="${new Date(u.lastSeen).toISOString()}">${new Date(u.lastSeen).toISOString().slice(0, 10)}</time>` : `<time class="never">never signed in</time>`;
-  const fixed = u.bootstrap ? ` disabled title="An admin by the deploy (ADMINS): change it there"` : "";
-  const added = u.bootstrap ? "Admin by the deploy (ADMINS)" : u.addedBy ? `Added by ${u.addedBy}` : "Signed in on their own";
-  return `  <li data-login="${esc(u.login)}">
-    <div class="doc"><span class="title">${esc(u.login)}</span>${u.name && u.name.toLowerCase() != u.login ? `<span class="note">${esc(u.name)}</span>` : ""}${me ? `<span class="badge">you</span>` : ""}${u.bootstrap ? `<span class="badge" title="${esc(added)}">deploy</span>` : ""}${seen}</div>
-    <select class="role" aria-label="Role for ${esc(u.login)}" title="${esc(added)}"${fixed}><option value="user"${u.role == "user" ? " selected" : ""}>User</option><option value="admin"${u.role == "admin" ? " selected" : ""}>Admin</option></select>
-    <button type="button" class="act remove" aria-label="Remove ${esc(u.login)}" title="${u.bootstrap ? "An admin by the deploy (ADMINS): change it there" : "Remove: they can't sign in any more"}"${u.bootstrap ? " disabled" : ""}>${ICON.delete}</button>
-  </li>`;
-}
+const PAGE_STYLE = `
+  section { margin-bottom: 44px; }
+  h2 { display: flex; align-items: baseline; gap: 10px; margin: 0 0 8px; font-size: 16px; font-weight: 600; color: var(--fg-strong); }
+  h2 small { font-size: 13px; font-weight: 400; color: var(--soft); }
+  .lede { margin: 0 0 16px; font-size: 13.5px; color: var(--soft); }
+  ol.rows > li .doc { cursor: default; }
+`;
 
-async function adminPage(platform: Platform, session: Session): Promise<Response> {
+const POST_SCRIPT = `
+  async function post(action, fields) {
+    const r = await fetch(action, { method: "POST", body: new URLSearchParams(fields), headers: { Accept: "application/json" } }).catch(() => null);
+    const body = r ? await r.json().catch(() => ({})) : {};
+    if (!r || !r.ok) throw new Error(body.error || "Couldn't reach the server: try again.");
+    return body;
+  }
+  const say = (hint, text, error) => { hint.textContent = text; hint.classList.toggle("error", !!error); };
+`;
+
+/** /admin: the server's settings, and Deploy your own. */
+async function settingsPage(platform: Platform, session: Session): Promise<Response> {
   const who = whoOf(session);
   const [entries, users] = await Promise.all([platform.directory.config.list(who), platform.directory.users.list(who)]);
   // A setting naming a document shows it by its address now, linked.
@@ -146,16 +204,9 @@ async function adminPage(platform: Platform, session: Session): Promise<Response
     const doc = await platform.directory.find(String(e.value));
     return { ...e, doc: doc && { address: `/${doc.owner}/${doc.slug}`, title: doc.title } };
   }));
-  const admins = users.filter((u) => u.role == "admin").length;
   // Whether a setting takes null (never) as well as its kind of value.
   const takesNever = (key: string) => { try { return (platform.directory.config.settings as Settings)[key]?.parse(null) === null; } catch { return false; } };
-  const style = `
-  section { margin-bottom: 44px; }
-  h2 { display: flex; align-items: baseline; gap: 10px; margin: 0 0 8px; font-size: 16px; font-weight: 600; color: var(--fg-strong); }
-  h2 small { font-size: 13px; font-weight: 400; color: var(--soft); }
-  .lede { margin: 0 0 16px; font-size: 13.5px; color: var(--soft); }
-  .back { font-size: 13px; color: var(--chrome); text-decoration: none; }
-  .back:hover { color: var(--chrome-hover); }
+  const style = PAGE_STYLE + `
   ol.rows > li.setting { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 4px 16px; padding: 10px 2px; }
   .setting .about { min-width: 0; }
   .setting .head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
@@ -172,82 +223,89 @@ async function adminPage(platform: Platform, session: Session): Promise<Response
   .setting .value .amount { display: flex; align-items: center; gap: 6px; }
   .setting .value .amount[hidden] { display: none; }
   .setting .value .unit { font-size: 13.5px; color: var(--soft); }
+  .setting .set { margin: 3px 0 0; font-size: 12px; color: var(--chrome); }
   .setting .hint { grid-column: 1 / -1; margin: 0; }
+  .switch { position: relative; display: inline-flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px; color: var(--soft); user-select: none; }
+  .switch input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: inherit; }
+  .switch .track { position: relative; flex: none; width: 34px; height: 20px; border-radius: 999px; background: color-mix(in srgb, var(--chrome) 45%, transparent); transition: background-color 150ms ease; }
+  .switch .track::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2); transition: transform 150ms ease; }
+  .switch input:checked + .track { background: var(--fg-strong); }
+  .switch input:checked + .track::after { transform: translateX(14px); }
+  .switch input:focus-visible + .track { outline: 2px solid var(--caret); outline-offset: 2px; }
+  .switch .state { min-width: 2em; }
+  .switch:has(input:disabled) { cursor: default; opacity: 0.6; }
+  .setting .value select { min-width: 9em; height: 34px; }
+  .picker { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px; max-width: 26em; }
+  .chips { display: contents; list-style: none; margin: 0; padding: 0; }
+  .chip { display: inline-flex; align-items: center; gap: 2px; height: 26px; padding: 0 4px 0 10px; border-radius: 999px; font-size: 13px; color: var(--fg-strong); background: color-mix(in srgb, var(--chrome) 14%, transparent); }
+  .chip:not(:has(button)) { padding-right: 10px; }
+  .unpick { display: grid; place-items: center; width: 20px; height: 20px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--chrome); cursor: pointer; }
+  .unpick:hover { color: var(--chrome-hover); background: color-mix(in srgb, var(--chrome) 18%, transparent); }
+  .unpick svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
+  .setting .value .input.pick { width: 9em; }
   .mono { font-family: var(--font-mono); font-size: 12.5px; }
-  .add-user { display: flex; gap: 8px; margin: 0 0 14px; }
-  .add-user .input { flex: 1; }
-  #users-hint { margin: -6px 0 12px; }
-  ol.rows > li .doc { cursor: default; }
-  .never { font-style: italic; }
-  .role { margin-left: 8px; }
   @media (max-width: 520px) { ol.rows > li.setting { grid-template-columns: 1fr; } .setting .value { justify-content: flex-end; } }
 `;
-  const deployOn = (await platform.directory.config.get("deploy_page")) != "off";
-  const factoryOn = (await platform.directory.config.get("factory")) == "on";
-  return new Response(appPage("Admin", style, `${brand(session)}<main>
-  <header>
-    <h1>Admin</h1>
-    <a class="back" href="${esc(link("/docs", session))}">‹ Documents</a>
-  </header>
-  <section aria-labelledby="settings-title">
-    <h2 id="settings-title">Settings</h2>
+  return adminResponse({ session, title: "Settings", here: "settings", style, body: `
+  <section aria-label="Settings">
     <ol class="rows">
 ${settings.map((e) => settingRow(e, session, takesNever(e.key))).join("\n")}
     </ol>
+    <datalist id="user-logins">${users.map((u) => `<option value="${esc(u.login)}">`).join("")}</datalist>
   </section>
-  <section aria-labelledby="users-title">
-    <h2 id="users-title">Users <small>${users.length} · ${admins} admin${admins == 1 ? "" : "s"}</small></h2>
-    <p class="lede">Only these GitHub logins can sign in.</p>
-    <form class="add-user" method="post" action="${esc(link("/admin/users", session))}">
-      <input type="hidden" name="do" value="add">
-      <input class="input" name="login" placeholder="A GitHub login" aria-label="GitHub login to add" autocomplete="off" autocapitalize="off" spellcheck="false" required>
-      <select name="role" aria-label="Their role"><option value="user">User</option><option value="admin">Admin</option></select>
-      <button class="new">Add</button>
-    </form>
-    <p class="hint" id="users-hint" role="status"></p>
-    <ol class="rows users">
-${users.map((u) => userRow(u, session)).join("\n")}
-    </ol>
-  </section>
-  <section aria-labelledby="source-title">
-    <h2 id="source-title">Source and deploys</h2>
-    <p class="lede">Erga's own repository, hosted here, and its branches deploying themselves: staging to staging.erga.dev, main to erga.dev. Commits, merging, deploys and their logs, the GitHub mirror, and the factory's tasks and agent: <a href="${esc(link("/admin/source", session))}">Source</a>.</p>
-  </section>
-  ${deployOn ? `<section aria-labelledby="deploy-title">
-    <h2 id="deploy-title">Deploy your own</h2>
-    <p class="lede">Put a copy of this server on your own Cloudflare account, with you as its admin: <a href="${esc(link("/deploy", session))}">Deploy Erga</a>. Who may use it is the deploy_page setting.</p>
-  </section>` : ""}
-  ${factoryOn ? `<section aria-labelledby="factory-title">
-    <h2 id="factory-title">Factory</h2>
-    <p class="lede">Tasks that Claude Code does in VMs, each a branch merged into staging (experimental): <a href="${esc(link("/admin/source", session))}">Open the factory</a>. The factory setting turns it off.</p>
-  </section>` : ""}
-</main>
 <script>
   ${TIMES_SCRIPT}
-  const me = ${JSON.stringify(session.login.toLowerCase())};
-  const usersAction = ${JSON.stringify(link("/admin/users", session))};
-  async function post(action, fields) {
-    const r = await fetch(action, { method: "POST", body: new URLSearchParams(fields), headers: { Accept: "application/json" } }).catch(() => null);
-    const body = r ? await r.json().catch(() => ({})) : {};
-    if (!r || !r.ok) throw new Error(body.error || "Couldn't reach the server: try again.");
-    return body;
-  }
-  const say = (hint, text, error) => { hint.textContent = text; hint.classList.toggle("error", !!error); };
-
-  // Settings: Save lights up once the value differs from what's saved; each is checked by the server, which says what's wrong.
+  ${POST_SCRIPT}
+  // Settings: a switch or a choice saves as soon as it changes; for the rest, Save lights up once the value differs from what's saved.
+  // Each is checked by the server, which says what's wrong.
+  const chipHtml = ${JSON.stringify(chip("LOGIN", false))};
   for (const li of document.querySelectorAll("li.setting")) {
     const form = li.querySelector("form"), input = form.elements.value, mode = li.querySelector("select.mode"), save = li.querySelector(".save"), reset = li.querySelector(".reset"), hint = li.querySelector(".hint");
-    if (!save) continue;
-    const state = () => (mode ? mode.value + ":" : "") + input.value;
+    if (input.disabled) continue;
+    const instant = li.dataset.control == "switch" || li.dataset.control == "choice";
+    const state = () => (mode ? mode.value + ":" : "") + (input.type == "checkbox" ? input.checked : input.value);
     const was = state();
     const asJson = () => {
       const kind = input.dataset.kind, v = input.value.trim();
       if (mode && mode.value == "never") return "null";
-      return kind == "number" || kind == "number-or-never" ? (v == "" ? "" : String(Number(v))) : kind == "boolean" ? v : kind == "string" ? JSON.stringify(input.value) : kind == "document" ? (v == "" ? "null" : JSON.stringify(v)) : v;
+      if (kind == "switch") return String(input.checked);
+      if (kind == "switch-text") return JSON.stringify(input.checked ? "on" : "off");
+      return kind == "number" || kind == "number-or-never" ? (v == "" ? "" : String(Number(v))) : kind == "string" ? JSON.stringify(input.value) : kind == "document" ? (v == "" ? "null" : JSON.stringify(v)) : v;
     };
-    const dirty = () => { save.disabled = state() == was; say(hint, ""); };
+    const submit = async () => {
+      say(hint, "Saving\u2026");
+      try { await post(form.action, { key: li.dataset.key, value: asJson() }); location.reload(); }
+      catch (err) {
+        say(hint, err.message, true);
+        if (input.type == "checkbox") { input.checked = !input.checked; li.querySelector(".state").textContent = input.checked ? "On" : "Off"; }
+      }
+    };
+    const dirty = () => {
+      if (input.type == "checkbox") li.querySelector(".state").textContent = input.checked ? "On" : "Off";
+      if (instant) { if (state() != was) submit(); return; }
+      save.disabled = state() == was; say(hint, "");
+    };
     input.addEventListener("input", dirty);
     input.addEventListener("change", dirty);
+    // A users setting: a chip for each user; picking one from the box adds it, \u00D7 takes it out.
+    const pick = li.querySelector("input.pick");
+    if (pick) {
+      const chips = li.querySelector(".chips");
+      const logins = () => [...chips.querySelectorAll(".chip")].map((c) => c.dataset.login);
+      const changed = () => { input.value = JSON.stringify(logins()); input.dispatchEvent(new Event("change")); };
+      const add = () => {
+        const login = pick.value.trim().replace(/^@/, "").toLowerCase();
+        if (!login) return false;
+        if (!logins().includes(login)) { chips.insertAdjacentHTML("beforeend", chipHtml.replaceAll("LOGIN", login.replace(/[&<>"]/g, (c) => "&#" + c.charCodeAt(0) + ";"))); changed(); }
+        pick.value = "";
+        return true;
+      };
+      // A login picked from the list is added at once; a typed one on Enter.
+      pick.addEventListener("input", (e) => { if (e.inputType == "insertReplacementText" || !e.inputType) add(); });
+      pick.addEventListener("keydown", (e) => { if (e.key == "Enter") { e.preventDefault(); add(); } });
+      chips.addEventListener("click", (e) => { const x = e.target.closest(".unpick"); if (x) { x.closest(".chip").remove(); changed(); } });
+      form.addEventListener("submit", () => add(), { capture: true });
+    }
     // "Never" hides the number; "After" shows it again, ready to type.
     mode?.addEventListener("change", () => {
       const amount = li.querySelector(".amount");
@@ -256,40 +314,121 @@ ${users.map((u) => userRow(u, session)).join("\n")}
       if (!amount.hidden) input.focus();
       dirty();
     });
-    form.addEventListener("submit", async (e) => {
-      e.preventDefault();
-      say(hint, "Saving…");
-      try { await post(form.action, { key: li.dataset.key, value: asJson() }); location.reload(); } catch (err) { say(hint, err.message, true); }
-    });
+    form.addEventListener("submit", (e) => { e.preventDefault(); if (!instant) submit(); });
     reset?.addEventListener("click", async () => {
-      say(hint, "Saving…");
+      say(hint, "Saving\u2026");
       try { await post(form.action, { key: li.dataset.key, reset: "1" }); location.reload(); } catch (err) { say(hint, err.message, true); }
     });
   }
+</script>` });
+}
 
-  // Users: add, change a role, remove; the page reloads to show the list as it is now.
-  const usersHint = document.getElementById("users-hint"), adder = document.querySelector("form.add-user");
-  adder.addEventListener("submit", async (e) => {
+/** A date as the page shows it before its script makes it relative (TIMES_SCRIPT). */
+const when = (t: number, cls = "") => `<time${cls ? ` class="${cls}"` : ""} datetime="${new Date(t).toISOString()}">${new Date(t).toISOString().slice(0, 10)}</time>`;
+
+/**
+ * A role's switch: a checkbox (role="switch"), never typed text. Off, with
+ * why in its title, where it can't change here: a bootstrap admin's admin
+ * role, and the last admin's.
+ */
+function roleSwitch(u: User, role: "admin" | "deploy", on: boolean, fixed: string): string {
+  const label = role == "admin" ? "Admin" : "Deploy";
+  return `<label class="switch" title="${esc(fixed || (role == "admin" ? "Admin: may change the server's settings and users" : "Deploy: may use /deploy when deploy_page is admins"))}">
+      <input type="checkbox" role="switch" class="${role}" aria-label="${label} role for ${esc(u.login)}"${on ? " checked" : ""}${fixed ? " disabled" : ""}><span class="track" aria-hidden="true"></span>
+    </label>`;
+}
+
+function userRow(u: User, session: Session, lastAdmin: boolean): string {
+  const me = u.login == session.login.toLowerCase();
+  const joined = u.created ? when(u.created, "joined") : `<time class="joined never">not yet</time>`;
+  const seen = u.lastSeen != null ? when(u.lastSeen, "seen") : `<time class="seen never">never</time>`;
+  const added = u.bootstrap ? "Admin by the deploy (ADMINS)" : u.addedBy ? `Added by ${u.addedBy}` : "Signed in on their own";
+  // The same reason keeps them from being removed.
+  const fixedAdmin = u.bootstrap ? "An admin by the deploy (ADMINS): change it there"
+    : lastAdmin ? `${me ? "You're" : "The"} last admin: make someone else an admin first` : "";
+  return `  <li data-login="${esc(u.login)}">
+    <div class="who"><span class="title">${esc(u.login)}</span>${u.name && u.name.toLowerCase() != u.login ? `<span class="note">${esc(u.name)}</span>` : ""}${me ? `<span class="badge">you</span>` : ""}<span class="added">${esc(added)}</span></div>
+    ${joined}
+    ${seen}
+    ${roleSwitch(u, "admin", u.role == "admin", fixedAdmin)}
+    ${roleSwitch(u, "deploy", u.deploy, "")}
+    <button type="button" class="act remove" aria-label="Remove ${esc(u.login)}" title="${esc(fixedAdmin || "Remove: they can't sign in any more")}"${fixedAdmin ? " disabled" : ""}>${ICON.delete}</button>
+  </li>`;
+}
+
+/** /admin/users: every user, when they joined and last came, and their roles as switches; add one, remove one. */
+async function usersPage(platform: Platform, session: Session): Promise<Response> {
+  const users = await platform.directory.users.list(whoOf(session));
+  const admins = users.filter((u) => u.role == "admin");
+  const deployers = users.filter((u) => u.deploy).length;
+  const deployPage = await platform.directory.config.get("deploy_page");
+  const deployNote = deployPage == "admins" ? "Users with the deploy role may use /deploy, as admins may."
+    : deployPage == "users" ? "Now anyone signed in may use /deploy (deploy_page is users): the deploy role matters only when deploy_page is admins."
+    : "/deploy is off now (deploy_page is off): the deploy role matters only when deploy_page is admins.";
+  const style = PAGE_STYLE + `
+  .add-user { display: flex; gap: 8px; margin: 0 0 14px; }
+  .add-user .input { flex: 1; }
+  #users-hint { margin: -6px 0 12px; }
+  .labels, ol.users > li { display: grid; grid-template-columns: minmax(0, 1fr) 7.5rem 7.5rem 4.5rem 4.5rem 34px; align-items: center; column-gap: 12px; }
+  .labels { padding: 0 4px 6px; font-size: 12px; color: var(--soft); }
+  .labels .c, ol.users .switch { justify-self: center; }
+  .labels .t, ol.users time { justify-self: start; margin: 0; }
+  ol.users > li { padding: 10px 4px; }
+  .who { min-width: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; }
+  .who .badge { align-self: center; }
+  .who .added { flex-basis: 100%; font-size: 12px; color: var(--chrome); }
+  .never { font-style: italic; }
+  .switch { position: relative; display: inline-block; width: 36px; height: 20px; cursor: pointer; }
+  .switch input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: inherit; }
+  .switch .track { position: absolute; inset: 0; border-radius: 999px; background: color-mix(in srgb, var(--chrome) 35%, transparent); transition: background-color 150ms ease; }
+  .switch .track::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: var(--bg); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25); transition: transform 150ms ease; }
+  .switch input:checked + .track { background: var(--fg-strong); }
+  .switch input:checked + .track::after { transform: translateX(16px); }
+  .switch input:focus-visible + .track { outline: 2px solid var(--caret); outline-offset: 2px; }
+  .switch:has(input:disabled) { cursor: default; opacity: 0.45; }
+  @media (max-width: 640px) { .labels .seen, ol.users time.seen { display: none; } .labels, ol.users > li { grid-template-columns: minmax(0, 1fr) 6.5rem 3.5rem 3.5rem 34px; } }
+`;
+  return adminResponse({ session, title: "Users", here: "users", style, body: `
+  <section aria-label="Users">
+    <p class="lede">Only these GitHub logins can sign in: <span id="users-count">${users.length} user${users.length == 1 ? "" : "s"} · ${admins.length} admin${admins.length == 1 ? "" : "s"} · ${deployers} with deploy</span>. Admins may change the server's settings and its users. ${esc(deployNote)}</p>
+    <form class="add-user" method="post" action="${esc(link("/admin/users", session))}">
+      <input type="hidden" name="do" value="add">
+      <input class="input" name="login" placeholder="A GitHub login" aria-label="GitHub login to add" autocomplete="off" autocapitalize="off" spellcheck="false" required>
+      <button class="new">Add</button>
+    </form>
+    <p class="hint" id="users-hint" role="status"></p>
+    <div class="labels" aria-hidden="true"><span>User</span><span class="t">Joined</span><span class="t seen">Last seen</span><span class="c">Admin</span><span class="c">Deploy</span><span></span></div>
+    <ol class="rows users">
+${users.map((u) => userRow(u, session, u.role == "admin" && admins.length == 1)).join("\n")}
+    </ol>
+  </section>
+<script>
+  ${TIMES_SCRIPT}
+  ${POST_SCRIPT}
+  const me = ${JSON.stringify(session.login.toLowerCase())};
+  const action = ${JSON.stringify(link("/admin/users", session))};
+  const hint = document.getElementById("users-hint"), adder = document.querySelector("form.add-user");
+  // Each change goes to the server, which checks it (admins only, and never the last admin); the page reloads to show the list as it is now.
+  async function change(fields, saying, undo) {
+    say(hint, saying);
+    try { await post(action, fields); location.reload(); } catch (err) { undo?.(); say(hint, err.message, true); }
+  }
+  adder.addEventListener("submit", (e) => {
     e.preventDefault();
-    say(usersHint, "Adding…");
-    try { await post(usersAction, { do: "add", login: adder.elements.login.value.trim().replace(/^@/, ""), role: adder.elements.role.value }); location.reload(); }
-    catch (err) { say(usersHint, err.message, true); }
+    change({ do: "add", login: adder.elements.login.value.trim().replace(/^@/, "") }, "Adding…");
   });
   for (const li of document.querySelectorAll("ol.users > li")) {
-    const login = li.dataset.login, role = li.querySelector("select.role"), remove = li.querySelector(".remove");
-    const was = role.value;
-    role.addEventListener("change", async () => {
-      if (login == me && role.value == "user" && !confirm("Stop being an admin? You won't see this page any more.")) { role.value = was; return; }
-      say(usersHint, "Saving…");
-      try { await post(usersAction, { do: "role", login, role: role.value }); location.reload(); }
-      catch (err) { role.value = was; say(usersHint, err.message, true); }
+    const login = li.dataset.login, admin = li.querySelector("input.admin"), deploy = li.querySelector("input.deploy"), remove = li.querySelector(".remove");
+    admin.addEventListener("change", () => {
+      const undo = () => { admin.checked = !admin.checked; };
+      if (login == me && !admin.checked && !confirm("Stop being an admin? You won't see the admin pages any more.")) return undo();
+      change({ do: "role", login, role: admin.checked ? "admin" : "user" }, "Saving…", undo);
     });
-    remove.addEventListener("click", async () => {
+    deploy.addEventListener("change", () => change({ do: "deploy", login, deploy: deploy.checked ? "1" : "0" }, "Saving…", () => { deploy.checked = !deploy.checked; }));
+    remove.addEventListener("click", () => {
       if (!confirm(login == me ? "Remove yourself? You'll be signed out, and can't sign in again until an admin adds you." : "Remove " + login + "? They won't be able to sign in. Their documents stay.")) return;
-      say(usersHint, "Removing…");
-      try { await post(usersAction, { do: "remove", login }); location.reload(); }
-      catch (err) { say(usersHint, err.message, true); }
+      change({ do: "remove", login }, "Removing…");
     });
   }
-</script>`), { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
+</script>` });
 }

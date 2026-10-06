@@ -4,7 +4,7 @@
 // development's shortcut (ERGA_ADMIN_UNLOCKED off):
 //
 //   - a signed-in admin reaches every admin surface with no unlock: /admin
-//     and its POSTs, /admin/source, /api/source, /api/deploys, the factory,
+//     and its POSTs, /admin/factory, /api/source, /api/deploys, the factory,
 //     the homepage's settings, the admin tools and the Git endpoint (with an
 //     agent token);
 //   - a signed-in user who isn't an admin is still refused, never told
@@ -34,7 +34,7 @@ try {
 
   // ---- an admin (tester, local development's bootstrap admin), signed in, no unlock
   expect((await get("/admin")).status == 200, "/admin opens for a signed-in admin");
-  expect((await get("/admin/source")).status == 200, "/admin/source opens too");
+  expect((await get("/admin/factory")).status == 200, "/admin/factory opens too");
   const set = await get("/admin/settings", { method: "POST", headers: { Origin: root }, body: new URLSearchParams({ key: "delete_docs_after_hours", value: "48" }) });
   expect(set.status < 400, "a setting saves", { status: set.status });
   const open: [string, Response][] = [
@@ -51,7 +51,7 @@ try {
   expect(homeState.canSet && !homeState.locked, "the homepage can be set", homeState);
   const keysPage = await (await get("/admin/keys")).text();
   expect(keysPage.includes("doesn't require admin SSH keys") && !keysPage.includes('id="lock"'), "/admin/keys says no keys are needed, with no Lock now", keysPage.slice(0, 500));
-  ok("a signed-in admin: /admin, /admin/source, settings, deploys, source, factory and the homepage, with no unlock");
+  ok("a signed-in admin: /admin, /admin/factory, settings, deploys, source, factory and the homepage, with no unlock");
 
   // An admin's agent token: the admin tools and the Git endpoint take it.
   const tokensPage = await (await get("/tokens/new", { method: "POST", body: new URLSearchParams({ label: "Admin open test" }), headers: { Origin: root } })).text();

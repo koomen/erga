@@ -14,15 +14,18 @@
 //   /auth/github[/callback]    signing in; /auth/logout signs out
 //   /llms.txt, /api/..., /mcp  the server's API for agents, with an agent token (server-api.ts, tokens.ts)
 //   /settings, /tokens/...     your settings: agent tokens, and a test token for running the test suite against erga.dev
-//   /deploy                    deploy Erga to your own Cloudflare account (worker/deploy.ts; the deploy_page setting)
-//   /api/factory/...           the factory (experimental): tasks done by Claude Code in VMs, and its agent (worker/factory.ts;
-//                              /admin/factory redirects to /admin/source)
+//   /deploy                    deploy Erga to your own Cloudflare account (worker/deploy.ts; the deploy_page setting,
+//                              not an admin right); /admin/deploy redirects there
+//   /api/factory/...           the factory (experimental): tasks done by Claude Code in VMs, and its agent (worker/factory.ts)
 //   /api/deploys, /api/events  branch deploys' status and events, and deploy logs (worker/deploys.ts)
 //   /auth/test?token=&as=      a test person (Ada, Bo...) signed in with one; they open only test documents
 //   /git/erga.git/...          Erga's own repository, over Git smart HTTP (worker/source.ts; admin tokens)
+//   /admin, /admin/users       the server's settings and its users (admin.ts)
 //   /admin/keys, /api/admin/...  admins' SSH keys, and unlocking admin access with them (admin-access.ts)
-//   /admin/source, /api/source/...  its Source page (the factory's board, the dashboard of source and deploys, and the
-//                              factory's agent; /source redirects there) and API
+//   /admin/factory, /api/source/...  the Factory page (the factory's board, the dashboard of source and deploys, and the
+//                              factory's agent; /source and /admin/source redirect there) and its API
+//                              Every /admin page has the same layout (admin-layout.ts), and every /admin route is
+//                              for the server's admins only, checked here first (adminGate) and by its own door.
 //   /page.js, /style.css, ...  the editor's own files (static assets)
 //
 // In local development only, the dev server (dev/plugin.ts) links files on
@@ -34,13 +37,14 @@
 
 import { accountOf, withAccount } from "../account";
 import { idShaped, slugify, type Route } from "../directory";
-import { frontDoor, OWNER, whoOf, withTokens, type Platform } from "../front";
+import { frontDoor, mayDeploy, OWNER, whoOf, withTokens, type Platform } from "../front";
 import { serverApi, tokensDoor } from "../server-api";
 import { devUnlocked, finishSignIn, isDev, keysRequired, lockCookie, mintTestToken, sessionOf, signOut, startSignIn, testSignIn, unlockCookie } from "./auth";
 import { adminKeysOf, directoryOf, tokensOf } from "./d1";
 import { adminAccess, isAdminAccessPath } from "../admin-access";
+import { adminGate, isAdminPath } from "../admin-layout";
 import { deployDoor } from "./deploy";
-import { factoryApi, factoryDoor, previewTicketOk } from "./factory";
+import { factoryApi, previewTicketOk } from "./factory";
 import { previewDoor } from "../factory/cloudflare";
 import { sourceApi, sourceDoor, sourceGit } from "./source";
 import { deploysDoor, isDeploysPath } from "./deploys";
@@ -91,7 +95,8 @@ export default {
       if (response.status == 101 || pagesSite(env, url)) return response;
       return withAccount(response, async () => {
         const session = await sessionOf(env, request);
-        return accountOf(session, !!session && !session.test && (await directoryOf(env).users.isAdmin(whoOf(session))));
+        const dir = directoryOf(env);
+        return accountOf(session, !!session && !session.test && (await dir.users.isAdmin(whoOf(session))), await mayDeploy(dir, session));
       }, url.pathname + url.search);
     });
     if (answer.status == 101) return answer;
@@ -130,7 +135,7 @@ const pagesSite = (env: Env, url: URL) => url.hostname.endsWith(`.${pagesDomainO
 
 async function route(request: Request, env: Env, url: URL, ctx: ExecutionContext): Promise<Response> {
   const path = url.pathname;
-  const assets = path == "/page.js" || path == "/frame.js" || path == "/settings.js" || path == "/pages-tree.js" || path == "/factory-agent.js" || path == "/style.css" || path.startsWith("/fonts/");
+  const assets = path == "/page.js" || path == "/frame.js" || path == "/settings.js" || path == "/pages-tree.js" || path == "/factory-agent.js" || path == "/admin-share.js" || path == "/style.css" || path.startsWith("/fonts/");
   // A factory VM's preview (factory/cloudflare.ts), on Cloudflare only: <vm>.<FACTORY_PREVIEW_DOMAIN>.
   if (env.FACTORY_PREVIEW_DOMAIN) {
     const preview = await previewDoor(request, env, (vm, ticket) => previewTicketOk(env, vm, ticket));
@@ -146,7 +151,14 @@ async function route(request: Request, env: Env, url: URL, ctx: ExecutionContext
   if (assets || path == "/editor.html") return env.ASSETS.fetch(request);
   // Erga's own source: the Git endpoint, its page (the dashboard of source and deploys) and API (worker/source.ts).
   if (path == "/git/erga.git" || path.startsWith("/git/erga.git/")) return sourceGit(request, env, url);
-  if (path == "/source" || path == "/admin/source") return sourceDoor(request, env, platform(env), url);
+  // Its old address, from when admin settings linked to it: it's a page of its own now, not an admin one, so before the admins' gate.
+  if (path == "/admin/deploy" || path == "/admin/deploy/") return new Response(null, { status: 301, headers: { Location: "/deploy" } });
+  // Every /admin route: the server's admins only, checked on the server before any of them answers.
+  if (isAdminPath(path)) {
+    const refused = await adminGate(platform(env), request);
+    if (refused) return refused;
+  }
+  if (path == "/source" || path == "/admin/source" || path == "/admin/factory") return sourceDoor(request, env, platform(env), url);
   if (path.startsWith("/api/source/")) return sourceApi(request, env, platform(env), url);
   // Branch deploys and their status, the event stream, and staging's snapshot endpoints (worker/deploys.ts).
   if (isDeploysPath(path)) return deploysDoor(request, env, platform(env));
@@ -175,8 +187,7 @@ async function route(request: Request, env: Env, url: URL, ctx: ExecutionContext
     lockCookie: () => lockCookie(request),
     local: isDev(env, url),
   });
-  // The factory (experimental): its board and API, admins only (worker/factory.ts).
-  if (path == "/admin/factory") return factoryDoor();
+  // The factory (experimental): its API, admins only (worker/factory.ts); its board is on /admin/factory (worker/source.ts).
   if (path == "/api/factory" || path.startsWith("/api/factory/")) return factoryApi(request, env, url);
   // The server's API for agents, and people's agent tokens (server-api.ts).
   if (path == "/llms.txt" || path == "/mcp" || path == "/api" || path.startsWith("/api/")) return serverApi(request, withTokens(platform(env), url));
@@ -188,7 +199,7 @@ async function route(request: Request, env: Env, url: URL, ctx: ExecutionContext
 }
 
 /** A path that may be one of the homepage's files at the root: /<name>.<ext> or /<folder>/<name>.<ext>, but none of the app's own. */
-const APP_FILES = new Set(["/page.js", "/frame.js", "/factory-agent.js", "/style.css", "/editor.html", "/llms.txt"]);
+const APP_FILES = new Set(["/page.js", "/frame.js", "/factory-agent.js", "/admin-share.js", "/style.css", "/editor.html", "/llms.txt"]);
 const isHomeFilePath = (path: string) => !APP_FILES.has(path) && !path.startsWith("/fonts/") && !path.startsWith("/d/") && /^\/(?:[^/]+\/)?[^/]*\.[^/]+$/.test(path);
 
 /**

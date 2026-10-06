@@ -15,6 +15,7 @@
 #                     who you are in every page's corner (tests/account.ts),
 #                     admin SSH keys and unlocking admin access with them (tests/admin-keys.ts),
 #                     admin power for a signed-in admin while keys aren't required (tests/admin-open.ts),
+#                     the admin pages' layout, and who may reach them (tests/admin-layout.ts),
 #                     the viewer's controls fading while you read (tests/fade.ts),
 #                     a presentation's steps, viewing and editing (tests/steps.ts),
 #                     a document's pages tree (tests/tree.ts),
@@ -98,6 +99,7 @@ run 1 deployed bun tests/server-config.ts                # [7]
 run 1 deploys bun tests/deploys.ts                       # [5]
 run 1 isolation bun tests/isolation.ts                   # [4]
 run 1 admin-open bun tests/admin-open.ts                 # [3]
+run 1 admin-layout bun tests/admin-layout.ts             # [8]
 collect
 # Latency is measured alone: other tests running would skew it.
 run 1 latency bun tests/suite/run.ts --suite latency     # [6]

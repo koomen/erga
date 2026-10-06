@@ -1,14 +1,15 @@
-// The Source page, /admin/source (worker/source.ts), for admins with admin
+// The Factory page, /admin/factory (worker/source.ts), for admins with admin
 // access unlocked: the one place to manage Erga's own source, its deploys and
-// the factory. Three parts, on one page: the factory's task board
+// the factory's tasks. Three parts, on one page: the factory's task board
 // (factory/page.ts), the source and deploy dashboard (below), and the
 // factory's agent (factory/agent.ts; its panel is src/page/factory-agent.ts,
-// built to /factory-agent.js), with "Share with agent" for an outside agent
-// (the icon in the header bar, upper right, as in the editor).
+// built to /factory-agent.js). It has the layout every admin page shares
+// (admin-layout.ts): the breadcrumb, Share with agent (upper right, as in the
+// editor) and the sidebar, which collapses so the board gets the full width.
 // On a wide window the agent sits on the left, as in the editor, and the
 // board and the dashboard are beside it, one above the other; narrower, tabs
 // show one at a time. Each part's stylesheet is scoped to its pane
-// (scopeCss). /source, /admin/factory and /admin/deploys redirect here.
+// (scopeCss). /source, /admin/source and /admin/deploys redirect here.
 //
 // The dashboard:
 //
@@ -33,7 +34,8 @@
 // opens a dialog: the mirror's state and Push now, or how to turn it on). It updates by itself (/api/events) and
 // follows the system's light or dark.
 
-import { appPage, esc, ICON, type Session } from "../front";
+import { esc, page as plainPage, type Session } from "../front";
+import { adminResponse } from "../admin-layout";
 import { BOARD_SCRIPT, BOARD_STYLE, boardMarkup } from "../factory/page";
 
 export interface SourcePageConfig {
@@ -545,15 +547,6 @@ export function scopeCss(css: string, scope: string): string {
 }
 
 const PAGE_STYLE = `
-  main.admin { max-width: none; padding: 62px max(16px, env(safe-area-inset-right)) 24px max(16px, env(safe-area-inset-left)); }
-  .crumbs { position: absolute; top: max(14px, env(safe-area-inset-top)); left: max(20px, env(safe-area-inset-left)); height: 30px; display: flex; align-items: center; gap: 0; }
-  .crumbs .brand { position: static; }
-  .crumbs a.here-link { color: var(--soft); text-decoration: none; font-size: 13.5px; font-weight: 500; display: flex; align-items: center; }
-  .crumbs a.here-link:hover { color: var(--fg-strong); }
-  .crumbs > :not(.brand)::before { content: "›"; margin: 0 9px 0 10px; color: var(--chrome); opacity: 0.55; font-weight: 400; }
-  .crumbs .here { display: flex; align-items: center; font-size: 13.5px; font-weight: 500; color: var(--fg); }
-  /* The header bar: left of your avatar (account.ts), as the editor's icons are; it scrolls with the page, as the avatar does. */
-  .chrome-top { position: absolute; right: calc(max(16px, env(safe-area-inset-right)) + 38px); }
   /* The agent on the left, as in the editor; the board and the dashboard beside it, one above the other. */
   .workspace { display: grid; grid-template-columns: minmax(300px, 370px) minmax(0, 1fr); gap: 20px; align-items: start; }
   .agent-pane { position: sticky; top: 16px; height: calc(100vh - 78px); height: calc(100dvh - 78px); min-height: 420px; display: flex; flex-direction: column; min-width: 0;
@@ -568,7 +561,6 @@ const PAGE_STYLE = `
   .tabs { display: none; }
   /* Narrower, one at a time: tabs for the board, the dashboard and the agent. */
   @media (max-width: 999.98px) {
-    main.admin { padding-top: 58px; }
     .workspace { display: block; }
     .tabs { display: flex; gap: 4px; padding: 4px; margin: 0 0 14px; border: 1px solid var(--rule); border-radius: 12px; background: var(--bg); position: sticky; top: max(8px, env(safe-area-inset-top)); z-index: 6; }
     .tabs button { flex: 1; height: 34px; border: 0; border-radius: 9px; background: transparent; color: var(--soft); font: 550 13.5px var(--font-text); cursor: pointer; }
@@ -576,7 +568,7 @@ const PAGE_STYLE = `
     .panes { display: block; }
     .pane, .agent-pane { display: none; }
     body[data-tab="tasks"] #tasks, body[data-tab="source"] #source-pane { display: block; }
-    body[data-tab="agent"] .agent-pane { display: flex; position: static; height: calc(100dvh - 150px); min-height: 360px; }
+    body[data-tab="agent"] .agent-pane { display: flex; position: static; height: calc(100dvh - 180px); min-height: 360px; }
   }
   /* The GitHub mirror: its state and Push now, or how to turn it on. */
   dialog#mirror-dlg { width: min(600px, calc(100vw - 32px)); }
@@ -598,12 +590,12 @@ const TABS_SCRIPT = `
 (() => {
   const tabs = ["tasks", "source", "agent"];
   let tab = location.hash.slice(1);
-  if (!tabs.includes(tab)) { try { tab = localStorage.getItem("erga:admin-source-tab") || "tasks"; } catch { tab = "tasks"; } }
+  if (!tabs.includes(tab)) { try { tab = localStorage.getItem("erga:admin-factory-tab") || "tasks"; } catch { tab = "tasks"; } }
   if (!tabs.includes(tab)) tab = "tasks";
   const show = (t) => {
     document.body.dataset.tab = t;
     for (const b of document.querySelectorAll(".tabs [data-tab]")) b.setAttribute("aria-selected", String(b.dataset.tab == t));
-    try { localStorage.setItem("erga:admin-source-tab", t); } catch {}
+    try { localStorage.setItem("erga:admin-factory-tab", t); } catch {}
     if (t == "agent") window.dispatchEvent(new Event("erga:agent-shown"));
   };
   for (const b of document.querySelectorAll(".tabs [data-tab]")) b.addEventListener("click", () => { show(b.dataset.tab); history.replaceState(null, "", "#" + b.dataset.tab); });
@@ -639,15 +631,10 @@ function mirrorDialog(c: SourcePageConfig): string {
   </dialog>`;
 }
 
-/** /admin/source: the factory's board, the source and deploy dashboard, and the factory's agent, on one page (admins, unlocked). */
-export function adminSourcePage(c: SourcePageConfig): Response {
-  const crumbs = `<nav class="crumbs" aria-label="Breadcrumbs"><a class="brand" href="/">Erga</a><a class="here-link" href="/admin">Admin</a><span class="here" aria-current="page">Source</span></nav>`;
-  // The header bar, upper right, as the editor's (page.html, .chrome-top): Share with agent, the same icon button.
-  const bar = `<div class="chrome chrome-top" role="toolbar" aria-label="Controls"><button type="button" class="icon-btn" id="btn-share" aria-label="Share the factory with an agent" data-tip="Share with an agent" aria-expanded="false" aria-controls="share">${ICON.agent}</button></div>`;
-  const page = (body: string, status = 200) => new Response(appPage("Source", PAGE_STYLE + scopeCss(BOARD_STYLE, "#tasks") + scopeCss(SOURCE_STYLE, "#source-pane"), `${crumbs}${body}`, false), { status, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
-  if (!c.admin) return page(`<main><p class="empty">There's nothing here. <a href="/">Back to the start</a>.</p></main>`, 404);
-  return page(`${bar}
-<main class="admin">
+/** /admin/factory: the factory's board, the source and deploy dashboard, and the factory's agent, on one page (admins, unlocked). */
+export function adminFactoryPage(c: SourcePageConfig): Response {
+  if (!c.admin) return plainPage("Not found", "There's nothing here. <a href=\"/\">Back to the start</a>.", 404);
+  return adminResponse({ session: c.session, title: "Factory", here: "factory", wide: true, style: PAGE_STYLE + scopeCss(BOARD_STYLE, "#tasks") + scopeCss(SOURCE_STYLE, "#source-pane"), body: `
   <div class="tabs" role="tablist" aria-label="Show"><button type="button" role="tab" data-tab="tasks">Tasks</button><button type="button" role="tab" data-tab="source">Source</button><button type="button" role="tab" data-tab="agent">Agent</button></div>
   <div class="workspace">
   <aside class="agent-pane" id="agent" aria-label="Agent">
@@ -671,9 +658,8 @@ export function adminSourcePage(c: SourcePageConfig): Response {
   </div>
   </div>
   ${c.ready ? mirrorDialog(c) : ""}
-</main>
 <script>${TABS_SCRIPT}</script>
 <script>${BOARD_SCRIPT}</script>
 ${c.ready ? `<script>${SOURCE_SCRIPT}</script>` : ""}
-<script src="/factory-agent.js" defer></script>`);
+<script src="/factory-agent.js" defer></script>` });
 }

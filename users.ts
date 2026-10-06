@@ -4,7 +4,10 @@
 //
 // A GitHub login with a row in users may sign in; nobody else may. Each has
 // a server role: "user", or "admin", who may see and change the server's
-// settings (config.ts) and its users. The first admins come from the
+// settings (config.ts) and its users. Apart from that, an admin may grant
+// anyone the deploy role: they may then use /deploy when the deploy_page
+// setting keeps it for admins (worker/deploy.ts). The server always keeps an
+// admin: nobody may demote or remove the last one. The first admins come from the
 // deploy: the logins in the ADMINS binding (cloudflare.config.ts; locally,
 // DEV_LOGIN too) are always admins and may always sign in, and get their row
 // the first time they do. They can't be demoted or removed here (take them
@@ -27,6 +30,8 @@ export interface User {
   name: string;
   /** Their role on the server (a bootstrap admin's is always "admin"). */
   role: ServerRole;
+  /** The deploy role: they may use /deploy when deploy_page is "admins", as admins may. */
+  deploy: boolean;
   /** Listed in ADMINS: always an admin, and can't be demoted or removed here. */
   bootstrap: boolean;
   created: number;
@@ -56,7 +61,7 @@ const REMEMBER_MS = 10_000;
 /** How often someone's last_seen is written, at most. */
 const SEEN_EVERY_MS = 5 * 60_000;
 
-interface Row { login: string; name: string; role: ServerRole; created: number; added_by: string | null; last_seen: number | null }
+interface Row { login: string; name: string; role: ServerRole; deploy?: number | null; created: number; added_by: string | null; last_seen: number | null }
 
 export class Users {
   private readonly admins: Set<string>;
@@ -95,6 +100,13 @@ export class Users {
     const actor = typeof who == "string" ? { login: who } : who;
     if (actor.test) return false;
     return (await this.get(actor.login))?.role == "admin";
+  }
+
+  /** Whether `login` has the deploy role (a test person never has). */
+  async hasDeploy(who: Actor | string): Promise<boolean> {
+    const actor = typeof who == "string" ? { login: who } : who;
+    if (actor.test) return false;
+    return !!(await this.get(actor.login))?.deploy;
   }
 
   /**
@@ -163,9 +175,24 @@ export class Users {
     await this.mustAdmin(by);
     login = login.toLowerCase();
     if (role != "admin" && this.isBootstrapAdmin(login)) throw new NotAllowed(`${login} is an admin by the deploy (ADMINS): change it there.`);
-    if (!(await this.get(login))) throw new NotAllowed(`${login} isn't a user: add them first.`);
+    const user = await this.get(login);
+    if (!user) throw new NotAllowed(`${login} isn't a user: add them first.`);
+    if (role != "admin" && user.role == "admin") await this.mustKeepAnAdmin(by, login);
     await this.sql.run("UPDATE users SET role = ?2 WHERE login = ?1", login, role);
     if (role != "admin") await this.revokeKeys(by, login);
+    this.known.delete(login);
+    return (await this.get(login))!;
+  }
+
+  /** Grants someone who may sign in the deploy role, or revokes it. Admins only. */
+  async setDeploy(by: Actor, login: string, deploy: boolean): Promise<User> {
+    await this.mustAdmin(by);
+    login = login.toLowerCase();
+    const user = await this.get(login);
+    if (!user) throw new NotAllowed(`${login} isn't a user: add them first.`);
+    // A bootstrap admin who hasn't signed in yet has no row: make it, as signing in would.
+    if (user.created == 0) await this.sql.run("INSERT INTO users (login, name, role, created) VALUES (?1, ?1, 'admin', ?2) ON CONFLICT (login) DO NOTHING", login, Date.now());
+    await this.sql.run("UPDATE users SET deploy = ?2 WHERE login = ?1", login, deploy ? 1 : 0);
     this.known.delete(login);
     return (await this.get(login))!;
   }
@@ -175,9 +202,19 @@ export class Users {
     await this.mustAdmin(by);
     login = login.toLowerCase();
     if (this.isBootstrapAdmin(login)) throw new NotAllowed(`${login} is an admin by the deploy (ADMINS): take them out there.`);
+    if ((await this.get(login))?.role == "admin") await this.mustKeepAnAdmin(by, login);
     await this.sql.run("DELETE FROM users WHERE login = ?1", login);
     await this.revokeKeys(by, login);
     this.known.delete(login);
+  }
+
+  /** Throws NotAllowed if `login` is the server's last admin (bootstrap admins count, signed in or not). */
+  private async mustKeepAnAdmin(by: Actor, login: string): Promise<void> {
+    const rows = await this.sql.all<{ login: string }>("SELECT login FROM users WHERE role = 'admin'");
+    const others = new Set([...rows.map((r) => r.login), ...this.admins]);
+    others.delete(login);
+    if (others.size > 0) return;
+    throw new NotAllowed(`${login == by.login.toLowerCase() ? "You're" : `${login} is`} the last admin: make someone else an admin first, so the server keeps one.`);
   }
 
   /** Someone who stops being an admin loses their admin SSH keys (admin-keys.ts): made an admin again, they add keys again. */
@@ -195,13 +232,13 @@ export class Users {
   private fromRow(r: Row): User {
     const bootstrap = this.isBootstrapAdmin(r.login);
     return {
-      login: r.login, name: r.name, role: bootstrap ? "admin" : r.role, bootstrap,
+      login: r.login, name: r.name, role: bootstrap ? "admin" : r.role, deploy: !!r.deploy, bootstrap,
       created: Number(r.created), addedBy: r.added_by, lastSeen: r.last_seen == null ? null : Number(r.last_seen),
     };
   }
 
   /** A bootstrap admin with no row yet (created 0: never signed in). */
   private bootstrapUser(login: string): User {
-    return { login, name: login, role: "admin", bootstrap: true, created: 0, addedBy: null, lastSeen: null };
+    return { login, name: login, role: "admin", deploy: false, bootstrap: true, created: 0, addedBy: null, lastSeen: null };
   }
 }

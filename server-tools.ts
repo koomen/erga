@@ -9,7 +9,8 @@
 //   list_settings, set_setting,         the server's settings (config.ts), admins only;
 //   reset_setting                       a setting the deploy locks can be seen, not changed
 //   list_users, add_user,               who may sign in, and who's an admin (users.ts),
-//   set_user_role, remove_user          admins only
+//   set_user_role, set_user_deploy,     admins only
+//   remove_user
 //
 // An admin tool is offered only to an admin who has unlocked admin access
 // with their SSH key (`toolsFor`; admin-keys.ts): an external agent with an
@@ -143,7 +144,7 @@ export const SERVER_TOOLS: ServerToolDef[] = [
     label: "List the server's users",
     activity: "listing the users",
     admin: true,
-    description: "Admins only. Everyone who may sign in to this server: login, name, role (user or admin), whether they're an admin by the deploy (bootstrap: can't be demoted or removed here), when they were added and by whom, and when they were last seen.",
+    description: "Admins only. Everyone who may sign in to this server: login, name, role (user or admin), whether they have the deploy role (may use /deploy when deploy_page is admins), whether they're an admin by the deploy (bootstrap: can't be demoted or removed here), when they were added and by whom, and when they were last seen.",
     parameters: Type.Object({}),
     run: async (_args, { dir, who }) => (await dir.users.list(who)).map(userOf),
   },
@@ -170,6 +171,15 @@ export const SERVER_TOOLS: ServerToolDef[] = [
     description: "Admins only. Makes a user an admin, or just a user. An admin by the deploy (bootstrap) stays one.",
     parameters: Type.Object({ login: LOGIN, role: Type.Union([Type.Literal("user"), Type.Literal("admin")], { description: "user or admin" }) }),
     run: async (args, { dir, who }) => userOf(await dir.users.setRole(who, String(args.login ?? ""), args.role == "admin" ? "admin" : "user")),
+  },
+  {
+    name: "set_user_deploy",
+    label: "Grant or revoke the deploy role",
+    activity: "changing a user's deploy role",
+    admin: true,
+    description: "Admins only. Grants a user the deploy role, or revokes it: with it they may use /deploy (deploy Erga to their own Cloudflare account) when the deploy_page setting is admins, as admins may.",
+    parameters: Type.Object({ login: LOGIN, deploy: Type.Boolean({ description: "true to grant the deploy role, false to revoke it" }) }),
+    run: async (args, { dir, who }) => userOf(await dir.users.setDeploy(who, String(args.login ?? ""), args.deploy === true)),
   },
   {
     name: "remove_user",
@@ -286,5 +296,5 @@ function entryOf(e: ConfigEntry) {
 }
 
 function userOf(u: User) {
-  return { login: u.login, name: u.name, role: u.role, bootstrap: u.bootstrap, added: u.created ? iso(u.created) : null, addedBy: u.addedBy, lastSeen: iso(u.lastSeen) };
+  return { login: u.login, name: u.name, role: u.role, deploy: u.deploy, bootstrap: u.bootstrap, added: u.created ? iso(u.created) : null, addedBy: u.addedBy, lastSeen: iso(u.lastSeen) };
 }

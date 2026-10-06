@@ -63,10 +63,33 @@ try {
   const { p, row } = await adminPage(open.root);
   expect(await row(`!li.querySelector(".badge") && !li.querySelector("[name=value]").disabled`), "unlocked, it's editable");
   await row(`(li.querySelector("[name=value]").value = "36", li.querySelector("[name=value]").dispatchEvent(new Event("input")), li.querySelector("form").requestSubmit(), true)`);
-  await until(() => row(`li?.querySelector(".meta")?.textContent.includes("set by tester") && li.querySelector("[name=value]").value == "36"`), 10_000, "the page reloads with the value set");
+  await until(() => row(`/^Last set at \\d{4}-\\d\\d-\\d\\d \\d\\d:\\d\\d UTC by tester$/.test(li?.querySelector(".set")?.textContent) && li.querySelector("[name=value]").value == "36"`), 10_000, "the page reloads with the value set");
+  await p.settle();
+  ok("unlocked, an admin sets it on /admin, and the line under it says when and who set it");
+
+  // The other settings have real controls: switches, selects, no Reset where the control picks the default; no Factory section.
+  const at = (key: string, expr: string) => p.eval<any>(`(() => { const li = document.querySelector('li.setting[data-key="${key}"]'); return ${expr}; })()`);
+  expect(await at("factory", `li.dataset.control == "switch" && li.querySelector("input[type=checkbox][role=switch]") && !li.querySelector("[name=value]").checked && !li.querySelector(".save")`), "factory is an off switch, with no Save");
+  expect(await at("factory_fast", `li.querySelector("input[role=switch]").checked`), "factory_fast is a switch, on");
+  expect(JSON.stringify(await at("factory_model", `[...li.querySelectorAll("select[name=value] option")].map((o) => o.value)`)) == '["opus","sonnet","haiku"]', "factory_model is a select of its models");
+  expect(JSON.stringify(await at("deploy_page", `[...li.querySelectorAll("select[name=value] option")].map((o) => o.value)`)) == '["off","admins","users"]', "deploy_page is a select of who");
+  expect(await p.eval(`!document.getElementById("factory-title")`), "no separate Factory section");
+  await p.settle();
+  await at("factory", `(li.querySelector("[name=value]").click(), true)`);
+  await until(() => at("factory", `li?.querySelector("[name=value]").checked && /by tester$/.test(li.querySelector(".set")?.textContent)`), 10_000, "turning the factory switch on saves it, and the page reloads");
+  await p.settle();
+  await at("factory_model", `(li.querySelector("select").value = "sonnet", li.querySelector("select").dispatchEvent(new Event("change")), true)`);
+  await until(() => at("factory_model", `li?.querySelector("select").value == "sonnet" && /by tester$/.test(li.querySelector(".set")?.textContent)`), 10_000, "picking sonnet saves it");
+  await p.settle();
+  const landing = await (await p.eval<any>(`fetch("/admin/settings", { method: "POST", body: new URLSearchParams({ key: "landing_document", value: "null" }) }).then((r) => r.status)`));
+  expect(landing == 200, "landing_document set to none", landing);
+  await p.eval(`location.reload()`);
+  await until(() => at("landing_document", `!!li?.querySelector(".set")`), 10_000, "the page reloads");
+  for (const key of ["factory", "factory_model", "factory_fast", "landing_document"]) expect(await at(key, `!li.querySelector(".reset")`), `no Reset on ${key}`);
+  expect(await at("delete_docs_after_hours", `!!li.querySelector(".reset")`), "Reset stays on delete_docs_after_hours");
   await p.settle();
   await p.screenshot(join(SHOTS, "admin-set.png"));
-  ok("unlocked, an admin sets it on /admin, and it says who set it");
+  ok("switches, selects and no Reset for the factory and landing document settings");
 } finally {
   await open.dispose();
   browser.close();
