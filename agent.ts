@@ -40,7 +40,7 @@ import { fauxAssistantMessage, fauxText, fauxToolCall, registerFauxProvider, val
 import { Agent as PiAgent, type AgentEvent, type AgentTool } from "@mariozechner/pi-agent-core";
 import { Type } from "typebox";
 import { emptyLog, reduce, type Log, type LogEvent } from "./src/page/agent-log";
-import type { ColorScheme, ViewRequest, ViewResult } from "./src/page/agent-log";
+import { EVAL_MAX_JSON, EVAL_TIMEOUT, type ColorScheme, type ViewRequest, type ViewResult } from "./src/page/agent-log";
 import { agentName, colorFor, files, hasSeen, introduce, stamp, stateVector, type Author } from "./src/room/doc";
 import { pageAddress, type TreeEntry, type TreeOp } from "./tree";
 import { joinLocal, type Room } from "./room";
@@ -235,6 +235,10 @@ ${PAGES_PROMPT}`}
   selector to look closely at one element. It renders at ${owner}'s window size and mode (the
   <editor> block says which); pass width, height or color_scheme to see it another way. If a
   font isn't the one the page asks for, the web font didn't load.
+- evaluate_page runs a JavaScript expression in that same render and gives you its result
+  as JSON: computed styles, the fonts in use, element sizes, e.g.
+  getComputedStyle(document.querySelector("h1")).fontFamily. Use it to measure what a
+  picture can't show exactly. It changes nothing: the render is a copy, thrown away after.
 - get_title and set_title read and change the document's title (shown in the list and
   the browser tab) and its address, /<owner>/<slug>. Until someone sets them, the title
   follows the page's first heading and the slug follows the title, so a new heading
@@ -433,6 +437,25 @@ function makeTools(ws: Workspace, opts: {
         const v = await opts.view({ selector: p.selector, fullPage: p.full_page, width: p.width, height: p.height, colorScheme: p.color_scheme });
         if (v.error || !v.png) throw new Error(v.error ?? "The page couldn't be captured.");
         return { content: [{ type: "image" as const, data: v.png, mimeType: "image/png" }, { type: "text" as const, text: describeView(v, p.selector, p.full_page) }], details: {} };
+      },
+    },
+    {
+      name: "evaluate_page",
+      label: "Inspect the page",
+      description: `Run a JavaScript expression in the page the user has open, rendered as view_page renders it (the latest version, in the user's browser), and get its result as JSON. For what a picture can't measure: computed styles, the fonts in use, element sizes and positions. E.g. getComputedStyle(document.querySelector("h1")).fontFamily, [...document.fonts].filter((f) => f.status == "loaded").map((f) => f.family), or document.querySelector("#chart").getBoundingClientRect(). It may be async (await works); statements need their own return. Read-only: it runs in a throwaway copy, so nothing it changes reaches the document (edit the files for that), and it can reach nothing the page's own scripts can't. Waits ${EVAL_TIMEOUT.default / 1000}s for the result by default (timeout, at most ${EVAL_TIMEOUT.max / 1000}s); the JSON is cut to ${EVAL_MAX_JSON / 1000}K characters, so return only what you need.`,
+      parameters: Type.Object({
+        expression: Type.String({ description: "JavaScript to run in the page, e.g. getComputedStyle(document.body).fontSize" }),
+        width: Type.Optional(Type.Number({ description: "Width to render at, in CSS pixels (default: as wide as the user's page)." })),
+        height: Type.Optional(Type.Number({ description: "Height of the screenful, in CSS pixels (default: as tall as the user's page)." })),
+        color_scheme: Type.Optional(Type.Union([Type.Literal("light"), Type.Literal("dark")], { description: "Light or dark mode, for the page's prefers-color-scheme (default: the user's)." })),
+        timeout: Type.Optional(Type.Number({ description: `How long to wait for the result, in ms (default ${EVAL_TIMEOUT.default}, at most ${EVAL_TIMEOUT.max}).` })),
+      }),
+      execute: async (_id, p: { expression: string; width?: number; height?: number; color_scheme?: ColorScheme; timeout?: number }) => {
+        if (!p.expression?.trim()) throw new Error("Give an expression to run.");
+        const v = await opts.view({ evaluate: p.expression, width: p.width, height: p.height, colorScheme: p.color_scheme, timeout: p.timeout });
+        const errors = v.errors.length ? `\nThe page threw ${v.errors.length} error(s):\n${v.errors.slice(0, 10).join("\n")}` : "";
+        if (v.error || v.value == null) throw new Error((v.error ?? "The page couldn't be inspected.") + errors);
+        return text(`${v.value}${v.note ? `\n\n[${v.note}]` : ""}${errors}`);
       },
     },
     ...(opts.pages ? pageTools(opts.pages, opts.open) : []),
@@ -790,7 +813,7 @@ export interface SessionOptions {
   versions?: VersionsAccess;
 }
 
-const TOOL_ACTIVITY: Record<string, string> = { ...SERVER_TOOL_ACTIVITY, new_page: "making a page", list_pages: "looking at the pages", open_page: "opening a page", mkdir: "making a folder", mv: "moving", rm: "deleting", read: "reading", edit: "editing", write: "writing", ls: "looking around", find: "looking for files", grep: "searching", view_page: "looking at the page", get_title: "reading the title", set_title: "renaming the document", list_versions: "looking at versions", read_version: "reading an old version", diff_versions: "comparing versions", restore_version: "restoring a version", publish_version: "publishing" };
+const TOOL_ACTIVITY: Record<string, string> = { ...SERVER_TOOL_ACTIVITY, new_page: "making a page", list_pages: "looking at the pages", open_page: "opening a page", mkdir: "making a folder", mv: "moving", rm: "deleting", read: "reading", edit: "editing", write: "writing", ls: "looking around", find: "looking for files", grep: "searching", view_page: "looking at the page", evaluate_page: "inspecting the page", get_title: "reading the title", set_title: "renaming the document", list_versions: "looking at versions", read_version: "reading an old version", diff_versions: "comparing versions", restore_version: "restoring a version", publish_version: "publishing" };
 
 export async function startSession(opts: SessionOptions): Promise<AgentSession> {
   const { cfg, owner } = opts;
@@ -1055,6 +1078,10 @@ error says what to fix), 401 (bad token) or 404 (no such tool).
   needs their editor open), at their window size and in their light or dark mode
   unless you pass others: a screenshot plus any script errors and the fonts its
   text rendered in. Use it to check visual work before you say it's done.
+  evaluate_page runs a JavaScript expression in that same render and answers with
+  its result as JSON, for what a picture can't measure, e.g.
+  getComputedStyle(document.querySelector("h1")).fontFamily. It changes nothing
+  in the document.
 - open_page switches ${o.owner}'s open editor (every tab they have open on this
   document) to another page; new_page with open: true makes one and opens it. If
   they have no editor open, nothing opens: the answer says so and gives the page's

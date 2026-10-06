@@ -1293,7 +1293,7 @@ Once you've read the guide, await further instructions.`;
   // The conversation as the log shows it (agent-chat.ts, which the factory's panel on /admin/factory shares).
   const agentChat = chat({
     logEl: agentLog, jump: $("agent-jump") as HTMLButtonElement,
-    verbs: { read: ["Reading", "Read"], edit: ["Editing", "Edited"], write: ["Writing", "Wrote"], ls: ["Listing", "Listed"], find: ["Finding files", "Found files"], grep: ["Searching", "Searched"], view_page: ["Looking at the page", "Looked at the page"] },
+    verbs: { read: ["Reading", "Read"], edit: ["Editing", "Edited"], write: ["Writing", "Wrote"], ls: ["Listing", "Listed"], find: ["Finding files", "Found files"], grep: ["Searching", "Searched"], view_page: ["Looking at the page", "Looked at the page"], evaluate_page: ["Inspecting the page", "Inspected the page"] },
     externalTip: "An agent you shared this page with, working as your agent",
   });
   const log: Log = agentChat.log;

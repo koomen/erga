@@ -9,7 +9,7 @@ import { EditorState, Transaction, type ChangeSet, type Extension } from "@codem
 import { historyField } from "@codemirror/commands";
 import { Authority, changesFrom, selectionFrom, stateJSON, type Backdrop, type FromFrame, type Keys, type Snapshot, type ToFrame } from "./bridge";
 import type { InlineStyle, Kind, MarkAuthor, PageProblem, Peer } from "./editor";
-import type { ViewRequest, ViewResult } from "./agent-log";
+import { EVAL_MAX_JSON, viewWait, type ViewRequest, type ViewResult } from "./agent-log";
 import { changesBetween } from "./merge";
 
 export interface RemotePageConfig {
@@ -248,7 +248,7 @@ export class RemotePage {
 
   /** The agent's look at the page: the frame renders it, with `text` if the source view has newer. */
   async capture(req: ViewRequest): Promise<ViewResult> {
-    const reply = await this.request<Extract<FromFrame, { type: "captured" }>>({ type: "capture", id: this.nextId++, req, ...(this.detached ? { text: this.state.doc.toString() } : {}) }, 20_000);
+    const reply = await this.request<Extract<FromFrame, { type: "captured" }>>({ type: "capture", id: this.nextId++, req, ...(this.detached ? { text: this.state.doc.toString() } : {}) }, viewWait(req));
     const r = reply?.result;
     if (!r) return { width: 0, height: 0, errors: [], error: "The page didn't send a picture back in time." };
     return {
@@ -261,6 +261,7 @@ export class RemotePage {
       ...(Array.isArray(r.pending) && r.pending.length ? { pending: r.pending.filter((p): p is string => typeof p == "string").slice(0, 20).map((p) => p.slice(0, 200)) } : {}),
       ...(typeof r.note == "string" ? { note: r.note } : {}),
       ...(typeof r.error == "string" ? { error: r.error } : {}),
+      ...(typeof r.value == "string" ? { value: r.value.slice(0, EVAL_MAX_JSON + 100) } : {}),
     };
   }
 }
