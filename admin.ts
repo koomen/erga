@@ -2,10 +2,13 @@
 // admins (users.ts), for admins only. Everyone else gets "not found": they
 // can't see the page, nor that there is one.
 //
-//   /admin                     the page: the settings, and links to the rest
-//   /admin/users               the users: their roles (admin, deploy) as switches, when they joined, add and remove
+//   /admin                     the Settings page (GET /admin/settings redirects here)
+//   /admin/users               the Users page: their roles (admin, deploy) as switches, when they joined, add and remove
 //   POST /admin/settings       key, and value (JSON; null for never) to set it, or reset=1 to put it back to its default
 //   POST /admin/users          do=add (login, role), do=role (login, role), do=deploy (login, deploy: 1 or 0) or do=remove (login)
+//
+// Both pages have the layout every admin page shares (admin-layout.ts): the
+// breadcrumb, Share with agent, and the sidebar to Settings, Users and Factory.
 //
 // The POSTs answer JSON ({ entry } or { user } or { ok }, or { error } with
 // the message the directory gave, for a person to act on) and come only from
@@ -17,7 +20,8 @@
 // and the last admin, who can't be demoted or removed at all (users.ts).
 
 import { ConfigError, type ConfigEntry, type Settings } from "./config.ts";
-import { appPage, brand, esc, ICON, link, page, type Platform, type Session, TIMES_SCRIPT, whoOf } from "./front.ts";
+import { esc, ICON, link, page, type Platform, type Session, TIMES_SCRIPT, whoOf } from "./front.ts";
+import { adminResponse } from "./admin-layout.ts";
 import { LOCKED, NotAllowed, type ServerRole, type User } from "./users.ts";
 import { unlockFirst } from "./admin-access.ts";
 
@@ -25,8 +29,8 @@ import { unlockFirst } from "./admin-access.ts";
 export async function adminDoor(platform: Platform, request: Request): Promise<Response> {
   const session = await platform.sessionOf(request);
   const url = new URL(request.url);
-  const isPage = (url.pathname == "/admin" || url.pathname == "/admin/users") && request.method == "GET";
-  if (!session && isPage) {
+  const read = request.method == "GET" || request.method == "HEAD";
+  if (!session && read) {
     return new Response(null, { status: 302, headers: { Location: `/auth/github?next=${encodeURIComponent(url.pathname)}` } });
   }
   const who = session && whoOf(session);
@@ -34,10 +38,11 @@ export async function adminDoor(platform: Platform, request: Request): Promise<R
   const admin = !!who && !session?.agent && (await platform.directory.users.isAdmin(who));
   // An admin who hasn't unlocked admin access with their SSH key (admin-keys.ts) unlocks it first.
   const unlocked = admin && (await platform.directory.users.isUnlocked(who!));
-  if (url.pathname == "/admin" || isPage) {
-    if (!admin || !isPage) return notFound();
+  if (read) {
+    if (!admin) return notFound();
+    if (url.pathname == "/admin/settings") return new Response(null, { status: 302, headers: { Location: link("/admin", session!) } });
     if (!unlocked) return unlockFirst(url.pathname, session!);
-    return url.pathname == "/admin" ? adminPage(platform, session!) : usersPage(platform, session!);
+    return url.pathname == "/admin/users" ? usersPage(platform, session!) : settingsPage(platform, session!);
   }
   if (request.method != "POST") return notFound();
   if (!admin) return Response.json({ error: "Only an admin can do that." }, { status: session ? 403 : 401 });
@@ -133,16 +138,14 @@ function settingRow(e: Shown, session: Session, never: boolean): string {
   </li>`;
 }
 
-/** The look both admin pages' sections share. */
-const SECTION_STYLE = `
+const PAGE_STYLE = `
   section { margin-bottom: 44px; }
   h2 { display: flex; align-items: baseline; gap: 10px; margin: 0 0 8px; font-size: 16px; font-weight: 600; color: var(--fg-strong); }
   h2 small { font-size: 13px; font-weight: 400; color: var(--soft); }
   .lede { margin: 0 0 16px; font-size: 13.5px; color: var(--soft); }
-  .back { font-size: 13px; color: var(--chrome); text-decoration: none; }
-  .back:hover { color: var(--chrome-hover); }`;
+  ol.rows > li .doc { cursor: default; }
+`;
 
-/** post(action, fields): a POST from the page, its JSON answer, or an error with the server's message; say(hint, text, error?) shows it. */
 const POST_SCRIPT = `
   async function post(action, fields) {
     const r = await fetch(action, { method: "POST", body: new URLSearchParams(fields), headers: { Accept: "application/json" } }).catch(() => null);
@@ -150,21 +153,22 @@ const POST_SCRIPT = `
     if (!r || !r.ok) throw new Error(body.error || "Couldn't reach the server: try again.");
     return body;
   }
-  const say = (hint, text, error) => { hint.textContent = text; hint.classList.toggle("error", !!error); };`;
+  const say = (hint, text, error) => { hint.textContent = text; hint.classList.toggle("error", !!error); };
+`;
 
-async function adminPage(platform: Platform, session: Session): Promise<Response> {
+/** /admin: the server's settings, and Deploy your own. */
+async function settingsPage(platform: Platform, session: Session): Promise<Response> {
   const who = whoOf(session);
-  const [entries, users] = await Promise.all([platform.directory.config.list(who), platform.directory.users.list(who)]);
+  const entries = await platform.directory.config.list(who);
   // A setting naming a document shows it by its address now, linked.
   const settings: Shown[] = await Promise.all(entries.map(async (e) => {
     if (e.kind != "document" || e.value == null) return e;
     const doc = await platform.directory.find(String(e.value));
     return { ...e, doc: doc && { address: `/${doc.owner}/${doc.slug}`, title: doc.title } };
   }));
-  const admins = users.filter((u) => u.role == "admin").length;
   // Whether a setting takes null (never) as well as its kind of value.
   const takesNever = (key: string) => { try { return (platform.directory.config.settings as Settings)[key]?.parse(null) === null; } catch { return false; } };
-  const style = `${SECTION_STYLE}
+  const style = PAGE_STYLE + `
   ol.rows > li.setting { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 4px 16px; padding: 10px 2px; }
   .setting .about { min-width: 0; }
   .setting .head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
@@ -186,39 +190,19 @@ async function adminPage(platform: Platform, session: Session): Promise<Response
   @media (max-width: 520px) { ol.rows > li.setting { grid-template-columns: 1fr; } .setting .value { justify-content: flex-end; } }
 `;
   const deployOn = (await platform.directory.config.get("deploy_page")) != "off";
-  const factoryOn = (await platform.directory.config.get("factory")) == "on";
-  return new Response(appPage("Admin", style, `${brand(session)}<main>
-  <header>
-    <h1>Admin</h1>
-    <a class="back" href="${esc(link("/docs", session))}">‹ Documents</a>
-  </header>
-  <section aria-labelledby="settings-title">
-    <h2 id="settings-title">Settings</h2>
+  return adminResponse({ session, title: "Settings", here: "settings", style, body: `
+  <section aria-label="Settings">
     <ol class="rows">
 ${settings.map((e) => settingRow(e, session, takesNever(e.key))).join("\n")}
     </ol>
   </section>
-  <section aria-labelledby="users-title">
-    <h2 id="users-title">Users <small>${users.length} · ${admins} admin${admins == 1 ? "" : "s"}</small></h2>
-    <p class="lede">Only the server's users can sign in. Who they are, when they joined, and their roles (admin, deploy): <a href="${esc(link("/admin/users", session))}">Users</a>.</p>
-  </section>
-  <section aria-labelledby="source-title">
-    <h2 id="source-title">Source and deploys</h2>
-    <p class="lede">Erga's own repository, hosted here, and its branches deploying themselves: staging to staging.erga.dev, main to erga.dev. Commits, merging, deploys and their logs, the GitHub mirror, and the factory's tasks and agent: <a href="${esc(link("/admin/source", session))}">Source</a>.</p>
-  </section>
   ${deployOn ? `<section aria-labelledby="deploy-title">
     <h2 id="deploy-title">Deploy your own</h2>
-    <p class="lede">Put a copy of this server on your own Cloudflare account, with you as its admin: <a href="${esc(link("/deploy", session))}">Deploy Erga</a>. Who may use it is the deploy_page setting.</p>
+    <p class="lede">Put a copy of this server on your own Cloudflare account, with you as its admin: <a href="${esc(link("/deploy", session))}">Deploy Erga</a>. Who may use it is the deploy_page setting. Using it never makes anyone an admin here.</p>
   </section>` : ""}
-  ${factoryOn ? `<section aria-labelledby="factory-title">
-    <h2 id="factory-title">Factory</h2>
-    <p class="lede">Tasks that Claude Code does in VMs, each a branch merged into staging (experimental): <a href="${esc(link("/admin/source", session))}">Open the factory</a>. The factory setting turns it off.</p>
-  </section>` : ""}
-</main>
 <script>
   ${TIMES_SCRIPT}
   ${POST_SCRIPT}
-
   // Settings: Save lights up once the value differs from what's saved; each is checked by the server, which says what's wrong.
   for (const li of document.querySelectorAll("li.setting")) {
     const form = li.querySelector("form"), input = form.elements.value, mode = li.querySelector("select.mode"), save = li.querySelector(".save"), reset = li.querySelector(".reset"), hint = li.querySelector(".hint");
@@ -251,7 +235,7 @@ ${settings.map((e) => settingRow(e, session, takesNever(e.key))).join("\n")}
       try { await post(form.action, { key: li.dataset.key, reset: "1" }); location.reload(); } catch (err) { say(hint, err.message, true); }
     });
   }
-</script>`), { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
+</script>` });
 }
 
 /** A date as the page shows it before its script makes it relative (TIMES_SCRIPT). */
@@ -296,7 +280,7 @@ async function usersPage(platform: Platform, session: Session): Promise<Response
   const deployNote = deployPage == "admins" ? "Users with the deploy role may use /deploy, as admins may."
     : deployPage == "users" ? "Now anyone signed in may use /deploy (deploy_page is users): the deploy role matters only when deploy_page is admins."
     : "/deploy is off now (deploy_page is off): the deploy role matters only when deploy_page is admins.";
-  const style = `${SECTION_STYLE}
+  const style = PAGE_STYLE + `
   .add-user { display: flex; gap: 8px; margin: 0 0 14px; }
   .add-user .input { flex: 1; }
   #users-hint { margin: -6px 0 12px; }
@@ -319,16 +303,9 @@ async function usersPage(platform: Platform, session: Session): Promise<Response
   .switch:has(input:disabled) { cursor: default; opacity: 0.45; }
   @media (max-width: 640px) { .labels .seen, ol.users time.seen { display: none; } .labels, ol.users > li { grid-template-columns: minmax(0, 1fr) 6.5rem 3.5rem 3.5rem 34px; } }
 `;
-  return new Response(appPage("Users", style, `${brand(session)}<main>
-  <header>
-    <div>
-      <h1>Users</h1>
-      <p class="sub" id="users-count">${users.length} · ${admins.length} admin${admins.length == 1 ? "" : "s"} · ${deployers} with deploy</p>
-    </div>
-    <a class="back" href="${esc(link("/admin", session))}">‹ Admin</a>
-  </header>
+  return adminResponse({ session, title: "Users", here: "users", style, body: `
   <section aria-label="Users">
-    <p class="lede">Only these GitHub logins can sign in. Admins may change the server's settings and its users. ${esc(deployNote)}</p>
+    <p class="lede">Only these GitHub logins can sign in: <span id="users-count">${users.length} user${users.length == 1 ? "" : "s"} · ${admins.length} admin${admins.length == 1 ? "" : "s"} · ${deployers} with deploy</span>. Admins may change the server's settings and its users. ${esc(deployNote)}</p>
     <form class="add-user" method="post" action="${esc(link("/admin/users", session))}">
       <input type="hidden" name="do" value="add">
       <input class="input" name="login" placeholder="A GitHub login" aria-label="GitHub login to add" autocomplete="off" autocapitalize="off" spellcheck="false" required>
@@ -340,7 +317,6 @@ async function usersPage(platform: Platform, session: Session): Promise<Response
 ${users.map((u) => userRow(u, session, u.role == "admin" && admins.length == 1)).join("\n")}
     </ol>
   </section>
-</main>
 <script>
   ${TIMES_SCRIPT}
   ${POST_SCRIPT}
@@ -369,5 +345,5 @@ ${users.map((u) => userRow(u, session, u.role == "admin" && admins.length == 1))
       change({ do: "remove", login }, "Removing…");
     });
   }
-</script>`), { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
+</script>` });
 }

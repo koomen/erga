@@ -70,7 +70,7 @@ export const SETTINGS = {
     kind: "document",
   }),
   factory: setting<"off" | "on">({
-    description: "The factory (experimental): tasks that Claude Code does in VMs, each a branch merged into staging, on /admin/source. off or on.",
+    description: "The factory (experimental): tasks that Claude Code does in VMs, each a branch merged into staging, on /admin/factory. off or on.",
     default: "off",
     parse: (v) => {
       const s = typeof v == "string" ? v.trim().toLowerCase() : v === true ? "on" : v === false ? "off" : v;

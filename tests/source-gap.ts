@@ -82,7 +82,7 @@ try {
   };
 
   // 40 ahead: 24 commits left out.
-  await p.open(`${root}/admin/source#source`, { width: 1280, height: 1400, scale: 2, clear: false });
+  await p.open(`${root}/admin/factory#source`, { width: 1280, height: 1400, scale: 2, clear: false });
   await until(async () => (await state()).rows.length > 0, 10_000, "the list draws", state);
   await broken(10, 24, "source-gap.png");
   console.log("ok   40 ahead: staging's head and 10, a break with 24 more, the 5 after main, main's head and 5 before it");
