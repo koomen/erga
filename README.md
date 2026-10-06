@@ -626,7 +626,8 @@ The API (also for the settings UI, and with an agent token):
       { mode: "latest" } | { mode: "manual", versionId: "v3" }   (no versionId: the current state)
       → { published } | 4xx { error }
     POST /api/docs/<id>/versions/<versionId>/restore   editors only; from a browser only from this site's pages
-      → { current: Version } | 4xx { error }
+      optional body { path: "blog/post.html" }   (only that file)
+      → { current: Version, from: "v3", files: string[] } | 4xx { error }
 
 `description` is null until the model has answered; `pending` says there are
 edits since the current version. Publishing the current version (`versionId`
@@ -635,7 +636,9 @@ and publishes that, so "current" means up to the keystroke. A **restore**
 writes the version's files over the document as it is (files it didn't have
 are deleted), as an edit open editors see live, and cuts that as a new current
 version, by the person (or "<login>’s agent"), described "Restored version
-<n>"; pending edits become a version first, so nothing is lost. In "latest"
+<n>"; pending edits become a version first, so nothing is lost. With a
+`path`, only that file comes back ("Restored <path> from version <n>"), and
+the other files stay as they are. In "latest"
 mode viewers then see it; in "manual" mode what's published stays. Everyone with the document open hears
 `{ type: "versions" }` on its event channel (`/api/events`) when a version is
 cut, a description arrives, or the published version changes. In "latest"
@@ -645,6 +648,11 @@ The agents (the editor's and external ones, over `/api/ext`, the server's
 API and MCP) have `list_versions`, `read_version` (a version's files, or one
 file as it was), `restore_version` and `publish_version` (`latest`, or
 `manual` with a version; editors only), so an agent can do what the person can.
+`restore_version` takes a `path` to restore one file, and answers the new
+current version's id and the restored text, so the agent can edit against it
+at once. An `edit` whose `oldText` was in the text the agent last saw, but
+isn't in the file now, says the file changed since, names any restore of it
+since, and gives the current version's id.
 
 **In process, for the homepage's deploy** (`versions.ts`):
 `onPublished(docId | "*", cb)` calls `cb({ docId, published, files() })`
