@@ -19,6 +19,7 @@
 #                     the admin pages' layout, and who may reach them (tests/admin-layout.ts),
 #                     the viewer's controls fading while you read (tests/fade.ts),
 #                     a presentation's steps, viewing and editing (tests/steps.ts),
+#                     the Slides template, stepped through viewing and editing (tests/slides.ts),
 #                     the Solar system tour template, viewing and editing (tests/solar-system.ts),
 #                     a document's pages tree (tests/tree.ts),
 #                     the first switch into editing on a slow network (tests/switch.ts),
@@ -27,6 +28,7 @@
 #                     document settings (tests/settings.ts),
 #                     the factory, with simulated VMs (tests/factory.ts),
 #                     the factory board's compact cards (tests/factory-cards.ts),
+#                     instructions for a working task (tests/factory-instruct.ts),
 #                     live reload (tests/reload.ts, in a copy of the checkout)
 #                     and the multiplayer suite, each
 #                     against dev servers of its own (tests/host.ts)
@@ -90,6 +92,7 @@ run 1 front bun tests/worker.ts --local                  # [19]
 run 1 band bun tests/band.ts                             # [18]
 run 1 new-doc bun tests/new-doc.ts                       # [15]
 run 1 steps bun tests/steps.ts                           # [15]
+run 1 slides bun tests/slides.ts                         # [15]
 run 1 solar-system bun tests/solar-system.ts             # [15]
 run 1 pages bun tests/pages.ts                           # [17]
 run 1 switch bun tests/switch.ts                         # [17]
@@ -97,6 +100,7 @@ run 1 deploy bun tests/deploy.ts                         # [16]
 run 1 admin-keys bun tests/admin-keys.ts                 # [16]
 run 1 landing bun tests/landing.ts                       # [14]
 run 1 factory-cards bun tests/factory-cards.ts           # [14]
+run 1 factory-instruct bun tests/factory-instruct.ts     # [70]
 run 1 versions bun tests/versions.ts                     # [13]
 run 2 unit bun test ./tests/                             # [11]
 run 1 deployed bun tests/server-config.ts                # [7]

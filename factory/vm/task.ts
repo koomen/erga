@@ -17,7 +17,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { api, CLONE, env, git, LIMITS, log, REPORTED, runField, step, TASK } from "./common.ts";
+import { api, asksPrompt, CLONE, env, git, INBOX, LIMITS, log, REPORTED, runField, step, STOPPED, TASK } from "./common.ts";
 
 const PORT = () => Number(env("FACTORY_PREVIEW_PORT", "4400"));
 const PUBLIC = () => Number(env("FACTORY_PUBLIC_PORT", "4401"));
@@ -186,6 +186,35 @@ export async function shot(target: string, caption: string, replace = false) {
   await api(`/screenshots?caption=${encodeURIComponent(caption)}${replace ? "&replace=1" : ""}`, { body: bytes, type: "image/png" });
 }
 
+/**
+ * Takes the instructions that wait for this run's Claude Code (the factory hands each over once), as the prompt it
+ * reads: "" when none wait, or the run reported its end already (the factory then gives them to a new run).
+ */
+export async function takeAsks(how: string): Promise<string> {
+  if (existsSync(REPORTED())) return "";
+  const { asks, text } = await api("/inbox", { json: { how } }) as { asks: unknown[]; text?: string };
+  rmSync(INBOX(), { force: true });
+  if (!asks.length || !text) return "";
+  const stopped = existsSync(STOPPED()) ? readFileSync(STOPPED(), "utf8") : "";
+  rmSync(STOPPED(), { force: true });
+  return asksPrompt(text, stopped);
+}
+
+/**
+ * Claude Code's hook (common.ts, inboxHooks), after each tool call and when it would stop: the instructions that wait,
+ * as more context for it (or, at its stop, as the reason to go on). Quick when none wait (no call to the factory), and
+ * never in a subagent (the main Claude Code gets them, when the subagent ends).
+ */
+async function hook() {
+  let input: any = {};
+  try { input = JSON.parse(await Bun.stdin.text()); } catch { /* none */ }
+  if (input.agent_id || !existsSync(INBOX())) return;
+  const event = String(input.hook_event_name ?? "PostToolUse");
+  const prompt = await takeAsks(event == "Stop" ? "as it was about to stop" : `after a step (${String(input.tool_name ?? "a tool")})`);
+  if (!prompt) return;
+  console.log(JSON.stringify(event == "Stop" ? { decision: "block", reason: prompt } : { hookSpecificOutput: { hookEventName: event, additionalContext: prompt } }));
+}
+
 export async function done(summary: string) {
   const commit = await pushBranch();
   await api("", { method: "PATCH", json: { status: "complete", summary, commit, ...runField() } });
@@ -208,6 +237,7 @@ if (import.meta.main) {
       case "shot": { const replace = has("--replace"); await shot(rest[0], rest.slice(1).join(" ") || "", replace); console.log("screenshot added"); break; }
       case "done": await done(rest.join(" ")); console.log(`task #${TASK()} is ready to merge`); break;
       case "fail": await fail(rest.join(" ")); break;
+      case "hook": await hook().catch((e) => console.error(`task hook: ${(e as Error).message}`)); break;
       case "run": {
         // A command under a time limit: its output as it comes; on timeout, its whole tree killed (exit 124).
         const t = Number(flag("--timeout") ?? 600);

@@ -247,8 +247,8 @@ The + button (New document) makes a new document. It is in the viewer's
 controls, beside Clone and Edit (on a document's page and on the front page,
 served directly or not), and in the editor's top row, beside the pencil. It
 opens a picker of templates, under the button: **Page** (a blank document)
-and the **Presentation** group, with the **Solar system tour** (a group with no
-templates says so). The demo page
+and the **Presentation** group, with **Slides** and the **Solar system tour**
+(below; an empty group says it has no templates yet). The demo page
 is no template: Clone, on the front page, copies it. Every option and group
 heading is in the app's typeface, Inter, at one size and weight (the picker
 loads `/fonts/inter.css` on a page that hasn't it). Each template is a link to
@@ -270,7 +270,7 @@ and the editor). To add a template:
    the picker:
 
        { id: "slides", name: "Slides", group: "Presentation",
-         description: "A deck you click through.", files: "templates/slides" },
+         description: "16:9 slides you step through.", files: "templates/slides" },
 
    `id` is its name in `/new?template=` (keep it once it's out: links name
    it), `group` one of `TEMPLATE_GROUPS` (or none, to stand on its own), and
@@ -280,6 +280,16 @@ and the editor). To add a template:
 `bun tests/new-doc.ts` checks it in headless Chrome: each template's
 document, the picker and its typeface in the viewer, the editor and the signed-out front page,
 and the way to sign in.
+
+**Slides** (`templates/slides`) is a deck of 16:9 slides, the shape of Google
+Slides', one at a time and as large as the window allows (everything in a
+slide is sized in `cqw`, hundredths of its width, so it all scales). It
+starts with two slides, each a title and "Hello". Each slide is a step
+(`window.ergaSteps`, below): its label is the slide's title, and its picture
+in the list of steps is the slide drawn small (a copy of it, with the page's
+styles, in an SVG). A slide is a `<section class="slide">` in `<body>`; add
+one and it counts. `bun tests/slides.ts` checks it, viewing and editing
+(`--shots` keeps pictures).
 
 **Solar system tour** (`templates/solar-system`) is a presentation
 (DOCUMENT_PROMPT.md, "Presentations") with no libraries: a canvas draws a
@@ -441,7 +451,7 @@ may. With `users` everyone signed in may anyway, and with `off` nobody may.
 page), Share with agent in the upper right (the editor's button and card,
 with a factory token: `admin-share.js`, built from
 `src/page/admin-share.ts`), and a sidebar on the left with Settings
-(`/admin`), Users (`/admin/users`) and Factory (`/admin/factory`). The
+(`/admin`), Change log (`/admin/changes`), Users (`/admin/users`) and Factory (`/admin/factory`). The
 sidebar collapses to a rail of icons, and expands again, with an animation,
 so the factory's board gets the full width; the browser remembers which
 (`localStorage`, `erga:admin-sidebar`). On a phone the links are a row above
@@ -470,7 +480,10 @@ number. Those typed in have Save, and Reset when they're set (not a
 document's: empty is none). `/admin/users` lists every user (who added
 them, when they joined and were last seen) with a switch for each role,
 Admin and Deploy, and a remove button, and a box to add one by GitHub
-login. Roles change only with the switches, never typed text. A bootstrap admin's Admin switch and
+login. Roles change only with the switches, never typed text. `/admin/changes`,
+the **Change log**, lists every change to the settings, newest first, each
+with when, who, and each setting's value from and to (a reset badged), 50 at
+a time (Older changes: `?before=<n>`). A bootstrap admin's Admin switch and
 remove button are off, and so are the last admin's, saying why. Underneath it's `POST
 /admin/settings` (`key` and `value` as JSON, or `reset=1`) and `POST
 /admin/users` (`do=add|role|deploy|remove`, `login`, `role`, `deploy`: 1
@@ -491,6 +504,17 @@ shows it by address, and the directory checks who may set it (`checks`).
 `"never"`) for never; the admin page offers it as "After [n] hours" or
 "Never". Anyone's request may read a setting (the server reads them
 to do its work); only admins list and change them.
+
+**Settings' versions.** Each change to a setting, however it's made (the
+admin page, an agent, the homepage's switch, the server's own write), keeps
+a version of the settings, as a document keeps versions: a row in
+`server_config_versions` (numbered 1, 2, 3...) with who made it, when, and
+what changed (`[{ key, from, to, reset? }]`, each value as it applied
+before and after; a default when it had no row). It's written with the
+change, in one batch, only while the row is still the one read (else it reads
+again), so a change saved twice at once is recorded once. A change that
+changes nothing (the same value again, a
+reset of a default) makes no version. Only admins read them.
 
 **Settings the deploy fixes.** A setting can also be fixed in the repo, in
 `server.config.ts`:
@@ -528,7 +552,8 @@ applies, so local development is locked the same way as erga.dev.
   login, deploy)`, `remove(by, login)`;
 - settings: `dir.config.get(key)` (typed by `SETTINGS`), `entry(key)`,
   `isLocked(key)`, and, admins only, `list(by)`, `set(by, key, value)`,
-  `reset(by, key)`. An entry (`ConfigEntry`) has the key, its description,
+  `reset(by, key)`, `history(by, { before?, limit? })` (the settings' versions,
+  newest first, and their `total`). An entry (`ConfigEntry`) has the key, its description,
   `value` (what applies now), `default`, `source` (`default`, `set` or
   `locked`), `locked` (true when the deploy fixes it: show it read-only),
   `deployed` (the deploy's value, only when locked) and who set it and when.
@@ -1588,6 +1613,22 @@ preview`: `bun start` in the VM), takes screenshots with headless Chromium
 branch and moves the card to Ready to merge. Then the VM waits: its preview
 stays up, and the detail view takes more instructions ("Send to Claude
 Code"), which run Claude Code again on the same branch (`--continue`).
+The detail view takes instructions **while the task works**, too (the API's
+`revise`, the agent's `instruct_task`): the factory keeps them for the task
+(its log says "<who> asked, while it works: ..."), and its Claude Code gets
+them when its current step ends, in the same session, with all its work.
+`run.ts` asks the factory every 5 seconds whether some wait; Claude Code's
+hooks (`task.ts hook`, after each tool call and when it would stop, set in
+`~/.claude/settings.json` by `common.ts`, `prepareClaude`) then take them,
+each one once, and the log says "Claude Code got the instructions from
+...". If one command still runs a minute after they came
+(`LIMITS.instructionsWait`), `run.ts` stops that command only (the
+processes Claude Code started for it, not Claude Code), and Claude Code
+gets them with a line that says which command was stopped, so it can run it
+again if it still needs it. A subagent's tool calls don't take them: the
+main Claude Code gets them when the subagent ends. A run that says done or
+fails before it got them doesn't finish the task: the factory gives them
+to a new run, on the same branch (`--continue`).
 **Restart** (on a failed task, or one ready to merge) runs the task again
 on the same branch with no new instructions: the old VM stops, and a fresh
 VM, with a fresh git token, starts Claude Code with the task's prompt.
@@ -1657,8 +1698,8 @@ own agent session (`factory/agent.ts`), one per admin, in the `Factory`
 Durable Object, so it keeps working when the tab closes and a reload keeps the
 conversation. It queues up work the way the local outer agent uses the task
 queue (AGENTS.md): `create_task` (title, ask, `startAfter`, `mergeAfter`),
-`set_dependencies`, `instruct_task` (more instructions for a task that's
-ready to merge or failed), and reads with `list_tasks`, `get_task` (the ask,
+`set_dependencies`, `instruct_task` (more instructions for a task that
+works, is ready to merge or failed), and reads with `list_tasks`, `get_task` (the ask,
 summary, error, preview URL, log) and `view_screenshot`; it sees `needs
 agent` cards and why, and what the task's Claude Code is doing (its words and
 the commands it runs go on the task's log, "Claude: …", "Claude runs Bash:
@@ -2122,6 +2163,8 @@ page draws the controls (`STEPS_BOOT` in `front.ts`), outside the editor's
 own, so they're the same in both; an edit (`ergaHost.changed`, `frame.ts`)
 makes the pictures out of date. `bun tests/steps.ts` checks it all, viewing
 and editing (`--shots` keeps pictures).
+The list's pictures take the frame's shape as it is, so they follow the
+window when it changes size.
 
 On a phone the controls make room: the breadcrumbs shrink to a back arrow,
 avatars overlap, the agent covers the page instead
