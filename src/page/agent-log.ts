@@ -71,9 +71,16 @@ export interface ViewRequest {
    * renders once it has seen every edit the agent had made by then.
    */
   after?: string;
+  /**
+   * evaluate_page: a JavaScript expression to run in the same render,
+   * instead of taking a picture. Its result comes back as JSON (`value`).
+   */
+  evaluate?: string;
+  /** How long evaluate waits for its result, in ms (EVAL_TIMEOUT). */
+  timeout?: number;
 }
 
-/** What the tab sends back: a PNG (base64), or why it couldn't. */
+/** What the tab sends back: a PNG (base64), evaluate's result, or why it couldn't. */
 export interface ViewResult {
   png?: string;
   width: number;
@@ -82,4 +89,13 @@ export interface ViewResult {
   errors: string[];
   note?: string;
   error?: string;
+  /** evaluate's result as JSON text, cut to EVAL_MAX_JSON characters ("undefined" when there is none). */
+  value?: string;
 }
+
+/** evaluate_page's limits: how long it waits, by default and at most (ms), and how much JSON it sends back. */
+export const EVAL_TIMEOUT = { default: 5_000, max: 15_000 };
+export const EVAL_MAX_JSON = 20_000;
+export const evalTimeout = (req: ViewRequest) => Math.max(100, Math.min(EVAL_TIMEOUT.max, Number(req.timeout) || EVAL_TIMEOUT.default));
+/** How long a tab may take to answer a view request: the render, plus evaluate's own wait. */
+export const viewWait = (req: ViewRequest) => 20_000 + (req.evaluate != null ? evalTimeout(req) : 0);

@@ -24,7 +24,7 @@ import { digest, StoreError, type FileStore, type Room } from "./room";
 import { titleOf } from "./front";
 import { checkNewName, cleanTreePath, isPage, pageAddress, parentsOf, resolvePage, TreeError, treeEntries, type TreeOp } from "./tree";
 import { ignored, isTextPath as isTextFile } from "./src/room/doc";
-import type { ViewRequest, ViewResult } from "./src/page/agent-log";
+import { viewWait, type ViewRequest, type ViewResult } from "./src/page/agent-log";
 import type { VersionsAccess } from "./agent";
 
 export interface HostOptions {
@@ -156,7 +156,7 @@ export function makeHost(opts: HostOptions) {
     if (![...tabs].some((t) => t.user == user)) return Promise.resolve({ width: 0, height: 0, errors: [], error: "Your user has no editor tab open, so there's no browser to look at the page with." });
     const id = crypto.randomUUID();
     return new Promise((resolve) => {
-      const timer = setTimeout(() => { views.delete(id); resolve({ width: 0, height: 0, errors: [], error: "The editor didn't send a picture back in time." }); }, 20_000);
+      const timer = setTimeout(() => { views.delete(id); resolve({ width: 0, height: 0, errors: [], error: `The editor didn't send ${req.evaluate != null ? "the result" : "a picture"} back in time.` }); }, viewWait(req) + 2_000);
       views.set(id, (r) => { clearTimeout(timer); views.delete(id); resolve(r); });
       sendTo(user, { type: "view", id, req });
     });
