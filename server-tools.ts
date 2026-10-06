@@ -8,13 +8,16 @@
 //   document_access, share_document     who a document is shared with, and sharing it (its owner)
 //   list_settings, set_setting,         the server's settings (config.ts), admins only;
 //   reset_setting                       a setting the deploy locks can be seen, not changed
+//   list_setting_changes                the settings' change log (config.ts history), admins only
+//   list_api_keys                       which API keys are set (credentials.ts), never a key, admins only
 //   list_users, add_user,               who may sign in, and who's an admin (users.ts),
 //   set_user_role, set_user_deploy,     admins only
 //   remove_user
 //
 // An admin tool is offered only to an admin who has unlocked admin access
 // with their SSH key (`toolsFor`; admin-keys.ts): an external agent with an
-// admin token. The editor's agent never has them (a document's host never
+// admin token, and the factory's own agent (factory/agent.ts, `adminTools`),
+// acting as the admin whose session it is. The editor's agent never has them (a document's host never
 // carries an unlock, and a document's text could steer its agent). The
 // directory checks again on every call (Users.mustAdmin), so a tool list
 // that's gone stale (an unlock ended, someone stopped being an admin) still
@@ -136,6 +139,33 @@ export const SERVER_TOOLS: ServerToolDef[] = [
     description: "Admins only. Puts one of the server's settings back to its default. A setting the deploy locks can't be changed.",
     parameters: Type.Object({ key: Type.String({ description: "The setting's key" }) }),
     run: async (args, { dir, who }) => entryOf(await dir.config.reset(who, String(args.key ?? ""))),
+  },
+
+  {
+    name: "list_setting_changes",
+    label: "Read the settings' change log",
+    activity: "reading the settings' change log",
+    admin: true,
+    description: "Admins only. The settings' change log (/admin/changes), newest first: each change's number, when, who made it, and each setting's value before and after (reset: put back to its default; credential: an API key set, replaced or cleared, never the key). 20 at a time unless you ask for more (up to 100); before: only changes older than that number. total: how many there are.",
+    parameters: Type.Object({
+      limit: Type.Optional(Type.Integer({ description: "How many, the latest first (default 20, at most 100)" })),
+      before: Type.Optional(Type.Integer({ description: "Only changes numbered lower than this" })),
+    }),
+    run: async (args, { dir, who }) => {
+      const { versions, total } = await dir.config.history(who, { limit: Math.min(100, Number(args.limit) || 20), ...(args.before != null ? { before: Number(args.before) } : {}) });
+      return { total, changes: versions.map((v) => ({ n: v.n, at: iso(v.at), by: v.by, changes: v.changes })) };
+    },
+  },
+  {
+    name: "list_api_keys",
+    label: "Read the API keys' status",
+    activity: "reading the API keys' status",
+    admin: true,
+    description: "Admins only. The server's API keys (Anthropic, OpenAI), as /admin shows them: whether each is stored, its last four characters, who set it and when, and whether a Worker secret stands in. Never the key itself. An admin sets, replaces or clears a key only on /admin, so a key never goes through a conversation.",
+    parameters: Type.Object({}),
+    run: async (_args, { dir, who }) => (await dir.credentials.list(who)).map((c) => ({
+      name: c.name, label: c.label, description: c.description, stored: c.set, last4: c.last4, updated: iso(c.updated), updatedBy: c.updatedBy, workerSecret: c.fallback,
+    })),
   },
 
   // ------------------------------------------------------------ the server's users (admins)

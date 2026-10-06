@@ -32,6 +32,16 @@ const VERBS: Record<string, [string, string]> = {
   create_task: ["Queueing", "Queued"],
   set_dependencies: ["Changing the dependencies of", "Changed the dependencies of"],
   instruct_task: ["Sending instructions to", "Sent instructions to"],
+  list_settings: ["Reading the settings", "Read the settings"],
+  set_setting: ["Changing", "Changed"],
+  reset_setting: ["Resetting", "Reset"],
+  list_setting_changes: ["Reading the change log", "Read the change log"],
+  list_api_keys: ["Reading the API keys' status", "Read the API keys' status"],
+  list_users: ["Listing the users", "Listed the users"],
+  add_user: ["Adding", "Added"],
+  set_user_role: ["Changing the role of", "Changed the role of"],
+  set_user_deploy: ["Changing the deploy role of", "Changed the deploy role of"],
+  remove_user: ["Removing", "Removed"],
 };
 
 const input = $("agent-input") as HTMLTextAreaElement, send = $("agent-send") as HTMLButtonElement, hint = $("agent-hint");
