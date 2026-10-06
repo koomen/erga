@@ -392,7 +392,7 @@ try {
   })()`);
   await until(() => p.eval(`!!document.querySelector(".agent-attachments .file-chip.image img")`), 5000, "a pasted screenshot waits above the box");
   await sayTo(`What's this? @script [{"inputs": true}]`);
-  await until(async () => (await replies()).includes(`{"images":["image/png"],"files":[]}`), 15_000, "the agent gets the screenshot as an image", () => p.eval(`document.getElementById("agent-send").outerHTML + " hint: " + document.getElementById("agent-hint").textContent + " tray: " + document.querySelector(".agent-attachments").outerHTML.slice(0, 300) + " clips: " + document.querySelectorAll(".agent-attach").length + " log: " + document.getElementById("agent-log").innerHTML.slice(-600)`).then((s) => s + " errors: " + p.errors.join(" / ")));
+  await until(async () => (await replies()).includes(`{"images":["image/png"],"files":[]}`), 15_000, "the agent gets the screenshot as an image", panel);
   expect(await p.eval(`!!document.querySelector("#agent-log .msg-user .msg-files .file-chip.image img")`), "and the conversation shows it");
   await p.screenshot(join(SHOTS, "factory-agent.png"));
   ok("the factory's agent: reads the board, queues a task with a dependency, reads it, looks at its screenshot, sends instructions, changes dependencies; no merge or discard; takes an attached screenshot");
