@@ -2219,6 +2219,13 @@ Click into any text and type. Enter makes a new paragraph or list item, Shift-En
 a line break, Backspace at the start of a paragraph joins it to the one above,
 ⌘Z undoes, ⌘-click opens a link.
 
+In an HTML file, an empty paragraph that Enter makes is written `<p><br></p>`.
+The `<br>` keeps it a line high on the published page as in the editor, so a
+blank paragraph you leave stays. The first text you type, paste or compose
+into it replaces the `<br>`, in the same undo step. A `<br>` is kept only as
+the sole content of an otherwise empty block: joining or deleting into one
+drops it once the block has text.
+
 Selecting text brings up a small style bar (bold, italic, code, link); ⌘B, ⌘I,
 ⌘E and ⌘K do the same. A selection may cross inline elements and paragraphs:
 each stretch of text gets the style, so the HTML stays well-formed, and taking
