@@ -2265,7 +2265,8 @@ A presentation (slides, a walkthrough) can tell Erga its steps, through
 contract, with a minimal example). Viewing and editing alike, the page then
 gets back and forward buttons under it, with the step it's at, and the arrow
 keys step too, except in text being edited. The button on the left opens a
-list of the steps over the page's right side: the page's own pictures of
+list of the steps (under a "Steps" head) over the page's right side (its left, if the
+editor's layout has the list on the left; in the editor it's docked beside the page, see "The agent"): the page's own pictures of
 them (its `image()`), kept until the document changes, else each step's
 number and label; a click goes to that step. The frame's host page reads the
 contract from the page shown and relays it (`HOST_SCRIPT`: `erga-steps`,
@@ -2463,7 +2464,7 @@ his own edit in teal.
 ### The agent
 
 ⌘J, or the round button in the lower-left corner, opens the agent: a
-floating card on the left that grows out of that button while the page slides
+floating card on the left (or where you dock it, below) that grows out of that button while the page slides
 right to make room (Esc or the collapse button shrinks it back). The editor
 paints the space behind the card with the page's own background, and tints
 the card and the other controls from it, so opening the agent never shows a
@@ -2518,6 +2519,25 @@ most 15 s) and cuts the JSON at 20,000 characters (src/page/agent-log.ts,
 `EVAL_TIMEOUT`, `EVAL_MAX_JSON`). The time limit can't stop an expression that
 never yields (a `while (true)` loop): that one stalls the editor's tab, and the
 tool gives up after the host's wait.
+
+The agent and a presentation's list of steps are side panels around the
+document, agent | document | steps to start with (`src/page/layout.ts`).
+Drag the agent's inner edge (the one that faces the document) to make it wider
+or narrower: from 300 to 760px, and never so wide that the document is under
+360px; a double-click on the edge puts back the default, 380px. Drag either
+panel by its head to dock it on the left or the right, in any order with the
+other: from agent | document | steps, dragging the agent right gives
+document | agent | steps, then document | steps | agent. While you drag, the
+panel follows the pointer, a dashed ghost shows the slot it will land in, and
+the document and the other panel slide aside to make room. Each slot is a
+magnet: the window's edges and the edge between the document and the other
+panel; the nearest one wins, and the slot the panel is in stays until another
+is 32px nearer, so it doesn't flicker between two. Let go and the panel eases
+into place; Escape puts it back. The arrangement and the agent's width are
+kept in this browser (localStorage, `erga:layout:v1`), and the agent's round
+button sits in the lower corner on its side. Viewing, the list of steps
+floats over the document on the same side. Under 760px wide nothing docks:
+the agent covers the page on its side, and the list floats as when viewing.
 
 **Attachments.** A message can carry files, in this panel and the factory's
 (`src/page/attach-ui.ts`, one code for both): drop them anywhere on the panel
@@ -2992,6 +3012,12 @@ scenarios at a time), `bun tests/suite/run.ts` (~22s; `--suite`, `--grep` and
 `--seed` narrow it, `--long` for the big slow version), `bun tests/factory.ts`
 (~57s), `bun test tests/` (~11s).
 
+`bun tests/layout.ts` checks the editor's side panels in a browser: the agent
+made wider by its edge (the document keeps its minimum), the agent and the list
+of steps dragged by their heads to each side (the ghost, Escape), and the
+arrangement kept across a reload; `tests/layout.test.ts` covers the layout's
+rules (`--shots` keeps pictures of the arrangements).
+
 `bun tests/attach.ts` attaches files in the editor's agent panel (pasted, dropped and
 picked; refusals; the drop highlight) and checks what the scripted model
 gets and what the conversation shows; `tests/attach.test.ts` covers the rules.
@@ -3157,7 +3183,7 @@ back, merging edits from disk, the agent's exact-match edits and attribution.
 - `src/page/`: the page editor, on CodeMirror 6: `manuscript.ts` (HTML source
   analysis), `markdown.ts` (Markdown rendering with source ranges),
   `editor.ts` (the editing surface, marks and other people's carets),
-  `main.ts` (shell, presence, source view, agent panel), `frame.ts` (the page
+  `main.ts` (shell, presence, source view, agent panel), `layout.ts` (the side panels: docking, the agent's width), `frame.ts` (the page
   editor's frame, on the document's own origin), `bridge.ts` and `remote.ts`
   (the messages between the two, and the shell's side of them), `collab.ts` (the
   room connection and its binding to the editor), `merge.ts` (word diffs and
