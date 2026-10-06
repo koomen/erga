@@ -19,7 +19,8 @@ import { ACCOUNT_STYLE, accountMarkup, type Account } from "./account.ts";
 import { ConfigError } from "./config.ts";
 import { LOCKED } from "./users.ts";
 import { NotAllowed, roleMay, type DocRow } from "./directory.ts";
-import { cloneButton, editButton, esc, FADE, fromElsewhere, VIEW_STYLE, whoOf, type Platform } from "./front.ts";
+import { cloneButton, editButton, esc, FADE, fromElsewhere, link, VIEW_STYLE, whoOf, type Platform } from "./front.ts";
+import { NEW_DOC_SCRIPT, NEW_DOC_STYLE, newDocButton, newDocMenu } from "./templates.ts";
 
 /** Where a deploy's files are served: /_home/<gen>/<path>, each address never reused, so browsers keep them for good. */
 export const HOME_FILES = "/_home/";
@@ -163,7 +164,7 @@ export async function renderHome(opts: { index: string; files: Record<string, st
 
 /**
  * The homepage's controls, over the page as on any document's viewer
- * (front.ts, viewDocument): Clone, Edit for those who may edit it, and who
+ * (front.ts, viewDocument): New document (templates.ts), Clone, Edit for those who may edit it, and who
  * you are (account.ts). They live in a shadow root (declarative, so they
  * paint as soon as they arrive, before any script), out of the page's
  * styles' reach and the page out of theirs, on a host that resets whatever
@@ -172,8 +173,9 @@ export async function renderHome(opts: { index: string; files: Record<string, st
  * account menu and the tooltips.
  */
 export function homeHeader(o: { clone: string; edit: string | null; account: Account | null; here: string; doc?: string }): string {
-  const buttons = `<div class="erga-view-buttons">${cloneButton(o.clone)}${o.edit ? editButton(o.edit, false) : ""}</div>`;
-  return `<erga-controls${o.doc ? ` data-doc="${esc(o.doc)}"` : ""}><template shadowrootmode="open"><style>${HOST_STYLE}</style><div class="band"></div>${buttons}${accountMarkup(o.account, o.here)}${VIEW_STYLE}${ACCOUNT_STYLE}</template></erga-controls><script>${HEADER_SCRIPT}</script>`;
+  const session = o.account?.session ?? null;
+  const buttons = `<div class="erga-view-buttons">${newDocButton("erga-view-button")}${cloneButton(o.clone)}${o.edit ? editButton(o.edit, false) : ""}</div>${newDocMenu((path) => link(path, session), !!session && !session.test)}`;
+  return `<erga-controls${o.doc ? ` data-doc="${esc(o.doc)}"` : ""}><template shadowrootmode="open"><style>${HOST_STYLE}</style><div class="band"></div>${buttons}${accountMarkup(o.account, o.here)}${VIEW_STYLE}${ACCOUNT_STYLE}${NEW_DOC_STYLE}</template></erga-controls><script>${HEADER_SCRIPT}</script>`;
 }
 
 // The host: nothing of the page's applies to it (its own !important rules win over the page's, from inside the shadow root).
@@ -219,6 +221,9 @@ const HEADER_SCRIPT = `(() => {
     document.addEventListener("keydown", (e) => { if (e.key == "Escape" && !menu.hidden) { show(false); btn.focus(); } });
     addEventListener("blur", () => show(false));
   }
+  // New document's picker (templates.ts).
+  ${NEW_DOC_SCRIPT}
+  ergaNewDoc(root);
   // The controls fade once the page is scrolled, as on any document's page (front.ts, FADE): on the host, whose own opacity
   // the page can't touch; the band stays as it is.
   ${FADE}

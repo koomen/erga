@@ -241,6 +241,45 @@ with the way in; so is a locked setting naming a document that isn't there.
 Locally, `bun start` does the same: on a fresh local database the first `/`
 makes `/<DEV_LOGIN>/landing`. Test servers too, when a test asks for `/`.
 
+### New documents from a template
+
+The + button (New document) makes a new document. It is in the viewer's
+controls, beside Clone and Edit (on a document's page and on the front page,
+served directly or not), and in the editor's top row, beside the pencil. It
+opens a picker of templates, under the button: **Page** (a blank document)
+and the **Presentation** group (no templates yet, it says so). The demo page
+is no template: Clone, on the front page, copies it. Every option and group
+heading is in the app's typeface, Inter, at one size and weight (the picker
+loads `/fonts/inter.css` on a page that hasn't it). Each template is a link to
+`/new?template=<id>`, which makes the document and opens it in the editor.
+Signed out, the picker says you sign in first; `/new` sends you to sign in
+and back to `/new?template=<id>`, which asks you to confirm (the way back from
+GitHub is another site) and then makes it. An unknown template is a 404.
+Escape, a click elsewhere or leaving the window closes the picker; ↑ ↓ move
+in it. `/new` with no template is the first one, Page.
+
+All of it comes from one registry, `templates.ts` (no server code: the
+picker's markup, style and script are there too, for the viewer, `home.ts`
+and the editor). To add a template:
+
+1. Put its starting document in a folder of its own, `templates/<name>/`,
+   with `index.html` (or `index.md`) and the text files beside it (the
+   Worker reads them as text).
+2. Add one entry to `TEMPLATES` in `templates.ts`, where it should show in
+   the picker:
+
+       { id: "slides", name: "Slides", group: "Presentation",
+         description: "A deck you click through.", files: "templates/slides" },
+
+   `id` is its name in `/new?template=` (keep it once it's out: links name
+   it), `group` one of `TEMPLATE_GROUPS` (or none, to stand on its own), and
+   `files` the folder.
+3. A new group goes in `TEMPLATE_GROUPS`, with the template it comes after.
+
+`bun tests/new-doc.ts` checks it in headless Chrome: each template's
+document, the picker and its typeface in the viewer, the editor and the signed-out front page,
+and the way to sign in.
+
 ### The homepage, served directly
 
 Every document renders in a frame on its own origin, for safety (see [Pages
@@ -2837,6 +2876,8 @@ back, merging edits from disk, the agent's exact-match edits and attribution.
 
 - `page.html`, `page.js`, `frame.js`: the editor's shell and its built
   scripts (the shell's, and the frame's that runs on each document's own origin)
+- `templates.ts`, `templates/`: what a new document starts from: the registry of templates (the + button's
+  picker, `/new?template=<id>`) and their files
 - `landing/`: the demo page, built into the Worker, which the server makes the
   front page when there's none (`seedLanding`, `front.ts`)
 - `home.ts`, `worker/home.ts`, `worker/published.ts`: the homepage served

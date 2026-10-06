@@ -13,6 +13,7 @@
 #                     Erga's own source: the Git endpoint, merges, the mirror and the Source page (tests/source.ts),
 #                     branches deploying themselves, in the Worker (tests/deploys.ts),
 #                     who you are in every page's corner (tests/account.ts),
+#                     the + button and its picker of templates (tests/new-doc.ts),
 #                     admin SSH keys and unlocking admin access with them (tests/admin-keys.ts),
 #                     admin power for a signed-in admin while keys aren't required (tests/admin-open.ts),
 #                     the admin pages' layout, and who may reach them (tests/admin-layout.ts),
@@ -86,6 +87,7 @@ run 3 suite bun tests/suite/run.ts --skip latency        # [22]
 run 1 fade bun tests/fade.ts                             # [20]
 run 1 front bun tests/worker.ts --local                  # [19]
 run 1 band bun tests/band.ts                             # [18]
+run 1 new-doc bun tests/new-doc.ts                       # [15]
 run 1 steps bun tests/steps.ts                           # [15]
 run 1 pages bun tests/pages.ts                           # [17]
 run 1 switch bun tests/switch.ts                         # [17]
