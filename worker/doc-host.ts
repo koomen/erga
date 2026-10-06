@@ -779,12 +779,18 @@ export class DocHost extends DurableObject<Env> {
       naming: (person) => naming({ login: person.id, test: person.id.startsWith("test-") }),
       // Sharing this document (or another), and for an admin the server's settings and users, as the person.
       serverTools: (person) => agentToolsFor({ dir: directoryOf(this.env), who: { login: person.id, test: person.id.startsWith("test-") }, here: this.idOf(meta) }),
-      // An agent's turn is one version.
-      turnEnded: () => { void this.cutSoon("agent turn"); },
+      // An agent's turn is one version, and where its next diff_versions starts from ("last_turn").
+      turnEnded: () => this.cutSoon("agent turn").then(async (v) => (v ?? (await this.versions.latest()))?.id ?? null),
       versions: {
         state: (opts) => this.versionsState(opts).then((s) => s!),
         version: (ref) => this.version(ref),
         file: (ref, path) => this.versionFile(ref, path),
+        files: async (ref) => {
+          const n = versionNumber(ref);
+          const v = n != null && (await this.ready()) ? await this.versions.get(n) : null;
+          return v ? this.versions.files(v) : null;
+        },
+        current: async () => (await this.ready())?.opened.current() ?? new Map(),
         publish: (req) => this.setPublished(req),
         restore: (ref, by) => this.restore(ref, by),
       },
