@@ -4,7 +4,8 @@
 // run it on bun:sqlite. A document's content and live room stay with its own
 // host (a DocHost Durable Object, named by the document's id). The server's
 // users and admins (users.ts) and its settings (config.ts) are on the same
-// database, and reached through the directory: `dir.users`, `dir.config`.
+// database, and reached through the directory: `dir.users`, `dir.config`,
+// and the API keys admins enter (credentials.ts), `dir.credentials`.
 //
 // Addresses: /d/<id> always works. /<owner>/<slug> is the pretty, canonical
 // one; /<owner>/<id> and /<owner>/<an old slug> lead to it. A slug is unique
@@ -37,6 +38,7 @@
 import { ConfigError, ServerConfig } from "./config.ts";
 import type { Unlock } from "./admin-keys.ts";
 import { NotAllowed, Users } from "./users.ts";
+import { Credentials } from "./credentials.ts";
 
 export { NotAllowed };
 
@@ -167,13 +169,18 @@ export class Directory {
   readonly users: Users;
   /** The server's settings. */
   readonly config: ServerConfig;
+  /** The API keys admins enter, encrypted. */
+  readonly credentials: Credentials;
 
   /**
    * `admins`: the deploy's bootstrap admins (users.ts). `locked`: settings
-   * the deploy fixes (config.ts).
+   * the deploy fixes (config.ts). `credentialSecret`: what the API keys are
+   * encrypted with (none: they can't be stored); `fallback`: which Worker
+   * secrets stand in for them (credentials.ts).
    */
-  constructor(private sql: Sql, opts: { admins?: Iterable<string>; locked?: Record<string, unknown>; changed?: (key: string) => Promise<void> } = {}) {
+  constructor(private sql: Sql, opts: { admins?: Iterable<string>; locked?: Record<string, unknown>; changed?: (key: string) => Promise<void>; credentialSecret?: string | null; fallback?: (env: string) => boolean } = {}) {
     this.users = new Users(sql, opts.admins);
+    this.credentials = new Credentials(sql, this.users, opts.credentialSecret ?? null, opts.fallback);
     this.config = new ServerConfig(sql, this.users, {
       locked: opts.locked,
       changed: opts.changed,

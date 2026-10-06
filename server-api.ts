@@ -830,7 +830,7 @@ because someone changed the text meanwhile.
 Each document keeps versions: snapshots of all its files, cut after each burst
 of edits and each agent turn, with a five-word description. What its viewers
 see is either "latest" (the document as it is) or one version ("manual"). The
-document tools list_versions, read_version, restore_version and publish_version handle them; so
+document tools list_versions, read_version, diff_versions, restore_version and publish_version handle them; so
 does plain HTTP:
 
     curl -s ${origin}/api/docs/<id>/versions -H "Authorization: Bearer $ERGA_TOKEN"

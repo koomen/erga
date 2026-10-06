@@ -6,7 +6,7 @@
 // the scripted model writes none); "latest" mode shows edits at once and
 // "manual" mode the chosen version, in the viewer (headless Chrome) and in
 // every file a viewer can ask for; only editors may publish; and the agent's
-// tools (list_versions, read_version, publish_version) over the API.
+// tools (list_versions, read_version, diff_versions, publish_version) over the API.
 //
 //   bun tests/versions.ts
 
@@ -180,7 +180,17 @@ try {
     const body = (await res.json()) as { ok: boolean; content?: { text?: string }[]; error?: string };
     return { status: res.status, text: body.content?.map((c) => c.text ?? "").join("\n") ?? body.error ?? "" };
   };
-  let t = await tool("list_versions", {});
+  // diff_versions: by default from where the owner's agent's last turn ended (the scripted turn above) to the document now.
+  let t = await tool("diff_versions", {});
+  expect(t.status == 200 && t.text.startsWith(`From ${agentVersion.id} (where your last turn ended) to current`) && t.text.includes("--- a/index.html\n+++ b/index.html\n@@ ") && /^\+.*live-now/m.test(t.text) && /^-.*agent-two/m.test(t.text), "diff_versions: since the agent's last turn, to the document now", t);
+  t = await tool("diff_versions", { from: "v1", to: "v2", path: "index.html", context: 0 });
+  expect(t.status == 200 && t.text.startsWith("From v1 to v2 in index.html: 1 file(s) differ") && /^\+.*burst5/m.test(t.text) && !t.text.includes("agent-one"), "diff_versions between two versions, for one file", t);
+  t = await tool("diff_versions", { from: "v2", to: "2" });
+  expect(t.status == 200 && t.text == "No changes from v2 to v2.", "diff_versions with nothing changed", t);
+  t = await tool("diff_versions", { from: "v99" });
+  expect(t.status != 200 && t.text.includes("no version \"v99\""), "diff_versions from a version that isn't there", t);
+  ok("diff_versions: unified diffs between versions, and since the agent's last turn");
+  t = await tool("list_versions", {});
   expect(t.status == 200 && t.text.includes("Published: latest") && t.text.includes("v2") && t.text.includes("Edited index.html"), "list_versions", t);
   t = await tool("read_version", { version: "v1" });
   expect(t.status == 200 && t.text.includes("index.html"), "read_version lists a version's files", t);
