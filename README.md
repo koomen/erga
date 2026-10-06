@@ -1851,7 +1851,13 @@ text and the other fields' values (`keepState` in `factory/page.ts`).
   staging's head, whose second parent is the task's branch as pushed (with
   staging in it), with that branch's files (`mergeShape`). It lasts as long
   as the merge job may (35 minutes), and `SourceRepo` keeps the ids of the
-  ones it has spent. On Cloudflare the repository
+  ones it has spent. The token is made when the merge job starts (after the
+  merge waits its turn), so it doesn't matter how long ago the task became
+  ready to merge, and the job is stopped at 30 minutes, before the token
+  ends. If the endpoint refuses the staging push anyway (a spent or older
+  token, a merge that isn't the branch's), the task goes back to Ready to
+  merge with the reason, and Merge tries again with a new token; only a
+  staging that moved meanwhile makes the job try again by itself. On Cloudflare the repository
   is Erga's Git endpoint (`/git/erga.git`), which takes these tokens beside
   admin tokens (`worker/source.ts`, `SourceRepo.receive`): a task branch
   (`task/<id>-<slug>`) is made, moved and deleted only with its own task's

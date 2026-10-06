@@ -281,6 +281,12 @@ describe("Erga's Git endpoint", () => {
     expect((await git(vm, "push", task, "HEAD:refs/heads/task/7-the-factory")).ok).toBe(true);
     const again = await git(vm, "push", merge, `${await shaped("HEAD^{tree}", merged, "HEAD")}:refs/heads/staging`);
     expect(again.err).toContain("moved staging already");
+    // What factory/vm/merge.ts tells apart: a refusal (back to ready to merge) from staging having moved (it tries again).
+    const stale = /fetch first|non-fast-forward|stale info/;
+    expect(again.err).not.toMatch(stale);
+    expect(sneaky.err).not.toMatch(stale);
+    const fresh = f.factory({ scope: "merge", branch: "task/7-the-factory", by: "ada", id: "merge-2" });
+    expect((await git(vm, "push", fresh, `${await must(vm, "commit-tree", `${head}^{tree}`, "-p", base, "-p", head, "-m", "A merge made before staging moved")}:refs/heads/staging`)).err).toMatch(stale);
     expect((await git(vm, "push", merge, ":refs/heads/staging")).ok).toBe(false);
     expect((await git(vm, "push", merge, "HEAD:main")).ok).toBe(false);
     // Then the task's branch is deleted, and gone.
