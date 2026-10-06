@@ -571,7 +571,8 @@ try {
   expect((await adminPost("/admin/settings", { key: "delete_docs_after_hours", value: "48" }, null)).status == 403, "nor can they change a setting");
   if (adminName) {
     const adminPage = await (await as(adminName, "/admin")).text(), usersPage = await (await as(adminName, "/admin/users")).text();
-    expect(adminPage.includes("delete_docs_after_hours") && usersPage.includes(`data-login="${adminName}"`) && usersPage.includes(`data-login="${login}"`), "an admin sees the settings and the users", usersPage.slice(0, 300));
+    expect(adminPage.includes("delete_docs_after_hours") && adminPage.includes(`href="/admin/users`) && usersPage.includes(`data-login="${adminName}"`) && usersPage.includes(`data-login="${login}"`), "an admin sees the settings, and the users on /admin/users", adminPage.slice(0, 300));
+    expect((await as("Ada", "/admin/users")).status == 404, "nobody else sees /admin/users");
     expect((await (await as(adminName, "/docs")).text()).includes(`>Admin settings</a>`), "and their menu links to it");
     // Settings: set, refused with the reason, reset.
     let res = await adminPost("/admin/settings", { key: "delete_docs_after_hours", value: "48" });
@@ -622,7 +623,7 @@ try {
     expect(r2.status == 403 && ((await r2.json()) as { error: string }).error.includes("ADMINS"), "a bootstrap admin can't be demoted");
     expect((await adminPost("/admin/users", { do: "remove", login: adminName })).status == 403, "nor removed");
     r2 = await adminPost("/admin/users", { do: "remove", login: newcomer });
-    expect(r2.ok && !(await (await as(adminName, "/admin")).text()).includes(`data-login="${newcomer}"`), "removing a user takes them off the list");
+    expect(r2.ok && !(await (await as(adminName, "/admin/users")).text()).includes(`data-login="${newcomer}"`), "removing a user takes them off the list");
     expect((await adminPost("/admin/users", { do: "role", login: newcomer, role: "admin" }, null)).status == 403, "and someone who isn't an admin can't change users");
     ok("admins add and remove users and make them admins or not; a bootstrap admin can't be demoted or removed");
 
