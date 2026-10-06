@@ -1098,13 +1098,16 @@ const EDIT_BOOT = `(() => {
 const STEPS_BOOT = `(() => {
   const frame = document.getElementById("frame"), pages = new URL(frame.src || frame.dataset.src, location.href).origin;
   const svg = (d) => '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="' + d + '"/></svg>';
-  const bar = document.createElement("div"), panel = document.createElement("ol");
+  const bar = document.createElement("div"), panel = document.createElement("div");
   bar.className = "erga-steps"; bar.hidden = true;
   bar.innerHTML = '<button type="button" class="erga-steps-toggle" aria-label="Steps" aria-expanded="false">' + svg("M5 6.5h14M5 12h14M5 17.5h14") + '</button>'
     + '<button type="button" class="erga-steps-back" aria-label="Back">' + svg("M14.5 6.5L9 12l5.5 5.5") + '</button>'
     + '<span class="erga-steps-at" aria-live="polite"></span>'
     + '<button type="button" class="erga-steps-next" aria-label="Forward">' + svg("M9.5 6.5L15 12l-5.5 5.5") + '</button>';
-  panel.className = "erga-steps-panel"; panel.hidden = true; panel.setAttribute("aria-label", "Steps");
+  // The list under a head: the editor docks it beside the page, and the head is where it's dragged from (layout.ts).
+  panel.className = "erga-steps-panel"; panel.hidden = true; panel.setAttribute("role", "region"); panel.setAttribute("aria-label", "Steps");
+  panel.innerHTML = '<div class="erga-steps-head">Steps</div><ol class="erga-steps-list"></ol>';
+  const list = panel.querySelector("ol");
   document.body.append(panel, bar);
   const [toggle, back, next] = bar.querySelectorAll("button"), at = bar.querySelector(".erga-steps-at");
   // What the page says (null: no steps), the list's shape it was built for, and the steps' pictures: step -> { url, rev }.
@@ -1124,7 +1127,7 @@ const STEPS_BOOT = `(() => {
     clearTimeout(timer);
     if (!steps?.images || !open()) return;
     timer = setTimeout(() => {
-      const r = frame.getBoundingClientRect(), w = 384, h = Math.round(w * (r.height / r.width || 9 / 16)), view = panel.getBoundingClientRect();
+      const r = frame.getBoundingClientRect(), w = 384, h = Math.round(w * (r.height / r.width || 9 / 16)), view = list.getBoundingClientRect();
       items().forEach((el, i) => {
         const b = el.getBoundingClientRect(), key = steps.rev + ":" + i;
         if (b.bottom < view.top - 200 || b.top > view.bottom + 200 || pics.get(i)?.rev == steps.rev || asked.has(key)) return;
@@ -1134,10 +1137,10 @@ const STEPS_BOOT = `(() => {
     }, pics.size ? 400 : 0);
   }
   function build() {
-    panel.textContent = "";
+    list.textContent = "";
     panel.classList.toggle("erga-steps-plain", !steps.images);
     steps.labels.forEach((label, i) => {
-      const li = panel.appendChild(document.createElement("li")), b = li.appendChild(document.createElement("button"));
+      const li = list.appendChild(document.createElement("li")), b = li.appendChild(document.createElement("button"));
       b.type = "button"; b.className = "erga-step"; b.dataset.step = i;
       b.setAttribute("aria-label", (label ? label + ", " : "") + "step " + (i + 1) + " of " + steps.count);
       b.appendChild(document.createElement("span")).className = "erga-step-pic";
@@ -1167,18 +1170,23 @@ const STEPS_BOOT = `(() => {
     if (!was || was.rev != steps.rev) ask();
     place();
   }
-  // Under the page and over its right side, wherever the editor puts the frame (the agent beside it), out of sight with it.
+  // Under the page and over its right side (its left, if the editor's layout has the list left of the page), wherever the editor puts
+  // the frame (the agent beside it), out of sight with it. Docked beside the page in the editor, the editor places the list (layout.ts).
   function place() {
     if (!steps) return;
     const r = frame.getBoundingClientRect(), hidden = getComputedStyle(frame).visibility == "hidden" || !r.width;
     bar.style.visibility = panel.style.visibility = hidden ? "hidden" : "";
     bar.style.left = r.left + r.width / 2 + "px";
     bar.style.bottom = Math.max(12, innerHeight - r.bottom + 14) + "px";
-    panel.style.right = Math.max(8, innerWidth - r.right + 12) + "px";
-    panel.style.top = r.top + 12 + "px";
+    const docked = panel.classList.contains("erga-docked") && document.body.classList.contains("erga-editing");
+    let left = false;
+    try { const o = JSON.parse(localStorage.getItem("erga:layout:v1") || "null")?.order; left = Array.isArray(o) && o.indexOf("picker") < o.indexOf("doc"); } catch {}
+    panel.style.left = docked || !left ? "" : Math.max(8, r.left + 12) + "px";
+    panel.style.right = docked ? "" : left ? "auto" : Math.max(8, innerWidth - r.right + 12) + "px";
+    panel.style.top = docked ? "" : r.top + 12 + "px";
     // The pictures' shape is the frame's, as it is now (it changes with the window).
     panel.style.setProperty("--ar", r.width && r.height ? r.width + " / " + r.height : "16 / 9");
-    panel.style.maxHeight = Math.max(80, innerHeight - Math.max(12, innerHeight - r.bottom + 14) - 50 - r.top - 12) + "px";
+    panel.style.maxHeight = docked ? "" : Math.max(80, innerHeight - Math.max(12, innerHeight - r.bottom + 14) - 50 - r.top - 12) + "px";
   }
   function show(on) {
     panel.hidden = !on;
@@ -1205,7 +1213,7 @@ const STEPS_BOOT = `(() => {
   next.addEventListener("click", () => go({ by: 1 }));
   toggle.addEventListener("click", () => show(!open()));
   panel.addEventListener("click", (e) => { const b = e.target.closest?.(".erga-step"); if (b) go({ to: Number(b.dataset.step) }); });
-  panel.addEventListener("scroll", ask, { passive: true });
+  list.addEventListener("scroll", ask, { passive: true });
   document.addEventListener("keydown", (e) => {
     const t = e.target;
     if (!steps || e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
@@ -1237,7 +1245,9 @@ const STEPS_STYLE = `
   .erga-steps button[aria-expanded="true"] { color: #3b7cf0; }
   .erga-steps svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
   .erga-steps-at { min-width: 54px; padding: 0 2px; text-align: center; font-variant-numeric: tabular-nums; }
-  .erga-steps-panel { width: min(208px, 55vw); margin: 0; padding: 6px; list-style: none; overflow-y: auto; overscroll-behavior: contain; border-radius: 12px; }
+  .erga-steps-panel { display: flex; flex-direction: column; width: min(208px, 55vw); overflow: hidden; border-radius: 12px; }
+  .erga-steps-head { flex: none; padding: 10px 12px 2px; color: var(--st-soft); font-size: 12px; font-weight: 600; }
+  .erga-steps-list { flex: 1 1 auto; min-height: 0; margin: 0; padding: 6px; list-style: none; overflow-y: auto; overscroll-behavior: contain; }
   .erga-step { display: block; width: 100%; padding: 5px; border: 0; border-radius: 8px; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
   .erga-step:hover { background: var(--st-hover); }
   .erga-step-pic { display: grid; place-items: center; width: 100%; aspect-ratio: var(--ar, 16 / 9); overflow: hidden; border-radius: 5px;
