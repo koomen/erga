@@ -189,17 +189,12 @@ async function settingsPage(platform: Platform, session: Session): Promise<Respo
   .mono { font-family: var(--font-mono); font-size: 12.5px; }
   @media (max-width: 520px) { ol.rows > li.setting { grid-template-columns: 1fr; } .setting .value { justify-content: flex-end; } }
 `;
-  const deployOn = (await platform.directory.config.get("deploy_page")) != "off";
   return adminResponse({ session, title: "Settings", here: "settings", style, body: `
   <section aria-label="Settings">
     <ol class="rows">
 ${settings.map((e) => settingRow(e, session, takesNever(e.key))).join("\n")}
     </ol>
   </section>
-  ${deployOn ? `<section aria-labelledby="deploy-title">
-    <h2 id="deploy-title">Deploy your own</h2>
-    <p class="lede">Put a copy of this server on your own Cloudflare account, with you as its admin: <a href="${esc(link("/deploy", session))}">Deploy Erga</a>. Who may use it is the deploy_page setting. Using it never makes anyone an admin here.</p>
-  </section>` : ""}
 <script>
   ${TIMES_SCRIPT}
   ${POST_SCRIPT}

@@ -68,15 +68,16 @@ serves the app's routes (`front.ts`). Its pages:
   unlocked admin access with their SSH key).
 - **Admin keys**, `/admin/keys`: an admin's SSH keys, and unlocking admin
   access with them (see [Admin SSH keys](#admin-ssh-keys)).
-- **Deploy your own**, `/deploy`: anyone signed in, by default (see
-  [Deploy your own](#deploy-your-own)).
+- **Deploy your own**, `/deploy`: a page of its own, not an admin one; anyone
+  signed in, by default (see [Deploy your own](#deploy-your-own)).
 - **Factory**, `/admin/factory`: Erga's own repository and its deploys, the
   factory's tasks and the factory's own agent, on one page, for admins
   (`/admin/source` and `/source` redirect there; see
   [Erga's own source](#ergas-own-source) and [The factory](#the-factory-experimental)).
 
 The user menu in the upper right of every page reaches Documents,
-Settings and (for admins) Admin settings. Clone and Edit sign you in with
+Settings, Deploy your own (for those the `deploy_page` setting lets in) and
+(for admins) Admin settings. Clone and Edit sign you in with
 GitHub first (only the server's users: see [Users, admins and
 settings](#users-admins-and-settings)); a copy is yours at `/<you>/<slug>`,
 which only you can open until you share it. `/new` makes a blank document
@@ -188,7 +189,8 @@ Objects (deleted by the config, with what they held), are gone.
 **Who you are, on every page.** The upper right of every page erga.dev
 serves (`account.ts`) shows your avatar (your GitHub picture, or your
 initial on your colour if it doesn't load); clicking it opens a small menu:
-your name, Documents, Settings, Admin settings (admins only) and Sign
+your name, Documents, Settings, Deploy your own (as `deploy_page` says),
+Admin settings (admins only) and Sign
 out. Signed out, it's a person in a circle whose menu has only Sign in (with
 GitHub, bringing you back to the same page). The Worker adds it to each of the site's own HTML pages
 (`withAccount`, `worker/index.ts`); the editor shows it itself, as your
@@ -1234,8 +1236,11 @@ Still to do are the steps marked *(you)*.
 `/deploy` puts a copy of the server on someone's own Cloudflare account,
 with the same settings erga.dev has, and them as its admin. Who may use it
 is the `deploy_page` setting: `users` (anyone signed in, the default),
-`admins` (and users with the deploy role, granted on `/admin/users`), or `off`; anyone it doesn't let in gets "not found". `/admin`
-links to it. Its breadcrumbs sit after the wordmark in the upper left.
+`admins` (and users with the deploy role, granted on `/admin/users`), or `off`; anyone it doesn't let in gets "not found". It's a page of its own, not
+an admin page: the user menu links to it for those it lets in, admin
+settings don't list it, and `/admin/deploy` redirects to it. Using it gives
+no admin rights: someone who isn't an admin still can't read or change the
+server's settings, its users, its source or the factory. Its breadcrumbs sit after the wordmark in the upper left.
 
 The page goes in four steps:
 
