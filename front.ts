@@ -5,7 +5,8 @@
 // in D1) and the documents themselves (Durable Objects).
 //
 //   /                          the front page: the viewer on the landing document (a setting), for anyone
-//   /new                       a blank document for you, in the editor (signs you in first); /new?from=landing a copy
+//   /new                       a blank document for you, in the editor (signs you in first); /new?template=<id> one from
+//                              a template (templates.ts); /new?from=landing a copy
 //                              of the front page's, /new?from=<id> of another you may open (the viewer's Clone)
 //   /docs                      your documents, latest edit first; POST /docs/delete deletes one,
 //                              /docs/share shares one (or stops sharing it), GET /docs/share?id= says with whom
@@ -45,6 +46,7 @@ import type { AgentToken, Tokens } from "./tokens.ts";
 import { ADMIN_TOKEN_PREFIX, SIGN_IN_KEY, UNLOCK_MS, type AdminKeys, type Unlock } from "./admin-keys.ts";
 import type { PublishRequest, PublishResult, Version, VersionsState } from "./versions.ts";
 import { pageAddress, resolvePage } from "./tree.ts";
+import { NEW_DOC_SCRIPT, NEW_DOC_STYLE, newDocButton, newDocMenu, templateById, TEMPLATES, type Template } from "./templates.ts";
 
 /** Who's signed in. */
 export interface Session {
@@ -590,6 +592,9 @@ const HOST_SCRIPT = `(function () {
         parent.postMessage({ type: "erga-band", color: c }, SHELL);
       }
       if (c != null) shown = f.contentDocument;
+      // The steps, a few times a second besides when the page says (ergastep), for a page that forgets to.
+      var now = Date.now();
+      if (stepping && now - stepping.polled > 300) { stepping.polled = now; tellSteps(); }
     } catch (e) {}
     requestAnimationFrame(watch);
   })();
@@ -599,11 +604,86 @@ const HOST_SCRIPT = `(function () {
     try { if (from) to.contentWindow.scrollTo(from.contentWindow.scrollX, from.contentWindow.scrollY); } catch (e) {}
     to.classList.add("on");
     report(to);
+    tellSteps();
     if (!from) return;
     from.classList.remove("on");
     if (from.id == "view") from.remove();
   }
   window.ergaHost = { ready: function () { if (want == "edit") show(page()); } };
+  // A presentation (DOCUMENT_PROMPT.md, "Presentations"): the page shown says it has steps (window.ergaSteps). This tells
+  // the shell how many, their labels and the current one (STEPS_BOOT shows them) whenever that changes, goes to a step or
+  // draws one when the shell asks, and steps with the arrow keys pressed in the page. "rev" changes whenever a step's
+  // picture may have changed: another page shown, the document edited (ergaHost.changed, frame.ts), different steps.
+  var STEP_MAX = 1000, stepping = { doc: null, said: "null", shape: "", rev: 0, polled: 0 };
+  function presentation() {
+    var f = document.querySelector("iframe.on");
+    try {
+      var w = f && f.contentWindow, p = w && w.ergaSteps;
+      return p && typeof p.count == "function" && typeof p.go == "function" && typeof p.current == "function" ? { w: w, d: w.document, p: p } : null;
+    } catch (e) { return null; }
+  }
+  function whole(n, max) { n = Math.floor(Number(n)); return isFinite(n) ? Math.max(0, Math.min(max, n)) : 0; }
+  function stepsKey(e) {
+    var t = e.target;
+    if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey || (e.key != "ArrowLeft" && e.key != "ArrowRight")) return;
+    if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName || ""))) return;
+    // Once the page's own handlers have had it: a page that takes the key itself (preventDefault) keeps it.
+    setTimeout(function () { if (!e.defaultPrevented) step({ by: e.key == "ArrowLeft" ? -1 : 1 }); });
+  }
+  function tellSteps() {
+    var s = presentation(), m = null;
+    // A page loaded afresh (another page, or the editor's render) is another window behind the same frame: listened to anew.
+    if (s && s.d !== stepping.doc) {
+      stepping.doc = s.d; stepping.rev++;
+      s.w.addEventListener("ergastep", function () { tellSteps(); });
+      s.w.addEventListener("keydown", stepsKey);
+    }
+    if (s) try {
+      var count = whole(s.p.count(), STEP_MAX), labels = [];
+      for (var i = 0; i < count; i++) {
+        var l = typeof s.p.label == "function" ? s.p.label(i) : "";
+        labels.push(typeof l == "string" ? l.replace(/\\s+/g, " ").trim().slice(0, 200) : "");
+      }
+      m = { count: count, current: whole(s.p.current(), Math.max(0, count - 1)), labels: labels, images: typeof s.p.image == "function" };
+    } catch (e) { m = null; }
+    var shape = m ? m.count + "\\n" + m.labels.join("\\n") : "";
+    if (shape != stepping.shape) { stepping.shape = shape; stepping.rev++; }
+    if (m) m.rev = stepping.rev;
+    var said = JSON.stringify(m);
+    if (said != stepping.said) { stepping.said = said; parent.postMessage({ type: "erga-steps", steps: m }, SHELL); }
+  }
+  function step(to) {
+    var s = presentation();
+    if (!s) return;
+    try {
+      var count = whole(s.p.count(), STEP_MAX), at = whole(s.p.current(), STEP_MAX);
+      var n = to.by ? at + (to.by > 0 ? 1 : -1) : whole(to.to, STEP_MAX);
+      if (n >= 0 && n < count && n != at) {
+        if (to.by > 0 && typeof s.p.next == "function") s.p.next();
+        else if (to.by < 0 && typeof s.p.back == "function") s.p.back();
+        else s.p.go(n);
+      }
+    } catch (e) {}
+    tellSteps();
+  }
+  // A step's picture, as a Blob (the shell makes its own address for it): the page answers a canvas, a Blob or an image's address.
+  function stepImage(m) {
+    var s = presentation(), rev = stepping.rev, n = whole(m.step, STEP_MAX);
+    if (!s || typeof s.p.image != "function" || m.rev !== rev) return;
+    var answer = function (blob) {
+      var ok = blob && typeof blob.type == "string" && /^image\\//.test(blob.type) && blob.size < 4e6;
+      parent.postMessage({ type: "erga-step-image", step: n, rev: rev, blob: ok ? blob : null }, SHELL);
+    };
+    var size = { width: whole(m.width, 1600) || 320, height: whole(m.height, 1600) || 180 };
+    Promise.resolve().then(function () { return s.p.image(n, size); }).then(function (r) {
+      if (!r) return null;
+      if (typeof r == "string") return fetch(r).then(function (res) { return res.blob(); });
+      if (typeof r.toBlob == "function") return new Promise(function (done) { r.toBlob(done, "image/png"); });
+      if (typeof r.arrayBuffer == "function") return r;
+      return null;
+    }).then(answer, function () { answer(null); });
+  }
+  window.ergaHost.changed = function () { stepping.rev++; stepping.said = ""; tellSteps(); };
   addEventListener("message", function (e) {
     if (e.source != parent || e.origin != SHELL || !e.data) return;
     var type = e.data.type;
@@ -622,7 +702,9 @@ const HOST_SCRIPT = `(function () {
       v.onload = function () { still(v); moved(v); follow(v); if (want == "view") show(v); };
       v.src = src;
       document.body.prepend(v);
-    } else if (type == "erga-prefetch") {
+    } else if (type == "erga-step") step(e.data);
+    else if (type == "erga-step-image") stepImage(e.data);
+    else if (type == "erga-prefetch") {
       var l = document.createElement("link"); l.rel = "prefetch"; l.href = "/frame.js"; document.head.append(l);
     }
   });
@@ -783,7 +865,7 @@ async function viewDocument(platform: Platform, request: Request, opened: { doc:
 ${meta}${backdrop}${opening}<style>${BAND_STYLE}</style>
 <body>${editable ? `<script>${EDITING_BODY}</script>` : ""}
 ${frame}${editable ? `<script>${FRAME_SRC}</script>` : ""}
-<div class="erga-view-buttons">${clone}${edit}</div>${VIEW_STYLE}<script>${NAV_SCRIPT}</script><script>${BAND_BOOT}</script><script>${FADE_BOOT}</script>${editable ? `<script>${EDIT_BOOT}</script>` : ""}
+<div class="erga-view-buttons">${newDocButton("erga-view-button")}${clone}${edit}</div>${newDocMenu((path) => link(path, session), !!session && !session.test && !session.agent)}${VIEW_STYLE}${NEW_DOC_STYLE}<script>${NEW_DOC_SCRIPT}ergaNewDoc(document);</script><script>${NAV_SCRIPT}</script><script>${BAND_BOOT}</script><script>${FADE_BOOT}</script>${STEPS_STYLE}<script>${STEPS_BOOT}</script>${editable ? `<script>${EDIT_BOOT}</script>` : ""}
 </body>
 </html>`, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "Referrer-Policy": "no-referrer", Link: `<${origin}>; rel=preconnect` } });
 }
@@ -989,6 +1071,176 @@ const EDIT_BOOT = `(() => {
   }
 })();`;
 
+/**
+ * A presentation's steps, on a document's page (viewDocument), viewing and
+ * editing alike: the frame's host page says when the page shown has steps
+ * (HOST_SCRIPT: erga-steps; DOCUMENT_PROMPT.md, "Presentations"), and this
+ * shows back and forward under the page, the step it's at, and a list of the
+ * steps that opens over its right side. The arrow keys step too, pressed here
+ * or in the page (the host page's), except in text. The list shows each step's
+ * picture where the page draws them (erga-step-image), kept until the page
+ * changes (another rev: an edit, another page), else its number and label.
+ */
+const STEPS_BOOT = `(() => {
+  const frame = document.getElementById("frame"), pages = new URL(frame.src || frame.dataset.src, location.href).origin;
+  const svg = (d) => '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="' + d + '"/></svg>';
+  const bar = document.createElement("div"), panel = document.createElement("ol");
+  bar.className = "erga-steps"; bar.hidden = true;
+  bar.innerHTML = '<button type="button" class="erga-steps-toggle" aria-label="Steps" aria-expanded="false">' + svg("M5 6.5h14M5 12h14M5 17.5h14") + '</button>'
+    + '<button type="button" class="erga-steps-back" aria-label="Back">' + svg("M14.5 6.5L9 12l5.5 5.5") + '</button>'
+    + '<span class="erga-steps-at" aria-live="polite"></span>'
+    + '<button type="button" class="erga-steps-next" aria-label="Forward">' + svg("M9.5 6.5L15 12l-5.5 5.5") + '</button>';
+  panel.className = "erga-steps-panel"; panel.hidden = true; panel.setAttribute("aria-label", "Steps");
+  document.body.append(panel, bar);
+  const [toggle, back, next] = bar.querySelectorAll("button"), at = bar.querySelector(".erga-steps-at");
+  // What the page says (null: no steps), the list's shape it was built for, and the steps' pictures: step -> { url, rev }.
+  let steps = null, shape = "", pics = new Map(), asked = new Set(), timer = 0;
+  const send = (m) => frame.contentWindow?.postMessage(m, pages);
+  const open = () => !panel.hidden;
+  const items = () => panel.querySelectorAll(".erga-step");
+  const drop = () => { for (const p of pics.values()) URL.revokeObjectURL(p.url); pics.clear(); asked.clear(); };
+  function picture(i) {
+    const box = items()[i]?.querySelector(".erga-step-pic"), p = pics.get(i);
+    if (!box) return;
+    if (p) { let img = box.querySelector("img"); if (!img) { box.textContent = ""; img = box.appendChild(document.createElement("img")); img.alt = ""; } if (img.src != p.url) img.src = p.url; }
+    else if (box.querySelector("img") || !box.textContent) box.textContent = String(i + 1);
+  }
+  // The pictures of the steps in sight in the list, of this rev, that it hasn't yet: asked for once the page has stopped changing.
+  function ask() {
+    clearTimeout(timer);
+    if (!steps?.images || !open()) return;
+    timer = setTimeout(() => {
+      const r = frame.getBoundingClientRect(), w = 384, h = Math.round(w * (r.height / r.width || 9 / 16)), view = panel.getBoundingClientRect();
+      items().forEach((el, i) => {
+        const b = el.getBoundingClientRect(), key = steps.rev + ":" + i;
+        if (b.bottom < view.top - 200 || b.top > view.bottom + 200 || pics.get(i)?.rev == steps.rev || asked.has(key)) return;
+        asked.add(key);
+        send({ type: "erga-step-image", step: i, rev: steps.rev, width: w, height: h });
+      });
+    }, pics.size ? 400 : 0);
+  }
+  function build() {
+    panel.textContent = "";
+    panel.classList.toggle("erga-steps-plain", !steps.images);
+    const r = frame.getBoundingClientRect();
+    panel.style.setProperty("--ar", r.width && r.height ? r.width + " / " + r.height : "16 / 9");
+    steps.labels.forEach((label, i) => {
+      const li = panel.appendChild(document.createElement("li")), b = li.appendChild(document.createElement("button"));
+      b.type = "button"; b.className = "erga-step"; b.dataset.step = i;
+      b.setAttribute("aria-label", (label ? label + ", " : "") + "step " + (i + 1) + " of " + steps.count);
+      b.appendChild(document.createElement("span")).className = "erga-step-pic";
+      const name = b.appendChild(document.createElement("span")), n = name.appendChild(document.createElement("b"));
+      name.className = "erga-step-name"; n.textContent = i + 1;
+      name.appendChild(document.createElement("span")).textContent = label || "Step " + (i + 1);
+      picture(i);
+    });
+  }
+  function current() {
+    items().forEach((el, i) => { if (i == steps.current) el.setAttribute("aria-current", "step"); else el.removeAttribute("aria-current"); });
+    if (open()) items()[steps.current]?.scrollIntoView({ block: "nearest" });
+  }
+  function update(s) {
+    const was = steps;
+    steps = s && s.count > 0 ? s : null;
+    bar.hidden = !steps;
+    if (!steps) { panel.hidden = true; toggle.setAttribute("aria-expanded", "false"); shape = ""; drop(); return; }
+    // Other steps: the old pictures may be of other steps. Otherwise they stay up until the new ones come.
+    const now = steps.count + "\\n" + steps.labels.join("\\n") + "\\n" + steps.images;
+    if (now != shape) { shape = now; drop(); build(); }
+    at.textContent = (steps.current + 1) + " / " + steps.count;
+    bar.title = steps.labels[steps.current] || "";
+    back.disabled = steps.current <= 0;
+    next.disabled = steps.current >= steps.count - 1;
+    current();
+    if (!was || was.rev != steps.rev) ask();
+    place();
+  }
+  // Under the page and over its right side, wherever the editor puts the frame (the agent beside it), out of sight with it.
+  function place() {
+    if (!steps) return;
+    const r = frame.getBoundingClientRect(), hidden = getComputedStyle(frame).visibility == "hidden" || !r.width;
+    bar.style.visibility = panel.style.visibility = hidden ? "hidden" : "";
+    bar.style.left = r.left + r.width / 2 + "px";
+    bar.style.bottom = Math.max(12, innerHeight - r.bottom + 14) + "px";
+    panel.style.right = Math.max(8, innerWidth - r.right + 12) + "px";
+    panel.style.top = r.top + 12 + "px";
+    panel.style.maxHeight = Math.max(80, innerHeight - Math.max(12, innerHeight - r.bottom + 14) - 50 - r.top - 12) + "px";
+  }
+  function show(on) {
+    panel.hidden = !on;
+    toggle.setAttribute("aria-expanded", String(on));
+    if (on) { place(); current(); ask(); }
+  }
+  addEventListener("message", (e) => {
+    const m = e.data;
+    if (e.source != frame.contentWindow || e.origin != pages || !m) return;
+    if (m.type == "erga-steps") {
+      const s = m.steps, ok = s && Number.isInteger(s.count) && s.count >= 0 && s.count <= 1000 && Number.isInteger(s.current) && Number.isInteger(s.rev)
+        && Array.isArray(s.labels) && s.labels.length == s.count && s.labels.every((l) => typeof l == "string" && l.length <= 200);
+      update(ok ? { count: s.count, current: Math.min(s.current, s.count - 1), labels: s.labels, images: s.images === true, rev: s.rev } : null);
+    } else if (m.type == "erga-step-image" && steps && m.rev == steps.rev && Number.isInteger(m.step) && m.step < steps.count) {
+      const old = pics.get(m.step);
+      if (old) URL.revokeObjectURL(old.url);
+      if (m.blob instanceof Blob && /^image\\//.test(m.blob.type)) pics.set(m.step, { url: URL.createObjectURL(m.blob), rev: m.rev });
+      else pics.delete(m.step);
+      picture(m.step);
+    }
+  });
+  const go = (m) => { if (steps) send({ type: "erga-step", ...m }); };
+  back.addEventListener("click", () => go({ by: -1 }));
+  next.addEventListener("click", () => go({ by: 1 }));
+  toggle.addEventListener("click", () => show(!open()));
+  panel.addEventListener("click", (e) => { const b = e.target.closest?.(".erga-step"); if (b) go({ to: Number(b.dataset.step) }); });
+  panel.addEventListener("scroll", ask, { passive: true });
+  document.addEventListener("keydown", (e) => {
+    const t = e.target;
+    if (!steps || e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+    if (e.key == "Escape" && open()) { show(false); return; }
+    if (e.key != "ArrowLeft" && e.key != "ArrowRight") return;
+    if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName || "") || t.closest?.(".cm-editor"))) return;
+    e.preventDefault();
+    go({ by: e.key == "ArrowLeft" ? -1 : 1 });
+  });
+  new ResizeObserver(place).observe(frame);
+  addEventListener("resize", place);
+  new MutationObserver(place).observe(document.body, { attributes: true, attributeFilter: ["class"] });
+  frame.addEventListener("transitionend", place);
+})();`;
+
+const STEPS_STYLE = `
+<style>
+  .erga-steps, .erga-steps-panel { --st-bg: rgba(255, 255, 255, .95); --st-fg: #3f3f46; --st-soft: #8a8a94; --st-hover: rgba(161, 161, 169, .18);
+    position: fixed; z-index: 25; box-sizing: border-box; background: var(--st-bg); color: var(--st-fg);
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, .06), 0 4px 18px rgba(0, 0, 0, .14); font: 500 13px/1 "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+  html.page-dark :is(.erga-steps, .erga-steps-panel) { --st-bg: rgba(31, 31, 35, .95); --st-fg: #e4e4e9; --st-soft: #8f8f99; --st-hover: rgba(161, 161, 169, .2);
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, .08), 0 4px 18px rgba(0, 0, 0, .4); }
+  .erga-steps[hidden], .erga-steps-panel[hidden] { display: none; }
+  .erga-steps { display: flex; align-items: center; gap: 2px; padding: 3px; border-radius: 10px; transform: translateX(-50%); }
+  .erga-steps button { display: grid; place-items: center; width: 30px; height: 30px; padding: 0; border: 0; border-radius: 7px; background: transparent; color: inherit; cursor: pointer; }
+  .erga-steps button:hover:not(:disabled) { background: var(--st-hover); }
+  .erga-steps button:disabled { opacity: .3; cursor: default; }
+  :is(.erga-steps button, .erga-step):focus-visible { outline: 2px solid #3b7cf0; outline-offset: -2px; }
+  .erga-steps button[aria-expanded="true"] { color: #3b7cf0; }
+  .erga-steps svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+  .erga-steps-at { min-width: 54px; padding: 0 2px; text-align: center; font-variant-numeric: tabular-nums; }
+  .erga-steps-panel { width: min(208px, 55vw); margin: 0; padding: 6px; list-style: none; overflow-y: auto; overscroll-behavior: contain; border-radius: 12px; }
+  .erga-step { display: block; width: 100%; padding: 5px; border: 0; border-radius: 8px; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+  .erga-step:hover { background: var(--st-hover); }
+  .erga-step-pic { display: grid; place-items: center; width: 100%; aspect-ratio: var(--ar, 16 / 9); overflow: hidden; border-radius: 5px;
+    background: var(--st-hover); color: var(--st-soft); font-size: 22px; font-weight: 600; }
+  .erga-step-pic img { display: block; width: 100%; height: 100%; object-fit: contain; }
+  .erga-step[aria-current="step"] .erga-step-pic { outline: 2px solid #3b7cf0; outline-offset: 1px; }
+  .erga-step-name { display: flex; gap: 6px; margin-top: 6px; font-size: 12px; font-weight: 400; line-height: 1.3; }
+  .erga-step-name b { color: var(--st-soft); font-weight: 500; font-variant-numeric: tabular-nums; }
+  .erga-step-name span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .erga-steps-plain .erga-step-pic { display: none; }
+  .erga-steps-plain .erga-step-name { margin: 0; }
+  .erga-steps-plain .erga-step[aria-current="step"] { color: #3b7cf0; }
+  .erga-steps-plain .erga-step[aria-current="step"] b { color: inherit; }
+  /* On a phone the agent covers the page: the steps go with it. */
+  @media (max-width: 640px) { body.agent-open :is(.erga-steps, .erga-steps-panel) { display: none; } }
+</style>`;
+
 /** The front page when there's no landing document and none can be made (seedLanding): what Erga is, and the way in. */
 async function startPage(platform: Platform, session: Session | null): Promise<Response> {
   const admin = !!session && !session.agent && (await platform.directory.users.isAdmin(whoOf(session)));
@@ -1141,13 +1393,22 @@ export const VIEW_STYLE = `
   }
 </style>`;
 
+/** A template's starting files (templates.ts: a folder under templates/), and its page; null if this server hasn't them. */
+export function templateFiles(platform: Platform, template: Template): { files: Record<string, string | Uint8Array>; index: string } | null {
+  const files = platform.templates[template.files.slice("templates/".length)];
+  if (!files) return null;
+  const index = files["index.html"] != null ? "index.html" : files["index.md"] != null ? "index.md" : null;
+  return index ? { files: { ...files }, index } : null;
+}
+
 /**
  * What a new document starts from: a copy of the front page's document
- * (`landing`), of another document by id (one `who` may open), or a blank
- * page (templates/doc). Null if there's nothing there to copy.
+ * (`landing`), of another document by id (one `who` may open), or a
+ * template's files (templates.ts; the first, a blank page, by default).
+ * Null if there's nothing there to copy.
  */
-export async function startingFiles(platform: Platform, from: string | null, who?: Who): Promise<{ files: Record<string, string | Uint8Array>; index: string } | null> {
-  if (!from) return { files: { ...platform.templates.doc }, index: "index.html" };
+export async function startingFiles(platform: Platform, from: string | null, who?: Who, template?: Template): Promise<{ files: Record<string, string | Uint8Array>; index: string } | null> {
+  if (!from) return templateFiles(platform, template ?? TEMPLATES[0]);
   const doc = from == "landing" ? await landingDocument(platform) : ID.test(from) && who ? await platform.directory.get(from) : null;
   if (!doc || (from != "landing" && !(await platform.directory.may(who!, "open", doc)))) return null;
   // A copy of what they may see: someone who may not edit it copies its published version (the same in "latest" mode).
@@ -1155,21 +1416,24 @@ export async function startingFiles(platform: Platform, from: string | null, who
   return platform.docs.snapshot(doc, { published: !editor });
 }
 
-/** A new document for the signed-in person, at /<login>/<id>: blank (templates/doc), or a copy of the front page's (?from=landing). */
+/** A new document for the signed-in person, at /<login>/<id>: blank (templates/doc), from a template (?template=<id>, templates.ts), or a copy of the front page's (?from=landing). */
 async function newDoc(platform: Platform, request: Request): Promise<Response> {
   const session = await platform.sessionOf(request);
   const url = new URL(request.url);
   const params = url.searchParams;
   if (!session) return signInFirst(`/new${params.size ? `?${params}` : ""}`);
+  const named = params.get("template");
+  const template = named ? templateById(named) : undefined;
+  if (named && !template) return page("No such template", "There's no template by that name. <a href=\"/new\">Make a blank document</a>.", 404);
   // Another site may not make documents for you (nor an unconfirmed sign-in on the way back from GitHub).
   if (request.method == "POST" ? request.headers.get("origin") != url.origin : fromElsewhere(request)) {
-    return confirmAction("New document", params.get("from") ? "Make your copy of this page" : "Make a new document", `/new${url.search}`);
+    return confirmAction("New document", params.get("from") ? "Make your copy of this page" : template ? `Make a new document: ${template.name}` : "Make a new document", `/new${url.search}`);
   }
   const wanted = params.get("id");
   const from = params.get("from");
-  const start = await startingFiles(platform, from, whoOf(session));
+  const start = await startingFiles(platform, from, whoOf(session), template);
   if (!start) return page("Nothing to copy", from == "landing" ? "This server has no front page to copy. <a href=\"/new\">Make a blank document</a>." : "There's no document here you can copy. <a href=\"/new\">Make a blank document</a>.", 404);
-  const template = start.files, index = start.index;
+  const files = start.files, index = start.index;
   // A test person makes (or reuses) a test document under the address of whoever minted their token.
   // Its address is its id, which never follows the title (the suite addresses it by id).
   if (session.test) {
@@ -1177,7 +1441,7 @@ async function newDoc(platform: Platform, request: Request): Promise<Response> {
     const owner = session.test.by.toLowerCase();
     const known = await platform.directory.route(wanted);
     if (known && (known.owner != owner || !known.test)) return page("Taken", "That test document's id is someone else's: pick another.", 409);
-    if (!known) await makeDoc(platform, owner, wanted, template, { test: true, index });
+    if (!known) await makeDoc(platform, owner, wanted, files, { test: true, index });
     return new Response(null, { status: 302, headers: { Location: `/${owner}/${wanted}#edit` } });
   }
   // Local development may name the document (the test suite wants "test" in its address),
@@ -1186,7 +1450,7 @@ async function newDoc(platform: Platform, request: Request): Promise<Response> {
   const unedited = (dev && Number(params.get("unedited"))) || undefined;
   for (let tries = 0; tries < 5; tries++) {
     const id = wanted && dev && ID.test(wanted) ? wanted : newId();
-    const made = await makeDoc(platform, session.login.toLowerCase(), id, template, { unedited, index });
+    const made = await makeDoc(platform, session.login.toLowerCase(), id, files, { unedited, index });
     if (made) return new Response(null, { status: 302, headers: { Location: `${link(`/${made.owner}/${made.slug}`, session)}#edit` } });
   }
   return page("Couldn't make a document", "Something went wrong picking an address. <a href=\"/new\">Try again</a>.", 500);

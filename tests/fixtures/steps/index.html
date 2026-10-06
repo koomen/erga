@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Steps</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #f4f1ea; font: 18px/1.5 Georgia, serif; color: #222; }
+  .slide { box-sizing: border-box; height: 100%; display: flex; flex-direction: column; justify-content: center; padding: 0 12vw; }
+  .slide[hidden] { display: none; }
+  h1 { font-size: 56px; margin: 0 0 16px; }
+  p { font-size: 22px; margin: 0; }
+</style>
+</head>
+<body>
+  <section class="slide"><h1>Owls at night</h1><p>A short talk in four slides.</p></section>
+  <section class="slide"><h1>Where they live</h1><p>Woods, barns and old church towers.</p></section>
+  <section class="slide"><h1>What they eat</h1><p>Mice, voles and the odd beetle.</p></section>
+  <section class="slide"><h1>How to see one</h1><p>Go out at dusk, stand still, and listen.</p></section>
+  <script>
+    const slides = [...document.querySelectorAll(".slide")];
+    let at = 0;
+    function show(i) {
+      at = Math.max(0, Math.min(slides.length - 1, i));
+      slides.forEach((s, k) => (s.hidden = k != at));
+      dispatchEvent(new Event("ergastep"));
+    }
+    window.ergaSteps = {
+      count: () => slides.length,
+      label: (i) => slides[i].querySelector("h1").textContent,
+      current: () => at,
+      go: show,
+      // A small picture of step i: its title on the page's colour.
+      image(i, { width, height }) {
+        const c = document.createElement("canvas");
+        c.width = width; c.height = height;
+        const g = c.getContext("2d");
+        g.fillStyle = "#f4f1ea"; g.fillRect(0, 0, width, height);
+        g.fillStyle = "#222"; g.font = `bold ${Math.round(height / 7)}px Georgia`;
+        g.fillText(slides[i].querySelector("h1").textContent, width * 0.1, height * 0.5);
+        g.font = `${Math.round(height / 14)}px Georgia`;
+        g.fillText(slides[i].querySelector("p").textContent, width * 0.1, height * 0.65);
+        return c;
+      },
+    };
+    show(0);
+  </script>
+</body>
+</html>

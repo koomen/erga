@@ -13,7 +13,7 @@ import { Relay, docExtensions, isAppShortcut, stateJSON, type Backdrop, type Fro
 import type { ViewRequest, ViewResult } from "./agent-log";
 
 declare global {
-  interface Window { ergaFrame?: unknown; __ergaTimescale?: number; ergaHost?: { ready(): void } }
+  interface Window { ergaFrame?: unknown; __ergaTimescale?: number; ergaHost?: { ready(): void; changed?(): void } }
 }
 
 const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
@@ -102,6 +102,8 @@ function start(m: Extract<ToFrame, { type: "init" }>) {
     onUpdate(u) {
       if (u.changes && !u.remote && !detached) relay!.local(u.changes);
       if (u.docChanged || u.selectionSet) sendSelection();
+      // A presentation's pictures of its steps are out of date once its text changes (front.ts, HOST_SCRIPT).
+      if (u.docChanged) window.ergaHost?.changed?.();
       if (u.rendered) {
         if (restoreScroll != null) { frame.contentWindow?.scrollTo(0, restoreScroll); restoreScroll = null; }
         watchPage();
