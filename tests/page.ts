@@ -2,7 +2,7 @@
 // a fixture, drives headless Chrome with real clicks and keys, and reads the
 // file back from disk after each edit. Runs the HTML and the Markdown
 // fixture. (Two people at once: tests/suite, `bun tests/suite/run.ts --suite browser`.)
-//   bun tests/page.ts [html|md|format|view|agent|reload] [--keep]   (--keep leaves the host running and prints its URL)
+//   bun tests/page.ts [html|md|format|view|agent|reload|enter] [--keep]   (--keep leaves the host running and prints its URL)
 
 import { Browser, MOD, ROOT } from "./cdp";
 import { startHost } from "./host";
@@ -14,7 +14,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { testJobs } from "./cores";
 
 const keep = process.argv.includes("--keep");
-const only = process.argv.find((a) => a == "html" || a == "md" || a == "agent" || a == "format" || a == "view" || a == "reload");
+const only = process.argv.find((a) => a == "html" || a == "md" || a == "agent" || a == "format" || a == "view" || a == "reload" || a == "enter");
 
 // Scenarios run at once, each in its own host and tab; each one's lines are
 // collected and printed together when it finishes.
@@ -415,13 +415,13 @@ async function formatScenario(browser: Browser) {
   check("'## ' at the start of a paragraph makes a heading", (await s.source()).includes("<h2>Sub</h2>"));
   await p.key("Enter");
   await Bun.sleep(100);
-  check("Enter at the end of a heading starts a well-formed paragraph", /<h2>Sub<\/h2>\s*<p><\/p>/.test(await s.source()), (await s.source()).match(/<h2>Sub[\s\S]{0,40}/)?.[0]);
+  check("Enter at the end of a heading starts a well-formed paragraph", /<h2>Sub<\/h2>\s*<p><br><\/p>/.test(await s.source()), (await s.source()).match(/<h2>Sub[\s\S]{0,40}/)?.[0]);
   await p.type("- item");
   await Bun.sleep(150);
   check("'- ' makes a list, and typing straight after lands in it", /<ul>\s*<li>item<\/li>\s*<\/ul>/.test(await s.source()), (await s.source()).match(/<h2>Sub[\s\S]{0,80}/)?.[0]);
   await p.key("Enter"); await p.key("Enter");
   await Bun.sleep(150);
-  check("Enter in an empty last item leaves the list", /<\/ul>\s*<p><\/p>/.test(await s.source()), (await s.source()).match(/<ul>\s*<li>item[\s\S]{0,60}/)?.[0]);
+  check("Enter in an empty last item leaves the list", /<\/ul>\s*<p><br><\/p>/.test(await s.source()), (await s.source()).match(/<ul>\s*<li>item[\s\S]{0,60}/)?.[0]);
   await p.type("> quoted");
   await Bun.sleep(150);
   check("'> ' makes a quote", /<blockquote>\s*<p>quoted<\/p>\s*<\/blockquote>/.test(await s.source()));
@@ -772,6 +772,90 @@ async function voiceScenario(browser: Browser) {
   await s.close();
 }
 
+/** Enter makes an empty paragraph; typing, pasting or composing into it leaves no placeholder <br> behind, on the page or in the file. */
+async function enterScenario(browser: Browser) {
+  say("\nEnter and the placeholder <br>");
+  const s = await session(browser, "page", "index.html");
+  const { p, F } = s;
+  const html = (sel: string) => p.frame<string>(`${F}.querySelector(${JSON.stringify(sel)}).innerHTML`);
+  const around = async (re: RegExp) => (await s.source()).match(re)?.[0];
+  // The editor's shortcut key: ⌘ on a Mac, Ctrl elsewhere.
+  const mod = process.platform == "darwin" ? MOD.Meta : MOD.Ctrl;
+
+  // Enter at the end, then typing.
+  await s.clickEnd("blockquote p");
+  await p.key("Enter");
+  await Bun.sleep(80);
+  await p.type("hello");
+  await Bun.sleep(120);
+  check("Enter at the end, then typing: the text fills the new paragraph", /<p>Typing never waits\.<\/p>\s*<p>hello<\/p>/.test(await s.source()), await around(/<blockquote>[\s\S]*?<\/blockquote>/));
+  check("and the page has no <br> in it", (await html("blockquote p:nth-of-type(2)")) == "hello", await html("blockquote p:nth-of-type(2)"));
+  check("saved without a <br>", await waitFor(() => /<p>hello<\/p>/.test(s.disk())), s.disk().match(/<blockquote>[\s\S]*?<\/blockquote>/)?.[0]);
+
+  await p.key("z", mod);
+  await Bun.sleep(100);
+  check("undo gives back the empty paragraph, <br> and all", /<p>Typing never waits\.<\/p>\s*<p><br><\/p>/.test(await s.source()), await around(/<blockquote>[\s\S]*?<\/blockquote>/));
+  await p.key("z", mod | MOD.Shift);
+  await Bun.sleep(100);
+  check("and redo the text, without it", /<p>hello<\/p>/.test(await s.source()), await around(/<blockquote>[\s\S]*?<\/blockquote>/));
+
+  // Enter twice keeps a blank paragraph between, as the user asked for it: a <br> holds it open, so it shows on the page too.
+  await s.clickEnd("blockquote p:nth-of-type(2)");
+  await p.key("Enter"); await p.key("Enter");
+  await Bun.sleep(80);
+  await p.type("world");
+  await Bun.sleep(120);
+  check("Enter twice: a blank paragraph stays, then the text", /<p>hello<\/p>\s*<p><br><\/p>\s*<p>world<\/p>/.test(await s.source()), await around(/<blockquote>[\s\S]*?<\/blockquote>/));
+  check("and the paragraph typed into has no <br>", (await html("blockquote p:nth-of-type(4)")) == "world", await html("blockquote p:nth-of-type(4)"));
+  check("the blank paragraph has a line's height", await p.frame<boolean>(`${F}.querySelector("blockquote p:nth-of-type(3)").getBoundingClientRect().height > 10`));
+
+  // Backspace at the start of "world" joins it to the blank paragraph: no <br> is left beside the text.
+  await p.key("ArrowLeft"); await p.key("ArrowLeft"); await p.key("ArrowLeft"); await p.key("ArrowLeft"); await p.key("ArrowLeft");
+  await p.key("Backspace");
+  await Bun.sleep(100);
+  check("Backspace into a blank paragraph leaves no <br>", /<p>hello<\/p>\s*<p>world<\/p>\s*<\/blockquote>/.test(await s.source()), await around(/<blockquote>[\s\S]*?<\/blockquote>/));
+
+  // Enter at the start of a block: the empty half before it gets the <br>.
+  await s.clickEnd("figcaption");
+  await p.key("Home");
+  await p.key("Enter");
+  await Bun.sleep(100);
+  check("Enter at the start leaves a blank block before, held open by a <br>", /<figcaption><br><\/figcaption>\s*<figcaption>Where the leads go\.<\/figcaption>/.test(await s.source()), await around(/<figure>[\s\S]*?<\/figure>/));
+
+  // Enter in the middle splits the block, and typing goes at the start of the second half.
+  const f = await frameAt(p);
+  const mid = await p.frame<{ x: number; y: number }>(`(() => { const t = ${F}.querySelector("h2").firstChild; const r = ${F}.createRange(); r.setStart(t, 5); r.setEnd(t, 5); const b = r.getBoundingClientRect(); return { x: b.left, y: b.top + b.height / 2 }; })()`);
+  await p.click(f.x + mid.x, f.y + mid.y);
+  await Bun.sleep(80);
+  await p.key("Enter");
+  await Bun.sleep(80);
+  await p.type("X");
+  await Bun.sleep(120);
+  check("Enter in the middle splits the block, typing starts the second half", /<h2>What <\/h2>\s*<h2>Xchanged<\/h2>/.test(await s.source()), await around(/<h2>What[\s\S]{0,60}/));
+
+  // Paste into a new paragraph.
+  await s.clickEnd("p.lede");
+  await p.key("Enter");
+  await Bun.sleep(80);
+  await p.frame(`(() => { const dt = new DataTransfer(); dt.setData("text/plain", "pasted"); ${F}.activeElement.dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true })); })()`);
+  await Bun.sleep(120);
+  check("pasting into a new paragraph leaves no <br>", /<\/p>\s*<p class="lede">pasted<\/p>/.test(await s.source()), await around(/<p class="lede">[\s\S]*?<\/p>\s*<p>[\s\S]*?<\/p>/));
+
+  // IME composition into a new paragraph.
+  await p.key("Enter");
+  await Bun.sleep(80);
+  await p.send("Input.imeSetComposition", { text: "か", selectionStart: 1, selectionEnd: 1 });
+  await Bun.sleep(40);
+  await p.send("Input.imeSetComposition", { text: "かな", selectionStart: 2, selectionEnd: 2 });
+  await Bun.sleep(40);
+  await p.send("Input.insertText", { text: "仮名" });
+  await Bun.sleep(150);
+  check("composing into a new paragraph leaves no <br>", /<p class="lede">pasted<\/p>\s*<p class="lede">仮名<\/p>/.test(await s.source()), await around(/<p class="lede">pasted[\s\S]{0,40}/));
+  check("and the page shows it once", (await p.frame<string>(`${F}.activeElement.innerHTML`)) == "仮名", await p.frame<string>(`${F}.activeElement.innerHTML`));
+  check("no page errors", p.errors.length == 0, p.errors.join("\n"));
+  await s.close();
+}
+
 /** evaluate_page's run, in this tab: an expression in view_page's render, its result as JSON; read-only, with a time limit and a size cap. */
 async function evaluateScenario(browser: Browser) {
   say("\nInspecting the page for the agent");
@@ -814,6 +898,7 @@ const SCENARIOS: [string, (b: Browser) => Promise<void>][] = [
   ["format", formatScenario], ["view", evaluateScenario],
   ["agent", agentOffScenario], ["agent", shareScenario], ["agent", modelScenario], ["agent", agentEmptyScenario], ["agent", voiceScenario],
   ["reload", backdropReloadScenario],
+  ["enter", enterScenario],
 ];
 const browser = await Browser.launch();
 try {
