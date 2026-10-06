@@ -60,7 +60,7 @@ export async function sourceGit(request: Request, env: Env, url: URL): Promise<R
   // (ERGA_ADMIN_UNLOCKED=1), and any server where admin keys aren't required (keysRequired), take an admin's agent token as it is.
   const admin = await adminKeysOf(env).readToken(secret).catch(() => null);
   const token = admin ? null : devUnlocked(env, url) || !keysRequired(env) ? await tokensOf(env).verify(secret).catch(() => null) : null;
-  // Never the share button's token: it goes to an agent along with a document (front.ts, withTokens).
+  // Never the share button's token: it goes into prompts for agents elsewhere, to work in documents.
   const who = admin ? { login: admin.login, name: admin.name } : token && !token.testBy && token.kind != "share" ? { login: token.login, name: token.name } : null;
   if (!who) {
     const agent = !admin && (await tokensOf(env).verify(secret).catch(() => null));

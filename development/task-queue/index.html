@@ -196,6 +196,8 @@ let history = { commits: [], tasks: {}, unpushed: 0, behind: 0, origin: false };
 let openId = null;
 const armed = new Set(); // discard buttons clicked once, waiting for the second click
 
+// A preview's address as a link: http(s) only (a task's url comes from its agent; javascript: would run on the board).
+const webUrl = (u) => /^https?:\/\//i.test(String(u ?? "")) ? u : "#";
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 const ago = (iso) => {
   const s = (Date.now() - new Date(iso)) / 1000;
@@ -204,7 +206,7 @@ const ago = (iso) => {
 
 function actions(t, inDialog = false) {
   const b = [];
-  if (t.url && !inDialog && !["merged", "discarded"].includes(t.status)) b.push(`<a class="btn" href="${esc(t.url)}" target="_blank" onclick="event.stopPropagation()"><span class="dot ${t.previewUp ? "up" : ""}" title="${t.previewUp ? "preview is up" : "preview is down"}"></span>Open</a>`);
+  if (t.url && !inDialog && !["merged", "discarded"].includes(t.status)) b.push(`<a class="btn" href="${esc(webUrl(t.url))}" target="_blank" onclick="event.stopPropagation()"><span class="dot ${t.previewUp ? "up" : ""}" title="${t.previewUp ? "preview is up" : "preview is down"}"></span>Open</a>`);
   if (t.live && t.port && t.worktree && !(t.previewUp && t.chromeUp) && ["queued", "working", "complete", "failed"].includes(t.status)) b.push(`<button data-act="live" data-id="${t.id}" title="Run its dev server and open its Chrome window">Open live window</button>`);
   else if (t.port && t.worktree && !t.previewUp && ["working", "complete", "failed"].includes(t.status)) b.push(`<button data-act="preview" data-id="${t.id}">Start preview</button>`);
   if (t.status == "complete") {
@@ -373,7 +375,7 @@ function renderDialog() {
   const live = !["merged", "discarded"].includes(t.status);
   const links = [
     t.worktree && live ? `<button class="link" data-act="copy" data-text="${esc(t.worktree)}" title="Copy ${esc(t.worktree)}">worktree</button>` : "",
-    t.url && live ? `<a href="${esc(t.url)}" target="_blank" title="${esc(t.url)}"><span class="dot ${t.previewUp ? "up" : ""}"></span>preview</a>${t.previewUp ? "" : ` <span class="muted">(not running)</span>`}` : "",
+    t.url && live ? `<a href="${esc(webUrl(t.url))}" target="_blank" title="${esc(t.url)}"><span class="dot ${t.previewUp ? "up" : ""}"></span>preview</a>${t.previewUp ? "" : ` <span class="muted">(not running)</span>`}` : "",
     t.chrome && live ? `<span class="muted" title="Its own profile: ${esc(t.chrome.profile)}"><span class="dot ${t.chromeUp ? "up" : ""}"></span> Chrome window ${t.chromeUp ? `open · DevTools port ${esc(t.chrome.port)}` : "closed"}</span>` : "",
     t.agent && live ? `<button class="link" data-act="copy" data-text="${esc(t.agent)}" title="The task's agent (copy its id): the one to wake if the merge needs work">agent <code>${esc(t.agent)}</code></button>` : "",
     t.commit ? `<code>${esc(t.commit)}</code>` : "",

@@ -1849,14 +1849,17 @@ text and the other fields' values (`keepState` in `factory/page.ts`).
   own token for it (`fct…`: it reports on that task only), the repository and
   a git token (`fgt…`, `factory/git-grant.ts`) that pushes that task's branch
   only (a merge's also moves staging, under staging's rules, never deletes
-  it), and the Claude token, if there is one. On Cloudflare the repository
+  it), and for a job that runs Claude Code, the Claude token, if there is
+  one (merge, save, stop and discard jobs never get it). On Cloudflare the repository
   is Erga's Git endpoint (`/git/erga.git`), which takes these tokens beside
   admin tokens (`worker/source.ts`, `SourceRepo.receive`): a task branch
   (`task/<id>-<slug>`) is made, moved and deleted only with its own task's
   token, never shown on the Factory page, mirrored or deployed.
-  Scripts take tokens out of anything they log; git gets its token through
+  Scripts take tokens out of anything they log, and the factory hides
+  anything shaped like a token in what a VM reports (`hideTokens`,
+  `factory/prompt.ts`); git gets its token through
   its environment, never its command line or `.git/config`; the preview gets
-  none of them.
+  none of them. Every secret, where it lives and who reads it: [docs/secrets.md](docs/secrets.md).
 
 **Findings.**
 
@@ -2960,6 +2963,7 @@ back, merging edits from disk, the agent's exact-match edits and attribution.
 
 ## Files
 
+- `docs/secrets.md`: every token, key and secret: what it's for, where it's set, who reads it, and the audit's risks
 - `page.html`, `page.js`, `frame.js`: the editor's shell and its built
   scripts (the shell's, and the frame's that runs on each document's own origin)
 - `templates.ts`, `templates/`: what a new document starts from: the registry of templates (the + button's

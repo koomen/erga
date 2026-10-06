@@ -25,6 +25,18 @@ export function claudeToken(raw: string): { token: string } | { error: string } 
   return { token };
 }
 
+/**
+ * Text from a VM (a log line, a summary, an error, a caption), with anything shaped like a token hidden: a Claude
+ * token, the factory's own (fct., fgt., erga_factory_) and Erga's (erga_, erga_admin_, erga_test_). The board and
+ * factory tokens' holders read this text, and the VM's code, which can read its own tokens, writes it.
+ */
+export function hideTokens(s: string): string {
+  return s
+    .replace(/sk-ant-[A-Za-z0-9_-]{16,}/g, "[a Claude token]")
+    .replace(/\bf[cg]t\.[A-Za-z0-9_.-]{16,}/g, "[a factory token]")
+    .replace(/\berga(?:req)?_[A-Za-z0-9_-]{20,}/g, "[an Erga token]");
+}
+
 export function taskPrompt(t: { id: number; title: string; description: string; branch: string; base: string }): string {
   return `You are doing task #${t.id} from Erga's factory: ${t.title}. The ask: ${t.description}
 
