@@ -32,7 +32,7 @@ import {
   toSideBand, utf8, ZERO, type Commit,
 } from "./git.ts";
 import { fetchPack, lsRefs, receiveAdvert, receivePack, RemoteError, type RefUpdate, type Remote } from "./remote.ts";
-import { refsAllowed, type GitGrant } from "../factory/git-grant.ts";
+import { mergeShape, refsAllowed, type CommitFacts, type GitGrant } from "../factory/git-grant.ts";
 
 export const BRANCHES = ["staging", "main"] as const;
 export type Branch = (typeof BRANCHES)[number];
@@ -328,14 +328,23 @@ export class SourceRepo {
             if (said != "ok") statuses.set(c.ref, `Artifacts refused it: ${said}`);
             return said == "ok";
           });
-          await this.sync(remote, landed.map((c) => c.new));
-          const moving = this.allowed(landed, refs, statuses);
+          // A merge token's staging move is checked against the task's branch as Artifacts has it (pushed first).
+          const head = grant?.scope == "merge" ? refs.get(taskRef!) : undefined;
+          await this.sync(remote, [...landed.map((c) => c.new), ...(head ? [head] : [])]);
+          const moving = this.allowed(landed, refs, statuses).filter((c) => {
+            if (grant?.scope != "merge" || c.branch != "staging") return true;
+            const why = this.spent(grant.id) ? "this merge token has moved staging already: merge again"
+              : mergeShape(grant, c.old, c.new, head, (sha) => this.commitFacts(sha), (a, b) => this.isAncestor(a, b));
+            if (why) statuses.set(c.ref, why);
+            return !why;
+          });
           const drop = [...staged.filter((c) => first.refs.get(c.quarantine) == "ok").map((c) => ({ ref: c.quarantine, old: c.new, new: ZERO })), ...leftovers];
           const final = await receivePack(remote, [...moving.map(({ ref, old, new: sha }) => ({ ref, old, new: sha })), ...drop], moving.length ? await emptyPack() : null);
           for (const c of moving) {
             const said = final.refs.get(c.ref) ?? final.unpack;
             statuses.set(c.ref, said);
             if (said == "ok") {
+              if (grant?.scope == "merge" && c.branch == "staging") this.spend(grant.id!);
               this.recordMove({ branch: c.branch, old: c.old, new: c.new, how: "push", by: who.login, at: this.now() });
               const before = c.old == ZERO ? null : this.ancestors(c.old);
               const count = before ? [...this.ancestors(c.new)].filter((s) => !before.has(s)).length : null;
@@ -368,6 +377,16 @@ export class SourceRepo {
     const max = caps.has("side-band-64k") ? 65515 : 995;
     return concat([...messages.flatMap((m) => toSideBand(utf8(`${m}\n`), 2, max)), ...toSideBand(report, 1, max), FLUSH]);
   }
+
+  /** A commit's tree and parents, from the index. */
+  private commitFacts(sha: string): CommitFacts | null {
+    const [r] = this.deps.db.exec<{ tree: string; parents: string }>("SELECT tree, parents FROM commits WHERE sha = ?", sha);
+    return r ? { tree: r.tree, parents: r.parents ? r.parents.split(" ") : [] } : null;
+  }
+
+  /** Whether a merge token (by its id) has moved staging already; spend marks it so. The last 500 are kept: tokens end in an hour. */
+  private spent(id: string | undefined) { return !!id && (this.state<string[]>("spentMerges") ?? []).includes(id); }
+  private spend(id: string) { this.setState("spentMerges", [...(this.state<string[]>("spentMerges") ?? []), id].slice(-500)); }
 
   private recordMove(m: Move) {
     this.deps.db.exec("INSERT INTO moves (branch, old, new, how, by, at) VALUES (?, ?, ?, ?, ?, ?)", m.branch, m.old, m.new, m.how, m.by, m.at);

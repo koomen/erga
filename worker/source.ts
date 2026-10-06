@@ -31,7 +31,7 @@ import { devUnlocked, keysRequired } from "./auth";
 import { unlockFirst } from "../admin-access";
 import { LOCKED } from "../users";
 import type { Env } from "./env";
-import { verifyGitToken, type GitGrant } from "../factory/git-grant";
+import { readAllowed, verifyGitToken, type GitGrant } from "../factory/git-grant";
 import { gitSecret } from "./factory";
 
 const host = (env: Env) => env.SOURCE.getByName("erga");
@@ -78,6 +78,8 @@ function git(request: Request, env: Env, url: URL, rest: string, actor: Actor, g
   return gitHttp(request, rest, {
     upstream: async () => (await artifactsRemote(env, "read", url.origin))!,
     advertise: () => host(env).advertise(url.origin, grant),
+    // A factory VM lists and fetches staging, main and its own task's branch only, never another task's.
+    ...(grant ? { reads: (ref: string) => readAllowed(grant, ref) } : {}),
     receive: async (body) => {
       const headers: Record<string, string> = { "x-erga-actor": JSON.stringify(actor), "x-erga-origin": url.origin };
       if (grant) headers["x-erga-grant"] = JSON.stringify(grant);
