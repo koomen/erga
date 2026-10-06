@@ -9,7 +9,7 @@ import { EditorState, Transaction, type ChangeSet, type Extension } from "@codem
 import { historyField } from "@codemirror/commands";
 import { Authority, changesFrom, selectionFrom, stateJSON, type Backdrop, type FromFrame, type Keys, type Snapshot, type ToFrame } from "./bridge";
 import type { InlineStyle, Kind, MarkAuthor, PageProblem, Peer } from "./editor";
-import type { ViewRequest, ViewResult } from "./agent-log";
+import { EVAL_MAX_JSON, viewWait, type ViewRequest, type ViewResult } from "./agent-log";
 import { changesBetween } from "./merge";
 
 export interface RemotePageConfig {
@@ -248,15 +248,20 @@ export class RemotePage {
 
   /** The agent's look at the page: the frame renders it, with `text` if the source view has newer. */
   async capture(req: ViewRequest): Promise<ViewResult> {
-    const reply = await this.request<Extract<FromFrame, { type: "captured" }>>({ type: "capture", id: this.nextId++, req, ...(this.detached ? { text: this.state.doc.toString() } : {}) }, 20_000);
+    const reply = await this.request<Extract<FromFrame, { type: "captured" }>>({ type: "capture", id: this.nextId++, req, ...(this.detached ? { text: this.state.doc.toString() } : {}) }, viewWait(req));
     const r = reply?.result;
     if (!r) return { width: 0, height: 0, errors: [], error: "The page didn't send a picture back in time." };
     return {
       ...(typeof r.png == "string" ? { png: r.png } : {}),
       width: Number(r.width) || 0, height: Number(r.height) || 0,
       errors: Array.isArray(r.errors) ? r.errors.filter((e): e is string => typeof e == "string").slice(0, 50) : [],
+      ...(r.viewport && Number.isFinite(r.viewport.width) && Number.isFinite(r.viewport.height) ? { viewport: { width: Number(r.viewport.width), height: Number(r.viewport.height) } } : {}),
+      ...(r.colorScheme == "light" || r.colorScheme == "dark" ? { colorScheme: r.colorScheme } : {}),
+      ...(Array.isArray(r.fonts) ? { fonts: r.fonts.filter((f) => f && typeof f.family == "string").slice(0, 10).map((f) => ({ family: f.family.slice(0, 100), ...(typeof f.wanted == "string" ? { wanted: f.wanted.slice(0, 100) } : {}), elements: Number(f.elements) || 0, tags: Array.isArray(f.tags) ? f.tags.filter((t): t is string => typeof t == "string").slice(0, 5) : [] })) } : {}),
+      ...(Array.isArray(r.pending) && r.pending.length ? { pending: r.pending.filter((p): p is string => typeof p == "string").slice(0, 20).map((p) => p.slice(0, 200)) } : {}),
       ...(typeof r.note == "string" ? { note: r.note } : {}),
       ...(typeof r.error == "string" ? { error: r.error } : {}),
+      ...(typeof r.value == "string" ? { value: r.value.slice(0, EVAL_MAX_JSON + 100) } : {}),
     };
   }
 }

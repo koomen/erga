@@ -10,7 +10,7 @@ import { historyField } from "@codemirror/commands";
 import { domToPng } from "modern-screenshot";
 import { PageEditor } from "./editor";
 import { Relay, docExtensions, isAppShortcut, stateJSON, type Backdrop, type FromFrame, type Snapshot, type ToFrame } from "./bridge";
-import type { ViewRequest, ViewResult } from "./agent-log";
+import { EVAL_MAX_JSON, evalTimeout, type ColorScheme, type RenderedFont, type ViewRequest, type ViewResult } from "./agent-log";
 
 declare global {
   interface Window { ergaFrame?: unknown; __ergaTimescale?: number; ergaHost?: { ready(): void; changed?(): void } }
@@ -239,28 +239,72 @@ function syncBackdrop() {
 // hidden frame and draws it to an image, which the browser renders itself
 // (modern-screenshot: the DOM through an SVG foreignObject), with any
 // errors the page's scripts threw. No server-side browser: whoever has the
-// editor open is the agent's eyes.
+// editor open is the agent's eyes. It renders at the user's size and in
+// their light or dark mode unless the agent asks for others, waits (up to
+// LOAD_WAIT) for the page's web fonts and images, and says which fonts the
+// text rendered in, so a fallback font shows as one.
 const CATCH_ERRORS = `<script>window.__ergaErrors=[];addEventListener("error",function(e){__ergaErrors.push(String(e.message))});addEventListener("unhandledrejection",function(e){__ergaErrors.push("Unhandled rejection: "+String(e.reason&&e.reason.message||e.reason))});(function(){var ce=console.error;console.error=function(){__ergaErrors.push("console.error: "+[].map.call(arguments,String).join(" "));return ce.apply(console,arguments)}})()</script>`;
+/**
+ * Light or dark mode for the hidden frame, when the agent asks for the one
+ * the browser doesn't prefer (a frame can't be given its own preference):
+ * every prefers-color-scheme query the page can reach, in its stylesheets,
+ * its elements' media attributes and its scripts' matchMedia, answers for
+ * `scheme` instead.
+ */
+const schemeQuery = (scheme: ColorScheme, media: string) =>
+  media.replace(/\(\s*prefers-color-scheme\s*:\s*(light|dark)\s*\)/gi, (_, s: string) => s.toLowerCase() == scheme ? "(min-width: 0px)" : "(min-width: 1000000px)");
+const forceSchemeScript = (scheme: ColorScheme) =>
+  `<script>(function(){var mm=window.matchMedia;window.matchMedia=function(q){return mm.call(window,String(q).replace(/\\(\\s*prefers-color-scheme\\s*:\\s*(light|dark)\\s*\\)/gi,function(_,s){return s.toLowerCase()==${JSON.stringify(scheme)}?"(min-width: 0px)":"(min-width: 1000000px)"}))}})()</script>`;
+function forceScheme(d: Document, scheme: ColorScheme) {
+  const w = d.defaultView as Window & typeof globalThis; // the page's own classes: instanceof is per window
+  const rewrite = (rules: CSSRuleList) => {
+    for (const r of rules) {
+      if ((r instanceof w.CSSMediaRule || r instanceof w.CSSImportRule) && /prefers-color-scheme/i.test(r.media.mediaText)) r.media.mediaText = schemeQuery(scheme, r.media.mediaText);
+      if (r instanceof w.CSSImportRule) { try { if (r.styleSheet) rewrite(r.styleSheet.cssRules); } catch { /* another site's */ } }
+      else if ("cssRules" in r) rewrite((r as CSSGroupingRule).cssRules);
+    }
+  };
+  for (const s of d.styleSheets) { try { rewrite(s.cssRules); } catch { /* another site's: out of reach */ } }
+  for (const el of d.querySelectorAll<HTMLElement>("[media]")) {
+    const m = el.getAttribute("media")!;
+    if (/prefers-color-scheme/i.test(m)) el.setAttribute("media", schemeQuery(scheme, m));
+  }
+  // A page that lets the browser choose (color-scheme: light dark) gets the one asked for.
+  const root = d.documentElement, cs = d.defaultView!.getComputedStyle(root).colorScheme;
+  if (/light/.test(cs) && /dark/.test(cs)) root.style.setProperty("color-scheme", scheme);
+}
 const MAX_SHOT = 4000;
+const LOAD_WAIT = 5000;
 async function captureView(req: ViewRequest, text?: string): Promise<ViewResult> {
   const width = Math.round(Math.max(320, Math.min(2400, req.width ?? (frame.clientWidth || 1280))));
-  const viewport = frame.clientHeight || 800;
+  const viewport = Math.round(Math.max(200, Math.min(MAX_SHOT, req.height ?? (frame.clientHeight || 800))));
+  const prefers: ColorScheme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  const scheme = req.colorScheme ?? prefers;
+  const forced = scheme != prefers;
   const shot = document.createElement("iframe");
   shot.setAttribute("sandbox", "allow-scripts allow-same-origin");
   shot.setAttribute("aria-hidden", "true");
   shot.style.cssText = `position:fixed;left:-100000px;top:0;width:${width}px;height:${viewport}px;border:0;`;
   const html = page!.renderedHtml(text);
-  shot.srcdoc = /<head(\s[^>]*)?>/i.test(html) ? html.replace(/<head(\s[^>]*)?>/i, (m) => m + CATCH_ERRORS) : CATCH_ERRORS + html;
+  const head = CATCH_ERRORS + (forced ? forceSchemeScript(scheme) : "");
+  shot.srcdoc = /<head(\s[^>]*)?>/i.test(html) ? html.replace(/<head(\s[^>]*)?>/i, (m) => m + head) : head + html;
   document.body.append(shot);
   try {
     await new Promise<void>((resolve, reject) => { shot.onload = () => resolve(); setTimeout(() => reject(new Error("the page took too long to load")), 10_000); });
     const d = shot.contentDocument!, win = shot.contentWindow as (Window & { __ergaErrors?: string[] }) | null;
-    await d.fonts?.ready;
+    if (forced) forceScheme(d, scheme);
+    const unread = await embeddableFonts(d);
+    const pending = await settle(d, Date.now() + LOAD_WAIT);
     await new Promise((r) => setTimeout(r, 600)); // let the page's own scripts draw
+    if (req.evaluate != null) {
+      const r = await evaluateIn(win!, String(req.evaluate), evalTimeout(req));
+      return { width, height: viewport, ...r, errors: [...(win?.__ergaErrors ?? [])] };
+    }
     const root = win!.getComputedStyle(d.documentElement), body = d.body ? win!.getComputedStyle(d.body) : null;
     const clear = (c: string) => /^(transparent|rgba\([^)]*,\s*0\))$/.test(c);
-    const bg = !clear(root.backgroundColor) ? root.backgroundColor : body && !clear(body.backgroundColor) ? body.backgroundColor : "#ffffff";
-    let target: Element = d.documentElement, w = width, h = viewport, note: string | undefined;
+    const bg = !clear(root.backgroundColor) ? root.backgroundColor : body && !clear(body.backgroundColor) ? body.backgroundColor : scheme == "dark" && /dark/.test(root.colorScheme) ? "#121212" : "#ffffff";
+    let target: Element = d.documentElement, w = width, h = viewport;
+    const notes: string[] = [];
     if (req.selector) {
       let el: Element | null = null;
       try { el = d.querySelector(req.selector); } catch { return { width: 0, height: 0, errors: [], error: `${req.selector} isn't a valid CSS selector` }; }
@@ -268,17 +312,220 @@ async function captureView(req: ViewRequest, text?: string): Promise<ViewResult>
       const r = el.getBoundingClientRect();
       if (r.width < 1 || r.height < 1) return { width: 0, height: 0, errors: win?.__ergaErrors ?? [], error: `${req.selector} has no size (${Math.round(r.width)}×${Math.round(r.height)}); it may not have rendered` };
       target = el; w = Math.ceil(r.width); h = Math.min(MAX_SHOT, Math.ceil(r.height));
-      if (r.height > MAX_SHOT) note = `${req.selector} is ${Math.round(r.height)}px tall; this shows the top ${MAX_SHOT}px.`;
+      if (r.height > MAX_SHOT) notes.push(`${req.selector} is ${Math.round(r.height)}px tall; this shows the top ${MAX_SHOT}px.`);
     } else if (req.fullPage) {
       const full = Math.max(d.documentElement.scrollHeight, d.body?.scrollHeight ?? 0);
       h = Math.min(MAX_SHOT, full);
-      if (full > MAX_SHOT) note = `The page is ${full}px tall; this shows the top ${MAX_SHOT}px.`;
+      if (full > MAX_SHOT) notes.push(`The page is ${full}px tall; this shows the top ${MAX_SHOT}px.`);
     }
+    if (unread.length) notes.push(`The picture may show fallback fonts where the page uses fonts from ${unread.join(", ")}: that stylesheet can't be read from the page (no CORS), so its fonts can't go into the picture.`);
+    const fonts = renderedFonts(d, target);
     // An element is drawn at its own size, without the margins around it (they'd shift it inside the image).
     const url = await domToPng(target, target == d.documentElement ? { width: w, height: h, backgroundColor: bg, scale: 1 } : { backgroundColor: bg, scale: 1, style: { margin: "0" } });
-    return { png: url.slice(url.indexOf(",") + 1), width: w, height: h, errors: win?.__ergaErrors ?? [], note };
+    return {
+      png: url.slice(url.indexOf(",") + 1), width: w, height: h, errors: win?.__ergaErrors ?? [],
+      viewport: { width, height: viewport }, colorScheme: scheme, fonts,
+      ...(pending.length ? { pending } : {}),
+      ...(notes.length ? { note: notes.join("\n") } : {}),
+    };
   } finally {
     shot.remove();
   }
 }
 
+/**
+ * Stylesheets from other sites (Google Fonts, say) can't be read by the
+ * page's scripts, so modern-screenshot can't put their fonts in the picture
+ * and draws their text in a fallback. Their @font-face rules are fetched
+ * (most font services allow it: CORS) and added to the page as its own.
+ * Answers the ones that couldn't be read.
+ */
+async function embeddableFonts(d: Document): Promise<string[]> {
+  const sheets = [...d.styleSheets].filter((s) => { try { void s.cssRules; return false; } catch { return !!s.href; } });
+  const unread: string[] = [];
+  await Promise.all(sheets.map(async (s) => {
+    const href = s.href!;
+    try {
+      const res = await fetch(href, { mode: "cors", credentials: "omit", signal: AbortSignal.timeout(LOAD_WAIT) });
+      if (!res.ok) throw new Error(String(res.status));
+      const css = (await res.text()).replace(/url\(\s*(['"]?)([^'")]+)\1\s*\)/g, (_, _q, u: string) => `url("${new URL(u, href).href}")`);
+      const sheet = new CSSStyleSheet();
+      sheet.replaceSync(css);
+      const faces = [...sheet.cssRules].filter((r) => r instanceof CSSFontFaceRule).map((r) => r.cssText);
+      if (!faces.length) return;
+      const style = d.createElement("style");
+      style.dataset.ergaFonts = href;
+      style.textContent = faces.join("\n");
+      d.head.append(style);
+    } catch {
+      unread.push(new URL(href).host);
+    }
+  }));
+  return [...new Set(unread)];
+}
+
+/**
+ * Waits until the page's fonts and images have loaded, or `deadline`.
+ * A web font loads only once some text needs it, so this lays the page out
+ * first; lazy images load at once, since a whole-page picture shows them.
+ * Answers what still hadn't loaded.
+ */
+async function settle(d: Document, deadline: number): Promise<string[]> {
+  const imgs = [...d.images];
+  for (const img of imgs) if (img.loading == "lazy") img.loading = "eager";
+  const loading = () => [
+    ...[...d.fonts].filter((f) => f.status == "loading").map((f) => ({ what: `font ${f.family.replace(/^["']|["']$/g, "")} ${f.weight} ${f.style}`, done: f.loaded.then(() => {}, () => {}) })),
+    ...imgs.filter((i) => i.src && !i.complete).map((i) => ({ what: `image ${i.getAttribute("src")}`, done: i.decode().catch(() => {}) })),
+  ];
+  // Text laid out in a newly loaded font can need another (a bold or an italic): look again until nothing loads.
+  for (let round = 0; round < 5; round++) {
+    void d.documentElement.getBoundingClientRect();
+    await Promise.race([new Promise((r) => requestAnimationFrame(r)), sleep(50)]); // a tab in the background gets no frames
+    const now = loading();
+    if (!now.length) { await Promise.race([d.fonts.ready, sleep(deadline - Date.now())]); if (!loading().length) break; continue; }
+    const left = deadline - Date.now();
+    if (left <= 0) break;
+    await Promise.race([Promise.all(now.map((l) => l.done)), sleep(left)]);
+  }
+  return [...new Set(loading().map((l) => l.what))];
+}
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, Math.max(0, ms)));
+
+const GENERIC = new Set(["serif", "sans-serif", "monospace", "cursive", "fantasy", "system-ui", "math", "emoji", "fangsong", "ui-serif", "ui-sans-serif", "ui-monospace", "ui-rounded"]);
+
+/**
+ * The fonts the text under `root` rendered in: for each element with text of
+ * its own, the first family in its font-family that the browser could use
+ * (a web font that loaded, a font on this computer, or a generic one).
+ */
+function renderedFonts(d: Document, root: Element): RenderedFont[] {
+  const win = d.defaultView!;
+  const faces = new Map<string, FontFace[]>();
+  for (const f of d.fonts) { const k = unquote(f.family).toLowerCase(); faces.set(k, [...(faces.get(k) ?? []), f]); }
+  const ctx = d.createElement("canvas").getContext("2d");
+  const installed = new Map<string, boolean>();
+  const isInstalled = (family: string) => {
+    if (!installed.has(family)) {
+      // A font the computer has changes how wide text is, from at least one of two different fallbacks.
+      const probe = "mmmmmmmmmmlli WQ@#0123456789";
+      const width = (font: string) => { ctx!.font = font; return ctx!.measureText(probe).width; };
+      installed.set(family, !!ctx && ["monospace", "serif"].some((g) => width(`72px "${family}", ${g}`) != width(`72px ${g}`)));
+    }
+    return installed.get(family)!;
+  };
+  const resolve = (stack: string): { family: string; wanted?: string } => {
+    const families = stack.split(",").map((f) => unquote(f.trim())).filter(Boolean);
+    for (const family of families) {
+      const key = family.toLowerCase();
+      if (GENERIC.has(key)) return { family, ...(family != families[0] ? { wanted: families[0] } : {}) };
+      const own = faces.get(key);
+      if (own ? own.some((f) => f.status == "loaded") : isInstalled(family)) return { family, ...(family != families[0] ? { wanted: families[0] } : {}) };
+    }
+    return { family: "the browser's default font", wanted: families[0] };
+  };
+  const by = new Map<string, RenderedFont>();
+  const seen = new Set<Element>();
+  const walk = d.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  for (let n = walk.nextNode(); n; n = walk.nextNode()) {
+    const el = n.parentElement;
+    if (!el || seen.has(el) || !n.nodeValue?.trim() || el.closest("script, style, noscript, template, title")) continue;
+    seen.add(el);
+    const cs = win.getComputedStyle(el);
+    if (cs.display == "none" || cs.visibility == "hidden") continue;
+    const r = resolve(cs.fontFamily);
+    const key = `${r.family}|${r.wanted ?? ""}`;
+    const f = by.get(key) ?? { family: r.family, ...(r.wanted ? { wanted: r.wanted } : {}), elements: 0, tags: [] };
+    f.elements++;
+    const tag = el.tagName.toLowerCase();
+    if (f.tags.length < 5 && !f.tags.includes(tag)) f.tags.push(tag);
+    by.set(key, f);
+  }
+  return [...by.values()].sort((a, b) => b.elements - a.elements).slice(0, 10);
+}
+const unquote = (s: string) => s.replace(/^["']|["']$/g, "");
+
+
+// evaluate_page: the agent's expression runs in the same throwaway render
+// view_page draws, so it sees computed styles, fonts and sizes as the page
+// has them. Nothing goes back to the document: the render is a copy of its
+// text, removed once the result is out, and nothing reads its DOM back.
+// The expression gets what the page's own scripts have, no more: this
+// origin holds only the document. parent, top, opener and frameElement
+// read as null in it, so it doesn't reach into the editor by mistake.
+// Only the result's JSON comes back, cut to EVAL_MAX_JSON characters.
+async function evaluateIn(win: Window, expr: string, timeoutMs: number): Promise<{ value?: string; note?: string; error?: string }> {
+  const W = win as Window & typeof globalThis;
+  for (const k of ["parent", "opener", "frameElement"]) try { Object.defineProperty(W, k, { value: null, configurable: true }); } catch { /* not replaceable here */ }
+  const params = ["parent", "top", "opener", "frameElement"];
+  let fn: (...a: null[]) => Promise<unknown>;
+  try { fn = new W.Function(...params, `return (async () => (${expr}\n))()`) as typeof fn; } catch {
+    // Not one expression: statements, with their own return.
+    try { fn = new W.Function(...params, `return (async () => {${expr}\n})()`) as typeof fn; } catch (e) { return { error: `The expression doesn't parse: ${(e as Error).message}` }; }
+  }
+  let timer = 0;
+  try {
+    const value = await Promise.race([
+      Promise.resolve().then(() => fn(null, null, null, null)),
+      new Promise((_, reject) => { timer = window.setTimeout(() => reject(new EvalTimeout()), timeoutMs); }),
+    ]);
+    const json = toJSON(value, W);
+    if (json.length <= EVAL_MAX_JSON) return { value: json };
+    return { value: json.slice(0, EVAL_MAX_JSON), note: `The result is ${json.length} characters of JSON; this is the first ${EVAL_MAX_JSON}. Return less (pick the properties you need).` };
+  } catch (e) {
+    if (e instanceof EvalTimeout) return { error: `The expression didn't finish within ${timeoutMs} ms.` };
+    const err = e as { name?: unknown; message?: unknown } | null;
+    return { error: `The expression threw: ${err && typeof err == "object" && "message" in err ? `${String(err.name ?? "Error")}: ${String(err.message)}` : String(e)}` };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+class EvalTimeout extends Error {}
+
+/**
+ * A value from the page as JSON, whatever it is: elements become a short
+ * description (<p#id.class>), lists and sets arrays, computed styles their
+ * properties, cycles "[circular]". Stops early once it is far over the cap.
+ */
+function toJSON(value: unknown, W: Window & typeof globalThis): string {
+  if (value === undefined) return "undefined";
+  const seen = new WeakSet<object>();
+  let budget = EVAL_MAX_JSON * 4;
+  const plain = (x: unknown, depth: number): unknown => {
+    if (budget-- <= 0) return "…";
+    if (x === null || typeof x == "boolean" || typeof x == "string") return x;
+    if (typeof x == "number") return Number.isFinite(x) ? x : String(x);
+    if (typeof x == "bigint") return `${x}n`;
+    if (typeof x == "undefined") return null;
+    if (typeof x == "function") return `[function ${x.name || "anonymous"}]`;
+    if (typeof x == "symbol") return x.toString();
+    const o = x as object;
+    if (seen.has(o)) return "[circular]";
+    if (depth > 12) return "[too deep]";
+    seen.add(o);
+    try {
+      if (o instanceof W.Element) return `<${o.localName}${o.id ? `#${o.id}` : ""}${[...o.classList].map((c) => `.${c}`).join("")}>`;
+      if (o instanceof W.Node) return o.nodeType == 3 ? `#text ${JSON.stringify((o.textContent ?? "").slice(0, 80))}` : `[${o.nodeName}]`;
+      if (o instanceof W.CSSStyleDeclaration) {
+        const out: Record<string, string> = {};
+        for (let i = 0; i < o.length; i++) out[o[i]] = o.getPropertyValue(o[i]);
+        return out;
+      }
+      if (o instanceof W.FontFace) return { family: o.family, style: o.style, weight: o.weight, status: o.status };
+      if (o instanceof W.Error) return { name: o.name, message: o.message };
+      if (o instanceof W.Map) return plain(Object.fromEntries([...o.entries()].slice(0, 1000).map(([k, v]) => [String(k), v])), depth + 1);
+      if (typeof (o as { toJSON?: unknown }).toJSON == "function") return plain((o as { toJSON(): unknown }).toJSON(), depth + 1);
+      if (Array.isArray(o) || (Symbol.iterator in o && typeof o != "string")) {
+        const out: unknown[] = [];
+        for (const v of o as Iterable<unknown>) { if (out.length >= 1000 || budget <= 0) { out.push("…"); break; } out.push(plain(v, depth + 1)); }
+        return out;
+      }
+      const out: Record<string, unknown> = {};
+      for (const k of Object.keys(o)) { if (budget <= 0) { out["…"] = "…"; break; } out[k] = plain((o as Record<string, unknown>)[k], depth + 1); }
+      return out;
+    } finally {
+      seen.delete(o);
+    }
+  };
+  return JSON.stringify(plain(value, 0)) ?? "undefined";
+}

@@ -2,7 +2,7 @@
 // a fixture, drives headless Chrome with real clicks and keys, and reads the
 // file back from disk after each edit. Runs the HTML and the Markdown
 // fixture. (Two people at once: tests/suite, `bun tests/suite/run.ts --suite browser`.)
-//   bun tests/page.ts [html|md|format|agent|reload|enter] [--keep]   (--keep leaves the host running and prints its URL)
+//   bun tests/page.ts [html|md|format|view|agent|reload|enter] [--keep]   (--keep leaves the host running and prints its URL)
 
 import { Browser, MOD, ROOT } from "./cdp";
 import { startHost } from "./host";
@@ -14,7 +14,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { testJobs } from "./cores";
 
 const keep = process.argv.includes("--keep");
-const only = process.argv.find((a) => a == "html" || a == "md" || a == "agent" || a == "format" || a == "reload" || a == "enter");
+const only = process.argv.find((a) => a == "html" || a == "md" || a == "agent" || a == "format" || a == "view" || a == "reload" || a == "enter");
 
 // Scenarios run at once, each in its own host and tab; each one's lines are
 // collected and printed together when it finishes.
@@ -445,6 +445,7 @@ async function formatScenario(browser: Browser) {
   const none = await p.eval<{ error?: string }>(`ergaPage.captureView({ selector: "#nope" })`);
   check("a selector that matches nothing says so", /Nothing on the page matches #nope/.test(none.error ?? ""));
 
+
   // The view switcher.
   await p.eval(`document.querySelector("#mode [data-mode=text]").click()`);
   await Bun.sleep(100);
@@ -855,10 +856,46 @@ async function enterScenario(browser: Browser) {
   await s.close();
 }
 
-const SCENARIOS:[string, (b: Browser) => Promise<void>][] = [
+/** evaluate_page's run, in this tab: an expression in view_page's render, its result as JSON; read-only, with a time limit and a size cap. */
+async function evaluateScenario(browser: Browser) {
+  say("\nInspecting the page for the agent");
+  const s = await session(browser, "page", "index.html");
+  const { p, F } = s;
+  type Ev = { value?: string; note?: string; error?: string; errors: string[] };
+  const ev = (expr: string, more = "") => p.eval<Ev>(`ergaPage.captureView({ evaluate: ${JSON.stringify(expr)}${more} })`);
+  const h1Size = await p.frame<string>(`getComputedStyle(${F}.querySelector("h1")).fontSize`);
+  const style = await ev(`getComputedStyle(document.querySelector("h1")).fontSize`);
+  check("evaluate gives a computed style as JSON, as the page has it", style.value == JSON.stringify(h1Size) && !style.error, JSON.stringify(style));
+  const box = await ev(`document.querySelector("figure").getBoundingClientRect()`);
+  const rect = JSON.parse(box.value ?? "{}");
+  check("and an element's size", rect.width > 100 && rect.height > 10 && "top" in rect, JSON.stringify(box));
+  const els = await ev(`const all = [...document.querySelectorAll("h1, figure")]; return { all, fonts: [...document.fonts].length, styles: Object.keys(getComputedStyle(document.body)).length };`);
+  const elsV = JSON.parse(els.value ?? "{}");
+  check("statements with a return work, and elements read as tags", JSON.stringify(elsV.all) == '["<h1>","<figure>"]' && typeof elsV.fonts == "number", JSON.stringify(els));
+  const before = await s.source();
+  const changed = await ev(`(document.querySelector("h1").textContent = "Changed by evaluate", document.querySelector("h1").textContent)`);
+  await Bun.sleep(500);
+  check("what it changes stays in its throwaway render", changed.value == '"Changed by evaluate"' && (await s.source()) == before && !(await p.frame<string>(`${F}.querySelector("h1").textContent`)).includes("Changed"), JSON.stringify(changed));
+  const up = await ev(`[parent, top, opener, frameElement, window.parent, window.frameElement]`);
+  check("it doesn't reach the editor around the page", up.value == "[null,null,null,null,null,null]", JSON.stringify(up));
+  const slow = await ev(`new Promise(() => {})`, ", timeout: 300");
+  check("an expression that never finishes times out", /didn't finish within 300 ms/.test(slow.error ?? "") && slow.value == null, JSON.stringify(slow));
+  const big = await ev(`"x".repeat(100000)`);
+  check("a large result is cut, and says so", big.value?.length == 20000 && /100002 characters/.test(big.note ?? ""), JSON.stringify({ ...big, value: big.value?.length }));
+  const threw = await ev(`document.querySelector("#nope").width`);
+  check("an expression that throws says why", /The expression threw: TypeError/.test(threw.error ?? ""), JSON.stringify(threw));
+  const bad = await ev(`1 +* 2`);
+  check("and one that doesn't parse", /doesn't parse/.test(bad.error ?? ""), JSON.stringify(bad));
+  const cyc = await ev(`(() => { const a = { n: 1n, f() {}, u: undefined }; a.self = a; return a; })()`);
+  check("cycles, bigints and functions still make JSON", cyc.value == '{"n":"1n","f":"[function f]","u":null,"self":"[circular]"}', JSON.stringify(cyc));
+  check("no page errors", p.errors.length == 0, p.errors.join("\n"));
+  await s.close();
+}
+
+const SCENARIOS: [string, (b: Browser) => Promise<void>][] = [
   ["html", htmlScenario], ["html", strayTagScenario], ["html", noEditScenario], ["html", brokenPageScenario], ["html", pauseScenario],
   ["md", mdScenario], ["md", lightOnlyScenario],
-  ["format", formatScenario],
+  ["format", formatScenario], ["view", evaluateScenario],
   ["agent", agentOffScenario], ["agent", shareScenario], ["agent", modelScenario], ["agent", agentEmptyScenario], ["agent", voiceScenario],
   ["reload", backdropReloadScenario],
   ["enter", enterScenario],

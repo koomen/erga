@@ -1293,7 +1293,7 @@ Once you've read the guide, await further instructions.`;
   // The conversation as the log shows it (agent-chat.ts, which the factory's panel on /admin/factory shares).
   const agentChat = chat({
     logEl: agentLog, jump: $("agent-jump") as HTMLButtonElement,
-    verbs: { read: ["Reading", "Read"], edit: ["Editing", "Edited"], write: ["Writing", "Wrote"], ls: ["Listing", "Listed"], find: ["Finding files", "Found files"], grep: ["Searching", "Searched"], view_page: ["Looking at the page", "Looked at the page"] },
+    verbs: { read: ["Reading", "Read"], edit: ["Editing", "Edited"], write: ["Writing", "Wrote"], ls: ["Listing", "Listed"], find: ["Finding files", "Found files"], grep: ["Searching", "Searched"], view_page: ["Looking at the page", "Looked at the page"], evaluate_page: ["Inspecting the page", "Inspected the page"] },
     externalTip: "An agent you shared this page with, working as your agent",
   });
   const log: Log = agentChat.log;
@@ -1346,7 +1346,13 @@ Once you've read the guide, await further instructions.`;
   /** Where the user is in the document, so "this" and "here" mean something to the agent. */
   function editorContext(): string {
     const at = addressOf(info!.path).replace(/[?#].*$/, "");
-    return `The user has the page ${info!.path} open (${at}).\n${caretContext()}`;
+    return `The user has the page ${info!.path} open (${at}).\n${viewContext()}\n${caretContext()}`;
+  }
+  /** How the user sees the page: view_page renders at this size and in this mode unless asked otherwise. */
+  function viewContext(): string {
+    const scheme = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    const w = frame.clientWidth, h = frame.clientHeight;
+    return `${w && h ? `Their window shows the page at ${w}×${h} CSS pixels` : "Their window shows the source, not the page"}, in ${scheme} mode.`;
   }
   function caretContext(): string {
     const s = currentState();
@@ -1757,6 +1763,6 @@ Once you've read the guide, await further instructions.`;
 
   started = true;
   presenceChanged();
-  window.ergaPage = { page, collab, toggleSource, captureView, setEditing, pagePath, openPage, get state() { return currentState(); } };
+  window.ergaPage = { page, collab, toggleSource, captureView, agentContext: editorContext, setEditing, pagePath, openPage, get state() { return currentState(); } };
   window.ergaShell?.ready();
 })();
