@@ -14,7 +14,7 @@
 // to set. To add a setting, add it to SETTINGS; nothing in the database
 // changes.
 
-import type { Sql } from "./directory.ts";
+import type { Sql, Statement } from "./directory.ts";
 import { NotAllowed, type Actor, type Users } from "./users.ts";
 
 /** A value a setting won't take; the message says why. */
@@ -178,6 +178,24 @@ export function parseDeployed(json: string | undefined, settings: Settings = SET
   return deployedSettings(values as Record<string, unknown>, settings);
 }
 
+/** One setting's change, in a version of the settings: its value as it applied before and after. */
+export interface SettingChange {
+  key: string;
+  from: unknown;
+  to: unknown;
+  /** Put back to its default (Reset). */
+  reset?: boolean;
+}
+
+/** A version of the settings (server_config_versions): who changed them, when, and what changed. */
+export interface SettingsVersion {
+  /** 1, 2, 3..., in the order they were made. */
+  n: number;
+  at: number;
+  by: string;
+  changes: SettingChange[];
+}
+
 interface Row { key: string; value: string; updated: number; updated_by: string | null }
 /**
  * By key: a parsed value someone sets, checked against more than the
@@ -254,10 +272,7 @@ export class ServerConfig<S extends Settings = typeof SETTINGS> {
     try { parsed = s.parse(value); } catch (e) { throw new ConfigError(`${key} ${(e as Error).message}.`); }
     const check = Object.hasOwn(this.checks, key) ? this.checks[key] : undefined;
     if (check && parsed != null) parsed = await check(by, parsed);
-    await this.sql.run(
-      `INSERT INTO server_config (key, value, updated, updated_by) VALUES (?1, ?2, ?3, ?4)
-       ON CONFLICT (key) DO UPDATE SET value = ?2, updated = ?3, updated_by = ?4`,
-      key, JSON.stringify(parsed), Date.now(), by.login.toLowerCase());
+    await this.write(key, JSON.stringify(parsed), by.login.toLowerCase());
     this.rows = null;
     await this.tell(key);
     return this.entry(key);
@@ -279,7 +294,12 @@ export class ServerConfig<S extends Settings = typeof SETTINGS> {
     }
     this.rows = null;
     const won = (await this.stored(key)) == json;
-    if (won) await this.tell(key);
+    // Only the winner records the change, from the row it replaced.
+    if (won) {
+      const recorded = this.version(Date.now(), by.toLowerCase(), this.change(key, expected, json));
+      if (recorded.length) await this.sql.batch(recorded);
+      await this.tell(key);
+    }
     return won;
   }
 
@@ -294,10 +314,73 @@ export class ServerConfig<S extends Settings = typeof SETTINGS> {
     await this.users.mustAdmin(by);
     this.setting(key);
     if (this.isLocked(key)) throw new NotAllowed(`${key} is fixed by the deploy (server.config.ts), so it can't be changed here: it stays ${JSON.stringify(this.locked[key])}.`);
-    await this.sql.run("DELETE FROM server_config WHERE key = ?1", key);
+    await this.write(key, null, by.login.toLowerCase());
     this.rows = null;
     await this.tell(key);
     return this.entry(key);
+  }
+
+  /**
+   * The settings' versions, newest first: who changed what, when, from what
+   * to what. `before`: only those older than version n; `limit`: at most this
+   * many (20 by default). `total`: how many there are. Admins only.
+   */
+  async history(by: Actor, opts: { before?: number; limit?: number } = {}): Promise<{ versions: SettingsVersion[]; total: number }> {
+    await this.users.mustAdmin(by);
+    const limit = Math.max(1, Math.min(Math.floor(opts.limit ?? 20), 1000));
+    const [rows, [count]] = await Promise.all([
+      this.sql.all<{ n: number; at: number; by: string; changes: string }>(
+        "SELECT * FROM server_config_versions WHERE n < ?1 ORDER BY n DESC LIMIT ?2", opts.before ?? Number.MAX_SAFE_INTEGER, limit),
+      this.sql.all<{ total: number }>("SELECT COUNT(*) AS total FROM server_config_versions"),
+    ]);
+    const versions = rows.map((r) => {
+      let changes: SettingChange[] = [];
+      try { changes = JSON.parse(r.changes); } catch { /* a row nobody can read: no changes to show */ }
+      return { n: Number(r.n), at: Number(r.at), by: r.by, changes };
+    });
+    return { versions, total: Number(count?.total ?? 0) };
+  }
+
+  /** A key's value as a row's JSON makes it (null: no row), as `entry` reads it: its default when there's none, or it won't parse. */
+  private applied(key: string, json: string | null): unknown {
+    const s = this.setting(key);
+    if (json == null) return s.default;
+    try { return s.parse(JSON.parse(json)); } catch { return s.default; }
+  }
+
+  /** What changes when key's row goes from `before` to `after` (JSON, null for no row); null when its value stays the same. */
+  private change(key: string, before: string | null, after: string | null): SettingChange | null {
+    const from = this.applied(key, before), to = this.applied(key, after);
+    return JSON.stringify(from) === JSON.stringify(to) ? null : { key, from, to };
+  }
+
+  /** The statement that records a version of the settings with this change (none for no change). */
+  private version(at: number, by: string, change: SettingChange | null): Statement[] {
+    return change ? [["INSERT INTO server_config_versions (at, by, changes) VALUES (?1, ?2, ?3)", at, by, JSON.stringify([change])]] : [];
+  }
+
+  /**
+   * Sets key's row to `json` (null: deletes it, back to its default), with
+   * the version that says what changed, in one batch, only while the row is
+   * still the one read: of two writes at once (a switch saved twice, two
+   * admins), each version says truly what it changed, and none is recorded
+   * twice. If another write came in between, it reads again and tries again.
+   */
+  private async write(key: string, json: string | null, by: string): Promise<void> {
+    for (let tries = 0; tries < 5; tries++) {
+      const before = await this.stored(key), at = Date.now();
+      const change = this.change(key, before, json);
+      const still = "(SELECT value FROM server_config WHERE key = ?1) IS ?2";
+      await this.sql.batch([
+        ...(change ? [[`INSERT INTO server_config_versions (at, by, changes) SELECT ?3, ?4, ?5 WHERE ${still}`, key, before, at, by, JSON.stringify([json == null ? { ...change, reset: true } : change])] as Statement] : []),
+        json == null
+          ? ["DELETE FROM server_config WHERE key = ?1 AND value IS ?2", key, before]
+          : [`INSERT INTO server_config (key, value, updated, updated_by) SELECT ?1, ?3, ?4, ?5 WHERE ${still}
+              ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated = excluded.updated, updated_by = excluded.updated_by`, key, before, json, at, by],
+      ]);
+      if ((await this.stored(key)) === json) return;
+    }
+    throw new ConfigError(`${key} is changing too often at once to save: try again.`);
   }
 
   private setting(key: string): Setting {

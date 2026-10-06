@@ -2,9 +2,9 @@
 // The admin pages' shared layout (admin-layout.ts), and who may reach them,
 // on a dev server of its own:
 //
-//   - every admin page (/admin, /admin/users, /admin/factory, /admin/keys)
+//   - every admin page (/admin, /admin/changes, /admin/users, /admin/factory, /admin/keys)
 //     has the breadcrumb (Erga › Admin › the page), Share with agent and the
-//     sidebar (Settings, Users, Factory), and no "Admin" title or back link;
+//     sidebar (Settings, Change log, Users, Factory), and no "Admin" title or back link;
 //   - the old addresses redirect: /admin/source and /source to /admin/factory,
 //     GET /admin/settings to /admin;
 //   - someone who isn't an admin, though deploy_page lets them use /deploy,
@@ -33,7 +33,7 @@ let browser: Browser | null = null;
 
 try {
   // ---- the layout, on every admin page (tester: local development's admin)
-  const pages: [string, string, string | null][] = [["/admin", "Settings", "Settings"], ["/admin/users", "Users", "Users"], ["/admin/factory", "Factory", "Factory"], ["/admin/keys", "Keys", null]];
+  const pages: [string, string, string | null][] = [["/admin", "Settings", "Settings"], ["/admin/changes", "Change log", "Change log"], ["/admin/users", "Users", "Users"], ["/admin/factory", "Factory", "Factory"], ["/admin/keys", "Keys", null]];
   for (const [path, title, current] of pages) {
     const r = await get(path);
     const html = await r.text();
@@ -42,7 +42,7 @@ try {
     expect(crumbs.includes(">Erga</a>") && crumbs.includes('href="/admin">Admin</a>') && crumbs.includes(`aria-current="page">${title}</h1>`), `${path}: the breadcrumb, Erga › Admin › ${title}`, crumbs);
     const side = /<nav class="admin-side"[^]*?<\/nav>/.exec(html)?.[0] ?? "";
     const links = [...side.matchAll(/<a href="([^"]+)"( aria-current="page")?>[^]*?<span class="label">([^<]+)<\/span>/g)].map((m) => `${m[3]} ${m[1]}${m[2] ? " *" : ""}`);
-    expect(links.join() == ["Settings /admin", "Users /admin/users", "Factory /admin/factory"].map((l) => l.startsWith(current ?? "-") ? `${l} *` : l).join(), `${path}: the sidebar's links, this page's marked`, links);
+    expect(links.join() == ["Settings /admin", "Change log /admin/changes", "Users /admin/users", "Factory /admin/factory"].map((l) => l.startsWith(current ?? "-") ? `${l} *` : l).join(), `${path}: the sidebar's links, this page's marked`, links);
     expect(html.includes('id="btn-share"') && html.includes('<script src="/admin-share.js" defer>'), `${path}: Share with agent in the header`);
     expect(!html.includes('class="back"') && !/<h1>Admin/.test(html) && !html.includes("‹ Documents"), `${path}: no "Admin" title and no back link`);
   }
@@ -61,7 +61,7 @@ try {
   const as = (who: string) => (path: string, init: RequestInit = {}) => get(path + (path.includes("?") ? "&" : "?") + `user=${who}`, init);
   const mallory = as("Mallory");
   const refused: [string, Response][] = [];
-  for (const path of ["/admin", "/admin/users", "/admin/factory", "/admin/keys", "/admin/settings", "/admin/anything"]) refused.push([`GET ${path}`, await mallory(path)]);
+  for (const path of ["/admin", "/admin/changes", "/admin/users", "/admin/factory", "/admin/keys", "/admin/settings", "/admin/anything"]) refused.push([`GET ${path}`, await mallory(path)]);
   refused.push(
     ["POST /admin/settings", await mallory("/admin/settings", { method: "POST", headers: { Origin: root }, body: new URLSearchParams({ key: "factory", value: '"on"' }) })],
     ["POST /admin/users", await mallory("/admin/users", { method: "POST", headers: { Origin: root }, body: new URLSearchParams({ do: "add", login: "mallory", role: "admin" }) })],
@@ -82,7 +82,7 @@ try {
   expect(!role.includes('value="admin" selected'), "Mallory is still not an admin", role);
   // Signed out: a page sends you to sign in; a POST is refused.
   const out = { Cookie: "erga_signed_out=1" };
-  for (const path of ["/admin", "/admin/users", "/admin/factory"]) {
+  for (const path of ["/admin", "/admin/changes", "/admin/users", "/admin/factory"]) {
     const r = await get(path, { headers: out });
     expect(r.status == 302 && (r.headers.get("location") ?? "").startsWith("/auth/github?next="), `signed out, GET ${path} goes to sign in`, { status: r.status, location: r.headers.get("location") });
   }
@@ -91,7 +91,7 @@ try {
   const tokensPage = await (await form("/tokens/new", { label: "Admin layout test" })).text();
   const agentToken = /<pre class="secret">(erga_[^<]+)<\/pre>/.exec(tokensPage)?.[1] ?? "";
   expect(agentToken, "an agent token, to try");
-  for (const path of ["/admin", "/admin/users", "/admin/factory"]) {
+  for (const path of ["/admin", "/admin/changes", "/admin/users", "/admin/factory"]) {
     const r = await get(path, { headers: { ...out, Authorization: `Bearer ${agentToken}` } });
     expect(r.status == 302 || r.status == 404, `GET ${path} with an admin's agent token: no page`, r.status);
   }

@@ -206,7 +206,7 @@ export async function frontDoor(request: Request, base: Platform): Promise<Respo
   if (path == "/docs") return listDocs(platform, request);
   if (path == "/docs/delete" && request.method == "POST") return deleteDoc(platform, request);
   if (path == "/docs/share") return shareDoc(platform, request);
-  if (path == "/admin" || path == "/admin/settings" || path == "/admin/users") return adminDoor(platform, request);
+  if (path == "/admin" || path == "/admin/changes" || path == "/admin/settings" || path == "/admin/users") return adminDoor(platform, request);
 
   const [, first, second, rest] = /^\/([^/]+)\/([^/]+)(\/.*)?$/.exec(path) ?? [];
   const nothing = () => page("Not found", "There's no document here. <a href=\"/\">Back to the start</a>.", 404);
@@ -1122,8 +1122,6 @@ const STEPS_BOOT = `(() => {
   function build() {
     panel.textContent = "";
     panel.classList.toggle("erga-steps-plain", !steps.images);
-    const r = frame.getBoundingClientRect();
-    panel.style.setProperty("--ar", r.width && r.height ? r.width + " / " + r.height : "16 / 9");
     steps.labels.forEach((label, i) => {
       const li = panel.appendChild(document.createElement("li")), b = li.appendChild(document.createElement("button"));
       b.type = "button"; b.className = "erga-step"; b.dataset.step = i;
@@ -1164,6 +1162,8 @@ const STEPS_BOOT = `(() => {
     bar.style.bottom = Math.max(12, innerHeight - r.bottom + 14) + "px";
     panel.style.right = Math.max(8, innerWidth - r.right + 12) + "px";
     panel.style.top = r.top + 12 + "px";
+    // The pictures' shape is the frame's, as it is now (it changes with the window).
+    panel.style.setProperty("--ar", r.width && r.height ? r.width + " / " + r.height : "16 / 9");
     panel.style.maxHeight = Math.max(80, innerHeight - Math.max(12, innerHeight - r.bottom + 14) - 50 - r.top - 12) + "px";
   }
   function show(on) {

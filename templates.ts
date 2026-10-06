@@ -29,6 +29,7 @@ export interface TemplateGroup {
 /** The templates, in the picker's order. The first is what /new makes when no template is named. */
 export const TEMPLATES: Template[] = [
   { id: "page", name: "Page", description: "A blank document.", files: "templates/doc" },
+  { id: "slides", name: "Slides", group: "Presentation", description: "16:9 slides you step through.", files: "templates/slides" },
   { id: "canvas", name: "Canvas presentation", group: "Presentation", description: "Frames on one big canvas; each step zooms out, then in on the next.", files: "templates/canvas" },
 ];
 
