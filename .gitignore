@@ -11,6 +11,11 @@ node_modules/
 .site/
 .site.*/
 .dev.vars
+.dev.vars.*
+!.dev.vars.example
+# Keys and certificates
+*.pem
+*.key
 
 # The task queue's state and its worktrees (development/task-queue)
 development/task-queue/data/

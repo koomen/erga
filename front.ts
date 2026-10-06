@@ -398,6 +398,13 @@ export function pagesHost(url: URL, platform: Platform): { owner: string; id: st
 }
 
 /** The signing key, imported once per secret (per isolate): every file of a document's page checks its token. */
+/** Whether two strings (MACs) are the same, in a time that doesn't say where they differ. */
+const sameText = (a: string, b: string) => {
+  if (a.length != b.length) return false;
+  let d = 0;
+  for (let i = 0; i < a.length; i++) d |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return d == 0;
+};
 const hmacKeys = new Map<string, Promise<CryptoKey>>();
 const hmac = async (secret: string, value: string) => {
   let key = hmacKeys.get(secret);
@@ -429,7 +436,7 @@ export async function readPagesToken(secret: string, token: string, owner: strin
 /** What a good, current token for this document says: the editor's origin, and whether it opens only the published version. */
 export async function readPagesClaims(secret: string, token: string, owner: string, id: string, now = Date.now()): Promise<{ shell: string; published: boolean } | null> {
   const [claims, mac, extra] = token.split(".");
-  if (!claims || !mac || extra != null || mac != (await hmac(secret, claims))) return null;
+  if (!claims || !mac || extra != null || !sameText(mac, await hmac(secret, claims))) return null;
   try {
     const c = JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(claims.replace(/-/g, "+").replace(/_/g, "/")), (ch) => ch.charCodeAt(0)))) as { d?: string; e?: number; s?: string; p?: number };
     if (c.d != `${owner.toLowerCase()}/${id}` || !(Number(c.e) > now / 1000) || typeof c.s != "string") return null;
