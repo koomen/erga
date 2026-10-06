@@ -5,7 +5,7 @@
 // is finishing, Merge off, with the reason; merged tasks leave the board, and the Factory page
 // shows staging); a card per task, its
 // detail on a click (the ask, the summary, the preview, the branch, the log,
-// the screenshots, at the top in a grid, a click to enlarge one), with Merge, Discard and new instructions; live, over
+// the screenshots, at the top in a grid, a click to enlarge one, the arrow keys for the previous and next one, Escape to shrink it), with Merge, Discard and new instructions; live, over
 // /api/factory/events. Dependencies between tasks as on the local board: a
 // chip on the card ("waiting for #12"), blocked tasks at the bottom of
 // Queued, Merge (and Start) off with the reason, and a Dependencies section
@@ -93,6 +93,7 @@ export const BOARD_STYLE = `
   .shots figure:not(.big) img { aspect-ratio: 16 / 10; object-fit: cover; object-position: top; }
   .shots figure.big { grid-column: 1 / -1; grid-row: 1; cursor: zoom-out; }
   .shots figure.big img { max-height: calc(100vh - 140px); object-fit: contain; background: var(--panel); }
+  .shots figure:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 6px; }
   .shots figcaption { color: var(--muted); font-size: 12px; margin-top: 4px; }
   .log { font: 12px/1.5 ui-monospace, monospace; max-height: 260px; overflow: auto; background: var(--panel); border-radius: 6px; padding: 8px 10px; }
   .log div { white-space: pre-wrap; overflow-wrap: anywhere; } .log time { color: var(--muted); margin: 0 8px 0 0; font-size: inherit; }
@@ -276,10 +277,14 @@ function renderDialog() {
   const d = $("dlg");
   if (!t) { d.close(); return; }
   // Click a screenshot to enlarge it to the modal's width (on the first row), again to put it back in the grid.
-  const shots = t.screenshots.map((s) => '<figure data-act="shot" data-file="' + esc(s.file) + '"' + (s.file == bigShot ? ' class="big"' : "") + ' title="' + (s.file == bigShot ? "Click to shrink" : "Click to enlarge") + '"><img src="/api/factory/shots/' + esc(s.file) + '" alt=""><figcaption>' + esc(s.caption) + '</figcaption></figure>').join("");
+  // The arrow keys go to the previous and next one, enlarged or not (see shotKey).
+  const shots = t.screenshots.map((s) => '<figure data-act="shot" data-file="' + esc(s.file) + '" tabindex="0" role="button"' + (s.file == bigShot ? ' class="big"' : "") + ' title="' + (s.file == bigShot ? "Click or Escape to shrink" : "Click to enlarge") + ', arrow keys for the others"><img src="/api/factory/shots/' + esc(s.file) + '" alt=""><figcaption>' + esc(s.caption) + '</figcaption></figure>').join("");
   const log = t.log.map((l) => '<div><time>' + new Date(l.at).toLocaleTimeString() + '</time>' + esc(l.message) + '</div>').join("");
   const revisable = ["complete", "failed"].includes(t.status);
   const keep = d.querySelector("#instructions")?.value || "";
+  // A redraw of the open task (a live update) keeps what the user is doing in it: see keepState.
+  const restore = d.open && d.dataset.task == String(t.id) ? keepState(d) : () => {};
+  d.dataset.task = t.id;
   d.innerHTML = '<div class="dlg"><div class="dlg-head"><h3><span class="id">#' + t.id + '</span>' + esc(t.title) + ' <span class="status ' + cls(t.status) + '">' + esc(STATUS[t.status] || t.status) + '</span></h3><button data-act="close">Close</button></div>' +
     '<div class="links">' + (t.url && t.status != "merged" ? '<a href="/api/factory/tasks/' + t.id + '/open" target="_blank">Open preview ↗</a><span class="muted">' + esc(t.url) + '</span>' : "") +
     '<span class="branch">' + esc(t.branch) + (t.base ? " from staging at " + esc(t.base.slice(0, 10)) : "") + '</span>' +
@@ -294,6 +299,37 @@ function renderDialog() {
     '<section><h4>Log</h4><div class="log" id="task-log">' + log + '</div></section></div>';
   const l = $("task-log"); if (l) l.scrollTop = l.scrollHeight;
   if (!d.open) d.showModal();
+  restore();
+}
+
+/**
+ * What the user has under way in the detail view, before a redraw: each field's text or choice (the instructions,
+ * the dependency's kind and task), its size, scroll and selection, which field or button has the focus, the
+ * dialog's scroll and why a send failed. Returns a function that puts it all back in the new view, so a live
+ * update doesn't take the cursor out of the text the user is typing.
+ */
+function keepState(d) {
+  const key = (el) => el.id ? "#" + el.id : el.dataset.act ? '[data-act="' + el.dataset.act + '"]' + (el.dataset.file ? '[data-file="' + CSS.escape(el.dataset.file) + '"]' : "") + (el.dataset.id ? '[data-id="' + el.dataset.id + '"]' : "") + (el.dataset.dep ? '[data-dep="' + el.dataset.dep + '"][data-kind="' + el.dataset.kind + '"]' : "") : null;
+  const fields = [...d.querySelectorAll("input[id], textarea[id], select[id]")].map((el) => ({ key: key(el), value: el.value, height: el.style.height, top: el.scrollTop,
+    sel: el.selectionStart != null ? [el.selectionStart, el.selectionEnd, el.selectionDirection] : null }));
+  const active = d.contains(document.activeElement) ? key(document.activeElement) : null;
+  const why = d.querySelector("#revise-why")?.textContent || "";
+  const top = d.scrollTop;
+  return () => {
+    for (const f of fields) {
+      const el = d.querySelector(f.key);
+      if (!el) continue;
+      // A choice that is gone (a task that left the list) leaves the new view's default.
+      if (el.tagName != "SELECT" || [...el.options].some((o) => o.value == f.value)) el.value = f.value;
+      if (f.height) el.style.height = f.height;
+      if (f.sel) el.setSelectionRange(...f.sel);
+      el.scrollTop = f.top;
+    }
+    const w = d.querySelector("#revise-why"); if (w && why) w.textContent = why;
+    const el = active && d.querySelector(active);
+    if (el) el.focus({ preventScroll: true });
+    d.scrollTop = top;
+  };
 }
 
 /**
@@ -421,6 +457,39 @@ document.addEventListener("click", async (e) => {
   }
 });
 $("dlg").addEventListener("close", () => { openId = null; bigShot = null; });
+$("dlg").addEventListener("keydown", shotKey);
+
+/**
+ * The detail view's keys for its screenshots. Left and right go to the previous and next screenshot, around at
+ * the ends: the enlarged one changes if one is enlarged, else the focus moves along the grid. Enter or Space
+ * enlarges (or shrinks) the one that has the focus. Escape shrinks the enlarged one (it doesn't close the view).
+ * The arrows do nothing in a field (the instructions, a choice), so they still move the cursor there.
+ */
+function shotKey(e) {
+  const t = tasks.find((x) => x.id == openId);
+  if (!t || !t.screenshots.length || e.altKey || e.ctrlKey || e.metaKey) return;
+  const d = $("dlg");
+  const show = (file, focus) => {
+    bigShot = file; renderDialog();
+    const f = d.querySelector('.shots figure[data-file="' + CSS.escape(focus) + '"]');
+    if (f) { f.focus({ preventScroll: true }); f.scrollIntoView({ block: "nearest" }); }
+  };
+  if (e.key == "Escape") {
+    if (!bigShot) return;
+    e.preventDefault();
+    show(null, bigShot);
+    return;
+  }
+  const fig = e.target.closest(".shots figure");
+  if ((e.key == "Enter" || e.key == " ") && fig) { e.preventDefault(); show(bigShot == fig.dataset.file ? null : fig.dataset.file, fig.dataset.file); return; }
+  if (e.key != "ArrowLeft" && e.key != "ArrowRight" || e.target.closest("input, textarea, select, [contenteditable]")) return;
+  const files = t.screenshots.map((s) => s.file), step = e.key == "ArrowRight" ? 1 : -1;
+  const from = files.indexOf(bigShot || fig?.dataset.file);
+  const next = files[from < 0 ? (step > 0 ? 0 : files.length - 1) : (from + step + files.length) % files.length];
+  e.preventDefault();
+  if (bigShot) show(next, next);
+  else { const f = d.querySelector('.shots figure[data-file="' + CSS.escape(next) + '"]'); f.focus(); f.scrollIntoView({ block: "nearest" }); }
+}
 
 async function load() {
   [info, tasks] = await Promise.all([api(""), api("/tasks")]);

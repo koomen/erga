@@ -1668,7 +1668,13 @@ stay compact, on a board of fixture tasks: a title on one line (the full
 title in its tooltip), no branch name (the detail has it), the last update
 as a short time on the title's line ("5m"), small buttons on one row, and
 the thumbnails; and that the detail view shows the screenshots first, three in
-a row, one enlarged to the modal's width on a click and back on a second click.
+a row, one enlarged to the modal's width on a click and back on a second click,
+and the left and right arrow keys going to the previous and next screenshot
+(around at the ends) in the grid and in the enlarged view, Escape shrinking
+it, and the arrows still moving the cursor in the instructions.
+It also types in a task's instructions while live updates of that task arrive:
+the redrawn detail view keeps the focus, the cursor, the selection, the unsent
+text and the other fields' values (`keepState` in `factory/page.ts`).
 
 **How it fits together.**
 
