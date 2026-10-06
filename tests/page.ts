@@ -2,9 +2,9 @@
 // a fixture, drives headless Chrome with real clicks and keys, and reads the
 // file back from disk after each edit. Runs the HTML and the Markdown
 // fixture. (Two people at once: tests/suite, `bun tests/suite/run.ts --suite browser`.)
-//   bun tests/page.ts [html|md|format|agent|reload] [--keep]   (--keep leaves the host running and prints its URL)
+//   bun tests/page.ts [html|select|md|format|agent|reload] [--keep]   (--keep leaves the host running and prints its URL)
 
-import { Browser, MOD, ROOT } from "./cdp";
+import { Browser, MOD, ROOT, SHOTS } from "./cdp";
 import { startHost } from "./host";
 import { F, frameAt, tab } from "./tab";
 import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
@@ -14,7 +14,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { testJobs } from "./cores";
 
 const keep = process.argv.includes("--keep");
-const only = process.argv.find((a) => a == "html" || a == "md" || a == "agent" || a == "format" || a == "reload");
+const only = process.argv.find((a) => a == "html" || a == "select" || a == "md" || a == "agent" || a == "format" || a == "reload");
 
 // Scenarios run at once, each in its own host and tab; each one's lines are
 // collected and printed together when it finishes.
@@ -771,8 +771,124 @@ async function voiceScenario(browser: Browser) {
   await s.close();
 }
 
+/** Selections that span several units (paragraphs, headings, list items): by mouse, Shift-click and keyboard, then copy, cut, delete and typing over them. */
+async function selectScenario(browser: Browser) {
+  say("\nSelecting across paragraphs");
+  const s = await session(browser, "page", "index.html");
+  const { p, F } = s;
+  /** A point in the tab at character `i` of an element's first text node. */
+  const at = async (selector: string, i: number) => {
+    const r = await p.frame<{ x: number; y: number }>(`(() => { const el = ${F}.querySelector(${JSON.stringify(selector)}); const t = ${F}.createTreeWalker(el, 4).nextNode(); const rg = ${F}.createRange(); rg.setStart(t, ${i}); rg.setEnd(t, ${i} + 1); const r = rg.getBoundingClientRect(); const f = document.getElementById("page").getBoundingClientRect(); return { x: f.left + r.left + 1, y: f.top + r.top + r.height / 2 }; })()`);
+    const f = await frameAt(p);
+    return { x: r.x + f.x, y: r.y + f.y };
+  };
+  const domText = () => p.frame<string>(`${F}.getSelection().toString()`);
+  const model = () => p.eval<{ from: number; to: number; text: string }>(`(() => { const m = ergaPage.state.selection.main; return { from: m.from, to: m.to, text: ergaPage.state.doc.sliceString(m.from, m.to) }; })()`);
+  const hosts = () => p.frame<boolean>(`[...${F}.querySelectorAll("[data-erga-id]:not(.erga-locked)")].every((el) => el.getAttribute("contenteditable") == "true")`);
+  /** The editor's shortcut key: ⌘ on a Mac, Ctrl elsewhere (src/page/editor.ts, isMac). */
+  /** Undo can render the page afresh (when patching it can't put the units back): wait until it's done. */
+  const idle = () => until(async () => !(await p.frame<boolean>("ergaFrame.page.rendering")));
+  const CMD = process.platform == "darwin" ? MOD.Meta : MOD.Ctrl;
+
+  // The mouse: from the heading into the paragraph under it.
+  const h = await at("h1", 2), b = await at("p.lede", 3);
+  await p.drag(h.x, h.y, b.x, b.y);
+  await until(async () => (await model()).text.includes("</h1>"));
+  check("a drag selects from the heading into the paragraph", (await domText()).replace(/\s+/g, " ") == "unch notes Bui", await domText());
+  check("and the editor's selection spans both", (await model()).text.startsWith("unch notes</h1>") && (await model()).text.endsWith("Bui"), await model());
+  await p.screenshot(`${SHOTS}/select-across.png`);
+  await p.key("Backspace");
+  check("Backspace deletes the selection and joins the two", await until(async () => (await s.textOf("h1")).startsWith("Lald ")), await s.textOf("h1"));
+  check("valid HTML in the source", (await s.source()).includes(`<h1>Lald <em>cool</em>`), (await s.source()).match(/<h1>.*/)?.[0]);
+  check("and the units are editing hosts again, with the caret", await hosts() && await p.frame<boolean>(`${F}.activeElement.matches("h1")`));
+  await p.key("z", CMD);
+  check("undo brings both back", await until(async () => (await s.textOf("h1")) == "Launch notes" && (await s.count("p.lede")) == 1));
+  await idle();
+
+  // Shift-click: from a caret in the heading to a list item, past the widget and the second heading.
+  await p.click(h.x, h.y);
+  const li = await at("li:first-child", 6);
+  await p.click(li.x, li.y, 1, MOD.Shift);
+  await until(async () => (await model()).text.includes("Faster"));
+  check("Shift-click extends the selection into another unit", /^unch notes[\s\S]*What changed[\s\S]*Faster$/.test((await domText()).trim()), await domText());
+  check("the editor's selection spans them", (await model()).text.startsWith("unch notes") && (await model()).text.endsWith("Faster"), await model());
+  // Copying: the browser copies the page's selected text; a cut takes it out too.
+  const cut = await p.frame<string>(`(() => { const d = new DataTransfer(); ${F}.body.dispatchEvent(new ClipboardEvent("cut", { clipboardData: d, bubbles: true, cancelable: true })); return d.getData("text/plain"); })()`);
+  check("a cut copies the text of every unit in it", /^unch notes[\s\S]*What changed[\s\S]*Faster$/.test(cut.trim()), cut);
+  check("and deletes it from the source", await until(async () => /<h1>La<\/h1>[\s\S]*<li> builds<\/li>/.test(await s.source()) && !(await s.source()).includes("What changed")), (await s.source()).match(/<h1>[\s\S]*?<\/ul>/)?.[0]);
+  await p.key("z", CMD);
+  check("undo brings it back", await until(async () => (await s.source()).includes("<h1>Launch notes</h1>") && (await s.source()).includes("<li>Faster builds</li>")));
+  await idle();
+
+  // The keyboard: Shift and the arrows carry on past the heading's end.
+  await p.click(h.x, h.y);
+  await p.key("ArrowDown", MOD.Shift);
+  await p.key("ArrowDown", MOD.Shift);
+  await p.key("ArrowRight", MOD.Shift);
+  await p.settle();
+  await until(async () => (await model()).text.includes("</h1>"));
+  check("Shift+ArrowDown selects past the end of the heading", (await domText()).startsWith("unch notes") && /Build/.test(await domText()), await domText());
+  check("the editor's selection follows", (await model()).text.startsWith("unch notes</h1>"), await model());
+  await p.key("ArrowLeft", MOD.Shift);
+  await p.key("ArrowUp", MOD.Shift);
+  await p.key("ArrowUp", MOD.Shift);
+  await p.settle();
+  check("Shift+ArrowUp comes back", await until(async () => !(await model()).text.includes("</h1>")), await model());
+  await p.key("ArrowDown", MOD.Shift);
+  await p.key("ArrowDown", MOD.Shift);
+  await until(async () => (await model()).text.includes("</h1>"));
+  await p.key("X", MOD.Shift);
+  check("typing replaces a selection across units", await until(async () => /^LaX/.test(await s.textOf("h1"))), await s.textOf("h1"));
+  check("and the caret is after it, in a unit that edits", await hosts() && await p.frame<boolean>(`${F}.activeElement.matches("h1")`));
+  await p.type("y");
+  check("typing goes on there", await until(async () => /^LaXy/.test(await s.textOf("h1"))), await s.textOf("h1"));
+  await p.key("z", CMD); await p.key("z", CMD);
+  await until(async () => (await s.textOf("h1")) == "Launch notes");
+  await idle();
+
+  // An arrow without Shift collapses the selection.
+  await p.drag(h.x, h.y, b.x, b.y);
+  await until(async () => (await model()).text.includes("</h1>"));
+  await p.key("ArrowRight");
+  check("ArrowRight collapses a selection across units at its end", await until(async () => { const m = await model(); return m.from == m.to; }) && await hosts() && await p.frame<boolean>(`${F}.activeElement.matches("p.lede")`));
+
+  // Select all (⌘A twice) spans the page, and the browser shows it.
+  await p.key("a", CMD); await p.key("a", CMD);
+  await p.settle();
+  check("⌘A twice selects every unit, on the page too", /^Launch notes[\s\S]*Typing never waits\.$/.test((await domText()).trim()), await domText());
+
+  // The HTML view (CodeMirror): a drag across lines, and Backspace.
+  await p.eval(`ergaPage.toggleSource(true)`);
+  await until(() => p.eval<boolean>(`document.querySelectorAll("#source .cm-line").length > 5`));
+  await p.settle();
+  const line = (n: number) => p.eval<{ x: number; y: number }>(`(() => { const l = document.querySelectorAll("#source .cm-line")[${n}]; l.scrollIntoView({ block: "center" }); const r = l.getBoundingClientRect(); return { x: r.left + 4, y: r.top + r.height / 2 }; })()`);
+  const lines = await p.eval<string[]>(`[...document.querySelectorAll("#source .cm-line")].map((l) => l.textContent)`);
+  const i = lines.findIndex((l) => l.includes("<h1>"));
+  const a1 = await line(i), a2 = await line(i + 2);
+  await p.drag(a1.x, a1.y, a2.x, a2.y);
+  check("the HTML view selects across lines", ((await p.eval<string>(`getSelection().toString()`)).match(/\n/g) ?? []).length >= 2, await p.eval<string>(`getSelection().toString()`));
+  await p.key("Backspace");
+  check("and Backspace deletes them", await until(async () => !(await s.source()).includes("<h1>Launch notes</h1>")));
+  await s.close();
+
+  // Markdown: the same drag, from the heading into the paragraph and on into the list.
+  const m = await session(browser, "md", "index.md");
+  const mp = m.p;
+  const pt = async (selector: string, i: number) => {
+    const r = await mp.frame<{ x: number; y: number }>(`(() => { const el = ${F}.querySelector(${JSON.stringify(selector)}); const t = ${F}.createTreeWalker(el, 4).nextNode(); const rg = ${F}.createRange(); rg.setStart(t, ${i}); rg.setEnd(t, ${i} + 1); const r = rg.getBoundingClientRect(); const f = document.getElementById("page").getBoundingClientRect(); return { x: f.left + r.left + 1, y: f.top + r.top + r.height / 2 }; })()`);
+    const f = await frameAt(mp);
+    return { x: r.x + f.x, y: r.y + f.y };
+  };
+  const m1 = await pt("h1", 5), m2 = await pt("li", 6);
+  await mp.drag(m1.x, m1.y, m2.x, m2.y);
+  check("Markdown: a drag selects from the heading into the list", /^ notes[\s\S]*Things to do[\s\S]*Water $/.test(await mp.frame<string>(`${F}.getSelection().toString()`)), await mp.frame<string>(`${F}.getSelection().toString()`));
+  await mp.key("Delete");
+  check("and Delete leaves one line of Markdown", await until(async () => (await m.source()).includes("\n# Fieldthe plants\n- Call")), (await m.source()).slice(0, 300));
+  await m.close();
+}
+
 const SCENARIOS: [string, (b: Browser) => Promise<void>][] = [
-  ["html", htmlScenario], ["html", strayTagScenario], ["html", noEditScenario], ["html", brokenPageScenario], ["html", pauseScenario],
+  ["html", htmlScenario], ["select", selectScenario], ["html", strayTagScenario], ["html", noEditScenario], ["html", brokenPageScenario], ["html", pauseScenario],
   ["md", mdScenario], ["md", lightOnlyScenario],
   ["format", formatScenario],
   ["agent", agentOffScenario], ["agent", shareScenario], ["agent", modelScenario], ["agent", agentEmptyScenario], ["agent", voiceScenario],
