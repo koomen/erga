@@ -1845,8 +1845,9 @@ text and the other fields' values (`keepState` in `factory/page.ts`).
 - Each job gets, in its environment only: the factory's API and the task's
   own token for it (`fct…`: it reports on that task only), the repository and
   a git token (`fgt…`, `factory/git-grant.ts`) that reads staging, main and
-  that task's branch, and pushes that task's branch only, for two hours; and
-  the Claude token, if there is one. A merge job's git token also moves
+  that task's branch, and pushes that task's branch only, for two hours; and,
+  for a job that runs Claude Code, the Claude token, if there is one (merge,
+  save, stop and discard jobs never get it). A merge job's git token also moves
   staging, once, and only to the merge itself: one new commit on top of
   staging's head, whose second parent is the task's branch as pushed (with
   staging in it), with that branch's files (`mergeShape`). It lasts as long
@@ -1864,9 +1865,11 @@ text and the other fields' values (`keepState` in `factory/page.ts`).
   token, never shown on the Factory page, mirrored or deployed, and never
   listed to another task's VM (its reads are protocol v2, with `ls-refs`
   filtered and `want-ref` checked: `source/http.ts`).
-  Scripts take tokens out of anything they log; git gets its token through
+  Scripts take tokens out of anything they log, and the factory hides
+  anything shaped like a token in what a VM reports (`hideTokens`,
+  `factory/prompt.ts`); git gets its token through
   its environment, never its command line or `.git/config`; the preview gets
-  none of them. The preview's own `Set-Cookie` headers are dropped (it could
+  none of them. Every secret, where it lives and who reads it: [docs/secrets.md](docs/secrets.md). The preview's own `Set-Cookie` headers are dropped (it could
   otherwise set a cookie on the whole previews' and pages' domain).
 - **What a task's VM can reach** (the audit of 2026-10-06, task #37). A VM is
   one Unix user, so the task's code (Claude Code, and anything it runs or a
@@ -2998,6 +3001,7 @@ back, merging edits from disk, the agent's exact-match edits and attribution.
 
 ## Files
 
+- `docs/secrets.md`: every token, key and secret: what it's for, where it's set, who reads it, and the audit's risks
 - `page.html`, `page.js`, `frame.js`: the editor's shell and its built
   scripts (the shell's, and the frame's that runs on each document's own origin)
 - `templates.ts`, `templates/`: what a new document starts from: the registry of templates (the + button's

@@ -314,8 +314,11 @@ export function withTokens(platform: Platform, url: URL): Platform {
       // A test person's token opens only test documents, while whoever minted their test token may sign in.
       const session: Session = { login: token.login, name: token.name, agent: token, ...(token.testBy ? { test: { by: token.testBy } } : {}) };
       if (token.testBy) return (await users.allowed(token.testBy)) ? session : null;
-      if (platform.devUnlocked?.(url)) session.unlocked = DEV_UNLOCK();
-      else if (platform.keysRequired && !platform.keysRequired()) session.unlocked = SIGN_IN_UNLOCK();
+      // The share button's token goes into prompts for agents elsewhere (to work in documents): never admin power.
+      const unlock = token.kind == "share" ? null
+        : platform.devUnlocked?.(url) ? DEV_UNLOCK()
+        : platform.keysRequired && !platform.keysRequired() ? SIGN_IN_UNLOCK() : null;
+      if (unlock) session.unlocked = unlock;
       return platform.dev(url) || (await users.allowed(token.login)) ? session : null;
     },
   };
@@ -395,6 +398,13 @@ export function pagesHost(url: URL, platform: Platform): { owner: string; id: st
 }
 
 /** The signing key, imported once per secret (per isolate): every file of a document's page checks its token. */
+/** Whether two strings (MACs) are the same, in a time that doesn't say where they differ. */
+const sameText = (a: string, b: string) => {
+  if (a.length != b.length) return false;
+  let d = 0;
+  for (let i = 0; i < a.length; i++) d |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return d == 0;
+};
 const hmacKeys = new Map<string, Promise<CryptoKey>>();
 const hmac = async (secret: string, value: string) => {
   let key = hmacKeys.get(secret);
@@ -426,7 +436,7 @@ export async function readPagesToken(secret: string, token: string, owner: strin
 /** What a good, current token for this document says: the editor's origin, and whether it opens only the published version. */
 export async function readPagesClaims(secret: string, token: string, owner: string, id: string, now = Date.now()): Promise<{ shell: string; published: boolean } | null> {
   const [claims, mac, extra] = token.split(".");
-  if (!claims || !mac || extra != null || mac != (await hmac(secret, claims))) return null;
+  if (!claims || !mac || extra != null || !sameText(mac, await hmac(secret, claims))) return null;
   try {
     const c = JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(claims.replace(/-/g, "+").replace(/_/g, "/")), (ch) => ch.charCodeAt(0)))) as { d?: string; e?: number; s?: string; p?: number };
     if (c.d != `${owner.toLowerCase()}/${id}` || !(Number(c.e) > now / 1000) || typeof c.s != "string") return null;

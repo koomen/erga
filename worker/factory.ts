@@ -90,7 +90,7 @@ import { type Blocked, dependents, depRules, depsNote, type DepStatus, type DepT
 import { factoryGuide, factoryTools, startFactoryAgent, type FactoryAgent, type FactoryOps } from "../factory/agent";
 import { containersHost } from "../factory/cloudflare";
 import { b64url } from "../factory/git-grant";
-import { branchName, claudeToken, resolvePrompt, restartPrompt, taskPrompt } from "../factory/prompt";
+import { branchName, claudeToken, hideTokens, resolvePrompt, restartPrompt, taskPrompt } from "../factory/prompt";
 import { type Stalled, stalledOf } from "../factory/stall";
 import { whoOf } from "../front";
 import { LOCKED } from "../users";
@@ -475,7 +475,7 @@ export class Factory extends DurableObject<Env> {
       const run = crypto.randomUUID().slice(0, 8);
       if (overtaken()) return;
       this.update(id, { run });
-      await host.job(vm, "run.ts", [job], { ...(await this.jobEnv(id, "task")), FACTORY_RUN: run }, false);
+      await host.job(vm, "run.ts", [job], { ...(await this.jobEnv(id, "task", undefined, true)), FACTORY_RUN: run }, false);
     } catch (e) {
       if (overtaken()) return;
       if (job == "resolve") return this.backToReady(id, `The merge needs Claude Code, but it couldn't be woken: ${(e as Error).message}`);
@@ -508,11 +508,14 @@ export class Factory extends DurableObject<Env> {
     }
   }
 
-  /** What a job in the task's VM gets: where to report and with what, the repository, and the Claude token when there is one. */
-  private async jobEnv(id: number, scope: "task" | "merge", by?: string): Promise<Record<string, string>> {
+  /**
+   * What a job in the task's VM gets: where to report and with what, the repository, and for a job that runs Claude
+   * Code (`claude`), the Claude token when there is one. The others (merge, save, stop, discard) never get it.
+   */
+  private async jobEnv(id: number, scope: "task" | "merge", by?: string, claude = false): Promise<Record<string, string>> {
     const r = this.row(id)!;
     const host = vmHost(this.env, r.origin) as VmHost;
-    const claude = await this.claudeToken();
+    const token = claude ? await this.claudeToken() : null;
     return {
       FACTORY_API: `${r.origin}/api/factory`, FACTORY_TASK: String(id), FACTORY_TOKEN: await taskToken(this.env, id),
       REPO_URL: host.repo(r.origin), REPO_TOKEN: await gitToken(this.env, scope, r.branch, by ?? r.by_login),
@@ -521,7 +524,7 @@ export class Factory extends DurableObject<Env> {
       // ./test.sh and the browser tests, in a 4-vCPU VM that Claude Code and the preview share: one test file at a
       // time (tests/cores.ts). A container may not see its own share of the host's cores, so it's said here.
       TEST_CORES_PER_JOB: "3",
-      ...(claude ? { CLAUDE_CODE_OAUTH_TOKEN: claude } : {}),
+      ...(token ? { CLAUDE_CODE_OAUTH_TOKEN: token } : {}),
     };
   }
 
@@ -536,10 +539,16 @@ export class Factory extends DurableObject<Env> {
     const r = this.row(id);
     if (!r) return { ok: false, error: "no such task" };
     if (["merged", "discarded"].includes(r.status)) return { ok: false, error: `task #${id} is ${r.status}` };
+    // The board and factory tokens' holders read what the VM says, and the VM's code can read its tokens: none in it.
+    body = { ...body };
+    for (const k of ["message", "summary", "error"]) if (typeof body[k] == "string") body[k] = hideTokens(body[k]);
     switch (kind) {
       case "log": this.note(id, String(body.message ?? "")); break;
       case "branch": this.update(id, { base: String(body.base ?? "") || null }); break;
-      case "preview": this.update(id, { preview_path: String(body.path || "/") }, `Preview up: ${r.preview_origin}${body.path || "/"}`); break;
+      case "preview":
+        // A path on the preview's own host, never another (//evil.example/, @evil.example: /open redirects there).
+        if (!/^\/(?![\/\\])/.test(String(body.path || "/"))) return { ok: false, error: "path: a path on the preview's host, starting with one /" };
+        this.update(id, { preview_path: String(body.path || "/") }, `Preview up: ${r.preview_origin}${body.path || "/"}`); break;
       case "status": {
         if (r.status == "merging") return { ok: false, error: "the task is merging" };
         // A run of Claude Code that the factory has woken again since (or given up on): its word is old.
@@ -579,6 +588,7 @@ export class Factory extends DurableObject<Env> {
     if (!r) return { ok: false, error: "no such task" };
     // As report: a task that is merged or discarded takes nothing more from its VM's token (it lasts a week).
     if (["merged", "discarded"].includes(r.status)) return { ok: false, error: `task #${id} is ${r.status}` };
+    caption = hideTokens(caption);
     if (data.length > 1_900_000) return { ok: false, error: "a screenshot may be 1.9 MB at most" };
     if (replace) this.sql.exec("DELETE FROM shots WHERE task = ?", id);
     const file = `${id}-${Date.now().toString(36)}${crypto.getRandomValues(new Uint8Array(3)).reduce((s, b) => s + b.toString(16).padStart(2, "0"), "")}.png`;
@@ -1113,7 +1123,7 @@ export async function factoryApi(request: Request, env: Env, url: URL): Promise<
   const shot = /^\/api\/factory\/shots\/([\w.-]+\.png)$/.exec(path);
   if (shot && request.method == "GET") {
     const data = await f.shot(shot[1]);
-    return data ? new Response(data, { headers: { "Content-Type": "image/png", "Cache-Control": "private, max-age=31536000, immutable" } }) : json({ error: "Not found" }, 404);
+    return data ? new Response(data, { headers: { "Content-Type": "image/png", "Cache-Control": "private, max-age=31536000, immutable", "X-Content-Type-Options": "nosniff", "Content-Security-Policy": "sandbox; default-src 'none'" } }) : json({ error: "Not found" }, 404);
   }
   if (path == "/api/factory/tasks" && request.method == "GET") return json(await f.list());
   // The preview, for the person asking: on Cloudflare with a ticket for its host (factory/cloudflare.ts).

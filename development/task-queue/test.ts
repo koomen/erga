@@ -134,6 +134,12 @@ try {
   check((await api("PATCH", "/api/tasks/1", { status: "merging" })).code == 400, "agents can't set merging");
   sh(`echo hello > hello.txt && git add . && git commit -qm "Say hello"`, t1.worktree);
 
+  // A web page elsewhere can't make the queue run a command: its fetch names its origin, or skips JSON's preflight.
+  const marker = join(t1.worktree, "pwned");
+  const evil = await fetch(`${base}/api/tasks/1/preview`, { method: "POST", headers: { origin: "https://evil.example", "content-type": "application/json" }, body: JSON.stringify({ command: `touch ${marker}` }) });
+  const sneaky = await fetch(`${base}/api/tasks`, { method: "POST", headers: { "content-type": "text/plain; x=json" }, body: JSON.stringify({ title: "Sneaky", description: "x" }) });
+  check(evil.status == 403 && sneaky.status == 400 && !existsSync(marker), `requests from another origin are refused (${evil.status}), and only application/json is read as JSON (${sneaky.status})`);
+
   const p = await api("POST", "/api/tasks/1/preview", { command: `bun -e 'Bun.serve({port: Number(process.env.PORT), fetch: () => new Response("<h1>hello from the preview</h1>", {headers: {"content-type": "text/html"}})})'`, path: "/hi" });
   check(p.url == `http://localhost:${t1.port}/hi`, "preview sets the url");
   const up = await until(1, (t) => t.previewUp);
