@@ -278,8 +278,8 @@ export function makeHost(opts: HostOptions) {
       sendTo((yield* Person).id, { type: "model", ...state });
       return { ok: true as const, ...state };
     }))
-    .handle("view", ({ payload: { id, ...result } }) => Effect.sync(() => {
-      views.get(id)?.({ ...result, errors: [...result.errors] });
+    .handle("view", ({ payload: { id, errors, fonts, pending, ...result } }) => Effect.sync(() => {
+      views.get(id)?.({ ...result, errors: [...errors], ...(fonts ? { fonts: fonts.map((f) => ({ ...f, tags: [...f.tags] })) } : {}), ...(pending ? { pending: [...pending] } : {}) });
       return { ok: true as const };
     }))
     .handle("abort", () => Person.use((user) => session(user).pipe(

@@ -2487,6 +2487,19 @@ agent's own person's tabs, and the tab waits until it has every edit the agent
 had made when it asked (a Yjs state vector). No browser runs on the server:
 whoever has the editor open is the agent's eyes, and with none of their tabs
 open the tool says so. The panel shows a thumbnail of what it saw.
+It renders at the size of the person's own page and in their light or dark
+mode (each message's `<editor>` block tells the agent both), unless the agent
+passes `width`, `height` or `color_scheme`. Since a frame can't be given a
+mode of its own, the other mode is had by rewriting the page's
+`prefers-color-scheme` queries (its CSS and its scripts' `matchMedia`). The
+picture waits, up to 5 s, for the page's web fonts (laid out first, since a
+font loads only once text needs it) and images (lazy ones too); a font
+stylesheet from another site, like Google Fonts, can't be read by the page,
+so its `@font-face` rules are fetched (CORS) and added, or the picture would
+draw that text in a fallback. Beside the picture the agent gets the window
+size, the mode and the fonts the text rendered in (a font that didn't load
+shows as the one the browser fell back to), and anything still loading.
+`bun tests/view-page.ts` checks it in headless Chrome.
 
 The agent runs on Claude Opus 5.5 in fast mode by default, at medium effort;
 the model name in the panel's header is a menu that switches it to Claude

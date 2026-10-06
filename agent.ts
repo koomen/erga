@@ -40,7 +40,7 @@ import { fauxAssistantMessage, fauxText, fauxToolCall, registerFauxProvider, val
 import { Agent as PiAgent, type AgentEvent, type AgentTool } from "@mariozechner/pi-agent-core";
 import { Type } from "typebox";
 import { emptyLog, reduce, type Log, type LogEvent } from "./src/page/agent-log";
-import type { ViewRequest, ViewResult } from "./src/page/agent-log";
+import type { ColorScheme, ViewRequest, ViewResult } from "./src/page/agent-log";
 import { agentName, colorFor, files, hasSeen, introduce, stamp, stateVector, type Author } from "./src/room/doc";
 import { pageAddress, type TreeEntry, type TreeOp } from "./tree";
 import { joinLocal, type Room } from "./room";
@@ -229,9 +229,12 @@ ${PAGES_PROMPT}`}
   page and opens it). Do it when ${owner} asks to go to a page, or when you made one
   they'll want to see; not just to look at a page yourself (read it instead).
 - view_page shows you the page ${owner} has open, as they see it (a screenshot, plus any script
-  errors). Use it to check visual work, like a diagram, layout or styling, before you
-  say it's done. It renders your latest changes, including ones the page won't show
-  until your turn ends. Pass a CSS selector to look closely at one element.
+  errors, the fonts its text rendered in, and the window size and light or dark mode). Use it
+  to check visual work, like a diagram, layout or styling, before you say it's done. It renders
+  your latest changes, including ones the page won't show until your turn ends. Pass a CSS
+  selector to look closely at one element. It renders at ${owner}'s window size and mode (the
+  <editor> block says which); pass width, height or color_scheme to see it another way. If a
+  font isn't the one the page asks for, the web font didn't load.
 - get_title and set_title read and change the document's title (shown in the list and
   the browser tab) and its address, /<owner>/<slug>. Until someone sets them, the title
   follows the page's first heading and the slug follows the title, so a new heading
@@ -418,19 +421,18 @@ function makeTools(ws: Workspace, opts: {
     {
       name: "view_page",
       label: "Look at the page",
-      description: "See the page the user has open, as they see it: a picture of the latest version rendered in the user's browser, plus any JavaScript errors it threw. By default one screenful from the top; full_page for the whole page (up to 4000px tall); selector for one element.",
+      description: "See the page the user has open, as they see it: a picture of the latest version rendered in the user's browser, plus any JavaScript errors it threw, the fonts its text rendered in, and the size and light or dark mode it rendered at. By default one screenful from the top, at the user's own window size and mode; full_page for the whole page (up to 4000px tall); selector for one element; width, height and color_scheme to see it as someone else would.",
       parameters: Type.Object({
         selector: Type.Optional(Type.String({ description: "CSS selector of an element to capture, e.g. \"#chart\" or \"figure:nth-of-type(2)\"." })),
         full_page: Type.Optional(Type.Boolean({ description: "Capture the whole page rather than the first screenful." })),
         width: Type.Optional(Type.Number({ description: "Width to render at, in CSS pixels (default: as wide as the user's page)." })),
+        height: Type.Optional(Type.Number({ description: "Height of the screenful, in CSS pixels (default: as tall as the user's page)." })),
+        color_scheme: Type.Optional(Type.Union([Type.Literal("light"), Type.Literal("dark")], { description: "Light or dark mode, for the page's prefers-color-scheme (default: the user's)." })),
       }),
-      execute: async (_id, p: { selector?: string; full_page?: boolean; width?: number }) => {
-        const v = await opts.view({ selector: p.selector, fullPage: p.full_page, width: p.width });
+      execute: async (_id, p: { selector?: string; full_page?: boolean; width?: number; height?: number; color_scheme?: ColorScheme }) => {
+        const v = await opts.view({ selector: p.selector, fullPage: p.full_page, width: p.width, height: p.height, colorScheme: p.color_scheme });
         if (v.error || !v.png) throw new Error(v.error ?? "The page couldn't be captured.");
-        const lines = [`Screenshot: ${v.width}×${v.height}px${p.selector ? ` of ${p.selector}` : p.full_page ? ", whole page" : ", top of the page"}.`];
-        if (v.note) lines.push(v.note);
-        lines.push(v.errors.length ? `The page threw ${v.errors.length} error(s):\n${v.errors.slice(0, 10).join("\n")}` : "No script errors.");
-        return { content: [{ type: "image" as const, data: v.png, mimeType: "image/png" }, { type: "text" as const, text: lines.join("\n") }], details: {} };
+        return { content: [{ type: "image" as const, data: v.png, mimeType: "image/png" }, { type: "text" as const, text: describeView(v, p.selector, p.full_page) }], details: {} };
       },
     },
     ...(opts.pages ? pageTools(opts.pages, opts.open) : []),
@@ -1050,8 +1052,9 @@ error says what to fix), 401 (bad token) or 404 (no such tool).
   cuts long lines, so text copied from it won't match), and keep edits scoped to
   what was asked.
 - view_page shows you the page ${o.owner} has open, rendered in their browser (so it
-  needs their editor open): a screenshot plus any script errors. Use it to check
-  visual work before you say it's done.
+  needs their editor open), at their window size and in their light or dark mode
+  unless you pass others: a screenshot plus any script errors and the fonts its
+  text rendered in. Use it to check visual work before you say it's done.
 - open_page switches ${o.owner}'s open editor (every tab they have open on this
   document) to another page; new_page with open: true makes one and opens it. If
   they have no editor open, nothing opens: the answer says so and gives the page's
@@ -1105,4 +1108,18 @@ export function resultImage(result: unknown): string | undefined {
 export function resultText(result: unknown): string {
   const r = result as { content?: { type: string; text?: string }[] } | null;
   return (r?.content ?? []).map((c) => c.text ?? "").join("\n").trim();
+}
+
+/** view_page's words beside its picture: what it shows, how it rendered (size, mode, fonts), and the page's errors. */
+export function describeView(v: ViewResult, selector?: string, fullPage?: boolean): string {
+  const lines = [`Screenshot: ${v.width}×${v.height}px${selector ? ` of ${selector}` : fullPage ? ", whole page" : ", top of the page"}.`];
+  if (v.viewport || v.colorScheme) lines.push(`Rendered${v.viewport ? ` in a ${v.viewport.width}×${v.viewport.height}px window` : ""}${v.colorScheme ? `${v.viewport ? "," : ""} in ${v.colorScheme} mode` : ""}.`);
+  if (v.fonts?.length) {
+    lines.push("Fonts the text rendered in:");
+    for (const f of v.fonts) lines.push(`- ${f.family}${f.wanted ? ` (the page asked for ${f.wanted}, which didn't load or isn't installed)` : ""}: ${f.elements} element${f.elements == 1 ? "" : "s"} (${f.tags.join(", ")})`);
+  }
+  if (v.pending?.length) lines.push(`Still loading when the picture was taken: ${v.pending.join(", ")}.`);
+  if (v.note) lines.push(v.note);
+  lines.push(v.errors.length ? `The page threw ${v.errors.length} error(s):\n${v.errors.slice(0, 10).join("\n")}` : "No script errors.");
+  return lines.join("\n");
 }
