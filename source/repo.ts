@@ -194,6 +194,15 @@ export class SourceRepo {
     return this.rows(this.order(tip, (order) => order.length >= limit));
   }
 
+  /** What a branch's move from `old` (ZERO: none) to `tip` brought: the newest `limit` of the commits `old` doesn't have, newest first, and how many there are. */
+  newCommits(old: string, tip: string, limit = 50): { commits: { sha: string; subject: string }[]; total: number } {
+    const before = old == ZERO ? new Set<string>() : this.ancestors(old);
+    const total = [...this.ancestors(tip)].filter((s) => !before.has(s)).length;
+    let seen = 0;
+    const order = this.order(tip, (o) => { if (o.length && !before.has(o[o.length - 1])) seen++; return seen >= Math.min(total, limit); }).filter((s) => !before.has(s));
+    return { commits: this.rows(order).map((r) => ({ sha: r.sha, subject: r.subject })), total };
+  }
+
   /** The commits behind `tip`, newest first, as log lists them, until `done` says so. */
   private order(tip: string, done: (order: string[]) => boolean): string[] {
     const nodes = this.nodes(), seen = new Set<string>([tip]), frontier = [tip], order: string[] = [];

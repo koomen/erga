@@ -187,6 +187,12 @@ export interface SettingChange {
   reset?: boolean;
   /** An API key admins enter (credentials.ts), by its Worker secret's name: what happened to it. `from` and `to` are null, never the key. */
   credential?: "set" | "replaced" | "cleared";
+  /** A factory task (key "task"): added to the board, or merged into staging (`commit`: the merge commit). `from` and `to` are null. */
+  task?: { id: number; title: string; event: "added" | "merged"; commit?: string };
+  /** main moved forward to staging (key "main"): the production deploy. `from` and `to` are main's old and new heads (null: none); `commits`, the newest that came (at most 50), of `total`. */
+  release?: { commits: { sha: string; subject: string }[]; total: number };
+  /** How the version's `by` did it, when not in person: "the factory's agent", "a shared agent (label)". */
+  via?: string;
 }
 
 /** A version of the settings (server_config_versions): who changed them, when, and what changed. */
@@ -341,6 +347,16 @@ export class ServerConfig<S extends Settings = typeof SETTINGS> {
       return { n: Number(r.n), at: Number(r.at), by: r.by, changes };
     });
     return { versions, total: Number(count?.total ?? 0) };
+  }
+
+  /**
+   * The server's own record of something an admin did that isn't a setting
+   * (a factory task added or merged, main moved to production): a version
+   * with these changes, by `by`. No check here: the caller made the change
+   * already, as `by`.
+   */
+  async record(by: string, changes: SettingChange[], at = Date.now()): Promise<void> {
+    if (changes.length) await this.sql.run("INSERT INTO server_config_versions (at, by, changes) VALUES (?1, ?2, ?3)", at, by.toLowerCase(), JSON.stringify(changes));
   }
 
   /** A key's value as a row's JSON makes it (null: no row), as `entry` reads it: its default when there's none, or it won't parse. */

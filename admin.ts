@@ -3,7 +3,7 @@
 // can't see the page, nor that there is one.
 //
 //   /admin                     the Settings page (GET /admin/settings redirects here)
-//   /admin/changes             the Change log: the settings' versions, newest first; ?before=n for older ones
+//   /admin/changes             the Change log: the settings' versions, factory tasks added and merged, and production deploys, newest first; ?before=n for older ones
 //   /admin/users               the Users page: their roles (admin, deploy) as switches, when they joined, add and remove
 //   POST /admin/settings       key, and value (JSON; null for never) to set it, or reset=1 to put it back to its default
 //   POST /admin/users          do=add (login, role), do=role (login, role), do=deploy (login, deploy: 1 or 0) or do=remove (login)
@@ -25,7 +25,7 @@
 // and so is a bootstrap admin (ADMINS), who can't be demoted or removed here,
 // and the last admin, who can't be demoted or removed at all (users.ts).
 
-import { ConfigError, type ConfigEntry, type Settings, type SettingsVersion } from "./config.ts";
+import { ConfigError, type ConfigEntry, type SettingChange, type Settings, type SettingsVersion } from "./config.ts";
 import { esc, ICON, link, page, type Platform, type Session, TIMES_SCRIPT, whoOf } from "./front.ts";
 import { adminResponse } from "./admin-layout.ts";
 import { LOCKED, NotAllowed, type ServerRole, type User } from "./users.ts";
@@ -220,6 +220,23 @@ export function credentialRow(c: CredentialEntry, session: Session): string {
 /** How many changes the change log lists on a page. */
 const CHANGES = 50;
 
+/** A change log line for something other than a setting: a factory task added or merged, main moved to production. */
+function eventItem(c: SettingChange): string {
+  const via = c.via ? ` <span class="via">via ${esc(c.via)}</span>` : "";
+  const sha = (s: unknown) => `<code class="sha" title="${esc(String(s))}">${esc(String(s).slice(0, 7))}</code>`;
+  if (c.task) {
+    const what = c.task.event == "added" ? "added" : `merged into staging${c.task.commit ? ` as ${sha(c.task.commit)}` : ""}`;
+    return `<li><span class="key">task #${c.task.id}</span> ${what}: <span class="title">${esc(c.task.title)}</span> <span class="badge">factory</span>${via}</li>`;
+  }
+  const r = c.release!;
+  const commits = r.commits.map((x) => `<li>${sha(x.sha)} ${esc(x.subject)}</li>`).join("");
+  const more = r.total > r.commits.length ? `<li class="more">and ${r.total - r.commits.length} older</li>` : "";
+  const list = r.commits.length > 5
+    ? `<details><summary>${r.total} commits</summary><ul class="commits">${commits}${more}</ul></details>`
+    : `<ul class="commits">${commits}${more}</ul>`;
+  return `<li><span class="key">main</span> ${c.from ? sha(c.from) : "none"} <span class="to" aria-label="to">→</span> ${sha(c.to)} <span class="badge">production</span>${via}${list}</li>`;
+}
+
 /**
  * One version of the settings in the change log: when, who, and each
  * setting's value from and to. `docs`: a document's address and title by id,
@@ -231,7 +248,7 @@ function changeRow(v: SettingsVersion, kinds: Record<string, string | undefined>
     const doc = kinds[key] == "document" && x != null ? docs.get(String(x)) : undefined;
     return `<span class="was">${esc(doc ? doc.address : shown(x, kinds[key]))}</span>`;
   };
-  const what = v.changes.map((c) => c.credential ? `<li><span class="key">${esc(c.key)}</span> key ${esc(c.credential)} <span class="badge">secret</span></li>` : `<li><span class="key">${esc(c.key)}</span> ${value(c.key, c.from)} <span class="to" aria-label="to">→</span> ${value(c.key, c.to)}${c.reset ? ` <span class="badge">reset</span>` : ""}</li>`).join("");
+  const what = v.changes.map((c) => c.task || c.release ? eventItem(c) : c.credential ? `<li><span class="key">${esc(c.key)}</span> key ${esc(c.credential)} <span class="badge">secret</span></li>` : `<li><span class="key">${esc(c.key)}</span> ${value(c.key, c.from)} <span class="to" aria-label="to">→</span> ${value(c.key, c.to)}${c.reset ? ` <span class="badge">reset</span>` : ""}</li>`).join("");
   return `  <li class="change" data-n="${v.n}">
     <div class="when"><time datetime="${at}">${at.slice(0, 16).replace("T", " ")} UTC</time><span class="by">${esc(v.by)}</span></div>
     <ul class="what">${what}</ul>
@@ -523,7 +540,7 @@ ${users.map((u) => userRow(u, session, u.role == "admin" && admins.length == 1))
 </script>` });
 }
 
-/** /admin/changes: the change log, every change to the settings, newest first (`before`: only those older than version n). */
+/** /admin/changes: the change log, every change to the settings, factory task added or merged, and production deploy, newest first (`before`: only those older than version n). */
 async function changesPage(platform: Platform, session: Session, before?: number): Promise<Response> {
   const who = whoOf(session), config = platform.directory.config;
   const history = await config.history(who, { before, limit: CHANGES });
@@ -547,14 +564,21 @@ async function changesPage(platform: Platform, session: Session, before?: number
   .changes .was { font-feature-settings: "tnum"; }
   .changes .to { color: var(--soft); margin: 0 3px; }
   .changes .badge { margin: 0 0 0 4px; }
+  .changes .sha { font-family: var(--font-mono); font-size: 12px; }
+  .changes .title { color: var(--fg-strong); }
+  .changes .via { margin-left: 6px; font-size: 12px; color: var(--soft); }
+  .changes .commits { list-style: none; margin: 4px 0 2px; padding: 0 0 0 12px; border-left: 2px solid var(--rule); font-size: 12.5px; }
+  .changes .commits li { padding: 1px 0; }
+  .changes .commits .more, .changes details summary { color: var(--soft); cursor: default; }
+  .changes details { margin-top: 4px; font-size: 12.5px; }
   .changes-empty, .changes-more { margin: 6px 2px 0; font-size: 13px; color: var(--soft); }
   @media (max-width: 520px) { .changes > li.change { grid-template-columns: 1fr; } .changes .when { flex-direction: row; gap: 8px; } }
 `;
   return adminResponse({ session, title: "Change log", here: "changes", style, body: `
-  <p class="lede">Every change to the server's settings, newest first: when, who, and each setting's value from and to.${history.total ? ` ${history.total} change${history.total == 1 ? "" : "s"}.` : ""}</p>
+  <p class="lede">Every change to the server's settings, every factory task added or merged into staging, and every production deploy (main moved forward to staging), newest first: when, who, and what changed.${history.total ? ` ${history.total} change${history.total == 1 ? "" : "s"}.` : ""}</p>
   ${history.versions.length ? `<ol class="changes">
 ${history.versions.map((v) => changeRow(v, kinds, docs)).join("\n")}
-  </ol>` : `<p class="changes-empty">${before ? "No older changes." : "No setting has changed yet."}</p>`}
+  </ol>` : `<p class="changes-empty">${before ? "No older changes." : "Nothing has changed yet."}</p>`}
   ${before || older ? `<p class="changes-more">${before ? `<a href="${esc(link("/admin/changes", session))}">Newest</a>` : ""}${before && older ? " · " : ""}${older ? `<a href="${esc(link(`/admin/changes?before=${last!.n}`, session))}">Older changes</a>` : ""}</p>` : ""}
 <script>
   ${TIMES_SCRIPT}
