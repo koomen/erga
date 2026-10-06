@@ -454,6 +454,9 @@ server](#agents-configure-the-server)): ask Claude Code, with one, to add a user
 deploy role (`users.deploy`, `Users.setDeploy`): they may then use
 [/deploy](#deploy-your-own) while `deploy_page` is `admins`, as admins
 may. With `users` everyone signed in may anyway, and with `off` nobody may.
+An admin may always deploy, so the Users page shows their Deploy switch on
+and fixed: one rule (`User.mayDeploy`, `Users.hasDeploy`) decides it for
+`/deploy`, the Users page and `list_users`.
 
 **The admin pages.** Every page under `/admin` has the same layout
 (`admin-layout.ts`): a breadcrumb in the upper left (Erga › Admin › the
