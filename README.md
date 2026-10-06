@@ -408,9 +408,15 @@ the admin tools) check the role themselves, as they always have. An admin who ha
 unlocked admin access goes to `/admin/keys` first, and comes back.
 
 `/admin` shows every
-setting compactly (its key, a one-line description, its value with Save
-and Reset; a small "set by whom" note, with when and the default on hover, or a
-"Locked" badge for one the deploy fixes, whose value is shown read-only). `/admin/users` lists every user (who added
+setting compactly (its key, a one-line description, a "Last set at … by …"
+line under it, with the default on hover, or a "Locked" badge for one the
+deploy fixes, whose value is shown read-only), each with a control that fits
+it: an on/off switch for a boolean or a setting whose `choices` are off and
+on, and a select for other `choices` (both save as soon as they change); a
+user picker (chips, and a box to add one of the server's users) for a list of
+users (`kind: "users"`, the `logins` parser); a document's address; a
+number. Those typed in have Save, and Reset when they're set (not a
+document's: empty is none). `/admin/users` lists every user (who added
 them, when they joined and were last seen) with a switch for each role,
 Admin and Deploy, and a remove button, and a box to add one by GitHub
 login. Roles change only with the switches, never typed text. A bootstrap admin's Admin switch and

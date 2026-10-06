@@ -87,15 +87,36 @@ const notFound = () => page("Not found", "There's nothing here. <a href=\"/\">Ba
 type Shown = ConfigEntry & { doc?: { address: string; title: string } | null };
 
 /**
- * How a setting's value is typed in: by its kind, else the kind of its
- * default. A document is typed by its address (kept by id, which a rename
- * never changes), empty for none. A number that can also be never (null,
- * e.g. delete_docs_after_hours) gets a choice of "After [n] hours" or
- * "Never" in front of it.
+ * The control a setting's value is set with: by its kind, its choices, else
+ * the kind of its default. A boolean, or a setting whose choices are "off"
+ * and "on", is a switch; other choices are a select (with the value now
+ * among them, if the parser took another). A document is typed by its
+ * address (kept by id, which a rename never changes), empty for none. A list
+ * of users is a picker: a chip for each, and a box to add one from the
+ * server's users. A number that can also be never (null, e.g.
+ * delete_docs_after_hours) gets a choice of "After [n] hours" or "Never" in
+ * front of it.
  */
 function valueInput(e: Shown, never: boolean): string {
   const locked = e.locked;
   const attrs = `name="value" id="set-${esc(e.key)}" aria-label="${esc(e.key)}"${locked ? " disabled" : ""}`;
+  const control = controlOf(e);
+  if (control == "switch") {
+    const text = typeof e.default != "boolean", on = text ? e.value == "on" : e.value === true;
+    return `<label class="switch"><input type="checkbox" role="switch" ${attrs} data-kind="${text ? "switch-text" : "switch"}"${on ? " checked" : ""}><span class="track" aria-hidden="true"></span><span class="state" aria-hidden="true">${on ? "On" : "Off"}</span></label>`;
+  }
+  if (control == "choice") {
+    const choices = e.choices!.includes(String(e.value)) ? e.choices! : [...e.choices!, String(e.value)];
+    return `<select ${attrs} data-kind="string">${choices.map((c) => `<option value="${esc(c)}"${c == e.value ? " selected" : ""}>${esc(c)}</option>`).join("")}</select>`;
+  }
+  if (control == "users") {
+    const list = Array.isArray(e.value) ? (e.value as string[]) : [];
+    return `<div class="picker">
+        <ul class="chips" aria-label="${esc(e.key)}">${list.map((l) => chip(l, locked)).join("")}</ul>
+        ${locked ? "" : `<input class="input pick" list="user-logins" placeholder="Add a user" aria-label="Add a user to ${esc(e.key)}" autocomplete="off" autocapitalize="off" spellcheck="false">`}
+        <input type="hidden" ${attrs} data-kind="users" value="${esc(JSON.stringify(list))}">
+      </div>`;
+  }
   if (e.kind == "document") {
     const value = e.doc ? e.doc.address : e.value == null ? "" : String(e.value);
     return `<input class="input" ${attrs} data-kind="document" value="${esc(value)}" placeholder="/owner/slug" autocomplete="off" spellcheck="false">`;
@@ -105,34 +126,51 @@ function valueInput(e: Shown, never: boolean): string {
     return `<select class="mode" name="mode" aria-label="${esc(e.key)}: after a time, or never"${locked ? " disabled" : ""}><option value="after"${off ? "" : " selected"}>After</option><option value="never"${off ? " selected" : ""}>Never</option></select>
       <span class="amount"${off ? " hidden" : ""}><input class="input" type="number" step="1" min="1" ${attrs} data-kind="number-or-never" value="${esc(String(off ? e.default : e.value))}"${off ? "" : " required"}>${unit ? ` <span class="unit">${unit}</span>` : ""}</span>`;
   }
-  if (typeof e.default == "boolean") {
-    return `<select ${attrs} data-kind="boolean"><option value="true"${e.value === true ? " selected" : ""}>On</option><option value="false"${e.value === false ? " selected" : ""}>Off</option></select>`;
-  }
   if (typeof e.default == "number") return `<input class="input" type="number" step="1" ${attrs} data-kind="number" value="${esc(String(e.value))}" required>`;
   if (typeof e.default == "string") return `<input class="input" ${attrs} data-kind="string" value="${esc(String(e.value))}" autocomplete="off" spellcheck="false">`;
   return `<input class="input mono" ${attrs} data-kind="json" value="${esc(JSON.stringify(e.value))}" autocomplete="off" spellcheck="false">`;
 }
 
-const shown = (v: unknown, kind?: string) => (v === null ? (kind == "document" ? "none" : "never") : typeof v == "boolean" ? (v ? "on" : "off") : typeof v == "string" ? `“${v}”` : JSON.stringify(v));
+/** How a setting is set: "switch" and "choice" save as soon as they change; the rest have Save. */
+function controlOf(e: Shown): "switch" | "choice" | "users" | "typed" {
+  if (e.kind == "users") return "users";
+  if (typeof e.default == "boolean" || (e.choices?.length == 2 && e.choices.includes("off") && e.choices.includes("on"))) return "switch";
+  if (e.choices?.length) return "choice";
+  return "typed";
+}
 
-function settingRow(e: Shown, session: Session, never: boolean): string {
+/** A user in a users setting's picker, with a button to take them out. */
+const chip = (login: string, locked: boolean) => `<li class="chip" data-login="${esc(login)}">${esc(login)}${locked ? "" : `<button type="button" class="unpick" aria-label="Take out ${esc(login)}" title="Take out ${esc(login)}">${ICON.close}</button>`}</li>`;
+
+const shown = (v: unknown, kind?: string) => (v === null ? (kind == "document" ? "none" : "never") : typeof v == "boolean" ? (v ? "on" : "off") : typeof v == "string" ? `“${v}”` : Array.isArray(v) && kind == "users" ? (v.length ? v.join(", ") : "nobody") : JSON.stringify(v));
+
+/** When a setting was last set, as the admin page says it: "2026-10-05 14:03 UTC". */
+const setAt = (at: number) => `${new Date(at).toISOString().slice(0, 16).replace("T", " ")} UTC`;
+
+export function settingRow(e: Shown, session: Session, never: boolean): string {
   const def = `default ${shown(e.default, e.kind)}`;
-  const when = e.updated != null ? `Set ${new Date(e.updated).toISOString().slice(0, 16).replace("T", " ")} UTC · ` : "";
-  const meta = e.locked ? `<span class="badge" title="Locked by the deploy (server.config.ts or ERGA_SERVER_CONFIG) · ${esc(def)}">Locked</span>`
-    : e.source == "set" ? `<span title="${esc(when + def)}">set${e.updatedBy ? ` by ${esc(e.updatedBy)}` : ""}</span>`
-    : "";
+  const control = controlOf(e);
+  const meta = e.locked ? `<span class="badge" title="Locked by the deploy (server.config.ts or ERGA_SERVER_CONFIG) · ${esc(def)}">Locked</span>` : "";
   const doc = e.kind == "document" && e.value != null
     ? e.doc ? `<a class="open-doc" href="${esc(link(e.doc.address, session))}">${esc(e.doc.title)}</a>` : `<span class="gone" title="No such document now: the front page is the plain one">missing</span>`
     : "";
-  return `  <li class="setting" data-key="${esc(e.key)}">
+  // Under each setting: when it was last set, and by whom (its default on hover).
+  const set = e.source == "set" && e.updated != null
+    ? `<p class="set" title="${esc(def)}">Last set at ${esc(setAt(e.updated))}${e.updatedBy ? ` by ${esc(e.updatedBy)}` : ""}</p>`
+    : "";
+  // Save for what's typed in; Reset only where the control can't simply pick the default (a switch, a choice, an empty document can).
+  const buttons = e.locked || control == "switch" || control == "choice" ? ""
+    : `<button class="pill save" disabled>Save</button>${e.source == "set" && e.kind != "document" ? `<button type="button" class="pill reset" title="Back to ${esc(shown(e.default, e.kind))}">Reset</button>` : ""}`;
+  return `  <li class="setting" data-key="${esc(e.key)}" data-control="${control}">
     <div class="about">
       <div class="head"><label class="key" for="set-${esc(e.key)}">${esc(e.key)}</label>${meta || doc ? `<span class="meta">${[meta, doc].filter(Boolean).join(`<span aria-hidden="true">·</span>`)}</span>` : ""}</div>
       <p class="desc">${esc(e.description)}</p>
+      ${set}
     </div>
     <form class="value" method="post" action="${esc(link("/admin/settings", session))}">
       <input type="hidden" name="key" value="${esc(e.key)}">
       ${valueInput(e, never)}
-      ${e.locked ? "" : `<button class="pill save" disabled>Save</button>${e.source == "set" ? `<button type="button" class="pill reset" title="Back to ${esc(shown(e.default, e.kind))}">Reset</button>` : ""}`}
+      ${buttons}
     </form>
     <p class="hint" role="status"></p>
   </li>`;
@@ -159,7 +197,7 @@ const POST_SCRIPT = `
 /** /admin: the server's settings, and Deploy your own. */
 async function settingsPage(platform: Platform, session: Session): Promise<Response> {
   const who = whoOf(session);
-  const entries = await platform.directory.config.list(who);
+  const [entries, users] = await Promise.all([platform.directory.config.list(who), platform.directory.users.list(who)]);
   // A setting naming a document shows it by its address now, linked.
   const settings: Shown[] = await Promise.all(entries.map(async (e) => {
     if (e.kind != "document" || e.value == null) return e;
@@ -185,7 +223,26 @@ async function settingsPage(platform: Platform, session: Session): Promise<Respo
   .setting .value .amount { display: flex; align-items: center; gap: 6px; }
   .setting .value .amount[hidden] { display: none; }
   .setting .value .unit { font-size: 13.5px; color: var(--soft); }
+  .setting .set { margin: 3px 0 0; font-size: 12px; color: var(--chrome); }
   .setting .hint { grid-column: 1 / -1; margin: 0; }
+  .switch { position: relative; display: inline-flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px; color: var(--soft); user-select: none; }
+  .switch input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: inherit; }
+  .switch .track { position: relative; flex: none; width: 34px; height: 20px; border-radius: 999px; background: color-mix(in srgb, var(--chrome) 45%, transparent); transition: background-color 150ms ease; }
+  .switch .track::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2); transition: transform 150ms ease; }
+  .switch input:checked + .track { background: var(--fg-strong); }
+  .switch input:checked + .track::after { transform: translateX(14px); }
+  .switch input:focus-visible + .track { outline: 2px solid var(--caret); outline-offset: 2px; }
+  .switch .state { min-width: 2em; }
+  .switch:has(input:disabled) { cursor: default; opacity: 0.6; }
+  .setting .value select { min-width: 9em; height: 34px; }
+  .picker { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px; max-width: 26em; }
+  .chips { display: contents; list-style: none; margin: 0; padding: 0; }
+  .chip { display: inline-flex; align-items: center; gap: 2px; height: 26px; padding: 0 4px 0 10px; border-radius: 999px; font-size: 13px; color: var(--fg-strong); background: color-mix(in srgb, var(--chrome) 14%, transparent); }
+  .chip:not(:has(button)) { padding-right: 10px; }
+  .unpick { display: grid; place-items: center; width: 20px; height: 20px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--chrome); cursor: pointer; }
+  .unpick:hover { color: var(--chrome-hover); background: color-mix(in srgb, var(--chrome) 18%, transparent); }
+  .unpick svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
+  .setting .value .input.pick { width: 9em; }
   .mono { font-family: var(--font-mono); font-size: 12.5px; }
   @media (max-width: 520px) { ol.rows > li.setting { grid-template-columns: 1fr; } .setting .value { justify-content: flex-end; } }
 `;
@@ -194,24 +251,61 @@ async function settingsPage(platform: Platform, session: Session): Promise<Respo
     <ol class="rows">
 ${settings.map((e) => settingRow(e, session, takesNever(e.key))).join("\n")}
     </ol>
+    <datalist id="user-logins">${users.map((u) => `<option value="${esc(u.login)}">`).join("")}</datalist>
   </section>
 <script>
   ${TIMES_SCRIPT}
   ${POST_SCRIPT}
-  // Settings: Save lights up once the value differs from what's saved; each is checked by the server, which says what's wrong.
+  // Settings: a switch or a choice saves as soon as it changes; for the rest, Save lights up once the value differs from what's saved.
+  // Each is checked by the server, which says what's wrong.
+  const chipHtml = ${JSON.stringify(chip("LOGIN", false))};
   for (const li of document.querySelectorAll("li.setting")) {
     const form = li.querySelector("form"), input = form.elements.value, mode = li.querySelector("select.mode"), save = li.querySelector(".save"), reset = li.querySelector(".reset"), hint = li.querySelector(".hint");
-    if (!save) continue;
-    const state = () => (mode ? mode.value + ":" : "") + input.value;
+    if (input.disabled) continue;
+    const instant = li.dataset.control == "switch" || li.dataset.control == "choice";
+    const state = () => (mode ? mode.value + ":" : "") + (input.type == "checkbox" ? input.checked : input.value);
     const was = state();
     const asJson = () => {
       const kind = input.dataset.kind, v = input.value.trim();
       if (mode && mode.value == "never") return "null";
-      return kind == "number" || kind == "number-or-never" ? (v == "" ? "" : String(Number(v))) : kind == "boolean" ? v : kind == "string" ? JSON.stringify(input.value) : kind == "document" ? (v == "" ? "null" : JSON.stringify(v)) : v;
+      if (kind == "switch") return String(input.checked);
+      if (kind == "switch-text") return JSON.stringify(input.checked ? "on" : "off");
+      return kind == "number" || kind == "number-or-never" ? (v == "" ? "" : String(Number(v))) : kind == "string" ? JSON.stringify(input.value) : kind == "document" ? (v == "" ? "null" : JSON.stringify(v)) : v;
     };
-    const dirty = () => { save.disabled = state() == was; say(hint, ""); };
+    const submit = async () => {
+      say(hint, "Saving\u2026");
+      try { await post(form.action, { key: li.dataset.key, value: asJson() }); location.reload(); }
+      catch (err) {
+        say(hint, err.message, true);
+        if (input.type == "checkbox") { input.checked = !input.checked; li.querySelector(".state").textContent = input.checked ? "On" : "Off"; }
+      }
+    };
+    const dirty = () => {
+      if (input.type == "checkbox") li.querySelector(".state").textContent = input.checked ? "On" : "Off";
+      if (instant) { if (state() != was) submit(); return; }
+      save.disabled = state() == was; say(hint, "");
+    };
     input.addEventListener("input", dirty);
     input.addEventListener("change", dirty);
+    // A users setting: a chip for each user; picking one from the box adds it, \u00D7 takes it out.
+    const pick = li.querySelector("input.pick");
+    if (pick) {
+      const chips = li.querySelector(".chips");
+      const logins = () => [...chips.querySelectorAll(".chip")].map((c) => c.dataset.login);
+      const changed = () => { input.value = JSON.stringify(logins()); input.dispatchEvent(new Event("change")); };
+      const add = () => {
+        const login = pick.value.trim().replace(/^@/, "").toLowerCase();
+        if (!login) return false;
+        if (!logins().includes(login)) { chips.insertAdjacentHTML("beforeend", chipHtml.replaceAll("LOGIN", login.replace(/[&<>"]/g, (c) => "&#" + c.charCodeAt(0) + ";"))); changed(); }
+        pick.value = "";
+        return true;
+      };
+      // A login picked from the list is added at once; a typed one on Enter.
+      pick.addEventListener("input", (e) => { if (e.inputType == "insertReplacementText" || !e.inputType) add(); });
+      pick.addEventListener("keydown", (e) => { if (e.key == "Enter") { e.preventDefault(); add(); } });
+      chips.addEventListener("click", (e) => { const x = e.target.closest(".unpick"); if (x) { x.closest(".chip").remove(); changed(); } });
+      form.addEventListener("submit", () => add(), { capture: true });
+    }
     // "Never" hides the number; "After" shows it again, ready to type.
     mode?.addEventListener("change", () => {
       const amount = li.querySelector(".amount");
@@ -220,13 +314,9 @@ ${settings.map((e) => settingRow(e, session, takesNever(e.key))).join("\n")}
       if (!amount.hidden) input.focus();
       dirty();
     });
-    form.addEventListener("submit", async (e) => {
-      e.preventDefault();
-      say(hint, "Saving…");
-      try { await post(form.action, { key: li.dataset.key, value: asJson() }); location.reload(); } catch (err) { say(hint, err.message, true); }
-    });
+    form.addEventListener("submit", (e) => { e.preventDefault(); if (!instant) submit(); });
     reset?.addEventListener("click", async () => {
-      say(hint, "Saving…");
+      say(hint, "Saving\u2026");
       try { await post(form.action, { key: li.dataset.key, reset: "1" }); location.reload(); } catch (err) { say(hint, err.message, true); }
     });
   }
