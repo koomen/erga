@@ -85,6 +85,7 @@ import { DurableObject } from "cloudflare:workers";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import { agentConfigFrom, isModelChoice, MODELS, type AgentConfig } from "../agent";
+import type { SettingChange } from "../config";
 import { SIGN_IN_KEY, type Unlock } from "../admin-keys";
 import { type Blocked, dependents, depRules, depsNote, type DepStatus, type DepTask, ids } from "../development/task-queue/deps";
 import type { ToolWho } from "../server-tools";
@@ -366,13 +367,22 @@ export class Factory extends DurableObject<Env> {
     this.changed(id);
   }
 
+  /** A line in the change log (/admin/changes), by `by`; a failure there is logged, never the caller's. */
+  private async logged(by: string, change: SettingChange) {
+    try { await directoryOf(this.env).config.record(by, [change]); } catch (e) { console.log(`couldn't write the change log: ${e}`); }
+  }
+
   private note(id: number, message: string) {
     this.sql.exec("INSERT INTO logs (task, at, message) VALUES (?, ?, ?)", id, now(), message.slice(0, 2000));
     this.sql.exec("UPDATE tasks SET updated = ? WHERE id = ?", now(), id);
     this.changed(id);
   }
 
-  async add(input: { title: string; description: string; by: string; origin: string; startAfter?: unknown; mergeAfter?: unknown }): Promise<Task> {
+  /**
+   * A new task. `by`: who the board says added it (an admin, or their agent); `user`: the admin to credit in the
+   * change log (/admin/changes), the one who prompted the agent (`by` when not given); `via`: how, when not in person.
+   */
+  async add(input: { title: string; description: string; by: string; user?: string; via?: string; origin: string; startAfter?: unknown; mergeAfter?: unknown }): Promise<Task> {
     const title = input.title.trim().slice(0, 200), description = input.description.trim().slice(0, 20000);
     if (!title) throw new Error("A task needs a title.");
     // A new task can't be in a cycle: nothing waits for it yet.
@@ -383,6 +393,7 @@ export class Factory extends DurableObject<Env> {
       title, description || title, input.origin, input.by, at, at, deps.startAfter ? JSON.stringify(deps.startAfter) : null, deps.mergeAfter ? JSON.stringify(deps.mergeAfter) : null).one().id;
     this.sql.exec("UPDATE tasks SET branch = ? WHERE id = ?", branchName(id, title), id);
     this.note(id, `Added by ${input.by}${depsNote(deps)}`);
+    await this.logged(input.user ?? input.by, { key: "task", from: null, to: null, task: { id, title, event: "added" }, ...(input.via ? { via: input.via } : {}) });
     const waiting = this.deps.unmetStart(depOf(this.row(id)!));
     if (waiting.length) this.note(id, `Queued: waiting for ${ids(waiting)} to merge (no VM until then)`);
     else this.begin(id);
@@ -728,6 +739,7 @@ export class Factory extends DurableObject<Env> {
       if (!res.ok) return this.backToReady(id, `The merge failed: ${res.error}`);
       await host.stop(vm).catch(() => {});
       this.update(id, { status: "merged", merged_at: now(), merge_commit: String(res.commit), vm: null, preview_origin: null, merge_by: null }, `Merged into staging as ${String(res.commit).slice(0, 10)}; ${r.branch} deleted; VM stopped`);
+      await this.logged(by, { key: "task", from: null, to: null, task: { id, title: r.title, event: "merged", commit: String(res.commit) } });
       this.tellDependents(id);
       // Staging moved. On Cloudflare the push went through Erga's Git endpoint, which tells the deploy pipeline itself
       // (worker/source-host.ts, deployHook): staging.erga.dev builds and deploys it. Locally the repository is the dev
@@ -865,7 +877,7 @@ export class Factory extends DurableObject<Env> {
       },
       list: () => this.list(),
       task: (id) => this.task(id),
-      add: async (input) => { await on(); return this.add({ ...input, by, origin: state.origin }); },
+      add: async (input) => { await on(); return this.add({ ...input, by, user: login, via: "the factory's agent", origin: state.origin }); },
       setDeps: async (id, body) => { await on(); return this.setDeps(id, body, by, state.origin); },
       revise: async (id, instructions) => { await on(); return this.revise(id, instructions, by, state.origin); },
       shot: (file) => this.shot(file),
@@ -1046,7 +1058,7 @@ async function sharedAgentApi(request: Request, env: Env, url: URL, raw: string,
   const body = await request.json().catch(() => null) as Record<string, unknown> | null;
   if (!body || typeof body != "object" || Array.isArray(body)) return json({ error: "Send JSON." }, 400);
   if (create) {
-    try { return json(await f.add({ title: String(body.title ?? ""), description: String(body.description ?? ""), by, origin: url.origin, startAfter: body.startAfter, mergeAfter: body.mergeAfter }), 201); }
+    try { return json(await f.add({ title: String(body.title ?? ""), description: String(body.description ?? ""), by, user: t.login, via: `a shared agent (${t.label})`, origin: url.origin, startAfter: body.startAfter, mergeAfter: body.mergeAfter }), 201); }
     catch (e) { return json({ error: (e as Error).message }, 400); }
   }
   const r = deps ? await f.setDeps(id!, body, by, url.origin) : await f.revise(id!, String(body.instructions ?? ""), by, url.origin);

@@ -8,9 +8,10 @@
 
 import { DurableObject } from "cloudflare:workers";
 import { deployHook, publishEvent } from "../deploy/index";
+import { ZERO } from "../source/git";
 import { SourceError, SourceRepo, type Actor } from "../source/repo";
 import { artifactsRemote, githubRemote } from "./artifacts";
-import { keptKeys } from "./d1";
+import { directoryOf, keptKeys } from "./d1";
 import type { Env } from "./env";
 import type { GitGrant } from "../factory/git-grant";
 
@@ -34,6 +35,13 @@ export class SourceHost extends DurableObject<Env> {
       moved: (m) => {
         ctx.waitUntil(publishEvent({ type: "source", branch: m.branch, commit: m.new }, env).catch(() => {}));
         ctx.waitUntil(deployHook(m.branch, m.new, env, `${m.how} by ${m.by}`).catch((e) => console.error(`deploy hook (${m.branch}):`, e)));
+        // main moved: the production deploy, in the change log (/admin/changes), with the commits it brought.
+        if (m.branch == "main") {
+          ctx.waitUntil((async () => {
+            const change = { key: "main", from: m.old == ZERO ? null : m.old, to: m.new, release: this.repo.newCommits(m.old, m.new) };
+            await directoryOf(env).config.record(m.by, [change], m.at);
+          })().catch((e) => console.error("change log (main):", e)));
+        }
       },
       changed: () => ctx.waitUntil(publishEvent({ type: "source" }, env).catch(() => {})),
       background: (work) => ctx.waitUntil(work),

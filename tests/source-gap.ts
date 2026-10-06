@@ -105,6 +105,21 @@ try {
   await p.screenshot(join(SHOTS, "source-no-gap.png"));
   expect(!p.errors.length, "no errors on the page", p.errors);
   console.log("ok   16 or fewer ahead: the log as always, no break");
+
+  // Each move of main is a production deploy in the change log (/admin/changes): who, main's move, and the commits it brought.
+  await p.navigate(`${root}/admin/changes`);
+  const deploys = () => p.eval<{ by: string; what: string; commits: string[] }[]>(`[...document.querySelectorAll("li.change")].filter((li) => li.querySelector(".what .key")?.textContent == "main").map((li) => ({
+    by: li.querySelector(".by").textContent, what: li.querySelector(".what").textContent.replace(/\\s+/g, " ").trim(), commits: [...li.querySelectorAll(".commits li")].map((c) => c.textContent.trim()) }))`);
+  await until(async () => (await deploys()).length >= 4 || (await p.navigate(`${root}/admin/changes`), false), 10_000, "the deploys show in the change log", deploys);
+  const [last, before] = await deploys();
+  const short = (n: number) => head(n).slice(0, 7);
+  expect(last.by == "tester" && last.what.startsWith(`main ${short(34)} → ${short(47)} production`) && last.what.includes("13 commits"), "the last deploy: who, and main's old and new head", last);
+  expect(last.commits.join() == range(47, 35).map((c, i) => `${short(47 - i)} ${c}`).join(), "its 13 commits, newest first", last.commits);
+  expect(before.what.startsWith(`main ${short(33)} → ${short(34)} production`) && before.commits.join() == `${short(34)} Commit 34`, "the one before: one commit", before);
+  await p.eval(`(document.querySelector("li.change details")?.setAttribute("open", ""), true)`);
+  await p.screenshot(join(SHOTS, "change-log-deploys.png"));
+  expect(!p.errors.length, "no errors on the change log", p.errors);
+  console.log("ok   each move of main is a production deploy in the change log, with who and its commits");
 } finally {
   browser?.close();
   await host.dispose();
