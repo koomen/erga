@@ -42,6 +42,9 @@ export interface VersionsState { current: Version; published: Published; version
 export type PublishRequest = { mode: "latest" } | { mode: "manual"; versionId?: string | number };
 export type PublishResult = { ok: true; published: Published } | { ok: false; status: number; error: string };
 
+/** A restore: the new current version, the version it came from, and the files it brought back. */
+export type RestoreResult = { ok: true; current: Version; from: string; files: string[] } | { ok: false; status: number; error: string };
+
 /** A version as stored: also its files (path -> digest), the document's page then, and its folders made as such (empty ones too). */
 export interface StoredVersion extends Version { files: Record<string, string>; index: string; folders?: string[] }
 
