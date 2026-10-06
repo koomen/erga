@@ -2438,7 +2438,7 @@ ask your agent for edits. Each person gets their own agent session in the host
 that person and that document (all their tabs show it live; nobody else ever
 sees it), it keeps running when the tab closes, and it edits through its own
 replica of the shared doc, as a participant in the room called "Ada's agent".
-Its tools (read, edit, write, ls, find, grep, list_pages, open_page, new_page, mkdir, mv, rm, view_page; get_title and set_title rename the document) are written against
+Its tools (read, edit, write, ls, find, grep, list_pages, open_page, new_page, mkdir, mv, rm, view_page, evaluate_page; get_title and set_title rename the document) are written against
 a small workspace interface (`workspace.ts`), not the disk, so it can change
 the page and anything next to it (styles, scripts, other pages) and could run
 anywhere the interface does. There's no bash tool. `edit` finds its `oldText`
@@ -2458,6 +2458,17 @@ agent's own person's tabs, and the tab waits until it has every edit the agent
 had made when it asked (a Yjs state vector). No browser runs on the server:
 whoever has the editor open is the agent's eyes, and with none of their tabs
 open the tool says so. The panel shows a thumbnail of what it saw.
+`evaluate_page` measures what a picture can't: it runs a JavaScript expression
+in that same hidden render (e.g. `getComputedStyle(document.querySelector("h1")).fontFamily`)
+and answers with its result as JSON, elements as `<h1#id.class>`, computed
+styles as their properties. It is read-only: the render is a copy of the text,
+thrown away after, so nothing it changes reaches the document, and it runs
+with only what the page's own scripts have (`parent`, `top`, `opener` and
+`frameElement` read as null in it). It waits 5 s for the result (`timeout`, at
+most 15 s) and cuts the JSON at 20,000 characters (src/page/agent-log.ts,
+`EVAL_TIMEOUT`, `EVAL_MAX_JSON`). The time limit can't stop an expression that
+never yields (a `while (true)` loop): that one stalls the editor's tab, and the
+tool gives up after the host's wait.
 
 The agent runs on Claude Opus 5.5 in fast mode by default, at medium effort;
 the model name in the panel's header is a menu that switches it to Claude
@@ -2507,7 +2518,7 @@ into the other agent, which reads the guide and waits, then say what to change. 
 [DOCUMENT_PROMPT.md](DOCUMENT_PROMPT.md)), then calls
 `POST /api/ext/tools/<name>` with the arguments as JSON. These are the
 embedded agent's own tools (read, edit, write, ls, find, grep, list_pages,
-open_page, new_page, mkdir, mv, rm, view_page, and get_title and set_title for the document's
+open_page, new_page, mkdir, mv, rm, view_page, evaluate_page, and get_title and set_title for the document's
 title and address),
 run in your agent's session, so its edits are handled exactly like your
 agent's: attributed to "Pete's agent", marked in its colour, undoable from
