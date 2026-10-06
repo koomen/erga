@@ -16,8 +16,10 @@
 //
 // Configuration comes from the Worker's bindings (in local development,
 // .dev.vars; see .dev.vars.example). The key lives only here, in the host:
-//   ANTHROPIC_API_KEY          required (locally a real one in .dev.vars, else
-//                              the dev server's environment: dev/agent-key.ts)
+//   ANTHROPIC_API_KEY          required: the key an admin stored on /admin
+//                              (credentials.ts, through worker/d1.ts's withKeys),
+//                              else the Worker secret (locally a real one in
+//                              .dev.vars, else the dev server's environment: dev/agent-key.ts)
 //   ERGA_AGENT_MODEL    the model a session starts on: opus-fast
 //                              (default, Claude Opus 5.5 in fast mode) or sonnet
 //                              (Claude Sonnet 5.5); each person can switch in the panel
@@ -38,12 +40,12 @@ import { fauxAssistantMessage, fauxText, fauxToolCall, registerFauxProvider, val
 import { Agent as PiAgent, type AgentEvent, type AgentTool } from "@mariozechner/pi-agent-core";
 import { Type } from "typebox";
 import { emptyLog, reduce, type Log, type LogEvent } from "./src/page/agent-log";
-import { EVAL_MAX_JSON, EVAL_TIMEOUT, type ViewRequest, type ViewResult } from "./src/page/agent-log";
+import { EVAL_MAX_JSON, EVAL_TIMEOUT, type ColorScheme, type ViewRequest, type ViewResult } from "./src/page/agent-log";
 import { agentName, colorFor, files, hasSeen, introduce, stamp, stateVector, type Author } from "./src/room/doc";
 import { pageAddress, type TreeEntry, type TreeOp } from "./tree";
 import { joinLocal, type Room } from "./room";
 import type { Naming } from "./directory";
-import type { PublishRequest, PublishResult, Published, Version, VersionsState } from "./versions";
+import { unifiedDiff, type PublishRequest, type PublishResult, type Published, type RestoreResult, type Version, type VersionsState } from "./versions";
 import { SERVER_TOOL_ACTIVITY } from "./server-tools";
 import { YjsWorkspace, WorkspaceError, cleanPath, globToRegExp, type Workspace } from "./workspace";
 import documentPrompt from "./DOCUMENT_PROMPT.md" with { type: "text" };
@@ -85,7 +87,7 @@ export const agentConfigFrom = (provider: ConfigProvider.ConfigProvider): Effect
   }
   const { apiKey, model, effort } = read.success;
   if (model == "script") return { apiKey: Redacted.make(""), model, effort: "medium" } satisfies AgentConfig;
-  if (Option.isNone(apiKey) || !Redacted.value(apiKey.value)) return { missing: `ANTHROPIC_API_KEY is not set (locally, export it before bun start, or put it in .dev.vars)` };
+  if (Option.isNone(apiKey) || !Redacted.value(apiKey.value)) return { missing: `ANTHROPIC_API_KEY is not set (an admin sets the Anthropic API key on /admin; locally, export it before bun start, or put it in .dev.vars)` };
   return { apiKey: apiKey.value, model, effort } satisfies AgentConfig;
 });
 
@@ -227,9 +229,12 @@ ${PAGES_PROMPT}`}
   page and opens it). Do it when ${owner} asks to go to a page, or when you made one
   they'll want to see; not just to look at a page yourself (read it instead).
 - view_page shows you the page ${owner} has open, as they see it (a screenshot, plus any script
-  errors). Use it to check visual work, like a diagram, layout or styling, before you
-  say it's done. It renders your latest changes, including ones the page won't show
-  until your turn ends. Pass a CSS selector to look closely at one element.
+  errors, the fonts its text rendered in, and the window size and light or dark mode). Use it
+  to check visual work, like a diagram, layout or styling, before you say it's done. It renders
+  your latest changes, including ones the page won't show until your turn ends. Pass a CSS
+  selector to look closely at one element. It renders at ${owner}'s window size and mode (the
+  <editor> block says which); pass width, height or color_scheme to see it another way. If a
+  font isn't the one the page asks for, the web font didn't load.
 - evaluate_page runs a JavaScript expression in that same render and gives you its result
   as JSON: computed styles, the fonts in use, element sizes, e.g.
   getComputedStyle(document.querySelector("h1")).fontFamily. Use it to measure what a
@@ -240,8 +245,10 @@ ${PAGES_PROMPT}`}
   usually renames the document by itself. Use set_title when asked to rename it or
   change its address.
 - The document keeps versions (a snapshot of every file after each burst of edits, and
-  after each of your turns). list_versions and read_version show them; to bring an old
-  version back, use restore_version. publish_version chooses what viewers
+  after each of your turns). list_versions and read_version show them; diff_versions
+  shows what changed between two of them, or since your last turn (by default), as a
+  diff, so you needn't read whole files to compare. To bring an old version back (or
+  one file of it, with path), use restore_version. publish_version chooses what viewers
   see: "latest" (the document as it is, the default) or one version. Only publish when
   asked.${beyondPrompt(owner, beyond)}
 - Keep replies short: say what you changed, not how. ${owner} can see the result.
@@ -281,9 +288,13 @@ function makeTools(ws: Workspace, opts: {
   edited: (path: string, at: number) => void;
   naming?: Naming;
   versions?: VersionsAccess;
+  /** The version the document was at when this agent's last turn ended (diff_versions' "last_turn"); null before its first turn ends. */
+  lastTurn?: () => Promise<string | null>;
   canEdit?: () => boolean;
   /** Who the agent's restores are by (its person's agent). */
   by?: string;
+  /** Resolves once the agent's replica has everything the room has (after a restore, say). */
+  caughtUp?: () => Promise<void>;
   /** The document's file tree: new pages and folders, moves, deletes (host.ts, runTreeOp); resolves once the agent's replica has the result. */
   tree?: (op: TreeOp) => Promise<void>;
   /** The document's pages, with titles, and its address (list_pages). */
@@ -294,6 +305,15 @@ function makeTools(ws: Workspace, opts: {
   const text = (s: string) => ({ content: [{ type: "text" as const, text: s }], details: {} });
   /** Runs a workspace operation; its failure becomes the tool's error, which the model reads. */
   const run = <T>(op: Effect.Effect<T, WorkspaceError>): T => Effect.runSync(Effect.mapError(op, (e) => new Error(e.message)));
+  /** An edit based on text the file no longer has: which restores changed it since the agent saw it, and the current version. */
+  const changedSince = async (message: string, path: string): Promise<string> => {
+    const s = opts.versions && await opts.versions.state({ limit: 20 }).catch(() => null);
+    if (!s) return message;
+    const since = ws.seenAt(path) ?? 0;
+    const restores = s.versions.filter((v) => Date.parse(v.at) >= since && (/^Restored version \d+$/.test(v.description ?? "") || v.description?.startsWith(`Restored ${path} from version `))).reverse();
+    const what = restores.length ? ` It was restored since: ${restores.map((v) => `${v.id}, "${v.description}", by ${v.authors.join(", ") || "(unknown)"}`).join("; ")}.` : "";
+    return message.replace(/ Read \S+ again and retry\.$/, "") + `${what} The current version is ${s.current.id}${s.pending ? " (with edits since, not yet a version)" : ""}. Read ${path} again and retry.`;
+  };
   return [
     {
       name: "read",
@@ -333,7 +353,8 @@ function makeTools(ws: Workspace, opts: {
         }), { description: "One or more targeted replacements, each matched against the current file" }),
       }),
       execute: async (_id, p: { path: string; edits: { oldText: string; newText: string }[] }) => {
-        const r = run(ws.edit(p.path, p.edits));
+        const r = Effect.runSync(Effect.match(ws.edit(p.path, p.edits), { onFailure: (e) => e, onSuccess: (r) => r }));
+        if (r instanceof WorkspaceError) throw new Error(r.reason == "changed" ? await changedSince(r.message, run(cleanPath(p.path))) : r.message);
         opts.edited(r.path, r.at);
         return text(r.summary);
       },
@@ -404,19 +425,18 @@ function makeTools(ws: Workspace, opts: {
     {
       name: "view_page",
       label: "Look at the page",
-      description: "See the page the user has open, as they see it: a picture of the latest version rendered in the user's browser, plus any JavaScript errors it threw. By default one screenful from the top; full_page for the whole page (up to 4000px tall); selector for one element.",
+      description: "See the page the user has open, as they see it: a picture of the latest version rendered in the user's browser, plus any JavaScript errors it threw, the fonts its text rendered in, and the size and light or dark mode it rendered at. By default one screenful from the top, at the user's own window size and mode; full_page for the whole page (up to 4000px tall); selector for one element; width, height and color_scheme to see it as someone else would.",
       parameters: Type.Object({
         selector: Type.Optional(Type.String({ description: "CSS selector of an element to capture, e.g. \"#chart\" or \"figure:nth-of-type(2)\"." })),
         full_page: Type.Optional(Type.Boolean({ description: "Capture the whole page rather than the first screenful." })),
         width: Type.Optional(Type.Number({ description: "Width to render at, in CSS pixels (default: as wide as the user's page)." })),
+        height: Type.Optional(Type.Number({ description: "Height of the screenful, in CSS pixels (default: as tall as the user's page)." })),
+        color_scheme: Type.Optional(Type.Union([Type.Literal("light"), Type.Literal("dark")], { description: "Light or dark mode, for the page's prefers-color-scheme (default: the user's)." })),
       }),
-      execute: async (_id, p: { selector?: string; full_page?: boolean; width?: number }) => {
-        const v = await opts.view({ selector: p.selector, fullPage: p.full_page, width: p.width });
+      execute: async (_id, p: { selector?: string; full_page?: boolean; width?: number; height?: number; color_scheme?: ColorScheme }) => {
+        const v = await opts.view({ selector: p.selector, fullPage: p.full_page, width: p.width, height: p.height, colorScheme: p.color_scheme });
         if (v.error || !v.png) throw new Error(v.error ?? "The page couldn't be captured.");
-        const lines = [`Screenshot: ${v.width}×${v.height}px${p.selector ? ` of ${p.selector}` : p.full_page ? ", whole page" : ", top of the page"}.`];
-        if (v.note) lines.push(v.note);
-        lines.push(v.errors.length ? `The page threw ${v.errors.length} error(s):\n${v.errors.slice(0, 10).join("\n")}` : "No script errors.");
-        return { content: [{ type: "image" as const, data: v.png, mimeType: "image/png" }, { type: "text" as const, text: lines.join("\n") }], details: {} };
+        return { content: [{ type: "image" as const, data: v.png, mimeType: "image/png" }, { type: "text" as const, text: describeView(v, p.selector, p.full_page) }], details: {} };
       },
     },
     {
@@ -426,11 +446,13 @@ function makeTools(ws: Workspace, opts: {
       parameters: Type.Object({
         expression: Type.String({ description: "JavaScript to run in the page, e.g. getComputedStyle(document.body).fontSize" }),
         width: Type.Optional(Type.Number({ description: "Width to render at, in CSS pixels (default: as wide as the user's page)." })),
+        height: Type.Optional(Type.Number({ description: "Height of the screenful, in CSS pixels (default: as tall as the user's page)." })),
+        color_scheme: Type.Optional(Type.Union([Type.Literal("light"), Type.Literal("dark")], { description: "Light or dark mode, for the page's prefers-color-scheme (default: the user's)." })),
         timeout: Type.Optional(Type.Number({ description: `How long to wait for the result, in ms (default ${EVAL_TIMEOUT.default}, at most ${EVAL_TIMEOUT.max}).` })),
       }),
-      execute: async (_id, p: { expression: string; width?: number; timeout?: number }) => {
+      execute: async (_id, p: { expression: string; width?: number; height?: number; color_scheme?: ColorScheme; timeout?: number }) => {
         if (!p.expression?.trim()) throw new Error("Give an expression to run.");
-        const v = await opts.view({ evaluate: p.expression, width: p.width, timeout: p.timeout });
+        const v = await opts.view({ evaluate: p.expression, width: p.width, height: p.height, colorScheme: p.color_scheme, timeout: p.timeout });
         const errors = v.errors.length ? `\nThe page threw ${v.errors.length} error(s):\n${v.errors.slice(0, 10).join("\n")}` : "";
         if (v.error || v.value == null) throw new Error((v.error ?? "The page couldn't be inspected.") + errors);
         return text(`${v.value}${v.note ? `\n\n[${v.note}]` : ""}${errors}`);
@@ -439,7 +461,7 @@ function makeTools(ws: Workspace, opts: {
     ...(opts.pages ? pageTools(opts.pages, opts.open) : []),
     ...(opts.tree ? treeTools(opts.tree, opts.open) : []),
     ...(opts.naming ? namingTools(opts.naming) : []),
-    ...(opts.versions ? versionTools(opts.versions, opts.canEdit ?? (() => true), opts.by ?? "agent") : []),
+    ...(opts.versions ? versionTools(opts.versions, opts.canEdit ?? (() => true), opts.by ?? "agent", opts.lastTurn ?? (async () => null), ws, opts.caughtUp ?? (async () => {})) : []),
   ] as AgentTool[];
 }
 
@@ -448,13 +470,17 @@ export interface VersionsAccess {
   state(opts: { before?: string | number | null; limit?: number }): Promise<VersionsState>;
   version(ref: string | number): Promise<(Version & { files: string[]; index: string }) | null>;
   file(ref: string | number, path: string): Promise<Uint8Array | null>;
+  /** Every file of a version (null if there's no such version). */
+  files(ref: string | number): Promise<Map<string, Uint8Array> | null>;
+  /** Every file as it is now, up to the keystroke. */
+  current(): Promise<Map<string, Uint8Array>>;
   publish(req: PublishRequest): Promise<PublishResult>;
-  /** Brings a version back as a new current version, by `by` (a login). */
-  restore(ref: string | number, by: string): Promise<{ ok: true; current: Version } | { ok: false; status: number; error: string }>;
+  /** Brings a version back (or, with `path`, one file of it) as a new current version, by `by` (a login). */
+  restore(ref: string | number, by: string, path?: string | null): Promise<RestoreResult>;
 }
 
-/** list_versions, read_version and publish_version: what the person can do with versions and publishing, their agent can. */
-function versionTools(versions: VersionsAccess, canEdit: () => boolean, by: string): AgentTool[] {
+/** list_versions, read_version, diff_versions, restore_version and publish_version: what the person can do with versions and publishing, their agent can (and diff them). */
+function versionTools(versions: VersionsAccess, canEdit: () => boolean, by: string, lastTurn: () => Promise<string | null>, ws: Workspace, caughtUp: () => Promise<void>): AgentTool[] {
   const text = (s: string) => ({ content: [{ type: "text" as const, text: s }], details: {} });
   const line = (v: Version) => `${v.id}  ${v.at}  ${v.authors.join(", ") || "(unknown)"}  ${v.description ?? "(description coming)"}`;
   const published = (p: Published) => p.mode == "latest" ? `Published: latest (viewers see the document as it is, up to the keystroke; that's ${p.version.id} plus any edits since)` : `Published: manual, ${p.version.id} (viewers see that version until someone publishes another)`;
@@ -476,7 +502,7 @@ function versionTools(versions: VersionsAccess, canEdit: () => boolean, by: stri
     {
       name: "read_version",
       label: "Read a version",
-      description: `Read an old version of the document. Without path: its files and details. With path: that file's text as it was in that version (cut to ${MAX_LINES} lines or ${MAX_BYTES / 1024}KB; use offset/limit), or the picture for an image. To bring a whole old version back, use restore_version.`,
+      description: `Read an old version of the document. Without path: its files and details. With path: that file's text as it was in that version (cut to ${MAX_LINES} lines or ${MAX_BYTES / 1024}KB; use offset/limit), or the picture for an image. To bring an old version, or one file of it, back, use restore_version.`,
       parameters: Type.Object({
         version: Type.String({ description: "The version's id (\"v3\") or number" }),
         path: Type.Optional(Type.String({ description: "A file in it, relative to the document's folder" })),
@@ -503,15 +529,71 @@ function versionTools(versions: VersionsAccess, canEdit: () => boolean, by: stri
       },
     },
     {
+      name: "diff_versions",
+      label: "Diff versions",
+      description: `See what changed in the document between two versions, as a unified diff for each file (files added, deleted and changed; binary files only say they changed). from: a version's id ("v3"), or "last_turn", the document as it was when your last turn ended (the default), to see what others changed since (and what you changed in this turn). to: a version's id, or "current", the document as it is now, up to the keystroke (the default). path: only that file, or the files in that folder. Cut at about ${MAX_BYTES / 1024}KB: pass path for more. Use it instead of reading whole files to compare them.`,
+      parameters: Type.Object({
+        from: Type.Optional(Type.String({ description: "A version's id (\"v3\") or number, \"last_turn\" (the default) or \"current\"" })),
+        to: Type.Optional(Type.String({ description: "A version's id (\"v3\") or number, \"last_turn\" or \"current\" (the default)" })),
+        path: Type.Optional(Type.String({ description: "Only this file, or the files in this folder, relative to the document's folder" })),
+        context: Type.Optional(Type.Number({ description: "Lines of context around each change (default 3)" })),
+      }),
+      execute: async (_id, p: { from?: string; to?: string; path?: string; context?: number }) => {
+        /** A side of the diff: its name, as the answer says it, and its files. */
+        const side = async (ref: string) => {
+          const r = ref.trim().toLowerCase().replace(/[\s-]+/g, "_");
+          if (r == "current" || r == "now") return { name: "current (the document as it is now)", files: await versions.current() };
+          let id: string = ref;
+          if (r == "last_turn") {
+            const last = await lastTurn();
+            if (!last) throw new Error(`You have no last turn in this document yet (or it's been reopened since), so there's nothing to diff from: pass from with a version's id. ${(await versions.state({ limit: 1 })).current.id} is the latest version.`);
+            id = last;
+          }
+          const files = await versions.files(id);
+          if (!files) throw new Error(`There's no version "${ref}": list_versions shows them.`);
+          const v = (await versions.version(id))!;
+          return { name: r == "last_turn" ? `${v.id} (where your last turn ended)` : v.id, files };
+        };
+        const from = await side(p.from ?? "last_turn"), to = await side(p.to ?? "current");
+        const d = unifiedDiff(from.files, to.files, { path: p.path, context: p.context == null ? undefined : Math.max(0, Math.min(50, Math.floor(p.context))) });
+        const what = p.path ? ` in ${p.path.replace(/^\.?\//, "")}` : "";
+        if (!d.files.length) return text(`No changes${what} from ${from.name} to ${to.name}.`);
+        return text(`From ${from.name} to ${to.name}${what}: ${d.files.length} file(s) differ.\n\n${d.diff}`);
+      },
+    },
+    {
       name: "restore_version",
       label: "Restore a version",
-      description: "Bring an old version back: its files are written over the document as it is now (files it didn't have are deleted), which everyone editing sees at once, and that becomes a new version, the current one. Nothing is lost: edits not yet in a version become one first, and every version stays. What's published in \"manual\" mode stays as it is. Only someone who may edit the document may; only do it when asked.",
-      parameters: Type.Object({ version: Type.String({ description: "The version's id (\"v3\") or number" }) }),
-      execute: async (_id, p: { version: string }) => {
+      description: `Bring an old version back: its files are written over the document as it is now (files it didn't have are deleted), which everyone editing sees at once, and that becomes a new version, the current one. With path, only that file comes back, and the other files stay as they are: prefer this when only one file needs it, as others may be editing other pages. Nothing is lost: edits not yet in a version become one first, and every version stays. What's published in "manual" mode stays as it is. Answers the new current version's id and the restored text (up to ${MAX_BYTES / 1024}KB in all), so you can edit against it at once. Only someone who may edit the document may; only do it when asked.`,
+      parameters: Type.Object({
+        version: Type.String({ description: "The version's id (\"v3\") or number" }),
+        path: Type.Optional(Type.String({ description: "Only this file, relative to the document's folder (it must be in that version)" })),
+      }),
+      execute: async (_id, p: { version: string; path?: string }) => {
         if (!canEdit()) throw new Error("You may only view this document, so you can't restore a version.");
-        const r = await versions.restore(p.version, by);
+        const r = await versions.restore(p.version, by, p.path ? Effect.runSync(Effect.mapError(cleanPath(p.path), (e) => new Error(e.message))) : null);
         if (!r.ok) throw new Error(r.error);
-        return text(`Restored. The current version is now ${r.current.id} (${r.current.description}).`);
+        // The agent edits its own replica: it has the restored text once it has caught up with the room.
+        await caughtUp();
+        const head = `Restored ${p.path ? `${r.files[0]} from ${r.from}` : `${r.from} (${r.files.length} file${r.files.length == 1 ? "" : "s"})`}. The current version is now ${r.current.id} ("${r.current.description}").`;
+        // Each restored text file as it is now, until the budget runs out; the agent's edits are based on what it's shown.
+        let budget = MAX_BYTES;
+        const shown: string[] = [], rest: string[] = [];
+        for (const path of r.files) {
+          if (!ws.isText(path)) { rest.push(`${path} (not text)`); continue; }
+          if (budget <= 0) { rest.push(path); continue; }
+          let body = Effect.runSync(Effect.orElseSucceed(ws.read(path), () => ""));
+          if (body.length > budget) {
+            const lines = body.split("\n");
+            let end = lines.length;
+            while (end > 1 && lines.slice(0, end).join("\n").length > budget) end = Math.max(1, Math.floor(end / 2));
+            body = `${lines.slice(0, end).join("\n")}\n[Showing lines 1-${end} of ${lines.length}: read ${path} for the rest.]`;
+          }
+          budget -= body.length;
+          shown.push(`=== ${path} ===\n${body}`);
+        }
+        const tail = rest.length ? `\n\n[Not shown: ${rest.join(", ")}. Read them before you edit them.]` : "";
+        return text(`${head}${shown.length ? ` Its text now, to edit against:\n\n${shown.join("\n\n")}` : ""}${tail}`);
       },
     },
     {
@@ -659,7 +741,7 @@ function namingTools(naming: Naming): AgentTool[] {
 export function documentToolSpecs(): ToolSpec[] {
   const none = () => { throw new Error("no document"); };
   const naming = { get: none, set: none } as unknown as Naming;
-  const versions = { state: none, version: none, file: none, publish: none, restore: none } as unknown as VersionsAccess;
+  const versions = { state: none, version: none, file: none, files: none, current: none, publish: none, restore: none } as unknown as VersionsAccess;
   return makeTools(null as unknown as Workspace, { view: none, readAsset: none, edited: none, naming, tree: none, versions, pages: none, open: none })
     .map((t) => ({ name: t.name, description: t.description, parameters: JSON.parse(JSON.stringify(t.parameters)) }));
 }
@@ -725,13 +807,13 @@ export interface SessionOptions {
    * before each new prompt, so becoming (or stopping being) an admin shows.
    */
   serverTools?: () => Promise<AgentTool[]>;
-  /** The agent's turn ended (or an external agent's run of calls did): the document cuts a version. */
-  turnEnded?: () => void;
+  /** The agent's turn ended (or an external agent's run of calls did): the document cuts a version, and answers the version it's at then (diff_versions' "last_turn"). */
+  turnEnded?: () => Promise<string | null> | void;
   /** The document's versions and publishing; without it those tools are left out. */
   versions?: VersionsAccess;
 }
 
-const TOOL_ACTIVITY: Record<string, string> = { ...SERVER_TOOL_ACTIVITY, new_page: "making a page", list_pages: "looking at the pages", open_page: "opening a page", mkdir: "making a folder", mv: "moving", rm: "deleting", read: "reading", edit: "editing", write: "writing", ls: "looking around", find: "looking for files", grep: "searching", view_page: "looking at the page", evaluate_page: "inspecting the page", get_title: "reading the title", set_title: "renaming the document", list_versions: "looking at versions", read_version: "reading an old version", restore_version: "restoring a version", publish_version: "publishing" };
+const TOOL_ACTIVITY: Record<string, string> = { ...SERVER_TOOL_ACTIVITY, new_page: "making a page", list_pages: "looking at the pages", open_page: "opening a page", mkdir: "making a folder", mv: "moving", rm: "deleting", read: "reading", edit: "editing", write: "writing", ls: "looking around", find: "looking for files", grep: "searching", view_page: "looking at the page", evaluate_page: "inspecting the page", get_title: "reading the title", set_title: "renaming the document", list_versions: "looking at versions", read_version: "reading an old version", diff_versions: "comparing versions", restore_version: "restoring a version", publish_version: "publishing" };
 
 export async function startSession(opts: SessionOptions): Promise<AgentSession> {
   const { cfg, owner } = opts;
@@ -769,10 +851,15 @@ export async function startSession(opts: SessionOptions): Promise<AgentSession> 
   // it's thinking between calls and nothing says when it's done.
   const busy = { agent: false, ext: 0, extTimer: null as ReturnType<typeof setTimeout> | null };
   let wasBusy = false;
+  /** The version the document was at when this agent's last turn ended. */
+  let lastTurn: Promise<string | null> = Promise.resolve(null);
   const syncBusy = (activity?: string | null) => {
     const on = busy.agent || busy.ext > 0 || busy.extTimer != null;
     // A turn just ended: the document cuts a version of it.
-    if (wasBusy && !on) opts.turnEnded?.();
+    if (wasBusy && !on) {
+      const at = opts.turnEnded?.();
+      if (at) { const before = lastTurn; lastTurn = at.catch(() => before); }
+    }
     wasBusy = on;
     presence({ busy: on, activity: on ? activity ?? (awareness.getLocalState()?.activity as string | null) ?? "working" : null });
   };
@@ -788,8 +875,10 @@ export async function startSession(opts: SessionOptions): Promise<AgentSession> 
     readAsset: opts.readAsset,
     naming: opts.naming,
     versions: opts.versions,
+    lastTurn: () => lastTurn,
     canEdit: opts.canEdit,
     by: agentName(owner.id),
+    caughtUp,
     pages: opts.pages,
     open: opts.open,
     tree: opts.tree && (async (op) => {
@@ -986,11 +1075,13 @@ error says what to fix), 401 (bad token) or 404 (no such tool).
   cuts long lines, so text copied from it won't match), and keep edits scoped to
   what was asked.
 - view_page shows you the page ${o.owner} has open, rendered in their browser (so it
-  needs their editor open): a screenshot plus any script errors. Use it to check
-  visual work before you say it's done. evaluate_page runs a JavaScript expression
-  in that same render and answers with its result as JSON, for what a picture
-  can't measure, e.g. getComputedStyle(document.querySelector("h1")).fontFamily.
-  It changes nothing in the document.
+  needs their editor open), at their window size and in their light or dark mode
+  unless you pass others: a screenshot plus any script errors and the fonts its
+  text rendered in. Use it to check visual work before you say it's done.
+  evaluate_page runs a JavaScript expression in that same render and answers with
+  its result as JSON, for what a picture can't measure, e.g.
+  getComputedStyle(document.querySelector("h1")).fontFamily. It changes nothing
+  in the document.
 - open_page switches ${o.owner}'s open editor (every tab they have open on this
   document) to another page; new_page with open: true makes one and opens it. If
   they have no editor open, nothing opens: the answer says so and gives the page's
@@ -1004,7 +1095,9 @@ error says what to fix), 401 (bad token) or 404 (no such tool).
   changes.
 - The document keeps versions (a snapshot of every file after each burst of
   edits, and after each run of your calls). list_versions and read_version show
-  them, and restore_version brings one back as a new version; publish_version
+  them; diff_versions shows what changed between two of them, or since your last
+  run of calls (by default), as a unified diff for each file; restore_version
+  brings one back (or one file of it) as a new version; publish_version
   chooses what viewers see: "latest" (the document as it is, the default) or one
   version. Only restore or publish when asked.
 - Follow the rules below whenever you create or change a page, so people can keep
@@ -1042,4 +1135,18 @@ export function resultImage(result: unknown): string | undefined {
 export function resultText(result: unknown): string {
   const r = result as { content?: { type: string; text?: string }[] } | null;
   return (r?.content ?? []).map((c) => c.text ?? "").join("\n").trim();
+}
+
+/** view_page's words beside its picture: what it shows, how it rendered (size, mode, fonts), and the page's errors. */
+export function describeView(v: ViewResult, selector?: string, fullPage?: boolean): string {
+  const lines = [`Screenshot: ${v.width}×${v.height}px${selector ? ` of ${selector}` : fullPage ? ", whole page" : ", top of the page"}.`];
+  if (v.viewport || v.colorScheme) lines.push(`Rendered${v.viewport ? ` in a ${v.viewport.width}×${v.viewport.height}px window` : ""}${v.colorScheme ? `${v.viewport ? "," : ""} in ${v.colorScheme} mode` : ""}.`);
+  if (v.fonts?.length) {
+    lines.push("Fonts the text rendered in:");
+    for (const f of v.fonts) lines.push(`- ${f.family}${f.wanted ? ` (the page asked for ${f.wanted}, which didn't load or isn't installed)` : ""}: ${f.elements} element${f.elements == 1 ? "" : "s"} (${f.tags.join(", ")})`);
+  }
+  if (v.pending?.length) lines.push(`Still loading when the picture was taken: ${v.pending.join(", ")}.`);
+  if (v.note) lines.push(v.note);
+  lines.push(v.errors.length ? `The page threw ${v.errors.length} error(s):\n${v.errors.slice(0, 10).join("\n")}` : "No script errors.");
+  return lines.join("\n");
 }

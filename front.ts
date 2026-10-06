@@ -44,7 +44,7 @@ import { adminDoor } from "./admin.ts";
 import { type Directory, type DocRow, type Grant, type Permission, type Role, type Route, type Who, NotAllowed, roleMay, UNTITLED } from "./directory.ts";
 import type { AgentToken, Tokens } from "./tokens.ts";
 import { ADMIN_TOKEN_PREFIX, SIGN_IN_KEY, UNLOCK_MS, type AdminKeys, type Unlock } from "./admin-keys.ts";
-import type { PublishRequest, PublishResult, Version, VersionsState } from "./versions.ts";
+import type { PublishRequest, PublishResult, RestoreResult, Version, VersionsState } from "./versions.ts";
 import { pageAddress, resolvePage } from "./tree.ts";
 import { NEW_DOC_SCRIPT, NEW_DOC_STYLE, newDocButton, newDocMenu, templateById, TEMPLATES, type Template } from "./templates.ts";
 
@@ -165,7 +165,7 @@ export interface Platform {
     /** Sets what a document's viewers see: "latest", or one version ("manual"). The caller checks the person may edit. */
     setPublished(doc: Route, req: PublishRequest): Promise<PublishResult>;
     /** Brings a version back as a new current version, by `by`. The caller checks the person may edit. */
-    restore(doc: Route, ref: string, by: string): Promise<{ ok: true; current: Version } | { ok: false; status: number; error: string }>;
+    restore(doc: Route, ref: string, by: string, path?: string | null): Promise<RestoreResult>;
     exists(doc: Route): Promise<boolean>;
     /** Deletes a document (its host takes it out of the directory too); false if it had no host. */
     delete(doc: Route): Promise<boolean>;
@@ -206,7 +206,7 @@ export async function frontDoor(request: Request, base: Platform): Promise<Respo
   if (path == "/docs") return listDocs(platform, request);
   if (path == "/docs/delete" && request.method == "POST") return deleteDoc(platform, request);
   if (path == "/docs/share") return shareDoc(platform, request);
-  if (path == "/admin" || path == "/admin/changes" || path == "/admin/settings" || path == "/admin/users") return adminDoor(platform, request);
+  if (path == "/admin" || path == "/admin/changes" || path == "/admin/settings" || path == "/admin/users" || path == "/admin/credentials") return adminDoor(platform, request);
 
   const [, first, second, rest] = /^\/([^/]+)\/([^/]+)(\/.*)?$/.exec(path) ?? [];
   const nothing = () => page("Not found", "There's no document here. <a href=\"/\">Back to the start</a>.", 404);

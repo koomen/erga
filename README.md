@@ -248,8 +248,11 @@ makes `/<DEV_LOGIN>/landing`. Test servers too, when a test asks for `/`.
 The + button (New document) makes a new document. It is in the viewer's
 controls, beside Clone and Edit (on a document's page and on the front page,
 served directly or not), and in the editor's top row, beside the pencil. It
-opens a picker of templates, under the button: **Page** (a blank document)
-and the **Presentation** group, with **Slides** (below), **Canvas
+opens a picker of templates, under the button: **Page** (a blank document:
+the base typography, Literata and Instrument Sans, in one reading column,
+and nothing more), **Design doc** (`templates/design-doc`: the same column
+with a header, flow diagrams, tables and boxed decisions with status chips;
+it was Page's starting point before) and the **Presentation** group, with **Slides** (below), **Canvas
 presentation** (`templates/canvas`, a Prezi-style talk: four frames on one
 large canvas, each a step with its label and picture; going to another step
 zooms out to the whole canvas, then in on that frame, and a click on a frame
@@ -496,6 +499,21 @@ remove button are off, and so are the last admin's, saying why. Underneath it's 
 or 0), answering JSON, from this site's pages only. The directory checks on
 the server, for every one, that an admin asks (`Users.mustAdmin`).
 
+**API keys.** The Settings page starts with the server's API keys
+(`credentials.ts`): the Anthropic key (the editor's agent, the factory's
+agent, version descriptions) and the OpenAI key (ready for OpenAI's models;
+nothing calls OpenAI yet). An admin pastes one and saves it, replaces it, or
+clears it (`POST /admin/credentials`: `name` `anthropic` or `openai`,
+and `value`, or `clear=1`). The page shows only whether each is set, its
+last four characters, and who set it when, never the key. The key is in its
+own table (`credentials`), encrypted with AES-GCM under a key from
+`FACTORY_KEY` (locally the session secret), and the change log says only
+"ANTHROPIC_API_KEY key set" (or replaced, cleared). The code that calls
+Anthropic reads the stored key first (`withKeys` in `worker/d1.ts`), else
+the Worker secret of the same name (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`).
+An open document keeps the key it opened with until it closes; the factory's
+agent reads it again after a minute. docs/secrets.md has the details.
+
 **Settings.** `server_config` holds the server's settings, a JSON value per
 key with who set it and when (`config.ts`). Only the keys declared in
 `SETTINGS` exist, each with a description, a default and a parser that
@@ -626,7 +644,8 @@ The API (also for the settings UI, and with an agent token):
       { mode: "latest" } | { mode: "manual", versionId: "v3" }   (no versionId: the current state)
       → { published } | 4xx { error }
     POST /api/docs/<id>/versions/<versionId>/restore   editors only; from a browser only from this site's pages
-      → { current: Version } | 4xx { error }
+      optional body { path: "blog/post.html" }   (only that file)
+      → { current: Version, from: "v3", files: string[] } | 4xx { error }
 
 `description` is null until the model has answered; `pending` says there are
 edits since the current version. Publishing the current version (`versionId`
@@ -635,7 +654,9 @@ and publishes that, so "current" means up to the keystroke. A **restore**
 writes the version's files over the document as it is (files it didn't have
 are deleted), as an edit open editors see live, and cuts that as a new current
 version, by the person (or "<login>’s agent"), described "Restored version
-<n>"; pending edits become a version first, so nothing is lost. In "latest"
+<n>"; pending edits become a version first, so nothing is lost. With a
+`path`, only that file comes back ("Restored <path> from version <n>"), and
+the other files stay as they are. In "latest"
 mode viewers then see it; in "manual" mode what's published stays. Everyone with the document open hears
 `{ type: "versions" }` on its event channel (`/api/events`) when a version is
 cut, a description arrives, or the published version changes. In "latest"
@@ -643,8 +664,16 @@ mode, `published.version` is the current version.
 
 The agents (the editor's and external ones, over `/api/ext`, the server's
 API and MCP) have `list_versions`, `read_version` (a version's files, or one
-file as it was), `restore_version` and `publish_version` (`latest`, or
+file as it was), `diff_versions` (a unified diff for each file, `from` a version
+or `last_turn`, the default: where that agent's last turn ended, `to` a version
+or `current`, the default: the document as it is now; `path` for one file or
+folder), `restore_version` and `publish_version` (`latest`, or
 `manual` with a version; editors only), so an agent can do what the person can.
+`restore_version` takes a `path` to restore one file, and answers the new
+current version's id and the restored text, so the agent can edit against it
+at once. An `edit` whose `oldText` was in the text the agent last saw, but
+isn't in the file now, says the file changed since, names any restore of it
+since, and gives the current version's id.
 
 **In process, for the homepage's deploy** (`versions.ts`):
 `onPublished(docId | "*", cb)` calls `cb({ docId, published, files() })`
@@ -2458,8 +2487,21 @@ agent's own person's tabs, and the tab waits until it has every edit the agent
 had made when it asked (a Yjs state vector). No browser runs on the server:
 whoever has the editor open is the agent's eyes, and with none of their tabs
 open the tool says so. The panel shows a thumbnail of what it saw.
+It renders at the size of the person's own page and in their light or dark
+mode (each message's `<editor>` block tells the agent both), unless the agent
+passes `width`, `height` or `color_scheme`. Since a frame can't be given a
+mode of its own, the other mode is had by rewriting the page's
+`prefers-color-scheme` queries (its CSS and its scripts' `matchMedia`). The
+picture waits, up to 5 s, for the page's web fonts (laid out first, since a
+font loads only once text needs it) and images (lazy ones too); a font
+stylesheet from another site, like Google Fonts, can't be read by the page,
+so its `@font-face` rules are fetched (CORS) and added, or the picture would
+draw that text in a fallback. Beside the picture the agent gets the window
+size, the mode and the fonts the text rendered in (a font that didn't load
+shows as the one the browser fell back to), and anything still loading.
+`bun tests/view-page.ts` checks it in headless Chrome.
 `evaluate_page` measures what a picture can't: it runs a JavaScript expression
-in that same hidden render (e.g. `getComputedStyle(document.querySelector("h1")).fontFamily`)
+in that same hidden render, after the same wait, with the same `width`, `height` and `color_scheme` (e.g. `getComputedStyle(document.querySelector("h1")).fontFamily`)
 and answers with its result as JSON, elements as `<h1#id.class>`, computed
 styles as their properties. It is read-only: the render is a copy of the text,
 thrown away after, so nothing it changes reaches the document, and it runs
@@ -2475,7 +2517,7 @@ the model name in the panel's header is a menu that switches it to Claude
 Sonnet 5.5 and back. The choice is per person (all their tabs follow, and a
 reload keeps it) and applies from the next message, so a running turn
 finishes on the model it started with. `ERGA_AGENT_MODEL=sonnet`
-starts everyone on Sonnet instead. Set it up with `ANTHROPIC_API_KEY`: locally
+starts everyone on Sonnet instead. Set it up with the Anthropic API key on `/admin` ([API keys](#users-admins-and-settings)), or `ANTHROPIC_API_KEY`: locally
 exported before `bun start` or in `.dev.vars`; a secret on erga.dev. pi's model catalogue
 predates the 5.5 models, so `agent.ts` describes them itself (`MODELS`) and
 rewrites each request for adaptive thinking, effort and, on Opus fast,

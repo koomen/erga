@@ -125,6 +125,40 @@ test("the agent's edits aim at the current text and keep others' edits", async (
   });
 });
 
+test("an edit based on text the file no longer has says the file changed since", async () => {
+  const m = memoryStore({ "index.html": "<h1>Notes</h1>\n<p>Old line.</p>\n" });
+  await withRoom(m, async (room) => {
+    const ada = await peer(room, person("Ada"));
+    const agentMe: Author = { user: "ada", name: "Ada’s agent", color: "#12a594", kind: "agent" };
+    const agent = await peer(room, agentMe);
+    const ws = new YjsWorkspace(agent.doc, agentMe, () => true, {});
+    expect(ws.seenAt("index.html")).toBeNull();
+    const before = Date.now();
+    Effect.runSync(ws.read("index.html"));
+    expect(ws.seenAt("index.html")!).toBeGreaterThanOrEqual(before);
+
+    // The file is written over after the agent read it (a restore, say).
+    ada.text().delete(0, ada.text().length);
+    ada.text().insert(0, "<h1>Notes</h1>\n<p>Restored line.</p>\n");
+    await tick();
+    const stale = failure(ws.edit("index.html", [{ oldText: "Old line.", newText: "New line." }]));
+    expect(stale.reason).toBe("changed");
+    expect(stale.message).toMatch(/isn't in the current text of index.html: the file changed since the text your edit was based on/);
+    expect(stale.message).not.toMatch(/someone could be editing/);
+
+    // Text that was never in the file, unchanged since the agent read it: check oldText.
+    Effect.runSync(ws.read("index.html"));
+    const wrong = failure(ws.edit("index.html", [{ oldText: "No such line.", newText: "x" }]));
+    expect(wrong.reason).toBe("notFound");
+    expect(wrong.message).toMatch(/same as when you last read it/);
+
+    // Read again, the edit lands.
+    Effect.runSync(ws.edit("index.html", [{ oldText: "Restored line.", newText: "New line." }]));
+    await tick();
+    expect(ada.text().toString()).toBe("<h1>Notes</h1>\n<p>New line.</p>\n");
+  });
+});
+
 test("every edit is attributed, deletions included", async () => {
   const m = memoryStore({ "index.html": "<p>one two three</p>" });
   await withRoom(m, async (room) => {

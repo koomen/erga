@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 // New documents from a template (templates.ts): the + button, in the viewer,
-// on the front page and in the editor, opens the picker (Page and the
+// on the front page and in the editor, opens the picker (Page, Design doc and the
 // Presentation group, with Slides, Canvas presentation and the Solar system tour), every option and group heading in the app's typeface
 // (Inter), at one size and weight; picking a template makes the document from
 // it and opens it in the editor; signed out, it asks you to sign in first.
@@ -40,7 +40,7 @@ const clickOn = async (p: Page, selector: string) => {
   await p.click(r.x, r.y);
   await p.settle();
 };
-const ROWS = "Page,Presentation,Slides,Canvas presentation,Solar system tour";
+const ROWS = "Page,Design doc,Presentation,Slides,Canvas presentation,Solar system tour";
 /** Every option's and group heading's typeface, size and weight, as the page shows them (Inter loaded, not a fallback). */
 const typeface = async (p: Page) => {
   await until(() => p.eval<boolean>(`document.fonts.load("600 14px Inter").then((f) => f.some((x) => x.family.replace(/["']/g, "") == "Inter" && x.status == "loaded"))`), 5000, "Inter loads");
@@ -75,7 +75,7 @@ try {
   await until(async () => !!(await p.eval<boolean>(`!!document.querySelector(".erga-view-buttons .erga-new-btn")`)), 5000, "the viewer has +");
   await clickOn(p, ".erga-view-buttons .erga-new-btn");
   let m = await picker(p);
-  expect(m.open && m.rows.join() == ROWS && m.expanded == "New document" && !m.note, "+ opens the picker: Page and the Presentation group, with Slides, Canvas presentation and the Solar system tour", m);
+  expect(m.open && m.rows.join() == ROWS && m.expanded == "New document" && !m.note, "+ opens the picker: Page, Design doc and the Presentation group, with Slides, Canvas presentation and the Solar system tour", m);
   await sameTypeface(p, "the viewer");
   await p.screenshot(join(SHOTS, "new-doc-viewer.png"));
   await p.key("Escape");

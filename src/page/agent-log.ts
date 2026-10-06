@@ -66,6 +66,10 @@ export interface ViewRequest {
   fullPage?: boolean;
   /** Width to render at, in CSS pixels (default: as wide as the user's page). */
   width?: number;
+  /** Height of one screenful, in CSS pixels (default: as tall as the user's page). */
+  height?: number;
+  /** Light or dark mode, for the page's prefers-color-scheme (default: the user's). */
+  colorScheme?: ColorScheme;
   /**
    * The agent's Yjs state vector when it asked (src/room/doc.ts): the tab
    * renders once it has seen every edit the agent had made by then.
@@ -80,11 +84,31 @@ export interface ViewRequest {
   timeout?: number;
 }
 
+export type ColorScheme = "light" | "dark";
+
+/** A font the page's text rendered in, and where. */
+export interface RenderedFont {
+  /** The family the browser drew with, e.g. "Literata", or "Georgia" when a web font didn't load. */
+  family: string;
+  /** The family the page asked for first, when the browser drew with another. */
+  wanted?: string;
+  /** How many elements' text it drew, and a few of their tags. */
+  elements: number;
+  tags: string[];
+}
+
 /** What the tab sends back: a PNG (base64), evaluate's result, or why it couldn't. */
 export interface ViewResult {
   png?: string;
   width: number;
   height: number;
+  /** The screenful the page rendered at, in CSS pixels. */
+  viewport?: { width: number; height: number };
+  colorScheme?: ColorScheme;
+  /** The fonts the page's text rendered in, most used first. */
+  fonts?: RenderedFont[];
+  /** Fonts and images still loading when the capture stopped waiting for them. */
+  pending?: string[];
   /** Errors the page's scripts threw while it rendered. */
   errors: string[];
   note?: string;
