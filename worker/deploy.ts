@@ -1,7 +1,8 @@
 // /deploy: deploy Erga to your own Cloudflare account, from erga.dev, with
 // the same settings erga.dev has (deploy/cloudflare.ts). Who may use it is
 // the deploy_page setting (anyone signed in by default; "admins" for admins
-// only, "off" hides it); anyone else gets "not found".
+// and users with the deploy role, users.ts; "off" hides it); anyone else
+// gets "not found".
 //
 //   /deploy                                the page (deploy/page.ts)
 //   /deploy/auth/cloudflare[/callback]     "Authorize with Cloudflare": OAuth with PKCE, when the server has a client

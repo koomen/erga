@@ -63,8 +63,9 @@ serves the app's routes (`front.ts`). Its pages:
   it (see [Documents with many pages](#documents-with-many-pages)).
 - **Settings**, `/settings`: your agent tokens (`/tokens` redirects there).
 - **Admin settings**, `/admin`: the server's settings, and **Users**,
-  `/admin/users`: who may sign in, and who's an admin; for admins (and, with
-  admin keys required, only once they've unlocked admin access with their SSH key).
+  `/admin/users`: who may sign in, when they joined, and their roles (admin,
+  deploy); for admins (and, with admin keys required, only once they've
+  unlocked admin access with their SSH key).
 - **Admin keys**, `/admin/keys`: an admin's SSH keys, and unlocking admin
   access with them (see [Admin SSH keys](#admin-ssh-keys)).
 - **Deploy your own**, `/deploy`: a page of its own, not an admin one; anyone
@@ -370,13 +371,19 @@ The first admins come from the deploy: the logins in the `ADMINS` binding
 (`cloudflare.config.ts`) are always admins and may always sign in, and get
 their row the first time they do; they can't be demoted or removed except by
 taking them out of `ADMINS` and deploying. Every other admin is a row, made
-by an admin. Locally, `DEV_LOGIN` is a bootstrap admin too, and everyone
+by an admin. The server always keeps an admin: nobody may demote or remove
+the last one (`NotAllowed`, saying so). Locally, `DEV_LOGIN` is a bootstrap admin too, and everyone
 signed in gets a row as they come. Being an admin says who *may* administer
 the server; with admin keys required (off by default), doing it also needs
 admin access unlocked with an SSH key the admin added themselves (see
 [Admin SSH keys](#admin-ssh-keys)). An admin's
 agent can do it all for them with an admin token (see [Agents configure the
 server](#agents-configure-the-server)): ask Claude Code, with one, to add a user.
+
+**The deploy role.** Apart from their role, an admin may grant any user the
+deploy role (`users.deploy`, `Users.setDeploy`): they may then use
+[/deploy](#deploy-your-own) while `deploy_page` is `admins`, as admins
+may. With `users` everyone signed in may anyway, and with `off` nobody may.
 
 **The admin pages.** Every page under `/admin` has the same layout
 (`admin-layout.ts`): a breadcrumb in the upper left (Erga › Admin › the
@@ -403,12 +410,15 @@ unlocked admin access goes to `/admin/keys` first, and comes back.
 `/admin` shows every
 setting compactly (its key, a one-line description, its value with Save
 and Reset; a small "set by whom" note, with when and the default on hover, or a
-"Locked" badge for one the deploy fixes, whose value is shown read-only); `/admin/users` every user (last seen, who added them,
-a User/Admin role menu and a remove button; a bootstrap admin's are
-disabled), with a box to add one by GitHub login. Underneath it's `POST
+"Locked" badge for one the deploy fixes, whose value is shown read-only). `/admin/users` lists every user (who added
+them, when they joined and were last seen) with a switch for each role,
+Admin and Deploy, and a remove button, and a box to add one by GitHub
+login. Roles change only with the switches, never typed text. A bootstrap admin's Admin switch and
+remove button are off, and so are the last admin's, saying why. Underneath it's `POST
 /admin/settings` (`key` and `value` as JSON, or `reset=1`) and `POST
-/admin/users` (`do=add|role|remove`, `login`, `role`), answering JSON, from
-this site's pages only.
+/admin/users` (`do=add|role|deploy|remove`, `login`, `role`, `deploy`: 1
+or 0), answering JSON, from this site's pages only. The directory checks on
+the server, for every one, that an admin asks (`Users.mustAdmin`).
 
 **Settings.** `server_config` holds the server's settings, a JSON value per
 key with who set it and when (`config.ts`). Only the keys declared in
@@ -456,9 +466,9 @@ applies, so local development is locked the same way as erga.dev.
   doc)` (the role that applies), `dir.permissions(id)`, `dir.share(who, id,
   login, role | null)`, `dir.list(login)`;
 - users and roles: `dir.users.get(login)`, `allowed(login)`,
-  `isAdmin(who)`, `signedIn(login, name?)`, and, admins only, `list(by)`,
-  `add(by, login, { role })`, `setRole(by, login, role)`, `remove(by,
-  login)`;
+  `isAdmin(who)`, `hasDeploy(who)`, `signedIn(login, name?)`, and, admins only, `list(by)`,
+  `add(by, login, { role })`, `setRole(by, login, role)`, `setDeploy(by,
+  login, deploy)`, `remove(by, login)`;
 - settings: `dir.config.get(key)` (typed by `SETTINGS`), `entry(key)`,
   `isLocked(key)`, and, admins only, `list(by)`, `set(by, key, value)`,
   `reset(by, key)`. An entry (`ConfigEntry`) has the key, its description,
@@ -576,8 +586,9 @@ an admin token:
   for the one it's in);
 - admins only: `list_settings`, `set_setting`, `reset_setting` (a setting
   the deploy locks shows `"locked": true` and is refused), and `list_users`,
-  `add_user`, `set_user_role`, `remove_user` (a bootstrap admin can't be
-  demoted or removed; nor can you remove yourself).
+  `add_user`, `set_user_role`, `set_user_deploy`, `remove_user` (a bootstrap
+  admin can't be demoted or removed, nor can the last admin; nor can you
+  remove yourself).
 
 They need only the directory and who's asking, so they run in a document's
 host for the editor's agent (`agentToolsFor`, given to the session by
@@ -637,7 +648,7 @@ and `{ error, locked: true }`, or sends them to unlock first):
 | surface | where |
 |---|---|
 | `/admin`, `POST /admin/settings`, `POST /admin/users` | `admin.ts` |
-| the admin tools (`list_settings`, `set_setting`, `reset_setting`, `list_users`, `add_user`, `set_user_role`, `remove_user`) over `/api/ext/tools`, `/mcp` and the editor's agent | `server-tools.ts`, `server-api.ts` |
+| the admin tools (`list_settings`, `set_setting`, `reset_setting`, `list_users`, `add_user`, `set_user_role`, `set_user_deploy`, `remove_user`) over `/api/ext/tools`, `/mcp` and the editor's agent | `server-tools.ts`, `server-api.ts` |
 | `dir.config.list/set/reset`, `dir.users.list/add/setRole/remove`, whatever calls them | `Users.mustAdmin` (`users.ts`, `config.ts`) |
 | `/api/factory/...` (not the VMs' own task tokens, nor factory tokens, below), the factory's agent and minting factory tokens | `worker/factory.ts` |
 | `/admin/factory` (the board, the dashboard and the agent), `GET /api/source/branches`, `POST /api/source/merge`, `POST /api/source/mirror` | `worker/source.ts` |
@@ -1225,7 +1236,7 @@ Still to do are the steps marked *(you)*.
 `/deploy` puts a copy of the server on someone's own Cloudflare account,
 with the same settings erga.dev has, and them as its admin. Who may use it
 is the `deploy_page` setting: `users` (anyone signed in, the default),
-`admins`, or `off`; anyone it doesn't let in gets "not found". It's a page of its own, not
+`admins` (and users with the deploy role, granted on `/admin/users`), or `off`; anyone it doesn't let in gets "not found". It's a page of its own, not
 an admin page: the user menu links to it for those it lets in, admin
 settings don't list it, and `/admin/deploy` redirects to it. Using it gives
 no admin rights: someone who isn't an admin still can't read or change the

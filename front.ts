@@ -267,15 +267,16 @@ const samePath = (a: string, b: string) => {
 const noPage = (address: string) => page("Not found", `This document has no page here. <a href="${esc(address)}">Go to its first page</a>.`, 404);
 
 /**
- * Who may use /deploy: the deploy_page setting (off, admins or users), and
- * never a test person or an agent's token. It's a permission of its own: it
+ * Who may use /deploy: the deploy_page setting (off, admins and those with
+ * the deploy role, or users), and never a test person or an agent's token. It's a permission of its own: it
  * gives nothing of an admin's (settings, users, the factory).
  */
 export async function mayDeploy(directory: Directory, session: Session | null): Promise<boolean> {
   if (!session || session.test || session.agent) return false;
   const mode = await directory.config.get("deploy_page");
   if (mode == "users") return true;
-  return mode == "admins" && (await directory.users.isAdmin(whoOf(session)));
+  const users = directory.users, who = whoOf(session);
+  return mode == "admins" && ((await users.isAdmin(who)) || (await users.hasDeploy(who)));
 }
 
 /** What the editor's menu on your avatar needs to know that the document doesn't (account.ts): the links it offers. */
