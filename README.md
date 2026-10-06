@@ -1531,7 +1531,13 @@ access unlocked; breadcrumbs Erga › Admin › Source): the one place to manage
 the source, its deploys and the factory. Three parts on one page: the factory's
 task board ([The factory](#the-factory-experimental)), this dashboard, and the
 factory's own agent. On a wide window the agent sits on the left, as in the
-editor, with the board above the dashboard beside it; narrower than 1000px,
+editor, with the board above the dashboard beside it. As in the editor (the
+same code, `src/page/layout.ts`), drag the agent's inner edge to make it
+wider or narrower (300 to 760px, and the board keeps at least 480px; a
+double-click puts back 380px), and drag it by its head to dock it on the
+right: a dashed ghost shows where it lands, and the board slides to the
+other side; Escape puts it back. The side and the width are kept in this
+browser (localStorage, `erga:factory-layout:v1`). Narrower than 1000px,
 tabs (Tasks, Source, Agent) show one at a time. Each part's stylesheet is
 scoped to its pane (`scopeCss`: its width queries measure the pane, so the
 board keeps its five columns beside the agent). `/source`, `/admin/factory`
@@ -3183,7 +3189,7 @@ back, merging edits from disk, the agent's exact-match edits and attribution.
 - `src/page/`: the page editor, on CodeMirror 6: `manuscript.ts` (HTML source
   analysis), `markdown.ts` (Markdown rendering with source ranges),
   `editor.ts` (the editing surface, marks and other people's carets),
-  `main.ts` (shell, presence, source view, agent panel), `layout.ts` (the side panels: docking, the agent's width), `frame.ts` (the page
+  `main.ts` (shell, presence, source view, agent panel), `layout.ts` (the side panels: docking, the agent's width; the factory's agent panel too), `frame.ts` (the page
   editor's frame, on the document's own origin), `bridge.ts` and `remote.ts`
   (the messages between the two, and the shell's side of them), `collab.ts` (the
   room connection and its binding to the editor), `merge.ts` (word diffs and

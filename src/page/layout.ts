@@ -9,6 +9,9 @@
  *
  * The first half is the layout's state and geometry, pure (tests/layout.test.ts);
  * mountLayout puts it on the page, as CSS variables page.html's rules read.
+ *
+ * /admin/factory's agent panel has the same grip and drag (mountGrip,
+ * dragToDock), in a grid of two: mountPaneLayout, PaneLayout.
  */
 
 export type Panel = "agent" | "picker";
