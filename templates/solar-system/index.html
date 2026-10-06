@@ -1,0 +1,326 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>A tour of the solar system</title>
+<style>
+  /* A presentation: a small 3D solar system on a canvas, drawn by the script below, and one note for each step.
+     Each .note is a step (window.ergaSteps); its data-planet names the planet the camera goes to (none: the overview). */
+  :root { --ink: #eef1f8; --muted: #a9b2c6; --card: rgba(10, 14, 28, .62); --rule: rgba(255, 255, 255, .12); --accent: #ffcf70;
+    --display: "Avenir Next", "Segoe UI", "Helvetica Neue", Arial, sans-serif; color-scheme: dark; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #03050c; color: var(--ink); font: 17px/1.55 var(--display); }
+  #space { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+  .note { position: fixed; left: clamp(16px, 5vw, 64px); top: 50%; transform: translateY(-50%); box-sizing: border-box; width: min(25rem, 38vw);
+    padding: 22px 26px 24px; border: 1px solid var(--rule); border-radius: 16px; background: var(--card);
+    -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); animation: arrive .9s ease-out both; }
+  .note[hidden] { display: none; }
+  .note.overview { top: auto; bottom: clamp(16px, 6vh, 56px); transform: none; width: min(34rem, calc(100vw - 32px)); }
+  .eyebrow { margin: 0 0 6px; font-size: 12px; font-weight: 600; letter-spacing: .14em; text-transform: uppercase; color: var(--accent); }
+  h1 { margin: 0 0 10px; font-size: clamp(28px, 4vw, 42px); line-height: 1.1; font-weight: 700; letter-spacing: -.01em; }
+  p { margin: 0; color: var(--muted); }
+  .facts { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 14px 0 0; padding: 12px 0 0; border-top: 1px solid var(--rule); list-style: none; font-size: 14px; color: var(--ink); }
+  .facts li span { color: var(--muted); }
+  @keyframes arrive { from { opacity: 0; translate: 0 12px; } to { opacity: 1; translate: 0 0; } }
+  @media (max-width: 640px) {
+    .note, .note.overview { top: auto; bottom: 16px; left: 16px; transform: none; width: calc(100vw - 32px); padding: 16px 18px; }
+    h1 { font-size: 26px; }
+  }
+  @media (prefers-reduced-motion: reduce) { .note { animation: none; } }
+</style>
+</head>
+<body>
+<canvas id="space" aria-label="A model of the solar system: the Sun, and eight planets that go around it"></canvas>
+
+<section class="note overview">
+  <p class="eyebrow">A tour in nine steps</p>
+  <h1>The solar system</h1>
+  <p>One star and eight planets that go around it. Step forward to visit each planet, from the Sun outwards. (Sizes, distances and speeds are not to scale.)</p>
+</section>
+
+<section class="note" data-planet="mercury" hidden>
+  <p class="eyebrow">Planet 1</p>
+  <h1>Mercury</h1>
+  <p>The smallest planet, and the closest to the Sun. It has almost no air, so its days are hot enough to melt lead and its nights are far below freezing.</p>
+  <ul class="facts"><li><span>Year</span> 88 days</li><li><span>Moons</span> 0</li></ul>
+</section>
+
+<section class="note" data-planet="venus" hidden>
+  <p class="eyebrow">Planet 2</p>
+  <h1>Venus</h1>
+  <p>Thick clouds of sulfuric acid trap the heat, which makes Venus the hottest planet. It turns backwards, so the Sun rises in the west.</p>
+  <ul class="facts"><li><span>Year</span> 225 days</li><li><span>Moons</span> 0</li></ul>
+</section>
+
+<section class="note" data-planet="earth" hidden>
+  <p class="eyebrow">Planet 3</p>
+  <h1>Earth</h1>
+  <p>Our home, and the only place we know with life. Oceans of liquid water cover about seven tenths of its surface.</p>
+  <ul class="facts"><li><span>Year</span> 365 days</li><li><span>Moons</span> 1</li></ul>
+</section>
+
+<section class="note" data-planet="mars" hidden>
+  <p class="eyebrow">Planet 4</p>
+  <h1>Mars</h1>
+  <p>Iron oxide dust makes the surface red. Mars has the tallest volcano we know, Olympus Mons, about two and a half times as high as Everest.</p>
+  <ul class="facts"><li><span>Year</span> 687 days</li><li><span>Moons</span> 2</li></ul>
+</section>
+
+<section class="note" data-planet="jupiter" hidden>
+  <p class="eyebrow">Planet 5</p>
+  <h1>Jupiter</h1>
+  <p>A giant of gas, more than twice as massive as all the other planets together. Its Great Red Spot is a storm wider than Earth.</p>
+  <ul class="facts"><li><span>Year</span> 12 years</li><li><span>Moons</span> 95</li></ul>
+</section>
+
+<section class="note" data-planet="saturn" hidden>
+  <p class="eyebrow">Planet 6</p>
+  <h1>Saturn</h1>
+  <p>Its rings are billions of pieces of ice and rock. The planet is so light for its size that it would float in a large enough bath.</p>
+  <ul class="facts"><li><span>Year</span> 29 years</li><li><span>Moons</span> 146</li></ul>
+</section>
+
+<section class="note" data-planet="uranus" hidden>
+  <p class="eyebrow">Planet 7</p>
+  <h1>Uranus</h1>
+  <p>An ice giant that lies on its side, perhaps after a collision long ago. Each pole has about 42 years of sun, then 42 years of dark.</p>
+  <ul class="facts"><li><span>Year</span> 84 years</li><li><span>Moons</span> 28</li></ul>
+</section>
+
+<section class="note" data-planet="neptune" hidden>
+  <p class="eyebrow">Planet 8</p>
+  <h1>Neptune</h1>
+  <p>The farthest planet, dark, cold and very windy: its storms blow at more than 2,000 km an hour. Sunlight takes about four hours to get there.</p>
+  <ul class="facts"><li><span>Year</span> 165 years</li><li><span>Moons</span> 16</li></ul>
+</section>
+
+<script>
+  // The model: no libraries, a canvas and a little perspective. Orbits are circles in the x–z plane, the Sun at the centre.
+  // a: orbit radius, r: radius, period: seconds for one orbit, phase: where it starts, bands: its colours from pole to pole.
+  const PLANETS = {
+    mercury: { a: 7, r: .38, period: 12, phase: 1.1, bands: ["#b9aa98", "#8c8073", "#a89887"] },
+    venus: { a: 10, r: .68, period: 20, phase: 3.9, bands: ["#f2deb0", "#dcc08a", "#efd9a6"] },
+    earth: { a: 13.5, r: .72, period: 30, phase: 5.6, bands: ["#eef4ff", "#3a78cc", "#2f6fc4", "#3f8f62", "#2d6bbd", "#2a62b2", "#e6eefb"] },
+    mars: { a: 17, r: .5, period: 44, phase: 2.4, bands: ["#f0d8c8", "#c4643a", "#a9502c", "#c76c42"] },
+    jupiter: { a: 25, r: 2, period: 80, phase: 4.6, bands: ["#c9b59a", "#e8d6b8", "#b9845a", "#f0e2c8", "#c98f62", "#e9d9bd", "#b48a66", "#d9c4a4"] },
+    saturn: { a: 33, r: 1.65, period: 120, phase: .5, bands: ["#d9c79c", "#efe0b6", "#c9ae7a", "#f3e6c2", "#d6bd8c"], ring: [1.3, 2.35] },
+    uranus: { a: 40.5, r: 1.05, period: 170, phase: 2.9, bands: ["#bfeff2", "#9edde4", "#aee6ea"] },
+    neptune: { a: 47, r: 1, period: 230, phase: 5, bands: ["#6f93f0", "#3f63d8", "#5b80ea", "#3a5bc9"] },
+  };
+  const SUN = 3.6;
+
+  const canvas = document.getElementById("space"), ctx = canvas.getContext("2d");
+  const notes = [...document.querySelectorAll(".note")];
+  const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const T0 = performance.now() - 6000;
+  const now = () => (performance.now() - T0) / 1000;
+
+  // Vectors, as [x, y, z].
+  const add = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
+  const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+  const mul = (a, k) => [a[0] * k, a[1] * k, a[2] * k];
+  const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+  const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+  const unit = (a) => mul(a, 1 / (Math.hypot(...a) || 1));
+  const mix = (a, b, k) => add(a, mul(sub(b, a), k));
+
+  const angle = (p, t) => p.phase + (2 * Math.PI * t) / p.period;
+  const where = (p, t) => { const θ = angle(p, t); return [p.a * Math.cos(θ), 0, -p.a * Math.sin(θ)]; };
+
+  // A camera: where it is (eye), what it looks at (target), and focus, 0 for the overview and 1 for a planet (it moves the picture aside for the note).
+  const OVERVIEW = { eye: [0, 46, 92], target: [0, -5, 4], focus: 0 };
+  function cameraFor(i, t) {
+    const p = PLANETS[notes[i] && notes[i].dataset.planet];
+    if (!p) return OVERVIEW;
+    const at = where(p, t), out = unit(at), ahead = [out[2], 0, -out[0]];
+    const d = p.r * (p.ring ? 7.5 : 6.2);
+    // From ahead of the planet and a little sunward, so most of the side we see is lit.
+    const eye = add(at, add(mul(unit(add(mul(ahead, -1), mul(out, -.45))), d), [0, d * .32, 0]));
+    return { eye, target: at, focus: 1 };
+  }
+
+  // Stars: fixed directions, so they turn with the camera but never come nearer.
+  let seed = 7;
+  const rand = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  const STARS = Array.from({ length: 420 }, () => {
+    const z = rand() * 2 - 1, φ = rand() * Math.PI * 2, s = Math.sqrt(1 - z * z);
+    return { d: [s * Math.cos(φ), z, s * Math.sin(φ)], m: Math.pow(rand(), 3), tint: rand() };
+  });
+
+  /** Draws the model at time t, as the camera sees it, on a w × h context. */
+  function draw(g, w, h, cam, t) {
+    const f = unit(sub(cam.target, cam.eye)), right = unit(cross(f, [0, 1, 0])), up = cross(right, f);
+    const narrow = w < h * 1.1;
+    const cx = w * (narrow ? .5 : .5 + .15 * cam.focus), cy = h * (narrow ? .5 - .16 * cam.focus : .5);
+    const F = Math.min(w, h) * 1.15;
+    const view = (v) => [dot(v, right), dot(v, up), dot(v, f)];
+    const project = (P) => { const [x, y, z] = view(sub(P, cam.eye)); return z > .05 ? { x: cx + (x / z) * F, y: cy - (y / z) * F, z, k: F / z } : null; };
+
+    const sky = g.createRadialGradient(w * .5, h * .45, 0, w * .5, h * .5, Math.hypot(w, h) * .6);
+    sky.addColorStop(0, "#0b1226"); sky.addColorStop(1, "#02030a");
+    g.fillStyle = sky; g.fillRect(0, 0, w, h);
+
+    const px = Math.max(1, Math.min(w, h) / 700);
+    for (const s of STARS) {
+      const [x, y, z] = view(s.d);
+      if (z <= 0) continue;
+      const sx = cx + (x / z) * F, sy = cy - (y / z) * F;
+      if (sx < 0 || sy < 0 || sx > w || sy > h) continue;
+      g.globalAlpha = .25 + .75 * s.m;
+      g.fillStyle = s.tint < .15 ? "#ffd9b0" : s.tint > .85 ? "#bcd2ff" : "#fff";
+      const size = (.6 + s.m * 1.4) * px;
+      g.fillRect(sx - size / 2, sy - size / 2, size, size);
+    }
+    g.globalAlpha = 1;
+
+    // Orbits, faint, behind everything.
+    g.lineWidth = px;
+    for (const p of Object.values(PLANETS)) {
+      g.strokeStyle = `rgba(170, 190, 255, ${.1 + .1 * (1 - cam.focus)})`;
+      g.beginPath();
+      let pen = false;
+      for (let k = 0; k <= 160; k++) {
+        const θ = (k / 160) * Math.PI * 2, q = project([p.a * Math.cos(θ), 0, -p.a * Math.sin(θ)]);
+        if (!q) { pen = false; continue; }
+        pen ? g.lineTo(q.x, q.y) : g.moveTo(q.x, q.y);
+        pen = true;
+      }
+      g.stroke();
+    }
+
+    // The Sun and the planets, farthest first.
+    const bodies = [{ sun: true, at: [0, 0, 0] }, ...Object.entries(PLANETS).map(([name, p]) => ({ name, p, at: where(p, t) }))];
+    for (const b of bodies) b.depth = dot(sub(b.at, cam.eye), f);
+    bodies.sort((a, b) => b.depth - a.depth);
+    for (const b of bodies) {
+      const q = project(b.at);
+      if (!q) continue;
+      if (b.sun) { sun(g, q, SUN * q.k); continue; }
+      planet(g, b.p, b.at, q, view, project, cam.focus < .5 ? 1 - cam.focus * 2 : 0, b.name, px);
+    }
+  }
+
+  function sun(g, q, R) {
+    const glow = g.createRadialGradient(q.x, q.y, R * .6, q.x, q.y, R * 4.5);
+    glow.addColorStop(0, "rgba(255, 196, 92, .55)"); glow.addColorStop(.35, "rgba(255, 140, 50, .14)"); glow.addColorStop(1, "rgba(255, 120, 40, 0)");
+    g.fillStyle = glow; g.beginPath(); g.arc(q.x, q.y, R * 4.5, 0, Math.PI * 2); g.fill();
+    const core = g.createRadialGradient(q.x - R * .25, q.y - R * .25, 0, q.x, q.y, R);
+    core.addColorStop(0, "#fffbe6"); core.addColorStop(.55, "#ffd66b"); core.addColorStop(1, "#ff9d2e");
+    g.fillStyle = core; g.beginPath(); g.arc(q.x, q.y, R, 0, Math.PI * 2); g.fill();
+  }
+
+  function planet(g, p, at, q, view, project, labels, name, px) {
+    const R = Math.max(p.r * q.k, 1.2 * px);
+    const ring = p.ring && ringParts(p, at, q, project);
+    if (ring) ringDraw(g, ring.back);
+
+    // The surface: bands from pole to pole.
+    g.save();
+    g.beginPath(); g.arc(q.x, q.y, R, 0, Math.PI * 2); g.clip();
+    const bands = g.createLinearGradient(q.x, q.y - R, q.x, q.y + R);
+    p.bands.forEach((c, k) => bands.addColorStop(k / (p.bands.length - 1), c));
+    g.fillStyle = bands; g.fillRect(q.x - R, q.y - R, R * 2, R * 2);
+
+    // The night side. The light comes from the Sun: in the picture, at angle φ; c is how much it faces us (1: full, −1: new).
+    const [lx, ly, lz] = view(unit(mul(at, -1)));
+    const φ = Math.atan2(-ly, lx), c = -lz;
+    g.translate(q.x, q.y); g.rotate(φ); g.scale(R, R);
+    g.fillStyle = "rgba(2, 4, 12, .9)";
+    if (R > 12) g.filter = `blur(${(R * .04).toFixed(1)}px)`; // a soft terminator, on the planet seen close
+    g.beginPath();
+    g.arc(0, 0, 1.02, Math.PI / 2, Math.PI * 1.5, false);
+    g.ellipse(0, 0, Math.max(Math.abs(c), .001), 1.02, 0, -Math.PI / 2, Math.PI / 2, c > 0);
+    g.fill();
+    g.filter = "none";
+    // Rounder: darker at the edge, a soft light on the sunward side.
+    const shade = g.createRadialGradient(.35, 0, 0, 0, 0, 1);
+    shade.addColorStop(0, "rgba(255, 255, 255, .12)"); shade.addColorStop(.7, "rgba(0, 0, 0, 0)"); shade.addColorStop(1, "rgba(0, 0, 0, .45)");
+    g.fillStyle = shade; g.fillRect(-1, -1, 2, 2);
+    g.restore();
+
+    if (ring) ringDraw(g, ring.front);
+    if (labels > 0) {
+      g.globalAlpha = labels * .85;
+      g.fillStyle = "#dfe6f5";
+      g.font = `600 ${Math.round(11 * px)}px "Avenir Next", "Segoe UI", sans-serif`;
+      g.textAlign = "center";
+      g.fillText(name[0].toUpperCase() + name.slice(1), q.x, q.y + R + 14 * px);
+      g.globalAlpha = 1;
+    }
+  }
+
+  // Saturn's ring, tilted, in pieces: those behind the planet are drawn before it, the rest after.
+  function ringParts(p, at, q, project) {
+    const tilt = .47, side = [0, Math.sin(tilt), Math.cos(tilt)], back = [], front = [];
+    const point = (θ, s) => project(add(at, add(mul([1, 0, 0], Math.cos(θ) * s * p.r), mul(side, Math.sin(θ) * s * p.r))));
+    const N = 72;
+    for (let k = 0; k < N; k++) {
+      const a = (k / N) * Math.PI * 2, b = ((k + 1) / N) * Math.PI * 2;
+      const quad = [point(a, p.ring[0]), point(a, p.ring[1]), point(b, p.ring[1]), point(b, p.ring[0])];
+      if (quad.some((v) => !v)) continue;
+      (quad.reduce((s, v) => s + v.z, 0) / 4 > q.z ? back : front).push(quad);
+    }
+    return { back, front };
+  }
+  function ringDraw(g, quads) {
+    g.fillStyle = "rgba(222, 202, 160, .55)";
+    g.beginPath();
+    for (const [a, b, c, d] of quads) { g.moveTo(a.x, a.y); g.lineTo(b.x, b.y); g.lineTo(c.x, c.y); g.lineTo(d.x, d.y); g.closePath(); }
+    g.fill();
+  }
+
+  // Steps: going to one flies the camera there, over the Sun rather than through it.
+  let at = 0, from = null, start = 0;
+  const FLIGHT = still ? 0 : 1.9;
+  const ease = (u) => (u < .5 ? 4 * u * u * u : 1 - Math.pow(-2 * u + 2, 3) / 2);
+  function camera(t) {
+    const to = cameraFor(at, t);
+    const u = FLIGHT ? Math.min(1, (t - start) / FLIGHT) : 1;
+    if (!from || u >= 1) { from = null; return to; }
+    const a = from(t), e = ease(u);
+    const eye = mix(a.eye, to.eye, e);
+    eye[1] += Math.sin(Math.PI * e) * Math.hypot(...sub(a.eye, to.eye)) * .3;
+    return { eye, target: mix(a.target, to.target, e), focus: a.focus + (to.focus - a.focus) * e };
+  }
+  function show(i) {
+    i = Math.max(0, Math.min(notes.length - 1, i | 0));
+    const t = now();
+    if (i != at) {
+      // From where the camera is: still following the last planet, or frozen mid-flight.
+      if (from) { const c = camera(t); from = () => c; } else { const was = at; from = (t) => cameraFor(was, t); }
+      start = t;
+    }
+    at = i;
+    notes.forEach((n, k) => (n.hidden = k != at));
+    dispatchEvent(new Event("ergastep"));
+  }
+
+  window.ergaSteps = {
+    count: () => notes.length,
+    current: () => at,
+    go: show,
+    label: (i) => notes[i].querySelector("h1").textContent.trim(),
+    // The view from step i's camera, now.
+    image(i, { width, height }) {
+      const c = document.createElement("canvas");
+      c.width = width; c.height = height;
+      draw(c.getContext("2d"), width, height, cameraFor(i, now()), now());
+      return c;
+    },
+  };
+
+  function size() {
+    const k = Math.min(devicePixelRatio || 1, 2);
+    canvas.width = Math.round(innerWidth * k); canvas.height = Math.round(innerHeight * k);
+  }
+  addEventListener("resize", size);
+  size();
+  (function frame() {
+    const t = now();
+    draw(ctx, canvas.width, canvas.height, camera(t), t);
+    requestAnimationFrame(frame);
+  })();
+  show(0);
+</script>
+</body>
+</html>

@@ -21,6 +21,7 @@
 #                     a presentation's steps, viewing and editing (tests/steps.ts),
 #                     the Slides template, stepped through viewing and editing (tests/slides.ts),
 #                     the Canvas presentation template, zooming between frames (tests/canvas-template.ts),
+#                     the Solar system tour template, viewing and editing (tests/solar-system.ts),
 #                     a document's pages tree (tests/tree.ts),
 #                     the first switch into editing on a slow network (tests/switch.ts),
 #                     the band the top controls sit on (tests/band.ts),
@@ -94,6 +95,7 @@ run 1 new-doc bun tests/new-doc.ts                       # [15]
 run 1 steps bun tests/steps.ts                           # [15]
 run 1 slides bun tests/slides.ts                         # [15]
 run 1 canvas bun tests/canvas-template.ts                # [12]
+run 1 solar-system bun tests/solar-system.ts             # [15]
 run 1 pages bun tests/pages.ts                           # [17]
 run 1 switch bun tests/switch.ts                         # [17]
 run 1 deploy bun tests/deploy.ts                         # [16]

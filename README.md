@@ -247,11 +247,12 @@ The + button (New document) makes a new document. It is in the viewer's
 controls, beside Clone and Edit (on a document's page and on the front page,
 served directly or not), and in the editor's top row, beside the pencil. It
 opens a picker of templates, under the button: **Page** (a blank document)
-and the **Presentation** group, with **Slides** (below) and **Canvas
+and the **Presentation** group, with **Slides** (below), **Canvas
 presentation** (`templates/canvas`, a Prezi-style talk: four frames on one
 large canvas, each a step with its label and picture; going to another step
 zooms out to the whole canvas, then in on that frame, and a click on a frame
-goes to it too). An empty group says it has no templates yet. The demo page
+goes to it too) and the **Solar system tour** (below). An empty group says it
+has no templates yet. The demo page
 is no template: Clone, on the front page, copies it. Every option and group
 heading is in the app's typeface, Inter, at one size and weight (the picker
 loads `/fonts/inter.css` on a page that hasn't it). Each template is a link to
@@ -293,6 +294,17 @@ in the list of steps is the slide drawn small (a copy of it, with the page's
 styles, in an SVG). A slide is a `<section class="slide">` in `<body>`; add
 one and it counts. `bun tests/slides.ts` checks it, viewing and editing
 (`--shots` keeps pictures).
+
+**Solar system tour** (`templates/solar-system`) is a presentation
+(DOCUMENT_PROMPT.md, "Presentations") with no libraries: a canvas draws a
+small 3D model of the Sun and the eight planets, which go around it, among
+stars. Each `.note` section is a step, and its `data-planet` names the
+planet the camera goes to: the first, with none, is the overview. Going to a
+step flies the camera there in about two seconds (at once with reduced
+motion), over the Sun rather than through it, and the camera follows the
+planet. Each step's picture in the list (`image()`) is the view from that
+step's camera, now. The notes are the page's text, so they're edited like any
+other. `bun tests/solar-system.ts` checks it, viewing and editing.
 
 ### The homepage, served directly
 
