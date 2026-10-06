@@ -575,7 +575,10 @@ export class Factory extends DurableObject<Env> {
   }
 
   async addShot(id: number, data: Uint8Array, caption: string, replace: boolean): Promise<{ ok: boolean; error?: string }> {
-    if (!this.row(id)) return { ok: false, error: "no such task" };
+    const r = this.row(id);
+    if (!r) return { ok: false, error: "no such task" };
+    // As report: a task that is merged or discarded takes nothing more from its VM's token (it lasts a week).
+    if (["merged", "discarded"].includes(r.status)) return { ok: false, error: `task #${id} is ${r.status}` };
     if (data.length > 1_900_000) return { ok: false, error: "a screenshot may be 1.9 MB at most" };
     if (replace) this.sql.exec("DELETE FROM shots WHERE task = ?", id);
     const file = `${id}-${Date.now().toString(36)}${crypto.getRandomValues(new Uint8Array(3)).reduce((s, b) => s + b.toString(16).padStart(2, "0"), "")}.png`;
