@@ -123,7 +123,9 @@ through `Directory.may`:
 
 The front door asks the directory on every request to a document (403 if
 they may not open it) and tells the document's host whether the person may
-edit or only view (`x-erga-access`). A viewer's room connection is
+edit or only view (`x-erga-access`). Its sockets open only from this site's own pages: a
+WebSocket whose `Origin` is another (another subdomain included, which the
+session cookie reaches) gets 403. A viewer's room connection is
 read-only (they see every edit as it happens; theirs are dropped, carets
 aside), their publishes (`PUT /api/stored`) are refused, and their agent,
 and an external agent with their share token, can read but not edit (it
@@ -715,6 +717,7 @@ session carries an unlock that names no key (`SIGN_IN_KEY`, made in
 `worker/auth.ts` and `front.ts`'s `withTokens`), so the admin check
 (`Users.isAdmin`) is the only one left. Non-admins and people signed out are
 refused as before. An admin's agent token works as an admin token does
+(but never the share button's token: below)
 (the admin tools, the Git endpoint), and `/admin/keys` says no key is
 needed. The keys, the challenges and admin tokens still work; to turn the
 requirement back on, make `ERGA_ADMIN_KEYS_REQUIRED`'s default `"1"` in
@@ -2465,6 +2468,10 @@ your agent panel as "External agent: …". It works with the embedded agent
 off too (no API key needed). The share button's token is the same each time
 you open it (in any tab or browser), until New token in the dialog turns it
 off and makes another; `/settings` lists and revokes it with the rest.
+It never carries admin power, not even an admin's: no admin tools, deploys,
+Erga's source or Git endpoint, nor editing the homepage (`withTokens`,
+`front.ts`). It goes to an agent along with a document, and the document's
+text can steer that agent, as it can the editor's own.
 
 ### Agent tokens and the server's API
 

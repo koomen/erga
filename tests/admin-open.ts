@@ -7,9 +7,14 @@
 //     and its POSTs, /admin/factory, /api/source, /api/deploys, the factory,
 //     the homepage's settings, the admin tools and the Git endpoint (with an
 //     agent token);
+//   - an admin's share token (the editor's share button) reaches none of it;
+//   - an admin's browser, on a request another site made (CSRF), changes
+//     nothing, and can't open a document's socket;
 //   - a signed-in user who isn't an admin is still refused, never told
-//     "locked";
-//   - someone signed out is still refused.
+//     "locked", everywhere that changes or deploys the app's code (source,
+//     deploys, the factory's tasks and agent, settings, users, the homepage);
+//   - someone signed out is still refused, and the server-to-server hooks
+//     aren't there without their secrets.
 //
 // tests/admin-keys.ts covers the keys themselves, with ERGA_ADMIN_KEYS_REQUIRED=1.
 //
