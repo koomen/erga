@@ -29,12 +29,14 @@ export async function buildCommit(o: { source: Source; commit: string; branch?: 
   if (!/^[0-9a-f]{7,40}$/.test(o.commit)) throw new Error(`Not a commit: ${o.commit}`);
   rmSync(o.dir, { recursive: true, force: true });
   mkdirSync(o.dir, { recursive: true });
-  const auth = o.source.token ? ["-c", `http.extraHeader=Authorization: Basic ${btoa(`x:${o.source.token}`)}`] : [];
   const env = { GIT_TERMINAL_PROMPT: "0" };
+  // The token goes to git through its environment, never its command line, which a failed command's error repeats
+  // (and the deploy log keeps).
+  const auth = o.source.token ? { GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "http.extraHeader", GIT_CONFIG_VALUE_0: `Authorization: Basic ${btoa(`x:${o.source.token}`)}` } : {};
   o.log(`fetching ${o.commit.slice(0, 12)} from ${o.source.cloneUrl}`);
   await run(["git", "init", "-q"], { cwd: o.dir, env, log: o.log });
   // The branch, then the commit on it (servers don't all let a commit be fetched by its id).
-  await run(["git", ...auth, "fetch", "-q", "--no-tags", o.source.cloneUrl, o.branch ? `+refs/heads/${o.branch}:refs/remotes/origin/${o.branch}` : o.commit], { cwd: o.dir, env, log: o.log, secret: o.source.token });
+  await run(["git", "fetch", "-q", "--no-tags", o.source.cloneUrl, o.branch ? `+refs/heads/${o.branch}:refs/remotes/origin/${o.branch}` : o.commit], { cwd: o.dir, env: { ...env, ...auth }, log: o.log, secret: o.source.token });
   await run(["git", "-c", "advice.detachedHead=false", "checkout", "-q", o.commit], { cwd: o.dir, env, log: o.log });
   return buildIn({ dir: o.dir, commit: o.commit, log: o.log, run });
 }
@@ -82,7 +84,7 @@ export function packRelease(dir: string): Uint8Array {
   return new TextEncoder().encode(JSON.stringify({ index, files }));
 }
 
-/** Bun.spawn, with every line it prints logged (a secret in it replaced by ***). */
+/** Bun.spawn, with every line it prints logged (a secret in it, as it is or as HTTP Basic auth's base64, replaced by ***). */
 export const spawnRunner: Runner = async (cmd, o) => {
   const proc = Bun.spawn(cmd, { cwd: o.cwd, env: { ...process.env, CI: "1", NO_COLOR: "1", CF_QUIET: "1", ...o.env }, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
   const kill = () => proc.kill();
@@ -99,8 +101,9 @@ export const spawnRunner: Runner = async (cmd, o) => {
     }
     if (buf) emit(buf);
   };
+  const hide = (s: string) => o.secret ? [o.secret, btoa(`x:${o.secret}`)].reduce((s, x) => s.split(x).join("***"), s) : s;
   const emit = (line: string) => {
-    const clean = o.secret ? line.split(o.secret).join("***") : line;
+    const clean = hide(line);
     if (!clean.trim()) return;
     tail.push(clean);
     if (tail.length > 20) tail.shift();
@@ -110,5 +113,5 @@ export const spawnRunner: Runner = async (cmd, o) => {
   const code = await proc.exited;
   o.signal?.removeEventListener("abort", kill);
   o.signal?.throwIfAborted();
-  if (code != 0) throw new Error(`${cmd.join(" ")} failed (exit ${code})${tail.length ? `:\n${tail.slice(-8).join("\n")}` : ""}`);
+  if (code != 0) throw new Error(`${hide(cmd.join(" "))} failed (exit ${code})${tail.length ? `:\n${tail.slice(-8).join("\n")}` : ""}`);
 };

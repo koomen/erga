@@ -66,6 +66,18 @@ try {
   expect(git.status != 401 && git.status != 403, "and the Git endpoint takes it", { status: git.status });
   ok("an admin's agent token: admin tools, deploys and Git");
 
+  // The share button's token goes into prompts for agents elsewhere: it works in documents, never as an admin.
+  const share = ((await (await get(`/d/${home}/api/share`, { method: "POST", headers: { "Content-Type": "application/json", Origin: root }, body: "{}" })).json()) as { token: string }).token;
+  expect(share?.startsWith("erga_"), "the share button's token", share);
+  const shareTools = await (await get("/api/ext/tools", { headers: bearer(share) })).json() as { tools: { name: string }[] };
+  expect(shareTools.tools.length > 0, "it signs its person in, with the documents tools", shareTools);
+  expect(!shareTools.tools.some((t) => t.name == "list_users"), "it isn't offered the admin tools", shareTools.tools.map((t) => t.name));
+  expect(!(await post("/api/ext/tools/list_users", {}, bearer(share))).ok, "list_users refuses it");
+  expect([401, 403].includes((await get("/api/deploys", { headers: bearer(share) })).status), "/api/deploys refuses it");
+  const shareGit = await get("/git/erga.git/info/refs?service=git-upload-pack", { headers: { Authorization: `Basic ${btoa(`x:${share}`)}` } });
+  expect(shareGit.status == 401, "the Git endpoint refuses it", { status: shareGit.status });
+  ok("an admin's share-button token: documents only, no admin tools, deploys or Git");
+
   // ---- a signed-in user who isn't an admin
   const notAdmin: [string, Response][] = [
     ["GET /admin", await get("/admin?user=Mallory")],

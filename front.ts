@@ -314,8 +314,11 @@ export function withTokens(platform: Platform, url: URL): Platform {
       // A test person's token opens only test documents, while whoever minted their test token may sign in.
       const session: Session = { login: token.login, name: token.name, agent: token, ...(token.testBy ? { test: { by: token.testBy } } : {}) };
       if (token.testBy) return (await users.allowed(token.testBy)) ? session : null;
-      if (platform.devUnlocked?.(url)) session.unlocked = DEV_UNLOCK();
-      else if (platform.keysRequired && !platform.keysRequired()) session.unlocked = SIGN_IN_UNLOCK();
+      // The share button's token goes into prompts for agents elsewhere (to work in documents): never admin power.
+      const unlock = token.kind == "share" ? null
+        : platform.devUnlocked?.(url) ? DEV_UNLOCK()
+        : platform.keysRequired && !platform.keysRequired() ? SIGN_IN_UNLOCK() : null;
+      if (unlock) session.unlocked = unlock;
       return platform.dev(url) || (await users.allowed(token.login)) ? session : null;
     },
   };
