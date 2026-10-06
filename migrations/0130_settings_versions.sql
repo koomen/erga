@@ -8,7 +8,7 @@
 -- `changes` is JSON: [{ key, from, to, reset? }], each setting's value as it
 -- applied before and after (its default when it had no row; `reset`: put
 -- back to its default). A change that changes nothing makes no version.
-CREATE TABLE server_config_versions (
+CREATE TABLE IF NOT EXISTS server_config_versions (
   n INTEGER PRIMARY KEY AUTOINCREMENT,
   at INTEGER NOT NULL,
   by TEXT NOT NULL,
