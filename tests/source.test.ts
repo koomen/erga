@@ -234,18 +234,59 @@ describe("Erga's Git endpoint", () => {
     expect((await git(vm, "push", "origin", "HEAD:main")).ok).toBe(false);
     expect((await git(vm, "push", "origin", "HEAD:refs/heads/task/8-other")).err).toContain("not refs/heads/task/8-other");
     // An admin's view doesn't show it; the Source page lists staging and main only; no moves, no deploys.
-    expect(await must(src, "ls-remote", "erga")).toContain("refs/heads/task/7-the-factory"); // a clone sees every branch Artifacts has
+    expect(await must(src, "ls-remote", "erga")).toContain("refs/heads/task/7-the-factory"); // an admin's clone sees every branch Artifacts has
+    // Another task's branch: out of this VM's sight (listed or fetched by name), as its own token reads staging, main and its own only.
+    const other = f.factory({ scope: "task", branch: "task/8-another" });
+    await must(vm, "push", other, "HEAD:refs/heads/task/8-another");
+    expect(await must(src, "ls-remote", "erga")).toContain("refs/heads/task/8-another");
+    const seen = await must(vm, "ls-remote", task);
+    expect(seen).toContain("refs/heads/staging");
+    expect(seen).toContain("refs/heads/task/7-the-factory");
+    expect(seen).not.toContain("task/8-another");
+    expect((await git(vm, "fetch", task, "refs/heads/task/8-another")).ok).toBe(false);
+    expect((await git(vm, "-c", "protocol.version=0", "ls-remote", task)).out).not.toContain("task/8-another");
+    expect((await git(vm, "push", other, "--delete", "task/8-another")).ok).toBe(true);
     expect((await f.repo.branches()).branches.map((b) => b.name)).toEqual(["staging", "main"]);
     expect(f.moves.length).toBe(moves);
     // A bad or other secret's token: refused.
     expect((await git(vm, "push", task.replace(/fgt\.[^.]+\.[0-9a-f]{4}/, (m) => m.slice(0, -4) + "0000"), "HEAD:refs/heads/task/7-the-factory")).ok).toBe(false);
-    // The merge: a merge token moves staging forward (staging's rules hold), recorded as the admin's push; never deletes it.
-    const merge = f.factory({ scope: "merge", branch: "task/7-the-factory", by: "ada" });
+    // The merge: a merge token moves staging, once, to the merge itself (as factory/vm/merge.ts makes it), recorded
+    // as the admin's push; never deletes it, never main, never another commit.
+    const merge = f.factory({ scope: "merge", branch: "task/7-the-factory", by: "ada", id: "merge-1" });
     await must(vm, "fetch", "-q", "origin");
-    await must(vm, "checkout", "-q", "-B", "staging", "origin/staging");
-    await must(vm, "merge", "-q", "--no-ff", "-m", "Merge task/7-the-factory: the factory", "origin/task/7-the-factory");
-    expect((await git(vm, "push", merge, "HEAD:refs/heads/staging")).ok).toBe(true);
-    expect(f.moves.at(-1)).toMatchObject({ branch: "staging", how: "push", by: "ada" });
+    const base = await must(vm, "rev-parse", "origin/staging"), head = await must(vm, "rev-parse", "origin/task/7-the-factory");
+    const shaped = (tree: string, ...parents: string[]) => must(vm, "commit-tree", tree, ...parents.flatMap((x) => ["-p", x]), "-m", "Merge task/7-the-factory: the factory");
+    // Not the merge: other files (a change no one saw), staging alone on top, the parents the other way, an older token.
+    writeFileSync(join(vm, "sneaky.txt"), "not in the branch\n");
+    await must(vm, "add", "sneaky.txt");
+    const otherTree = await must(vm, "write-tree");
+    await must(vm, "reset", "-q", "--hard");
+    const sneaky = await git(vm, "push", merge, `${await shaped(otherTree, base, head)}:refs/heads/staging`);
+    expect(sneaky.ok).toBe(false);
+    expect(sneaky.err).toContain("must have the files of task/7-the-factory");
+    expect((await git(vm, "push", merge, `${await shaped(`${head}^{tree}`, base)}:refs/heads/staging`)).err).toContain("two parents");
+    expect((await git(vm, "push", merge, `${await shaped(`${head}^{tree}`, head, base)}:refs/heads/staging`)).err).toContain("two parents");
+    expect((await git(vm, "push", merge, `${head}:refs/heads/staging`)).ok).toBe(false);
+    const old = f.factory({ scope: "merge", branch: "task/7-the-factory", by: "ada" });
+    expect((await git(vm, "push", old, `${await shaped(`${head}^{tree}`, base, head)}:refs/heads/staging`)).err).toContain("older one");
+    expect(await must(src, "ls-remote", "erga", "staging")).toContain(base);
+    // The merge itself.
+    const merged = await shaped(`${head}^{tree}`, base, head);
+    expect((await git(vm, "push", merge, `${merged}:refs/heads/staging`)).ok).toBe(true);
+    expect(f.moves.at(-1)).toMatchObject({ branch: "staging", how: "push", by: "ada", new: merged });
+    // Once: the same token can't move staging again, even to a new merge of the branch.
+    await must(vm, "checkout", "-q", "-B", "task/7-the-factory", merged);
+    writeFileSync(join(vm, "task.txt"), "after the merge\n");
+    await must(vm, "commit", "-qam", "After the merge");
+    expect((await git(vm, "push", task, "HEAD:refs/heads/task/7-the-factory")).ok).toBe(true);
+    const again = await git(vm, "push", merge, `${await shaped("HEAD^{tree}", merged, "HEAD")}:refs/heads/staging`);
+    expect(again.err).toContain("moved staging already");
+    // What factory/vm/merge.ts tells apart: a refusal (back to ready to merge) from staging having moved (it tries again).
+    const stale = /fetch first|non-fast-forward|stale info/;
+    expect(again.err).not.toMatch(stale);
+    expect(sneaky.err).not.toMatch(stale);
+    const fresh = f.factory({ scope: "merge", branch: "task/7-the-factory", by: "ada", id: "merge-2" });
+    expect((await git(vm, "push", fresh, `${await must(vm, "commit-tree", `${head}^{tree}`, "-p", base, "-p", head, "-m", "A merge made before staging moved")}:refs/heads/staging`)).err).toMatch(stale);
     expect((await git(vm, "push", merge, ":refs/heads/staging")).ok).toBe(false);
     expect((await git(vm, "push", merge, "HEAD:main")).ok).toBe(false);
     // Then the task's branch is deleted, and gone.

@@ -21,7 +21,7 @@
 // port 4401, with Host set to localhost (the dev server in the VM signs in its
 // DEV_LOGIN on localhost only). A document's page on a sibling host can't use
 // that cookie: requests from another host of the domain (Sec-Fetch-Site:
-// same-site) are refused.
+// same-site) are refused, and the preview's own Set-Cookie headers are dropped.
 
 import { DurableObject } from "cloudflare:workers";
 import type { Env } from "../worker/env";
@@ -157,5 +157,17 @@ export async function previewDoor(request: Request, env: Env, ticketOk: (vm: str
     return new Response(null, { status: 302, headers: { Location: url.pathname + url.search, "Set-Cookie": `factory_preview=${ticket}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=43200`, "Referrer-Policy": "no-referrer" } });
   }
   if (!cookie || !(await ticketOk(name, cookie))) return new Response("Open this preview from the factory's board.", { status: 403 });
-  return env.FACTORY_VM.getByName(name).preview(request);
+  return withoutCookies(await env.FACTORY_VM.getByName(name).preview(request));
+}
+
+/**
+ * The preview's answer without its Set-Cookie headers. The preview gets no cookies (FactoryVm.preview drops them), so
+ * its own are of no use to it; but the task's code could set one for the whole domain (Domain=), which every other
+ * preview, and every document's pages, would then get.
+ */
+export function withoutCookies(r: Response): Response {
+  if (!r.headers.has("set-cookie")) return r;
+  const headers = new Headers(r.headers);
+  headers.delete("set-cookie");
+  return new Response(r.body, { status: r.status, statusText: r.statusText, headers });
 }
