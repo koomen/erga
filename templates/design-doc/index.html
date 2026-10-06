@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Untitled</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@500;600;700&family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,600;1,7..72,400&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+  /* One reading column: a header, sections, and open decisions boxed at the end. */
+  :root {
+    --bg: #f7f8fa; --surface: #ffffff; --ink: #1b2330; --muted: #5b6676; --rule: #dde2ea; --accent: #1f5f8b;
+    --alice: #1f5f8b; --carol: #b3541c;
+    --open-bg: #fbeed3; --open-fg: #7a4d00; --lean-bg: #dcebf7; --lean-fg: #1f5f8b; --done-bg: #dcf1e3; --done-fg: #1e6b3c;
+    --display: "Instrument Sans", "Helvetica Neue", Arial, sans-serif;
+    --body: "Literata", Georgia, "Times New Roman", serif;
+    --mono: "JetBrains Mono", ui-monospace, Menlo, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #12161d; --surface: #1a2029; --ink: #e4e8ee; --muted: #9aa5b4; --rule: #2c3440; --accent: #7fb6e0;
+      --alice: #7fb6e0; --carol: #f0a468;
+      --open-bg: #3a2e14; --open-fg: #f0c46e; --lean-bg: #173049; --lean-fg: #9ccbef; --done-bg: #173524; --done-fg: #8fd6a8; color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #12161d; --surface: #1a2029; --ink: #e4e8ee; --muted: #9aa5b4; --rule: #2c3440; --accent: #7fb6e0;
+    --alice: #7fb6e0; --carol: #f0a468;
+    --open-bg: #3a2e14; --open-fg: #f0c46e; --lean-bg: #173049; --lean-fg: #9ccbef; --done-bg: #173524; --done-fg: #8fd6a8; color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--body); font-size: 17px; line-height: 1.6; }
+  .page { max-width: 44rem; margin: 0 auto; padding: 56px 16px 96px; display: grid; gap: 36px; }
+  header { display: grid; gap: 10px; }
+  .eyebrow { font-family: var(--mono); font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+  h1, h2, h3 { font-family: var(--display); line-height: 1.15; margin: 0; text-wrap: balance; }
+  h1 { font-size: 2.3rem; font-weight: 700; letter-spacing: -.01em; text-align: center; }
+  h2 { font-size: 1.3rem; font-weight: 600; }
+  h3 { font-size: 1rem; font-weight: 600; }
+  p { margin: 0; }
+  .lede { font-size: 1.1rem; color: var(--muted); }
+  section { display: grid; gap: 12px; min-width: 0; }
+  section > * { min-width: 0; }
+  ul, ol { margin: 0; padding-left: 1.3em; display: grid; gap: 6px; }
+  code { font-family: var(--mono); font-size: .85em; background: var(--surface); border: 1px solid var(--rule); border-radius: 4px; padding: 0 .3em; }
+  .sketch { overflow-x: auto; background: var(--surface); border: 1px solid var(--rule); border-radius: 10px; padding: 16px 18px; }
+  .sketch pre { margin: 0; font-family: var(--mono); font-size: 12.5px; line-height: 1.55; }
+  .flow { width: min(820px, calc(100vw - 32px)); margin-left: calc((100% - min(820px, calc(100vw - 32px))) / 2); margin-block: 0; display: grid; gap: 12px; overflow-x: auto; background: var(--surface); border: 1px solid var(--rule); border-radius: 10px; padding: 16px; }
+  .flow svg { display: block; width: 100%; min-width: 620px; height: auto; font-family: var(--display); }
+  .flow .box { fill: var(--bg); stroke: var(--rule); stroke-width: 1.5; }
+  .flow .truth { stroke: var(--ink); stroke-width: 2; }
+  .flow .rail { fill: var(--muted); font-family: var(--mono); font-size: 11px; letter-spacing: .08em; }
+  .flow .t { fill: var(--ink); font-size: 13px; font-weight: 700; }
+  .flow .m { fill: var(--muted); font-size: 12px; }
+  .flow .c { fill: var(--ink); font-family: var(--mono); font-size: 11px; }
+  .flow .b { fill: var(--ink); font-family: var(--body); font-size: 15px; }
+  .flow .mid { text-anchor: middle; }
+  .flow .who { font-size: 12px; font-weight: 600; text-anchor: end; }
+  .flow .alice { fill: var(--alice); font-weight: 700; }
+  .flow .carol { fill: var(--carol); font-weight: 700; }
+  .flow .arr { fill: none; stroke: var(--muted); stroke-width: 1.5; }
+  .flow .al { fill: var(--muted); font-size: 11.5px; }
+  .flow .sub { fill: var(--muted); font-size: 13px; text-anchor: middle; }
+  .flow figcaption { font-size: 14px; color: var(--muted); }
+  .table-wrap { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-size: 15px; }
+  th, td { text-align: left; vertical-align: top; padding: 8px 10px; border-bottom: 1px solid var(--rule); }
+  th { font-family: var(--display); font-weight: 600; font-size: 13px; color: var(--muted); }
+  .decisions { display: grid; gap: 14px; }
+  .decision { background: var(--surface); border: 1px solid var(--rule); border-radius: 10px; padding: 16px 20px; display: grid; gap: 8px; }
+  .decision-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+  .decision-head .id { font-family: var(--mono); font-size: 13px; color: var(--muted); margin-right: 8px; }
+  .chip { font-family: var(--display); font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; padding: 2px 8px; border-radius: 999px; background: var(--open-bg); color: var(--open-fg); white-space: nowrap; }
+  .chip.lean { background: var(--lean-bg); color: var(--lean-fg); }
+  .chip.done { background: var(--done-bg); color: var(--done-fg); }
+  .lean.call strong { color: var(--done-fg); }
+  .lean { font-size: 15.5px; padding-left: 12px; border-left: 2px solid var(--rule); color: var(--muted); }
+  .lean strong { font-family: var(--display); font-size: 12px; letter-spacing: .04em; text-transform: uppercase; color: var(--accent); margin-right: 6px; }
+  @media (max-width: 480px) { body { font-size: 16px; } h1 { font-size: 1.9rem; } }
+</style>
+</head>
+<body>
+<main class="page">
+
+  <header>
+    <div class="eyebrow"></div>
+    <h1>Untitled</h1>
+    <p class="lede">What this document is about, in a sentence or two.</p>
+  </header>
+
+  <section>
+    <h2>Section</h2>
+    <p>Start writing here.</p>
+  </section>
+
+</main>
+</body>
+</html>
