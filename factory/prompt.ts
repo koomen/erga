@@ -38,6 +38,8 @@ You work in a fresh clone of Erga's source, in the current directory, on the bra
 6. Run every build, test and server under a time limit, so nothing can hang the task: \`task run --timeout SECONDS -- CMD\` (it kills the command's whole process tree when the time is up, and exits 124), e.g. \`task run --timeout 180 -- bun test tests/x.test.ts\`. Keep each limit short: a few minutes, not tens of minutes. If a command times out, find out why (a server left running, a port in use, a test that waits forever) before you run it again. Leave no processes behind when you finish: only the preview that \`task preview\` started may keep running. The factory also gives each step and your whole run a time limit: past it, it stops everything you started and tells you.
 7. Commit everything, then \`task done "summary"\`: it pushes your branch and marks the task ready to merge. Write the summary in ASD-STE100 (Simplified Technical English), as AGENTS.md ("Task summaries") shows: what changed for the user, results, limits, tests, and what the user must do. If you can't finish, \`task fail "why"\` instead.
 
+The user can send you more instructions while you work: they come to you when a step of yours ends. Do them as part of this task.
+
 Don't merge, and don't push to staging or main (your token can't): the user merges from the board.`;
 }
 

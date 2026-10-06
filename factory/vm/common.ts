@@ -78,6 +78,11 @@ export const LIMITS = {
   preview: 150, shot: 60, stopPreview: 10,
   /** An earlier run that is still going when a merge or another run starts: the time it gets to end by itself (it reported, and says its last words). */
   stopRun: 30,
+  /**
+   * Instructions sent while Claude Code works reach it when its current step ends. When one command of its still runs
+   * this long after they came (and had run this long), that command is stopped, so they reach Claude Code anyway.
+   */
+  instructionsWait: 60,
 };
 
 export interface StepResult { code: number; out: string; err: string; timedOut: boolean; secs: number; /** Its time limit, in seconds. */ limit: number }
@@ -198,7 +203,25 @@ export function prepareClaude() {
   const settings = join(home, ".claude", "settings.json");
   let now: Record<string, unknown> = {};
   try { now = JSON.parse(readFileSync(settings, "utf8")); } catch {}
-  writeFileSync(settings, JSON.stringify({ ...now, fastMode: FAST() }, null, 2));
+  writeFileSync(settings, JSON.stringify({ ...now, fastMode: FAST(), hooks: inboxHooks() }, null, 2));
+}
+
+/**
+ * Claude Code's hooks for the instructions sent while it works (task.ts hook): after each tool call (failed or not),
+ * and when it would stop, it gets those that wait. The hook asks the factory only when run.ts has seen some (INBOX).
+ */
+function inboxHooks() {
+  const hook = [{ type: "command", command: `bun '${join(import.meta.dirname, "task.ts")}' hook`, timeout: 30 }];
+  return { PostToolUse: [{ matcher: "*", hooks: hook }], PostToolUseFailure: [{ matcher: "*", hooks: hook }], Stop: [{ hooks: hook }] };
+}
+
+/** Where run.ts notes that instructions wait for this run's Claude Code (the hook then takes them), and why a command of its was stopped. */
+export const INBOX = () => join(WORK(), `.inbox-${RUN()}`);
+export const STOPPED = () => join(WORK(), `.stopped-${RUN()}`);
+
+/** What Claude Code reads with the instructions that were sent while it worked (`text`: the factory's, who asks what). */
+export function asksPrompt(text: string, stopped = ""): string {
+  return `The user sent more instructions while you worked on this task. Do them now, as part of the task, and keep the work you did, unless they say otherwise. Then go on as before: test, commit, and say task done (or task fail).${stopped ? `\n\n${stopped}` : ""}\n\n${text}`;
 }
 
 /** Fast mode for Claude Code: on, unless the factory_fast setting is off (FACTORY_FAST=0). */
