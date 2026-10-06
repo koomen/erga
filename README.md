@@ -247,8 +247,12 @@ The + button (New document) makes a new document. It is in the viewer's
 controls, beside Clone and Edit (on a document's page and on the front page,
 served directly or not), and in the editor's top row, beside the pencil. It
 opens a picker of templates, under the button: **Page** (a blank document)
-and the **Presentation** group, with **Slides** and the **Solar system tour**
-(below; an empty group says it has no templates yet). The demo page
+and the **Presentation** group, with **Slides** (below), **Canvas
+presentation** (`templates/canvas`, a Prezi-style talk: four frames on one
+large canvas, each a step with its label and picture; going to another step
+zooms out to the whole canvas, then in on that frame, and a click on a frame
+goes to it too) and the **Solar system tour** (below). An empty group says it
+has no templates yet. The demo page
 is no template: Clone, on the front page, copies it. Every option and group
 heading is in the app's typeface, Inter, at one size and weight (the picker
 loads `/fonts/inter.css` on a page that hasn't it). Each template is a link to
@@ -1690,6 +1694,15 @@ sends `{ type: "unblocked" | "blocked" }` (a toast on the board). On the
 board: a chip on the card ("waiting for #12", "merges after #12", "blocked by
 #12"), waiting tasks at the bottom of Queued with Start off, and Merge off
 with the reason.
+
+**Stalled tasks.** A task that is working or needs agent, and whose log has
+had no new line in 5 minutes, is *stalled* (`factory/stall.ts`): its Claude
+Code may be hung, or in one long step. Its card and its detail view show a
+badge ("stalled 12 min") and the detail view says since when; the board
+checks again every 30 seconds, and a new log line clears it. The API's tasks
+carry a computed `stalled {since, quietMs}`, and `list_tasks` and `get_task`
+tell the factory's agent how long the task has been quiet. "Stalled" is not
+"blocked": a blocked task waits for its dependencies.
 
 **The factory's agent.** Beside the board, an agent panel like the editor's
 (the same panel and conversation, `src/page/agent-chat.ts`; its own code is
