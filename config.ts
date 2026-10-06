@@ -185,6 +185,8 @@ export interface SettingChange {
   to: unknown;
   /** Put back to its default (Reset). */
   reset?: boolean;
+  /** An API key admins enter (credentials.ts), by its Worker secret's name: what happened to it. `from` and `to` are null, never the key. */
+  credential?: "set" | "replaced" | "cleared";
 }
 
 /** A version of the settings (server_config_versions): who changed them, when, and what changed. */
