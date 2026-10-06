@@ -1223,7 +1223,13 @@ and each target's deploys beside the commit each deployed (one for each
 commit: the running one, else the live one, else the newest; its state as
 plain text, and only the live one with a background),
 any deploy's log, past or live, in a modal;
-`/admin/deploys` (and `/source`) redirect there.
+`/admin/deploys` (and `/source`) redirect there. A factory task's merge
+(`Merge task/<id>-<slug>: title`) shows as a long, thin card with the task's
+number, name and how many commits it has, and the commits that came in with it
+(those its second parent brings, `source/repo.ts`: `withTasks`, up to 100) follow it,
+their dots on the same rail, their subjects indented. Other commits show as
+always. A card folds its commits away; "Collapse tasks" folds every card, so
+the list shows only tasks; the browser remembers it (`tests/source-tasks.ts`).
 
 **The branch model.** There are only two branches, and `staging` is always
 at or ahead of `main`: `main` only fast-forwards to a commit of `staging`
