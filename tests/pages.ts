@@ -321,6 +321,16 @@ try {
   await until(async () => (await editedPage())?.h1 == "Blog", 10_000, "the editor renders the page", editedPage);
   const editing = (await editedPage())!;
   expect(editing.h1 == "Blog" && editing.color == "rgb(180, 40, 30)", "the editor renders blog/index.html, its folder's stylesheet applying", editing);
+  // evaluate_page: the agent's expression runs in that page as the editor renders it, and changes nothing.
+  const evaluated = await tool("evaluate_page", { document: doc.id, expression: `({ color: getComputedStyle(document.querySelector("h1")).color, h1: document.querySelector("h1").getBoundingClientRect().height > 0 })` });
+  expect(evaluated.ok && evaluated.text.startsWith('{"color":"rgb(180, 40, 30)","h1":true}'), "evaluate_page gives the page's computed style as JSON", evaluated);
+  const blogBefore = await (await get(`/d/${doc.id}/doc/blog/index.html`)).text();
+  const meddled = await tool("evaluate_page", { document: doc.id, expression: `document.querySelector("h1").textContent = "Meddled"` });
+  await Bun.sleep(300);
+  expect(meddled.ok && meddled.text.startsWith('"Meddled"') && (await (await get(`/d/${doc.id}/doc/blog/index.html`)).text()) == blogBefore && (await editedPage())?.h1 == "Blog", "and what it changes in the page goes nowhere", meddled);
+  const stuck = await tool("evaluate_page", { document: doc.id, expression: "new Promise(() => {})", timeout: 200 });
+  expect(!stuck.ok && /didn't finish within 200 ms/.test(stuck.text), "an expression that never finishes times out", stuck);
+  ok("evaluate_page runs an expression in the open editor's render, read-only, with a time limit");
   // Typing into it edits blog/index.html.
   const box = await p.frame<{ x: number; y: number }>(`(() => { const d = document.getElementById("page").contentDocument; const r = d.querySelector("p").getBoundingClientRect(); return { x: r.right - 2, y: r.top + r.height / 2 }; })()`);
   const offset = await p.eval<{ x: number; y: number }>(`(() => { const r = document.getElementById("frame").getBoundingClientRect(); return { x: r.left, y: r.top }; })()`);
