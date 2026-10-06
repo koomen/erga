@@ -1,7 +1,8 @@
-// The API keys an admin enters on /admin (admin.ts): Anthropic's, for the
-// editor's agent, the factory's agent and version descriptions, and
-// OpenAI's, for OpenAI's models. docs/secrets.md ("Keys entered on the admin
-// pages") says how they are kept, and this does it:
+// The API keys an admin enters on /admin/api-keys (admin.ts): Anthropic's,
+// for the editor's agent, the factory's agent and version descriptions;
+// OpenAI's, for OpenAI's models; the GitHub mirror's token; and the
+// Cloudflare token a server deploys itself with. docs/secrets.md ("Keys
+// entered on the admin pages") says how they are kept, and this does it:
 //
 //   - Each key is encrypted with AES-GCM, a fresh IV each time, its name as
 //     the additional data, under a key derived from a deploy-time secret
@@ -20,11 +21,35 @@
 import type { Param, Sql, Statement } from "./directory.ts";
 import type { Actor, Users } from "./users.ts";
 
-/** The keys there are, by name: the Worker secret each stands in for, and how a real one starts. */
+/**
+ * The keys there are, by name: the Worker secret each stands in for, the
+ * service it is for, and how a real one starts (any start, if none).
+ */
 export const CREDENTIALS = {
-  anthropic: { env: "ANTHROPIC_API_KEY", label: "Anthropic API key", prefix: "sk-ant-", description: "The editor's agent, the factory's agent and the descriptions of versions call Anthropic's API with it." },
-  openai: { env: "OPENAI_API_KEY", label: "OpenAI API key", prefix: "sk-", description: "For OpenAI's models. Erga doesn't call OpenAI yet: a key set here is ready for when it does." },
-} as const;
+  anthropic: { env: "ANTHROPIC_API_KEY", label: "Anthropic API key", service: "Anthropic", prefixes: ["sk-ant-"], description: "The editor's agent, the factory's agent and the descriptions of versions call Anthropic's API with it." },
+  openai: { env: "OPENAI_API_KEY", label: "OpenAI API key", service: "OpenAI", prefixes: ["sk-"], description: "For OpenAI's models. Erga doesn't call OpenAI yet: a key set here is ready for when it does." },
+  github_mirror: { env: "GITHUB_MIRROR_TOKEN", label: "GitHub mirror token", service: "GitHub", prefixes: ["github_pat_", "ghp_"], description: "Pushes staging and main to Erga's GitHub mirror. A fine-grained token, with Contents read and write on that one repository." },
+  cloudflare_deploy: { env: "CLOUDFLARE_DEPLOY_TOKEN", label: "Cloudflare deploy token", service: "Cloudflare", prefixes: [], description: "The server deploys itself with it when its branch moves. A Cloudflare API token: bun deploy/setup.ts makes one as narrow as Cloudflare allows." },
+} as const satisfies Record<string, { env: string; label: string; service: string; prefixes: readonly string[]; description: string }>;
+
+/**
+ * The secrets only the deploy sets (Worker secrets). The API keys page lists
+ * them but can't change them: each is a root key, guards the sign-in, or is
+ * shared with the other server, so a wrong value there could lock the admins
+ * out or break both servers (docs/secrets.md, "Admin panel?").
+ */
+export const DEPLOY_SECRETS = [
+  { env: "SESSION_SECRET", service: "Erga", description: "Signs sessions, agent tokens and admin tokens. If it changes, everyone is signed out.", why: "It is the root key of every sign-in." },
+  { env: "FACTORY_KEY", service: "Erga", description: "Encrypts the keys on this page and the Claude plan token, and signs the factory's VM tokens.", why: "The keys on this page are encrypted with it. Locally, the session secret stands in for it." },
+  { env: "GITHUB_CLIENT_SECRET", service: "GitHub", description: "Signs people in with GitHub (the OAuth app).", why: "A wrong value stops every sign-in, the admin's too." },
+  { env: "SNAPSHOT_TOKEN", service: "Erga", description: "Lets staging copy production's documents.", why: "Production and staging must have the same value." },
+  { env: "DEPLOY_HOOK_SECRET", service: "Erga", description: "Lets production and staging tell each other that a branch moved.", why: "Production and staging must have the same value." },
+] as const;
+
+/** A deploy-time secret as an admin sees it: only whether the deploy has it. */
+export interface DeploySecretEntry { env: string; service: string; description: string; why: string; set: boolean; /** Not set, but something stands in for it (FACTORY_KEY: the session secret, locally). */ standIn: boolean }
+
+const aOrAn = (label: string) => `${/^[AEIOU]/.test(label) ? "an" : "a"} ${label}`;
 export type CredentialName = keyof typeof CREDENTIALS;
 export const isCredentialName = (s: string): s is CredentialName => Object.hasOwn(CREDENTIALS, s);
 
@@ -33,6 +58,7 @@ export interface CredentialEntry {
   name: CredentialName;
   env: string;
   label: string;
+  service: string;
   description: string;
   /** A key is stored here. */
   set: boolean;
@@ -60,8 +86,9 @@ export function checkKey(name: CredentialName, value: string): string {
   const c = CREDENTIALS[name], key = value.trim();
   if (!key) throw new CredentialError(`Paste the ${c.label}, or use Clear to remove it.`);
   if (name == "anthropic" && key.startsWith("sk-ant-oat")) throw new CredentialError(`That is a Claude plan token (sk-ant-oat…), not an API key: it goes on the Factory page. An API key starts with sk-ant-api.`);
-  if (!key.startsWith(c.prefix)) throw new CredentialError(`That isn't an ${c.label}: one starts with ${c.prefix}.`);
-  if (!/^[\x21-\x7e]{20,400}$/.test(key)) throw new CredentialError(`That isn't an ${c.label}: a key is 20 to 400 characters, with no spaces.`);
+  const prefixes: readonly string[] = c.prefixes;
+  if (prefixes.length && !prefixes.some((p) => key.startsWith(p))) throw new CredentialError(`That isn't ${aOrAn(c.label)}: one starts with ${prefixes.join(" or ")}.`);
+  if (!/^[\x21-\x7e]{20,400}$/.test(key)) throw new CredentialError(`That isn't ${aOrAn(c.label)}: a key is 20 to 400 characters, with no spaces.`);
   return key;
 }
 
@@ -86,7 +113,16 @@ export class Credentials {
     const rows = new Map((await this.sql.all<Row>("SELECT name, last4, updated, updated_by FROM credentials")).map((r) => [r.name, r]));
     return (Object.keys(CREDENTIALS) as CredentialName[]).map((name) => {
       const c = CREDENTIALS[name], r = rows.get(name);
-      return { name, env: c.env, label: c.label, description: c.description, set: !!r, last4: r?.last4 ?? null, updated: r ? Number(r.updated) : null, updatedBy: r?.updated_by ?? null, fallback: this.fallback(c.env), canStore: !!this.aesKey };
+      return { name, env: c.env, label: c.label, service: c.service, description: c.description, set: !!r, last4: r?.last4 ?? null, updated: r ? Number(r.updated) : null, updatedBy: r?.updated_by ?? null, fallback: this.fallback(c.env), canStore: !!this.aesKey };
+    });
+  }
+
+  /** The secrets only the deploy sets, and whether this server has each (never a value). Admins only. */
+  async deployed(by: Actor): Promise<DeploySecretEntry[]> {
+    await this.users.mustAdmin(by);
+    return DEPLOY_SECRETS.map((s) => {
+      const set = this.fallback(s.env);
+      return { ...s, set, standIn: !set && s.env == "FACTORY_KEY" && !!this.aesKey };
     });
   }
 
@@ -141,7 +177,7 @@ export class Credentials {
   }
 
   private nameOf(name: string): CredentialName {
-    if (!isCredentialName(name)) throw new CredentialError(`There's no key "${name}": the keys are ${Object.keys(CREDENTIALS).join(" and ")}.`);
+    if (!isCredentialName(name)) throw new CredentialError(`There's no key "${name}": the keys are ${Object.keys(CREDENTIALS).join(", ")}.`);
     return name;
   }
 
