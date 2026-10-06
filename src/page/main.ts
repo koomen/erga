@@ -33,6 +33,7 @@ import { BASE } from "./base";
 import { shareWithAgent } from "./share-agent";
 import type { Settings } from "./settings";
 import { dirOf, isPage, pageUrl } from "../../tree";
+import { mountLayout } from "./layout";
 
 const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 
@@ -1282,6 +1283,8 @@ Once you've read the guide, await further instructions.`;
   // ---------------------------------------------------------------- the agent
 
   const agentPanel = $("agent");
+  // Where the agent and the steps list sit around the document, and how wide the agent is (layout.ts).
+  mountLayout(agentPanel, agentPanel.querySelector<HTMLElement>(".agent-head")!);
   const agentLog = $("agent-log");
   const agentInput = $("agent-input") as HTMLTextAreaElement;
   const agentSend = $("agent-send") as HTMLButtonElement;
