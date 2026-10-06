@@ -658,7 +658,10 @@ mode, `published.version` is the current version.
 
 The agents (the editor's and external ones, over `/api/ext`, the server's
 API and MCP) have `list_versions`, `read_version` (a version's files, or one
-file as it was), `restore_version` and `publish_version` (`latest`, or
+file as it was), `diff_versions` (a unified diff for each file, `from` a version
+or `last_turn`, the default: where that agent's last turn ended, `to` a version
+or `current`, the default: the document as it is now; `path` for one file or
+folder), `restore_version` and `publish_version` (`latest`, or
 `manual` with a version; editors only), so an agent can do what the person can.
 
 **In process, for the homepage's deploy** (`versions.ts`):

@@ -16,7 +16,7 @@
 // them, says what changed (`changes`, a compact diff), and writes the
 // fallback description used when no model writes one.
 
-import { structuredPatch } from "diff";
+import { createTwoFilesPatch, structuredPatch } from "diff";
 import Anthropic from "@anthropic-ai/sdk";
 
 /** A version as the API shows it (README: the contract shared with the settings UI and the homepage deploy). */
@@ -197,6 +197,45 @@ export class Versions {
 }
 
 export interface Changes { added: string[]; removed: string[]; changed: string[]; diff: string }
+
+/**
+ * A unified diff for each file that differs from `before` to `after` (two
+ * whole file sets, path -> bytes): changed files first, then added, then
+ * removed, each in path order; `path` keeps one file (or the files in that
+ * folder). Binary files say only that they changed. The text stops at about
+ * `maxChars`, with a note of the files it left out. Empty if nothing differs.
+ */
+export function unifiedDiff(before: Map<string, Uint8Array>, after: Map<string, Uint8Array>, opts: { path?: string; context?: number; maxChars?: number } = {}): { files: string[]; diff: string } {
+  const want = opts.path?.replace(/^\.?\//, "").replace(/\/$/, "");
+  const wanted = (p: string) => !want || p == want || p.startsWith(want + "/");
+  const same = (a: Uint8Array, b: Uint8Array) => a.length == b.length && a.every((x, i) => x == b[i]);
+  const rank = (p: string) => (before.has(p) && after.has(p) ? 0 : after.has(p) ? 1 : 2);
+  const files = [...new Set([...before.keys(), ...after.keys()])].filter(wanted)
+    .filter((p) => !before.has(p) || !after.has(p) || !same(before.get(p)!, after.get(p)!))
+    .sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
+  const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false });
+  const text = (b: Uint8Array | undefined) => { if (!b) return ""; try { return decoder.decode(b); } catch { return null; } };
+  const max = opts.maxChars ?? 50 * 1024;
+  const cut = (i: number) => `[The diff stops here, at about ${Math.round(max / 1024)}KB. Not shown: ${files.slice(i).join(", ")}. Pass path for one file.]`;
+  const parts: string[] = [];
+  let used = 0;
+  for (const [i, path] of files.entries()) {
+    const was = before.get(path), now = after.get(path);
+    const a = text(was), b = text(now);
+    let piece: string;
+    if (a == null || b == null) piece = `Binary file ${path} ${!was ? "added" : !now ? "deleted" : "changed"} (${was?.length ?? 0} -> ${now?.length ?? 0} bytes)`;
+    else {
+      piece = createTwoFilesPatch(was ? `a/${path}` : "/dev/null", now ? `b/${path}` : "/dev/null", a, b, undefined, undefined, { context: opts.context ?? 3 })
+        .replace(/^=+\n/, "").trimEnd();
+      if (!was) piece = `new file ${path}\n${piece}`;
+      else if (!now) piece = `deleted file ${path}\n${piece}`;
+    }
+    if (used > 0 && used + piece.length > max) { parts.push(cut(i)); break; }
+    parts.push(piece.length > max ? `${piece.slice(0, max)}\n[${path}'s diff is cut here: pass path, and a smaller context, or read_version.]` : piece);
+    used += piece.length;
+  }
+  return { files, diff: parts.join("\n") };
+}
 
 function sameFiles(a: Record<string, string>, b: Record<string, string>): boolean {
   const ka = Object.keys(a), kb = Object.keys(b);
