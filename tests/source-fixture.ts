@@ -10,7 +10,7 @@ import { join } from "node:path";
 import { gitServers, localToken, MOCK_GITHUB_TOKEN } from "../dev/git-server.ts";
 import { gitHttp } from "../source/http.ts";
 import { SourceRepo, type Move } from "../source/repo.ts";
-import { verifyGitToken, type GitGrant } from "../factory/git-grant.ts";
+import { readAllowed, verifyGitToken, type GitGrant } from "../factory/git-grant.ts";
 import { mintGitToken } from "../dev/factory.ts";
 import type { Remote } from "../source/remote.ts";
 
@@ -77,6 +77,7 @@ export function startFixture(opts: { mirror?: boolean } = {}): Fixture {
         return gitHttp(request, url.pathname.slice("/git/erga.git".length), {
           upstream: async () => artifacts(),
           advertise: () => repo.advertise(grant),
+          ...(grant ? { reads: (ref: string) => readAllowed(grant, ref) } : {}),
           receive: (body) => repo.receive(body, grant ? { login: grant.by ?? "factory", name: "Erga factory" } : { login: "ada", name: "Ada" }, grant),
         });
       }

@@ -87,6 +87,10 @@ async function merge(): Promise<Record<string, unknown>> {
         return { ok: true, commit };
       }
       if (moved.timedOut) return needsAgent("timeout", "push-staging", stepFailure("Pushing staging", moved));
+      // Refused by the server's rules (an ended or spent merge token, a merge that isn't the branch's), not because
+      // staging moved: nothing the task's Claude Code can fix, so back to ready to merge with the reason; Merge again
+      // gets a new token.
+      if (!/fetch first|non-fast-forward|stale info/.test(moved.err)) return { ok: false, error: stepFailure("Pushing staging", moved) };
       // Staging moved on (another merge, a push): again, on top of it.
       if (attempt >= 3) return needsAgent("failed", "push-staging", `Staging kept moving; the push failed three times: ${moved.err}`);
     }
