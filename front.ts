@@ -252,6 +252,10 @@ export async function frontDoor(request: Request, base: Platform): Promise<Respo
   if (!access) return new Response("Not allowed", { status: 403 });
   // The share button's token is the front door's (tokens.ts), not the document's.
   if (rest == "/api/share" && request.method == "POST") return shareToken(platform, request, session);
+  // The document's sockets (its room, its events) are opened by this site's own pages: a page of another origin, even
+  // of this site (another subdomain, which the session cookie reaches), may not open one as whoever's signed in.
+  const origin = request.headers.get("origin");
+  if (request.headers.get("upgrade")?.toLowerCase() == "websocket" && origin && origin != url.origin) return new Response("Not from this site", { status: 403 });
   const answer = await platform.docs.fetch(route, forwarded(request, url, rest, `${url.origin}/d/${route.id}`, session, accessOf(access)));
   // A document's own files are its own: nothing of the site's goes into them (account.ts).
   if (!/^text\/html\b/i.test(answer.headers.get("content-type") ?? "") || answer.status == 101) return answer;

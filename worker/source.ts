@@ -105,8 +105,8 @@ async function adminOf(request: Request, env: Env, platform: Platform, url: URL)
 export async function sourceApi(request: Request, env: Env, platform: Platform, url: URL): Promise<Response> {
   const who = await adminOf(request, env, platform, url);
   if (who instanceof Response) return who;
-  if (!hasSource(env)) return json({ error: notSetUp }, 503);
   if (request.method == "POST" && !who.bearer && request.headers.get("origin") != url.origin) return json({ error: "Forbidden" }, 403);
+  if (!hasSource(env)) return json({ error: notSetUp }, 503);
   try {
     if (url.pathname == "/api/source/branches" && request.method == "GET") {
       const view = await host(env).branches(url.origin);
