@@ -1028,7 +1028,8 @@ error says what to fix), 401 (bad token) or 404 (no such tool).
 - The document keeps versions (a snapshot of every file after each burst of
   edits, and after each run of your calls). list_versions and read_version show
   them; diff_versions shows what changed between two of them, or since your last
-  run of calls (by default), as a unified diff for each file; restore_version brings one back as a new version; publish_version
+  run of calls (by default), as a unified diff for each file; restore_version
+  brings one back as a new version; publish_version
   chooses what viewers see: "latest" (the document as it is, the default) or one
   version. Only restore or publish when asked.
 - Follow the rules below whenever you create or change a page, so people can keep
