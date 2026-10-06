@@ -221,7 +221,7 @@
     @media (prefers-reduced-motion: reduce) {
       :root { --agent-ms: 1ms; }
     }
-    /* The agent panel's insides (its head, the conversation, the box) are style.css's: /admin/source's panel has them too. */
+    /* The agent panel's insides (its head, the conversation, the box) are style.css's: /admin/factory's panel has them too. */
 
     /* Who's here: you, then everyone else and their agents, in their colours. */
     .people { display: flex; align-items: center; gap: 4px; margin-right: 6px; }
@@ -411,6 +411,7 @@
     <p class="account-who"><b id="account-name"></b><span id="account-login"></span></p>
     <a role="menuitem" id="account-docs" href="/docs">Documents</a>
     <a role="menuitem" id="account-settings" href="/settings">Settings</a>
+    <a role="menuitem" id="account-deploy" href="/deploy" hidden>Deploy your own</a>
     <a role="menuitem" id="account-admin" href="/admin" hidden>Admin settings</a>
     <a role="menuitem" id="account-out" href="/auth/logout">Sign out</a>
   </div>

@@ -27,7 +27,7 @@
 import { DurableObject } from "cloudflare:workers";
 import { accountOf, OWN_ACCOUNT } from "../account";
 import { roleMay, type DocRow } from "../directory";
-import { link, whoOf, type Platform } from "../front";
+import { link, mayDeploy, whoOf, type Platform } from "../front";
 import { HOME_FILES, homeHeader, IDLE, renderHome, type DeployStatus } from "../home";
 import { mimeOf } from "../host";
 import { directoryOf } from "./d1";
@@ -363,7 +363,7 @@ export async function serveHome(request: Request, env: Env, ctx: ExecutionContex
       clone: link("/new?from=landing", session),
       edit: session && !session.agent && roleMay(role, "edit") ? `${link(page.address, session)}#edit`
         : unlockToEdit ? link(`/admin/keys?next=${encodeURIComponent(`${page.address}#edit`)}`, session) : null,
-      account: accountOf(session, admin),
+      account: accountOf(session, admin, await mayDeploy(dir, session)),
       here: url.pathname + url.search,
       doc: page.docId,
     });

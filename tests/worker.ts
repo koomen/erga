@@ -570,8 +570,9 @@ try {
     get(`${path}${who ? `?user=${who}` : ""}`, { method: "POST", body: new URLSearchParams(fields), headers: { Origin: origin, Accept: "application/json" } });
   expect((await adminPost("/admin/settings", { key: "delete_docs_after_hours", value: "48" }, null)).status == 403, "nor can they change a setting");
   if (adminName) {
-    const adminPage = await (await as(adminName, "/admin")).text();
-    expect(adminPage.includes("delete_docs_after_hours") && adminPage.includes(`data-login="${adminName}"`) && adminPage.includes(`data-login="${login}"`), "an admin sees the settings and the users", adminPage.slice(0, 300));
+    const adminPage = await (await as(adminName, "/admin")).text(), usersPage = await (await as(adminName, "/admin/users")).text();
+    expect(adminPage.includes("delete_docs_after_hours") && adminPage.includes(`href="/admin/users`) && usersPage.includes(`data-login="${adminName}"`) && usersPage.includes(`data-login="${login}"`), "an admin sees the settings, and the users on /admin/users", adminPage.slice(0, 300));
+    expect((await as("Ada", "/admin/users")).status == 404, "nobody else sees /admin/users");
     expect((await (await as(adminName, "/docs")).text()).includes(`>Admin settings</a>`), "and their menu links to it");
     // Settings: set, refused with the reason, reset.
     let res = await adminPost("/admin/settings", { key: "delete_docs_after_hours", value: "48" });
@@ -622,7 +623,7 @@ try {
     expect(r2.status == 403 && ((await r2.json()) as { error: string }).error.includes("ADMINS"), "a bootstrap admin can't be demoted");
     expect((await adminPost("/admin/users", { do: "remove", login: adminName })).status == 403, "nor removed");
     r2 = await adminPost("/admin/users", { do: "remove", login: newcomer });
-    expect(r2.ok && !(await (await as(adminName, "/admin")).text()).includes(`data-login="${newcomer}"`), "removing a user takes them off the list");
+    expect(r2.ok && !(await (await as(adminName, "/admin/users")).text()).includes(`data-login="${newcomer}"`), "removing a user takes them off the list");
     expect((await adminPost("/admin/users", { do: "role", login: newcomer, role: "admin" }, null)).status == 403, "and someone who isn't an admin can't change users");
     ok("admins add and remove users and make them admins or not; a bootstrap admin can't be demoted or removed");
 
@@ -630,18 +631,19 @@ try {
     const at = await browser.page();
     await at.open(`${base}/admin?user=${adminName}`);
     await at.eval(`(() => { const i = document.querySelector('li.setting[data-key=delete_docs_after_hours] input[name=value]'); i.value = "36"; i.dispatchEvent(new Event("input", { bubbles: true })); document.querySelector('li.setting[data-key=delete_docs_after_hours] .save').click(); })()`);
-    await until(async () => (await at.eval<string>(`document.readyState == "complete" ? document.querySelector('li.setting[data-key=delete_docs_after_hours] .meta')?.textContent ?? "" : ""`)).includes(`set by ${adminName}`), 5000, "saving a setting from the page shows who set it");
+    await until(async () => (await at.eval<string>(`document.readyState == "complete" ? document.querySelector('li.setting[data-key=delete_docs_after_hours] .set')?.textContent ?? "" : ""`)).includes(`by ${adminName}`), 5000, "saving a setting from the page shows who set it");
     expect((await at.eval<string>(`document.querySelector('li.setting[data-key=delete_docs_after_hours] input[name=value]').value`)) == "36", "with its new value");
     await at.eval(`document.querySelector('li.setting[data-key=delete_docs_after_hours] .reset').click()`);
-    await until(async () => await at.eval<boolean>(`document.readyState == "complete" && !document.querySelector('li.setting[data-key=delete_docs_after_hours] .meta') && !document.querySelector('li.setting[data-key=delete_docs_after_hours] .reset')`), 5000, "reset from the page");
+    await until(async () => await at.eval<boolean>(`document.readyState == "complete" && !document.querySelector('li.setting[data-key=delete_docs_after_hours] .set') && !document.querySelector('li.setting[data-key=delete_docs_after_hours] .reset')`), 5000, "reset from the page");
     // Never, from the page: choosing it hides the hours, and saving keeps it.
     await at.eval(`(() => { const m = document.querySelector('li.setting[data-key=delete_docs_after_hours] select.mode'); m.value = "never"; m.dispatchEvent(new Event("change", { bubbles: true })); })()`);
     expect(await at.eval<boolean>(`document.querySelector('li.setting[data-key=delete_docs_after_hours] .amount').hidden && !document.querySelector('li.setting[data-key=delete_docs_after_hours] .save').disabled`), "choosing Never hides the hours and lights up Save");
     await at.eval(`document.querySelector('li.setting[data-key=delete_docs_after_hours] .save').click()`);
-    await until(async () => (await at.eval<string>(`document.readyState == "complete" ? document.querySelector('li.setting[data-key=delete_docs_after_hours] .meta')?.textContent ?? "" : ""`)).includes(`set by ${adminName}`), 5000, "saving Never from the page");
+    await until(async () => (await at.eval<string>(`document.readyState == "complete" ? document.querySelector('li.setting[data-key=delete_docs_after_hours] .set')?.textContent ?? "" : ""`)).includes(`by ${adminName}`), 5000, "saving Never from the page");
     expect(await at.eval<boolean>(`document.querySelector('li.setting[data-key=delete_docs_after_hours] select.mode').value == "never" && document.querySelector('li.setting[data-key=delete_docs_after_hours] .amount').hidden`), "the page shows Never after saving");
     await at.eval(`document.querySelector('li.setting[data-key=delete_docs_after_hours] .reset').click()`);
-    await until(async () => await at.eval<boolean>(`document.readyState == "complete" && !document.querySelector('li.setting[data-key=delete_docs_after_hours] .meta') && !document.querySelector('li.setting[data-key=delete_docs_after_hours] .reset')`), 5000, "reset from the page, again");
+    await until(async () => await at.eval<boolean>(`document.readyState == "complete" && !document.querySelector('li.setting[data-key=delete_docs_after_hours] .set') && !document.querySelector('li.setting[data-key=delete_docs_after_hours] .reset')`), 5000, "reset from the page, again");
+    await at.open(`${base}/admin/users?user=${adminName}`);
     await at.eval(`(() => { const f = document.querySelector('form.add-user'); f.elements.login.value = "pagebie"; f.requestSubmit(); })()`);
     await until(async () => at.eval<boolean>(`!!document.querySelector('li[data-login="pagebie"]')`), 5000, "adding a user from the page lists them");
     at.close?.();

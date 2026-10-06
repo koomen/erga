@@ -64,22 +64,48 @@ try {
   const { p, row } = await adminPage(open.root);
   expect(await row(`!li.querySelector(".badge") && !li.querySelector("[name=value]").disabled`), "unlocked, it's editable");
   await row(`(li.querySelector("[name=value]").value = "36", li.querySelector("[name=value]").dispatchEvent(new Event("input")), li.querySelector("form").requestSubmit(), true)`);
-  await until(() => row(`li?.querySelector(".meta")?.textContent.includes("set by tester") && li.querySelector("[name=value]").value == "36"`), 10_000, "the page reloads with the value set");
+  await until(() => row(`/^Last set at \\d{4}-\\d\\d-\\d\\d \\d\\d:\\d\\d UTC by tester$/.test(li?.querySelector(".set")?.textContent) && li.querySelector("[name=value]").value == "36"`), 10_000, "the page reloads with the value set");
+  await p.settle();
+  ok("unlocked, an admin sets it on /admin, and the line under it says when and who set it");
+
+  // The other settings have real controls: switches, selects, no Reset where the control picks the default; no Factory section.
+  const at = (key: string, expr: string) => p.eval<any>(`(() => { const li = document.querySelector('li.setting[data-key="${key}"]'); return ${expr}; })()`);
+  expect(await at("factory", `li.dataset.control == "switch" && li.querySelector("input[type=checkbox][role=switch]") && !li.querySelector("[name=value]").checked && !li.querySelector(".save")`), "factory is an off switch, with no Save");
+  expect(await at("factory_fast", `li.querySelector("input[role=switch]").checked`), "factory_fast is a switch, on");
+  expect(JSON.stringify(await at("factory_model", `[...li.querySelectorAll("select[name=value] option")].map((o) => o.value)`)) == '["opus","sonnet","haiku"]', "factory_model is a select of its models");
+  expect(JSON.stringify(await at("deploy_page", `[...li.querySelectorAll("select[name=value] option")].map((o) => o.value)`)) == '["off","admins","users"]', "deploy_page is a select of who");
+  expect(await p.eval(`!document.getElementById("factory-title")`), "no separate Factory section");
+  await p.settle();
+  await at("factory", `(li.querySelector("[name=value]").click(), true)`);
+  await until(() => at("factory", `li?.querySelector("[name=value]").checked && /by tester$/.test(li.querySelector(".set")?.textContent)`), 10_000, "turning the factory switch on saves it, and the page reloads");
+  await p.settle();
+  await at("factory_model", `(li.querySelector("select").value = "sonnet", li.querySelector("select").dispatchEvent(new Event("change")), true)`);
+  await until(() => at("factory_model", `li?.querySelector("select").value == "sonnet" && /by tester$/.test(li.querySelector(".set")?.textContent)`), 10_000, "picking sonnet saves it");
+  await p.settle();
+  const landing = await (await p.eval<any>(`fetch("/admin/settings", { method: "POST", body: new URLSearchParams({ key: "landing_document", value: "null" }) }).then((r) => r.status)`));
+  expect(landing == 200, "landing_document set to none", landing);
+  await p.eval(`location.reload()`);
+  await until(() => at("landing_document", `!!li?.querySelector(".set")`), 10_000, "the page reloads");
+  for (const key of ["factory", "factory_model", "factory_fast", "landing_document"]) expect(await at(key, `!li.querySelector(".reset")`), `no Reset on ${key}`);
+  expect(await at("delete_docs_after_hours", `!!li.querySelector(".reset")`), "Reset stays on delete_docs_after_hours");
   await p.settle();
   await p.screenshot(join(SHOTS, "admin-set.png"));
-  ok("unlocked, an admin sets it on /admin, and it says who set it");
+  ok("switches, selects and no Reset for the factory and landing document settings");
 
   // The change log, a page of its own (/admin/changes): newest first, when, who, and from what to what.
-  await p.eval(`fetch("/admin/settings", { method: "POST", body: new URLSearchParams({ key: "factory_model", value: '"sonnet"' }) }).then((r) => r.ok)`);
+  await p.eval(`fetch("/admin/settings", { method: "POST", body: new URLSearchParams({ key: "factory_fast", value: '"off"' }) }).then((r) => r.ok)`);
   await p.eval(`fetch("/admin/settings", { method: "POST", body: new URLSearchParams({ key: "delete_docs_after_hours", reset: "1" }) }).then((r) => r.ok)`);
   await p.eval("location.reload(), true");
-  await until(() => p.eval<boolean>(`!!document.querySelector('li.setting[data-key="factory_model"] [name=value]')?.value.includes("sonnet")`), 10_000, "/admin shows the new value");
+  await until(() => at("factory_fast", `!!li && !li.querySelector("[name=value]").checked`), 10_000, "/admin shows the new value");
   expect(await p.eval<boolean>(`!document.querySelector("ol.changes, #changes")`), "/admin itself has no change log");
   await p.eval(`location.href = "/admin/changes", true`);
   await until(() => p.eval<boolean>(`location.pathname == "/admin/changes" && document.querySelector("h1")?.textContent == "Change log"`), 10_000, "/admin/changes opens, titled Change log");
-  await until(() => p.eval<boolean>(`document.querySelectorAll("ol.changes > li.change").length == 3`), 10_000, "the change log lists the 3 changes");
+  const side = await p.eval<string[]>(`[...document.querySelectorAll(".admin-side a")].map((a) => a.textContent + " " + a.getAttribute("href") + (a.getAttribute("aria-current") ? " *" : ""))`);
+  expect(JSON.stringify(side.slice(0, 2)) == JSON.stringify(["Settings /admin", "Change log /admin/changes *"]), "the sidebar has Change log right after Settings, marked as this page", side);
+  await until(() => p.eval<boolean>(`document.querySelectorAll("ol.changes > li.change").length == 5`), 10_000, "the change log lists the 5 changes");
   const log = await p.eval<string[]>(`[...document.querySelectorAll("ol.changes > li.change")].map((li) => li.querySelector(".by").textContent + ": " + li.querySelector(".what").textContent.replace(/\\s+/g, " ").trim())`);
-  expect(JSON.stringify(log) == JSON.stringify(["tester: delete_docs_after_hours 36 → 24 reset", "tester: factory_model “opus” → “sonnet”", "tester: delete_docs_after_hours 24 → 36"]), "newest first, each with who and from what to what", log);
+  // The changes made above, newest first, each once (landing_document was none already: no change, no version).
+  expect(JSON.stringify(log) == JSON.stringify(["tester: delete_docs_after_hours 36 → 24 reset", "tester: factory_fast “on” → “off”", "tester: factory_model “opus” → “sonnet”", "tester: factory “off” → “on”", "tester: delete_docs_after_hours 24 → 36"]), "newest first, each once, with who and from what to what", log);
   await until(() => p.eval<boolean>(`!!document.querySelector("ol.changes time[title]")`), 5_000, "the times are shown");
   const times = await p.eval<string[]>(`[...document.querySelectorAll("ol.changes time[datetime]")].map((t) => t.textContent + "|" + t.title)`);
   expect(times.every((t) => t.startsWith("just now|") && t.length > 10), "each says when", times);

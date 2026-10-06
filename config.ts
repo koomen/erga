@@ -27,8 +27,10 @@ export interface Setting<T = unknown> {
   default: T;
   /** A value as given (parsed JSON), checked: throws a ConfigError saying what's wrong. */
   parse(value: unknown): T;
-  /** What the value names, when it isn't just a number or text: "document" (one of the server's documents, by id). */
-  kind?: "document";
+  /** What the value names, when it isn't just a number or text: "document" (one of the server's documents, by id), "users" (a list of logins). */
+  kind?: "document" | "users";
+  /** The values the admin page offers, as a select (as a switch when they're "off" and "on"). The parser may take others too. */
+  choices?: string[];
 }
 
 /** A whole number from `min` to `max`. */
@@ -44,6 +46,15 @@ export const text = (max: number) => (v: unknown): string => {
 };
 /** Either null or what `inner` takes. */
 export const nullable = <T>(inner: (v: unknown) => T) => (v: unknown): T | null => (v === null ? null : inner(v));
+/** A list of GitHub logins (lowercased, no "@", each once); a string of them, split by commas or spaces, too. */
+export const logins = (v: unknown): string[] => {
+  const list = typeof v == "string" ? v.split(/[\s,]+/) : v;
+  if (!Array.isArray(list) || list.some((l) => typeof l != "string")) throw new ConfigError("must be a list of GitHub logins");
+  const out = [...new Set((list as string[]).map((l) => l.trim().replace(/^@/, "").toLowerCase()).filter(Boolean))];
+  const bad = out.find((l) => !/^[a-z0-9][a-z0-9-]{0,38}$/.test(l));
+  if (bad) throw new ConfigError(`has "${bad}", which isn't a GitHub login`);
+  return out;
+};
 export const boolean = (v: unknown): boolean => {
   if (typeof v != "boolean") throw new ConfigError("must be true or false");
   return v;
@@ -70,13 +81,14 @@ export const SETTINGS = {
     kind: "document",
   }),
   factory: setting<"off" | "on">({
-    description: "The factory (experimental): tasks that Claude Code does in VMs, each a branch merged into staging, on /admin/source. off or on.",
+    description: "The factory (experimental): tasks that Claude Code does in VMs, each a branch merged into staging, on /admin/factory. off or on.",
     default: "off",
     parse: (v) => {
       const s = typeof v == "string" ? v.trim().toLowerCase() : v === true ? "on" : v === false ? "off" : v;
       if (s === "off" || s === "on") return s;
       throw new ConfigError('must be "off" or "on"');
     },
+    choices: ["off", "on"],
   }),
   factory_model: setting<string>({
     description: "The model the factory's Claude Code uses (claude --model): an alias such as opus or sonnet, or a full model name. Each job reads it when it starts, so no new image is needed.",
@@ -86,6 +98,7 @@ export const SETTINGS = {
       if (typeof s == "string" && /^[A-Za-z0-9][A-Za-z0-9._\[\]-]{0,99}$/.test(s)) return s;
       throw new ConfigError("must be a model alias (opus, sonnet) or a model name");
     },
+    choices: ["opus", "sonnet", "haiku"],
   }),
   factory_fast: setting<"off" | "on">({
     description: "Whether the factory's Claude Code runs in fast mode (its fastMode setting). on or off. Each job reads it when it starts.",
@@ -95,15 +108,17 @@ export const SETTINGS = {
       if (s === "off" || s === "on") return s;
       throw new ConfigError('must be "off" or "on"');
     },
+    choices: ["off", "on"],
   }),
   deploy_page: setting<"off" | "admins" | "users">({
-    description: "Who may use /deploy, to deploy Erga to their own Cloudflare account: off, admins or users (anyone signed in).",
+    description: "Who may use /deploy, to deploy Erga to their own Cloudflare account: off, admins (and users with the deploy role, on /admin/users) or users (anyone signed in).",
     default: "users",
     parse: (v) => {
       const s = typeof v == "string" ? v.trim().toLowerCase() : v;
       if (s === "off" || s === "admins" || s === "users") return s;
       throw new ConfigError('must be "off", "admins" or "users"');
     },
+    choices: ["off", "admins", "users"],
   }),
 };
 
@@ -122,7 +137,9 @@ export interface ConfigEntry {
   /** Fixed by the deploy: nobody can set or reset it here (show it read-only). */
   locked: boolean;
   /** What the value names, if it isn't plain (Setting.kind). */
-  kind?: "document";
+  kind?: "document" | "users";
+  /** The values the admin page offers (Setting.choices). */
+  choices?: string[];
   /** The value the deploy fixes it to (only when it's locked; then it's `value` too). */
   deployed?: unknown;
   /** When it was last set, and by whom (null if it never was, or it's locked). */
@@ -229,7 +246,7 @@ export class ServerConfig<S extends Settings = typeof SETTINGS> {
   async entry(key: string): Promise<ConfigEntry> {
     const s = this.setting(key);
     const row = (await this.table()).get(key);
-    const base = { key, description: s.description, default: s.default, ...(s.kind ? { kind: s.kind } : {}) };
+    const base = { key, description: s.description, default: s.default, ...(s.kind ? { kind: s.kind } : {}), ...(s.choices ? { choices: s.choices } : {}) };
     // The deploy's value wins; a row set before it was locked stays in the table, and counts again once it isn't.
     if (this.isLocked(key)) return { ...base, value: this.locked[key], source: "locked", locked: true, deployed: this.locked[key], updated: null, updatedBy: null };
     if (row) {
@@ -255,14 +272,7 @@ export class ServerConfig<S extends Settings = typeof SETTINGS> {
     try { parsed = s.parse(value); } catch (e) { throw new ConfigError(`${key} ${(e as Error).message}.`); }
     const check = Object.hasOwn(this.checks, key) ? this.checks[key] : undefined;
     if (check && parsed != null) parsed = await check(by, parsed);
-    const json = JSON.stringify(parsed), at = Date.now(), login = by.login.toLowerCase();
-    // The row and its version, together: every change is in the history.
-    const change = this.change(key, await this.stored(key), json);
-    await this.sql.batch([
-      [`INSERT INTO server_config (key, value, updated, updated_by) VALUES (?1, ?2, ?3, ?4)
-        ON CONFLICT (key) DO UPDATE SET value = ?2, updated = ?3, updated_by = ?4`, key, json, at, login],
-      ...this.version(at, login, change),
-    ]);
+    await this.write(key, JSON.stringify(parsed), by.login.toLowerCase());
     this.rows = null;
     await this.tell(key);
     return this.entry(key);
@@ -304,11 +314,7 @@ export class ServerConfig<S extends Settings = typeof SETTINGS> {
     await this.users.mustAdmin(by);
     this.setting(key);
     if (this.isLocked(key)) throw new NotAllowed(`${key} is fixed by the deploy (server.config.ts), so it can't be changed here: it stays ${JSON.stringify(this.locked[key])}.`);
-    const change = this.change(key, await this.stored(key), null);
-    await this.sql.batch([
-      ["DELETE FROM server_config WHERE key = ?1", key],
-      ...this.version(Date.now(), by.login.toLowerCase(), change && { ...change, reset: true }),
-    ]);
+    await this.write(key, null, by.login.toLowerCase());
     this.rows = null;
     await this.tell(key);
     return this.entry(key);
@@ -351,6 +357,30 @@ export class ServerConfig<S extends Settings = typeof SETTINGS> {
   /** The statement that records a version of the settings with this change (none for no change). */
   private version(at: number, by: string, change: SettingChange | null): Statement[] {
     return change ? [["INSERT INTO server_config_versions (at, by, changes) VALUES (?1, ?2, ?3)", at, by, JSON.stringify([change])]] : [];
+  }
+
+  /**
+   * Sets key's row to `json` (null: deletes it, back to its default), with
+   * the version that says what changed, in one batch, only while the row is
+   * still the one read: of two writes at once (a switch saved twice, two
+   * admins), each version says truly what it changed, and none is recorded
+   * twice. If another write came in between, it reads again and tries again.
+   */
+  private async write(key: string, json: string | null, by: string): Promise<void> {
+    for (let tries = 0; tries < 5; tries++) {
+      const before = await this.stored(key), at = Date.now();
+      const change = this.change(key, before, json);
+      const still = "(SELECT value FROM server_config WHERE key = ?1) IS ?2";
+      await this.sql.batch([
+        ...(change ? [[`INSERT INTO server_config_versions (at, by, changes) SELECT ?3, ?4, ?5 WHERE ${still}`, key, before, at, by, JSON.stringify([json == null ? { ...change, reset: true } : change])] as Statement] : []),
+        json == null
+          ? ["DELETE FROM server_config WHERE key = ?1 AND value IS ?2", key, before]
+          : [`INSERT INTO server_config (key, value, updated, updated_by) SELECT ?1, ?3, ?4, ?5 WHERE ${still}
+              ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated = excluded.updated, updated_by = excluded.updated_by`, key, before, json, at, by],
+      ]);
+      if ((await this.stored(key)) === json) return;
+    }
+    throw new ConfigError(`${key} is changing too often at once to save: try again.`);
   }
 
   private setting(key: string): Setting {
