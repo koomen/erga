@@ -247,7 +247,11 @@ The + button (New document) makes a new document. It is in the viewer's
 controls, beside Clone and Edit (on a document's page and on the front page,
 served directly or not), and in the editor's top row, beside the pencil. It
 opens a picker of templates, under the button: **Page** (a blank document)
-and the **Presentation** group (no templates yet, it says so). The demo page
+and the **Presentation** group: **Canvas presentation** (`templates/canvas`,
+a Prezi-style talk: four frames on one large canvas, each a step with its
+label and picture; going to another step zooms out to the whole canvas, then
+in on that frame, and a click on a frame goes to it too). A group with no
+templates says so. The demo page
 is no template: Clone, on the front page, copies it. Every option and group
 heading is in the app's typeface, Inter, at one size and weight (the picker
 loads `/fonts/inter.css` on a page that hasn't it). Each template is a link to
