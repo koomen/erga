@@ -95,6 +95,18 @@ test("users: add, make admin, demote, remove; bootstrap admins and yourself are 
   expect(await dir.users.allowed("bo")).toBe(false);
 });
 
+test("users: the deploy role, granted and revoked by an admin only", async () => {
+  const dir = fresh({ admins: ["root"] });
+  const root = { dir, who: { login: "root", unlocked: U } };
+  await run(root, "add_user", { login: "bo" });
+  expect((await run(root, "list_users")).find((u: { login: string }) => u.login == "bo").deploy).toBe(false);
+  expect(await run(root, "set_user_deploy", { login: "bo", deploy: true })).toMatchObject({ login: "bo", role: "user", deploy: true });
+  expect(await dir.users.hasDeploy("bo")).toBe(true);
+  expect((await failure(run({ dir, who: { login: "bo", unlocked: U } }, "set_user_deploy", { login: "bo", deploy: false }))).status).toBe(403);
+  expect((await run(root, "set_user_deploy", { login: "bo", deploy: false })).deploy).toBe(false);
+  expect((await failure(run(root, "set_user_deploy", { login: "nobody", deploy: true }))).status).toBe(404);
+});
+
 test("sharing: the owner sees and changes who has access; nobody else may; the editor's agent defaults to its document", async () => {
   const dir = fresh();
   await dir.add({ id: "aaaaaaaa", owner: "ada", title: "Plan", created: 1 });

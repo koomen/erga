@@ -17,7 +17,8 @@
 // one with a token is its own proof.
 
 import { CHALLENGE_MS, KeyError, NAMESPACE, SIGN_IN_KEY, TOKEN_MAX_MS, UNLOCK_MS, type AdminKey, type AdminKeys, type LogEntry, type Unlock } from "./admin-keys.ts";
-import { appPage, brand, esc, fromElsewhere, ICON, link, page, safeNext, type Platform, type Session, TIMES_SCRIPT, whoOf } from "./front.ts";
+import { adminLayout } from "./admin-layout.ts";
+import { esc, fromElsewhere, ICON, link, page, safeNext, type Platform, type Session, TIMES_SCRIPT, whoOf } from "./front.ts";
 
 /** What the Worker hands in: the erga_admin cookie (worker/auth.ts), and whether this is local development (GitHub isn't asked about a first key). */
 export interface AccessHooks {
@@ -194,14 +195,11 @@ function keysPage(session: Session, url: URL, s: State, next: string | null): Re
     ? `<div class="lockstate on" role="status"><div><b>Admin access is unlocked</b> until <span data-time="${esc(s.unlocked.until)}">${esc(s.unlocked.until.slice(11, 16))} UTC</span>, with ${esc(s.unlocked.key.name)}.${back ? ` <a href="${esc(back)}" class="go">Continue to ${esc(back.split("#")[0])}</a>` : ""}</div><button type="button" class="pill" id="lock">Lock now</button></div>`
     : `<div class="lockstate" role="status"><div><b>Admin access is locked.</b> ${s.bootstrap ? "Add your first admin SSH key below: it must be one of your keys on GitHub." : "Sign a challenge with one of your admin SSH keys to unlock it for an hour."}</div></div>`;
   const style = `
-  main { max-width: 760px; }
   section { margin-bottom: 40px; }
   h2 { display: flex; align-items: baseline; gap: 10px; margin: 0 0 8px; font-size: 16px; font-weight: 600; color: var(--fg-strong); }
   h2 small { font-size: 13px; font-weight: 400; color: var(--soft); }
   .lede { margin: 0 0 14px; font-size: 13.5px; color: var(--soft); }
   .lede code, .meta code { font-family: var(--font-mono); font-size: 12.5px; }
-  .back { font-size: 13px; color: var(--chrome); text-decoration: none; }
-  .back:hover { color: var(--chrome-hover); }
   .mono { font-family: var(--font-mono); font-size: 12.5px; }
   .lockstate { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 0 0 36px; padding: 14px 16px; border: 1px solid var(--rule); border-radius: 10px; font-size: 14px; color: var(--fg); background: color-mix(in srgb, #c2410c 7%, var(--bg)); }
   .lockstate.on { background: color-mix(in srgb, #15803d 9%, var(--bg)); }
@@ -274,11 +272,8 @@ function keysPage(session: Session, url: URL, s: State, next: string | null): Re
       <div class="actions"><button type="button" class="new" id="add-go">Add key</button><p class="hint" id="add-hint" role="status"></p></div>
     </div>
   </section>` : "";
-  const html = appPage("Admin keys", style, `${brand(session)}<main>
-  <header>
-    <h1>Admin keys</h1>
-    <a class="back" href="${esc(link(s.unlocked ? "/admin" : "/docs", session))}">‹ ${s.unlocked ? "Admin" : "Documents"}</a>
-  </header>
+  // The layout every admin page shares (admin-layout.ts); Share with agent only once admin access is open (it needs it).
+  const html = adminLayout({ session, title: "Keys", share: !!s.unlocked, style, body: `
   ${status}
   ${unlockSection}
   <section aria-labelledby="mine-title">
@@ -304,7 +299,6 @@ function keysPage(session: Session, url: URL, s: State, next: string | null): Re
 ${s.log.map((e) => `      <li><time datetime="${esc(e.at)}">${esc(e.at.slice(0, 16).replace("T", " "))}</time><span class="d"><b>${esc(e.login)}</b> ${esc(e.action.replace(/-/g, " "))}${e.detail ? `: ${esc(e.detail)}` : ""}</span></li>`).join("\n")}
     </ol>
   </section>` : ""}
-</main>
 <script>
   ${TIMES_SCRIPT}
   for (const t of document.querySelectorAll("[data-time]")) t.textContent = new Date(t.dataset.time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
@@ -393,6 +387,6 @@ ${s.log.map((e) => `      <li><time datetime="${esc(e.at)}">${esc(e.at.slice(0, 
     try { await call("/api/admin/keys/" + li.dataset.id + "/revoke"); location.reload(); }
     catch (e) { say(document.getElementById("keys-hint"), e.message, true); }
   });
-</script>`);
+</script>` });
   return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" } });
 }

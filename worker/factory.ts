@@ -5,7 +5,7 @@
 // Admins only, and only while the `factory` setting is "on". README, The
 // factory, has the design, the findings and the runbook.
 //
-//   /admin/factory                         redirects to /admin/source: the board is there now (factory/page.ts),
+//   /admin/factory                         the board (factory/page.ts), on the Factory page (worker/source.ts),
 //                                          with the source dashboard and the factory's own agent
 //   GET  /api/factory                      { enabled, vms, claude: { signedIn, at, by } }
 //   GET  /api/factory/tasks[/<id>]         the tasks, each with its log and screenshots
@@ -16,7 +16,8 @@
 //   POST /api/factory/tasks/<id>/merge     into staging (one merge at a time), then the branch is deleted; 409 while
 //                                          a dependency isn't merged (or merging ahead of it)
 //   POST /api/factory/tasks/<id>/discard   the branch deleted, the VM stopped
-//   POST /api/factory/tasks/<id>/revise    { instructions }: Claude Code works on the task again
+//   POST /api/factory/tasks/<id>/revise    { instructions }: Claude Code works on the task again (ready to merge or
+//                                          failed), or, while it works, gets them when its current step ends
 //   POST /api/factory/tasks/<id>/restart   a failed or ready task runs again on its branch: a fresh VM and git token
 //   PUT  /api/factory/claude               { token }: the Claude plan's token (claude setup-token), stored encrypted
 //   DELETE /api/factory/claude             forgets it
@@ -49,6 +50,8 @@
 // which reaches their own task only:
 //
 //   GET   /api/factory/tasks/<id>/brief         the title, branch and prompt (and new instructions)
+//   GET   /api/factory/tasks/<id>/inbox         { waiting }: instructions sent while the task works, not taken yet
+//   POST  /api/factory/tasks/<id>/inbox         { how }: Claude Code takes them (each one once), and the log says so
 //   POST  /api/factory/tasks/<id>/log           { message }
 //   POST  /api/factory/tasks/<id>/branch        { base }: the branch is made (from staging at base)
 //   POST  /api/factory/tasks/<id>/preview       { path }: the preview is up
@@ -118,6 +121,8 @@ export interface Task {
   starting?: boolean;
   /** Computed on every read: working or needs agent, and no new log line in 5 minutes (factory/stall.ts). */
   stalled?: Stalled;
+  /** Instructions sent while it works that its Claude Code hasn't got yet (it gets them when its current step ends). */
+  waiting?: number;
 }
 
 const enc = new TextEncoder();
@@ -278,6 +283,8 @@ export class Factory extends DurableObject<Env> {
     // Factory tokens, for outside agents ("Share with agent"): only the secret's SHA-256 is kept.
     this.sql.exec(`CREATE TABLE IF NOT EXISTS agent_tokens (id TEXT PRIMARY KEY, hash TEXT NOT NULL, login TEXT NOT NULL, name TEXT NOT NULL, label TEXT NOT NULL,
       unlock_key TEXT NOT NULL, created INTEGER NOT NULL, expires INTEGER NOT NULL, revoked INTEGER, revoked_by TEXT, last_used INTEGER)`);
+    // Instructions sent to a task while it works: its Claude Code takes them (taken) when its current step ends.
+    this.sql.exec(`CREATE TABLE IF NOT EXISTS asks (n INTEGER PRIMARY KEY AUTOINCREMENT, task INTEGER NOT NULL, by_login TEXT NOT NULL, text TEXT NOT NULL, at TEXT NOT NULL, taken TEXT)`);
     // Dependencies (#49), on a table made before them.
     const cols = this.sql.exec<{ name: string }>("PRAGMA table_info(tasks)").toArray().map((c) => c.name);
     for (const c of ["start_after", "merge_after", "merge_by", "run"]) if (!cols.includes(c)) this.sql.exec(`ALTER TABLE tasks ADD COLUMN ${c} TEXT`);
@@ -295,6 +302,7 @@ export class Factory extends DurableObject<Env> {
     const log = this.sql.exec<{ at: string; message: string }>("SELECT at, message FROM (SELECT * FROM logs WHERE task = ? ORDER BY n DESC LIMIT 200) ORDER BY n", r.id).toArray();
     const screenshots = this.sql.exec<{ file: string; caption: string; at: string }>("SELECT file, caption, at FROM shots WHERE task = ? ORDER BY n", r.id).toArray();
     const stalled = stalledOf({ status: r.status, updatedAt: r.updated, log });
+    const waiting = this.waiting(r.id).length;
     return {
       id: r.id, title: r.title, description: r.description, status: r.status, branch: r.branch, base: r.base, commit: r.commit_sha,
       summary: r.summary, error: r.error, url: r.preview_origin && r.preview_path != null ? r.preview_origin + r.preview_path : null,
@@ -303,11 +311,35 @@ export class Factory extends DurableObject<Env> {
       ...(this.deps.blocked(depOf(r)) ? { blockedBy: this.deps.blocked(depOf(r)) } : {}),
       ...(this.starting.has(r.id) ? { starting: true } : {}),
       ...(stalled ? { stalled } : {}),
+      ...(waiting ? { waiting } : {}),
     };
   }
 
   async list(): Promise<Task[]> { return this.sql.exec<Row>("SELECT * FROM tasks ORDER BY id").toArray().map((r) => this.view(r)); }
   async task(id: number): Promise<Task | null> { const r = this.row(id); return r && this.view(r); }
+
+  /** The instructions that wait for the task's Claude Code, oldest first. */
+  private waiting(id: number): Ask[] {
+    return this.sql.exec<Ask>("SELECT n, by_login AS by, text, at FROM asks WHERE task = ? AND taken IS NULL ORDER BY n", id).toArray();
+  }
+
+  /** Takes the instructions that wait, each one once, so that two runs never both get one. */
+  private takeAsks(id: number): Ask[] {
+    const asks = this.waiting(id);
+    if (asks.length) this.sql.exec("UPDATE asks SET taken = ? WHERE task = ? AND taken IS NULL AND n <= ?", now(), id, asks.at(-1)!.n);
+    return asks;
+  }
+
+  /** What a VM polls (run.ts): how many instructions wait, and since when. */
+  async inbox(id: number) { return { waiting: this.waiting(id).map(({ n, by, at }) => ({ n, by, at })) }; }
+
+  /** The task's Claude Code takes the instructions that wait (the VM's hook, as a step ends, or run.ts, as it starts Claude Code). */
+  async take(id: number, how: string): Promise<{ asks: Ask[]; text: string }> {
+    if (this.row(id)?.status != "working") return { asks: [], text: "" };
+    const asks = this.takeAsks(id);
+    if (asks.length) this.note(id, `Claude Code got the instructions from ${whoAsked(asks)}${how ? ` ${how.slice(0, 300)}` : ""}`);
+    return { asks, text: joinAsks(asks) };
+  }
 
   async shot(file: string): Promise<Uint8Array | null> {
     const r = this.sql.exec<{ data: ArrayBuffer }>("SELECT data FROM shots WHERE file = ?", file).toArray()[0];
@@ -506,6 +538,15 @@ export class Factory extends DurableObject<Env> {
           else return { ok: false, error: "status: complete or failed" };
           return { ok: true };
         }
+        // It ended before its Claude Code got the instructions that wait: it works on them now, in a new run.
+        const asks = ["complete", "failed"].includes(body.status) ? this.takeAsks(id) : [];
+        if (asks.length) {
+          const said = body.status == "complete" ? "said it was done" : `failed (${String(body.error ?? "").slice(0, 300)})`;
+          this.update(id, { instructions: joinAsks(asks), summary: body.status == "complete" ? String(body.summary ?? "") : r.summary, commit_sha: body.commit ? String(body.commit) : r.commit_sha, error: null, run: null },
+            `Claude Code ${said} before it got the instructions from ${whoAsked(asks)}: it works on them now`);
+          this.ctx.waitUntil(this.launch(id, "revise"));
+          return { ok: true };
+        }
         if (body.status == "complete") this.update(id, { status: "complete", summary: String(body.summary ?? ""), commit_sha: body.commit ? String(body.commit) : r.commit_sha, error: null }, "Ready to merge");
         else if (body.status == "failed") { this.update(id, { status: "failed", error: String(body.error ?? "failed") }, "Failed"); if (r.status != "failed") this.tellDependents(id); }
         else return { ok: false, error: "status: complete or failed" };
@@ -529,11 +570,19 @@ export class Factory extends DurableObject<Env> {
     if (origin) this.sql.exec("UPDATE tasks SET origin = ? WHERE id = ?", origin, id);
     const r = this.row(id);
     if (!r) return { ok: false, error: "no such task" };
-    if (!["complete", "failed"].includes(r.status)) return { ok: false, error: `task #${id} is ${r.status}: it takes instructions when it's ready to merge or failed` };
+    if (!["complete", "failed", "working"].includes(r.status)) return { ok: false, error: `task #${id} is ${r.status}: it takes instructions while it works, or when it's ready to merge or failed` };
     if (!instructions.trim()) return { ok: false, error: "Say what to change." };
+    if (r.status == "working") {
+      // Claude Code works on, and gets them when its current step ends (the VM's hook): nothing it did is lost.
+      this.sql.exec("INSERT INTO asks (task, by_login, text, at) VALUES (?, ?, ?, ?)", id, by, instructions.trim().slice(0, 20000), now());
+      this.note(id, `${by} asked, while it works: ${instructions.trim().slice(0, 500)}`);
+      return { ok: true };
+    }
     const why = this.deps.startRefusal(depOf(r));
     if (why) return { ok: false, error: why };
-    this.update(id, { instructions: instructions.trim().slice(0, 20000), status: "working", error: null }, `${by} asked: ${instructions.trim().slice(0, 500)}`);
+    // Any sent while it worked that its Claude Code never got (its VM stopped first) go with them.
+    const older = joinAsks(this.takeAsks(id));
+    this.update(id, { instructions: (older ? older + "\n\n" : "") + instructions.trim().slice(0, 20000), status: "working", error: null }, `${by} asked: ${instructions.trim().slice(0, 500)}`);
     this.ctx.waitUntil(this.launch(id, "revise"));
     return { ok: true };
   }
@@ -613,7 +662,7 @@ export class Factory extends DurableObject<Env> {
       // Staging moved. On Cloudflare the push went through Erga's Git endpoint, which tells the deploy pipeline itself
       // (worker/source-host.ts, deployHook): staging.erga.dev builds and deploys it. Locally the repository is the dev
       // server's own, which no deploy reads.
-      this.note(id, host.kind == "local" ? "Staging moved (the local repository: nothing deploys it)" : "Staging moved: staging.erga.dev deploys it now (see /admin/source)");
+      this.note(id, host.kind == "local" ? "Staging moved (the local repository: nothing deploys it)" : "Staging moved: staging.erga.dev deploys it now (see /admin/factory)");
     } catch (e) {
       this.backToReady(id, `The merge failed: ${(e as Error).message}`);
     }
@@ -884,11 +933,6 @@ async function adminOf(env: Env, request: Request): Promise<{ login: string; nam
   return (await users.isUnlocked(who)) && session.unlocked ? { login: session.login.toLowerCase(), name: session.name, unlock: session.unlocked } : "locked";
 }
 
-/** /admin/factory: the board is on /admin/source now, with the source dashboard and the factory's agent. */
-export function factoryDoor(): Response {
-  return new Response(null, { status: 302, headers: { Location: "/admin/source" } });
-}
-
 /** Whether the factory is on, for the page (worker/source.ts). */
 export const factoryEnabled = enabled;
 
@@ -901,7 +945,7 @@ async function sharedAgentApi(request: Request, env: Env, url: URL, raw: string,
   const t = await f.readToken(raw);
   const keyOk = t && (t.key == "local" ? isDev(env, url) : t.key == SIGN_IN_KEY ? !keysRequired(env) : (await adminKeysOf(env).ownerOf(t.key)) == t.login);
   if (!t || !keyOk || !(await directoryOf(env).users.isAdmin(t.login))) {
-    return json({ error: "That factory token doesn't work: it ended, was revoked, or the admin key that made it was. Ask an admin for a new one (Share with agent, on /admin/source)." }, 401);
+    return json({ error: "That factory token doesn't work: it ended, was revoked, or the admin key that made it was. Ask an admin for a new one (Share with agent, on /admin/factory)." }, 401);
   }
   const by = `${agentName(t.login)} (shared: ${t.label})`;
   const m = request.method;
@@ -918,7 +962,7 @@ async function sharedAgentApi(request: Request, env: Env, url: URL, raw: string,
     return data ? new Response(data, { headers: { "Content-Type": "image/png", "Cache-Control": "private, max-age=3600" } }) : json({ error: "Not found" }, 404);
   }
   const create = path == "/api/factory/tasks" && m == "POST", deps = id != null && !action && m == "PATCH", revise = id != null && action == "revise" && m == "POST";
-  if (!create && !deps && !revise) return json({ error: "A factory token can only create, read and instruct tasks (GET /api/factory/guide). Merging, discarding and starting are an admin's, on /admin/source." }, 403);
+  if (!create && !deps && !revise) return json({ error: "A factory token can only create, read and instruct tasks (GET /api/factory/guide). Merging, discarding and starting are an admin's, on /admin/factory." }, 403);
   if (!(await enabled(env))) return json({ error: "The factory is off: an admin turns it on with the factory setting (/admin)." }, 409);
   const body = await request.json().catch(() => null) as Record<string, unknown> | null;
   if (!body || typeof body != "object" || Array.isArray(body)) return json({ error: "Send JSON." }, 400);
@@ -933,7 +977,7 @@ async function sharedAgentApi(request: Request, env: Env, url: URL, raw: string,
 /** /api/factory/... */
 export async function factoryApi(request: Request, env: Env, url: URL): Promise<Response> {
   const path = url.pathname.replace(/\/$/, "");
-  const m = /^\/api\/factory\/tasks\/(\d+)(?:\/(brief|log|branch|preview|screenshots|merge|discard|revise|restart|open|start))?$/.exec(path);
+  const m = /^\/api\/factory\/tasks\/(\d+)(?:\/(brief|inbox|log|branch|preview|screenshots|merge|discard|revise|restart|open|start))?$/.exec(path);
   const id = m ? Number(m[1]) : null, action = m?.[2] ?? "";
 
   // An outside agent, with a factory token.
@@ -947,6 +991,8 @@ export async function factoryApi(request: Request, env: Env, url: URL): Promise<
     if (task == null || task != id) return json({ error: "That token isn't for this task." }, 403);
     const f = factory(env);
     if (action == "brief" && request.method == "GET") return json(await f.brief(task));
+    if (action == "inbox" && request.method == "GET") return json(await f.inbox(task));
+    if (action == "inbox" && request.method == "POST") return json(await f.take(task, String(((await request.json().catch(() => ({}))) as { how?: unknown }).how ?? "")));
     if (action == "screenshots" && request.method == "POST") {
       const r = await f.addShot(task, new Uint8Array(await request.arrayBuffer()), url.searchParams.get("caption") ?? "", url.searchParams.get("replace") == "1");
       return json(r, r.ok ? 200 : 400);
@@ -1041,4 +1087,14 @@ export async function factoryApi(request: Request, env: Env, url: URL): Promise<
     return r.ok ? json(await f.task(id), action == "merge" ? 202 : 200) : json(r, 409);
   }
   return json({ error: "Not found" }, 404);
+}
+
+/** An instruction sent while a task worked. */
+type Ask = { n: number; by: string; text: string; at: string };
+
+const whoAsked = (asks: Ask[]) => [...new Set(asks.map((a) => a.by))].join(", ");
+
+/** Instructions sent while a task worked, for Claude Code: each with who sent it, oldest first. */
+export function joinAsks(asks: { by: string; text: string }[]): string {
+  return asks.map((a) => `${a.by} asks: ${a.text}`).join("\n\n");
 }

@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Untitled presentation</title>
+<style>
+  /* A deck of 16:9 slides (Google Slides' shape), one at a time, as large as the window allows.
+     Sizes inside a slide are in cqw (hundredths of the slide's width), so everything scales with it. */
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #202124; }
+  body { display: grid; place-items: center; }
+  .slide { grid-area: 1 / 1; container-type: inline-size; box-sizing: border-box; overflow: hidden;
+    width: min(100vw, calc(100vh * 16 / 9)); height: min(100vh, calc(100vw * 9 / 16));
+    padding: 5.5cqw 6.5cqw; display: flex; flex-direction: column; gap: 2.5cqw; background: #fff;
+    font-family: Arial, Helvetica, sans-serif; color: #202124; }
+  .slide[hidden] { display: none; }
+  .slide h1, .slide h2, .slide p { margin: 0; }
+  .slide h1 { font-size: 7.2cqw; font-weight: 400; line-height: 1.15; }
+  .slide h2 { font-size: 5cqw; font-weight: 400; line-height: 1.2; }
+  .slide p { font-size: 2.5cqw; line-height: 1.4; }
+  /* The title slide: its title and subtitle in the middle. */
+  .slide.title { justify-content: center; text-align: center; gap: 2cqw; }
+  .slide.title p { font-size: 3.3cqw; color: #5f6368; }
+</style>
+</head>
+<body>
+<section class="slide title">
+  <h1>Untitled presentation</h1>
+  <p>Hello</p>
+</section>
+<section class="slide">
+  <h2>Second slide</h2>
+  <p>Hello</p>
+</section>
+<script>
+  // One step for each slide (window.ergaSteps, DOCUMENT_PROMPT.md, "Presentations"): Erga's buttons,
+  // arrow keys and list of slides step through them. The slides are read afresh each time, so a new one counts.
+  const slides = () => [...document.querySelectorAll("body > .slide")];
+  let at = 0;
+  function show(i) {
+    const all = slides();
+    at = Math.max(0, Math.min(all.length - 1, i));
+    all.forEach((s, k) => (s.hidden = k != at));
+    dispatchEvent(new Event("ergastep"));
+  }
+  // Slides added or removed: show the one we're at (or the last), and tell Erga.
+  new MutationObserver(() => show(at)).observe(document.body, { childList: true });
+  const title = (s) => (s?.querySelector("h1, h2")?.textContent ?? "").trim();
+  window.ergaSteps = {
+    count: () => slides().length,
+    current: () => at,
+    go: show,
+    label: (i) => title(slides()[i]) || `Slide ${i + 1}`,
+    // The slide drawn small: a copy of it, with the page's styles, in an SVG picture.
+    image(i, { width, height }) {
+      const slide = slides()[i];
+      if (!slide) return null;
+      const w = Math.round(Math.min(width, height * 16 / 9)), h = Math.round(w * 9 / 16);
+      const copy = slide.cloneNode(true);
+      for (const e of [copy, ...copy.querySelectorAll("*")]) {
+        if (e.localName.startsWith("erga-")) { e.remove(); continue; }
+        for (const a of [...e.attributes]) if (a.name.startsWith("data-erga") || a.name == "contenteditable" || a.name == "hidden") e.removeAttribute(a.name);
+      }
+      const box = document.createElement("div");
+      const css = document.createElement("style");
+      css.textContent = [...document.querySelectorAll("head style")].map((s) => s.textContent).join("\n") +
+        `\n.slide { width: ${w}px !important; height: ${h}px !important; }`;
+      box.append(css, copy);
+      const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}"><foreignObject width="100%" height="100%">` +
+        new XMLSerializer().serializeToString(box) + `</foreignObject></svg>`;
+      return "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
+    },
+  };
+  show(0);
+</script>
+</body>
+</html>
