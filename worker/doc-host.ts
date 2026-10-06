@@ -42,7 +42,7 @@ import { resolvePage } from "../tree";
 import { agentToolsFor } from "../server-tools";
 import { FileStore, Room, StateStore, StoreError } from "../room";
 import { agentName, assets, authorOf, files as texts, folders, isTextPath, type Author } from "../src/room/doc";
-import { describeChange, fallbackDescription, firePublished, publicVersion, versionNumber, Versions, type KV, type Published, type PublishRequest, type PublishResult, type StoredVersion, type Version, type VersionsState } from "../versions";
+import { describeChange, fallbackDescription, firePublished, publicVersion, versionNumber, Versions, type KV, type Published, type PublishRequest, type PublishResult, type RestoreResult, type StoredVersion, type Version, type VersionsState } from "../versions";
 import * as Y from "yjs";
 import { decodeValue, encodeValue, type DocSnapshot } from "../deploy/snapshot";
 import { directoryOf, withKeys } from "./d1";
@@ -656,18 +656,29 @@ export class DocHost extends DurableObject<Env> {
    * Brings a version back: its files are written over the document as it
    * is now (every file: those it didn't have are deleted), as an edit open
    * editors see live, and that becomes a new version, the current one, by
-   * `by`, "Restored version <n>". Edits not yet in a version become one
-   * first, so nothing is lost. In "latest" mode viewers then see it; in
-   * "manual" mode what's published stays.
+   * `by`, "Restored version <n>". With `path`, only that file comes back
+   * ("Restored <path> from version <n>"); the other files stay as they are.
+   * Edits not yet in a version become one first, so nothing is lost. In
+   * "latest" mode viewers then see it; in "manual" mode what's published stays.
    */
-  async restore(ref: string | number, by: string): Promise<{ ok: true; current: Version } | { ok: false; status: number; error: string }> {
+  async restore(ref: string | number, by: string, path?: string | null): Promise<RestoreResult> {
     const r = await this.ready();
     if (!r) return { ok: false, status: 404, error: "There's no such document." };
     const n = versionNumber(ref);
     const v = n != null ? await this.versions.get(n) : null;
     if (!v) return { ok: false, status: 404, error: `There's no version ${ref} of this document: its versions are v1 to v${await this.versions.head()}.` };
+    if (path != null) {
+      path = path.replace(/^\.?\/+/, "");
+      if (!(path in v.files)) return { ok: false, status: 404, error: `Version ${v.n} has no file ${path}: its files are ${Object.keys(v.files).sort().join(", ")}.` };
+    }
     await this.cutSoon("restore");
     const files = await this.versions.files(v);
+    if (path != null) {
+      const out = await this.publish({ [path]: files.get(path)! }, []);
+      if (out.refused.length) return { ok: false, status: 409, error: `Couldn't restore ${path}: ${out.refused[0].why}.` };
+      const made = await this.cutSoon("restored", { authors: [by], description: `Restored ${path} from version ${v.n}` });
+      return { ok: true, current: publicVersion(made ?? (await this.versions.latest())!), from: v.id, files: [path] };
+    }
     const room = r.opened.room;
     // Folders it didn't have go (unless something of it is inside); then its files over the current ones; then its folders.
     const keep = [...files.keys(), ...(v.folders ?? [])];
@@ -677,7 +688,7 @@ export class DocHost extends DurableObject<Env> {
     for (const d of v.folders ?? []) if (room.exists(d) != "folder") await Effect.runPromise(room.mkdir(d)).catch(() => {});
     if (out.refused.length) console.log(`restoring ${v.id}: ${out.refused.map((x) => `${x.path} (${x.why})`).join(", ")}`);
     const made = await this.cutSoon("restored", { authors: [by], description: `Restored version ${v.n}` });
-    return { ok: true, current: publicVersion(made ?? (await this.versions.latest())!) };
+    return { ok: true, current: publicVersion(made ?? (await this.versions.latest())!), from: v.id, files: [...files.keys()].sort() };
   }
 
   /**
@@ -792,7 +803,7 @@ export class DocHost extends DurableObject<Env> {
         },
         current: async () => (await this.ready())?.opened.current() ?? new Map(),
         publish: (req) => this.setPublished(req),
-        restore: (ref, by) => this.restore(ref, by),
+        restore: (ref, by, path) => this.restore(ref, by, path),
       },
       // A new page in its file tree starts as a new document does.
       newPage: TEMPLATE ? (path) => (path.endsWith(".md") ? plainMarkdown : TEMPLATE) : undefined,
