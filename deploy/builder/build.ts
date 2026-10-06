@@ -32,7 +32,7 @@ export async function buildCommit(o: { source: Source; commit: string; branch?: 
   const env = { GIT_TERMINAL_PROMPT: "0" };
   // The token goes to git through its environment, never its command line, which a failed command's error repeats
   // (and the deploy log keeps).
-  const auth = o.source.token ? { GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "http.extraHeader", GIT_CONFIG_VALUE_0: `Authorization: Basic ${btoa(`x:${o.source.token}`)}` } : {};
+  const auth: Record<string, string> = o.source.token ? { GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "http.extraHeader", GIT_CONFIG_VALUE_0: `Authorization: Basic ${btoa(`x:${o.source.token}`)}` } : {};
   o.log(`fetching ${o.commit.slice(0, 12)} from ${o.source.cloneUrl}`);
   await run(["git", "init", "-q"], { cwd: o.dir, env, log: o.log });
   // The branch, then the commit on it (servers don't all let a commit be fetched by its id).
