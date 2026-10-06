@@ -123,7 +123,9 @@ through `Directory.may`:
 
 The front door asks the directory on every request to a document (403 if
 they may not open it) and tells the document's host whether the person may
-edit or only view (`x-erga-access`). A viewer's room connection is
+edit or only view (`x-erga-access`). Its sockets open only from this site's own pages: a
+WebSocket whose `Origin` is another (another subdomain included, which the
+session cookie reaches) gets 403. A viewer's room connection is
 read-only (they see every edit as it happens; theirs are dropped, carets
 aside), their publishes (`PUT /api/stored`) are refused, and their agent,
 and an external agent with their share token, can read but not edit (it
@@ -730,6 +732,7 @@ session carries an unlock that names no key (`SIGN_IN_KEY`, made in
 `worker/auth.ts` and `front.ts`'s `withTokens`), so the admin check
 (`Users.isAdmin`) is the only one left. Non-admins and people signed out are
 refused as before. An admin's agent token works as an admin token does
+(but never the share button's token: below)
 (the admin tools, the Git endpoint), and `/admin/keys` says no key is
 needed. The keys, the challenges and admin tokens still work; to turn the
 requirement back on, make `ERGA_ADMIN_KEYS_REQUIRED`'s default `"1"` in
@@ -1859,19 +1862,64 @@ text and the other fields' values (`keepState` in `factory/page.ts`).
   relay to the app's 4400, as the app listens on the VM's loopback).
 - Each job gets, in its environment only: the factory's API and the task's
   own token for it (`fct…`: it reports on that task only), the repository and
-  a git token (`fgt…`, `factory/git-grant.ts`) that pushes that task's branch
-  only (a merge's also moves staging, under staging's rules, never deletes
-  it), and for a job that runs Claude Code, the Claude token, if there is
-  one (merge, save, stop and discard jobs never get it). On Cloudflare the repository
+  a git token (`fgt…`, `factory/git-grant.ts`) that reads staging, main and
+  that task's branch, and pushes that task's branch only, for two hours; and,
+  for a job that runs Claude Code, the Claude token, if there is one (merge,
+  save, stop and discard jobs never get it). A merge job's git token also moves
+  staging, once, and only to the merge itself: one new commit on top of
+  staging's head, whose second parent is the task's branch as pushed (with
+  staging in it), with that branch's files (`mergeShape`). It lasts as long
+  as the merge job may (35 minutes), and `SourceRepo` keeps the ids of the
+  ones it has spent. The token is made when the merge job starts (after the
+  merge waits its turn), so it doesn't matter how long ago the task became
+  ready to merge, and the job is stopped at 30 minutes, before the token
+  ends. If the endpoint refuses the staging push anyway (a spent or older
+  token, a merge that isn't the branch's), the task goes back to Ready to
+  merge with the reason, and Merge tries again with a new token; only a
+  staging that moved meanwhile makes the job try again by itself. On Cloudflare the repository
   is Erga's Git endpoint (`/git/erga.git`), which takes these tokens beside
   admin tokens (`worker/source.ts`, `SourceRepo.receive`): a task branch
   (`task/<id>-<slug>`) is made, moved and deleted only with its own task's
-  token, never shown on the Factory page, mirrored or deployed.
+  token, never shown on the Factory page, mirrored or deployed, and never
+  listed to another task's VM (its reads are protocol v2, with `ls-refs`
+  filtered and `want-ref` checked: `source/http.ts`).
   Scripts take tokens out of anything they log, and the factory hides
   anything shaped like a token in what a VM reports (`hideTokens`,
   `factory/prompt.ts`); git gets its token through
   its environment, never its command line or `.git/config`; the preview gets
-  none of them. Every secret, where it lives and who reads it: [docs/secrets.md](docs/secrets.md).
+  none of them. Every secret, where it lives and who reads it: [docs/secrets.md](docs/secrets.md). The preview's own `Set-Cookie` headers are dropped (it could
+  otherwise set a cookie on the whole previews' and pages' domain).
+- **What a task's VM can reach** (the audit of 2026-10-06, task #37). A VM is
+  one Unix user, so the task's code (Claude Code, and anything it runs or a
+  task's ask talks it into) can read everything any job there gets: the
+  agent's secret (`/proc/1/environ`), the task's tokens, the Claude token and,
+  during a merge, the merge job's git token (its environment, or a git hook
+  or a changed cached script that the merge job then runs). So the server
+  decides what each token can do, never the VM. What it can reach:
+  1. *The Claude plan's token* (`CLAUDE_CODE_OAUTH_TOKEN`): the riskiest. A
+     VM can copy it out (it has the internet) and use the plan elsewhere until
+     someone signs out on /admin/factory and revokes it at claude.ai. The fix
+     would be a proxy in the Worker that holds the token and lets each VM use
+     it only while its task works.
+  2. *Staging, through a merge*: only when an admin presses Merge, once, and
+     only to the merge of the task's branch as it is then. The task's code can
+     still change its own branch up to that moment, and resolve a conflict as
+     it likes: what lands is what the branch holds, which may not be what the
+     screenshots showed. Read the diff before Merge.
+  3. *Its own branch*: read and push, for two hours a token, as long as the
+     task works. Not main, not another task's branch, never staging without
+     a merge.
+  4. *Its own task on the factory's API* (`fct…`, a week): its log, status,
+     summary, preview and screenshots. Never another task's (403), and nothing
+     once it is merged or discarded. What it writes reaches the admin's own
+     factory agent, which treats it as information and has no tool to merge,
+     discard, push or deploy (`factory/agent.ts`).
+  5. *The internet*, from the VM (Claude Code and `bun install` need it).
+  It can't reach: main or production, deploy or Cloudflare tokens (no job
+  gets any), the server's secrets or database, other tasks' branches, data or
+  VMs, or an admin's session (the preview gets no cookies; its ticket is for
+  its own VM's host). The local stand-in (`dev/factory.ts`) checks a merge
+  token's refs, not the merge's shape: locally, nothing deploys staging.
 
 **Findings.**
 
@@ -2483,6 +2531,10 @@ your agent panel as "External agent: …". It works with the embedded agent
 off too (no API key needed). The share button's token is the same each time
 you open it (in any tab or browser), until New token in the dialog turns it
 off and makes another; `/settings` lists and revokes it with the rest.
+It never carries admin power, not even an admin's: no admin tools, deploys,
+Erga's source or Git endpoint, nor editing the homepage (`withTokens`,
+`front.ts`). It goes to an agent along with a document, and the document's
+text can steer that agent, as it can the editor's own.
 
 ### Agent tokens and the server's API
 

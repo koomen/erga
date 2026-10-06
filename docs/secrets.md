@@ -123,7 +123,7 @@ database, the object or the Worker's settings through Cloudflare.
 - **Admin panel?** Per person (unlocked admins).
 
 ### The factory's VM tokens: task tokens (`fct.…`), git tokens (`fgt.…`), preview tickets, `FACTORY_AGENT_SECRET`
-- **For**: a task's VM reports on its task (`fct`), pushes its branch (`fgt`, task scope; merge scope also moves `staging`), and an admin opens its preview (ticket, then a cookie on the preview's host). `FACTORY_AGENT_SECRET` is random for each VM and lets only the factory reach the VM's agent.
+- **For**: a task's VM reports on its task (`fct`), pushes its branch (`fgt`, task scope; merge scope also moves `staging`, once, only to the merge itself, for 35 minutes: README, "What a task's VM can reach"), and an admin opens its preview (ticket, then a cookie on the preview's host). `FACTORY_AGENT_SECRET` is random for each VM and lets only the factory reach the VM's agent.
 - **At rest**: not stored (signed with keys from `FACTORY_KEY`). They are in the VM job's environment.
 - **Exposure**: the VM's own code can read them. Since this audit, the factory hides anything shaped like a token in what a VM reports (log lines, summaries, errors, captions), because the board and factory-token holders read that text.
 

@@ -2,11 +2,16 @@
 // (worker/source.ts, source/repo.ts) and the dev server's stand-in does
 // (dev/factory.ts). The Worker mints them (worker/factory.ts, gitToken):
 //
-//   fgt.<base64url of the UTF-8 JSON { scope, branch, exp, by? }>.<hex HMAC-SHA256 of that, with HMAC(secret, "erga-factory-git")>
+//   fgt.<base64url of the UTF-8 JSON { scope, branch, exp, by?, id? }>.<hex HMAC-SHA256 of that, with HMAC(secret, "erga-factory-git")>
 //
-// A task's token reads the repository and pushes its own branch (task/…),
-// deleting it included. A merge token also moves staging forward, never
-// deletes it. Nothing else: not main, not another task's branch.
+// A task's token reads staging, main and its own branch (task/…), and pushes
+// its own branch, deleting it included. A merge token also moves staging,
+// once, and only to the merge itself: one new commit on top of staging, whose
+// other parent is the task's branch as pushed (with staging in it), with that
+// branch's files (mergeShape). Nothing else: not main, not another task's
+// branch, no other commit on staging. The VM is one user, so the task's own
+// code can read the merge job's environment: a merge token taken that way
+// does no more than the merge the admin asked for.
 //
 // Platform-neutral: Web Crypto only (the Worker, Bun and the tests).
 
@@ -18,6 +23,8 @@ export interface GitGrant {
   exp: number;
   /** The admin who asked (a merge's: whoever pressed Merge), for the push's record and its deploy. */
   by?: string;
+  /** A merge token's own id: it moves staging once (source/repo.ts keeps the ids it has spent). */
+  id?: string;
 }
 
 const enc = new TextEncoder();
@@ -59,6 +66,32 @@ export async function verifyGitToken(secret: string, token: string): Promise<Git
 
 /** A factory task's branch name (factory/prompt.ts, branchName): task/<id>-<slug>. */
 export const isTaskBranch = (b: unknown): b is string => typeof b == "string" && /^task\/\d+-[a-z0-9-]+$/.test(b);
+
+/** Whether a grant may read (list and fetch) `ref`: staging, main and its own branch, never another task's. */
+export const readAllowed = (grant: GitGrant, ref: string) =>
+  ref == "HEAD" || ref == "refs/heads/staging" || ref == "refs/heads/main" || ref == `refs/heads/${grant.branch}`;
+
+/** What mergeShape needs to know of a commit. */
+export interface CommitFacts { tree: string; parents: string[] }
+
+/**
+ * Whether a merge token's move of staging, from `old` to `next`, is the merge itself (factory/vm/merge.ts): `next`
+ * has the parents [old, head], where `head` is the task's branch as it is now and has `old` in it, and `next` has
+ * head's files. The reason if not. `commit` reads a commit (null if unknown); `isAncestor(a, b)`: b comes from a.
+ */
+export function mergeShape(grant: GitGrant, old: string, next: string, head: string | undefined,
+  commit: (sha: string) => CommitFacts | null, isAncestor: (a: string, b: string) => boolean): string | null {
+  const why = (s: string) => `a merge token moves staging only to the merge of ${grant.branch}: ${s}`;
+  if (grant.scope != "merge") return why("this isn't a merge token");
+  if (!grant.id) return why("this token is an older one, with no id: merge again");
+  if (!head) return why(`push ${grant.branch} first`);
+  const c = commit(next), h = commit(head);
+  if (!c || !h) return why("its commits aren't known");
+  if (c.parents.length != 2 || c.parents[0] != old || c.parents[1] != head) return why(`the new commit must have two parents: staging's head (${old.slice(0, 7)}), then the branch's (${head.slice(0, 7)})`);
+  if (!isAncestor(old, head)) return why(`merge staging into ${grant.branch} first, and push it`);
+  if (c.tree != h.tree) return why(`the new commit must have the files of ${grant.branch} (${head.slice(0, 7)})`);
+  return null;
+}
 
 /** Whether a grant allows these ref updates; the reason if not. */
 export function refsAllowed(grant: GitGrant, refs: { next: string; ref: string }[]): string | null {

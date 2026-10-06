@@ -2,7 +2,7 @@
 // git token lets a VM push (dev/factory.ts, which the real Git endpoint
 // should match).
 
-import { expect, test } from "bun:test";
+import { expect, mock, test } from "bun:test";
 import { checkGitToken, mintGitToken, pushedRefs, refsAllowed } from "../dev/factory";
 import { branchName, claudeToken, restartPrompt, taskPrompt } from "../factory/prompt";
 import { quietFor, STALL_MS, stalledOf } from "../factory/stall";
@@ -182,4 +182,37 @@ test("a task is stalled when it is working or needs agent, with no new log line 
   expect(stalledOf(t("working", null, 7), now)?.since).toBe(at(7));
   for (const s of ["queued", "complete", "merging", "failed", "merged", "discarded"]) expect(stalledOf(t(s, 30), now)).toBeNull();
   expect([quietFor(5 * 60_000), quietFor(59 * 60_000 + 59_000), quietFor(60 * 60_000), quietFor(125 * 60_000)]).toEqual(["5 min", "59 min", "1 h", "2 h 5 min"]);
+});
+
+test("a preview's door: a ticket for its own VM, never from a sibling host, and none of the preview's cookies", async () => {
+  mock.module("cloudflare:workers", () => ({ DurableObject: class {} }));
+  const { previewDoor } = await import("../factory/cloudflare");
+  const vm = "task-3-a1b2c3";
+  let forwarded: Request | null = null;
+  const env = {
+    FACTORY_PREVIEW_DOMAIN: "pages.test",
+    FACTORY_VM: { getByName: (name: string) => ({ preview: async (r: Request) => {
+      forwarded = r;
+      const h = new Headers({ "Content-Type": "text/html" });
+      h.append("Set-Cookie", "tossed=1; Domain=pages.test; Path=/");
+      h.append("Set-Cookie", "factory_preview=x; Path=/");
+      return new Response(`preview of ${name}`, { headers: h });
+    } }) },
+  } as any;
+  const ok = async (name: string, ticket: string) => name == vm && ticket == "good";
+  const door = (path: string, headers: Record<string, string> = {}) => previewDoor(new Request(`https://${vm}.pages.test${path}`, { headers }), env, ok);
+  // Not a preview's host (a document's pages): not this door's.
+  expect(await previewDoor(new Request("https://doc-1-ada.pages.test/"), env, ok)).toBeNull();
+  expect((await door("/"))!.status).toBe(403);
+  expect((await door("/?factory_ticket=bad"))!.status).toBe(403);
+  expect((await door("/", { cookie: "factory_preview=good", "sec-fetch-site": "same-site" }))!.status).toBe(403);
+  const traded = (await door("/x?factory_ticket=good"))!;
+  expect(traded.status).toBe(302);
+  expect(traded.headers.get("location")).toBe("/x");
+  expect(traded.headers.get("set-cookie")).toContain("HttpOnly");
+  expect(forwarded).toBeNull();
+  const page = (await door("/x", { cookie: "factory_preview=good" }))!;
+  expect(await page.text()).toBe(`preview of ${vm}`);
+  expect(page.headers.get("set-cookie")).toBeNull();
+  expect(forwarded).not.toBeNull();
 });
