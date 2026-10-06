@@ -60,7 +60,8 @@ export async function sourceGit(request: Request, env: Env, url: URL): Promise<R
   // (ERGA_ADMIN_UNLOCKED=1), and any server where admin keys aren't required (keysRequired), take an admin's agent token as it is.
   const admin = await adminKeysOf(env).readToken(secret).catch(() => null);
   const token = admin ? null : devUnlocked(env, url) || !keysRequired(env) ? await tokensOf(env).verify(secret).catch(() => null) : null;
-  const who = admin ? { login: admin.login, name: admin.name } : token && !token.testBy ? { login: token.login, name: token.name } : null;
+  // Never the share button's token: it goes to an agent along with a document (front.ts, withTokens).
+  const who = admin ? { login: admin.login, name: admin.name } : token && !token.testBy && token.kind != "share" ? { login: token.login, name: token.name } : null;
   if (!who) {
     const agent = !admin && (await tokensOf(env).verify(secret).catch(() => null));
     return challenge(agent ? `That's an agent token, which no longer reaches Erga's repository. ${howTo}` : `That isn't a working admin token (it may have ended, or its key was revoked). ${howTo}`);
@@ -102,8 +103,8 @@ async function adminOf(request: Request, env: Env, platform: Platform, url: URL)
 export async function sourceApi(request: Request, env: Env, platform: Platform, url: URL): Promise<Response> {
   const who = await adminOf(request, env, platform, url);
   if (who instanceof Response) return who;
-  if (!hasSource(env)) return json({ error: notSetUp }, 503);
   if (request.method == "POST" && !who.bearer && request.headers.get("origin") != url.origin) return json({ error: "Forbidden" }, 403);
+  if (!hasSource(env)) return json({ error: notSetUp }, 503);
   try {
     if (url.pathname == "/api/source/branches" && request.method == "GET") {
       const view = await host(env).branches(url.origin);

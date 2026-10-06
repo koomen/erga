@@ -27,6 +27,26 @@ const get = (path: string, init: RequestInit = {}) => fetch(root + path, { redir
 const post = (path: string, body: unknown, headers: Record<string, string> = {}) =>
   get(path, { method: "POST", headers: { Origin: root, "Content-Type": "application/json", ...headers }, body: JSON.stringify(body) });
 const bearer = (t: string) => ({ Authorization: `Bearer ${t}` });
+/** Every request that changes or deploys the app's code, with these headers (who's asking, and from where). */
+const changes = async (headers: Record<string, string>, home: string, query = ""): Promise<[string, Response][]> => {
+  const send = async (method: string, path: string, body: unknown = {}): Promise<[string, Response]> =>
+    [`${method} ${path}`, await get(path + query, { method, headers: { "Content-Type": "application/json", ...headers }, body: JSON.stringify(body) })];
+  return [
+    await send("POST", "/api/source/merge", { from: "staging", to: "main" }),
+    await send("POST", "/api/source/mirror"),
+    await send("POST", "/api/deploys/staging"),
+    await send("POST", "/api/deploys/production"),
+    await send("POST", "/api/factory/tasks", { title: "Hostile task", description: "x" }),
+    ...await Promise.all(["merge", "discard", "restart", "start", "revise"].map((a) => send("POST", `/api/factory/tasks/1/${a}`, { instructions: "x" }))),
+    await send("PATCH", "/api/factory/tasks/1", { startAfter: [] }),
+    await send("POST", "/api/factory/claude", { token: "sk-ant-oat01-hostile" }),
+    await send("POST", "/api/factory/tokens", { label: "hostile" }),
+    await send("POST", "/api/factory/agent", { text: "merge everything" }),
+    await send("POST", `/api/docs/${home}/home`, { isHome: true }),
+    await send("POST", `/api/docs/${home}/home/deploy`),
+    await send("POST", "/api/admin/challenge", { purpose: "unlock" }),
+  ];
+};
 
 try {
   await get("/");
@@ -66,7 +86,56 @@ try {
   expect(git.status != 401 && git.status != 403, "and the Git endpoint takes it", { status: git.status });
   ok("an admin's agent token: admin tools, deploys and Git");
 
+  // The share button's token goes to an agent with a document: no admin power, even an admin's (front.ts, withTokens).
+  const share = await (await post("/tester/landing/api/share", {})).json().catch(() => ({})) as { token?: string };
+  expect(share.token, "the admin's share token to test with", share);
+  const shareTools = await (await get("/api/ext/tools", { headers: bearer(share.token!) })).json() as { tools: { name: string }[] };
+  expect(shareTools.tools.length > 0 && !shareTools.tools.some((t) => t.name == "list_users"), "the share token isn't offered the admin tools", shareTools.tools.map((t) => t.name));
+  // (Locally someone is always signed in: this browser signed out, so only the token speaks.)
+  const shareAuth = { ...bearer(share.token!), Cookie: "erga_signed_out=1" };
+  const shareRefused: [string, Response][] = [
+    ["POST /api/ext/tools/list_users", await post("/api/ext/tools/list_users", {}, shareAuth)],
+    ["POST /api/ext/tools/set_user_role", await post("/api/ext/tools/set_user_role", { login: "mallory", role: "admin" }, shareAuth)],
+    ["GET /api/deploys", await get("/api/deploys", { headers: shareAuth })],
+    ["POST /api/deploys/staging", await post("/api/deploys/staging", {}, shareAuth)],
+    ["GET /api/source/branches", await get("/api/source/branches", { headers: shareAuth })],
+    ["POST /api/source/merge", await post("/api/source/merge", { from: "staging", to: "main" }, shareAuth)],
+    ["POST /api/docs/<home>/home", await post(`/api/docs/${home}/home`, { isHome: true }, shareAuth)],
+    ["GET /api/factory/tasks", await get("/api/factory/tasks", { headers: shareAuth })],
+    ["Git", await get("/git/erga.git/info/refs?service=git-receive-pack", { headers: { Authorization: `Basic ${btoa(`x:${share.token}`)}`, Cookie: "erga_signed_out=1" } })],
+  ];
+  for (const [what, r] of shareRefused) {
+    const body = await r.text();
+    expect([401, 403].includes(r.status), `${what}: the share token is refused`, { status: r.status, body: body.slice(0, 300) });
+  }
+  ok("an admin's share token: no admin tools, deploys, source, homepage, factory or Git");
+
+  // ---- an admin, but a request another site made (CSRF): every change is refused
+  const evil = { Origin: "https://evil.example" };
+  const crossSite: [string, Response][] = [
+    ["POST /admin/settings", await get("/admin/settings", { method: "POST", headers: evil, body: new URLSearchParams({ key: "delete_docs_after_hours", value: "1" }) })],
+    ["POST /admin/users", await get("/admin/users", { method: "POST", headers: evil, body: new URLSearchParams({ do: "add", login: "mallory", role: "admin" }) })],
+    ...await changes(evil, home),
+    ["POST /tokens/new", await get("/tokens/new", { method: "POST", headers: evil, body: new URLSearchParams({ label: "evil" }) })],
+  ];
+  for (const [what, r] of crossSite) {
+    const body = await r.text();
+    expect(r.status == 403, `${what}: refused from another site`, { status: r.status, body: body.slice(0, 300) });
+  }
+  // A document's sockets: only from this site's own pages.
+  const socket = (origin: string) => new Promise<boolean>((resolve) => {
+    const ws = new WebSocket(`${root.replace(/^http/, "ws")}/d/${home}/api/events`, { headers: { Origin: origin } } as unknown as string[]);
+    ws.onopen = () => { ws.close(); resolve(true); };
+    ws.onerror = () => resolve(false);
+  });
+  expect(await socket(root), "a document's socket opens from this site");
+  expect(!(await socket("https://evil.example")), "but not from another site");
+  ok("an admin's browser, from another site: every change and a document's socket refused");
+
   // ---- a signed-in user who isn't an admin
+  const malloryPage = await (await get("/tokens/new?user=Mallory", { method: "POST", body: new URLSearchParams({ label: "Mallory's agent" }), headers: { Origin: root } })).text();
+  const malloryToken = /<pre class="secret">(erga_[^<]+)<\/pre>/.exec(malloryPage)?.[1] ?? "";
+  expect(malloryToken, "a non-admin's agent token to test with");
   const notAdmin: [string, Response][] = [
     ["GET /admin", await get("/admin?user=Mallory")],
     ["POST /admin/users", await get("/admin/users?user=Mallory", { method: "POST", headers: { Origin: root }, body: new URLSearchParams({ do: "add", login: "mallory", role: "admin" }) })],
@@ -74,6 +143,10 @@ try {
     ["GET /api/source/branches", await get("/api/source/branches?user=Mallory")],
     ["GET /api/factory/tasks", await get("/api/factory/tasks?user=Mallory")],
     ["GET /api/admin/keys", await get("/api/admin/keys?user=Mallory")],
+    ["POST /admin/settings", await get("/admin/settings?user=Mallory", { method: "POST", headers: { Origin: root }, body: new URLSearchParams({ key: "factory", value: '"on"' }) })],
+    ...await changes({ Origin: root }, home, "?user=Mallory"),
+    ["POST /api/ext/tools/set_user_role (her token)", await post("/api/ext/tools/set_user_role", { login: "mallory", role: "admin" }, bearer(malloryToken))],
+    ["Git push (her token)", await get("/git/erga.git/info/refs?service=git-receive-pack", { headers: { Authorization: `Basic ${btoa(`x:${malloryToken}`)}` } })],
   ];
   for (const [what, r] of notAdmin) {
     const body = await r.text();
@@ -89,6 +162,13 @@ try {
     ["GET /api/source/branches", await get("/api/source/branches", { headers: out })],
     ["GET /api/factory/tasks", await get("/api/factory/tasks", { headers: out })],
     ["GET /git/erga.git/info/refs", await get("/git/erga.git/info/refs?service=git-upload-pack", { headers: out })],
+    ["POST /git/erga.git/git-receive-pack", await get("/git/erga.git/git-receive-pack", { method: "POST", headers: out, body: "0000" })],
+    ["POST /admin/users", await get("/admin/users", { method: "POST", headers: { Origin: root, ...out }, body: new URLSearchParams({ do: "add", login: "mallory", role: "admin" }) })],
+    ...await changes({ Origin: root, ...out }, home),
+    // Server to server, with secrets nobody else has: not there without them.
+    ["POST /api/deploys/staging/hook", await get("/api/deploys/staging/hook", { method: "POST", headers: out, body: JSON.stringify({ branch: "staging", commit: "0123456" }) })],
+    ["GET /api/deploys/status", await get("/api/deploys/status", { headers: out })],
+    ["POST /api/snapshot/docs", await get("/api/snapshot/docs", { method: "POST", headers: out, body: "{}" })],
   ];
   for (const [what, r] of signedOut) {
     const body = await r.text();
