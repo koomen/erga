@@ -50,6 +50,22 @@ export function factoryKey(env: Env): string | null {
 /** The Worker's bindings with the API keys admins stored (credentials.ts) in place of the Worker secrets: what the code that calls Anthropic or OpenAI reads. */
 export const withKeys = (env: Env): Promise<Env> => withCredentials(env, env.DB ? directoryOf(env).credentials : null);
 
+/**
+ * A Durable Object's copy of withKeys, for code that reads a key without
+ * waiting (the GitHub mirror, branch deploys): read before the object
+ * answers anything, then again in the background at most once a minute, so
+ * a key an admin sets or clears takes effect within a minute.
+ */
+export function keptKeys(ctx: DurableObjectState, env: Env): () => Env {
+  let keys = env, at = 0, reading: Promise<void> | null = null;
+  const read = () => (reading ??= withKeys(env).then((k) => { keys = k; }, () => {}).finally(() => { at = Date.now(); reading = null; }));
+  ctx.blockConcurrencyWhile(read);
+  return () => {
+    if (Date.now() - at > 60_000) ctx.waitUntil(read());
+    return keys;
+  };
+}
+
 /** Agent tokens (tokens.ts), on the same database. */
 export function tokensOf(env: Env): Tokens {
   return new Tokens(sqlOn(env.DB), env.SESSION_SECRET);

@@ -5,16 +5,18 @@
 //   /admin                     the Settings page (GET /admin/settings redirects here)
 //   /admin/changes             the Change log: the settings' versions, newest first; ?before=n for older ones
 //   /admin/users               the Users page: their roles (admin, deploy) as switches, when they joined, add and remove
+//   /admin/api-keys            the API keys page: every key Erga needs from the services it calls (GET /admin/credentials redirects here)
 //   POST /admin/settings       key, and value (JSON; null for never) to set it, or reset=1 to put it back to its default
 //   POST /admin/users          do=add (login, role), do=role (login, role), do=deploy (login, deploy: 1 or 0) or do=remove (login)
-//   POST /admin/credentials    name (anthropic, openai), and value to set or replace its API key, or clear=1 to remove it
+//   POST /admin/credentials    name (anthropic, openai, github_mirror, cloudflare_deploy), and value to set or replace its key, or clear=1 to remove it
 //
-// The Settings page starts with the API keys (credentials.ts): whether each
-// is set, its last four characters, and who set it when. The page never gets
-// a saved key back, nor does any answer here.
+// The API keys page (credentials.ts) shows whether each key is set, its
+// last four characters, and who set it when; the Claude plan token, which
+// the factory keeps (its own API); and, read-only, the secrets only the
+// deploy sets. The page never gets a saved key back, nor does any answer here.
 //
-// Both pages have the layout every admin page shares (admin-layout.ts): the
-// breadcrumb, Share with agent, and the sidebar to Settings, Change log, Users and Factory.
+// Every page has the layout every admin page shares (admin-layout.ts): the
+// breadcrumb, Share with agent, and the sidebar to Settings, API keys, Change log, Users and Factory.
 //
 // The POSTs answer JSON ({ entry } or { user } or { ok }, or { error } with
 // the message the directory gave, for a person to act on) and come only from
@@ -30,7 +32,7 @@ import { esc, ICON, link, page, type Platform, type Session, TIMES_SCRIPT, whoOf
 import { adminResponse } from "./admin-layout.ts";
 import { LOCKED, NotAllowed, type ServerRole, type User } from "./users.ts";
 import { unlockFirst } from "./admin-access.ts";
-import { CredentialError, type CredentialEntry } from "./credentials.ts";
+import { CredentialError, type CredentialEntry, type DeploySecretEntry } from "./credentials.ts";
 
 /** /admin and its POSTs. */
 export async function adminDoor(platform: Platform, request: Request): Promise<Response> {
@@ -47,12 +49,14 @@ export async function adminDoor(platform: Platform, request: Request): Promise<R
   const unlocked = admin && (await platform.directory.users.isUnlocked(who!));
   if (read) {
     if (!admin) return notFound();
-    if (url.pathname == "/admin/settings" || url.pathname == "/admin/credentials") return new Response(null, { status: 302, headers: { Location: link("/admin", session!) } });
+    if (url.pathname == "/admin/settings") return new Response(null, { status: 302, headers: { Location: link("/admin", session!) } });
+    if (url.pathname == "/admin/credentials") return new Response(null, { status: 302, headers: { Location: link("/admin/api-keys", session!) } });
     if (!unlocked) return unlockFirst(url.pathname, session!);
     if (url.pathname == "/admin/changes") {
       const before = Number(url.searchParams.get("before"));
       return changesPage(platform, session!, Number.isInteger(before) && before > 0 ? before : undefined);
     }
+    if (url.pathname == "/admin/api-keys") return apiKeysPage(platform, session!);
     return url.pathname == "/admin/users" ? usersPage(platform, session!) : settingsPage(platform, session!);
   }
   if (request.method != "POST") return notFound();
@@ -256,19 +260,8 @@ const POST_SCRIPT = `
   const say = (hint, text, error) => { hint.textContent = text; hint.classList.toggle("error", !!error); };
 `;
 
-/** /admin: the server's settings, and Deploy your own. */
-async function settingsPage(platform: Platform, session: Session): Promise<Response> {
-  const who = whoOf(session);
-  const [entries, users, credentials] = await Promise.all([platform.directory.config.list(who), platform.directory.users.list(who), platform.directory.credentials.list(who)]);
-  // A setting naming a document shows it by its address now, linked.
-  const settings: Shown[] = await Promise.all(entries.map(async (e) => {
-    if (e.kind != "document" || e.value == null) return e;
-    const doc = await platform.directory.find(String(e.value));
-    return { ...e, doc: doc && { address: `/${doc.owner}/${doc.slug}`, title: doc.title } };
-  }));
-  // Whether a setting takes null (never) as well as its kind of value.
-  const takesNever = (key: string) => { try { return (platform.directory.config.settings as Settings)[key]?.parse(null) === null; } catch { return false; } };
-  const style = PAGE_STYLE + `
+/** The style of a setting's row (its key, description and control), on Settings and API keys. */
+const SETTING_STYLE = PAGE_STYLE + `
   ol.rows > li.setting { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 4px 16px; padding: 10px 2px; }
   .setting .about { min-width: 0; }
   .setting .head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
@@ -311,15 +304,23 @@ async function settingsPage(platform: Platform, session: Session): Promise<Respo
   .setting .state-line .on { color: var(--fg-strong); font-weight: 600; }
   .setting .state-line .last4 { font-family: var(--font-mono); font-size: 11.5px; color: var(--fg); }
   .setting .value .input.secret { width: 15em; font-family: var(--font-mono); font-size: 12.5px; }
+  .setting .value [hidden] { display: none; }
 `;
+
+/** /admin: the server's settings. */
+async function settingsPage(platform: Platform, session: Session): Promise<Response> {
+  const who = whoOf(session);
+  const [entries, users] = await Promise.all([platform.directory.config.list(who), platform.directory.users.list(who)]);
+  // A setting naming a document shows it by its address now, linked.
+  const settings: Shown[] = await Promise.all(entries.map(async (e) => {
+    if (e.kind != "document" || e.value == null) return e;
+    const doc = await platform.directory.find(String(e.value));
+    return { ...e, doc: doc && { address: `/${doc.owner}/${doc.slug}`, title: doc.title } };
+  }));
+  // Whether a setting takes null (never) as well as its kind of value.
+  const takesNever = (key: string) => { try { return (platform.directory.config.settings as Settings)[key]?.parse(null) === null; } catch { return false; } };
+  const style = SETTING_STYLE;
   return adminResponse({ session, title: "Settings", here: "settings", style, body: `
-  <section aria-labelledby="keys-head" class="credentials">
-    <h2 id="keys-head">API keys</h2>
-    <p class="lede">The server keeps each key encrypted, and shows it to nobody, this page included: only whether it is set, its last four characters, and who set it when. Without a key here, the server uses the deploy's Worker secret of the same name, if it has one.</p>
-    <ol class="rows">
-${credentials.map((c) => credentialRow(c, session)).join("\n")}
-    </ol>
-  </section>
   <section aria-labelledby="settings-head">
     <h2 id="settings-head">Settings</h2>
     <ol class="rows">
@@ -330,22 +331,6 @@ ${settings.map((e) => settingRow(e, session, takesNever(e.key))).join("\n")}
 <script>
   ${TIMES_SCRIPT}
   ${POST_SCRIPT}
-  // API keys: Save sets or replaces the key typed in, Clear removes it. The answer never holds the key; the page reloads to show what it is now.
-  for (const li of document.querySelectorAll("li.credential")) {
-    const form = li.querySelector("form"), input = form.elements.value, save = li.querySelector(".save"), clear = li.querySelector(".clear"), hint = li.querySelector(".hint");
-    if (input.disabled) continue;
-    input.addEventListener("input", () => { save.disabled = !input.value.trim(); say(hint, ""); });
-    form.addEventListener("submit", async (e) => {
-      e.preventDefault();
-      say(hint, "Saving\u2026");
-      try { await post(form.action, { name: li.dataset.name, value: input.value }); input.value = ""; location.reload(); } catch (err) { say(hint, err.message, true); }
-    });
-    clear?.addEventListener("click", async () => {
-      if (!confirm("Clear the " + li.dataset.label + "? " + (li.dataset.fallback ? "The server goes back to the deploy's " + li.dataset.env + "." : "What uses it stops until someone sets a key again."))) return;
-      say(hint, "Clearing\u2026");
-      try { await post(form.action, { name: li.dataset.name, clear: "1" }); location.reload(); } catch (err) { say(hint, err.message, true); }
-    });
-  }
   // Settings: a switch or a choice saves as soon as it changes; for the rest, Save lights up once the value differs from what's saved.
   // Each is checked by the server, which says what's wrong.
   const chipHtml = ${JSON.stringify(chip("LOGIN", false))};
@@ -408,6 +393,119 @@ ${settings.map((e) => settingRow(e, session, takesNever(e.key))).join("\n")}
     reset?.addEventListener("click", async () => {
       say(hint, "Saving\u2026");
       try { await post(form.action, { key: li.dataset.key, reset: "1" }); location.reload(); } catch (err) { say(hint, err.message, true); }
+    });
+  }
+</script>` });
+}
+
+/**
+ * The Claude plan token's row: the factory keeps it (worker/factory.ts, its
+ * own encrypted table), so the page asks the factory's API whether there is
+ * one, and sets or clears it there (PUT and DELETE /api/factory/claude).
+ */
+const CLAUDE_ROW = `  <li class="setting credential" data-name="claude" data-label="Claude plan token" data-api="/api/factory/claude">
+    <div class="about">
+      <div class="head"><label class="key" for="key-claude">Claude plan token</label><span class="meta">CLAUDE_CODE_OAUTH_TOKEN</span></div>
+      <p class="desc">The factory's VMs run Claude Code on a Pro or Max plan with it. <span class="mono">claude setup-token</span> prints one (sk-ant-oat\u2026), good for a year.</p>
+      <p class="state-line">Checking\u2026</p>
+    </div>
+    <form class="value" method="post" action="/api/factory/claude">
+      <input class="input secret" type="password" name="value" id="key-claude" aria-label="Claude plan token" placeholder="Paste the token" autocomplete="off" autocapitalize="off" spellcheck="false" disabled>
+      <button class="pill save" disabled>Save</button><button type="button" class="pill clear" hidden>Clear</button>
+    </form>
+    <p class="hint" role="status"></p>
+  </li>`;
+
+/** A secret only the deploy sets: whether this server has it, what it is for, and why it isn't set here. */
+function deploySecretRow(d: DeploySecretEntry): string {
+  const state = d.set ? `<span class="on">Set</span> in the deploy` : d.standIn ? "Not set. The session secret stands in for it." : "Not set.";
+  return `  <li class="setting deploy-secret" data-env="${esc(d.env)}">
+    <div class="about">
+      <div class="head"><span class="key">${esc(d.env)}</span><span class="meta">${esc(d.service)}</span></div>
+      <p class="desc">${esc(d.description)}</p>
+      <p class="state-line">${state} \u00B7 ${esc(d.why)}</p>
+    </div>
+  </li>`;
+}
+
+/**
+ * /admin/api-keys: every key and secret Erga needs from the services it
+ * calls. The keys an admin sets here (credentials.ts, and the factory's
+ * Claude plan token), each with whether it is set, its last four
+ * characters, and who set it when; then the secrets only the deploy sets,
+ * read-only. The page never has a key.
+ */
+async function apiKeysPage(platform: Platform, session: Session): Promise<Response> {
+  const who = whoOf(session);
+  const [credentials, deployed] = await Promise.all([platform.directory.credentials.list(who), platform.directory.credentials.deployed(who)]);
+  // The Claude plan token goes after the Anthropic and OpenAI keys, with the other AI keys.
+  const rows = credentials.map((c) => credentialRow(c, session));
+  rows.splice(2, 0, CLAUDE_ROW);
+  return adminResponse({ session, title: "API keys", here: "keys", style: SETTING_STYLE, body: `
+  <section aria-labelledby="keys-head" class="credentials">
+    <h2 id="keys-head">API keys</h2>
+    <p class="lede">The keys Erga uses to call other services. The server keeps each key encrypted and shows it to nobody, this page included: only whether it is set, its last four characters, and who set it when. Without a key here, the server uses the deploy's Worker secret of the same name, if it has one.</p>
+    <ol class="rows">
+${rows.join("\n")}
+    </ol>
+  </section>
+  <section aria-labelledby="deploy-head" class="deploy-secrets">
+    <h2 id="deploy-head">Set in the deploy <small>read-only</small></h2>
+    <p class="lede">These secrets are Worker secrets only. A wrong value here could lock every admin out, or break the other server, so this page doesn't change them. Set one with <span class="mono">bunx cf workers secrets update NAME</span>, or with <span class="mono">bun deploy/setup.ts</span> (docs/secrets.md). The factory's VMs run on Cloudflare Containers, through the Worker's own binding: they need no key.</p>
+    <ol class="rows">
+${deployed.map(deploySecretRow).join("\n")}
+    </ol>
+  </section>
+<script>
+  ${TIMES_SCRIPT}
+  ${POST_SCRIPT}
+  // The Claude plan token: the factory's API says whether there is one, and sets or clears it.
+  const claude = document.querySelector('li.credential[data-name="claude"]');
+  const claudeApi = async (method, body) => {
+    const r = await fetch(claude.dataset.api, { method, headers: { Accept: "application/json", ...(body ? { "Content-Type": "application/json" } : {}) }, body: body && JSON.stringify(body) }).catch(() => null);
+    const out = r ? await r.json().catch(() => ({})) : {};
+    if (!r || !r.ok) throw new Error(out.error || "Couldn't reach the factory: try again.");
+    return out;
+  };
+  const showClaude = (c) => {
+    const input = claude.querySelector("input"), save = claude.querySelector(".save"), clear = claude.querySelector(".clear");
+    claude.querySelector(".state-line").innerHTML = c.signedIn
+      ? '<span class="on">Set</span>' + (c.at ? " \u00B7 updated " + new Date(c.at).toISOString().slice(0, 10) + (c.by ? " by " + c.by.replace(/[&<>"]/g, "") : "") : "")
+      : "Not set. The factory's VMs run a scripted stand-in." + (c.canStore ? "" : " <b>This server has no FACTORY_KEY, so it can't store a token.</b>");
+    input.disabled = !c.canStore;
+    input.placeholder = c.signedIn ? "Paste a new token" : "Paste the token";
+    save.textContent = c.signedIn ? "Replace" : "Save";
+    clear.hidden = !c.signedIn;
+  };
+  claudeApi("GET").then(showClaude, (err) => { claude.querySelector(".state-line").textContent = "Unknown: " + err.message; });
+  {
+    const input = claude.querySelector("input"), save = claude.querySelector(".save"), hint = claude.querySelector(".hint");
+    input.addEventListener("input", () => { save.disabled = !input.value.trim(); say(hint, ""); });
+    claude.querySelector("form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      say(hint, "Saving\u2026");
+      try { showClaude(await claudeApi("PUT", { token: input.value })); input.value = ""; save.disabled = true; say(hint, "Saved."); } catch (err) { say(hint, err.message, true); }
+    });
+    claude.querySelector(".clear").addEventListener("click", async () => {
+      if (!confirm("Clear the Claude plan token? The factory's VMs run a scripted stand-in until someone sets one again.")) return;
+      say(hint, "Clearing\u2026");
+      try { showClaude(await claudeApi("DELETE")); say(hint, "Cleared."); } catch (err) { say(hint, err.message, true); }
+    });
+  }
+  // API keys: Save sets or replaces the key typed in, Clear removes it. The answer never holds the key; the page reloads to show what it is now.
+  for (const li of document.querySelectorAll("li.credential:not([data-name=claude])")) {
+    const form = li.querySelector("form"), input = form.elements.value, save = li.querySelector(".save"), clear = li.querySelector(".clear"), hint = li.querySelector(".hint");
+    if (input.disabled) continue;
+    input.addEventListener("input", () => { save.disabled = !input.value.trim(); say(hint, ""); });
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      say(hint, "Saving\u2026");
+      try { await post(form.action, { name: li.dataset.name, value: input.value }); input.value = ""; location.reload(); } catch (err) { say(hint, err.message, true); }
+    });
+    clear?.addEventListener("click", async () => {
+      if (!confirm("Clear the " + li.dataset.label + "? " + (li.dataset.fallback ? "The server goes back to the deploy's " + li.dataset.env + "." : "What uses it stops until someone sets a key again."))) return;
+      say(hint, "Clearing\u2026");
+      try { await post(form.action, { name: li.dataset.name, clear: "1" }); location.reload(); } catch (err) { say(hint, err.message, true); }
     });
   }
 </script>` });

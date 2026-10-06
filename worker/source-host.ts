@@ -10,6 +10,7 @@ import { DurableObject } from "cloudflare:workers";
 import { deployHook, publishEvent } from "../deploy/index";
 import { SourceError, SourceRepo, type Actor } from "../source/repo";
 import { artifactsRemote, githubRemote } from "./artifacts";
+import { keptKeys } from "./d1";
 import type { Env } from "./env";
 import type { GitGrant } from "../factory/git-grant";
 
@@ -20,6 +21,8 @@ export class SourceHost extends DurableObject<Env> {
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     const sql = ctx.storage.sql;
+    // The mirror's token: the one an admin stored on /admin/api-keys, else the Worker secret.
+    const keys = keptKeys(ctx, env);
     this.repo = new SourceRepo({
       db: { exec: <T>(q: string, ...params: (string | number | null)[]) => sql.exec(q, ...params).toArray() as T[] },
       artifacts: async () => {
@@ -27,7 +30,7 @@ export class SourceHost extends DurableObject<Env> {
         if (!r) throw new SourceError("Erga's repository isn't set up on this server (no Artifacts binding).", 503);
         return r;
       },
-      github: () => githubRemote(env, this.origin),
+      github: () => githubRemote(keys(), this.origin),
       moved: (m) => {
         ctx.waitUntil(publishEvent({ type: "source", branch: m.branch, commit: m.new }, env).catch(() => {}));
         ctx.waitUntil(deployHook(m.branch, m.new, env, `${m.how} by ${m.by}`).catch((e) => console.error(`deploy hook (${m.branch}):`, e)));

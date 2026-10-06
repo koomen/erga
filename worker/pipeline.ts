@@ -25,6 +25,7 @@ import { containerBuilder } from "../deploy/builder/client";
 import { loadRelease, type Release } from "../deploy/cloudflare";
 import { FLEET_ACCOUNT, MOCK_HOOK_SECRET, MOCK_SNAPSHOT_TOKEN, mockBuilder, mockCloudflare } from "../deploy/mock";
 import { isTargetName, TARGETS, targetNames, type TargetName } from "../deploy/targets";
+import { keptKeys } from "./d1";
 import type { Env } from "./env";
 import { hasSource } from "./artifacts";
 import { sourceForBuild } from "./source";
@@ -61,12 +62,15 @@ export class Pipeline extends DurableObject<Env> {
       const view = await env.SOURCE.getByName("erga").branches(env.ERGA_DEV_ORIGIN ?? "").catch(() => null);
       return !!view?.branches.some((b: { commits: { sha: string; subject: string }[] }) => b.commits.some((c) => c.sha == commit && c.subject.includes("[mock-fail]")));
     };
+    // The deploy token: the one an admin stored on /admin/api-keys, else the Worker secret (the mock's stays).
+    const keys = mock ? null : keptKeys(ctx, env);
+    const token = () => keys ? keys().CLOUDFLARE_DEPLOY_TOKEN : deployEnv.CLOUDFLARE_DEPLOY_TOKEN;
     const self = env.DEPLOY_TARGET?.trim() ?? "";
     const peerName: TargetName | null = mock && isTargetName(self) ? targetNames.find((n) => n != self) ?? null : null;
     const fleet = mock ? mockCloudflare({ fleet: true, stagingSecrets: true, delayMs: 25, sites: (req, script) => this.peerSite(req, script, peerName) }) : null;
     const make = (target: string | undefined, prefix: string) => new BranchDeploys({
       storage: { get: (k) => ctx.storage.get(prefix + k), put: (k, v) => ctx.storage.put(prefix + k, v), delete: (k) => ctx.storage.delete(prefix + k) },
-      env: { ...deployEnv, DEPLOY_TARGET: target },
+      env: Object.defineProperty({ ...deployEnv, DEPLOY_TARGET: target }, "CLOUDFLARE_DEPLOY_TOKEN", { get: token, enumerable: true }),
       net: fleet ? fleet.fetch : globalThis.fetch.bind(globalThis),
       builder: mock ? mockBuilder(release, { delayMs: 200, fails: mockFails }) : env.BUILDER ? containerBuilder(env.BUILDER) : null,
       schedule: async (ms) => {

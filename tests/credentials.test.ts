@@ -1,4 +1,4 @@
-// The API keys admins enter on /admin (credentials.ts, admin.ts), on an
+// The API keys admins enter on /admin/api-keys (credentials.ts, admin.ts), on an
 // in-memory SQLite database with the same migrations D1 gets: stored
 // encrypted, never answered back (only set, the last four characters, and who
 // set it when), in the change log without the value, admins only, and read by
@@ -20,6 +20,8 @@ import { until } from "./suite/harness";
 const MIGRATIONS = new URL("../migrations/", import.meta.url).pathname;
 const ANTHROPIC = "sk-ant-api03-" + "x".repeat(80) + "Ab12";
 const OPENAI = "sk-proj-" + "y".repeat(60) + "Zz90";
+const GITHUB = "github_pat_" + "g".repeat(70) + "Gh12";
+const CLOUDFLARE = "c".repeat(36) + "Cf34";
 
 function fresh(secret: string | null = "the factory key", fallback: string[] = []) {
   const db = new Database(":memory:", { strict: true });
@@ -85,7 +87,23 @@ test("admins only, unlocked; a key that isn't one, or a server with no secret, i
   expect(() => checkKey("openai", "")).toThrow(/Paste/);
   const none = fresh(null, ["ANTHROPIC_API_KEY"]).dir;
   await expect(none.credentials.set(ada, "anthropic", ANTHROPIC)).rejects.toThrow(/no FACTORY_KEY/);
-  expect((await none.credentials.list(ada)).map((c) => [c.name, c.canStore, c.fallback])).toEqual([["anthropic", false, true], ["openai", false, false]]);
+  expect((await none.credentials.list(ada)).map((c) => [c.name, c.canStore, c.fallback])).toEqual([["anthropic", false, true], ["openai", false, false], ["github_mirror", false, false], ["cloudflare_deploy", false, false]]);
+});
+
+test("every key Erga calls a service with: the GitHub mirror's and Cloudflare's too; the deploy's own secrets only as set or not", async () => {
+  const { dir } = fresh("the factory key", ["SESSION_SECRET", "GITHUB_CLIENT_SECRET"]);
+  expect(() => checkKey("github_mirror", "gho_" + "q".repeat(36))).toThrow(/starts with github_pat_ or ghp_/);
+  expect(checkKey("github_mirror", " " + GITHUB + " ")).toBe(GITHUB);
+  expect(checkKey("cloudflare_deploy", CLOUDFLARE)).toBe(CLOUDFLARE);
+  expect(() => checkKey("cloudflare_deploy", "short")).toThrow(/20 to 400 characters/);
+  await dir.credentials.set(ada, "github_mirror", GITHUB);
+  await dir.credentials.set(ada, "cloudflare_deploy", CLOUDFLARE);
+  const env = { GITHUB_MIRROR_TOKEN: "github_pat_from_the_deploy", CLOUDFLARE_DEPLOY_TOKEN: "from-the-deploy" };
+  expect(await withCredentials(env, dir.credentials)).toEqual({ GITHUB_MIRROR_TOKEN: GITHUB, CLOUDFLARE_DEPLOY_TOKEN: CLOUDFLARE });
+  const deployed = await dir.credentials.deployed(ada);
+  expect(deployed.map((d) => [d.env, d.set])).toEqual([["SESSION_SECRET", true], ["FACTORY_KEY", false], ["GITHUB_CLIENT_SECRET", true], ["SNAPSHOT_TOKEN", false], ["DEPLOY_HOOK_SECRET", false]]);
+  expect(deployed.find((d) => d.env == "FACTORY_KEY")!.standIn).toBe(true);
+  await expect(dir.credentials.deployed({ login: "mallory" })).rejects.toThrow(NotAllowed);
 });
 
 test("the code that calls the providers reads the stored key first, else the Worker secret", async () => {
@@ -104,11 +122,18 @@ test("the code that calls the providers reads the stored key first, else the Wor
 const { dir } = fresh("the factory key", ["ANTHROPIC_API_KEY"]);
 const session = { login: "ada", name: "Ada", unlocked: ada.unlocked } as unknown as Session;
 const platform = { sessionOf: async () => session, directory: dir } as unknown as Platform;
+let claude: { signedIn: boolean; at: string | null; by: string | null; canStore: boolean; token?: string } = { signedIn: false, at: null, by: null, canStore: true };
 const server = Bun.serve({
   port: 0,
   fetch: async (r) => {
     const path = new URL(r.url).pathname;
     if (path == "/admin" || path.startsWith("/admin/")) return adminDoor(platform, r);
+    if (path == "/api/factory/claude") {
+      if (r.method == "PUT") claude = { signedIn: true, at: "2026-10-06T12:00:00.000Z", by: "ada", canStore: true, token: String((await r.json()).token) };
+      if (r.method == "DELETE") claude = { signedIn: false, at: null, by: null, canStore: true };
+      const { token: _, ...shown } = claude as typeof claude & { token?: string };
+      return Response.json(shown);
+    }
     const file = Bun.file(join(import.meta.dir, "..", path));
     return (path == "/style.css" || path.startsWith("/fonts/")) && !path.includes("..") && (await file.exists()) ? new Response(file) : new Response("", { status: 404 });
   },
@@ -126,19 +151,24 @@ test("POST /admin/credentials: only from this site's pages; the answer never hol
   expect(text).not.toContain(OPENAI.slice(0, 20));
   expect(JSON.parse(text).credential).toMatchObject({ name: "openai", set: true, last4: "Zz90" });
   expect((await post({ name: "openai", value: "nope" })).status).toBe(400);
-  const html = await (await fetch(`${origin}/admin`)).text();
+  const html = await (await fetch(`${origin}/admin/api-keys`)).text();
   expect(html).not.toContain(OPENAI.slice(0, 20));
   expect(html).toContain(`ends in <span class="last4">…Zz90</span>`);
   expect(html).toContain("Not set here. The server uses ANTHROPIC_API_KEY from the deploy.");
   const log = await (await fetch(`${origin}/admin/changes`)).text();
   expect(log).toContain(`<span class="key">OPENAI_API_KEY</span> key set`);
   expect(log).not.toContain(OPENAI.slice(0, 20));
-  expect((await fetch(`${origin}/admin/credentials`, { redirect: "manual" })).status).toBe(302);
+  expect((await fetch(`${origin}/admin/credentials`, { redirect: "manual" })).headers.get("location")).toBe("/admin/api-keys");
+  // The keys have their own page now: Settings has none of them; every key and deploy secret is on API keys.
+  expect(await (await fetch(`${origin}/admin`)).text()).not.toContain("li class=\"setting credential");
+  for (const name of ["anthropic", "openai", "claude", "github_mirror", "cloudflare_deploy"]) expect(html).toContain(`data-name="${name}"`);
+  for (const env of ["SESSION_SECRET", "FACTORY_KEY", "GITHUB_CLIENT_SECRET", "SNAPSHOT_TOKEN", "DEPLOY_HOOK_SECRET"]) expect(html).toContain(`data-env="${env}"`);
+  expect(html).toContain(`href="/admin/api-keys" aria-current="page"`);
 });
 
 test("in the browser: paste a key and Save, then Clear it", async () => {
   const p = await browser.page(await browser.context());
-  await p.open(`${origin}/admin`, { width: 1000, height: 760 });
+  await p.open(`${origin}/admin/api-keys`, { width: 1100, height: 1400 });
   await p.settle();
   const row = (expr: string) => p.eval<any>(`(() => { const li = document.querySelector('li.credential[data-name="anthropic"]'); return ${expr}; })()`);
   expect(await row(`li.querySelector(".save").disabled`)).toBe(true);
@@ -149,6 +179,15 @@ test("in the browser: paste a key and Save, then Clear it", async () => {
   expect(await row(`li.querySelector("input").value`)).toBe("");
   expect(await p.eval<string>("document.documentElement.outerHTML")).not.toContain(ANTHROPIC.slice(0, 20));
   expect(await row(`li.querySelector(".save").textContent`)).toBe("Replace");
+  // The Claude plan token, through the factory's API.
+  const claudeRow = (expr: string) => p.eval<any>(`(() => { const li = document.querySelector('li.credential[data-name="claude"]'); return ${expr}; })()`);
+  await until(async () => (await claudeRow(`li.querySelector(".state-line").textContent`)).startsWith("Not set"), 5000, "the Claude row asks the factory");
+  expect(await claudeRow(`getComputedStyle(li.querySelector(".clear")).display`)).toBe("none");
+  const OAT = "sk-ant-oat01-" + "o".repeat(60);
+  await claudeRow(`(() => { const input = li.querySelector("input"); input.value = ${JSON.stringify(OAT)}; input.dispatchEvent(new Event("input")); li.querySelector(".save").click(); })()`);
+  await until(async () => claude.token == OAT, 5000, "the Claude token goes to the factory");
+  await until(async () => (await claudeRow(`li.querySelector(".state-line").textContent`)).includes("by ada"), 5000, "the page shows it set");
+  expect(await claudeRow(`getComputedStyle(li.querySelector(".clear")).display`)).not.toBe("none");
   await p.screenshot(join(SHOTS, "admin-credentials.png"));
   await p.eval(`window.confirm = () => true`);
   await row(`li.querySelector(".clear").click()`);
