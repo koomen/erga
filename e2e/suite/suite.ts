@@ -1,5 +1,5 @@
 // The multiplayer suite on e2e: black-box tests of a document room, its
-// participants and their agents (e2e/suite/README.md has the contract). The
+// participants and their agents (e2e/suite/target.ts has the contract). The
 // tests themselves are e2e/suite/suites/*.ts, written against a Target, so
 // one test runs against a worker's dev server here and against a deployment
 // (prod.ts); each e2e/suite/<name>.e2e.ts file registers some of them with

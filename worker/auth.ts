@@ -174,6 +174,7 @@ export async function finishSignIn(env: Env, request: Request): Promise<Response
     }
     return page("Sign-in failed", `GitHub didn't let you in${why}. <a href="/">Try again</a>.`, 400);
   }
+  // GitHub's access token reads the login, once, and is never stored.
   const user = await fetch("https://api.github.com/user", {
     headers: { Authorization: `Bearer ${token.access_token}`, Accept: "application/vnd.github+json", "User-Agent": "erga.dev" },
   }).then((r) => r.json() as Promise<{ login?: string; name?: string | null; id?: number }>);
@@ -188,6 +189,8 @@ export async function finishSignIn(env: Env, request: Request): Promise<Response
 }
 
 // ------------------------------------------------------------ test tokens
+// They travel in a URL (/auth/test?token=…), so they can show in Worker logs:
+// they open only test documents, and last a week.
 
 const TOKEN = "erga_test_", TOKEN_DAYS = 7;
 

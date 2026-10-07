@@ -19,6 +19,10 @@
 //
 // ERGA_DEPLOY_MOCK=1: against the mock Cloudflare's copy of Erga's account
 // (deploy/mock.ts), with .site/release/ for the build: nothing real is touched.
+//
+// To roll erga.dev back at once, with no build, to an earlier Worker version
+// (D1 stays as it is): bunx cf workers deployments create --worker erga
+// --strategy percentage --versions '[{"version_id":"<id>","percentage":100}]'
 
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";

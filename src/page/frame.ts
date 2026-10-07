@@ -481,6 +481,8 @@ const unquote = (s: string) => s.replace(/^["']|["']$/g, "");
 // origin holds only the document. parent, top, opener and frameElement
 // read as null in it, so it doesn't reach into the editor by mistake.
 // Only the result's JSON comes back, cut to EVAL_MAX_JSON characters.
+// The time limit can't stop an expression that never yields (while (true)):
+// it stalls this tab, and the host gives up after viewWait.
 async function evaluateIn(win: Window, expr: string, timeoutMs: number): Promise<{ value?: string; note?: string; error?: string }> {
   const W = win as Window & typeof globalThis;
   for (const k of ["parent", "opener", "frameElement"]) try { Object.defineProperty(W, k, { value: null, configurable: true }); } catch { /* not replaceable here */ }

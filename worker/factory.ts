@@ -2,8 +2,17 @@
 // branch of Erga's own repository, task/<id>-<slug>, made from staging, and
 // a VM in which Claude Code does the work and reports back. Merging a task
 // merges its branch into staging and deletes it; discarding it deletes it.
-// Admins only, and only while the `factory` setting is "on". README, The
-// factory, has the design, the findings and the runbook.
+// Admins only, and only while the `factory` setting is "on".
+//
+// A VM is one Unix user, so the task's code (Claude Code, and anything a
+// task's ask talks it into) can read every secret any job there gets: the
+// agent's (/proc/1/environ), the task's tokens, the Claude token and, during
+// a merge, the merge's git token. So the server decides what each token can
+// do, never the VM. The Claude token is the riskiest: a VM can copy it out
+// and use the plan elsewhere until someone signs out here and revokes it at
+// claude.ai (the fix would be a proxy here that holds it). What lands on
+// staging is what the branch holds at Merge, not what the screenshots
+// showed: the merge is the review.
 //
 //   /admin/factory                         the board (factory/page.ts), on the Factory page (worker/source.ts),
 //                                          with the source dashboard and the factory's own agent
@@ -47,7 +56,7 @@
 //                                          APIs, how to call them, and the token's limits (factory/agent.ts)
 //   GET  /api/factory/guide                the same guide (its old address)
 //
-// A local task (factory/task.ts; README, The factory, "Local tasks") has no VM: a local agent (Claude Code on the
+// A local task (factory/task.ts) has no VM: a local agent (Claude Code on the
 // admin's own machine) runs it in its own checkout, and reports with an admin token on the VMs' routes below
 // (brief, inbox, log, branch, preview, screenshots, PATCH with a status), for a local task only. And:
 //
@@ -78,7 +87,7 @@
 // done, the merge runs again by itself (stopping that Claude Code first, if it is still saying its last words);
 // when it fails, the task goes back to ready to merge with its reason, and its Claude Code is stopped.
 //
-// Dependencies between tasks (factory/deps.ts, README, The factory): startAfter and mergeAfter, a computed blockedBy, a
+// Dependencies between tasks (factory/deps.ts): startAfter and mergeAfter, a computed blockedBy, a
 // blocked start or merge refused (409), the merge checked again when its turn
 // comes. With no outer agent here, the factory starts a queued task itself as
 // soon as nothing blocks it.
@@ -183,6 +192,8 @@ export const gitSecret = (env: Env) => env.ERGA_LINK_SECRET || factoryKey(env);
 export async function gitToken(env: Env, scope: "task" | "merge", branch: string, by?: string, via?: string): Promise<string> {
   const secret = gitSecret(env);
   if (!secret) throw new Error("FACTORY_KEY isn't set");
+  // A merge token is made when the merge job starts (after it waits its turn), so how long ago the task became ready
+  // doesn't matter; it outlives the job by 5 minutes, and the job is stopped at MERGE_JOB_MS, before the token ends.
   const life = scope == "merge" ? MERGE_JOB_MS / 1000 + 300 : 7200;
   const body = b64url(JSON.stringify({ scope, branch, exp: Math.floor(Date.now() / 1000) + life, ...(by ? { by } : {}), ...(via ? { via } : {}), ...(scope == "merge" ? { id: crypto.randomUUID() } : {}) }));
   return `fgt.${body}.${hex(await hmac(await hmac(secret, "erga-factory-git"), body))}`;
@@ -260,7 +271,7 @@ function vmHost(env: Env, origin: string): VmHost | string {
   if (env.ERGA_LINK_SECRET && env.DEV_LOGIN) return localHost(env, origin);
   // On Cloudflare: Containers (factory/cloudflare.ts), which the deploy declares (deploy/cloudflare.ts, deploy/targets.json).
   if (env.FACTORY_VM && env.FACTORY_PREVIEW_DOMAIN) return containersHost(env, origin);
-  return "This server has no VMs for the factory yet: its deploy declares them (README, The factory, On Cloudflare).";
+  return "This server has no VMs for the factory yet: its deploy declares them (bun deploy/setup.ts --factory).";
 }
 
 /** What the dev server says about its VMs: Docker or simulated (local only). */
@@ -576,6 +587,8 @@ export class Factory extends DurableObject<Env> {
   /**
    * What a job in the task's VM gets: where to report and with what, the repository, and for a job that runs Claude
    * Code (`claude`), the Claude token when there is one. The others (merge, save, stop, discard) never get it.
+   * A known risk: every command Claude Code runs can read it, and the VM reaches the internet, so a prompt injection
+   * could send it out (narrowing the VM's egress, or proxying Anthropic's API through the Worker, would close it).
    */
   private async jobEnv(id: number, scope: "task" | "merge", by?: Act, claude = false): Promise<Record<string, string>> {
     const r = this.row(id)!;
@@ -1054,7 +1067,7 @@ export class Factory extends DurableObject<Env> {
     // In the change log, as an API key's change is (never the token).
     const log = (credential: "set" | "replaced" | "cleared") => this.logged(by, { key: "CLAUDE_CODE_OAUTH_TOKEN", from: null, to: null, credential });
     if (token == null) { this.sql.exec("DELETE FROM secrets WHERE name = 'claude'"); if (had) await log("cleared"); return { ok: true }; }
-    if (!factoryKey(this.env)) return { ok: false, error: "This server has no FACTORY_KEY to encrypt the token with: bun deploy/setup.ts --factory makes it (README, The factory, On Cloudflare)." };
+    if (!factoryKey(this.env)) return { ok: false, error: "This server has no FACTORY_KEY to encrypt the token with: bun deploy/setup.ts --factory makes it." };
     const checked = claudeToken(token);
     if ("error" in checked) return { ok: false, error: checked.error };
     token = checked.token;
@@ -1126,7 +1139,7 @@ export class Factory extends DurableObject<Env> {
     const as = (): ToolWho => ({ dir: directoryOf(this.env), who: { login, admin: true, via: VIA.admin }, origin: state.origin, auth: authOps(this.env, state.origin) });
     // The source tools read the server's copy of Erga's repository (SourceHost), read-only.
     const readSource = async (q: SourceRead): Promise<SourceAnswer> => {
-      if (!hasSource(this.env)) throw new Error("Erga's repository isn't set up on this server: it needs the Artifacts binding (README, Erga's own source).");
+      if (!hasSource(this.env)) throw new Error("Erga's repository isn't set up on this server: it needs the Artifacts binding: bun deploy/setup.ts binds it, and source/import.ts fills it.");
       const r = await this.env.SOURCE.getByName("erga").read(state.origin, q);
       if ("error" in r) throw new Error(r.error);
       return r;
@@ -1146,7 +1159,7 @@ export class Factory extends DurableObject<Env> {
    */
   private dashboard(login: string, state: { origin: string }): DashboardOps {
     const source = () => {
-      if (!hasSource(this.env)) throw new Error("Erga's repository isn't set up on this server: it needs the Artifacts binding (README, Erga's own source).");
+      if (!hasSource(this.env)) throw new Error("Erga's repository isn't set up on this server: it needs the Artifacts binding: bun deploy/setup.ts binds it, and source/import.ts fills it.");
       return this.env.SOURCE.getByName("erga");
     };
     const pipeline = () => this.env.PIPELINE.getByName("deploys");

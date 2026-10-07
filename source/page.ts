@@ -232,7 +232,7 @@ const SOURCE_STYLE = `
 function sourceMarkup(c: SourcePageConfig): string {
   if (!c.ready) {
     return `<div class="pane-head"><h2>git log</h2></div>
-  <div class="box setup"><h2>Not set up on this server</h2><p>The repository lives in Cloudflare Artifacts, which this server isn't bound to yet. README.md (Erga's own source) has the steps:</p>
+  <div class="box setup"><h2>Not set up on this server</h2><p>The repository lives in Cloudflare Artifacts, which this server isn't bound to yet. The steps:</p>
   <ol><li>Make the Artifacts repo <code>erga</code> in the namespace <code>erga</code>.</li><li>Deploy with <code>ERGA_ARTIFACTS_NAMESPACE=erga</code>, which adds the binding.</li><li>Push the history in: <code>bun source/import.ts</code>.</li></ol></div>`;
   }
   const remote = `${c.origin}/git/erga.git`;
@@ -826,7 +826,7 @@ const TABS_SCRIPT = `
 })();
 `;
 
-/** The GitHub mirror's dialog: the steps that turn it on (README, The GitHub mirror), shown while it's off; its state and Push now while it's on. */
+/** The GitHub mirror's dialog: the steps that turn it on shown while it's off; its state and Push now while it's on. */
 function mirrorDialog(c: SourcePageConfig): string {
   const repo = /github\.com\/([^/]+\/[^/]+?)(\.git)?$/.exec(c.mirrorUrl)?.[1] ?? "koomen/erga";
   const name = c.worker ? ` --name ${c.worker}` : " --name <this server's Worker>";

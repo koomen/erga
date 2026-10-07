@@ -11,15 +11,14 @@
 // version is cut, listed and served in the same object that holds the
 // document, and deleting the document deletes them.
 //
-// When a version is cut (doc-host.ts decides; see README, Versions and
-// publishing), and what's in it, is the caller's: this file stores and reads
-// them, says what changed (`changes`, a compact diff), and writes the
+// When a version is cut (doc-host.ts decides, in `noteEdit`), and what's
+// in it, is the caller's: this file stores and reads them, says what changed (`changes`, a compact diff), and writes the
 // fallback description used when no model writes one.
 
 import { createTwoFilesPatch, structuredPatch } from "diff";
 import Anthropic from "@anthropic-ai/sdk";
 
-/** A version as the API shows it (README: the contract shared with the settings UI and the homepage deploy). */
+/** A version as the API shows it (the contract shared with the settings UI, src/page/versions.ts, and the homepage deploy, home.ts). */
 export interface Version {
   id: string;
   /** 1, 2, 3... per document. */

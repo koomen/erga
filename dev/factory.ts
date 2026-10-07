@@ -1,4 +1,4 @@
-// The factory's local stand-ins (experimental; README, The factory), served
+// The factory's local stand-ins (experimental), served
 // by the dev server (dev/plugin.ts) because they need this machine: what the
 // Worker reaches on Cloudflare as Erga's repository (Artifacts) and as
 // Containers.

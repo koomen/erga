@@ -1,5 +1,5 @@
 // Agent tokens: the one credential for agents, scripts, the API, MCP and Git.
-// Each stands for one person, within a scope (README, Tokens):
+// Each stands for one person, within a scope:
 //
 //   document    one document (`docId`), with the person's rights there, and
 //               nothing else: no listing, making or deleting other documents
@@ -25,6 +25,8 @@
 // its SHA-256 is stored, so the database alone holds no working token. That
 // lets the share button show its token again each time it's asked (until
 // it's rotated); a token made at /tokens or for an agent is shown once.
+// It also means a token works only on the server that made it: staging's
+// database copies the rows, but staging's secret is its own.
 
 import type { Directory, Sql } from "./directory";
 import { changeLogEntry } from "./attribution";

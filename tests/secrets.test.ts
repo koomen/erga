@@ -1,4 +1,4 @@
-// The fixes from the audit of how secrets are stored and handled (docs/secrets.md): each test
+// The fixes from the audit of how secrets are stored and handled (each fix's reason is a comment next to it): each test
 // stands for one way a secret could leak or be used where it shouldn't.
 
 import { Database } from "bun:sqlite";

@@ -2,7 +2,7 @@
 // production's data, so a server whose deploy target says `adminsOnly`
 // (deploy/targets.json; the pipeline sets DEPLOY_TARGET on each deploy, so no
 // setting turns this off) lets a request in only with admin power: an
-// admin's signed-in session, or an admin-scope token (README, Tokens;
+// admin's signed-in session, or an admin-scope token (tokens.ts;
 // Users.actsAsAdmin). Anyone else gets a page (signed out: sign in; signed in:
 // admins only, with a link to production) or a JSON 403, and Git a 401 that
 // asks for a token. This is the one guard, at the front door (worker/index.ts,

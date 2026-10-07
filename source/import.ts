@@ -11,7 +11,7 @@
 //                   or a local checkout (".")
 //   --branch        which of its branches (main)
 //
-// ERGA_TOKEN is a token with the admin scope (made at <server>/tokens: README, Tokens). It stops if the server's
+// ERGA_TOKEN is a token with the admin scope (made at <server>/tokens). It stops if the server's
 // main already has commits: seeding is once. Erga's GitHub mirror then
 // adds staging on GitHub (main is already there, the same commit).
 

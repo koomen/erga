@@ -726,7 +726,7 @@ async function tokensPage(platform: Platform, session: Session, url: URL, o: { n
 (send it as "Authorization: Bearer &lt;token&gt;").</pre>
 <p>Or add Erga to Claude Code:</p>
 <pre>claude mcp add --transport http erga ${esc(origin)}/mcp --header "Authorization: Bearer ${esc(m.token)}"</pre>${m.info.scope == "admin" ? `
-<p>To push to Erga's source with it (README, Tokens), once:</p>
+<p>To push to Erga's source with it, once:</p>
 <pre>git remote set-url origin ${esc(origin)}/git/erga.git
 printf 'protocol=${esc(url.protocol.replace(":", ""))}\\nhost=${esc(url.host)}\\nusername=token\\npassword=${esc(m.token)}\\n\\n' | git credential approve</pre>` : ""}</section>` : "";
   const test = platform.testToken ? await platform.testToken(session.login) : null;

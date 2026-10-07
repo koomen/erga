@@ -11,6 +11,15 @@ node_modules/
 # A running dev server's address (dev.ts)
 .dev-url
 .site/
+# The editor's bundles once lived at the root (build.sh writes them into .site/ now): an old checkout's copies stay out.
+/page.js
+/frame.js
+/settings.js
+/pages-tree.js
+/factory-agent.js
+/admin-nav.js
+/admin-share.js
+/live.js
 .site.*/
 .dev.vars
 .dev.vars.*

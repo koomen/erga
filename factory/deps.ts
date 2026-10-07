@@ -5,7 +5,7 @@
 // merged) and mergeAfter (don't merge until they're merged; startAfter ones
 // count too). Only `merged` satisfies a dependency. Ids must name other
 // tasks, not discarded ones, and a cycle (through either list) is refused.
-// blockedBy is derived, never stored. README.md, "Dependencies", has the rest.
+// blockedBy is derived, never stored.
 
 export type DepStatus = "queued" | "working" | "complete" | "merging" | "needs-agent" | "merged" | "failed" | "discarded";
 

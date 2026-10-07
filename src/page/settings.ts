@@ -17,8 +17,8 @@
 //     current and the published one marked. Edit, on hover or focus, makes a
 //     copy of a version the current one (POST .../versions/<id>/restore).
 //
-// It talks to the server's API as the shared contract says (README,
-// "Versions and publishing" and "The homepage"), and refreshes on the event
+// It talks to the server's API as the shared contract says (versions.ts
+// and home.ts), and refreshes on the event
 // channel's { type: "versions" } and { type: "home" } (main.ts passes them on).
 // Someone who can't edit sees it all read-only, with a line saying why: what
 // viewers see is worth knowing even when you can't change it.

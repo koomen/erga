@@ -187,6 +187,7 @@ async function claude(brief: Brief, wake: string, limit: number, woken: false | 
   const board = claudeLog();
   const quiet = setInterval(() => { for (const l of board.tick()) log(l); }, 5000);
   const inbox = watchInbox();
+  // Never --bare: it ignores CLAUDE_CODE_OAUTH_TOKEN. And the VM never gets an ANTHROPIC_API_KEY, which would win over it.
   const r = await step(["claude", "-p", prompt, ...(continuing ? ["--continue"] : []), "--model", MODEL(), "--dangerously-skip-permissions", "--output-format", "stream-json", "--verbose", "--max-turns", String(woken == "turns" ? FINISH_TURNS : brief.maxTurns ?? 300)], {
     name: "claude", timeout: limit, cwd: CLONE(), echo: true, onStart: inbox.started,
     onLine: (line) => {

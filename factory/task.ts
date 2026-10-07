@@ -1,8 +1,7 @@
 #!/usr/bin/env bun
 // `task`, outside a VM: how a local agent (Claude Code on the admin's own
 // machine, in its own checkout) runs a factory task itself, with no VM, and
-// reports on it as a VM's Claude Code does (factory/vm/task.ts). README, The
-// factory, "Local tasks"; AGENTS.md, "Two ways to work".
+// reports on it as a VM's Claude Code does (factory/vm/task.ts). AGENTS.md, "Local tasks".
 //
 //   bun task new "title" "ask" [--start-after 12,13] [--merge-after 14]
 //                                   registers a local task on the board, then starts it (below), unless it waits
@@ -22,7 +21,7 @@
 //
 // Settings: the server is ERGA_URL, else `git config erga.url`, else the origin remote when it is an Erga Git
 // endpoint (https://erga.dev/git/erga.git). The admin token is ERGA_TOKEN, else the one Git's credential store keeps
-// for that server (README, Tokens). The task is FACTORY_TASK, else the branch's (task/<id>-...). The machine's name
+// for that server. The task is FACTORY_TASK, else the branch's (task/<id>-...). The machine's name
 // on the board is ERGA_MACHINE, else the host name. Git pushes with a git token the factory makes for the task's
 // branch only (POST /api/factory/tasks/<id>/git); the admin token never goes on a command line.
 
@@ -65,7 +64,7 @@ function adminToken(origin: string): string {
   const r = spawnSync("git", ["credential", "fill"], { input: `protocol=${u.protocol.slice(0, -1)}\nhost=${u.host}\n\n`, encoding: "utf8", timeout: 15_000, env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_ASKPASS: "", SSH_ASKPASS: "" } });
   const password = /^password=(.*)$/m.exec(r.stdout ?? "")?.[1]?.trim();
   if (password?.startsWith("erga_")) return password;
-  throw new Error(`No admin token: set ERGA_TOKEN, or keep one in Git's credential store for ${u.host} (README, Tokens). Make one at ${origin}/tokens (scope: admin).`);
+  throw new Error(`No admin token: set ERGA_TOKEN, or keep one in Git's credential store for ${u.host}. Make one at ${origin}/tokens (scope: admin).`);
 }
 
 /** The task: FACTORY_TASK, or the branch's number (task/<id>-...). */

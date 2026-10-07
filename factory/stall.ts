@@ -1,4 +1,4 @@
-// A stalled task (README, The factory): one that is working, or needs its agent, and whose log has had no new
+// A stalled task: one that is working, or needs its agent, and whose log has had no new
 // line in STALL_MS. The server computes it on every read (worker/factory.ts), the board again as time passes
 // (factory/page.ts), and the factory's agent sees it in list_tasks and get_task. "Stalled", not "blocked":
 // "blocked" is a task that waits for its dependencies.

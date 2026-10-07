@@ -71,7 +71,7 @@ export interface TargetSpec {
    */
   deploys: TargetName[];
   /**
-   * The factory runs here with VMs (README, The factory): Cloudflare Containers from the factory's image (FACTORY,
+   * The factory runs here with VMs (factory/cloudflare.ts): Cloudflare Containers from the factory's image (FACTORY,
    * below), with previews on <vm>.<pages.domain>: the pages' wildcard route, DNS record and Universal SSL certificate
    * already cover one label under it, so the previews need nothing new.
    */
@@ -100,7 +100,7 @@ export const FACTORY: { image: string } = data.factory;
 /**
  * The targets themselves are in targets.json (staging's GITHUB_CLIENT_ID is
  * its own GitHub OAuth app's: homepage https://staging.erga.dev, callback
- * https://staging.erga.dev/auth/github/callback; the runbook in the README).
+ * https://staging.erga.dev/auth/github/callback; deploy/setup.ts).
  * Staging is for admins only (`adminsOnly`), and its admins sign in with that
  * app, not production's: until someone makes it (on GitHub, by hand: GitHub
  * has no API for OAuth apps), puts its Client ID here and sets its secret

@@ -9,7 +9,15 @@
 // colo's cache (the Cache API), and checks with the Durable Object for a newer
 // one at most every few seconds, after answering (stale-while-revalidate), so
 // / never waits on anything but the snapshot, and usually not even on that.
-// The files are at /_home/<gen>/<path>, cached for good.
+// The files are at /_home/<gen>/<path>, cached for good. On workers.dev,
+// which has no Cache API, it serves from the isolate's memory alone.
+//
+// Why not Cloudflare Pages, KV or static assets: Pages is a second project
+// with an API token as a secret, and / belongs to this Worker, so it would
+// fetch each page from Pages, a hop more than its own cache; KV needs a
+// namespace for every deploy (and /deploy making one); static assets need a
+// Worker deploy. This needs nothing outside the Worker, and works the same
+// locally and on /deploy'ed servers.
 //
 // When the homepage's published version changes, the next deploy runs about
 // five minutes later (ERGA_HOME_DELAY_MS), each change pushing it back

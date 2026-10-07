@@ -197,7 +197,8 @@ export const RESUME_MS = 5_000;
  * How many times a deploy runs, in all, when restarts of the server stop it
  * before its upload (Cloudflare resets a Durable Object now and then: a new
  * version, a secret changed, its isolate at its memory limit). Each time it
- * starts again from the top by itself, with nobody to press Redeploy.
+ * starts again from the top by itself, with nobody to press Redeploy. So set
+ * a Worker's secrets when no deploy runs: the new version interrupts it.
  */
 export const ATTEMPTS = 3;
 const key = (name: TargetName) => `target:${name}`;
@@ -235,7 +236,7 @@ export class BranchDeploys {
     const e = this.deps.env;
     if (!this.self || !name) return "This server isn't one of Erga's deploy targets (DEPLOY_TARGET).";
     if (!this.deploysTo.includes(name)) return `This server doesn't deploy ${name}.`;
-    if (!e.CLOUDFLARE_DEPLOY_TOKEN?.trim()) return "Branch deploys aren't set up on this server (no CLOUDFLARE_DEPLOY_TOKEN): nothing is deployed. See the README's runbook.";
+    if (!e.CLOUDFLARE_DEPLOY_TOKEN?.trim()) return "Branch deploys aren't set up on this server (no CLOUDFLARE_DEPLOY_TOKEN): nothing is deployed. bun deploy/setup.ts sets it up.";
     if (!/^[0-9a-f]{32}$/.test(e.CLOUDFLARE_ACCOUNT_ID?.trim() ?? "")) return "This server doesn't know its Cloudflare account (CLOUDFLARE_ACCOUNT_ID).";
     if (!this.deps.builder) return `This server has no builder (the BUILDER service binding to ${BUILDER}).`;
     if (TARGETS[name].snapshotFrom && !(e.SNAPSHOT_TOKEN?.trim().length! >= 32)) return "Staging copies production's data, which needs SNAPSHOT_TOKEN on both servers (deploy/setup.ts).";

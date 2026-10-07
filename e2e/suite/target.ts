@@ -1,6 +1,6 @@
 // What the suite runs against. A target hands out documents; a document is
-// reached only through the deployment's public surface (the contract in
-// e2e/suite/README.md): its shell, the room's WebSocket, the agent's HTTP
+// reached only through the deployment's public surface (the contract: Doc,
+// below, and the room as client.ts joins it): its shell, the room's WebSocket, the agent's HTTP
 // endpoints, what's served and what's stored. Nothing here peeks inside the
 // server, so the same tests run against a local dev server and a deployment.
 //
@@ -26,10 +26,12 @@ import { dirname, join, relative } from "path";
  *   restart        stop the server gracefully and start it again
  *   kill           stop it abruptly (SIGKILL) and start it again
  *   disk           edit the stored files directly, behind the server's back
- *   scriptedAgent  the agent runs the scripted test model (agent.ts)
+ *   scriptedAgent  the agent runs the scripted test model (agent.ts); staging
+ *                  only, never a server real people reach (production)
  *   liveAgent      the agent runs a real model (costs money)
  *   browser        a headless Chrome is available here to open the shell
- *   roles          people can have view-only access (Doc.share)
+ *   roles          people can have view-only access (Doc.share); local only,
+ *                  as test people on a deployment always edit their test documents
  */
 export type Capability = "restart" | "kill" | "disk" | "scriptedAgent" | "liveAgent" | "browser" | "roles";
 

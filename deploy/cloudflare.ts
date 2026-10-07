@@ -639,13 +639,15 @@ export async function runPipeline(cf: Cloudflare, release: Release | null, targe
         await uploadWorker(rel, assetsJwt, !!target.factory);
       } catch (e) {
         // A deploy token that may not name a container image: the version goes up without the factory's VMs (the rest of
-        // Erga is unchanged), and the log says how to give them back.
+        // Erga is unchanged), and the log says how to give them back. Deploy tokens get no Containers permission:
+        // Cloudflare's narrowest is account-wide, so the image and the container application are made once from a
+        // machine with your own login (bun deploy/setup.ts --factory), and a version then only names the image.
         if (!(target.factory && target.keepSecrets && e instanceof DeployError && e.status == 403)) throw e;
         carry.noVms = e.message;
         await uploadWorker(rel, assetsJwt, false);
       }
       delete (carry as Carry & { assetsJwt?: string }).assetsJwt;
-      return `${target.workerName}, release ${rel.version}${carry.noVms ? "; without the factory's VMs: this deploy's token may not name a container image (README, The factory)" : ""}`;
+      return `${target.workerName}, release ${rel.version}${carry.noVms ? "; without the factory's VMs: this deploy's token may not name a container image (bun deploy/setup.ts --factory)" : ""}`;
     },
 
     // The factory's container application, made once for the Worker's FactoryVm namespace (deploy/containers.ts).

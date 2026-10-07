@@ -781,6 +781,7 @@ export class DocHost extends DurableObject<Env> {
       Scope.provide(scope),
     ));
     // A test document's agent is the scripted one (agent.ts): free, and the same every run.
+    // Read once, as the host starts: an open document keeps this key until it closes, so an admin's new key reaches it then.
     const agent = meta.test
       ? { apiKey: Redacted.make(""), model: "script" as const, effort: "medium" }
       : await Effect.runPromise(agentConfigFrom(ConfigProvider.fromUnknown(await withKeys(this.env))));

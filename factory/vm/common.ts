@@ -66,7 +66,7 @@ export const log = (message: string) => api("/log", { json: { message } }).catch
 
 /**
  * How long each step of a job may take, in seconds, before its processes are killed (the whole tree) and the
- * task's Claude Code is woken with the logs (README, The factory, "Timeouts"). Nothing in a job waits forever.
+ * task's Claude Code is woken with the logs. Nothing in a job waits forever.
  */
 export const LIMITS = {
   clone: 300, fetch: 120, push: 120, git: 60,

@@ -30,7 +30,7 @@ export function run(cmd: string, args: string[], opts: { cwd?: string; env?: Rec
 }
 
 export async function localAgent(s: FactoryServer, label = "Laptop agent") {
-  // An admin token, as Claude Code on a laptop has one (README, Tokens).
+  // An admin token, as Claude Code on a laptop has one.
   const made = await (await fetch(`${s.root}/tokens/new`, { method: "POST", headers: { Origin: s.root }, body: new URLSearchParams({ label, scope: "admin" }) })).text();
   const token = /<pre class="secret">(erga_[^<]+)<\/pre>/.exec(made)?.[1];
   expect(token, made.slice(0, 300)).toBeTruthy();

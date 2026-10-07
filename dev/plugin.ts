@@ -109,7 +109,7 @@ export function ergaDev(opts: DevOptions): Plugin {
         return l;
       };
 
-      // The factory's local stand-ins: Erga's repository and the VMs (dev/factory.ts; README, The factory).
+      // The factory's local stand-ins: Erga's repository and the VMs (dev/factory.ts).
       const factory = factoryDev({ stateDir: opts.stateDir, secret: opts.secret, port: () => (server.httpServer?.address() as AddressInfo | null)?.port ?? 0, log });
       server.middlewares.use((req, res, next) => {
         if (req.url?.startsWith("/__factory/") && factory.handle(req, res)) return;

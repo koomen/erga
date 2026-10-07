@@ -20,6 +20,10 @@
 // The API takes the app's session or an admin-scope token ("Authorization:
 // Bearer erga_..."), an admin's either way. A POST with the session alone
 // must come from this site's own pages.
+//
+// Checkouts push to erga.dev's endpoint, not staging's: tokens are production's
+// (staging's secret is its own, so they don't work there), and a bad staging
+// deploy can't break the way pushes reach staging. Both proxy one repository.
 
 import type { Platform } from "../front";
 import { whoOf, withTokens } from "../front";
@@ -39,7 +43,7 @@ import { gitSecret } from "./factory";
 
 const host = (env: Env) => env.SOURCE.getByName("erga");
 const json = (body: unknown, status = 200) => Response.json(body, { status, headers: { "Cache-Control": "no-store" } });
-const notSetUp = "Erga's repository isn't set up on this server: it needs the Artifacts binding (see README, Erga's own source).";
+const notSetUp = "Erga's repository isn't set up on this server: it needs the Artifacts binding: bun deploy/setup.ts binds it, and source/import.ts fills it.";
 
 /** A read (clone, fetch, ls-remote: git-upload-pack's two requests), which anyone may make without credentials. */
 export function isGitRead(request: Request, rest: string, url: URL): boolean {

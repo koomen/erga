@@ -536,7 +536,7 @@ ${rows.join("\n")}
   </section>
   <section aria-labelledby="deploy-head" class="deploy-secrets">
     <h2 id="deploy-head">Set in the deploy <small>read-only</small></h2>
-    <p class="lede">These secrets are Worker secrets only. A wrong value here could lock every admin out, or break the other server, so this page doesn't change them. Set one with <span class="mono">bunx cf workers secrets update NAME</span>, or with <span class="mono">bun deploy/setup.ts</span> (docs/secrets.md). The factory's VMs run on Cloudflare Containers, through the Worker's own binding: they need no key.</p>
+    <p class="lede">These secrets are Worker secrets only. A wrong value here could lock every admin out, or break the other server, so this page doesn't change them. Set one with <span class="mono">bunx cf workers secrets update NAME</span>, or with <span class="mono">bun deploy/setup.ts</span>. The factory's VMs run on Cloudflare Containers, through the Worker's own binding: they need no key.</p>
     <ol class="rows">
 ${deployed.map(deploySecretRow).join("\n")}
     </ol>

@@ -1,7 +1,9 @@
 // What a new document can start from: the templates the + button offers
 // (the viewer's, the homepage's and the editor's), and /new?template=<id>
-// makes. One registry, so a new template is one entry here (README, "New
-// documents from a template"). No server code: the editor's bundle reads it too.
+// makes. One registry, so a new template is one entry in TEMPLATES (its
+// starting files in templates/<name>/, index.html or index.md and text files
+// beside it, which the Worker reads as text). No server code: the editor's
+// bundle reads it too.
 
 /** A template: what the picker shows, and the files a new document starts with. */
 export interface Template {
