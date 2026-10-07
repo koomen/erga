@@ -196,15 +196,15 @@ try {
   let s = await state();
   expect(s.rows.map((x) => x.subject).join() == "Fifth,Fourth,Third,Second,First" && s.title.startsWith("Factory") && !s.merge && !s.mergeShown && s.ahead == "" && s.headGap < 1, "one list: staging's commits, newest first; nothing to merge, so no Merge button, no text and no space for them", s);
   await p.screenshot(join(SHOTS, "source-at-staging.png"));
-  // The page is plain: no notes under the headings, no summary lines, no footer; Clone copies the clone command.
-  const plain = await p.eval<{ notes: number; extra: number; clone: string }>(`({ notes: document.querySelectorAll(".pane-head .sub, .pane-note").length,
-    extra: document.querySelectorAll("#grid .older, #moves, .site-foot").length, clone: document.getElementById("clone-copy")?.dataset.clone ?? "" })`);
-  expect(!plain.notes && !plain.extra && plain.clone == "git clone " + origin + "/git/erga.git", "no notes, summary lines or footer; Clone copies git clone", plain);
+  // The page is plain: no notes under the headings, no summary lines, no footer; no Clone button.
+  const plain = await p.eval<{ notes: number; extra: number; clone: boolean; heading: string }>(`({ notes: document.querySelectorAll(".pane-head .sub, .pane-note").length,
+    extra: document.querySelectorAll("#grid .older, #moves, .site-foot").length, clone: !!document.getElementById("clone-copy"), heading: document.querySelector("#source-pane .pane-head h2")?.textContent ?? "" })`);
+  expect(!plain.notes && !plain.extra && !plain.clone && plain.heading == "git log", "no notes, summary lines, footer or Clone button; the heading says git log", plain);
   await p.open(`${root}/admin/factory#source`, { width: 390, height: 844, scale: 2, clear: false });
   await until(async () => (await state()).rows.length > 0, 10_000, "the list draws (phone, main at staging)");
   await p.eval(`document.querySelector(".tabs [data-tab=source]").click()`);
   s = await state();
-  expect(!s.mergeShown && s.ahead == "" && s.headGap < 1 && await p.eval<boolean>(`document.getElementById("merge-row").parentElement.getBoundingClientRect().height > 0`), "on a phone too: no count, no button and no space for them", s);
+  expect(!s.mergeShown && s.ahead == "" && s.headGap < 1 && await p.eval<boolean>(`document.getElementById("merge-row").getBoundingClientRect().height == 0`), "on a phone too: no count, no button and no space for them", s);
   await p.screenshot(join(SHOTS, "source-at-staging-phone.png"));
   await p.open(`${root}/admin/factory`, { width: 1280, height: 900, scale: 2, clear: false });
   await until(async () => (await state()).rows.length > 0, 10_000, "the list draws again");

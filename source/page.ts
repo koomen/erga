@@ -59,6 +59,7 @@ const SOURCE_STYLE = `
   :root[data-theme="dark"] { --on-main: #4cc38a; --only-staging: #f0a742; --bad: #ff8a65; }
   .pane-head { justify-content: space-between; }
   .head-actions { display: flex; align-items: center; gap: 10px; margin-left: auto; }
+  .head-actions:not(:has(> :not([hidden]))) { display: none; }
   .merge-row { display: flex; align-items: center; gap: 10px; }
   .merge-row .count { font-size: 13px; color: var(--soft); white-space: nowrap; }
   .merge-row[hidden], #merge-hint:empty { display: none; }
@@ -128,7 +129,7 @@ const SOURCE_STYLE = `
   @keyframes pulse { 50% { opacity: .25; } }
   /* A factory task: its merge commit is a long, thin card on its own line (the task's name, number and how many commits),
      its commits under it, their dots on the same rail, their subjects indented, a thin line down the indent.
-     The card folds them away; "Collapse tasks" in the legend folds every task, so the list shows only tasks. */
+     The card folds them away; "Collapse all", beside the heading, folds every task, so the list shows only tasks. */
   .row > .task-card { grid-column: 2 / span 4; display: grid; grid-template-columns: subgrid; align-items: center; height: 26px; align-self: center; margin: 0 4px 0 2px;
     border: 1px solid var(--rule); border-radius: 7px; background: color-mix(in srgb, var(--chrome) 7%, var(--bg)); cursor: pointer; }
   .row:hover > .task-card { background: color-mix(in srgb, var(--chrome) 13%, var(--bg)); }
@@ -148,9 +149,10 @@ const SOURCE_STYLE = `
   .row.in-task .subj::before { content: ""; position: absolute; left: 13px; top: 0; bottom: 0; border-left: 1px solid var(--rule); }
   .row.in-task.last .subj::before { bottom: 50%; }
   .row.in-task.hide { display: none; }
-  .legend .fold-all { margin-left: auto; height: 22px; padding: 0 8px; border: 1px solid var(--rule); border-radius: 6px; background: var(--bg); color: var(--fg); font: 500 12px var(--font-text); cursor: pointer; }
-  .legend .fold-all:hover { background: color-mix(in srgb, var(--chrome) 10%, var(--bg)); }
-  .legend .fold-all[hidden] { display: none; }
+  .head-title { display: flex; align-items: center; gap: 10px; min-width: 0; }
+  .fold-all { height: 24px; padding: 0 8px; border: 1px solid var(--rule); border-radius: 6px; background: var(--bg); color: var(--fg); font: 500 12px var(--font-text); cursor: pointer; }
+  .fold-all:hover { background: color-mix(in srgb, var(--chrome) 10%, var(--bg)); }
+  .fold-all[hidden] { display: none; }
   /* The break, when staging is far ahead of main: a dashed rail and how many commits it leaves out. */
   .gap { display: contents; }
   .gap > * { height: var(--row); display: flex; align-items: center; }
@@ -187,7 +189,7 @@ const SOURCE_STYLE = `
 /** The source pane: the commits with their deploys, Merge, how to clone; or how to set it up. */
 function sourceMarkup(c: SourcePageConfig): string {
   if (!c.ready) {
-    return `<div class="pane-head"><h2>Source and deploys</h2></div>
+    return `<div class="pane-head"><h2>git log</h2></div>
   <div class="box setup"><h2>Not set up on this server</h2><p>The repository lives in Cloudflare Artifacts, which this server isn't bound to yet. README.md (Erga's own source) has the steps:</p>
   <ol><li>Make the Artifacts repo <code>erga</code> in the namespace <code>erga</code>.</li><li>Deploy with <code>ERGA_ARTIFACTS_NAMESPACE=erga</code>, which adds the binding.</li><li>Push the history in: <code>bun source/import.ts</code>.</li></ol></div>`;
   }
@@ -195,12 +197,12 @@ function sourceMarkup(c: SourcePageConfig): string {
   const target = (name: string, label: string) => `<div class="head deploy"><button class="target" type="button" id="target-${name}" data-target="${name}" disabled title="Deploys aren't set up yet"><b>${label}</b><span class="st"><i></i><span>not set up</span></span></button></div>`;
   return `
   <div class="pane-head">
-    <h2>Source and deploys</h2>
-    <div class="head-actions"><div class="merge-row" id="merge-row" hidden><span class="count" id="ahead"></span><button class="new" id="merge" disabled>Merge staging into main</button></div><button class="pill" id="clone-copy" type="button" data-clone="git clone ${esc(remote)}" title="Copy: git clone ${esc(remote)}">Clone</button></div>
+    <div class="head-title"><h2>git log</h2><button class="fold-all" type="button" id="fold-all" hidden>Collapse all</button></div>
+    <div class="head-actions"><div class="merge-row" id="merge-row" hidden><span class="count" id="ahead"></span><button class="new" id="merge" disabled>Merge staging into main</button></div></div>
   </div>
   <p class="hint" id="merge-hint" role="status"></p>
   <section class="card" aria-label="Commits">
-    <div class="legend"><span><i class="dot staging-only"></i>only on staging</span><span><i class="dot on-main"></i>on main too</span><button class="fold-all" type="button" id="fold-all" hidden>Collapse tasks</button></div>
+    <div class="legend"><span><i class="dot staging-only"></i>only on staging</span><span><i class="dot on-main"></i>on main too</span></div>
     <div class="grid" id="grid">
       <div class="head"></div>
       <div class="head" style="padding-left:6px">Commit</div><div class="head who-h"></div><div class="head"></div><div class="head time-h"></div>
@@ -241,10 +243,10 @@ const SOURCE_SCRIPT = `
   /** When staging is far ahead of main: how many of its newest commits show above the break, and how many of main's below it. */
   const GAP_TOP = 11, GAP_MAIN = 6;
   let view = null, deploys = null, busy = false, drawn = false;
-  // Which task cards are folded, kept in the browser: every task, or none (all), except those flipped one by one.
-  // So after "Collapse tasks", a task merged later comes folded too.
+  // Which task cards are folded, kept in the browser: every task (the default), or none, except those flipped one by one.
+  // So with "Collapse all" (or before any choice), a task merged later comes folded too.
   const FOLDS = "erga:source-folded-tasks";
-  let folds = { all: false, flip: [] };
+  let folds = { all: true, flip: [] };
   try { folds = { ...folds, ...JSON.parse(localStorage.getItem(FOLDS) || "{}") }; } catch {}
   const isFolded = (sha) => folds.all != folds.flip.includes(sha);
   const setFolded = (sha, on) => {
@@ -320,7 +322,7 @@ const SOURCE_SCRIPT = `
     const cards = new Set(commits.filter((x) => x.task && !x.inTask).map((x) => x.sha));
     const foldAll = document.getElementById("fold-all");
     foldAll.hidden = !cards.size;
-    foldAll.textContent = cards.size && [...cards].every(isFolded) ? "Expand tasks" : "Collapse tasks";
+    foldAll.textContent = cards.size && [...cards].every(isFolded) ? "Expand all" : "Collapse all";
     commits.forEach((x, i) => {
       let r = rows.get(x.sha);
       if (!r) { r = document.createElement("div"); r.dataset.sha = x.sha; }
@@ -507,13 +509,6 @@ const SOURCE_SCRIPT = `
     try { localStorage.setItem(FOLDS, JSON.stringify(folds)); } catch {}
     render();
   });
-  // Clone: copies the git clone command; the button says so for a moment.
-  const cloneBtn = document.getElementById("clone-copy");
-  cloneBtn.addEventListener("click", async () => {
-    const ok = await navigator.clipboard.writeText(cloneBtn.dataset.clone).then(() => true, () => false);
-    cloneBtn.textContent = ok ? "Copied" : "Couldn't copy";
-    setTimeout(() => { cloneBtn.textContent = "Clone"; }, 1500);
-  });
   const mirrorDlg = document.getElementById("mirror-dlg");
   document.getElementById("mirror-pill")?.addEventListener("click", () => {
     document.getElementById("mirror-status").textContent = "";
@@ -695,7 +690,7 @@ export function adminFactoryPage(c: SourcePageConfig): Response {
   <div class="tabs" role="tablist" aria-label="Show"><button type="button" role="tab" data-tab="tasks">Tasks</button><button type="button" role="tab" data-tab="source">Source</button></div>
   <div class="panes">
     <section class="pane" id="tasks" aria-label="Tasks">${boardMarkup({ enabled: c.factory })}</section>
-    <section class="pane" id="source-pane" aria-label="Source and deploys">${sourceMarkup(c)}</section>
+    <section class="pane" id="source-pane" aria-label="git log">${sourceMarkup(c)}</section>
   </div>
   ${c.ready ? mirrorDialog(c) : ""}
 <script>${TABS_SCRIPT}</script>

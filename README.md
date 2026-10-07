@@ -1271,8 +1271,8 @@ any deploy's log, past or live, in a modal;
 number, name and how many commits it has, and the commits that came in with it
 (those its second parent brings, `source/repo.ts`: `withTasks`, up to 100) follow it,
 their dots on the same rail, their subjects indented. Other commits show as
-always. A card folds its commits away; "Collapse tasks" folds every card, so
-the list shows only tasks; the browser remembers it (`tests/source-tasks.ts`).
+always. A card folds its commits away; cards start folded; "Collapse all" and "Expand all", right after the "git log" heading, fold or unfold every card, so
+the list shows only tasks; the browser remembers the choice (`tests/source-tasks.ts`).
 
 **The branch model.** There are only two branches, and `staging` is always
 at or ahead of `main`: `main` only fast-forwards to a commit of `staging`
@@ -1555,7 +1555,7 @@ what happened (`remote: Erga: main is now 1a2b3c4 (3 new commits).`).
 
 Erga keeps an index of the commits (parents, subject, author, times) in
 that Durable Object's SQLite: "is this a fast-forward", "where do these
-branches meet" and "the last 25 commits" never ask Artifacts. Commits never
+branches meet" and "the last 100 commits" never ask Artifacts. Commits never
 change, so it's a cache that's always right; anything missing (a push made
 straight to Artifacts) is fetched from Artifacts when it's needed.
 
@@ -1592,7 +1592,7 @@ Narrower than 1000px, tabs (Tasks, Source) show one at a time, and the
 agent covers the page while it's open. Each part's stylesheet is
 scoped to its pane (`scopeCss`: its width queries measure the pane, so the
 board keeps its five columns beside the agent). `/source`, `/admin/factory`
-and `/admin/deploys` redirect here. The dashboard: One list, staging's last 25 commits,
+and `/admin/deploys` redirect here. The dashboard: One list, staging's last 100 commits,
 newest first, with two dot columns beside it, as the task queue board's
 Branches column draws them: staging's (a hollow orange circle for a commit
 only on staging, a solid green circle for one main has too) and main's (a

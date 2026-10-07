@@ -39,7 +39,7 @@ export type Branch = (typeof BRANCHES)[number];
 const REF = (b: Branch) => `refs/heads/${b}`;
 const QUARANTINE = "refs/heads/erga-incoming/";
 /** How many commits each branch shows. */
-export const LOG = 25;
+export const LOG = 100;
 /** At most how many commits a task's card holds. */
 export const TASK_COMMITS = 100;
 /** A task's merge commit, by the factory (factory/vm/merge.ts) or the task queue: "Merge task/<id>-<slug>: title". */
