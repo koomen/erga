@@ -772,8 +772,11 @@ const seeding = new WeakMap<object, Promise<DocRow | null>>();
  * landing_document to it. No deploy step does this; the server does.
  * Requests at once in one isolate share one seed; across isolates the setting
  * is claimed compare-and-set (ServerConfig.claim), and a seed that loses
- * deletes its document and takes the winner's. A setting an admin chose (a
- * document that's there) is never touched, nor one the deploy locks.
+ * deletes its document and takes the winner's. Each seed makes its document
+ * at its id (/<owner>/<id>), and only the winner moves to /<owner>/landing,
+ * once it has won: so a loser never holds "landing" while the winner looks
+ * for a free slug, which gave the winner "landing-2". A setting an admin
+ * chose (a document that's there) is never touched, nor one the deploy locks.
  */
 export function seedLanding(platform: Platform): Promise<DocRow | null> {
   const key = platform.directory;
@@ -792,18 +795,22 @@ export function seedLanding(platform: Platform): Promise<DocRow | null> {
       const doc = typeof ref == "string" && ref ? await platform.directory.find(ref) : null;
       return doc && !doc.test && (await platform.docs.exists(doc)) ? doc : null;
     };
+    // The winner's document, still at its id, takes its address: landing-2 only if another of the owner's really is at landing.
+    // A loser does it too, so the document it answers with has its address already.
+    const settle = async (doc: DocRow | null) => (doc && doc.slug == doc.id ? ((await platform.directory.reslug(doc.id, "landing")) ?? doc) : doc);
     const stored = await config.stored("landing_document");
     const there = await live(stored);
     if (there) return there;
     const owner = project.owner.toLowerCase();
     let made: DocRow | null = null;
-    for (let tries = 0; !made && tries < 5; tries++) made = await makeDoc(platform, owner, newId(), { ...project.files }, { index, slug: "landing", published: true });
+    for (let tries = 0; !made && tries < 5; tries++) { const id = newId(); made = await makeDoc(platform, owner, id, { ...project.files }, { index, slug: id, published: true }); }
     if (!made) return null;
     if (!(await config.claim("landing_document", stored, made.id, owner))) {
       // Another seed won: theirs is the front page, and this one goes.
       if (!(await platform.docs.delete(made))) await platform.directory.remove(made.id);
-      return live(await config.stored("landing_document"));
+      return settle(await live(await config.stored("landing_document")));
     }
+    made = (await settle(made)) ?? made;
     // The deploy's own doing (its ADMINS), not a person's: the server shares as the owner, with admin power
     // (editing the front page needs that: directory.ts, homeLimit).
     const server = { login: owner, test: false, admin: true };

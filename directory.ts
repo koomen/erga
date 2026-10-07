@@ -399,6 +399,19 @@ export class Directory {
     return this.write(doc, { title, titleSet, slug, slugSet, explicit });
   }
 
+  /**
+   * Moves a document to the slug `base`, or base-2, base-3... if another of
+   * its owner's has that: the server's own naming (the front page it makes,
+   * front.ts seedLanding), not a person's, so it never refuses. The slug
+   * stays set.
+   */
+  async reslug(id: string, base: string): Promise<DocRow | null> {
+    const doc = await this.get(id);
+    if (!doc) return null;
+    if (doc.slug == base) return doc;
+    return (await this.write(doc, { title: doc.title, titleSet: doc.titleSet, slug: base, slugSet: true, explicit: false })).doc;
+  }
+
   /** Writes a new title and slug (null: keep the slug), keeping the old slug as history. */
   private async write(doc: DocRow, next: { title: string; titleSet: boolean; slug: string | null; slugSet: boolean; explicit: boolean }): Promise<{ doc: DocRow; renamed: boolean }> {
     for (let tries = 0; ; tries++) {
