@@ -77,11 +77,11 @@ export const AREAS: Record<string, string[]> = {
 /** Changes that need every test: the tests' own machinery, the build, the server's core. */
 export const ALL = [
   "e2e/", "e2e.config.ts", "e2e.bench.config.ts", "package.json", "bun.lock", "tsconfig.json", "site.sh", "build.sh", "dev.ts", "dev/plugin.ts",
-  "vite.config.ts", "cloudflare.config.ts", "server.config.ts", "worker/index.ts", "worker/env.ts", "worker/auth.ts", "worker/platform.ts", "e2e/cores.ts",
+  "vite.config.ts", "cloudflare.config.ts", "server.config.ts", "worker/index.ts", "worker/env.ts", "worker/auth.ts", "worker/platform.ts",
 ];
 
 /** Text no test reads. */
-const NONE = [/\.md$/, /^docs\//, /^tests\/(?!fixtures\/|cores\.ts$)/, /^test\.sh$/, /^\.gitignore$/];
+const NONE = [/\.md$/, /^docs\//, /^tests\//, /^\.gitignore$/];
 
 const under = (pattern: string, file: string) => (pattern.endsWith("/") ? file.startsWith(pattern) : file == pattern);
 
@@ -90,8 +90,10 @@ export function affected(changed: string[]): string[] | "ALL" {
   const out = new Set<string>();
   for (const file of changed) {
     if (/^e2e\/.+\.e2e\.ts$/.test(file)) { if (!file.endsWith(".bench.e2e.ts")) out.add(file); continue; }
-    if (ALL.some((p) => under(p, file))) return "ALL";
     const areas = Object.entries(AREAS).filter(([, files]) => files.some((p) => under(p, file))).map(([dir]) => dir);
+    // The tests' data and helpers that areas name (e2e/fixtures/multi/, e2e/suite/client.ts) run those areas, not everything.
+    if (file.startsWith("e2e/") && areas.length) { for (const a of areas) out.add(a); continue; }
+    if (ALL.some((p) => under(p, file))) return "ALL";
     if (areas.length) { for (const a of areas) out.add(a); continue; }
     if (NONE.some((re) => re.test(file))) continue;
     return "ALL";
