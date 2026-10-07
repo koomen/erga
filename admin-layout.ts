@@ -19,6 +19,12 @@
 // before the sidebar paints, so it doesn't jump. On a phone it is a row of
 // links above the page.
 //
+// In the browser the admin pages are one page (admin-nav.js, built from
+// src/page/admin-nav.ts): a link to another admin page changes only <main>
+// (and the title, the style, the breadcrumb and the sidebar's mark), so the
+// agent panel and its conversation stay. Each page is still made whole here,
+// for a deep link or a reload.
+//
 // Only the page: who may see it is checked on the server, before any admin
 // page is made (adminGate, below, in worker/index.ts; and each page's own door).
 
