@@ -2328,6 +2328,14 @@ Click into any text and type. Enter makes a new paragraph or list item, Shift-En
 a line break, Backspace at the start of a paragraph joins it to the one above,
 ⌘Z undoes, ⌘-click opens a link.
 
+In a Markdown file, Tab at the start of a list item nests it under the item
+before it (it and the items nested in it move in one level), and Shift-Tab
+takes it back out one level. Enter after it starts the next item at the same
+level. The first item of a list, and an item at the top level, stay where
+they are. Tab anywhere else does what it did before. The page shows the new
+nesting at once: when a change moves the blocks around the text (a list
+nested deeper, say) and not only the text, the editor renders the page again.
+
 In an HTML file, an empty paragraph that Enter makes is written `<p><br></p>`.
 The `<br>` keeps it a line high on the published page as in the editor, so a
 blank paragraph you leave stays. The first text you type, paste or compose
