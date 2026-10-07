@@ -36,6 +36,7 @@ export const AREAS: Record<string, string[]> = {
     "worker/doc-host.ts", "source/http.ts", "server-api.ts", "src/page/bridge.ts", "src/page/admin-share.ts", "src/page/share-agent.ts", "src/page/admin-nav.ts",
     "src/page/main.ts", "admin-share.js", "admin-nav.js",
   ],
+  "e2e/templates/": ["templates.ts", "templates/", "front.ts", "DOCUMENT_PROMPT.md", "src/page/main.ts", "page.html", "tests/fixtures/steps/", "tests/fixtures/fade/"],
   "e2e/viewer/": ["front.ts", "home.ts", "account.ts", "src/page/base.ts", "style.css", "src/page/main.ts", "src/page/layout.ts", "tests/fixtures/"],
 };
 
