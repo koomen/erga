@@ -48,6 +48,7 @@
         "CLOUDFLARE_OAUTH_CLIENT_ID": ""
       },
       "snapshotFrom": "production",
+      "adminsOnly": true,
       "notifies": [
         "production"
       ],

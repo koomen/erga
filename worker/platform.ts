@@ -10,6 +10,7 @@ import { isDev, mintTestToken, sessionOf } from "./auth";
 import { directoryOf, tokensOf } from "./d1";
 import type { Env } from "./env";
 import { counted } from "./timing";
+import { isAdminsOnly } from "../deploy/targets";
 
 
 /** The templates' files, by template then path ("doc" → { "index.html": "..." }). Text files only. */
@@ -68,6 +69,7 @@ export const platform = (env: Env): Platform => {
     pagesDomain: (url) => (local(url) ? "localhost" : pagesDomainOf(env)),
     pagesShared: (url) => (local(url) ? null : env.PAGES_HOST?.trim() || null),
     secret: env.SESSION_SECRET,
+    adminsOnly: isAdminsOnly(env.DEPLOY_TARGET),
     tokens: tokensOf(env),
     testToken: (login) => mintTestToken(env, login),
     docs: {

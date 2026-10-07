@@ -55,7 +55,13 @@ it reports with the `task` command, and never merges.
 1. **Anything that could hang runs under a time limit**: builds, tests, git,
    servers, screenshots (e.g. `timeout 180 bun tests/x.ts`). Stop the
    servers you start, and leave no processes behind.
-2. **New rules go here.** When the user gives a standing instruction
+2. **Staging is for admins only.** staging.erga.dev runs on a copy of
+   production's data, so every request there needs an admin: an admin's
+   session or an admin-scope token (`worker/admins-only.ts`, from
+   `adminsOnly` in `deploy/targets.json`). Keep it so: a new route or
+   origin goes behind that guard, and any exemption (server to server, the
+   factory's VMs, sign-in) is listed there with its reason.
+3. **New rules go here.** When the user gives a standing instruction
    ("always…", "from now on…"), add it to AGENTS.md, not to an agent's own
    memory, so every agent sees it.
 

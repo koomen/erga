@@ -71,7 +71,7 @@ export interface DashboardOps {
   mirror(): Promise<object>;
   deploys(history: number): Promise<object>;
   deployLog(target: string, deploy?: string): Promise<object | null>;
-  redeploy(target: string): Promise<object>;
+  redeploy(target: string, fresh?: boolean): Promise<object>;
   /** The homepage (the landing_document setting) deployed again, as Redeploy in the editor's settings does. */
   deployHome(): Promise<object>;
   agentTokens(): Promise<object[]>;
@@ -217,8 +217,9 @@ export function dashboardTools(ops: DashboardOps, guard: () => Promise<void>): A
         const n = Math.max(1, Math.min(1000, Number(a.lines) || 200)), lines = log.lines ?? [];
         return { ...log, lines: lines.slice(-n), ...(lines.length > n ? { cut: `the last ${n} of ${lines.length} lines` } : {}) };
       }),
-    tool("redeploy", "Redeploy a target", "Deploys a target's branch head again now (staging: staging; production: main), as the dashboard's Redeploy does. The deploy says who asked for it.",
-      Type.Object({ target: TARGET }), (a) => ops.redeploy(String(a.target ?? ""))),
+    tool("redeploy", "Redeploy a target", "Deploys a target's branch head again now (staging: staging; production: main), as the dashboard's Redeploy does. The deploy says who asked for it. Staging copies production's data afresh by itself only for a commit with a new migration, or when its copy is over 6 hours old; fresh_data: true makes this redeploy of staging copy it afresh now.",
+      Type.Object({ target: TARGET, fresh_data: Type.Optional(Type.Boolean({ description: "Staging only: copy production's database and documents afresh, however new staging's copy is" })) }),
+      (a) => ops.redeploy(String(a.target ?? ""), a.fresh_data === true)),
     tool("deploy_homepage", "Redeploy the homepage", "Deploys the homepage (the document the landing_document setting names, which set_setting changes) again now, as Redeploy in that document's settings does in the editor.",
       Type.Object({}), () => ops.deployHome()),
     tool("list_agent_tokens", "Read your agent tokens", "Your own agent tokens (/settings): id, label, kind (share: a share button's: the editor's, scope documents, or Share with agent's on the admin pages, scope admin), scope (document, documents or admin), when made, when it ends and when last used. Never a token itself: a token is made, or an agent's request for one approved, only on /settings.",

@@ -30,6 +30,9 @@
 //                              for the server's admins only, checked here first (adminGate) and by its own door.
 //   /page.js, /style.css, ...  the editor's own files (static assets)
 //
+// On staging (deploy/targets.json `adminsOnly`) every route above, and the documents' pages origin, is for Erga's admins
+// only: one guard before them all (worker/admins-only.ts lists what's exempt, and why).
+//
 // In local development only, the dev server (dev/plugin.ts) links files on
 // disk to documents, proving itself with ERGA_LINK_SECRET:
 //
@@ -54,6 +57,7 @@ import { homeApi } from "../home";
 import type { Env } from "./env";
 import { simulateLatency, tallied } from "./timing";
 import { pagesSite, platform } from "./platform";
+import { adminsOnlyGate } from "./admins-only";
 
 export { Deployer } from "./deployer";
 export { DocHost } from "./doc-host";
@@ -108,6 +112,10 @@ async function route(request: Request, env: Env, url: URL, ctx: ExecutionContext
     const preview = await previewDoor(request, env, (vm, ticket) => previewTicketOk(env, vm, ticket));
     if (preview) return preview;
   }
+  // Staging is for Erga's admins only (deploy/targets.json `adminsOnly`): every route after this, and the pages origin,
+  // needs an admin's session or admin-scope token, but for the exemptions worker/admins-only.ts lists and explains.
+  const refused = await adminsOnlyGate(request, env, url);
+  if (refused) return refused;
   // A document's pages origin (front.ts, pagesDoor) serves its frame and files, and nothing of this site's.
   if (pagesSite(env, url)) return assets ? env.ASSETS.fetch(request) : frontDoor(request, platform(env));
   if (path == "/auth/github") return startSignIn(env, request);

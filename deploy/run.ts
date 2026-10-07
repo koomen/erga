@@ -101,7 +101,7 @@ export async function deployFromMachine(o: MachineDeploy): Promise<boolean> {
   if (target.snapshot && target.snapshot.token.length < 32) throw new Error("Staging copies production's documents: set SNAPSHOT_TOKEN (production's).");
 
   log(`Deploy ${commit.slice(0, 12)} to ${o.name}${mock ? " (the mock Cloudflare: nothing real)" : ""}:`);
-  log(`  account ${accountId}, Worker ${spec.worker}, database ${spec.database}${target.snapshot ? " (deleted and made afresh from production's)" : spec.snapshotFrom ? " (kept as it is: --no-snapshot)" : ""}`);
+  log(`  account ${accountId}, Worker ${spec.worker}, database ${spec.database}${target.snapshot ? " (a new copy of production's, beside the one the Worker is on, which goes once the new version answers)" : spec.snapshotFrom ? " (kept as it is: --no-snapshot)" : ""}`);
   log(`  https://${targetHost(target)}, documents' pages on *.${spec.pages.domain}`);
   log(`  steps: build, ${stepsFor(target).map((s) => s.id).join(", ")}`);
   if (Object.keys(target.secrets).length) log(`  secrets set: ${Object.keys(target.secrets).join(", ")}`);

@@ -15,6 +15,7 @@
 // sign-in: the server keeps them (worker/factory.ts, factory/chat-store.ts). This browser keeps a copy of
 // the panel's state (admin-layout.ts, layout.ts), so a page paints it at once.
 //
+// The chime when a task or the agent needs the admin (chime.ts) rides along, on the same events.
 // Share with agent is in every admin page's header (admin-share.ts). Built
 // by build.sh to factory-agent.js.
 
@@ -23,6 +24,7 @@ import { fileRefs, type Attachment } from "./attach";
 import { attachments } from "./attach-ui";
 import type { Log, LogEvent } from "./agent-log";
 import { mountPaneLayout, type PaneLayout } from "./layout";
+import * as chime from "./chime";
 
 interface AgentState { enabled: boolean; reason?: string; model?: string | null; choice?: string | null; models?: { id: string; label: string }[]; log?: Log }
 declare global { interface Window { ergaBoard?: { openTask(): number | null; title(id: number): string | null; open(id: number): void }; ergaAgent?: { set(open: boolean): void } } }
@@ -204,12 +206,14 @@ async function load(tries = 0): Promise<void> {
 }
 
 // The agent's events come with the board's, to this admin only; a reconnect reads the whole conversation again.
+// The chime (chime.ts) hears them all too: a task that comes to need the admin, the agent's reply.
 function connect() {
   const es = new EventSource("/api/factory/events");
-  es.onopen = () => { load(); };
+  es.onopen = () => { load(); chime.opened(); };
   es.onmessage = (e) => {
     let m: { type?: string; ev?: LogEvent };
     try { m = JSON.parse(e.data); } catch { return; }
+    chime.heard(m as Parameters<typeof chime.heard>[0]);
     if (m.type == "agent" && m.ev) { heard++; talk.apply(m.ev); renderBusy(); }
   };
 }

@@ -2,9 +2,10 @@
 // Erga's own source, end to end, on a dev server of its own (tests/host.ts)
 // with its stand-ins for Artifacts and GitHub (dev/git-server.ts):
 //
-//   - the Git endpoint's auth: no token (reads in, pushes 401), a token that
-//     isn't one, a documents token, an admin's admin token; an anonymous clone,
-//     fetch and ls-remote, and an anonymous push refused;
+//   - the Git endpoint's auth: no token (401: the server plays staging, which
+//     is for admins only, so even reads need a token), a token that isn't one,
+//     a documents token (403), an admin's admin token; an anonymous clone and
+//     push refused;
 //   - seeding with source/import.ts, then a real `git clone`, `git push`
 //     (a fast-forward, and a rewrite main refuses) and `git pull`;
 //   - the strict model: main only follows staging, staging keeps main's
@@ -45,13 +46,16 @@ const host = await startHost(null, { env: { ERGA_DEPLOY_MOCK: "1", ERGA_DEPLOY_T
 const root = host.root, origin = root;
 const get = (path: string, init: RequestInit = {}) => fetch(root + path, { redirect: "manual", ...init });
 
-/** Signs in as someone (no `as`: DEV_LOGIN, "tester", an admin) and mints a token: admin scope for an admin, documents for anyone else. */
-async function tokenFor(as: string | null): Promise<{ token: string; cookie: string }> {
-  const r = await fetch(`${root}/auth/github?${as ? `as=${as}&` : ""}next=/docs`, { redirect: "manual" });
+/**
+ * Signs in as DEV_LOGIN ("tester", an admin) and mints a token: the admin scope, or the documents scope (no admin power).
+ * (Only an admin gets anywhere on staging, so the token without admin power is an admin's documents token.)
+ */
+async function tokenFor(scope: "admin" | "documents"): Promise<{ token: string; cookie: string }> {
+  const r = await fetch(`${root}/auth/github?next=/docs`, { redirect: "manual" });
   const cookie = r.headers.getSetCookie().map((x) => x.split(";")[0]).find((x) => x.startsWith("erga_session="))!;
-  const page = await (await fetch(`${root}/tokens/new`, { method: "POST", headers: { Cookie: cookie, Origin: origin }, body: new URLSearchParams({ label: "Git", scope: as ? "documents" : "admin" }) })).text();
+  const page = await (await fetch(`${root}/tokens/new`, { method: "POST", headers: { Cookie: cookie, Origin: origin }, body: new URLSearchParams({ label: "Git", scope }) })).text();
   const token = /<pre class="secret">(erga_[^<]+)<\/pre>/.exec(page)?.[1] ?? "";
-  expect(token, `a token for ${as ?? "tester"}`, page.slice(0, 300));
+  expect(token, `a ${scope} token`, page.slice(0, 300));
   return { token, cookie };
 }
 
@@ -69,12 +73,12 @@ const commit = (dir: string, file: string, text: string, message: string) => { w
 
 let browser: Browser | null = null;
 try {
-  const admin = await tokenFor(null), bo = await tokenFor("Bo");
+  const admin = await tokenFor("admin"), bo = await tokenFor("documents");
 
   // ---- Who may reach the Git endpoint ------------------------------------------------
   const refs = (auth?: string) => get("/git/erga.git/info/refs?service=git-upload-pack", auth ? { headers: { Authorization: auth } } : {});
   let r = await refs();
-  expect(r.status == 200 && (r.headers.get("content-type") ?? "").includes("git-upload-pack"), "no token, a read: in", r.status);
+  expect(r.status == 401 && (r.headers.get("www-authenticate") ?? "").startsWith("Basic"), "no token, a read: 401 (staging is for admins only)", r.status);
   r = await get("/git/erga.git/info/refs?service=git-receive-pack");
   expect(r.status == 401 && (r.headers.get("www-authenticate") ?? "").startsWith("Basic"), "no token, a push: 401, asking for Basic credentials (git then asks for them)", r.status);
   r = await get("/git/erga.git/git-receive-pack", { method: "POST", body: "0000" });
@@ -85,10 +89,10 @@ try {
   r = await pushRefs(`Basic ${btoa(`x:${bo.token}`)}`);
   expect(r.status == 403 && (await r.text()).includes("admin scope"), "a documents token, a push: 403", r.status);
   r = await refs(`Basic ${btoa(`x:${bo.token}`)}`);
-  expect(r.status == 200, "a documents token, a read: in (reads are public)", r.status);
+  expect(r.status == 403, "a documents token, a read: 403 (staging is for admins only)", r.status);
   r = await refs(`Basic ${btoa(`anyone:${admin.token}`)}`);
   expect(r.status == 200 && (r.headers.get("content-type") ?? "").includes("git-upload-pack"), "an admin's token, any username: in", r.status);
-  ok("the Git endpoint: no token reads but can't push, a documents token 403, an admin's admin token in");
+  ok("the Git endpoint on staging: no token 401, a documents token 403, an admin's admin token in");
 
   // ---- Seed, clone, push, pull ---------------------------------------------------------------
   const src = scratch();
@@ -115,18 +119,21 @@ try {
   const back = git(a, "push", "--force", "origin", "HEAD~1:main");
   expect(!back.ok && back.err.includes("only moves forward"), "main never moves back", back.err);
   expect(git(a, "push", "origin", "HEAD:feature").err.includes("two branches"), "other branches are refused");
-  // Anyone reads: clone, fetch and ls-remote with no credentials. A push without them is refused.
+  // On staging even reads need an admin's token (worker/admins-only.ts): an anonymous clone is refused, as is a push.
+  // (No credential helper: one may have kept the admin token from the clones above for this address.)
+  const refusedClone = git(tmpdir(), "-c", "credential.helper=", "clone", "-q", remote(null), join(scratch(), "refused"));
+  expect(!refusedClone.ok && /401|Authentication failed|could not read Username/i.test(refusedClone.err), "an anonymous git clone is refused (401)", refusedClone.err);
   const anon = join(scratch(), "anon");
-  must(tmpdir(), "clone", "-q", remote(null), anon);
-  expect(must(anon, "log", "--format=%s", "origin/staging").split("\n")[0] == "Third", "an anonymous git clone brings the history");
-  expect(must(anon, "ls-remote", remote(null)).includes("refs/heads/staging"), "an anonymous git ls-remote lists the branches");
+  must(tmpdir(), "clone", "-q", remote(admin.token), anon);
+  expect(must(anon, "log", "--format=%s", "origin/staging").split("\n")[0] == "Third", "a git clone with an admin token brings the history");
+  expect(must(anon, "ls-remote", remote(admin.token)).includes("refs/heads/staging"), "git ls-remote lists the branches");
   must(anon, "fetch", "-q", "origin");
   commit(anon, "anon.txt", "anon\n", "Anonymous");
-  const anonPush = git(anon, "push", "origin", "HEAD:staging");
+  const anonPush = git(anon, "-c", "credential.helper=", "push", remote(null), "HEAD:staging");
   expect(!anonPush.ok && /401|Authentication failed|could not read Username/i.test(anonPush.err), "an anonymous git push is refused (401)", anonPush.err);
   expect(git(anon, "push", remote(bo.token), "HEAD:staging").err.includes("403"), "a git push with a documents token is refused (403)");
-  expect(must(anon, "ls-remote", remote(null), "refs/heads/staging").split(/\s/)[0] == must(anon, "rev-parse", "HEAD~1"), "and staging didn't move");
-  ok("anyone clones, fetches and lists without credentials; an anonymous push is refused");
+  expect(must(anon, "ls-remote", remote(admin.token), "refs/heads/staging").split(/\s/)[0] == must(anon, "rev-parse", "HEAD~1"), "and staging didn't move");
+  ok("an admin token clones, fetches and lists; an anonymous clone and push are refused");
   const b = join(scratch(), "b");
   must(tmpdir(), "clone", "-q", remote(admin.token), b);
   must(a, "fetch", "-q", "origin");
@@ -187,7 +194,7 @@ try {
   ok("each move of staging and main reaches the deploy pipeline (deployHook), which deploys it");
 
   // ---- The Source page ------------------------------------------------------------------------------
-  expect((await get("/admin/factory?user=Bo")).status == 404, "the Source page is for admins only");
+  expect((await get("/admin/factory?user=Bo")).status == 403, "the Source page is for admins only (on staging, the admins-only page)");
   const moved = await get("/source");
   expect(moved.status == 302 && moved.headers.get("location") == "/admin/factory", "/source redirects to /admin/factory", moved.status);
   browser = await Browser.launch();
