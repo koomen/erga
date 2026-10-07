@@ -201,6 +201,9 @@ export class LocalTarget implements Target {
 
 // ------------------------------------------------------------ remote
 
+/** A document's address, the base of its API: without the editor's #edit (where /new sends you) or a trailing slash. */
+const docAddress = (url: string) => { const u = new URL(url); u.hash = ""; return u.toString().replace(/\/+$/, ""); };
+
 export class RemoteTarget implements Target {
   name: string;
   /** One scratch document for every test: one at a time. */
@@ -215,7 +218,7 @@ export class RemoteTarget implements Target {
     const url = process.env.ERGA_TARGET_DOC;
     if (!url) throw new Error("set ERGA_TARGET_DOC to a scratch document's URL");
     if (!/test/i.test(url)) throw new Error(`refusing ${url}: the suite rewrites the document, so its URL must contain "test"`);
-    this.base = url.replace(/\/+$/, "");
+    this.base = docAddress(url);
     this.name = `remote ${this.base}`;
     this.headers = { ...JSON.parse(process.env.ERGA_TARGET_HEADERS || "{}") };
     if (process.env.ERGA_TARGET_COOKIE) this.headers.Cookie = process.env.ERGA_TARGET_COOKIE;
@@ -232,7 +235,7 @@ export class RemoteTarget implements Target {
     const r = await fetch(this.newDocUrl.replace("{id}", id), { headers: this.headers, redirect: "manual" });
     const location = r.headers.get("location");
     if (r.status != 302 || !location) throw new Error(`making a test document: ${r.status} ${await r.text()}`);
-    return new URL(location, this.newDocUrl).toString().replace(/\/+$/, "");
+    return docAddress(new URL(location, this.newDocUrl).toString());
   }
 
   /**

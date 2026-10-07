@@ -93,7 +93,8 @@ const OWN_SERVER_MS = 60_000;
  */
 function limit(t: Pick<Test, "needs" | "slow">): number {
   const own = local && (t.needs ?? []).some((c) => c == "restart" || c == "kill");
-  return (own ? OWN_SERVER_MS : t.slow ? 30_000 : 15_000) * (long ? 6 : 1);
+  // (A deployment: every request is a round trip over the internet, and each test makes its document there: four times as long.)
+  return (own ? OWN_SERVER_MS : t.slow ? 30_000 : 15_000) * (long ? 6 : 1) * (local ? 1 : 4);
 }
 
 /** Why the target can't run a test, if it can't. */
