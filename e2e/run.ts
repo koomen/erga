@@ -137,9 +137,11 @@ function stop(p: ChildProcess) {
 }
 /** Kills whatever still carries this run's mark: what a killed worker left running (dev servers, VMs' previews). */
 function sweep() {
-  const ps = spawnSync("ps", ["-axeww", "-o", "pid=,command="], { encoding: "utf8", timeout: 30_000, maxBuffer: 64 << 20 }).stdout ?? "";
+  // BSD form: "e" shows each process's environment, on a Mac and on Linux (on a Mac, "-e" is every process, and no environment).
+  const ps = spawnSync("ps", ["axeww", "-o", "pid=,command="], { encoding: "utf8", timeout: 30_000, maxBuffer: 64 << 20 }).stdout ?? "";
   for (const line of ps.split("\n")) {
-    if (!line.includes(`ERGA_TEST_RUN=${mark}`)) continue;
+    // In its environment, or on its command line: a scratch folder of this run (e2e/server.ts), as a VM's preview names it.
+    if (!line.includes(mark)) continue;
     const pid = Number(line.trim().split(/\s+/)[0]);
     if (pid && pid != process.pid) try { process.kill(pid, "SIGKILL"); } catch { /* gone */ }
   }

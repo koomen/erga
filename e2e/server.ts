@@ -94,7 +94,9 @@ process.on("exit", () => { for (const s of live) s.dispose(); });
 let fixtures = 0;
 
 export async function startServer(opts: ServerOptions = {}): Promise<Server> {
-  const scratch = mkdtempSync(join(realpathSync(tmpdir()), "erga-e2e-"));
+  // The run's mark in its name: what a simulated VM starts gets a clean environment, without ERGA_TEST_RUN, but its command
+  // line names this folder, so e2e/run.ts's sweep finds it after a worker that was killed.
+  const scratch = mkdtempSync(join(realpathSync(tmpdir()), `erga-e2e-${process.env.ERGA_TEST_RUN ? `${process.env.ERGA_TEST_RUN}-` : ""}`));
   const state = opts.state ?? join(scratch, "state"), envDir = join(scratch, "env");
   mkdirSync(envDir);
   const vars: Record<string, string> = { DEV_LOGIN: "tester", SESSION_SECRET: crypto.randomUUID(), ...opts.env };
