@@ -3,8 +3,8 @@
 # that page.html loads, frame.js (the editor itself, which runs on each
 # document's own origin), settings.js (document settings) and pages-tree.js (a
 # document's pages), both loaded on demand, factory-agent.js (the agent
-# panel on /admin/factory) and admin-share.js (Share with an agent, on every
-# admin page). Usage: ./build.sh
+# panel on /admin/factory), admin-share.js (Share with an agent, on every
+# admin page) and admin-nav.js (the admin pages as one page). Usage: ./build.sh
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 cd "$here"
@@ -33,4 +33,8 @@ mv -f ".factory-agent.js.$$" factory-agent.js
 bun build src/page/admin-share.ts --format iife --minify --outfile ".admin-share.js.$$" \
   --banner "/* Built by build.sh from src/page/. Erga, Share with an agent on the admin pages. */"
 mv -f ".admin-share.js.$$" admin-share.js
+# The admin area as one page (src/page/admin-nav.ts, admin-layout.ts): a link to another admin page changes only the page, so the agent panel stays.
+bun build src/page/admin-nav.ts --format iife --minify --outfile ".admin-nav.js.$$" \
+  --banner "/* Built by build.sh from src/page/. Erga, the admin pages as one page. */"
+mv -f ".admin-nav.js.$$" admin-nav.js
 echo "built page.js ($(wc -c < page.js | tr -d " ") bytes), frame.js ($(wc -c < frame.js | tr -d " ") bytes), pages-tree.js ($(wc -c < pages-tree.js | tr -d " ") bytes)"

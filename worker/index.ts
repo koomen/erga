@@ -136,7 +136,7 @@ const pagesSite = (env: Env, url: URL) => url.hostname.endsWith(`.${pagesDomainO
 
 async function route(request: Request, env: Env, url: URL, ctx: ExecutionContext): Promise<Response> {
   const path = url.pathname;
-  const assets = path == "/page.js" || path == "/frame.js" || path == "/settings.js" || path == "/pages-tree.js" || path == "/factory-agent.js" || path == "/admin-share.js" || path == "/style.css" || path.startsWith("/fonts/");
+  const assets = path == "/page.js" || path == "/frame.js" || path == "/settings.js" || path == "/pages-tree.js" || path == "/factory-agent.js" || path == "/admin-share.js" || path == "/admin-nav.js" || path == "/style.css" || path.startsWith("/fonts/");
   // A factory VM's preview (factory/cloudflare.ts), on Cloudflare only: <vm>.<FACTORY_PREVIEW_DOMAIN>.
   if (env.FACTORY_PREVIEW_DOMAIN) {
     const preview = await previewDoor(request, env, (vm, ticket) => previewTicketOk(env, vm, ticket));
@@ -202,7 +202,7 @@ async function route(request: Request, env: Env, url: URL, ctx: ExecutionContext
 }
 
 /** A path that may be one of the homepage's files at the root: /<name>.<ext> or /<folder>/<name>.<ext>, but none of the app's own. */
-const APP_FILES = new Set(["/page.js", "/frame.js", "/factory-agent.js", "/admin-share.js", "/style.css", "/editor.html", "/llms.txt"]);
+const APP_FILES = new Set(["/page.js", "/frame.js", "/factory-agent.js", "/admin-share.js", "/admin-nav.js", "/style.css", "/editor.html", "/llms.txt"]);
 const isHomeFilePath = (path: string) => !APP_FILES.has(path) && !path.startsWith("/fonts/") && !path.startsWith("/d/") && /^\/(?:[^/]+\/)?[^/]*\.[^/]+$/.test(path);
 
 /**

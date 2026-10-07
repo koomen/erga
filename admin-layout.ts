@@ -19,6 +19,12 @@
 // before the sidebar paints, so it doesn't jump. On a phone it is a row of
 // links above the page.
 //
+// In the browser the admin pages are one page (admin-nav.js, built from
+// src/page/admin-nav.ts): a link to another admin page changes only <main>
+// (and the title, the style, the breadcrumb and the sidebar's mark), so the
+// agent panel and its conversation stay. Each page is still made whole here,
+// for a deep link or a reload.
+//
 // Only the page: who may see it is checked on the server, before any admin
 // page is made (adminGate, below, in worker/index.ts; and each page's own door).
 
@@ -173,9 +179,10 @@ export const LAYOUT_STYLE = `
   }
 `;
 
-/** Remembered state, before the sidebar paints; the toggle; and the animation only from then on. */
+/** Remembered state, before the sidebar paints; the toggle; and the animation only from then on. And the first page's view (admin-nav.ts): what its scripts stop when it goes. */
 const EARLY_SCRIPT = `<script>try { if (localStorage.getItem("erga:admin-sidebar") == "closed") document.documentElement.classList.add("side-closed"); } catch {}
-try { if (matchMedia("(max-width: 999.98px)").matches || localStorage.getItem("erga:admin-agent") == "closed") document.documentElement.classList.add("agent-closed"); } catch {}</script>`;
+try { if (matchMedia("(max-width: 999.98px)").matches || localStorage.getItem("erga:admin-agent") == "closed") document.documentElement.classList.add("agent-closed"); } catch {}
+window.ergaView = (() => { const c = new AbortController(), fns = []; return { signal: c.signal, onLeave: (fn) => { if (c.signal.aborted) fn(); else fns.push(fn); }, leave: () => { c.abort(); for (const fn of fns.splice(0)) try { fn(); } catch (e) { console.error(e); } } }; })();</script>`;
 
 /** The agent's collapse and expand: its button, the round one, Esc in the panel, ⌘J; remembered on a wide window. */
 const AGENT_SCRIPT = `<script>
@@ -244,7 +251,8 @@ ${o.body}
 ${SIDEBAR_SCRIPT}
 ${AGENT_SCRIPT}
 <script src="/admin-share.js" defer></script>
-<script src="/factory-agent.js" defer></script>`, false);
+<script src="/factory-agent.js" defer></script>
+<script src="/admin-nav.js" defer></script>`, false);
 }
 
 /** adminLayout as a response. */
