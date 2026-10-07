@@ -30,6 +30,8 @@ export const AREAS: Record<string, string[]> = {
   "e2e/factory/": [
     "factory/", "worker/factory.ts", "dev/factory.ts", "dev/git-server.ts", "worker/source.ts", "source/", "tokens.ts",
     "src/page/factory-agent.ts", "src/page/agent-chat.ts", "src/page/share-agent.ts", "src/page/admin-share.ts", "factory-agent.js", "admin-share.js",
+    "src/page/chime.ts", "src/page/admin-nav.ts", "admin-layout.ts", "admin.ts", "attribution.ts", "users.ts", "config.ts", "server-api.ts",
+    "worker/doc-host.ts", "src/room/doc.ts", "migrations/0170_attribution.sql",
   ],
 };
 
