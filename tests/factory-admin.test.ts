@@ -9,7 +9,8 @@ import { readdirSync, readFileSync } from "node:fs";
 import { expect, test } from "bun:test";
 import * as Redacted from "effect/Redacted";
 import { Directory, type Param, type Sql } from "../directory";
-import { adminTools, factoryTools, startFactoryAgent, type FactoryOps } from "../factory/agent";
+import { adminTools, dashboardTools, factoryTools, startFactoryAgent, type DashboardOps, type FactoryOps } from "../factory/agent";
+import type { Task } from "../worker/factory";
 import { SERVER_TOOLS, type ToolWho } from "../server-tools";
 import type { Unlock } from "../admin-keys";
 
@@ -112,4 +113,55 @@ test("users the agent adds are added by the admin; with the unlock ended, or the
   const notAdmin = await session(dir, "ada", U).run([{ tool: "set_setting", args: { key: "factory", value: "on" } }]);
   expect(notAdmin[0]).toMatchObject({ status: "error", detail: expect.stringMatching(/Only an admin/) });
   expect((await dir.config.history({ login: "root", unlocked: U })).total).toBe(0);
+});
+
+test("the board's buttons, the dashboard, keys and tokens: each tool does what the page does, as the admin, and says what changed", async () => {
+  const calls: string[] = [];
+  const task = (id: number) => ({ id, title: `Task ${id}`, status: "complete", branch: `task/${id}-x`, startAfter: [], mergeAfter: [], log: [], screenshots: [], updatedAt: "" }) as unknown as Task;
+  const button = (name: string) => async (id: number) => { calls.push(`${name} ${id}`); return id == 9 ? { ok: false, error: `task #9 is merged` } : { ok: true }; };
+  const ops = {
+    task: async (id: number) => (id == 404 ? null : task(id)),
+    start: button("start"), merge: button("merge"), discard: button("discard"), restart: button("restart"),
+    tokens: async () => [{ id: "t1", label: "Laptop", created: 1.8e12, expires: 1.9e12 }],
+    revokeToken: async (id: string) => { calls.push(`revoke factory token ${id}`); return id == "t1"; },
+    signOutClaude: async () => { calls.push("sign out claude"); },
+  } as unknown as FactoryOps;
+  const dash = {
+    release: async (commit?: string) => { calls.push(`release ${commit ?? "head"}`); return { commit: "abc", done: "main moved" }; },
+    deployLog: async (target: string) => (target == "staging" ? { lines: Array.from({ length: 300 }, (_, i) => ({ text: `line ${i}` })) } : null),
+    redeploy: async (target: string) => { calls.push(`redeploy ${target}`); return { done: `${target} redeploys now` }; },
+    revokeAgentToken: async (id: string) => id == "mine",
+  } as unknown as DashboardOps;
+  let locked = false;
+  const guard = async () => { if (locked) throw new Error("Unlock admin access first."); };
+  const tools = [...factoryTools(ops, guard), ...dashboardTools(dash, guard)];
+  const call = async (name: string, args: Record<string, unknown> = {}) => {
+    const out = await tools.find((t) => t.name == name)!.execute("call", args as never);
+    return (out.content[0] as { text: string }).text;
+  };
+  const fails = (p: Promise<unknown>) => p.then(() => "no error", (e: Error) => e.message);
+
+  expect(await call("merge_task", { id: 3 })).toMatch(/Merge requested for task #3: Task 3/);
+  expect(await call("discard_task", { id: 4 })).toMatch(/Discarded task #4/);
+  expect(await call("restart_task", { id: 5 })).toMatch(/Restarted task #5/);
+  expect(await call("start_task", { id: 6 })).toMatch(/Started task #6/);
+  expect(await fails(call("merge_task", { id: 9 }))).toBe("task #9 is merged");
+  expect(await fails(call("discard_task", { id: 404 }))).toMatch(/no task #404/);
+  expect(await call("list_factory_tokens")).toMatch(/"created": "2027-/);
+  expect(await call("revoke_factory_token", { id: "t1" })).toMatch(/"revoked": "t1"/);
+  expect(await fails(call("revoke_factory_token", { id: "t2" }))).toMatch(/no working factory token/);
+  expect(await call("sign_out_claude")).toMatch(/signed out/);
+  expect(await call("deploy_production")).toMatch(/main moved/);
+  await call("deploy_production", { commit: " 1234567 " });
+  const log = JSON.parse(await call("deploy_log", { target: "staging" }));
+  expect([log.lines.length, log.lines[0].text, log.cut]).toEqual([200, "line 100", "the last 200 of 300 lines"]);
+  expect(await fails(call("deploy_log", { target: "nope" }))).toMatch(/No such deploy/);
+  expect(await call("redeploy", { target: "production" })).toMatch(/production redeploys now/);
+  expect(await fails(call("revoke_agent_token", { id: "theirs" }))).toMatch(/You have no token/);
+  expect(calls).toEqual(["merge 3", "discard 4", "restart 5", "start 6", "merge 9", "revoke factory token t1", "revoke factory token t2", "sign out claude", "release head", "release 1234567", "redeploy production"]);
+  // Admin access locked (or its key revoked): nothing runs.
+  locked = true;
+  expect(await fails(call("merge_task", { id: 3 }))).toMatch(/Unlock/);
+  expect(await fails(call("deploy_production"))).toMatch(/Unlock/);
+  expect(calls.length).toBe(11);
 });

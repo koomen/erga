@@ -7,6 +7,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { expect, test } from "bun:test";
 import { Directory, type Param, type Sql, type Who } from "../directory";
 import { agentToolsFor, runServerTool, SERVER_TOOLS, ToolError, toolsFor, type ToolWho } from "../server-tools";
+import type { Platform } from "../front";
 /** An unlock of admin access (admin-keys.ts), as the front door gives an admin who signed a challenge with their SSH key. */
 const U = { key: "test", until: Infinity };
 
@@ -125,4 +126,64 @@ test("sharing: the owner sees and changes who has access; nobody else may; the e
   expect((await failure(run(ada, "document_access", { document: "/ada/none" }))).status).toBe(404);
   r = await run(ada, "share_document", { document: "aaaaaaaa", login: "bo", role: "none" });
   expect(r.permissions.map((p: { login: string }) => p.login)).toEqual(["ada", "*"]);
+});
+
+/** The platform the documents list's tools need (front.ts, Platform), on the in-memory directory: templates, and documents that are only rows. */
+function platformOf(dir: Directory) {
+  const made: string[] = [];
+  const platform = {
+    directory: dir,
+    templates: { doc: { "index.html": "<h1>Blank</h1>" }, slides: { "index.html": "<h1>Slides</h1>" } },
+    docs: {
+      create: async (doc: { id: string }) => { made.push(doc.id); return true; },
+      delete: async () => false,
+      snapshot: async () => ({ files: { "index.html": "<h1>Copied</h1>" }, index: "index.html" }),
+      list: async (owner: string) => (await dir.list(owner)).map((d) => ({ ...d, modified: d.modified ?? d.created })),
+    },
+  } as unknown as Platform;
+  return { platform, made };
+}
+
+test("the documents list: the editor's agent lists, makes (blank, a template, a copy) and deletes the person's documents, as /docs does", async () => {
+  const dir = fresh();
+  const { platform, made } = platformOf(dir);
+  await dir.add({ id: "aaaaaaaa", owner: "ada", title: "Plan", created: 1 });
+  await dir.add({ id: "bbbbbbbb", owner: "cy", title: "Secret", created: 1 });
+  const ada: ToolWho = { dir, who: { login: "ada" }, here: "aaaaaaaa", platform, origin: "https://erga.test" };
+  let r = await run(ada, "list_documents");
+  expect(r.map((d: { address: string; here?: boolean }) => [d.address, !!d.here])).toEqual([["/ada/plan", true]]);
+  r = await run(ada, "create_document", { title: "Notes" });
+  expect([r.made.address, r.from, made.length]).toEqual(["/ada/notes", "the page template", 1]);
+  r = await run(ada, "create_document", { template: "slides", slug: "deck" });
+  expect(r.made.address).toBe("/ada/deck");
+  r = await run(ada, "create_document", { from: "/ada/plan", title: "Plan copy" });
+  expect(r.made.url).toBe("https://erga.test/ada/plan-copy");
+  expect((await failure(run(ada, "create_document", { template: "nope" }))).message).toMatch(/slides/);
+  expect((await failure(run(ada, "create_document", { from: "bbbbbbbb" }))).status).toBe(403);
+  expect((await run(ada, "list_documents")).length).toBe(4);
+  // Deleting: one of theirs, never the one the agent is in, never someone else's.
+  r = await run(ada, "delete_document", { document: "/ada/deck" });
+  expect(r.deleted.address).toBe("/ada/deck");
+  expect((await run(ada, "list_documents")).map((d: { address: string }) => d.address)).not.toContain("/ada/deck");
+  expect((await failure(run(ada, "delete_document", { document: "/ada/plan" }))).status).toBe(409);
+  expect((await failure(run(ada, "delete_document", { document: "bbbbbbbb" }))).status).toBe(403);
+  expect((await failure(run(ada, "delete_document", {}))).status).toBe(400);
+  // A test person makes no documents; without the platform (the REST API has its own) the tools aren't offered.
+  expect((await failure(run({ ...ada, who: { login: "test-ada", test: true } }, "create_document"))).status).toBe(403);
+  expect((await agentToolsFor({ dir, who: { login: "ada" } })).map((t) => t.name)).not.toContain("list_documents");
+  expect((await agentToolsFor(ada)).map((t) => t.name)).toContain("delete_document");
+});
+
+test("API keys: an admin clears one (the change log says who), and is never offered a tool to set one", async () => {
+  const dir = fresh({ admins: ["root"], credentialSecret: "a-secret-for-the-tests-0123456789" });
+  const root = { dir, who: { login: "root", unlocked: U } };
+  await dir.credentials.set(root.who, "openai", "sk-test-1234567890abcd");
+  expect((await run(root, "list_api_keys")).find((k: { name: string }) => k.name == "openai").stored).toBe(true);
+  const r = await run(root, "clear_api_key", { name: "openai" });
+  expect([r.cleared, r.stored]).toEqual(["openai", false]);
+  const log = await run(root, "list_setting_changes");
+  expect([log.changes[0].by, log.changes[0].changes[0].key, log.changes[0].changes[0].credential]).toEqual(["root", "OPENAI_API_KEY", "cleared"]);
+  expect((await failure(run(root, "clear_api_key", { name: "nope" }))).status).toBe(400);
+  expect((await failure(run({ dir, who: { login: "bo" } }, "clear_api_key", { name: "openai" }))).status).toBe(403);
+  expect(SERVER_TOOLS.map((t) => t.name).filter((n) => /^set_.*key|token/.test(n))).toEqual([]);
 });
