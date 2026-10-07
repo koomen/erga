@@ -228,6 +228,9 @@ git push erga HEAD:staging</code></pre>
 
 const SOURCE_SCRIPT = `
 (() => {
+  // The admin pages are one page (src/page/admin-nav.ts): what keeps running stops when another admin page is shown.
+  const pageView = window.ergaView;
+  const setInterval = (f, ms) => { const t = window.setInterval(f, ms); pageView.onLeave(() => clearInterval(t)); return t; };
   const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[ch]);
   const rtf = new Intl.RelativeTimeFormat(undefined, { numeric: "auto", style: "narrow" });
   const ago = (t) => {
@@ -406,6 +409,7 @@ const SOURCE_SCRIPT = `
       const r = await fetch("/api/source/branches", { headers: { Accept: "application/json" } });
       const body = await r.json();
       if (!r.ok) throw new Error(body.error || "HTTP " + r.status);
+      if (pageView.signal.aborted) return;
       view = body; render();
     } catch (e) {
       const l = document.getElementById("loading");
@@ -420,6 +424,7 @@ const SOURCE_SCRIPT = `
       const r = await fetch("/api/deploys?history=100", { headers: { Accept: "application/json" } }).catch(() => null);
       // No answer, or a 5xx (a server restarting into its new version): keep what's shown, and the poll below asks again.
       const body = r && r.ok ? await r.json().catch(() => null) : null;
+      if (pageView.signal.aborted) return;
       if (body || (r && r.status < 500)) deploys = body;
       renderTargets();
       if (open && !open.pinned) { const t = targetOf(open.target); if (t?.deployId && t.deployId != open.deployId) refreshLog(false); }
@@ -454,6 +459,7 @@ const SOURCE_SCRIPT = `
     const name = open.target, want = open.pinned ? open.deployId : null;
     const r = await fetch("/api/deploys/" + name + "/log" + (want ? "?deploy=" + encodeURIComponent(want) : "")).catch(() => null);
     const log = r && r.ok ? await r.json().catch(() => null) : null;
+    if (pageView.signal.aborted) return;
     if (!open || open.target != name) return;
     if (!log || !log.deployId) { if (first) { pre.textContent = r && r.status == 404 ? "This deploy isn't in the history any more." : "No deploy log yet."; } return; }
     const lines = log.lines || [];
@@ -530,7 +536,9 @@ const SOURCE_SCRIPT = `
   // (a server restarting into its new version) the browser closes for good: open it again.
   let heard = 0;
   function listen() {
+    if (pageView.signal.aborted) return;
     const events = new EventSource("/api/events");
+    pageView.onLeave(() => events.close());
     events.onopen = () => { load(); loadDeploys(); };
     events.onerror = () => { if (events.readyState == EventSource.CLOSED) setTimeout(listen, 3000); };
     events.onmessage = (e) => {
@@ -642,7 +650,7 @@ const TABS_SCRIPT = `
 (() => {
   const tabs = ["tasks", "source"];
   let tab = location.hash.slice(1);
-  if (tab == "agent") addEventListener("DOMContentLoaded", () => window.ergaAgent?.show(true));
+  if (tab == "agent") { if (document.readyState == "loading") addEventListener("DOMContentLoaded", () => window.ergaAgent?.show(true)); else window.ergaAgent?.show(true); }
   if (!tabs.includes(tab)) { try { tab = localStorage.getItem("erga:admin-factory-tab") || "tasks"; } catch { tab = "tasks"; } }
   if (!tabs.includes(tab)) tab = "tasks";
   const show = (t) => {
@@ -650,8 +658,9 @@ const TABS_SCRIPT = `
     for (const b of document.querySelectorAll(".tabs [data-tab]")) b.setAttribute("aria-selected", String(b.dataset.tab == t));
     try { localStorage.setItem("erga:admin-factory-tab", t); } catch {}
   };
-  for (const b of document.querySelectorAll(".tabs [data-tab]")) b.addEventListener("click", () => { show(b.dataset.tab); history.replaceState(null, "", "#" + b.dataset.tab); });
+  for (const b of document.querySelectorAll(".tabs [data-tab]")) b.addEventListener("click", () => { show(b.dataset.tab); history.replaceState(history.state, "", "#" + b.dataset.tab); });
   show(tab);
+  window.ergaView.onLeave(() => { delete document.body.dataset.tab; });
 })();
 `;
 

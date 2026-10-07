@@ -148,6 +148,9 @@ export const BOARD_STYLE = `
 
 export const BOARD_SCRIPT = `
 (() => {
+// The admin pages are one page (src/page/admin-nav.ts): what keeps running stops when another admin page is shown.
+const pageView = window.ergaView;
+const setInterval = (f, ms) => { const t = window.setInterval(f, ms); pageView.onLeave(() => clearInterval(t)); return t; };
 const COLUMNS = [
   { title: "Queued", statuses: ["queued"] },
   { title: "Working", statuses: ["working", "failed"] },
@@ -492,7 +495,7 @@ document.addEventListener("click", async (e) => {
   } catch (err) {
     if (act == "revise") $("revise-why").textContent = err.message; else alert(err.message);
   }
-});
+}, { signal: pageView.signal });
 $("dlg").addEventListener("close", () => { openId = null; bigShot = null; });
 $("dlg").addEventListener("keydown", shotKey);
 
@@ -530,6 +533,7 @@ function shotKey(e) {
 
 async function load() {
   [info, tasks] = await Promise.all([api(""), api("/tasks")]);
+  if (pageView.signal.aborted) return;
   renderInfo();
 }
 function connect() {
@@ -541,11 +545,13 @@ function connect() {
     if (m.type == "task") upsert(m.task);
     else if (m.type == "unblocked" || m.type == "blocked") toast("#" + m.id + " " + m.type + ": " + m.title + " (" + m.why.split(":")[0] + ")");
   };
+  pageView.onLeave(() => es.close());
 }
 load().then(connect);
 setInterval(render, 30000);
 // The page's agent panel (src/page/factory-agent.ts) asks which task is open, so "this task" means something to the agent.
 window.ergaBoard = { openTask: () => openId, title: (id) => tasks.find((x) => x.id == id)?.title ?? null, open: (id) => { openId = id; renderDialog(); } };
+pageView.onLeave(() => { delete window.ergaBoard; });
 })();
 `;
 
