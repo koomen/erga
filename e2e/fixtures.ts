@@ -12,6 +12,7 @@
 //   servers.main()     a dev server, signed in as DEV_LOGIN, with no agent key
 //   servers.agent()    the same with an agent key that is never used (the agent's UI comes on)
 //   servers.factory()  the factory with simulated VMs and the scripted agent model
+//   servers.script()   a plain dev server whose agents (the editor's, the admin's) run on the scripted model
 //   startServer()      a server for one test alone (test.ts disposes of it, see `tab.own`)
 //
 // Per test: `tab`, the attempt's own page in a fresh browser context (the web
@@ -57,6 +58,9 @@ export const servers = {
     const initial = await (await fetch(`${s.root}/api/factory`)).json() as { enabled: boolean };
     return Object.assign(s, { secret, initial });
   }),
+  // The scripted model (agent.ts, "@script [...]"): a message plays the tool calls and replies it lists. A task the
+  // admin agent queues runs in a simulated VM, never in this machine's Docker.
+  script: once("script", () => startServer({ env: { ERGA_AGENT_MODEL: "script", ERGA_FACTORY_RUNNER: "sim", ERGA_FACTORY_SIM_NO_SCRIPTS: "1" } })),
 };
 
 export interface Tab {
