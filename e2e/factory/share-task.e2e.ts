@@ -18,7 +18,7 @@ test("an outside agent with an admin token queues a task with a dependency, as t
   const r = await as("/tasks", { json: { title: "Shared agent's task", description: "From outside.", startAfter: [dep] } });
   const t = await r.json() as { id: number; by: string; startAfter: number[] };
   expect(r.status).toBe(201);
-  expect(t.by).toBe("tester’s agent (Claude Code 🤖)");
+  expect(t.by).toBe("tester, via a shared agent (Claude Code 🤖)");
   expect(t.startAfter).toEqual([dep]);
   expect((await as(`/tasks/${t.id}`, { method: "PATCH", json: { startAfter: null, mergeAfter: [dep] } })).status).toBe(200);
   // Free of its start dependency, it starts: its VM's git token carries the agent's name, and the stand-in pushes with it.
@@ -28,10 +28,10 @@ test("an outside agent with an admin token queues a task with a dependency, as t
   expect((await as(`/tasks/${dep}/revise`, { json: { instructions: "One more word." } })).status).toBe(200);
   const discarded = await as(`/tasks/${t.id}/discard`, { method: "POST", json: {} });
   expect(discarded.status).toBe(200);
-  expect((await f.task(t.id)).log.some((l) => l.message == "Discarded by tester")).toBe(true);
+  expect((await f.task(t.id)).log.some((l) => l.message == "Discarded by tester, via a shared agent (Claude Code 🤖)")).toBe(true);
   await tab.page.goto(`${s.root}/admin/changes`);
   await until(() => b.eval(`!!document.querySelector("li.change")`), 10_000, "the change log");
-  const line = await b.eval<{ by: string; what: string } | undefined>(`[...document.querySelectorAll("li.change")].map((li) => ({ by: li.querySelector(".by").textContent, what: li.querySelector(".what").textContent.replace(/\\s+/g, " ").trim() })).find((l) => l.what.startsWith("task #${t.id} added: Shared agent's task"))`);
+  const line = await b.eval<{ by: string; via: string | null; what: string } | undefined>(`[...document.querySelectorAll("li.change")].map((li) => ({ by: li.querySelector(".by").textContent, via: li.querySelector(".via")?.dataset.via ?? null, what: li.querySelector(".what").textContent.replace(/\\s+/g, " ").trim() })).find((l) => l.what.startsWith("task #${t.id} added: Shared agent's task"))`);
   expect(line?.by).toBe("tester");
-  expect(line?.what).toContain("via an outside agent (Claude Code 🤖)");
+  expect(line?.via).toBe("a shared agent (Claude Code 🤖)");
 });
