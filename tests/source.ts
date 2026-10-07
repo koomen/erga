@@ -257,15 +257,6 @@ try {
   must(b, "push", "-q", "origin", "staging");
   const sixth = must(b, "rev-parse", "HEAD");
   await until(async () => (await state()).rows[0]?.subject == "Staging only, live", 10_000, "the push shows up by itself", state);
-  await until(async () => (await state()).merge, 20_000, "its tests pass (the production gate's fake), and Merge turns on", state);
-  s = await state();
-  expect(s.merge && s.mergeShown && s.ahead.startsWith("1 commit"), "and the Merge button shows, enabled", s);
-  // The dots: circles only; hollow orange for only on staging, solid green for on main.
-  const [top, below] = s.rows;
-  const [, , topBg, topBorder] = top.staging.split("|"), [, , belowBg, belowBorder] = below.staging.split("|");
-  expect(s.rows.every((x) => x.staging.startsWith("circle|")), "every dot is a circle, untransformed", s.rows);
-  expect(topBorder != topBg && /rgb\((19[0-9]|2\d\d), (9\d|1[0-2]\d|1[5-9]\d), \d{1,2}\)/.test(topBorder), "a commit only on staging: a hollow orange circle", top);
-  expect(belowBg == belowBorder && /rgb\(\d{1,2}, 1[0-4]\d, \d{2}\)/.test(belowBg), "a commit on main too: a solid green circle", below);
   // The live log: clicking staging's status opens it; its lines arrive as the deploy runs ({ type: "deploy-log" }).
   const click = async (sel: string) => {
     const at = await p.eval<{ x: number; y: number }>(`(() => { const r = document.querySelector(${JSON.stringify(sel)}).getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })()`);
@@ -278,6 +269,16 @@ try {
   const opened = (await logText()).split("\n").length;
   await until(async () => (await logText()).split("\n").length > opened + 2, 30_000, "new lines show up in the open log by themselves", logText);
   await until(async () => (await state()).rows[0].live[0] == "live", 60_000, "and the column marks the new commit live when it's done", state);
+  // Then its tests pass (watched after the deploy, which a fast deploy would otherwise finish first).
+  await until(async () => (await state()).merge, 20_000, "its tests pass (the production gate's fake), and Merge turns on", state);
+  s = await state();
+  expect(s.merge && s.mergeShown && s.ahead.startsWith("1 commit"), "and the Merge button shows, enabled", s);
+  // The dots: circles only; hollow orange for only on staging, solid green for on main.
+  const [top, below] = s.rows;
+  const [, , topBg, topBorder] = top.staging.split("|"), [, , belowBg, belowBorder] = below.staging.split("|");
+  expect(s.rows.every((x) => x.staging.startsWith("circle|")), "every dot is a circle, untransformed", s.rows);
+  expect(topBorder != topBg && /rgb\((19[0-9]|2\d\d), (9\d|1[0-2]\d|1[5-9]\d), \d{1,2}\)/.test(topBorder), "a commit only on staging: a hollow orange circle", top);
+  expect(belowBg == belowBorder && /rgb\(\d{1,2}, 1[0-4]\d, \d{2}\)/.test(belowBg), "a commit on main too: a solid green circle", below);
   await p.screenshot(join(SHOTS, "source-log.png"));
   await click("#log-close");
   await p.screenshot(join(SHOTS, "source-light.png"));
