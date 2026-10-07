@@ -167,5 +167,5 @@ function hint(s: Snapshot, path: string): string {
   const near = [...s.dirs].filter((d) => d && d.startsWith(up ? `${up}/` : "") && !d.slice(up ? up.length + 1 : 0).includes("/")).map((d) => `${d.slice(up ? up.length + 1 : 0)}/`);
   const files = [...s.files.keys()].filter((p) => p.startsWith(up ? `${up}/` : "") && !p.slice(up ? up.length + 1 : 0).includes("/")).map((p) => p.slice(up ? up.length + 1 : 0));
   const all = [...near.sort(), ...files.sort()];
-  return all.length ? ` ${up || "The root"} has: ${all.slice(0, 40).join(", ")}${all.length > 40 ? ", …" : ""}.` : "";
+  return all.length ? ` ${up || "The root"} has: ${all.slice(0, 20).join(", ")}${all.length > 20 ? ", and more" : ""}.` : "";
 }
