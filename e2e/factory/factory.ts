@@ -24,8 +24,12 @@ export interface Task {
 
 export function factory(s: FactoryServer) {
   const root = s.root;
-  const api = async (path: string, init: { method?: string; json?: unknown; headers?: Record<string, string> } = {}) => {
-    const r = await fetch(`${root}/api/factory${path}`, { method: init.method ?? (init.json ? "POST" : "GET"), headers: { Origin: root, ...(init.json ? { "Content-Type": "application/json" } : {}), ...init.headers }, body: init.json ? JSON.stringify(init.json) : undefined });
+  /** A request as the admin's session; as `who` (a dev session, ?user=Name); or with a `token` (no session). */
+  const api = async (path: string, init: { method?: string; json?: unknown; headers?: Record<string, string>; who?: string; token?: string } = {}) => {
+    const url = new URL(`${root}/api/factory${path}`);
+    if (init.who) url.searchParams.set("user", init.who);
+    const auth = init.token ? { Authorization: `Bearer ${init.token}` } : { Origin: root };
+    const r = await fetch(url, { method: init.method ?? (init.json ? "POST" : "GET"), headers: { ...auth, ...(init.json ? { "Content-Type": "application/json" } : {}), ...init.headers }, body: init.json ? JSON.stringify(init.json) : undefined });
     return { status: r.status, body: await r.json().catch(() => null) as any };
   };
   const f = {
@@ -33,6 +37,10 @@ export function factory(s: FactoryServer) {
     repo: join(s.state, "factory", "erga.git"),
     task: async (id: number) => (await api(`/tasks/${id}`)).body as Task,
     status: async (id: number) => (await f.task(id)).status,
+    /** A task's log, its messages. */
+    msgs: async (id: number) => (await f.task(id)).log.map((l) => l.message),
+    /** Whether a line of the task's log has `part`. */
+    logged: async (id: number, part: string) => (await f.msgs(id)).some((m) => m.includes(part)),
     setting: (value: string) => fetch(`${root}/admin/settings`, { method: "POST", headers: { Origin: root }, body: new URLSearchParams({ key: "factory", value: JSON.stringify(value) }) }),
     /** The factory on (each test that makes tasks says so itself). */
     async on() { expect((await f.setting("on")).ok).toBe(true); },
