@@ -6,10 +6,14 @@
 // so they run the same in a document's host and in the Worker.
 //
 //   document_access, share_document     who a document is shared with, and sharing it (its owner)
+//   list_documents, create_document,    the documents list (/docs): the person's documents, a new one (blank, from a
+//   delete_document                     template, or a copy), deleting one; the editor's agent only (`docs`: the
+//                                       REST API has its own, server-api.ts, which also publish files)
 //   list_settings, set_setting,         the server's settings (config.ts), admins only;
 //   reset_setting                       a setting the deploy locks can be seen, not changed
 //   list_setting_changes                the settings' change log (config.ts history), admins only
-//   list_api_keys                       which API keys are set (credentials.ts), never a key, admins only
+//   list_api_keys, clear_api_key        which API keys are set (credentials.ts), never a key, and clearing one,
+//                                       admins only; a key is set only on /admin/api-keys, never in a conversation
 //   list_users, add_user,               who may sign in, and who's an admin (users.ts),
 //   set_user_role, set_user_deploy,     admins only
 //   remove_user
@@ -28,8 +32,10 @@
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import { Type, type TObject } from "typebox";
 import { ConfigError, type ConfigEntry } from "./config.ts";
+import { CredentialError } from "./credentials.ts";
 import { type Action, type Directory, type DocRow, type Grant, type Route, type Who, ANYONE, NotAllowed, nameOf } from "./directory.ts";
-import { ID, OWNER } from "./front.ts";
+import { ID, makeDoc, newDocId, OWNER, startingFiles, type Platform } from "./front.ts";
+import { TEMPLATES, templateById } from "./templates.ts";
 import { LOCKED, type User } from "./users.ts";
 
 /** A tool's failure, worded for the agent to act on; `status` is the HTTP status the REST API answers. */
@@ -45,6 +51,8 @@ export interface ToolWho {
   readonly here?: string;
   /** The server's origin, for URLs in answers (else addresses only). */
   readonly origin?: string;
+  /** The platform (front.ts): for the documents list's tools (`docs`), which only the editor's agent gets. */
+  readonly platform?: Platform;
 }
 
 export interface ServerToolDef {
@@ -57,6 +65,8 @@ export interface ServerToolDef {
   readonly parameters: TObject;
   /** Only for server admins. */
   readonly admin?: boolean;
+  /** The documents list's (needs ToolWho.platform): for the editor's agent; the REST API has its own (server-api.ts). */
+  readonly docs?: boolean;
   /** Its answer: text, or JSON (shown as text). Throws a ToolError (or NotAllowed, ConfigError) the agent can act on. */
   run(args: Record<string, unknown>, ctx: ToolWho): Promise<string | object>;
 }
@@ -93,6 +103,65 @@ export const SERVER_TOOLS: ServerToolDef[] = [
       const role = args.role == "none" ? null : (args.role as Grant);
       await ctx.dir.share(ctx.who, doc.id, String(args.login ?? ""), role);
       return { document: described(doc, ctx), permissions: await permissionsOf(ctx.dir, doc.id) };
+    },
+  },
+
+  // ------------------------------------------------------------ the documents list (/docs)
+  {
+    name: "list_documents",
+    label: "List documents",
+    activity: "listing the documents",
+    docs: true,
+    description: "The person's documents, as the documents list (/docs) shows them, most recently edited first: their own and the ones shared with them. Each one's id, title, address, whose it is, their role in it, when it was last edited, and when it goes if nobody edits it (only for never-edited ones).",
+    parameters: Type.Object({}),
+    run: async (_args, ctx) => (await docsOf(ctx).docs.list(ctx.who.login.toLowerCase())).map((d) => ({
+      id: d.id, title: d.title, address: `/${d.owner}/${d.slug}`, ...(ctx.origin ? { url: `${ctx.origin}/${d.owner}/${d.slug}` } : {}), owner: d.owner, role: d.role,
+      modified: iso(d.modified), ...(d.expires != null ? { expires: iso(d.expires) } : {}), ...(d.id == ctx.here ? { here: true } : {}),
+    })),
+  },
+  {
+    name: "create_document",
+    label: "Make a document",
+    activity: "making a document",
+    docs: true,
+    description: `Makes a new document for the person, as New on the documents list does: from a template (${TEMPLATES.map((t) => `"${t.id}": ${t.description}`).join(" ")} "landing": a copy of the server's front page), or a copy of a document they may open (from; someone who may not edit it copies its published version). A blank page by default. It goes if nobody edits it in time (the delete_docs_after_hours setting; the answer says when). The title follows the page's first heading unless you give one; the address follows the title unless you give a slug. Answers its address: open it, or say where it is.`,
+    parameters: Type.Object({
+      template: Type.Optional(Type.String({ description: `A template: ${TEMPLATES.map((t) => t.id).join(", ")} (the default), or landing` })),
+      from: Type.Optional(Type.String({ description: "A document to copy instead: its address, URL or id" })),
+      title: Type.Optional(Type.String({ description: "Its title (else the page's first heading)" })),
+      slug: Type.Optional(Type.String({ description: "Its address after /<owner>/ (else made from the title)" })),
+    }),
+    run: async (args, ctx) => {
+      const { who } = ctx, platform = docsOf(ctx);
+      if (who.test) throw new ToolError("You can't make documents on this server.", 403);
+      const named = typeof args.template == "string" && args.template.trim() ? args.template.trim() : null;
+      if (named && args.from) throw new ToolError("Give a template or a document to copy (from), not both.");
+      const template = named && named != "landing" ? templateById(named) : undefined;
+      if (named && named != "landing" && !template) throw new ToolError(`There's no template "${named}": ${TEMPLATES.map((t) => t.id).join(", ")}, or landing.`);
+      const from = args.from ? (await findDocument(ctx, args.from, "open")).id : named == "landing" ? "landing" : null;
+      const start = await startingFiles(platform, from, who, template);
+      if (!start) throw new ToolError(from == "landing" ? "This server has no front page (landing document) to copy." : "There's nothing there you can copy.", 404);
+      const title = typeof args.title == "string" ? args.title : undefined, slug = typeof args.slug == "string" ? args.slug : undefined;
+      for (let tries = 0; tries < 5; tries++) {
+        const doc = await makeDoc(platform, who.login.toLowerCase(), newDocId(), start.files, { index: start.index, title, slug });
+        if (doc) return { made: described(doc, ctx), from: from ?? `the ${template?.id ?? TEMPLATES[0].id} template`, ...(doc.expires != null ? { expires: `${iso(doc.expires)}, unless someone edits it` } : {}) };
+      }
+      throw new ToolError("Couldn't pick an address for it: try again.", 500);
+    },
+  },
+  {
+    name: "delete_document",
+    label: "Delete a document",
+    activity: "deleting a document",
+    docs: true,
+    description: "Deletes one of the person's documents for good, as Delete on the documents list does (only its owner may). A document that's a folder on disk (local development) only comes off the list. Not the document you're in: the person deletes that one on the documents list (/docs). Only delete when the person asks, naming the document.",
+    parameters: Type.Object({ document: Type.String({ description: "The document: its address (/<owner>/<slug>), its URL or its id" }) }),
+    run: async (args, ctx) => {
+      const doc = await findDocument({ ...ctx, here: undefined }, args.document, "delete");
+      if (doc.id == ctx.here) throw new ToolError("That's the document you're in: the person deletes it on the documents list (/docs).", 409);
+      const platform = docsOf(ctx);
+      if (!(await platform.docs.delete(doc))) await platform.directory.remove(doc.id);
+      return { deleted: described(doc, ctx) };
     },
   },
 
@@ -166,6 +235,19 @@ export const SERVER_TOOLS: ServerToolDef[] = [
     run: async (_args, { dir, who }) => (await dir.credentials.list(who)).map((c) => ({
       name: c.name, label: c.label, description: c.description, stored: c.set, last4: c.last4, updated: iso(c.updated), updatedBy: c.updatedBy, workerSecret: c.fallback,
     })),
+  },
+
+  {
+    name: "clear_api_key",
+    label: "Clear an API key",
+    activity: "clearing an API key",
+    admin: true,
+    description: "Admins only. Clears one of the server's API keys (list_api_keys lists them), as Clear on /admin/api-keys does: the server goes back to its Worker secret, if one stands in, else does without (the Anthropic key: the agents stop). The change log says who cleared it. Setting or replacing a key is done only on /admin/api-keys, so a key never goes through a conversation.",
+    parameters: Type.Object({ name: Type.String({ description: "The key's name: anthropic, openai, github_mirror or cloudflare_deploy" }) }),
+    run: async (args, { dir, who }) => {
+      const c = await dir.credentials.clear(who, String(args.name ?? ""));
+      return { cleared: c.name, label: c.label, stored: c.set, workerSecret: c.fallback };
+    },
   },
 
   // ------------------------------------------------------------ the server's users (admins)
@@ -245,14 +327,14 @@ export async function runServerTool(tool: ServerToolDef, args: Record<string, un
   } catch (e) {
     if (e instanceof ToolError) throw e;
     if (e instanceof NotAllowed) throw new ToolError(e.message, /no such|isn't a user/i.test(e.message) ? 404 : 403);
-    if (e instanceof ConfigError) throw new ToolError(e.message, 400);
+    if (e instanceof ConfigError || e instanceof CredentialError) throw new ToolError(e.message, 400);
     throw e;
   }
 }
 
 /** The tools as the editor's agent takes them (pi's AgentTool), for someone in a document. */
 export async function agentToolsFor(ctx: ToolWho): Promise<AgentTool[]> {
-  return (await toolsFor(ctx.dir, ctx.who)).map((t): AgentTool => ({
+  return (await toolsFor(ctx.dir, ctx.who)).filter((t) => !t.docs || ctx.platform).map((t): AgentTool => ({
     name: t.name,
     label: t.label,
     description: t.description,
@@ -316,6 +398,12 @@ async function permissionsOf(dir: Directory, id: string) {
     login: p.login, role: p.role, ...(p.login == ANYONE ? { means: "anyone signed in who has the link" } : {}),
     granted: new Date(p.granted).toISOString(), ...(p.grantedBy ? { grantedBy: p.grantedBy } : {}),
   }));
+}
+
+/** The platform, for the documents list's tools. */
+function docsOf(ctx: ToolWho): Platform {
+  if (!ctx.platform) throw new ToolError("The documents list isn't reachable from here.", 501);
+  return ctx.platform;
 }
 
 const iso = (t: number | null) => (t ? new Date(t).toISOString() : null);

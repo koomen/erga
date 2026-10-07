@@ -40,6 +40,7 @@ import { findDocument, runServerTool, SERVER_TOOLS, ToolError, type ToolWho } fr
 import { cleanRel } from "./host";
 import { LABEL_MAX, normalCode, REQUEST_MINUTES, type AgentToken } from "./tokens";
 import { LOCKED } from "./users";
+import { TEMPLATES, templateById } from "./templates";
 
 // ---------------------------------------------------------------- the registry
 
@@ -93,7 +94,7 @@ export const TOOLS: ServerTool[] = [
   },
   {
     name: "create_document",
-    description: `Makes a new document and answers its URL. With files, it's those files (publishing a site or a page: a folder with index.html or index.md, plus its styles, scripts and images), and it stays. Without files it's a blank page (or a copy of the server's front page, template: "landing"), which goes if nobody edits it in time (the server's delete_docs_after_hours setting, unless that's never; it says when). The title follows the page's first heading unless you give one; the address (/<owner>/<slug>) follows the title unless you give a slug.`,
+    description: `Makes a new document and answers its URL. With files, it's those files (publishing a site or a page: a folder with index.html or index.md, plus its styles, scripts and images), and it stays. Without files it's a blank page, a template (template: ${TEMPLATES.map((t) => t.id).join(", ")}, or "landing" for a copy of the server's front page) or a copy of another document you may open (from), which goes if nobody edits it in time (the server's delete_docs_after_hours setting, unless that's never; it says when). The title follows the page's first heading unless you give one; the address (/<owner>/<slug>) follows the title unless you give a slug.`,
     parameters: {
       type: "object",
       properties: {
@@ -101,7 +102,8 @@ export const TOOLS: ServerTool[] = [
         index: str("The page, if it isn't index.html or index.md: an .html or .md file among the files."),
         title: str("Its title (else the page's first heading)."),
         slug: str("Its address after /<owner>/ (letters, digits and dashes; else made from the title). Taken already, it gets -2, -3..."),
-        template: { type: "string", enum: ["blank", "landing"], description: "Without files: a blank page (the default) or a copy of the server's front page (its landing document)." },
+        template: { type: "string", enum: ["blank", ...TEMPLATES.map((t) => t.id), "landing"], description: "Without files: a blank page (blank or page, the default), another template, or a copy of the server's front page (landing)." },
+        from: str("Without files: a document to copy instead (its address, URL or id). Someone who may not edit it copies its published version."),
       },
     },
     run: async (args, ctx) => {
@@ -113,8 +115,12 @@ export const TOOLS: ServerTool[] = [
       let index: string;
       if (published) index = pageOf(files, args.index);
       else {
-        const start = await startingFiles(platform, args.template == "landing" ? "landing" : null);
-        if (!start) throw new ToolError("This server has no front page (landing document) to copy.", 404);
+        const named = typeof args.template == "string" && args.template != "blank" ? args.template : null;
+        const template = named && named != "landing" ? templateById(named) : undefined;
+        if (named && named != "landing" && !template) throw new ToolError(`There's no template "${named}".`);
+        const from = args.from ? (await resolve(ctx, args.from, "open")).id : named == "landing" ? "landing" : null;
+        const start = await startingFiles(platform, from, whoOf(session), template);
+        if (!start) throw new ToolError(from == "landing" ? "This server has no front page (landing document) to copy." : "There's nothing there you can copy.", 404);
         ({ files, index } = start);
       }
       for (let tries = 0; tries < 5; tries++) {
@@ -216,8 +222,8 @@ function documentTools(): ServerTool[] {
 /** What a tool in server-tools.ts runs with, for an agent token's person. */
 const toolWho = (ctx: ToolContext): ToolWho => ({ dir: ctx.platform.directory, who: whoOf(ctx.session), origin: ctx.origin });
 
-/** The tools the editor's agent has too (server-tools.ts): sharing, and the admin ones. */
-const sharedTools: ServerTool[] = SERVER_TOOLS.map((t) => ({
+/** The tools the editor's agent has too (server-tools.ts): sharing, and the admin ones. The documents list's are in TOOLS above, with files. */
+const sharedTools: ServerTool[] = SERVER_TOOLS.filter((t) => !t.docs).map((t) => ({
   name: t.name,
   description: t.description,
   admin: t.admin,
