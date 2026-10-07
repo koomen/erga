@@ -11,8 +11,8 @@
 // the top level and in a folder) name the new one in place (.html added),
 // rename in place, Move to… and drag and drop (with the warning about relative
 // links), delete (a folder asks first), the server's errors shown in its
-// words, the keys, light, dark and a phone. pages-tree.js isn't loaded until
-// the tree is opened.
+// words, the keys, light, dark and a phone. The editor and Documents load
+// pages-tree.js once they are up; the viewer never does.
 //
 // All against the real server, on a real document: tests/fixtures/multi, linked
 // from disk, so every change lands in its files. Documents, not files: the tree
@@ -127,6 +127,8 @@ try {
   await until(async () => (await p.inPage<boolean>(`!!document.getElementById("owl")`)).some(Boolean), 10_000, "the viewer shows it at its address");
   await until(async () => (await p.inFrames(rendered(`document.querySelector("iframe.on")?.contentDocument`))).some(renderedRight), 10_000, "rendered whole in the viewer at its address");
   await p.screenshot(join(SHOTS, "tree-nested-viewer.png"));
+  await Bun.sleep(300);
+  expect(!(await p.eval<boolean>(`!!window.ergaTree || !!document.querySelector('script[src="/pages-tree.js"]')`)), "the viewer never loads pages-tree.js");
   await p.open(editor(nestedAt), { width: 900, height: 700, clear: false, agent: false });
   await until(async () => renderedRight(await p.frame(rendered(`document.getElementById("page")?.contentDocument`))), 15_000, "and in the editor, which resolves its links from its folder");
   expect(await p.eval<string>(`window.ergaPage.pagePath`) == "blog/drafts/owls.html", "the editor edits blog/drafts/owls.html");
@@ -136,7 +138,7 @@ try {
   // ------------------------------------------------------------ the editor
   await p.open(editor(host.base), { width: 1200, height: 760, scale: 2, agent: false });
   await until(() => p.eval<boolean>(`document.body.classList.contains("erga-editor-ready") && !document.getElementById("doc-title").hidden`), 20_000, "the editor is up with its title");
-  expect(!(await p.eval<boolean>(`!!window.ergaTree || !!document.querySelector('script[src="/pages-tree.js"]')`)), "pages-tree.js isn't loaded until it's wanted");
+  await until(() => p.eval<boolean>(`!!window.ergaTree && !!document.querySelector("#pages[hidden] #pages-tree .et-row[data-path]")`), 10_000, "the editor loads pages-tree.js once it is up, and mounts the tree, still closed");
   await clickOn(p, "#doc-title");
   await until(() => p.eval<boolean>(`document.querySelectorAll(".et-row[data-path]").length > 0`), 10_000, "the tree shows");
   let r = await rows(p);
