@@ -44,7 +44,7 @@
         "domain": "erga-pages-staging.dev"
       },
       "vars": {
-        "GITHUB_CLIENT_ID": "",
+        "GITHUB_CLIENT_ID": "Ov23likQyJqb2dDatb5S",
         "CLOUDFLARE_OAUTH_CLIENT_ID": ""
       },
       "snapshotFrom": "production",
