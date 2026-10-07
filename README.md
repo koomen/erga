@@ -1585,8 +1585,11 @@ same code, `src/page/layout.ts`), drag the agent's inner edge to make it
 wider or narrower (300 to 760px, and the board keeps at least 480px; a
 double-click puts back 380px), and drag it by its head to dock it on the
 right: a dashed ghost shows where it lands, and the board slides to the
-other side; Escape puts it back. The side and the width are kept in this
-browser (localStorage, `erga:factory-layout:v1`), for every admin page: the
+other side; Escape puts it back. The side and the width, and whether the
+agent is open, are kept for each admin on the server (`GET`/`PUT
+/api/admin/agent/prefs`, so they follow the admin to another browser), with a
+copy in this browser (localStorage, `erga:factory-layout:v1`) so a page paints
+them at once, for every admin page: the
 agent is the admin layout's (`admin-layout.ts`, [The admin pages](#users-admins-and-settings)).
 Narrower than 1000px, tabs (Tasks, Source) show one at a time, and the
 agent covers the page while it's open. Each part's stylesheet is
@@ -1808,8 +1811,18 @@ tell the factory's agent how long the task has been quiet. "Stalled" is not
 (the same panel and conversation, `src/page/agent-chat.ts`; its own code is
 `src/page/factory-agent.ts`, built to `factory-agent.js`) talks to the admin's
 own agent session (`factory/agent.ts`), one per admin, in the `Factory`
-Durable Object, so it keeps working when the tab closes and a reload keeps the
-conversation. It queues up work the way the local outer agent uses the task
+Durable Object, so it keeps working when the tab closes. The conversation is
+kept there too, for each admin (`agent_chats`, `factory/chat-store.ts`): the
+transcript and the model's own messages, saved as a reply streams in (at most
+a second behind) and at once when a turn or a tool ends. So it survives a
+reload, a move between admin pages, a new deploy and a sign-in days later, and
+the agent remembers it. A reply the server stopped in the middle keeps what
+arrived, says so, and drops a tool call that has no result (the model's API
+would refuse it). Screenshots go from the model's messages, and the oldest
+turns go when a conversation passes about 900 KB. The panel reads it on mount
+from `GET /api/admin/agent/conversation` (any admin page, the agent on or
+off); "New conversation" is `DELETE` on the same route (`tests/admin-agent-chat.ts`,
+`tests/admin-agent-chat.test.ts`). It queues up work the way the local outer agent uses the task
 queue (AGENTS.md): `create_task` (title, ask, `startAfter`, `mergeAfter`),
 `set_dependencies`, `instruct_task` (more instructions for a task that
 works, is ready to merge or failed), and reads with `list_tasks`, `get_task` (the ask,
