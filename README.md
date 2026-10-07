@@ -2337,6 +2337,19 @@ other than text between (a picture, a widget), or in a table cell, Backspace
 does nothing. One ⌘Z brings both blocks back, and others see the join live.
 In Markdown, Backspace at the start of a list item first takes its marker off.
 
+Tab at the start of a list item nests it under the item before it (it and
+the items nested in it move in one level), and Shift-Tab takes it back out
+one level, with the items after it nested in it, so the order stays. Enter
+after it starts the next item at the same level. The first item of a list,
+and an item at the top level, stay where they are. Tab anywhere else does
+what it did before. In Markdown, the item's lines move in or out by its
+marker's width. In HTML, an item with a list in it keeps its own text in a
+`<p>` (`<li><p>text</p><ul>…</ul></li>`, as Markdown renders it), since
+text beside a list isn't a unit and couldn't be edited; when the last item
+comes out of that list, the `<p>` goes too. In a Markdown page, a change that
+moves the blocks around the text (a list nested deeper, say) and not only
+the text renders the page again, so the nesting shows at once.
+
 In an HTML file, an empty paragraph that Enter makes is written `<p><br></p>`.
 The `<br>` keeps it a line high on the published page as in the editor, so a
 blank paragraph you leave stays. The first text you type, paste or compose

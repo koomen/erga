@@ -19,6 +19,8 @@
 import { EditorState, EditorSelection, type SelectionRange, Transaction, MapMode, findClusterBreak, type ChangeSet, type TransactionSpec } from "@codemirror/state";
 import { undo, redo, isolateHistory } from "@codemirror/commands";
 import { insertNewlineContinueMarkup, deleteMarkupBackward } from "@codemirror/lang-markdown";
+import { syntaxTree } from "@codemirror/language";
+import type { SyntaxNode } from "@lezer/common";
 import * as M from "./manuscript";
 import { analyzeMarkdown, escapeMarkdownText, parseMarkdown, type Node as MdNode } from "./markdown";
 import { changesBetween } from "./merge";
@@ -108,6 +110,19 @@ const FORMAT_TAGS = new Set(["strong", "b", "em", "i", "code", "a", "u", "s", "s
 const MD_STYLED = new Set(["Emphasis", "StrongEmphasis", "Strikethrough", "InlineCode"]);
 
 interface Analysis { units: M.Unit[]; html: string }
+
+/** A Markdown page's HTML with its units cut out: what's left is the blocks around them. Empty for HTML pages, whose units don't carry their HTML. */
+function skeletonOf(a: Analysis): string {
+  let out = "", at = 0;
+  for (const u of a.units) {
+    if (!u.outerHtml) return "";
+    const i = a.html.indexOf(u.outerHtml, at);
+    if (i < 0) return "";
+    out += a.html.slice(at, i) + "\u0000";
+    at = i + u.outerHtml.length;
+  }
+  return out + a.html.slice(at);
+}
 
 /** Inline elements a copy keeps (see clipboard), by the name it writes them with; the rest give only their text. */
 const COPY_TAGS: Record<string, string> = { strong: "strong", b: "strong", em: "em", i: "em", code: "code", a: "a", sub: "sub", sup: "sup", s: "s", del: "s", strike: "s", br: "br" };
@@ -383,6 +398,8 @@ export class PageEditor {
   private listeners: ((u: PageUpdate) => void)[] = [];
   /** Set while a full render is in flight; edits wait for it. */
   private rendering = false;
+  /** A Markdown page's blocks around its units (lists and their nesting, quotes), as last rendered: when they change, patching the units isn't enough. */
+  private skeleton = "";
   /** Source ranges to flash once the render in flight is done. */
   private pendingFlash: { from: number; to: number }[] = [];
   /**
@@ -487,6 +504,7 @@ export class PageEditor {
     const src = this.state.doc.toString();
     const a = this.analyze(src);
     this.units = a.units;
+    this.skeleton = skeletonOf(a);
     const onLoad = () => {
       if (token != this.renderToken) return;
       this.frame.removeEventListener("load", onLoad);
@@ -966,6 +984,7 @@ export class PageEditor {
     let handled = false;
     if (key == "enter" && !mod && !e.altKey) handled = this.enter(e.shiftKey);
     else if (key.startsWith("arrow")) handled = this.arrow(e);
+    else if (key == "tab" && !mod && !e.altKey) handled = this.indentItem(e.shiftKey);
     else if (mod && !e.altKey && key == "z") handled = e.shiftKey ? this.redo() : this.undo();
     else if (mod && !e.altKey && !e.shiftKey && key == "y" && !isMac) handled = this.redo();
     else if (mod && !e.altKey && !e.shiftKey && key == "b") handled = this.styleKey("strong");
@@ -1534,6 +1553,126 @@ export class PageEditor {
     }
     const insert = brBefore + M.closeTags(stack) + `</${u.tag}>\n${indent}` + openTag + M.openTags(stack);
     insertAt(insert + brAfter, pos + insert.length);
+    return true;
+  }
+
+  /**
+   * Tab at the start of a list item: the item (and the items nested in it)
+   * moves one level in, under the item before it; Shift+Tab moves it one
+   * level out, after the item it was under. Elsewhere, Tab is the browser's,
+   * as before. An item that can't move (the first in its list, or one at the
+   * top level) still takes the key, so the caret stays put.
+   */
+  private indentItem(out: boolean): boolean {
+    const sel = this.currentSelection();
+    if (!sel.empty) return false;
+    return this.kind == "md" ? this.indentMdItem(sel.head, out) : this.indentHtmlItem(sel.head, out);
+  }
+
+  private indentMdItem(pos: number, out: boolean): boolean {
+    const doc = this.state.doc;
+    // A caret in the line's indentation counts as at the item's start.
+    const caretLine = doc.lineAt(pos), at = Math.max(pos, caretLine.from + /^[\s>]*/.exec(caretLine.text)![0].length);
+    let item: SyntaxNode | null = syntaxTree(this.state).resolveInner(at, 1);
+    while (item && item.name != "ListItem") item = item.parent;
+    const mark = item?.getChild("ListMark");
+    if (!item || !mark) return false;
+    const line = doc.lineAt(item.from);
+    const start = mark.to + /^[ \t]*/.exec(doc.sliceString(mark.to, line.to))![0].length;
+    if (pos < line.from || pos > start) return false;
+    const col = (p: number) => p - doc.lineAt(p).from;
+    // The item's lines, each past what comes before its indentation (a quote's "> ").
+    const last = doc.lineAt(Math.max(item.from, item.to - (doc.sliceString(item.to - 1, item.to) == "\n" ? 1 : 0))).number;
+    const lines: { from: number; text: string }[] = [];
+    for (let n = line.number; n <= last; n++) {
+      const l = doc.line(n), quote = /^(?:[ \t]*>[ \t]?)*/.exec(l.text)![0];
+      lines.push({ from: l.from + quote.length, text: l.text.slice(quote.length) });
+    }
+    let changes: { from: number; to?: number; insert?: string }[];
+    if (!out) {
+      // In by as much as the item before it indents its text: then it's nested in that item.
+      const prev = item.prevSibling, prevMark = prev?.name == "ListItem" ? prev.getChild("ListMark") : null;
+      if (!prevMark) return true;
+      const gap = /^[ \t]*/.exec(doc.sliceString(prevMark.to, doc.lineAt(prevMark.to).to))![0].length;
+      const by = col(prevMark.to) + Math.max(1, gap) - col(mark.from);
+      if (by <= 0) return true;
+      changes = lines.filter((l) => /\S/.test(l.text)).map((l) => ({ from: l.from, insert: " ".repeat(by) }));
+    } else {
+      // Out to the column of the item it's nested in.
+      const parent = item.parent?.parent, parentMark = parent?.name == "ListItem" ? parent.getChild("ListMark") : null;
+      if (!parentMark) return true;
+      const by = col(mark.from) - col(parentMark.from);
+      if (by <= 0) return true;
+      changes = lines.map((l) => {
+        let w = 0, k = 0;
+        while (k < l.text.length && w < by && (l.text[k] == " " || l.text[k] == "\t")) { w += l.text[k] == "\t" ? 4 - (w % 4) : 1; k++; }
+        return { from: l.from, to: l.from + k };
+      }).filter((c) => c.to > c.from);
+    }
+    const set = this.state.changes(changes);
+    this.dispatch({ changes: set, selection: { anchor: set.mapPos(start, 1) }, userEvent: out ? "delete.dedent" : "input.indent", scrollIntoView: true });
+    return true;
+  }
+
+  /**
+   * The same in HTML. An item with a list nested in it keeps its own text in
+   * a <p> (`<li><p>text</p><ul>…</ul></li>`, as Markdown renders it): text
+   * beside a list isn't a unit, and couldn't be edited. Taking the last item
+   * out of a nested list takes the <p> off again.
+   */
+  private indentHtmlItem(pos: number, out: boolean): boolean {
+    const u = M.unitAt(this.units, pos);
+    const n = u?.node;
+    if (!u || !n || !this.verify(u) || pos < u.contentFrom || pos > M.textStart(u)) return false;
+    const elements = (e: M.ElementNode) => e.children.filter((c): c is M.ElementNode => c.kind == "element");
+    const isList = (e: M.ElementNode | null | undefined): e is M.ElementNode => e?.tag == "ul" || e?.tag == "ol";
+    const item = n.tag == "li" ? n : n.parent?.tag == "li" && elements(n.parent)[0] == n ? n.parent : null;
+    const list = item?.parent;
+    if (!item || !isList(list)) return false;
+    const src = this.state.doc.toString();
+    const closed = (e: M.ElementNode) => !e.selfClosing && src.startsWith("</", e.closeFrom);
+    if (![item, list].every(closed)) return false;
+    // Source slices, with a mark where the caret is, to find it again in the new source.
+    const CARET = "\u0000";
+    const cut = (a: number, b: number) => (a <= pos && pos < b ? src.slice(a, pos) + CARET + src.slice(pos, b) : src.slice(a, b));
+    const indent = (e: M.ElementNode) => M.lineIndent(src, e.from);
+    const reindent = (text: string, from: string, to: string) =>
+      text.replace(/\n([ \t]*)/g, (_, w: string) => "\n" + (to.length >= from.length ? to.slice(from.length) + w : w.slice(Math.min(w.length, from.length - to.length))));
+    const block = (e: M.ElementNode, to: string) => reindent(cut(e.from, e.to), indent(e), to);
+    // An item with more items nested at its end: into its last list, or a new one after its text.
+    const nest = (li: M.ElementNode, items: M.ElementNode[], tag: string) => {
+      const open = cut(li.from, li.openTo), close = src.slice(li.closeFrom, li.to), last = elements(li).at(-1);
+      if (isList(last) && closed(last)) {
+        const inner = indent(last) + "  ";
+        return cut(li.from, last.closeFrom).trimEnd() + items.map((e) => "\n" + inner + block(e, inner)).join("") + "\n" + indent(last) + cut(last.closeFrom, li.to);
+      }
+      const at = indent(li) + "  ", inner = at + "  ";
+      const content = cut(li.openTo, li.closeFrom).trim();
+      const text = elements(li).some((e) => !M.INLINE.has(e.tag)) ? content : `<p>${content}</p>`;
+      return open + text + `\n${at}<${tag}>` + items.map((e) => "\n" + inner + block(e, inner)).join("") + `\n${at}</${tag}>\n${indent(li)}` + close;
+    };
+    const siblings = elements(list), i = siblings.indexOf(item);
+    let from: number, to: number, insert: string;
+    if (!out) {
+      const prev = siblings[i - 1];
+      if (!prev || prev.tag != "li" || !closed(prev) || src.slice(prev.to, item.from).trim()) return true;
+      ({ from, to, insert } = { from: prev.from, to: item.to, insert: nest(prev, [item], list.tag) });
+    } else {
+      const parent = list.parent;
+      if (parent?.tag != "li" || !closed(parent)) return true;
+      // The items after it go with it, nested in it, so the order stays.
+      const after = siblings.slice(i + 1);
+      const moved = reindent(after.length ? nest(item, after, list.tag) : cut(item.from, item.to), indent(item), indent(parent));
+      const gone = (k: number) => k - src.slice(0, k).replace(/\s+$/, "").length;
+      const [a, b] = i == 0 ? [list.from - gone(list.from), list.to] : [item.from - gone(item.from), siblings.at(-1)!.to];
+      let content = cut(parent.openTo, a) + cut(b, parent.closeFrom);
+      const lone = i == 0 && /^\s*<p>((?:(?!<\/?p[\s>])[\s\S])*)<\/p>\s*$/.exec(content);
+      content = lone ? lone[1] : content.trimEnd() + "\n" + indent(parent);
+      ({ from, to, insert } = { from: parent.from, to: parent.to, insert: cut(parent.from, parent.openTo) + content + src.slice(parent.closeFrom, parent.to) + "\n" + indent(parent) + moved });
+    }
+    const caret = insert.indexOf(CARET);
+    insert = insert.replace(CARET, "");
+    this.dispatch({ changes: { from, to, insert }, selection: { anchor: from + Math.max(0, caret) }, userEvent: out ? "delete.dedent" : "input.indent", scrollIntoView: true });
     return true;
   }
 
@@ -2288,7 +2427,9 @@ export class PageEditor {
       if (nu && nu.tag == old.tag && !matched.has(nu.id)) matched.set(nu.id, { el, old });
     }
     this.units = newUnits;
-    const structural = matched.size != newUnits.length || matched.size != oldUnits.length;
+    const skeleton = skeletonOf(a), reshaped = skeleton != this.skeleton;
+    this.skeleton = skeleton;
+    const structural = reshaped || matched.size != newUnits.length || matched.size != oldUnits.length;
     const changed = new Set<number>();
     try {
       if (!structural) {
