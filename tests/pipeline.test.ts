@@ -24,7 +24,7 @@ import { packRelease } from "../deploy/builder/build";
 import { handle as builderServer } from "../deploy/builder/server";
 import { containerBuilder, ndjsonLines } from "../deploy/builder/client";
 import { CACHE_KEEP, CHUNK, cachedBuild, releaseKey, storageStore, toolchainKey } from "../deploy/builder/cache";
-import { ALL_STEPS, Cloudflare, guardTarget, loadRelease, runPipeline, type Release, type Target } from "../deploy/cloudflare";
+import { ALL_STEPS, Cloudflare, COPY_MAX_AGE_MS, copyName, copyReason, guardTarget, loadRelease, runPipeline, type Release, type Target } from "../deploy/cloudflare";
 import { FLEET_ACCOUNT, MOCK_HOOK_SECRET, MOCK_SNAPSHOT_TOKEN, mockBuilder, mockCloudflare, namespaceId, PROD_DB, PROD_DOCS, scriptTag, type MockState } from "../deploy/mock";
 import { memoryStore, snapshotDoor } from "../deploy/snapshot";
 import { FACTORY, TARGETS } from "../deploy/targets";
@@ -57,6 +57,10 @@ async function deployTo(target: Target, mock: ReturnType<typeof mockCloudflare>,
 }
 
 const bindingsOf = (state: MockState, script: string) => Object.fromEntries((state.scripts[script].metadata.bindings as any[]).map((b) => [b.name, b]));
+/** Staging's database: the copy its Worker is bound to (each copy has a name of its own: deploy/cloudflare.ts, copyName). */
+const stagingDbOf = (state: MockState) => state.databases.find((d) => d.uuid == bindingsOf(state, "erga-staging").DB.database_id)!;
+/** Staging's copies of production's data, by name. */
+const stagingCopies = (state: MockState) => state.databases.filter((d) => d.name.startsWith("erga-staging")).map((d) => d.name);
 /** Production as the fleet mock starts it, to compare against after. */
 const productionOf = (state: MockState) => JSON.stringify({
   script: state.scripts.erga, secrets: state.secrets.erga, versions: state.versions.erga,
@@ -77,7 +81,7 @@ describe("staging", () => {
     expect(result.pages).toBe("*.erga-pages-staging.dev");
 
     // Its own database: a new one, with production's rows and migrations.
-    const db = mock.state.databases.find((d) => d.name == "erga-staging")!;
+    const db = stagingDbOf(mock.state);
     const prod = mock.state.databases.find((d) => d.uuid == PROD_DB)!;
     expect(db.uuid).not.toBe(PROD_DB);
     expect(db.rows).toEqual(prod.rows!);
@@ -132,7 +136,7 @@ describe("staging", () => {
     const mock = mockCloudflare({ fleet: true });
     await deployTo(staging({ secrets: stagingSecrets }), mock);
     // Things happen on both: someone makes a document on staging, and one on production.
-    const stagingDb = mock.state.databases.find((d) => d.name == "erga-staging")!;
+    const stagingDb = stagingDbOf(mock.state);
     stagingDb.rows!.push("INSERT INTO documents (id, owner, slug, title) VALUES ('zzzz9999', 'bo', 'scratch', 'Scratch');");
     mock.state.docs["erga-staging"].docs.set("zzzz9999", { entries: new Map([["meta", { id: "zzzz9999" }]]), alarm: null });
     mock.state.docs["erga-staging"].docs.get(PROD_DOCS[0])!.entries.set("file:index.html", new TextEncoder().encode("edited on staging"));
@@ -141,8 +145,8 @@ describe("staging", () => {
     const before = productionOf(mock.state);
 
     const { steps } = await deployTo(staging(), mock);
-    expect(mock.state.deletedDatabases).toEqual(["erga-staging"]);
-    const db = mock.state.databases.find((d) => d.name == "erga-staging")!;
+    expect(mock.state.deletedDatabases).toEqual([stagingDb.name]);
+    const db = stagingDbOf(mock.state);
     expect(db.uuid).not.toBe(stagingDb.uuid);
     expect(db.rows!.some((r) => r.includes("zzzz9999"))).toBe(false);
     expect(db.rows!.some((r) => r.includes("newp4567"))).toBe(true);
@@ -160,7 +164,7 @@ describe("staging", () => {
     const mock = mockCloudflare({ fleet: true });
     await deployTo(staging({ secrets: stagingSecrets }), mock);
     mock.state.docs["erga-staging"].docs.set("zzzz9999", { entries: new Map([["meta", { id: "zzzz9999" }]]), alarm: null });
-    mock.state.databases.find((d) => d.name == "erga-staging")!.rows!.push("INSERT INTO documents (id, owner, slug, title) VALUES ('zzzz9999', 'bo', 's', 'S');");
+    stagingDbOf(mock.state).rows!.push("INSERT INTO documents (id, owner, slug, title) VALUES ('zzzz9999', 'bo', 's', 'S');");
     // Copying the database fails after the old one is deleted: what it had is carried to the next run.
     mock.state.failNext = "data";
     const carry: { oldDocs?: string[] } = {};
@@ -183,7 +187,7 @@ describe("staging", () => {
     delete mock.state.secrets.erga.SNAPSHOT_TOKEN;
     const { steps } = await deployTo(staging({ secrets: stagingSecrets }), mock);
     expect(steps.find((s) => s.startsWith("documents:skipped"))).toContain("doesn't serve snapshots yet");
-    expect(mock.state.databases.find((d) => d.name == "erga-staging")!.rows!.length).toBeGreaterThan(0);
+    expect(stagingDbOf(mock.state).rows!.length).toBeGreaterThan(0);
   });
 });
 
@@ -1011,7 +1015,7 @@ describe("staging's data copy runs while the commit builds", () => {
     expect(at(/^Copy production's database into it: done/)).toBeLessThan(at(/^built release/));
     expect(at(/^Set up the database's tables…/)).toBeGreaterThan(at(/^built release/));
     // The Worker went up on the copy's database, with the tombstone (the Worker was there: the account step's answer, carried over).
-    const db = mock.state.databases.find((d) => d.name == "erga-staging")!;
+    const db = stagingDbOf(mock.state);
     expect(bindingsOf(mock.state, "erga-staging").DB.database_id).toBe(db.uuid);
     expect(db.rows).toEqual(mock.state.databases.find((d) => d.uuid == PROD_DB)!.rows!);
     expect(mock.state.scripts["erga-staging"].metadata.exports.DocList).toEqual({ type: "durable-object", state: "deleted" });
@@ -1086,7 +1090,9 @@ describe("staging's data copy runs while the commit builds", () => {
     expect(builder.stopped).toEqual([SHA2]);
     expect(mid.steps.find((x) => x.id == "build")!.status).toBe("cancelled");
     expect(mid.steps.find((x) => x.id == "migrations")!.status).toBe("cancelled");
-    expect((await server.instance.logOf("staging"))!.lines.map((l) => l.text)).toContainEqual(expect.stringContaining("its database is the new copy already"));
+    // The copy it made is deleted; staging stays on its database.
+    expect((await server.instance.logOf("staging"))!.lines.map((l) => l.text)).toContainEqual(expect.stringContaining("deleted the copy this deploy made, which nothing uses"));
+    expect(stagingCopies(mock.state)).toEqual([stagingDbOf(mock.state).name]);
     const next = new Server(mock, waitsForCopy(mock) as never, "erga-staging", stagingEnv());
     next.storage = server.storage;
     next.start();
@@ -1113,7 +1119,185 @@ describe("staging's data copy runs while the commit builds", () => {
     const history = (await server.instance.historyOf("staging"))!;
     expect(history.map((r) => r.state)).toEqual(["deployed", "failed"]);
     expect(history[0].trigger).toBe("push by ada, again after a restart");
-    expect(bindingsOf(mock.state, "erga-staging").DB.database_id).toBe(mock.state.databases.find((d) => d.name == "erga-staging")!.uuid);
+    expect(bindingsOf(mock.state, "erga-staging").DB.database_id).toBe(stagingDbOf(mock.state).uuid);
+  });
+});
+
+describe("staging's copy of production's data: a database of its own each time, and only when it's worth it", () => {
+  const stagingEnv = () => env({ DEPLOY_TARGET: "staging", CLOUDFLARE_DEPLOY_TOKEN: "mock-staging-deploy-token" });
+  /** The commit's migrations as the repository has them: the release's, and `more`. */
+  const known = (...more: string[]) => ({ migrationsOf: async () => [...Object.keys(release.migrations), ...more] });
+  const stepOf = (t: TargetStatus, id: string) => t.steps.find((x) => x.id == id)!;
+  const exports = (mock: ReturnType<typeof mockCloudflare>) => mock.state.calls.filter((c) => c.endsWith(`/d1/database/${PROD_DB}/export`)).length;
+  /** Makes staging's copy look `hours` old (the age is in its name). */
+  const age = (mock: ReturnType<typeof mockCloudflare>, hours: number) => { const db = stagingDbOf(mock.state); db.name = copyName("erga-staging", Date.now() - hours * 3600_000); return db; };
+
+  test("no downtime: staging's Worker is never on a missing database; the old copy goes only after the new version answers", async () => {
+    const mock = mockCloudflare({ fleet: true });
+    await bootstrap(mock);
+    const old = stagingDbOf(mock.state);
+    const server = new Server(mock, mockBuilder(async () => release, { delayMs: 20 }), "erga-staging", stagingEnv());
+    // Every few ms of the deploy: the database staging's Worker is bound to is there.
+    const missing: string[] = [];
+    const watch = setInterval(() => { const id = bindingsOf(mock.state, "erga-staging").DB.database_id; if (!mock.state.databases.some((d) => d.uuid == id)) missing.push(id); }, 1);
+    await server.instance.hook("staging", SHA2);
+    await server.settle();
+    clearInterval(watch);
+    expect(missing).toEqual([]);
+    const t = await server.status("staging");
+    expect(t).toMatchObject({ state: "deployed", deployed: SHA2 });
+    const now = stagingDbOf(mock.state);
+    expect(now.uuid).not.toBe(old.uuid);
+    expect(now.name).toMatch(/^erga-staging-[0-9a-z]{8,10}$/);
+    expect(mock.state.deletedDatabases).toEqual([old.name]);
+    expect(stagingCopies(mock.state)).toEqual([now.name]);
+    expect(stepOf(t, "cleanup")).toMatchObject({ status: "done", detail: `deleted ${old.name}` });
+    // In the log: the new version answered before the old copy went.
+    const lines = (await server.instance.logOf("staging"))!.lines.map((l) => l.text);
+    expect(lines.findIndex((l) => l.startsWith("Wait for it to answer: done"))).toBeLessThan(lines.findIndex((l) => l.startsWith("Delete the old copies of the database: done")));
+    expect(writesToProduction(mock.state)).toEqual([]);
+  });
+
+  test("a failed build: staging stays on its version and its database, and the copy made beside it is deleted", async () => {
+    const mock = mockCloudflare({ fleet: true });
+    await bootstrap(mock);
+    const old = stagingDbOf(mock.state), rows = [...old.rows!];
+    const builder = mockBuilder(async () => release, { delayMs: 20 });
+    builder.failNext = "bun install: lockfile changed";
+    const server = new Server(mock, builder, "erga-staging", stagingEnv());
+    await server.instance.hook("staging", SHA2);
+    await server.settle();
+    const t = await server.status("staging");
+    expect(t.state).toBe("failed");
+    expect(stepOf(t, "database").status).toBe("done");
+    expect(server.version()).toBe(SHA1.slice(0, 12));
+    expect(stagingDbOf(mock.state).uuid).toBe(old.uuid);
+    expect(stagingDbOf(mock.state).rows).toEqual(rows);
+    expect(stagingCopies(mock.state)).toEqual([old.name]);
+    expect(mock.state.deletedDatabases).toHaveLength(1);
+    expect(mock.state.deletedDatabases[0]).not.toBe(old.name);
+    expect((await server.instance.logOf("staging"))!.lines.map((l) => l.text)).toContainEqual(expect.stringContaining("deleted the copy this deploy made, which nothing uses"));
+  });
+
+  test("cleanup: a copy a stopped deploy left is deleted by the next one, never the one staging is on, nor production's", async () => {
+    const mock = mockCloudflare({ fleet: true });
+    await bootstrap(mock);
+    const old = stagingDbOf(mock.state);
+    // A deploy that died half way (its server gone before it could tidy up) left a copy; another project's database is there too.
+    const stray = copyName("erga-staging", Date.now() - 60_000);
+    mock.state.databases.push({ uuid: "dead0000-0000-4000-8000-000000000001", name: stray, statements: [], migrations: [], tables: [] } as never);
+    mock.state.databases.push({ uuid: "dead0000-0000-4000-8000-000000000002", name: "erga-staging-notes", statements: [], migrations: [], tables: [] } as never);
+    const server = new Server(mock, mockBuilder(async () => release), "erga-staging", stagingEnv(), known());
+    await server.instance.hook("staging", SHA2);
+    await server.settle();
+    const t = await server.status("staging");
+    expect(t).toMatchObject({ state: "deployed", deployed: SHA2 });
+    expect(stepOf(t, "database").detail).toContain(`1 left by an earlier deploy deleted (${stray})`);
+    expect(mock.state.deletedDatabases).toEqual([stray]);
+    expect(stagingDbOf(mock.state).uuid).toBe(old.uuid);
+    expect(mock.state.databases.map((d) => d.name)).toEqual(expect.arrayContaining(["erga", "erga-staging-notes", old.name]));
+    expect(stepOf(t, "cleanup").detail).toBe("none to delete");
+    // Production's database can't take a name like a copy's: the guard stops such a deploy before anything.
+    expect(guardTarget({ ...staging(), guard: { ...staging().guard!, database: copyName("erga-staging", Date.now()) } })).toMatch(/name like a copy/);
+  });
+
+  test("a commit with no new migration and a copy under 6 hours old: staging keeps its database and documents", async () => {
+    const mock = mockCloudflare({ fleet: true });
+    await bootstrap(mock);
+    const old = stagingDbOf(mock.state);
+    mock.state.docs["erga-staging"].docs.get(PROD_DOCS[0])!.entries.set("file:index.html", new TextEncoder().encode("edited on staging"));
+    const seen = exports(mock);
+    const server = new Server(mock, mockBuilder(async () => release), "erga-staging", stagingEnv(), known());
+    await server.instance.hook("staging", SHA2);
+    await server.settle();
+    const t = await server.status("staging");
+    expect(t).toMatchObject({ state: "deployed", deployed: SHA2 });
+    expect(stepOf(t, "database").detail).toMatch(new RegExp(`^kept "${old.name}"`));
+    expect(stepOf(t, "data")).toMatchObject({ status: "skipped" });
+    expect(stepOf(t, "documents")).toMatchObject({ status: "skipped" });
+    expect(exports(mock)).toBe(seen);
+    expect(stagingDbOf(mock.state).uuid).toBe(old.uuid);
+    expect(new TextDecoder().decode(mock.state.docs["erga-staging"].docs.get(PROD_DOCS[0])!.entries.get("file:index.html") as Uint8Array)).toBe("edited on staging");
+    expect(server.version()).toBe(SHA2.slice(0, 12));
+  });
+
+  test("a commit with a migration staging's copy hasn't had: a fresh copy, which the migration then runs on", async () => {
+    const mock = mockCloudflare({ fleet: true });
+    await bootstrap(mock);
+    const old = stagingDbOf(mock.state);
+    const seen = exports(mock);
+    const server = new Server(mock, mockBuilder(async () => release), "erga-staging", stagingEnv(), known("0999_new_table.sql"));
+    await server.instance.hook("staging", SHA2);
+    await server.settle();
+    const t = await server.status("staging");
+    expect(t).toMatchObject({ state: "deployed", deployed: SHA2 });
+    expect(stepOf(t, "database").detail).toContain("the commit has a migration the copy hasn't had (0999_new_table.sql)");
+    expect(stepOf(t, "data").status).toBe("done");
+    expect(stepOf(t, "documents").status).toBe("done");
+    expect(exports(mock)).toBeGreaterThan(seen);
+    expect(stagingDbOf(mock.state).uuid).not.toBe(old.uuid);
+    expect(mock.state.deletedDatabases).toEqual([old.name]);
+    // The commit's migrations unknown (the repository couldn't be read): a fresh copy too, to be safe.
+    const unknown = new Server(mock, mockBuilder(async () => release), "erga-staging", stagingEnv(), { migrationsOf: async () => null });
+    await unknown.instance.hook("staging", SHA3);
+    await unknown.settle();
+    expect(stepOf(await unknown.status("staging"), "database").detail).toContain("the commit's migrations aren't known");
+  });
+
+  test("a copy over 6 hours old: a fresh one; under 6 hours: kept", async () => {
+    const mock = mockCloudflare({ fleet: true });
+    await bootstrap(mock);
+    age(mock, 5.5);
+    const server = new Server(mock, mockBuilder(async () => release), "erga-staging", stagingEnv(), known());
+    await server.instance.hook("staging", SHA2);
+    await server.settle();
+    expect(stepOf(await server.status("staging"), "data").status).toBe("skipped");
+    const old = age(mock, COPY_MAX_AGE_MS / 3600_000 + 0.5);
+    await server.instance.hook("staging", SHA3);
+    await server.settle();
+    const t = await server.status("staging");
+    expect(t).toMatchObject({ state: "deployed", deployed: SHA3 });
+    expect(stepOf(t, "database").detail).toContain("the copy is 6.5 hours old");
+    expect(stepOf(t, "data").status).toBe("done");
+    expect(stagingDbOf(mock.state).uuid).not.toBe(old.uuid);
+    expect(mock.state.deletedDatabases).toEqual([old.name]);
+  });
+
+  test("Redeploy with a fresh copy: copied however new the copy is; production refuses it; a newer push keeps it asked for", async () => {
+    const mock = mockCloudflare({ fleet: true });
+    await bootstrap(mock);
+    const old = stagingDbOf(mock.state);
+    const server = new Server(mock, mockBuilder(async () => release), "erga-staging", stagingEnv(), known());
+    await server.instance.hook("staging", SHA2);
+    await server.settle();
+    expect(stepOf(await server.status("staging"), "data").status).toBe("skipped");
+    expect(await server.instance.redeploy("staging", "redeploy by ada", { fresh: true })).toMatchObject({ ok: true });
+    await server.settle();
+    const t = await server.status("staging");
+    expect(t).toMatchObject({ state: "deployed", deployed: SHA2 });
+    expect(stepOf(t, "database").detail).toContain("a fresh copy was asked for");
+    expect(stepOf(t, "data").status).toBe("done");
+    expect(stagingDbOf(mock.state).uuid).not.toBe(old.uuid);
+    expect(t.log.some((l) => l.includes("asked for (redeploy by ada), with a fresh copy of production's data"))).toBe(true);
+    // The next deploy, not asked: kept again.
+    await server.instance.hook("staging", SHA3);
+    await server.settle();
+    expect(stepOf(await server.status("staging"), "data").status).toBe("skipped");
+    // Asked for, then a push comes before it runs: the push's deploy copies afresh.
+    await server.instance.redeploy("staging", "redeploy by ada", { fresh: true });
+    await server.instance.hook("staging", SHA1, "push by bo");
+    await server.settle();
+    expect(stepOf(await server.status("staging"), "database").detail).toContain("a fresh copy was asked for");
+    // Production takes no copy: refused.
+    const prod = new Server(mock, mockBuilder(async () => release), "erga", env({ DEPLOY_TARGET: "production" }));
+    expect(await prod.instance.redeploy("production", "redeploy by ada", { fresh: true })).toMatchObject({ ok: false, status: 400 });
+    // The rule itself.
+    const live = { made: Date.now() - 3600_000, migrations: ["0001_a.sql"] };
+    expect(copyReason({ fresh: { migrations: ["0001_a.sql"] }, live, now: Date.now() })).toBeNull();
+    expect(copyReason({ fresh: { migrations: ["0001_a.sql"], force: true }, live, now: Date.now() })).toBe("a fresh copy was asked for");
+    expect(copyReason({ fresh: { migrations: ["0001_a.sql"] }, live: null, now: Date.now() })).toBe("there's no copy yet");
+    expect(copyReason({ fresh: { migrations: ["0001_a.sql"] }, live: { ...live, made: null }, now: Date.now() })).toBe("the copy's age isn't known");
+    expect(copyReason({ live, now: Date.now() })).toBe("every deploy copies");
   });
 });
 

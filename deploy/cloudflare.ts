@@ -18,12 +18,14 @@
 //     (Target.snapshot: the "data" and "documents" steps).
 //
 // The steps (ALL_STEPS): check the account, find or make the D1 database
-// (afresh, for a snapshot), copy the source's database into it, apply
+// (for a snapshot, a new copy beside the one the Worker is on, or that one
+// kept: Target.snapshot), copy the source's database into it, apply
 // migrations/ to it (recorded in d1_migrations, as `cf d1 migrations apply`
 // does), upload the static assets (direct upload), upload the Worker with its
 // bindings, secrets and Durable Objects, give it its address (workers.dev,
 // or a custom domain), give documents' pages theirs, wait for it to answer,
-// and copy the source's documents into it. A new server makes its own front
+// copy the source's documents into it, and delete the old copies of the
+// database (a snapshot's: only once the new version answers). A new server makes its own front
 // page from the landing project built into it, the first time someone opens
 // it (front.ts), owned by its first admin.
 
@@ -228,12 +230,13 @@ export const ALL_STEPS = [
   { id: "vms", title: "Connect the factory's VMs (Containers)" },
   STEPS[5], STEPS[6], STEPS[7],
   { id: "documents", title: "Copy production's documents into it" },
+  { id: "cleanup", title: "Delete the old copies of the database" },
 ] as const;
 export type StepId = (typeof ALL_STEPS)[number]["id"];
 
-/** A target's steps: the deploy page's, the two copying steps for one with a snapshot, and the factory's two for one with a factory. */
+/** A target's steps: the deploy page's, the copying steps (and the old copies' cleanup) for one with a snapshot, and the factory's two for one with a factory. */
 export const stepsFor = (t: Pick<Target, "snapshot" | "factory">) => ALL_STEPS.filter((s) =>
-  (t.snapshot || (s.id != "data" && s.id != "documents")) && (t.factory || (s.id != "image" && s.id != "vms")));
+  (t.snapshot || (s.id != "data" && s.id != "documents" && s.id != "cleanup")) && (t.factory || (s.id != "image" && s.id != "vms")));
 
 export type Report = (step: StepId, status: "running" | "done" | "skipped", detail?: string) => void;
 
@@ -289,13 +292,25 @@ export interface Target {
   /** Wait for this release's version to answer (GET /api/deploys/version), not only for the server to answer. */
   checkVersion?: boolean;
   /**
-   * Copy another server's data in, on every deploy (staging: production's).
-   * The target's database is made afresh from the source database's D1
-   * export (read-only on the source), and each document's Durable Object
-   * from the source server's snapshot endpoint (deploy/snapshot.ts),
-   * authorized with `token`. Nothing is ever written to the source.
+   * Copy another server's data in (staging: production's). The copy goes
+   * into a new database of its own, `<databaseName>-<when, base 36>`
+   * (copyName), made from the source database's D1 export (read-only on the
+   * source), while the target's Worker stays on the database it has: the
+   * Worker's upload binds the new one, and the old one is deleted only once
+   * the new version answers (the cleanup step). So the target is never on a
+   * deleted database, and a deploy that stops before its upload leaves it as
+   * it was; the copies such a deploy leaves are deleted by the next one. Each
+   * document's Durable Object is copied from the source server's snapshot
+   * endpoint (deploy/snapshot.ts), authorized with `token`. Nothing is ever
+   * written to the source.
+   *
+   * `fresh` says when to copy (copyReason): with no `fresh`, every deploy
+   * copies; with it, only when forced, when the commit has a migration the
+   * target's database hasn't had (`migrations`, the commit's migrations/
+   * files; null, unknown, copies), or when the target's copy is older than
+   * `maxAgeMs`. Otherwise the target keeps its database and documents.
    */
-  snapshot?: { databaseName: string; origin: string; token: string };
+  snapshot?: { databaseName: string; origin: string; token: string; fresh?: { force?: boolean; maxAgeMs?: number; migrations?: string[] | null } };
   /**
    * The factory's VMs (factory/cloudflare.ts): Cloudflare Containers owned by the FactoryVm Durable Object, started
    * from `image` (a reference in the account's registry, deploy/containers.ts), with previews on <vm>.<previews>
@@ -312,11 +327,74 @@ export interface Target {
  * What runs on from one step to the next (and across a restart, deploy/branches.ts keeps it): the database, the version,
  * the documents staging had before, and why the version went up without the factory's containers (if it did).
  */
-export interface Carry { dbId?: string; version?: string; oldDocs?: string[]; noVms?: string; existing?: boolean }
+export interface Carry { dbId?: string; version?: string; oldDocs?: string[]; noVms?: string; existing?: boolean; copied?: boolean }
+
+/** A copy of another server's data, by when it was made: `<base>-<ms since the epoch, base 36>` (Target.snapshot). */
+export const copyName = (base: string, at: number) => `${base}-${at.toString(36)}`;
+/** When a database by that name was made, if it's one of `base`'s copies (the base name itself: one from before, of no known age). */
+export function copyMade(base: string, name: string): number | null | undefined {
+  if (name == base) return null;
+  const m = name.startsWith(`${base}-`) ? /^[0-9a-z]{8,10}$/.exec(name.slice(base.length + 1)) : null;
+  if (!m) return undefined;
+  const at = parseInt(m[0], 36);
+  return at > 1.5e12 && at < 1e13 ? at : undefined;
+}
+/** How old a copy may be before a deploy copies afresh (staging: 6 hours). */
+export const COPY_MAX_AGE_MS = 6 * 3600_000;
+
+/** Why a deploy copies the source's data afresh, or null (the target keeps its copy). */
+export function copyReason(o: { fresh?: { force?: boolean; maxAgeMs?: number; migrations?: string[] | null }; live: { made: number | null; migrations: string[] } | null; now: number }): string | null {
+  const f = o.fresh;
+  if (!f) return "every deploy copies";
+  if (f.force) return "a fresh copy was asked for";
+  if (!o.live) return "there's no copy yet";
+  if (f.migrations == null) return "the commit's migrations aren't known";
+  const had = new Set(o.live.migrations);
+  const fresh = f.migrations.filter((n) => !had.has(n));
+  if (fresh.length) return `the commit has ${fresh.length == 1 ? "a migration" : "migrations"} the copy hasn't had (${fresh.join(", ")})`;
+  if (o.live.made == null) return "the copy's age isn't known";
+  const age = o.now - o.live.made;
+  if (age > (f.maxAgeMs ?? COPY_MAX_AGE_MS)) return `the copy is ${Math.round(age / 3600_000 * 10) / 10} hours old`;
+  return null;
+}
+
+/** The databases that are `base`'s copies (its own name, and copyName's), with when each was made. */
+export async function copiesOf(cf: Cloudflare, acc: string, base: string): Promise<{ uuid: string; name: string; made: number | null }[]> {
+  const all = (await cf.call<{ uuid: string; name: string }[]>("GET", `${acc}/d1/database?per_page=1000`, "list your D1 databases")) ?? [];
+  return all.flatMap((d) => { const made = copyMade(base, d.name); return made === undefined ? [] : [{ uuid: d.uuid, name: d.name, made }]; });
+}
+
+/** The database a Worker's DB binding names now, or null (no Worker, no binding). */
+export async function boundDatabase(cf: Cloudflare, acc: string, worker: string): Promise<string | null> {
+  const settings = await cf.call<{ bindings?: { name: string; type: string; id?: string; database_id?: string }[] }>("GET", `${acc}/workers/scripts/${worker}/settings`, `read ${worker}'s settings`, undefined, { allow404: true });
+  const b = settings?.bindings?.find((x) => x.type == "d1" && x.name == "DB");
+  return b?.database_id ?? b?.id ?? null;
+}
+
+/**
+ * Deletes a target's copies of the source's data but `keep` (and, unless null, the one its Worker is bound to):
+ * the ones a failed or cancelled deploy left, or the one a new version took the place of. What it deleted.
+ */
+export async function dropCopies(cf: Cloudflare, target: Target, keep: string | null): Promise<string[]> {
+  const acc = `/accounts/${target.accountId}`;
+  const bound = await boundDatabase(cf, acc, target.workerName);
+  // Not knowing which one the Worker is on, and told to keep none: delete nothing.
+  if (!bound && !keep) return [];
+  const gone: string[] = [];
+  for (const c of await copiesOf(cf, acc, target.databaseName)) {
+    if (c.uuid == keep || c.uuid == bound) continue;
+    // Never production's, whatever its name (copiesOf matches the target's names only; this is a second lock).
+    if (target.guard && c.name == target.guard.database) continue;
+    await cf.call("DELETE", `${acc}/d1/database/${c.uuid}`, `delete ${c.name}, an old copy`);
+    gone.push(c.name);
+  }
+  return gone;
+}
 
 /**
  * The steps a target with a snapshot (staging) runs while its commit builds (deploy/branches.ts): they need no
- * release (the snapshot's database step makes the database afresh, with no check of the release's migrations).
+ * release (the snapshot's database step decides from the commit's migrations, named in Target.snapshot.fresh, not
+ * from the release's). They change nothing the target runs on: a new copy goes beside the database its Worker is on.
  */
 export const BEFORE_BUILD: readonly StepId[] = ["account", "database", "data"];
 
@@ -360,6 +438,9 @@ export function guardTarget(t: Target): string | null {
     if (t.production) return "Production never takes a copy of another server's data.";
     if (t.snapshot.databaseName == t.databaseName) return `A snapshot can't go into the database it's copied from (${t.databaseName}).`;
     if (g && (t.databaseName == g.database || t.workerName == g.worker)) return `A snapshot is made afresh in the target's database, which is deleted first: never production's (${g.database}).`;
+    // The target's copies (copyName) are made and deleted by their names: production's must never look like one.
+    if (g && copyMade(t.databaseName, g.database) !== undefined) return `Production's database (${g.database}) has a name like a copy of ${t.databaseName}'s: copies are deleted by name, so this stops here.`;
+    if (copyMade(t.databaseName, t.snapshot.databaseName) !== undefined) return `The snapshot's source (${t.snapshot.databaseName}) has a name like a copy of ${t.databaseName}'s: this stops here.`;
   }
   return null;
 }
@@ -442,22 +523,47 @@ export async function runPipeline(cf: Cloudflare, release: Release | null, targe
       return `${account?.name ?? target.accountId}${found ? `; ${target.workerName} is already there and will be replaced${target.keepSecrets ? "" : " (everyone signs in again)"}` : ""}`;
     },
 
-    // The database: the one by this name if it's Erga's, else a new one. With a snapshot, always a new one (the old one, staging's, deleted first).
+    // The database: the one by this name if it's Erga's, else a new one. With a snapshot, the target's copy, or a new
+    // copy beside it (Target.snapshot): the Worker stays on the one it has until its upload.
     async database() {
-      const found = await findDatabase(cf, acc, target.databaseName);
       if (target.snapshot) {
-        if (found) {
-          // Which documents it had, so their Durable Objects are emptied too (the documents step), then gone.
-          const old = await d1(cf, acc, found, "SELECT id FROM documents", [], `read which documents ${target.databaseName} had`).catch(() => []);
-          carry.oldDocs = [...new Set([...(carry.oldDocs ?? []), ...(old ?? []).map((r) => String(r.id))])];
-          await opts.checkpoint?.("account", carry);
-          await cf.call("DELETE", `${acc}/d1/database/${found}`, `delete ${target.databaseName}'s old copy`);
+        const copies = await copiesOf(cf, acc, target.databaseName);
+        const boundId = await boundDatabase(cf, acc, target.workerName);
+        const live = copies.find((c) => c.uuid == boundId) ?? null;
+        // Copies a failed or cancelled deploy left (any but the one the Worker is on): gone first.
+        const left = live ? copies.filter((c) => c != live) : [];
+        for (const c of left) await cf.call("DELETE", `${acc}/d1/database/${c.uuid}`, `delete ${c.name}, a copy an earlier deploy left`);
+        const leftNote = left.length ? `; ${left.length} left by an earlier deploy deleted (${left.map((c) => c.name).join(", ")})` : "";
+        const liveMigrations = live && target.snapshot.fresh
+          ? ((await d1(cf, acc, live.uuid, "SELECT name FROM d1_migrations", [], `read ${live.name}'s migrations`).catch(() => [])) ?? []).map((r) => String(r.name))
+          : [];
+        const why = copyReason({ fresh: target.snapshot.fresh, live: live ? { made: live.made, migrations: liveMigrations } : null, now: Date.now() });
+        if (!why && live) {
+          carry.dbId = live.uuid;
+          carry.copied = false;
+          const age = live.made ? `${Math.round((Date.now() - live.made) / 60_000)} min old` : "";
+          return `kept "${live.name}" (${live.uuid}${age ? `, ${age}` : ""}): no migration it hasn't had, and it's newer than ${Math.round((target.snapshot.fresh?.maxAgeMs ?? COPY_MAX_AGE_MS) / 3600_000)} hours${leftNote}`;
         }
-        const made = await cf.call<{ uuid: string }>("POST", `${acc}/d1/database`, "make the database", { name: target.databaseName });
-        if (!made?.uuid) throw new DeployError("Cloudflare made the database but didn't say its id. Deploy again: the next run will find it.");
+        if (live) {
+          // Which documents it has, so their Durable Objects are emptied too (the documents step).
+          const old = await d1(cf, acc, live.uuid, "SELECT id FROM documents", [], `read which documents ${live.name} has`).catch(() => []);
+          carry.oldDocs = [...new Set([...(carry.oldDocs ?? []), ...(old ?? []).map((r) => String(r.id))])];
+        }
+        // A copy that isn't bound (the Worker isn't there, or is on another database): kept until the cleanup, in case it is in use.
+        let at = Date.now();
+        const names = new Set(copies.map((c) => c.name));
+        while (names.has(copyName(target.databaseName, at))) at++;
+        const name = copyName(target.databaseName, at);
+        if (target.guard && name == target.guard.database) throw new DeployError(`A copy can't be called ${name}: that's production's database.`);
+        const made = await cf.call<{ uuid: string }>("POST", `${acc}/d1/database`, "make the database", { name });
+        if (!made?.uuid) throw new DeployError("Cloudflare made the database but didn't say its id. Deploy again: the next one deletes it.");
         carry.dbId = made.uuid;
-        return `"${target.databaseName}" (${carry.dbId}), made afresh${found ? " (the old copy deleted)" : ""}`;
+        carry.copied = true;
+        return `"${name}" (${carry.dbId}), a new copy beside ${live ? `"${live.name}", which ${target.workerName} stays on until its upload` : "nothing (there's no copy yet)"}: ${why}${leftNote}`;
       }
+      const found = await findDatabase(cf, acc, target.databaseName)
+        // A target that takes copies, deployed without one (deploy/run.ts --no-snapshot): the copy its Worker is on.
+        ?? await (async () => { const b = await boundDatabase(cf, acc, target.workerName).catch(() => null); return b && (await copiesOf(cf, acc, target.databaseName)).some((c) => c.uuid == b) ? b : null; })();
       if (found) {
         // Erga's if it has Erga's first migration; usable if it's empty (made by a run that stopped before its tables).
         const tables = ((await d1(cf, acc, found, "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_cf_%'", [], "look inside the database")) ?? []).map((r) => String(r.name));
@@ -477,6 +583,7 @@ export async function runPipeline(cf: Cloudflare, release: Release | null, targe
     // Production's database, exported (D1's export: read-only on it) and loaded into the new one (D1's import).
     async data() {
       const snap = target.snapshot!;
+      if (carry.copied === false) return "skipped: the target keeps its copy (the database step says why)";
       const source = await findDatabase(cf, acc, snap.databaseName);
       if (!source) throw new DeployError(`There's no database called ${snap.databaseName} to copy.`);
       if (source == carry.dbId) throw new DeployError("The snapshot's source and target are the same database: stopped.");
@@ -630,11 +737,19 @@ export async function runPipeline(cf: Cloudflare, release: Release | null, targe
     // Each document's Durable Object: production's storage, read through its snapshot endpoint, written into the new server's.
     async documents() {
       const snap = target.snapshot!;
+      if (carry.copied === false) return "skipped: the target keeps its documents, as it keeps its copy of the database";
       const ids = ((await d1(cf, acc, carry.dbId!, "SELECT id FROM documents", [], "list the documents in the copy")) ?? []).map((r) => String(r.id));
       const result = await copyDocuments({ ids, wipe: (carry.oldDocs ?? []).filter((id) => !ids.includes(id)), from: snap.origin, to: `https://${host}`, token: snap.token, fetch: site });
       if (result.unsupported) return `skipped: ${snap.origin} doesn't serve snapshots yet (it needs this version, and SNAPSHOT_TOKEN set); the documents are listed but empty`;
       carry.oldDocs = [];
       return `${result.copied} documents copied${result.missing ? `, ${result.missing} gone from production since the database's copy` : ""}${result.wiped ? `, ${result.wiped} old ones emptied` : ""}`;
+    },
+
+    // The copies the new version doesn't use: the one it took the place of, and any a stopped deploy left. Only now,
+    // with the new version up and answering (the live step): until then the old one is what the target runs on.
+    async cleanup() {
+      const gone = await dropCopies(cf, target, carry.dbId ?? null);
+      return gone.length ? `deleted ${gone.join(", ")}` : "none to delete";
     },
   };
 
@@ -642,7 +757,7 @@ export async function runPipeline(cf: Cloudflare, release: Release | null, targe
     signal?.throwIfAborted();
     report(id, "running");
     const detail = await run[id]();
-    const skipped = (id == "documents" || id == "vms" || id == "image") && !!detail?.startsWith("skipped");
+    const skipped = (id == "documents" || id == "data" || id == "vms" || id == "image") && !!detail?.startsWith("skipped");
     report(id, skipped ? "skipped" : "done", detail);
     await opts.checkpoint?.(id, carry);
   }

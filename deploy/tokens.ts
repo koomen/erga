@@ -19,8 +19,8 @@
 //     keep_bindings), its static assets, its settings; its Durable Objects
 //     inherit it. It can't make or delete a Worker: the first deploy, from a
 //     machine with the setup's own credential, makes it.
-//   - D1 Write: staging's database is deleted and made afresh from
-//     production's export on every deploy, and both apply migrations/.
+//   - D1 Write: staging gets a new database, a copy of
+//     production's export, and deletes its old one (deploy/cloudflare.ts, Target.snapshot); both apply migrations/.
 //   - Read on the zones: find the zones by name, and check that the app's
 //     custom domain, the pages' route and their DNS record are there and
 //     point at this Worker. The setup's first deploy makes them; a deploy

@@ -116,7 +116,8 @@ describe("deploying with them", () => {
     const steps: string[] = [];
     await runPipeline(new Cloudflare(value, mock.fetch), { ...release, version: SHA2.slice(0, 12) }, targetOf(TARGETS.staging, { CLOUDFLARE_ACCOUNT_ID: FLEET_ACCOUNT, SNAPSHOT_TOKEN: MOCK_SNAPSHOT_TOKEN }), { ...quick, site: mock.fetch, report: (id, status, detail) => steps.push(`${id}:${status}${detail ? ` ${detail}` : ""}`) });
     expect(steps).toContain("address:done https://staging.erga.dev (already its address)");
-    expect(steps.at(-1)).toMatch(/^documents:done/);
+    expect(steps.at(-3)).toMatch(/^documents:done/);
+    expect(steps.at(-1)).toMatch(/^cleanup:done deleted erga-staging-/);
     // No write to a custom domain, a route or a DNS record: the token can only read them.
     expect(mock.state.calls.slice(calls).filter((c) => /^(PUT|POST|DELETE) .*(workers\/domains|dns_records|workers\/routes)/.test(c))).toEqual([]);
     expect(productionOf(mock)).toBe(before);
