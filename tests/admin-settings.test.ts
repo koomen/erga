@@ -1,16 +1,13 @@
 // The admin page's controls for settings (admin.ts), against a stand-in
 // directory: a setting that holds users (kind "users") is a picker, with a
 // chip for each user and a box to add one from the server's users; the
-// logins parser (config.ts) checks what it saves. Headless Chrome adds and
-// takes out users, and the page saves the list as JSON.
+// logins parser (config.ts) checks what it saves. In the browser (adding and
+// taking out users, Save): e2e/config/picker.e2e.ts.
 
 import { afterAll, expect, test } from "bun:test";
 import { adminDoor } from "../admin.ts";
 import { ConfigError, logins, type ConfigEntry } from "../config.ts";
 import type { Platform } from "../front.ts";
-import { join } from "path";
-import { Browser, SHOTS } from "./cdp";
-import { until } from "./suite/harness";
 
 test("logins: a list of GitHub logins, tidied; a bad one is refused, saying which", () => {
   expect(logins(["Alice", "@bob", "alice", " "])).toEqual(["alice", "bob"]);
@@ -44,18 +41,15 @@ const platform = {
     find: async () => null,
   },
 } as unknown as Platform;
-// The page, and its stylesheet and fonts from the repo, so the screenshot looks as it does.
+// The admin pages, on the stand-in.
 const server = Bun.serve({
   port: 0,
   fetch: async (r) => {
     const path = new URL(r.url).pathname;
-    if (path == "/admin" || path.startsWith("/admin/")) return adminDoor(platform, r);
-    const file = Bun.file(join(import.meta.dir, "..", path));
-    return (path == "/style.css" || path.startsWith("/fonts/")) && !path.includes("..") && (await file.exists()) ? new Response(file) : new Response("", { status: 404 });
+    return path == "/admin" || path.startsWith("/admin/") ? adminDoor(platform, r) : new Response("", { status: 404 });
   },
 });
-const browser = await Browser.launch();
-afterAll(() => { browser.close(); server.stop(true); });
+afterAll(() => server.stop(true));
 
 test("a users setting is a picker: chips for its users, no typed list; the line says when and who set it", async () => {
   const html = await (await fetch(`http://localhost:${server.port}/admin`)).text();
@@ -65,23 +59,3 @@ test("a users setting is a picker: chips for its users, no typed list; the line 
   expect(html).toMatch(/data-key="factory" data-control="switch"/);
   expect(html).not.toContain("factory-title");
 });
-
-test("in the browser: add a user, take one out, Save sends the list", async () => {
-  const p = await browser.page(await browser.context());
-  await p.open(`http://localhost:${server.port}/admin`, { width: 1000, height: 600 });
-  await p.settle();
-  const row = (expr: string) => p.eval<any>(`(() => { const li = document.querySelector('li.setting[data-key="deploy_users"]'); return ${expr}; })()`);
-  expect(await row(`li.querySelector(".save").disabled`)).toBe(true);
-  // Typed, then Enter; then picked from the list (an input event with no inputType).
-  await row(`(() => { const pick = li.querySelector("input.pick"); pick.value = "Carol"; pick.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })); })()`);
-  await row(`(() => { const pick = li.querySelector("input.pick"); pick.value = "bob"; pick.dispatchEvent(new Event("input")); })()`);
-  expect(await row(`[...li.querySelectorAll(".chip")].map((c) => c.dataset.login).join(" ")`)).toBe("alice carol bob");
-  await p.screenshot(join(SHOTS, "admin-picker.png"));
-  await row(`li.querySelector('.chip[data-login="alice"] .unpick').click()`);
-  expect(await row(`li.querySelector("[name=value]").value`)).toBe(`["carol","bob"]`);
-  expect(await row(`li.querySelector(".save").disabled`)).toBe(false);
-  await row(`li.querySelector(".save").click()`);
-  await until(() => saved.length > 0, 5000, "the list is saved");
-  expect(saved[0]).toEqual({ key: "deploy_users", value: ["carol", "bob"] });
-  expect(p.errors).toEqual([]);
-}, 30_000);

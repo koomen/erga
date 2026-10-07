@@ -3,19 +3,16 @@
 // encrypted, never answered back (only set, the last four characters, and who
 // set it when), in the change log without the value, admins only, and read by
 // the code that calls the providers before the Worker secret of the same name.
-// Headless Chrome sets, replaces and clears one on the real page.
+// In the browser (Save, Replace, Clear, the Claude token): e2e/config/api-keys.e2e.ts.
 
 import { Database } from "bun:sqlite";
 import { readdirSync, readFileSync } from "node:fs";
 import { afterAll, expect, test } from "bun:test";
-import { join } from "path";
 import { adminDoor } from "../admin.ts";
 import { checkKey, CredentialError, Credentials, withCredentials } from "../credentials.ts";
 import { Directory, type Param, type Sql } from "../directory.ts";
 import type { Platform, Session } from "../front.ts";
 import { NotAllowed } from "../users.ts";
-import { Browser, SHOTS } from "./cdp";
-import { until } from "./suite/harness";
 
 const MIGRATIONS = new URL("../migrations/", import.meta.url).pathname;
 const ANTHROPIC = "sk-ant-api03-" + "x".repeat(80) + "Ab12";
@@ -118,29 +115,19 @@ test("the code that calls the providers reads the stored key first, else the Wor
   expect(await withCredentials(env, broken)).toEqual(env);
 });
 
-// The real page, on the real directory: the section, the browser's Set, Replace and Clear.
+// The real page, on the real directory: what POST /admin/credentials answers, and what the pages show.
 const { dir } = fresh("the factory key", ["ANTHROPIC_API_KEY"]);
 const session = { login: "ada", name: "Ada", admin: true } as unknown as Session;
 const platform = { sessionOf: async () => session, directory: dir } as unknown as Platform;
-let claude: { signedIn: boolean; at: string | null; by: string | null; canStore: boolean; token?: string } = { signedIn: false, at: null, by: null, canStore: true };
 const server = Bun.serve({
   port: 0,
   fetch: async (r) => {
     const path = new URL(r.url).pathname;
-    if (path == "/admin" || path.startsWith("/admin/")) return adminDoor(platform, r);
-    if (path == "/api/factory/claude") {
-      if (r.method == "PUT") claude = { signedIn: true, at: "2026-10-06T12:00:00.000Z", by: "ada", canStore: true, token: String((await r.json()).token) };
-      if (r.method == "DELETE") claude = { signedIn: false, at: null, by: null, canStore: true };
-      const { token: _, ...shown } = claude as typeof claude & { token?: string };
-      return Response.json(shown);
-    }
-    const file = Bun.file(join(import.meta.dir, "..", path));
-    return (path == "/style.css" || path.startsWith("/fonts/")) && !path.includes("..") && (await file.exists()) ? new Response(file) : new Response("", { status: 404 });
+    return path == "/admin" || path.startsWith("/admin/") ? adminDoor(platform, r) : new Response("", { status: 404 });
   },
 });
 const origin = `http://localhost:${server.port}`;
-const browser = await Browser.launch();
-afterAll(() => { browser.close(); server.stop(true); });
+afterAll(() => server.stop(true));
 
 test("POST /admin/credentials: only from this site's pages; the answer never holds the key", async () => {
   const post = (fields: Record<string, string>, from = origin) => fetch(`${origin}/admin/credentials`, { method: "POST", body: new URLSearchParams(fields), headers: { Origin: from } });
@@ -165,32 +152,3 @@ test("POST /admin/credentials: only from this site's pages; the answer never hol
   for (const env of ["SESSION_SECRET", "FACTORY_KEY", "GITHUB_CLIENT_SECRET", "SNAPSHOT_TOKEN", "DEPLOY_HOOK_SECRET"]) expect(html).toContain(`data-env="${env}"`);
   expect(html).toContain(`href="/admin/api-keys" aria-current="page"`);
 });
-
-test("in the browser: paste a key and Save, then Clear it", async () => {
-  const p = await browser.page(await browser.context());
-  await p.open(`${origin}/admin/api-keys`, { width: 1100, height: 1400 });
-  await p.settle();
-  const row = (expr: string) => p.eval<any>(`(() => { const li = document.querySelector('li.credential[data-name="anthropic"]'); return ${expr}; })()`);
-  expect(await row(`li.querySelector(".save").disabled`)).toBe(true);
-  expect(await row(`li.querySelector("input").type`)).toBe("password");
-  await row(`(() => { const input = li.querySelector("input"); input.value = ${JSON.stringify(ANTHROPIC)}; input.dispatchEvent(new Event("input")); li.querySelector(".save").click(); })()`);
-  await until(async () => (await dir.credentials.value("anthropic")) == ANTHROPIC, 5000, "the key is saved");
-  await until(async () => (await p.eval<string>(`document.querySelector('li.credential[data-name="anthropic"] .state-line')?.textContent ?? ""`)).includes("…Ab12"), 5000, "the page shows it");
-  expect(await row(`li.querySelector("input").value`)).toBe("");
-  expect(await p.eval<string>("document.documentElement.outerHTML")).not.toContain(ANTHROPIC.slice(0, 20));
-  expect(await row(`li.querySelector(".save").textContent`)).toBe("Replace");
-  // The Claude plan token, through the factory's API.
-  const claudeRow = (expr: string) => p.eval<any>(`(() => { const li = document.querySelector('li.credential[data-name="claude"]'); return ${expr}; })()`);
-  await until(async () => (await claudeRow(`li.querySelector(".state-line").textContent`)).startsWith("Not set"), 5000, "the Claude row asks the factory");
-  expect(await claudeRow(`getComputedStyle(li.querySelector(".clear")).display`)).toBe("none");
-  const OAT = "sk-ant-oat01-" + "o".repeat(60);
-  await claudeRow(`(() => { const input = li.querySelector("input"); input.value = ${JSON.stringify(OAT)}; input.dispatchEvent(new Event("input")); li.querySelector(".save").click(); })()`);
-  await until(async () => claude.token == OAT, 5000, "the Claude token goes to the factory");
-  await until(async () => (await claudeRow(`li.querySelector(".state-line").textContent`)).includes("by ada"), 5000, "the page shows it set");
-  expect(await claudeRow(`getComputedStyle(li.querySelector(".clear")).display`)).not.toBe("none");
-  await p.screenshot(join(SHOTS, "admin-credentials.png"));
-  await p.eval(`window.confirm = () => true`);
-  await row(`li.querySelector(".clear").click()`);
-  await until(async () => (await dir.credentials.value("anthropic")) == null, 5000, "the key is cleared");
-  expect(p.errors).toEqual([]);
-}, 30_000);
