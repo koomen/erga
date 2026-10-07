@@ -9,8 +9,11 @@
 // - The last update is a short time on the title's line ("5m"), its date in a tooltip.
 // - A plain card (no thumbnails, no error) is at most two lines of text and a row of buttons.
 // - The thumbnails stay.
-// - Every card has Preview, Start, Restart, Discard and Merge, in that order, on one row; the ones that don't apply
-//   are off (a dashed border), with a tooltip that says why.
+// - A card shows only the steps that work for its state, the main one (Merge, Start, or else Preview) filled and on
+//   the right, or a round spinner while a merge or a start runs; no off buttons. They fit inside the card, apart, with
+//   whole labels, at four narrow columns and at two (factory-card-states[-narrow][-dark].png: the board alone).
+// - The detail view keeps all five, Preview, Start, Restart, Discard and Merge; an off one (a dashed border) says why.
+// - Discard asks first ("Discard branch?"), on the card too.
 // - Each column is in id order, oldest first, so a card moves only when its status changes.
 // - The detail view shows the screenshots first, three in a row; a click enlarges one to the modal's width, a
 //   second click puts it back (factory-detail-shots.png, factory-detail-shot-big.png).
@@ -27,7 +30,7 @@
 
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { Browser, SHOTS } from "./cdp";
+import { Browser, type Page, SHOTS } from "./cdp";
 import { startHost } from "./host";
 import { expect } from "./suite/harness";
 
@@ -52,6 +55,8 @@ const tasks = [
   t("Keyboard shortcuts help dialog", "queued", 1, "queued"),
   t("Export a document as EPUB, with the cover image and the table of contents", "queued", 4, "queued", { startAfter: [6], blockedBy: { start: [6], merge: [], stuck: [], reason: ["waits for #6 to merge"] } }),
   t("Resolve the merge with staging", "needs agent", 3, "Merging origin/staging into the branch", { error: "conflicts merging origin/staging: README.md" }),
+  t("Spell check in the editor", "merging", 1, "Merging origin/staging into the branch", { url: "http://localhost:4402/" }),
+  t("Print a document with its footnotes", "queued", 0, "queued", { starting: true }),
 ];
 const info = { enabled: true, vms: { runner: "sim" }, claude: { signedIn: true, canStore: true } };
 // The events: none, until the typing test sends task #6's updates, one each time the page reconnects (every 150 ms).
@@ -63,6 +68,12 @@ const update = () => {
   task.log.push({ at: new Date().toISOString(), message: "update " + ++updates });
   task.updatedAt = new Date().toISOString();
   return "retry: 150\n\ndata: " + JSON.stringify({ type: "task", task }) + "\n\n";
+};
+/** The board alone (a card in each state), in SHOTS. */
+const boardShot = async (p: Page, file: string) => {
+  const r = await p.eval<{ x: number; y: number; width: number; height: number }>(`(() => { const r = document.getElementById("board").getBoundingClientRect(); return { x: r.x + scrollX, y: r.y + scrollY, width: r.width, height: r.height }; })()`);
+  const png = await p.send("Page.captureScreenshot", { format: "png", captureBeyondViewport: true, clip: { ...r, scale: 1 } });
+  writeFileSync(join(SHOTS, file), Buffer.from(png.data, "base64"));
 };
 const host = await startHost(null);
 const browser = await Browser.launch();
@@ -87,17 +98,50 @@ try {
     else if (path == "") reply(JSON.stringify(info), "application/json");
     else p.send("Fetch.continueRequest", { requestId }).catch(() => {});
   });
+  // A card's buttons, read where the board is: which show, whether they fit, the main one, the spinner.
+  const readRows = () => p.eval<{ id: number; keys: string[]; inside: boolean; overlap: boolean; cut: string[]; off: number; mainRight: boolean; main: string; spin: { w: number; h: number; anim: string } | null }[]>(`[...document.querySelectorAll("#board .card")].map((c) => {
+    const bs = [...c.querySelectorAll(".actions > *")], box = c.getBoundingClientRect(), r = bs.map((e) => e.getBoundingClientRect());
+    const pad = parseFloat(getComputedStyle(c).paddingRight), last = bs.at(-1), lr = r.at(-1), spin = c.querySelector(".spin");
+    const sr = spin?.getBoundingClientRect();
+    return { id: Number(c.dataset.open), keys: bs.map((e) => e.dataset.btn), inside: r.every((x) => x.left >= box.left && x.right <= box.right),
+      overlap: r.some((a, i) => r.some((b, j) => i < j && a.left < b.right - 0.5 && b.left < a.right - 0.5 && a.top < b.bottom - 0.5 && b.top < a.bottom - 0.5)),
+      cut: bs.filter((e) => e.scrollWidth > e.clientWidth + 1).map((e) => e.dataset.btn), off: c.querySelectorAll("button:disabled").length,
+      mainRight: !last || Math.abs(box.right - pad - 1 - lr.right) < 3 || Math.abs(box.right - pad - lr.right) < 3,
+      main: last && (last.classList.contains("primary") || last.classList.contains("busy")) ? last.dataset.btn + (last.classList.contains("busy") ? ":busy" : "") : "",
+      spin: sr ? { w: sr.width, h: sr.height, anim: getComputedStyle(spin).animationName } : null };
+  })`);
+  const fits = async (where: string) => {
+    for (const r of await readRows()) {
+      expect(r.inside && !r.overlap && !r.cut.length, `the buttons fit inside the card, apart, their labels whole (${where})`, r);
+      expect(!r.off, `no off buttons on a card (${where})`, r);
+      if (r.main) expect(r.mainRight, `the main step is on the right (${where})`, r);
+      if (r.spin) expect(Math.abs(r.spin.w - r.spin.h) < 0.5 && r.spin.w >= 11 && r.spin.anim != "none", `the spinner is a round circle that spins (${where})`, r);
+    }
+  };
   for (const dark of [false, true]) {
+    // The board alone, at a narrow width first (four narrow columns), then at the normal one.
+    await p.open(`${host.root}/admin/factory`, { width: 1540, height: 900, scale: 2, dark });
+    for (const end = Date.now() + 15_000; !(await p.eval(`document.querySelectorAll("#board .card").length`)) && Date.now() < end;) await Bun.sleep(50);
+    await Bun.sleep(300);
+    expect(await p.eval(`getComputedStyle(document.getElementById("board")).gridTemplateColumns.split(" ").length == 4`), "four columns at 1540px");
+    await fits(`four columns, ${dark ? "dark" : "light"}`);
+    await boardShot(p, `factory-card-states-narrow${dark ? "-dark" : ""}.png`);
     await p.open(`${host.root}/admin/factory`, { width: 1400, height: 900, scale: 2, dark });
     const deadline = Date.now() + 15_000;
     while (!(await p.eval(`document.querySelectorAll("#board .card").length`)) && Date.now() < deadline) await Bun.sleep(50);
     await p.eval(`document.getElementById("tasks").scrollIntoView()`);
     await Bun.sleep(300);
+    await fits(`two columns, ${dark ? "dark" : "light"}`);
     await p.screenshot(join(SHOTS, dark ? "factory-cards-dark.png" : "factory-cards.png"));
-    // An off Merge reads as off, as the other off buttons do: the same faint text, in light and dark.
-    const [merge, start] = await p.eval<string[]>(`["merge", "start"].map((k) => getComputedStyle(document.querySelector("[data-open='3'] [data-btn='" + k + "']")).color)`);
+    await boardShot(p, `factory-card-states${dark ? "-dark" : ""}.png`);
+    // The detail view keeps all five: an off Merge reads as off, as the other off buttons do, in light and dark.
+    await p.eval(`window.ergaBoard.open(3)`);
+    const [merge, start] = await p.eval<string[]>(`["merge", "start"].map((k) => getComputedStyle(document.querySelector("#dlg [data-btn='" + k + "']")).color)`);
     expect(merge == start, `an off Merge has the off text (${dark ? "dark" : "light"})`, { merge, start });
+    await p.eval(`document.getElementById("dlg").close()`);
   }
+  ok("the cards' buttons fit inside the card, apart, with whole labels, at four and two columns, light and dark; no off buttons");
+  ok("the spinner keeps its size: a round circle that spins");
   const cards = await p.eval<{ id: number; text: string; titleLines: number; titleTip: string; titleCut: boolean; time: string; timeTip: string; height: number; thumbs: number; lineH: number }[]>(`[...document.querySelectorAll("#board .card")].map((c) => {
     const title = c.querySelector(".title"), time = c.querySelector(".when");
     const lineH = parseFloat(getComputedStyle(title).lineHeight) || title.getBoundingClientRect().height;
@@ -119,43 +163,49 @@ try {
   // The title's line, the last update's line, and the buttons: about 70px at 12-14px type.
   expect(plain.height <= 80, "a plain card is short", plain.height);
   ok(`a plain card is ${Math.round(plain.height)}px high`);
-  // Every card: the same five buttons, in one order, on one row inside the card, Merge on the right. The ones that don't
-  // apply are off, with a tooltip that says why.
-  const rows = await p.eval<{ id: number; keys: string[]; oneRow: boolean; inside: boolean; mergeRight: boolean; on: string[]; offUntitled: string[] }[]>(`[...document.querySelectorAll("#board .card")].map((c) => {
-    const bs = [...c.querySelectorAll(".actions > *")], box = c.getBoundingClientRect(), r = bs.map((e) => e.getBoundingClientRect());
-    const merge = r.at(-1), pad = parseFloat(getComputedStyle(c).paddingRight);
-    return { id: Number(c.dataset.open), keys: bs.map((e) => e.dataset.btn), oneRow: r.every((x) => Math.abs(x.top - r[0].top) < 1), inside: r.every((x) => x.left >= box.left && x.right <= box.right),
-      mergeRight: Math.abs(box.right - pad - 1 - merge.right) < 3 || Math.abs(box.right - pad - merge.right) < 3,
-      on: bs.filter((e) => !e.disabled).map((e) => e.dataset.btn), offUntitled: bs.filter((e) => e.disabled && !e.title).map((e) => e.dataset.btn) };
-  })`);
-  for (const r of rows) {
-    expect(r.keys.join() == "preview,start,restart,discard,merge", "the five buttons, in order", r);
-    expect(r.oneRow && r.inside, "they fit on one row, inside the card", r);
-    expect(r.mergeRight, "Merge is on the right", r);
-    expect(!r.offUntitled.length, "an off button says why", r);
+  // Every card: only the steps that work for its state, the main one (Merge, Start or Preview, or a spinner) last.
+  const rows = await readRows();
+  const shown = (id: number) => { const r = rows.find((x) => x.id == id)!; return r.keys.join() + (r.main ? " | " + r.main : ""); };
+  expect(shown(3) == "restart,discard" && shown(4) == "restart,discard", "working: Restart and Discard", rows);
+  expect(shown(5) == "restart,discard", "failed: Restart and Discard", shown(5));
+  expect(shown(6) == "preview,discard,merge | merge", "ready to merge: Preview, Discard, and Merge as the main step", shown(6));
+  expect(shown(7) == "discard,preview | preview", "ready, Merge waits for #3: no Merge, Preview as the main step", shown(7));
+  expect(shown(8) == "discard,start | start" && shown(9) == "discard", "queued: Start as the main step, unless it waits for another task", [shown(8), shown(9)]);
+  expect(shown(10) == "restart,discard", "needs agent: Restart and Discard", shown(10));
+  expect(shown(11) == "preview,merge | merge:busy", "merging: Preview and the merge's spinner", shown(11));
+  expect(shown(12) == "discard,start | start:busy", "starting: Discard and the start's spinner", shown(12));
+  ok("each state shows only the steps that work: Merge, Start or Preview as the main step, on the right; a spinner while a merge or start runs");
+  // The detail view keeps all five, in order; an off one says why.
+  for (const id of [3, 6, 7, 9, 10, 11, 12]) {
+    await p.eval(`window.ergaBoard.open(${id})`);
+    const d = await p.eval<{ keys: string; offUntitled: number; spin: number[] | null }>(`(() => { const bs = [...document.querySelectorAll("#dlg .actions > *")], s = document.querySelector("#dlg .spin")?.getBoundingClientRect();
+      return { keys: bs.map((b) => b.dataset.btn).join(), offUntitled: bs.filter((b) => b.disabled && !b.title).length, spin: s ? [s.width, s.height] : null }; })()`);
+    expect(d.keys == "preview,start,restart,discard,merge" && !d.offUntitled, "the detail view: all five, an off one with its reason", { id, d });
+    if (d.spin) expect(d.spin[0] == d.spin[1], "the detail view's spinner is round", d);
   }
-  ok("every card: Preview, Start, Restart, Discard, Merge, on one row, Merge on the right; an off button says why");
-  const enabled = (id: number) => rows.find((r) => r.id == id)!.on.join();
-  expect(enabled(3) == "restart,discard" && enabled(4) == "restart,discard", "a working task: Restart and Discard", rows);
-  expect(enabled(5) == "restart,discard", "a failed task: Restart and Discard", enabled(5));
-  expect(enabled(6) == "preview,restart,discard,merge", "a task ready to merge: all but Start", enabled(6));
-  expect(enabled(7) == "preview,restart,discard", "a ready task whose Merge waits for #3: Merge off", enabled(7));
-  expect(enabled(8) == "start,discard" && enabled(9) == "discard", "queued: Start, unless it waits for another task", [enabled(8), enabled(9)]);
-  expect(enabled(10) == "restart,discard", "needs agent: Restart and Discard", enabled(10));
-  ok("the buttons that work: Restart and Discard while working; Restart in any state once the task has run; Merge when it can merge");
-  const offLook = await p.eval<{ border: string; cursor: string }>(`(() => { const s = getComputedStyle(document.querySelector("[data-open='3'] [data-btn='merge']")); return { border: s.borderStyle, cursor: s.cursor }; })()`);
+  await p.eval(`window.ergaBoard.open(7)`);
+  expect(await p.eval(`document.querySelector("#dlg .actions-why")?.textContent == "Can't merge until #3 merges"`), "the detail view says why Merge is off");
+  const offLook = await p.eval<{ border: string; cursor: string }>(`(() => { const s = getComputedStyle(document.querySelector("#dlg [data-btn='merge']")); return { border: s.borderStyle, cursor: s.cursor }; })()`);
   expect(offLook.border == "dashed" && offLook.cursor == "not-allowed", "an off button looks off", offLook);
-  ok("an off button looks off: a dashed border, no fill");
+  await p.eval(`document.getElementById("dlg").close()`);
+  ok("the detail view: Preview, Start, Restart, Discard, Merge; an off one looks off and says why");
   // Discard's text is black (the page's ink), not red; in light mode at least.
   await p.open(`${host.root}/admin/factory`, { width: 1400, height: 900 });
   for (const end = Date.now() + 15_000; !(await p.eval(`document.querySelectorAll("#board .card").length`)) && Date.now() < end;) await Bun.sleep(50);
   const discard = await p.eval<string>(`getComputedStyle(document.querySelector("[data-open='5'] [data-act='arm']")).color`);
   expect(discard == "rgb(13, 13, 15)", "Discard's text is black", discard);
   ok("Discard's text is black");
+  // Discard asks first: one click turns it into "Discard branch?", which still fits the card; a second click discards.
+  await p.eval(`document.querySelector("[data-open='8'] [data-act='arm']").click()`);
+  const armedCard = await p.eval<{ text: string; inside: boolean; cut: boolean }>(`(() => { const c = document.querySelector("[data-open='8']"), b = c.querySelector("[data-act='discard']"), box = c.getBoundingClientRect(), r = b?.getBoundingClientRect();
+    return { text: b?.textContent ?? "", inside: !!r && r.left >= box.left && r.right <= box.right, cut: !!b && b.scrollWidth > b.clientWidth + 1 }; })()`);
+  expect(armedCard.text == "Discard branch?" && armedCard.inside && !armedCard.cut, "Discard's confirm shows on the card, and fits", armedCard);
+  ok("Discard asks first: \"Discard branch?\" on the card, inside it");
   expect(card(6).thumbs == 3, "the thumbnails stay (the last three)", card(6));
   ok("the thumbnails stay");
-  // Each column in id order (oldest first), not by last update: #7 updated after #6, yet stays below it.
-  const order = await p.eval<number[][]>(`[...document.querySelectorAll("#board .col")].map((c) => [...c.querySelectorAll(".card")].map((e) => Number(e.dataset.open)))`);
+  // Each column in id order (oldest first), not by last update: #7 updated after #6, yet stays below it. (Queued puts the
+  // ones waiting for another task below the rest.)
+  const order = await p.eval<number[][]>(`[...document.querySelectorAll("#board .col")].map((c) => [...c.querySelectorAll(".card:not(.blocked)")].map((e) => Number(e.dataset.open)))`);
   for (const ids of order) expect(ids.every((id, i) => !i || ids[i - 1] < id), "each column is in id order", order);
   ok("each column is in id order, oldest first");
   // Stalled: #4 is working and its last log line is 12 minutes old; #3 (2 minutes), #10 (needs agent, 3 minutes)
