@@ -1516,17 +1516,20 @@ export class PageEditor {
   }
 
   /**
-   * Tab at the start of a Markdown list item: the item (and the items nested
-   * in it) moves one level in, under the item before it; Shift+Tab moves it
-   * one level out, after the item it was under. Elsewhere, Tab is the
-   * browser's, as before. An item that can't move (the first in its list, or
-   * one at the top level) still takes the key, so the caret stays put.
+   * Tab at the start of a list item: the item (and the items nested in it)
+   * moves one level in, under the item before it; Shift+Tab moves it one
+   * level out, after the item it was under. Elsewhere, Tab is the browser's,
+   * as before. An item that can't move (the first in its list, or one at the
+   * top level) still takes the key, so the caret stays put.
    */
   private indentItem(out: boolean): boolean {
-    if (this.kind != "md") return false;
     const sel = this.currentSelection();
     if (!sel.empty) return false;
-    const pos = sel.head, doc = this.state.doc;
+    return this.kind == "md" ? this.indentMdItem(sel.head, out) : this.indentHtmlItem(sel.head, out);
+  }
+
+  private indentMdItem(pos: number, out: boolean): boolean {
+    const doc = this.state.doc;
     // A caret in the line's indentation counts as at the item's start.
     const caretLine = doc.lineAt(pos), at = Math.max(pos, caretLine.from + /^[\s>]*/.exec(caretLine.text)![0].length);
     let item: SyntaxNode | null = syntaxTree(this.state).resolveInner(at, 1);
@@ -1567,6 +1570,68 @@ export class PageEditor {
     }
     const set = this.state.changes(changes);
     this.dispatch({ changes: set, selection: { anchor: set.mapPos(start, 1) }, userEvent: out ? "delete.dedent" : "input.indent", scrollIntoView: true });
+    return true;
+  }
+
+  /**
+   * The same in HTML. An item with a list nested in it keeps its own text in
+   * a <p> (`<li><p>text</p><ul>…</ul></li>`, as Markdown renders it): text
+   * beside a list isn't a unit, and couldn't be edited. Taking the last item
+   * out of a nested list takes the <p> off again.
+   */
+  private indentHtmlItem(pos: number, out: boolean): boolean {
+    const u = M.unitAt(this.units, pos);
+    const n = u?.node;
+    if (!u || !n || !this.verify(u) || pos < u.contentFrom || pos > M.textStart(u)) return false;
+    const elements = (e: M.ElementNode) => e.children.filter((c): c is M.ElementNode => c.kind == "element");
+    const isList = (e: M.ElementNode | null | undefined): e is M.ElementNode => e?.tag == "ul" || e?.tag == "ol";
+    const item = n.tag == "li" ? n : n.parent?.tag == "li" && elements(n.parent)[0] == n ? n.parent : null;
+    const list = item?.parent;
+    if (!item || !isList(list)) return false;
+    const src = this.state.doc.toString();
+    const closed = (e: M.ElementNode) => !e.selfClosing && src.startsWith("</", e.closeFrom);
+    if (![item, list].every(closed)) return false;
+    // Source slices, with a mark where the caret is, to find it again in the new source.
+    const CARET = "\u0000";
+    const cut = (a: number, b: number) => (a <= pos && pos < b ? src.slice(a, pos) + CARET + src.slice(pos, b) : src.slice(a, b));
+    const indent = (e: M.ElementNode) => M.lineIndent(src, e.from);
+    const reindent = (text: string, from: string, to: string) =>
+      text.replace(/\n([ \t]*)/g, (_, w: string) => "\n" + (to.length >= from.length ? to.slice(from.length) + w : w.slice(Math.min(w.length, from.length - to.length))));
+    const block = (e: M.ElementNode, to: string) => reindent(cut(e.from, e.to), indent(e), to);
+    // An item with more items nested at its end: into its last list, or a new one after its text.
+    const nest = (li: M.ElementNode, items: M.ElementNode[], tag: string) => {
+      const open = cut(li.from, li.openTo), close = src.slice(li.closeFrom, li.to), last = elements(li).at(-1);
+      if (isList(last) && closed(last)) {
+        const inner = indent(last) + "  ";
+        return cut(li.from, last.closeFrom).trimEnd() + items.map((e) => "\n" + inner + block(e, inner)).join("") + "\n" + indent(last) + cut(last.closeFrom, li.to);
+      }
+      const at = indent(li) + "  ", inner = at + "  ";
+      const content = cut(li.openTo, li.closeFrom).trim();
+      const text = elements(li).some((e) => !M.INLINE.has(e.tag)) ? content : `<p>${content}</p>`;
+      return open + text + `\n${at}<${tag}>` + items.map((e) => "\n" + inner + block(e, inner)).join("") + `\n${at}</${tag}>\n${indent(li)}` + close;
+    };
+    const siblings = elements(list), i = siblings.indexOf(item);
+    let from: number, to: number, insert: string;
+    if (!out) {
+      const prev = siblings[i - 1];
+      if (!prev || prev.tag != "li" || !closed(prev) || src.slice(prev.to, item.from).trim()) return true;
+      ({ from, to, insert } = { from: prev.from, to: item.to, insert: nest(prev, [item], list.tag) });
+    } else {
+      const parent = list.parent;
+      if (parent?.tag != "li" || !closed(parent)) return true;
+      // The items after it go with it, nested in it, so the order stays.
+      const after = siblings.slice(i + 1);
+      const moved = reindent(after.length ? nest(item, after, list.tag) : cut(item.from, item.to), indent(item), indent(parent));
+      const gone = (k: number) => k - src.slice(0, k).replace(/\s+$/, "").length;
+      const [a, b] = i == 0 ? [list.from - gone(list.from), list.to] : [item.from - gone(item.from), siblings.at(-1)!.to];
+      let content = cut(parent.openTo, a) + cut(b, parent.closeFrom);
+      const lone = i == 0 && /^\s*<p>((?:(?!<\/?p[\s>])[\s\S])*)<\/p>\s*$/.exec(content);
+      content = lone ? lone[1] : content.trimEnd() + "\n" + indent(parent);
+      ({ from, to, insert } = { from: parent.from, to: parent.to, insert: cut(parent.from, parent.openTo) + content + src.slice(parent.closeFrom, parent.to) + "\n" + indent(parent) + moved });
+    }
+    const caret = insert.indexOf(CARET);
+    insert = insert.replace(CARET, "");
+    this.dispatch({ changes: { from, to, insert }, selection: { anchor: from + Math.max(0, caret) }, userEvent: out ? "delete.dedent" : "input.indent", scrollIntoView: true });
     return true;
   }
 

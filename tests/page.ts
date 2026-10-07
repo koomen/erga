@@ -955,6 +955,59 @@ async function indentScenario(browser: Browser) {
   await s.close();
 }
 
+/** The same in an HTML page: a nested list goes in the item before, whose own text moves into a <p> so it stays editable. */
+async function htmlIndentScenario(browser: Browser) {
+  say("\nTab in an HTML list");
+  const s = await session(browser, "page", "index.html");
+  const { p } = s;
+  const UNDO = process.platform == "darwin" ? MOD.Meta : MOD.Ctrl;
+  const list = async () => (await s.source()).match(/<ul>[\s\S]*<\/ul>/)?.[0] ?? "";
+  const flat = (t: string) => t.replace(/\s*\n\s*/g, "");
+  const press = async (key: string, mods = 0) => { await p.key(key, mods); await Bun.sleep(120); };
+  const start = async (selector: string) => { await s.clickEnd(selector); await press("Home"); };
+  const editable = () => p.frame<boolean>(`[...${F}.querySelectorAll("[data-erga-id]")].filter((e) => e.closest("li")).every((e) => e.isContentEditable)`);
+
+  await start("li:last-child");
+  await press("Tab");
+  check("Tab nests the item in the one before, whose text goes in a <p>", flat(await list()) == "<ul><li><p>Faster builds</p><ul><li>A <strong>new</strong> editor</li></ul></li></ul>", await list());
+  check("the page shows it nested, and every item's text stays editable", (await s.count("li li")) == 1 && await editable(), await s.count("li li"));
+  await s.clickEnd("li li");
+  await press("Enter");
+  await p.type("Fewer bugs");
+  await Bun.sleep(150);
+  check("Enter after it starts the next item at the same level", flat(await list()) == "<ul><li><p>Faster builds</p><ul><li>A <strong>new</strong> editor</li><li>Fewer bugs</li></ul></li></ul>", await list());
+
+  await start("li li:first-child");
+  await press("Tab", MOD.Shift);
+  check("Shift+Tab takes it out; the items after it go with it, nested", flat(await list()) == "<ul><li>Faster builds</li><li><p>A <strong>new</strong> editor</p><ul><li>Fewer bugs</li></ul></li></ul>", await list());
+  await p.type("A ");
+  await Bun.sleep(150);
+  check("the caret stays at the start of its text", (await s.source()).includes("<p>A A <strong>"), await list());
+  await press("Backspace"); await press("Backspace");
+  await start("li li");
+  await press("Tab", MOD.Shift);
+  check("and the last nested item out takes the <p> away again", flat(await list()) == "<ul><li>Faster builds</li><li>A <strong>new</strong> editor</li><li>Fewer bugs</li></ul>", await list());
+  check("each item editable", await editable());
+
+  await start("li:nth-child(2)");
+  await press("Tab");
+  await start("li:nth-child(2)");
+  await press("Tab");
+  check("the next item joins the nested list", flat(await list()) == "<ul><li><p>Faster builds</p><ul><li>A <strong>new</strong> editor</li><li>Fewer bugs</li></ul></li></ul>", await list());
+  await start("li li:last-child");
+  await press("Tab");
+  check("Tab again: three levels", flat(await list()) == "<ul><li><p>Faster builds</p><ul><li><p>A <strong>new</strong> editor</p><ul><li>Fewer bugs</li></ul></li></ul></li></ul>", await list());
+  check("on the page too", (await s.count("li li li")) == 1 && await editable());
+  await p.key("z", UNDO); await Bun.sleep(150);
+  check("undo takes the last indent back", flat(await list()) == "<ul><li><p>Faster builds</p><ul><li>A <strong>new</strong> editor</li><li>Fewer bugs</li></ul></li></ul>", await list());
+  if (process.platform == "darwin") await p.key("z", MOD.Meta | MOD.Shift); else await p.key("y", MOD.Ctrl);
+  await Bun.sleep(150);
+  check("redo puts it back", (await s.count("li li li")) == 1 && await editable(), await list());
+  await p.screenshot(`${SHOTS}/indent-html-list.png`);
+  check("no page errors", p.errors.length == 0, p.errors.join("\n"));
+  await s.close();
+}
+
 /** Enter makes an empty paragraph; typing, pasting or composing into it leaves no placeholder <br> behind, on the page or in the file. */
 async function enterScenario(browser: Browser) {
   say("\nEnter and the placeholder <br>");
@@ -1082,7 +1135,7 @@ const SCENARIOS: [string, (b: Browser) => Promise<void>][] = [
   ["agent", agentOffScenario], ["agent", shareScenario], ["agent", modelScenario], ["agent", agentEmptyScenario], ["agent", voiceScenario],
   ["reload", backdropReloadScenario],
   ["enter", enterScenario],
-  ["indent", indentScenario],
+  ["indent", indentScenario], ["indent", htmlIndentScenario],
 ];
 const browser = await Browser.launch();
 try {
