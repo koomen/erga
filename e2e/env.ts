@@ -42,6 +42,8 @@ export function hermetic(): boolean {
     "[tag]", "\tgpgsign = false",
     "",
   ].join("\n"));
+  // The one secret kept, asked for by name: the live agent check's key (e2e/page/agent-live.e2e.ts), for its own server only.
+  if (process.env.ERGA_LIVE_AGENT == "1" && process.env.ANTHROPIC_API_KEY?.trim()) process.env.ERGA_LIVE_AGENT_KEY = process.env.ANTHROPIC_API_KEY.trim();
   for (const k of Object.keys(process.env)) if (SECRET.test(k) && !k.startsWith("PLAYWRIGHT_")) delete process.env[k];
   Object.assign(process.env, GIT, { HOME: home, XDG_CONFIG_HOME: join(home, ".config"), ERGA_TEST_HOME: home });
   process.env.ERGA_TEST_RUN ??= `run-${process.pid}-${Date.now()}`;
