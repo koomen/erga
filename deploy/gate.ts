@@ -1,12 +1,12 @@
 // The production gate (README, Deploys: "The test gate"): main, and so
 // erga.dev, moves only to a staging commit whose full test run passed
-// (./test.sh, every file, the end-to-end tests, `bun run test:e2e`, and
-// `bun run typecheck`).
+// (every end-to-end test, `bun run test:e2e`, the unit tests, `bun test`,
+// and `bun run typecheck`).
 //
 // Every staging commit gets a run, by itself, when staging moves: the suite
-// split into SHARDS shares (factory/vm/gate.ts, planShards, balanced by the
-// seconds test.sh notes for each file and e2e/timings.json), each in a VM of
-// its own, all at once.
+// split into SHARDS shares (factory/vm/gate.ts, planShards, balanced by
+// each e2e file's seconds in e2e/timings.json), each in a VM of its own, all
+// at once.
 // One result is kept for each commit: running, passed, failed or cancelled,
 // which files failed, each shard's items, times and log. A run whose
 // failures are a few test files reruns those files once, in one more VM: if
@@ -27,8 +27,8 @@
 // it can be tried and tested without Cloudflare.
 
 /**
- * How many VMs a run uses: test.sh's ~425 s of pool time on a Mac and e2e's ~1340 s of test time (two workers: ~670 s)
- * in six ~220 s shares (the longest file, an e2e one, is ~100 s alone).
+ * How many VMs a run uses: e2e's ~2540 s of test time on a Mac (two workers in a VM: ~1270 s), the unit tests and the
+ * typecheck, in six ~225 s shares (the longest file is ~100 s alone).
  */
 export const SHARDS = 6;
 /** How often a running shard is asked how it does. */
@@ -401,7 +401,7 @@ export const vmName = (commit: string, attempt: number, n: number) => `gate-${co
 
 /**
  * Local development's runner (and the tests'): no VMs. Each shard "runs" for `delayMs`, then ends as the commit's
- * subject says (`subject`): "[gate-fail]" fails tests/fake-fail.ts every time; "[gate-flaky]" fails it once, so
+ * subject says (`subject`): "[gate-fail]" fails e2e/fake-fail.e2e.ts every time; "[gate-flaky]" fails it once, so
  * its rerun passes; "[gate-e2e-flaky]" has a test of e2e/fake.e2e.ts pass only on e2e's retry in the shard;
  * "[gate-hang]" never ends; anything else passes.
  */
@@ -417,11 +417,11 @@ export function fakeRunner(o: { delayMs?: number; subject?: (commit: string) => 
       if (!r) return "gone";
       const { spec, subject } = r;
       const items = spec.files ? spec.files.map((f) => ({ name: f, files: [f] })) : [
-        ...(spec.shard == 1 ? [{ name: "tests/fake-fail.ts", files: ["tests/fake-fail.ts"] }] : [{ name: `tests/fake-${spec.shard}.ts`, files: [`tests/fake-${spec.shard}.ts`] }]),
-        ...(spec.shard == spec.of ? [{ name: "typecheck", files: [] }, { name: "e2e/fake.e2e.ts", files: ["e2e/fake.e2e.ts"] }] : []),
+        ...(spec.shard == 1 ? [{ name: "e2e/fake-fail.e2e.ts", files: ["e2e/fake-fail.e2e.ts"] }] : [{ name: `e2e/fake-${spec.shard}.e2e.ts`, files: [`e2e/fake-${spec.shard}.e2e.ts`] }]),
+        ...(spec.shard == spec.of ? [{ name: "typecheck", files: [] }, { name: "unit", files: ["tests/fake.test.ts"] }, { name: "e2e/fake.e2e.ts", files: ["e2e/fake.e2e.ts"] }] : []),
       ];
       if (subject.includes("[gate-hang]") || now() - r.at < delay) return { state: "running", phase: "tests", items };
-      const fails = (name: string) => name == "tests/fake-fail.ts" && (subject.includes("[gate-fail]") || (subject.includes("[gate-flaky]") && !spec.files));
+      const fails = (name: string) => name == "e2e/fake-fail.e2e.ts" && (subject.includes("[gate-fail]") || (subject.includes("[gate-flaky]") && !spec.files));
       const flaky = (name: string) => name == "e2e/fake.e2e.ts" && subject.includes("[gate-e2e-flaky]") ? { flaky: [`${name} › wobbles`] } : {};
       const results = items.map((i) => ({ name: i.name, files: i.files, ok: !fails(i.name), secs: Math.round(delay / 1000), ...flaky(i.name) }));
       const code = results.every((x) => x.ok) ? 0 : 1;

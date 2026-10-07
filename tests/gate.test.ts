@@ -5,63 +5,46 @@
 
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fakeRunner, RERUN_MAX, SILENT_MS, TestGate, verdictOf, vmName, type GateRunner, type ShardReport } from "../deploy/gate.ts";
-import { E2E_SLOTS, e2eItems, e2eResults, namesByFile, planShards, reportLines, testItems, TYPECHECK_SECS, type E2EReport } from "../factory/vm/gate.ts";
+import { E2E_ALONE, E2E_SLOTS, e2eItems, e2eResults, planShards, TYPECHECK_SECS, UNIT_SECS, type E2EReport } from "../factory/vm/gate.ts";
 import { parseStatus, vmRunner } from "../worker/gate.ts";
 import { git, must, startFixture, type Fixture } from "./source-fixture.ts";
 
 setDefaultTimeout(60_000);
 const ROOT = new URL("../", import.meta.url).pathname;
-const TEST_SH = readFileSync(join(ROOT, "test.sh"), "utf8");
 const UNITS = ["tests/a.test.ts", "tests/b.test.ts"];
 const TIMINGS = JSON.parse(readFileSync(join(ROOT, "e2e/timings.json"), "utf8")) as Record<string, number>;
 const E2E = e2eItems(Object.keys(TIMINGS), TIMINGS);
 
 describe("the shard split", () => {
-  test("every test file of test.sh runs in exactly one shard, the typecheck in one, the unit tests as one item", () => {
-    const items = testItems(TEST_SH, UNITS);
-    const plan = planShards(TEST_SH, UNITS, 6);
+  test("each e2e file runs in exactly one shard, the unit tests as one item, the typecheck in one", () => {
+    const plan = planShards(UNITS, 6, { e2e: E2E });
     expect(plan.length).toBe(6);
     const names = plan.flatMap((s) => s.items.map((i) => i.name));
-    expect(names.sort()).toEqual(items.map((i) => i.name).sort());
     expect(new Set(names).size).toBe(names.length);
-    expect(plan.filter((s) => s.typecheck).length).toBe(1);
+    expect(names.filter((n) => n != "unit").sort()).toEqual(Object.keys(TIMINGS).filter((f) => !f.endsWith(".bench.e2e.ts")).sort());
     expect(plan.flatMap((s) => s.items).find((i) => i.name == "unit")?.files).toEqual(UNITS);
-    // The multiplayer suite runs twice in test.sh (and its latency part): one item, its seconds added.
-    const suite = items.find((i) => i.name == "tests/suite/run.ts")!;
-    expect(suite.secs).toBe(28);
-    expect(items.find((i) => i.name == "tests/worker.ts")).toBeTruthy();
+    expect(plan.filter((s) => s.typecheck).length).toBe(1);
+    // Nothing of the old harness: no test.sh file, no tests/*.ts that isn't a unit test.
+    expect(plan.flatMap((s) => s.items.flatMap((i) => i.files)).filter((f) => !f.startsWith("e2e/") && !f.endsWith(".test.ts"))).toEqual([]);
+    // No unit test files, no unit item; one shard is the whole run.
+    expect(planShards([], 6, { e2e: E2E }).flatMap((s) => s.items).some((i) => i.name == "unit")).toBe(false);
+    expect(planShards(UNITS, 1, { e2e: E2E })[0].items.length).toBe(E2E.length + 1);
   });
 
-  test("balanced: no shard is far over its share, and the same input gives the same split", () => {
-    const plan = planShards(TEST_SH, UNITS, 6);
-    const items = testItems(TEST_SH, UNITS);
-    const longest = Math.max(...items.map((i) => i.secs));
-    const total = items.reduce((s, i) => s + (i.secs * Math.min(i.weight, 2)) / 2, 0) + TYPECHECK_SECS / 2;
-    const ests = plan.map((s) => s.est);
-    // Each shard ends by its fair share plus one item, or by the longest file alone.
-    expect(Math.max(...ests)).toBeLessThanOrEqual(Math.max(longest, total / 6 + 40));
-    expect(JSON.stringify(planShards(TEST_SH, UNITS, 6))).toBe(JSON.stringify(plan));
-    // One shard is the whole run.
-    expect(planShards(TEST_SH, UNITS, 1)[0].items.length).toBe(items.length);
-  });
-
-  test("each e2e file runs in exactly one shard, balanced by e2e/timings.json beside test.sh's files", () => {
-    const plan = planShards(TEST_SH, UNITS, 6, { e2e: E2E });
-    const e2e = plan.flatMap((s) => s.items.filter((i) => i.e2e).map((i) => i.name));
-    expect(e2e.sort()).toEqual(Object.keys(TIMINGS).filter((f) => !f.endsWith(".bench.e2e.ts")).sort());
-    expect(plan.flatMap((s) => s.items.filter((i) => !i.e2e).map((i) => i.name)).sort()).toEqual(testItems(TEST_SH, UNITS).map((i) => i.name).sort());
+  test("balanced by e2e/timings.json: no shard is far over its share, and the same input gives the same split", () => {
+    const plan = planShards(UNITS, 6, { e2e: E2E });
+    // Two e2e files at a time in a VM; e2e/alone's alone; the unit tests and the typecheck, alone.
+    const total = E2E.reduce((s, i) => s + (i.name.startsWith(E2E_ALONE) ? i.secs : i.secs / E2E_SLOTS), 0) + UNIT_SECS + TYPECHECK_SECS;
+    const longest = Math.max(...E2E.map((i) => i.secs));
     // The fair share, plus one item; or the longest file alone.
-    const items = testItems(TEST_SH, UNITS);
-    const total = items.reduce((s, i) => s + (i.secs * Math.min(i.weight, 2)) / 2, 0) + TYPECHECK_SECS / 2 + E2E.reduce((s, i) => s + i.secs / E2E_SLOTS, 0);
-    const longest = Math.max(...items.map((i) => i.secs), ...E2E.map((i) => i.secs));
     expect(Math.max(...plan.map((s) => s.est))).toBeLessThanOrEqual(Math.max(longest, total / 6 + 40));
-    expect(JSON.stringify(planShards(TEST_SH, UNITS, 6, { e2e: E2E }))).toBe(JSON.stringify(plan));
+    expect(JSON.stringify(planShards(UNITS, 6, { e2e: E2E }))).toBe(JSON.stringify(plan));
     // A file e2e/timings.json doesn't have yet: 10 s a test. Bench files never run in the gate.
-    expect(e2eItems(["e2e/new/x.e2e.ts", "e2e/x.bench.e2e.ts"], {}, { "e2e/new/x.e2e.ts": 3 })).toEqual([{ name: "e2e/new/x.e2e.ts", files: ["e2e/new/x.e2e.ts"], secs: 30, weight: 1, e2e: true }]);
+    expect(e2eItems(["e2e/new/x.e2e.ts", "e2e/x.bench.e2e.ts"], {}, { "e2e/new/x.e2e.ts": 3 })).toEqual([{ name: "e2e/new/x.e2e.ts", files: ["e2e/new/x.e2e.ts"], secs: 30, e2e: true }]);
   });
 
   test("e2e's report: a file passes when each test passed, at once or on its retry (flaky, named); one it lacks failed", () => {
@@ -89,16 +72,6 @@ describe("the shard split", () => {
     expect(docker).toContain("ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright");
     const [major, minor] = (/FROM node:(\d+)\.(\d+)\.\d+-/.exec(docker) ?? []).slice(1).map(Number);
     expect(major > 24 || (major == 24 && minor >= 8) || (major == 22 && minor >= 22)).toBe(true);
-  });
-
-  test("test.sh's report is read by name, and names map back to files", () => {
-    const said = reportLines("=== tree ok (36s)\nnoise\n=== front FAILED (19s)\n");
-    expect(said.get("tree")).toEqual({ ok: true, secs: 36 });
-    expect(said.get("front")).toEqual({ ok: false, secs: 19 });
-    const names = namesByFile(TEST_SH);
-    expect(names.get("tests/worker.ts")).toEqual(["front"]);
-    expect(names.get("tests/suite/run.ts")).toEqual(["suite", "latency"]);
-    expect(names.get("unit")).toEqual(["unit"]);
   });
 });
 
@@ -148,15 +121,15 @@ describe("a run", () => {
     // One rerun VM for the failed file, then the end.
     let run = await gate.get(sha("b"));
     expect(run?.shards.filter((s) => s.rerun).length).toBe(1);
-    expect(run?.shards.find((s) => s.rerun)?.files).toEqual(["tests/fake-fail.ts"]);
+    expect(run?.shards.find((s) => s.rerun)?.files).toEqual(["e2e/fake-fail.e2e.ts"]);
     await step(10); await step(1500);
     run = await gate.get(sha("b"));
     expect(run?.state).toBe("failed");
-    expect(run?.failed).toEqual(["tests/fake-fail.ts"]);
+    expect(run?.failed).toEqual(["e2e/fake-fail.e2e.ts"]);
     expect(run?.flaky).toEqual([]);
     const v = await gate.verdict(sha("b"));
     expect(v.ok).toBe(false);
-    expect(v.reason).toContain("tests/fake-fail.ts failed");
+    expect(v.reason).toContain("e2e/fake-fail.e2e.ts failed");
   });
 
   test("flaky: it fails once and passes when run again; the run passes and says which were flaky", async () => {
@@ -165,7 +138,7 @@ describe("a run", () => {
     await step(10); await step(1500); await step(10); await step(1500);
     const run = await gate.get(sha("c"));
     expect(run?.state).toBe("passed");
-    expect(run?.flaky).toEqual(["tests/fake-fail.ts"]);
+    expect(run?.flaky).toEqual(["e2e/fake-fail.e2e.ts"]);
     expect(run?.shards.filter((s) => s.rerun).length).toBe(1);
     expect((await gate.verdict(sha("c"))).ok).toBe(true);
   });
@@ -306,37 +279,32 @@ describe("every path that moves main asks the gate", () => {
 });
 
 describe("the shard's job in a VM (factory/vm/gate.ts)", () => {
-  test("clones the commit, runs its share with test.sh and e2e, and reports each file; status says so", async () => {
+  test("clones the commit, runs its share of the unit tests and e2e, and reports each item; status says so", async () => {
     const dir = mkdtempSync(join(tmpdir(), "erga-gate-vm-"));
     try {
       const repo = join(dir, "repo");
       const run = (cwd: string, ...a: string[]) => { const r = spawnSync("git", a, { cwd, encoding: "utf8" }); if (r.status) throw new Error(r.stderr); return r.stdout.trim(); };
-      spawnSync("mkdir", ["-p", join(repo, "tests")]);
+      spawnSync("mkdir", ["-p", join(repo, "tests"), join(repo, "e2e/alone")]);
       run(repo, "init", "-q", "-b", "staging");
-      // A test.sh like Erga's: it notes each file's seconds, and reports each file as test.sh does. b fails.
-      writeFileSync(join(repo, "test.sh"), [
-        "#!/usr/bin/env bash",
-        'for f in "$@"; do n=$(basename "$f" .ts); if [[ $n == b ]]; then echo "=== $n FAILED (1s)"; else echo "=== $n ok (1s)"; fi; done',
-        "exit 0",
-        ": <<'PLAN'",
-        "run 1 a bun tests/a.ts                # [30]",
-        "run 1 b bun tests/b.ts                # [20]",
-        "run 1 c bun tests/c.ts                # [10]",
-        "PLAN",
-      ].join("\n") + "\n");
-      chmodSync(join(repo, "test.sh"), 0o755);
-      for (const f of ["a", "b", "c"]) writeFileSync(join(repo, "tests", `${f}.ts`), "");
-      // e2e like Erga's (`bun run test:e2e FILES`, CI=1): its report has each test; x passes, y passes on its retry, z fails.
-      spawnSync("mkdir", ["-p", join(repo, "e2e")]);
-      for (const f of ["x", "y", "z", "w.bench"]) writeFileSync(join(repo, "e2e", `${f}.e2e.ts`), 'test("one", () => {});\n');
-      writeFileSync(join(repo, "e2e/timings.json"), JSON.stringify({ "e2e/x.e2e.ts": 40, "e2e/y.e2e.ts": 40, "e2e/z.e2e.ts": 40 }));
+      // Unit tests, run by `bun test`: a passes, b fails. tests/c.ts isn't a unit test (and there's no test.sh).
+      writeFileSync(join(repo, "tests/a.test.ts"), 'import { test, expect } from "bun:test";\ntest("a", () => expect(1).toBe(1));\n');
+      writeFileSync(join(repo, "tests/b.test.ts"), 'import { test, expect } from "bun:test";\ntest("b", () => expect(1).toBe(2));\n');
+      writeFileSync(join(repo, "tests/c.ts"), "");
+      // e2e like Erga's (`bun run test:e2e FILES`, CI=1): its report has each test; x passes, y passes on its retry, z fails;
+      // e2e/alone/q, in a report of its own (e2e/run.ts runs it alone, after), passes.
+      for (const f of ["x", "y", "z", "w.bench", "alone/q"]) writeFileSync(join(repo, "e2e", `${f}.e2e.ts`), 'test("one", () => {});\n');
+      writeFileSync(join(repo, "e2e/timings.json"), JSON.stringify({ "e2e/x.e2e.ts": 40, "e2e/y.e2e.ts": 40, "e2e/z.e2e.ts": 40, "e2e/alone/q.e2e.ts": 10 }));
       writeFileSync(join(repo, "fake-e2e.ts"), [
         'import { mkdirSync, writeFileSync } from "node:fs";',
         'if (process.env.CI != "1") process.exit(3);',
-        'const status = (f: string) => f.includes("/x.") ? "passed" : f.includes("/y.") ? "flaky" : "failed";',
+        'const status = (f: string) => f.includes("/x.") || f.includes("/q.") ? "passed" : f.includes("/y.") ? "flaky" : "failed";',
         'const results = process.argv.slice(2).map((file) => ({ file, titlePath: ["one"], status: status(file), selected: true, attempts: [{ durationMs: 1000 }] }));',
-        'mkdirSync(".e2e", { recursive: true });',
-        'writeFileSync(".e2e/report.json", JSON.stringify({ run: { results } }));',
+        'const alone = (r: { file: string }) => r.file.startsWith("e2e/alone/");',
+        'for (const [dir, rs] of [[".e2e", results.filter((r) => !alone(r))], [".e2e-alone", results.filter(alone)]] as const) {',
+        '  if (!rs.length) continue;',
+        '  mkdirSync(dir, { recursive: true });',
+        '  writeFileSync(`${dir}/report.json`, JSON.stringify({ run: { results: rs } }));',
+        '}',
         'process.exit(results.some((r) => r.status == "failed") ? 1 : 0);',
       ].join("\n"));
       writeFileSync(join(repo, "package.json"), JSON.stringify({ name: "x", private: true, scripts: { typecheck: "true", "test:e2e": "bun fake-e2e.ts" } }));
@@ -348,31 +316,34 @@ describe("the shard's job in a VM (factory/vm/gate.ts)", () => {
       const status = () => parseStatus(job("status").stdout);
       expect(status().state).toBe("none");
       // Each shard as the split has it, with the e2e files (not the bench's); together they run everything once.
-      const e2e = e2eItems(["e2e/x.e2e.ts", "e2e/y.e2e.ts", "e2e/z.e2e.ts", "e2e/w.bench.e2e.ts"], JSON.parse(readFileSync(join(repo, "e2e/timings.json"), "utf8")));
-      const plan = planShards(readFileSync(join(repo, "test.sh"), "utf8"), [], 2, { e2e });
+      const files = ["e2e/x.e2e.ts", "e2e/y.e2e.ts", "e2e/z.e2e.ts", "e2e/w.bench.e2e.ts", "e2e/alone/q.e2e.ts"];
+      const e2e = e2eItems(files, JSON.parse(readFileSync(join(repo, "e2e/timings.json"), "utf8")));
+      const plan = planShards(["tests/a.test.ts", "tests/b.test.ts"], 2, { e2e });
       const seen: string[] = [];
       for (const n of [1, 2]) {
         const r = job("run", head, String(n), "2");
         const s: ShardReport = status();
         const names = plan[n - 1].items.map((i) => i.name);
         expect(s.state).toBe("done");
-        // test.sh's files first, then e2e's.
-        expect(s.items?.map((i) => i.name)).toEqual([...(plan[n - 1].typecheck ? ["typecheck"] : []), ...names.filter((x) => !x.startsWith("e2e/")), ...names.filter((x) => x.startsWith("e2e/"))]);
-        const bad = names.filter((x) => x == "tests/b.ts" || x == "e2e/z.e2e.ts");
+        // The typecheck, the unit tests, then e2e's files.
+        expect(s.items?.map((i) => i.name)).toEqual([...(plan[n - 1].typecheck ? ["typecheck"] : []), ...names.filter((x) => x == "unit"), ...names.filter((x) => x.startsWith("e2e/"))]);
+        const bad = names.filter((x) => x == "unit" || x == "e2e/z.e2e.ts");
         expect(s.results?.filter((x) => !x.ok).map((x) => x.name).sort()).toEqual(bad.sort());
         expect(r.status).toBe(bad.length ? 1 : 0);
         expect(s.code).toBe(bad.length ? 1 : 0);
+        if (names.includes("unit")) expect(s.log).toContain("$ bun test ./tests/a.test.ts ./tests/b.test.ts");
         if (names.includes("e2e/y.e2e.ts")) expect(s.results?.find((x) => x.name == "e2e/y.e2e.ts")).toMatchObject({ ok: true, flaky: ["e2e/y.e2e.ts › one"] });
         if (names.some((x) => x.startsWith("e2e/"))) expect(s.log).toContain("$ bun run test:e2e e2e/");
+        expect(s.log).not.toContain("test.sh");
         seen.push(...(s.results ?? []).map((x) => x.name));
       }
-      expect(seen.sort()).toEqual(["e2e/x.e2e.ts", "e2e/y.e2e.ts", "e2e/z.e2e.ts", "tests/a.ts", "tests/b.ts", "tests/c.ts", "typecheck"]);
-      // A rerun of named files only, test.sh's and e2e's.
-      expect(job("run", head, "3", "2", "--files", "tests/a.ts,e2e/y.e2e.ts,tests/c.ts").status).toBe(0);
+      expect(seen.sort()).toEqual(["e2e/alone/q.e2e.ts", "e2e/x.e2e.ts", "e2e/y.e2e.ts", "e2e/z.e2e.ts", "typecheck", "unit"]);
+      // A rerun of named files only: the unit test files as one item, and e2e's.
+      expect(job("run", head, "3", "2", "--files", "tests/a.test.ts,e2e/y.e2e.ts,e2e/alone/q.e2e.ts").status).toBe(0);
       expect(status()).toMatchObject({ state: "done", code: 0 });
-      expect(status().results?.map((x) => x.name)).toEqual(["tests/a.ts", "tests/c.ts", "e2e/y.e2e.ts"]);
-      expect(job("run", head, "3", "2", "--files", "e2e/z.e2e.ts").status).toBe(1);
-      expect(status().results).toMatchObject([{ name: "e2e/z.e2e.ts", ok: false }]);
+      expect(status().results?.map((x) => x.name)).toEqual(["unit", "e2e/y.e2e.ts", "e2e/alone/q.e2e.ts"]);
+      expect(job("run", head, "3", "2", "--files", "tests/b.test.ts,e2e/z.e2e.ts").status).toBe(1);
+      expect(status().results).toMatchObject([{ name: "unit", files: ["tests/b.test.ts"], ok: false }, { name: "e2e/z.e2e.ts", ok: false }]);
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 });

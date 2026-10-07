@@ -14,7 +14,7 @@ test("each push to staging runs its tests by itself; a red run names the failed 
   const red = c.push("A change that breaks a test [gate-fail]");
   await until(async () => (await gateOf(s, a.token, red)).run?.state == "failed", RUN_MS, "the red commit's tests fail");
   const run = (await gateOf(s, a.token, red)).run!;
-  expect(run.failed).toEqual(["tests/fake-fail.ts"]);
+  expect(run.failed).toEqual(["e2e/fake-fail.e2e.ts"]);
   expect(run.shards.some((x) => x.rerun)).toBe(true);
 });
 
@@ -38,7 +38,7 @@ test("a running commit is refused; a newer push cancels its run; a flaky run pas
   expect(((await r.json()) as { error: string }).error).toContain("still running");
   const flaky = c.push("A wobbly change [gate-flaky]");
   await until(async () => (await gateOf(s, a.token, flaky)).run?.state == "passed", RUN_MS, "the next push's run passes after its rerun");
-  expect((await gateOf(s, a.token, flaky)).run!.flaky).toEqual(["tests/fake-fail.ts"]);
+  expect((await gateOf(s, a.token, flaky)).run!.flaky).toEqual(["e2e/fake-fail.e2e.ts"]);
   const cancelled = (await gateOf(s, a.token, slow)).run!;
   expect([cancelled.state, cancelled.supersededBy]).toEqual(["cancelled", flaky]);
 });

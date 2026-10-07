@@ -13,7 +13,7 @@ test("a red commit: the API, the dashboard's merge, naming the commit and a git 
   await until(async () => (await gateOf(s, a.token, red)).run?.state == "failed", RUN_MS, "the head's run fails");
   let m = await merge(s, a, "token");
   expect(m.status).toBe(409);
-  expect(m.body.error).toContain("failed: tests/fake-fail.ts");
+  expect(m.body.error).toContain("failed: e2e/fake-fail.e2e.ts");
   expect(m.body.error).toContain(`/admin/factory#tests-${red.slice(0, 12)}`);
   m = await merge(s, a, "cookie");
   expect(m.status).toBe(409);
@@ -21,7 +21,7 @@ test("a red commit: the API, the dashboard's merge, naming the commit and a git 
   expect((await merge(s, a, "token", { commit: red })).status).toBe(409);
   const pushed = git(c.dir, "push", "origin", "HEAD:main");
   expect(pushed.ok).toBe(false);
-  expect(pushed.err).toContain("failed: tests/fake-fail.ts");
+  expect(pushed.err).toContain("failed: e2e/fake-fail.e2e.ts");
   expect(c.main()).not.toBe(red);
   // An earlier green commit may go out while staging's head is red.
   await until(async () => (await gateOf(s, a.token, green)).run?.state == "passed" || (await gateOf(s, a.token, green)).run?.state == "cancelled", RUN_MS, "the green commit's run ends");

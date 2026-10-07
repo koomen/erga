@@ -32,7 +32,7 @@ test("a red head: the agent's deploy_production is refused with why; it reads th
   const tools = await say(tab.page, "Deploy production.", [{ tool: "deploy_production" }, { tool: "list_test_runs", args: { limit: 3 } }, { tool: "get_test_run", args: { commit: red, shard: 1 } }], `Production stays (${red.slice(0, 7)}).`);
   const [deploy, list, get] = tools.slice(-3);
   expect(deploy.status).toBe("error");
-  expect(deploy.detail).toMatch(/failed: tests\/fake-fail\.ts/);
+  expect(deploy.detail).toMatch(/failed: e2e\/fake-fail\.e2e\.ts/);
   expect([list.status, get.status]).toEqual(["done", "done"]);
   expect(c.main()).not.toBe(red);
 });
