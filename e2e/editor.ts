@@ -18,6 +18,10 @@ export const W = `document.getElementById("page").contentWindow`;
 /** In the page editor's frame: where the page sits in it. */
 const PAGE_AT = `document.getElementById("page").getBoundingClientRect()`;
 
+/** Keys sent as plain DevTools key events (Editor.press), with their Windows key codes. */
+const RAW = { Home: 36, End: 35, ArrowLeft: 37, ArrowUp: 38, ArrowRight: 39, ArrowDown: 40 } as const;
+const MOD: Record<string, number> = { Alt: 1, Control: 2, Meta: 4, Shift: 8, ControlOrMeta: process.platform == "darwin" ? 4 : 2 };
+
 /** The editor's timers run at this fraction of real time in the tests (src/page/editor.ts, `ms`). */
 export const TIMESCALE = 0.1;
 
@@ -157,19 +161,22 @@ export function editor(page: Page, doc: { address: string; dir: string; file: st
       await ed.drag(r.a, r.ay, r.b, r.by);
     },
     /**
-     * Presses a key or a combination ("Enter", "ControlOrMeta+b", "Shift+Tab"). Home and End go as plain key events
-     * (rawKey): Playwright on a Mac turns them into the Mac's own commands, which scroll instead of moving the caret.
+     * Presses a key or a combination ("Enter", "ControlOrMeta+b", "Shift+Tab"). Home, End and the arrows go as plain
+     * key events (rawKey), as tests/cdp.ts sent them: Playwright on a Mac turns them into the Mac's own editing
+     * commands (Home scrolls instead of moving the caret, Shift+ArrowUp selects by its own rules).
      */
-    async press(key: string) {
-      if (key == "Home" || key == "End") return ed.rawKey(key);
-      await page.keyboard.press(key);
+    async press(combo: string) {
+      const parts = combo.split("+"), key = parts.pop()!;
+      if (key in RAW) return ed.rawKey(key as keyof typeof RAW, parts);
+      await page.keyboard.press(combo);
     },
     /** A key as the browser gets it from DevTools, with no editing command attached. */
-    async rawKey(key: "Home" | "End") {
+    async rawKey(key: keyof typeof RAW, modifiers: string[] = []) {
       const cdp = await page.context().newCDPSession(page);
-      const code = key == "Home" ? 36 : 35;
-      await cdp.send("Input.dispatchKeyEvent", { type: "rawKeyDown", key, code: key, windowsVirtualKeyCode: code });
-      await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key, code: key, windowsVirtualKeyCode: code });
+      const bits = modifiers.reduce((m, k) => m | (MOD[k] ?? 0), 0);
+      const k = { key, code: key, windowsVirtualKeyCode: RAW[key], modifiers: bits };
+      await cdp.send("Input.dispatchKeyEvent", { type: "rawKeyDown", ...k });
+      await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", ...k });
       await cdp.detach();
     },
     /** IME composition, as DevTools sends it (Playwright has no API for it). */
