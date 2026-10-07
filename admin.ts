@@ -235,17 +235,19 @@ const CHANGES = 50;
  * acted through an agent or the factory, "via …" beside it. Never the agent alone.
  */
 function byHtml(by: string, via?: string | null): string {
-  return `<span class="who"><span class="by">${esc(byLine(by))}</span>${via ? ` <span class="via" data-via="${esc(via)}" title="via ${esc(via)}">${esc(shortVia(via))}</span>` : ""}</span>`;
+  if (!via) return `<span class="who"><span class="by">${esc(byLine(by))}</span></span>`;
+  const chip = viaChip(via);
+  return `<span class="who"><span class="by">${esc(byLine(by))}</span> <span class="via" data-via="${esc(via)}" title="${esc(chip.title)}">${esc(chip.text)}</span></span>`;
 }
 
-/** A via, short enough for a chip on one line (the whole phrase is its title): "admin agent", "Board agent" (a token's label), "factory #12". */
-function shortVia(via: string): string {
-  if (via == VIA.agent) return "editor agent";
-  if (via == VIA.admin) return "admin agent";
+/** A via as a short chip, with more on hover: "admin agent", "token" (its name on hover), "factory #12". */
+function viaChip(via: string): { text: string; title: string } {
+  if (via == VIA.agent) return { text: "editor agent", title: `via ${via}` };
+  if (via == VIA.admin) return { text: "admin agent", title: `via ${via}` };
   const token = /^a shared agent \((.*)\)$/.exec(via);
-  if (token) return `token: ${token[1]}`;
+  if (token) return { text: "token", title: token[1] };
   const task = /^the factory \(task #(\d+)\)$/.exec(via);
-  return task ? `factory #${task[1]}` : via;
+  return { text: task ? `factory #${task[1]}` : via, title: `via ${via}` };
 }
 
 /** A change log line for something other than a setting: a factory task added or merged, main moved to production, a user or a token changed. */
@@ -254,20 +256,20 @@ function eventItem(c: SettingChange): string {
     const u = c.user;
     const what = u.event == "added" ? `added${u.role ? ` as ${esc(u.role)}` : ""}` : u.event == "removed" ? "removed"
       : u.event == "role" ? `made ${esc(u.role ?? "user")}` : `deploy role ${u.deploy ? "granted" : "revoked"}`;
-    return `<li><span class="key">user</span> <span class="title">${esc(u.login)}</span> ${what} <span class="badge">users</span></li>`;
+    return `<li><span class="key">user</span> <span class="title">${esc(u.login)}</span> ${what}</li>`;
   }
-  if (c.token) return `<li><span class="key">token</span> <span class="title">${esc(c.token.label)}</span> (${esc(c.token.of)}’s) revoked <span class="badge">token</span></li>`;
+  if (c.token) return `<li><span class="key">token</span> <span class="title">${esc(c.token.label)}</span> (${esc(c.token.of)}’s) revoked</li>`;
   const sha = (s: unknown) => `<code class="sha" title="${esc(String(s))}">${esc(String(s).slice(0, 7))}</code>`;
   if (c.task) {
     const what = c.task.event == "added" ? "added" : `merged into staging${c.task.commit ? ` as ${sha(c.task.commit)}` : ""}`;
-    return `<li><span class="key">task #${c.task.id}</span> ${what}: <span class="title">${esc(c.task.title)}</span> <span class="badge">factory</span></li>`;
+    return `<li><span class="key">task #${c.task.id}</span> ${what}: <span class="title">${esc(c.task.title)}</span></li>`;
   }
   const r = c.release!;
   const commits = r.commits.map((x) => `<li>${sha(x.sha)} ${esc(x.subject)}</li>`).join("");
   const more = r.total > r.commits.length ? `<li class="more">and ${r.total - r.commits.length} older</li>` : "";
   // Folded, so the entry stays on its line: the commits open under it.
   const list = r.commits.length ? ` <details><summary>${r.total} commit${r.total == 1 ? "" : "s"}</summary><ul class="commits">${commits}${more}</ul></details>` : "";
-  return `<li><span class="key">main</span> ${c.from ? sha(c.from) : "none"} <span class="to" aria-label="to">→</span> ${sha(c.to)} <span class="badge">production</span>${list}</li>`;
+  return `<li><span class="key">main</span> ${c.from ? sha(c.from) : "none"} <span class="to" aria-label="to">→</span> ${sha(c.to)}${list}</li>`;
 }
 
 /**
@@ -281,7 +283,7 @@ function changeRow(v: SettingsVersion, kinds: Record<string, string | undefined>
     const doc = kinds[key] == "document" && x != null ? docs.get(String(x)) : undefined;
     return `<span class="was">${esc(doc ? doc.address : shown(x, kinds[key]))}</span>`;
   };
-  const what = v.changes.map((c) => c.task || c.release || c.user || c.token ? eventItem(c) : c.credential ? `<li><span class="key">${esc(c.key)}</span> key ${esc(c.credential)} <span class="badge">secret</span></li>` : `<li><span class="key">${esc(c.key)}</span> ${value(c.key, c.from)} <span class="to" aria-label="to">→</span> ${value(c.key, c.to)}${c.reset ? ` <span class="badge">reset</span>` : ""}</li>`).join("");
+  const what = v.changes.map((c) => c.task || c.release || c.user || c.token ? eventItem(c) : c.credential ? `<li><span class="key">${esc(c.key)}</span> key ${esc(c.credential)}</li>` : `<li><span class="key">${esc(c.key)}</span> ${value(c.key, c.from)} <span class="to" aria-label="to">→</span> ${value(c.key, c.to)}${c.reset ? ` <span class="badge">reset</span>` : ""}</li>`).join("");
   return `  <li class="change" data-n="${v.n}">
     <time datetime="${at}" title="${at.slice(0, 16).replace("T", " ")} UTC">${at.slice(0, 16).replace("T", " ")}</time>${byHtml(v.by, v.via)}<ul class="what">${what}</ul>
   </li>`;
@@ -683,15 +685,19 @@ async function changesPage(platform: Platform, session: Session, before?: number
   const older = last && last.n > 1 && history.versions.length == CHANGES;
   const style = `
   .lede { margin: 0 0 16px; font-size: 13.5px; color: var(--soft); }
-  .changes { list-style: none; margin: 0; padding: 0; }
-  /* One line each (two when the change is long): when, who (and how), what. */
-  .changes > li.change { display: flex; flex-wrap: wrap; gap: 0 12px; align-items: baseline; padding: 3px 2px; border-top: 1px solid var(--rule); font-size: 13px; line-height: 1.5; }
-  .changes > li.change > time { flex: none; width: 5.5em; margin: 0; font-size: inherit; color: var(--soft); font-feature-settings: "tnum"; white-space: nowrap; }
-  .changes .who { flex: none; max-width: 18em; display: flex; align-items: baseline; gap: 5px; min-width: 0; white-space: nowrap; }
+  /* One line each: when, who (and how), what, in columns as wide as their widest entry; when narrow, what goes on the next line. */
+  .changes { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: max-content minmax(0, max-content) minmax(0, 1fr); column-gap: 14px; }
+  .changes > li.change { grid-column: 1 / -1; display: grid; grid-template-columns: subgrid; align-items: baseline; padding: 3px 2px; border-top: 1px solid var(--rule); font-size: 13px; line-height: 1.5; }
+  .changes > li.change > time { margin: 0; font-size: inherit; color: var(--soft); font-feature-settings: "tnum"; white-space: nowrap; }
+  .changes .who { display: flex; align-items: baseline; gap: 5px; min-width: 0; max-width: 22em; white-space: nowrap; }
   .changes .who .by { color: var(--fg); flex: none; }
   .changes .who .via { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: 11.5px; color: var(--soft); border: 1px solid var(--rule); border-radius: 999px; padding: 0 6px; }
+  @media (max-width: 640px) {
+    .changes { grid-template-columns: max-content minmax(0, 1fr); }
+    .changes .what { grid-column: 1 / -1; }
+  }
   /* What changed: the rest of the line, or the whole next one when it's narrow; one line, its full text on hover. */
-  .changes .what { flex: 1 1 18em; list-style: none; margin: 0; padding: 0; min-width: 0; }
+  .changes .what { list-style: none; margin: 0; padding: 0; min-width: 0; }
   .changes .what > li { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .changes .what > li:has(details[open]) { white-space: normal; }
   .changes .key { font-family: var(--font-mono); font-size: 12.5px; color: var(--fg-strong); margin-right: 4px; }
@@ -708,7 +714,7 @@ async function changesPage(platform: Platform, session: Session, before?: number
   .changes-empty, .changes-more { margin: 6px 2px 0; font-size: 13px; color: var(--soft); }
 `;
   return adminResponse({ session, title: "Change log", here: "changes", style, body: `
-  <p class="lede">Every change to the server's settings, users, API keys and tokens, every factory task added or merged into staging, and every production deploy (main moved forward to staging), newest first: when, who, and what changed. A change an agent made is under the person who controls it, with how (“via their admin agent”, “via a shared agent (its label)”).${history.total ? ` ${history.total} change${history.total == 1 ? "" : "s"}.` : ""}</p>
+  <p class="lede">A log of every change to the server's admin surface, including settings, users, keys, tokens, source, and deploys.${history.total ? ` ${history.total} change${history.total == 1 ? "" : "s"}.` : ""}</p>
   ${history.versions.length ? `<ol class="changes">
 ${history.versions.map((v) => changeRow(v, kinds, docs)).join("\n")}
   </ol>` : `<p class="changes-empty">${before ? "No older changes." : "Nothing has changed yet."}</p>`}
