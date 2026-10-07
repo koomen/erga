@@ -625,6 +625,19 @@ export class SourceRepo {
   }
 
   /**
+   * For the factory (worker/factory.ts, factory/recover.ts): every branch's head, and staging's newest LOG commits
+   * (sha and subject), so it can see whether a task's merge reached staging. Read-only, with a read token.
+   */
+  async stagingLog(): Promise<{ heads: Record<string, string>; commits: { sha: string; subject: string }[] }> {
+    const remote = await (this.deps.reader ?? this.deps.artifacts)();
+    const { refs } = await lsRefs(remote);
+    const heads = Object.fromEntries([...refs].filter(([r]) => r.startsWith("refs/heads/") && !r.startsWith(QUARANTINE)).map(([r, s]) => [r.slice("refs/heads/".length), s]));
+    if (!heads.staging) return { heads, commits: [] };
+    await this.locked(() => this.sync(remote, [heads.staging]));
+    return { heads, commits: this.log(heads.staging, LOG).map((r) => ({ sha: r.sha, subject: r.subject })) };
+  }
+
+  /**
    * A branch's head, or a commit (all 40 hex digits, or the first 7 or more of one the index has): staging if none.
    * `head`: it is a branch's head, which Artifacts sends; another commit, it may refuse.
    */

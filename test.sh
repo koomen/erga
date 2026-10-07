@@ -35,6 +35,7 @@
 #                     files attached in the agent panel (tests/attach.ts),
 #                     instructions for a working task (tests/factory-instruct.ts),
 #                     who the factory's commits are by (tests/factory-authors.ts),
+#                     the factory across a reset of its Durable Object, and at Claude Code's limits (tests/factory-reset.ts),
 #                     the admin agent reading Erga's own source, in the Worker (tests/admin-agent-source.ts),
 #                     the agents doing what their person does on the page, in the Worker (tests/admin-agent-actions.ts),
 #                     live reload (tests/reload.ts, in a copy of the checkout)
@@ -138,6 +139,7 @@ run 1 landing bun tests/landing.ts                       # [14]
 run 1 factory-cards bun tests/factory-cards.ts           # [14]
 run 1 factory-instruct bun tests/factory-instruct.ts     # [70]
 run 1 factory-authors bun tests/factory-authors.ts       # [20]
+run 1 factory-reset bun tests/factory-reset.ts           # [150]
 run 1 versions bun tests/versions.ts                     # [13]
 run 1 attach bun tests/attach.ts                         # [10]
 run 1 docs-pages bun tests/docs-pages.ts                 # [6]
