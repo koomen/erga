@@ -1,8 +1,7 @@
 // The factory's own agent, on /admin/factory: the admin's general agent. An
 // agent panel like the editor's (the same transcript, src/page/agent-log.ts,
 // and the same panel, src/page/agent-chat.ts), with tools that queue and read
-// factory tasks the way the local outer agent uses the task queue
-// (AGENTS.md): add a task (title and ask, startAfter and mergeAfter), change
+// factory tasks (AGENTS.md, the hosted factory): add a task (title and ask, startAfter and mergeAfter), change
 // its dependencies, send it more instructions, read the board, a task's log,
 // its preview and its screenshots, and the board's buttons (start, merge,
 // discard, restart), Share with agent's tokens and the Claude sign-out. And
@@ -142,14 +141,14 @@ export function factoryTools(ops: FactoryOps, guard: () => Promise<void>): Agent
         for (let i = 0; i < png.length; i += 0x8000) bin += String.fromCharCode(...png.subarray(i, i + 0x8000));
         return { content: [{ type: "text", text: `Task #${t.id}, screenshot ${t.screenshots.indexOf(s) + 1} of ${t.screenshots.length}: ${s.caption}` }, { type: "image", data: btoa(bin), mimeType: "image/png" }], details: {} };
       }),
-    tool("create_task", "Queue a task", "Adds a task to the factory, as the local task queue's `tq add` does: the factory makes its branch (task/<id>-<slug>) from staging and starts a VM where Claude Code does the work, unless it waits for a startAfter task to merge. title: short and imperative. description: the ask, in a few plain sentences, with only the context the worker can't find itself. startAfter: tasks that must merge before this one starts (it truly needs their work). mergeAfter: tasks it can be built beside, against a contract written in both asks, but must merge after. Answers the new task.",
+    tool("create_task", "Queue a task", "Adds a task to the factory: the factory makes its branch (task/<id>-<slug>) from staging and starts a VM where Claude Code does the work, unless it waits for a startAfter task to merge. title: short and imperative. description: the ask, in a few plain sentences, with only the context the worker can't find itself. startAfter: tasks that must merge before this one starts (it truly needs their work). mergeAfter: tasks it can be built beside, against a contract written in both asks, but must merge after. Answers the new task.",
       Type.Object({
         title: Type.String({ description: "Short and imperative, e.g. \"Add a dark theme to Documents\"" }),
         description: Type.String({ description: "The ask: what is wanted, in a few plain sentences" }),
         startAfter: IDS, mergeAfter: IDS,
       }),
       async (a) => text(full(await ops.add({ title: String(a.title ?? ""), description: String(a.description ?? ""), ...(a.startAfter !== undefined ? { startAfter: a.startAfter } : {}), ...(a.mergeAfter !== undefined ? { mergeAfter: a.mergeAfter } : {}) }), 5))),
-    tool("set_dependencies", "Change dependencies", "Changes a task's dependencies (as `tq deps`): startAfter and mergeAfter, each a list of task ids that replaces the one it has; [] or null clears it; leave one out to keep it. Not for a task that is merging, merged or discarded. A cycle or an unknown id is refused.",
+    tool("set_dependencies", "Change dependencies", "Changes a task's dependencies: startAfter and mergeAfter, each a list of task ids that replaces the one it has; [] or null clears it; leave one out to keep it. Not for a task that is merging, merged or discarded. A cycle or an unknown id is refused.",
       Type.Object({ id: Type.Integer({ description: "The task's id" }), startAfter: IDS, mergeAfter: IDS }),
       async (a) => {
         const body: Record<string, unknown> = {};
@@ -358,8 +357,7 @@ board: Merge merges its branch into staging, and staging deploys itself to stagi
 server. Then ${owner} moves main forward to staging on the dashboard, which deploys
 production.
 
-For the factory, you help ${owner} queue up and follow work, as the local outer agent does with the task
-queue (AGENTS.md): turn what they ask for into tasks, split big asks into several, say
+For the factory, you help ${owner} queue up and follow work (AGENTS.md, the hosted factory): turn what they ask for into tasks, split big asks into several, say
 how tasks depend on each other, and tell them how tasks are doing.
 
 - create_task adds a task: a short imperative title, and an ask of a few plain

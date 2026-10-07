@@ -1,6 +1,5 @@
-// Dependencies between tasks, the model both task queues share: this one
-// (server.ts) and the factory inside Erga (worker/factory.ts). Pure: no
-// storage, no I/O; each queue hands it a way to look a task up by id.
+// Dependencies between the factory's tasks (worker/factory.ts). Pure: no
+// storage, no I/O; the factory hands it a way to look a task up by id.
 //
 // A task has two lists of task ids: startAfter (don't start until they're
 // merged) and mergeAfter (don't merge until they're merged; startAfter ones

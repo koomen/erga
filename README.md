@@ -17,14 +17,13 @@ With [Bun](https://bun.sh) 1.4 or later (and Node, which runs Vite):
     bun start                       # erga.dev's app, locally: your documents at /docs, /new, the front page at /
     bun start ./path/to/site        # and any folder with index.html or index.md, edited in place
     bun start ./notes/some.md       # or a single file
-    bun start --reload              # open tabs reload by themselves on every edit (live mode runs this)
+    bun start --reload              # open tabs reload by themselves on every edit
 
 `bun start` (`dev.ts`; `--help` lists its options) builds the editor and runs
 the same Worker as erga.dev, under Vite and the Cloudflare plugin, at
 `http://localhost:4400`. The first time, it makes `.dev.vars` for you (see
 `.dev.vars.example`): you're signed in as `DEV_LOGIN`. An `ANTHROPIC_API_KEY`
-turns the agent on: exported in the shell that runs `bun start` (and so task
-previews and live mode, which inherit the task queue's environment), or in
+turns the agent on: exported in the shell that runs `bun start`, or in
 `.dev.vars`. A real key in `.dev.vars` wins; a placeholder there (empty, short,
 not `sk-…`) counts as none, so the exported one is used. It reaches the Worker
 as a binding (`dev/agent-key.ts`, `cloudflare.config.ts`), never written to
@@ -175,10 +174,10 @@ In short: `main` in Erga's own source (Cloudflare Artifacts) deploys
 erga.dev, and `staging` deploys staging.erga.dev; each server builds and
 deploys its own branch when it moves. A push to GitHub deploys nothing
 (Workers Builds is off for `erga` since task #3). The main checkout's
-`origin` is Erga's own Git endpoint (`https://erga.dev/git/erga.git`), and the
-task queue pushes each merge to its `staging`, so a merge on the board
-deploys staging.erga.dev. erga.dev moves only when someone moves `main` to
-staging: Merge on erga.dev/admin/factory, or `tq release`. The deploy pipeline applies `migrations/` to the
+`origin` is Erga's own Git endpoint (`https://erga.dev/git/erga.git`): a push
+to its `staging` (or a factory merge) deploys staging.erga.dev. erga.dev
+moves only when someone moves `main` to staging: Merge on
+erga.dev/admin/factory. The deploy pipeline applies `migrations/` to the
 database before it uploads the Worker.
 
 A migration lands just before the Worker that needs it, so it must keep working with the one still deployed (add tables
@@ -881,8 +880,7 @@ must be an admin now (`worker/source.ts`). No credentials, or a token that
 expired or was revoked: 401, saying to make a token at `<origin>/tokens`,
 which makes Git ask. A token with another scope: 403. An admin token whose person has since been made a user: 403. The
 factory VMs' `fgt.…` tokens are separate ([The
-factory](#the-factory-experimental)). Set up a machine that pushes once (the
-task queue's machine too):
+factory](#the-factory-experimental)). Set up a machine that pushes once:
 
     git remote set-url origin https://erga.dev/git/erga.git
     printf 'protocol=https\nhost=erga.dev\nusername=token\npassword=erga_…\n\n' | git credential approve
@@ -922,9 +920,9 @@ leak gives no working token (only hashes; tokens need `SESSION_SECRET`).
    who holds it is its person, within its scope. Revoke one at `/tokens`;
    removing a person or making an admin a user ends what their tokens could
    do, within ten seconds in other isolates.
-2. *An admin token on a stolen laptop pushes code.* The machine that runs
-   the task queue keeps one in Git's credential store, and with it pushes to
-   staging, which deploys staging.erga.dev. Give it an expiry, and revoke it
+2. *An admin token on a stolen laptop pushes code.* A machine that pushes
+   keeps one in Git's credential store, and with it can push to staging,
+   which deploys staging.erga.dev. Give it an expiry, and revoke it
    at once if the machine is lost.
 3. *A machine with Cloudflare credentials deploys erga.dev without Erga*:
    `bun run deploy`, `wrangler`, and the Cloudflare dashboard. Pushes to
@@ -1089,38 +1087,15 @@ deploys itself only with `CLOUDFLARE_DEPLOY_TOKEN` set: without it a push is
 noted in its log and nothing is deployed. Both have theirs (staging since
 task #2, production since task #3).
 
-**Pushes from this machine: the task queue.** The main checkout's `origin` is
-Erga's Git endpoint, `https://erga.dev/git/erga.git` (GitHub, if the
-checkout has it, is a mirror Erga keeps itself). The queue merges into the main
-checkout's `main` and pushes it to Erga's `staging`; that push deploys
-staging.erga.dev, as any push to staging does. It never moves `main`:
-
-1. Before a merge, the queue fetches origin and merges `origin/staging`
-   into the task's branch with `main`. Commits made in Erga (a factory task,
-   a push from elsewhere) so come back to `main`, and the push is a
-   fast-forward. If that conflicts, the queue stops and the task's own
-   agent resolves it (status `needs-agent`, then `tq continue`: AGENTS.md,
-   "Merging").
-2. After the merge, it pushes `main` to `staging`. The task's log has what
-   Erga said (`Erga: staging is now 1a2b3c4`). A refused push undoes
-   nothing: the merge stays in `main`, the log says why, and the queue
-   pushes again by itself between merges (a queue merge that staging can
-   take as a fast-forward) or with the next merge.
-3. **Production is a deliberate step**: Merge on erga.dev/admin/factory, or `tq
-   release` (`POST /api/release` on the queue: Erga's `main` to `staging`'s
-   head, or `tq release <commit>`, one of staging's commits). Agents run it
-   only when the user asks. The board's Branches column counts the commits
-   that staging has and production doesn't ("2 not released").
-
-**Signing in.** The queue doesn't sign in, and doesn't change the main
-checkout's remotes or Git settings: it runs a plain `git push`, and Git
-gives the admin token kept in its own credential store. Set this machine up
-once, as [Tokens](#tokens) says ("Git"): `origin` set to Erga's endpoint,
-and a token with the admin scope, made at https://erga.dev/tokens, stored
-with `git credential approve`. With no token stored, or one that expired or
-was revoked, Erga answers 401, and the merge fails with "make an admin token
-at https://erga.dev/tokens and store it (README)". The merge stays in
-`main`; store a new token and the next push carries it.
+**Pushes from a checkout.** A checkout's `origin` is Erga's Git endpoint,
+`https://erga.dev/git/erga.git` (GitHub, if the checkout has it, is a
+mirror Erga keeps itself). A push to `staging` deploys staging.erga.dev, as
+any push to staging does; `main` takes fast-forwards to staging's commits
+only, and moving it is **a deliberate step**: Merge on
+erga.dev/admin/factory, which agents do only when the user asks. Git signs
+in with the admin token kept in its own credential store; set a machine up
+once, as [Tokens](#tokens) says ("Git"). With no token stored, or one that
+expired or was revoked, Erga answers 401.
 
 Why erga.dev's endpoint and not staging's: tokens are production's
 (staging's database is a copy, with its own
@@ -1541,7 +1516,7 @@ person isn't an admin now: 403).
     git push erga HEAD:staging
 
 To push without being asked each time, store the token in Git's credential
-store once ([Tokens](#tokens), "Git"): the task queue's machine is set up so.
+store once ([Tokens](#tokens), "Git").
 
 Clones and fetches stream straight through to Artifacts with a read token.
 A push is Erga's (`source/repo.ts`, `SourceRepo.receive`, in one Durable
@@ -1602,8 +1577,7 @@ agent covers the page while it's open. Each part's stylesheet is
 scoped to its pane (`scopeCss`: its width queries measure the pane, so the
 board keeps its five columns beside the agent). `/source`, `/admin/factory`
 and `/admin/deploys` redirect here. The dashboard: One list, staging's last 100 commits,
-newest first, with two dot columns beside it, as the task queue board's
-Branches column draws them: staging's (a hollow orange circle for a commit
+newest first, with two dot columns beside it: staging's (a hollow orange circle for a commit
 only on staging, a solid green circle for one main has too) and main's (a
 solid green circle where main has it). Circles only, no other shapes. Then
 two deploy columns, staging and production: a "live" mark on the commit each
@@ -1678,7 +1652,7 @@ Merge to here, light, dark and a phone; `--keep` leaves it running).
    token, from /tokens> bun source/import.ts https://erga.dev` (from GitHub's main).
    It refuses if main is already there.
 5. Point your checkouts at it and push there; GitHub follows. Each checkout
-   that pushes, the task queue's main checkout included, also needs an
+   that pushes also needs an
    admin token in Git's credential store ([Tokens](#tokens), "Git"):
 
        git remote rename origin github
@@ -1691,23 +1665,21 @@ fine for Erga's thousands but not for millions.
 
 ### The factory (experimental)
 
-The factory is the task queue (`development/task-queue/`) inside Erga, on
+The factory is Erga's task queue, on
 `/admin/factory`, the Factory page (with the source dashboard and the factory's agent;
-`/admin/source` and `/source` redirect there): the same board (Queued, Working, Ready to merge and Merging,
-with `needs agent` cards in Merging; merged tasks leave the board), but each task is done by Claude Code in a VM of its own, not on
-this machine: on staging.erga.dev and erga.dev a Cloudflare Container
+`/admin/source` and `/source` redirect there): a board (Queued, Working, Ready to merge and Merging,
+with `needs agent` cards in Merging; merged tasks leave the board) where each task is done by Claude Code in a VM of its own: on staging.erga.dev and erga.dev a Cloudflare Container
 ([On Cloudflare](#on-cloudflare), below). It's a prototype: admins only, and
 off until an admin sets the `factory` setting to `on` (`/admin`). It does
-background tasks only; live mode stays on the user's own computer, with the
-local queue.
+background tasks only; working with someone watching is done locally, with
+the development server (AGENTS.md).
 
 **A task is a branch.** Adding a task names its branch
-`task/<id>-<slug>` (as the local queue does) and starts a VM. In the VM
+`task/<id>-<slug>` and starts a VM. In the VM
 (`factory/vm/run.ts`) the task's job clones Erga's repository, makes the
 branch from staging and pushes it at once, installs the dependencies, and
 runs Claude Code (`claude -p`, unattended) with the task's prompt
-(`factory/prompt.ts`: AGENTS.md's worker prompt, with `task` in place of
-`tq`). Claude Code works on the clone, runs the app headless (`task
+(`factory/prompt.ts`). Claude Code works on the clone, runs the app headless (`task
 preview`: `bun start` in the VM), takes screenshots with headless Chromium
 (`task shot`), commits, and says `task done "summary"`, which pushes the
 branch and moves the card to Ready to merge. Then the VM waits: its preview
@@ -1780,10 +1752,10 @@ most 30 minutes for a merge job's answer. Claude Code is told
 (`factory/prompt.ts`) to run builds, tests and servers under a limit with
 `task run --timeout SECONDS -- CMD` (the same process-tree kill, exit 124),
 and to leave no processes behind. The merge stops the preview first: on
-2026-10-05 a 3-hour-old dev server blocked `vite build` in the local queue.
+2026-10-05 a 3-hour-old dev server blocked `vite build` in a task's checkout.
 
-**Dependencies between tasks** are the local queue's (task #49; the rules
-are one file, `development/task-queue/deps.ts`, that both use). A task has
+**Dependencies between tasks** (task #49; the rules are one file,
+`factory/deps.ts`). A task has
 `startAfter` (no VM until those tasks are merged) and `mergeAfter` (it works
 now, but doesn't merge until they're merged; `startAfter` counts too): set
 on the New task form or `POST /api/factory/tasks`, changed in the detail
@@ -1828,8 +1800,7 @@ would refuse it). Screenshots go from the model's messages, and the oldest
 turns go when a conversation passes about 900 KB. The panel reads it on mount
 from `GET /api/admin/agent/conversation` (any admin page, the agent on or
 off); "New conversation" is `DELETE` on the same route (`tests/admin-agent-chat.ts`,
-`tests/admin-agent-chat.test.ts`). It queues up work the way the local outer agent uses the task
-queue (AGENTS.md): `create_task` (title, ask, `startAfter`, `mergeAfter`),
+`tests/admin-agent-chat.test.ts`). It queues up work (AGENTS.md, the hosted factory): `create_task` (title, ask, `startAfter`, `mergeAfter`),
 `set_dependencies`, `instruct_task` (more instructions for a task that
 works, is ready to merge or failed), and reads with `list_tasks`, `get_task` (the ask,
 summary, error, preview URL, log) and `view_screenshot`; it sees `needs
@@ -2118,8 +2089,8 @@ text and the other fields' values (`keepState` in `factory/page.ts`).
    request to the VM's port 4401 as if to localhost (the dev server in the
    VM signs everyone in as its `DEV_LOGIN`, on localhost only, so the
    ticket is what keeps it to admins).
-6. *The board* is the local one's, without live mode, the Merged column or
-   the Branches column (merged tasks leave the board; the Factory page shows staging).
+6. *The board* has no Merged column: merged tasks leave the board, and the
+   Factory page shows staging.
 
 **Risks.**
 
@@ -2319,8 +2290,8 @@ development has:
   editor's files are rebuilt, when the Worker's code changes (Vite reloads
   the Worker), or when the dev server restarts (Vite restarts it when its
   config, or a file the config imports, such as `front.ts`, changes). A
-  document's own frame gets nothing. It's what the task queue's live mode
-  runs (AGENTS.md). Edits are watched in any checkout, an agent's worktree
+  document's own frame gets nothing. It's for working locally with someone
+  watching (AGENTS.md). Edits are watched in any checkout, an agent's worktree
   under `.claude/worktrees/` included; only a checkout's own `.claude/` is
   ignored.
 

@@ -1,4 +1,4 @@
-// Live reload (`bun start --reload`, dev/reload.ts: what live mode runs) in
+// Live reload (`bun start --reload`, dev/reload.ts) in
 // headless Chrome: an open page reloads by itself, showing the change, when
 // the Worker's front door changes (Vite restarts the server), when another
 // Worker module changes (Vite reloads the Worker), and when the editor's own
