@@ -39,17 +39,6 @@ function watch(page: Page, errors: string[]): Watched {
   return w;
 }
 
-/**
- * Takes out of `errors` (in place) what the browser logs for requests that failed because the server was down
- * ("Failed to load resource: net::ERR_CONNECTION_REFUSED", "WebSocket connection to ... failed"), which Playwright reports as console errors: a restart
- * means some. What's left is the page's own errors.
- */
-export function withoutOutage(errors: string[]): string[] {
-  const left = errors.filter((e) => !/^console\.error: (Failed to load resource|WebSocket connection to '[^']*' failed)\b.*net::ERR_(CONNECTION_REFUSED|CONNECTION_RESET|INCOMPLETE_CHUNKED_ENCODING|EMPTY_RESPONSE|CONNECTION_CLOSED)\b/.test(e));
-  errors.splice(0, errors.length, ...left);
-  return errors;
-}
-
 /** Waits until every page has had `n` more live checks answered than it had at `since` (by checks each). */
 export async function checked(pages: Watched[], since: number[], n: number, ms = 20_000) {
   await until(() => pages.every((p, i) => p.checks >= since[i] + n), ms, `${n} live checks on every page`);

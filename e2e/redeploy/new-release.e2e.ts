@@ -4,9 +4,9 @@
 import { cpSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { expect, test, until } from "../fixtures";
+import { expect, test, until, withoutOutage } from "../fixtures";
 import { ROOT } from "../env";
-import { checked, openPages, withoutOutage } from "./pages";
+import { checked, openPages } from "./pages";
 
 // Its own server, started and restarted (a few seconds each, more on a busy machine), three pages to set up, and three to reload.
 test("a restart with new client files: every page reloads by itself, with its state, and only once", { timeout: 60_000 }, async ({ tab }) => {

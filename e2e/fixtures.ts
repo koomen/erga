@@ -95,6 +95,17 @@ export const test = web.extend<{ tab: Tab }>({
   },
 });
 
+/**
+ * Takes out of `errors` (in place) what the browser logs for requests that failed because the server was down
+ * ("Failed to load resource: net::ERR_CONNECTION_REFUSED", "WebSocket connection to ... failed"), which Playwright reports as console errors: a restart
+ * (a server of the test's own, halted) means some. What's left is the page's own errors.
+ */
+export function withoutOutage(errors: string[]): string[] {
+  const left = errors.filter((e) => !/^console\.error: (Failed to load resource|WebSocket connection to '[^']*' failed)\b.*net::ERR_(CONNECTION_REFUSED|CONNECTION_RESET|INCOMPLETE_CHUNKED_ENCODING|EMPTY_RESPONSE|CONNECTION_CLOSED)\b/.test(e));
+  errors.splice(0, errors.length, ...left);
+  return errors;
+}
+
 /** Waits until `f` gives something truthy (a thrown error counts as not yet), and returns it; fails after `ms`. */
 export async function until<T>(f: () => Promise<T> | T, ms = 5_000, what = "the condition"): Promise<T> {
   const end = Date.now() + ms;
