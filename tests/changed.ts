@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-// Which tests cover a change (./test.sh --changed uses it; README, Tests):
+// Which tests cover a change (./test.sh --changed uses it):
 //
 //   bun tests/changed.ts                  the test files that cover the files changed since staging, one a line
 //   bun tests/changed.ts FILE...          the test files that cover these files

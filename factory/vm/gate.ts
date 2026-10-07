@@ -1,4 +1,4 @@
-// The production gate's shard, in a VM (README, Deploys: "The test gate"):
+// The production gate's shard, in a VM (deploy/gate.ts):
 // one share of the full test run of a staging commit. The server's gate
 // (deploy/gate.ts) starts one VM per shard and runs this in each, through the
 // image's agent, as `bun run.ts gate ...` (the agent runs run.ts and merge.ts

@@ -29,7 +29,7 @@ export function gateRunner(env: Env, subject: (commit: string) => Promise<string
   if (env.ERGA_DEPLOY_MOCK == "1" || (env.ERGA_LINK_SECRET && env.DEV_LOGIN)) {
     return fakeRunner({ delayMs: Number(env.ERGA_GATE_FAKE_MS) || 1500, subject });
   }
-  if (!env.FACTORY_VM) return "it has no VMs (the FactoryVm binding: README, The factory, On Cloudflare).";
+  if (!env.FACTORY_VM) return "it has no VMs (the FactoryVm binding: bun deploy/setup.ts --factory).";
   const self = env.DEPLOY_TARGET?.trim() ?? "";
   if (!isTargetName(self)) return "it isn't one of Erga's deploy targets (DEPLOY_TARGET).";
   return vmRunner(env.FACTORY_VM, `https://${TARGETS[self].host}/git/erga.git`);

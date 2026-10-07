@@ -4,7 +4,8 @@
 // (Clone, Edit, who you are) on top, in a shadow root of their own. Every
 // other document still renders in a frame on its own origin (front.ts,
 // pagesDoor); the homepage may skip that only because only admins may edit
-// it (directory.ts, homeBlocked and homeLimit).
+// it (directory.ts, homeBlocked and homeLimit): its script runs on this
+// site's own origin, where it could act as whoever views it.
 //
 // This file is the platform-neutral half: rendering a deploy's page
 // (`renderHome`), the controls (`homeHeader`), and the homepage's API
@@ -26,7 +27,7 @@ import { NEW_DOC_SCRIPT, NEW_DOC_STYLE, newDocButton, newDocMenu } from "./templ
 /** Where a deploy's files are served: /_home/<gen>/<path>, each address never reused, so browsers keep them for good. */
 export const HOME_FILES = "/_home/";
 
-/** The deploy's state, as the contract (README, "The homepage") gives it. */
+/** The deploy's state, as GET /api/docs/<id>/home gives it (homeApi). A document that isn't the homepage is "idle". */
 export interface DeployStatus {
   state: "idle" | "scheduled" | "deploying" | "deployed" | "failed";
   /** The last successful deploy (ISO time), or null. */

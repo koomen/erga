@@ -3,7 +3,14 @@
 // cloudflare.config.ts, only when the deploy names a namespace). Erga uses the
 // binding for two things only: the repo's Git remote, and short-lived
 // repo-scoped tokens for it. Everything else is plain Git over HTTPS
-// (source/remote.ts), the same protocol any git client uses.
+// (source/remote.ts), the same protocol any git client uses. Not the REST
+// API: that needs a Cloudflare API token with Artifacts Edit as a secret,
+// which can do far more than one repository's tokens.
+//
+// Erga proxies Git itself (worker/source.ts) rather than hand out this
+// remote: Artifacts' tokens don't know Erga's admins, Artifacts can't hold
+// Erga's rules (two branches, main only forward), and every branch move must
+// go through Erga so it can tell the Factory page, the deploys and the mirror.
 //
 // Artifacts has no local mode (the binding in `vite dev` only proxies to the
 // real service), so local development uses a stand-in: the dev server serves

@@ -21,6 +21,8 @@
 //     machine with the setup's own credential, makes it.
 //   - D1 Write: staging gets a new database, a copy of
 //     production's export, and deletes its old one (deploy/cloudflare.ts, Target.snapshot); both apply migrations/.
+//     With no narrower scope, staging's token can also write production's D1: a known risk, as code that reaches
+//     staging can read it (production pushing its copy, or staging on its own account, would close it).
 //   - Read on the zones: find the zones by name, and check that the app's
 //     custom domain, the pages' route and their DNS record are there and
 //     point at this Worker. The setup's first deploy makes them; a deploy
@@ -34,6 +36,11 @@
 //
 // The rules are in deploy/targets.json (`deploys`): production's server may
 // deploy staging and production, staging's may deploy staging only.
+//
+// The risk left: D1 Write is account-wide, and code on a Worker can read its
+// token. So code merged to staging could read or wipe every D1 database in the
+// account, other projects' too: the merge is the review. An account of Erga's
+// own would limit that to Erga's databases.
 
 import { DeployError, zoneIdOf, type Cloudflare, type Fetch } from "./cloudflare";
 import { SOURCE, TARGETS, type TargetName } from "./targets";

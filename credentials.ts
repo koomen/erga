@@ -1,8 +1,8 @@
 // The API keys an admin enters on /admin/api-keys (admin.ts): Anthropic's,
 // for the editor's agent, the factory's agent and version descriptions;
 // OpenAI's, for OpenAI's models; the GitHub mirror's token; and the
-// Cloudflare token a server deploys itself with. docs/secrets.md ("Keys
-// entered on the admin pages") says how they are kept, and this does it:
+// Cloudflare token a server deploys itself with. They are kept as the
+// factory keeps the Claude plan token (worker/factory.ts):
 //
 //   - Each key is encrypted with AES-GCM, a fresh IV each time, its name as
 //     the additional data, under a key derived from a deploy-time secret
@@ -17,6 +17,10 @@
 //     admin, in a browser, with a same-origin request.
 //   - A server with no key stored uses the Worker secret of the same name
 //     (`withCredentials`), so a server deployed without this page still works.
+//
+// Staging has a FACTORY_KEY of its own, so production's keys, copied into
+// staging's database, don't open there: staging uses its own stored keys or
+// its Worker secrets. The last four characters are kept in plain text, for the page.
 
 import { changeLogEntry } from "./attribution.ts";
 import type { Sql, Statement } from "./directory.ts";
@@ -37,7 +41,8 @@ export const CREDENTIALS = {
  * The secrets only the deploy sets (Worker secrets). The API keys page lists
  * them but can't change them: each is a root key, guards the sign-in, or is
  * shared with the other server, so a wrong value there could lock the admins
- * out or break both servers (docs/secrets.md, "Admin panel?").
+ * out or break both servers. A key here may be wrong at no greater cost than
+ * the one feature it serves.
  */
 export const DEPLOY_SECRETS = [
   { env: "SESSION_SECRET", service: "Erga", description: "Signs sessions, agent tokens and admin tokens. If it changes, everyone is signed out.", why: "It is the root key of every sign-in." },
@@ -134,7 +139,7 @@ export class Credentials {
     await this.users.mustAdmin(by);
     const n = this.nameOf(name);
     const key = checkKey(n, value);
-    if (!this.aesKey) throw new CredentialError("This server has no FACTORY_KEY to encrypt the key with: bun deploy/setup.ts --factory makes it (docs/secrets.md).");
+    if (!this.aesKey) throw new CredentialError("This server has no FACTORY_KEY to encrypt the key with: bun deploy/setup.ts --factory makes it.");
     const iv = crypto.getRandomValues(new Uint8Array(12));
     const data = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv, additionalData: enc.encode(n) }, await this.aesKey, enc.encode(key)));
     const had = await this.has(n), at = Date.now(), login = by.login.toLowerCase();

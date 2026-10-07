@@ -1,7 +1,18 @@
 #!/usr/bin/env bun
 // The multiplayer suite: black-box tests of a document room and its agents,
 // through the deployment's public surface only, so the same run works
-// against a local dev server and a deployment. See tests/suite/README.md.
+// against a local dev server and a deployment (the contract: target.ts).
+// Run --long at least once per deploy: it waits out Durable Object eviction.
+//
+// Each of these breakages, made on purpose, turned the suite red; break them
+// again when the server changes shape, to see it still does:
+//   the room merging any replica, ignoring epochs   durability: lost history, foreign replica
+//   no saved Yjs state (restart rebuilds from files) durability: restart, killed server; browser (the document doubles)
+//   the agent's write diffing against current text   agent: write keeps edits made after its read
+//   writes and merges not queued                     sync: publishes racing the room's writes; fuzz
+//   pure deletions not stamped                       presence: every edit attributed
+//   malformed messages throwing                      robustness: corrupt Yjs messages
+//   If-Match ignored                                 fuzz: deleted tokens come back
 //
 //   bun tests/suite/run.ts                      a local dev server, every suite
 //   bun tests/suite/run.ts --suite fuzz,agent   some suites

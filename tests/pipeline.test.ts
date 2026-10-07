@@ -793,7 +793,7 @@ describe("the factory's VMs (Containers)", () => {
       `(factory/vm/Dockerfile, factory/vm/agent.ts or .bun-version) changed. Run, with Docker running and the cf CLI's login:\n` +
       `  CLOUDFLARE_ACCOUNT_ID=<id> bun factory/vm/push.ts --wait\n` +
       `It pushes and prepares the new image, and writes its name into deploy/targets.json only once a container starts from it ` +
-      `(up to an hour after preparation); then commit deploy/targets.json. A deploy from a machine (deploy/run.ts) does the same (README, "The factory").`);
+      `(up to an hour after preparation); then commit deploy/targets.json. A deploy from a machine (deploy/run.ts) does the same (factory/vm/push.ts).`);
   });
 
   test("updatePin moves the pinned image only after a container starts from the new one", async () => {

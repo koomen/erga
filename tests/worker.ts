@@ -300,7 +300,7 @@ async function adminScenario() {
   ok("an owner's agent shares a document over the API; nobody else's can");
 
   // The editor's own agent never has the admin tools, even an admin's: a document's host carries no
-  // admin power, and a document's text can steer its agent (README, Tokens).
+  // admin power, and a document's text can steer its agent.
   const adminDoc = ((await (await fetch(`${base}${blank}/api/name`, { headers: { Cookie: admin.cookie } })).json()) as Name).id;
   let tools = await agentRun(adminDoc, admin.cookie, [{ tool: "set_setting", args: { key: "delete_docs_after_hours", value: 30 } }, { tool: "add_user", args: { login: newcomer, role: "admin" } }, { text: "Done." }]);
   expect(tools.length == 2 && tools.every((x) => x.status == "error"), "an admin's agent in the editor has no admin tools", tools);
@@ -531,7 +531,7 @@ try {
   expect((await pagesFetch(`${pages!.origin}/docs`)).status == 404, "and none of this site's own pages are there");
   ok("a document's page runs on its own origin, whose files open only with the editor's token");
 
-  // Loading fast (README, "Loading fast"): the frame asks for doc/, which is the page; files are kept by the browser and checked by ETag.
+  // Loading fast: the frame asks for doc/, which is the page; files are kept by the browser and checked by ETag.
   const pageFile = await pagesFetch(`${pagesUrl}doc/index.html`);
   const etag = pageFile.headers.get("etag");
   expect((await (await pagesFetch(`${pagesUrl}doc/`)).text()) == (await pageFile.text()), "doc/ is the document's page");

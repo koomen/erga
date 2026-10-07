@@ -4,7 +4,8 @@
 // and import); a Durable Object's storage can only be read from inside the
 // Worker that owns it, so production serves a read-only snapshot endpoint and
 // staging an import one, both behind a shared bearer token (SNAPSHOT_TOKEN,
-// set on both Workers by deploy/setup.ts):
+// set on both Workers by deploy/setup.ts). With it staging can read every
+// production document, so it is at least 32 characters, compared in constant time:
 //
 //   POST /api/snapshot/docs          {ids}          → {docs: [{id, entries, alarm}]}   any server with SNAPSHOT_TOKEN: read-only
 //   POST /api/snapshot/docs/import   {docs, wipe}   → {imported, wiped}                only with SNAPSHOT_IMPORT=1 and never on production

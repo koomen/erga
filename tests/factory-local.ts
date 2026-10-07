@@ -69,7 +69,7 @@ const idOf = (out: string) => Number(/Registered task #(\d+)/.exec(out)?.[1]);
 
 try {
   expect((await fetch(`${root}/admin/settings`, { method: "POST", headers: { Origin: root }, body: new URLSearchParams({ key: "factory", value: JSON.stringify("on") }) })).ok, "the factory turns on");
-  // An admin token, as Claude Code on a laptop has one (README, Tokens).
+  // An admin token, as Claude Code on a laptop has one.
   const made = await (await fetch(`${root}/tokens/new`, { method: "POST", headers: { Origin: root }, body: new URLSearchParams({ label: "Laptop agent", scope: "admin" }) })).text();
   token = /<pre class="secret">(erga_[^<]+)<\/pre>/.exec(made)?.[1] ?? "";
   expect(token, "an admin token", made.slice(0, 300));

@@ -1,5 +1,5 @@
-// Open pages across a redeploy, the Worker's side (README, Redeploys and open
-// pages; the page's side is src/page/live.ts):
+// Open pages across a redeploy, the Worker's side (the page's side is
+// src/page/live.ts):
 //
 //   - GET /api/release: the build of each of the editor's files, as site.sh
 //     listed them in build.json, and the release ({ files: { "page.js":

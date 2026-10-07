@@ -1,4 +1,4 @@
-// The production gate (README, Deploys: "The test gate"): main, and so
+// The production gate: main, and so
 // erga.dev, moves only to a staging commit whose full test run passed
 // (./test.sh, every file, the end-to-end tests, `bun run test:e2e`, and
 // `bun run typecheck`).

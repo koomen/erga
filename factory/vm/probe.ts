@@ -9,7 +9,8 @@
 // the VM, make the task's branch, change the front page, start the preview
 // (relayed on 4401), take a screenshot with the VM's Chromium, and report to
 // a pretend factory API that the probe Worker serves. Then it deletes the
-// container, the application and the Worker.
+// container, the application and the Worker. A Worker of its own, so the
+// server's running tasks keep the old image while a new one is tried.
 //
 //   CLOUDFLARE_ACCOUNT_ID=<id> bun factory/vm/probe.ts [--image erga-factory:<tag>@sha256:<digest>] [--keep] [--shot FILE] [--instance standard-4] [--wait SECONDS]
 //

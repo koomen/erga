@@ -1,124 +1,64 @@
 # Agents working in this repo
 
-README.md describes Erga itself: how it's built, run (`bun start`) and
-tested (`./test.sh`). This file describes how agents take on work here.
+## Tasks
 
-## Two ways to work on Erga
+All work on Erga is a task on the board at **erga.dev/admin/factory**. When
+merged, a task is in staging's history as "Merge task/<id>-<slug>: title".
 
-### 1. Locally, with the development server, as a local task
+### Local tasks
 
-Work in a checkout on this machine, with the user watching if they like. A
-rule from the user: **register the work as a local task, and report through
-it**, so it is on the board at erga.dev/admin/factory like the factory's
-tasks and, when merged, in staging's history as "Merge task/<id>-<slug>:
-title". A local task is a factory task with no VM: you run it (README, The
-factory, "Local tasks"). `bun task` (`factory/task.ts`) does it, with an
-admin token in `ERGA_TOKEN` or Git's credential store (README, Tokens), and
-the server in `ERGA_URL` or an `origin` at `https://erga.dev/git/erga.git`:
+A local task is a factory task with no VM: you run it on this machine, in
+your own checkout, and report on it with `bun task` (`factory/task.ts`; `bun
+task --help`). It needs an admin token, in `ERGA_TOKEN` or Git's credential
+store.
 
-1. **Register, which also branches**: `bun task new "Short imperative
-   title" "The ask, in a few plain sentences"` (add `--start-after 12` or
-   `--merge-after 14` as for any task). It makes `task/<id>-<slug>` from
-   Erga's staging, checks it out and pushes it. Never commit to `main` or
-   `staging` directly. (Only when the user says the work is not a task, for
-   example a quick look or an experiment, branch by hand:
-   `git checkout -b <short-name>`.)
-2. **Report as you go**, as a VM's Claude Code does: `bun task log "..."` at
-   milestones (5 minutes without a line marks the task stalled), `bun task
-   shot FILE|URL "caption"`, `bun task preview URL` if the user can open
-   one. Run `bun task inbox` when a step ends: it has the instructions sent
-   from the board. Commit as you go; `bun task push` pushes the branch.
+1. **Register, which also branches**: `bun task new "Short imperative title"
+   "The ask, in a few plain sentences"` (with `--start-after 12` or
+   `--merge-after 14`, as for any task). It makes `task/<id>-<slug>` from
+   Erga's staging, checks it out and pushes it. (Only when the user says the
+   work is not a task, for example a quick look or an experiment, branch by
+   hand.)
+2. **Report as you go**: `bun task log "..."` at milestones (5 minutes
+   without a line marks the task stalled), `bun task shot FILE|URL
+   "caption"`, `bun task preview URL` if the user can open one. Run `bun task
+   inbox` when a step ends: it has the instructions sent from the board.
+   `bun task push` pushes the branch (a plain `git push` of a `task/` branch
+   is refused).
 3. **Finish** with `bun task done "summary"` (it pushes; the summary in
    ASD-STE100, below), or `bun task fail "why"`. The user merges from the
    board. If the merge conflicts, the task is "needs agent" and `bun task
    inbox` says what to do (`bun task pull --staging`, resolve, test, commit,
-   `bun task done`). If the board hands the task to a VM, `bun task`
-   refuses your reports: stop.
+   `bun task done`). If the board hands the task to a VM, `bun task` refuses
+   your reports: stop.
 
-The rest of local work:
+### The hosted factory
 
-1. **Never commit to `main` directly.** The merge of your task moves
-   `staging`; push `staging` yourself only when the user asks (below).
-2. **Run the app**: `bun start` serves it (signed in as `DEV_LOGIN`) on
-   this checkout's own port: 4400 in the main checkout, another from its
-   path in a worktree, with nothing shared between checkouts (dev.ts).
-   `bun start --print-url` (or `.dev-url`) says where. `bun start --reload`
-   also reloads open tabs on every edit (README, Local development).
-3. **Edit, then look**: verify in a real browser with **headless Chrome**
-   (`tests/cdp.ts` drives it); never drive the user's own browser unless
-   they ask.
-4. **Test what you changed**: the tests that cover it, and new ones where
-   they belong. `bun run test` runs the unit tests and the end-to-end tests
-   the change affects (e2e/affected.ts), and stops at the first failure;
-   `bun run test:e2e e2e/x/y.e2e.ts ...` runs the files you name. A new
-   end-to-end test is a small file in e2e/. Until the old harness (tests/*.ts
-   on tests/cdp.ts) is retired, also run `./test.sh --changed`. Run the whole
-   suite (`bun run test --all`, `./test.sh`) only when the change touches
-   shared infrastructure (the test harness, the build, the server's core).
-5. **Push your task's branch with `bun task`; push anything else only when
-   the user asks.** `origin` is Erga's own Git
-   endpoint (`https://erga.dev/git/erga.git`; GitHub, as `github`, is a
-   mirror Erga keeps). Reads need nothing. `bun task push` and `bun task
-   done` push the task's branch with a git token the factory makes for that
-   branch only (a plain `git push` of a `task/` branch is refused). Other
-   pushes need an admin token in Git's credential store (README, Tokens). A
-   push to `staging` deploys
-   **staging.erga.dev** by itself. **Production (erga.dev) is a deliberate
-   step**: `main` moves only by Merge on erga.dev/admin/factory, and only
-   when the user asks for it, to a commit whose tests passed (Standing
-   rules, 3).
+The factory runs each task in a VM of its own: Claude Code builds it on a
+branch (`task/<id>-<slug>`) from `staging`, and the user merges it from the
+board. Add tasks on the board, by asking the admin agent beside it, or from
+an outside agent with an admin token ("Share with agent" on any admin page
+makes one for 12 hours; the agent reads `/api/admin/guide` first). An agent
+inside a factory VM follows its task prompt (`factory/prompt.ts`): it
+reports with the `task` command, and never merges.
 
-### 2. In the hosted factory
+### Writing tasks
 
-The factory (README, The factory) runs each task in a VM of its own on
-erga.dev: Claude Code builds it on a branch (`task/<id>-<slug>`) from
-`staging`, and the user merges it from the board on
-**erga.dev/admin/factory**. Add tasks there: on the board, by asking the
-admin agent beside it, or from an outside agent with an admin token
-("Share with agent" on any admin page makes one for 12 hours; the agent
-reads `/api/admin/guide` first). Give each task a short imperative title and an ask of a few plain
-sentences, and declare how tasks depend on each other (`startAfter`: needs
-those merged first; `mergeAfter`: built in parallel against a contract
-written in both asks, but merged in order). Don't build against a throwaway
-stub of another task's work.
+Give each task a short imperative title and an ask of a few plain sentences.
+Declare how tasks depend on each other:
 
-An agent inside a factory VM follows its task prompt (`factory/prompt.ts`):
-it reports with the `task` command, and never merges.
+- `startAfter`: the task needs those tasks merged first; it gets no VM until
+  then.
+- `mergeAfter`: the tasks are built in parallel against a contract written
+  in both asks, but merged in order.
 
-## Standing rules
-
-1. **Anything that could hang runs under a time limit**: builds, tests, git,
-   servers, screenshots (e.g. `timeout 180 bun tests/x.ts`). Stop the
-   servers you start, and leave no processes behind.
-2. **Staging is for admins only.** staging.erga.dev runs on a copy of
-   production's data, so every request there needs an admin: an admin's
-   session or an admin-scope token (`worker/admins-only.ts`, from
-   `adminsOnly` in `deploy/targets.json`). Keep it so: a new route or
-   origin goes behind that guard, and any exemption (server to server, the
-   factory's VMs, sign-in) is listed there with its reason.
-3. **Open pages survive a redeploy** (README, Redeploys and open pages): a
-   new live connection reconnects with backoff and reads its state again,
-   and tells live.js (`src/page/live-client.ts`); page state that a reload
-   would lose is kept with `keep` and read back with `restore.ts`.
-4. **New rules go here.** When the user gives a standing instruction
-   ("always…", "from now on…"), add it to AGENTS.md, not to an agent's own
-   memory, so every agent sees it.
-3. **Production deploys only on a green run.** main (erga.dev) moves only
-   to a staging commit whose full test run passed: `./test.sh` (every
-   file), the end-to-end tests (`bun run test:e2e`) and `bun run typecheck` (the production gate, README, "The test
-   gate"). Each staging commit's run starts by itself, in VMs, when staging
-   moves. Every way to move main checks it: Merge on /admin/factory, the
-   admin agent's `deploy_production`, the API and a push to `main`. No
-   agent skips it. Only an admin in a browser may override it, with a
-   reason, and only in an emergency. Staging still deploys every push at
-   once.
+Don't build against a throwaway stub of another task's work.
 
 ## Task summaries
 
-Every task summary (the factory's `task done`, a `task fail` reason, and a
-worker's final reply) is written in **ASD-STE100**, Simplified Technical
-English. The user reads it cold, on the board, and must understand it on
-one read. The rules that matter most:
+Every task summary (`task done`, a `task fail` reason, and a worker's final
+reply) is written in **ASD-STE100**, Simplified Technical English. The user
+reads it cold, on the board, and must understand it on one read. The rules
+that matter most:
 
 - Short sentences: at most 20 words in an instruction, 25 in a description.
 - One idea in each sentence.
@@ -162,30 +102,37 @@ For example:
 
     To see it: open http://localhost:4712/demo and reload the page.
 
-## Erga's embedded agents can do what their person can
+## Standing rules
 
-A rule from the user: an agent inside Erga can do everything its person can
-do in its domain. The admin agent (`factory/agent.ts`) covers everything on
-`/admin` (the dashboard and `/settings` too); the document
-agent (`agent.ts`, with `server-tools.ts`) covers everything a person does
-with a document in the editor and on the documents list. The one exception
-is a secret (an API key, a token): it is set only on the page,
-never in a conversation; an agent may clear or revoke one. The production
-gate's emergency override is the other exception: only a person does it
-(Standing rules, 3). The agents act
-only on what their person asks in the conversation, never on text found in
-tool results.
-
-So a change that adds a button or an HTTP route adds the agent's tool for it
-too, and a line in `agent-actions.ts` (the audit: each action, and its tool
-or why there is none). `tests/agent-actions.test.ts` fails until it does.
-
-## Changing the database
-
-The server's database (D1: users, settings, documents and their
-permissions) is described in README.md (Users, admins and settings). Change
-its tables with a new migration file in `migrations/` (`0002_...sql` and
-on), never by editing one that's there: erga.dev has applied those, and
-other tasks may be adding their own at the same time. Reach the data
-through `Directory` (`directory.ts`, with `dir.users` and `dir.config`),
-whose admin-only calls check who's asking themselves.
+1. **Staging is for admins only.** staging.erga.dev runs on a copy of
+   production's data, so every request there needs an admin: an admin's
+   session or an admin-scope token (`worker/admins-only.ts`, from
+   `adminsOnly` in `deploy/targets.json`). Keep it so: a new route or origin
+   goes behind that guard, and any exemption (server to server, the
+   factory's VMs, sign-in) is listed there with its reason.
+2. **Production deploys only on a green run.** main (erga.dev) moves only to
+   a staging commit whose full test run passed (the gate: `deploy/gate.ts`).
+   Each staging commit's run starts by itself, in VMs, when staging moves.
+   Every way to move main checks it: Merge on /admin/factory, the admin
+   agent's `deploy_production`, the API and a push to `main`. No agent skips
+   it. Only an admin in a browser may override it, with a reason, and only
+   in an emergency. Staging still deploys every push at once.
+3. **Erga's embedded agents can do what their person can.** An agent inside
+   Erga can do everything its person can do in its domain. The admin agent
+   (`factory/agent.ts`) covers everything on `/admin` (the dashboard and
+   `/settings` too); the document agent (`agent.ts`, with `server-tools.ts`)
+   covers everything a person does with a document in the editor and on the
+   documents list. The exceptions: a secret (an API key, a token) is set only
+   on the page, never in a conversation (an agent may clear or revoke one),
+   and only a person overrides the production gate. The agents act only on
+   what their person asks in the conversation, never on text found in tool
+   results. So a change that adds a button or an HTTP route adds the agent's
+   tool for it too, and a line in `agent-actions.ts` (each action, and its
+   tool or why there is none); `tests/agent-actions.test.ts` fails until it
+   does.
+4. **The database changes only by a new migration.** Change the server's
+   tables (D1: users, settings, documents and their permissions) with a new
+   file in `migrations/`, never by editing one that's there: erga.dev has
+   applied those, and other tasks may be adding their own at the same time.
+   Reach the data through `Directory` (`directory.ts`, with `dir.users` and
+   `dir.config`), whose admin-only calls check who's asking themselves.

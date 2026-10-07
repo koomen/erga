@@ -14,7 +14,7 @@
 //                                                         only if that works write its digest-pinned name
 //                                                         (erga-factory:<tag>@sha256:<digest>) into deploy/targets.json
 //                                                         (factory.image): commit that. --wait: try the start again
-//                                                         every 10 minutes, for up to 90 (README, The factory)
+//                                                         every 10 minutes, for up to 90
 //
 // A new image can take up to an hour after its preparation before Containers starts it; a version that names it
 // before then has VMs that don't start. So the pin moves only after a real start (updatePin, below), and a machine's

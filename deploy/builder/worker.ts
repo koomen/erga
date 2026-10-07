@@ -4,6 +4,9 @@
 // it to the Workers it deploys), and it has no public address
 // (workers_dev off, no routes), so only they can ask it to build.
 //
+// Why a container: a Worker can't run `bun install` or Vite, and Workers Builds
+// connects only GitHub and GitLab repos, not Erga's Artifacts repository.
+//
 // Each build has a container of its own: the pipeline names the build (?id=,
 // deploy/builder/client.ts) and the Durable Object of that name starts a
 // container for it, forwards the request and streams the answer back. When

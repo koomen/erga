@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 // One-time setup for staging.erga.dev, its first deploy, and the narrow
-// Cloudflare tokens Erga's servers deploy themselves with: the README's
-// runbook, as a script. It says what it will do first, then does each step
+// Cloudflare tokens Erga's servers deploy themselves with: the runbook, as a
+// script. It says what it will do first, then does each step
 // only after you say yes. It never deploys erga.dev. On production it sets
 // two secrets (step 7) and, only with --production, production's own deploy
 // token (step 10).
@@ -53,7 +53,10 @@ const dry = flag("--dry-run"), yes = flag("--yes"), tokensOnly = flag("--tokens"
 const mock = process.env.ERGA_DEPLOY_MOCK == "1";
 const STAGING = TARGETS.staging, PROD = TARGETS.production;
 const secret = () => randomBytes(32).toString("hex");
-/** Staging's pages are the zone's own wildcard (*.erga-pages-staging.dev), which the zone's free Universal SSL certificate covers. */
+/**
+ * Staging's pages are the zone's own wildcard (*.erga-pages-staging.dev), which the zone's free Universal SSL certificate covers.
+ * Universal SSL covers only one level below a zone, so *.staging.erga-pages.dev would need a paid advanced certificate.
+ */
 const UNIVERSAL = STAGING.pages.domain == STAGING.pages.zone;
 /** The wrangler that deploys the builder (its containers need a recent one). */
 export const WRANGLER = "wrangler@4.147.0";
@@ -89,7 +92,7 @@ if (flag("--hook-secret")) {
   process.exit(0);
 }
 
-// --factory: the factory's VMs (README, The factory) on staging, and with --production on erga.dev: what a deploy token
+// --factory: the factory's VMs (factory/cloudflare.ts) on staging, and with --production on erga.dev: what a deploy token
 // may not do itself (deploy/tokens.ts gives it no Containers permission). Each step only if it's missing.
 if (flag("--factory")) {
   const accountId = mock ? "0123456789abcdef0123456789abcdef" : process.env.CLOUDFLARE_ACCOUNT_ID?.trim() ?? "";

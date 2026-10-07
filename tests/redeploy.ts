@@ -1,4 +1,4 @@
-// Open pages across a redeploy (README, Redeploys and open pages), in headless
+// Open pages across a redeploy (src/page/live.ts), in headless
 // Chrome: the editor (scrolled, a selection, the help card open, an agent
 // draft with a file attached), the admin Factory page (a task's detail open,
 // an agent draft) and Documents are open when the server restarts.

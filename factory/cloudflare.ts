@@ -7,7 +7,9 @@
 // FACTORY_PREVIEW_DOMAIN, nothing here runs.
 //
 // It needs only the platform's basic container API: start the container,
-// reach a TCP port over HTTP, keep it up while it's idle, destroy it. The
+// reach a TCP port over HTTP, keep it up while it's idle, destroy it. Not the
+// Sandbox SDK: since 1.0 it is only helpers on top (files, R2 mounts,
+// backups), and its 0.x API (exec, exposePort) is legacy. The
 // image's agent (factory/vm/agent.ts, port 8080) runs the jobs, as it does
 // locally, and the preview's relay listens on 4401. The jobs' scripts
 // (factory/vm/*.ts) come with each job, from this Worker's own version, so
@@ -53,7 +55,7 @@ const INSTANCE = "standard-4";
 export class FactoryVm extends DurableObject<Env> {
   private get box(): ContainerApi {
     const c = (this.ctx as unknown as { container?: ContainerApi }).container;
-    if (!c) throw new Error("FactoryVm has no container: the deploy declares it (deploy/targets.json, factory; README, The factory)");
+    if (!c) throw new Error("FactoryVm has no container: the deploy declares it (deploy/targets.json, factory)");
     return c;
   }
 

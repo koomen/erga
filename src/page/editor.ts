@@ -2184,7 +2184,8 @@ export class PageEditor {
 
   /**
    * Track changes: on, every change from now on (yours, the agent's) stays
-   * marked, as a diff against the document as it is now; off, the marks go.
+   * marked, as a diff against the document as it is now (so text typed and
+   * deleted again leaves no trace); off, the marks go.
    */
   setTracking(on: boolean): void {
     if (on == !!this.tracking) return;

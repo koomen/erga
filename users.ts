@@ -124,6 +124,8 @@ export class Users {
   /**
    * Whether `who` may use admin power now: they come with it (Actor.admin: a
    * browser session, or an admin token) and they're an admin, as of now.
+   * isAdmin is asked on every request (remembered REMEMBER_MS), so an admin
+   * made a user loses admin power within seconds, whatever tokens they hold.
    */
   async actsAsAdmin(who: Actor | string): Promise<boolean> {
     if (typeof who == "string" || !who.admin) return false;

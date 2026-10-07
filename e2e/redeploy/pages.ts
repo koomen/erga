@@ -1,4 +1,4 @@
-// Open pages across a redeploy (README, Redeploys and open pages; src/page/live.ts), for the tests in this folder:
+// Open pages across a redeploy (src/page/live.ts), for the tests in this folder:
 // the editor (scrolled, a selection, the help card open, an agent draft with a file attached), the admin Factory
 // page (a task's detail open, an agent draft) and Documents, each open in a tab when the test's own server restarts.
 //

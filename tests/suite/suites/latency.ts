@@ -1,7 +1,8 @@
 // How fast it feels: an edit's trip from one person to another, to a crowd,
 // a newcomer's join, and sustained typing from several people at once.
 // Thresholds default to something reasonable for the target (tighter
-// locally) and can be set with ERGA_SUITE_P95_MS.
+// locally) and can be set with ERGA_SUITE_P95_MS. They are a starting point:
+// on a deployment, set it to what production should meet.
 
 import { converged, Participant } from "../client";
 import { expect, percentile, sleep, until, type Ctx, type Test } from "../harness";
