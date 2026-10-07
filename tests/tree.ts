@@ -341,7 +341,7 @@ try {
 
   // ------------------------------------------------------------ Documents
   await p.open(`${host.root}/docs`, { width: 1100, height: 760, scale: 2, clear: false });
-  expect(!(await p.eval<boolean>(`!!window.ergaTree`)), "Documents doesn't load pages-tree.js until asked");
+  await until(() => p.eval<boolean>(`!!window.ergaTree && !document.querySelector(".et")`), 10_000, "Documents loads pages-tree.js once the list is up, and shows no tree until asked");
   const twist = `button.twist[data-id="${id}"]`, sub = `#pages-${id}`;
   await clickOn(p, twist);
   await until(() => p.eval<boolean>(`document.querySelectorAll("${sub} .et-row[data-path]").length > 0`), 10_000, "the document's pages show beneath it");
@@ -384,6 +384,20 @@ try {
   await until(async () => !(await rows(p)).some((x) => x[0] == "colophon.html"), 15_000, "and goes when the agent deletes it");
   await p.open(`${host.root}/docs`, { width: 1100, height: 760, scale: 2, clear: false, dark: true });
   await until(() => p.eval<boolean>(`document.querySelectorAll("${sub} .et-row[data-path]").length > 0`), 10_000, "it stays open for the tab");
+  // Fast: closed and opened again, its pages are there at once; on the next visit too (each tree's last answer is kept for
+  // the tab), and the area under the row shows at once in any case.
+  const reopen = `(async () => { const b = document.querySelector(${JSON.stringify(twist)}); b.click(); await new Promise((r) => setTimeout(r, 0));
+    return { box: !!document.querySelector("${sub}:not([hidden])"), rows: document.querySelectorAll("${sub} .et-row[data-path]").length }; })()`;
+  await clickOn(p, twist);
+  expect(await p.eval<boolean>(`document.querySelector("${sub}").hidden`), "the chevron closes it");
+  let again = await p.eval<{ box: boolean; rows: number }>(reopen);
+  expect(again.box && again.rows > 0, "opened again, its pages show at once", again);
+  await p.eval(`sessionStorage.removeItem("erga:docs-open"), true`);
+  await p.navigate(`${host.root}/docs`);
+  await until(() => p.eval<boolean>(`!!window.ergaTree`), 10_000, "the tree's script loads once the list is up");
+  again = await p.eval<{ box: boolean; rows: number }>(reopen);
+  expect(again.box && again.rows > 0, "on the next visit, its pages show at once too", again);
+  ok("Documents: a document's pages show at once when opened again, and on the next visit");
   const dark = await p.eval<string>(`getComputedStyle(document.querySelector(".et-row.folder .et-name")).color`);
   expect(dark != "rgb(28, 28, 31)", "dark, it takes the page's dark colours", dark);
   await p.screenshot(join(SHOTS, "tree-docs-dark.png"));

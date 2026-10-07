@@ -2404,7 +2404,13 @@ document's stylesheets, scripts, fonts and images are shared assets, out of sigh
 opened, so viewing never pays for it) shows in two places: in the editor, the
 document's title in the breadcrumbs opens it in a card, the document as its
 first row and everything else under it; on `/docs`, the chevron left of each
-document opens its pages beneath its row. Folders open and close (remembered
+document opens its pages beneath its row. There they show at once: `/docs` loads
+`pages-tree.js` once its list is up and the tab is idle, reads a document's
+pages while the pointer rests on its row (or its chevron is focused or
+touched), and keeps each document's last answer for the tab, so a document
+opened again, or on the next visit, shows its pages straight away and reads
+them again behind (closed and opened within 4 seconds, not even that).
+Folders open and close (remembered
 for the tab); pages show by their title when it's known (in the editor,
 read from the room as they're edited; "Untitled" counts as none), else by
 their name made readable ("spring-migration" is "Spring migration", a
