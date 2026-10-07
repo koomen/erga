@@ -60,8 +60,11 @@ export async function openFonts(tab: Tab, dark = false): Promise<Editor> {
   copyFileSync(FONT, join(dir, "local.woff2"));
   writeFileSync(join(dir, "index.html"), page(port));
   const address = await s.open(dir);
-  // The page asks for missing.woff2 on purpose: the one error it may have.
-  tab.strict = false;
+  // Any page error fails the test, but for the 404 of missing.woff2, which the page asks for on purpose (Chrome's
+  // message doesn't name the file).
+  tab.strict = true;
+  const push = tab.errors.push.bind(tab.errors);
+  tab.errors.push = (...e: string[]) => push(...e.filter((x) => !/^console\.error: Failed to load resource: the server responded with a status of 404/.test(x)));
   await tab.page.setViewportSize({ width: 1100, height: 800 });
   await tab.page.emulateMedia({ colorScheme: dark ? "dark" : "light" });
   // Someone who keeps the agent pane closed (the window it renders at is the frame's whole width).
