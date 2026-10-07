@@ -112,6 +112,14 @@ export function editor(page: Page, doc: { address: string; dir: string; file: st
     /** After a (re)load: the shell is up, the page rendered, the agent's status in. */
     loaded: () => until(async () => await page.evaluate(`!!window.ergaPage && !!document.getElementById("agent-model")?.textContent`) && await ed.frame<boolean>(`!!${F}?.querySelector("[data-erga-id]")`), 10_000, "the editor loads"),
     settle: () => settle(page),
+    /**
+     * After a change to the page's structure (an indent, a join, an undo): the page has rendered it and put the caret
+     * back in a unit. Keys sent before that can be lost (tests/page.ts waited a fixed 120 ms after each).
+     */
+    async idle() {
+      await settle(page);
+      await until(() => ed.frame<boolean>(`!ergaFrame.page.rendering && (!ergaFrame.relay || ergaFrame.relay.idle) && !!${F}.activeElement?.closest("[data-erga-id]")`), 5000, "the editor to settle");
+    },
     /** The file on disk. */
     disk: () => readFileSync(doc.file, "utf8"),
     write: (text: string) => writeFileSync(doc.file, text),
