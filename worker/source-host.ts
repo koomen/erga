@@ -9,6 +9,7 @@
 import { DurableObject } from "cloudflare:workers";
 import { deployHook, publishEvent } from "../deploy/index";
 import { ZERO } from "../source/git";
+import { byLine } from "../attribution";
 import { SourceError, SourceRepo, type Actor } from "../source/repo";
 import { artifactsRemote, githubRemote } from "./artifacts";
 import { directoryOf, keptKeys } from "./d1";
@@ -41,12 +42,12 @@ export class SourceHost extends DurableObject<Env> {
       github: () => githubRemote(keys(), this.origin),
       moved: (m) => {
         ctx.waitUntil(publishEvent({ type: "source", branch: m.branch, commit: m.new }, env).catch(() => {}));
-        ctx.waitUntil(deployHook(m.branch, m.new, env, `${m.how} by ${m.by}`).catch((e) => console.error(`deploy hook (${m.branch}):`, e)));
+        ctx.waitUntil(deployHook(m.branch, m.new, env, `${m.how} by ${byLine(m.by, m.via)}`).catch((e) => console.error(`deploy hook (${m.branch}):`, e)));
         // main moved: the production deploy, in the change log (/admin/changes), with the commits it brought.
         if (m.branch == "main") {
           ctx.waitUntil((async () => {
             const change = { key: "main", from: m.old == ZERO ? null : m.old, to: m.new, release: this.repo.newCommits(m.old, m.new) };
-            await directoryOf(env).config.record(m.by, [change], m.at);
+            await directoryOf(env).config.record(m.by, [change], m.at, m.via ?? null);
           })().catch((e) => console.error("change log (main):", e)));
         }
       },
@@ -73,7 +74,8 @@ export class SourceHost extends DurableObject<Env> {
 
   advertise(origin: string, grant?: GitGrant) { return this.at(origin).advertise(grant); }
   branches(origin: string) { return this.at(origin).branches(); }
-  mirrorNow(origin: string) { return this.at(origin).mirror(); }
+  /** `by`: who asked (attribution.ts, byLine). */
+  mirrorNow(origin: string, by?: string) { return this.at(origin).mirror(by); }
   files(origin: string, commit: string) { return this.at(origin).files(commit); }
 
   /** The factory's agent reading the source (source/browse.ts): the answer, or { error } it can act on. */

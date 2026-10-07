@@ -46,3 +46,6 @@ export function parseByLine(line: string): { by: string; via: string | null } {
 export function changeLogEntry(at: number, by: string, via: string | null | undefined, changes: object[]): [string, number, string, string, string | null] {
   return ["INSERT INTO server_config_versions (at, by, changes, via) VALUES (?1, ?2, ?3, ?4)", at, by.toLowerCase(), JSON.stringify(changes), via ?? null];
 }
+
+/** Someone acting: their login, and how when not in person (VIA). */
+export interface Act { login: string; via?: string | null }

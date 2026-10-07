@@ -203,7 +203,7 @@ export const TOOLS: ServerTool[] = [
     description: "Turns one of the person's agent tokens off, by id (list_tokens). Revoking your own ends your access.",
     parameters: { type: "object", properties: { id: str("The token's id.") }, required: ["id"] },
     run: async (args, { session, platform }) => {
-      if (!(await platform.tokens.revoke(session.login, String(args.id ?? "")))) throw new ToolError(`You have no token "${args.id}".`, 404);
+      if (!(await platform.tokens.revoke(session.login, String(args.id ?? ""), whoOf(session).via))) throw new ToolError(`You have no token "${args.id}".`, 404);
       return { revoked: args.id };
     },
   },

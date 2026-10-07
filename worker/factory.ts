@@ -97,7 +97,7 @@ import { branchName, claudeToken, hideTokens, resolvePrompt, restartPrompt, task
 import { type Stalled, stalledOf } from "../factory/stall";
 import { whoOf } from "../front";
 import { sessionOf } from "./auth";
-import { agentName } from "../src/room/doc";
+import { byLine, SYSTEM, VIA, type Act } from "../attribution";
 import { checkAttachments } from "../src/page/attach";
 import { directoryOf, factoryKey, tokensOf, withKeys } from "./d1";
 import { forgetHome } from "./home";
@@ -118,7 +118,7 @@ export interface Task {
   /** The task's preview, where the user opens it (null until the VM says it's up, and after the VM stops). */
   url: string | null;
   vm: string | null;
-  /** Who added it, as the board says it: an admin, or their agent ("koomen’s agent"). */
+  /** Who added it, as the board says it (attribution.ts, byLine): the person, and how ("koomen, via their admin agent"). */
   by: string;
   /** The person who added it (their login), in person or through an agent: the author of the task's commits. Null for a task from before. */
   person: string | null;
@@ -156,11 +156,11 @@ export const gitSecret = (env: Env) => env.ERGA_LINK_SECRET || factoryKey(env);
  * A git token for the repository: pushes `branch` only, for two hours; or, a merge's, that and one move of staging to
  * the merge itself (factory/git-grant.ts, mergeShape), for as long as the merge job may take. `by`: the admin who asked.
  */
-export async function gitToken(env: Env, scope: "task" | "merge", branch: string, by?: string): Promise<string> {
+export async function gitToken(env: Env, scope: "task" | "merge", branch: string, by?: string, via?: string): Promise<string> {
   const secret = gitSecret(env);
   if (!secret) throw new Error("FACTORY_KEY isn't set");
   const life = scope == "merge" ? MERGE_JOB_MS / 1000 + 300 : 7200;
-  const body = b64url(JSON.stringify({ scope, branch, exp: Math.floor(Date.now() / 1000) + life, ...(by ? { by } : {}), ...(scope == "merge" ? { id: crypto.randomUUID() } : {}) }));
+  const body = b64url(JSON.stringify({ scope, branch, exp: Math.floor(Date.now() / 1000) + life, ...(by ? { by } : {}), ...(via ? { via } : {}), ...(scope == "merge" ? { id: crypto.randomUUID() } : {}) }));
   return `fgt.${body}.${hex(await hmac(await hmac(secret, "erga-factory-git"), body))}`;
 }
 
@@ -251,14 +251,18 @@ async function vmsInfo(env: Env, origin: string): Promise<{ runner: string; bran
 type Row = {
   id: number; title: string; description: string; status: Status; branch: string; base: string | null; commit_sha: string | null;
   summary: string | null; error: string | null; preview_origin: string | null; preview_path: string | null; vm: string | null;
-  origin: string; by_login: string; created: string; updated: string; merged_at: string | null; merge_commit: string | null; instructions: string | null;
+  origin: string; by_login: string;
+  /** How by_login added it, when not in person (attribution.ts); null in person, and before #69. */
+  by_via: string | null;
+  created: string; updated: string; merged_at: string | null; merge_commit: string | null; instructions: string | null;
   /** JSON lists of task ids, or null. */
   start_after: string | null; merge_after: string | null;
-  /** Who pressed Merge, while the merge goes on (it continues by itself after "needs agent"). */
+  /** Who pressed Merge (a login), and how (merge_via), while the merge goes on (it continues by itself after "needs agent"). */
   merge_by: string | null;
+  merge_via: string | null;
   /** The id of the task's current run of Claude Code (run.ts): a report from another run is refused. */
   run: string | null;
-  /** JSON: every instruction the user sent ("Send to Claude Code"), [{ at, by, text }], for a restart's brief. */
+  /** JSON: every instruction the user sent ("Send to Claude Code"), [{ at, by, via?, text }], for a restart's brief. */
   asked: string | null;
   /** The person who added it (a login): its commits' author, whether they added it themselves or through an agent. Null before #68. */
   person: string | null;
@@ -270,7 +274,7 @@ type TokenRow = { id: string; hash: string; login: string; name: string; label: 
 export interface TokenView { id: string; login: string; label: string; created: number; expires: number; revoked: number | null; revokedBy: string | null; lastUsed: number | null }
 
 const list = (json: string | null): number[] => { try { const v = JSON.parse(json ?? "[]"); return Array.isArray(v) ? v.map(Number) : []; } catch { return []; } };
-const asked = (r: Row): { at: string; by: string; text: string }[] => { try { const v = JSON.parse(r.asked ?? "[]"); return Array.isArray(v) ? v : []; } catch { return []; } };
+const asked = (r: Row): { at: string; by: string; via?: string | null; text: string }[] => { try { const v = JSON.parse(r.asked ?? "[]"); return Array.isArray(v) ? v : []; } catch { return []; } };
 // "needs agent" is a merge that hasn't happened yet: to the dependency rules, a task that isn't merged or merging.
 const depOf = (r: Row): DepTask => ({ id: r.id, status: r.status as DepStatus, startAfter: list(r.start_after), mergeAfter: list(r.merge_after) });
 
@@ -313,17 +317,19 @@ export class Factory extends DurableObject<Env> {
     this.sql.exec(`CREATE TABLE IF NOT EXISTS agent_prefs (login TEXT PRIMARY KEY, prefs TEXT NOT NULL, updated INTEGER NOT NULL)`);
     // Dependencies (#49), on a table made before them.
     const cols = this.sql.exec<{ name: string }>("PRAGMA table_info(tasks)").toArray().map((c) => c.name);
-    for (const c of ["start_after", "merge_after", "merge_by", "run", "asked", "person"]) if (!cols.includes(c)) this.sql.exec(`ALTER TABLE tasks ADD COLUMN ${c} TEXT`);
+    for (const c of ["start_after", "merge_after", "merge_by", "run", "asked", "person", "by_via", "merge_via"]) if (!cols.includes(c)) this.sql.exec(`ALTER TABLE tasks ADD COLUMN ${c} TEXT`);
+    // How each instruction's sender sent it (#69).
+    if (!this.sql.exec<{ name: string }>("PRAGMA table_info(asks)").toArray().some((c: { name: string }) => c.name == "via")) this.sql.exec("ALTER TABLE asks ADD COLUMN via TEXT");
     // A merge the object was stopped in the middle of goes back to ready to merge, saying so.
     for (const r of this.sql.exec<Row>("SELECT * FROM tasks WHERE status = 'merging'").toArray()) {
-      this.update(r.id, { status: "complete", error: "The merge was stopped in the middle (the factory restarted). Merge again." });
+      this.update(r.id, { status: "complete", error: "The merge was stopped in the middle (the factory restarted). Merge again." }, "The merge stopped: the factory restarted (by the system)");
     }
     // Every task starts by itself, with no button: when it is added, or when the tasks it waits for merge. One whose VM
     // was starting when the object stopped (each merge deploys staging, which restarts it) is still queued with no VM:
     // it starts again here.
     for (const { id } of this.sql.exec<{ id: number }>("SELECT id FROM tasks WHERE status = 'queued' AND vm IS NULL").toArray()) {
       if (this.deps.unmetStart(depOf(this.row(id)!)).length) continue;
-      this.note(id, "Starting again: the factory restarted before the task's VM started");
+      this.note(id, `Starting again, as ${byLine(this.row(id)!.person ?? SYSTEM)} set it up: the factory restarted before the task's VM started`);
       this.begin(id);
     }
   }
@@ -340,7 +346,7 @@ export class Factory extends DurableObject<Env> {
     return {
       id: r.id, title: r.title, description: r.description, status: r.status, branch: r.branch, base: r.base, commit: r.commit_sha,
       summary: r.summary, error: r.error, url: r.preview_origin && r.preview_path != null ? r.preview_origin + r.preview_path : null,
-      vm: r.vm, by: r.by_login, person: r.person, createdAt: r.created, updatedAt: r.updated, mergedAt: r.merged_at, mergeCommit: r.merge_commit, log, screenshots,
+      vm: r.vm, by: byLine(r.by_login, r.by_via), person: r.person, createdAt: r.created, updatedAt: r.updated, mergedAt: r.merged_at, mergeCommit: r.merge_commit, log, screenshots,
       startAfter: list(r.start_after), mergeAfter: list(r.merge_after),
       ...(this.deps.blocked(depOf(r)) ? { blockedBy: this.deps.blocked(depOf(r)) } : {}),
       ...(this.starting.has(r.id) ? { starting: true } : {}),
@@ -354,7 +360,7 @@ export class Factory extends DurableObject<Env> {
 
   /** The instructions that wait for the task's Claude Code, oldest first. */
   private waiting(id: number): Ask[] {
-    return this.sql.exec<Ask>("SELECT n, by_login AS by, text, at FROM asks WHERE task = ? AND taken IS NULL ORDER BY n", id).toArray();
+    return this.sql.exec<Ask>("SELECT n, by_login AS by, via, text, at FROM asks WHERE task = ? AND taken IS NULL ORDER BY n", id).toArray();
   }
 
   /** Takes the instructions that wait, each one once, so that two runs never both get one. */
@@ -365,7 +371,7 @@ export class Factory extends DurableObject<Env> {
   }
 
   /** What a VM polls (run.ts): how many instructions wait, and since when. */
-  async inbox(id: number) { return { waiting: this.waiting(id).map(({ n, by, at }) => ({ n, by, at })) }; }
+  async inbox(id: number) { return { waiting: this.waiting(id).map(({ n, by, via, at }) => ({ n, by: byLine(by, via), at })) }; }
 
   /** The task's Claude Code takes the instructions that wait (the VM's hook, as a step ends, or run.ts, as it starts Claude Code). */
   async take(id: number, how: string): Promise<{ asks: Ask[]; text: string }> {
@@ -389,9 +395,9 @@ export class Factory extends DurableObject<Env> {
     this.changed(id);
   }
 
-  /** A line in the change log (/admin/changes), by `by`; a failure there is logged, never the caller's. */
-  private async logged(by: string, change: SettingChange) {
-    try { await directoryOf(this.env).config.record(by, [change]); } catch (e) { console.log(`couldn't write the change log: ${e}`); }
+  /** A line in the change log (/admin/changes), by `by` (their login, and how); a failure there is logged, never the caller's. */
+  private async logged(by: Act, change: SettingChange) {
+    try { await directoryOf(this.env).config.record(by.login, [change], Date.now(), by.via ?? null); } catch (e) { console.log(`couldn't write the change log: ${e}`); }
   }
 
   private note(id: number, message: string) {
@@ -401,22 +407,22 @@ export class Factory extends DurableObject<Env> {
   }
 
   /**
-   * A new task. `by`: who the board says added it (an admin, or their agent); `user`: the admin to credit in the
-   * change log (/admin/changes), the one who prompted the agent (`by` when not given); `via`: how, when not in person.
-   * The task's person (its commits' author) is `user`, or `by`.
+   * A new task. `by`: the admin who added it (their login: the task's person, its commits' author, and the change
+   * log's), and how, when not in person (attribution.ts: their admin agent, a shared agent).
    */
-  async add(input: { title: string; description: string; by: string; user?: string; via?: string; origin: string; startAfter?: unknown; mergeAfter?: unknown }): Promise<Task> {
+  async add(input: { title: string; description: string; by: Act; origin: string; startAfter?: unknown; mergeAfter?: unknown }): Promise<Task> {
     const title = input.title.trim().slice(0, 200), description = input.description.trim().slice(0, 20000);
     if (!title) throw new Error("A task needs a title.");
     // A new task can't be in a cycle: nothing waits for it yet.
     const deps = this.deps.depChanges(Object.fromEntries(Object.entries({ startAfter: input.startAfter, mergeAfter: input.mergeAfter }).filter(([, v]) => v !== undefined)));
     if (typeof deps == "string") throw new Error(deps);
     const at = now();
-    const id = this.sql.exec<{ id: number }>(`INSERT INTO tasks (title, description, status, branch, origin, by_login, person, created, updated, start_after, merge_after) VALUES (?, ?, 'queued', '', ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
-      title, description || title, input.origin, input.by, (input.user ?? input.by).toLowerCase(), at, at, deps.startAfter ? JSON.stringify(deps.startAfter) : null, deps.mergeAfter ? JSON.stringify(deps.mergeAfter) : null).one().id;
+    const login = input.by.login.toLowerCase();
+    const id = this.sql.exec<{ id: number }>(`INSERT INTO tasks (title, description, status, branch, origin, by_login, by_via, person, created, updated, start_after, merge_after) VALUES (?, ?, 'queued', '', ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+      title, description || title, input.origin, login, input.by.via ?? null, login, at, at, deps.startAfter ? JSON.stringify(deps.startAfter) : null, deps.mergeAfter ? JSON.stringify(deps.mergeAfter) : null).one().id;
     this.sql.exec("UPDATE tasks SET branch = ? WHERE id = ?", branchName(id, title), id);
-    this.note(id, `Added by ${input.by}${depsNote(deps)}`);
-    await this.logged(input.user ?? input.by, { key: "task", from: null, to: null, task: { id, title, event: "added" }, ...(input.via ? { via: input.via } : {}) });
+    this.note(id, `Added by ${byLine(login, input.by.via)}${depsNote(deps)}`);
+    await this.logged(input.by, { key: "task", from: null, to: null, task: { id, title, event: "added" } });
     const waiting = this.deps.unmetStart(depOf(this.row(id)!));
     if (waiting.length) this.note(id, `Queued: waiting for ${ids(waiting)} to merge (no VM until then)`);
     else this.begin(id);
@@ -431,7 +437,7 @@ export class Factory extends DurableObject<Env> {
   }
 
   /** Changes a task's dependencies (startAfter, mergeAfter: lists of ids; null or [] clears one). */
-  async setDeps(id: number, body: Record<string, unknown>, by: string, origin?: string): Promise<{ ok: boolean; error?: string; status?: number }> {
+  async setDeps(id: number, body: Record<string, unknown>, by: Act, origin?: string): Promise<{ ok: boolean; error?: string; status?: number }> {
     if (origin) this.sql.exec("UPDATE tasks SET origin = ? WHERE id = ?", origin, id);
     const r = this.row(id);
     if (!r) return { ok: false, error: "no such task", status: 404 };
@@ -443,7 +449,7 @@ export class Factory extends DurableObject<Env> {
     const fields: Partial<Record<keyof Row, string | null>> = {};
     if ("startAfter" in deps) fields.start_after = deps.startAfter ? JSON.stringify(deps.startAfter) : null;
     if ("mergeAfter" in deps) fields.merge_after = deps.mergeAfter ? JSON.stringify(deps.mergeAfter) : null;
-    this.update(id, fields, `Dependencies (${by}): ${depsNote(next).replace(/^ \(|\)$/g, "") || "none"}`);
+    this.update(id, fields, `Dependencies (${byLine(by.login, by.via)}): ${depsNote(next).replace(/^ \(|\)$/g, "") || "none"}`);
     this.startUnblocked([id]);
     return { ok: true };
   }
@@ -531,19 +537,19 @@ export class Factory extends DurableObject<Env> {
    * What a job in the task's VM gets: where to report and with what, the repository, and for a job that runs Claude
    * Code (`claude`), the Claude token when there is one. The others (merge, save, stop, discard) never get it.
    */
-  private async jobEnv(id: number, scope: "task" | "merge", by?: string, claude = false): Promise<Record<string, string>> {
+  private async jobEnv(id: number, scope: "task" | "merge", by?: Act, claude = false): Promise<Record<string, string>> {
     const r = this.row(id)!;
     const host = vmHost(this.env, r.origin) as VmHost;
     const token = claude ? await this.claudeToken() : null;
     // The task's person authors its commits (Claude Code's, and "Merge staging into ..."); whoever pressed Merge, the
     // merge into staging. The factory is always the committer.
     const author = r.person ? await this.identity(r.person) : FACTORY_IDENTITY;
-    const merger = scope == "merge" && by ? await this.identity(by) : null;
+    const merger = scope == "merge" && by ? await this.identity(by.login) : null;
     return {
       GIT_AUTHOR_NAME: author.name, GIT_AUTHOR_EMAIL: author.email, GIT_COMMITTER_NAME: FACTORY_IDENTITY.name, GIT_COMMITTER_EMAIL: FACTORY_IDENTITY.email,
       ...(merger ? { FACTORY_MERGE_AUTHOR_NAME: merger.name, FACTORY_MERGE_AUTHOR_EMAIL: merger.email } : {}),
       FACTORY_API: `${r.origin}/api/factory`, FACTORY_TASK: String(id), FACTORY_TOKEN: await taskToken(this.env, id),
-      REPO_URL: host.repo(r.origin), REPO_TOKEN: await gitToken(this.env, scope, r.branch, by ?? r.by_login),
+      REPO_URL: host.repo(r.origin), REPO_TOKEN: await gitToken(this.env, scope, r.branch, by?.login ?? r.person ?? r.by_login, VIA.factory(id)),
       FACTORY_MODEL: String((await directoryOf(this.env).config.get("factory_model")) ?? "opus"),
       FACTORY_FAST: (await directoryOf(this.env).config.get("factory_fast")) == "off" ? "0" : "1",
       // ./test.sh and the browser tests, in a 4-vCPU VM that Claude Code and the preview share: one test file at a
@@ -561,7 +567,7 @@ export class Factory extends DurableObject<Env> {
   async brief(id: number) {
     const r = this.row(id);
     if (!r) return null;
-    return { title: r.title, branch: r.branch, base: "staging", prompt: taskPrompt({ ...r, base: "staging" }), instructions: r.instructions, restart: restartPrompt(r, asked(r)), maxTurns: 200 };
+    return { title: r.title, branch: r.branch, base: "staging", prompt: taskPrompt({ ...r, base: "staging" }), instructions: r.instructions, restart: restartPrompt(r, asked(r).map((a) => ({ ...a, by: byLine(a.by, a.via) }))), maxTurns: 200 };
   }
 
   /** A VM's report on its task. */
@@ -591,7 +597,7 @@ export class Factory extends DurableObject<Env> {
           if (body.status == "complete") {
             this.update(id, { status: "merging", error: null, commit_sha: body.commit ? String(body.commit) : r.commit_sha }, `Claude Code: ${String(body.summary ?? "done").slice(0, 1500)}`);
             this.note(id, "The merge goes on");
-            this.queueMerge(id, r.merge_by ?? r.by_login);
+            this.queueMerge(id, r.merge_by ? { login: r.merge_by, via: r.merge_via } : { login: r.person ?? r.by_login, via: r.by_via });
           } else if (body.status == "failed") this.backToReady(id, `Claude Code couldn't finish the merge: ${String(body.error ?? "failed")}`);
           else return { ok: false, error: "status: complete or failed" };
           return { ok: true };
@@ -627,7 +633,7 @@ export class Factory extends DurableObject<Env> {
     return { ok: true };
   }
 
-  async revise(id: number, instructions: string, by: string, origin?: string): Promise<{ ok: boolean; error?: string }> {
+  async revise(id: number, instructions: string, by: Act, origin?: string): Promise<{ ok: boolean; error?: string }> {
     // The server as the person asking reaches it now (it can move: another port locally).
     if (origin) this.sql.exec("UPDATE tasks SET origin = ? WHERE id = ?", origin, id);
     const r = this.row(id);
@@ -636,9 +642,9 @@ export class Factory extends DurableObject<Env> {
     if (!instructions.trim()) return { ok: false, error: "Say what to change." };
     if (r.status == "working") {
       // Claude Code works on, and gets them when its current step ends (the VM's hook): nothing it did is lost.
-      this.sql.exec("INSERT INTO asks (task, by_login, text, at) VALUES (?, ?, ?, ?)", id, by, instructions.trim().slice(0, 20000), now());
-      this.update(id, { asked: JSON.stringify([...asked(r), { at: now(), by, text: instructions.trim().slice(0, 20000) }]) });
-      this.note(id, `${by} asked, while it works: ${instructions.trim().slice(0, 500)}`);
+      this.sql.exec("INSERT INTO asks (task, by_login, via, text, at) VALUES (?, ?, ?, ?, ?)", id, by.login, by.via ?? null, instructions.trim().slice(0, 20000), now());
+      this.update(id, { asked: JSON.stringify([...asked(r), { at: now(), by: by.login, ...(by.via ? { via: by.via } : {}), text: instructions.trim().slice(0, 20000) }]) });
+      this.note(id, `${byLine(by.login, by.via)} asked, while it works: ${instructions.trim().slice(0, 500)}`);
       return { ok: true };
     }
     const why = this.deps.startRefusal(depOf(r));
@@ -646,7 +652,7 @@ export class Factory extends DurableObject<Env> {
     // Any sent while it worked that its Claude Code never got (its VM stopped first) go with them.
     const older = joinAsks(this.takeAsks(id));
     const text = instructions.trim().slice(0, 20000);
-    this.update(id, { instructions: (older ? older + "\n\n" : "") + text, asked: JSON.stringify([...asked(r), { at: now(), by, text }]), status: "working", error: null }, `${by} asked: ${instructions.trim().slice(0, 500)}`);
+    this.update(id, { instructions: (older ? older + "\n\n" : "") + text, asked: JSON.stringify([...asked(r), { at: now(), by: by.login, ...(by.via ? { via: by.via } : {}), text }]), status: "working", error: null }, `${byLine(by.login, by.via)} asked: ${instructions.trim().slice(0, 500)}`);
     this.ctx.waitUntil(this.launch(id, "revise"));
     return { ok: true };
   }
@@ -657,7 +663,7 @@ export class Factory extends DurableObject<Env> {
    * (merge.ts save: Claude Code and the preview stopped, anything uncommitted committed, the branch pushed), then stops.
    * Claude Code starts in a new session with the task's prompt and every instruction the user sent (restartPrompt).
    */
-  async restart(id: number, by: string, origin?: string): Promise<{ ok: boolean; error?: string }> {
+  async restart(id: number, by: Act, origin?: string): Promise<{ ok: boolean; error?: string }> {
     // The server as the person asking reaches it now (it can move: another port locally).
     if (origin) this.sql.exec("UPDATE tasks SET origin = ? WHERE id = ?", origin, id);
     const r = this.row(id);
@@ -667,7 +673,7 @@ export class Factory extends DurableObject<Env> {
     if (why) return { ok: false, error: why };
     // A queued task that never ran has nothing to restart: it starts (again, if its VM was starting).
     if (r.status == "queued" && !r.vm) {
-      if (!this.starting.has(id)) this.note(id, `Started by ${by}`);
+      if (!this.starting.has(id)) this.note(id, `Started by ${byLine(by.login, by.via)}`);
       this.begin(id);
       return { ok: true };
     }
@@ -678,8 +684,8 @@ export class Factory extends DurableObject<Env> {
     this.takeAsks(id);
     // No run is current any more: the old Claude Code's reports are refused from now on. A merge that is running sees
     // the task isn't merging any more, and does nothing with its answer.
-    this.update(id, { status: "working", error: null, run: null, merge_by: null, vm: null, preview_origin: null, preview_path: null },
-      `Restarted by ${by} (the task was ${was}): ${r.vm ? `the work in VM ${r.vm} is saved, then a fresh VM` : "a fresh VM"} starts Claude Code with the task's prompt and ${asked(r).length} earlier instruction${asked(r).length == 1 ? "" : "s"}`);
+    this.update(id, { status: "working", error: null, run: null, merge_by: null, merge_via: null, vm: null, preview_origin: null, preview_path: null },
+      `Restarted by ${byLine(by.login, by.via)} (the task was ${was}): ${r.vm ? `the work in VM ${r.vm} is saved, then a fresh VM` : "a fresh VM"} starts Claude Code with the task's prompt and ${asked(r).length} earlier instruction${asked(r).length == 1 ? "" : "s"}`);
     this.ctx.waitUntil((async () => {
       const host = vmHost(this.env, r.origin);
       if (r.vm && typeof host != "string") {
@@ -711,7 +717,7 @@ export class Factory extends DurableObject<Env> {
     }
   }
 
-  async merge(id: number, by: string, origin?: string): Promise<{ ok: boolean; error?: string }> {
+  async merge(id: number, by: Act, origin?: string): Promise<{ ok: boolean; error?: string }> {
     // The server as the person asking reaches it now (it can move: another port locally).
     if (origin) this.sql.exec("UPDATE tasks SET origin = ? WHERE id = ?", origin, id);
     const r = this.row(id);
@@ -721,19 +727,20 @@ export class Factory extends DurableObject<Env> {
     const why = this.deps.mergeRefusal(depOf(r));
     if (why) return { ok: false, error: why };
     const waiting = this.sql.exec<{ n: number }>("SELECT count(*) AS n FROM tasks WHERE status = 'merging'").one().n;
-    this.update(id, { status: "merging", error: null, merge_by: by }, waiting ? `Merge requested by ${by}: waiting for ${waiting} merge${waiting > 1 ? "s" : ""} first` : `Merge requested by ${by}`);
+    const who = byLine(by.login, by.via);
+    this.update(id, { status: "merging", error: null, merge_by: by.login, merge_via: by.via ?? null }, waiting ? `Merge requested by ${who}: waiting for ${waiting} merge${waiting > 1 ? "s" : ""} first` : `Merge requested by ${who}`);
     this.queueMerge(id, by);
     return { ok: true };
   }
 
   /** The task's merge, after the ones asked for before it (one at a time). */
-  private queueMerge(id: number, by: string) {
+  private queueMerge(id: number, by: Act) {
     const run = this.merges.then(() => this.doMerge(id, by));
     this.merges = run.catch(() => {});
     this.ctx.waitUntil(run);
   }
 
-  private async doMerge(id: number, by: string) {
+  private async doMerge(id: number, by: Act) {
     const r = this.row(id)!;
     // Discarded meanwhile (while it waited for its turn).
     if (r.status != "merging") return;
@@ -763,7 +770,7 @@ export class Factory extends DurableObject<Env> {
       }
       if (!res.ok) return this.backToReady(id, `The merge failed: ${res.error}`);
       await host.stop(vm).catch(() => {});
-      this.update(id, { status: "merged", merged_at: now(), merge_commit: String(res.commit), vm: null, preview_origin: null, merge_by: null }, `Merged into staging as ${String(res.commit).slice(0, 10)}; ${r.branch} deleted; VM stopped`);
+      this.update(id, { status: "merged", merged_at: now(), merge_commit: String(res.commit), vm: null, preview_origin: null, merge_by: null, merge_via: null }, `Merged into staging as ${String(res.commit).slice(0, 10)}; ${r.branch} deleted; VM stopped`);
       await this.logged(by, { key: "task", from: null, to: null, task: { id, title: r.title, event: "merged", commit: String(res.commit) } });
       this.tellDependents(id);
       // Staging moved. On Cloudflare the push went through Erga's Git endpoint, which tells the deploy pipeline itself
@@ -777,13 +784,13 @@ export class Factory extends DurableObject<Env> {
     }
   }
 
-  async discard(id: number, by: string, origin?: string): Promise<{ ok: boolean; error?: string }> {
+  async discard(id: number, by: Act, origin?: string): Promise<{ ok: boolean; error?: string }> {
     // The server as the person asking reaches it now (it can move: another port locally).
     if (origin) this.sql.exec("UPDATE tasks SET origin = ? WHERE id = ?", origin, id);
     const r = this.row(id);
     if (!r) return { ok: false, error: "no such task" };
     if (["merging", "merged", "discarded"].includes(r.status)) return { ok: false, error: `task #${id} is ${r.status}` };
-    this.update(id, { status: "discarded", preview_origin: null }, `Discarded by ${by}`);
+    this.update(id, { status: "discarded", preview_origin: null }, `Discarded by ${byLine(by.login, by.via)}`);
     this.tellDependents(id);
     // A queued task that never started has no VM and no branch to delete.
     if (r.status == "queued" && !r.vm && !this.starting.has(id)) return { ok: true };
@@ -845,15 +852,19 @@ export class Factory extends DurableObject<Env> {
     return { signedIn: !!r, at: r?.at ?? null, by: r?.by_login ?? null, canStore: !!factoryKey(this.env) };
   }
 
-  async setClaude(token: string | null, by: string): Promise<{ ok: boolean; error?: string }> {
-    if (token == null) { this.sql.exec("DELETE FROM secrets WHERE name = 'claude'"); return { ok: true }; }
+  async setClaude(token: string | null, by: Act): Promise<{ ok: boolean; error?: string }> {
+    const had = (await this.claude()).signedIn;
+    // In the change log, as an API key's change is (never the token).
+    const log = (credential: "set" | "replaced" | "cleared") => this.logged(by, { key: "CLAUDE_CODE_OAUTH_TOKEN", from: null, to: null, credential });
+    if (token == null) { this.sql.exec("DELETE FROM secrets WHERE name = 'claude'"); if (had) await log("cleared"); return { ok: true }; }
     if (!factoryKey(this.env)) return { ok: false, error: "This server has no FACTORY_KEY to encrypt the token with: bun deploy/setup.ts --factory makes it (README, The factory, On Cloudflare)." };
     const checked = claudeToken(token);
     if ("error" in checked) return { ok: false, error: checked.error };
     token = checked.token;
     const iv = crypto.getRandomValues(new Uint8Array(12));
     const data = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv }, await aes(this.env), enc.encode(token)));
-    this.sql.exec("INSERT OR REPLACE INTO secrets (name, iv, data, by_login, at) VALUES ('claude', ?, ?, ?, ?)", iv, data, by, now());
+    this.sql.exec("INSERT OR REPLACE INTO secrets (name, iv, data, by_login, at) VALUES ('claude', ?, ?, ?, ?)", iv, data, by.login, now());
+    await log(had ? "replaced" : "set");
     return { ok: true };
   }
 
@@ -886,7 +897,8 @@ export class Factory extends DurableObject<Env> {
     if ("missing" in cfg) return cfg.missing;
     let s = this.agents.get(login);
     if (s) { s.origin = origin; return s; }
-    const by = agentName(login);
+    // What the agent does is its admin's, via it (attribution.ts): the task's log and the change log say so.
+    const by: Act = { login, via: VIA.admin };
     const on = async () => {
       if ((await directoryOf(this.env).config.get("factory")) != "on") throw new Error("The factory is off: an admin turns it on with the factory setting (/admin).");
     };
@@ -898,25 +910,25 @@ export class Factory extends DurableObject<Env> {
       },
       list: () => this.list(),
       task: (id) => this.task(id),
-      add: async (input) => { await on(); return this.add({ ...input, by, user: login, via: "the factory's agent", origin: state.origin }); },
+      add: async (input) => { await on(); return this.add({ ...input, by, origin: state.origin }); },
       setDeps: async (id, body) => { await on(); return this.setDeps(id, body, by, state.origin); },
       revise: async (id, instructions) => { await on(); return this.revise(id, instructions, by, state.origin); },
       shot: (file) => this.shot(file),
-      // The board's buttons, as the admin themselves (the task's log and the change log name them, as when they click).
-      merge: async (id) => { await on(); return this.merge(id, login, state.origin); },
-      discard: async (id) => { await on(); return this.discard(id, login, state.origin); },
-      restart: async (id) => { await on(); return this.restart(id, login, state.origin); },
+      // The board's buttons, as the admin, via their agent (the task's log and the change log say so).
+      merge: async (id) => { await on(); return this.merge(id, by, state.origin); },
+      discard: async (id) => { await on(); return this.discard(id, by, state.origin); },
+      restart: async (id) => { await on(); return this.restart(id, by, state.origin); },
       tokens: () => this.tokens(),
-      revokeToken: (id) => this.revokeToken(id, login),
-      signOutClaude: async () => { await this.setClaude(null, login); },
+      revokeToken: (id) => this.revokeToken(id, by),
+      signOutClaude: async () => { await this.setClaude(null, by); },
     };
     const dashboard = this.dashboard(login, state);
     const guard = async () => {
       const why = await this.refusal(login);
       if (why) throw new Error(why);
     };
-    // The admin tools act as the admin, with admin power: the settings' change log names them, not the agent.
-    const as = (): ToolWho => ({ dir: directoryOf(this.env), who: { login, admin: true }, origin: state.origin });
+    // The admin tools act as the admin, with admin power, via their agent: the change log names them, and how.
+    const as = (): ToolWho => ({ dir: directoryOf(this.env), who: { login, admin: true, via: VIA.admin }, origin: state.origin });
     // The source tools read the server's copy of Erga's repository (SourceHost), read-only.
     const readSource = async (q: SourceRead): Promise<SourceAnswer> => {
       if (!hasSource(this.env)) throw new Error("Erga's repository isn't set up on this server: it needs the Artifacts binding (README, Erga's own source).");
@@ -943,7 +955,7 @@ export class Factory extends DurableObject<Env> {
       return this.env.SOURCE.getByName("erga");
     };
     const pipeline = () => this.env.PIPELINE.getByName("deploys");
-    const actor = async () => ({ login, name: (await directoryOf(this.env).users.get(login))?.name || login });
+    const actor = async () => ({ login, name: (await directoryOf(this.env).users.get(login))?.name || login, via: VIA.admin });
     return {
       branches: async () => source().branches(state.origin),
       release: async (commit) => {
@@ -951,23 +963,23 @@ export class Factory extends DurableObject<Env> {
         if ("error" in r) throw new Error(r.error);
         return { ...r, done: r.upToDate ? "main was at staging already: nothing to deploy" : `main moved to ${r.commit.slice(0, 10)}: production deploys it now (list_deploys follows it)` };
       },
-      mirror: async () => ({ mirror: await source().mirrorNow(state.origin) }),
+      mirror: async () => ({ mirror: await source().mirrorNow(state.origin, byLine(login, VIA.admin)) }),
       deploys: (history) => pipeline().status(history),
       deployLog: (target, deploy) => pipeline().logOf(target, deploy),
       redeploy: async (target) => {
-        const r = await pipeline().redeploy(target, `redeploy by ${login}`);
+        const r = await pipeline().redeploy(target, `redeploy by ${byLine(login, VIA.admin)}`);
         if (!r.ok) throw new Error(r.error ?? "refused");
         return { done: `${target} redeploys now`, target: r.status };
       },
       deployHome: async () => {
         const dir = directoryOf(this.env);
         if (!(await dir.homeId())) throw new Error("No document is the homepage (the landing_document setting): there's nothing to deploy.");
-        const status = await this.env.HOME.getByName("home").deploy();
+        const status = await this.env.HOME.getByName("home").deploy(byLine(login, VIA.admin));
         await forgetHome(new URL(state.origin)).catch(() => {});
         return { done: "The homepage deploys now", status };
       },
       agentTokens: async () => (await tokensOf(this.env).list(login)).map((t) => ({ id: t.id, label: t.label, kind: t.kind, scope: t.scope, docId: t.docId, created: t.created, expires: t.expires, lastUsed: t.lastUsed })),
-      revokeAgentToken: (id) => tokensOf(this.env).revoke(login, id),
+      revokeAgentToken: (id) => tokensOf(this.env).revoke(login, id, VIA.admin),
     };
   }
 
@@ -1076,10 +1088,11 @@ export class Factory extends DurableObject<Env> {
     return this.sql.exec<TokenRow>("SELECT * FROM agent_tokens WHERE created > ? ORDER BY created DESC LIMIT 50", Date.now() - 7 * 86400_000).toArray().map((r) => this.tokenView(r));
   }
 
-  async revokeToken(id: string, by: string): Promise<boolean> {
+  async revokeToken(id: string, by: Act): Promise<boolean> {
     const r = this.sql.exec<TokenRow>("SELECT * FROM agent_tokens WHERE id = ? AND revoked IS NULL", id).toArray()[0];
     if (!r) return false;
-    this.sql.exec("UPDATE agent_tokens SET revoked = ?, revoked_by = ? WHERE id = ?", Date.now(), by, id);
+    this.sql.exec("UPDATE agent_tokens SET revoked = ?, revoked_by = ? WHERE id = ?", Date.now(), byLine(by.login, by.via), id);
+    await this.logged(by, { key: "token", from: null, to: null, token: { id, label: r.label, event: "revoked", of: r.login } });
     return true;
   }
 
@@ -1193,7 +1206,8 @@ async function sharedAgentApi(request: Request, env: Env, url: URL, raw: string,
   if (!t || !(await directoryOf(env).users.isAdmin(t.login))) {
     return json({ error: "That factory token doesn't work: it ended, was revoked, or its maker is no longer an admin. Ask an admin for a new one (Share with agent, on /admin/factory)." }, 401);
   }
-  const by = `${agentName(t.login)} (shared: ${t.label})`;
+  // What it does is its admin's, via it (attribution.ts).
+  const by: Act = { login: t.login, via: VIA.token(t.label) };
   const m = request.method;
   if (path == "/api/factory/guide" && m == "GET") return new Response(factoryGuide({ origin: url.origin, owner: t.login, label: t.label, expires: t.expires }), { headers: { "Content-Type": "text/markdown; charset=utf-8", "Cache-Control": "no-store" } });
   if (path == "/api/factory" && m == "GET") {
@@ -1213,7 +1227,7 @@ async function sharedAgentApi(request: Request, env: Env, url: URL, raw: string,
   const body = await request.json().catch(() => null) as Record<string, unknown> | null;
   if (!body || typeof body != "object" || Array.isArray(body)) return json({ error: "Send JSON." }, 400);
   if (create) {
-    try { return json(await f.add({ title: String(body.title ?? ""), description: String(body.description ?? ""), by, user: t.login, via: `a shared agent (${t.label})`, origin: url.origin, startAfter: body.startAfter, mergeAfter: body.mergeAfter }), 201); }
+    try { return json(await f.add({ title: String(body.title ?? ""), description: String(body.description ?? ""), by, origin: url.origin, startAfter: body.startAfter, mergeAfter: body.mergeAfter }), 201); }
     catch (e) { return json({ error: (e as Error).message }, 400); }
   }
   const r = deps ? await f.setDeps(id!, body, by, url.origin) : await f.revise(id!, String(body.instructions ?? ""), by, url.origin);
@@ -1290,7 +1304,7 @@ export async function factoryApi(request: Request, env: Env, url: URL): Promise<
     }
   }
   const tok = /^\/api\/factory\/tokens\/([0-9a-f]{18})$/.exec(path)?.[1];
-  if (tok && request.method == "DELETE") return (await f.revokeToken(tok, admin.login)) ? json({ ok: true, tokens: await f.tokens() }) : json({ error: "No such token, or it's revoked already." }, 404);
+  if (tok && request.method == "DELETE") return (await f.revokeToken(tok, { login: admin.login })) ? json({ ok: true, tokens: await f.tokens() }) : json({ error: "No such token, or it's revoked already." }, 404);
   const shot = /^\/api\/factory\/shots\/([\w.-]+\.png)$/.exec(path);
   if (shot && request.method == "GET") {
     const data = await f.shot(shot[1]);
@@ -1309,37 +1323,38 @@ export async function factoryApi(request: Request, env: Env, url: URL): Promise<
   if (path == "/api/factory/claude") {
     if (request.method == "GET") return json(await f.claude());
     const token = request.method == "DELETE" ? null : String(((await request.json().catch(() => ({}))) as { token?: string }).token ?? "");
-    const r = await f.setClaude(token, admin.login);
+    const r = await f.setClaude(token, { login: admin.login });
     return r.ok ? json(await f.claude()) : json(r, 400);
   }
   // Everything that changes something needs the factory on.
   if (!on) return json({ error: "The factory is off: an admin turns it on with the factory setting (/admin)." }, 409);
   if (path == "/api/factory/tasks" && request.method == "POST") {
     const body = await request.json().catch(() => ({})) as { title?: string; description?: string; startAfter?: unknown; mergeAfter?: unknown };
-    try { return json(await f.add({ title: String(body.title ?? ""), description: String(body.description ?? ""), by: admin.login, origin: url.origin, startAfter: body.startAfter, mergeAfter: body.mergeAfter }), 201); }
+    try { return json(await f.add({ title: String(body.title ?? ""), description: String(body.description ?? ""), by: { login: admin.login }, origin: url.origin, startAfter: body.startAfter, mergeAfter: body.mergeAfter }), 201); }
     catch (e) { return json({ error: (e as Error).message }, 400); }
   }
   if (id != null && !action && request.method == "PATCH") {
     const body = await request.json().catch(() => null);
     if (!body || typeof body != "object" || Array.isArray(body)) return json({ error: "send JSON: { startAfter, mergeAfter }" }, 400);
-    const r = await f.setDeps(id, body as Record<string, unknown>, admin.login, url.origin);
+    const r = await f.setDeps(id, body as Record<string, unknown>, { login: admin.login }, url.origin);
     return r.ok ? json(await f.task(id)) : json({ error: r.error }, r.status ?? 409);
   }
   if (id != null && request.method == "POST" && ["merge", "discard", "revise", "restart"].includes(action)) {
     const body = action == "revise" ? await request.json().catch(() => ({})) as { instructions?: string } : {};
-    const r = action == "merge" ? await f.merge(id, admin.login, url.origin) : action == "discard" ? await f.discard(id, admin.login, url.origin)
-      : action == "restart" ? await f.restart(id, admin.login, url.origin) : await f.revise(id, String(body.instructions ?? ""), admin.login, url.origin);
+    const by: Act = { login: admin.login };
+    const r = action == "merge" ? await f.merge(id, by, url.origin) : action == "discard" ? await f.discard(id, by, url.origin)
+      : action == "restart" ? await f.restart(id, by, url.origin) : await f.revise(id, String(body.instructions ?? ""), by, url.origin);
     return r.ok ? json(await f.task(id), action == "merge" ? 202 : 200) : json(r, 409);
   }
   return json({ error: "Not found" }, 404);
 }
 
 /** An instruction sent while a task worked. */
-type Ask = { n: number; by: string; text: string; at: string };
+type Ask = { n: number; by: string; via?: string | null; text: string; at: string };
 
-const whoAsked = (asks: Ask[]) => [...new Set(asks.map((a) => a.by))].join(", ");
+const whoAsked = (asks: Ask[]) => [...new Set(asks.map((a) => byLine(a.by, a.via)))].join(", ");
 
-/** Instructions sent while a task worked, for Claude Code: each with who sent it, oldest first. */
-export function joinAsks(asks: { by: string; text: string }[]): string {
-  return asks.map((a) => `${a.by} asks: ${a.text}`).join("\n\n");
+/** Instructions sent while a task worked, for Claude Code: each with who sent it (and how), oldest first. */
+export function joinAsks(asks: { by: string; via?: string | null; text: string }[]): string {
+  return asks.map((a) => `${byLine(a.by, a.via)} asks: ${a.text}`).join("\n\n");
 }

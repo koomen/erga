@@ -34,6 +34,7 @@ import {
 import { fetchPack, lsRefs, receiveAdvert, receivePack, RemoteError, type RefUpdate, type Remote } from "./remote.ts";
 import { BrowseError, cleanPath, list, read, search, snapshotOf, type Snapshot, type SourceAnswer, type SourceRead } from "./browse.ts";
 import { mergeShape, refsAllowed, type CommitFacts, type GitGrant } from "../factory/git-grant.ts";
+import { byLine, SYSTEM } from "../attribution.ts";
 
 export const BRANCHES = ["staging", "main"] as const;
 export type Branch = (typeof BRANCHES)[number];
@@ -50,14 +51,16 @@ export const AFTER_MAIN = 5;
 
 export interface Db { exec<T = Record<string, unknown>>(sql: string, ...params: (string | number | null)[]): T[] }
 
-/** Someone acting on the repository: an admin, by their GitHub login. */
-export interface Actor { login: string; name: string }
+/** Someone acting on the repository: an admin, by their GitHub login, and how when not in person (attribution.ts: "their admin agent", "a shared agent (label)", "the factory (task #3)"). */
+export interface Actor { login: string; name: string; via?: string }
 
 export interface MirrorStatus {
   /** Where the mirror pushes (no credentials), or null when there's no mirror. */
   url: string | null;
   /** When it last brought the mirror up to date (ms), if ever. */
   lastPushAt: number | null;
+  /** Whom its last push was for (attribution.ts, byLine): who moved the branch it carried, or asked for the push ("ada, via their admin agent"). */
+  lastPushBy?: string | null;
   error: string | null;
   /** off (not set up), idle, pushing. */
   state: "off" | "idle" | "pushing";
@@ -79,7 +82,8 @@ export interface BranchInfo {
   /** The AFTER_MAIN commits only on staging that come just after main's head, newest first (staging only): the Source page shows them below its break, when staging is far ahead. */
   afterMain?: CommitInfo[];
 }
-export interface Move { branch: Branch; old: string; new: string; how: "push" | "merge"; by: string; at: number }
+/** A branch moved: `by` (a login) did it, `via` how when not in person (attribution.ts). */
+export interface Move { branch: Branch; old: string; new: string; how: "push" | "merge"; by: string; via?: string | null; at: number }
 
 export class SourceError extends Error {
   constructor(message: string, readonly status = 400) { super(message); }
@@ -110,6 +114,8 @@ export class SourceRepo {
   private graph: Map<string, Node> | null = null;
   private mirroring: Promise<MirrorStatus> | null = null;
   private mirrorAgain = false;
+  /** Who the mirror's next push is for (byLine): whoever moved a branch, or asked for it. */
+  private mirrorBy = SYSTEM;
   /** The commits `read` read last, the newest last: a few, as each holds every file. */
   private snapshots = new Map<string, Promise<Snapshot>>();
 
@@ -118,6 +124,8 @@ export class SourceRepo {
     db.exec("CREATE TABLE IF NOT EXISTS commits (sha TEXT PRIMARY KEY, tree TEXT NOT NULL, parents TEXT NOT NULL, author TEXT NOT NULL, email TEXT NOT NULL, at INTEGER NOT NULL, committed INTEGER NOT NULL, subject TEXT NOT NULL)");
     db.exec("CREATE TABLE IF NOT EXISTS moves (id INTEGER PRIMARY KEY AUTOINCREMENT, branch TEXT NOT NULL, old TEXT NOT NULL, new TEXT NOT NULL, how TEXT NOT NULL, by TEXT NOT NULL, at INTEGER NOT NULL)");
     db.exec("CREATE TABLE IF NOT EXISTS state (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
+    // #69: how the mover did it, when not in person.
+    if (!db.exec<{ name: string }>("PRAGMA table_info(moves)").some((c) => c.name == "via")) db.exec("ALTER TABLE moves ADD COLUMN via TEXT");
   }
 
   private now() { return this.deps.now?.() ?? Date.now(); }
@@ -305,7 +313,7 @@ export class SourceRepo {
   }
 
   moves(limit: number): Move[] {
-    return this.deps.db.exec<Move>("SELECT branch, old, new, how, by, at FROM moves ORDER BY id DESC LIMIT ?", limit);
+    return this.deps.db.exec<Move>("SELECT branch, old, new, how, by, via, at FROM moves ORDER BY id DESC LIMIT ?", limit);
   }
 
   mirrorStatus(): MirrorStatus {
@@ -406,7 +414,7 @@ export class SourceRepo {
             statuses.set(c.ref, said);
             if (said == "ok") {
               if (grant?.scope == "merge" && c.branch == "staging") this.spend(grant.id!);
-              this.recordMove({ branch: c.branch, old: c.old, new: c.new, how: "push", by: who.login, at: this.now() });
+              this.recordMove({ branch: c.branch, old: c.old, new: c.new, how: "push", by: who.login, via: who.via ?? null, at: this.now() });
               const before = c.old == ZERO ? null : this.ancestors(c.old);
               const count = before ? [...this.ancestors(c.new)].filter((s) => !before.has(s)).length : null;
               messages.push(`Erga: ${c.branch} is now ${c.new.slice(0, 7)}${count != null ? ` (${count} new commit${count == 1 ? "" : "s"})` : ""}.`);
@@ -450,12 +458,13 @@ export class SourceRepo {
   private spend(id: string) { this.setState("spentMerges", [...(this.state<string[]>("spentMerges") ?? []), id].slice(-500)); }
 
   private recordMove(m: Move) {
-    this.deps.db.exec("INSERT INTO moves (branch, old, new, how, by, at) VALUES (?, ?, ?, ?, ?, ?)", m.branch, m.old, m.new, m.how, m.by, m.at);
+    this.deps.db.exec("INSERT INTO moves (branch, old, new, how, by, via, at) VALUES (?, ?, ?, ?, ?, ?, ?)", m.branch, m.old, m.new, m.how, m.by, m.via ?? null, m.at);
     const tips = this.state<Record<string, string>>("tips") ?? {};
     this.setState("tips", { ...tips, [m.branch]: m.new });
     this.deps.moved(m);
     this.deps.changed();
-    this.deps.background(this.mirror().catch(() => {}));
+    // The mirror's push is the mover's: it follows what they did.
+    this.deps.background(this.mirror(byLine(m.by, m.via)).catch(() => {}));
   }
 
   /**
@@ -507,7 +516,7 @@ export class SourceRepo {
       const r = await receivePack(remote, [{ ref: REF("main"), old: main ?? ZERO, new: target }], await emptyPack());
       const said = r.unpack != "ok" ? r.unpack : r.refs.get(REF("main")) ?? "no answer";
       if (said != "ok") throw new SourceError(/stale|lock|old/i.test(said) ? "main moved while merging: try again." : `Artifacts refused it: ${said}`, 409);
-      this.recordMove({ branch: "main", old: main ?? ZERO, new: target, how: "merge", by: who.login, at: this.now() });
+      this.recordMove({ branch: "main", old: main ?? ZERO, new: target, how: "merge", by: who.login, via: who.via ?? null, at: this.now() });
       return { commit: target, fastForward: true, upToDate: false };
     });
   }
@@ -520,7 +529,8 @@ export class SourceRepo {
    * anything). main moves there only forward: if GitHub's main has commits
    * Erga doesn't, the mirror stops and says so rather than drop them.
    */
-  mirror(): Promise<MirrorStatus> {
+  mirror(by: string = SYSTEM): Promise<MirrorStatus> {
+    this.mirrorBy = by;
     if (this.mirroring) { this.mirrorAgain = true; return this.mirroring; }
     this.mirroring = (async () => {
       let status = this.mirrorStatus();
@@ -538,7 +548,8 @@ export class SourceRepo {
     const gh = this.deps.github();
     if (!gh) return this.mirrorStatus();
     const saved = this.state<MirrorStatus>("mirror");
-    const status: MirrorStatus = { url: publicUrl(gh.url), lastPushAt: saved?.lastPushAt ?? null, error: null, state: "idle", refs: saved?.refs };
+    const status: MirrorStatus = { url: publicUrl(gh.url), lastPushAt: saved?.lastPushAt ?? null, lastPushBy: saved?.lastPushBy ?? null, error: null, state: "idle", refs: saved?.refs };
+    const by = this.mirrorBy;
     try {
       const remote = await this.deps.artifacts();
       const [{ refs }, advert] = await Promise.all([lsRefs(remote), receiveAdvert(gh)]);
@@ -563,11 +574,12 @@ export class SourceRepo {
       const pushed = updates.length && !problems.length;
       status.refs = Object.fromEntries(BRANCHES.map((b) => [b, updates.find((u) => u.ref == REF(b))?.new ?? advert.refs.get(REF(b))]).filter(([, s]) => s));
       if (pushed || !problems.length) status.lastPushAt = this.now();
+      if (pushed) status.lastPushBy = by;
       status.error = problems.length ? problems.join(". ") + "." : null;
     } catch (e) {
       status.error = e instanceof RemoteError || e instanceof SourceError ? e.message : `the mirror failed: ${(e as Error).message}`;
     }
-    this.setState("mirror", { url: status.url, lastPushAt: status.lastPushAt, error: status.error, refs: status.refs });
+    this.setState("mirror", { url: status.url, lastPushAt: status.lastPushAt, lastPushBy: status.lastPushBy, error: status.error, refs: status.refs });
     return status;
   }
 

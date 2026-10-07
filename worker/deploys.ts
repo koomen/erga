@@ -27,6 +27,7 @@ import { PRODUCTION } from "../deploy/targets";
 import { whoOf, withTokens, type Platform } from "../front";
 import type { Env } from "./env";
 import { LOCKED } from "../users";
+import { byLine } from "../attribution";
 
 /** Whether this path is one of these routes. */
 export const isDeploysPath = (path: string) =>
@@ -100,7 +101,7 @@ export async function deploysDoor(request: Request, env: Env, base: Platform): P
   if (name && method == "POST") {
     // From this site's pages, or an agent's token: never another site's form.
     if (!session!.agent && request.headers.get("origin") != url.origin) return Response.json({ error: "Forbidden" }, { status: 403 });
-    const r = await stub().redeploy(name, `redeploy by ${session!.login}`);
+    const r = await stub().redeploy(name, `redeploy by ${byLine(session!.login.toLowerCase(), whoOf(session!).via)}`);
     return r.ok ? Response.json({ ok: true, target: r.status }) : Response.json({ ok: false, error: r.error }, { status: r.status ?? 400 });
   }
   return Response.json({ error: `There's nothing at ${method} ${path}.` }, { status: 404 });

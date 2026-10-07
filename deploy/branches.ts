@@ -441,7 +441,7 @@ export class BranchDeploys {
    */
   async remoteHook(name: string, body: { branch?: string; commit?: string; redeploy?: boolean; trigger?: string }): Promise<{ ok: boolean; error?: string }> {
     if (name != this.self) return { ok: false, error: `This server is ${this.self ?? "no deploy target"}, not ${name}.` };
-    const by = `${typeof body.trigger == "string" && body.trigger ? body.trigger.slice(0, 80) : "a move"}, passed on`;
+    const by = `${typeof body.trigger == "string" && body.trigger ? body.trigger.slice(0, 160) : "a move"}, passed on`;
     if (body.redeploy) {
       const r = await this.redeploy(name, by);
       const wrong = this.notReady();
