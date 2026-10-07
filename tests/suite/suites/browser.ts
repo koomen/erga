@@ -101,6 +101,27 @@ export const browserTests: Test[] = [
     },
   },
   {
+    name: "Backspace at the start of a list item joins it to the paragraph before, for others too, and one ⌘Z undoes it for all",
+    needs: ["browser"],
+    async run(ctx) {
+      const d = await ctx.doc("join");
+      const [a, b] = [await open(ctx, d, "Ada"), await open(ctx, d, "Bo")];
+      const mod = process.platform == "darwin" ? MOD.Meta : MOD.Ctrl;
+      const original = await a.source();
+      await a.clickEnd("#one");
+      await a.p.key("Home");
+      await a.p.key("Backspace");
+      const joined = `<p id="gamma">keeps its own type.Item one</p>`;
+      await until(async () => (await a.source()).includes(joined) && (await b.source()) == (await a.source()), 3000, "both tabs have the join", async () => (await b.source()).match(/<p id="gamma">[\s\S]*?<\/ul>/)?.[0]);
+      await until(async () => (await b.count("li")) == 1 && (await b.textOf("#gamma")) == "keeps its own type.Item one", 3000, "Bo's page shows it");
+      const s = await a.source();
+      await until(async () => (await d.stored(d.path))?.text == s, 5000, "and stored");
+      await a.p.key("z", mod);
+      await until(async () => (await b.source()) == original && (await b.count("li")) == 2, 3000, "Ada's one ⌘Z brings both blocks back, for Bo too");
+      noErrors(a, "Ada"); noErrors(b, "Bo");
+    },
+  },
+  {
     name: "the source view follows others' typing and shows their caret; the page redraws it after",
     needs: ["browser"],
     async run(ctx) {

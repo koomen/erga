@@ -1541,13 +1541,15 @@ branches, main only forward), and every branch move must go through Erga so
 it can tell the Factory page, the deploy pipeline and the mirror.
 
 **The Git endpoint**, `https://<server>/git/erga.git` (`worker/source.ts`,
-`source/http.ts`): clone, fetch, pull and push, over Git's smart HTTP. Git
-asks for a username and password: any username, and an admin token as the
-password (`ERGA_TOKEN=<agent token> bun admin-login.ts https://erga.dev`,
+`source/http.ts`): clone, fetch, pull and push, over Git's smart HTTP.
+Anyone may read: `git clone`, `git fetch` and `git ls-remote` need no
+credentials. For a push, Git asks for a username and password: any username,
+and an admin token as the password (`ERGA_TOKEN=<agent token> bun admin-login.ts https://erga.dev`,
 see [Admin SSH keys](#admin-ssh-keys)); admins only (no token, an agent
 token, or one that ended or whose key was revoked: 401, which makes git ask;
 a user who isn't an admin: 403).
 
+    git clone https://erga.dev/git/erga.git          # no credentials
     git remote add erga https://erga.dev/git/erga.git
     git fetch erga
     git push erga HEAD:staging
@@ -2325,8 +2327,15 @@ stops.
 ## Page editor
 
 Click into any text and type. Enter makes a new paragraph or list item, Shift-Enter
-a line break, Backspace at the start of a paragraph joins it to the one above,
-⌘Z undoes, ⌘-click opens a link.
+a line break, ⌘Z undoes, ⌘-click opens a link. Backspace at the start of a
+block (a paragraph, a heading, a list item) joins it to the block before: the
+block goes, its text moves to the end of the one before, which keeps its own
+type, and the caret stays at the join (Delete at the end of a block does the
+same with the next one). It joins across a list or a quote too, and an empty
+list or quote it leaves goes with it; in the first block, or with something
+other than text between (a picture, a widget), or in a table cell, Backspace
+does nothing. One ⌘Z brings both blocks back, and others see the join live.
+In Markdown, Backspace at the start of a list item first takes its marker off.
 
 In an HTML file, an empty paragraph that Enter makes is written `<p><br></p>`.
 The `<br>` keeps it a line high on the published page as in the editor, so a
