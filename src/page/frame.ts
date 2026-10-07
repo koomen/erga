@@ -111,12 +111,17 @@ function start(m: Extract<ToFrame, { type: "init" }>) {
   }
   relay = new Relay(m.version, (version, changes) => post({ type: "push", version, changes: changes.toJSON() }));
   const state = EditorState.fromJSON(m.state, { extensions: docExtensions(m.kind) }, { history: historyField });
+  // The page's own folder, so its relative links and assets resolve as they would on disk (tree.ts).
+  const base = BASE + (m.dir ? m.dir.split("/").map(encodeURIComponent).join("/") + "/" : "");
+  // This page's <base> too (front.ts set it to the document's folder): Chrome's preload scanner resolves the srcdoc
+  // page's files against it, not against the <base> the page itself gets, so a page in a folder asked for each of its
+  // relative files at the document's root first (404s), at every render and every capture.
+  document.querySelector("base")?.setAttribute("href", base);
   page = new PageEditor({
     frame,
     kind: m.kind,
     state,
-    // The page's own folder, so its relative links and assets resolve as they would on disk (tree.ts).
-    base: BASE + (m.dir ? m.dir.split("/").map(encodeURIComponent).join("/") + "/" : ""),
+    base,
     markdownHead: m.markdownHead,
     self: m.self,
     onUpdate(u) {

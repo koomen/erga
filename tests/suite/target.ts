@@ -22,7 +22,7 @@
 import { cpSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync, mkdirSync, statSync } from "fs";
 import { tmpdir } from "os";
 import { dirname, join, relative } from "path";
-import { startHost, type Host } from "../host";
+import type { Host } from "../host";
 
 /**
  * What a target can do beyond the contract:
@@ -106,7 +106,7 @@ export function readFixture(name: string): Record<string, string> {
 
 const indexOf = (files: Record<string, string>) => ["index.html", "index.htm", "index.md"].find((n) => n in files) ?? Object.keys(files)[0];
 
-function makeDoc(base: string, headers: Record<string, string>, fixture: Record<string, string>, extra: Partial<Doc> & { dispose(): Promise<void> }, perUser: Record<string, Record<string, string>> = {}): Doc {
+export function makeDoc(base: string, headers: Record<string, string>, fixture: Record<string, string>, extra: Partial<Doc> & { dispose(): Promise<void> }, perUser: Record<string, Record<string, string>> = {}): Doc {
   const doc: Doc = {
     base,
     path: indexOf(fixture),
@@ -158,6 +158,8 @@ export class LocalTarget implements Target {
   }
 
   async newDoc(fixture: string, needs: Capability[] = []): Promise<Doc> {
+    // (Loaded here: the e2e suite, on Node, imports this file for RemoteTarget and makeDoc, and tests/host.ts is Bun's.)
+    const { startHost } = await import("../host");
     const dir = mkdtempSync(join(tmpdir(), "erga-suite-"));
     cpSync(join(FIXTURES, fixture), dir, { recursive: true });
     const writeDisk = (p: string, data: string | Uint8Array) => { const full = join(dir, p); mkdirSync(dirname(full), { recursive: true }); writeFileSync(full, data); };
@@ -199,6 +201,9 @@ export class LocalTarget implements Target {
 
 // ------------------------------------------------------------ remote
 
+/** A document's address, the base of its API: without the editor's #edit (where /new sends you) or a trailing slash. */
+const docAddress = (url: string) => { const u = new URL(url); u.hash = ""; return u.toString().replace(/\/+$/, ""); };
+
 export class RemoteTarget implements Target {
   name: string;
   /** One scratch document for every test: one at a time. */
@@ -213,7 +218,7 @@ export class RemoteTarget implements Target {
     const url = process.env.ERGA_TARGET_DOC;
     if (!url) throw new Error("set ERGA_TARGET_DOC to a scratch document's URL");
     if (!/test/i.test(url)) throw new Error(`refusing ${url}: the suite rewrites the document, so its URL must contain "test"`);
-    this.base = url.replace(/\/+$/, "");
+    this.base = docAddress(url);
     this.name = `remote ${this.base}`;
     this.headers = { ...JSON.parse(process.env.ERGA_TARGET_HEADERS || "{}") };
     if (process.env.ERGA_TARGET_COOKIE) this.headers.Cookie = process.env.ERGA_TARGET_COOKIE;
@@ -230,7 +235,7 @@ export class RemoteTarget implements Target {
     const r = await fetch(this.newDocUrl.replace("{id}", id), { headers: this.headers, redirect: "manual" });
     const location = r.headers.get("location");
     if (r.status != 302 || !location) throw new Error(`making a test document: ${r.status} ${await r.text()}`);
-    return new URL(location, this.newDocUrl).toString().replace(/\/+$/, "");
+    return docAddress(new URL(location, this.newDocUrl).toString());
   }
 
   /**

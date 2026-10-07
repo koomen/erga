@@ -1,0 +1,5 @@
+// The multiplayer suite, fuzz (tests/suite/suites/fuzz.ts, part 1 of 2): seeded random edits from many hands converge, with nothing lost or resurrected. ERGA_SUITE_SEED=n replays a run.
+import { fuzz } from "../../tests/suite/suites/fuzz";
+import { part, register } from "./suite";
+
+register("e2e/suite/fuzz-1.e2e.ts", "fuzz", part(fuzz, 1, 2));
