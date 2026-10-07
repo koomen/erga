@@ -531,7 +531,8 @@ document.addEventListener("click", async (e) => {
     if (act == "revise") $("revise-why").textContent = err.message; else alert(err.message);
   }
 }, { signal: pageView.signal });
-$("dlg").addEventListener("close", () => { openId = null; bigShot = null; });
+// The close event comes a task after close(): a task opened again meanwhile (the dialog is open) stays open.
+$("dlg").addEventListener("close", () => { if (!$("dlg").open) { openId = null; bigShot = null; } });
 $("dlg").addEventListener("keydown", shotKey);
 
 /**
