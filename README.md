@@ -1693,9 +1693,10 @@ The factory is Erga's task queue, on
 `/admin/source` and `/source` redirect there): a board (Queued, Working, Ready to merge and Merging,
 with `needs agent` cards in Merging; merged tasks leave the board) where each task is done by Claude Code in a VM of its own: on staging.erga.dev and erga.dev a Cloudflare Container
 ([On Cloudflare](#on-cloudflare), below). It's a prototype: admins only, and
-off until an admin sets the `factory` setting to `on` (`/admin`). It does
-background tasks only; working with someone watching is done locally, with
-the development server (AGENTS.md).
+off until an admin sets the `factory` setting to `on` (`/admin`). Working
+with someone watching is done locally, with the development server
+(AGENTS.md), and registered on the board as a **local task** (below): a
+task with no VM, which a local agent runs and reports on itself.
 
 **A task is a branch.** Adding a task names its branch
 `task/<id>-<slug>` and starts a VM. In the VM
@@ -1809,6 +1810,64 @@ model, its turns, its tokens and its cost at API prices (`claudeLog`,
 `factory/vm/common.ts`). The board and the API show a log's last 200 lines;
 `GET /api/factory/tasks/<id>?log=all` gives every line, each with its
 time.
+
+**Local tasks.** A local agent (Claude Code on an admin's own machine, in its
+own checkout, with an admin token: [Tokens](#tokens)) registers its work as a
+task with no VM, so it is on the board like the others and, once merged, in
+staging's history the same way ("Merge task/<id>-<slug>: title", `--no-ff`).
+It runs the task itself and reports with `bun task` (`factory/task.ts`), the
+VMs' `task` command made to work outside a VM: it reads the server from
+`ERGA_URL` (or `git config erga.url`, or an `origin` that is an Erga Git
+endpoint), the admin token from `ERGA_TOKEN` (or Git's credential store for
+that server), and the task from the branch (`task/<id>-…`). The flow:
+
+    bun task new "Title" "The ask" [--start-after 12] [--merge-after 14]   # registers it, makes the branch from staging, pushes it
+    bun task log "Tests pass"                    # a log line
+    bun task shot shot.png "The new page"        # a screenshot (a file, or a URL: headless Chrome)
+    bun task preview http://localhost:4400/x     # where to see the change, if anywhere
+    bun task inbox [--wait 60]                   # instructions sent from the board, each one once
+    bun task push                                # the branch, through Erga's Git endpoint
+    bun task done "summary"                      # pushes, then ready to merge;  bun task fail "why"
+    bun task pull [--staging]                    # Erga's commits on the branch (and staging: for a conflict)
+    bun task status                              # the task as the board has it
+
+Over HTTP it is `POST /api/factory/tasks` with `"local": {"machine": "…"}`,
+then the VMs' own report routes (`log`, `inbox`, `branch`, `preview`,
+`screenshots`, `PATCH` with a status), which take an admin token for a local
+task only (409 for any other), and `POST /api/factory/tasks/<id>/git`, which
+answers a git token for the task's branch (the VMs' `fgt…`: it reads staging,
+main and that branch and pushes that branch only, for two hours). So the Git
+endpoint's rules don't change: no admin token pushes a `task/` branch, and
+`bun task push` sends the git token as a header, never on a command line.
+
+- *On the board*: a "local · <machine>" chip on the card, and in the detail
+  view who runs it and since when, "Send to the local agent", and **Hand to a
+  VM** in place of Restart. A local task starts working when it's added (or
+  when what it `startAfter`s merges: then `bun task start` makes its branch);
+  it has no VM and no preview of the factory's.
+- *Instructions* sent from the board wait in the task's inbox; the local agent
+  takes them with `bun task inbox` (the log says so), and `bun task done` is
+  refused while any wait. A task that is ready to merge or failed works again.
+- *Merge* is the board's Merge, as for any task, in the same merge queue, with
+  the same dependency checks. A local task has no VM, so the factory starts one
+  for the merge job only (`merge.ts merge`, in a fresh clone of the pushed
+  branch, with the merge's own git token and whoever pressed Merge as the
+  merge's author), and stops it after. A conflict, or a step that fails, makes
+  the task **needs agent**: the merge VM stops, and the local agent's inbox
+  gets the factory's instructions (`localResolvePrompt`, `factory/prompt.ts`:
+  `bun task pull --staging`, resolve, test, commit, `bun task done`, which
+  runs the merge again; `bun task fail` sends it back to ready to merge). Or the
+  admin hands it to a VM.
+- *Stale tasks*: a local agent can vanish (a laptop closed). The stall rule is
+  the same (no log line in 5 minutes: "stalled"). **Hand to a VM** (the
+  API's `restart`, the agent's `restart_task`) makes it a VM's task: a fresh
+  VM's Claude Code goes on from what the local agent pushed (told so in its
+  brief, `restartPrompt`), and the local agent's reports get 409 ("handed to a
+  VM"). Discard works as for any task.
+- *Limits*: work the local agent didn't push is not on the board and is lost
+  on a hand-over; its commits are authored by its own git identity (not
+  `factory/author.ts`'s); the preview is a link the local agent gives, often
+  to its own `localhost`, which only its machine opens.
 
 **Stalled tasks.** A task that is working or needs agent, and whose log has
 had no new line in 5 minutes, is *stalled* (`factory/stall.ts`): its Claude
@@ -1958,7 +2017,15 @@ stopped; the same VM's stand-in resolves it and the merge goes on to
 merged), a merge step that hangs (killed at its limit with its process
 tree, needs agent, then merged) and an install that hangs (the stand-in is
 told and installs again). `tests/factory.test.ts` tests the branch names and
-the git tokens' rules. `tests/factory-cards.ts` checks that the board's cards
+the git tokens' rules. `tests/factory-local.ts` tests local tasks end to end,
+with `bun factory/task.ts` in temporary clones as the local agent: register
+(the branch from staging, pushed), a log line, a screenshot and done; the
+board's local chip and detail; instructions from the board (done refused
+until `task inbox` takes them); a merge (a VM for the job only; "Merge
+task/…: title" on staging, the branch gone); a local task that waits for
+another and then works; a conflict (needs agent, the agent told, `task pull
+--staging`, resolved, merged); and a stale task handed to a VM, which goes on
+from the pushed branch while the old agent is refused. `tests/factory-cards.ts` checks that the board's cards
 stay compact, on a board of fixture tasks: a title on one line (the full
 title in its tooltip), no branch name (the detail has it), the last update
 as a short time on the title's line ("5m"), small buttons on one row, and
@@ -1978,6 +2045,10 @@ text and the other fields' values (`keepState` in `factory/page.ts`).
   and screenshots, the Claude token and each admin's
   agent session, and drives the VMs. The board (`factory/page.ts`, a part of
   `/admin/factory`) updates live from its event stream.
+- `factory/task.ts`: `bun task`, the `task` command outside a VM, for a
+  local task's agent (Local tasks, above). It reuses the VM's scripts
+  (`factory/vm/common.ts`, `task.ts`) with the admin token in place of the
+  task's own; the VM's copies don't change.
 - A `VmHost` starts and stops VMs and runs jobs in them. Locally it's the
   dev server (`dev/factory.ts`: Docker or the simulation, and the
   repository); on Cloudflare, Containers (`factory/cloudflare.ts`,

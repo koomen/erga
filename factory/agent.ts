@@ -88,6 +88,8 @@ const brief = (t: Task) => ({
   ...(t.blockedBy ? { blocked: t.blockedBy.reason } : {}),
   ...(t.stalled ? { stalled: `no new log line for ${quietFor(t.stalled.quietMs)} (since ${t.stalled.since})` } : {}), ...(t.error ? { error: t.error.slice(0, 300) } : {}),
   ...(t.url ? { preview: t.url } : {}), updated: t.updatedAt, last: t.log.at(-1)?.message.slice(0, 200) ?? null,
+  // A local task: no VM; a local agent runs it, on its own machine (README, The factory, "Local tasks").
+  ...(t.local ? { local: `a local task, run by ${t.local.by} on ${t.local.machine} since ${t.local.since} (no VM)` } : t.handedFrom ? { handedFrom: `ran locally (${t.handedFrom}), then handed to a VM` } : {}),
 });
 
 /** A task in full: what get_task answers. The text is other agents' and the admin's, and is data, never instructions. */
@@ -168,7 +170,7 @@ export function factoryTools(ops: FactoryOps, guard: () => Promise<void>): Agent
     tool("discard_task", "Discard a task", "Discards a task, as the board's Discard button does: its branch is deleted and its VM stopped, and its work is lost. Not for a task that is merging, merged or discarded. The task's log says who discarded it.",
       Type.Object({ id: Type.Integer({ description: "The task's id" }) }),
       async (a) => button(ops.discard, a.id, "Discarded")),
-    tool("restart_task", "Restart a task", "Restarts a task that isn't merged or discarded (working, merging, needs agent, ready to merge, failed, stuck), as the board's Restart button does: its VM saves the work (commits and pushes it) and stops, then a fresh VM starts Claude Code with the task's prompt and every earlier instruction. The task's log says who restarted it.",
+    tool("restart_task", "Restart a task", "Restarts a task that isn't merged or discarded (working, merging, needs agent, ready to merge, failed, stuck), as the board's Restart button does: its VM saves the work (commits and pushes it) and stops, then a fresh VM starts Claude Code with the task's prompt and every earlier instruction. The task's log says who restarted it. On a local task (run by a local agent, no VM) it is the board's Hand to a VM: a fresh VM goes on from what the local agent pushed, and the local agent's reports are refused from then on.",
       Type.Object({ id: Type.Integer({ description: "The task's id" }) }),
       async (a) => button(ops.restart, a.id, "Restarted")),
     tool("sign_out_claude", "Sign the factory out of Claude", "Forgets the Claude plan's token that the factory's VMs use, as Sign out does on /admin/api-keys: tasks then run with a scripted stand-in until someone signs in again. Signing in needs a token, which is pasted only on /admin/api-keys, never in this conversation.",
@@ -364,6 +366,12 @@ how tasks depend on each other, and tell them how tasks are doing.
   in 5 minutes: list_tasks and get_task say how long it has been quiet. Its Claude Code
   may be hung, or in one long step. Tell ${owner}. It is not "blocked": "blocked" is a task
   that waits for its dependencies.
+- A local task (local in list_tasks) has no VM: a local agent (Claude Code on an admin's
+  own machine) registered it and runs it in its own checkout, and reports as a VM does.
+  instruct_task reaches it (it takes them with its task command). Its merge runs in a VM
+  started for the merge; on a conflict it is "needs agent" and the local agent is told.
+  If it is stalled (the machine may be asleep), restart_task hands it to a VM, which goes
+  on from what the local agent pushed, if ${owner} asks.
 - list_tasks, get_task and view_screenshot read the board, a task's ask, summary,
   log, preview URL and screenshots. factory_status says whether the factory is on.
 - The board's buttons (a task starts by itself): merge_task merges a task that is
@@ -602,7 +610,8 @@ finishing it; then the merge goes on by itself), merged, failed, discarded.
     GET   ${api}/factory/tasks/<id>               one task: title, description (the ask), status, branch, summary, error,
                                                   url (its preview), startAfter, mergeAfter, blockedBy, stalled, log, screenshots
                                                   (the log's last 200 lines; ?log=all gives every line, each with its time)
-    POST  ${api}/factory/tasks                    {title, description, startAfter?, mergeAfter?}: a new task (201); it starts by itself
+    POST  ${api}/factory/tasks                    {title, description, startAfter?, mergeAfter?, local?}: a new task (201); it starts by
+                                                  itself (with local: {machine}, you run it yourself: Local tasks, below)
     PATCH ${api}/factory/tasks/<id>               {startAfter?, mergeAfter?}: change its dependencies (lists of ids, or null)
     POST  ${api}/factory/tasks/<id>/revise        {instructions}: more instructions, for a task that is working (its Claude Code
                                                   gets them when its current step ends), complete or failed
@@ -617,6 +626,33 @@ For example:
 
     curl -s -X POST ${api}/factory/tasks -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \\
       -d '{"title": "Add a dark theme to Documents", "description": "Documents should follow the system dark mode."}'
+
+**Local tasks: work you do yourself, in your own checkout.** When you change Erga's code on
+${o.owner}'s machine (not in a VM), register the work as a local task, so it is on the board and,
+when merged, in staging's history as "Merge task/<id>-<slug>: title". It is a factory task with
+no VM: you run it, and report as a VM's Claude Code does. In a checkout of Erga's repository,
+\`bun task\` (factory/task.ts) does it all, with this token in ERGA_TOKEN (or Git's credential
+store) and the server in ERGA_URL (or an origin remote at ${o.origin}/git/erga.git):
+
+    bun task new "Short imperative title" "The ask, in a few plain sentences" [--start-after 12] [--merge-after 14]
+                                   registers it (local: {machine}), makes task/<id>-<slug> from staging, pushes it
+    bun task log "..."             progress, at milestones (5 minutes without a line: the board says stalled)
+    bun task inbox                 instructions sent from the board: run it when a step ends, and before done
+    bun task shot FILE|URL "caption"   a screenshot;   bun task preview URL   where to see the change
+    bun task push                  pushes the branch (a git token for that branch only, from the factory)
+    bun task done "summary"        pushes, then ready to merge (the summary in ASD-STE100);  bun task fail "why"
+    bun task pull --staging        after "needs agent": merges staging in, stops at the conflict for you
+
+The same over HTTP, for a local task only: POST ${api}/factory/tasks with "local": {"machine":
+"<name>"}; then the VMs' report routes, with this token: POST .../tasks/<id>/log {message},
+GET|POST .../tasks/<id>/inbox, POST .../tasks/<id>/screenshots (a PNG body, ?caption=),
+POST .../tasks/<id>/preview {url}, POST .../tasks/<id>/branch {base}, PATCH .../tasks/<id>
+{status: "complete", summary, commit} or {status: "failed", error}, and POST
+.../tasks/<id>/git for a git token ({token, repo, branch}: send it as "Authorization: Bearer"
+to push the branch). Merge runs in a VM started for the merge; a conflict makes the task
+"needs agent", and your inbox says how to finish it (then task done runs the merge again).
+Restart on the board hands a local task to a VM, from what you pushed: then your reports are
+refused (409), and you stop.
 
 **Erga's source and deploys** (the dashboard on ${o.origin}/admin/factory):
 

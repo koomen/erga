@@ -5,12 +5,40 @@ tested (`./test.sh`). This file describes how agents take on work here.
 
 ## Two ways to work on Erga
 
-### 1. Locally, with the development server
+### 1. Locally, with the development server, as a local task
 
-Work in a checkout on this machine, with the user watching if they like:
+Work in a checkout on this machine, with the user watching if they like. A
+rule from the user: **register the work as a local task, and report through
+it**, so it is on the board at erga.dev/admin/factory like the factory's
+tasks and, when merged, in staging's history as "Merge task/<id>-<slug>:
+title". A local task is a factory task with no VM: you run it (README, The
+factory, "Local tasks"). `bun task` (`factory/task.ts`) does it, with an
+admin token in `ERGA_TOKEN` or Git's credential store (README, Tokens), and
+the server in `ERGA_URL` or an `origin` at `https://erga.dev/git/erga.git`:
 
-1. **Branch first** (`git checkout -b <short-name>`); never commit to `main`
-   directly.
+1. **Register, which also branches**: `bun task new "Short imperative
+   title" "The ask, in a few plain sentences"` (add `--start-after 12` or
+   `--merge-after 14` as for any task). It makes `task/<id>-<slug>` from
+   Erga's staging, checks it out and pushes it. Never commit to `main` or
+   `staging` directly. (Only when the user says the work is not a task, for
+   example a quick look or an experiment, branch by hand:
+   `git checkout -b <short-name>`.)
+2. **Report as you go**, as a VM's Claude Code does: `bun task log "..."` at
+   milestones (5 minutes without a line marks the task stalled), `bun task
+   shot FILE|URL "caption"`, `bun task preview URL` if the user can open
+   one. Run `bun task inbox` when a step ends: it has the instructions sent
+   from the board. Commit as you go; `bun task push` pushes the branch.
+3. **Finish** with `bun task done "summary"` (it pushes; the summary in
+   ASD-STE100, below), or `bun task fail "why"`. The user merges from the
+   board. If the merge conflicts, the task is "needs agent" and `bun task
+   inbox` says what to do (`bun task pull --staging`, resolve, test, commit,
+   `bun task done`). If the board hands the task to a VM, `bun task`
+   refuses your reports: stop.
+
+The rest of local work:
+
+1. **Never commit to `main` directly.** The merge of your task moves
+   `staging`; push `staging` yourself only when the user asks (below).
 2. **Run the app**: `bun start` serves it at http://localhost:4400 (signed
    in as `DEV_LOGIN`); `bun start --reload` also reloads open tabs on every
    edit (README, Local development). Another checkout or worktree takes
@@ -25,10 +53,14 @@ Work in a checkout on this machine, with the user watching if they like:
    the files you name. Run `./test.sh` with no arguments (the whole suite) only when the change
    touches shared infrastructure (the test harness, the build, the server's
    core).
-5. **Commit and push only when the user asks.** `origin` is Erga's own Git
+5. **Push your task's branch with `bun task`; push anything else only when
+   the user asks.** `origin` is Erga's own Git
    endpoint (`https://erga.dev/git/erga.git`; GitHub, as `github`, is a
-   mirror Erga keeps). Reads need nothing; a push needs an admin token in
-   Git's credential store (README, Tokens). A push to `staging` deploys
+   mirror Erga keeps). Reads need nothing. `bun task push` and `bun task
+   done` push the task's branch with a git token the factory makes for that
+   branch only (a plain `git push` of a `task/` branch is refused). Other
+   pushes need an admin token in Git's credential store (README, Tokens). A
+   push to `staging` deploys
    **staging.erga.dev** by itself. **Production (erga.dev) is a deliberate
    step**: `main` moves only by Merge on erga.dev/admin/factory, and only
    when the user asks for it.
