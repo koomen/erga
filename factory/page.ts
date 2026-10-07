@@ -8,7 +8,7 @@
 // the screenshots, at the top in a grid, a click to enlarge one, the arrow keys for the previous and next one, Escape to shrink it), with Merge, Discard and new instructions; live, over
 // /api/factory/events. Dependencies between tasks as on the local board: a
 // chip on the card ("waiting for #12"), blocked tasks at the bottom of
-// Queued, Merge (and Start) off with the reason, and a Dependencies section
+// Queued, Merge off with the reason (a task starts by itself: no Start), and a Dependencies section
 // in the detail view to add and remove them. The pane's head says where the VMs run and whether a
 // Claude plan is signed in, and signs one in (a `claude setup-token` token).
 //
@@ -219,10 +219,11 @@ function stalledBadge(t) {
 const waitsToStart = (t) => t.status == "queued" && !!(t.blockedBy?.start.length || t.blockedBy?.stuck.length);
 
 /**
- * The task's buttons. In the detail view (inDialog), all five, in one order: Preview, Start, Restart, Discard, Merge
+ * The task's buttons. No Start: a task starts by itself, when it is added or when the tasks it waits for merge.
+ * In the detail view (inDialog), all four, in one order: Preview, Restart, Discard, Merge
  * (on the right); one that doesn't apply to its status is off, and its tooltip and the line under them say why. An
  * off button has no data-act: it does nothing, and [data-act="…"] finds the buttons that work.
- * On a card, only the ones that work, the task's main step (Merge, Start, or else Preview) filled and on the right,
+ * On a card, only the ones that work, the task's main step (Merge, or else Preview) filled and on the right,
  * and no off ones: the card's chip, flag or error says why a step waits. Restart is in the detail view only while the
  * task is ready to merge or merging, where it is rarely the next step. A running start or merge shows as a spinner.
  */
@@ -233,18 +234,18 @@ function actions(t, inDialog) {
   const done = ["merged", "discarded"].includes(t.status);
   const gone = t.status == "merged" ? "The task is merged" : "The task is discarded";
   const b = [];
-  // In the detail view, the reason the next step is off (Start or Merge), under the buttons.
+  // In the detail view, why the next step waits (a queued task's start, or Merge), under the buttons.
   let note = null;
 
   if (t.url && !done) b.push({ key: "preview", on: true, html: (main) => '<a class="btn' + (main ? " primary" : "") + '" data-btn="preview" href="/api/factory/tasks/' + t.id + '/open" target="_blank" title="Open the preview" onclick="event.stopPropagation()">Preview</a>' });
   else b.push(off("preview", "Preview", done ? gone + ": its preview is gone" : t.status == "queued" ? "No preview yet: the task hasn't started" : "No preview yet: Claude Code starts one when there's something to see"));
 
+  // A queued task: why it waits (under the buttons), or a spinner while its VM starts.
   if (t.status == "queued" && !t.vm) {
     const why = t.blockedBy?.start.length ? (t.blockedBy.stuck.length ? t.blockedBy.reason[0].toUpperCase() + t.blockedBy.reason.slice(1) : "Starts when " + ids(t.blockedBy.start) + " merge" + (t.blockedBy.start.length == 1 ? "s" : "")) : null;
-    if (why) { b.push(off("start", "Start", why)); note = why; }
-    else if (t.starting) b.push(busy("start", "Starting…", "The VM is starting"));
-    else b.push(on("start", "Start", "Start the task's VM", "primary"));
-  } else b.push(off("start", "Start", done ? gone : "The task has started already"));
+    if (why) note = why;
+    else if (t.starting) b.push({ key: "start", busy: "Starting…", html: '<span class="busy" data-btn="start" title="The VM is starting"><span class="spin"></span>Starting…</span>' });
+  }
 
   // Restart: any time once the task has run (working, merging and stuck too): its VM saves the work, then a fresh one starts.
   if (!done && !(t.status == "queued" && !t.vm)) {
@@ -276,7 +277,7 @@ function actions(t, inDialog) {
   const shown = b.filter((x) => x.on && !quiet.includes(x.key));
   const spin = b.find((x) => x.busy);
   // A running start or merge is the main step: the spinner takes its place.
-  const main = spin ? null : ["merge", "start", "preview"].map((k) => shown.find((x) => x.key == k)).find(Boolean);
+  const main = spin ? null : ["merge", "preview"].map((k) => shown.find((x) => x.key == k)).find(Boolean);
   const rest = shown.filter((x) => x != main).map((x) => html(x, false));
   const end = spin ? '<span class="busy" data-btn="' + spin.key + '" title="' + (spin.key == "merge" ? "The merge is running" : "The VM is starting") + '"><span class="spin"></span>' + spin.busy + '</span>' : main ? html(main, true) : "";
   return rest.length || end ? '<div class="actions">' + rest.join("") + end + '</div>' : "";
@@ -496,7 +497,6 @@ document.addEventListener("click", async (e) => {
     else if (act == "discard") { armed.delete(id); upsert(await api("/tasks/" + id + "/discard", { method: "POST" })); }
     else if (act == "restart") { el.disabled = true; upsert(await api("/tasks/" + id + "/restart", { method: "POST" })); }
     else if (act == "merge") upsert(await api("/tasks/" + id + "/merge", { method: "POST" }));
-    else if (act == "start") { el.disabled = true; upsert(await api("/tasks/" + id + "/start", { method: "POST" })); }
     else if (act == "dep" || act == "undep") {
       const t = tasks.find((x) => x.id == id);
       const kind = act == "dep" ? $("dep-kind").value : el.dataset.kind;

@@ -111,11 +111,11 @@ try {
   const detail = (await p.eval<string>(`document.getElementById("dlg").innerText`)).toLowerCase();
   expect(detail.includes("task/1-say-hello-on-the-front-page") && detail.includes("summary") && detail.includes("more instructions") && detail.includes("open preview"), "the detail: branch, summary, instructions, preview", detail.slice(0, 800));
   await p.screenshot(join(SHOTS, "factory-detail.png"));
-  // The detail's buttons: the cards' order, Merge on the right; the ones that don't apply (Start, for a task that ran) off, with why.
+  // The detail's buttons: Preview, Restart, Discard, Merge (on the right), and no Start: a task starts by itself.
   const dlgButtons = await p.eval<{ keys: string[]; on: string[]; offWhy: string[] }>(`(() => { const bs = [...document.querySelectorAll("#dlg .actions > *")];
     return { keys: bs.map((b) => b.dataset.btn), on: bs.filter((b) => !b.disabled && b.dataset.act).map((b) => b.dataset.btn), offWhy: bs.filter((b) => b.disabled).map((b) => b.title) }; })()`);
-  expect(dlgButtons.keys.join() == "preview,start,restart,discard,merge" && dlgButtons.on.join() == "restart,discard,merge" && dlgButtons.offWhy.length == 1 && dlgButtons.offWhy[0] == "The task has started already",
-    "the detail: Preview, Start (off, with why), Restart, Discard, Merge", dlgButtons);
+  expect(dlgButtons.keys.join() == "preview,restart,discard,merge" && dlgButtons.on.join() == "restart,discard,merge" && !dlgButtons.offWhy.length,
+    "the detail: Preview, Restart, Discard, Merge, and no Start", dlgButtons);
   await click(p, '[data-act="close"]');
   await until(async () => (await task(2)).status == "complete" && (await task(3)).status == "complete", STEP, "the other two are ready", async () => [await task(2), await task(3)].map((t) => ({ status: t.status, error: t.error, log: t.log.slice(-5).map((l: any) => l.message) })));
   const t2model = await task(2);
@@ -255,11 +255,12 @@ try {
   const t5 = await task(5);
   expect(JSON.stringify(t5.startAfter) == "[4]" && JSON.stringify(t5.blockedBy?.start) == "[4]" && t5.blockedBy.reason == "waiting for #4 to merge", "#5 waits for #4", t5);
   expect(t5.status == "queued" && !t5.vm && !t5.log.some((l: any) => l.message.includes("Starting a VM")) && !vmsOf(5).length, "no VM started for #5", { t5, vms: vmsOf(5) });
-  const start5 = await api("/tasks/5/start", { method: "POST" });
-  expect(start5.status == 409 && start5.body.error.includes("can't start: waiting for #4"), "Start is refused while #4 isn't merged", start5);
+  // There is no Start (a task starts by itself); Restart, on a task that never ran, starts it, and is refused the same way.
+  const start5 = await api("/tasks/5/restart", { method: "POST" });
+  expect(start5.status == 409 && start5.body.error.includes("can't start: waiting for #4"), "Restart is refused while #4 isn't merged", start5);
   expect(!vmsOf(5).length && !(await task(5)).vm, "still no VM for #5");
   await until(() => p.eval(`(() => { const c = document.querySelector('[data-col="queued"] [data-open="5"]'); return !!c && c.classList.contains("blocked") && c.innerText.includes("waiting for #4") && !c.querySelector("[data-btn=start]"); })()`), 5000, "#5's card: blocked, 'waiting for #4', no Start");
-  ok("a task that starts after another: queued with no VM, Start refused (409), the card says what it waits for");
+  ok("a task that starts after another: queued with no VM, Restart refused (409), the card says what it waits for");
 
   // A blocked merge: #4 is ready, but #3 isn't merged.
   await until(async () => (await task(4)).status == "complete", STEP, "#4 is ready to merge");
@@ -290,7 +291,7 @@ try {
   expect(JSON.stringify(s6.blockedBy?.stuck) == "[3]" && s6.blockedBy.reason.startsWith("blocked: #3 was discarded"), "#6 is blocked by the discarded #3", s6.blockedBy);
   expect(JSON.stringify(s4.blockedBy?.stuck) == "[3]", "#4 too (it merges after #3)", s4.blockedBy);
   expect(s6.log.some((l: any) => l.message.includes("#3 was discarded: this task is blocked")), "#6's log says so");
-  expect((await api("/tasks/6/start", { method: "POST" })).status == 409 && !vmsOf(6).length, "#6 can't start, and has no VM");
+  expect((await api("/tasks/6/restart", { method: "POST" })).status == 409 && (await api("/tasks/6/start", { method: "POST" })).status == 404 && !vmsOf(6).length, "#6 can't start, and has no VM");
   expect((await add({ title: "After a discarded one", startAfter: [3] })).status == 400, "a new dependency on a discarded task is refused");
   await until(() => p.eval(`(() => { const c = document.querySelector('[data-open="6"]'); return !!c && c.innerText.includes("blocked by #3"); })()`), 5000, "#6's card: 'blocked by #3'");
   ok("a discarded dependency blocks its dependents (start and merge) until it's removed");
@@ -436,7 +437,7 @@ try {
   await until(async () => (await task(sharedTask.id)).status == "complete", STEP, "the shared agent's task starts its VM, pushes its branch and is ready to merge", async () => { const t = await task(sharedTask.id); return { status: t.status, error: t.error, log: t.log.slice(-4) }; });
   expect(!!branches(host.state)[(await task(sharedTask.id)).branch], "its branch reached the repository, pushed with its git token", branches(host.state));
   expect((await as(`/tasks/${next}/revise`, { json: { instructions: "One more word." } })).status == 200, "it sends instructions");
-  for (const [method, path] of [["POST", `/tasks/${next}/merge`], ["POST", `/tasks/${next}/discard`], ["POST", `/tasks/${sharedTask.id}/start`], ["PUT", "/claude"], ["DELETE", "/claude"], ["POST", "/agent"], ["GET", "/agent"], ["GET", "/events"], ["POST", "/tokens"], ["GET", "/tokens"]] as const) {
+  for (const [method, path] of [["POST", `/tasks/${next}/merge`], ["POST", `/tasks/${next}/discard`], ["POST", `/tasks/${sharedTask.id}/restart`], ["PUT", "/claude"], ["DELETE", "/claude"], ["POST", "/agent"], ["GET", "/agent"], ["GET", "/events"], ["POST", "/tokens"], ["GET", "/tokens"]] as const) {
     const r = await as(path, { method, json: method == "GET" || method == "DELETE" ? undefined : {} });
     expect(r.status == 403, `a factory token can't ${method} ${path}`, r.status);
   }

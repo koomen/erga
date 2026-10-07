@@ -9,10 +9,10 @@
 // - The last update is a short time on the title's line ("5m"), its date in a tooltip.
 // - A plain card (no thumbnails, no error) is at most two lines of text and a row of buttons.
 // - The thumbnails stay.
-// - A card shows only the steps that work for its state, the main one (Merge, Start, or else Preview) filled and on
-//   the right, or a round spinner while a merge or a start runs; no off buttons. They fit inside the card, apart, with
-//   whole labels, at four narrow columns and at two (factory-card-states[-narrow][-dark].png: the board alone).
-// - The detail view keeps all five, Preview, Start, Restart, Discard and Merge; an off one (a dashed border) says why.
+// - A card shows only the steps that work for its state, the main one (Merge, or else Preview) filled and on the
+//   right, or a round spinner while a merge or a start runs (a task starts by itself: there is no Start); no off
+//   buttons. They fit inside the card, apart, with whole labels, at four narrow columns and at two (factory-card-states[-narrow][-dark].png: the board alone).
+// - The detail view keeps all four, Preview, Restart, Discard and Merge; an off one (a dashed border) says why.
 // - Discard asks first ("Discard branch?"), on the card too.
 // - Each column is in id order, oldest first, so a card moves only when its status changes.
 // - The detail view shows the screenshots first, three in a row; a click enlarges one to the modal's width, a
@@ -52,11 +52,10 @@ const tasks = [
   t("Dark mode for the outline panel", "failed", 45, "failed", { error: "The build failed: src/page/outline.ts(12,3): Property 'x' does not exist." }),
   t("Show word counts in the document list, with a total for each folder", "complete", 70, "ready to merge", { url: "http://localhost:4400/", screenshots: [shot("a.png"), shot("b.png"), shot("c.png"), shot("d.png")] }),
   t("Faster first paint on the reader page", "complete", 8, "ready to merge", { url: "http://localhost:4401/", blockedBy: { start: [], merge: [3], stuck: [], reason: ["merges after #3"] } }),
-  t("Keyboard shortcuts help dialog", "queued", 1, "queued"),
+  t("Keyboard shortcuts help dialog", "queued", 1, "queued", { starting: true }),
   t("Export a document as EPUB, with the cover image and the table of contents", "queued", 4, "queued", { startAfter: [6], blockedBy: { start: [6], merge: [], stuck: [], reason: ["waits for #6 to merge"] } }),
   t("Resolve the merge with staging", "needs agent", 3, "Merging origin/staging into the branch", { error: "conflicts merging origin/staging: README.md" }),
   t("Spell check in the editor", "merging", 1, "Merging origin/staging into the branch", { url: "http://localhost:4402/" }),
-  t("Print a document with its footnotes", "queued", 0, "queued", { starting: true }),
 ];
 const info = { enabled: true, vms: { runner: "sim" }, claude: { signedIn: true, canStore: true } };
 // The events: none, until the typing test sends task #6's updates, one each time the page reconnects (every 150 ms).
@@ -136,8 +135,8 @@ try {
     await boardShot(p, `factory-card-states${dark ? "-dark" : ""}.png`);
     // The detail view keeps all five: an off Merge reads as off, as the other off buttons do, in light and dark.
     await p.eval(`window.ergaBoard.open(3)`);
-    const [merge, start] = await p.eval<string[]>(`["merge", "start"].map((k) => getComputedStyle(document.querySelector("#dlg [data-btn='" + k + "']")).color)`);
-    expect(merge == start, `an off Merge has the off text (${dark ? "dark" : "light"})`, { merge, start });
+    const [merge, preview] = await p.eval<string[]>(`["merge", "preview"].map((k) => getComputedStyle(document.querySelector("#dlg [data-btn='" + k + "']")).color)`);
+    expect(merge == preview, `an off Merge has the off text (${dark ? "dark" : "light"})`, { merge, preview });
     await p.eval(`document.getElementById("dlg").close()`);
   }
   ok("the cards' buttons fit inside the card, apart, with whole labels, at four and two columns, light and dark; no off buttons");
@@ -163,24 +162,24 @@ try {
   // The title's line, the last update's line, and the buttons: about 70px at 12-14px type.
   expect(plain.height <= 80, "a plain card is short", plain.height);
   ok(`a plain card is ${Math.round(plain.height)}px high`);
-  // Every card: only the steps that work for its state, the main one (Merge, Start or Preview, or a spinner) last.
+  // Every card: only the steps that work for its state, the main one (Merge or Preview, or a spinner) last.
   const rows = await readRows();
   const shown = (id: number) => { const r = rows.find((x) => x.id == id)!; return r.keys.join() + (r.main ? " | " + r.main : ""); };
   expect(shown(3) == "restart,discard" && shown(4) == "restart,discard", "working: Restart and Discard", rows);
   expect(shown(5) == "restart,discard", "failed: Restart and Discard", shown(5));
   expect(shown(6) == "preview,discard,merge | merge", "ready to merge: Preview, Discard, and Merge as the main step", shown(6));
   expect(shown(7) == "discard,preview | preview", "ready, Merge waits for #3: no Merge, Preview as the main step", shown(7));
-  expect(shown(8) == "discard,start | start" && shown(9) == "discard", "queued: Start as the main step, unless it waits for another task", [shown(8), shown(9)]);
+  expect(shown(8) == "discard,start | start:busy", "queued: Discard and the start's spinner (it starts by itself)", shown(8));
+  expect(shown(9) == "discard", "queued, waiting for another task: Discard (the chip says what it waits for)", shown(9));
   expect(shown(10) == "restart,discard", "needs agent: Restart and Discard", shown(10));
   expect(shown(11) == "preview,merge | merge:busy", "merging: Preview and the merge's spinner", shown(11));
-  expect(shown(12) == "discard,start | start:busy", "starting: Discard and the start's spinner", shown(12));
-  ok("each state shows only the steps that work: Merge, Start or Preview as the main step, on the right; a spinner while a merge or start runs");
+  ok("each state shows only the steps that work: Merge or Preview as the main step, on the right; a spinner while a merge or start runs");
   // The detail view keeps all five, in order; an off one says why.
-  for (const id of [3, 6, 7, 9, 10, 11, 12]) {
+  for (const id of [3, 6, 7, 8, 9, 10, 11]) {
     await p.eval(`window.ergaBoard.open(${id})`);
-    const d = await p.eval<{ keys: string; offUntitled: number; spin: number[] | null }>(`(() => { const bs = [...document.querySelectorAll("#dlg .actions > *")], s = document.querySelector("#dlg .spin")?.getBoundingClientRect();
+    const d = await p.eval<{ keys: string; offUntitled: number; spin: number[] | null }>(`(() => { const bs = [...document.querySelectorAll("#dlg .actions > :is(button, a)")], s = document.querySelector("#dlg .spin")?.getBoundingClientRect();
       return { keys: bs.map((b) => b.dataset.btn).join(), offUntitled: bs.filter((b) => b.disabled && !b.title).length, spin: s ? [s.width, s.height] : null }; })()`);
-    expect(d.keys == "preview,start,restart,discard,merge" && !d.offUntitled, "the detail view: all five, an off one with its reason", { id, d });
+    expect(d.keys == "preview,restart,discard,merge" && !d.offUntitled, "the detail view: all four, an off one with its reason", { id, d });
     if (d.spin) expect(d.spin[0] == d.spin[1], "the detail view's spinner is round", d);
   }
   await p.eval(`window.ergaBoard.open(7)`);
@@ -188,7 +187,7 @@ try {
   const offLook = await p.eval<{ border: string; cursor: string }>(`(() => { const s = getComputedStyle(document.querySelector("#dlg [data-btn='merge']")); return { border: s.borderStyle, cursor: s.cursor }; })()`);
   expect(offLook.border == "dashed" && offLook.cursor == "not-allowed", "an off button looks off", offLook);
   await p.eval(`document.getElementById("dlg").close()`);
-  ok("the detail view: Preview, Start, Restart, Discard, Merge; an off one looks off and says why");
+  ok("the detail view: Preview, Restart, Discard, Merge, no Start; an off one looks off and says why");
   // Discard's text is black (the page's ink), not red; in light mode at least.
   await p.open(`${host.root}/admin/factory`, { width: 1400, height: 900 });
   for (const end = Date.now() + 15_000; !(await p.eval(`document.querySelectorAll("#board .card").length`)) && Date.now() < end;) await Bun.sleep(50);

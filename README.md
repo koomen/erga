@@ -1790,17 +1790,19 @@ on the New task form or `POST /api/factory/tasks`, changed in the detail
 view's Dependencies section or `PATCH /api/factory/tasks/<id>`. Ids must
 name other tasks, not discarded ones, and a cycle is refused (400). Each
 task carries a computed `blockedBy` (`start`, `merge`, `stuck`, `reason`).
-Start (`POST .../start`) and Merge answer 409 while blocked; a merge asked
+Restart (on a task that never ran) and Merge answer 409 while blocked; a merge asked
 for while its dependency merges ahead of it is allowed, and checked again
 when its turn comes (if the dependency didn't merge, it goes back to Ready to
 merge, saying why). A discarded or failed dependency blocks its dependents
 until someone removes or changes it. The factory has no outer agent, so when
 a dependency merges (or is removed) it starts each queued task that no longer
-waits, itself; dependents' logs say what happened, and the event stream
+waits, itself. There is no Start: every task starts by itself, when it is
+added or when what it waits for merges, and one whose VM was starting when
+the factory restarted (each merge deploys staging) starts again when it comes
+back. Dependents' logs say what happened, and the event stream
 sends `{ type: "unblocked" | "blocked" }` (a toast on the board). On the
 board: a chip on the card ("waiting for #12", "merges after #12", "blocked by
-#12"), waiting tasks at the bottom of Queued with Start off, and Merge off
-with the reason.
+#12"), waiting tasks at the bottom of Queued, and Merge off with the reason.
 
 **Stalled tasks.** A task that is working or needs agent, and whose log has
 had no new line in 5 minutes, is *stalled* (`factory/stall.ts`): its Claude
@@ -1858,7 +1860,7 @@ never instructions (`tests/source-read.test.ts`, and in the Worker,
 
 The rule: the admin's agent can do everything the admin can do on the admin
 pages, so they can ask for anything there in words. Beside the tools above it
-presses the board's buttons, `start_task`, `merge_task` (into staging, which
+presses the board's buttons, `merge_task` (into staging, which
 deploys itself), `discard_task` and `restart_task`; reads and revokes Share
 with agent's tokens (`list_factory_tokens`, `revoke_factory_token`) and signs
 the factory out of Claude (`sign_out_claude`); clears an API key
