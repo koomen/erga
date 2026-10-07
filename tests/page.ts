@@ -2,7 +2,7 @@
 // a fixture, drives headless Chrome with real clicks and keys, and reads the
 // file back from disk after each edit. Runs the HTML and the Markdown
 // fixture. (Two people at once: tests/suite, `bun tests/suite/run.ts --suite browser`.)
-//   bun tests/page.ts [html|select|md|format|view|agent|reload|enter] [--keep]   (--keep leaves the host running and prints its URL)
+//   bun tests/page.ts [html|select|md|format|view|agent|reload|enter|indent] [--keep]   (--keep leaves the host running and prints its URL)
 
 import { Browser, MOD, ROOT, SHOTS } from "./cdp";
 import { startHost } from "./host";
@@ -14,7 +14,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { testJobs } from "./cores";
 
 const keep = process.argv.includes("--keep");
-const only = process.argv.find((a) => a == "html" || a == "select" || a == "md" || a == "agent" || a == "format" || a == "view" || a == "reload" || a == "enter");
+const only = process.argv.find((a) => a == "html" || a == "select" || a == "md" || a == "agent" || a == "format" || a == "view" || a == "reload" || a == "enter" || a == "indent");
 
 // Scenarios run at once, each in its own host and tab; each one's lines are
 // collected and printed together when it finishes.
@@ -896,6 +896,65 @@ async function selectScenario(browser: Browser) {
   await m.close();
 }
 
+/** Tab and Shift+Tab at the start of a Markdown list item nest it and take it back out; Enter then carries on at its level. */
+async function indentScenario(browser: Browser) {
+  say("\nTab in a list");
+  const s = await session(browser, "md", "index.md");
+  const { p } = s;
+  // The editor's own shortcut key: ⌘ on a Mac, Ctrl elsewhere.
+  const UNDO = process.platform == "darwin" ? MOD.Meta : MOD.Ctrl;
+  const list = async () => (await s.source()).match(/- Water[\s\S]*?\n(?=\n)/)?.[0] ?? "";
+  const press = async (key: string, mods = 0) => { await p.key(key, mods); await Bun.sleep(80); };
+  const start = async (selector: string) => { await s.clickEnd(selector); await press("Home"); };
+  const nested = () => p.frame<string[]>(`[...${F}.querySelectorAll("li li")].map((li) => li.textContent.trim())`);
+
+  await start("li:last-child p");
+  await press("Tab");
+  check("Tab at the start of an item nests it under the one before", (await list()) == "- Water the plants\n  - Call *Sam* back\n", await list());
+  check("and the page shows a nested list", JSON.stringify(await nested()) == '["Call Sam back"]', await nested());
+  check("the caret stays at the start of the item's text", await until(async () => (await s.source()).indexOf("Call *Sam*") == await p.eval<number>("ergaPage.state.selection.main.head")));
+
+  await s.clickEnd("li li p");
+  await press("Enter");
+  await p.type("Write it down");
+  await Bun.sleep(120);
+  check("Enter after it starts the next item at the same level", (await list()) == "- Water the plants\n  - Call *Sam* back\n  - Write it down\n", await list());
+
+  await press("Tab");
+  check("Tab in the middle of the text changes nothing", (await list()) == "- Water the plants\n  - Call *Sam* back\n  - Write it down\n", await list());
+
+  await start("li li:last-child p");
+  await press("Tab");
+  check("Tab again nests it one more level", (await list()) == "- Water the plants\n  - Call *Sam* back\n    - Write it down\n", await list());
+  check("three levels on the page", (await s.count("li li li")) == 1);
+  await press("Tab", MOD.Shift);
+  check("Shift+Tab takes it one level back out", (await list()) == "- Water the plants\n  - Call *Sam* back\n  - Write it down\n", await list());
+
+  await start("li li:first-child p");
+  await press("Tab", MOD.Shift);
+  check("Shift+Tab on a nested item takes it out, with what comes after it nested under it", (await list()) == "- Water the plants\n- Call *Sam* back\n  - Write it down\n", await list());
+  await p.type("Now ");
+  await Bun.sleep(120);
+  check("the caret stays at the start of the item", (await list()).includes("\n- Now Call *Sam* back\n"), await list());
+  await p.key("z", UNDO); await Bun.sleep(120);
+
+  const before = await s.source();
+  await start("li:first-child p");
+  await press("Tab");
+  await press("Tab", MOD.Shift);
+  check("the first item and a top-level item stay where they are", (await s.source()) == before, await list());
+
+  await start("li:last-child p");
+  await press("Tab");
+  check("a nested list made with Tab", (await list()) == "- Water the plants\n  - Call *Sam* back\n    - Write it down\n", await list());
+  await p.screenshot(`${SHOTS}/indent-list.png`);
+  check("on disk too", await waitFor(() => s.disk().includes("  - Call *Sam* back\n    - Write it down\n")));
+  await p.key("z", UNDO); await Bun.sleep(150);
+  check("undo takes the indent back", (await list()) == "- Water the plants\n- Call *Sam* back\n  - Write it down\n", await list());
+  check("no page errors", p.errors.length == 0, p.errors.join("\n"));
+  await s.close();
+}
+
 /** Enter makes an empty paragraph; typing, pasting or composing into it leaves no placeholder <br> behind, on the page or in the file. */
 async function enterScenario(browser: Browser) {
   say("\nEnter and the placeholder <br>");
@@ -1023,6 +1082,7 @@ const SCENARIOS: [string, (b: Browser) => Promise<void>][] = [
   ["agent", agentOffScenario], ["agent", shareScenario], ["agent", modelScenario], ["agent", agentEmptyScenario], ["agent", voiceScenario],
   ["reload", backdropReloadScenario],
   ["enter", enterScenario],
+  ["indent", indentScenario],
 ];
 const browser = await Browser.launch();
 try {
