@@ -948,10 +948,10 @@ export class Factory extends DurableObject<Env> {
       mirror: async () => ({ mirror: await source().mirrorNow(state.origin) }),
       deploys: (history) => pipeline().status(history),
       deployLog: (target, deploy) => pipeline().logOf(target, deploy),
-      redeploy: async (target) => {
-        const r = await pipeline().redeploy(target, `redeploy by ${login}`);
+      redeploy: async (target, fresh) => {
+        const r = fresh ? await pipeline().redeployWith(target, `redeploy by ${login}`, { fresh: true }) : await pipeline().redeploy(target, `redeploy by ${login}`);
         if (!r.ok) throw new Error(r.error ?? "refused");
-        return { done: `${target} redeploys now`, target: r.status };
+        return { done: `${target} redeploys now${fresh ? ", with a fresh copy of production's data" : ""}`, target: r.status };
       },
       deployHome: async () => {
         const dir = directoryOf(this.env);

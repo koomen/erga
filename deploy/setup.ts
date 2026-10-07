@@ -37,6 +37,8 @@
 // account (deploy/mock.ts), with --yes taking the defaults: the tests run it so.
 
 import { randomBytes } from "node:crypto";
+import { copyFileSync, mkdirSync, rmSync } from "node:fs";
+import { join } from "node:path";
 import { Cloudflare, DeployError, zoneIdOf, type Fetch } from "./cloudflare";
 import { machineCredential } from "./credential";
 import { MOCK_HOOK_SECRET, mockCloudflare } from "./mock";
@@ -228,7 +230,14 @@ try {
     if (scripts.includes(BUILDER) && !flag("--builder")) console.log("   It's there.");
     else if (mock) console.log("   (mock) It's there.");
     else if (ask(`   Deploy it now (\`bunx ${WRANGLER} deploy\` in deploy/builder; needs Docker running)?`, yes)) {
-      const p = Bun.spawnSync(["bunx", WRANGLER, "deploy"], { cwd: new URL("./builder/", import.meta.url).pathname, stdout: "inherit", stderr: "inherit", env: { ...process.env, CLOUDFLARE_API_TOKEN: token, CLOUDFLARE_ACCOUNT_ID: accountId } });
+      // The image caches the checkout's dependencies (deploy/builder/Dockerfile): package.json and bun.lock go in its
+      // build context, deps/, for the build only.
+      const dir = new URL("./builder/", import.meta.url).pathname, deps = join(dir, "deps");
+      mkdirSync(deps, { recursive: true });
+      for (const f of ["package.json", "bun.lock"]) copyFileSync(new URL(`../${f}`, import.meta.url).pathname, join(deps, f));
+      let p;
+      try { p = Bun.spawnSync(["bunx", WRANGLER, "deploy"], { cwd: dir, stdout: "inherit", stderr: "inherit", env: { ...process.env, CLOUDFLARE_API_TOKEN: token, CLOUDFLARE_ACCOUNT_ID: accountId } }); }
+      finally { rmSync(deps, { recursive: true, force: true }); }
       if (p.exitCode != 0) throw new DeployError("The builder didn't deploy (see above). Staging can still be deployed from a machine (bun deploy/run.ts staging), but can't deploy itself until it's there.");
     } else console.log("   Skipped: staging can't deploy itself until it's there.");
 

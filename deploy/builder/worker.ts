@@ -15,11 +15,32 @@
 // Deployed once, by deploy/setup.ts (`bunx wrangler deploy` here: it builds
 // the image with Docker and pushes it to Cloudflare's registry).
 
-import { DurableObject } from "cloudflare:workers";
+//
+// The release cache (cache.ts): a commit built once is answered from the
+// cache after, with no container (production's deploy of a commit staging
+// built). It's kept in one more object of the same class, named CACHE, which
+// no build's id can be (ids are letters, digits, _ and - only).
 
-interface Env { BUILDS: DurableObjectNamespace<Builder> }
+import { DurableObject } from "cloudflare:workers";
+import { cachedBuild, storageStore, toolchainKey } from "./cache";
+
+interface Env { BUILDS: DurableObjectNamespace<Builder>; CF_VERSION_METADATA?: { id?: string } }
+
+/** The image's Bun (Dockerfile's FROM; tests/pipeline.test.ts keeps them equal): part of the release cache's key. */
+export const BUILDER_BUN = "1.4.2";
+/** The release cache's object. */
+const CACHE = "cache:releases";
 
 export class Builder extends DurableObject<Env> {
+  /** The release cache's object only: a kept release (its stream line), or null. */
+  async cachedRelease(key: string): Promise<{ line: string; at: number; branch?: string } | null> {
+    return storageStore(this.ctx.storage as never).get(key);
+  }
+  /** The release cache's object only: keeps a release this Worker's own build just streamed back. */
+  async keepRelease(key: string, line: string, meta: { at: number; branch?: string }): Promise<void> {
+    await storageStore(this.ctx.storage as never).put(key, line, meta);
+  }
+
   async fetch(request: Request): Promise<Response> {
     const container = (this.ctx as unknown as { container: ContainerApi }).container;
     // A cancel with no container up: there's no build to stop (and none is started for it).
@@ -63,11 +84,20 @@ interface ContainerApi {
 }
 
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url), path = url.pathname;
     if ((path != "/build" && path != "/cancel") || request.method != "POST") return new Response("Not found", { status: 404 });
     // A container for each build (its id; an older pipeline sends none and shares one: 409 while busy, and it tries again).
     const id = (url.searchParams.get("id") ?? "").replace(/[^\w-]/g, "").slice(0, 64) || "builder";
-    return env.BUILDS.getByName(id).fetch(request);
+    if (path == "/cancel") return env.BUILDS.getByName(id).fetch(request);
+    // A build: from the release cache if this commit was built by this builder (its version) before, else in a container.
+    const cache = env.BUILDS.getByName(CACHE);
+    const body = await request.text();
+    return cachedBuild(body, {
+      toolchain: await toolchainKey({ bun: BUILDER_BUN, builderVersion: env.CF_VERSION_METADATA?.id }),
+      store: { get: (k) => cache.cachedRelease(k), put: (k, line, meta) => cache.keepRelease(k, line, meta) },
+      build: (b) => env.BUILDS.getByName(id).fetch(new Request(request.url, { method: "POST", headers: request.headers, body: b, signal: request.signal })),
+      keep: (p) => ctx.waitUntil(p),
+    });
   },
 } satisfies ExportedHandler<Env>;

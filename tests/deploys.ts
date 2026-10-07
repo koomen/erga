@@ -82,7 +82,7 @@ try {
   await until(async () => (await stagingOf()).state == "deployed", 60_000, "staging builds and deploys itself", async () => JSON.stringify(await stagingOf(), null, 1));
   const done = await stagingOf();
   expect(done.commit == SHA1 && done.deployed == SHA1 && done.error == null, "the commit is live", done);
-  expect(done.steps.map((s: any) => s.id).join() == "build,account,database,data,migrations,assets,image,worker,vms,address,pages,live,documents" && done.steps.every((s: any) => s.status == "done"), "every step done, copying production's data included", done.steps);
+  expect(done.steps.map((s: any) => s.id).join() == "build,account,database,data,migrations,assets,image,worker,vms,address,pages,live,documents,cleanup" && done.steps.every((s: any) => s.status == "done"), "every step done, copying production's data included", done.steps);
   expect(done.steps.find((s: any) => s.id == "documents").detail.includes("3 documents copied"), "production's documents copied", done.steps);
   expect(done.log.some((l: string) => l.includes("build: $ bun install --frozen-lockfile")) && done.log.at(-1).includes(`deployed ${SHA1.slice(0, 12)}`), "the log says what happened, step by step", done.log);
   await until(() => events.filter((e) => e == "deploys").length > 8, 5000, "an event on each change", () => events.join());

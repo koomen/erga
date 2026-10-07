@@ -93,6 +93,7 @@ export const AGENT_ACTIONS: AgentAction[] = [
   { route: "GET /api/deploys/<name>/history[?limit=N]", domain: "admin", action: "Read a target's past deploys (Factory, dashboard)", tool: "list_deploys" },
   { route: "GET /api/deploys/<name>/log[?deploy=<id>]", domain: "admin", action: "Read a deploy's log (Factory, dashboard)", tool: "deploy_log" },
   { route: "POST /api/deploys/<name>", domain: "admin", action: "Redeploy a target (Factory, dashboard)", tool: "redeploy" },
+  { route: "POST /api/deploys/<name> fresh=", domain: "admin", action: "Redeploy staging with a fresh copy of production's data ({fresh: true})", tool: "redeploy" },
   { route: "GET /api/events", domain: "none", action: "The dashboard's live updates", exempt: STREAM },
   { route: "GET /admin/deploys", domain: "none", action: "An old address of the dashboard", exempt: "a redirect" },
   { route: "GET /api/deploys/version", domain: "none", action: "The release this server runs", exempt: "the deploy pipeline's, server to server" },

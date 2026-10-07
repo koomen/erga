@@ -3,8 +3,8 @@
 // machine (deploy/run.ts). A Worker can't run `bun install` or Vite, so this
 // is the one part of a deploy that runs outside the Worker.
 //
-//   1. fetch the commit from the source repo (a Git remote and a read token: deploy/source.ts)
-//   2. bun install --frozen-lockfile
+//   1. fetch the commit from the source repo, depth 1 (a Git remote and a read token: deploy/source.ts)
+//   2. bun install --frozen-lockfile    (the image has the packages in Bun's cache: Dockerfile)
 //   3. ./site.sh                        (the editor's files, into .site/)
 //   4. bun deploy/release.ts            (cf build: the Worker and its config, into .site/release/)
 //   5. pack .site/release/ as one bundle (deploy/bundle.ts reads it)
@@ -35,8 +35,26 @@ export async function buildCommit(o: { source: Source; commit: string; branch?: 
   const auth: Record<string, string> = o.source.token ? { GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "http.extraHeader", GIT_CONFIG_VALUE_0: `Authorization: Basic ${btoa(`x:${o.source.token}`)}` } : {};
   o.log(`fetching ${o.commit.slice(0, 12)} from ${o.source.cloneUrl}`);
   await run(["git", "init", "-q"], { cwd: o.dir, env, log: o.log });
-  // The branch, then the commit on it (servers don't all let a commit be fetched by its id).
-  await run(["git", "fetch", "-q", "--no-tags", o.source.cloneUrl, o.branch ? `+refs/heads/${o.branch}:refs/remotes/origin/${o.branch}` : o.commit], { cwd: o.dir, env: { ...env, ...auth }, log: o.log, secret: o.source.token });
+  // Only the commit, not the branch's history: nothing in the build reads history (site.sh and build.sh run no git,
+  // and deploy/release.ts stamps the version from WORKERS_CI_COMMIT_SHA). The cheapest fetch that has the commit:
+  //   1. the commit by its id, depth 1 (Git's protocol v2 servers serve any commit a branch reaches);
+  //   2. else the branch's head, depth 1 (a server that won't fetch by id: the head is the commit nearly always);
+  //   3. else the rest of the branch's history (the branch moved on, and the commit is further back).
+  const fetch = (...args: string[]) => ["git", "fetch", "-q", "--no-tags", ...args, o.source.cloneUrl];
+  const git = { cwd: o.dir, env: { ...env, ...auth }, log: o.log, secret: o.source.token };
+  /** Whether a command worked (a cancel still throws). */
+  const ok = (cmd: string[], x: Parameters<Runner>[1]) => run(cmd, x).then(() => true, (e) => { signal?.throwIfAborted(); void e; return false; });
+  const ref = o.branch ? `+refs/heads/${o.branch}:refs/remotes/origin/${o.branch}` : null;
+  let have = /^[0-9a-f]{40}$/.test(o.commit) && await ok([...fetch("--depth", "1"), o.commit], { ...git, log: () => {} });
+  if (!have && ref) {
+    o.log(`the source doesn't serve a commit by its id: fetching ${o.branch}'s head`);
+    await run([...fetch("--depth", "1"), ref], git);
+    have = await ok(["git", "cat-file", "-e", `${o.commit}^{commit}`], { cwd: o.dir, env, log: () => {} });
+    if (!have) {
+      o.log(`${o.branch} has moved on from ${o.commit.slice(0, 12)}: fetching its history`);
+      await run([...fetch("--unshallow"), ref], git);
+    }
+  } else if (!have) await run([...fetch(), o.commit], git);
   await run(["git", "-c", "advice.detachedHead=false", "checkout", "-q", o.commit], { cwd: o.dir, env, log: o.log });
   return buildIn({ dir: o.dir, commit: o.commit, log: o.log, run });
 }

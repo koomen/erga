@@ -4,7 +4,8 @@
 //
 //   GET  /api/deploys[?history=N]       admins: every target's status {targets: [...]}, with each one's last N deploys
 //                                       (`history`, newest first) if asked
-//   POST /api/deploys/<name>            admins: redeploy that target's branch head now
+//   POST /api/deploys/<name>            admins: redeploy that target's branch head now; {fresh: true}: staging with a
+//                                       fresh copy of production's data, however new its copy is
 //   GET  /api/deploys/<name>/history[?limit=N]
 //                                       admins (or another of Erga's servers): the last N deploys (default 20, at most
 //                                       100) {target, deploys: [{id, commit, state, started, ended, trigger, error, live, ...}]}
@@ -100,7 +101,8 @@ export async function deploysDoor(request: Request, env: Env, base: Platform): P
   if (name && method == "POST") {
     // From this site's pages, or an agent's token: never another site's form.
     if (!session!.agent && request.headers.get("origin") != url.origin) return Response.json({ error: "Forbidden" }, { status: 403 });
-    const r = await stub().redeploy(name, `redeploy by ${session!.login}`);
+    const fresh = ((await request.json().catch(() => ({}))) as { fresh?: unknown }).fresh === true;
+    const r = fresh ? await stub().redeployWith(name, `redeploy by ${session!.login}`, { fresh }) : await stub().redeploy(name, `redeploy by ${session!.login}`);
     return r.ok ? Response.json({ ok: true, target: r.status }) : Response.json({ ok: false, error: r.error }, { status: r.status ?? 400 });
   }
   return Response.json({ error: `There's nothing at ${method} ${path}.` }, { status: 404 });
