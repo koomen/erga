@@ -4,6 +4,7 @@
 // all on one Bun server. No Worker: the logic alone, quickly.
 
 import { Database } from "bun:sqlite";
+import { execFile } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -32,11 +33,15 @@ export interface Fixture {
   stop(): void;
 }
 
-/** git, run without blocking: the fixture's server answers in this same process. */
-export async function git(cwd: string, ...args: string[]) {
-  const p = Bun.spawn(["git", ...args], { cwd, stdout: "pipe", stderr: "pipe", env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_AUTHOR_NAME: "Ada", GIT_AUTHOR_EMAIL: "ada@example.com", GIT_COMMITTER_NAME: "Ada", GIT_COMMITTER_EMAIL: "ada@example.com" } });
-  const [out, err, code] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited]);
-  return { ok: code == 0, out: out.trim(), err: err.trim() };
+/**
+ * git, run without blocking: the fixture's server answers in this same process. With node:child_process: Bun.spawn
+ * with its output read as Responses now and then never finished (a git push, under 1 s, waited out the 30 s limit).
+ */
+export function git(cwd: string, ...args: string[]): Promise<{ ok: boolean; out: string; err: string }> {
+  return new Promise((resolve) => {
+    execFile("git", args, { cwd, encoding: "utf8", maxBuffer: 64 << 20, env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "credential.helper", GIT_CONFIG_VALUE_0: "", GIT_AUTHOR_NAME: "Ada", GIT_AUTHOR_EMAIL: "ada@example.com", GIT_COMMITTER_NAME: "Ada", GIT_COMMITTER_EMAIL: "ada@example.com" } },
+      (e, out, err) => resolve({ ok: !e, out: String(out ?? "").trim(), err: String(err ?? "").trim() }));
+  });
 }
 export async function must(cwd: string, ...args: string[]) {
   const r = await git(cwd, ...args);

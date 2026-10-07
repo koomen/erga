@@ -22,7 +22,7 @@ import { expect, until } from "./suite/harness";
 let clock = Date.parse("2026-10-01T09:00:00Z") / 1000;
 const must = (cwd: string, ...args: string[]) => {
   const when = `${clock++} +0000`; // one second apart, so log's order is fixed
-  const env = { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_AUTHOR_NAME: "Ada", GIT_AUTHOR_EMAIL: "ada@example.com", GIT_COMMITTER_NAME: "Ada", GIT_COMMITTER_EMAIL: "ada@example.com", GIT_AUTHOR_DATE: when, GIT_COMMITTER_DATE: when };
+  const env = { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "credential.helper", GIT_CONFIG_VALUE_0: "", GIT_AUTHOR_NAME: "Ada", GIT_AUTHOR_EMAIL: "ada@example.com", GIT_COMMITTER_NAME: "Ada", GIT_COMMITTER_EMAIL: "ada@example.com", GIT_AUTHOR_DATE: when, GIT_COMMITTER_DATE: when };
   const r = spawnSync("git", args, { cwd, encoding: "utf8", env });
   expect(r.status == 0, `git ${args.join(" ")}`, r.stderr);
   return (r.stdout ?? "").trim();

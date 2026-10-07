@@ -195,7 +195,7 @@ try {
   expect(git("clone", "-q", `${root}/__factory/git/erga.git`, ".").status == 0, "a task's token clones");
   const toStaging = git("push", "--force", "origin", `origin/${t3b.branch}:refs/heads/staging`);
   expect(toStaging.status != 0 && toStaging.stderr.includes("403"), "a task's token can't push staging", toStaging.stderr);
-  const noToken = spawnSync("git", ["ls-remote", `${root}/__factory/git/erga.git`], { encoding: "utf8", env: { ...process.env, GIT_TERMINAL_PROMPT: "0" } });
+  const noToken = spawnSync("git", ["ls-remote", `${root}/__factory/git/erga.git`], { encoding: "utf8", env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "credential.helper", GIT_CONFIG_VALUE_0: "" } });
   expect(noToken.status != 0, "no token, no repository");
   ok("tokens: a VM's reaches its own task only; a task's git token can't push staging; none, no access");
 
@@ -606,7 +606,9 @@ try {
   await until(async () => (await statusOf(tH)) == "complete" && !!(await task(tH)).error, STEP, "H's merge fails", async () => (await task(tH)).log.slice(-4));
   await until(async () => (await task(tH)).log.some((l: any) => l.message == "Claude Code was stopped"), 30_000, "the factory stops H's stand-in", async () => (await task(tH)).log.slice(-4));
   const h = await task(tH);
-  const standIns = docker ? spawnSync("docker", ["exec", h.vm, "pgrep", "-f", "fake-claude.ts resolve"], { encoding: "utf8" }).stdout.trim() : spawnSync("pgrep", ["-f", "fake-claude.ts resolve"], { encoding: "utf8" }).stdout.trim();
+  // Simulated, only this checkout's and this host's stand-ins: another checkout's tests/factory.ts may be running its own.
+  const mine = [join(import.meta.dir, "..", "factory", "vm"), host.state].map((s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
+  const standIns = docker ? spawnSync("docker", ["exec", h.vm, "pgrep", "-f", "fake-claude.ts resolve"], { encoding: "utf8" }).stdout.trim() : spawnSync("pgrep", ["-f", `(${mine}).*fake-claude\\.ts resolve`], { encoding: "utf8" }).stdout.trim();
   expect(!standIns && h.error.includes("Claude Code couldn't finish the merge"), "H is back in ready to merge, and no stand-in still runs", standIns);
   ok("a merge whose Claude Code gives up: back to ready to merge, and that Claude Code is stopped");
 

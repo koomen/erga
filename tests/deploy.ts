@@ -170,7 +170,7 @@ try {
   const old = await fetch(`${host.root}/admin/deploy`, { headers: { Cookie: bo }, redirect: "manual" });
   expect(old.status == 301 && old.headers.get("location") == "/deploy", "/admin/deploy redirects to /deploy", [old.status, old.headers.get("location")]);
   const adminHtml = await p.eval<string>(`fetch("/admin").then((r) => r.text())`);
-  expect(adminHtml.includes('aria-label="Settings"') && !adminHtml.includes('id="deploy-title"'), "admin settings no longer list it");
+  expect(adminHtml.includes('aria-labelledby="settings-head"') && !adminHtml.includes('id="deploy-title"'), "admin settings no longer list it");
   const boHtml = await asBo.text();
   expect(boHtml.includes('href="/deploy">Deploy your own</a>') && !boHtml.includes("Admin settings"), "Bo's menu has Deploy your own, and no Admin settings", boHtml.slice(-1200));
   // Bo may deploy, and nothing more: admin settings, users, the source and the factory stay closed to them.

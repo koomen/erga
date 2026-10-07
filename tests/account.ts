@@ -140,7 +140,7 @@ try {
   await p.eval(`[...document.querySelectorAll("#sharing-list li")].find((li) => li.textContent.startsWith("ada")).querySelector(".remove").click()`);
   await until(() => p.eval<boolean>(`![...document.querySelectorAll("#sharing-list li")].some((li) => li.textContent.startsWith("ada"))`), 5000, "and taking them off unlists them");
   const order = await p.eval<string>(`[...document.querySelectorAll(".chrome-top > button:not([hidden]), .chrome-top > .mode, .chrome-top > a:not([hidden])")].map((e) => e.id).join(" ")`);
-  expect(order == "btn-pause btn-track btn-share btn-people btn-settings mode btn-edit", "the controls, right to left from your avatar: edit, view, document settings, share with people, share with an agent, track changes, pause", order);
+  expect(order == "btn-pause btn-track btn-share btn-people btn-settings mode btn-new btn-edit", "the controls, right to left from your avatar: edit, new document (+), view, document settings, share with people, share with an agent, track changes, pause", order);
   await p.key("Escape");
   ok("in the editor, its owner shares it with people");
 

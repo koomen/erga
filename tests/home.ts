@@ -54,11 +54,15 @@ const publish = async (files: Record<string, string>, opts: { document?: string;
   expect(body.ok, "published", body);
   return body;
 };
-/** An agent token for DEV_LOGIN on the server at `base`, made at /tokens (asked again for a while: a server just started may still be setting up its database). */
+/**
+ * An agent token for DEV_LOGIN (an admin) on the server at `base`, made at /tokens (asked again for a while: a server just
+ * started may still be setting up its database). Admin scope: only an admin's token with it may edit the homepage
+ * (directory.ts, homeLimit); a documents token only views it.
+ */
 const mintToken = async (base: string) => {
   let page = "";
   for (let i = 0; i < 50; i++) {
-    page = await (await fetch(`${base}/tokens/new`, { method: "POST", body: new URLSearchParams({ label: "Home test" }), headers: { Origin: base }, redirect: "manual" })).text();
+    page = await (await fetch(`${base}/tokens/new`, { method: "POST", body: new URLSearchParams({ label: "Home test", scope: "admin" }), headers: { Origin: base }, redirect: "manual" })).text();
     const t = /<pre class="secret">(erga_[^<]+)<\/pre>/.exec(page)?.[1];
     if (t) return t;
     await Bun.sleep(200);

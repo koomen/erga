@@ -34,7 +34,8 @@ export class Browser {
       // timers and frames running as if it were in front.
       "--disable-background-timer-throttling", "--disable-renderer-backgrounding", "--disable-backgrounding-occluded-windows",
       "about:blank"], { stdout: "ignore", stderr: "ignore" });
-    for (let i = 0; i < 600; i++) {
+    // Up to 45 s: on a loaded machine (the whole suite, and other work beside it) Chrome has taken over 15 s to start.
+    for (const until = Date.now() + 45_000; Date.now() < until; ) {
       try {
         const port = Number(readFileSync(join(profile, "DevToolsActivePort"), "utf8").split("\n")[0]);
         if (port) { await fetch(`http://127.0.0.1:${port}/json/version`); return new Browser(proc, port, profile); }

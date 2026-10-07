@@ -76,12 +76,37 @@ const centre = async (p: Page, selector: string) => {
   return r;
 };
 const clickOn = async (p: Page, selector: string) => { const r = await centre(p, selector); await p.click(r.x, r.y); };
+// The tree draws its rows again after each change, and when the server says the tree changed (a moment later, and
+// later still on a busy machine). If that happens between a press and its release, they land on different rows, and
+// the browser sends no click. So a click on a row that must open a menu or a page is tried again until it does.
+/**
+ * A click on a row that leaves the page, until `gone`. No settling after it: Page.click's evaluate fails once the page
+ * navigates, as it may at once on a busy machine.
+ */
+const clickToGo = async (p: Page, selector: string, gone: () => boolean, what: string) => {
+  for (let tries = 0; ; tries++) {
+    const r = await centre(p, selector);
+    await p.mouse("mouseMoved", r.x, r.y);
+    await p.mouse("mousePressed", r.x, r.y, { clickCount: 1, buttons: 1 });
+    await p.mouse("mouseReleased", r.x, r.y, { clickCount: 1 });
+    try { return await until(gone, 2500, what); }
+    catch (e) { if (tries == 2) throw e; }
+  }
+};
 const row = (path: string) => `.et-row[data-path="${path}"]`;
-/** Hovers a row (its buttons show), then clicks one of them. */
+/** Hovers a row (its buttons show), then clicks one of them; a menu button until its menu opens. */
 const act = async (p: Page, path: string, which: string) => {
-  const r = await centre(p, row(path));
-  await p.mouse("mouseMoved", r.x, r.y);
-  await clickOn(p, `${row(path)} [data-act="${which}"]`);
+  const press = async () => {
+    const r = await centre(p, row(path));
+    await p.mouse("mouseMoved", r.x, r.y);
+    await clickOn(p, `${row(path)} [data-act="${which}"]`);
+  };
+  if (which == "rename") return press();
+  for (let tries = 0; ; tries++) {
+    await press();
+    try { return await until(() => p.eval<boolean>(`!!document.querySelector(".et-menu")`), 2000, `${which} on ${path} opens its menu`); }
+    catch (e) { if (tries == 2) throw e; }
+  }
 };
 const menuItem = async (p: Page, label: string) => {
   const ok = await p.eval<boolean>(`(() => { const b = [...document.querySelectorAll('.et-menu [role="menuitem"]')].find((b) => b.textContent.trim() == ${JSON.stringify(label)}); if (b) b.setAttribute("data-pick", ""); return !!b; })()`);
@@ -140,6 +165,9 @@ try {
   await p.open(editor(host.base), { width: 1200, height: 760, scale: 2, agent: false });
   await until(() => p.eval<boolean>(`document.body.classList.contains("erga-editor-ready") && !document.getElementById("doc-title").hidden`), 20_000, "the editor is up with its title");
   await until(() => p.eval<boolean>(`!!window.ergaTree && !!document.querySelector("#pages[hidden] #pages-tree .et-row[data-path]")`), 10_000, "the editor loads pages-tree.js once it is up, and mounts the tree, still closed");
+  // The page in its frame up as well, editable: on a busy machine it can still be starting, and as it starts it can take
+  // the focus (into its frame) from a card opened meanwhile. That race is the editor's, not the tree's: here, wait it out.
+  await until(() => p.frame<boolean>(`!!document.getElementById("page")?.contentDocument?.querySelector("[data-erga-id]")`), 20_000, "the page is editable in its frame");
   await clickOn(p, "#doc-title");
   await until(() => p.eval<boolean>(`document.querySelectorAll(".et-row[data-path]").length > 0`), 10_000, "the tree shows");
   let r = await rows(p);
@@ -152,7 +180,7 @@ try {
   expect(ls.includes("style.css") && ls.includes("assets/") && ls.includes("fonts/") && found.includes("assets/owl.svg") && found.includes("fonts/field.woff2"), "an agent sees them all (ls, find)", { ls, found });
   expect(r.find((x) => x[0] == "about.html")?.[1] == "About us", "a page shows by its title, read from the room", r);
   expect(await p.eval<boolean>(`document.getElementById("doc-title").getAttribute("aria-expanded") == "true" && !document.getElementById("pages").hidden`), "the title says it's open");
-  expect((await focused(p)) == "index.html", "focus goes to the page you're on");
+  expect((await focused(p)) == "index.html", "focus goes to the page you're on", await p.eval(`(() => { const a = document.activeElement; return { focused: a?.outerHTML.slice(0, 200), path: a?.closest?.("[data-path]")?.dataset.path ?? null }; })()`));
   ok("the title opens the tree: the document, its pages under it, titles, the page you're on");
 
   // Open and close a folder: by click, and by key.
@@ -201,8 +229,7 @@ try {
   // Clicking a page opens it, at its address in the editor.
   const went: string[] = [];
   p.onEvent("Page.frameNavigated", (e) => { if (!e.frame.parentId) went.push((e.frame.unreachableUrl ?? e.frame.url) + (e.frame.urlFragment ?? "")); });
-  await clickOn(p, row("contact.html"));
-  await until(async () => wentTo(went, `${address}/contact#edit`), 5000, "clicking a page goes to its address in the editor");
+  await clickToGo(p, row("contact.html"), () => wentTo(went, `${address}/contact#edit`), "clicking a page goes to its address in the editor");
   ok("clicking a page opens it in the editor (its address, then #edit: …/contact#edit)");
   await p.navigate(editor(host.base));
   await until(() => p.eval<boolean>(`document.body.classList.contains("erga-editor-ready") && !document.getElementById("doc-title").hidden`), 20_000, "the editor is back");
@@ -404,8 +431,7 @@ try {
   const dark = await p.eval<string>(`getComputedStyle(document.querySelector(".et-row.folder .et-name")).color`);
   expect(dark != "rgb(28, 28, 31)", "dark, it takes the page's dark colours", dark);
   await p.screenshot(join(SHOTS, "tree-docs-dark.png"));
-  await clickOn(p, `${sub} ${row("owl-calls.html")}`);
-  await until(async () => wentTo(went, `${address}/owl-calls#edit`), 5000, "a page opens in the editor, for an editor");
+  await clickToGo(p, `${sub} ${row("owl-calls.html")}`, () => wentTo(went, `${address}/owl-calls#edit`), "a page opens in the editor, for an editor");
   await until(() => p.eval<boolean>(`document.body.classList.contains("erga-editor-ready")`).catch(() => false), 20_000, "the editor is up");
   ok("Documents: a document's chevron shows its pages beneath it; New folder and New page, rename, move (with the warning), delete; live; light, dark; a page opens");
 
