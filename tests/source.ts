@@ -2,8 +2,9 @@
 // Erga's own source, end to end, on a dev server of its own (tests/host.ts)
 // with its stand-ins for Artifacts and GitHub (dev/git-server.ts):
 //
-//   - the Git endpoint's auth: no token, a token that isn't one, a user who
-//     isn't an admin, an admin;
+//   - the Git endpoint's auth: no token (reads in, pushes 401), a token that
+//     isn't one, a user who isn't an admin, an admin; an anonymous clone,
+//     fetch and ls-remote, and an anonymous push refused;
 //   - seeding with source/import.ts, then a real `git clone`, `git push`
 //     (a fast-forward, and a rewrite main refuses) and `git pull`;
 //   - the strict model: main only follows staging, staging keeps main's
@@ -70,16 +71,18 @@ try {
   // ---- Who may reach the Git endpoint ------------------------------------------------
   const refs = (auth?: string) => get("/git/erga.git/info/refs?service=git-upload-pack", auth ? { headers: { Authorization: auth } } : {});
   let r = await refs();
-  expect(r.status == 401 && (r.headers.get("www-authenticate") ?? "").startsWith("Basic"), "no token: 401, asking for Basic credentials (git then asks for them)", r.status);
+  expect(r.status == 200 && (r.headers.get("content-type") ?? "").includes("git-upload-pack"), "no token, a read: in", r.status);
+  r = await get("/git/erga.git/info/refs?service=git-receive-pack");
+  expect(r.status == 401 && (r.headers.get("www-authenticate") ?? "").startsWith("Basic"), "no token, a push: 401, asking for Basic credentials (git then asks for them)", r.status);
+  r = await get("/git/erga.git/git-receive-pack", { method: "POST", body: "0000" });
+  expect(r.status == 401, "no token, a push's POST: 401", r.status);
   r = await refs(`Basic ${btoa("x:erga_not_a_token")}`);
   expect(r.status == 401, "a token that isn't one: 401", r.status);
   r = await refs(`Basic ${btoa(`x:${bo.token}`)}`);
   expect(r.status == 403 && (await r.text()).includes("Only admins"), "a user who isn't an admin: 403", r.status);
   r = await refs(`Basic ${btoa(`anyone:${admin.token}`)}`);
   expect(r.status == 200 && (r.headers.get("content-type") ?? "").includes("git-upload-pack"), "an admin's token, any username: in", r.status);
-  expect(!git(scratch(), "clone", "-q", remote(null), "x").ok, "git clone without credentials fails");
-  expect(git(scratch(), "clone", "-q", remote(bo.token), "x").err.includes("403"), "git clone with a non-admin's token is refused (403)");
-  ok("the Git endpoint: no token 401, a non-admin 403, an admin in");
+  ok("the Git endpoint: no token reads but can't push, a non-admin 403, an admin in");
 
   // ---- Seed, clone, push, pull ---------------------------------------------------------------
   const src = scratch();
@@ -106,6 +109,18 @@ try {
   const back = git(a, "push", "--force", "origin", "HEAD~1:main");
   expect(!back.ok && back.err.includes("only moves forward"), "main never moves back", back.err);
   expect(git(a, "push", "origin", "HEAD:feature").err.includes("two branches"), "other branches are refused");
+  // Anyone reads: clone, fetch and ls-remote with no credentials. A push without them is refused.
+  const anon = join(scratch(), "anon");
+  must(tmpdir(), "clone", "-q", remote(null), anon);
+  expect(must(anon, "log", "--format=%s", "origin/staging").split("\n")[0] == "Third", "an anonymous git clone brings the history");
+  expect(must(anon, "ls-remote", remote(null)).includes("refs/heads/staging"), "an anonymous git ls-remote lists the branches");
+  must(anon, "fetch", "-q", "origin");
+  commit(anon, "anon.txt", "anon\n", "Anonymous");
+  const anonPush = git(anon, "push", "origin", "HEAD:staging");
+  expect(!anonPush.ok && /401|Authentication failed|could not read Username/i.test(anonPush.err), "an anonymous git push is refused (401)", anonPush.err);
+  expect(git(anon, "push", remote(bo.token), "HEAD:staging").err.includes("403"), "a git push with a non-admin's token is refused (403)");
+  expect(must(anon, "ls-remote", remote(null), "refs/heads/staging").split(/\s/)[0] == must(anon, "rev-parse", "HEAD~1"), "and staging didn't move");
+  ok("anyone clones, fetches and lists without credentials; an anonymous push is refused");
   const b = join(scratch(), "b");
   must(tmpdir(), "clone", "-q", remote(admin.token), b);
   must(a, "fetch", "-q", "origin");
