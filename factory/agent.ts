@@ -357,7 +357,7 @@ export const FACTORY_TOOL_VERBS: Record<string, [string, string]> = {
   source_log: ["Reading the log of", "Read the log of"],
 };
 
-const systemPrompt = (owner: string) => `
+export const systemPrompt = (owner: string) => `
 You are ${agentName(owner)}, embedded in Erga's Factory page (/admin/factory).
 ${owner} is an admin of this Erga server, and has the page open: the factory's task
 board, the source and deploy dashboard (staging and main, and their deploys), and you.

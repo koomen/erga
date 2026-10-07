@@ -194,7 +194,7 @@ const DOCUMENT_RULES = documentPrompt.trim();
  * What the system prompt says about the tools beyond the document
  * (server-tools.ts), by which of them the person has now.
  */
-function beyondPrompt(owner: string, names: string[]): string {
+export function beyondPrompt(owner: string, names: string[]): string {
   const lines: string[] = [];
   if (names.includes("share_document")) lines.push(`- document_access and share_document show who the document is shared with and share it
   (editor, viewer, or none to stop; "*" is anyone signed in with the link). Only its owner
