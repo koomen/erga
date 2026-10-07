@@ -51,7 +51,6 @@ test("HTML: Shift+Tab takes a nested item out, and typing at once goes at the st
   await ed.press("Home");
   await ed.press("Tab");
   await expect.poll(() => ed.count("li li")).toBe(1);
-  await ed.idle();
   await burst(ed, "Shift+Tab", "Y");
   await expect.poll(() => ed.source()).toMatch(/<li>YA <strong>new<\/strong> editor<\/li>/);
   await expect.poll(() => ed.count("li li")).toBe(0);

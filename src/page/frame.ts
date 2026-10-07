@@ -61,7 +61,9 @@ window.addEventListener("message", (e: MessageEvent) => {
     case "tracking": page.setTracking(m.on); return;
     case "paused": page.setPaused(m.on); queueSnapshot(); return;
     case "render": restoreScroll = frame.contentWindow?.scrollY ?? 0; page.render(); return;
-    case "focus": page.focus(); return;
+    // The shell focuses this frame as it asks (Remote.focus): if this frame lost the focus since, something that opened
+    // after the ask has it (the pages card, the agent's box), and keeps it.
+    case "focus": if (document.hasFocus()) page.focus(); return;
     case "reveal": page.reveal(m.pos); return;
     case "peers": page.setPeers(m.peers); return;
     case "detach": detach(m.id); return;

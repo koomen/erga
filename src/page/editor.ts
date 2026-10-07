@@ -546,8 +546,9 @@ export class PageEditor {
       if (first && !M.unitAt(this.units, head)) {
         this.state = this.state.update({ selection: { anchor: M.textStart(first) }, annotations: noHistory() }).state;
       }
-      if (hadFocus) {
-        if (this.sink && this.sink.ownerDocument.activeElement == this.sink) this.frame.contentWindow?.focus();
+      const sinkHad = this.sinkHasFocus;
+      if (hadFocus || sinkHad) {
+        if (sinkHad) this.frame.contentWindow?.focus();
         this.syncDOMSelection(true);
       }
       this.notify({ docChanged: false, selectionSet: false, rendered: true, changes: null, remote: false });
@@ -860,6 +861,8 @@ export class PageEditor {
   }
 
   focus(): void {
+    // While the page renders afresh, to the stand-in that holds the keys: the render then puts the focus in the new page.
+    if (this.rendering) { this.focusSink(); return; }
     this.frame.contentWindow?.focus();
     this.syncDOMSelection(true);
   }
@@ -1039,8 +1042,14 @@ export class PageEditor {
       sink.tabIndex = -1;
       sink.setAttribute("aria-hidden", "true");
       sink.style.cssText = "position:fixed;left:0;top:0;width:1px;height:1px;opacity:0;pointer-events:none;border:0;padding:0;resize:none";
-      // Stopped here: the frame's own shortcut keys (frame.ts) come in with the rest.
-      const hold = (e: Event, h: HeldInput) => { e.preventDefault(); e.stopPropagation(); this.held.push(h); };
+      // Stopped here: the frame's own shortcut keys (frame.ts) come in with the rest. With no render in flight
+      // (nothing should leave the focus here then), the page takes the focus back and the key at once.
+      const hold = (e: Event, h: HeldInput) => {
+        e.preventDefault();
+        e.stopPropagation();
+        this.held.push(h);
+        if (!this.rendering && this.doc) { this.frame.contentWindow?.focus(); this.syncDOMSelection(true); this.release(); }
+      };
       sink.addEventListener("keydown", (e) => { if (!e.isComposing) hold(e, { key: e.key, shift: e.shiftKey, alt: e.altKey, ctrl: e.ctrlKey, meta: e.metaKey }); });
       sink.addEventListener("beforeinput", (e) => hold(e, { input: e.inputType, data: e.data }));
       doc.body.append(sink);
@@ -1048,10 +1057,13 @@ export class PageEditor {
     this.sink!.focus({ preventScroll: true });
   }
 
+  private get sinkHasFocus(): boolean { return !!this.sink && this.sink.ownerDocument.activeElement == this.sink; }
+
   /** Takes input on the page again, once it's rendered and not handed over: what was held meanwhile goes in first, in order. */
   private release(): void {
-    if (this.holding || this.rendering || !this.doc) return;
-    for (const h of this.held.splice(0)) this.replay(h);
+    if (!this.doc) return;
+    // A held key can render the page afresh itself (an indent): the keys after it wait for that render too.
+    while (this.held.length && !this.holding && !this.rendering) this.replay(this.held.shift()!);
   }
 
   /**
