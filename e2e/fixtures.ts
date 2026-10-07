@@ -4,8 +4,9 @@
 // worker-scoped fixtures (test.extend's run for every test), so these live in
 // a registry in this module, which a worker imports once (e2e imports each
 // test file afresh for every file and retry, but not the modules it imports).
-// A file starts the ones it needs in test.beforeAll, which has a budget of its
-// own, so a test's time limit never pays for a server. They stop when the
+// A file starts the ones it needs in test.beforeAll, whose budget is
+// config.timeout (90 s, e2e.config.ts), so a test's time limit (ERGA_TEST_MS,
+// which `test` below gives each test) never pays for a server. They stop when the
 // worker exits (server.ts), and e2e/run.ts sweeps up after a worker that was
 // killed.
 //
@@ -69,7 +70,7 @@ export interface Tab {
   own(opts?: ServerOptions): Promise<Server>;
 }
 
-export const test = web.extend<{ tab: Tab }>({
+const extended = web.extend<{ tab: Tab }>({
   tab: async ({ browser }, use) => {
     // The attempt's page exists once something has navigated it.
     await browser.goto("about:blank");
@@ -86,6 +87,19 @@ export const test = web.extend<{ tab: Tab }>({
     if (tab.strict && errors.length) throw new Error(`the page had errors:\n${errors.join("\n")}`);
   },
 });
+
+/**
+ * e2e's `test`, each test with the time limit ERGA_TEST_MS (the config's) unless it names its own: e2e gives a test
+ * without one config.timeout, which is the hooks' budget and longer.
+ */
+export const test = new Proxy(extended, {
+  apply(target, self, args: unknown[]) {
+    const ms = Number(process.env.ERGA_TEST_MS) || undefined;
+    if (!ms) return Reflect.apply(target, self, args);
+    const [title, a, b] = args;
+    return b === undefined ? Reflect.apply(target, self, [title, { timeout: ms }, a]) : Reflect.apply(target, self, [title, { timeout: ms, ...(a as object) }, b]);
+  },
+}) as typeof extended;
 
 /** Waits until `f` gives something truthy (a thrown error counts as not yet), and returns it; fails after `ms`. */
 export async function until<T>(f: () => Promise<T> | T, ms = 5_000, what = "the condition"): Promise<T> {

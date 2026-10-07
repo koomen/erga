@@ -5,6 +5,8 @@
 import type { E2EConfig } from "e2e";
 import config from "./e2e.config";
 
+process.env.ERGA_TEST_MS = "60000";
+
 export default {
   ...config,
   tests: ["e2e/**/*.bench.e2e.ts"],

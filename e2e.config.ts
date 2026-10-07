@@ -9,8 +9,8 @@
 // per worker, started lazily (e2e/fixtures.ts); each test gets a fresh browser
 // context.
 //
-// Every test has a time limit (timeout); a test that needs more says so with
-// its own `timeout` and a comment. Every wait is a condition (locators,
+// Every test has a time limit (TEST_MS, below); a test that needs more says so
+// with its own `timeout` and a comment. Every wait is a condition (locators,
 // expect.poll, until), never a pause. Locally the run stops at the first
 // failure; --all or CI runs everything with a retry for each failure and
 // reports what passed only on the retry as flaky (e2e/run.ts). Timing and
@@ -27,6 +27,8 @@ import { cleanEnv, hermetic, ROOT } from "./e2e/env";
 import { engine } from "./e2e/engine";
 
 process.env.E2E_TELEMETRY_DISABLED = "1";
+/** Each test's time limit (e2e/fixtures.ts gives it to every test that doesn't name its own). */
+process.env.ERGA_TEST_MS ||= "15000";
 if (hermetic() && !process.env.ERGA_BUILT) {
   const r = spawnSync("./site.sh", { cwd: ROOT, env: cleanEnv(), stdio: ["ignore", "ignore", "inherit"], timeout: 180_000 });
   if (r.status != 0) throw new Error(`site.sh failed (${r.error?.message ?? `exit ${r.status}`})`);
@@ -41,7 +43,9 @@ export default {
   // The app's address is each worker's own dev server (e2e/fixtures.ts), so tests navigate by full URL; this is never opened.
   targets: [{ name: "web", engine, app: { url: "http://127.0.0.1:9" } }],
   tests: ["e2e/**/*.e2e.ts", "!e2e/**/*.bench.e2e.ts"],
-  timeout: 15_000,
+  // Not a test's limit (ERGA_TEST_MS is): e2e gives this to each test.beforeAll too, which starts the worker's dev
+  // servers (e2e/fixtures.ts). Four cold starts at once in a 4-core VM take longer than a test may.
+  timeout: 90_000,
   assertionTimeout: 5_000,
   actionTimeout: 5_000,
   // A worker killed for a test that blocked it is replaced after this; teardown gets as long.
