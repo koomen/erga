@@ -52,6 +52,10 @@ const VERBS: Record<string, [string, string]> = {
   set_user_role: ["Changing the role of", "Changed the role of"],
   set_user_deploy: ["Changing the deploy role of", "Changed the deploy role of"],
   remove_user: ["Removing", "Removed"],
+  list_source: ["Listing", "Listed"],
+  read_source: ["Reading", "Read"],
+  search_source: ["Searching the source for", "Searched the source for"],
+  source_log: ["Reading the log of", "Read the log of"],
 };
 
 // Which side the agent is on, and how wide: dragged by its head and its inner edge, as in the editor (layout.ts).

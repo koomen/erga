@@ -14,6 +14,7 @@ import { artifactsRemote, githubRemote } from "./artifacts";
 import { directoryOf, keptKeys } from "./d1";
 import type { Env } from "./env";
 import type { GitGrant } from "../factory/git-grant";
+import type { SourceAnswer, SourceRead } from "../source/browse";
 
 export class SourceHost extends DurableObject<Env> {
   private origin = "";
@@ -28,6 +29,12 @@ export class SourceHost extends DurableObject<Env> {
       db: { exec: <T>(q: string, ...params: (string | number | null)[]) => sql.exec(q, ...params).toArray() as T[] },
       artifacts: async () => {
         const r = await artifactsRemote(env, "write", this.origin);
+        if (!r) throw new SourceError("Erga's repository isn't set up on this server (no Artifacts binding).", 503);
+        return r;
+      },
+      // The source tools (factory/agent.ts) read with a read token: they can't write, whatever they ask.
+      reader: async () => {
+        const r = await artifactsRemote(env, "read", this.origin);
         if (!r) throw new SourceError("Erga's repository isn't set up on this server (no Artifacts binding).", 503);
         return r;
       },
@@ -68,6 +75,13 @@ export class SourceHost extends DurableObject<Env> {
   branches(origin: string) { return this.at(origin).branches(); }
   mirrorNow(origin: string) { return this.at(origin).mirror(); }
   files(origin: string, commit: string) { return this.at(origin).files(commit); }
+
+  /** The factory's agent reading the source (source/browse.ts): the answer, or { error } it can act on. */
+  async read(origin: string, q: SourceRead): Promise<SourceAnswer | { error: string }> {
+    try { return await this.at(origin).read(q); } catch (e) {
+      return { error: e instanceof SourceError ? e.message : `Erga couldn't read its repository: ${(e as Error).message}` };
+    }
+  }
 
   /** A merge, as POST /api/source/merge asks: { commit } or { error, status }. */
   async merge(origin: string, who: Actor, commit?: string): Promise<{ commit: string; fastForward: boolean; upToDate: boolean } | { error: string; status: number }> {
