@@ -30,7 +30,7 @@ export const AREAS: Record<string, string[]> = {
     "factory/", "worker/factory.ts", "dev/factory.ts", "dev/git-server.ts", "worker/source.ts", "source/", "tokens.ts",
     "src/page/factory-agent.ts", "src/page/agent-chat.ts", "src/page/share-agent.ts", "src/page/admin-share.ts",
     "src/page/chime.ts", "src/page/admin-nav.ts", "admin-layout.ts", "admin.ts", "attribution.ts", "users.ts", "config.ts", "server-api.ts",
-    "worker/doc-host.ts", "src/room/doc.ts", "migrations/0170_attribution.sql",
+    "worker/doc-host.ts", "src/room/doc.ts", "migrations/0170_attribution.sql", "src/page/layout.ts",
   ],
   "e2e/suite/": [
     "room.ts", "src/room/", "host.ts", "agent.ts", "workspace.ts", "server-api.ts", "api.ts", "attribution.ts", "tokens.ts", "worker/doc-host.ts",
@@ -45,7 +45,7 @@ export const AREAS: Record<string, string[]> = {
   "e2e/versions/": ["versions.ts", "src/page/versions.ts", "src/page/settings.ts", "worker/home.ts", "e2e/suite/client.ts", "src/room/"],
   "e2e/pages/": ["tree.ts", "src/page/tree.ts", "src/page/frame.ts"],
   "e2e/home/": ["home.ts", "worker/home.ts", "worker/published.ts", "landing/"],
-  "e2e/config/": ["config.ts", "worker/d1.ts"],
+  "e2e/config/": ["config.ts", "worker/d1.ts", "admin.ts"],
   "e2e/deploy/": ["deploy/", "worker/deploy.ts", "worker/deployer.ts", "front.ts", "users.ts"],
   "e2e/staging/": [
     "deploy/", "worker/deploys.ts", "worker/pipeline.ts", "worker/deployer.ts", "worker/gate.ts", "worker/admins-only.ts", "worker/auth-settings.ts",
