@@ -10,7 +10,8 @@
 // (a beforeAll has the test's 15 s, and under load a server takes longer to
 // start, which skipped the whole file), so no test or hook pays for a server.
 // The runner imports every file too, only to list its tests: there servers.*
-// start nothing (WORKER). A test still calls servers.x() for the server (at
+// start nothing (WORKER). A file's own processes start the same way, in
+// beforeTests(). A test still calls servers.x() for the server (at
 // once: started), which also starts again one that stopped by itself. They
 // stop when the worker exits (server.ts), and e2e/run.ts sweeps up after a
 // worker that was killed.
@@ -23,6 +24,8 @@
 //   servers.staging()  staging, deploying itself on the mock Cloudflare: admins only, its pipeline, the gate's fake runner
 //   servers.gate()     no deploy target, the production gate's fake runner (fast) and the scripted agent model
 //   servers.pair()     production and staging, each the other's peer with the mock's shared secret, and a stand-in GitHub
+//   servers.short()    the scripted agent model, and short timings (SHORT): versions cut, homepages deployed, in seconds
+//   servers.suite()    the multiplayer suite's: the scripted agent model, and a short write delay (e2e/suite/suite.ts)
 //   servers.of(key, o) a kind one file needs alone (its own settings, or one it changes or restarts),
 //                      started with ServerOptions `o`: `const own = () => servers.of("deploy-page");`
 //                      (the worker keeps the last file's only)
@@ -73,9 +76,19 @@ const once = <T extends Disposable>(key: string, make: () => Promise<T>) => (): 
   return s.then((x) => { if (x.alive()) return x; x.dispose(); started.delete(key); return once(key, make)(); }) as Promise<T>;
 };
 
+/**
+ * servers.short()'s timings: a version is cut once edits pause for `idle` ms (or after `max`, whatever the typing); a
+ * homepage deploys `homeDelay` ms after its published version changes, and / always asks for the latest deploy.
+ */
+export const SHORT = { idle: 1000, max: 8000, homeDelay: 2000 };
+
 export const servers = {
   main: once("main", () => startServer()),
   agent: once("agent", () => startServer({ env: { ANTHROPIC_API_KEY: "sk-ant-test-not-used" } })),
+  short: once("short", () => startServer({ env: {
+    ERGA_AGENT_MODEL: "script", ERGA_WRITE_DELAY_MS: "50", ERGA_VERSION_IDLE_MS: String(SHORT.idle), ERGA_VERSION_MAX_MS: String(SHORT.max),
+    ERGA_HOME_DELAY_MS: String(SHORT.homeDelay), ERGA_HOME_RECHECK_MS: "0",
+  } })),
   factory: once("factory", async (): Promise<FactoryServer> => {
     const secret = `factory-test-${crypto.randomUUID()}`;
     const s = await startServer({ env: { ERGA_AGENT_MODEL: "script", ERGA_FACTORY_RUNNER: "sim", ERGA_LINK_SECRET: secret, ERGA_FACTORY_SIM_NO_SCRIPTS: "1",
@@ -92,6 +105,7 @@ export const servers = {
   // The fake runner's shards take 700 ms, not 1.5 s (worker/gate.ts).
   gate: once("gate", () => startServer({ env: { ERGA_AGENT_MODEL: "script", ERGA_GATE_FAKE_MS: "700" } })),
   pair: once("pair", () => startPair()),
+  suite: once("suite", () => startServer({ env: SUITE_ENV })),
   /**
    * A kind of server one file needs (`key`, its own), started with `opts` the first time. A worker keeps one such
    * server: the next file's (another key) disposes of it, as files run one after another. So one key for each file.
@@ -101,6 +115,21 @@ export const servers = {
     return once(`of:${key}`, () => startServer(opts))() as Promise<Server>;
   },
 };
+
+/**
+ * The multiplayer suite's server settings. A short write delay: the suite waits on storage a lot. Not too short:
+ * tests share a server, and one that makes an edit "not yet stored" needs its next request in first.
+ */
+export const SUITE_ENV = { ERGA_AGENT_MODEL: "script", ERGA_WRITE_DELAY_MS: "200" };
+
+/**
+ * Work a file does before its tests (processes of its own: checkouts, a copy of the repository), awaited at its top
+ * level as the worker imports it, so outside any time limit, as servers.* start. Nothing where the runner only lists
+ * the tests. A retry imports the file again, after its afterAll: so it runs again, for the new attempt.
+ */
+export async function beforeTests<T>(fn: () => Promise<T>): Promise<T | undefined> {
+  return WORKER ? fn() : undefined;
+}
 
 export interface Tab {
   page: Page;
@@ -130,13 +159,24 @@ export const test = web.extend<{ tab: Tab }>({
   },
 });
 
-/** Waits until `f` gives something truthy (a thrown error counts as not yet), and returns it; fails after `ms`. */
-export async function until<T>(f: () => Promise<T> | T, ms = 5_000, what = "the condition"): Promise<T> {
+/**
+ * Takes out of `errors` (in place) what the browser logs for requests that failed because the server was down
+ * ("Failed to load resource: net::ERR_CONNECTION_REFUSED", "WebSocket connection to ... failed"), which Playwright reports as console errors: a restart
+ * (a server of the test's own, halted) means some. What's left is the page's own errors.
+ */
+export function withoutOutage(errors: string[]): string[] {
+  const left = errors.filter((e) => !/^console\.error: (Failed to load resource|WebSocket connection to '[^']*' failed)\b.*net::ERR_(CONNECTION_REFUSED|CONNECTION_RESET|INCOMPLETE_CHUNKED_ENCODING|EMPTY_RESPONSE|CONNECTION_CLOSED)\b/.test(e));
+  errors.splice(0, errors.length, ...left);
+  return errors;
+}
+
+/** Waits until `f` gives something truthy (a thrown error counts as not yet), and returns it; fails after `ms`, with `detail()` if given. */
+export async function until<T>(f: () => Promise<T> | T, ms = 5_000, what = "the condition", detail?: () => unknown): Promise<T> {
   const end = Date.now() + ms;
   let last: unknown;
   for (;;) {
     try { const v = await f(); if (v) return v; last = v; } catch (e) { last = e; }
-    if (Date.now() > end) throw new Error(`${what} didn't hold within ${ms} ms (last: ${last instanceof Error ? last.message : JSON.stringify(last)})`);
+    if (Date.now() > end) throw new Error(`${what} didn't hold within ${ms} ms (last: ${last instanceof Error ? last.message : JSON.stringify(last)})${detail ? `\n${JSON.stringify(await Promise.resolve().then(detail).catch((e) => String(e)))}` : ""}`);
     await new Promise((r) => setTimeout(r, 20));
   }
 }

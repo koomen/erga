@@ -33,6 +33,20 @@ export const AREAS: Record<string, string[]> = {
     "src/page/chime.ts", "src/page/admin-nav.ts", "admin-layout.ts", "admin.ts", "attribution.ts", "users.ts", "config.ts", "server-api.ts",
     "worker/doc-host.ts", "src/room/doc.ts", "migrations/0170_attribution.sql",
   ],
+  "e2e/suite/": [
+    "room.ts", "src/room/", "host.ts", "agent.ts", "workspace.ts", "server-api.ts", "api.ts", "attribution.ts", "tokens.ts", "worker/doc-host.ts",
+    "src/page/main.ts", "src/page/collab.ts", "src/page/bridge.ts", "src/page/frame.ts", "src/page/agent-chat.ts", "page.js", "frame.js", "tests/suite/",
+  ],
+  "e2e/redeploy/": [
+    "src/page/live.ts", "src/page/live-client.ts", "src/page/restore.ts", "worker/live.ts", "src/page/collab.ts", "src/page/attach-ui.ts", "src/page/main.ts",
+    "factory/page.ts", "live.js", "page.js", "factory-agent.js",
+  ],
+  "e2e/reload/": ["dev/reload.ts", "front.ts"],
+  "e2e/alone/": ["vite.config.ts", "worker/cookies.ts", "worker/auth.ts"],
+  "e2e/versions/": ["versions.ts", "src/page/versions.ts", "src/page/settings.ts", "settings.js", "worker/home.ts", "tests/suite/client.ts", "src/room/"],
+  "e2e/pages/": ["tree.ts", "src/page/tree.ts", "pages-tree.js", "src/page/frame.ts", "frame.js"],
+  "e2e/home/": ["home.ts", "worker/home.ts", "worker/published.ts", "landing/"],
+  "e2e/config/": ["config.ts", "worker/d1.ts"],
   "e2e/deploy/": ["deploy/", "worker/deploy.ts", "worker/deployer.ts", "front.ts", "users.ts"],
   "e2e/staging/": [
     "deploy/", "worker/deploys.ts", "worker/pipeline.ts", "worker/deployer.ts", "worker/gate.ts", "worker/admins-only.ts", "worker/auth-settings.ts",

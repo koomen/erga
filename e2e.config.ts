@@ -48,7 +48,8 @@ export default {
   projectId: "erga",
   // The app's address is each worker's own dev server (e2e/fixtures.ts), so tests navigate by full URL; this is never opened.
   targets: [{ name: "web", engine, app: { url: "http://127.0.0.1:9" } }],
-  tests: ["e2e/**/*.e2e.ts", "!e2e/**/*.bench.e2e.ts"],
+  // (e2e/alone runs by itself, after the rest: e2e.alone.config.ts.)
+  tests: ["e2e/**/*.e2e.ts", "!e2e/**/*.bench.e2e.ts", "!e2e/alone/**"],
   timeout: 15_000,
   assertionTimeout: 5_000,
   actionTimeout: 5_000,
