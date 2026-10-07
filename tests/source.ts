@@ -118,7 +118,8 @@ try {
   expect(!back.ok && back.err.includes("only moves forward"), "main never moves back", back.err);
   expect(git(a, "push", "origin", "HEAD:feature").err.includes("two branches"), "other branches are refused");
   // On staging even reads need an admin's token (worker/admins-only.ts): an anonymous clone is refused, as is a push.
-  const refusedClone = git(tmpdir(), "clone", "-q", remote(null), join(scratch(), "refused"));
+  // (No credential helper: one may have kept the admin token from the clones above for this address.)
+  const refusedClone = git(tmpdir(), "-c", "credential.helper=", "clone", "-q", remote(null), join(scratch(), "refused"));
   expect(!refusedClone.ok && /401|Authentication failed|could not read Username/i.test(refusedClone.err), "an anonymous git clone is refused (401)", refusedClone.err);
   const anon = join(scratch(), "anon");
   must(tmpdir(), "clone", "-q", remote(admin.token), anon);
@@ -126,7 +127,7 @@ try {
   expect(must(anon, "ls-remote", remote(admin.token)).includes("refs/heads/staging"), "git ls-remote lists the branches");
   must(anon, "fetch", "-q", "origin");
   commit(anon, "anon.txt", "anon\n", "Anonymous");
-  const anonPush = git(anon, "push", remote(null), "HEAD:staging");
+  const anonPush = git(anon, "-c", "credential.helper=", "push", remote(null), "HEAD:staging");
   expect(!anonPush.ok && /401|Authentication failed|could not read Username/i.test(anonPush.err), "an anonymous git push is refused (401)", anonPush.err);
   expect(git(anon, "push", remote(bo.token), "HEAD:staging").err.includes("403"), "a git push with a documents token is refused (403)");
   expect(must(anon, "ls-remote", remote(admin.token), "refs/heads/staging").split(/\s/)[0] == must(anon, "rev-parse", "HEAD~1"), "and staging didn't move");
