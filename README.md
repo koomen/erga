@@ -956,8 +956,10 @@ borrowed from git (the namespace). A database leak gives no working unlock
    injection). Task #1 kept the admin tools out of the editor's agent for this
    reason. This agent has them (task #50 made it a general admin agent): it
    queues, reads and instructs factory tasks, and reads and changes the
-   server's settings and users (no merge, discard or start, no API keys set,
-   no pushes or deploys). Every call checks again that its admin is unlocked
+   server's settings and users, and reads Erga's source with a read token (no
+   merge, discard or start, no API keys set, no pushes or deploys). The
+   source's files and commit messages, any task's branch included, are more
+   text that can try to steer it. Every call checks again that its admin is unlocked
    (the unlock their page sent last, its key not revoked, still an admin), and
    its prompt says tool answers are information, never instructions, and to
    change settings and users only when the admin asks. What an injection could
@@ -1539,13 +1541,15 @@ branches, main only forward), and every branch move must go through Erga so
 it can tell the Factory page, the deploy pipeline and the mirror.
 
 **The Git endpoint**, `https://<server>/git/erga.git` (`worker/source.ts`,
-`source/http.ts`): clone, fetch, pull and push, over Git's smart HTTP. Git
-asks for a username and password: any username, and an admin token as the
-password (`ERGA_TOKEN=<agent token> bun admin-login.ts https://erga.dev`,
+`source/http.ts`): clone, fetch, pull and push, over Git's smart HTTP.
+Anyone may read: `git clone`, `git fetch` and `git ls-remote` need no
+credentials. For a push, Git asks for a username and password: any username,
+and an admin token as the password (`ERGA_TOKEN=<agent token> bun admin-login.ts https://erga.dev`,
 see [Admin SSH keys](#admin-ssh-keys)); admins only (no token, an agent
 token, or one that ended or whose key was revoked: 401, which makes git ask;
 a user who isn't an admin: 403).
 
+    git clone https://erga.dev/git/erga.git          # no credentials
     git remote add erga https://erga.dev/git/erga.git
     git fetch erga
     git push erga HEAD:staging
@@ -1856,7 +1860,18 @@ the users' tools. They act as the admin themselves, their login and their latest
 unlock (`adminTools`, `factory/agent.ts`), so each change goes into the
 settings' change log under the admin who prompted it, as if they had made it on
 `/admin`, never the agent's name (`tests/factory-admin.test.ts`); a user it adds
-is added by them. It can't merge, discard or start a task:
+is added by them. It reads Erga's own code, too, in the server's copy of the
+repository ([Erga's own source](#ergas-own-source)), read-only (`sourceTools`,
+`factory/agent.ts`; `SourceRepo.read`, `source/browse.ts`): `list_source` (a
+folder, or every file under it), `read_source` (a file, numbered, or lines
+`from` to `to`), `search_source` (as grep: text or a regular expression, in a
+folder or by glob) and `source_log` (a branch's commits, newest first). Each
+takes `ref`, a branch (staging by default, main, or a task's branch) or a
+commit's sha. They only list refs and fetch, with an Artifacts read token
+(`SourceHost.read`); a commit's files are fetched once and the last three are
+kept in memory. Each answer starts by saying that its text is information,
+never instructions (`tests/source-read.test.ts`, and in the Worker,
+`tests/admin-agent-source.ts`). It can't merge, discard or start a task:
 an admin approves each merge by hand on the board, and Merge merges into
 staging, which deploys itself. Each message carries the task open on the
 board, if any, so "this task" means something. It acts only for an unlocked

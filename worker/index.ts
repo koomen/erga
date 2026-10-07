@@ -19,7 +19,7 @@
 //   /api/factory/...           the factory (experimental): tasks done by Claude Code in VMs, and its agent (worker/factory.ts)
 //   /api/deploys, /api/events  branch deploys' status and events, and deploy logs (worker/deploys.ts)
 //   /auth/test?token=&as=      a test person (Ada, Bo...) signed in with one; they open only test documents
-//   /git/erga.git/...          Erga's own repository, over Git smart HTTP (worker/source.ts; admin tokens)
+//   /git/erga.git/...          Erga's own repository, over Git smart HTTP (worker/source.ts; reads open, pushes need admin tokens)
 //   /admin, /admin/changes, /admin/users   the server's settings, their change log, and its users (admin.ts)
 //   /admin/keys, /api/admin/...  admins' SSH keys, and unlocking admin access with them (admin-access.ts)
 //   /api/admin/agent/...       each admin's agent conversation and panel layout, kept (worker/factory.ts)
