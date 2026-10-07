@@ -3,7 +3,7 @@
 import { AGENT_DEFAULT, INSET, PICKER_W } from "../../src/page/layout";
 import { center, drag } from "../drag";
 import { expect, servers, test } from "../fixtures";
-import { dock, H, open, openSteps, settled, W, where } from "./layout";
+import { dock, open, openSteps, settled, W, where } from "./layout";
 
 await servers.agent();
 
