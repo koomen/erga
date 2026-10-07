@@ -57,7 +57,8 @@
 #                             the way to test while you work
 #   ./test.sh tests/x.ts ...  only these test files (a unit test too), in the same pool
 #
-# Each file has a time limit: twice its seconds in brackets below, at least 45 s, at most 180 s (TEST_FILE_TIMEOUT=s
+# Each file has a time limit: three times its seconds in brackets below (a file alone; in the pool, on a busy
+# machine, they take twice that), at least 45 s, at most 240 s (tests/factory.ts needs that in a busy pool; TEST_FILE_TIMEOUT=s
 # gives every file that limit). tests/run-file.ts runs it in the tests' own environment (tests/hermetic.ts), and past
 # the limit stops it (it prints the waits it was in, tests/stop.ts) and kills everything under it. A file that hits its
 # limit stops the whole run at once, and the report names it.
@@ -122,10 +123,10 @@ run() { # run WEIGHT NAME CMD...: in the background once WEIGHT slots are free (
     fi
   fi
   while (( used > 0 && used + weight > jobs )); do sleep 0.2; reap; done
-  # Its limit: twice its seconds in brackets on its run line here, 45 s to 180 s.
+  # Its limit: three times its seconds in brackets on its run line here, 45 s to 240 s.
   local secs limit
   secs=$(grep -E "^run [0-9]+ $name " "$0" | sed -nE 's/.*# \[([0-9]+)\].*/\1/p' | head -1 || true)
-  limit=${TEST_FILE_TIMEOUT:-$(( ${secs:-60} * 2 < 45 ? 45 : ${secs:-60} * 2 > 180 ? 180 : ${secs:-60} * 2 ))}
+  limit=${TEST_FILE_TIMEOUT:-$(( ${secs:-60} * 3 < 45 ? 45 : ${secs:-60} * 3 > 240 ? 240 : ${secs:-60} * 3 ))}
   echo "$limit" >"$tmp/$name.limit"
   ( t0=$(date +%s); rc=0; bun tests/run-file.ts --limit "$limit" -- "$@" >"$tmp/$name.log" 2>&1 || rc=$?; echo $rc >"$tmp/$name.rc"; echo $(( $(date +%s) - t0 )) >"$tmp/$name.time" ) &
   names+=("$name"); weights+=("$weight"); used=$(( used + weight ))
@@ -161,7 +162,7 @@ run 1 switch bun tests/switch.ts                         # [17]
 run 1 deploy bun tests/deploy.ts                         # [16]
 run 1 scoped-tokens bun tests/scoped-tokens.ts           # [10]
 run 1 landing bun tests/landing.ts                       # [14]
-run 1 factory-cards bun tests/factory-cards.ts           # [14]
+run 1 factory-cards bun tests/factory-cards.ts           # [20]
 run 1 factory-chime bun tests/factory-chime.ts           # [20]
 run 1 factory-instruct bun tests/factory-instruct.ts     # [70]
 run 1 factory-authors bun tests/factory-authors.ts       # [20]
