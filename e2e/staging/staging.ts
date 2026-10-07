@@ -136,3 +136,30 @@ export const hook = (s: Server, commit: string) => fetch(`${s.root}/api/deploys/
 
 /** Up to how long a deploy on the mock Cloudflare may take (about 2 s: the mock builder's three steps, then fourteen against the mock); a test that waits for one has this much more time. */
 export const DEPLOY_MS = 10_000;
+
+/** A clone of `s`'s seeded repository that pushes commits of its own to staging (the fake runner's result: their subject). */
+export async function pusher(s: Server, token: string) {
+  await seed(s, token);
+  const dir = clone(s, token);
+  return {
+    dir,
+    /** A new commit on staging, pushed: its id. */
+    push(subject: string) {
+      must(dir, "pull", "-q", "--rebase", "origin", "staging");
+      commit(dir, "gate-test.txt", `${subject}\n${crypto.randomUUID()}\n`, subject);
+      must(dir, "push", "-q", "origin", "HEAD:staging");
+      return must(dir, "rev-parse", "HEAD");
+    },
+    main: () => git(dir, "ls-remote", "origin", "main").out.split("\t")[0],
+  };
+}
+
+/** POST /api/source/merge as the admin (a token, or the page's session), staging to main. */
+export async function merge(s: Server, who: { token: string; cookie: string }, as: "token" | "cookie", body: Record<string, unknown> = {}) {
+  const r = await fetch(`${s.root}/api/source/merge`, {
+    method: "POST", redirect: "manual",
+    headers: { "Content-Type": "application/json", ...(as == "cookie" ? { Cookie: who.cookie, Origin: s.root } : { Authorization: `Bearer ${who.token}` }) },
+    body: JSON.stringify({ from: "staging", to: "main", ...body }),
+  });
+  return { status: r.status, body: await r.json() as { commit?: string; error?: string; override?: boolean; fastForward?: boolean; upToDate?: boolean } };
+}
