@@ -1,8 +1,7 @@
-// Dependencies between tasks (development/task-queue/deps.ts): the rules the
-// local task queue and the factory share.
+// Dependencies between the factory's tasks (factory/deps.ts).
 
 import { expect, test } from "bun:test";
-import { type DepTask, dependents, depRules, depsNote, ids } from "../development/task-queue/deps";
+import { type DepTask, dependents, depRules, depsNote, ids } from "../factory/deps";
 
 const board = (tasks: DepTask[]) => depRules((id) => tasks.find((t) => t.id == id));
 

@@ -3,333 +3,62 @@
 README.md describes Erga itself: how it's built, run (`bun start`) and
 tested (`./test.sh`). This file describes how agents take on work here.
 
-## Every ask goes through the task queue
+## Two ways to work on Erga
 
-The task queue (`development/task-queue/`) is a local board at
-**http://localhost:4700** where the user watches work move through
-**Queued → Working → Ready to merge → Merging → Branches** (main's latest
-commits, where merged tasks show), live, and merges it
-with one click. It runs only on this machine.
+### 1. Locally, with the development server
 
-### Standing rules: one agent per task, and time limits
+Work in a checkout on this machine, with the user watching if they like:
 
-These two rules come from the user. They hold for every task, in task mode
-and in live mode, and for the queue itself:
+1. **Branch first** (`git checkout -b <short-name>`); never commit to `main`
+   directly.
+2. **Run the app**: `bun start` serves it at http://localhost:4400 (signed
+   in as `DEV_LOGIN`); `bun start --reload` also reloads open tabs on every
+   edit (README, Local development). Another checkout or worktree takes
+   `--port`.
+3. **Edit, then look**: verify in a real browser with **headless Chrome**
+   (`tests/cdp.ts` drives it); never drive the user's own browser unless
+   they ask.
+4. **Test what you changed**: the tests that cover it, and new ones where
+   they belong. Run `./test.sh` (the whole suite) only when the change
+   touches shared infrastructure (the test harness, the build, the server's
+   core).
+5. **Commit and push only when the user asks.** `origin` is Erga's own Git
+   endpoint (`https://erga.dev/git/erga.git`; GitHub, as `github`, is a
+   mirror Erga keeps). Reads need nothing; a push needs an admin token in
+   Git's credential store (README, Tokens). A push to `staging` deploys
+   **staging.erga.dev** by itself. **Production (erga.dev) is a deliberate
+   step**: `main` moves only by Merge on erga.dev/admin/factory, and only
+   when the user asks for it.
 
-1. **A task keeps the same agent from start until it merges.** The outer
-   agent records the task's agent on the task (`tq agent <id> <agentId>`).
-   When a merge needs work, the queue wakes nobody itself and never starts a
-   fresh, context-free agent: it stops, and the outer agent wakes the task's
-   own agent (SendMessage). Only if that agent is gone (a new session, say)
-   does a new agent take the task over, with the task's log and summary.
-2. **Anything that could hang runs under a time limit**: builds, tests, git,
-   pushes, previews, screenshots, every step the queue runs. When the limit
-   is reached, the whole process tree is killed and the task's agent is woken
-   to resolve the issue. Agents run their own builds and tests under
-   `timeout` (e.g. `timeout 180 bun tests/x.ts`), stop their own preview when it
-   gets in the way of a build in the worktree, and never leave processes
-   behind.
-3. **A task builds, tests and merges in under 5 minutes.** Run only the
-   tests that cover the change, each command under a short time limit
-   (e.g. `timeout 180 bun tests/x.ts`). Run `./test.sh` or Docker only when
-   the change needs them, never by default. The queue's own step limits are
-   minutes, not tens of minutes, and the board shows each task's times
-   (worked: working to ready to merge; merge: the last merge), so slowness
-   shows.
+### 2. In the hosted factory
 
-### Watch the queue, always
+The factory (README, The factory) runs each task in a VM of its own on
+erga.dev: Claude Code builds it on a branch (`task/<id>-<slug>`) from
+`staging`, and the user merges it from the board on
+**erga.dev/admin/factory**. Add tasks there: on the board, by asking the
+admin agent beside it, or from an outside agent with a factory token
+("Share with agent" on that page; the agent reads `/api/factory/guide`
+first). Give each task a short imperative title and an ask of a few plain
+sentences, and declare how tasks depend on each other (`startAfter`: needs
+those merged first; `mergeAfter`: built in parallel against a contract
+written in both asks, but merged in order). Don't build against a throwaway
+stub of another task's work.
 
-At the start of every session, before anything else, the outer agent starts
-watching the queue, and keeps watching for the whole session, so it hears
-when each task changes state without the user having to say so:
+An agent inside a factory VM follows its task prompt (`factory/prompt.ts`):
+it reports with the `task` command, and never merges.
 
-    development/task-queue/tq watch --state /tmp/tq-watch-<a name for this session>.json
+## Standing rules
 
-Run it under Claude Code's **Monitor** tool (`timeout_ms` at the maximum,
-a description like "task queue status changes"). It starts the queue if it
-isn't running, then prints one line per task status change, and nothing
-else: `#3 working: title`, `#3 ready to merge: title`, `#3 merging: title`,
-`#3 merged: title`, `#4 failed: title: why`, `#5 merge failed, back to
-ready to merge: title: why`, `#6 discarded: title`, `#8 needs agent:
-title: why (agent <agentId>)` (or `(no agent recorded)`); and, for
-[dependencies](#dependencies-between-tasks), `#7 unblocked: title (#3
-merged)`, `#8 unblocked for merge: title (#3 merged)` and `#9 blocked:
-title: why`. It rides out the server
-restarting (and starts it again if it stays down). When the Monitor
-expires, **re-arm it** with the same command: `--state` remembers what it
-had seen, so changes made in between are reported then.
-
-On each line, act without being asked:
-
-- **ready to merge** or **failed**: if its subagent hasn't already reported
-  it, relay it to the user in a sentence or two (`tq get <id>` has the
-  summary, URL or error).
-- **merged**: say so in a line.
-- **unblocked**: its `--after` tasks have merged, so start it: hand it to a
-  subagent as below (it's registered already, with its worktree).
-  **unblocked for merge**: tell the user it can be merged now.
-- **blocked**: a dependency was discarded or failed. Tell the user, and
-  change the dependency (`tq deps`) if they agree.
-- **merge failed**: tell the user why, and what would fix it. (This is a
-  failure outside the task's worktree: the main checkout off `main`, a
-  dependency that didn't merge, origin refusing the admin token. The task
-  is back in Ready to merge.)
-- **needs agent**: the merge stopped for something in the task's worktree:
-  a conflict (`conflicts merging origin/staging: README.md, worker/factory.ts`),
-  uncommitted changes, a failed check, or a step that timed out (`git fetch
-  origin timed out after 120s`). The queue put the worktree back on the
-  branch's last commit; Merge is off. Do this, without being asked:
-  1. Tell the user in a line.
-  2. Wake the task's own agent: SendMessage to the agent id in the line
-     (`tq get <id>` has it as `agent`), with the reason and the output
-     (`tq get <id>`: `error`, `needsAgent.output`), and ask it to merge
-     origin's branch and `main` into its branch, resolve, test under a time
-     limit, commit, and run `tq continue <id>`.
-  3. Only if no agent is recorded, or SendMessage fails (the agent is gone),
-     start a new subagent with the prompt below, plus the task's summary,
-     its log (`tq get <id>`) and the reason, and record its id
-     (`tq agent <id> <agentId>`).
-  4. Never resolve or merge it yourself (except for a live task, below).
-  The merge then runs again by itself after `tq continue`; the watch prints
-  `merging`, then `merged`, or `needs agent` again.
-
-### Two modes: task mode and live mode
-
-Every change goes through the queue, in one of two modes:
-
-- **Task mode**, the default: the task is queued and a subagent does it in
-  the background, while the outer agent stays free (below).
-- **Live mode**: the user and the outer agent work on one task together, in
-  this session, in a tight loop: the user looks at the page in a Chrome
-  window, says what to change, and sees it change. For iterating on the UI
-  as quickly as possible (see [Live mode](#live-mode)).
-
-The user picks live mode by asking for it: "live mode", "let's work on X
-live", "work on this with me live". Anything else is task mode.
-
-### Task mode
-
-When the user asks for a change to this repo (and not live):
-
-1. **Register it, straight away**, before doing anything else:
-
-       development/task-queue/tq add "Short imperative title" "A short, clear description of the ask"
-
-   The description is what the board shows as the ask, and the worker's
-   brief: a few plain sentences saying what the user wants, plus only the
-   context the worker can't find itself. Not a wall of text.
-
-   This starts the queue if it isn't running, and gives the task a branch
-   (`task/<id>-<slug>`), its own worktree (`.claude/worktrees/task-<id>`,
-   made from `main`, with `node_modules` and `.dev.vars` from the main checkout) and a
-   preview port. It prints the task as JSON: note `id`, `worktree`, `port`.
-
-2. **Hand it to a subagent, in the background**, with the prompt below
-   (Agent tool, `run_in_background: true`, no `isolation`: the queue already
-   made the worktree). **Record the subagent as the task's agent** at once,
-   with the agent id from the Agent tool's result (a subagent doesn't know
-   its own id):
-
-       development/task-queue/tq agent <id> <agentId>
-
-   That agent keeps the task until it merges. Then tell the user, in a line, that it's on the board
-   as #id, and **stay free**: the outer agent does no implementation, testing
-   or merging itself (except in live mode, below), and waits for the next instruction. Several tasks can
-   be in flight at once, each in its own worktree.
-
-3. When a subagent reports back, relay its result in a sentence or two
-   (the task's URL, and anything the user must know). Don't redo its work.
-   The subagent stays the task's agent after it reports: if the merge needs
-   work, wake it (SendMessage) as the watch section says.
-
-### Dependencies between tasks
-
-When the outer agent splits work into several tasks, it declares how they
-depend on each other, and the queue enforces it (in the API and on the
-board):
-
-- `--after 12,13`: the task truly needs #12 and #13 merged first. It stays
-  queued; `tq start` is refused until they merge. Register it now, but hand
-  it to a subagent only when `tq watch` prints `#14 unblocked`.
-- `--merge-after 12`: the tasks can be built in parallel against a contract
-  written in both asks (an API, a file format), but must land in order.
-  Merge stays off until #12 merges.
-
-      development/task-queue/tq add "Title" "Ask" --after 12 --merge-after 13
-      development/task-queue/tq deps 14 --after 12,13 | --merge-after none | --clear
-
-Don't build against a throwaway stub of another task's work, to be followed
-by a "connect it to the real thing" task: make the task wait (`--after`), or
-write the contract and use `--merge-after`. A dependency that is discarded or
-fails blocks its dependents until someone removes or changes it.
-
-The factory inside Erga (`/admin/factory`) has the same dependencies, with
-the same rules (`development/task-queue/deps.ts`: change them there, for
-both), but starts an unblocked task itself (README, The factory).
-
-Questions about the code, explanations and other asks that change nothing
-in the repo are answered directly, without a task. Work on the task queue
-itself goes through the queue like anything else.
-
-When the user gives a new rule or standing instruction ("always…",
-"from now on…"), add it to AGENTS.md, through the queue like any other
-change, not to Claude's local memory: that way every agent sees it.
-
-### The subagent's prompt
-
-Fill in the brackets:
-
-> You are doing task #[id] from the task queue: [title]. The ask: [the
-> user's ask, in full].
->
-> Work only in the worktree [worktree] (branch [branch]): use absolute paths
-> there, and never touch the main checkout or other worktrees. Read
-> AGENTS.md and README.md there first. Report progress with
-> `development/task-queue/tq` (run from anywhere):
->
-> 1. `tq start [id]` now.
-> 2. Do the work, committing as you go (`tq log [id] "..."` at milestones,
->    so the board shows where you are).
-> 3. Test it thoroughly: the tests that cover what you changed (`./test.sh`
->    for the whole suite) and new ones where they belong. Verify in a real
->    browser with **headless Chrome only** (`tests/cdp.ts` drives it; never
->    open or drive the user's own browser). Aim to build, test and merge in
->    under 5 minutes: run only the tests that cover the change, each under a
->    short time limit (`timeout 180 bun tests/x.ts`); `./test.sh` and Docker
->    only when the change needs them, never by default. If
->    your own preview gets in the way of a build in the worktree, stop it
->    first (`tq preview [id] --stop`) and start it again after. Never leave
->    processes behind (dev servers, watchers, browsers): stop what you start.
-> 4. Make the result visible at one URL: `tq preview [id] [/path]` runs the
->    app from the worktree on the task's port ([port]) and keeps it running
->    after you finish. Pick the page that shows the change best, with any
->    state it needs already set up, so the user only has to open it.
-> 5. Attach screenshots that show the change, where it has a visible side:
->    `tq shot [id] http://localhost:[port]/path "caption"` (headless Chrome
->    takes it), or `tq shot [id] /path/to/file.png "caption"` for ones you
->    took yourself (e.g. after interacting, with tests/cdp.ts). When you
->    revise a task, remove the screenshots that no longer match
->    (`tq unshot [id] FILE|INDEX`, or `tq unshot [id] --all`), or add
->    `--replace` to the first `tq shot` of a fresh set. The card must show
->    only current screenshots.
-> 6. Merge origin's branch and main into your branch yourself (`git fetch
->    origin`, `git merge origin/staging`, `git merge main`), resolve
->    anything, test, and commit, so the queue's merge finds no conflicts.
->    Commit everything (the queue won't merge uncommitted work), then
->    `tq done [id] "summary" [url]`. Write the summary, and your final
->    reply, in ASD-STE100 (Simplified Technical English), as AGENTS.md
->    ("Task summaries") shows: what changed for the user, results, limits,
->    tests, and what the user must do. If you can't finish,
->    `tq fail [id] "why"` instead.
->
-> Don't build against a stand-in for another task's unmerged work: if the
-> ask says this task merges after #[n], build against the contract it gives,
-> as the real thing; if you find an unnamed dependency, say so
-> (`tq fail [id] "why"`) rather than stub it.
->
-> You are this task's agent until it merges: stay available after you
-> finish. If the merge needs you (a conflict, uncommitted changes, a failed
-> check, a step that timed out), the outer agent messages you with the
-> reason. Then, in the worktree: merge origin's branch and main into your
-> branch, resolve, test under a time limit, commit, and run
-> `tq continue [id]`. The merge then runs again by itself.
->
-> Don't merge or push: the user merges from the board. Finish by replying
-> with the task's URL and a two-line summary.
-
-### Live mode
-
-The outer agent does the work itself, in the task's worktree, with the user
-watching. Step by step:
-
-1. **Register a live task, and start it**:
-
-       development/task-queue/tq add --live "Short imperative title" "A short, clear description of the ask"
-       development/task-queue/tq live <id> [/path]
-
-   `tq live` marks the task live and working; runs the dev server from the
-   task's worktree on the task's port, with live reload (`bun start --reload`;
-   it waits until the server answers); and opens a **Chrome window of its
-   own** on `http://localhost:<port><path>`: its own profile
-   (`development/task-queue/data/chrome/task-<id>`) and its own DevTools port,
-   never the user's everyday browser or tabs. It records the window on the
-   task (`chrome: {pid, port, profile, target}`, in `tq get <id>`), so this
-   agent, or a later session, finds it again: running `tq live <id>` again
-   brings the same window to the front (opening the page if its tabs were
-   closed), or opens a new one if the window is gone. Tell the user, in a
-   line, that #id is live, and where.
-
-2. **Look before acting.** Before acting on anything the user says, check
-   what they're looking at:
-
-       development/task-queue/tq look <id>                 # the tab in front: url, title; every tab; selected text; console errors
-       development/task-queue/tq look <id> --shot [FILE]   # and a screenshot (read it)
-       development/task-queue/tq look <id> --console       # and every console message
-
-   "This", "here" and "that button" mean what's on screen and selected
-   there. Take a screenshot whenever the ask is about how something looks.
-   To click, type or scroll in the window, drive it over its DevTools port
-   (`chrome.port`; `tests/cdp.ts`'s `Page` takes a tab's
-   `webSocketDebuggerUrl` from `http://127.0.0.1:<port>/json/list`). It's
-   the agent's own window; the user's own browser stays untouched.
-
-3. **Edit in the worktree directly**: absolute paths under it, no subagent,
-   never the main checkout. Open pages reload by themselves on every edit:
-   the editor's own code (`src/page/`, `page.html`, `style.css`, `fonts/`)
-   is rebuilt and the page reloads; Worker code is reloaded and so is the
-   page; the dev server restarts when its config or the files it imports
-   (`front.ts` and what it imports) change, and the page reloads once it's
-   back. Don't ask the user to reload. After each change, `tq look` (with
-   `--shot` for visible changes) to see that it landed and the console is
-   clean.
-
-4. **Commit as you go**, each commit a working state, with `tq log <id>` at
-   milestones so the board shows where things are.
-
-5. **Finish when the user says so**: test as in task mode (the tests that
-   cover what changed; `./test.sh` when the app changed), attach screenshots
-   (`tq shot`), commit everything, then `tq done <id> "summary" <url>` (the summary in
-   ASD-STE100, as in "Task summaries"). The
-   user merges from the board as usual: a live task merges like any other,
-   and merging or discarding it stops its dev server and closes its window.
-   If the user drops it instead, `tq fail <id> "why"` (or they discard it).
-   A live task's agent is the outer agent itself: if its merge needs an
-   agent (the watch prints `needs agent`), the outer agent resolves it in
-   the worktree, as a task's agent would, and runs `tq continue <id>`.
-
-**The outer agent's other duties carry on during live mode.** The queue
-watch stays armed (re-arm it when the Monitor expires) and its lines are
-relayed between edits, as always. Any other change the user asks for
-meanwhile, unrelated to the live task, goes through task mode: registered
-and handed to a background subagent, while the live session carries on. One
-live task at a time per session; a new session picks an unfinished live task
-back up with `tq live <id>` (`tq list working` shows them; live ones have
-`live: true` in `tq get`).
-
-### With the Claude Code mod
-
-`development/task-queue/mod/` is a Claude Code mod that does the above for
-you (`claude --plugin-dir development/task-queue/mod`). It puts the workflow
-in the main agent's system prompt and gives it one tool,
-`mcp__task-queue__task_create`, which registers the task and starts a
-`task-queue:worker` subagent in the worktree with the prompt above built in.
-It records the worker as the task's agent (the id `$.agent.spawn`
-returns), so it is the one to wake when the merge needs work.
-The worker reports with `task_log`, `task_preview`, `task_screenshot`
-(`replace: true` for a fresh set), `task_unscreenshot`, `task_done` and
-`task_fail`, and runs `task_continue` after it fixes what stopped its merge. `task_create` also takes `after` and `mergeAfter`
-(dependencies, as above): a task with `after` gets no worker until its
-dependencies merge, and then `task_start` starts it; `task_deps` changes
-them. `/tasks` opens a live pane (with a Needs agent group) with Open, Merge
-and Discard buttons (no Merge or Discard while a task is merging), and
-`/tasks board` opens the browser board. The status line counts working, ready,
-merging and need-agent tasks (and those waiting on others), and toasts say when one is
-ready, starts merging, needs its agent, is merged, fails to merge, fails, is unblocked or is
-blocked. With the mod loaded, use its tools instead of `tq` (but still watch the queue with `tq watch` under Monitor, as above: the mod's toasts tell the user, not the agent; its system prompt says so too). Live mode has no tool of its own: use `tq add --live`, `tq live` and `tq look`, as above (the mod's system prompt says so).
+1. **Anything that could hang runs under a time limit**: builds, tests, git,
+   servers, screenshots (e.g. `timeout 180 bun tests/x.ts`). Stop the
+   servers you start, and leave no processes behind.
+2. **New rules go here.** When the user gives a standing instruction
+   ("always…", "from now on…"), add it to AGENTS.md, not to an agent's own
+   memory, so every agent sees it.
 
 ## Task summaries
 
-Every task summary (`tq done`, `task_done`, a `tq fail` reason, and the
+Every task summary (the factory's `task done`, a `task fail` reason, and a
 worker's final reply) is written in **ASD-STE100**, Simplified Technical
 English. The user reads it cold, on the board, and must understand it on
 one read. The rules that matter most:
@@ -401,112 +130,3 @@ on), never by editing one that's there: erga.dev has applied those, and
 other tasks may be adding their own at the same time. Reach the data
 through `Directory` (`directory.ts`, with `dir.users` and `dir.config`),
 whose admin-only calls check who's asking themselves.
-
-## Merging
-
-The user merges from the board (the same as `tq merge <id>`, or
-`tq merge <id> --wait` to wait for the outcome; agents don't). Merge is off,
-with the reason, while a task's dependencies (`--after`, `--merge-after`)
-aren't merged; a dependency that is merging just ahead of it is fine. The task goes
-straight to **Merging** (status `merging`, its own column), and stays there
-while the queue works; merges run one at a time, in the order they were
-asked for, and a card waiting its turn says so. First the queue stops the
-task's preview and anything else still running in its worktree (a dev
-server, a build, a test left behind), and logs what it stopped. Then it
-merges `origin/staging` and `main` into the task's branch, in its worktree,
-and runs `TASK_QUEUE_CHECK` there if one is set. If anything needs work
-there (a conflict, uncommitted changes, a failed check) or any step runs out
-of time, the queue never resolves it itself: it puts the worktree back on
-the branch's last commit and sets the task to **Needs agent** (status
-`needs-agent`, its own column, Merge off), with the reason, the conflicted
-files and the output (`needsAgent`). The task's agent fixes it and runs `tq
-continue <id>`, and the merge runs again (Watch the queue, "needs agent").
-Then it merges the branch into `main`
-(`--no-ff`, "Merge task/…: title"), pushes `main` to `origin`'s `staging`,
-stops the preview and removes the worktree and branch: the task is Done
-(`merged`). `origin` is Erga's own Git endpoint
-(`https://erga.dev/git/erga.git`; GitHub is the `github` remote, a mirror
-Erga keeps), so the push deploys **staging.erga.dev** by itself. The push
-uses the admin token stored in Git's credentials (README, Tokens); a 401
-fails the merge with "make an admin token at https://erga.dev/tokens and
-store it (README)". A
-refused push doesn't undo the merge: the log says why, and the queue pushes
-again by itself.
-
-**Production (erga.dev) is a deliberate step, never part of a merge**:
-Merge on erga.dev/admin/factory, or `tq release` (Erga's `main` to `staging`'s
-head). Agents run `tq release` only when the user asks for it.
-
-A merge that
-fails for a reason outside the task's worktree (the main checkout not on
-`main`, a `--merge-after` task that didn't merge first, origin refusing
-the admin token) goes back to Ready to merge (`complete`) with the reason on the card,
-as does one the queue was stopped in the middle of, when it starts again.
-Agents can't set `merging`, `needs-agent` or `merged`, nor change a merging task's status.
-
-**Time limits.** Every step the queue runs has one, and runs in a process
-group of its own; at the limit the whole group is killed. The limits, in
-seconds (each one is changed with `TASK_QUEUE_TIMEOUT_<STEP>`; `GET /api`
-lists them): `git` 120 (local git), `origin` 120 (fetch and push), `check` 240
-(`TASK_QUEUE_CHECK`), `install` 180 (a new worktree's `node_modules`),
-`stop` 15 (a preview or a leftover process stopping), `screenshot` 60, and
-`build` 60 (the new code built before a restart). During a merge a step
-that times out sends the task to its agent (`needs agent: git fetch origin
-timed out after 120s`, with the output's tail). A push that times out is
-like a refused push: the merge stays, and the queue pushes again later. Discard drops a task: preview stopped,
-worktree removed, branch deleted. A live task's Chrome window is closed on
-merge and on discard, as its dev server (the preview) is stopped.
-
-### The queue restarts itself when its own code changes
-
-When the queue's own code changes on disk (files in
-`development/task-queue/` that the server, the board or `tq` run; not docs,
-`mod/` or its tests), by a merge or any other way (a commit or a pull in the
-main checkout), the queue restarts itself so it runs the new code. It
-compares its files with what it started with, after each merge and every
-3 seconds. It waits until nothing is merging and that merge's bookkeeping is
-done (merged, pushed, worktree removed), checks that the new code builds
-(if not, it keeps running and logs why), then starts a fresh server and
-exits (the new pid is in `GET /api`; `running: {version, stale}` there says
-which code runs, and which files changed since). `tq restart` asks for a
-restart. Tasks are kept, previews carry on, and boards
-and `tq watch` reconnect (a board reloads if the board itself changed).
-
-(On 2026-10-04 it didn't restart after #2 and #3: the server that ran then
-was older than the self-restart code itself, so it had no way to restart.
-`tq` now restarts a server too old to report `running`, when nothing is
-merging.) If it ever doesn't (`running.stale` in `curl -s localhost:4700/api`
-isn't empty), the outer agent restarts it by hand: kill the server listening on 4700
-(`kill $(lsof -ti tcp:4700 -sTCP:LISTEN)`), then any `tq` command starts it
-again.
-
-## The task queue's API
-
-Discover it with `curl -s localhost:4700/api`: every endpoint, the statuses
-and the CLI. `development/task-queue/tq help` lists the CLI's commands; both
-print the task as JSON.
-
-| | |
-|---|---|
-| `POST /api/tasks {title, description, live?, startAfter?, mergeAfter?}` | register (branch, worktree, port); `live: true` for a live task; `startAfter`, `mergeAfter`: task ids it depends on |
-| `GET /api/tasks[?status=…]`, `GET /api/tasks/:id` | read |
-| `PATCH /api/tasks/:id {status, url, summary, error, live, agent, startAfter, mergeAfter, message}` | update; `agent` records the task's agent (`tq start <id> --agent <agentId>`, `tq agent <id> <agentId>`); `status` is `queued`, `working`, `complete` or `failed` (`merging`, `needs-agent`, `merged` and `discarded` are the queue's; `working` is a 409 while a `startAfter` task isn't merged); `message` goes on the log. Reads carry `blockedBy {start, merge, stuck, reason}` while something blocks the task |
-| `POST /api/tasks/:id/log {message}` | a progress line |
-| `POST /api/tasks/:id/preview {command?, path?}` | run the preview (default `bun start --port $PORT --no-open`) in the worktree; sets `url` |
-| `DELETE /api/tasks/:id/preview` | stop it (`tq preview <id> --stop`) |
-| `POST /api/tasks/:id/live {path?, command?}` | live mode: mark it live, run the dev server with live reload, open (or bring back) its Chrome window; records `chrome` |
-| `GET /api/tasks/:id/look[?shot=1&console=1]` | what that window shows: `url`, `title`, `tabs`, `selection`, `console`, `screenshot` |
-| `POST /api/tasks/:id/screenshots` | an image body, or `{path}`, or `{url}` (headless Chrome), with `caption` |
-| `DELETE /api/tasks/:id/screenshots/:file`, `DELETE /api/tasks/:id/screenshots` | remove one screenshot (by file name or 1-based index), or all, and delete the files; not while merging. The board's detail view has a × on each screenshot (on hover) |
-| `POST /api/tasks/:id/merge`, `POST /api/tasks/:id/discard` | the board's buttons; merge answers 202 with the task `merging`, or 409 while its dependencies aren't merged or it needs its agent |
-| `POST /api/tasks/:id/continue` | `tq continue <id> [--wait]`: the task's agent, once it has fixed what stopped the merge (`needs-agent`) and committed: the merge runs again (202); 409 while the worktree has uncommitted changes or an unfinished merge |
-| `POST /api/restart` | `tq restart`: restart the queue with the code on disk, once nothing is merging |
-| `POST /api/release {commit?}` | `tq release`: Erga's `main` (production) to `staging`'s head, or to `commit`; only when the user asks |
-| `GET /api/history` | main's latest commits (the Branches column), and what was pushed and released |
-| `GET /api/events` | server-sent events: every task, on each change |
-
-If the queue isn't running, any `tq` command starts it (or
-`bun development/task-queue/server.ts`; its log is
-`development/task-queue/data/server.log`). Its state is
-`development/task-queue/data/` (gitignored). `bun development/task-queue/test.ts`
-tests it end to end against a throwaway repo.

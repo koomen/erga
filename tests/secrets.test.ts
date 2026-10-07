@@ -59,19 +59,6 @@ test("a build's failed fetch never puts the source token in its error, or the de
   (await import("node:fs")).rmSync(dir, { recursive: true, force: true });
 });
 
-test("the task queue (localhost:4700) answers its own tools and board, never a web page or a rebinding name", async () => {
-  const { foreign } = await import("../development/task-queue/foreign");
-  const ask = (headers: Record<string, string>) => foreign(new Request("http://localhost:4700/api/tasks/1/preview", { method: "POST", headers }), 4700);
-  // tq, the mod, curl: no Origin. The board: its own.
-  expect(ask({ host: "localhost:4700" })).toBeNull();
-  expect(ask({ host: "127.0.0.1:4700", origin: "http://127.0.0.1:4700" })).toBeNull();
-  expect(ask({ host: "localhost:4700", origin: "http://localhost:4700" })).toBeNull();
-  // A page elsewhere (its fetch says where it's from), a document's page on Erga, and a DNS rebinding name.
-  expect(ask({ host: "localhost:4700", origin: "https://evil.example" })).toContain("evil.example");
-  expect(ask({ host: "localhost:4700", origin: "http://localhost:4400" })).toContain("4400");
-  expect(ask({ host: "rebind.evil.example:4700" })).toContain("rebind.evil.example");
-});
-
 test("a document's pages token is checked whole (its MAC compared in constant time): a changed one opens nothing", async () => {
   const { pagesToken, readPagesToken } = await import("../front");
   const token = await pagesToken("pages-secret", "ada", "abcd1234", "https://erga.dev");

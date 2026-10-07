@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
-// `task`: how Claude Code, in the VM, reports to the factory (as `tq` does
-// for the local task queue). It works on the job's task only.
+// `task`: how Claude Code, in the VM, reports to the factory. It works on the
+// job's task only.
 //
 //   task log "message"                    a progress line on the board
 //   task preview [/path] [--static DIR]   runs the app from the clone (bun start) on the preview port, kept

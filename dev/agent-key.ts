@@ -1,6 +1,6 @@
 // The agent's key in local development (cloudflare.config.ts): a real one in
 // .dev.vars, else ANTHROPIC_API_KEY from the environment that runs the dev
-// server (bun start, a task's preview, live mode). A placeholder (empty, too
+// server (bun start). A placeholder (empty, too
 // short, not "sk-…") counts as none. The key reaches the Worker as a binding,
 // never written anywhere, and nothing here prints it.
 

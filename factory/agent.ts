@@ -1,8 +1,7 @@
 // The factory's own agent, on /admin/factory: the admin's general agent. An
 // agent panel like the editor's (the same transcript, src/page/agent-log.ts,
 // and the same panel, src/page/agent-chat.ts), with tools that queue and read
-// factory tasks the way the local outer agent uses the task queue
-// (AGENTS.md): add a task (title and ask, startAfter and mergeAfter), change
+// factory tasks (AGENTS.md, the hosted factory): add a task (title and ask, startAfter and mergeAfter), change
 // its dependencies, send it more instructions, read the board, a task's log,
 // its preview and its screenshots, and the board's buttons (start, merge,
 // discard, restart), Share with agent's tokens and the Claude sign-out. And
@@ -56,8 +55,7 @@ export interface FactoryOps {
   setDeps(id: number, body: Record<string, unknown>): Promise<{ ok: boolean; error?: string }>;
   revise(id: number, instructions: string): Promise<{ ok: boolean; error?: string }>;
   shot(file: string): Promise<Uint8Array | null>;
-  /** The board's buttons: Start (a queued task), Merge, Discard and Restart, as the admin. */
-  start(id: number): Promise<{ ok: boolean; error?: string }>;
+  /** The board's buttons: Merge, Discard and Restart, as the admin (a task starts by itself). */
   merge(id: number): Promise<{ ok: boolean; error?: string }>;
   discard(id: number): Promise<{ ok: boolean; error?: string }>;
   restart(id: number): Promise<{ ok: boolean; error?: string }>;
@@ -143,14 +141,14 @@ export function factoryTools(ops: FactoryOps, guard: () => Promise<void>): Agent
         for (let i = 0; i < png.length; i += 0x8000) bin += String.fromCharCode(...png.subarray(i, i + 0x8000));
         return { content: [{ type: "text", text: `Task #${t.id}, screenshot ${t.screenshots.indexOf(s) + 1} of ${t.screenshots.length}: ${s.caption}` }, { type: "image", data: btoa(bin), mimeType: "image/png" }], details: {} };
       }),
-    tool("create_task", "Queue a task", "Adds a task to the factory, as the local task queue's `tq add` does: the factory makes its branch (task/<id>-<slug>) from staging and starts a VM where Claude Code does the work, unless it waits for a startAfter task to merge. title: short and imperative. description: the ask, in a few plain sentences, with only the context the worker can't find itself. startAfter: tasks that must merge before this one starts (it truly needs their work). mergeAfter: tasks it can be built beside, against a contract written in both asks, but must merge after. Answers the new task.",
+    tool("create_task", "Queue a task", "Adds a task to the factory: the factory makes its branch (task/<id>-<slug>) from staging and starts a VM where Claude Code does the work, unless it waits for a startAfter task to merge. title: short and imperative. description: the ask, in a few plain sentences, with only the context the worker can't find itself. startAfter: tasks that must merge before this one starts (it truly needs their work). mergeAfter: tasks it can be built beside, against a contract written in both asks, but must merge after. Answers the new task.",
       Type.Object({
         title: Type.String({ description: "Short and imperative, e.g. \"Add a dark theme to Documents\"" }),
         description: Type.String({ description: "The ask: what is wanted, in a few plain sentences" }),
         startAfter: IDS, mergeAfter: IDS,
       }),
       async (a) => text(full(await ops.add({ title: String(a.title ?? ""), description: String(a.description ?? ""), ...(a.startAfter !== undefined ? { startAfter: a.startAfter } : {}), ...(a.mergeAfter !== undefined ? { mergeAfter: a.mergeAfter } : {}) }), 5))),
-    tool("set_dependencies", "Change dependencies", "Changes a task's dependencies (as `tq deps`): startAfter and mergeAfter, each a list of task ids that replaces the one it has; [] or null clears it; leave one out to keep it. Not for a task that is merging, merged or discarded. A cycle or an unknown id is refused.",
+    tool("set_dependencies", "Change dependencies", "Changes a task's dependencies: startAfter and mergeAfter, each a list of task ids that replaces the one it has; [] or null clears it; leave one out to keep it. Not for a task that is merging, merged or discarded. A cycle or an unknown id is refused.",
       Type.Object({ id: Type.Integer({ description: "The task's id" }), startAfter: IDS, mergeAfter: IDS }),
       async (a) => {
         const body: Record<string, unknown> = {};
@@ -167,9 +165,6 @@ export function factoryTools(ops: FactoryOps, guard: () => Promise<void>): Agent
         if (!r.ok) throw new Error(r.error ?? "refused");
         return text(brief((await ops.task(Number(a.id)))!));
       }),
-    tool("start_task", "Start a task", "Starts a queued task now, as the board's Start button does: its VM starts and Claude Code does the work. Refused while a startAfter task isn't merged. The task's log says who started it.",
-      Type.Object({ id: Type.Integer({ description: "The task's id" }) }),
-      async (a) => button(ops.start, a.id, "Started")),
     tool("merge_task", "Merge a task", "Merges a task that is ready to merge into staging, as the board's Merge button does: staging merged into its branch, then its branch into staging (one merge at a time); then the branch is deleted, and staging deploys itself to staging's server. Refused while a dependency isn't merged. The merge goes on after the answer: get_task follows it (merging, then merged, or needs agent). The task's log and the change log (/admin/changes) say who merged it.",
       Type.Object({ id: Type.Integer({ description: "The task's id" }) }),
       async (a) => button(ops.merge, a.id, "Merge requested for")),
@@ -324,7 +319,6 @@ export const FACTORY_TOOL_VERBS: Record<string, [string, string]> = {
   set_user_deploy: ["Changing the deploy role of", "Changed the deploy role of"],
   remove_user: ["Removing", "Removed"],
   clear_api_key: ["Clearing", "Cleared"],
-  start_task: ["Starting", "Started"],
   merge_task: ["Merging", "Merged"],
   discard_task: ["Discarding", "Discarded"],
   restart_task: ["Restarting", "Restarted"],
@@ -363,8 +357,7 @@ board: Merge merges its branch into staging, and staging deploys itself to stagi
 server. Then ${owner} moves main forward to staging on the dashboard, which deploys
 production.
 
-For the factory, you help ${owner} queue up and follow work, as the local outer agent does with the task
-queue (AGENTS.md): turn what they ask for into tasks, split big asks into several, say
+For the factory, you help ${owner} queue up and follow work (AGENTS.md, the hosted factory): turn what they ask for into tasks, split big asks into several, say
 how tasks depend on each other, and tell them how tasks are doing.
 
 - create_task adds a task: a short imperative title, and an ask of a few plain
@@ -386,7 +379,7 @@ how tasks depend on each other, and tell them how tasks are doing.
   that waits for its dependencies.
 - list_tasks, get_task and view_screenshot read the board, a task's ask, summary,
   log, preview URL and screenshots. factory_status says whether the factory is on.
-- The board's buttons: start_task starts a queued task; merge_task merges a task that is
+- The board's buttons (a task starts by itself): merge_task merges a task that is
   ready to merge into staging (staging then deploys itself); discard_task drops a task
   and its branch, and its work is lost; restart_task runs a task again in a fresh VM,
   with its work saved. Each one goes on the task's log under ${owner}'s name, as if they

@@ -114,7 +114,7 @@ test("only a secret, or what isn't a person's action, goes without a tool", () =
 });
 
 test("the known gaps are closed: merge, discard, restart, production's deploy, the dashboard, keys and tokens", () => {
-  for (const t of ["merge_task", "discard_task", "restart_task", "start_task", "deploy_production", "sync_mirror", "list_branches", "list_deploys", "deploy_log", "redeploy", "deploy_homepage",
+  for (const t of ["merge_task", "discard_task", "restart_task", "deploy_production", "sync_mirror", "list_branches", "list_deploys", "deploy_log", "redeploy", "deploy_homepage",
     "clear_api_key", "list_agent_tokens", "revoke_agent_token", "list_factory_tokens", "revoke_factory_token", "sign_out_claude"]) expect(ADMIN).toContain(t);
   for (const t of ["list_documents", "create_document", "delete_document"]) expect(DOCUMENT).toContain(t);
   // Never a tool that sets a secret.
