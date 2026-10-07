@@ -1,4 +1,5 @@
-// The Source pane of the Factory page (source/page.ts) in a test's tab: what it shows, read in one go.
+// The Source pane of the Factory page (source/page.ts) in a test's tab: what it shows, read in one go; and a log of
+// commits to seed a server's repository with, for the pane to show.
 
 import { spawnSync } from "node:child_process";
 import { mkdtempSync } from "node:fs";
