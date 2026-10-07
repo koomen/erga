@@ -64,14 +64,16 @@ const VERBS: Record<string, [string, string]> = {
 
 // Which side the agent is on, and how wide: dragged by its head and its inner edge, as in the editor (layout.ts).
 // Off on a narrow window, where the agent covers the page instead (admin-layout.ts).
-// Each change goes to the server too, and the server's (the admin's last, from any browser) is put on at load.
+// Each change goes to the server too, and the server's (the admin's last, from any browser) is put on at load,
+// unless the admin changed that part here while the server's answer was on its way (it's older than theirs).
 const savePrefs = (p: Prefs) => { fetch("/api/admin/agent/prefs", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(p), keepalive: true }).catch(() => {}); };
-const panes = mountPaneLayout($("workspace"), $("agent-dock"), $("admin-panes"), $("agent").querySelector<HTMLElement>(".agent-head")!, matchMedia("(max-width: 999.98px)"), (l: PaneLayout) => savePrefs({ side: l.side, width: l.width }));
-window.addEventListener("erga:agent-toggled", (e) => savePrefs({ open: !!(e as CustomEvent<{ open: boolean }>).detail?.open }));
+const changedHere = { open: false, layout: false };
+const panes = mountPaneLayout($("workspace"), $("agent-dock"), $("admin-panes"), $("agent").querySelector<HTMLElement>(".agent-head")!, matchMedia("(max-width: 999.98px)"), (l: PaneLayout) => { changedHere.layout = true; savePrefs({ side: l.side, width: l.width }); });
+window.addEventListener("erga:agent-toggled", (e) => { changedHere.open = true; savePrefs({ open: !!(e as CustomEvent<{ open: boolean }>).detail?.open }); });
 fetch("/api/admin/agent/prefs").then((r) => (r.ok ? r.json() : null)).then((p: Prefs | null) => {
   if (!p) return;
-  if (p.side || p.width) panes.set({ side: p.side ?? panes.layout.side, width: p.width ?? panes.layout.width });
-  if (typeof p.open == "boolean") window.ergaAgent?.set(p.open);
+  if ((p.side || p.width) && !changedHere.layout) panes.set({ side: p.side ?? panes.layout.side, width: p.width ?? panes.layout.width });
+  if (typeof p.open == "boolean" && !changedHere.open) window.ergaAgent?.set(p.open);
 }).catch(() => {});
 
 const input = $("agent-input") as HTMLTextAreaElement, send = $("agent-send") as HTMLButtonElement, hint = $("agent-hint");

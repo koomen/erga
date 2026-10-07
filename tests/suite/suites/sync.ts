@@ -85,14 +85,20 @@ export const sync: Test[] = [
       const d = await ctx.doc();
       const [a, b] = [await Participant.join(d, "Ada"), await Participant.join(d, "Bo")];
       ctx.defer(() => { a.destroy(); b.destroy(); });
-      const base = (await d.stored(d.path))!;
-      // Live, not yet stored:
-      a.insertAfter("<h1>", "LIVE ");
-      // A publish made from the stored version, changing something else:
-      const pushed = base.text.replace("Where the leads go.", "Where the leads went.");
-      expect(pushed != base.text, "the fixture has the sentence to change");
-      const r = await d.push(d.path, pushed, base.etag);
-      expect(r.ok, `the push is taken (${r.status})`, await r.text());
+      // Live, not yet stored; then a publish made from the stored version, changing something else. The room stores the
+      // live edit a moment later (about 400 ms): on a busy machine that can come before the push, which is then
+      // rightly refused as stale (412). Then try again, with another live edit the new stored version doesn't have.
+      let r: Response | null = null;
+      for (let tries = 0; tries < 3; tries++) {
+        const base = (await d.stored(d.path))!;
+        a.insertAfter("<h1>", "LIVE ");
+        const pushed = base.text.replace("Where the leads go.", "Where the leads went.");
+        expect(pushed != base.text, "the fixture has the sentence to change");
+        r = await d.push(d.path, pushed, base.etag);
+        if (r.status != 412) break;
+        await r.text();
+      }
+      expect(r!.ok, `the push is taken (${r!.status})`, await r!.text());
       await until(() => b.str().includes("leads went.") && b.str().includes("LIVE "), 3000, "Bo has both");
       await converged([a, b], 3000);
       await until(async () => { const s = (await d.stored(d.path))?.text ?? ""; return s.includes("leads went.") && s.includes("LIVE "); }, STORE_MS, "storage has both");

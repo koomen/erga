@@ -128,7 +128,7 @@ document.addEventListener("click", (e) => {
 addEventListener("popstate", (e) => {
   clearTimeout(scrollTimer); scrollTimer = 0;
   if (here() == shown) return;
-  go(location.href, { push: false, scroll: (e.state as { ergaScroll?: number } | null)?.ergaScroll ?? 0, keep: true });
+  go(location.href, { push: false, scroll: ((e as PopStateEvent).state as { ergaScroll?: number } | null)?.ergaScroll ?? 0, keep: true });
 });
 addEventListener("pagehide", keepScroll);
 

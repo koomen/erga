@@ -85,7 +85,7 @@ export function panelPrefs(raw: unknown): PanelPrefs {
   const r = (raw && typeof raw == "object" ? raw : {}) as Record<string, unknown>;
   const p: PanelPrefs = {};
   if (typeof r.open == "boolean") p.open = r.open;
-  if (r.side == "left" || r.side == "right") p.side = r.side;
+  if (r.side == "left" || r.side == "right") p.side = r.side as "left" | "right";
   if (typeof r.width == "number" && Number.isFinite(r.width)) p.width = Math.max(100, Math.min(4000, Math.round(r.width)));
   return p;
 }

@@ -209,7 +209,7 @@ async function htmlScenario(browser: Browser) {
   check("a stylesheet change reaches the page", await until(() => p.frame<boolean>(`getComputedStyle(${F}.querySelector("h1")).letterSpacing == "3px"`)));
 
   await p.key("p", MOD.Meta | MOD.Shift);
-  check("source view shows the file", await until(async () => await p.eval<boolean>(`document.body.classList.contains("source")`) && (await s.source()).includes("Where leads go now.")));
+  check("source view shows the file", await until(async () => await p.eval<boolean>(`document.body.classList.contains("source")`) && (await s.source()).includes("Where leads go now."), 10_000));
   await p.key("p", MOD.Meta | MOD.Shift);
   await until(async () => !(await p.eval<boolean>(`document.body.classList.contains("source")`)) && await p.frame<boolean>(`!!${F}.querySelector("h1[data-erga-id]")`));
   await s.clickEnd("h1");
@@ -833,7 +833,8 @@ async function selectScenario(browser: Browser) {
   await p.key("ArrowRight", MOD.Shift);
   await p.settle();
   await until(async () => (await model()).text.includes("</h1>"));
-  check("Shift+ArrowDown selects past the end of the heading", (await domText()).startsWith("unch notes") && /Build/.test(await domText()), await domText());
+  // (The frame's selection and the shell's model each hear of the keys in their own time: on a busy machine, either can be last.)
+  check("Shift+ArrowDown selects past the end of the heading", await until(async () => { const t = await domText(); return t.startsWith("unch notes") && /Build/.test(t); }), await domText());
   check("the editor's selection follows", (await model()).text.startsWith("unch notes</h1>"), await model());
   const one = await p.frame<{ text: string; html: string }>(`(() => { const t = ${F}.querySelector("p.lede").firstChild; ${F}.getSelection().setBaseAndExtent(t, 0, t, 5); const d = new DataTransfer(); ${F}.activeElement.dispatchEvent(new ClipboardEvent("copy", { clipboardData: d, bubbles: true, cancelable: true })); return { text: d.getData("text/plain"), html: d.getData("text/html") }; })()`);
   check("a copy inside one paragraph is its text, with no block around it", one.text == "Build" && one.html == "Build", one);
@@ -1103,12 +1104,14 @@ async function joinScenario(browser: Browser) {
   const main = async () => (await s.source()).match(/<main>[\s\S]*<\/main>/)?.[0];
   const caret = () => p.eval<number>("ergaPage.state.selection.main.head");
   /** Puts the caret at the start of an element's text and presses Backspace. */
+  // Each step waits for what it does (not a fixed time): on a busy machine the frame takes its time.
   const backspaceAt = async (sel: string) => {
+    const before = await s.source();
     await s.clickEnd(sel);
     await p.key("Home");
-    await Bun.sleep(60);
+    await until(() => p.frame<boolean>(`(() => { const e = ${F}.querySelector(${JSON.stringify(sel)}), r = ${F}.getSelection().getRangeAt(0); if (!r.collapsed || !e.contains(r.startContainer)) return false; const x = r.cloneRange(); x.setStart(e, 0); return x.toString() == ""; })()`));
     await p.key("Backspace");
-    await Bun.sleep(100);
+    await until(async () => (await s.source()) != before);
   };
   // [what, the block, the source after the join with "|" at the caret, the block before, its text after]
   const cases: [string, string, string, string, string][] = [

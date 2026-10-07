@@ -581,7 +581,8 @@ export class Factory extends DurableObject<Env> {
     const host = vmHost(this.env, r.origin) as VmHost;
     const token = claude ? await this.claudeToken() : null;
     // The task's person authors its commits (Claude Code's, and "Merge staging into ..."); whoever pressed Merge, the
-    // merge into staging. The factory is always the committer.
+    // merge into staging. The factory is always the committer. (The image's own git config, factory/vm/Dockerfile, is
+    // "Erga factory": these override it.)
     const author = r.person ? await this.identity(r.person) : FACTORY_IDENTITY;
     const merger = scope == "merge" && by ? await this.identity(by.login) : null;
     return {

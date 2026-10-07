@@ -80,13 +80,16 @@ describe("staging", () => {
     expect(result.url).toBe("https://staging.erga.dev");
     expect(result.pages).toBe("*.erga-pages-staging.dev");
 
-    // Its own database: a new one, with production's rows and migrations.
+    // Its own database: a new one, with production's rows and migrations, then the migrations production hasn't had yet
+    // (the mock's production stops at 0110_admin_keys.sql; staging runs ahead of it with the newer ones).
     const db = stagingDbOf(mock.state);
     const prod = mock.state.databases.find((d) => d.uuid == PROD_DB)!;
     expect(db.uuid).not.toBe(PROD_DB);
     expect(db.rows).toEqual(prod.rows!);
-    expect(db.migrations).toEqual(prod.migrations);
-    expect(steps).toContain("migrations:done already up to date");
+    const all = Object.keys(release.migrations).sort(), newer = all.filter((n) => !prod.migrations.includes(n));
+    expect(db.migrations).toEqual([...prod.migrations, ...newer]);
+    expect(db.migrations).toEqual(all);
+    expect(steps).toContain(newer.length ? `migrations:done applied ${newer.join(", ")}` : "migrations:done already up to date");
 
     // Its own Worker: bound to its database, its settings, its secrets, the builder; Durable Objects of its own (a new Worker: no tombstone).
     const b = bindingsOf(mock.state, "erga-staging");
@@ -939,7 +942,7 @@ describe("the builder", () => {
       return new Response(new ReadableStream({ start(c) { c.enqueue(new TextEncoder().encode(`${JSON.stringify({ log: "go" })}\n`)); } }));
     }) as typeof fetch };
     await expect(containerBuilder(hang).build({ commit: SHA2, branch: "staging", source: { cloneUrl: "x", token: "t" } }, () => abort.abort(new Error("superseded")), abort.signal)).rejects.toThrow("superseded");
-    expect(cancels).toEqual([ids.at(-1)]);
+    expect(cancels).toEqual([ids.at(-1)!]);
   });
 });
 

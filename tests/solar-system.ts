@@ -84,9 +84,9 @@ try {
   let b: Bar = await bar(p);
   // (It asks for the pictures of the steps in sight: scrolled down, the rest.)
   await until(async () => { b = await bar(p); return b.items.length == 9 && b.items.slice(0, 5).every((i) => i.img.startsWith("blob:")); }, 8000, "the list shows the pictures in sight", () => JSON.stringify(b));
-  await p.eval(`document.querySelector(".erga-steps-panel").scrollTop = 1e6, document.querySelector(".erga-steps-panel").dispatchEvent(new Event("scroll"))`);
+  await p.eval(`document.querySelector(".erga-steps-list").scrollTop = 1e6, document.querySelector(".erga-steps-list").dispatchEvent(new Event("scroll"))`);
   await until(async () => { b = await bar(p); return b.items.every((i) => i.img.startsWith("blob:")); }, 8000, "scrolled down, the list shows all nine pictures", () => JSON.stringify(b));
-  await p.eval(`document.querySelector(".erga-steps-panel").scrollTop = 0`);
+  await p.eval(`document.querySelector(".erga-steps-list").scrollTop = 0`);
   expect(b.items.map((i) => i.label).join("|") == LABELS, "the list labels each step", b.items.map((i) => i.label));
   // Each picture is the view from its own camera: no two the same.
   const sums = await p.eval<string[]>(`Promise.all([...document.querySelectorAll(".erga-steps-panel .erga-step img")].map((img) => fetch(img.src).then((r) => r.arrayBuffer()).then((b) => b.byteLength + ":" + new Uint8Array(b).slice(-64).join(""))))`);

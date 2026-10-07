@@ -113,7 +113,9 @@ export class RemotePage {
         this.post({ type: "init", kind: this.kind, dir: c.dir ?? "", state: this.state.toJSON(), version: this.authority.version, markdownHead: c.markdownHead, self: c.self, tracking: this.tracking, ...(timescale ? { timescale } : {}), ...(c.scroll ? { scroll: c.scroll } : {}) });
         // Only the first frame: one that loads again later starts where it renders.
         c.scroll = undefined;
-        for (const q of this.queue.splice(0)) this.post(q);
+        // A focus asked for before the frame was up only if the frame still has it: focus moved on since (the pages
+        // card opened, the agent's box) stays where it went.
+        for (const q of this.queue.splice(0)) if (q.type != "focus" || document.activeElement == this.frame) this.post(q);
         return;
       }
       case "push": {

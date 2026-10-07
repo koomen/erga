@@ -195,7 +195,7 @@ try {
   expect(git("clone", "-q", `${root}/__factory/git/erga.git`, ".").status == 0, "a task's token clones");
   const toStaging = git("push", "--force", "origin", `origin/${t3b.branch}:refs/heads/staging`);
   expect(toStaging.status != 0 && toStaging.stderr.includes("403"), "a task's token can't push staging", toStaging.stderr);
-  const noToken = spawnSync("git", ["ls-remote", `${root}/__factory/git/erga.git`], { encoding: "utf8", env: { ...process.env, GIT_TERMINAL_PROMPT: "0" } });
+  const noToken = spawnSync("git", ["ls-remote", `${root}/__factory/git/erga.git`], { encoding: "utf8", env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "credential.helper", GIT_CONFIG_VALUE_0: "" } });
   expect(noToken.status != 0, "no token, no repository");
   ok("tokens: a VM's reaches its own task only; a task's git token can't push staging; none, no access");
 
