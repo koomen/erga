@@ -1432,7 +1432,7 @@ export async function factoryApi(request: Request, env: Env, url: URL): Promise<
   // A local task's agent (factory/task.ts), with an admin token: the VMs' report routes, for a local task only, and
   // its git token. (A PATCH without a status is a change of dependencies, below.)
   let patch: Record<string, unknown> | null = null;
-  if (id != null && !action && request.method == "PATCH") patch = await request.json().catch(() => null);
+  if (id != null && !action && request.method == "PATCH") patch = await request.json().catch(() => null) as Record<string, unknown> | null;
   if (id != null && (["brief", "inbox", "log", "branch", "preview", "screenshots", "git"].includes(action) || (patch && typeof patch == "object" && "status" in patch))) {
     const no = await f.localRefusal(id);
     if (no) return json({ error: no.error }, no.status);
