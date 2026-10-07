@@ -26,12 +26,13 @@ import { expect, until } from "./suite/harness";
 const ok = (what: string) => console.log(`ok   ${what}`);
 const SECRET = `staging-admins-${crypto.randomUUID()}`;
 const HOOK = "mock-hook-secret-0123456789abcdef";
-const SIGNED_OUT = "erga_signed_out=1";
 
 const [staging, plain] = await Promise.all([
   startHost(null, { env: { ERGA_DEPLOY_MOCK: "1", ERGA_DEPLOY_TARGET: "staging", SESSION_SECRET: SECRET } }),
   startHost(null, { env: { SESSION_SECRET: SECRET } }),
 ]);
+// Signed out on either server: locally each names its cookies for its port (worker/cookies.ts).
+const SIGNED_OUT = `erga_signed_out_${staging.port}=1; erga_signed_out_${plain.port}=1`;
 
 const at = (host: Host) => {
   const root = host.root;
@@ -41,7 +42,7 @@ const at = (host: Host) => {
     page: (path: string, headers: Record<string, string> = {}) => get(path, { headers: { Accept: "text/html", ...headers } }),
     async signIn(as: string | null): Promise<string> {
       const r = await get(`/auth/github?${as ? `as=${as}&` : ""}next=/docs`);
-      return r.headers.getSetCookie().map((x) => x.split(";")[0]).find((x) => x.startsWith("erga_session="))!;
+      return r.headers.getSetCookie().map((x) => x.split(";")[0]).find((x) => /^erga_session(_\d+)?=/.test(x))!;
     },
     async mint(cookie: string, fields: Record<string, string>): Promise<string> {
       const html = await (await get("/tokens/new", { method: "POST", headers: { Cookie: cookie, Origin: root }, body: new URLSearchParams(fields) })).text();

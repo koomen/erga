@@ -21,7 +21,8 @@ With [Bun](https://bun.sh) 1.4 or later (and Node, which runs Vite):
 
 `bun start` (`dev.ts`; `--help` lists its options) builds the editor and runs
 the same Worker as erga.dev, under Vite and the Cloudflare plugin, at
-`http://localhost:4400`. The first time, it makes `.dev.vars` for you (see
+`http://localhost:4400` (a worktree gets a port of its own: `bun start
+--print-url`). The first time, it makes `.dev.vars` for you (see
 `.dev.vars.example`): you're signed in as `DEV_LOGIN`. An `ANTHROPIC_API_KEY`
 turns the agent on: exported in the shell that runs `bun start`, or in
 `.dev.vars`. A real key in `.dev.vars` wins; a placeholder there (empty, short,

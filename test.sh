@@ -39,7 +39,8 @@
 #                     who the factory's commits are by (tests/factory-authors.ts),
 #                     the admin agent reading Erga's own source, in the Worker (tests/admin-agent-source.ts),
 #                     the agents doing what their person does on the page, in the Worker (tests/admin-agent-actions.ts),
-#                     live reload (tests/reload.ts, in a copy of the checkout)
+#                     live reload (tests/reload.ts, in a copy of the checkout),
+#                     two checkouts' dev servers at once, sharing nothing (tests/checkouts.ts, in two copies)
 #                     and the multiplayer suite, each
 #                     against dev servers of its own (tests/host.ts)
 #
@@ -163,6 +164,9 @@ run 1 latency bun tests/suite/run.ts --suite latency     # [6]
 collect
 # Live reload alone too: it edits files and waits on rebuilds, which a busy machine slows.
 run 1 reload bun tests/reload.ts                         # [14]
+collect
+# Two checkouts' servers at once, with their default ports: alone, so no other test takes one of those ports meanwhile.
+run 1 checkouts bun tests/checkouts.ts                   # [40]
 collect
 # A named test file test.sh doesn't run itself (tests/agent.ts, say): it runs now, on its own.
 if [[ $some == 1 ]]; then

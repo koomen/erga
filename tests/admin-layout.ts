@@ -84,7 +84,8 @@ try {
   const role = (await (await get("/admin/users")).text()).match(/data-login="mallory"[^]*?<\/li>/)?.[0] ?? "";
   expect(!role.includes('value="admin" selected'), "Mallory is still not an admin", role);
   // Signed out: a page sends you to sign in; a POST is refused.
-  const out = { Cookie: "erga_signed_out=1" };
+  // Locally each server names its cookies for its port (worker/cookies.ts).
+  const out = { Cookie: `erga_signed_out_${host.port}=1` };
   for (const path of ["/admin", "/admin/changes", "/admin/users", "/admin/factory"]) {
     const r = await get(path, { headers: out });
     expect(r.status == 302 && (r.headers.get("location") ?? "").startsWith("/auth/github?next="), `signed out, GET ${path} goes to sign in`, { status: r.status, location: r.headers.get("location") });

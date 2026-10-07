@@ -11,10 +11,11 @@ Work in a checkout on this machine, with the user watching if they like:
 
 1. **Branch first** (`git checkout -b <short-name>`); never commit to `main`
    directly.
-2. **Run the app**: `bun start` serves it at http://localhost:4400 (signed
-   in as `DEV_LOGIN`); `bun start --reload` also reloads open tabs on every
-   edit (README, Local development). Another checkout or worktree takes
-   `--port`.
+2. **Run the app**: `bun start` serves it (signed in as `DEV_LOGIN`) on
+   this checkout's own port: 4400 in the main checkout, another from its
+   path in a worktree, with nothing shared between checkouts (dev.ts).
+   `bun start --print-url` (or `.dev-url`) says where. `bun start --reload`
+   also reloads open tabs on every edit (README, Local development).
 3. **Edit, then look**: verify in a real browser with **headless Chrome**
    (`tests/cdp.ts` drives it); never drive the user's own browser unless
    they ask.
