@@ -23,6 +23,7 @@
 //   /admin, /admin/changes, /admin/users   the server's settings, their change log, and its users (admin.ts)
 
 //   /api/admin/agent/...       each admin's agent conversation and panel layout, kept (worker/factory.ts)
+//   /api/admin/guide           the guide for an outside agent with an admin token (Share with agent; worker/factory.ts)
 //   /admin/factory, /api/source/...  the Factory page (the factory's board, the dashboard of source and deploys, and the
 //                              factory's agent; /source and /admin/source redirect there) and its API
 //                              Every /admin page has the same layout (admin-layout.ts), and every /admin route is
@@ -44,7 +45,7 @@ import { finishSignIn, isDev, sessionOf, signOut, startSignIn, testSignIn } from
 import { directoryOf } from "./d1";
 import { adminGate, isAdminPath } from "../admin-layout";
 import { deployDoor } from "./deploy";
-import { adminAgentApi, factoryApi, isAdminAgentPath, previewTicketOk } from "./factory";
+import { adminAgentApi, adminGuideApi, factoryApi, isAdminAgentPath, previewTicketOk } from "./factory";
 import { previewDoor } from "../factory/cloudflare";
 import { sourceApi, sourceDoor, sourceGit } from "./source";
 import { deploysDoor, isDeploysPath } from "./deploys";
@@ -149,6 +150,8 @@ async function route(request: Request, env: Env, url: URL, ctx: ExecutionContext
   }
   // Each admin's agent conversation and panel, kept in the Factory object (worker/factory.ts): before the server's API, which has the rest of /api/.
   if (isAdminAgentPath(path)) return adminAgentApi(request, env, url);
+  // What an outside agent with an admin token reads first (Share with agent): the admin APIs (worker/factory.ts).
+  if (path == "/api/admin/guide") return adminGuideApi(request, env, url);
   // The factory (experimental): its API, admins only (worker/factory.ts); its board is on /admin/factory (worker/source.ts).
   if (path == "/api/factory" || path.startsWith("/api/factory/")) return factoryApi(request, env, url);
   // The server's API for agents, and people's agent tokens (server-api.ts).

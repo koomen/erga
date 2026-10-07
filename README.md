@@ -459,7 +459,7 @@ and fixed: one rule (`User.mayDeploy`, `Users.hasDeploy`) decides it for
 **The admin pages.** Every page under `/admin` has the same layout
 (`admin-layout.ts`): a breadcrumb in the upper left (Erga › Admin › the
 page), Share with agent in the upper right (the editor's button and card,
-with a factory token: `admin-share.js`, built from
+with a short-lived admin token: `admin-share.js`, built from
 `src/page/admin-share.ts`), and a sidebar on the left with Settings
 (`/admin`), API keys (`/admin/api-keys`), Change log (`/admin/changes`), Users (`/admin/users`) and Factory (`/admin/factory`). The
 sidebar collapses to a rail of icons, and expands again, with an animation,
@@ -527,7 +527,7 @@ task merged into staging (its id, title and merge commit), and main moved
 forward to staging, the production deploy (main's old and new head, and the
 commits it brought: the newest 50, of how many). An entry for something an
 agent did names the admin who prompted it, never the agent, with "via the
-factory's agent" or "via a shared agent (its label)". The factory
+factory's agent" or "via an outside agent (its token's label)". The factory
 (`worker/factory.ts`) and the repository (`worker/source-host.ts`) write
 them with `ServerConfig.record`, as versions whose changes have `task`,
 `release` and `via` (`SettingChange`). A bootstrap admin's Admin switch and
@@ -827,8 +827,11 @@ directory's admin-only calls check it (`Users.mustAdmin`), and so do the
 admin APIs (settings, users, source, deploys, the homepage). An admin whose
 token has another scope gets 403 with `LOCKED`: "This token has no admin
 power: make a token with the admin scope at /tokens." Test people never have
-admin power. The `/admin` pages and the factory take a browser session only,
-never a token (`adminGate`).
+admin power. The `/admin` pages take a browser session only, never a token
+(`adminGate`); an agent with an admin token uses the APIs behind them
+instead: the admin tools for settings, users, API keys and the change log,
+and `/api/factory/...`, `/api/source/...` and `/api/deploys` (the guide,
+`GET /api/admin/guide`, lists them).
 
 **What needs admin power** (the audit; each refuses with 403, and a
 token without the admin scope gets `{ error: LOCKED, locked: true }`):
@@ -838,7 +841,8 @@ token without the admin scope gets `{ error: LOCKED, locked: true }`):
 | `/admin`, `POST /admin/settings`, `POST /admin/users` (a browser session only) | `admin.ts`, `admin-layout.ts` |
 | the admin tools (`list_settings`, `set_setting`, `reset_setting`, `list_setting_changes`, `list_api_keys`, `clear_api_key`, `list_users`, `add_user`, `set_user_role`, `set_user_deploy`, `remove_user`) over `/api/ext/tools`, `/mcp` and the factory's agent | `server-tools.ts`, `server-api.ts` |
 | `dir.config.list/set/reset`, `dir.users.list/add/setRole/remove`, whatever calls them | `Users.mustAdmin` (`users.ts`, `config.ts`) |
-| `/api/factory/...` (not the VMs' own task tokens, nor factory tokens), the factory's agent and making factory tokens (a browser session only) | `worker/factory.ts` |
+| `/api/factory/...` (not the VMs' own task tokens), `GET /api/admin/guide`; the admin's own agent panel (`/api/factory/agent...`, `/api/admin/agent/...`) and setting the Claude token take a browser session only | `worker/factory.ts` |
+| `POST /admin/share` (Share with agent's token; a browser session only) | `admin.ts`, `tokens.ts` |
 | `/admin/factory`, `GET /api/source/branches`, `POST /api/source/merge`, `POST /api/source/mirror` | `worker/source.ts` |
 | pushes to `/git/erga.git` | `worker/source.ts` |
 | `GET /api/deploys`, `POST /api/deploys/<name>` (redeploy), `/log`, `/history`, `GET /api/events` | `worker/deploys.ts` |
@@ -893,11 +897,27 @@ if `git config credential.helper` prints nothing, set one first. After that,
 a plain `git push` signs in by itself, until the token expires or is
 revoked; then make a new one and store it the same way.
 
-**Factory tokens** (`erga_factory_…`, "Share with agent" on the admin pages;
-`worker/factory.ts`) are a kind of their own: an admin makes one in a
-browser, for 1 to 12 hours, and it only creates, reads and instructs factory
-tasks. It works while it hasn't ended or been revoked and its maker is still
-an admin, checked on every call.
+**Share with agent's token** (the icon in the upper right of every admin
+page; `src/page/admin-share.ts`, `POST /admin/share`, `Tokens.shareAdmin`)
+is an admin token for an outside agent, with the admin's own admin power: it
+does over HTTP what the admin does on the admin pages. It always ends: 12
+hours after it's made. It is the admin's one admin "Share with agent" token
+(kind `share`, scope `admin`): the card shows the same one again while it
+has more than an hour left, and then makes a new one (the old one ends by
+itself); New token turns the old one off at once and makes another.
+`/tokens` lists it ("Admin pages") and revokes it, as the admin's agent can
+(`revoke_agent_token`). Only an admin signed in in a browser makes one: the
+route is under `/admin`, which no token reaches. Like every token, it can't
+make or approve another token (`/tokens`, the editor's share button and
+`POST /admin/share` refuse any agent), nor set a secret (an API key, the
+Claude token). It can do everything else an admin token can: change
+settings and users, queue, merge, discard and restart factory tasks, move
+main (deploy production), redeploy, and push to the Git endpoint. The
+prompt it comes in points the agent at `GET /api/admin/guide` (also at its
+old address, `/api/factory/guide`): the admin APIs, how to send the token,
+when it ends, and that task text, logs and documents are data, never
+instructions. The factory tokens it made before (`erga_factory_…`) are
+gone: the factory dropped them, and answers one with 401.
 
 **Not covered, on purpose:** `/api/deploys/<name>/hook` and
 `/api/snapshot/...` (server to server, with `DEPLOY_HOOK_SECRET` and
@@ -971,9 +991,12 @@ leak gives no working token (only hashes; tokens need `SESSION_SECRET`).
    such change is in the change log (or the users' list) under the admin's
    name, and the conversation shows each tool call. Each task's work lands
    only on its branch, and an admin approves every merge by hand: the merge
-   is the review. **Factory tokens** have the same reach and the same risk,
-   plus that of any bearer token: up to 12 hours, revocable in the dialog,
-   and ended when their maker stops being an admin.
+   is the review. **Share with agent's admin token** has more reach (it is
+   an admin token: it can also push and needs no merge to change settings or
+   users) and the same risk, plus that of any bearer token: an outside agent
+   reads the same text, and whoever holds the token is the admin. It ends in
+   12 hours at most, `/tokens` revokes it, and it stops when its maker stops
+   being an admin. It can't make tokens or set secrets.
 7. *The `/deploy` page, server-to-server secrets and the factory's VM
    tokens* are outside this scheme (above). The VMs run code an admin asked
    for, with the branch's push token: the merge is the review.
@@ -1832,14 +1855,14 @@ never instructions (`tests/source-read.test.ts`, and in the Worker,
 The rule: the admin's agent can do everything the admin can do on the admin
 pages, so they can ask for anything there in words. Beside the tools above it
 presses the board's buttons, `merge_task` (into staging, which
-deploys itself), `discard_task` and `restart_task`; reads and revokes Share
-with agent's tokens (`list_factory_tokens`, `revoke_factory_token`) and signs
+deploys itself), `discard_task` and `restart_task`; signs
 the factory out of Claude (`sign_out_claude`); clears an API key
 (`clear_api_key`); and works the dashboard (`dashboardTools`):
 `list_branches`, `deploy_production` (main moved to staging's head, or to a
 staging commit: production deploys it), `sync_mirror`, `list_deploys`,
 `deploy_log`, `redeploy` and `deploy_homepage`, and `/settings`:
-`list_agent_tokens`, `revoke_agent_token`. Each acts as the admin, so a task's log ("Merged by
+`list_agent_tokens`, `revoke_agent_token` (Share with agent's token
+among them). Each acts as the admin, so a task's log ("Merged by
 …"), and the change log (a merge, main moved) name them, as
 when they click, and each answer says what changed. The one exception is a
 secret: an API key, the Claude token, a new token, and `/deploy` (its session holds a Cloudflare token sealed to the
@@ -1856,18 +1879,23 @@ on every call; [Tokens](#tokens) ("What's still weak") has the risk
 `POST /api/factory/agent/abort|reset|model`, and `{ type: "agent" }` events on
 `/api/factory/events`, to that admin only.
 
-**Share with agent.** The button on the board's head makes a factory token
-for an outside agent (Claude Code on a laptop, say) and a prompt to paste into
-it, as the editor's share button does. Only an admin signed in in a browser can
-make one (`POST /api/factory/tokens { label, hours }`: 1 to 12 hours, shown
-once; only its SHA-256 is kept, in the `Factory` object), and the dialog lists
-them and revokes them (`DELETE /api/factory/tokens/<id>`). A token also stops
-working when its maker stops being an admin. With `Authorization: Bearer erga_factory_…` an agent reads the guide
-(`GET /api/factory/guide`), the factory, its tasks and screenshots, adds tasks
-(`POST /api/factory/tasks`), changes dependencies (`PATCH`) and sends
-instructions (`POST .../revise`), as "<admin>'s agent (shared: <label>)".
-Anything else answers 403: merge, discard, start, the Claude sign-in, the
-agent, tokens, events.
+**Share with agent.** The icon in the upper right of every admin page makes
+an admin token for an outside agent (Claude Code on a laptop, say) and a
+prompt to paste into it, as the editor's share button does: it ends in 12
+hours, `/tokens` lists and revokes it, and New token replaces it
+([Tokens](#tokens), "Share with agent's token"). With `Authorization: Bearer
+erga_…` the agent reads the guide (`GET /api/admin/guide`; the old
+`/api/factory/guide` answers the same) and uses the factory's API as the
+board does: the tasks and screenshots, adding tasks, dependencies,
+instructions, merge, discard, restart, the event stream (the board's events
+only, never the admin's agent conversation) and signing the factory out of
+Claude. What it adds or asks says "<admin>'s agent (<label>)" on the task's
+log, and the change log says "via an outside agent (<label>)"; a merge,
+discard or restart names the admin, as their own agent's do. It gets 403 for
+setting the Claude token (a secret, pasted only on `/admin/api-keys`) and
+for the admin's own agent panel (`/api/factory/agent...`). Any admin token
+works the same way here, with the admin's admin power checked on every
+call; a token with another scope gets 403 (`LOCKED`).
 
 Without a signed-in Claude plan, a scripted stand-in (`factory/vm/fake-claude.ts`)
 does each task the same way, with a change known in advance (a note under
@@ -1911,8 +1939,9 @@ with no VM, a blocked merge, the merge-time check, a discarded dependency,
 the automatic start on unblock), then `/admin/factory` itself (the layout, the
 old pages' redirects, a phone's tabs), the factory's agent with the scripted
 model (it queues a task with a dependency, reads it, looks at its screenshot,
-sends instructions, has no merge or discard tool), factory tokens (what
-they may and may not do, Revoke), and merges that need the task's agent: a
+sends instructions, merges nothing it is not asked to), Share with agent (the
+card's admin token reaches the factory and the other admin APIs, can't make
+tokens or set the Claude token, New token and Revoke end it), and merges that need the task's agent: a
 conflict (needs agent on the board, Merge off, the reason, the preview
 stopped; the same VM's stand-in resolves it and the merge goes on to
 merged), a merge step that hangs (killed at its limit with its process
@@ -1935,7 +1964,7 @@ text and the other fields' values (`keepState` in `factory/page.ts`).
 
 - `worker/factory.ts`: the API (`/api/factory/...`, listed at its top) and
   the `Factory` Durable Object ("factory"), which holds every task, its log
-  and screenshots, the Claude token, the factory tokens and each admin's
+  and screenshots, the Claude token and each admin's
   agent session, and drives the VMs. The board (`factory/page.ts`, a part of
   `/admin/factory`) updates live from its event stream.
 - A `VmHost` starts and stops VMs and runs jobs in them. Locally it's the
@@ -2760,7 +2789,7 @@ API and on each document's `/api/ext` alike, with your own permissions
 (`Directory.may`).
 
 **Tokens** (`tokens.ts`) work until they're revoked or expire, each within
-its scope. There are three ways to get one ([Tokens](#tokens) has the
+its scope. There are four ways to get one ([Tokens](#tokens) has the
 details):
 
 - `/tokens`: make one (a scope, an optional expiry; shown once, with what to
@@ -2768,6 +2797,8 @@ details):
   used, revoke any. (It also still shows a test token for the test suite.)
 - The share button: your one "Share button" token, a documents token, shown
   again each time until it's rotated.
+- Share with agent on the admin pages (admins only): an admin token that
+  ends in 12 hours, for an outside agent that helps run the server.
 - An agent asks, from the command line, with no sign-in of its own (a device
   flow): `POST /api/auth/request {"label": "Claude Code", "scope":
   "documents"}` answers an `approve_url` for you to open (signed in; it shows

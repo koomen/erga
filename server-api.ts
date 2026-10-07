@@ -710,7 +710,7 @@ async function tokensPage(platform: Platform, session: Session, url: URL, o: { n
   const scopeCell = async (t: AgentToken) => t.scope == "document" ? `<span class="scope">One document</span> ${await docLabel(platform, t.docId)}` : `<span class="scope">${SCOPE_NAMES[t.scope]}</span>`;
   // Rows as the documents list's: its name (and whether it's the share button's), its scope, when it expires, when it was last used, revoke on hover.
   const rows = (await Promise.all(list.map(async (t) => `  <li${t.expires != null && t.expires <= Date.now() ? ` class="expired"` : ""}>
-    <div class="name"><span class="title">${esc(t.label)}</span>${t.kind == "share" ? `<span class="note">Share button</span>` : ""}</div>
+    <div class="name"><span class="title">${esc(t.label)}</span>${t.kind == "share" ? `<span class="note">${t.scope == "admin" ? "Admin pages" : "Share button"}</span>` : ""}</div>
     <div class="what">${await scopeCell(t)}</div>
     ${t.expires ? (t.expires <= Date.now() ? `<span class="never">Expired</span>` : day(t.expires)) : `<span class="never">Never</span>`}
     ${when(t.lastUsed)}

@@ -6,8 +6,8 @@
 //   bun tests/factory-authors.ts
 //
 // Three admins each add a task: tester on the board's API (their session),
-// Ada through the factory's agent, and Grace with a factory token (an outside
-// agent). Each task records its person, and the stand-in's commits on its
+// Ada through the factory's agent, and Grace with Share with agent's admin
+// token (an outside agent). Each task records its person, and the stand-in's commits on its
 // branch are authored by that person (their GitHub name and noreply address)
 // and committed by Erga factory. Then tester merges Grace's task, and Ada
 // merges tester's: the "Merge staging into task/…" commit is by tester (the
@@ -61,11 +61,12 @@ try {
   const t2 = (await api("/tasks")).body.find((t: any) => t.title == "Ada's agent's task");
   expect(t2.by == "ada-lovelace’s agent" && t2.person == "ada-lovelace", "a task the admin agent added: its person is the admin who prompted it", t2);
 
-  // 3. Grace, with a factory token (an outside agent).
-  const minted = await api("/tokens", { who: GRACE, json: { label: "Grace's agent", hours: 1 } });
-  expect(minted.status == 200 || minted.status == 201, "Grace makes a factory token", minted);
-  const t3 = (await api("/tasks", { token: minted.body.token, json: { title: "Grace's agent's task", description: "A third note." } })).body;
-  expect(t3.by == "grace-hopper’s agent (shared: Grace's agent)" && t3.person == "grace-hopper", "a task added with a token: its person is the token's", t3);
+  // 3. Grace, with Share with agent's admin token (an outside agent).
+  const share = await fetch(`${root}/admin/share?user=${encodeURIComponent(GRACE)}`, { method: "POST", headers: { Origin: root }, body: new URLSearchParams({}) });
+  const minted = await share.json() as { token?: string };
+  expect(share.ok && !!minted.token?.startsWith("erga_"), "Grace makes an admin token with Share with agent", minted);
+  const t3 = (await api("/tasks", { token: minted.token, json: { title: "Grace's agent's task", description: "A third note." } })).body;
+  expect(t3.by == "grace-hopper’s agent (Share with agent)" && t3.person == "grace-hopper", "a task added with a token: its person is the token's", t3);
 
   for (const t of [t1, t2, t3]) await until(async () => (await task(t.id)).status == "complete", STEP, `#${t.id} is ready to merge`, async () => (await task(t.id)).log.slice(-4));
   const people: [any, string][] = [[t1, "tester <tester@users.noreply.github.com>"], [t2, `${ADA} <ada-lovelace@users.noreply.github.com>`], [t3, `${GRACE} <grace-hopper@users.noreply.github.com>`]];

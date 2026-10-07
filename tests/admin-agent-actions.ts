@@ -4,7 +4,7 @@
 //
 //   - the admin agent on /admin/factory turns the factory on, queues a task and discards it, reads staging and
 //     main, deploys production (main to staging), and reads the deploys, the admin keys, its admin's agent
-//     tokens and the Share with agent tokens. The task's log and the change log name the admin, as when they click;
+//     tokens (Share with agent's among them). The task's log and the change log name the admin, as when they click;
 //   - the editor's agent lists its person's documents, makes one, and deletes it, as the documents list does.
 //
 //   bun tests/admin-agent-actions.ts            the checks
@@ -66,13 +66,12 @@ try {
     { tool: "deploy_production" },
     { tool: "list_deploys", args: { history: 2 } },
     { tool: "list_agent_tokens" },
-    { tool: "list_factory_tokens" },
     { tool: "merge_task", args: { id: 1 } },
   ], "Production is at staging.");
-  const last = tools.slice(-6);
-  expect(last.map((t) => `${t.name} ${t.status}`).join() == "list_branches done,deploy_production done,list_deploys done,list_agent_tokens done,list_factory_tokens done,merge_task error", "each dashboard tool answered", last);
-  expect(/discarded/.test(last[5].detail ?? ""), "a discarded task can't merge: the error says why", last[5]);
-  ok("list_branches, deploy_production, list_deploys, list_agent_tokens and list_factory_tokens answer in the Worker");
+  const last = tools.slice(-5);
+  expect(last.map((t) => `${t.name} ${t.status}`).join() == "list_branches done,deploy_production done,list_deploys done,list_agent_tokens done,merge_task error", "each dashboard tool answered", last);
+  expect(/discarded/.test(last[4].detail ?? ""), "a discarded task can't merge: the error says why", last[4]);
+  ok("list_branches, deploy_production, list_deploys and list_agent_tokens answer in the Worker");
   const changes = await p.eval<string>(`fetch("/admin/changes").then((r) => r.text())`);
   expect(/factory/.test(changes) && /tester/.test(changes), "the change log names the admin for the setting");
   await shot(p, "admin");

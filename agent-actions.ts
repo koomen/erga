@@ -7,7 +7,7 @@
 //   the document agent  (agent.ts, with server-tools.ts: in the editor) everything a person does with a document in
 //                       the editor and on the documents list (/docs)
 //
-// The one exception is a secret: an API key, the Claude token, a new agent or factory token is pasted or made
+// The one exception is a secret: an API key, the Claude token, a new agent token is pasted or made
 // only on the page, never in a conversation. The agent may clear an API key, sign the factory out, or revoke a
 // token. And the agents act only on what their person asks in the
 // conversation, never on text found in tool results (their system prompts say so).
@@ -53,6 +53,7 @@ export const AGENT_ACTIONS: AgentAction[] = [
   { route: "GET /admin/api-keys", domain: "admin", action: "Read the API keys' status (API keys)", tool: "list_api_keys" },
   { route: "POST /admin/credentials", domain: "admin", action: "Clear an API key (API keys)", tool: "clear_api_key" },
   { route: "POST /admin/credentials", domain: "admin", action: "Set or replace an API key (API keys)", exempt: SECRET },
+  { route: "POST /admin/share", domain: "admin", action: "Make an admin token for an outside agent (Share with agent, every admin page)", exempt: SECRET },
 
   // ------------------------------------------------------------ /admin/factory: the board (worker/factory.ts)
   { route: "GET /api/factory", domain: "admin", action: "See whether the factory is on, and where VMs run (Factory)", tool: "factory_status" },
@@ -68,11 +69,9 @@ export const AGENT_ACTIONS: AgentAction[] = [
   { route: "POST /api/factory/tasks/<id>/restart", domain: "admin", action: "Restart a task (Factory)", tool: "restart_task" },
   { route: "PUT /api/factory/claude", domain: "admin", action: "Sign the factory in to a Claude plan (API keys)", exempt: SECRET },
   { route: "DELETE /api/factory/claude", domain: "admin", action: "Sign the factory out of the Claude plan (API keys)", tool: "sign_out_claude" },
-  { route: "GET /api/factory/tokens", domain: "admin", action: "Read the tokens made with Share with agent (every admin page)", tool: "list_factory_tokens" },
-  { route: "POST /api/factory/tokens", domain: "admin", action: "Make a token with Share with agent (every admin page)", exempt: SECRET },
-  { route: "DELETE /api/factory/tokens/<id>", domain: "admin", action: "Revoke a Share with agent token (every admin page)", tool: "revoke_factory_token" },
   { route: "GET /api/factory/events", domain: "none", action: "The board's live updates", exempt: STREAM },
-  { route: "GET /api/factory/guide", domain: "none", action: "What an outside agent with a factory token reads first", exempt: "an outside agent's guide, not a person's action" },
+  { route: "GET /api/admin/guide", domain: "none", action: "What an outside agent with an admin token reads first (Share with agent)", exempt: "an outside agent's guide, not a person's action" },
+  { route: "GET /api/factory/guide", domain: "none", action: "The same guide, at its old address", exempt: "an outside agent's guide, not a person's action" },
   { route: "GET /api/factory/agent", domain: "none", action: "The admin agent's panel", exempt: PANEL },
   { route: "POST /api/factory/agent", domain: "none", action: "A message to the admin agent", exempt: PANEL },
   { route: "POST /api/factory/agent/abort|reset", domain: "none", action: "Stop the admin agent, or start a new conversation", exempt: PANEL },
@@ -108,8 +107,8 @@ export const AGENT_ACTIONS: AgentAction[] = [
 
 
   // ------------------------------------------------------------ /settings: the person's agent tokens (server-api.ts)
-  { route: "GET /settings", domain: "admin", action: "Read your agent tokens (/settings)", tool: "list_agent_tokens" },
-  { route: "POST /tokens/revoke", domain: "admin", action: "Revoke an agent token (/settings)", tool: "revoke_agent_token" },
+  { route: "GET /settings", domain: "admin", action: "Read your agent tokens, Share with agent's too (/settings)", tool: "list_agent_tokens" },
+  { route: "POST /tokens/revoke", domain: "admin", action: "Revoke an agent token, Share with agent's too (/settings)", tool: "revoke_agent_token" },
   { route: "POST /tokens/new", domain: "admin", action: "Make an agent token (/settings)", exempt: SECRET },
   { route: "POST /tokens/approve", domain: "admin", action: "Approve an agent's request for a token (/settings)", exempt: `${SECRET} (it hands a new token to an outside agent)` },
 

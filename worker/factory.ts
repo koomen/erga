@@ -35,17 +35,15 @@
 //   POST /api/factory/agent/model          { model }: sonnet or opus-fast, from the next message
 //   (its events come on /api/factory/events, to that admin only: { type: "agent", ev })
 //
-// "Share with agent": factory tokens (erga_factory_...) for an outside agent, minted by an admin
-// in a browser, at most 12 hours, revocable; each works while its maker is still an admin:
+// An outside agent with an admin token ("Authorization: Bearer erga_...", tokens.ts, scope admin, whose person
+// is an admin now: Share with agent on the admin pages makes one) uses the same API as the board, as its
+// admin, except: setting the Claude token (a secret, set only on the page; it may sign the factory out) and the
+// admin's own agent panel (/api/factory/agent...). Its events carry the board's changes only, never the
+// admin's agent conversation. It doesn't need the page's Origin.
 //
-//   GET  /api/factory/tokens               the tokens (never the secret), newest first
-//   POST /api/factory/tokens               { label?, hours? }: a new one, shown once
-//   DELETE /api/factory/tokens/<id>        revokes it
-//   GET  /api/factory/guide                what the outside agent reads first (factory/agent.ts)
-//
-// With a factory token ("Authorization: Bearer erga_factory_..."), only: GET /api/factory, the tasks,
-// one task and its screenshots, the guide; POST /api/factory/tasks; PATCH /api/factory/tasks/<id>;
-// POST /api/factory/tasks/<id>/revise. Never merge, discard, start, the Claude sign-in or the agent.
+//   GET  /api/admin/guide                  what an outside agent with an admin token reads first: the admin
+//                                          APIs, how to call them, and the token's limits (factory/agent.ts)
+//   GET  /api/factory/guide                the same guide (its old address)
 //
 // The VMs call back with their task's token (Authorization: Bearer fct...),
 // which reaches their own task only:
@@ -89,7 +87,7 @@ import type { ToolWho } from "../server-tools";
 import type { SourceAnswer, SourceRead } from "../source/browse";
 import { panelPrefs, restoredLog, restoredMessages, storedLog, storedMessages, type PanelPrefs } from "../factory/chat-store";
 import { emptyLog, type Log, type LogEvent } from "../src/page/agent-log";
-import { adminTools, dashboardTools, factoryGuide, factoryTools, sourceTools, startFactoryAgent, type DashboardOps, type FactoryAgent, type FactoryOps } from "../factory/agent";
+import { adminGuide, adminTools, dashboardTools, factoryTools, sourceTools, startFactoryAgent, type DashboardOps, type FactoryAgent, type FactoryOps } from "../factory/agent";
 import { FACTORY_IDENTITY, githubIdOf, type Identity, personIdentity } from "../factory/author";
 import { containersHost } from "../factory/cloudflare";
 import { b64url } from "../factory/git-grant";
@@ -100,6 +98,8 @@ import { sessionOf } from "./auth";
 import { agentName } from "../src/room/doc";
 import { checkAttachments } from "../src/page/attach";
 import { directoryOf, factoryKey, tokensOf, withKeys } from "./d1";
+import { SHARE_ADMIN_HOURS } from "../tokens";
+import { LOCKED } from "../users";
 import { forgetHome } from "./home";
 import { hasSource } from "./artifacts";
 import type { Env } from "./env";
@@ -264,11 +264,6 @@ type Row = {
   person: string | null;
 };
 
-/** A factory token: erga_factory_<id>_<secret>. */
-export const TOKEN_PREFIX = "erga_factory_";
-type TokenRow = { id: string; hash: string; login: string; name: string; label: string; unlock_key: string; created: number; expires: number; revoked: number | null; revoked_by: string | null; last_used: number | null };
-export interface TokenView { id: string; login: string; label: string; created: number; expires: number; revoked: number | null; revokedBy: string | null; lastUsed: number | null }
-
 const list = (json: string | null): number[] => { try { const v = JSON.parse(json ?? "[]"); return Array.isArray(v) ? v.map(Number) : []; } catch { return []; } };
 const asked = (r: Row): { at: string; by: string; text: string }[] => { try { const v = JSON.parse(r.asked ?? "[]"); return Array.isArray(v) ? v : []; } catch { return []; } };
 // "needs agent" is a merge that hasn't happened yet: to the dependency rules, a task that isn't merged or merging.
@@ -303,9 +298,8 @@ export class Factory extends DurableObject<Env> {
     this.sql.exec(`CREATE TABLE IF NOT EXISTS logs (n INTEGER PRIMARY KEY AUTOINCREMENT, task INTEGER NOT NULL, at TEXT NOT NULL, message TEXT NOT NULL)`);
     this.sql.exec(`CREATE TABLE IF NOT EXISTS shots (n INTEGER PRIMARY KEY AUTOINCREMENT, task INTEGER NOT NULL, file TEXT NOT NULL UNIQUE, caption TEXT NOT NULL, at TEXT NOT NULL, data BLOB NOT NULL)`);
     this.sql.exec(`CREATE TABLE IF NOT EXISTS secrets (name TEXT PRIMARY KEY, iv BLOB NOT NULL, data BLOB NOT NULL, by_login TEXT NOT NULL, at TEXT NOT NULL)`);
-    // Factory tokens, for outside agents ("Share with agent"): only the secret's SHA-256 is kept.
-    this.sql.exec(`CREATE TABLE IF NOT EXISTS agent_tokens (id TEXT PRIMARY KEY, hash TEXT NOT NULL, login TEXT NOT NULL, name TEXT NOT NULL, label TEXT NOT NULL,
-      unlock_key TEXT NOT NULL, created INTEGER NOT NULL, expires INTEGER NOT NULL, revoked INTEGER, revoked_by TEXT, last_used INTEGER)`);
+    // The old factory tokens (erga_factory_..., Share with agent before it made admin tokens): gone, and with them every such token.
+    this.sql.exec("DROP TABLE IF EXISTS agent_tokens");
     // Instructions sent to a task while it works: its Claude Code takes them (taken) when its current step ends.
     this.sql.exec(`CREATE TABLE IF NOT EXISTS asks (n INTEGER PRIMARY KEY AUTOINCREMENT, task INTEGER NOT NULL, by_login TEXT NOT NULL, text TEXT NOT NULL, at TEXT NOT NULL, taken TEXT)`);
     // Each admin's agent conversation (the transcript and the model's messages) and their panel's layout (factory/chat-store.ts).
@@ -569,7 +563,7 @@ export class Factory extends DurableObject<Env> {
     const r = this.row(id);
     if (!r) return { ok: false, error: "no such task" };
     if (["merged", "discarded"].includes(r.status)) return { ok: false, error: `task #${id} is ${r.status}` };
-    // The board and factory tokens' holders read what the VM says, and the VM's code can read its tokens: none in it.
+    // The board and outside agents (admin tokens) read what the VM says, and the VM's code can read its tokens: none in it.
     body = { ...body };
     for (const k of ["message", "summary", "error"]) if (typeof body[k] == "string") body[k] = hideTokens(body[k]);
     switch (kind) {
@@ -906,8 +900,6 @@ export class Factory extends DurableObject<Env> {
       merge: async (id) => { await on(); return this.merge(id, login, state.origin); },
       discard: async (id) => { await on(); return this.discard(id, login, state.origin); },
       restart: async (id) => { await on(); return this.restart(id, login, state.origin); },
-      tokens: () => this.tokens(),
-      revokeToken: (id) => this.revokeToken(id, login),
       signOutClaude: async () => { await this.setClaude(null, login); },
     };
     const dashboard = this.dashboard(login, state);
@@ -1054,47 +1046,6 @@ export class Factory extends DurableObject<Env> {
     return { ok: true, model: s.agent.model, choice: s.agent.modelChoice, models: s.agent.modelChoice ? Object.entries(MODELS).map(([id, m]) => ({ id, label: m.label })) : [] };
   }
 
-  // -- factory tokens, for outside agents ("Share with agent")
-
-  /** A new token for an outside agent: shown once. It works while `login` is an admin (sharedAgentApi checks). */
-  async mintToken(login: string, name: string, label: string, hours: number): Promise<{ token: string } & TokenView> {
-    const id = hex(crypto.getRandomValues(new Uint8Array(9)));
-    const secret = b64url(crypto.getRandomValues(new Uint8Array(24)));
-    const ms = Math.round(Math.max(1, Math.min(12, hours || 4)) * 3600_000);
-    const at = Date.now();
-    this.sql.exec("INSERT INTO agent_tokens (id, hash, login, name, label, unlock_key, created, expires) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-      id, hex(await crypto.subtle.digest("SHA-256", enc.encode(secret))), login, name, label.replace(/\s+/g, " ").trim().slice(0, 60) || "Outside agent", "", at, at + ms);
-    return { token: `${TOKEN_PREFIX}${id}_${secret}`, ...this.tokenView(this.sql.exec<TokenRow>("SELECT * FROM agent_tokens WHERE id = ?", id).one()) };
-  }
-
-  private tokenView(r: TokenRow): TokenView {
-    return { id: r.id, login: r.login, label: r.label, created: r.created, expires: r.expires, revoked: r.revoked, revokedBy: r.revoked_by, lastUsed: r.last_used };
-  }
-
-  /** The tokens of the last week (working or not), newest first; never their secrets. */
-  async tokens(): Promise<TokenView[]> {
-    return this.sql.exec<TokenRow>("SELECT * FROM agent_tokens WHERE created > ? ORDER BY created DESC LIMIT 50", Date.now() - 7 * 86400_000).toArray().map((r) => this.tokenView(r));
-  }
-
-  async revokeToken(id: string, by: string): Promise<boolean> {
-    const r = this.sql.exec<TokenRow>("SELECT * FROM agent_tokens WHERE id = ? AND revoked IS NULL", id).toArray()[0];
-    if (!r) return false;
-    this.sql.exec("UPDATE agent_tokens SET revoked = ?, revoked_by = ? WHERE id = ?", Date.now(), by, id);
-    return true;
-  }
-
-  /** Whose a token is, while it works (not revoked, not ended); the caller checks the admin. */
-  async readToken(raw: string): Promise<{ id: string; login: string; name: string; label: string; expires: number } | null> {
-    const m = /^erga_factory_([0-9a-f]{18})_([A-Za-z0-9_-]{20,64})$/.exec(raw);
-    if (!m) return null;
-    const r = this.sql.exec<TokenRow>("SELECT * FROM agent_tokens WHERE id = ?", m[1]).toArray()[0];
-    if (!r || r.revoked != null || r.expires <= Date.now()) return null;
-    const want = enc.encode(r.hash), got = enc.encode(hex(await crypto.subtle.digest("SHA-256", enc.encode(m[2]))));
-    if (want.length != got.length || !crypto.subtle.timingSafeEqual(want, got)) return null;
-    if (!r.last_used || Date.now() - r.last_used > 60_000) this.sql.exec("UPDATE agent_tokens SET last_used = ? WHERE id = ?", Date.now(), r.id);
-    return { id: r.id, login: r.login, name: r.name, label: r.label, expires: r.expires };
-  }
-
   // -- live updates
 
   async fetch(request: Request): Promise<Response> {
@@ -1144,13 +1095,52 @@ const factory = (env: Env) => env.FACTORY.getByName("factory");
 const enabled = async (env: Env) => (await directoryOf(env).config.get("factory")) == "on";
 
 /**
- * An admin, signed in (the person, in a browser: agent tokens don't reach the factory).
+ * An admin, signed in (the person, in a browser: for their own agent panel, which no token reaches).
  */
 async function adminOf(env: Env, request: Request): Promise<{ login: string; name: string } | null> {
   const session = await sessionOf(env, request);
   if (!session || session.test || (session as { agent?: unknown }).agent) return null;
   if (!(await directoryOf(env).users.actsAsAdmin(whoOf(session)))) return null;
   return { login: session.login.toLowerCase(), name: session.name };
+}
+
+/** An admin, or an outside agent acting as one: with `token`, it came with an admin token (tokens.ts). */
+type FactoryAdmin = { login: string; name: string; token?: { id: string; label: string; expires: number | null } };
+
+/**
+ * Who asks the factory's API (and the admin guide): an admin signed in in a browser, or an outside agent with an
+ * admin token ("Authorization: Bearer erga_...", scope admin, whose person is an admin now; Share with agent makes
+ * one). Anyone else: the answer that refuses them, saying why.
+ */
+async function factoryAdminOf(env: Env, request: Request, url: URL): Promise<FactoryAdmin | Response> {
+  const raw = /^Bearer\s+(erga_\S+)$/.exec(request.headers.get("authorization") ?? "")?.[1];
+  const users = directoryOf(env).users;
+  if (raw) {
+    const again = `Ask an admin for a new one (Share with agent, on any page under ${url.origin}/admin), or make an admin token at ${url.origin}/tokens.`;
+    if (raw.startsWith("erga_factory_")) return json({ error: `Factory tokens no longer work: Share with agent makes admin tokens now. ${again}` }, 401);
+    const t = await tokensOf(env).verify(raw).catch(() => null);
+    if (!t) return json({ error: `That token doesn't work: it expired, or was revoked. ${again}` }, 401);
+    if (t.testBy || !(await users.isAdmin(t.login))) return json({ error: `Only admins can do that, and ${t.login} isn't one.` }, 403);
+    if (t.scope != "admin") return json({ error: LOCKED, locked: true }, 403);
+    return { login: t.login, name: t.name, token: { id: t.id, label: t.label, expires: t.expires } };
+  }
+  const admin = await adminOf(env, request);
+  if (admin) return admin;
+  return json({ error: `Only admins can do that: sign in, or send an admin token as "Authorization: Bearer <token>".` }, (await sessionOf(env, request)) ? 403 : 401);
+}
+
+/** The guide an outside agent reads first (GET /api/admin/guide, and its old address GET /api/factory/guide). */
+function guideFor(admin: FactoryAdmin, url: URL): Response {
+  const body = adminGuide({ origin: url.origin, owner: admin.login, label: admin.token?.label ?? "(your token's label)", expires: admin.token ? admin.token.expires : Date.now() + SHARE_ADMIN_HOURS * 3600_000 });
+  return new Response(body, { headers: { "Content-Type": "text/markdown; charset=utf-8", "Cache-Control": "no-store" } });
+}
+
+/** GET /api/admin/guide: the admin guide, for an admin or their agent with an admin token. */
+export async function adminGuideApi(request: Request, env: Env, url: URL): Promise<Response> {
+  const admin = await factoryAdminOf(env, request, url);
+  if (admin instanceof Response) return admin;
+  if (request.method != "GET") return json({ error: "Not found" }, 404);
+  return guideFor(admin, url);
 }
 
 /**
@@ -1183,52 +1173,11 @@ export async function adminAgentApi(request: Request, env: Env, url: URL): Promi
 /** Whether the factory is on, for the page (worker/source.ts). */
 export const factoryEnabled = enabled;
 
-/**
- * An outside agent with a factory token ("Share with agent"): it may create, read and instruct tasks, as its
- * admin's agent, while the token works and they're still an admin.
- */
-async function sharedAgentApi(request: Request, env: Env, url: URL, raw: string, path: string, id: number | null, action: string): Promise<Response> {
-  const f = factory(env);
-  const t = await f.readToken(raw);
-  if (!t || !(await directoryOf(env).users.isAdmin(t.login))) {
-    return json({ error: "That factory token doesn't work: it ended, was revoked, or its maker is no longer an admin. Ask an admin for a new one (Share with agent, on /admin/factory)." }, 401);
-  }
-  const by = `${agentName(t.login)} (shared: ${t.label})`;
-  const m = request.method;
-  if (path == "/api/factory/guide" && m == "GET") return new Response(factoryGuide({ origin: url.origin, owner: t.login, label: t.label, expires: t.expires }), { headers: { "Content-Type": "text/markdown; charset=utf-8", "Cache-Control": "no-store" } });
-  if (path == "/api/factory" && m == "GET") {
-    const host = vmHost(env, url.origin), claude = await f.claude();
-    return json({ enabled: await enabled(env), vms: typeof host == "string" ? { runner: null, why: host } : { runner: host.kind }, claude: { signedIn: claude.signedIn } });
-  }
-  if (path == "/api/factory/tasks" && m == "GET") return json(await f.list());
-  if (id != null && !action && m == "GET") { const task = await f.task(id); return task ? json(task) : json({ error: "Not found" }, 404); }
-  const shot = /^\/api\/factory\/shots\/([\w.-]+\.png)$/.exec(path);
-  if (shot && m == "GET") {
-    const data = await f.shot(shot[1]);
-    return data ? new Response(data, { headers: { "Content-Type": "image/png", "Cache-Control": "private, max-age=3600" } }) : json({ error: "Not found" }, 404);
-  }
-  const create = path == "/api/factory/tasks" && m == "POST", deps = id != null && !action && m == "PATCH", revise = id != null && action == "revise" && m == "POST";
-  if (!create && !deps && !revise) return json({ error: "A factory token can only create, read and instruct tasks (GET /api/factory/guide). Merging, discarding and starting are an admin's, on /admin/factory." }, 403);
-  if (!(await enabled(env))) return json({ error: "The factory is off: an admin turns it on with the factory setting (/admin)." }, 409);
-  const body = await request.json().catch(() => null) as Record<string, unknown> | null;
-  if (!body || typeof body != "object" || Array.isArray(body)) return json({ error: "Send JSON." }, 400);
-  if (create) {
-    try { return json(await f.add({ title: String(body.title ?? ""), description: String(body.description ?? ""), by, user: t.login, via: `a shared agent (${t.label})`, origin: url.origin, startAfter: body.startAfter, mergeAfter: body.mergeAfter }), 201); }
-    catch (e) { return json({ error: (e as Error).message }, 400); }
-  }
-  const r = deps ? await f.setDeps(id!, body, by, url.origin) : await f.revise(id!, String(body.instructions ?? ""), by, url.origin);
-  return r.ok ? json(await f.task(id!)) : json({ error: r.error }, (r as { status?: number }).status ?? 409);
-}
-
 /** /api/factory/... */
 export async function factoryApi(request: Request, env: Env, url: URL): Promise<Response> {
   const path = url.pathname.replace(/\/$/, "");
   const m = /^\/api\/factory\/tasks\/(\d+)(?:\/(brief|inbox|log|branch|preview|screenshots|merge|discard|revise|restart|open|start))?$/.exec(path);
   const id = m ? Number(m[1]) : null, action = m?.[2] ?? "";
-
-  // An outside agent, with a factory token.
-  const shared = /^Bearer\s+(erga_factory_\S+)$/.exec(request.headers.get("authorization") ?? "")?.[1];
-  if (shared) return sharedAgentApi(request, env, url, shared, path, id, action);
 
   // A VM, with its task's token.
   const bearer = /^Bearer\s+(fct\.\S+)$/.exec(request.headers.get("authorization") ?? "")?.[1];
@@ -1250,9 +1199,16 @@ export async function factoryApi(request: Request, env: Env, url: URL): Promise<
     return json(r, r.ok ? 200 : 409);
   }
 
-  const admin = await adminOf(env, request);
-  if (!admin) return json({ error: "Only admins can use the factory." }, (await sessionOf(env, request)) ? 403 : 401);
-  if (request.method != "GET" && request.headers.get("origin") != url.origin) return json({ error: "Forbidden" }, 403);
+  // An admin in a browser, or an outside agent with an admin token (Share with agent).
+  const admin = await factoryAdminOf(env, request, url);
+  if (admin instanceof Response) return admin;
+  const agent = admin.token;
+  if (!agent && request.method != "GET" && request.headers.get("origin") != url.origin) return json({ error: "Forbidden" }, 403);
+  // An outside agent works as its admin's agent: what it adds and asks says so (the board, the task's log, the change
+  // log); the board's buttons (merge, discard, restart) name the admin, as their own agent's do.
+  const by = agent ? `${agentName(admin.login)} (${agent.label})` : admin.login;
+  if (agent && (path == "/api/factory/agent" || path.startsWith("/api/factory/agent/"))) return json({ error: `The admin's agent panel is theirs, in a browser: an outside agent calls the same APIs itself (GET ${url.origin}/api/admin/guide).` }, 403);
+  if (agent && path == "/api/factory/claude" && request.method == "PUT") return json({ error: `The Claude token is a secret: it's pasted only on ${url.origin}/admin/api-keys, never by an agent. An agent may sign the factory out (DELETE).` }, 403);
   const f = factory(env);
   const on = await enabled(env);
   if (path == "/api/factory" && request.method == "GET") {
@@ -1262,10 +1218,11 @@ export async function factoryApi(request: Request, env: Env, url: URL): Promise<
   }
   if (path == "/api/factory/events" && request.method == "GET") {
     const headers = new Headers(request.headers);
-    headers.set("x-erga-login", admin.login);
+    // The admin's agent's events go to their own pages only: an outside agent's stream has the board's alone.
+    headers.set("x-erga-login", agent ? `token:${agent.id}` : admin.login);
     return f.fetch(new Request(request.url, { headers }));
   }
-  if (path == "/api/factory/guide" && request.method == "GET") return new Response(factoryGuide({ origin: url.origin, owner: admin.login, label: "(your token's label)", expires: Date.now() + 4 * 3600_000 }), { headers: { "Content-Type": "text/markdown; charset=utf-8", "Cache-Control": "no-store" } });
+  if (path == "/api/factory/guide" && request.method == "GET") return guideFor(admin, url);
   // The factory's own agent, for this admin.
   if (path == "/api/factory/agent") {
     if (request.method == "GET") return json(await f.agentState(admin.login, url.origin));
@@ -1281,16 +1238,6 @@ export async function factoryApi(request: Request, env: Env, url: URL): Promise<
     const r = await f.agentControl(admin.login, control, body.model);
     return json(r, r.ok ? 200 : 409);
   }
-  // Factory tokens, for outside agents (Share with agent).
-  if (path == "/api/factory/tokens") {
-    if (request.method == "GET") return json({ tokens: await f.tokens() });
-    if (request.method == "POST") {
-      const body = await request.json().catch(() => ({})) as { label?: unknown; hours?: unknown };
-      return json(await f.mintToken(admin.login, admin.name, String(body.label ?? ""), Number(body.hours) || 4), 201);
-    }
-  }
-  const tok = /^\/api\/factory\/tokens\/([0-9a-f]{18})$/.exec(path)?.[1];
-  if (tok && request.method == "DELETE") return (await f.revokeToken(tok, admin.login)) ? json({ ok: true, tokens: await f.tokens() }) : json({ error: "No such token, or it's revoked already." }, 404);
   const shot = /^\/api\/factory\/shots\/([\w.-]+\.png)$/.exec(path);
   if (shot && request.method == "GET") {
     const data = await f.shot(shot[1]);
@@ -1316,19 +1263,19 @@ export async function factoryApi(request: Request, env: Env, url: URL): Promise<
   if (!on) return json({ error: "The factory is off: an admin turns it on with the factory setting (/admin)." }, 409);
   if (path == "/api/factory/tasks" && request.method == "POST") {
     const body = await request.json().catch(() => ({})) as { title?: string; description?: string; startAfter?: unknown; mergeAfter?: unknown };
-    try { return json(await f.add({ title: String(body.title ?? ""), description: String(body.description ?? ""), by: admin.login, origin: url.origin, startAfter: body.startAfter, mergeAfter: body.mergeAfter }), 201); }
+    try { return json(await f.add({ title: String(body.title ?? ""), description: String(body.description ?? ""), by, user: admin.login, ...(agent ? { via: `an outside agent (${agent.label})` } : {}), origin: url.origin, startAfter: body.startAfter, mergeAfter: body.mergeAfter }), 201); }
     catch (e) { return json({ error: (e as Error).message }, 400); }
   }
   if (id != null && !action && request.method == "PATCH") {
     const body = await request.json().catch(() => null);
     if (!body || typeof body != "object" || Array.isArray(body)) return json({ error: "send JSON: { startAfter, mergeAfter }" }, 400);
-    const r = await f.setDeps(id, body as Record<string, unknown>, admin.login, url.origin);
+    const r = await f.setDeps(id, body as Record<string, unknown>, by, url.origin);
     return r.ok ? json(await f.task(id)) : json({ error: r.error }, r.status ?? 409);
   }
   if (id != null && request.method == "POST" && ["merge", "discard", "revise", "restart"].includes(action)) {
     const body = action == "revise" ? await request.json().catch(() => ({})) as { instructions?: string } : {};
     const r = action == "merge" ? await f.merge(id, admin.login, url.origin) : action == "discard" ? await f.discard(id, admin.login, url.origin)
-      : action == "restart" ? await f.restart(id, admin.login, url.origin) : await f.revise(id, String(body.instructions ?? ""), admin.login, url.origin);
+      : action == "restart" ? await f.restart(id, admin.login, url.origin) : await f.revise(id, String(body.instructions ?? ""), by, url.origin);
     return r.ok ? json(await f.task(id), action == "merge" ? 202 : 200) : json(r, 409);
   }
   return json({ error: "Not found" }, 404);

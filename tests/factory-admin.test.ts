@@ -119,8 +119,6 @@ test("the board's buttons, the dashboard, keys and tokens: each tool does what t
   const ops = {
     task: async (id: number) => (id == 404 ? null : task(id)),
     merge: button("merge"), discard: button("discard"), restart: button("restart"),
-    tokens: async () => [{ id: "t1", label: "Laptop", created: 1.8e12, expires: 1.9e12 }],
-    revokeToken: async (id: string) => { calls.push(`revoke factory token ${id}`); return id == "t1"; },
     signOutClaude: async () => { calls.push("sign out claude"); },
   } as unknown as FactoryOps;
   const dash = {
@@ -145,9 +143,6 @@ test("the board's buttons, the dashboard, keys and tokens: each tool does what t
   expect(tools.some((t) => t.name == "start_task")).toBe(false);
   expect(await fails(call("merge_task", { id: 9 }))).toBe("task #9 is merged");
   expect(await fails(call("discard_task", { id: 404 }))).toMatch(/no task #404/);
-  expect(await call("list_factory_tokens")).toMatch(/"created": "2027-/);
-  expect(await call("revoke_factory_token", { id: "t1" })).toMatch(/"revoked": "t1"/);
-  expect(await fails(call("revoke_factory_token", { id: "t2" }))).toMatch(/no working factory token/);
   expect(await call("sign_out_claude")).toMatch(/signed out/);
   expect(await call("deploy_production")).toMatch(/main moved/);
   await call("deploy_production", { commit: " 1234567 " });
@@ -156,10 +151,10 @@ test("the board's buttons, the dashboard, keys and tokens: each tool does what t
   expect(await fails(call("deploy_log", { target: "nope" }))).toMatch(/No such deploy/);
   expect(await call("redeploy", { target: "production" })).toMatch(/production redeploys now/);
   expect(await fails(call("revoke_agent_token", { id: "theirs" }))).toMatch(/You have no token/);
-  expect(calls).toEqual(["merge 3", "discard 4", "restart 5", "merge 9", "revoke factory token t1", "revoke factory token t2", "sign out claude", "release head", "release 1234567", "redeploy production"]);
+  expect(calls).toEqual(["merge 3", "discard 4", "restart 5", "merge 9", "sign out claude", "release head", "release 1234567", "redeploy production"]);
   // Admin access locked (or its key revoked): nothing runs.
   locked = true;
   expect(await fails(call("merge_task", { id: 3 }))).toMatch(/Unlock/);
   expect(await fails(call("deploy_production"))).toMatch(/Unlock/);
-  expect(calls.length).toBe(10);
+  expect(calls.length).toBe(8);
 });

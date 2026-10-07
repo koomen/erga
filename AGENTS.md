@@ -36,9 +36,9 @@ The factory (README, The factory) runs each task in a VM of its own on
 erga.dev: Claude Code builds it on a branch (`task/<id>-<slug>`) from
 `staging`, and the user merges it from the board on
 **erga.dev/admin/factory**. Add tasks there: on the board, by asking the
-admin agent beside it, or from an outside agent with a factory token
-("Share with agent" on that page; the agent reads `/api/factory/guide`
-first). Give each task a short imperative title and an ask of a few plain
+admin agent beside it, or from an outside agent with an admin token
+("Share with agent" on any admin page makes one for 12 hours; the agent
+reads `/api/admin/guide` first). Give each task a short imperative title and an ask of a few plain
 sentences, and declare how tasks depend on each other (`startAfter`: needs
 those merged first; `mergeAfter`: built in parallel against a contract
 written in both asks, but merged in order). Don't build against a throwaway

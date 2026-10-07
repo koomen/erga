@@ -9,6 +9,8 @@
 //   POST /admin/settings       key, and value (JSON; null for never) to set it, or reset=1 to put it back to its default
 //   POST /admin/users          do=add (login, role), do=role (login, role), do=deploy (login, deploy: 1 or 0) or do=remove (login)
 //   POST /admin/credentials    name (anthropic, openai, github_mirror, cloudflare_deploy), and value to set or replace its key, or clear=1 to remove it
+//   POST /admin/share          rotate=1 (optional): Share with agent's admin token (tokens.ts, shareAdmin), for an outside
+//                              agent: { token, id, label, expires }; the same one until it's near its end (12 hours), or rotated
 //
 // The API keys page (credentials.ts) shows whether each key is set, its
 // last four characters, and who set it when; the Claude plan token, which
@@ -31,6 +33,7 @@ import { esc, ICON, link, page, type Platform, type Session, TIMES_SCRIPT, whoOf
 import { adminResponse } from "./admin-layout.ts";
 import { NotAllowed, type ServerRole, type User } from "./users.ts";
 import { CredentialError, type CredentialEntry, type DeploySecretEntry } from "./credentials.ts";
+import { ScopeError } from "./tokens.ts";
 
 /** /admin and its POSTs. */
 export async function adminDoor(platform: Platform, request: Request): Promise<Response> {
@@ -44,7 +47,7 @@ export async function adminDoor(platform: Platform, request: Request): Promise<R
   // Only the person themselves, in a browser (which comes with admin power): an agent with their token isn't an admin here.
   const admin = !!who && !session?.agent && (await platform.directory.users.actsAsAdmin(who));
   if (read) {
-    if (!admin) return notFound();
+    if (!admin || url.pathname == "/admin/share") return notFound();
     if (url.pathname == "/admin/settings") return new Response(null, { status: 302, headers: { Location: link("/admin", session!) } });
     if (url.pathname == "/admin/credentials") return new Response(null, { status: 302, headers: { Location: link("/admin/api-keys", session!) } });
 
@@ -62,6 +65,12 @@ export async function adminDoor(platform: Platform, request: Request): Promise<R
   const form = await request.formData();
   const field = (name: string) => String(form.get(name) ?? "");
   try {
+    // Share with agent: a person in a browser only (an agent never makes a token, whatever its scope; checked above too).
+    if (url.pathname == "/admin/share") {
+      if (session!.agent || session!.test) return Response.json({ error: "An agent can't make tokens." }, { status: 403 });
+      const { token, info } = await platform.tokens.shareAdmin({ login: session!.login, name: session!.name }, field("rotate") == "1");
+      return Response.json({ token, id: info.id, label: info.label, expires: info.expires }, { headers: { "Cache-Control": "no-store" } });
+    }
     if (url.pathname == "/admin/credentials") {
       const credentials = platform.directory.credentials, name = field("name");
       // The answer says what the page shows: never the key.
@@ -91,7 +100,7 @@ export async function adminDoor(platform: Platform, request: Request): Promise<R
       default: return Response.json({ error: "do= add, role, deploy or remove" }, { status: 400 });
     }
   } catch (e) {
-    if (e instanceof NotAllowed) return Response.json({ error: e.message }, { status: 403 });
+    if (e instanceof NotAllowed || e instanceof ScopeError) return Response.json({ error: e.message }, { status: 403 });
     if (e instanceof ConfigError || e instanceof CredentialError) return Response.json({ error: e.message }, { status: 400 });
     throw e;
   }
