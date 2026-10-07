@@ -23,7 +23,7 @@
 //                                          token start Claude Code with the task's prompt and every earlier instruction
 //   PUT  /api/factory/claude               { token }: the Claude plan's token (claude setup-token), stored encrypted
 //   DELETE /api/factory/claude             forgets it
-//   GET  /api/factory/events               server-sent events: { type: "task", task } on each change, and
+//   GET  /api/factory/events               server-sent events: { type: "task", task } on each change (and when it stalls), and
 //                                          { type: "unblocked" | "blocked", id, title, why } for a task's dependencies
 //   GET  /api/factory/shots/<file>         a screenshot
 //   GET  /api/factory/tasks/<id>/open      to the task's preview (on Cloudflare, with a ticket for its host)
@@ -1057,6 +1057,7 @@ export class Factory extends DurableObject<Env> {
     this.send(w, ": connected\nretry: 2000\n\n");
     this.beat ??= setInterval(() => {
       for (const c of this.clients.keys()) this.send(c, ": beat\n\n");
+      this.checkStalls();
       if (!this.clients.size && this.beat) { clearInterval(this.beat); this.beat = null; }
     }, 20_000);
     return new Response(readable, { headers: { "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-store", "X-Accel-Buffering": "no" } });
@@ -1068,6 +1069,23 @@ export class Factory extends DurableObject<Env> {
     if (!r) return;
     const rows = [r, ...this.sql.exec<Row>("SELECT * FROM tasks WHERE status NOT IN ('merged', 'discarded') AND id != ?", id).toArray().filter((t) => list(t.start_after).includes(id) || list(t.merge_after).includes(id))];
     for (const t of rows) this.event({ type: "task", task: this.view(t) });
+  }
+
+  /**
+   * A task that has just stalled (factory/stall.ts) goes to the boards, as no change of its own sends it: the
+   * chime on the admin pages (src/page/chime.ts) hears it. On the beat, so at most 20 s late; stalledSeen is
+   * what the boards were told, so each task is sent once when it stalls (and again only after a new log line).
+   */
+  private stalledSeen = new Set<number>();
+  private checkStalls() {
+    const seen = new Set<number>();
+    for (const r of this.sql.exec<Row>("SELECT * FROM tasks WHERE status IN ('working', 'needs agent')").toArray()) {
+      const last = this.sql.exec<{ at: string }>("SELECT at FROM logs WHERE task = ? ORDER BY n DESC LIMIT 1", r.id).toArray();
+      if (!stalledOf({ status: r.status, updatedAt: r.updated, log: last })) continue;
+      seen.add(r.id);
+      if (!this.stalledSeen.has(r.id)) this.event({ type: "task", task: this.view(r) });
+    }
+    this.stalledSeen = seen;
   }
 
   /** An event for every board, or (`login`) for that admin's pages only. */

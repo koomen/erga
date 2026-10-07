@@ -33,6 +33,7 @@
 #                     what the agent's view_page sees: fonts, size, light or dark (tests/view-page.ts),
 #                     the factory, with simulated VMs (tests/factory.ts),
 #                     the factory board's compact cards (tests/factory-cards.ts),
+#                     the chime when a task or the agent needs the admin (tests/factory-chime.ts),
 #                     files attached in the agent panel (tests/attach.ts),
 #                     instructions for a working task (tests/factory-instruct.ts),
 #                     who the factory's commits are by (tests/factory-authors.ts),
@@ -137,6 +138,7 @@ run 1 deploy bun tests/deploy.ts                         # [16]
 run 1 scoped-tokens bun tests/scoped-tokens.ts           # [10]
 run 1 landing bun tests/landing.ts                       # [14]
 run 1 factory-cards bun tests/factory-cards.ts           # [14]
+run 1 factory-chime bun tests/factory-chime.ts           # [20]
 run 1 factory-instruct bun tests/factory-instruct.ts     # [70]
 run 1 factory-authors bun tests/factory-authors.ts       # [20]
 run 1 versions bun tests/versions.ts                     # [13]
