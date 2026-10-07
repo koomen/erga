@@ -1,14 +1,17 @@
 // The production gate (README, Deploys: "The test gate"): main, and so
 // erga.dev, moves only to a staging commit whose full test run passed
-// (./test.sh, every file, and `bun run typecheck`).
+// (./test.sh, every file, the end-to-end tests, `bun run test:e2e`, and
+// `bun run typecheck`).
 //
 // Every staging commit gets a run, by itself, when staging moves: the suite
 // split into SHARDS shares (factory/vm/gate.ts, planShards, balanced by the
-// seconds test.sh notes for each file), each in a VM of its own, all at once.
+// seconds test.sh notes for each file and e2e/timings.json), each in a VM of
+// its own, all at once.
 // One result is kept for each commit: running, passed, failed or cancelled,
 // which files failed, each shard's items, times and log. A run whose
 // failures are a few test files reruns those files once, in one more VM: if
-// they pass then, the run passes, and the files are recorded as flaky. A
+// they pass then, the run passes, and the files are recorded as flaky (so
+// are the e2e tests that passed on e2e's own retry, in the shard). A
 // newer staging commit cancels a run that is still going (its VMs stop), and
 // any run can be run again (rerun).
 //
@@ -23,7 +26,10 @@
 // fake (fakeRunner, below) whose result a commit's subject decides, so all of
 // it can be tried and tested without Cloudflare.
 
-/** How many VMs a run uses: the full run's ~425 s of pool time on a Mac in six ~70 s shares (its longest file is 70 s alone). */
+/**
+ * How many VMs a run uses: test.sh's ~425 s of pool time on a Mac and e2e's ~1340 s of test time (four workers: ~335 s)
+ * in six ~125 s shares (the longest file, an e2e one, is ~100 s alone).
+ */
 export const SHARDS = 6;
 /** How often a running shard is asked how it does. */
 export const POLL_MS = 5000;
@@ -41,7 +47,8 @@ const LOG_KEEP = 60_000;
 export type GateState = "running" | "passed" | "failed" | "cancelled";
 export type ShardState = "starting" | "running" | "passed" | "failed" | "cancelled";
 
-export interface GateItemResult { name: string; files: string[]; ok: boolean; secs: number }
+/** `flaky`: an e2e file's tests that passed only on e2e's retry ("file › title"). */
+export interface GateItemResult { name: string; files: string[]; ok: boolean; secs: number; flaky?: string[] }
 
 export interface GateShard {
   /** 1, 2, ... SHARDS; the rerun of flaky failures is the next number, with `rerun`. */
@@ -76,7 +83,7 @@ export interface GateRun {
   shards: GateShard[];
   /** The items (test files, "unit", "typecheck") that failed, at the end. */
   failed: string[];
-  /** The items that failed once and passed when run again. */
+  /** The items that failed once and passed when run again, and the e2e tests that did ("file › title"). */
   flaky: string[];
   error: string | null;
   /** A cancelled run: the newer commit that took its place. */
@@ -381,6 +388,9 @@ export class TestGate {
   }
 
   private end(run: GateRun, state: "passed" | "failed") {
+    // e2e retries a failed test once in the shard itself (CI=1): those that passed then are flaky too.
+    const tests = run.shards.flatMap((s) => s.results.flatMap((r) => r.flaky ?? []));
+    run.flaky = [...new Set([...run.flaky, ...tests])];
     run.state = state;
     run.ended = this.now();
   }
@@ -392,7 +402,8 @@ export const vmName = (commit: string, attempt: number, n: number) => `gate-${co
 /**
  * Local development's runner (and the tests'): no VMs. Each shard "runs" for `delayMs`, then ends as the commit's
  * subject says (`subject`): "[gate-fail]" fails tests/fake-fail.ts every time; "[gate-flaky]" fails it once, so
- * its rerun passes; "[gate-hang]" never ends; anything else passes.
+ * its rerun passes; "[gate-e2e-flaky]" has a test of e2e/fake.e2e.ts pass only on e2e's retry in the shard;
+ * "[gate-hang]" never ends; anything else passes.
  */
 export function fakeRunner(o: { delayMs?: number; subject?: (commit: string) => Promise<string | null>; now?: () => number } = {}): GateRunner {
   const now = o.now ?? Date.now;
@@ -407,11 +418,12 @@ export function fakeRunner(o: { delayMs?: number; subject?: (commit: string) => 
       const { spec, subject } = r;
       const items = spec.files ? spec.files.map((f) => ({ name: f, files: [f] })) : [
         ...(spec.shard == 1 ? [{ name: "tests/fake-fail.ts", files: ["tests/fake-fail.ts"] }] : [{ name: `tests/fake-${spec.shard}.ts`, files: [`tests/fake-${spec.shard}.ts`] }]),
-        ...(spec.shard == spec.of ? [{ name: "typecheck", files: [] }] : []),
+        ...(spec.shard == spec.of ? [{ name: "typecheck", files: [] }, { name: "e2e/fake.e2e.ts", files: ["e2e/fake.e2e.ts"] }] : []),
       ];
       if (subject.includes("[gate-hang]") || now() - r.at < delay) return { state: "running", phase: "tests", items };
       const fails = (name: string) => name == "tests/fake-fail.ts" && (subject.includes("[gate-fail]") || (subject.includes("[gate-flaky]") && !spec.files));
-      const results = items.map((i) => ({ name: i.name, files: i.files, ok: !fails(i.name), secs: Math.round(delay / 1000) }));
+      const flaky = (name: string) => name == "e2e/fake.e2e.ts" && subject.includes("[gate-e2e-flaky]") ? { flaky: [`${name} › wobbles`] } : {};
+      const results = items.map((i) => ({ name: i.name, files: i.files, ok: !fails(i.name), secs: Math.round(delay / 1000), ...flaky(i.name) }));
       const code = results.every((x) => x.ok) ? 0 : 1;
       return { state: "done", phase: "done", items, results, code, log: results.map((x) => `=== ${x.name} ${x.ok ? "ok" : "FAILED"} (${x.secs}s)`).join("\n") + `\n(simulated: no VM ran; ${code ? "a commit whose subject says [gate-fail] or [gate-flaky] fails here" : "it passed"})\n` };
     },

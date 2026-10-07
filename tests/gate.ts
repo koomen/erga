@@ -7,7 +7,8 @@
 //     where its run is: the dashboard's merge (a browser session), the API (an admin token), the admin agent's
 //     deploy_production, and a git push to main;
 //   - a green commit moves main; so does an earlier green one while staging's head is red;
-//   - a rerun (the API, and the agent's run_tests), and a flaky run (failed once, passed when run again);
+//   - a rerun (the API, and the agent's run_tests), and a flaky run (a file failed once, passed when run again; an
+//     e2e test passed on e2e's own retry in its shard): it passes, and names both;
 //   - the emergency override: refused to a token, needs a reason, and the change log keeps it;
 //   - the Factory page: the tests column, Merge off with the reason, Merge to newest green, a run's shards.
 //
@@ -141,10 +142,12 @@ try {
   let ui = await gateUi();
   expect(!ui.merge && ui.why.includes("still running") && !ui.override, "Merge is off, the reason shows, no override while it runs", ui);
   await p.screenshot(join(SHOTS, "gate-running.png"));
-  const flaky = push("A wobbly change [gate-flaky]");
+  const flaky = push("A wobbly change [gate-flaky] [gate-e2e-flaky]");
   await until_(flaky, "passed", "the next push's run passes after its rerun");
   run = (await runOf(flaky)).run!;
-  expect(run.flaky.join() == "tests/fake-fail.ts", "and records the flaky file", run);
+  expect(run.flaky.join() == "tests/fake-fail.ts,e2e/fake.e2e.ts › wobbles", "and records the flaky file and the flaky e2e test", run);
+  await until(async () => (await p.eval<string>(`document.querySelector('#grid .row[data-sha="${flaky}"] .gt')?.title ?? ""`)).includes("e2e/fake.e2e.ts › wobbles"), 15_000, "the page's tests column names the flaky e2e test",
+    () => p.eval<string>(`document.querySelector('#grid .row[data-sha="${flaky}"] .gt')?.title ?? ""`));
   const cancelled = (await runOf(slow)).run!;
   expect(cancelled.state == "cancelled" && cancelled.supersededBy == flaky, "the slow commit's run was cancelled by the newer push", cancelled);
   ok("a running commit is refused; a newer push cancels its run; a flaky run passes and says so");

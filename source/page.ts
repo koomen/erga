@@ -249,7 +249,7 @@ function sourceMarkup(c: SourcePageConfig): string {
     <div class="grid" id="grid">
       <div class="head"></div>
       <div class="head" style="padding-left:6px">Commit</div><div class="head who-h"></div><div class="head"></div><div class="head time-h"></div>
-      <div class="head deploy" id="tests-head" title="The production gate: each staging commit's full test run (./test.sh and the typecheck, in VMs). main moves only to a commit that passed.">tests</div>
+      <div class="head deploy" id="tests-head" title="The production gate: each staging commit's full test run (./test.sh, the end-to-end tests and the typecheck, in VMs). main moves only to a commit that passed.">tests</div>
       ${target("staging", "staging")}${target("production", "production")}
       <div class="none" id="loading">Loading…</div>
     </div>
