@@ -1,10 +1,8 @@
-// What Claude Code is told, in a task's VM: AGENTS.md's worker prompt
-// ("The subagent's prompt"), with the factory's ways in place of the local
-// task queue's: a clone on the task's branch instead of a worktree, `task`
-// instead of `tq`, and the VM's own preview port. Also the check on a
+// What Claude Code is told, in a task's VM: a clone on the task's branch, the
+// `task` command to report with, and the VM's own preview port. Also the check on a
 // pasted Claude token (claudeToken), which the server and its tests share.
 
-/** A task's branch: task/<id>-<slug of the title>, as the local task queue names them. */
+/** A task's branch: task/<id>-<slug of the title>. */
 export function branchName(id: number, title: string): string {
   const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40).replace(/-+$/, "");
   return `task/${id}-${slug || "task"}`;
@@ -40,7 +38,7 @@ export function hideTokens(s: string): string {
 export function taskPrompt(t: { id: number; title: string; description: string; branch: string; base: string }): string {
   return `You are doing task #${t.id} from Erga's factory: ${t.title}. The ask: ${t.description}
 
-You work in a fresh clone of Erga's source, in the current directory, on the branch ${t.branch} (made from ${t.base}). This is a VM of your own: nothing else runs here, and it is thrown away after the merge. Read AGENTS.md and README.md first. Ignore AGENTS.md's task queue workflow (tq, worktrees, live mode, the outer agent): here you report with the \`task\` command instead.
+You work in a fresh clone of Erga's source, in the current directory, on the branch ${t.branch} (made from ${t.base}). This is a VM of your own: nothing else runs here, and it is thrown away after the merge. Read AGENTS.md and README.md first. You are working in the hosted factory (AGENTS.md): you report with the \`task\` command.
 
 1. Report progress with \`task log "..."\` at milestones, so the board shows where you are.
 2. Do the work, committing as you go.

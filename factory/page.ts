@@ -1,6 +1,5 @@
 // The factory's board (experimental), a part of /admin/factory (source/page.ts,
-// which puts it beside the source dashboard and the factory's agent): the
-// local task queue's board (development/task-queue/index.html) inside Erga. Columns
+// which puts it beside the source dashboard and the factory's agent). Columns
 // Queued, Working, Ready to merge and Merging (with "needs agent": a merge the task's Claude Code
 // is finishing, Merge off, with the reason; merged tasks leave the board, and the Factory page
 // shows staging); a card per task, its

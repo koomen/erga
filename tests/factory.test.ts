@@ -7,7 +7,7 @@ import { checkGitToken, mintGitToken, pushedRefs, refsAllowed } from "../dev/fac
 import { branchName, claudeToken, restartPrompt, taskPrompt } from "../factory/prompt";
 import { quietFor, STALL_MS, stalledOf } from "../factory/stall";
 
-test("branch names follow the task queue's", () => {
+test("branch names: task/<id>-<slug of the title>", () => {
   expect(branchName(46, "Experimental: the task queue inside Erga, with Claude Code in Cloudflare VMs")).toBe("task/46-experimental-the-task-queue-inside-erga");
   expect(branchName(3, "!!!")).toBe("task/3-task");
   expect(branchName(7, "Fix  the  thing ")).toBe("task/7-fix-the-thing");

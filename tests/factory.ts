@@ -16,7 +16,7 @@
 // 5. More instructions on a finished task: it works again, on the same branch. Restart: again, in a fresh VM.
 // 6. Tokens: a VM's token reaches its own task only; a task's git token can't push staging.
 // 7. The Claude sign-in: stored, never shown, signed out again.
-// 8. Dependencies (development/task-queue/deps.ts): bad ids and cycles refused; one added on the
+// 8. Dependencies (factory/deps.ts): bad ids and cycles refused; one added on the
 //    board; a task that starts after another stays queued with no VM, and Start is refused; a blocked
 //    merge is refused and Merge is off on the board; a merge queued behind a dependency's merge that
 //    fails is refused when its turn comes; a discarded dependency blocks; when a dependency merges,

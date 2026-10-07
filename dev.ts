@@ -6,8 +6,8 @@
 //   bun start [file-or-folder] [--port 4400] [--no-open] [--reload]
 //
 // --reload reloads open tabs by itself when the editor is rebuilt, the
-// Worker's code changes or the server restarts (dev/reload.ts): what live
-// mode runs (AGENTS.md).
+// Worker's code changes or the server restarts (dev/reload.ts), for working
+// locally with someone watching (AGENTS.md).
 //
 // A folder (with index.html or index.md) or a single .html or .md file
 // named here is linked to one of your documents and edited where it is:

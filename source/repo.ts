@@ -43,7 +43,7 @@ const QUARANTINE = "refs/heads/erga-incoming/";
 export const LOG = 100;
 /** At most how many commits a task's card holds. */
 export const TASK_COMMITS = 100;
-/** A task's merge commit, by the factory (factory/vm/merge.ts) or the task queue: "Merge task/<id>-<slug>: title". */
+/** A task's merge commit, by the factory (factory/vm/merge.ts): "Merge task/<id>-<slug>: title". */
 const TASK_MERGE = /^Merge (task\/(\d+)-[^\s:]*): (.+)$/;
 /** How many of staging's commits just after main's head the Source page gets (BranchInfo.afterMain). */
 export const AFTER_MAIN = 5;

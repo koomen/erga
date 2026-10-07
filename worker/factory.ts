@@ -1,4 +1,4 @@
-// The factory (experimental): the task queue inside Erga. Each task is a
+// The factory (experimental): Erga's task queue. Each task is a
 // branch of Erga's own repository, task/<id>-<slug>, made from staging, and
 // a VM in which Claude Code does the work and reports back. Merging a task
 // merges its branch into staging and deletes it; discarding it deletes it.
@@ -69,8 +69,7 @@
 // done, the merge runs again by itself (stopping that Claude Code first, if it is still saying its last words);
 // when it fails, the task goes back to ready to merge with its reason, and its Claude Code is stopped.
 //
-// Dependencies between tasks are the local task queue's (development/task-queue/deps.ts,
-// README, The factory): startAfter and mergeAfter, a computed blockedBy, a
+// Dependencies between tasks (factory/deps.ts, README, The factory): startAfter and mergeAfter, a computed blockedBy, a
 // blocked start or merge refused (409), the merge checked again when its turn
 // comes. With no outer agent here, the factory starts a queued task itself as
 // soon as nothing blocks it.
@@ -86,7 +85,7 @@ import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import { agentConfigFrom, isModelChoice, MODELS, type AgentConfig } from "../agent";
 import type { SettingChange } from "../config";
-import { type Blocked, dependents, depRules, depsNote, type DepStatus, type DepTask, ids } from "../development/task-queue/deps";
+import { type Blocked, dependents, depRules, depsNote, type DepStatus, type DepTask, ids } from "../factory/deps";
 import type { ToolWho } from "../server-tools";
 import type { SourceAnswer, SourceRead } from "../source/browse";
 import { panelPrefs, restoredLog, restoredMessages, storedLog, storedMessages, type PanelPrefs } from "../factory/chat-store";
@@ -285,7 +284,7 @@ export class Factory extends DurableObject<Env> {
   private epochs = new Map<number, number>();
   /** Queued tasks whose VM is being started (so a second Start doesn't start another). */
   private starting = new Set<number>();
-  /** The dependency rules (development/task-queue/deps.ts), over this object's tasks. */
+  /** The dependency rules (factory/deps.ts), over this object's tasks. */
   private deps = depRules((id) => { const r = this.row(id); return r && depOf(r); });
 
   constructor(ctx: DurableObjectState, env: Env) {
