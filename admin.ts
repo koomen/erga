@@ -275,6 +275,8 @@ const POST_SCRIPT = `
     return body;
   }
   const say = (hint, text, error) => { hint.textContent = text; hint.classList.toggle("error", !!error); };
+  // The page again, as the server has it now: in place, so the agent panel carries on (src/page/admin-nav.ts).
+  const reload = () => window.ergaAdmin ? window.ergaAdmin.reload() : location.reload();
 `;
 
 /** The style of a setting's row (its key, description and control), on Settings and API keys. */
@@ -366,7 +368,7 @@ ${settings.map((e) => settingRow(e, session, takesNever(e.key))).join("\n")}
     };
     const submit = async () => {
       say(hint, "Saving\u2026");
-      try { await post(form.action, { key: li.dataset.key, value: asJson() }); location.reload(); }
+      try { await post(form.action, { key: li.dataset.key, value: asJson() }); reload(); }
       catch (err) {
         say(hint, err.message, true);
         if (input.type == "checkbox") { input.checked = !input.checked; li.querySelector(".state").textContent = input.checked ? "On" : "Off"; }
@@ -409,7 +411,7 @@ ${settings.map((e) => settingRow(e, session, takesNever(e.key))).join("\n")}
     form.addEventListener("submit", (e) => { e.preventDefault(); if (!instant) submit(); });
     reset?.addEventListener("click", async () => {
       say(hint, "Saving\u2026");
-      try { await post(form.action, { key: li.dataset.key, reset: "1" }); location.reload(); } catch (err) { say(hint, err.message, true); }
+      try { await post(form.action, { key: li.dataset.key, reset: "1" }); reload(); } catch (err) { say(hint, err.message, true); }
     });
   }
 </script>` });
@@ -517,12 +519,12 @@ ${deployed.map(deploySecretRow).join("\n")}
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
       say(hint, "Saving\u2026");
-      try { await post(form.action, { name: li.dataset.name, value: input.value }); input.value = ""; location.reload(); } catch (err) { say(hint, err.message, true); }
+      try { await post(form.action, { name: li.dataset.name, value: input.value }); input.value = ""; reload(); } catch (err) { say(hint, err.message, true); }
     });
     clear?.addEventListener("click", async () => {
       if (!confirm("Clear the " + li.dataset.label + "? " + (li.dataset.fallback ? "The server goes back to the deploy's " + li.dataset.env + "." : "What uses it stops until someone sets a key again."))) return;
       say(hint, "Clearing\u2026");
-      try { await post(form.action, { name: li.dataset.name, clear: "1" }); location.reload(); } catch (err) { say(hint, err.message, true); }
+      try { await post(form.action, { name: li.dataset.name, clear: "1" }); reload(); } catch (err) { say(hint, err.message, true); }
     });
   }
 </script>` });
@@ -616,7 +618,7 @@ ${users.map((u) => userRow(u, session, u.role == "admin" && admins.length == 1))
   // Each change goes to the server, which checks it (admins only, and never the last admin); the page reloads to show the list as it is now.
   async function change(fields, saying, undo) {
     say(hint, saying);
-    try { await post(action, fields); location.reload(); } catch (err) { undo?.(); say(hint, err.message, true); }
+    try { await post(action, fields); reload(); } catch (err) { undo?.(); say(hint, err.message, true); }
   }
   adder.addEventListener("submit", (e) => {
     e.preventDefault();

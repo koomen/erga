@@ -181,13 +181,17 @@ function renderModel(m: AgentState | null) {
   el.append(sel);
 }
 
-async function load() {
+// Events heard: one that comes while load() asks for the conversation may be newer than its answer, so load() asks again (up to 5 times).
+let heard = 0;
+async function load(tries = 0): Promise<void> {
+  const was = heard;
   // The conversation from where the server keeps it, whether the agent is on or not.
   const kept = fetch("/api/admin/agent/conversation").then((r) => (r.ok ? r.json() : null)).catch(() => null) as Promise<{ log?: Log } | null>;
   const a = await fetch("/api/factory/agent").then(async (r) => r.ok ? r.json() : Promise.reject(new Error(((await r.json().catch(() => null)) as { error?: string } | null)?.error?.replace(/\.$/, "") ?? `the server answered ${r.status}`))).catch((e: Error) => ({ enabled: false, reason: e.message })) as AgentState;
+  const l = (await kept)?.log ?? a.log;
+  if (heard != was && tries < 5) return load(tries + 1);
   off = a.enabled ? null : `The agent is off: ${a.reason ?? "the server did not start it"}.`;
   renderModel(a);
-  const l = (await kept)?.log ?? a.log;
   if (l) { log.items = l.items; log.busy = l.busy; log.undoable = l.undoable; }
   talk.render();
   renderBusy();
@@ -200,7 +204,7 @@ function connect() {
   es.onmessage = (e) => {
     let m: { type?: string; ev?: LogEvent };
     try { m = JSON.parse(e.data); } catch { return; }
-    if (m.type == "agent" && m.ev) { talk.apply(m.ev); renderBusy(); }
+    if (m.type == "agent" && m.ev) { heard++; talk.apply(m.ev); renderBusy(); }
   };
 }
 load().then(connect);

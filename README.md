@@ -483,6 +483,23 @@ the page takes the room. The browser remembers which (`localStorage`,
 page while it's open. Each message says which admin page is open (and, on
 the Factory page, which task), so "this page" means something.
 
+**One page.** The admin pages are one page in the browser
+(`src/page/admin-nav.ts`, built to `admin-nav.js`): a link to another
+admin page (the sidebar, the breadcrumb, a link in a page or in the agent's
+reply) fetches that page and puts its `<main>`, title, style, breadcrumb and
+sidebar mark in place of the last one's, so the sidebar, Share with agent and
+the agent panel stay: the conversation and a reply on its way carry on. The
+address changes with it, and back and forward go between the pages without a
+load. The server still makes each page whole, so a deep link, a reload or a
+new tab opens it as before; an answer that isn't an admin page (sign in, an
+error) opens as a whole page. A page's scripts run again each time it shows,
+each in a function of its own; one that keeps something running (an
+EventSource, a timer, a listener on `document`) stops it when the page goes
+(`window.ergaView`: `signal`, `onLeave(fn)`), as the Factory page's board and
+dashboard do. Where a page used to reload after a change (a setting saved, a
+user added), it shows itself again in place (`ergaAdmin.reload()`).
+`bun tests/admin-nav.ts` tests it in headless Chrome.
+
 Every `/admin` route is for admins only, checked on the server: the Worker
 asks the server's role (`Users.isAdmin`) before any of them answers
 (`adminGate`, `worker/index.ts`), and each page's own door checks again.

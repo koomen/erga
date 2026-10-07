@@ -17,6 +17,7 @@
 #                     admin SSH keys and unlocking admin access with them (tests/admin-keys.ts),
 #                     admin power for a signed-in admin while keys aren't required (tests/admin-open.ts),
 #                     the admin pages' layout, and who may reach them (tests/admin-layout.ts),
+#                     the admin pages as one page, the agent panel staying across them (tests/admin-nav.ts),
 #                     the viewer's controls fading while you read (tests/fade.ts),
 #                     a presentation's steps, viewing and editing (tests/steps.ts),
 #                     the Slides template, stepped through viewing and editing (tests/slides.ts),
@@ -115,6 +116,7 @@ run 1 deploys bun tests/deploys.ts                       # [5]
 run 1 isolation bun tests/isolation.ts                   # [4]
 run 1 admin-open bun tests/admin-open.ts                 # [3]
 run 1 admin-layout bun tests/admin-layout.ts             # [8]
+run 1 admin-nav bun tests/admin-nav.ts                   # [6]
 run 1 admin-agent-chat bun tests/admin-agent-chat.ts     # [30]
 run 1 view-page bun tests/view-page.ts                   # [9]
 collect

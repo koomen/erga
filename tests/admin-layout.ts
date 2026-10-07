@@ -42,7 +42,7 @@ try {
     expect(crumbs.includes(">Erga</a>") && crumbs.includes('href="/admin">Admin</a>') && crumbs.includes(`aria-current="page">${title}</h1>`), `${path}: the breadcrumb, Erga › Admin › ${title}`, crumbs);
     const side = /<nav class="admin-side"[^]*?<\/nav>/.exec(html)?.[0] ?? "";
     const links = [...side.matchAll(/<a href="([^"]+)"( aria-current="page")?>[^]*?<span class="label">([^<]+)<\/span>/g)].map((m) => `${m[3]} ${m[1]}${m[2] ? " *" : ""}`);
-    expect(links.join() == ["Settings /admin", "Change log /admin/changes", "Users /admin/users", "Factory /admin/factory"].map((l) => l.startsWith(current ?? "-") ? `${l} *` : l).join(), `${path}: the sidebar's links, this page's marked`, links);
+    expect(links.join() == ["Settings /admin", "API keys /admin/api-keys", "Change log /admin/changes", "Users /admin/users", "Factory /admin/factory"].map((l) => l.startsWith(current ?? "-") ? `${l} *` : l).join(), `${path}: the sidebar's links, this page's marked`, links);
     expect(html.includes('id="btn-share"') && html.includes('<script src="/admin-share.js" defer>'), `${path}: Share with agent in the header`);
     expect(html.includes('<aside class="admin-agent" id="agent"') && html.includes('id="agent-fab"') && html.includes('id="agent-close"') && html.includes('<script src="/factory-agent.js" defer>'), `${path}: the admin's agent, with its collapse button and its round button`);
     expect(!html.includes('class="back"') && !/<h1>Admin/.test(html) && !html.includes("‹ Documents"), `${path}: no "Admin" title and no back link`);
