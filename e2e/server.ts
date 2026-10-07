@@ -26,12 +26,20 @@ export interface ServerOptions {
   processEnv?: Record<string, string>;
   /** Up to how long to wait for it to answer. */
   startMs?: number;
+  /** A folder dev.ts opens as it starts (as `bun start <folder>` does), at the same address after every restart: `base`. */
+  open?: string;
+  /** This port, not a free one: for servers that name each other's address as they start (servers.pair). No second try if it's taken. */
+  port?: number;
+  /** The local state (ERGA_STATE_DIR) of a server stopped before, to start again on: a restart. Its owner disposes of it. */
+  state?: string;
 }
 
 export interface Server {
   /** http://127.0.0.1:<port> */
   root: string;
   port: number;
+  /** The `open` folder's document (no #edit), else `root`. */
+  base: string;
   /** The Worker's local state (ERGA_STATE_DIR): its Durable Objects, the factory's repository and VMs. */
   state: string;
   /** The scratch folder everything of this server's is in. */
@@ -45,11 +53,20 @@ export interface Server {
   /** Copies tests/fixtures/<name> into the scratch folder and links it: its folder and address. */
   fixture(name: string): Promise<{ dir: string; address: string }>;
   stop(): void;
+  /**
+   * Stops it as a restart or a crash would: SIGTERM lets the documents write what's unsaved first (dev.ts stops in
+   * under 10 s), SIGKILL kills everything at once. The state and the port stay, for start().
+   */
+  halt(signal?: "SIGTERM" | "SIGKILL"): Promise<void>;
+  /** Starts it again after halt(), on the same port, with the same state and settings. */
+  start(): Promise<void>;
+  /** Kills it at once (as a deploy cuts a Durable Object off) and starts it again, on the same port and state. */
+  restart(): Promise<void>;
   dispose(): void;
 }
 
 /** A port nothing listens on right now (dev.ts refuses a taken one, and we try again). */
-function freePort(): Promise<number> {
+export function freePort(): Promise<number> {
   return new Promise((resolve, reject) => {
     const s = createServer();
     s.unref();
@@ -78,7 +95,7 @@ let fixtures = 0;
 
 export async function startServer(opts: ServerOptions = {}): Promise<Server> {
   const scratch = mkdtempSync(join(realpathSync(tmpdir()), "erga-e2e-"));
-  const state = join(scratch, "state"), envDir = join(scratch, "env");
+  const state = opts.state ?? join(scratch, "state"), envDir = join(scratch, "env");
   mkdirSync(envDir);
   const vars: Record<string, string> = { DEV_LOGIN: "tester", SESSION_SECRET: crypto.randomUUID(), ...opts.env };
   writeFileSync(join(envDir, ".dev.vars"), Object.entries(vars).filter(([k, v]) => DEV_VARS.has(k) && v).map(([k, v]) => `${k}=${v}\n`).join(""));
@@ -91,7 +108,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<Server> {
   let output = "";
   let port = 0;
   const server: Server = {
-    root: "", port: 0, state, scratch,
+    root: "", port: 0, base: "", state, scratch,
     output: () => output,
     alive: () => !!proc && proc.exitCode == null && proc.signalCode == null,
     async open(path) {
@@ -110,6 +127,29 @@ export async function startServer(opts: ServerOptions = {}): Promise<Server> {
       proc = null;
       if (p?.pid) kill([p.pid, ...descendants(p.pid)]);
     },
+    async halt(signal = "SIGTERM") {
+      const p = proc;
+      if (!p?.pid) return;
+      const exited = new Promise<boolean>((r) => { if (p.exitCode != null || p.signalCode != null) r(true); else p.once("exit", () => r(true)); });
+      const within = (ms: number) => Promise.race([exited, new Promise<boolean>((r) => setTimeout(() => r(false), ms).unref())]);
+      if (signal == "SIGTERM") {
+        proc = null;
+        try { process.kill(p.pid, "SIGTERM"); } catch { /* gone */ }
+        // Past dev.ts's own limit it's stuck: everything goes, as for SIGKILL.
+        if (await within(20_000)) { kill(descendants(p.pid)); return; }
+        proc = p;
+      }
+      server.stop();
+      await within(10_000);
+    },
+    async start() {
+      if (server.alive()) throw new Error(`the dev server at ${server.root} is running`);
+      await launch(port);
+    },
+    async restart() {
+      server.stop();
+      await launch(server.port);
+    },
     dispose() {
       server.stop();
       // What a simulated factory VM started detached (its preview, a stand-in) runs from a folder in the scratch one.
@@ -120,30 +160,40 @@ export async function startServer(opts: ServerOptions = {}): Promise<Server> {
     },
   };
   live.add(server);
-  const until = Date.now() + (opts.startMs ?? 90_000);
-  for (let attempt = 0; ; attempt++) {
-    port = await freePort();
-    const root = `http://127.0.0.1:${port}`;
-    output = "";
-    const p = proc = spawn("bun", [join(ROOT, "dev.ts"), "--port", String(port), "--no-open"], { cwd: ROOT, env, stdio: ["ignore", "pipe", "pipe"], detached: true });
-    const take = (c: Buffer) => { output = (output + c.toString()).slice(-20_000); };
-    p.stdout!.on("data", take);
-    p.stderr!.on("data", take);
-    let exited: number | null = null;
-    p.on("exit", (code, signal) => {
-      exited = code ?? 1;
-      // Stopped by nobody: say why, for the test that finds it gone.
-      if (proc == p && server.root) console.error(`the dev server at ${server.root} stopped by itself (${signal ?? `exit ${code}`}):\n${output.slice(-3000)}`);
-    });
-    // Up once a page that reads the database answers: the server migrates it as it starts.
-    while (Date.now() < until && exited == null) {
-      const ok = await fetch(`${root}/docs`, { redirect: "manual", signal: AbortSignal.timeout(5000) }).then((r) => r.ok, () => false);
-      if (ok) { Object.assign(server, { root, port }); return server; }
-      await new Promise((r) => setTimeout(r, 50));
+  /** Starts dev.ts on `fixed` (a restart), or on a free port, again on another if one was taken meanwhile. */
+  async function launch(fixed?: number) {
+    const until = Date.now() + (opts.startMs ?? 90_000);
+    for (let attempt = 0; ; attempt++) {
+      const at = fixed ?? await freePort();
+      const root = `http://127.0.0.1:${at}`;
+      output = "";
+      const p = proc = spawn("bun", [join(ROOT, "dev.ts"), ...(opts.open ? [opts.open] : []), "--port", String(at), "--no-open"], { cwd: ROOT, env, stdio: ["ignore", "pipe", "pipe"], detached: true });
+      const take = (c: Buffer) => { output = (output + c.toString()).slice(-20_000); };
+      p.stdout!.on("data", take);
+      p.stderr!.on("data", take);
+      let exited: number | null = null, up = false;
+      p.on("exit", (code, signal) => {
+        exited = code ?? 1;
+        // Stopped by nobody, once it was up: say why, for the test that finds it gone.
+        if (proc == p && up) console.error(`the dev server at ${server.root} stopped by itself (${signal ?? `exit ${code}`}):\n${output.slice(-3000)}`);
+      });
+      // Up once a page that reads the database answers (the server migrates it as it starts), and the folder it opens is open.
+      while (Date.now() < until && exited == null) {
+        const doc = opts.open ? new RegExp(`editing .*: http://localhost:${at}(/[a-z0-9-]+/[a-z0-9-]+)`).exec(output)?.[1] : "";
+        const ok = doc != null && await fetch(opts.open ? `${root}${doc}/api/doc` : `${root}/docs`, { redirect: "manual", signal: AbortSignal.timeout(5000) }).then((r) => r.ok, () => false);
+        if (ok) { up = true; port = at; Object.assign(server, { root, port, base: root + doc }); return; }
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      // Another server took the port between freePort and dev.ts: once more, on another. (A restart keeps its port: the
+      // killed one's socket may linger a moment, so it tries that port again.)
+      if (exited != null && /port \d+ is taken/.test(output) && attempt < (fixed ? 40 : 3)) {
+        if (fixed) await new Promise((r) => setTimeout(r, 250));
+        continue;
+      }
+      server.dispose();
+      throw new Error(`the dev server didn't start (${exited != null ? `exit ${exited}` : "timed out"}):\n${output.slice(-4000)}`);
     }
-    // Another server took the port between freePort and dev.ts: once more, on another.
-    if (exited != null && /port \d+ is taken/.test(output) && attempt < 3) continue;
-    server.dispose();
-    throw new Error(`the dev server didn't start (${exited != null ? `exit ${exited}` : "timed out"}):\n${output.slice(-4000)}`);
   }
+  await launch(opts.port);
+  return server;
 }

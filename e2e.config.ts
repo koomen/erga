@@ -18,9 +18,12 @@
 //
 // This file is imported by the runner and again by every worker. The first
 // import makes the environment hermetic (e2e/env.ts) and builds the editor's
-// files once for every dev server (ERGA_BUILT); the workers inherit both.
+// files once for every dev server (ERGA_BUILT), and the release the mock
+// Cloudflare's deploys use; the workers inherit both.
 
 import { spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import type { E2EConfig } from "e2e";
 import { testJobs } from "./tests/cores";
 import { cleanEnv, hermetic, ROOT } from "./e2e/env";
@@ -32,6 +35,11 @@ process.env.ERGA_TEST_MS ||= "15000";
 if (hermetic() && !process.env.ERGA_BUILT) {
   const r = spawnSync("./site.sh", { cwd: ROOT, env: cleanEnv(), stdio: ["ignore", "ignore", "inherit"], timeout: 180_000 });
   if (r.status != 0) throw new Error(`site.sh failed (${r.error?.message ?? `exit ${r.status}`})`);
+  // The release /deploy deploys and the mock builder stands in with (deploy/release.ts), made if this checkout has none.
+  if (!existsSync(join(ROOT, ".site/release/release.json"))) {
+    const rel = spawnSync("bun", ["deploy/release.ts"], { cwd: ROOT, env: cleanEnv(), stdio: ["ignore", "ignore", "inherit"], timeout: 180_000 });
+    if (rel.status != 0) throw new Error(`deploy/release.ts failed (${rel.error?.message ?? `exit ${rel.status}`})`);
+  }
   process.env.ERGA_BUILT = "1";
 }
 
@@ -42,7 +50,8 @@ export default {
   projectId: "erga",
   // The app's address is each worker's own dev server (e2e/fixtures.ts), so tests navigate by full URL; this is never opened.
   targets: [{ name: "web", engine, app: { url: "http://127.0.0.1:9" } }],
-  tests: ["e2e/**/*.e2e.ts", "!e2e/**/*.bench.e2e.ts"],
+  // (e2e/alone runs by itself, after the rest: e2e.alone.config.ts.)
+  tests: ["e2e/**/*.e2e.ts", "!e2e/**/*.bench.e2e.ts", "!e2e/alone/**"],
   // Not a test's limit (ERGA_TEST_MS is): e2e gives this to each test.beforeAll too, which starts the worker's dev
   // servers (e2e/fixtures.ts). Four cold starts at once in a 4-core VM take longer than a test may.
   timeout: 90_000,

@@ -270,8 +270,8 @@ export const browserTests: Test[] = [
       const d = await ctx.doc();
       const a = await open(ctx, d, "Ada");
       await a.p.openAgent();
-      // The host stops answering the agent's endpoint for a moment.
-      await a.p.eval(`window.__realFetch = window.fetch; window.fetch = (u, o) => String(u).includes("/api/agent?") && o?.method == "POST" ? Promise.reject(new TypeError("Failed to fetch")) : window.__realFetch(u, o)`);
+      // The host refuses the agent's endpoint for a moment, with an error that isn't a redeploy's (a network error or a 502-504 is, and the message waits for the host: main.ts, ask).
+      await a.p.eval(`window.__realFetch = window.fetch; window.fetch = (u, o) => String(u).includes("/api/agent?") && o?.method == "POST" ? Promise.resolve(new Response(JSON.stringify({ reason: "the host is down" }), { status: 500 })) : window.__realFetch(u, o)`);
       await a.p.eval(`(() => { const i = document.getElementById("agent-input"); i.value = "hello there"; i.dispatchEvent(new Event("input")); })()`);
       await a.p.key("Enter");
       await until(() => a.p.eval<boolean>(`!!document.querySelector("#agent-log .msg-user.failed .send-failed button")`), 2000, "the message is marked as not sent, with a retry");

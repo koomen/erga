@@ -28,14 +28,14 @@ function memory(): Sql {
 }
 
 /** A platform on `sql`: its own Directory (as an isolate has), document hosts in `hosts`. */
-function platformOn(sql: Sql, hosts: Map<string, Record<string, string | Uint8Array>>, opts: { locked?: Record<string, unknown>; owner?: string | null } = {}): Platform {
+function platformOn(sql: Sql, hosts: Map<string, Record<string, string | Uint8Array>>, opts: { locked?: Record<string, unknown>; owner?: string | null; made?: () => Promise<void> } = {}): Platform {
   const directory = new Directory(sql, { admins: ["root", "second"], locked: opts.locked });
   return {
     directory,
     landing: { files: LANDING, owner: opts.owner === undefined ? "root" : opts.owner, editors: ["second"] },
     templates: { doc: { "index.html": "<h1>Untitled</h1>" } },
     docs: {
-      create: async (doc: Route, files: Record<string, string | Uint8Array>) => { if (hosts.has(doc.id)) return false; hosts.set(doc.id, files); return true; },
+      create: async (doc: Route, files: Record<string, string | Uint8Array>) => { if (hosts.has(doc.id)) return false; hosts.set(doc.id, files); await opts.made?.(); return true; },
       exists: async (doc: Route) => hosts.has(doc.id),
       index: async (doc: Route) => (hosts.has(doc.id) ? "index.html" : null),
       delete: async (doc: Route) => { if (!hosts.delete(doc.id)) return false; await directory.remove(doc.id); return true; },
@@ -66,6 +66,30 @@ test("a fresh database: the first requests make one landing document, even from 
   expect(await p.directory.may({ login: "ada" }, "edit", doc)).toBe(false);
   // Asked again, it's the same one.
   expect((await landingDocument(platformOn(sql, hosts)))?.id).toBe(doc.id);
+});
+
+test("two seeds at once: the winner is at /<owner>/landing even when the loser made its document first", async () => {
+  // The ordering that gave the winner "landing-2": A makes its document, then B makes its own and claims the setting
+  // while A still holds its document; A loses the claim and deletes its document.
+  const sql = memory(), hosts = new Map();
+  let release!: () => void;
+  const held = new Promise<void>((r) => (release = r));
+  const a = landingDocument(platformOn(sql, hosts, { made: () => held }));
+  while (hosts.size == 0) await new Promise((r) => setTimeout(r, 1));
+  const b = (await landingDocument(platformOn(sql, hosts)))!;
+  release();
+  expect((await a)?.id).toBe(b.id);
+  expect(b.slug).toBe("landing");
+  expect((await sql.all<{ id: string; slug: string }>("SELECT id, slug FROM documents"))).toEqual([{ id: b.id, slug: "landing" }]);
+  expect([...hosts.keys()]).toEqual([b.id]);
+});
+
+test("a document of the owner's already at landing: the made one is at landing-2", async () => {
+  const sql = memory(), hosts = new Map();
+  const p = platformOn(sql, hosts);
+  await p.directory.add({ id: "theirs01", owner: "root", title: "Mine", slug: "landing", slugSet: true, created: 1 });
+  hosts.set("theirs01", { "index.html": "<h1>Mine</h1>" });
+  expect((await landingDocument(p))?.slug).toBe("landing-2");
 });
 
 test("a deleted landing document is made again; an admin's choice stays", async () => {
