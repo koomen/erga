@@ -43,26 +43,30 @@ function repo(): { url: string; merge: string } {
   return { url, merge: sh(["git", "rev-parse", "HEAD"], work) };
 }
 
-function runMerge(url: string, branch: string): Record<string, unknown> {
+/** The job, run without blocking: the stub API answers from this process, so a spawnSync would deadlock with it. */
+async function runMerge(url: string, branch: string): Promise<Record<string, unknown>> {
   const work = mkdtempSync(join(dir, "vm-"));
-  const r = spawnSync("bun", [MERGE, "merge", branch, "X"], {
-    cwd: work, encoding: "utf8", timeout: 60_000,
+  const p = Bun.spawn(["bun", MERGE, "merge", branch, "X"], {
+    cwd: work, stdout: "pipe", stderr: "pipe",
     env: { ...env, FACTORY_WORK: work, FACTORY_API: `http://127.0.0.1:${api.port}/api/factory`, FACTORY_TASK: "9", FACTORY_TOKEN: "fct.test", REPO_URL: url },
   });
-  const line = r.stdout.split("\n").reverse().find((l) => l.startsWith("FACTORY-RESULT "));
-  if (!line) throw new Error(`no result: ${r.stdout}\n${r.stderr}`);
+  const timer = setTimeout(() => p.kill("SIGKILL"), 30_000);
+  const [stdout, stderr] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text()]);
+  clearTimeout(timer);
+  const line = stdout.split("\n").reverse().find((l) => l.startsWith("FACTORY-RESULT "));
+  if (!line) throw new Error(`no result: ${stdout}\n${stderr}`);
   return JSON.parse(line.slice("FACTORY-RESULT ".length));
 }
 
-test("a merge that ended before: the branch is gone, staging has its merge, so it succeeds with that commit", () => {
+test("a merge that ended before: the branch is gone, staging has its merge, so it succeeds with that commit", async () => {
   const { url, merge } = repo();
-  expect(runMerge(url, "task/9-x")).toEqual({ ok: true, commit: merge, already: true });
-}, 60_000);
+  expect(await runMerge(url, "task/9-x")).toEqual({ ok: true, commit: merge, already: true });
+}, 40_000);
 
-test("a branch that is gone with no merge in staging: a plain failure (back to ready to merge), not a wake-up of Claude Code", () => {
+test("a branch that is gone with no merge in staging: a plain failure (back to ready to merge), not a wake-up of Claude Code", async () => {
   const { url } = repo();
-  const r = runMerge(url, "task/10-y");
+  const r = await runMerge(url, "task/10-y");
   expect(r.ok).toBe(false);
   expect(r.needsAgent).toBeUndefined();
   expect(String(r.error)).toContain("task/10-y isn't in the repository any more, and staging has no merge of it");
-}, 60_000);
+}, 40_000);
