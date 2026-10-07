@@ -396,7 +396,7 @@ function described(doc: DocRow, { origin }: ToolWho) {
 async function permissionsOf(dir: Directory, id: string) {
   return (await dir.permissions(id)).map((p) => ({
     login: p.login, role: p.role, ...(p.login == ANYONE ? { means: "anyone signed in who has the link" } : {}),
-    granted: new Date(p.granted).toISOString(), ...(p.grantedBy ? { grantedBy: p.grantedBy } : {}),
+    granted: new Date(p.granted).toISOString(), ...(p.grantedBy ? { grantedBy: p.grantedBy } : {}), ...(p.grantedVia ? { grantedVia: p.grantedVia } : {}),
   }));
 }
 

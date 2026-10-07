@@ -43,6 +43,7 @@ import { Type } from "typebox";
 import { emptyLog, reduce, type Log, type LogEvent } from "./src/page/agent-log";
 import { EVAL_MAX_JSON, EVAL_TIMEOUT, type ColorScheme, type ViewRequest, type ViewResult } from "./src/page/agent-log";
 import { agentName, colorFor, files, hasSeen, introduce, stamp, stateVector, type Author } from "./src/room/doc";
+import { byLine, VIA } from "./attribution";
 import { pageAddress, type TreeEntry, type TreeOp } from "./tree";
 import { joinLocal, type Room } from "./room";
 import type { Naming } from "./directory";
@@ -311,8 +312,8 @@ function makeTools(ws: Workspace, opts: {
   /** The version the document was at when this agent's last turn ended (diff_versions' "last_turn"); null before its first turn ends. */
   lastTurn?: () => Promise<string | null>;
   canEdit?: () => boolean;
-  /** Who the agent's restores are by (its person's agent). */
-  by?: string;
+  /** Who the agent's restores are by, now (its person, via it: attribution.ts). */
+  by?: () => string;
   /** Resolves once the agent's replica has everything the room has (after a restore, say). */
   caughtUp?: () => Promise<void>;
   /** The document's file tree: new pages and folders, moves, deletes (host.ts, runTreeOp); resolves once the agent's replica has the result. */
@@ -481,7 +482,7 @@ function makeTools(ws: Workspace, opts: {
     ...(opts.pages ? pageTools(opts.pages, opts.open) : []),
     ...(opts.tree ? treeTools(opts.tree, opts.open) : []),
     ...(opts.naming ? namingTools(opts.naming) : []),
-    ...(opts.versions ? versionTools(opts.versions, opts.canEdit ?? (() => true), opts.by ?? "agent", opts.lastTurn ?? (async () => null), ws, opts.caughtUp ?? (async () => {})) : []),
+    ...(opts.versions ? versionTools(opts.versions, opts.canEdit ?? (() => true), opts.by ?? (() => "agent"), opts.lastTurn ?? (async () => null), ws, opts.caughtUp ?? (async () => {})) : []),
   ] as AgentTool[];
 }
 
@@ -500,7 +501,7 @@ export interface VersionsAccess {
 }
 
 /** list_versions, read_version, diff_versions, restore_version and publish_version: what the person can do with versions and publishing, their agent can (and diff them). */
-function versionTools(versions: VersionsAccess, canEdit: () => boolean, by: string, lastTurn: () => Promise<string | null>, ws: Workspace, caughtUp: () => Promise<void>): AgentTool[] {
+function versionTools(versions: VersionsAccess, canEdit: () => boolean, by: () => string, lastTurn: () => Promise<string | null>, ws: Workspace, caughtUp: () => Promise<void>): AgentTool[] {
   const text = (s: string) => ({ content: [{ type: "text" as const, text: s }], details: {} });
   const line = (v: Version) => `${v.id}  ${v.at}  ${v.authors.join(", ") || "(unknown)"}  ${v.description ?? "(description coming)"}`;
   const published = (p: Published) => p.mode == "latest" ? `Published: latest (viewers see the document as it is, up to the keystroke; that's ${p.version.id} plus any edits since)` : `Published: manual, ${p.version.id} (viewers see that version until someone publishes another)`;
@@ -591,7 +592,7 @@ function versionTools(versions: VersionsAccess, canEdit: () => boolean, by: stri
       }),
       execute: async (_id, p: { version: string; path?: string }) => {
         if (!canEdit()) throw new Error("You may only view this document, so you can't restore a version.");
-        const r = await versions.restore(p.version, by, p.path ? Effect.runSync(Effect.mapError(cleanPath(p.path), (e) => new Error(e.message))) : null);
+        const r = await versions.restore(p.version, by(), p.path ? Effect.runSync(Effect.mapError(cleanPath(p.path), (e) => new Error(e.message))) : null);
         if (!r.ok) throw new Error(r.error);
         // The agent edits its own replica: it has the restored text once it has caught up with the room.
         await caughtUp();
@@ -795,7 +796,8 @@ export interface AgentSession {
    * call shows in the transcript, marked as external. Throws with a message
    * the caller can act on (unknown tool, bad arguments, the tool's own error).
    */
-  runTool(name: string, args: unknown): Promise<ToolContent[]>;
+  /** `via`: how the person acts through the outside agent (attribution.ts: "a shared agent (label)"); its edits are theirs, via it. */
+  runTool(name: string, args: unknown, via?: string): Promise<ToolContent[]>;
 }
 
 export interface SessionOptions {
@@ -837,7 +839,12 @@ const TOOL_ACTIVITY: Record<string, string> = { ...SERVER_TOOL_ACTIVITY, new_pag
 
 export async function startSession(opts: SessionOptions): Promise<AgentSession> {
   const { cfg, owner } = opts;
-  const me: Author = { user: owner.id, name: agentName(owner.name), color: colorFor(owner.id, true), kind: "agent" };
+  // Its work is its person's, via it (attribution.ts): "Ada, via their agent".
+  const me: Author = { user: owner.id, name: byLine(owner.name, VIA.agent), color: colorFor(owner.id, true), kind: "agent", via: VIA.agent };
+  /** Who the session's edits are by now: the embedded agent, or, while an outside agent's calls run, that agent (runTool). */
+  let acting = me;
+  /** Says who edits now, in the shared doc's authors (src/room/doc.ts), so each edit is attributed to it. */
+  const actAs = (a: Author) => { if (acting != a) { acting = a; introduce(doc, a); presence({ user: a }); } };
 
   // The session's own replica of the shared doc, joined to the room as a peer.
   const doc = new Y.Doc();
@@ -849,7 +856,7 @@ export async function startSession(opts: SessionOptions): Promise<AgentSession> 
 
   const origin = { agent: owner.id }, undoOrigin = { agentUndo: owner.id };
   const undo = new Y.UndoManager(files(doc), { trackedOrigins: new Set([origin]), captureTimeout: 0 });
-  const ws = new YjsWorkspace(doc, me, opts.canEdit, origin, opts.only ?? null);
+  const ws = new YjsWorkspace(doc, () => acting, opts.canEdit, origin, opts.only ?? null);
   let choice: ModelChoice | null = cfg == null || cfg.model == "script" ? null : cfg.model;
   const model = cfg == null ? null : choice == null ? scriptModel() : describeModel(choice);
 
@@ -897,7 +904,7 @@ export async function startSession(opts: SessionOptions): Promise<AgentSession> 
     versions: opts.versions,
     lastTurn: () => lastTurn,
     canEdit: opts.canEdit,
-    by: agentName(owner.id),
+    by: () => byLine(owner.id, acting.via),
     caughtUp,
     pages: opts.pages,
     open: opts.open,
@@ -1008,7 +1015,7 @@ export async function startSession(opts: SessionOptions): Promise<AgentSession> 
     undo() {
       if (!undo.undoStack.length) return false;
       // Stamped, so the undo is attributed to the agent even when it only deletes (src/room/doc.ts).
-      doc.transact(() => { undo.undo(); stamp(doc, me); }, undoOrigin);
+      doc.transact(() => { undo.undo(); stamp(doc, acting); }, undoOrigin);
       undoable();
       return true;
     },
@@ -1017,13 +1024,15 @@ export async function startSession(opts: SessionOptions): Promise<AgentSession> 
       return () => listeners.delete(listener);
     },
     tools: () => tools.map((t) => ({ name: t.name, description: t.description, parameters: JSON.parse(JSON.stringify(t.parameters)) })),
-    async runTool(name, args) {
+    async runTool(name, args, via) {
       const tool = tools.find((t) => t.name == name);
       if (!tool) throw new Error(`There's no tool named "${name}". The tools are: ${tools.map((t) => t.name).join(", ")}.`);
       const id = `ext-${crypto.randomUUID()}`;
       const params = validateToolArguments(tool, { type: "toolCall", id, name, arguments: (args ?? {}) as Record<string, unknown> });
       const path = toolPath(params);
       busy.ext++;
+      // Its edits are its person's, via it, under the token's label ("Ada, via a shared agent (CI)"); the cursor says so too.
+      if (via) actAs({ ...me, name: byLine(owner.name, via), via });
       if (busy.extTimer) { clearTimeout(busy.extTimer); busy.extTimer = null; }
       syncBusy(`${TOOL_ACTIVITY[name] ?? name}${path ? ` ${path}` : ""}`);
       emit({ t: "tool", id, name, path, status: "running", via: "external" });
@@ -1037,6 +1046,7 @@ export async function startSession(opts: SessionOptions): Promise<AgentSession> 
         throw new Error(message);
       } finally {
         busy.ext--;
+        if (!busy.ext) actAs(me);
         if (busy.extTimer) clearTimeout(busy.extTimer);
         busy.extTimer = setTimeout(() => { busy.extTimer = null; syncBusy(); }, EXTERNAL_IDLE_MS);
         syncBusy("working");

@@ -72,7 +72,7 @@ export const platform = (env: Env): Platform => {
     testToken: (login) => mintTestToken(env, login),
     docs: {
       create: (doc, files, index, opts) => counted("doc", () => host(doc).create(doc.owner, doc.id, files, index, opts)),
-      publish: (doc, files, remove) => counted("doc", () => host(doc).publish(files, remove)),
+      publish: (doc, files, remove, by) => counted("doc", () => host(doc).publish(files, remove, by)),
       paths: (doc) => counted("doc", () => host(doc).paths()),
       index: (doc) => counted("doc", () => host(doc).index()),
       snapshot: (doc, opts) => counted("doc", () => host(doc).snapshot(opts)),
