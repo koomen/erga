@@ -31,6 +31,16 @@ export const AREAS: Record<string, string[]> = {
     "factory/", "worker/factory.ts", "dev/factory.ts", "dev/git-server.ts", "worker/source.ts", "source/", "tokens.ts",
     "src/page/factory-agent.ts", "src/page/agent-chat.ts", "src/page/share-agent.ts", "src/page/admin-share.ts", "factory-agent.js", "admin-share.js",
   ],
+  "e2e/suite/": [
+    "room.ts", "src/room/", "host.ts", "agent.ts", "workspace.ts", "server-api.ts", "api.ts", "attribution.ts", "tokens.ts", "worker/doc-host.ts",
+    "src/page/main.ts", "src/page/collab.ts", "src/page/bridge.ts", "src/page/frame.ts", "src/page/agent-chat.ts", "page.js", "frame.js", "tests/suite/",
+  ],
+  "e2e/redeploy/": [
+    "src/page/live.ts", "src/page/live-client.ts", "src/page/restore.ts", "worker/live.ts", "src/page/collab.ts", "src/page/attach-ui.ts", "src/page/main.ts",
+    "factory/page.ts", "live.js", "page.js", "factory-agent.js",
+  ],
+  "e2e/reload/": ["dev/reload.ts", "front.ts"],
+  "e2e/alone/": ["vite.config.ts", "worker/cookies.ts", "worker/auth.ts"],
 };
 
 /** Changes that need every test: the tests' own machinery, the build, the server's core. */

@@ -106,13 +106,13 @@ export function withoutOutage(errors: string[]): string[] {
   return errors;
 }
 
-/** Waits until `f` gives something truthy (a thrown error counts as not yet), and returns it; fails after `ms`. */
-export async function until<T>(f: () => Promise<T> | T, ms = 5_000, what = "the condition"): Promise<T> {
+/** Waits until `f` gives something truthy (a thrown error counts as not yet), and returns it; fails after `ms`, with `detail()` if given. */
+export async function until<T>(f: () => Promise<T> | T, ms = 5_000, what = "the condition", detail?: () => unknown): Promise<T> {
   const end = Date.now() + ms;
   let last: unknown;
   for (;;) {
     try { const v = await f(); if (v) return v; last = v; } catch (e) { last = e; }
-    if (Date.now() > end) throw new Error(`${what} didn't hold within ${ms} ms (last: ${last instanceof Error ? last.message : JSON.stringify(last)})`);
+    if (Date.now() > end) throw new Error(`${what} didn't hold within ${ms} ms (last: ${last instanceof Error ? last.message : JSON.stringify(last)})${detail ? `\n${JSON.stringify(await Promise.resolve().then(detail).catch((e) => String(e)))}` : ""}`);
     await new Promise((r) => setTimeout(r, 20));
   }
 }

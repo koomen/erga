@@ -46,8 +46,8 @@ test("a restart with new client files: every page reloads by itself, with its st
     await until(() => ed.eval<boolean>(`document.getElementById("agent-input").value == "Make the title bigger" && document.querySelectorAll(".agent-attachments .file-chip").length == 1`), 5000, "the agent's draft and its attached file are back");
     expect(p.doc.disk()).toContain("Typed before the release.");
     await until(() => fa.page.evaluate(`document.getElementById("dlg").open && window.ergaBoard?.openTask() == 2`), 10_000, "task 2's detail is open again on the Factory page");
-    expect(await fa.page.evaluate(`document.getElementById("agent-input").value`)).toBe("What is task 2 doing?");
-    expect(await dl.page.evaluate(`document.title`)).toMatch(/^Documents/);
+    expect(await fa.page.evaluate(`document.getElementById("agent-input").value`) as string).toBe("What is task 2 doing?");
+    expect(await dl.page.evaluate(`document.title`) as string).toMatch(/^Documents/);
 
     // And it settles: the reloaded pages check twice more, find nothing new, and stay.
     await p.mark();

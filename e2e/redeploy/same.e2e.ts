@@ -28,7 +28,7 @@ test("a restart with the same client files: every page reconnects and none reloa
   expect(await p.kept()).toEqual({ editor: true, factory: true, docs: true });
   expect(await ed.eval<boolean>(`document.getElementById("status").classList.contains("error")`)).toBe(false);
   await until(async () => !(await Promise.all(p.all.map((x) => x.page.evaluate(`!!document.querySelector(".erga-live-note")`)))).some(Boolean), 10_000, "no page still says it's reconnecting");
-  expect(await fa.page.evaluate(`document.getElementById("dlg").open && window.ergaBoard.openTask() == 2`)).toBe(true);
+  expect(await fa.page.evaluate(`document.getElementById("dlg").open && window.ergaBoard.openTask() == 2`) as boolean).toBe(true);
   expect(await ed.eval<string>(`document.getElementById("agent-input").value`)).toBe("Make the title bigger");
   expect(await ed.eval<number>(`document.querySelectorAll(".agent-attachments .file-chip").length`)).toBe(1);
   for (const x of p.all) expect(withoutOutage(x.errors)).toEqual([]);

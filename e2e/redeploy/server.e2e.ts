@@ -22,7 +22,7 @@ test("a page of the site's own carries its build and live.js, and asked with X-E
   expect(html).toContain('<script src="/live.js" defer></script>');
   const asked = await fetch(`${s.root}/docs`, { headers: { "X-Erga-Check": "build" } });
   expect(asked.status).toBe(204);
-  expect(asked.headers.get("x-erga-build")).toBe(build);
+  expect(asked.headers.get("x-erga-build")).toBe(build!);
 });
 
 test("a document's own HTML gets nothing of the site's", async () => {
