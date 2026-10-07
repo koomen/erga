@@ -52,7 +52,7 @@ const get = (path: string, init: RequestInit = {}) => fetch(root + path, { redir
  */
 async function tokenFor(scope: "admin" | "documents"): Promise<{ token: string; cookie: string }> {
   const r = await fetch(`${root}/auth/github?next=/docs`, { redirect: "manual" });
-  const cookie = r.headers.getSetCookie().map((x) => x.split(";")[0]).find((x) => x.startsWith("erga_session="))!;
+  const cookie = r.headers.getSetCookie().map((x) => x.split(";")[0]).find((x) => /^erga_session(_\d+)?=/.test(x))!;
   const page = await (await fetch(`${root}/tokens/new`, { method: "POST", headers: { Cookie: cookie, Origin: origin }, body: new URLSearchParams({ label: "Git", scope }) })).text();
   const token = /<pre class="secret">(erga_[^<]+)<\/pre>/.exec(page)?.[1] ?? "";
   expect(token, `a ${scope} token`, page.slice(0, 300));
