@@ -316,12 +316,16 @@ try {
   const at0 = (await qlog()).split("\n").length;
   await until(async () => (await qlog()).split("\n").length > at0 || (await qlog()).includes("deployed"), 30_000, "and polls for new lines", qlog);
   await until(async () => (await stagingTarget()).deployed == polled2, 60_000, "that deploy finishes");
-  // Merge to a chosen commit from the page: hover the row, click "Merge to here".
-  const rowAt = await p.eval<{ x: number; y: number }>(`(() => { const r = document.querySelector("#grid .row .subj").getBoundingClientRect(); return { x: r.x + 40, y: r.y + r.height / 2 }; })()`);
-  await p.mouse("mouseMoved", rowAt.x, rowAt.y);
+  // Merge to a chosen commit from the page: hover the row, click "Merge to here". Hover only once the page shows its
+  // tests passed, and aim at its row: the list moves under a still mouse when the line above it that says why Merge is
+  // off (#gate-hint) goes away as the head's run passes, and the mouse was then over the next commit.
   await gateGreen(polled2);
-  await until(async () => p.eval(`!!document.querySelector("#grid .row button.here") && getComputedStyle(document.querySelector("#grid .row button.here")).display != "none"`), 15_000, "hovering a staging-only commit whose tests passed offers Merge to here");
-  await click("#grid .row button.here");
+  const hereRow = `#grid .row[data-sha="${polled2}"]`;
+  await until(() => p.eval(`!!document.querySelector('${hereRow} button.here') && document.getElementById("gate-why").textContent == ""`), 10_000, "the page shows its tests passed");
+  const rowAt = await p.eval<{ x: number; y: number }>(`(() => { const r = document.querySelector('${hereRow} .subj').getBoundingClientRect(); return { x: r.x + 40, y: r.y + r.height / 2 }; })()`);
+  await p.mouse("mouseMoved", rowAt.x, rowAt.y);
+  await until(async () => p.eval(`getComputedStyle(document.querySelector('${hereRow} button.here')).display != "none"`), 15_000, "hovering a staging-only commit whose tests passed offers Merge to here");
+  await click(`${hereRow} button.here`);
   await until(async () => (await state()).rows.find((x) => x.sha == polled2)?.kind.includes("on-main"), 10_000, "Merge to here moves main to that commit", state);
   expect((await p.eval<string>(`document.getElementById("merge-hint").textContent`)) == "", "and leaves no message after it");
   await p.screenshot(join(SHOTS, "source-after-merge.png"));
