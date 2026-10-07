@@ -58,10 +58,10 @@ export const home = async (server: Server, id: string, user?: string) => (await 
  * homeLimit; a documents token only views it). Asked again for a while: a server just started may still be setting up.
  */
 export async function adminToken(server: Server) {
-  return until(async () => {
+  return until<string | undefined>(async () => {
     const page = await (await get(server, "/tokens/new", { method: "POST", body: new URLSearchParams({ label: "Home test", scope: "admin" }), headers: { Origin: server.root } })).text();
     return /<pre class="secret">(erga_[^<]+)<\/pre>/.exec(page)?.[1];
-  }, 10_000, "an admin token");
+  }, 10_000, "an admin token") as Promise<string>;
 }
 
 /** Publishes files with a token (POST /api/publish): a new document, or into `document`. */

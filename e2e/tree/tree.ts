@@ -58,7 +58,7 @@ export async function site(server: Server, opts: { pages?: boolean } = {}) {
       const tools = steps.filter((x) => (x as { tool?: string }).tool).length;
       const sent = await owner.get(`/d/${doc.id}/api/agent`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: `${text} @script ${JSON.stringify(steps)}`, ...(context ? { context } : {}) }) });
       if (!sent.ok) throw new Error(`the agent didn't take the prompt: ${sent.status}`);
-      const log = await until(async () => { const l = await s.agentLog(); return !l.busy && l.items.slice(before).filter((i) => i.kind == "tool").length >= tools && l; }, 10_000, "the agent's turn ends");
+      const log = await until(async () => { const l = await s.agentLog(); return !l.busy && l.items.slice(before).filter((i) => i.kind == "tool").length >= tools ? l : null; }, 10_000, "the agent's turn ends") as Awaited<ReturnType<typeof s.agentLog>>;
       return log.items.slice(before).filter((i) => i.kind == "tool");
     },
   };

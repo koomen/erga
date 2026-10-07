@@ -1,5 +1,5 @@
 // The popover following the document live, Publish the current version, Edit on an old version, and errors (tests/settings.ts).
-import { expect, servers, test } from "../fixtures";
+import { expect, servers, test, type Tab } from "../fixtures";
 import { roomOf, Participant } from "./versions";
 import { another, closeDrafts, draftDoc, openDocEditor, viewerShows } from "./settings";
 import { F } from "../editor";
@@ -8,7 +8,7 @@ test.beforeAll(async () => { await servers.short(); });
 test.afterEach(closeDrafts);
 
 /** A document of 20 versions published (manually) at version 11, its editor open with the popover open. */
-async function manualAt11(tab: Parameters<Parameters<typeof test>[1]>[0]["tab"]) {
+async function manualAt11(tab: Tab) {
   const server = await servers.short();
   const doc = await draftDoc(server, "Field notes", 20);
   expect((await doc.owner.publish(doc.id, { mode: "manual", versionId: "v11" })).ok).toBe(true);

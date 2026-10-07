@@ -1,11 +1,11 @@
 // Agents and the open editor of a page: what they see, and taking it to another page (tests/pages.ts).
-import { expect, servers, test } from "../fixtures";
+import { expect, servers, test, type Tab } from "../fixtures";
 import { editing, inFrames, ready, site, where } from "./tree";
 
 test.beforeAll(async () => { await servers.short(); });
 
 /** The sample document with blog/post.html open in the editor in the test's tab. */
-async function onPost(tab: Parameters<Parameters<typeof test>[1]>[0]["tab"]) {
+async function onPost(tab: Tab) {
   const server = await servers.short();
   const s = await site(server, { pages: true });
   tab.strict = true;
