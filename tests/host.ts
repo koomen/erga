@@ -4,6 +4,8 @@
 // folder, it links that as a document and `base` is the document's address;
 // without one, `base` is the app's root, and `open` links them as needed.
 
+import "./hermetic";
+import { exitedWithin, waiting } from "./stop";
 import { mkdirSync, mkdtempSync, readdirSync, readlinkSync, realpathSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -81,46 +83,63 @@ export async function startHost(target: string | null, opts: { port?: number; en
   const root = `http://127.0.0.1:${port}`;
   let proc: ReturnType<typeof Bun.spawn> | null = null;
   let output = "";
+  let readers: ReadableStreamDefaultReader<Uint8Array>[] = [];
   const host: Host = {
     base: root, root, port, state,
     output: () => output,
     async open(path) {
-      const r = await fetch(`${root}/__erga/open`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path }), redirect: "manual" });
+      const r = await fetch(`${root}/__erga/open`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path }), redirect: "manual", signal: AbortSignal.timeout(60_000) });
       const at = r.headers.get("location");
       if (r.status != 303 || !at) throw new Error(`opening ${path}: ${r.status} ${await r.text()}`);
       // The editor's address (…#edit); the tests address the document itself, where its API is too.
       return root + at.replace(/#edit$/, "");
     },
     async forget(address) {
-      const info = await (await fetch(`${address}/api/doc`)).json() as { docName?: { id: string } };
+      const info = await (await fetch(`${address}/api/doc`, { signal: AbortSignal.timeout(60_000) })).json() as { docName?: { id: string } };
       const id = info.docName?.id ?? address.split("/").pop()!;
-      await fetch(`${root}/docs/delete`, { method: "POST", headers: { Origin: root }, body: new URLSearchParams({ id }), redirect: "manual" });
+      await fetch(`${root}/docs/delete`, { method: "POST", headers: { Origin: root }, body: new URLSearchParams({ id }), redirect: "manual", signal: AbortSignal.timeout(60_000) });
     },
     async start() {
       // Its own process group, so stopping it outright takes the server with it.
       const p = proc = Bun.spawn(["bun", join(ROOT, "dev.ts"), ...(target ? [target] : []), "--port", String(port), "--no-open"], { env, stdout: "pipe", stderr: "pipe", detached: true });
       running.add(p.pid);
       p.exited.then(() => running.delete(p.pid));
-      for (const s of [p.stdout, p.stderr] as ReadableStream<Uint8Array>[]) (async () => { for await (const c of s) output = (output + new TextDecoder().decode(c)).slice(-20000); })();
+      readers = ([p.stdout, p.stderr] as ReadableStream<Uint8Array>[]).map((s) => s.getReader());
+      for (const r of readers) (async () => { for (let c; !(c = await r.read()).done;) output = (output + new TextDecoder().decode(c.value)).slice(-20000); })().catch(() => {});
       // Usually ~2s; the margin is for a machine busy running everything else at once (./test.sh starts many
       // servers together, each optimizing Vite's dependencies in a cache of its own: on a loaded machine, 30s wasn't enough).
-      for (const until = Date.now() + 120_000; Date.now() < until;) {
-        if (p.exitCode != null) break;
-        const at = target ? new RegExp(`editing .*: http://localhost:${port}(/[a-z0-9-]+/[a-z0-9-]+)`).exec(output)?.[1] : "";
-        // Up once a page that reads the database answers: the server migrates it as it starts, and until then those fail.
-        try { if (at != null && (await fetch(target ? `${root}${at}/api/doc` : `${root}/docs`, { redirect: "manual" })).ok) { host.base = root + at; return; } } catch { /* not up yet */ }
-        await Bun.sleep(25);
-      }
-      throw new Error(`dev server didn't start:\n${output}`);
+      const done = waiting(`the dev server on port ${port} to start`);
+      try {
+        for (const until = Date.now() + 120_000; Date.now() < until;) {
+          if (p.exitCode != null) break;
+          const at = target ? new RegExp(`editing .*: http://localhost:${port}(/[a-z0-9-]+/[a-z0-9-]+)`).exec(output)?.[1] : "";
+          // Up once a page that reads the database answers: the server migrates it as it starts, and until then those fail.
+          try { if (at != null && (await fetch(target ? `${root}${at}/api/doc` : `${root}/docs`, { redirect: "manual", signal: AbortSignal.timeout(10_000) })).ok) { host.base = root + at; return; } } catch { /* not up yet */ }
+          await Bun.sleep(25);
+        }
+      } finally { done(); }
+      throw new Error(`dev server didn't start${p.exitCode != null ? ` (it exited, ${p.exitCode})` : " in 120 s"}:\n${output}`);
     },
     async stop(signal = "SIGTERM") {
       const p = proc;
       if (!p) return;
       proc = null;
-      if (signal == "SIGTERM") { p.kill("SIGTERM"); await p.exited; return; }
-      // Everything at once, as a crash would: dev.ts, the server and workerd under it.
-      for (const pid of [p.pid, ...descendants(p.pid)]) { try { process.kill(pid, "SIGKILL"); } catch { /* gone */ } }
-      await p.exited;
+      // dev.ts writes what's unsaved and stops in under 10 s (its own limit); past 20 s, it's stuck: everything goes.
+      const done = waiting(`the dev server on port ${port} to stop`);
+      try {
+        if (signal == "SIGTERM") {
+          p.kill("SIGTERM");
+          if (await exitedWithin(p, 20_000)) return;
+        }
+        // Everything at once, as a crash would: dev.ts, the server and workerd under it.
+        for (const pid of [p.pid, ...descendants(p.pid)]) { try { process.kill(pid, "SIGKILL"); } catch { /* gone */ } }
+        if (!(await exitedWithin(p, 10_000))) throw new Error(`the dev server on port ${port} (pid ${p.pid}) didn't stop, even killed`);
+      } finally {
+        done();
+        // Stopped: nothing of it may keep this process running (with Bun 1.2 its pipes could stay open after it exited).
+        for (const r of readers) r.cancel().catch(() => {});
+        p.unref();
+      }
     },
     async dispose() {
       await host.stop();
@@ -153,10 +172,9 @@ const scratches = new Set<string>();
 const running = new Set<number>();
 process.on("exit", () => {
   for (const pid of running) for (const p of [pid, ...descendants(pid)]) { try { process.kill(p, "SIGKILL"); } catch { /* gone */ } }
-  for (const dir of scratches) killLeftovers(dir);
+  for (const dir of scratches) { killLeftovers(dir); try { rmSync(dir, { recursive: true, force: true }); } catch { /* best effort */ } }
 });
-// Stopped from outside (Ctrl-C, timeout): exit, so the above runs.
-for (const sig of ["SIGINT", "SIGTERM"] as const) process.once(sig, () => process.exit(130));
+// Stopped from outside (Ctrl-C, a time limit): tests/stop.ts exits, so the above runs.
 
 /**
  * Kills what is still running from a host's scratch folder. A factory job's preview (factory/vm/task.ts serve-static,

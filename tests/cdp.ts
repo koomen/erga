@@ -1,5 +1,7 @@
 // Minimal Chrome DevTools Protocol driver for the tests: launches headless
 // Chrome, opens pages and sends real input events.
+import "./hermetic";
+import { waiting } from "./stop";
 import { spawn, type Subprocess } from "bun";
 import { mkdtempSync, readFileSync, rmSync } from "fs";
 import { tmpdir } from "os";
@@ -23,27 +25,53 @@ export class Browser {
    * Starts a headless Chrome on a port it picks itself (port 0, read back
    * from DevToolsActivePort): with many browsers starting at once, a random
    * port of our own would sometimes collide, and two test workers would
-   * silently share one browser and its storage.
+   * silently share one browser and its storage. A Chrome that exits as it
+   * starts, or doesn't answer, is tried again with a fresh profile, up to
+   * three times; the error says what Chrome printed.
    */
   static async launch(): Promise<Browser> {
+    const done = waiting("Chrome to start");
+    const why: string[] = [];
+    try {
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        const b = await Browser.start(attempt == 3 ? 60_000 : 30_000).catch((e: Error) => { why.push(`attempt ${attempt}: ${e.message}`); return null; });
+        if (b) return b;
+      }
+    } finally { done(); }
+    throw new Error(`Chrome did not start (${CHROME}):\n${why.join("\n")}`);
+  }
+
+  private static async start(ms: number): Promise<Browser> {
     const profile = mkdtempSync(join(process.env.TMPDIR || tmpdir(), "edtest-"));
+    const t0 = Date.now();
     const proc = spawn([CHROME, "--headless=new", "--remote-debugging-port=0", `--user-data-dir=${profile}`,
       "--no-first-run", "--no-default-browser-check", "--hide-scrollbars", "--allow-file-access-from-files",
       "--disable-features=Translate,CalculateNativeWinOcclusion,IntensiveWakeUpThrottling",
       // Tests run many tabs at once: a tab in the background must keep its
       // timers and frames running as if it were in front.
       "--disable-background-timer-throttling", "--disable-renderer-backgrounding", "--disable-backgrounding-occluded-windows",
-      "about:blank"], { stdout: "ignore", stderr: "ignore" });
-    // Up to 45 s: on a loaded machine (the whole suite, and other work beside it) Chrome has taken over 15 s to start.
-    for (const until = Date.now() + 45_000; Date.now() < until; ) {
+      // In a container /dev/shm is small (64 MB by default), and a renderer that runs out of it crashes.
+      ...(process.platform == "linux" ? ["--disable-dev-shm-usage"] : []),
+      "about:blank"], { stdout: "ignore", stderr: "pipe" });
+    chromes.set(proc, profile);
+    let printed = "";
+    (async () => { for await (const c of proc.stderr as ReadableStream<Uint8Array>) printed = (printed + new TextDecoder().decode(c)).slice(-2000); })().catch(() => {});
+    const fail = (what: string) => {
+      proc.kill("SIGKILL");
+      chromes.delete(proc);
+      try { rmSync(profile, { recursive: true, force: true }); } catch {}
+      return new Error(`${what} after ${((Date.now() - t0) / 1000).toFixed(1)}s${printed.trim() ? `; it printed:\n${printed.trim().split("\n").slice(-8).join("\n")}` : ""}`);
+    };
+    // Up to 30 s a try (60 s the last): on a loaded machine (the whole suite, and other work beside it) Chrome has taken over 15 s to start.
+    for (const until = Date.now() + ms; Date.now() < until; ) {
+      if (proc.exitCode != null || proc.signalCode) throw fail(`Chrome exited (${proc.signalCode ?? proc.exitCode})`);
       try {
         const port = Number(readFileSync(join(profile, "DevToolsActivePort"), "utf8").split("\n")[0]);
-        if (port) { await fetch(`http://127.0.0.1:${port}/json/version`); return new Browser(proc, port, profile); }
+        if (port && (await fetch(`http://127.0.0.1:${port}/json/version`, { signal: AbortSignal.timeout(5000) })).ok) return new Browser(proc, port, profile);
       } catch { /* not up yet */ }
       await Bun.sleep(25);
     }
-    proc.kill();
-    throw new Error("Chrome did not start");
+    throw fail("no answer from Chrome");
   }
 
   /** A tab, in the default context or in one from `context()`. */
@@ -53,7 +81,7 @@ export class Browser {
       const { targetId } = await (await this.browserLevel()).send("Target.createTarget", { url: "about:blank", browserContextId: context });
       url = `ws://127.0.0.1:${this.port}/devtools/page/${targetId}`;
     } else {
-      url = (await (await fetch(`http://127.0.0.1:${this.port}/json/new?about:blank`, { method: "PUT" })).json()).webSocketDebuggerUrl;
+      url = (await (await fetch(`http://127.0.0.1:${this.port}/json/new?about:blank`, { method: "PUT", signal: AbortSignal.timeout(30_000) })).json()).webSocketDebuggerUrl;
     }
     const page = new Page(url);
     await page.ready;
@@ -73,7 +101,7 @@ export class Browser {
   /** The browser-level DevTools connection (for contexts and targets). */
   private browserLevel(): Promise<Page> {
     return (this.browser ??= (async () => {
-      const { webSocketDebuggerUrl } = await (await fetch(`http://127.0.0.1:${this.port}/json/version`)).json();
+      const { webSocketDebuggerUrl } = await (await fetch(`http://127.0.0.1:${this.port}/json/version`, { signal: AbortSignal.timeout(30_000) })).json();
       const conn = new Page(webSocketDebuggerUrl);
       await conn.ready;
       return conn;
@@ -82,9 +110,25 @@ export class Browser {
 
   close() {
     this.proc.kill();
+    // Nothing waits for it to exit: it can't keep the test's process running (tests/stop.ts, exitedWithin).
+    this.proc.unref();
+    chromes.delete(this.proc);
     try { rmSync(this.profile, { recursive: true, force: true }); } catch {}
   }
 }
+
+/**
+ * Every Chrome this process started and hasn't closed, with its profile: killed and removed when the process exits,
+ * as a test that fails half-way, or is stopped from outside (tests/stop.ts), never closes its browser. Before this,
+ * each such run left a headless Chrome running for good (38 of them on one Mac, 6.9 GB).
+ */
+const chromes = new Map<Subprocess, string>();
+process.on("exit", () => {
+  for (const [proc, profile] of chromes) {
+    try { proc.kill("SIGKILL"); } catch { /* gone */ }
+    try { rmSync(profile, { recursive: true, force: true }); } catch { /* best effort */ }
+  }
+});
 
 /**
  * Runs `items` across `workers` headless Chromes, one item at a time each.
@@ -124,6 +168,8 @@ export class Page {
   private ws: WebSocket;
   private id = 0;
   private pending = new Map<number, (v: any) => void>();
+  /** Why the connection is gone (Chrome closed or crashed), once it is: every command after fails at once. */
+  private gone: string | null = null;
   private listeners = new Map<string, ((params: any) => void)[]>();
   onEvent(method: string, f: (params: any) => void) { this.listeners.set(method, [...(this.listeners.get(method) ?? []), f]); }
   /** Every event, frames' sessions' included (the benchmark, tests/bench.ts, follows requests and paints in all of them). */
@@ -153,15 +199,29 @@ export class Page {
       else if (d.method == "Runtime.exceptionThrown") this.errors.push(d.params.exceptionDetails.exception?.description || d.params.exceptionDetails.text);
       else if (d.method == "Runtime.consoleAPICalled" && d.params.type == "error") this.errors.push("console.error: " + d.params.args.map((a: any) => a.value ?? a.description).join(" "));
     };
-    this.ready = new Promise((r) => (this.ws.onopen = () => r()));
+    // A connection that never opens (a stuck or dead browser) fails the test rather than hanging it.
+    this.ready = new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(`no DevTools connection to ${url} in 30s`)), 30_000);
+      this.ws.onopen = () => { clearTimeout(timer); resolve(); };
+      this.ws.onerror = () => { clearTimeout(timer); reject(new Error(`DevTools connection to ${url} failed`)); };
+    });
+    this.ready.catch(() => {});
+    // Gone (Chrome closed or crashed): the commands waiting for an answer fail now, not after their 30 s.
+    this.ws.onclose = (e) => {
+      this.gone = `the browser closed the DevTools connection (${e.code}${e.reason ? ` ${e.reason}` : ""})`;
+      for (const [, answer] of this.pending) answer({ error: { message: this.gone } });
+      this.pending.clear();
+    };
   }
 
   /** A DevTools command; never waits forever (a stuck browser fails the test rather than hanging it). */
   send(method: string, params: any = {}, timeoutMs = 30_000, sessionId?: string): Promise<any> {
     return new Promise((resolve, reject) => {
+      if (this.gone) return reject(new Error(`${method}: ${this.gone}`));
       const i = ++this.id;
-      const timer = setTimeout(() => { this.pending.delete(i); reject(new Error(`${method}: no answer from the browser in ${timeoutMs / 1000}s`)); }, timeoutMs);
-      this.pending.set(i, (d) => { clearTimeout(timer); d.error ? reject(new Error(method + ": " + JSON.stringify(d.error))) : resolve(d.result); });
+      const done = waiting(`the browser to answer ${method}${method == "Runtime.evaluate" ? ` ${String(params.expression).slice(0, 120).replace(/\s+/g, " ")}` : ""}`);
+      const timer = setTimeout(() => { done(); this.pending.delete(i); reject(new Error(`${method}: no answer from the browser in ${timeoutMs / 1000}s`)); }, timeoutMs);
+      this.pending.set(i, (d) => { done(); clearTimeout(timer); d.error ? reject(new Error(method + ": " + JSON.stringify(d.error))) : resolve(d.result); });
       this.ws.send(JSON.stringify({ id: i, method, params, ...(sessionId ? { sessionId } : {}) }));
     });
   }

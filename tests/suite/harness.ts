@@ -3,6 +3,7 @@
 // itself, so tests are independent and can run in any order or alone.
 
 import type { Capability, Doc, Target } from "./target";
+import { waiting } from "../stop";
 
 export interface Ctx {
   target: Target;
@@ -44,11 +45,14 @@ export function expect(cond: unknown, what: string, detail?: unknown): asserts c
 /** Waits until `f` holds, polling; fails with `what` after `ms`. */
 export async function until(f: () => unknown | Promise<unknown>, ms: number, what: string, detail?: () => unknown): Promise<void> {
   const t0 = Date.now();
-  for (;;) {
-    try { if (await f()) return; } catch { /* not yet */ }
-    if (Date.now() - t0 > ms) throw new Failure(`timed out after ${ms}ms: ${what}${detail ? `\n${JSON.stringify(await detail(), null, 1)?.slice(0, 2000)}` : ""}`);
-    await sleep(20);
-  }
+  const done = waiting(`until: ${what}`);
+  try {
+    for (;;) {
+      try { if (await f()) return; } catch { /* not yet */ }
+      if (Date.now() - t0 > ms) throw new Failure(`timed out after ${ms}ms: ${what}${detail ? `\n${JSON.stringify(await detail(), null, 1)?.slice(0, 2000)}` : ""}`);
+      await sleep(20);
+    }
+  } finally { done(); }
 }
 
 export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));

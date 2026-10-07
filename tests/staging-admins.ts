@@ -19,6 +19,7 @@
 // covers: worker/admins-only.ts worker/index.ts worker/platform.ts deploy/targets.json deploy/targets.ts front.ts
 
 import { spawnSync } from "node:child_process";
+import { request } from "node:http";
 import { pagesToken } from "../front";
 import { startHost, type Host } from "./host";
 import { expect, until } from "./suite/harness";
@@ -58,6 +59,19 @@ const at = (host: Host) => {
 const frameOf = (html: string) => /<meta name="erga-pages" content="([^"]+)">/.exec(html)?.[1] ?? "";
 const pagesFetch = (u: string) => { const url = new URL(u); return fetch(u.replace(url.host, `localhost:${url.port}`), { headers: { Host: url.host }, redirect: "manual" }); };
 const mcp = (root: string, headers: Record<string, string>) => fetch(`${root}/mcp`, { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream", ...headers }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "test", version: "1" } } }) });
+/**
+ * What a WebSocket upgrade gets: its status (101: the socket opens), or "closed" when the server shuts the
+ * connection instead of answering, as the dev server does when the Worker refuses an upgrade. Through node:http, not
+ * fetch: Bun 1.2's fetch dropped the Upgrade header (it saw a plain 403), Bun 1.4's resets.
+ */
+const upgrade = (url: string, headers: Record<string, string>) => new Promise<number | "closed">((resolve, reject) => {
+  const req = request(url, { headers: { ...headers, Upgrade: "websocket", Connection: "Upgrade", "Sec-WebSocket-Key": "dGhlIHNhbXBsZSBub25jZQ==", "Sec-WebSocket-Version": "13" }, timeout: 10_000 });
+  req.on("response", (r) => { r.resume(); resolve(r.statusCode ?? 0); });
+  req.on("upgrade", (r, socket) => { socket.destroy(); resolve(r.statusCode ?? 101); });
+  req.on("timeout", () => req.destroy(new Error("no answer to the upgrade in 10s")));
+  req.on("error", (e: NodeJS.ErrnoException) => (e.code == "ECONNRESET" ? resolve("closed") : reject(e)));
+  req.end();
+});
 const refusedJson = async (r: Response) => r.status == 403 && ((await r.json().catch(() => ({}))) as { adminsOnly?: boolean }).adminsOnly == true;
 
 try {
@@ -129,7 +143,8 @@ try {
   expect(html.includes('href="https://erga.dev"'), "with a link to erga.dev");
   for (const path of ["/", "/docs", "/new", "/deploy", "/settings", "/tokens", "/admin"]) expect((await s.page(path, { Cookie: bo })).status == 403, `Bo: ${path} refused`);
   expect(await refusedJson(await s.get(`${bosPath}/api/doc`, { headers: { Cookie: bo } })), "his document's API");
-  expect((await s.get(`/d/${bos.id}/api/room`, { headers: { Cookie: bo, Upgrade: "websocket", Connection: "Upgrade", "Sec-WebSocket-Key": "dGhlIHNhbXBsZSBub25jZQ==", "Sec-WebSocket-Version": "13" }, signal: AbortSignal.timeout(10_000) })).status == 403, "its room's socket");
+  const room = await upgrade(`${s.root}/d/${bos.id}/api/room`, { Cookie: bo });
+  expect(room == 403 || room == "closed", "its room's socket doesn't open", room);
   expect((await pagesFetch(bosFrame)).status == 403 && (await pagesFetch(`${bosFrame}doc/index.html`)).status == 403, "its frame on the pages origin, though its token was good while he was an admin");
   expect(await refusedJson(await mcp(s.root, { Cookie: bo })), "MCP with his session");
   expect(await refusedJson(await mcp(s.root, { Authorization: `Bearer ${bosAdmin}` })), "MCP with his old admin token");
