@@ -23,6 +23,7 @@
 #                     the Canvas presentation template, zooming between frames (tests/canvas-template.ts),
 #                     the Solar system tour template, viewing and editing (tests/solar-system.ts),
 #                     a document's pages tree (tests/tree.ts),
+#                     opening and closing a document's pages on Documents (tests/docs-pages.ts),
 #                     the first switch into editing on a slow network (tests/switch.ts),
 #                     the band the top controls sit on (tests/band.ts),
 #                     versions and publishing (tests/versions.ts),
@@ -107,6 +108,7 @@ run 1 factory-cards bun tests/factory-cards.ts           # [14]
 run 1 factory-instruct bun tests/factory-instruct.ts     # [70]
 run 1 versions bun tests/versions.ts                     # [13]
 run 1 attach bun tests/attach.ts                         # [10]
+run 1 docs-pages bun tests/docs-pages.ts                 # [6]
 run 2 unit bun test ./tests/                             # [11]
 run 1 deployed bun tests/server-config.ts                # [7]
 run 1 deploys bun tests/deploys.ts                       # [5]

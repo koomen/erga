@@ -1754,7 +1754,7 @@ function docsPage(session: Session, docs: Listed[], now: number, hours: number |
   .doc::after { content: ""; position: absolute; inset: 0; }
   .acts { position: relative; z-index: 1; }
   .name { gap: 12px; }
-  /* A document's pages (pages-tree.js, loaded when first asked for): the chevron left of its title opens them beneath its row. */
+  /* A document's pages (pages-tree.js, loaded once the list is up): the chevron left of its title opens them beneath its row. */
   .twist { position: relative; z-index: 1; flex: none; display: grid; place-items: center; width: 22px; height: 22px; margin: 0 -8px 0 -4px; padding: 0; border: 0; border-radius: 6px;
     background: transparent; color: var(--chrome); cursor: pointer; transition: color 120ms ease, background-color 120ms ease; }
   .twist svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; transition: transform 150ms ease; }
@@ -1763,8 +1763,12 @@ function docsPage(session: Session, docs: Listed[], now: number, hours: number |
   .twist:focus-visible { outline: 2px solid var(--caret); outline-offset: 1px; }
   .labels span:first-child { padding-left: 22px; }
   ol.rows > li.sub { display: block; padding: 0 0 10px 18px; }
+  ol.rows > li.sub[hidden] { display: none; }
   .sub-tree { max-width: 560px; }
   .sub-tree.error { margin: 0; font-size: 13px; color: #c2410c; }
+  /* Before the tree's script runs: a quiet line where its rows go, faded in only if it lasts. */
+  .sub-wait { margin: 0; padding: 6px 4px 6px 26px; font-size: 12.5px; color: var(--soft); animation: sub-wait 150ms 120ms both; }
+  @keyframes sub-wait { from { opacity: 0; } }
   @media (pointer: coarse) { .twist { width: 34px; height: 34px; margin: 0 -10px 0 -10px; } }
   .title { transition: color 120ms ease; }
   li:hover .title { color: var(--link); }
@@ -1899,7 +1903,9 @@ function docsPage(session: Session, docs: Listed[], now: number, hours: number |
   });
   share.querySelector(".done").addEventListener("click", () => share.close());
   share.addEventListener("close", () => { if (changed) location.reload(); });
-  // A document's pages, beneath its row: the tree (pages-tree.js), loaded the first time one is opened (or the pointer heads for one).
+  // A document's pages, beneath its row: the tree (pages-tree.js). The script loads once the list is up and the tab is idle, and a
+  // document's pages are read as the pointer heads for its row, together, so a click shows them at once. Each document's last
+  // answer is kept for the tab: opened again, or on the next visit, its pages show straight away, and are read again behind.
   // Pages open in the editor for those who may edit, in the viewer otherwise. Which are open is remembered for the tab.
   let treeJs = null;
   const loadTree = () => window.ergaTree ? Promise.resolve(window.ergaTree) : (treeJs ??= new Promise((ok, no) => {
@@ -1908,30 +1914,61 @@ function docsPage(session: Session, docs: Listed[], now: number, hours: number |
     s.onerror = () => { treeJs = null; s.remove(); no(new Error("Couldn't load the pages: check your connection and try again.")); };
     document.head.append(s);
   }));
+  (window.requestIdleCallback ?? setTimeout)(() => loadTree().catch(() => {}));
   const treeQuery = ${JSON.stringify(session.as ? `?user=${encodeURIComponent(session.as)}` : "")};
+  // A tree read ahead of the click, handed to the tree for its first read (once), if it's still fresh.
+  const ahead = new Map();
+  const readAhead = (id) => {
+    const a = ahead.get(id);
+    if (a && Date.now() - a.at < 10000) return;
+    const answer = fetch("/api/docs/" + encodeURIComponent(id) + "/tree" + treeQuery, { headers: { Accept: "application/json" }, signal: AbortSignal.timeout(15000) });
+    answer.catch(() => {});
+    ahead.set(id, { at: Date.now(), answer });
+  };
+  const fetchFor = (id) => (url, init) => {
+    const a = ahead.get(id);
+    if (a && (!init || !init.method || init.method == "GET")) { ahead.delete(id); if (Date.now() - a.at < 10000) return a.answer.then((r) => r.clone(), () => fetch(url, init)); }
+    return fetch(url, init);
+  };
+  const keptKey = (id) => "erga:docs-tree:" + id;
+  const kept = (id) => { try { return JSON.parse(sessionStorage.getItem(keptKey(id)) || "null"); } catch { return null; } };
+  const keep = (id, answer) => { try { sessionStorage.setItem(keptKey(id), JSON.stringify({ entries: answer.entries, canEdit: answer.canEdit })); } catch {} };
   const openKey = "erga:docs-open";
   const opened = new Set((() => { try { return JSON.parse(sessionStorage.getItem(openKey) || "[]"); } catch { return []; } })());
   const saveOpened = () => { try { sessionStorage.setItem(openKey, JSON.stringify([...opened])); } catch {} };
-  const trees = new Map();
+  const trees = new Map(), readAt = new Map();
   async function showPages(b, open) {
     const id = b.dataset.id;
     b.setAttribute("aria-expanded", String(open));
     if (open) opened.add(id); else opened.delete(id);
     saveOpened();
     let sub = document.getElementById("pages-" + id);
-    if (sub) { sub.hidden = !open; if (open) trees.get(id)?.refresh(); return; }
+    // Opened again: its pages are there already; read again only if they're more than a few seconds old.
+    if (sub) { sub.hidden = !open; if (open && Date.now() - (readAt.get(id) ?? 0) > 4000) trees.get(id)?.refresh({ quiet: true }); return; }
     if (!open) return;
+    readAhead(id);
     sub = Object.assign(document.createElement("li"), { id: "pages-" + id, className: "sub" });
     const box = Object.assign(document.createElement("div"), { className: "sub-tree" });
+    // Until the tree's script runs: the pages kept from before, or a quiet line saying they're on their way.
+    box.append(Object.assign(document.createElement("p"), { className: "sub-wait", textContent: "Loading pages…" }));
     sub.append(box);
     b.closest("li").after(sub);
     try {
       const t = await loadTree();
-      trees.set(id, t.mountTree(box, { id, base: b.dataset.base, editing: "edit" in b.dataset, query: treeQuery, rootTitle: b.dataset.title, label: "Pages of " + b.dataset.title }));
+      box.replaceChildren();
+      trees.set(id, t.mountTree(box, { id, base: b.dataset.base, editing: "edit" in b.dataset, query: treeQuery, rootTitle: b.dataset.title, label: "Pages of " + b.dataset.title,
+        initial: kept(id), fetch: fetchFor(id), onChange: (a) => { readAt.set(id, Date.now()); keep(id, a); } }));
     } catch (e) { box.className = "sub-tree error"; box.textContent = e.message; }
   }
   for (const b of document.querySelectorAll("button.twist")) {
-    b.addEventListener("pointerenter", () => loadTree().catch(() => {}), { once: true });
+    // The pointer resting on a row (or the chevron focused, or touched): its pages are read, and the script fetched.
+    let rest = 0;
+    const li = b.closest("li");
+    const ready = () => { if (!trees.has(b.dataset.id)) readAhead(b.dataset.id); loadTree().catch(() => {}); };
+    li.addEventListener("pointerenter", () => { clearTimeout(rest); rest = setTimeout(ready, 60); });
+    li.addEventListener("pointerleave", () => clearTimeout(rest));
+    b.addEventListener("focus", ready);
+    b.addEventListener("pointerdown", ready);
     b.addEventListener("click", () => showPages(b, b.getAttribute("aria-expanded") != "true"));
     if (opened.has(b.dataset.id)) showPages(b, true);
   }

@@ -54,6 +54,8 @@ export interface TreeOptions {
   hasRelativeLinks?: (path: string) => boolean | undefined;
   /** What the server answered last, for a caller that wants it (e.g. to count the pages). */
   onChange?: (answer: { entries: Entry[]; canEdit: boolean }) => void;
+  /** The tree as the caller last saw it (Documents keeps each one's last answer): shown at once, then read again. */
+  initial?: { entries: Entry[]; canEdit: boolean } | null;
   /** Where to fetch from (tests stub it); default window.fetch. */
   fetch?: typeof fetch;
   /** The label for the tree, for screen readers. */
@@ -914,6 +916,7 @@ export function mountTree(container: HTMLElement, opts: TreeOptions): TreeHandle
   window.addEventListener("scroll", onScroll, true);
   window.addEventListener("resize", () => closeMenu());
 
+  if (opts.initial) set(opts.initial.entries, opts.initial.canEdit);
   render();
   load();
 
