@@ -14,6 +14,7 @@
 // 3. Merge: the branch is merged into staging (a merge commit) and deleted.
 // 4. Discard: the branch is deleted, nothing reaches staging.
 // 5. More instructions on a finished task: it works again, on the same branch. Restart: again, in a fresh VM.
+//    ?log=all gives the task's whole log.
 // 6. Tokens: a VM's token reaches its own task only; a task's git token can't push staging.
 // 7. The Claude sign-in: stored, never shown, signed out again.
 // 8. Dependencies (factory/deps.ts): bad ids and cycles refused; one added on the
@@ -175,6 +176,10 @@ try {
   expect(t3c.log.some((l: any) => l.message.startsWith("The stand-in was restarted.") && l.message.includes("Say it again.")), "the fresh Claude Code got the instructions sent before", t3c.log.slice(-14));
   expect((await api("/tasks/2/restart", { method: "POST" })).status == 409, "a discarded task doesn't restart");
   ok("restart: the task runs again on its branch, in a fresh VM, with its earlier instructions, and is ready to merge again");
+  const all3 = (await api("/tasks/3?log=all")).body, last3 = await task(3);
+  expect(all3.log.length >= last3.log.length && all3.log.length > 0 && all3.log.at(-1).message == last3.log.at(-1).message && all3.log.every((l: any) => typeof l.at == "string"),
+    "?log=all gives the whole log, each line with its time", { all: all3.log.length, last: last3.log.length });
+  ok("a task's whole log: ?log=all");
 
 
   // ---------------------------------------------------------------- 6. tokens

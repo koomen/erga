@@ -587,6 +587,7 @@ Send the token on every request:
     GET   ${api}/tasks                    every task, with its log and screenshots
     GET   ${api}/tasks/<id>               one task: title, description (the ask), status, branch, summary, error,
                                           url (its preview), startAfter, mergeAfter, blockedBy, stalled, log, screenshots
+                                          (the log's last 200 lines; ?log=all gives every line, each with its time)
     POST  ${api}/tasks                    {title, description, startAfter?, mergeAfter?}: a new task (201)
     PATCH ${api}/tasks/<id>               {startAfter?, mergeAfter?}: change its dependencies (lists of ids, or null)
     POST  ${api}/tasks/<id>/revise        {instructions}: more instructions, for a task that is working (its Claude Code gets them when its current step ends), complete or failed
