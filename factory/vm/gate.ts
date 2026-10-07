@@ -115,19 +115,22 @@ export function reportLines(output: string): Map<string, { ok: boolean; secs: nu
 }
 
 /** e2e's report (.e2e/report.json): what its tests did. */
-export interface E2EReport { run: { results: { file: string; titlePath: string[]; status: string; selected?: boolean; attempts?: { durationMs: number }[] }[] } }
+export interface E2EReport { run: { results: { file: string; titlePath: string[]; status: string; selected?: boolean; attempts?: { durationMs: number }[] }[]; errors?: unknown[] } }
 
 /**
  * Each e2e file's result, from e2e's report: ok when each of its tests passed (at once, or on its retry: flaky,
- * listed) or was skipped. A file the report doesn't have didn't run: it failed. `code`: e2e's exit code; one that
- * says it failed though no file did (it stopped before its report) fails every file.
+ * listed) or was skipped, and the run's errors don't name it (a failed hook skips the tests after it, and says so
+ * only there). A file the report doesn't have didn't run: it failed. `code`: e2e's exit code; one that says it
+ * failed though no file did (it stopped before its report) fails every file.
  */
 export function e2eResults(files: string[], report: E2EReport | null, code: number): GateResult[] {
   const out = files.map((f) => {
     const tests = (report?.run.results ?? []).filter((r) => r.file == f && r.selected != false);
     const secs = Math.round(tests.reduce((s, t) => s + (t.attempts ?? []).reduce((a, x) => a + x.durationMs, 0), 0) / 1000);
     const flaky = tests.filter((t) => t.status == "flaky").map((t) => `${f} › ${t.titlePath.join(" › ")}`);
-    return { name: f, files: [f], ok: tests.length > 0 && tests.every((t) => ["passed", "flaky", "skipped"].includes(t.status)), secs, ...(flaky.length ? { flaky } : {}) };
+    // The file by its path from the checkout, or absolute.
+    const erred = (report?.run.errors ?? []).some((e) => { const j = JSON.stringify(e); return j.includes(`"${f}"`) || j.includes(`/${f}"`); });
+    return { name: f, files: [f], ok: !erred && tests.length > 0 && tests.every((t) => ["passed", "flaky", "skipped"].includes(t.status)), secs, ...(flaky.length ? { flaky } : {}) };
   });
   if (code != 0 && out.every((r) => r.ok)) for (const r of out) r.ok = false;
   return out;

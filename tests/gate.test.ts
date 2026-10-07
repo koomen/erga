@@ -77,6 +77,9 @@ describe("the shard split", () => {
     // e2e failed but its report says nothing did (it stopped early): every file failed.
     expect(e2eResults(["e2e/a.e2e.ts"], { run: { results: [t("e2e/a.e2e.ts", "passed")] } }, 1)[0].ok).toBe(false);
     expect(e2eResults(["e2e/a.e2e.ts"], null, 0)[0].ok).toBe(false);
+    // A hook that failed skips the file's tests: the run's errors name the file (e2e's realm.hookFailed).
+    const hook = { run: { results: [t("e2e/a.e2e.ts", "passed"), t("e2e/c.e2e.ts", "skipped")], errors: [{ error: { code: "HOOK_FAILED", phase: "beforeAll", scope: { file: "e2e/c.e2e.ts", titlePath: [] } } }] } };
+    expect(e2eResults(["e2e/a.e2e.ts", "e2e/c.e2e.ts"], hook, 1).map((r) => r.ok)).toEqual([true, false]);
   });
 
   test("the image installs the e2e engine's Chromium at package.json's version, on a Node the e2e CLI runs on", () => {
