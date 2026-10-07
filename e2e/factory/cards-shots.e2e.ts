@@ -52,5 +52,5 @@ test("the arrow keys go along the screenshots, around at the ends; Enter enlarge
   expect(await keys("Escape")).toEqual({ open: true, big: null, focus: "d.png" });
   await page.evaluate(`(() => { const t = document.getElementById("instructions"); t.value = "abc"; t.focus(); t.setSelectionRange(3, 3); })()`);
   await keys("ArrowLeft", "ArrowLeft");
-  expect(await page.evaluate(`({ focus: document.activeElement.id, at: document.getElementById("instructions").selectionStart, big: !!document.querySelector("#dlg .shots figure.big") })`)).toEqual({ focus: "instructions", at: 1, big: false });
+  expect(await page.evaluate<Record<string, unknown>>(`({ focus: document.activeElement.id, at: document.getElementById("instructions").selectionStart, big: !!document.querySelector("#dlg .shots figure.big") })`)).toEqual({ focus: "instructions", at: 1, big: false });
 });

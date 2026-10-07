@@ -9,7 +9,7 @@ for (const dark of [false, true]) {
   test(`four columns at 1540px (${look}): the buttons fit inside the card, apart, with whole labels; no off buttons; the main step on the right; a round spinner that spins`, async ({ tab }) => {
     tab.strict = true;
     await cardBoard(tab.page, { width: 1540, dark });
-    expect(await tab.page.evaluate(`getComputedStyle(document.getElementById("board")).gridTemplateColumns.split(" ").length`)).toBe(4);
+    expect(await tab.page.evaluate<number>(`getComputedStyle(document.getElementById("board")).gridTemplateColumns.split(" ").length`)).toBe(4);
     await fits(tab.page);
   });
 

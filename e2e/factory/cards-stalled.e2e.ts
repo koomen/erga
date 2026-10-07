@@ -17,10 +17,10 @@ test("a working task quiet for 12 minutes has a stalled badge (with since when) 
   expect([st[4].badge, st[4].cls]).toEqual(["stalled 12 min", true]);
   expect(st[4].tip.startsWith("No new log line for 12 min, since "), st[4].tip).toBe(true);
   for (const [id, s] of Object.entries(st)) if (id != "4") expect([s.badge, s.cls], `#${id}`).toEqual(["", false]);
-  expect(await tab.page.evaluate(`document.querySelector("[data-open='4']").textContent.includes("blocked")`)).toBe(false);
+  expect(await tab.page.evaluate<boolean>(`document.querySelector("[data-open='4']").textContent.includes("blocked")`)).toBe(false);
   await tab.page.evaluate(`window.ergaBoard.open(4)`);
   await expect.poll(() => tab.page.evaluate(`document.querySelector("#dlg h3 .stalled-badge")?.textContent ?? ""`)).toBe("stalled 12 min");
-  expect(await tab.page.evaluate(`document.getElementById("stalled-note")?.textContent ?? ""`)).toMatch(/^Stalled: No new log line for 12 min/);
+  expect(await tab.page.evaluate<string>(`document.getElementById("stalled-note")?.textContent ?? ""`)).toMatch(/^Stalled: No new log line for 12 min/);
 
   const t = f.tasks[3];
   t.log.push({ at: new Date().toISOString(), message: "Claude runs Bash: bun test" });

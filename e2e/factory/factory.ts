@@ -28,7 +28,7 @@ export function factory(s: FactoryServer) {
   const api = async (path: string, init: { method?: string; json?: unknown; headers?: Record<string, string>; who?: string; token?: string } = {}) => {
     const url = new URL(`${root}/api/factory${path}`);
     if (init.who) url.searchParams.set("user", init.who);
-    const auth = init.token ? { Authorization: `Bearer ${init.token}` } : { Origin: root };
+    const auth: Record<string, string> = init.token ? { Authorization: `Bearer ${init.token}` } : { Origin: root };
     const r = await fetch(url, { method: init.method ?? (init.json ? "POST" : "GET"), headers: { ...auth, ...(init.json ? { "Content-Type": "application/json" } : {}), ...init.headers }, body: init.json ? JSON.stringify(init.json) : undefined });
     return { status: r.status, body: await r.json().catch(() => null) as any };
   };

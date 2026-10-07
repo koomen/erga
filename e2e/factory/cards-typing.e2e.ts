@@ -35,6 +35,6 @@ test("typing in the instructions through live updates of the task: the view show
   expect((await field()).value).toBe("Make a button blue");
   await page.evaluate(`(() => { const k = document.getElementById("dep-kind"); k.value = "mergeAfter"; document.getElementById("instructions").focus(); })()`);
   await through(2);
-  expect(await page.evaluate(`document.getElementById("dep-kind").value`)).toBe("mergeAfter");
+  expect(await page.evaluate<string>(`document.getElementById("dep-kind").value`)).toBe("mergeAfter");
   sending = false;
 });

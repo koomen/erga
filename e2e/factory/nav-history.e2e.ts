@@ -17,7 +17,7 @@ test("back and forward go between the admin pages without a load", async ({ tab 
   await p.evaluate(`history.back(), true`);
   await expect.poll(async () => (await navState(p)).crumb).toBe("Settings");
   expect(await navState(p)).toMatchObject({ path: "/admin", marked: "/admin", same: true });
-  expect(await p.evaluate(`!!document.querySelector("li.setting")`)).toBe(true);
+  expect(await p.evaluate<boolean>(`!!document.querySelector("li.setting")`)).toBe(true);
   await p.evaluate(`history.forward(), true`);
   await expect.poll(async () => (await navState(p)).crumb).toBe("Users");
   expect((await navState(p)).same).toBe(true);

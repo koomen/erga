@@ -15,6 +15,6 @@ test("the detail view keeps Preview, Restart, Discard and Merge in every state, 
     if (d.spin) expect(d.spin[0], `#${id}'s spinner`).toBe(d.spin[1]);
   }
   await tab.page.evaluate(`window.ergaBoard.open(7)`);
-  expect(await tab.page.evaluate(`document.querySelector("#dlg .actions-why")?.textContent`)).toBe("Can't merge until #3 merges");
-  expect(await tab.page.evaluate(`(() => { const s = getComputedStyle(document.querySelector("#dlg [data-btn='merge']")); return { border: s.borderStyle, cursor: s.cursor }; })()`)).toEqual({ border: "dashed", cursor: "not-allowed" });
+  expect(await tab.page.evaluate<string>(`document.querySelector("#dlg .actions-why")?.textContent`)).toBe("Can't merge until #3 merges");
+  expect(await tab.page.evaluate<Record<string, unknown>>(`(() => { const s = getComputedStyle(document.querySelector("#dlg [data-btn='merge']")); return { border: s.borderStyle, cursor: s.cursor }; })()`)).toEqual({ border: "dashed", cursor: "not-allowed" });
 });

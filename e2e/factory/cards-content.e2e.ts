@@ -48,7 +48,7 @@ test("each state shows only the steps that work, the main one (Merge, or else Pr
 test("Discard's text is the page's ink, not red; one click turns it into \"Discard branch?\", which fits the card", async ({ tab }) => {
   tab.strict = true;
   await cardBoard(tab.page);
-  expect(await tab.page.evaluate(`getComputedStyle(document.querySelector("[data-open='5'] [data-act='arm']")).color`)).toBe("rgb(13, 13, 15)");
+  expect(await tab.page.evaluate<string>(`getComputedStyle(document.querySelector("[data-open='5'] [data-act='arm']")).color`)).toBe("rgb(13, 13, 15)");
   await tab.page.evaluate(`document.querySelector("[data-open='8'] [data-act='arm']").click()`);
   const armed = await tab.page.evaluate(`(() => { const c = document.querySelector("[data-open='8']"), b = c.querySelector("[data-act='discard']"), box = c.getBoundingClientRect(), r = b?.getBoundingClientRect();
     return { text: b?.textContent ?? "", inside: !!r && r.left >= box.left && r.right <= box.right, cut: !!b && b.scrollWidth > b.clientWidth + 1 }; })()`);
