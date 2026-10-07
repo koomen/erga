@@ -141,7 +141,7 @@ echo "$jobs slots: $why"
 # The factory (experimental), with simulated VMs; `bun tests/factory.ts --docker` runs real containers, by hand.
 run 2 factory bun tests/factory.ts                       # [90]
 run 1 tree bun tests/tree.ts                             # [36]
-run 1 source bun tests/source.ts                         # [29]
+run 1 source bun tests/source.ts                         # [60]
 run 1 redeploy bun tests/redeploy.ts                     # [30]
 run 1 home bun tests/home.ts                             # [29]
 run 3 page bun tests/page.ts                             # [27]
