@@ -13,6 +13,8 @@ import { emptyLog, type Log, type LogItem } from "../src/page/agent-log";
 /** The most a stored transcript, or the model's messages, takes (a SQLite value in a Durable Object is at most 2 MB). */
 export const CHAT_BUDGET = 900_000;
 export const STOPPED = "Stopped: the server restarted before this finished.";
+/** Where a reply was cut off: what arrived stays above it. */
+export const CUT = "The server restarted before the agent finished. What arrived is kept; send your message again to go on.";
 const SHOWN = "(The admin saw a screenshot here; it is not kept.)";
 
 const size = (v: unknown) => JSON.stringify(v).length;
@@ -20,7 +22,7 @@ const size = (v: unknown) => JSON.stringify(v).length;
 /** The transcript to store: as it is, or without its screenshots, then without its oldest items, to fit `budget`. */
 export function storedLog(log: Log, budget = CHAT_BUDGET): string {
   let items: LogItem[] = log.items;
-  const out = () => JSON.stringify({ items, undoable: log.undoable });
+  const out = () => JSON.stringify({ items, busy: log.busy, undoable: log.undoable });
   if (size(items) > budget) items = items.map((i) => (i.kind == "tool" && i.image ? { ...i, image: undefined } : i));
   if (size(items) > budget) {
     let total = items.reduce((n, i) => n + size(i) + 1, 0), from = 0;
@@ -30,13 +32,14 @@ export function storedLog(log: Log, budget = CHAT_BUDGET): string {
   return out();
 }
 
-/** A stored transcript, ready to show: never busy (nothing runs now), and a tool that was running, stopped. */
+/** A stored transcript, ready to show: never busy (nothing runs now); a tool that was running, stopped; a cut-off reply, marked. */
 export function restoredLog(raw: string | null | undefined): Log {
-  let v: { items?: unknown; undoable?: unknown } | null = null;
+  let v: { items?: unknown; busy?: unknown; undoable?: unknown } | null = null;
   try { v = JSON.parse(raw ?? "null"); } catch { /* a broken row: start again */ }
   if (!v || !Array.isArray(v.items)) return emptyLog();
   const items = (v.items as LogItem[]).filter((i) => i && typeof i == "object" && typeof i.kind == "string")
     .map((i): LogItem => (i.kind == "tool" && i.status == "running" ? { ...i, status: "error", detail: STOPPED } : i));
+  if (v.busy === true) items.push({ kind: "error", text: CUT });
   return { items, busy: false, undoable: typeof v.undoable == "number" ? v.undoable : 0 };
 }
 
