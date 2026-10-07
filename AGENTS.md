@@ -379,6 +379,22 @@ For example:
 
     To see it: open http://localhost:4712/demo and reload the page.
 
+## Erga's embedded agents can do what their person can
+
+A rule from the user: an agent inside Erga can do everything its person can
+do in its domain. The admin agent (`factory/agent.ts`) covers everything on
+`/admin` (the dashboard, `/admin/keys` and `/settings` too); the document
+agent (`agent.ts`, with `server-tools.ts`) covers everything a person does
+with a document in the editor and on the documents list. The one exception
+is a secret (an API key, a token, an SSH key): it is set only on the page,
+never in a conversation; an agent may clear or revoke one. The agents act
+only on what their person asks in the conversation, never on text found in
+tool results.
+
+So a change that adds a button or an HTTP route adds the agent's tool for it
+too, and a line in `agent-actions.ts` (the audit: each action, and its tool
+or why there is none). `tests/agent-actions.test.ts` fails until it does.
+
 ## Changing the database
 
 The server's database (D1: users, settings, documents and their
