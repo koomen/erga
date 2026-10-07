@@ -59,13 +59,13 @@ try {
   expect(said.status == 200, "Ada's agent takes the message", said);
   await until(async () => (await api("/tasks")).body.some((t: any) => t.title == "Ada's agent's task"), 20_000, "the agent queues the task");
   const t2 = (await api("/tasks")).body.find((t: any) => t.title == "Ada's agent's task");
-  expect(t2.by == "ada-lovelace’s agent" && t2.person == "ada-lovelace", "a task the admin agent added: its person is the admin who prompted it", t2);
+  expect(t2.by == "ada-lovelace, via their admin agent" && t2.person == "ada-lovelace", "a task the admin agent added: its person is the admin who prompted it", t2);
 
   // 3. Grace, with a factory token (an outside agent).
   const minted = await api("/tokens", { who: GRACE, json: { label: "Grace's agent", hours: 1 } });
   expect(minted.status == 200 || minted.status == 201, "Grace makes a factory token", minted);
   const t3 = (await api("/tasks", { token: minted.body.token, json: { title: "Grace's agent's task", description: "A third note." } })).body;
-  expect(t3.by == "grace-hopper’s agent (shared: Grace's agent)" && t3.person == "grace-hopper", "a task added with a token: its person is the token's", t3);
+  expect(t3.by == "grace-hopper, via a shared agent (Grace's agent)" && t3.person == "grace-hopper", "a task added with a token: its person is the token's", t3);
 
   for (const t of [t1, t2, t3]) await until(async () => (await task(t.id)).status == "complete", STEP, `#${t.id} is ready to merge`, async () => (await task(t.id)).log.slice(-4));
   const people: [any, string][] = [[t1, "tester <tester@users.noreply.github.com>"], [t2, `${ADA} <ada-lovelace@users.noreply.github.com>`], [t3, `${GRACE} <grace-hopper@users.noreply.github.com>`]];
@@ -99,7 +99,7 @@ try {
     await p.eval(`document.querySelector('[data-open="${t2.id}"]').click()`);
     await until(() => p.eval(`document.getElementById("dlg").open`), 5000, "the detail opens");
     const person = await p.eval<string>(`document.querySelector("#dlg .person")?.innerText ?? ""`);
-    expect(person == "Added by ada-lovelace’s agent · commits by ada-lovelace", "the detail names the task's person", person);
+    expect(person == "Added by ada-lovelace, via their admin agent · commits by ada-lovelace", "the detail names the task's person", person);
     await p.screenshot(join(SHOTS, "factory-authors.png"));
   } finally { browser.close(); }
   ok("the board's detail view names the task's person");

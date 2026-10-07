@@ -1097,7 +1097,7 @@ error says what to fix), 401 (bad token) or 404 (no such tool).
 ## How to work
 
 - Your edits go straight into the shared document and show up in everyone's page
-  as you make them, attributed to ${agentName(o.owner)}. ${o.owner} can undo them one tool
+  as you make them, attributed to ${o.owner}, via you (your token's label names you). ${o.owner} can undo them one tool
   call at a time. Prefer small, targeted edits (edit) over rewriting whole files.
 - People may be typing while you work. edit matches oldText against the text as it
   is at that moment; if it fails because the text changed, read the file again and

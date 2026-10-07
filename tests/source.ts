@@ -315,7 +315,7 @@ try {
   const hist = await (await api("/api/deploys/staging/history?limit=50")).json() as { deploys: { id: string; commit: string; state: string; trigger: string; replacedBy?: string; live: boolean; started: number; ended: number }[] };
   const [failedRec, cancelledRec] = hist.deploys;
   expect(failedRec.commit == failing && failedRec.state == "failed" && cancelledRec.commit == superseded && cancelledRec.state == "cancelled" && cancelledRec.replacedBy == failedRec.id, "the history: the first cancelled, replaced by the newer one, which failed", hist.deploys.slice(0, 3));
-  expect(cancelledRec.trigger == "push by tester" && cancelledRec.ended >= cancelledRec.started && hist.deploys.filter((d) => d.live).length == 1 && hist.deploys.find((d) => d.live)!.commit == polled2, "each with what started it and when; one live, the last that worked", hist.deploys.slice(0, 4));
+  expect(cancelledRec.trigger == "push by tester, via a shared agent (Git)" && cancelledRec.ended >= cancelledRec.started && hist.deploys.filter((d) => d.live).length == 1 && hist.deploys.find((d) => d.live)!.commit == polled2, "each with what started it and when; one live, the last that worked", hist.deploys.slice(0, 4));
   const pastLog = await (await api(`/api/deploys/staging/log?deploy=${cancelledRec.id}`)).json() as { deployId: string; state: string; lines: { text: string }[] };
   expect(pastLog.deployId == cancelledRec.id && pastLog.state == "cancelled" && pastLog.lines.some((l) => l.text.startsWith("cancelled:")), "a past deploy's log, by its id", pastLog.lines.slice(-3));
   expect((await api("/api/deploys/staging/log?deploy=nope")).status == 404, "a deploy the history doesn't have: 404");

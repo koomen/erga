@@ -525,12 +525,42 @@ a time (Older changes: `?before=<n>`). It lists three more kinds of entry,
 each with who and when: a factory task added (its id and title), a factory
 task merged into staging (its id, title and merge commit), and main moved
 forward to staging, the production deploy (main's old and new head, and the
-commits it brought: the newest 50, of how many). An entry for something an
-agent did names the admin who prompted it, never the agent, with "via the
-factory's agent" or "via a shared agent (its label)". The factory
-(`worker/factory.ts`) and the repository (`worker/source-host.ts`) write
-them with `ServerConfig.record`, as versions whose changes have `task`,
-`release` and `via` (`SettingChange`). A bootstrap admin's Admin switch and
+commits it brought: the newest 50, of how many). It also lists users added,
+made admin or user, given or denied the deploy role, and removed
+(`Users`), and tokens revoked (`Tokens.revoke`, factory tokens). An entry
+for something an agent did names the person who controls it, never the
+agent, with how beside it (see [Who did it](#who-did-it)). The factory
+(`worker/factory.ts`), the repository (`worker/source-host.ts`), `Users`,
+`Credentials` and `Tokens` write them with `ServerConfig.record` or
+`changeLogEntry` (`attribution.ts`), as versions with a `via` column whose
+changes have `task`, `release`, `user`, `token` or `credential`
+(`SettingChange`).
+
+**Who did it** (#69, `attribution.ts`). Anything an agent does anywhere in
+Erga is the person's who controls it. Every record of who did something keeps
+the person's login as the actor, and how they did it beside it (`via`):
+nothing (in person), "their agent" (the editor's agent), "their admin agent",
+"a shared agent (<label>)" (one of their tokens: the server's API, MCP,
+`/api/ext`, a Git push, a factory token) or "the factory (task #<n>)" (a
+factory VM, for a task they added). The pages show both, as
+"koomen, via their agent" (`byLine`), or the login with the via under it (the
+change log). What the server does by itself is by the person who set it up
+(a task that starts again after a restart: its person; the mirror's push:
+whoever moved the branch), else by "the system" (`SYSTEM`). The front door
+puts the via on `Who`/`Actor` (`whoOf`: a token's label); the admin agent
+and the editor's agent set their own; `tests/attribution.ts` runs an action
+through each path. Where it's recorded:
+
+| place | stored |
+|---|---|
+| settings' versions, the change log | `server_config_versions.by`, `.via` (migration 0170) |
+| a setting's "Last set by", an API key's "updated by" | `server_config.updated_by`/`updated_via`, `credentials.updated_by`/`updated_via` |
+| a user's "Added by"; role, deploy and removal | `users.added_by`/`added_via`; the change log |
+| a document shared | `permissions.granted_by`/`granted_via` |
+| a document's versions, cursors and marks | `authors`: "ada, via their agent", "ada, via a shared agent (CI)"; the agent's `Author.via` |
+| a factory task: added, asked, merged, restarted, discarded | `tasks.by_login`/`by_via`, `merge_by`/`merge_via`, `asks.by_login`/`via`; the task's log |
+| a branch moved, its deploy, the GitHub mirror | `moves.by`/`via` (`SourceRepo`), the deploy's trigger, `MirrorStatus.lastPushBy` |
+| a homepage deploy, a redeploy | `DeployStatus.by`, the deploy's trigger | A bootstrap admin's Admin switch and
 remove button are off, and so are the last admin's, saying why. Underneath it's `POST
 /admin/settings` (`key` and `value` as JSON, or `reset=1`) and `POST
 /admin/users` (`do=add|role|deploy|remove`, `login`, `role`, `deploy`: 1
@@ -654,7 +684,7 @@ cut after a burst of edits, not on every keystroke. The rule
 
 A cut that finds nothing changed makes no version. A new document's first
 version is the files it starts from. Each version says when it was cut, who
-edited since the one before (logins, and agents: "koomen’s agent"), and a
+edited since the one before (logins, and agents' people: "koomen, via their agent", "koomen, via a shared agent (CI)"), and a
 five-word description: in the background, the document sends a compact diff
 (files added, removed and changed, and the changed lines with one line of
 context, about 6KB at most) to Claude Sonnet 5.5 (`DESCRIBE_MODEL`) with the
@@ -702,7 +732,7 @@ the current one's) while edits are pending cuts them into a new version first
 and publishes that, so "current" means up to the keystroke. A **restore**
 writes the version's files over the document as it is (files it didn't have
 are deleted), as an edit open editors see live, and cuts that as a new current
-version, by the person (or "<login>’s agent"), described "Restored version
+version, by the person (or "<login>, via their agent", "<login>, via a shared agent (<label>)"), described "Restored version
 <n>"; pending edits become a version first, so nothing is lost. With a
 `path`, only that file comes back ("Restored <path> from version <n>"), and
 the other files stay as they are. In "latest"
@@ -1985,7 +2015,7 @@ text and the other fields' values (`keepState` in `factory/page.ts`).
 - Who the commits are by (`factory/author.ts`): each task records its
   person (`person`, a login) when it's added: the admin themselves, on the
   board, or the admin who prompted the factory's agent or made the factory
-  token (`by` says "koomen’s agent"; the person is koomen). Each job's
+  token (`by` says "koomen, via their admin agent"; the person is koomen). Each job's
   environment makes that person the author of the task's commits (Claude
   Code's, which keep its Co-Authored-By trailer, and "Merge staging into
   task/…"), and whoever pressed Merge the author of the merge into staging

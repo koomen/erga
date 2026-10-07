@@ -28,6 +28,7 @@
 
 import { ConfigError, type ConfigEntry, type SettingChange, type Settings, type SettingsVersion } from "./config.ts";
 import { esc, ICON, link, page, type Platform, type Session, TIMES_SCRIPT, whoOf } from "./front.ts";
+import { byLine } from "./attribution.ts";
 import { adminResponse } from "./admin-layout.ts";
 import { NotAllowed, type ServerRole, type User } from "./users.ts";
 import { CredentialError, type CredentialEntry, type DeploySecretEntry } from "./credentials.ts";
@@ -172,7 +173,7 @@ export function settingRow(e: Shown, session: Session, never: boolean): string {
     : "";
   // Under each setting: when it was last set, and by whom (its default on hover).
   const set = e.source == "set" && e.updated != null
-    ? `<p class="set" title="${esc(def)}">Last set at ${esc(setAt(e.updated))}${e.updatedBy ? ` by ${esc(e.updatedBy)}` : ""}</p>`
+    ? `<p class="set" title="${esc(def)}">Last set at ${esc(setAt(e.updated))}${e.updatedBy ? ` by ${esc(byLine(e.updatedBy, e.updatedVia))}` : ""}</p>`
     : "";
   // Save for what's typed in; Reset only where the control can't simply pick the default (a switch, a choice, an empty document can).
   const buttons = e.locked || control == "switch" || control == "choice" ? ""
@@ -200,7 +201,7 @@ export function settingRow(e: Shown, session: Session, never: boolean): string {
 export function credentialRow(c: CredentialEntry, session: Session): string {
   const id = `key-${c.name}`;
   const state = c.set
-    ? `<span class="on">Set</span> · ends in <span class="last4">…${esc(c.last4 ?? "")}</span>${c.updated != null ? ` · updated ${esc(setAt(c.updated))}${c.updatedBy ? ` by ${esc(c.updatedBy)}` : ""}` : ""}`
+    ? `<span class="on">Set</span> · ends in <span class="last4">…${esc(c.last4 ?? "")}</span>${c.updated != null ? ` · updated ${esc(setAt(c.updated))}${c.updatedBy ? ` by ${esc(byLine(c.updatedBy, c.updatedVia))}` : ""}` : ""}`
     : c.fallback ? `Not set here. The server uses ${esc(c.env)} from the deploy.` : "Not set.";
   const cannot = !c.canStore ? ` <b>This server has no FACTORY_KEY, so it can't store a key.</b>` : "";
   return `  <li class="setting credential" data-name="${esc(c.name)}" data-label="${esc(c.label)}" data-env="${esc(c.env)}"${c.fallback ? ` data-fallback="1"` : ""}>
@@ -220,13 +221,28 @@ export function credentialRow(c: CredentialEntry, session: Session): string {
 /** How many changes the change log lists on a page. */
 const CHANGES = 50;
 
-/** A change log line for something other than a setting: a factory task added or merged, main moved to production. */
+/**
+ * Who made a version, and how (attribution.ts): the person's login, and, when they
+ * acted through an agent or the factory, "via …" beside it. Never the agent alone.
+ */
+function byHtml(by: string, via?: string | null): string {
+  const [who, how] = [byLine(by), via ? `via ${via}` : ""];
+  return `<span class="by">${esc(who)}</span>${how ? `<span class="via">${esc(how)}</span>` : ""}`;
+}
+
+/** A change log line for something other than a setting: a factory task added or merged, main moved to production, a user or a token changed. */
 function eventItem(c: SettingChange): string {
-  const via = c.via ? ` <span class="via">via ${esc(c.via)}</span>` : "";
+  if (c.user) {
+    const u = c.user;
+    const what = u.event == "added" ? `added${u.role ? ` as ${esc(u.role)}` : ""}` : u.event == "removed" ? "removed"
+      : u.event == "role" ? `made ${esc(u.role ?? "user")}` : `deploy role ${u.deploy ? "granted" : "revoked"}`;
+    return `<li><span class="key">user</span> <span class="title">${esc(u.login)}</span> ${what} <span class="badge">users</span></li>`;
+  }
+  if (c.token) return `<li><span class="key">token</span> <span class="title">${esc(c.token.label)}</span> (${esc(c.token.of)}’s) revoked <span class="badge">token</span></li>`;
   const sha = (s: unknown) => `<code class="sha" title="${esc(String(s))}">${esc(String(s).slice(0, 7))}</code>`;
   if (c.task) {
     const what = c.task.event == "added" ? "added" : `merged into staging${c.task.commit ? ` as ${sha(c.task.commit)}` : ""}`;
-    return `<li><span class="key">task #${c.task.id}</span> ${what}: <span class="title">${esc(c.task.title)}</span> <span class="badge">factory</span>${via}</li>`;
+    return `<li><span class="key">task #${c.task.id}</span> ${what}: <span class="title">${esc(c.task.title)}</span> <span class="badge">factory</span></li>`;
   }
   const r = c.release!;
   const commits = r.commits.map((x) => `<li>${sha(x.sha)} ${esc(x.subject)}</li>`).join("");
@@ -234,7 +250,7 @@ function eventItem(c: SettingChange): string {
   const list = r.commits.length > 5
     ? `<details><summary>${r.total} commits</summary><ul class="commits">${commits}${more}</ul></details>`
     : `<ul class="commits">${commits}${more}</ul>`;
-  return `<li><span class="key">main</span> ${c.from ? sha(c.from) : "none"} <span class="to" aria-label="to">→</span> ${sha(c.to)} <span class="badge">production</span>${via}${list}</li>`;
+  return `<li><span class="key">main</span> ${c.from ? sha(c.from) : "none"} <span class="to" aria-label="to">→</span> ${sha(c.to)} <span class="badge">production</span>${list}</li>`;
 }
 
 /**
@@ -248,9 +264,9 @@ function changeRow(v: SettingsVersion, kinds: Record<string, string | undefined>
     const doc = kinds[key] == "document" && x != null ? docs.get(String(x)) : undefined;
     return `<span class="was">${esc(doc ? doc.address : shown(x, kinds[key]))}</span>`;
   };
-  const what = v.changes.map((c) => c.task || c.release ? eventItem(c) : c.credential ? `<li><span class="key">${esc(c.key)}</span> key ${esc(c.credential)} <span class="badge">secret</span></li>` : `<li><span class="key">${esc(c.key)}</span> ${value(c.key, c.from)} <span class="to" aria-label="to">→</span> ${value(c.key, c.to)}${c.reset ? ` <span class="badge">reset</span>` : ""}</li>`).join("");
+  const what = v.changes.map((c) => c.task || c.release || c.user || c.token ? eventItem(c) : c.credential ? `<li><span class="key">${esc(c.key)}</span> key ${esc(c.credential)} <span class="badge">secret</span></li>` : `<li><span class="key">${esc(c.key)}</span> ${value(c.key, c.from)} <span class="to" aria-label="to">→</span> ${value(c.key, c.to)}${c.reset ? ` <span class="badge">reset</span>` : ""}</li>`).join("");
   return `  <li class="change" data-n="${v.n}">
-    <div class="when"><time datetime="${at}">${at.slice(0, 16).replace("T", " ")} UTC</time><span class="by">${esc(v.by)}</span></div>
+    <div class="when"><time datetime="${at}">${at.slice(0, 16).replace("T", " ")} UTC</time>${byHtml(v.by, v.via)}</div>
     <ul class="what">${what}</ul>
   </li>`;
 }
@@ -545,7 +561,7 @@ function userRow(u: User, session: Session, lastAdmin: boolean): string {
   const me = u.login == session.login.toLowerCase();
   const joined = u.created ? when(u.created, "joined") : `<time class="joined never">not yet</time>`;
   const seen = u.lastSeen != null ? when(u.lastSeen, "seen") : `<time class="seen never">never</time>`;
-  const added = u.bootstrap ? "Admin by the deploy (ADMINS)" : u.addedBy ? `Added by ${u.addedBy}` : "Signed in on their own";
+  const added = u.bootstrap ? "Admin by the deploy (ADMINS)" : u.addedBy ? `Added by ${byLine(u.addedBy, u.addedVia)}` : "Signed in on their own";
   // The same reason keeps them from being removed.
   const fixedAdmin = u.bootstrap ? "An admin by the deploy (ADMINS): change it there"
     : lastAdmin ? `${me ? "You're" : "The"} last admin: make someone else an admin first` : "";
@@ -662,7 +678,7 @@ async function changesPage(platform: Platform, session: Session, before?: number
   .changes .badge { margin: 0 0 0 4px; }
   .changes .sha { font-family: var(--font-mono); font-size: 12px; }
   .changes .title { color: var(--fg-strong); }
-  .changes .via { margin-left: 6px; font-size: 12px; color: var(--soft); }
+  .changes .when .via { font-size: 12px; color: var(--soft); }
   .changes .commits { list-style: none; margin: 4px 0 2px; padding: 0 0 0 12px; border-left: 2px solid var(--rule); font-size: 12.5px; }
   .changes .commits li { padding: 1px 0; }
   .changes .commits .more, .changes details summary { color: var(--soft); cursor: default; }
@@ -671,7 +687,7 @@ async function changesPage(platform: Platform, session: Session, before?: number
   @media (max-width: 520px) { .changes > li.change { grid-template-columns: 1fr; } .changes .when { flex-direction: row; gap: 8px; } }
 `;
   return adminResponse({ session, title: "Change log", here: "changes", style, body: `
-  <p class="lede">Every change to the server's settings, every factory task added or merged into staging, and every production deploy (main moved forward to staging), newest first: when, who, and what changed.${history.total ? ` ${history.total} change${history.total == 1 ? "" : "s"}.` : ""}</p>
+  <p class="lede">Every change to the server's settings, users, API keys and tokens, every factory task added or merged into staging, and every production deploy (main moved forward to staging), newest first: when, who, and what changed. A change an agent made is under the person who controls it, with how (“via their admin agent”, “via a shared agent (its label)”).${history.total ? ` ${history.total} change${history.total == 1 ? "" : "s"}.` : ""}</p>
   ${history.versions.length ? `<ol class="changes">
 ${history.versions.map((v) => changeRow(v, kinds, docs)).join("\n")}
   </ol>` : `<p class="changes-empty">${before ? "No older changes." : "Nothing has changed yet."}</p>`}
