@@ -14,7 +14,7 @@ test("a deep link opens Users whole, with the agent's conversation so far; a pag
   await p.goto(`${s.root}/admin/users`);
   await until(() => p.evaluate(`!!document.querySelector("ol.users")`), 5000, "a deep link to /admin/users opens it");
   await expect.poll(async () => (await navState(p)).reply).toContain(said);
-  expect(await navState(p)).toMatchObject({ same: false, crumb: "Users", marked: "/admin/users" });
+  await expect.poll(() => navState(p)).toMatchObject({ same: false, crumb: "Users", marked: "/admin/users" });
   await p.goto(`${s.root}/admin/changes`);
   await expect.poll(async () => (await navState(p)).crumb).toBe("Change log");
   await mark(p);

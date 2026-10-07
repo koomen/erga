@@ -15,9 +15,9 @@ test("a sidebar link shows Users without a load: its address, title, breadcrumb 
   await click(p, '.admin-side a[href="/admin/users"]');
   await expect.poll(async () => (await navState(p)).crumb).toBe("Users");
   expect(await p.evaluate<boolean>(`!!document.querySelector("ol.users")`)).toBe(true);
-  expect(await navState(p)).toMatchObject({ path: "/admin/users", title: "Users · Erga", marked: "/admin/users", same: true, log: true, busy: true });
+  await expect.poll(() => navState(p)).toMatchObject({ path: "/admin/users", title: "Users · Erga", marked: "/admin/users", same: true, log: true, busy: true });
   await click(p, '.admin-side a[href="/admin/changes"]');
   await expect.poll(async () => (await navState(p)).crumb).toBe("Change log");
   await expect.poll(async () => (await navState(p)).reply).toContain(said);
-  expect(await navState(p)).toMatchObject({ path: "/admin/changes", same: true, log: true, busy: false });
+  await expect.poll(() => navState(p)).toMatchObject({ path: "/admin/changes", same: true, log: true, busy: false });
 });

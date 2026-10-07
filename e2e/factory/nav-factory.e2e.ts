@@ -10,7 +10,7 @@ test("the Factory page's board runs in place; leaving it (the breadcrumb's Admin
   await admin(p);
   await click(p, '.admin-side a[href="/admin/factory"]');
   await until(() => p.evaluate(`!!window.ergaBoard && !!document.querySelector('#tasks [data-col="queued"]')`), 5000, "the board runs");
-  expect((await navState(p)).same).toBe(true);
+  await expect.poll(async () => (await navState(p)).same).toBe(true);
   await click(p, ".crumbs a.here-link");
   await expect.poll(async () => (await navState(p)).crumb).toBe("Settings");
   expect(await p.evaluate<boolean>(`!window.ergaBoard && !document.body.dataset.tab`)).toBe(true);
@@ -26,7 +26,7 @@ test("the Factory page's board runs in place; leaving it (the breadcrumb's Admin
   };
   const was = await p.evaluate(`document.querySelector('li.setting[data-key="factory"] input[type=checkbox]').checked`) as boolean;
   await flip(!was);
-  expect((await navState(p)).same).toBe(true);
+  await expect.poll(async () => (await navState(p)).same).toBe(true);
   expect(await p.evaluate<string>(`document.querySelector('li.setting[data-key="factory"] .set')?.textContent ?? ""`)).toContain("Last set");
   await flip(was);
 });
