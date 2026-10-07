@@ -43,7 +43,7 @@ import { OWN_ACCOUNT } from "./account.ts";
 import { adminDoor } from "./admin.ts";
 import { type Directory, type DocRow, type Grant, type Permission, type Role, type Route, type Who, NotAllowed, roleMay, UNTITLED } from "./directory.ts";
 import type { AgentToken, Tokens } from "./tokens.ts";
-import { ADMIN_TOKEN_PREFIX, SIGN_IN_KEY, UNLOCK_MS, type AdminKeys, type Unlock } from "./admin-keys.ts";
+
 import type { PublishRequest, PublishResult, RestoreResult, Version, VersionsState } from "./versions.ts";
 import { pageAddress, resolvePage } from "./tree.ts";
 import { NEW_DOC_SCRIPT, NEW_DOC_STYLE, newDocButton, newDocMenu, templateById, TEMPLATES, type Template } from "./templates.ts";
@@ -59,11 +59,13 @@ export interface Session {
   /** Signed in with an agent token (tokens.ts): an agent acting as this person. */
   agent?: AgentToken;
   /**
-   * Admin access unlocked with one of their SSH keys (admin-keys.ts): by the
-   * erga_admin cookie beside the session's (worker/auth.ts), or an admin
-   * token (withTokens). Every admin-only call needs it (Users.mustAdmin).
+   * Comes with admin power: a signed-in browser session does (worker/auth.ts),
+   * a token only with the admin scope (withTokens). Every admin-only call
+   * needs it, and Users.isAdmin must say yes too (Users.mustAdmin).
    */
-  unlocked?: Unlock;
+  admin?: boolean;
+  /** Signed in with a document token (tokens.ts): this one document (its id), and no other. */
+  onlyDoc?: string;
 }
 
 /** A document as its owner's list shows it. */
@@ -128,18 +130,7 @@ export interface Platform {
   directory: Directory;
   /** Agent tokens (tokens.ts). */
   tokens: Tokens;
-  /** Admins' SSH keys and the unlocks they make (admin-keys.ts): admin tokens are read with it. */
-  adminKeys?: AdminKeys;
-  /**
-   * Local development's shortcut (ERGA_ADMIN_UNLOCKED=1, which the tests set):
-   * every admin counts as unlocked, on localhost only.
-   */
-  devUnlocked?(url: URL): boolean;
-  /**
-   * Whether admin power needs an unlock with an admin SSH key (ERGA_ADMIN_KEYS_REQUIRED=1). If not (the
-   * default), every signed-in session carries SIGN_IN_UNLOCK, so a signed-in admin is enough.
-   */
-  keysRequired?(): boolean;
+
   /** A test token for the test suite, minted by `login` (shown on /tokens), where the platform makes them. */
   testToken?(login: string): Promise<{ token: string; expires: Date }>;
   docs: {
@@ -294,9 +285,11 @@ async function accountMeta(platform: Platform, session: Session): Promise<string
 
 /**
  * The platform with agent tokens: a request carrying one ("Authorization:
- * Bearer erga_...") is signed in as the person it stands for, as long as
- * they may still sign in, whatever cookie it has. A bearer token that isn't
- * a good one signs in nobody.
+ * Bearer erga_...") is signed in as the person it stands for, within its
+ * scope (tokens.ts), as long as they may still sign in, whatever cookie it
+ * has: admin power only with the admin scope, one document only with the
+ * document scope. A bearer token that isn't a good one (revoked, expired)
+ * signs in nobody.
  */
 export function withTokens(platform: Platform, url: URL): Platform {
   return {
@@ -305,23 +298,15 @@ export function withTokens(platform: Platform, url: URL): Platform {
       const bearer = /^Bearer\s+(\S+)\s*$/i.exec(request.headers.get("authorization") ?? "")?.[1];
       if (!bearer) return platform.sessionOf(request);
       const users = platform.directory.users;
-      // An admin token (admin-keys.ts): its person, as their agent, with admin access unlocked by their SSH key until it ends.
-      if (bearer.startsWith(ADMIN_TOKEN_PREFIX)) {
-        const admin = await platform.adminKeys?.readToken(bearer).catch(() => null);
-        if (!admin || !(platform.dev(url) || (await users.allowed(admin.login)))) return null;
-        const agent: AgentToken = { id: `admin-${admin.unlock.key}`, login: admin.login, name: admin.name, label: "Admin token", kind: "agent", testBy: null, created: Date.now(), lastUsed: Date.now() };
-        return { login: admin.login, name: admin.name, agent, unlocked: admin.unlock };
-      }
       const token = await platform.tokens.verify(bearer).catch(() => null);
       if (!token) return null;
       // A test person's token opens only test documents, while whoever minted their test token may sign in.
-      const session: Session = { login: token.login, name: token.name, agent: token, ...(token.testBy ? { test: { by: token.testBy } } : {}) };
+      const session: Session = {
+        login: token.login, name: token.name, agent: token, ...(token.testBy ? { test: { by: token.testBy } } : {}),
+        // Admin power only with the admin scope (Users.isAdmin still decides); a document token, its one document.
+        ...(token.scope == "admin" && !token.testBy ? { admin: true } : {}), ...(token.scope == "document" ? { onlyDoc: token.docId ?? "-" } : {}),
+      };
       if (token.testBy) return (await users.allowed(token.testBy)) ? session : null;
-      // The share button's token goes into prompts for agents elsewhere (to work in documents): never admin power.
-      const unlock = token.kind == "share" ? null
-        : platform.devUnlocked?.(url) ? DEV_UNLOCK()
-        : platform.keysRequired && !platform.keysRequired() ? SIGN_IN_UNLOCK() : null;
-      if (unlock) session.unlocked = unlock;
       return platform.dev(url) || (await users.allowed(token.login)) ? session : null;
     },
   };
@@ -332,13 +317,10 @@ export const accessOf = (role: Role | null): "edit" | "view" | null =>
   role == "owner" || role == "editor" ? "edit" : role == "viewer" ? "view" : null;
 
 /** Who a session is, to the directory's `may`. */
-export const whoOf = (session: Session): Who => ({ login: session.login.toLowerCase(), test: !!session.test, ...(session.test ? { by: session.test.by.toLowerCase() } : {}), ...(session.unlocked && !session.test ? { unlocked: session.unlocked } : {}) });
-
-/** Local development's shortcut unlock (Platform.devUnlocked): an hour from now, by no key. */
-export const DEV_UNLOCK = (): Unlock => ({ key: "local", until: Date.now() + 60 * 60 * 1000 });
-
-/** The unlock every signed-in session carries while admin keys aren't required (Platform.keysRequired): an hour from now, by no key. */
-export const SIGN_IN_UNLOCK = (): Unlock => ({ key: SIGN_IN_KEY, until: Date.now() + UNLOCK_MS });
+export const whoOf = (session: Session): Who => ({
+  login: session.login.toLowerCase(), test: !!session.test, ...(session.test ? { by: session.test.by.toLowerCase() } : {}),
+  ...(session.admin && !session.test ? { admin: true } : {}), ...(session.onlyDoc != null ? { onlyDoc: session.onlyDoc } : {}),
+});
 
 const refused = (session: Session) => session.test
   ? page("Test documents only", "Test people can open only test documents.", 403)
@@ -808,9 +790,9 @@ export function seedLanding(platform: Platform): Promise<DocRow | null> {
       if (!(await platform.docs.delete(made))) await platform.directory.remove(made.id);
       return live(await config.stored("landing_document"));
     }
-    // The deploy's own doing (its ADMINS), not a person's: the server shares as the owner, with admin access unlocked for it
+    // The deploy's own doing (its ADMINS), not a person's: the server shares as the owner, with admin power
     // (editing the front page needs that: directory.ts, homeLimit).
-    const server = { login: owner, test: false, unlocked: { key: "server", until: Date.now() + 60_000 } };
+    const server = { login: owner, test: false, admin: true };
     for (const login of project.editors) {
       if (login.toLowerCase() == owner) continue;
       await platform.directory.share(server, made.id, login, "editor").catch(() => {});
@@ -1445,6 +1427,7 @@ async function newDoc(platform: Platform, request: Request): Promise<Response> {
   const url = new URL(request.url);
   const params = url.searchParams;
   if (!session) return signInFirst(`/new${params.size ? `?${params}` : ""}`);
+  if (session.onlyDoc != null) return page("One document only", "This token is for one document: it can't make others.", 403);
   const named = params.get("template");
   const template = named ? templateById(named) : undefined;
   if (named && !template) return page("No such template", "There's no template by that name. <a href=\"/new\">Make a blank document</a>.", 404);
@@ -1528,6 +1511,7 @@ async function listDocs(platform: Platform, request: Request): Promise<Response>
   const session = await platform.sessionOf(request);
   if (!session) return signInFirst("/docs");
   if (session.test) return page("Not for test people", "Test people have no documents of their own.", 403);
+  if (session.onlyDoc != null) return page("One document only", "This token is for one document: it can't list others.", 403);
   const [docs, hours] = await Promise.all([platform.docs.list(session.login), platform.directory.config.get("delete_docs_after_hours")]);
   return new Response(docsPage(session, docs, Date.now(), hours), { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
 }

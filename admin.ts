@@ -22,16 +22,14 @@
 // the message the directory gave, for a person to act on) and come only from
 // this site's pages. The directory checks who's asking itself (NotAllowed);
 // this file only shows it. An agent token (Session.agent) never gets in, even
-// an admin's. An admin must have unlocked admin access with their SSH key
-// (admin-keys.ts): until then /admin sends them to /admin/keys to do it. A setting the deploy locks is shown, read-only,
+// an admin's. A setting the deploy locks is shown, read-only,
 // and so is a bootstrap admin (ADMINS), who can't be demoted or removed here,
 // and the last admin, who can't be demoted or removed at all (users.ts).
 
 import { ConfigError, type ConfigEntry, type SettingChange, type Settings, type SettingsVersion } from "./config.ts";
 import { esc, ICON, link, page, type Platform, type Session, TIMES_SCRIPT, whoOf } from "./front.ts";
 import { adminResponse } from "./admin-layout.ts";
-import { LOCKED, NotAllowed, type ServerRole, type User } from "./users.ts";
-import { unlockFirst } from "./admin-access.ts";
+import { NotAllowed, type ServerRole, type User } from "./users.ts";
 import { CredentialError, type CredentialEntry, type DeploySecretEntry } from "./credentials.ts";
 
 /** /admin and its POSTs. */
@@ -43,15 +41,13 @@ export async function adminDoor(platform: Platform, request: Request): Promise<R
     return new Response(null, { status: 302, headers: { Location: `/auth/github?next=${encodeURIComponent(url.pathname)}` } });
   }
   const who = session && whoOf(session);
-  // Only the person themselves, in a browser: an agent with their token isn't an admin here.
-  const admin = !!who && !session?.agent && (await platform.directory.users.isAdmin(who));
-  // An admin who hasn't unlocked admin access with their SSH key (admin-keys.ts) unlocks it first.
-  const unlocked = admin && (await platform.directory.users.isUnlocked(who!));
+  // Only the person themselves, in a browser (which comes with admin power): an agent with their token isn't an admin here.
+  const admin = !!who && !session?.agent && (await platform.directory.users.actsAsAdmin(who));
   if (read) {
     if (!admin) return notFound();
     if (url.pathname == "/admin/settings") return new Response(null, { status: 302, headers: { Location: link("/admin", session!) } });
     if (url.pathname == "/admin/credentials") return new Response(null, { status: 302, headers: { Location: link("/admin/api-keys", session!) } });
-    if (!unlocked) return unlockFirst(url.pathname, session!);
+
     if (url.pathname == "/admin/changes") {
       const before = Number(url.searchParams.get("before"));
       return changesPage(platform, session!, Number.isInteger(before) && before > 0 ? before : undefined);
@@ -61,7 +57,7 @@ export async function adminDoor(platform: Platform, request: Request): Promise<R
   }
   if (request.method != "POST") return notFound();
   if (!admin) return Response.json({ error: "Only an admin can do that." }, { status: session ? 403 : 401 });
-  if (!unlocked) return Response.json({ error: LOCKED, locked: true }, { status: 403 });
+
   if (request.headers.get("origin") != url.origin) return Response.json({ error: "Forbidden" }, { status: 403 });
   const form = await request.formData();
   const field = (name: string) => String(form.get(name) ?? "");

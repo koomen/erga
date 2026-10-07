@@ -35,7 +35,7 @@ function fresh(secret: string | null = "the factory key", fallback: string[] = [
   const dir = new Directory(sql, { admins: ["ada"], credentialSecret: secret, fallback: (env) => fallback.includes(env) });
   return { db, sql, dir };
 }
-const ada = { login: "ada", unlocked: { key: "laptop", until: Date.now() + 3_600_000 } };
+const ada = { login: "ada", admin: true };
 
 test("a key is stored encrypted: the table and the change log never hold it; the list shows only its last four characters", async () => {
   const { db, dir } = fresh();
@@ -76,10 +76,10 @@ test("a fresh IV each time; another secret (staging, with a copy of production's
   expect(await dir.credentials.value("anthropic")).toBeNull();
 });
 
-test("admins only, unlocked; a key that isn't one, or a server with no secret, is refused saying why", async () => {
+test("admins only, with admin power; a key that isn't one, or a server with no secret, is refused saying why", async () => {
   const { dir } = fresh();
   await expect(dir.credentials.set({ login: "mallory" }, "anthropic", ANTHROPIC)).rejects.toThrow(NotAllowed);
-  await expect(dir.credentials.list({ login: "ada" })).rejects.toThrow(/locked/);
+  await expect(dir.credentials.list({ login: "ada" })).rejects.toThrow(/no admin power/);
   await expect(dir.credentials.set(ada, "gemini", ANTHROPIC)).rejects.toThrow(/no key "gemini"/);
   expect(() => checkKey("anthropic", "sk-ant-oat01-" + "z".repeat(40))).toThrow(/Claude plan token/);
   expect(() => checkKey("anthropic", OPENAI)).toThrow(/starts with sk-ant-/);
@@ -120,7 +120,7 @@ test("the code that calls the providers reads the stored key first, else the Wor
 
 // The real page, on the real directory: the section, the browser's Set, Replace and Clear.
 const { dir } = fresh("the factory key", ["ANTHROPIC_API_KEY"]);
-const session = { login: "ada", name: "Ada", unlocked: ada.unlocked } as unknown as Session;
+const session = { login: "ada", name: "Ada", admin: true } as unknown as Session;
 const platform = { sessionOf: async () => session, directory: dir } as unknown as Platform;
 let claude: { signedIn: boolean; at: string | null; by: string | null; canStore: boolean; token?: string } = { signedIn: false, at: null, by: null, canStore: true };
 const server = Bun.serve({

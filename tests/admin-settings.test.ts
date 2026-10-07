@@ -30,7 +30,7 @@ const users = ["alice", "bob", "carol"].map((login) => ({ login, name: login, ro
 const platform = {
   sessionOf: async () => ({ login: "bob", name: "bob" }),
   directory: {
-    users: { isAdmin: async () => true, isUnlocked: async () => true, list: async () => users },
+    users: { isAdmin: async () => true, actsAsAdmin: async () => true, list: async () => users },
     config: {
       settings: {},
       list: async () => entries,

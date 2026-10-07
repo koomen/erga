@@ -16,7 +16,8 @@
 //   POST /mcp                      the same tools as a stateless MCP server (Streamable HTTP, JSON answers)
 //   GET  /api/docs/<id>/tree       a document's file tree; POST does a tree operation (tree.ts). For people
 //                                  signed in (the tree's UI) as well as tokens
-//   /settings, /tokens/...         a person's settings: their tokens (make, revoke, approve an agent's request); /tokens redirects there
+//   /tokens, /tokens/...           a person's tokens: make one (a scope, an expiry), revoke one, approve or deny an agent's request
+//   /settings                      their settings: the test token, and a link to /tokens
 //
 // The Worker (worker/index.ts) sends those paths here, with the platform
 // that knows agent tokens (front.ts, withTokens). The share button's token
@@ -38,7 +39,7 @@ import type { PublishRequest } from "./versions";
 import { accessOf, appPage, brand, esc, forwarded, fromElsewhere, ICON, ID, makeDoc, newDocId, page, safeNext, startingFiles, TIMES_SCRIPT, type Platform, type Session, whoOf } from "./front";
 import { findDocument, runServerTool, SERVER_TOOLS, ToolError, type ToolWho } from "./server-tools";
 import { cleanRel } from "./host";
-import { LABEL_MAX, normalCode, REQUEST_MINUTES, type AgentToken } from "./tokens";
+import { LABEL_MAX, normalCode, REQUEST_MINUTES, SCOPES, ScopeError, type AgentToken, type Scope } from "./tokens";
 import { LOCKED } from "./users";
 
 // ---------------------------------------------------------------- the registry
@@ -60,6 +61,8 @@ export interface ServerTool {
   readonly parameters: ArgsSchema;
   /** Only for server admins: listed only for an admin's token. */
   readonly admin?: boolean;
+  /** Reaches beyond one document (lists or makes documents, manages tokens): never for a document token (tokens.ts). */
+  readonly wide?: boolean;
   /** Its answer: text, JSON (shown as text), or content items (text, images). Throws a ToolError the agent can act on. */
   run(args: Record<string, unknown>, ctx: ToolContext): Promise<string | object | ToolContent[]>;
 }
@@ -78,12 +81,16 @@ const FILES_ARG = {
 export const TOOLS: ServerTool[] = [
   {
     name: "whoami",
-    description: "Who your token stands for, and what it's called.",
+    description: "Who your token stands for, what it's called, its scope (document, documents or admin), its document (for the document scope) and when it expires.",
     parameters: { type: "object", properties: {} },
-    run: async (_args, { session, origin }) => ({ login: session.login, name: session.name, token: { id: session.agent.id, label: session.agent.label }, server: origin }),
+    run: async (_args, { session, origin }) => ({
+      login: session.login, name: session.name, server: origin,
+      token: { id: session.agent.id, label: session.agent.label, scope: session.agent.scope, ...(session.agent.docId ? { document: session.agent.docId } : {}), expires: session.agent.expires ? new Date(session.agent.expires).toISOString() : null },
+    }),
   },
   {
     name: "list_documents",
+    wide: true,
     description: "The person's documents, most recently edited first: id, title, address, URL, when it was last edited, and when it goes if nobody edits it (only for never-edited ones).",
     parameters: { type: "object", properties: {} },
     run: async (_args, { session, platform, origin }) => (await platform.docs.list(session.login)).map((d) => ({
@@ -93,6 +100,7 @@ export const TOOLS: ServerTool[] = [
   },
   {
     name: "create_document",
+    wide: true,
     description: `Makes a new document and answers its URL. With files, it's those files (publishing a site or a page: a folder with index.html or index.md, plus its styles, scripts and images), and it stays. Without files it's a blank page (or a copy of the server's front page, template: "landing"), which goes if nobody edits it in time (the server's delete_docs_after_hours setting, unless that's never; it says when). The title follows the page's first heading unless you give one; the address (/<owner>/<slug>) follows the title unless you give a slug.`,
     parameters: {
       type: "object",
@@ -175,14 +183,16 @@ export const TOOLS: ServerTool[] = [
   },
   {
     name: "list_tokens",
+    wide: true,
     description: "The person's agent tokens (never the tokens themselves): id, label, when made and last used.",
     parameters: { type: "object", properties: {} },
     run: async (_args, { session, platform }) => (await platform.tokens.list(session.login)).map((t) => ({
-      id: t.id, label: t.label, kind: t.kind, created: new Date(t.created).toISOString(), lastUsed: t.lastUsed ? new Date(t.lastUsed).toISOString() : null, ...(t.id == session.agent.id ? { yours: true } : {}),
+      id: t.id, label: t.label, kind: t.kind, scope: t.scope, ...(t.docId ? { document: t.docId } : {}), expires: t.expires ? new Date(t.expires).toISOString() : null, created: new Date(t.created).toISOString(), lastUsed: t.lastUsed ? new Date(t.lastUsed).toISOString() : null, ...(t.id == session.agent.id ? { yours: true } : {}),
     })),
   },
   {
     name: "revoke_token",
+    wide: true,
     description: "Turns one of the person's agent tokens off, by id (list_tokens). Revoking your own ends your access.",
     parameters: { type: "object", properties: { id: str("The token's id.") }, required: ["id"] },
     run: async (args, { session, platform }) => {
@@ -232,10 +242,11 @@ const sharedTools: ServerTool[] = SERVER_TOOLS.map((t) => ({
 /** Every tool: the server's, then those the editor's agent has too, then the documents'. */
 export const allTools = (): ServerTool[] => [...TOOLS, ...sharedTools, ...documentTools()];
 
-/** The tools someone may use (all of them, admin ones marked so, for no one in particular). */
+/** The tools someone may use (all of them, admin ones marked so, for no one in particular): no admin ones without admin power, no wide ones for a document token. */
 export async function toolsFor(ctx: ToolContext | null): Promise<ServerTool[]> {
-  const admin = ctx ? await ctx.platform.directory.users.isUnlocked(whoOf(ctx.session)) : true;
-  return allTools().filter((t) => admin || !t.admin);
+  const admin = ctx ? await ctx.platform.directory.users.actsAsAdmin(whoOf(ctx.session)) : true;
+  const one = ctx?.session.onlyDoc != null;
+  return allTools().filter((t) => (admin || !t.admin) && !(one && t.wide));
 }
 const specOf = (t: ServerTool): ToolSpec => ({ name: t.name, description: t.description, parameters: t.parameters });
 
@@ -243,9 +254,10 @@ const specOf = (t: ServerTool): ToolSpec => ({ name: t.name, description: t.desc
 async function runTool(name: string, args: unknown, ctx: ToolContext): Promise<ToolContent[]> {
   const tool = allTools().find((t) => t.name == name);
   if (!tool) throw new ToolError(`There's no tool named "${name}". The tools are: ${(await toolsFor(ctx)).map((t) => t.name).join(", ")}.`, 404);
-  if (tool.admin && !(await ctx.platform.directory.users.isUnlocked(whoOf(ctx.session)))) {
+  if (tool.admin && !(await ctx.platform.directory.users.actsAsAdmin(whoOf(ctx.session)))) {
     throw new ToolError((await ctx.platform.directory.users.isAdmin(whoOf(ctx.session))) ? `${name} needs an admin token: ${LOCKED}` : `${name} is for the server's admins only, and ${ctx.session.login} isn't one.`, 403);
   }
+  if (tool.wide && ctx.session.onlyDoc != null) throw new ToolError(`${name} isn't for a document token: this token reaches one document only. Make a token with the documents scope at ${ctx.origin}/tokens.`, 403);
   if (args == null) args = {};
   if (typeof args != "object" || Array.isArray(args)) throw new ToolError("The arguments must be a JSON object.");
   const a = args as Record<string, unknown>;
@@ -536,7 +548,7 @@ async function rpc(m: RpcMessage, ctx: ToolContext): Promise<object | null> {
         protocolVersion: MCP_VERSIONS.includes(asked) ? asked : MCP_VERSIONS[0],
         capabilities: { tools: { listChanged: false } },
         serverInfo: { name: "erga", title: "Erga", version: "1.0.0" },
-        instructions: `Erga (${ctx.origin}) as ${ctx.session.name} (${ctx.session.login}): list, make (publish files as a site), rename, share and delete their documents, read and edit any document they may edit (name it with "document")${(await ctx.platform.directory.users.isUnlocked(whoOf(ctx.session))) ? ", and, as they're an admin with an admin token, read and change the server's settings and users" : ""}. The full guide: ${ctx.origin}/api/ext.`,
+        instructions: `Erga (${ctx.origin}) as ${ctx.session.name} (${ctx.session.login}): list, make (publish files as a site), rename, share and delete their documents, read and edit any document they may edit (name it with "document")${(await ctx.platform.directory.users.actsAsAdmin(whoOf(ctx.session))) ? ", and, as they're an admin with an admin token, read and change the server's settings and users" : ""}.${ctx.session.onlyDoc != null ? ` This token reaches one document only (id ${ctx.session.onlyDoc}).` : ""} The full guide: ${ctx.origin}/api/ext.`,
       });
     }
     case "ping": return ok({});
@@ -556,34 +568,55 @@ async function rpc(m: RpcMessage, ctx: ToolContext): Promise<object | null> {
 
 // ---------------------------------------------------------------- asking for a token
 
-/** POST /api/auth/request {label}: a link for the person to approve, and a code to poll with. */
+/** A token's expiry as given: an ISO 8601 time, a date (the end of that day, UTC), milliseconds since the epoch, or nothing (never). */
+function expiryOf(v: unknown): number | null | "bad" {
+  if (v == null || v === "") return null;
+  if (typeof v == "number") return Number.isFinite(v) ? v : "bad";
+  if (typeof v != "string") return "bad";
+  const s = v.trim();
+  const t = /^\d{4}-\d{2}-\d{2}$/.test(s) ? Date.parse(`${s}T23:59:59Z`) : /^\d+$/.test(s) ? Number(s) : Date.parse(s);
+  return Number.isFinite(t) ? t : "bad";
+}
+
+/** POST /api/auth/request {label, scope, doc?, expires?}: a link for the person to approve, and a code to poll with. */
 async function askForToken(request: Request, platform: Platform, origin: string): Promise<Response> {
-  const body = (await request.json().catch(() => ({}))) as { label?: unknown };
-  const r = await platform.tokens.request(typeof body?.label == "string" ? body.label : null);
+  const body = (await request.json().catch(() => ({}))) as { label?: unknown; scope?: unknown; doc?: unknown; expires?: unknown };
+  const scope = body?.scope ?? "documents";
+  if (!SCOPES.includes(scope as Scope)) return failure(`scope must be "document" (one document: give doc), "documents" or "admin".`, 400);
+  const expires = expiryOf(body?.expires);
+  if (expires == "bad") return failure("expires must be a time (ISO 8601, e.g. 2026-12-31T00:00:00Z), a date, or left out for a token that lasts until it's revoked.", 400);
+  let r;
+  try {
+    r = await platform.tokens.request(typeof body?.label == "string" ? body.label : null, { scope: scope as Scope, docId: typeof body?.doc == "string" ? body.doc : null, expires });
+  } catch (e) {
+    if (e instanceof ScopeError) return failure(e.message, 400);
+    throw e;
+  }
   const approve = `${origin}/tokens/approve?code=${r.userCode}`;
   return json({
-    ok: true, code: r.code, user_code: r.userCode, label: r.label, approve_url: approve,
+    ok: true, code: r.code, user_code: r.userCode, label: r.label, scope, approve_url: approve,
     poll_url: `${origin}/api/auth/poll`, interval: 2, expires_in: Math.round((r.expires - Date.now()) / 1000),
-    next: `Ask your person to open ${approve} (signed in to Erga) and approve "${r.label}". Meanwhile POST {"code": "${r.code}"} to ${origin}/api/auth/poll every couple of seconds: it answers 202 while waiting and 200 with the token once they've approved.`,
+    next: `Ask your person to open ${approve} (signed in to Erga) and approve "${r.label}" (scope: ${scope}). Meanwhile POST {"code": "${r.code}"} to ${origin}/api/auth/poll every couple of seconds: it answers 202 while waiting and 200 with the token once they've approved.`,
   });
 }
 
-/** POST /api/auth/poll {code}: 202 waiting, 200 with the token (once), 410 if it expired or was collected. */
+/** POST /api/auth/poll {code}: 202 waiting, 200 with the token (once), 410 if it expired, was denied or was collected. */
 async function pollForToken(request: Request, platform: Platform): Promise<Response> {
   const body = (await request.json().catch(() => ({}))) as { code?: unknown };
   if (typeof body?.code != "string") return failure("Send {\"code\": \"...\"}, the code /api/auth/request gave you.", 400);
   const r = await platform.tokens.collect(body.code);
   if (r.status == "pending") return json({ ok: false, status: "pending", error: "Not approved yet: ask again in a couple of seconds." }, 202);
-  if (r.status == "gone") return json({ ok: false, status: "gone", error: `That request expired (they last ${REQUEST_MINUTES} minutes) or its token was already collected: ask again.` }, 410);
+  if (r.status == "gone") return json({ ok: false, status: "gone", error: `That request expired (they last ${REQUEST_MINUTES} minutes), was denied, or its token was already collected: ask again.` }, 410);
   return json({ ok: true, status: "approved", token: r.token, login: r.login });
 }
 
 // ---------------------------------------------------------------- /tokens
 
 /**
- * /tokens: the signed-in person's agent tokens (make one, revoke one),
- * approving an agent's request (/tokens/approve?code=), and, where the
- * platform makes them, a test token for running the test suite.
+ * /tokens: the signed-in person's tokens (make one with a scope and an
+ * optional expiry, revoke one), approving or denying an agent's request
+ * (/tokens/approve?code=), and, where the platform makes them, a test token
+ * for running the test suite. /settings is the same page.
  */
 export async function tokensDoor(request: Request, platform: Platform): Promise<Response> {
   const url = new URL(request.url), path = url.pathname.replace(/\/+$/, "");
@@ -592,77 +625,125 @@ export async function tokensDoor(request: Request, platform: Platform): Promise<
   if (session.agent) return page("Not for agents", "Tokens are made and approved by people, signed in.", 403);
   if (session.test) return page("Not for test people", "Sign in as yourself to make a token.", 403);
   const post = request.method == "POST";
-  // Only this site's own pages may make, revoke or approve.
+  // Only this site's own pages may make, revoke, approve or deny.
   if (post && request.headers.get("origin") != url.origin) return new Response("Forbidden", { status: 403 });
   const form = post ? await request.formData() : null;
   const field = (k: string) => String(form?.get(k) ?? "");
   const who = { login: session.login, name: session.name };
+  const error = (message: string) => `<p class="notice error">${esc(message)}</p>`;
 
   if (path == "/tokens/approve") {
     const code = normalCode(post ? field("code") : url.searchParams.get("code") ?? "");
     const waiting = await platform.tokens.pending(code);
-    if (!waiting) return tokensPage(platform, session, url, { notice: `<p class="notice error">That request (${esc(code)}) has expired or was already approved. Ask the agent to start again.</p>` });
-    if (!post) {
-      return tokensPage(platform, session, url, {
-        notice: `<section class="card approve"><h2>An agent asks to act as you</h2>
-<p><b>${esc(waiting.label)}</b> wants a token to do everything you can do in Erga. Approve only if you started this and the code matches:</p>
-<p class="code">${esc(code)}</p>
-<form class="buttons" method="post" action="/tokens/approve"><input type="hidden" name="code" value="${esc(code)}"><button class="new">Approve</button><a href="/settings">Not now</a></form></section>`,
-      });
+    if (!waiting) return tokensPage(platform, session, url, { notice: error(`That request (${code}) has expired, or was already approved or denied. Ask the agent to start again.`) });
+    if (post && field("answer") == "deny") {
+      await platform.tokens.deny(code);
+      return tokensPage(platform, session, url, { notice: `<p class="notice">Denied: <b>${esc(waiting.label)}</b> gets no token.</p>` });
     }
-    const info = await platform.tokens.approve(code, who);
-    return tokensPage(platform, session, url, { notice: info ? `<p class="notice">Approved: <b>${esc(info.label)}</b> has its token now. Go back to it. You can revoke it below at any time.</p>` : `<p class="notice error">That request has expired.</p>` });
+    if (!post) return tokensPage(platform, session, url, { notice: await approvalCard(platform, session, code, waiting) });
+    try {
+      const info = await platform.tokens.approve(code, who);
+      return tokensPage(platform, session, url, { notice: info ? `<p class="notice">Approved: <b>${esc(info.label)}</b> has its token now. Go back to it. You can revoke it below at any time.</p>` : error("That request has expired.") });
+    } catch (e) {
+      if (e instanceof ScopeError) return tokensPage(platform, session, url, { notice: error(`${e.message} The request is still waiting: deny it, or ask the agent for another scope.`) });
+      throw e;
+    }
   }
   if (path == "/tokens/new" && post) {
-    const { token, info } = await platform.tokens.mint(who, field("label") || "Agent");
-    return tokensPage(platform, session, url, { made: { token, label: info.label } });
+    const scope = (field("scope") || "documents") as Scope;
+    const expires = expiryOf(field("expires"));
+    if (expires == "bad") return tokensPage(platform, session, url, { notice: error("That expiry isn't a date.") });
+    try {
+      const { token, info } = await platform.tokens.mint(who, field("label") || "Agent", { scope, docId: field("doc") || null, expires });
+      return tokensPage(platform, session, url, { made: { token, info } });
+    } catch (e) {
+      if (e instanceof ScopeError) return tokensPage(platform, session, url, { notice: error(e.message) });
+      throw e;
+    }
   }
   if (path == "/tokens/revoke" && post) {
     await platform.tokens.revoke(session.login, field("id"));
-    return new Response(null, { status: 303, headers: { Location: "/settings" } });
+    return new Response(null, { status: 303, headers: { Location: "/tokens" } });
   }
-  // Tokens live on the settings page now; old links still get there.
-  if (path == "/tokens") return new Response(null, { status: 302, headers: { Location: "/settings" } });
-  if (path != "/settings") return page("Not found", "There's nothing here. <a href=\"/settings\">Your settings</a>.", 404);
+  if (path != "/tokens" && path != "/settings") return page("Not found", "There's nothing here. <a href=\"/tokens\">Your tokens</a>.", 404);
   return tokensPage(platform, session, url, {});
 }
 
-async function tokensPage(platform: Platform, session: Session, url: URL, o: { notice?: string; made?: { token: string; label: string } }): Promise<Response> {
+const SCOPE_NAMES: Record<Scope, string> = { document: "One document", documents: "All my documents", admin: "Admin" };
+
+/** A document token's document, as a line shows it: its title and address, or "a document that's gone". */
+async function docLabel(platform: Platform, ref: string | null): Promise<string> {
+  const doc = ref ? await platform.directory.find(ref) : null;
+  return doc ? `${esc(nameOf(doc).title)} <span class="addr">${esc(nameOf(doc).address)}</span>` : `<span class="never">a document that's gone</span>`;
+}
+
+const day = (t: number) => `<time class="day" datetime="${new Date(t).toISOString()}">${new Date(t).toISOString().slice(0, 10)}</time>`;
+
+/** The card on /tokens/approve: what the agent asks for, and Approve (if the person may give it) or Deny. */
+async function approvalCard(platform: Platform, session: Session, code: string, waiting: { label: string; grant: { scope: Scope; docId: string | null; expires: number | null } }): Promise<string> {
+  const g = waiting.grant;
+  const may = await platform.tokens.check({ login: session.login, name: session.name }, g).then(() => null, (e) => (e instanceof ScopeError ? e.message : "This request can't be approved."));
+  const what = g.scope == "document" ? `one document: ${await docLabel(platform, g.docId)}. It can do there what you can do, and nothing anywhere else.`
+    : g.scope == "documents" ? "all your documents: everything you can do with documents, but no admin power."
+    : "everything you can do in Erga, admin power included (the server's settings, its users, pushes to its source).";
+  return `<section class="card approve"><h2>An agent asks to act as you</h2>
+<p><b>${esc(waiting.label)}</b> wants a token for ${what}</p>
+<dl class="grant"><dt>Scope</dt><dd class="scope-${g.scope}">${SCOPE_NAMES[g.scope]}</dd><dt>Expires</dt><dd>${g.expires ? day(g.expires) : "Never (until you revoke it)"}</dd></dl>
+<p>Approve only if you started this and the code matches:</p>
+<p class="code">${esc(code)}</p>
+${may ? `<p class="notice error">${esc(may)}</p>` : ""}
+<form class="buttons" method="post" action="/tokens/approve"><input type="hidden" name="code" value="${esc(code)}">${may ? "" : `<button class="new" name="answer" value="approve">Approve</button>`}<button class="deny" name="answer" value="deny">Deny</button></form></section>`;
+}
+
+async function tokensPage(platform: Platform, session: Session, url: URL, o: { notice?: string; made?: { token: string; info: AgentToken } }): Promise<Response> {
   const origin = url.origin;
-  const list = await platform.tokens.list(session.login);
+  const [list, docs, admin] = await Promise.all([
+    platform.tokens.list(session.login), platform.docs.list(session.login), platform.directory.users.isAdmin(whoOf(session)),
+  ]);
   const when = (t: number | null) => (t ? `<time datetime="${new Date(t).toISOString()}">${new Date(t).toISOString().slice(0, 10)}</time>` : `<span class="never">Never</span>`);
-  // Rows as the documents list's: its name (and whether it's the share button's), when it was made, when it was last used, revoke on hover.
-  const rows = list.map((t) => `  <li>
+  const scopeCell = async (t: AgentToken) => t.scope == "document" ? `<span class="scope">One document</span> ${await docLabel(platform, t.docId)}` : `<span class="scope">${SCOPE_NAMES[t.scope]}</span>`;
+  // Rows as the documents list's: its name (and whether it's the share button's), its scope, when it expires, when it was last used, revoke on hover.
+  const rows = (await Promise.all(list.map(async (t) => `  <li${t.expires != null && t.expires <= Date.now() ? ` class="expired"` : ""}>
     <div class="name"><span class="title">${esc(t.label)}</span>${t.kind == "share" ? `<span class="note">Share button</span>` : ""}</div>
-    ${when(t.created)}
+    <div class="what">${await scopeCell(t)}</div>
+    ${t.expires ? (t.expires <= Date.now() ? `<span class="never">Expired</span>` : day(t.expires)) : `<span class="never">Never</span>`}
     ${when(t.lastUsed)}
     <div class="acts"><form method="post" action="/tokens/revoke" data-label="${esc(t.label)}"><input type="hidden" name="id" value="${esc(t.id)}"><button class="act" aria-label="Revoke ${esc(t.label)}" data-tip="Revoke">${ICON.delete}</button></form></div>
-  </li>`).join("\n");
-  const made = o.made ? `<section class="card made"><h2>${esc(o.made.label)}</h2>
-<p>Copy it now: it isn't shown again.</p>
-<pre class="secret">${esc(o.made.token)}</pre>
+  </li>`))).join("\n");
+  const m = o.made;
+  const made = m ? `<section class="card made"><h2>${esc(m.info.label)}</h2>
+<p>${SCOPE_NAMES[m.info.scope]}${m.info.scope == "document" ? `: ${await docLabel(platform, m.info.docId)}` : ""}. ${m.info.expires ? `Expires ${day(m.info.expires)}.` : "It lasts until you revoke it."} Copy it now: it isn't shown again.</p>
+<pre class="secret">${esc(m.token)}</pre>
 <p>Tell your agent:</p>
-<pre>Erga's API is at ${esc(origin)}: read ${esc(origin)}/llms.txt first. My token is ${esc(o.made.token)}
+<pre>Erga's API is at ${esc(origin)}: read ${esc(origin)}/llms.txt first. My token is ${esc(m.token)}
 (send it as "Authorization: Bearer &lt;token&gt;").</pre>
 <p>Or add Erga to Claude Code:</p>
-<pre>claude mcp add --transport http erga ${esc(origin)}/mcp --header "Authorization: Bearer ${esc(o.made.token)}"</pre></section>` : "";
+<pre>claude mcp add --transport http erga ${esc(origin)}/mcp --header "Authorization: Bearer ${esc(m.token)}"</pre>${m.info.scope == "admin" ? `
+<p>To push to Erga's source with it (README, Tokens), once:</p>
+<pre>git remote set-url origin ${esc(origin)}/git/erga.git
+printf 'protocol=${esc(url.protocol.replace(":", ""))}\\nhost=${esc(url.host)}\\nusername=token\\npassword=${esc(m.token)}\\n\\n' | git credential approve</pre>` : ""}</section>` : "";
   const test = platform.testToken ? await platform.testToken(session.login) : null;
   const testBlock = test ? `<section class="part">
   <h2>Test token</h2>
-  <p class="sub">Runs the test suite here, as test people, on test documents only. Until <time class="day" datetime="${test.expires.toISOString()}">${test.expires.toISOString().slice(0, 10)}</time>.</p>
+  <p class="sub">Runs the test suite here, as test people, on test documents only. Until ${day(test.expires.getTime())}.</p>
   <pre>ERGA_TEST_TOKEN=<span class="secret">${esc(test.token)}</span> bun run test:prod</pre>
 </section>` : "";
+  const docOptions = docs.map((d) => `<option value="${esc(d.id)}">${esc(d.title)} (/${esc(d.owner)}/${esc(d.slug)})</option>`).join("");
   const style = `
   .part { margin-bottom: 56px; }
   .part h2 { margin: 0; font-size: 17px; font-weight: 620; letter-spacing: -0.01em; color: var(--fg-strong); }
   .part > header { margin-bottom: 20px; align-items: flex-end; }
   .part > .sub { margin-bottom: 16px; }
   .part .sub a { color: inherit; text-decoration-color: var(--rule); text-underline-offset: 0.2em; }
-  .labels, ol.rows > li { display: grid; grid-template-columns: minmax(0, 1fr) 9rem 9rem 40px; align-items: center; column-gap: 16px; }
+  .labels, ol.rows > li { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr) 7rem 7rem 40px; align-items: center; column-gap: 16px; }
   .labels { padding-bottom: 8px; border-bottom: 1px solid var(--rule); font-size: 12px; font-weight: 500; color: var(--chrome); }
   ol.rows > li, ol.rows > li:first-child { border: 0; }
+  ol.rows > li.expired { opacity: 0.55; }
   ol.rows { padding-top: 6px; margin-bottom: 20px; }
   .name { min-width: 0; display: flex; align-items: center; gap: 12px; padding: 11px 0; }
+  .what { min-width: 0; font-size: 13px; color: var(--soft); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .scope { font-weight: 550; color: var(--fg-strong); }
+  .addr { color: var(--chrome); }
   .note { padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 500; color: var(--soft); background: color-mix(in srgb, var(--chrome) 13%, transparent); }
   time, .never { margin: 0; text-align: left; font-size: 13px; color: var(--soft); }
   .acts { display: flex; justify-content: flex-end; }
@@ -671,32 +752,55 @@ async function tokensPage(platform: Platform, session: Session, url: URL, o: { n
     white-space: pre; font: 400 12px/1.3 var(--font-text); letter-spacing: 0.01em; color: var(--soft); opacity: 0; pointer-events: none; }
   @media (hover: hover) { .acts .act[data-tip]:hover::after { opacity: 1; } }
   .empty { margin-bottom: 20px; padding: 32px 24px; }
-  form.add { display: flex; gap: 8px; max-width: 520px; }
-  form.add .input { flex: 1; }
+  form.add { display: grid; gap: 14px; max-width: 560px; padding: 18px 20px; border: 1px solid var(--rule); border-radius: 12px; }
+  form.add h3 { margin: 0; font-size: 15px; font-weight: 600; color: var(--fg-strong); }
+  form.add label.field { display: grid; gap: 6px; font-size: 13px; font-weight: 500; color: var(--soft); }
+  form.add fieldset { margin: 0; padding: 0; border: 0; display: grid; gap: 8px; }
+  form.add legend { margin-bottom: 6px; font-size: 13px; font-weight: 500; color: var(--soft); }
+  form.add .choice { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--fg-strong); }
+  form.add .choice small { color: var(--soft); font-size: 12.5px; }
+  form.add select, form.add input[type=date] { font: inherit; font-size: 14px; padding: 6px 8px; border: 1px solid var(--rule); border-radius: 8px; background: transparent; color: var(--fg-strong); max-width: 100%; }
+  form.add .doc-pick { margin-left: 26px; }
+  form.add .buttons { display: flex; }
   .card { margin: 0 0 24px; padding: 18px 20px; border: 1px solid var(--rule); border-radius: 12px; font-size: 14px; }
   .card h2 { margin: 0 0 8px; font-size: 15px; font-weight: 600; color: var(--fg-strong); }
   .card p { margin: 0 0 10px; }
   .made, .approve { border-color: var(--caret); }
   .card .buttons { display: flex; align-items: center; gap: 12px; }
-  .card .buttons a { color: var(--soft); font-size: 13.5px; }
-  .card button.new { font: inherit; font-size: 13.5px; font-weight: 550; }
+  .card button.new, .card button.deny { font: inherit; font-size: 13.5px; font-weight: 550; }
+  .card button.deny { padding: 6px 12px; border: 1px solid var(--rule); border-radius: 999px; background: transparent; color: var(--soft); cursor: pointer; }
+  dl.grant { display: grid; grid-template-columns: auto 1fr; gap: 4px 16px; margin: 0 0 12px; font-size: 14px; }
+  dl.grant dt { color: var(--soft); }
+  dl.grant dd { margin: 0; font-weight: 550; color: var(--fg-strong); }
+  dl.grant dd.scope-admin { color: #c2410c; }
   pre { margin: 0 0 12px; padding: 10px 12px; border-radius: 8px; background: color-mix(in srgb, var(--chrome) 9%, transparent); font: 12.5px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; word-break: break-all; color: var(--fg-strong); }
   .secret { user-select: all; }
   .code { font: 600 26px/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: 0.08em; color: var(--fg-strong); }
   .notice { margin: 0 0 24px; padding: 12px 14px; border-radius: 10px; font-size: 14px; background: color-mix(in srgb, var(--caret) 10%, transparent); }
   .notice.error { background: color-mix(in srgb, #c2410c 12%, transparent); }
-  @media (max-width: 520px) { .labels { display: none; } .labels, ol.rows > li { grid-template-columns: minmax(0, 1fr) auto 40px; } ol.rows time:nth-of-type(2), ol.rows .never:nth-of-type(2) { display: none; } }
+  @media (max-width: 620px) { .labels { display: none; } .labels, ol.rows > li { grid-template-columns: minmax(0, 1fr) auto 40px; } ol.rows .what, ol.rows > li > time:nth-of-type(2), ol.rows > li > .never:nth-of-type(2) { display: none; } }
 `;
-  const html = appPage("Settings", style, `${brand(session)}<main>
-  <header><div><h1>Settings</h1></div></header>
+  const html = appPage("Tokens", style, `${brand(session)}<main>
+  <header><div><h1>Tokens</h1></div></header>
   ${o.notice ?? ""}
   ${made}
   <section class="part">
-  <h2>Agent tokens</h2>
-  <p class="sub">Agents (Claude Code, Codex, etc.) can do everything you can do in Erga. <a href="/llms.txt">Point them here</a>.</p>
-  ${list.length ? `<div class="labels" aria-hidden="true"><span>Name</span><span>Made</span><span>Last used</span><span></span></div>
+  <h2>Your tokens</h2>
+  <p class="sub">A token lets an agent or a script (Claude Code, Codex, git) act as you, within its scope. <a href="/llms.txt">Point agents here</a>.</p>
+  ${list.length ? `<div class="labels" aria-hidden="true"><span>Name</span><span>Scope</span><span>Expires</span><span>Last used</span><span></span></div>
   <ol class="rows">\n${rows}\n  </ol>` : `<p class="empty">No tokens yet.</p>`}
-  <form class="add" method="post" action="/tokens/new"><input class="input" name="label" maxlength="${LABEL_MAX}" placeholder="What it's for: Claude Code on my laptop" aria-label="What the token is for" autocomplete="off"><button class="pill">${ICON.plus}New token</button></form>
+  <form class="add" method="post" action="/tokens/new">
+    <h3>New token</h3>
+    <label class="field">Name<input class="input" name="label" maxlength="${LABEL_MAX}" placeholder="What it's for: Claude Code on my laptop" autocomplete="off"></label>
+    <fieldset><legend>Scope</legend>
+      <label class="choice"><input type="radio" name="scope" value="document"${docs.length ? "" : " disabled"}> One document <small>only that document, with your rights there</small></label>
+      <select class="doc-pick" name="doc" aria-label="The document"${docs.length ? "" : " disabled"}>${docOptions || `<option value="">You have no documents</option>`}</select>
+      <label class="choice"><input type="radio" name="scope" value="documents" checked> All my documents <small>everything you can do with documents, no admin power</small></label>
+      ${admin ? `<label class="choice"><input type="radio" name="scope" value="admin"> Admin <small>everything you can do, admin power and git push included</small></label>` : ""}
+    </fieldset>
+    <label class="field">Expires (optional)<input type="date" name="expires" min="${new Date(Date.now() + 86_400_000).toISOString().slice(0, 10)}" aria-label="Expiry date"></label>
+    <div class="buttons"><button class="pill">${ICON.plus}Make token</button></div>
+  </form>
   </section>
   ${testBlock}
 </main>
@@ -704,27 +808,30 @@ async function tokensPage(platform: Platform, session: Session, url: URL, o: { n
   ${TIMES_SCRIPT}
   for (const t of document.querySelectorAll("time.day")) t.textContent = new Date(t.dateTime).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
   for (const f of document.querySelectorAll("form[data-label]")) f.addEventListener("submit", (e) => { if (!confirm("Revoke \\u201c" + f.dataset.label + "\\u201d? Agents using it lose access at once.")) e.preventDefault(); });
+  // Picking a document picks the one-document scope.
+  const pick = document.querySelector(".doc-pick"), one = document.querySelector("input[name=scope][value=document]");
+  pick?.addEventListener("change", () => { if (one && !one.disabled) one.checked = true; });
 </script>`);
   return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
 }
 
 // ---------------------------------------------------------------- the guide
 
-/** Whether a token's person may use the admin tools now (an admin token), is an admin without one ("locked"), or neither. */
+/** Whether a token's person may use the admin tools now (an admin-scope token), is an admin without one ("locked"), or neither. */
 async function adminStatus(platform: Platform, session: Session): Promise<boolean | "locked"> {
   const users = platform.directory.users, who = whoOf(session);
-  return (await users.isUnlocked(who)) ? true : (await users.isAdmin(who)) ? "locked" : false;
+  return (await users.actsAsAdmin(who)) ? true : (await users.isAdmin(who)) ? "locked" : false;
 }
 
 /**
  * The guide (/llms.txt for anyone; /api/ext, personal, with a token): enough for an agent to start from nothing.
- * `admin`: the admin tools work for this token (an admin token), or "locked": its person is an admin, but this isn't an admin token.
+ * `admin`: the admin tools work for this token (an admin-scope token), or "locked": its person is an admin, but this isn't an admin token.
  */
 export function guide(origin: string, session: ToolContext["session"] | null, adminOrLocked: boolean | "locked"): string {
   const admin = adminOrLocked === true, locked = adminOrLocked == "locked";
   const toolDocs = (tools: ServerTool[]) => tools.map((t) => `### ${t.name}\n\n${t.description}\n\n\`\`\`json\n${JSON.stringify(t.parameters)}\n\`\`\``).join("\n\n");
   const you = session
-    ? `You're signed in as **${session.name}** (${session.login}), with the token "${session.agent.label}". Everything below acts as them.${admin ? " They're an admin of this server, and this is an admin token, so the admin tools are yours too until it ends." : locked ? " They're an admin of this server, but the admin tools need an admin token (below)." : ""}`
+    ? `You're signed in as **${session.name}** (${session.login}), with the token "${session.agent.label}" (scope: ${session.agent.scope}${session.agent.expires ? `, until ${new Date(session.agent.expires).toISOString()}` : ""}). Everything below acts as them.${session.onlyDoc != null ? ` This token reaches one document only (id ${session.onlyDoc}): list_documents, create_document and the token tools are refused, and so is every other document.` : ""}${admin ? " They're an admin of this server, and this is an admin token, so the admin tools are yours too." : locked ? " They're an admin of this server, but the admin tools need an admin token (below)." : ""}`
     : `Nothing here works without a token: get one first (below).`;
   return `# Erga
 
@@ -745,15 +852,25 @@ ${you}
 
 ## Getting a token
 
-Every call carries an agent token that stands for one person:
+Every call carries a token that stands for one person:
 
     Authorization: Bearer erga_...
 
-Your person may give you one (they make it at ${origin}/tokens, or with the
-share button in the editor). If you don't have one, ask for it: no sign-in
-needed on your side.
+Each token has a scope: \`document\` (one document, with the person's rights
+there, and nothing else), \`documents\` (everything they can do with documents,
+but no admin power) or \`admin\` (everything they can do, admin power included,
+while they're an admin; only admins can have one). It may also have an expiry,
+after which it stops working. Ask for the smallest scope that does the job.
 
-    curl -s -X POST ${origin}/api/auth/request -H "Content-Type: application/json" -d '{"label": "Claude Code"}'
+Your person may give you one (they make it at ${origin}/tokens, or with the
+share button in the editor, which gives a documents token). If you don't have
+one, ask for it: no sign-in needed on your side.
+
+    curl -s -X POST ${origin}/api/auth/request -H "Content-Type: application/json" -d '{"label": "Claude Code", "scope": "documents"}'
+
+For one document, \`"scope": "document", "doc": "<its address, URL or id>"\`; for
+an expiry, \`"expires": "2026-12-31T00:00:00Z"\` (or a date). Your person sees
+the scope, the document and the expiry, and approves or denies.
 
 The answer has an \`approve_url\` and a \`code\`. Show your person the
 \`approve_url\` (and the \`user_code\`) and ask them to open it and approve.
@@ -762,9 +879,9 @@ Meanwhile poll, every couple of seconds:
     curl -s -X POST ${origin}/api/auth/poll -H "Content-Type: application/json" -d '{"code": "<code>"}'
 
 It answers 202 while they haven't approved yet, then 200 with \`{"token": "erga_..."}\`
-(once). The request lasts ${REQUEST_MINUTES} minutes. Keep the token somewhere
-safe for later (an environment variable, ERGA_TOKEN): it works until your person
-revokes it at ${origin}/tokens.
+(once), or 410 if they denied it. The request lasts ${REQUEST_MINUTES} minutes. Keep the token somewhere
+safe for later (an environment variable, ERGA_TOKEN): it works until it expires
+or your person revokes it at ${origin}/tokens.
 
 ## Calling the API
 
@@ -779,7 +896,7 @@ The answer is \`{"ok": true, "content": [{"type": "text", "text": "..."}]}\` (th
 text is JSON for the server's own tools; a document tool may answer an image,
 \`{"type": "image", "mimeType": "image/png", "data": "<base64>"}\`). A failure is
 \`{"ok": false, "error": "..."}\` with 400 (fix the call as the error says), 401
-(no token, or a revoked one), 403 (not allowed), 404 (no such tool or document)
+(no token, or a revoked or expired one), 403 (not allowed, or outside the token's scope), 404 (no such tool or document)
 or 413 (too big).
 
 **MCP.** \`${origin}/mcp\` is a stateless MCP server (Streamable HTTP, JSON
@@ -849,13 +966,9 @@ ${toolDocs([...TOOLS, ...sharedTools.filter((t) => !t.admin)])}
 
 ## Admin tools
 
-For the server's admins only, with an admin token: ${session ? (admin ? "yours is one, so these are listed for you and work until it ends." : locked ? `${session.login} is an admin, but this is an agent token, so these aren't listed for it and are refused.` : `${session.login} isn't one, so these aren't listed for your token and are refused.`) : "they work only with an admin token."}
-An admin token stands for an admin who has unlocked admin access with their
-own SSH key, for an hour (at most 12). Your person makes one on their computer,
-with their key and an agent token: \`ERGA_TOKEN=<agent token> bun admin-login.ts ${origin}\`
-(from Erga's repository), which signs a one-time challenge with \`ssh-keygen -Y sign\`
-(\`POST ${origin}/api/admin/challenge\`, then \`POST ${origin}/api/admin/unlock\`).
-Never ask for their private key.
+For the server's admins only, with an admin token (a token with the admin scope): ${session ? (admin ? "yours is one, so these are listed for you and work while your person is an admin." : locked ? `${session.login} is an admin, but this token's scope is ${session.agent.scope}, so these aren't listed for it and are refused.` : `${session.login} isn't one, so these aren't listed for your token and are refused.`) : "they work only with an admin token."}
+Your person makes one at ${origin}/tokens (scope: Admin), or approves your
+request for one (\`"scope": "admin"\`). It works only while they're an admin.
 The settings are the server's own (list_settings says what each does); one the
 deploy locks shows as \`"locked": true\` and can't be changed here. Users are
 everyone who may sign in; an admin by the deploy (\`"bootstrap": true\`) can't

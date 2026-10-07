@@ -1,5 +1,5 @@
 // The layout every admin page shares (/admin, /admin/changes, /admin/users, /admin/factory,
-// /admin/api-keys, /admin/keys): a breadcrumb in the upper left (Erga › Admin › the page),
+// /admin/api-keys): a breadcrumb in the upper left (Erga › Admin › the page),
 // Share with agent in the header bar upper right (the editor's button and
 // card: admin-share.js, built from src/page/admin-share.ts), the admin's agent
 // (the factory's agent, factory/agent.ts: its panel is factory-agent.js, built
@@ -46,7 +46,7 @@ export interface AdminLayout {
   session: Session;
   /** The page's own title, the last crumb. */
   title: string;
-  /** Which sidebar link is this page (none for /admin/keys). */
+  /** Which sidebar link is this page. */
   here?: AdminSection;
   /** The page's own style, after the layout's. */
   style?: string;

@@ -175,11 +175,11 @@ try {
   // Bo may deploy, and nothing more: admin settings, users, the source and the factory stay closed to them.
   for (const [method, path, body] of [
     ["GET", "/admin", null], ["POST", "/admin/settings", { key: "deploy_page", value: '"off"' }], ["POST", "/admin/users", { do: "add", login: "eve", role: "admin" }],
-    ["GET", "/admin/source", null], ["GET", "/api/factory", null], ["GET", "/admin/keys", null],
+    ["GET", "/admin/source", null], ["GET", "/api/factory", null],
   ] as const) {
     const r = await fetch(`${host.root}${path}`, { method, headers: { Cookie: bo, Origin: host.root, Accept: "application/json" }, redirect: "manual", ...(body ? { body: new URLSearchParams(body) } : {}) });
     const text = await r.text();
-    expect(r.status != 200 || (path == "/admin/keys" && !text.includes("users-title")), `Bo can't use ${method} ${path}`, [r.status, text.slice(0, 300)]);
+    expect(r.status != 200, `Bo can't use ${method} ${path}`, [r.status, text.slice(0, 300)]);
   }
   const still = await fetch(`${host.root}/deploy`, { headers: { Cookie: bo }, redirect: "manual" });
   expect(still.status == 200, "the deploy_page setting is unchanged", still.status);

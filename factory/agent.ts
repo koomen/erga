@@ -21,9 +21,8 @@
 // approves each merge by hand on the board; Merge merges into staging, which
 // deploys itself. Task text, logs, summaries and screenshots are written by
 // other agents and can carry instructions, so every call checks that the
-// admin is still unlocked (`guard`), and the system prompt says to treat that
+// person is still an admin (`guard`), and the system prompt says to treat that
 // text as data and to change settings and users only when the admin asks.
-// README, Admin SSH keys, has the risk.
 //
 // An outside agent (Claude Code on a laptop) gets the same powers over HTTP
 // with a factory token (worker/factory.ts, "Share with agent"), and reads
@@ -74,7 +73,7 @@ const full = (t: Task, logLines: number) => ({
 
 const text = (v: unknown) => ({ content: [{ type: "text" as const, text: typeof v == "string" ? v : JSON.stringify(v, null, 2) }], details: {} });
 
-/** The tools. Each one first checks that the admin may still act (`guard`: unlocked, still an admin). */
+/** The tools. Each one first checks that the admin may still act (`guard`: still an admin). */
 export function factoryTools(ops: FactoryOps, guard: () => Promise<void>): AgentTool[] {
   const tool = (name: string, label: string, description: string, parameters: ReturnType<typeof Type.Object>, run: (a: Record<string, unknown>) => Promise<ReturnType<typeof text> | { content: ({ type: "text"; text: string } | { type: "image"; data: string; mimeType: string })[]; details: object }>): AgentTool => ({
     name, label, description, parameters,

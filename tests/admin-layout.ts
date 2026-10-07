@@ -2,7 +2,7 @@
 // The admin pages' shared layout (admin-layout.ts), and who may reach them,
 // on a dev server of its own:
 //
-//   - every admin page (/admin, /admin/changes, /admin/users, /admin/factory, /admin/keys)
+//   - every admin page (/admin, /admin/changes, /admin/users, /admin/factory)
 //     has the breadcrumb (Erga › Admin › the page), Share with agent and the
 //     sidebar (Settings, Change log, Users, Factory), and no "Admin" title or back link;
 //   - the old addresses redirect: /admin/source and /source to /admin/factory,
@@ -33,7 +33,7 @@ let browser: Browser | null = null;
 
 try {
   // ---- the layout, on every admin page (tester: local development's admin)
-  const pages: [string, string, string | null][] = [["/admin", "Settings", "Settings"], ["/admin/changes", "Change log", "Change log"], ["/admin/users", "Users", "Users"], ["/admin/factory", "Factory", "Factory"], ["/admin/keys", "Keys", null]];
+  const pages: [string, string, string | null][] = [["/admin", "Settings", "Settings"], ["/admin/changes", "Change log", "Change log"], ["/admin/users", "Users", "Users"], ["/admin/factory", "Factory", "Factory"]];
   for (const [path, title, current] of pages) {
     const r = await get(path);
     const html = await r.text();
@@ -62,11 +62,11 @@ try {
   const as = (who: string) => (path: string, init: RequestInit = {}) => get(path + (path.includes("?") ? "&" : "?") + `user=${who}`, init);
   const mallory = as("Mallory");
   const refused: [string, Response][] = [];
-  for (const path of ["/admin", "/admin/changes", "/admin/users", "/admin/factory", "/admin/keys", "/admin/settings", "/admin/anything"]) refused.push([`GET ${path}`, await mallory(path)]);
+  for (const path of ["/admin", "/admin/changes", "/admin/users", "/admin/factory", "/admin/settings", "/admin/anything"]) refused.push([`GET ${path}`, await mallory(path)]);
   refused.push(
     ["POST /admin/settings", await mallory("/admin/settings", { method: "POST", headers: { Origin: root }, body: new URLSearchParams({ key: "factory", value: '"on"' }) })],
     ["POST /admin/users", await mallory("/admin/users", { method: "POST", headers: { Origin: root }, body: new URLSearchParams({ do: "add", login: "mallory", role: "admin" }) })],
-    ["GET /api/admin/keys", await mallory("/api/admin/keys")],
+
     ["GET /api/source/branches", await mallory("/api/source/branches")],
     ["POST /api/source/merge", await mallory("/api/source/merge", { method: "POST", headers: { Origin: root, "Content-Type": "application/json" }, body: "{}" })],
     ["GET /api/deploys", await mallory("/api/deploys")],

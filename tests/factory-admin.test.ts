@@ -11,7 +11,7 @@ import * as Redacted from "effect/Redacted";
 import { Directory, type Param, type Sql } from "../directory";
 import { adminTools, factoryTools, startFactoryAgent, type FactoryOps } from "../factory/agent";
 import { SERVER_TOOLS, type ToolWho } from "../server-tools";
-import type { Unlock } from "../admin-keys";
+
 
 const MIGRATIONS = new URL("../migrations/", import.meta.url).pathname;
 
@@ -32,8 +32,8 @@ const noOps = {} as FactoryOps;
 const ok = async () => {};
 
 /** One admin's factory agent on the scripted model, with the factory's tools and the admin tools, as worker/factory.ts makes it. */
-function session(dir: Directory, login: string, unlock: Unlock, guard = ok) {
-  const as = (): ToolWho => ({ dir, who: { login, unlocked: unlock } });
+function session(dir: Directory, login: string, admin: boolean, guard = ok) {
+  const as = (): ToolWho => ({ dir, who: { login, admin } });
   const agent = startFactoryAgent({ cfg: { apiKey: Redacted.make(""), model: "script", effort: "medium" }, owner: login, tools: [...factoryTools(noOps, guard), ...adminTools(as, guard)] });
   /** Runs a script of tool calls, and answers each tool's outcome. */
   const run = (steps: { tool: string; args?: Record<string, unknown> }[]) => new Promise<{ name: string; status: string; detail?: string }[]>((resolve) => {
@@ -57,8 +57,7 @@ test("the factory's agent has every admin tool beside the factory's, each name o
 
 test("a setting the agent changes is in the change log under the admin who prompted it, not the agent", async () => {
   const dir = fresh();
-  const U = { key: "test", until: Infinity };
-  const { run } = session(dir, "Root", U);
+  const { run } = session(dir, "Root", true);
   const done = await run([
     { tool: "set_setting", args: { key: "delete_docs_after_hours", value: 6 } },
     { tool: "set_setting", args: { key: "deploy_page", value: "admins" } },
@@ -66,7 +65,7 @@ test("a setting the agent changes is in the change log under the admin who promp
   ]);
   expect(done).toEqual([{ name: "set_setting", status: "done" }, { name: "set_setting", status: "done" }, { name: "reset_setting", status: "done" }]);
 
-  const { versions, total } = await dir.config.history({ login: "root", unlocked: U });
+  const { versions, total } = await dir.config.history({ login: "root", admin: true });
   expect(total).toBe(3);
   expect(versions.map((v) => v.by)).toEqual(["root", "root", "root"]);
   expect(versions[0].changes).toEqual([{ key: "delete_docs_after_hours", from: 6, to: expect.anything(), reset: true }]);
@@ -80,10 +79,9 @@ test("a setting the agent changes is in the change log under the admin who promp
 
 test("the agent reads the settings, the change log and the API keys as /admin shows them", async () => {
   const dir = fresh();
-  const U = { key: "test", until: Infinity };
-  await dir.config.set({ login: "root", unlocked: U }, "factory", "on");
-  await dir.credentials.set({ login: "root", unlocked: U }, "anthropic", "sk-ant-api03-secretsecretsecret-1234");
-  const tools = adminTools(() => ({ dir, who: { login: "root", unlocked: U } }), ok);
+  await dir.config.set({ login: "root", admin: true }, "factory", "on");
+  await dir.credentials.set({ login: "root", admin: true }, "anthropic", "sk-ant-api03-secretsecretsecret-1234");
+  const tools = adminTools(() => ({ dir, who: { login: "root", admin: true } }), ok);
   const call = async (name: string, args = {}) => JSON.parse((await tools.find((t) => t.name == name)!.execute("1", args) as { content: { text: string }[] }).content[0].text);
 
   const settings = await call("list_settings") as { key: string; value: unknown; updatedBy: string | null }[];
@@ -96,20 +94,19 @@ test("the agent reads the settings, the change log and the API keys as /admin sh
   expect(JSON.stringify(keys)).not.toContain("sk-ant-secret");
 });
 
-test("users the agent adds are added by the admin; with the unlock ended, or the guard refusing, nothing changes", async () => {
+test("users the agent adds are added by the admin; without admin power, or the guard refusing, nothing changes", async () => {
   const dir = fresh();
-  const U = { key: "test", until: Infinity };
-  expect(await session(dir, "root", U).run([{ tool: "add_user", args: { login: "Ada" } }])).toEqual([{ name: "add_user", status: "done" }]);
+  expect(await session(dir, "root", true).run([{ tool: "add_user", args: { login: "Ada" } }])).toEqual([{ name: "add_user", status: "done" }]);
   expect((await dir.users.get("ada"))?.addedBy).toBe("root");
 
-  const ended = await session(dir, "root", { key: "test", until: Date.now() - 1 }).run([{ tool: "set_setting", args: { key: "factory", value: "on" } }]);
-  expect(ended[0].status).toBe("error");
-  expect(ended[0].detail).toMatch(/unlock/i);
+  const without = await session(dir, "root", false).run([{ tool: "set_setting", args: { key: "factory", value: "on" } }]);
+  expect(without[0].status).toBe("error");
+  expect(without[0].detail).toMatch(/no admin power/i);
 
-  const refused = await session(dir, "root", U, async () => { throw new Error("Admin access is locked."); }).run([{ tool: "set_setting", args: { key: "factory", value: "on" } }]);
-  expect(refused[0]).toMatchObject({ status: "error", detail: expect.stringMatching(/locked/) });
+  const refused = await session(dir, "root", true, async () => { throw new Error("Only admins can use the factory."); }).run([{ tool: "set_setting", args: { key: "factory", value: "on" } }]);
+  expect(refused[0]).toMatchObject({ status: "error", detail: expect.stringMatching(/Only admins/) });
 
-  const notAdmin = await session(dir, "ada", U).run([{ tool: "set_setting", args: { key: "factory", value: "on" } }]);
+  const notAdmin = await session(dir, "ada", true).run([{ tool: "set_setting", args: { key: "factory", value: "on" } }]);
   expect(notAdmin[0]).toMatchObject({ status: "error", detail: expect.stringMatching(/Only an admin/) });
-  expect((await dir.config.history({ login: "root", unlocked: U })).total).toBe(0);
+  expect((await dir.config.history({ login: "root", admin: true })).total).toBe(0);
 });
