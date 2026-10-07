@@ -10,6 +10,7 @@
 #                     (tests/worker.ts), documents with many pages (tests/pages.ts), the front page the server makes (tests/landing.ts),
 #                     the homepage served directly and its deploys (tests/home.ts),
 #                     the deploy page against a pretend Cloudflare (tests/deploy.ts),
+#                     the production gate: each staging commit's tests, and main only to a green one (tests/gate.ts),
 #                     Erga's own source: the Git endpoint, merges, the mirror and the Source page (tests/source.ts),
 #                     branches deploying themselves, in the Worker (tests/deploys.ts),
 #                     who you are in every page's corner (tests/account.ts),
@@ -145,6 +146,7 @@ run 1 pages-open bun tests/pages-open.ts                 # [12]
 run 2 unit bun test ./tests/                             # [11]
 run 1 deployed bun tests/server-config.ts                # [7]
 run 1 deploys bun tests/deploys.ts                       # [5]
+run 1 gate bun tests/gate.ts                             # [30]
 run 1 isolation bun tests/isolation.ts                   # [4]
 
 run 1 admin-layout bun tests/admin-layout.ts             # [8]

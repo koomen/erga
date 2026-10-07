@@ -9,7 +9,7 @@
 
 import { expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
-import { AGENT_ACTIONS, type AgentAction } from "../agent-actions";
+import { AGENT_ACTIONS, OVERRIDE, type AgentAction } from "../agent-actions";
 import { beyondPrompt, documentToolSpecs } from "../agent";
 import { adminTools, dashboardTools, factoryTools, sourceTools, systemPrompt, type DashboardOps, type FactoryOps } from "../factory/agent";
 import { SERVER_TOOLS, type ToolWho } from "../server-tools";
@@ -109,8 +109,11 @@ test("each action has a tool that its agent has, or says why there's none", () =
   expect(wrong).toEqual([]);
 });
 
-test("only a secret, or what isn't a person's action, goes without a tool", () => {
-  for (const a of AGENT_ACTIONS.filter((a) => a.exempt && a.domain != "none")) expect(`${a.route}: ${a.exempt}`).toMatch(/secret/);
+test("only a secret, the production gate's override, or what isn't a person's action, goes without a tool", () => {
+  for (const a of AGENT_ACTIONS.filter((a) => a.exempt && a.domain != "none")) {
+    if (a.route == "POST /api/source/merge override=") expect(a.exempt).toBe(OVERRIDE);
+    else expect(`${a.route}: ${a.exempt}`).toMatch(/secret/);
+  }
 });
 
 test("the known gaps are closed: merge, discard, restart, production's deploy, the dashboard, keys and tokens", () => {

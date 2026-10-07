@@ -43,6 +43,10 @@ async function seed(root: string, ahead: number) {
   commits(src, 11, 10 + ahead);
   must(src, "push", "-q", "erga", "HEAD:staging");
   const merge = async (commit: string) => {
+    // main moves only to a commit whose tests passed (the production gate): run them first (locally, a fake runs them).
+    const auth = { Authorization: `Bearer ${token}` };
+    await fetch(`${root}/api/gate/${commit}/run`, { method: "POST", headers: auth });
+    await until(async () => (await (await fetch(`${root}/api/gate/${commit}`, { headers: auth })).json()).run?.state == "passed", 30_000, `the tests of ${commit.slice(0, 7)} pass`);
     const m = await fetch(`${root}/api/source/merge`, { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify({ commit }) });
     expect(m.status == 200, "main moves forward", await m.text());
   };

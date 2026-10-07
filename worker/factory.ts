@@ -962,6 +962,26 @@ export class Factory extends DurableObject<Env> {
       },
       agentTokens: async () => (await tokensOf(this.env).list(login)).map((t) => ({ id: t.id, label: t.label, kind: t.kind, scope: t.scope, docId: t.docId, created: t.created, expires: t.expires, lastUsed: t.lastUsed })),
       revokeAgentToken: (id) => tokensOf(this.env).revoke(login, id),
+      testRuns: async (limit) => {
+        const g = await pipeline().gateList(limit);
+        return { ...g, runs: g.runs.map((r) => ({ ...r, started: new Date(r.started).toISOString(), ended: r.ended ? new Date(r.ended).toISOString() : null, shards: r.shards.map((s) => ({ n: s.n, state: s.state, phase: s.phase, rerun: s.rerun, items: s.items.map((i) => i.name), failed: s.results.filter((x) => !x.ok).map((x) => x.name), error: s.error, secs: s.ended ? Math.round((s.ended - s.started) / 1000) : null })) })) };
+      },
+      testRun: async (commit, shard) => {
+        if (!/^[0-9a-f]{40}$/.test(commit)) throw new Error("Name the commit by its full sha (40 hex digits): list_test_runs and list_branches list them.");
+        const r = await pipeline().gateGet(commit);
+        return { ...r, ...(shard ? { log: (await pipeline().gateLog(commit, shard)) ?? `shard ${shard} has no log (yet)` } : {}) };
+      },
+      runTests: async (commit) => {
+        let sha = commit;
+        if (!sha) {
+          const view = await source().branches(state.origin) as { branches: { name: string; commit: string | null }[] };
+          sha = view.branches.find((b) => b.name == "staging")?.commit ?? undefined;
+          if (!sha) throw new Error("staging has no commits yet.");
+        }
+        if (!/^[0-9a-f]{40}$/.test(sha)) throw new Error("Name the commit by its full sha (40 hex digits).");
+        const run = await pipeline().gateStart(sha, login);
+        return { done: `The tests of ${sha.slice(0, 10)} run now (${run.shards.length} shards); list_test_runs follows them`, state: run.state };
+      },
     };
   }
 
