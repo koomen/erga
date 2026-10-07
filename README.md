@@ -2009,6 +2009,21 @@ text and the other fields' values (`keepState` in `factory/page.ts`).
   token, never shown on the Factory page, mirrored or deployed, and never
   listed to another task's VM (its reads are protocol v2, with `ls-refs`
   filtered and `want-ref` checked: `source/http.ts`).
+- Who the commits are by (`factory/author.ts`): each task records its
+  person (`person`, a login) when it's added: the admin themselves, on the
+  board, or the admin who prompted the factory's agent or made the factory
+  token (`by` says "koomen’s agent"; the person is koomen). Each job's
+  environment makes that person the author of the task's commits (Claude
+  Code's, which keep its Co-Authored-By trailer, and "Merge staging into
+  task/…"), and whoever pressed Merge the author of the merge into staging
+  (`FACTORY_MERGE_AUTHOR_*`, `factory/vm/merge.ts`). The author is the
+  person's GitHub name and noreply address
+  (`<id>+<login>@users.noreply.github.com`, so the GitHub mirror links the
+  commit to their profile); the id comes from their sign-in
+  (`users.github_id`), or from GitHub's API for one who hasn't signed in
+  since (not locally, where the address has no id). "Erga factory
+  <factory@erga.dev>" is always the committer. The detail view says who
+  added the task and who its commits are by.
   Scripts take tokens out of anything they log, and the factory hides
   anything shaped like a token in what a VM reports (`hideTokens`,
   `factory/prompt.ts`); git gets its token through

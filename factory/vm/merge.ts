@@ -4,7 +4,9 @@
 // output).
 //
 //   bun merge.ts merge BRANCH "TITLE"   merges staging into BRANCH in the task's clone, pushes BRANCH, then moves
-//                                       staging to a --no-ff merge commit ("Merge BRANCH: TITLE") and deletes BRANCH
+//                                       staging to a --no-ff merge commit ("Merge BRANCH: TITLE") and deletes BRANCH.
+//                                       The first merge's author is the task's person (GIT_AUTHOR_*), the second's
+//                                       whoever pressed Merge (FACTORY_MERGE_AUTHOR_*); the factory commits both.
 //   bun merge.ts discard BRANCH         deletes the branch
 //   bun merge.ts save BRANCH            before a restart: stops the task's Claude Code and preview, then commits what isn't
 //                                       committed in the clone and pushes BRANCH, so the fresh VM has all the work
@@ -80,7 +82,7 @@ async function merge(): Promise<Record<string, unknown>> {
       if (pushed.code != 0) return needsAgent(pushed.timedOut ? "timeout" : "failed", "push", stepFailure(`Pushing ${branch}`, pushed));
       // 3. Staging moved to a --no-ff merge commit of the branch (which has staging in it: the branch's tree).
       const base = (await git(["rev-parse", "origin/staging"], dir)).out;
-      const commit = (await git(["commit-tree", "HEAD^{tree}", "-p", base, "-p", "HEAD", "-m", `Merge ${branch}: ${title}`], dir)).out;
+      const commit = (await git(["commit-tree", "HEAD^{tree}", "-p", base, "-p", "HEAD", "-m", `Merge ${branch}: ${title}`], dir, { env: mergeAuthor() })).out;
       const moved = await git(["push", "--quiet", "origin", `${commit}:refs/heads/staging`], dir, { quiet: true, name: "push-staging" });
       if (moved.code == 0) {
         await git(["push", "--quiet", "origin", "--delete", branch], dir, { quiet: true, name: "delete" });
@@ -99,6 +101,12 @@ async function merge(): Promise<Record<string, unknown>> {
     if (e instanceof StepFailed) return needsAgent(e.result.timedOut ? "timeout" : "failed", e.stepName, e.message);
     throw e;
   }
+}
+
+/** Whoever pressed Merge, as the author of the merge into staging (the job's own author, the task's person, if not given). */
+function mergeAuthor(): Record<string, string> {
+  const name = process.env.FACTORY_MERGE_AUTHOR_NAME, email = process.env.FACTORY_MERGE_AUTHOR_EMAIL;
+  return name && email ? { GIT_AUTHOR_NAME: name, GIT_AUTHOR_EMAIL: email } : {};
 }
 
 const stepFailure = (what: string, r: StepResult) =>

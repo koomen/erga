@@ -6,6 +6,7 @@ import { expect, mock, test } from "bun:test";
 import { checkGitToken, mintGitToken, pushedRefs, refsAllowed } from "../dev/factory";
 import { branchName, claudeToken, restartPrompt, taskPrompt } from "../factory/prompt";
 import { quietFor, STALL_MS, stalledOf } from "../factory/stall";
+import { commitIdentity, FACTORY_IDENTITY, githubIdOf, personIdentity } from "../factory/author";
 
 test("branch names follow the task queue's", () => {
   expect(branchName(46, "Experimental: the task queue inside Erga, with Claude Code in Cloudflare VMs")).toBe("task/46-experimental-the-task-queue-inside-erga");
@@ -215,4 +216,29 @@ test("a preview's door: a ticket for its own VM, never from a sibling host, and 
   expect(await page.text()).toBe(`preview of ${vm}`);
   expect(page.headers.get("set-cookie")).toBeNull();
   expect(forwarded).not.toBeNull();
+});
+
+test("a task's commits are by its person: their GitHub name and noreply address; the factory commits them (#68)", async () => {
+  expect(commitIdentity("Koomen", "Pete Koomen", 1234)).toEqual({ name: "Pete Koomen", email: "1234+koomen@users.noreply.github.com" });
+  expect(commitIdentity("ada", null, null)).toEqual({ name: "ada", email: "ada@users.noreply.github.com" });
+  expect(FACTORY_IDENTITY).toEqual({ name: "Erga factory", email: "factory@erga.dev" });
+  // The id from the sign-in; GitHub asked (once, and kept) for one who hasn't signed in since; never for a stranger.
+  const rows: Record<string, { login: string; name: string; created: number; githubId: number | null }> = {
+    koomen: { login: "koomen", name: "Pete Koomen", created: 1, githubId: 1234 }, ada: { login: "ada", name: "Ada Lovelace", created: 1, githubId: null },
+  };
+  const users = { get: async (l: string) => rows[l.toLowerCase()] ?? null, setGithubId: async (l: string, id: number) => { rows[l].githubId = id; } } as any;
+  const asked: string[] = [];
+  const lookup = async (l: string) => { asked.push(l); return 99; };
+  expect(await personIdentity(users, "koomen", lookup)).toEqual({ name: "Pete Koomen", email: "1234+koomen@users.noreply.github.com" });
+  expect(await personIdentity(users, "Ada", null)).toEqual({ name: "Ada Lovelace", email: "ada@users.noreply.github.com" });
+  expect(await personIdentity(users, "ada", lookup)).toEqual({ name: "Ada Lovelace", email: "99+ada@users.noreply.github.com" });
+  expect(await personIdentity(users, "ada", lookup)).toEqual({ name: "Ada Lovelace", email: "99+ada@users.noreply.github.com" });
+  expect(await personIdentity(users, "nobody", lookup)).toEqual({ name: "nobody", email: "nobody@users.noreply.github.com" });
+  expect(asked).toEqual(["ada"]);
+  // GitHub's public API: its id, or null when it doesn't answer as it should.
+  const answer = (status: number, body: unknown) => (async () => new Response(JSON.stringify(body), { status })) as unknown as typeof fetch;
+  expect(await githubIdOf("ada", answer(200, { id: 42, login: "ada" }))).toBe(42);
+  expect(await githubIdOf("ada", answer(404, { message: "Not Found" }))).toBeNull();
+  expect(await githubIdOf("ada", answer(200, { id: "42" }))).toBeNull();
+  expect(await githubIdOf("ada", (async () => { throw new Error("offline"); }) as unknown as typeof fetch)).toBeNull();
 });

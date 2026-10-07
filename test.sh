@@ -34,6 +34,7 @@
 #                     the factory board's compact cards (tests/factory-cards.ts),
 #                     files attached in the agent panel (tests/attach.ts),
 #                     instructions for a working task (tests/factory-instruct.ts),
+#                     who the factory's commits are by (tests/factory-authors.ts),
 #                     the admin agent reading Erga's own source, in the Worker (tests/admin-agent-source.ts),
 #                     the agents doing what their person does on the page, in the Worker (tests/admin-agent-actions.ts),
 #                     live reload (tests/reload.ts, in a copy of the checkout)
@@ -109,6 +110,7 @@ run 1 scoped-tokens bun tests/scoped-tokens.ts           # [10]
 run 1 landing bun tests/landing.ts                       # [14]
 run 1 factory-cards bun tests/factory-cards.ts           # [14]
 run 1 factory-instruct bun tests/factory-instruct.ts     # [70]
+run 1 factory-authors bun tests/factory-authors.ts       # [20]
 run 1 versions bun tests/versions.ts                     # [13]
 run 1 attach bun tests/attach.ts                         # [10]
 run 1 docs-pages bun tests/docs-pages.ts                 # [6]

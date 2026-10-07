@@ -154,10 +154,12 @@ export async function finishSignIn(env: Env, request: Request): Promise<Response
   }
   const user = await fetch("https://api.github.com/user", {
     headers: { Authorization: `Bearer ${token.access_token}`, Accept: "application/vnd.github+json", "User-Agent": "erga.dev" },
-  }).then((r) => r.json() as Promise<{ login?: string; name?: string | null }>);
+  }).then((r) => r.json() as Promise<{ login?: string; name?: string | null; id?: number }>);
   if (!user.login) return page("Sign-in failed", "GitHub didn't say who you are. <a href=\"/\">Try again</a>.", 400);
   // Their row says they're in (a bootstrap admin's is made now), with the name GitHub gives today.
   if (!(await users(env).signedIn(user.login, user.name?.trim() || user.login))) return page("Invite only", `Erga is invite-only for now, and <b>${escape(user.login)}</b> isn't on the list yet.`, 403);
+  // Their GitHub id: the factory authors their tasks' commits with their noreply address (worker/factory.ts, personOf).
+  if (typeof user.id == "number") await users(env).setGithubId(user.login, user.id).catch(() => {});
   return signIn(env, request, { login: user.login, name: user.name?.trim().split(/\s+/)[0] || user.login }, safeNext(next ?? null));
 }
 

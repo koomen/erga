@@ -41,6 +41,8 @@ export interface User {
   addedBy: string | null;
   /** When they last used the server (to the nearest few minutes); null if never. */
   lastSeen: number | null;
+  /** Their GitHub account id (users.github_id), from their last sign-in; null until then. */
+  githubId: number | null;
 }
 
 /**
@@ -64,7 +66,7 @@ const REMEMBER_MS = 10_000;
 /** How often someone's last_seen is written, at most. */
 const SEEN_EVERY_MS = 5 * 60_000;
 
-interface Row { login: string; name: string; role: ServerRole; deploy?: number | null; created: number; added_by: string | null; last_seen: number | null }
+interface Row { login: string; name: string; role: ServerRole; deploy?: number | null; created: number; added_by: string | null; last_seen: number | null; github_id?: number | null }
 
 export class Users {
   private readonly admins: Set<string>;
@@ -144,6 +146,14 @@ export class Users {
       login, given, this.isBootstrapAdmin(login) ? "admin" : "user", now);
     this.known.delete(login);
     return this.get(login);
+  }
+
+  /** Their GitHub account id (from GitHub, at sign-in or when the factory asks it), written when it's new. Only for someone with a row. */
+  async setGithubId(login: string, id: number): Promise<void> {
+    login = login.toLowerCase();
+    if (!Number.isSafeInteger(id) || id <= 0 || (await this.get(login))?.githubId == id) return;
+    await this.sql.run("UPDATE users SET github_id = ?2 WHERE login = ?1", login, id);
+    this.known.delete(login);
   }
 
   // ------------------------------------------------------------ admin only
@@ -229,11 +239,12 @@ export class Users {
     return {
       login: r.login, name: r.name, role, deploy: !!r.deploy, mayDeploy: role == "admin" || !!r.deploy, bootstrap,
       created: Number(r.created), addedBy: r.added_by, lastSeen: r.last_seen == null ? null : Number(r.last_seen),
+      githubId: r.github_id == null ? null : Number(r.github_id),
     };
   }
 
   /** A bootstrap admin with no row yet (created 0: never signed in). */
   private bootstrapUser(login: string): User {
-    return { login, name: login, role: "admin", deploy: false, mayDeploy: true, bootstrap: true, created: 0, addedBy: null, lastSeen: null };
+    return { login, name: login, role: "admin", deploy: false, mayDeploy: true, bootstrap: true, created: 0, addedBy: null, lastSeen: null, githubId: null };
   }
 }

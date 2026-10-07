@@ -40,6 +40,7 @@ COPY --chown=bun:bun package.json bun.lock /opt/erga-deps/
 RUN cd /opt/erga-deps && bun install --frozen-lockfile && rm -rf /opt/erga-deps/node_modules
 
 COPY --chown=bun:bun scripts/ /opt/factory/
+# The factory commits; each job's environment (GIT_AUTHOR_*, worker/factory.ts jobEnv) makes the task's person the author.
 RUN git config --global user.name "Erga factory" && git config --global user.email "factory@erga.dev" \
  && git config --global init.defaultBranch main && git config --global github.user factory
 
