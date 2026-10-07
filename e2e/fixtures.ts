@@ -12,6 +12,7 @@
 //   servers.main()     a dev server, signed in as DEV_LOGIN, with no agent key
 //   servers.agent()    the same with an agent key that is never used (the agent's UI comes on)
 //   servers.factory()  the factory with simulated VMs and the scripted agent model
+//   servers.short()    the scripted agent model, and short timings (SHORT): versions cut, homepages deployed, in seconds
 //   startServer()      a server for one test alone (test.ts disposes of it, see `tab.own`)
 //
 // Per test: `tab`, the attempt's own page in a fresh browser context (the web
@@ -48,9 +49,19 @@ const once = <T extends Server>(key: string, make: () => Promise<T>) => (): Prom
   return s.then((x) => { if (x.alive()) return x; x.dispose(); started.delete(key); return once(key, make)(); }) as Promise<T>;
 };
 
+/**
+ * servers.short()'s timings: a version is cut once edits pause for `idle` ms (or after `max`, whatever the typing); a
+ * homepage deploys `homeDelay` ms after its published version changes, and / always asks for the latest deploy.
+ */
+export const SHORT = { idle: 1000, max: 8000, homeDelay: 2000 };
+
 export const servers = {
   main: once("main", () => startServer()),
   agent: once("agent", () => startServer({ env: { ANTHROPIC_API_KEY: "sk-ant-test-not-used" } })),
+  short: once("short", () => startServer({ env: {
+    ERGA_AGENT_MODEL: "script", ERGA_WRITE_DELAY_MS: "50", ERGA_VERSION_IDLE_MS: String(SHORT.idle), ERGA_VERSION_MAX_MS: String(SHORT.max),
+    ERGA_HOME_DELAY_MS: String(SHORT.homeDelay), ERGA_HOME_RECHECK_MS: "0",
+  } })),
   factory: once("factory", async (): Promise<FactoryServer> => {
     const secret = `factory-test-${crypto.randomUUID()}`;
     const s = await startServer({ env: { ERGA_AGENT_MODEL: "script", ERGA_FACTORY_RUNNER: "sim", ERGA_LINK_SECRET: secret, ERGA_FACTORY_SIM_NO_SCRIPTS: "1" } });
