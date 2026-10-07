@@ -454,8 +454,10 @@ function slide(el: HTMLElement, from: DOMRect) {
  * the agent's `dock` and the board's column, `panes`), .agent-right on it when
  * the agent is right of the board, the grip on the dock's inner edge, and the
  * dock dragged by the agent's head. Off where the window is `narrow` (tabs).
+ * `saved` hears each layout the admin leaves it in (the server keeps it too:
+ * factory-agent.ts); `set` puts one on (the server's, on another browser).
  */
-export function mountPaneLayout(workspace: HTMLElement, dock: HTMLElement, panes: HTMLElement, head: HTMLElement, narrow: MediaQueryList) {
+export function mountPaneLayout(workspace: HTMLElement, dock: HTMLElement, panes: HTMLElement, head: HTMLElement, narrow: MediaQueryList, saved?: (layout: PaneLayout) => void) {
   const storage = localStore();
   let layout = loadPane(storage);
   const room = () => workspace.clientWidth;
@@ -463,7 +465,7 @@ export function mountPaneLayout(workspace: HTMLElement, dock: HTMLElement, panes
     start: () => narrow.matches ? null : { width: paneWidth(layout, room()), side: layout.side },
     max: () => paneMax(room()),
     set: (width) => { layout = { ...layout, width }; apply(); },
-    done: () => savePane(storage, layout),
+    done: () => { savePane(storage, layout); saved?.(layout); },
   });
   const ghost = mountGhost();
   function apply(l: PaneLayout = layout) {
@@ -497,6 +499,7 @@ export function mountPaneLayout(workspace: HTMLElement, dock: HTMLElement, panes
         layout = slot == null ? from : { ...from, side: slot == 1 ? "right" : "left" };
         apply();
         savePane(storage, layout);
+        if (slot != null) saved?.(layout);
       },
       land: (from) => {
         Object.assign(dock.style, { top: "", height: "", width: "" });
@@ -506,5 +509,13 @@ export function mountPaneLayout(workspace: HTMLElement, dock: HTMLElement, panes
   });
   new ResizeObserver(() => apply()).observe(workspace);
   apply();
-  return { get layout() { return layout; } };
+  return {
+    get layout() { return layout; },
+    set(l: PaneLayout) {
+      if (l.side == layout.side && l.width == layout.width) return;
+      layout = normalizePane(l);
+      apply();
+      savePane(storage, layout);
+    },
+  };
 }

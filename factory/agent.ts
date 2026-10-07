@@ -26,7 +26,7 @@
 // with a factory token (worker/factory.ts, "Share with agent"), and reads
 // `factoryGuide` first.
 
-import { Agent as PiAgent, type AgentEvent, type AgentTool } from "@mariozechner/pi-agent-core";
+import { Agent as PiAgent, type AgentEvent, type AgentMessage, type AgentTool } from "@mariozechner/pi-agent-core";
 import * as Redacted from "effect/Redacted";
 import { Type } from "typebox";
 import { DEFAULT_MODEL, describeModel, isScript, MODELS, patchPayload, resultImage, resultText, scriptModel, type AgentConfig, type ModelChoice } from "../agent";
@@ -247,6 +247,8 @@ export interface FactoryAgent {
   readonly modelChoice: ModelChoice | null;
   setModel(choice: ModelChoice): boolean;
   log(): Log;
+  /** The model's messages so far (what worker/factory.ts stores, factory/chat-store.ts). */
+  messages(): AgentMessage[];
   /** A message, with any files attached (src/page/attach.ts). */
   prompt(text: string, context: string | null, files?: Attachment[]): void;
   abort(): void;
@@ -265,12 +267,12 @@ function about(name: string, args: unknown): string | null {
   return null;
 }
 
-/** One admin's agent session. `cfg` null: the agent is off (no ANTHROPIC_API_KEY). */
-export function startFactoryAgent(opts: { cfg: AgentConfig; owner: string; tools: AgentTool[] }): FactoryAgent {
-  const { cfg, owner, tools } = opts;
+/** One admin's agent session; `restore`: the conversation stored before (factory/chat-store.ts), to go on with. */
+export function startFactoryAgent(opts: { cfg: AgentConfig; owner: string; tools: AgentTool[]; restore?: { log: Log; messages: AgentMessage[] } }): FactoryAgent {
+  const { cfg, owner, tools, restore } = opts;
   let choice: ModelChoice | null = cfg.model == "script" ? null : cfg.model;
   const model = choice == null ? scriptModel() : describeModel(choice);
-  const log = emptyLog();
+  const log = restore?.log ?? emptyLog();
   const listeners = new Set<(ev: LogEvent) => void>();
   const whats = new Map<string, string | null>();
   const emit = (ev: LogEvent) => {
@@ -282,7 +284,7 @@ export function startFactoryAgent(opts: { cfg: AgentConfig; owner: string; tools
     for (const l of listeners) l(ev);
   };
   const agent = new PiAgent({
-    initialState: { systemPrompt: systemPrompt(owner), model, thinkingLevel: "medium", tools },
+    initialState: { systemPrompt: systemPrompt(owner), model, thinkingLevel: "medium", tools, messages: restore?.messages ?? [] },
     getApiKey: () => Redacted.value(cfg.apiKey) || "none",
     onPayload: isScript(cfg) ? undefined : patchPayload(cfg, () => choice ?? DEFAULT_MODEL),
   });
@@ -317,6 +319,7 @@ export function startFactoryAgent(opts: { cfg: AgentConfig; owner: string; tools
       return true;
     },
     log: () => log,
+    messages: () => agent.state.messages,
     prompt(text, context, files = []) {
       emit(files.length ? { t: "user", text, files: fileRefs(files) } : { t: "user", text });
       const content = messageContent(context ? `<page>\n${context}\n</page>\n\n${text}` : text, files);
