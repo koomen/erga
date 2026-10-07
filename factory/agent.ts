@@ -55,8 +55,7 @@ export interface FactoryOps {
   setDeps(id: number, body: Record<string, unknown>): Promise<{ ok: boolean; error?: string }>;
   revise(id: number, instructions: string): Promise<{ ok: boolean; error?: string }>;
   shot(file: string): Promise<Uint8Array | null>;
-  /** The board's buttons: Start (a queued task), Merge, Discard and Restart, as the admin. */
-  start(id: number): Promise<{ ok: boolean; error?: string }>;
+  /** The board's buttons: Merge, Discard and Restart, as the admin (a task starts by itself). */
   merge(id: number): Promise<{ ok: boolean; error?: string }>;
   discard(id: number): Promise<{ ok: boolean; error?: string }>;
   restart(id: number): Promise<{ ok: boolean; error?: string }>;
@@ -166,9 +165,6 @@ export function factoryTools(ops: FactoryOps, guard: () => Promise<void>): Agent
         if (!r.ok) throw new Error(r.error ?? "refused");
         return text(brief((await ops.task(Number(a.id)))!));
       }),
-    tool("start_task", "Start a task", "Starts a queued task now, as the board's Start button does: its VM starts and Claude Code does the work. Refused while a startAfter task isn't merged. The task's log says who started it.",
-      Type.Object({ id: Type.Integer({ description: "The task's id" }) }),
-      async (a) => button(ops.start, a.id, "Started")),
     tool("merge_task", "Merge a task", "Merges a task that is ready to merge into staging, as the board's Merge button does: staging merged into its branch, then its branch into staging (one merge at a time); then the branch is deleted, and staging deploys itself to staging's server. Refused while a dependency isn't merged. The merge goes on after the answer: get_task follows it (merging, then merged, or needs agent). The task's log and the change log (/admin/changes) say who merged it.",
       Type.Object({ id: Type.Integer({ description: "The task's id" }) }),
       async (a) => button(ops.merge, a.id, "Merge requested for")),
@@ -323,7 +319,6 @@ export const FACTORY_TOOL_VERBS: Record<string, [string, string]> = {
   set_user_deploy: ["Changing the deploy role of", "Changed the deploy role of"],
   remove_user: ["Removing", "Removed"],
   clear_api_key: ["Clearing", "Cleared"],
-  start_task: ["Starting", "Started"],
   merge_task: ["Merging", "Merged"],
   discard_task: ["Discarding", "Discarded"],
   restart_task: ["Restarting", "Restarted"],
@@ -384,7 +379,7 @@ how tasks depend on each other, and tell them how tasks are doing.
   that waits for its dependencies.
 - list_tasks, get_task and view_screenshot read the board, a task's ask, summary,
   log, preview URL and screenshots. factory_status says whether the factory is on.
-- The board's buttons: start_task starts a queued task; merge_task merges a task that is
+- The board's buttons (a task starts by itself): merge_task merges a task that is
   ready to merge into staging (staging then deploys itself); discard_task drops a task
   and its branch, and its work is lost; restart_task runs a task again in a fresh VM,
   with its work saved. Each one goes on the task's log under ${owner}'s name, as if they

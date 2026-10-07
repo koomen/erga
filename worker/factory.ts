@@ -12,7 +12,6 @@
 //   POST /api/factory/tasks                { title, description, startAfter?, mergeAfter? }: a new task (its branch,
 //                                          then its VM, unless it waits for a startAfter task to merge)
 //   PATCH /api/factory/tasks/<id>          { startAfter?, mergeAfter? }: changes its dependencies (lists of ids, or null)
-//   POST /api/factory/tasks/<id>/start     a queued task's VM; 409 while a startAfter task isn't merged
 //   POST /api/factory/tasks/<id>/merge     into staging (one merge at a time), then the branch is deleted; 409 while
 //                                          a dependency isn't merged (or merging ahead of it)
 //   POST /api/factory/tasks/<id>/discard   the branch deleted, the VM stopped
@@ -282,7 +281,7 @@ export class Factory extends DurableObject<Env> {
   private merges: Promise<void> = Promise.resolve();
   /** Each task's restarts in this object's life: a launch that a restart overtook stops the VM it started, and runs nothing. */
   private epochs = new Map<number, number>();
-  /** Queued tasks whose VM is being started (so a second Start doesn't start another). */
+  /** Queued tasks whose VM is being started (so a second start doesn't start another). */
   private starting = new Set<number>();
   /** The dependency rules (factory/deps.ts), over this object's tasks. */
   private deps = depRules((id) => { const r = this.row(id); return r && depOf(r); });
@@ -310,6 +309,14 @@ export class Factory extends DurableObject<Env> {
     // A merge the object was stopped in the middle of goes back to ready to merge, saying so.
     for (const r of this.sql.exec<Row>("SELECT * FROM tasks WHERE status = 'merging'").toArray()) {
       this.update(r.id, { status: "complete", error: "The merge was stopped in the middle (the factory restarted). Merge again." });
+    }
+    // Every task starts by itself, with no button: when it is added, or when the tasks it waits for merge. One whose VM
+    // was starting when the object stopped (each merge deploys staging, which restarts it) is still queued with no VM:
+    // it starts again here.
+    for (const { id } of this.sql.exec<{ id: number }>("SELECT id FROM tasks WHERE status = 'queued' AND vm IS NULL").toArray()) {
+      if (this.deps.unmetStart(depOf(this.row(id)!)).length) continue;
+      this.note(id, "Starting again: the factory restarted before the task's VM started");
+      this.begin(id);
     }
   }
 
@@ -412,19 +419,6 @@ export class Factory extends DurableObject<Env> {
     if (this.starting.has(id)) return;
     this.starting.add(id);
     this.ctx.waitUntil(this.launch(id, "work").finally(() => { this.starting.delete(id); this.changed(id); }));
-  }
-
-  /** Start, for a queued task: refused while a startAfter task isn't merged (no VM starts). */
-  async start(id: number, by: string, origin?: string): Promise<{ ok: boolean; error?: string }> {
-    if (origin) this.sql.exec("UPDATE tasks SET origin = ? WHERE id = ?", origin, id);
-    const r = this.row(id);
-    if (!r) return { ok: false, error: "no such task" };
-    if (r.status != "queued") return { ok: false, error: `task #${id} is ${r.status}: only a queued task can be started` };
-    const why = this.deps.startRefusal(depOf(r));
-    if (why) return { ok: false, error: why };
-    if (!this.starting.has(id)) this.note(id, `Started by ${by}`);
-    this.begin(id);
-    return { ok: true };
   }
 
   /** Changes a task's dependencies (startAfter, mergeAfter: lists of ids; null or [] clears one). */
@@ -651,8 +645,12 @@ export class Factory extends DurableObject<Env> {
     if (["merged", "discarded"].includes(r.status)) return { ok: false, error: `task #${id} is ${r.status}: it can't restart` };
     const why = this.deps.startRefusal(depOf(r));
     if (why) return { ok: false, error: why };
-    // A queued task that never ran has nothing to restart: it starts.
-    if (r.status == "queued" && !r.vm) return this.start(id, by);
+    // A queued task that never ran has nothing to restart: it starts (again, if its VM was starting).
+    if (r.status == "queued" && !r.vm) {
+      if (!this.starting.has(id)) this.note(id, `Started by ${by}`);
+      this.begin(id);
+      return { ok: true };
+    }
     const epoch = (this.epochs.get(id) ?? 0) + 1;
     this.epochs.set(id, epoch);
     const was = r.status == "complete" ? "ready to merge" : r.status;
@@ -885,7 +883,6 @@ export class Factory extends DurableObject<Env> {
       revise: async (id, instructions) => { await on(); return this.revise(id, instructions, by, state.origin); },
       shot: (file) => this.shot(file),
       // The board's buttons, as the admin themselves (the task's log and the change log name them, as when they click).
-      start: async (id) => { await on(); return this.start(id, login, state.origin); },
       merge: async (id) => { await on(); return this.merge(id, login, state.origin); },
       discard: async (id) => { await on(); return this.discard(id, login, state.origin); },
       restart: async (id) => { await on(); return this.restart(id, login, state.origin); },
@@ -1308,10 +1305,10 @@ export async function factoryApi(request: Request, env: Env, url: URL): Promise<
     const r = await f.setDeps(id, body as Record<string, unknown>, admin.login, url.origin);
     return r.ok ? json(await f.task(id)) : json({ error: r.error }, r.status ?? 409);
   }
-  if (id != null && request.method == "POST" && ["merge", "discard", "revise", "restart", "start"].includes(action)) {
+  if (id != null && request.method == "POST" && ["merge", "discard", "revise", "restart"].includes(action)) {
     const body = action == "revise" ? await request.json().catch(() => ({})) as { instructions?: string } : {};
     const r = action == "merge" ? await f.merge(id, admin.login, url.origin) : action == "discard" ? await f.discard(id, admin.login, url.origin)
-      : action == "start" ? await f.start(id, admin.login, url.origin) : action == "restart" ? await f.restart(id, admin.login, url.origin) : await f.revise(id, String(body.instructions ?? ""), admin.login, url.origin);
+      : action == "restart" ? await f.restart(id, admin.login, url.origin) : await f.revise(id, String(body.instructions ?? ""), admin.login, url.origin);
     return r.ok ? json(await f.task(id), action == "merge" ? 202 : 200) : json(r, 409);
   }
   return json({ error: "Not found" }, 404);

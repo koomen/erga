@@ -63,7 +63,6 @@ export const AGENT_ACTIONS: AgentAction[] = [
   { route: "POST /api/factory/tasks", domain: "admin", action: "Add a task (Factory)", tool: "create_task" },
   { route: "PATCH /api/factory/tasks/<id>", domain: "admin", action: "Change a task's dependencies (Factory)", tool: "set_dependencies" },
   { route: "POST /api/factory/tasks/<id>/revise", domain: "admin", action: "Send a task more instructions (Factory)", tool: "instruct_task" },
-  { route: "POST /api/factory/tasks/<id>/start", domain: "admin", action: "Start a queued task (Factory)", tool: "start_task" },
   { route: "POST /api/factory/tasks/<id>/merge", domain: "admin", action: "Merge a task into staging (Factory)", tool: "merge_task" },
   { route: "POST /api/factory/tasks/<id>/discard", domain: "admin", action: "Discard a task (Factory)", tool: "discard_task" },
   { route: "POST /api/factory/tasks/<id>/restart", domain: "admin", action: "Restart a task (Factory)", tool: "restart_task" },

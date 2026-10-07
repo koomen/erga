@@ -111,11 +111,11 @@ try {
   const detail = (await p.eval<string>(`document.getElementById("dlg").innerText`)).toLowerCase();
   expect(detail.includes("task/1-say-hello-on-the-front-page") && detail.includes("summary") && detail.includes("more instructions") && detail.includes("open preview"), "the detail: branch, summary, instructions, preview", detail.slice(0, 800));
   await p.screenshot(join(SHOTS, "factory-detail.png"));
-  // The detail's buttons: the cards' order, Merge on the right; the ones that don't apply (Start, for a task that ran) off, with why.
+  // The detail's buttons: Preview, Restart, Discard, Merge (on the right), and no Start: a task starts by itself.
   const dlgButtons = await p.eval<{ keys: string[]; on: string[]; offWhy: string[] }>(`(() => { const bs = [...document.querySelectorAll("#dlg .actions > *")];
     return { keys: bs.map((b) => b.dataset.btn), on: bs.filter((b) => !b.disabled && b.dataset.act).map((b) => b.dataset.btn), offWhy: bs.filter((b) => b.disabled).map((b) => b.title) }; })()`);
-  expect(dlgButtons.keys.join() == "preview,start,restart,discard,merge" && dlgButtons.on.join() == "restart,discard,merge" && dlgButtons.offWhy.length == 1 && dlgButtons.offWhy[0] == "The task has started already",
-    "the detail: Preview, Start (off, with why), Restart, Discard, Merge", dlgButtons);
+  expect(dlgButtons.keys.join() == "preview,restart,discard,merge" && dlgButtons.on.join() == "restart,discard,merge" && !dlgButtons.offWhy.length,
+    "the detail: Preview, Restart, Discard, Merge, and no Start", dlgButtons);
   await click(p, '[data-act="close"]');
   await until(async () => (await task(2)).status == "complete" && (await task(3)).status == "complete", STEP, "the other two are ready", async () => [await task(2), await task(3)].map((t) => ({ status: t.status, error: t.error, log: t.log.slice(-5).map((l: any) => l.message) })));
   const t2model = await task(2);
@@ -160,9 +160,12 @@ try {
   expect(t3b.log.some((l: any) => l.message.includes("asked: Say it again.")), "the log says what was asked");
   ok("more instructions: the task works again on its branch, and is ready to merge again");
 
-  // Restart, on the board: the same branch, a fresh VM, no new instructions.
-  await until(() => p.eval(`!!document.querySelector('[data-open="3"] [data-act="restart"]')`), 5000, "task 3's card has Restart");
-  await click(p, '[data-open="3"] [data-act="restart"]');
+  // Restart, on the board: the same branch, a fresh VM, no new instructions. A task ready to merge has it in its detail view.
+  await until(() => p.eval(`!document.querySelector('[data-open="3"] [data-act="restart"]') && !!document.querySelector('[data-open="3"] [data-act="merge"]')`), 5000, "task 3's card: Merge, and no Restart");
+  await click(p, '[data-open="3"]');
+  await until(() => p.eval(`!!document.querySelector('#dlg [data-act="restart"]')`), 5000, "task 3's detail has Restart");
+  await click(p, '#dlg [data-act="restart"]');
+  await click(p, '[data-act="close"]');
   await until(async () => { const t = await task(3); return t.status == "complete" && t.commit != t3b.commit && !!t.vm && t.vm != t3b.vm; }, STEP, "task 3 is ready again, from a fresh VM", async () => JSON.stringify((await task(3)).log.slice(-6)));
   const t3c = await task(3);
   const log3c = spawnSync("git", ["-C", repo, "log", "--format=%s", `staging..${t3c.branch}`], { encoding: "utf8" }).stdout;
@@ -252,17 +255,18 @@ try {
   const t5 = await task(5);
   expect(JSON.stringify(t5.startAfter) == "[4]" && JSON.stringify(t5.blockedBy?.start) == "[4]" && t5.blockedBy.reason == "waiting for #4 to merge", "#5 waits for #4", t5);
   expect(t5.status == "queued" && !t5.vm && !t5.log.some((l: any) => l.message.includes("Starting a VM")) && !vmsOf(5).length, "no VM started for #5", { t5, vms: vmsOf(5) });
-  const start5 = await api("/tasks/5/start", { method: "POST" });
-  expect(start5.status == 409 && start5.body.error.includes("can't start: waiting for #4"), "Start is refused while #4 isn't merged", start5);
+  // There is no Start (a task starts by itself); Restart, on a task that never ran, starts it, and is refused the same way.
+  const start5 = await api("/tasks/5/restart", { method: "POST" });
+  expect(start5.status == 409 && start5.body.error.includes("can't start: waiting for #4"), "Restart is refused while #4 isn't merged", start5);
   expect(!vmsOf(5).length && !(await task(5)).vm, "still no VM for #5");
-  await until(() => p.eval(`(() => { const c = document.querySelector('[data-col="queued"] [data-open="5"]'); return !!c && c.classList.contains("blocked") && c.innerText.includes("waiting for #4") && !!c.querySelector("button[disabled]"); })()`), 5000, "#5's card: blocked, 'waiting for #4', Start off");
-  ok("a task that starts after another: queued with no VM, Start refused (409), the card says what it waits for");
+  await until(() => p.eval(`(() => { const c = document.querySelector('[data-col="queued"] [data-open="5"]'); return !!c && c.classList.contains("blocked") && c.innerText.includes("waiting for #4") && !c.querySelector("[data-btn=start]"); })()`), 5000, "#5's card: blocked, 'waiting for #4', no Start");
+  ok("a task that starts after another: queued with no VM, Restart refused (409), the card says what it waits for");
 
   // A blocked merge: #4 is ready, but #3 isn't merged.
   await until(async () => (await task(4)).status == "complete", STEP, "#4 is ready to merge");
   const merge4 = await api("/tasks/4/merge", { method: "POST" });
   expect(merge4.status == 409 && merge4.body.error.includes("can't merge until #3 merges"), "merging #4 is refused while #3 isn't merged", merge4);
-  await until(() => p.eval(`(() => { const c = document.querySelector('[data-col="ready-to-merge"] [data-open="4"]'); const b = c && [...c.querySelectorAll("button")].find((x) => x.textContent == "Merge"); return !!b && b.disabled && b.title == "Can't merge until #3 merges" && c.innerText.includes("merges after #3"); })()`), 5000, "#4's Merge is off, with the reason");
+  await until(() => p.eval(`(() => { const c = document.querySelector('[data-col="ready-to-merge"] [data-open="4"]'); return !!c && !c.querySelector("[data-btn=merge]") && c.innerText.includes("merges after #3"); })()`), 5000, "#4's card: no Merge, and the reason");
   await p.settle();
   await p.screenshot(join(SHOTS, "factory-deps-board.png"));
   ok("a blocked merge: refused (409), and Merge is off on the board with the reason");
@@ -287,7 +291,7 @@ try {
   expect(JSON.stringify(s6.blockedBy?.stuck) == "[3]" && s6.blockedBy.reason.startsWith("blocked: #3 was discarded"), "#6 is blocked by the discarded #3", s6.blockedBy);
   expect(JSON.stringify(s4.blockedBy?.stuck) == "[3]", "#4 too (it merges after #3)", s4.blockedBy);
   expect(s6.log.some((l: any) => l.message.includes("#3 was discarded: this task is blocked")), "#6's log says so");
-  expect((await api("/tasks/6/start", { method: "POST" })).status == 409 && !vmsOf(6).length, "#6 can't start, and has no VM");
+  expect((await api("/tasks/6/restart", { method: "POST" })).status == 409 && (await api("/tasks/6/start", { method: "POST" })).status == 404 && !vmsOf(6).length, "#6 can't start, and has no VM");
   expect((await add({ title: "After a discarded one", startAfter: [3] })).status == 400, "a new dependency on a discarded task is refused");
   await until(() => p.eval(`(() => { const c = document.querySelector('[data-open="6"]'); return !!c && c.innerText.includes("blocked by #3"); })()`), 5000, "#6's card: 'blocked by #3'");
   ok("a discarded dependency blocks its dependents (start and merge) until it's removed");
@@ -433,7 +437,7 @@ try {
   await until(async () => (await task(sharedTask.id)).status == "complete", STEP, "the shared agent's task starts its VM, pushes its branch and is ready to merge", async () => { const t = await task(sharedTask.id); return { status: t.status, error: t.error, log: t.log.slice(-4) }; });
   expect(!!branches(host.state)[(await task(sharedTask.id)).branch], "its branch reached the repository, pushed with its git token", branches(host.state));
   expect((await as(`/tasks/${next}/revise`, { json: { instructions: "One more word." } })).status == 200, "it sends instructions");
-  for (const [method, path] of [["POST", `/tasks/${next}/merge`], ["POST", `/tasks/${next}/discard`], ["POST", `/tasks/${sharedTask.id}/start`], ["PUT", "/claude"], ["DELETE", "/claude"], ["POST", "/agent"], ["GET", "/agent"], ["GET", "/events"], ["POST", "/tokens"], ["GET", "/tokens"]] as const) {
+  for (const [method, path] of [["POST", `/tasks/${next}/merge`], ["POST", `/tasks/${next}/discard`], ["POST", `/tasks/${sharedTask.id}/restart`], ["PUT", "/claude"], ["DELETE", "/claude"], ["POST", "/agent"], ["GET", "/agent"], ["GET", "/events"], ["POST", "/tokens"], ["GET", "/tokens"]] as const) {
     const r = await as(path, { method, json: method == "GET" || method == "DELETE" ? undefined : {} });
     expect(r.status == 403, `a factory token can't ${method} ${path}`, r.status);
   }
@@ -485,7 +489,7 @@ try {
   expect(!(await fetch(previewB, { signal: AbortSignal.timeout(3000) }).then((r) => r.ok).catch(() => false)), "the preview was stopped before the merge work");
   expect((await api(`/tasks/${tB}/merge`, { method: "POST" })).status == 409 && (await api(`/tasks/${tB}/revise`, { json: { instructions: "x" } })).status == 409, "Merge and new instructions are refused while it needs its agent");
   const cardB = `[data-col="merging"] [data-open="${tB}"]`;
-  await until(() => p.eval(`(() => { const c = document.querySelector(${JSON.stringify(cardB)}); const b = c && [...c.querySelectorAll("button")].find((x) => x.textContent == "Merge"); return !!b && b.disabled && c.classList.contains("needs-agent") && c.innerText.toLowerCase().includes("needs agent") && c.innerText.includes("conflicts with staging in landing/index.html"); })()`), 5000, "B's card: in Merging, needs agent, the reason, Merge off", () => p.eval(`document.querySelector('[data-col="merging"]')?.innerText`));
+  await until(() => p.eval(`(() => { const c = document.querySelector(${JSON.stringify(cardB)}); return !!c && !c.querySelector("[data-btn=merge]") && c.classList.contains("needs-agent") && c.innerText.toLowerCase().includes("needs agent") && c.innerText.includes("conflicts with staging in landing/index.html"); })()`), 5000, "B's card: in Merging, needs agent, the reason, no Merge", () => p.eval(`document.querySelector('[data-col="merging"]')?.innerText`));
   await p.settle();
   await p.screenshot(join(SHOTS, "factory-needs-agent.png"));
   await click(p, `[data-open="${tB}"]`);

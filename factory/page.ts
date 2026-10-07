@@ -7,7 +7,7 @@
 // the screenshots, at the top in a grid, a click to enlarge one, the arrow keys for the previous and next one, Escape to shrink it), with Merge, Discard and new instructions; live, over
 // /api/factory/events. Dependencies between tasks as on the local board: a
 // chip on the card ("waiting for #12"), blocked tasks at the bottom of
-// Queued, Merge (and Start) off with the reason, and a Dependencies section
+// Queued, Merge off with the reason (a task starts by itself: no Start), and a Dependencies section
 // in the detail view to add and remove them. The pane's head says where the VMs run and whether a
 // Claude plan is signed in, and signs one in (a `claude setup-token` token).
 //
@@ -61,23 +61,28 @@ export const BOARD_STYLE = `
   .err { color: var(--bad); font-size: 12px; margin-top: 2px; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
   .thumbs { display: flex; gap: 4px; margin-top: 4px; overflow: hidden; }
   .thumbs img { height: 40px; border-radius: 4px; border: 1px solid var(--line); object-fit: cover; max-width: 72px; }
-  .actions { display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; }
-  .card .actions { gap: 3px; margin-top: 4px; flex-wrap: nowrap; }
+  .actions { display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; align-items: center; }
   .actions [data-btn="merge"] { margin-left: auto; }
-  /* The five share the row, so they fit a narrow card. */
-  .card .actions > * { flex: 1 1 auto; min-width: 0; justify-content: center; font-size: 11px; line-height: 16px; padding: 1px 3px; border-radius: 5px; white-space: nowrap; }
+  /* On a card, only the steps that work (see actions): small buttons at their own width, the main step (or a spinner)
+     on the right. They wrap to a second row rather than squeeze, so a label never overflows. */
+  .card .actions { gap: 4px; margin-top: 4px; }
+  .card .actions > * { flex: none; font-size: 11px; line-height: 16px; padding: 1px 8px; border-radius: 5px; white-space: nowrap; }
+  .card .actions > .primary, .card .actions > .busy { margin-left: auto; }
+  .card .actions > .primary { font-weight: 600; }
+  .busy { display: inline-flex; align-items: center; gap: 6px; color: var(--warn); font-weight: 500; }
+  .card .actions > .busy { padding: 1px 0; }
   button, .btn { font: inherit; font-size: 12px; border: 1px solid var(--line); background: var(--card); color: var(--ink); border-radius: 6px; padding: 4px 10px; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; gap: 5px; }
   button:hover, .btn:hover { border-color: var(--muted); }
-  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) button.primary:not(:disabled) { color: #0d1218; } }
-  :root[data-theme="dark"] button.primary:not(:disabled) { color: #0d1218; }
+  button.primary, .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) button.primary:not(:disabled), :root:not([data-theme="light"]) .btn.primary { color: #0d1218; } }
+  :root[data-theme="dark"] button.primary:not(:disabled), :root[data-theme="dark"] .btn.primary { color: #0d1218; }
   button.danger { color: var(--bad); }
   button.danger[data-act="arm"] { color: var(--ink); }
   button.confirm { background: var(--bad); border-color: var(--bad); color: #fff; }
   /* Off: no fill, a dashed border and faint text, so it can't pass for a button that works. */
   button:disabled, button.primary:disabled, button.danger:disabled { background: transparent; border-style: dashed; border-color: var(--line); color: var(--muted); opacity: .6; cursor: not-allowed; }
   button:disabled:hover { border-color: var(--line); }
-  .spin { display: inline-block; width: 10px; height: 10px; border: 2px solid var(--warn); border-right-color: transparent; border-radius: 50%; animation: s .8s linear infinite; }
+  .spin { display: inline-block; flex: none; box-sizing: border-box; width: 12px; height: 12px; border: 2px solid var(--warn); border-right-color: transparent; border-radius: 50%; animation: s .8s linear infinite; }
   @keyframes s { to { transform: rotate(360deg); } }
   dialog { border: 1px solid var(--line); border-radius: 12px; background: var(--card); color: var(--ink); width: min(900px, calc(100vw - 32px)); max-height: calc(100vh - 48px); padding: 0; font-size: 14px; }
   dialog h3 { color: var(--ink); }
@@ -213,28 +218,33 @@ function stalledBadge(t) {
 const waitsToStart = (t) => t.status == "queued" && !!(t.blockedBy?.start.length || t.blockedBy?.stuck.length);
 
 /**
- * The task's buttons, in one order everywhere: Preview, Start, Restart, Discard, Merge (on the right). Each one
- * shows on every task; one that doesn't apply to its status is off, and its tooltip says why. An off button has no
- * data-act: it does nothing, and [data-act="…"] finds the buttons that work.
+ * The task's buttons. No Start: a task starts by itself, when it is added or when the tasks it waits for merge.
+ * In the detail view (inDialog), all four, in one order: Preview, Restart, Discard, Merge
+ * (on the right); one that doesn't apply to its status is off, and its tooltip and the line under them say why. An
+ * off button has no data-act: it does nothing, and [data-act="…"] finds the buttons that work.
+ * On a card, only the ones that work, the task's main step (Merge, or else Preview) filled and on the right,
+ * and no off ones: the card's chip, flag or error says why a step waits. Restart is in the detail view only while the
+ * task is ready to merge or merging, where it is rarely the next step. A running start or merge shows as a spinner.
  */
 function actions(t, inDialog) {
-  const off = (key, label, why, cls) => '<button' + (cls ? ' class="' + cls + '"' : "") + ' data-btn="' + key + '" disabled title="' + esc(why) + '">' + label + '</button>';
-  const on = (key, label, title, cls) => '<button' + (cls ? ' class="' + cls + '"' : "") + ' data-btn="' + key + '" data-act="' + key + '" data-id="' + t.id + '"' + (title ? ' title="' + esc(title) + '"' : "") + '>' + label + '</button>';
+  const off = (key, label, why, cls) => ({ key, html: '<button' + (cls ? ' class="' + cls + '"' : "") + ' data-btn="' + key + '" disabled title="' + esc(why) + '">' + label + '</button>' });
+  const on = (key, label, title, cls) => ({ key, on: true, html: (main) => '<button' + (cls || main ? ' class="' + [cls, main && "primary"].filter(Boolean).join(" ") + '"' : "") + ' data-btn="' + key + '" data-act="' + key + '" data-id="' + t.id + '"' + (title ? ' title="' + esc(title) + '"' : "") + '>' + label + '</button>' });
+  const busy = (key, label, title, cls) => ({ key, busy: label, html: '<button' + (cls ? ' class="' + cls + '"' : "") + ' data-btn="' + key + '" disabled title="' + title + '"><span class="spin"></span> ' + label + '</button>' });
   const done = ["merged", "discarded"].includes(t.status);
   const gone = t.status == "merged" ? "The task is merged" : "The task is discarded";
   const b = [];
-  // In the detail view, the reason the next step is off (Start or Merge), under the buttons.
+  // In the detail view, why the next step waits (a queued task's start, or Merge), under the buttons.
   let note = null;
 
-  if (t.url && !done) b.push('<a class="btn" data-btn="preview" href="/api/factory/tasks/' + t.id + '/open" target="_blank" title="Open the preview" onclick="event.stopPropagation()">Preview</a>');
+  if (t.url && !done) b.push({ key: "preview", on: true, html: (main) => '<a class="btn' + (main ? " primary" : "") + '" data-btn="preview" href="/api/factory/tasks/' + t.id + '/open" target="_blank" title="Open the preview" onclick="event.stopPropagation()">Preview</a>' });
   else b.push(off("preview", "Preview", done ? gone + ": its preview is gone" : t.status == "queued" ? "No preview yet: the task hasn't started" : "No preview yet: Claude Code starts one when there's something to see"));
 
+  // A queued task: why it waits (under the buttons), or a spinner while its VM starts.
   if (t.status == "queued" && !t.vm) {
     const why = t.blockedBy?.start.length ? (t.blockedBy.stuck.length ? t.blockedBy.reason[0].toUpperCase() + t.blockedBy.reason.slice(1) : "Starts when " + ids(t.blockedBy.start) + " merge" + (t.blockedBy.start.length == 1 ? "s" : "")) : null;
-    if (why) { b.push(off("start", "Start", why)); note = why; }
-    else if (t.starting) b.push('<button data-btn="start" disabled title="The VM is starting"><span class="spin"></span> Starting…</button>');
-    else b.push(on("start", "Start", "Start the task's VM", "primary"));
-  } else b.push(off("start", "Start", done ? gone : "The task has started already"));
+    if (why) note = why;
+    else if (t.starting) b.push({ key: "start", busy: "Starting…", html: '<span class="busy" data-btn="start" title="The VM is starting"><span class="spin"></span>Starting…</span>' });
+  }
 
   // Restart: any time once the task has run (working, merging and stuck too): its VM saves the work, then a fresh one starts.
   if (!done && !(t.status == "queued" && !t.vm)) {
@@ -246,7 +256,7 @@ function actions(t, inDialog) {
   } else b.push(off("restart", "Restart", done ? gone : "The task hasn't run yet"));
 
   if (!["merging", ...(done ? [t.status] : [])].includes(t.status))
-    b.push(armed.has(t.id) ? '<button class="confirm" data-btn="discard" data-act="discard" data-id="' + t.id + '">Discard branch?</button>' : '<button class="danger" data-btn="discard" data-act="arm" data-id="' + t.id + '" title="Delete the branch and stop the VM">Discard</button>');
+    b.push({ key: "discard", on: true, html: () => armed.has(t.id) ? '<button class="confirm" data-btn="discard" data-act="discard" data-id="' + t.id + '">Discard branch?</button>' : '<button class="danger" data-btn="discard" data-act="arm" data-id="' + t.id + '" title="Delete the branch and stop the VM">Discard</button>' });
   else b.push(off("discard", "Discard", done ? gone : "The task is merging", "danger"));
 
   if (t.status == "complete") {
@@ -256,10 +266,20 @@ function actions(t, inDialog) {
   } else if (t.status == "needs agent") {
     b.push(off("merge", "Merge", "Claude Code is finishing the merge", "primary"));
     note = "Needs agent: the task’s Claude Code is finishing the merge, which then goes on by itself";
-  } else if (t.status == "merging") b.push('<button class="primary" data-btn="merge" disabled title="The merge is running"><span class="spin"></span> ' + (t.log.at(-1)?.message.includes("waiting for") ? "Waiting…" : "Merging…") + '</button>');
+  } else if (t.status == "merging") b.push(busy("merge", t.log.at(-1)?.message.includes("waiting for") ? "Waiting…" : "Merging…", "The merge is running", "primary"));
   else b.push(off("merge", "Merge", done ? gone : t.status == "failed" ? "The task failed: restart it, or send more instructions" : "The task isn't ready to merge yet", "primary"));
 
-  return '<div class="actions">' + b.join("") + '</div>' + (inDialog && note ? '<div class="why actions-why">' + esc(note) + '</div>' : "");
+  const html = (x, main) => typeof x.html == "function" ? x.html(main) : x.html;
+  if (inDialog) return '<div class="actions">' + b.map((x) => html(x, false)).join("") + '</div>' + (note ? '<div class="why actions-why">' + esc(note) + '</div>' : "");
+
+  const quiet = ["complete", "merging"].includes(t.status) ? ["restart"] : [];
+  const shown = b.filter((x) => x.on && !quiet.includes(x.key));
+  const spin = b.find((x) => x.busy);
+  // A running start or merge is the main step: the spinner takes its place.
+  const main = spin ? null : ["merge", "preview"].map((k) => shown.find((x) => x.key == k)).find(Boolean);
+  const rest = shown.filter((x) => x != main).map((x) => html(x, false));
+  const end = spin ? '<span class="busy" data-btn="' + spin.key + '" title="' + (spin.key == "merge" ? "The merge is running" : "The VM is starting") + '"><span class="spin"></span>' + spin.busy + '</span>' : main ? html(main, true) : "";
+  return rest.length || end ? '<div class="actions">' + rest.join("") + end + '</div>' : "";
 }
 
 function card(t) {
@@ -476,7 +496,6 @@ document.addEventListener("click", async (e) => {
     else if (act == "discard") { armed.delete(id); upsert(await api("/tasks/" + id + "/discard", { method: "POST" })); }
     else if (act == "restart") { el.disabled = true; upsert(await api("/tasks/" + id + "/restart", { method: "POST" })); }
     else if (act == "merge") upsert(await api("/tasks/" + id + "/merge", { method: "POST" }));
-    else if (act == "start") { el.disabled = true; upsert(await api("/tasks/" + id + "/start", { method: "POST" })); }
     else if (act == "dep" || act == "undep") {
       const t = tasks.find((x) => x.id == id);
       const kind = act == "dep" ? $("dep-kind").value : el.dataset.kind;

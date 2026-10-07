@@ -118,7 +118,7 @@ test("the board's buttons, the dashboard, keys and tokens: each tool does what t
   const button = (name: string) => async (id: number) => { calls.push(`${name} ${id}`); return id == 9 ? { ok: false, error: `task #9 is merged` } : { ok: true }; };
   const ops = {
     task: async (id: number) => (id == 404 ? null : task(id)),
-    start: button("start"), merge: button("merge"), discard: button("discard"), restart: button("restart"),
+    merge: button("merge"), discard: button("discard"), restart: button("restart"),
     tokens: async () => [{ id: "t1", label: "Laptop", created: 1.8e12, expires: 1.9e12 }],
     revokeToken: async (id: string) => { calls.push(`revoke factory token ${id}`); return id == "t1"; },
     signOutClaude: async () => { calls.push("sign out claude"); },
@@ -141,7 +141,8 @@ test("the board's buttons, the dashboard, keys and tokens: each tool does what t
   expect(await call("merge_task", { id: 3 })).toMatch(/Merge requested for task #3: Task 3/);
   expect(await call("discard_task", { id: 4 })).toMatch(/Discarded task #4/);
   expect(await call("restart_task", { id: 5 })).toMatch(/Restarted task #5/);
-  expect(await call("start_task", { id: 6 })).toMatch(/Started task #6/);
+  // No start_task: a task starts by itself, as the board has no Start.
+  expect(tools.some((t) => t.name == "start_task")).toBe(false);
   expect(await fails(call("merge_task", { id: 9 }))).toBe("task #9 is merged");
   expect(await fails(call("discard_task", { id: 404 }))).toMatch(/no task #404/);
   expect(await call("list_factory_tokens")).toMatch(/"created": "2027-/);
@@ -155,10 +156,10 @@ test("the board's buttons, the dashboard, keys and tokens: each tool does what t
   expect(await fails(call("deploy_log", { target: "nope" }))).toMatch(/No such deploy/);
   expect(await call("redeploy", { target: "production" })).toMatch(/production redeploys now/);
   expect(await fails(call("revoke_agent_token", { id: "theirs" }))).toMatch(/You have no token/);
-  expect(calls).toEqual(["merge 3", "discard 4", "restart 5", "start 6", "merge 9", "revoke factory token t1", "revoke factory token t2", "sign out claude", "release head", "release 1234567", "redeploy production"]);
+  expect(calls).toEqual(["merge 3", "discard 4", "restart 5", "merge 9", "revoke factory token t1", "revoke factory token t2", "sign out claude", "release head", "release 1234567", "redeploy production"]);
   // Admin access locked (or its key revoked): nothing runs.
   locked = true;
   expect(await fails(call("merge_task", { id: 3 }))).toMatch(/Unlock/);
   expect(await fails(call("deploy_production"))).toMatch(/Unlock/);
-  expect(calls.length).toBe(11);
+  expect(calls.length).toBe(10);
 });
