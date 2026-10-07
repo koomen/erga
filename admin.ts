@@ -243,7 +243,9 @@ function eventItem(c: SettingChange): string {
   const list = r.commits.length > 5
     ? `<details><summary>${r.total} commits</summary><ul class="commits">${commits}${more}</ul></details>`
     : `<ul class="commits">${commits}${more}</ul>`;
-  return `<li><span class="key">main</span> ${c.from ? sha(c.from) : "none"} <span class="to" aria-label="to">→</span> ${sha(c.to)} <span class="badge">production</span>${via}${list}</li>`;
+  // Past the production gate (its tests hadn't passed): the admin's reason, and what the gate said.
+  const override = r.override ? ` <span class="badge" title="${esc(r.override.gate)}">tests overridden</span> <span class="title">${esc(r.override.reason)}</span>` : "";
+  return `<li><span class="key">main</span> ${c.from ? sha(c.from) : "none"} <span class="to" aria-label="to">→</span> ${sha(c.to)} <span class="badge">production</span>${override}${via}${list}</li>`;
 }
 
 /**

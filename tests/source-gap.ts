@@ -29,7 +29,7 @@ const commits = (dir: string, from: number, to: number) => { for (let i = from; 
 /** Seeds `root`: main at ten commits (Commit 1 to 10), staging `ahead` past it. Returns the clone and how to push and merge. */
 async function seed(root: string, ahead: number) {
   const r = await fetch(`${root}/auth/github?next=/docs`, { redirect: "manual" });
-  const cookie = r.headers.getSetCookie().map((x) => x.split(";")[0]).find((x) => x.startsWith("erga_session="))!;
+  const cookie = r.headers.getSetCookie().map((x) => x.split(";")[0]).find((x) => /^erga_session(_\d+)?=/.test(x))!;
   const page = await (await fetch(`${root}/tokens/new`, { method: "POST", headers: { Cookie: cookie, Origin: root }, body: new URLSearchParams({ label: "Git", scope: "admin" }) })).text();
   const token = /<pre class="secret">(erga_[^<]+)<\/pre>/.exec(page)?.[1] ?? "";
   expect(token, "an admin's token", page.slice(0, 300));
@@ -43,6 +43,10 @@ async function seed(root: string, ahead: number) {
   commits(src, 11, 10 + ahead);
   must(src, "push", "-q", "erga", "HEAD:staging");
   const merge = async (commit: string) => {
+    // main moves only to a commit whose tests passed (the production gate): run them first (locally, a fake runs them).
+    const auth = { Authorization: `Bearer ${token}` };
+    await fetch(`${root}/api/gate/${commit}/run`, { method: "POST", headers: auth });
+    await until(async () => (await (await fetch(`${root}/api/gate/${commit}`, { headers: auth })).json()).run?.state == "passed", 30_000, `the tests of ${commit.slice(0, 7)} pass`);
     const m = await fetch(`${root}/api/source/merge`, { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify({ commit }) });
     expect(m.status == 200, "main moves forward", await m.text());
   };

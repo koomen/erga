@@ -10,7 +10,9 @@
 //     (a fast-forward, and a rewrite main refuses) and `git pull`;
 //   - the strict model: main only follows staging, staging keeps main's
 //     commits; merging is a fast-forward of main, to staging's head or a
-//     chosen commit; who may merge, and a POST from another site;
+//     chosen commit; who may merge, and a POST from another site; main only
+//     to a commit whose tests passed (the production gate, with its local
+//     fake runner: tests/gate.ts tests it in full);
 //   - the GitHub mirror, after each move;
 //   - the Source page in headless Chrome: one list with one dot column and
 //     no header (circles only: hollow orange, only on staging; solid green,
@@ -52,7 +54,7 @@ const get = (path: string, init: RequestInit = {}) => fetch(root + path, { redir
  */
 async function tokenFor(scope: "admin" | "documents"): Promise<{ token: string; cookie: string }> {
   const r = await fetch(`${root}/auth/github?next=/docs`, { redirect: "manual" });
-  const cookie = r.headers.getSetCookie().map((x) => x.split(";")[0]).find((x) => x.startsWith("erga_session="))!;
+  const cookie = r.headers.getSetCookie().map((x) => x.split(";")[0]).find((x) => /^erga_session(_\d+)?=/.test(x))!;
   const page = await (await fetch(`${root}/tokens/new`, { method: "POST", headers: { Cookie: cookie, Origin: origin }, body: new URLSearchParams({ label: "Git", scope }) })).text();
   const token = /<pre class="secret">(erga_[^<]+)<\/pre>/.exec(page)?.[1] ?? "";
   expect(token, `a ${scope} token`, page.slice(0, 300));
@@ -74,6 +76,12 @@ const commit = (dir: string, file: string, text: string, message: string) => { w
 let browser: Browser | null = null;
 try {
   const admin = await tokenFor("admin"), bo = await tokenFor("documents");
+  // The production gate (deploy/gate.ts): main moves only to a commit whose tests passed. Locally a fake runs them.
+  const gateOf = async (sha: string) => (await (await fetch(`${root}/api/gate/${sha}`, { headers: { Authorization: `Bearer ${admin.token}` } })).json()) as { run: { state: string } | null };
+  const gateGreen = async (sha: string) => {
+    if (!(await gateOf(sha)).run) await fetch(`${root}/api/gate/${sha}/run`, { method: "POST", headers: { Authorization: `Bearer ${admin.token}` } });
+    await until(async () => (await gateOf(sha)).run?.state == "passed", 20_000, `the tests of ${sha.slice(0, 7)} pass`, () => gateOf(sha));
+  };
 
   // ---- Who may reach the Git endpoint ------------------------------------------------
   const refs = (auth?: string) => get("/git/erga.git/info/refs?service=git-upload-pack", auth ? { headers: { Authorization: auth } } : {});
@@ -111,7 +119,10 @@ try {
   const early = git(a, "push", "origin", "main");
   expect(!early.ok && early.err.includes("main only follows staging"), "a push to main of a commit staging doesn't have is refused", early.err);
   const both = git(a, "push", "origin", "HEAD:staging", "HEAD:main");
-  expect(both.ok && both.err.includes("Erga: main is now") && both.err.includes("Erga: staging is now"), "pushed to staging and main at once, it lands, and Erga says so", both.err);
+  expect(!both.ok && both.err.includes("Erga: staging is now") && /no test run|still running/.test(both.err), "pushed to staging and main at once: staging lands, and main waits for the commit's tests (the production gate)", both.err);
+  await gateGreen(must(a, "rev-parse", "HEAD"));
+  const later = git(a, "push", "origin", "HEAD:main");
+  expect(later.ok && later.err.includes("Erga: main is now"), "once its tests passed, main takes it, and Erga says so", later.err);
   must(a, "reset", "-q", "--hard", "HEAD~1");
   commit(a, "app.ts", "export const x = 3;\n", "Rewritten");
   const dropped = git(a, "push", "--force", "origin", "HEAD:staging");
@@ -161,6 +172,8 @@ try {
   expect((await api("/api/source/merge", { method: "POST", as: "cookie", body: "{}", headers: { Origin: "https://evil.example" } })).status == 403, "a merge POSTed from another site is refused");
   expect((await api("/api/source/merge", { method: "POST", body: JSON.stringify({ from: "main", to: "staging" }) })).status == 400, "merging the other way is refused: main only follows staging");
   const fourth = staging.commits[1].sha;
+  await gateGreen(fourth);
+  await gateGreen(staging.commit);
   r = await api("/api/source/merge", { method: "POST", body: JSON.stringify({ from: "staging", to: "main", commit: fourth }) });
   let merged = await r.json() as { commit?: string; fastForward?: boolean; upToDate?: boolean; error?: string };
   expect(r.status == 200 && merged.commit == fourth && merged.fastForward === true, "main fast-forwards to a chosen staging commit", merged);
@@ -246,14 +259,6 @@ try {
   must(b, "push", "-q", "origin", "staging");
   const sixth = must(b, "rev-parse", "HEAD");
   await until(async () => (await state()).rows[0]?.subject == "Staging only, live", 10_000, "the push shows up by itself", state);
-  s = await state();
-  expect(s.merge && s.mergeShown && s.ahead.startsWith("1 commit"), "and the Merge button shows, enabled", s);
-  // The dots: circles only; hollow orange for only on staging, solid green for on main.
-  const [top, below] = s.rows;
-  const [, , topBg, topBorder] = top.staging.split("|"), [, , belowBg, belowBorder] = below.staging.split("|");
-  expect(s.rows.every((x) => x.staging.startsWith("circle|")), "every dot is a circle, untransformed", s.rows);
-  expect(topBorder != topBg && /rgb\((19[0-9]|2\d\d), (9\d|1[0-2]\d|1[5-9]\d), \d{1,2}\)/.test(topBorder), "a commit only on staging: a hollow orange circle", top);
-  expect(belowBg == belowBorder && /rgb\(\d{1,2}, 1[0-4]\d, \d{2}\)/.test(belowBg), "a commit on main too: a solid green circle", below);
   // The live log: clicking staging's status opens it; its lines arrive as the deploy runs ({ type: "deploy-log" }).
   const click = async (sel: string) => {
     const at = await p.eval<{ x: number; y: number }>(`(() => { const r = document.querySelector(${JSON.stringify(sel)}).getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })()`);
@@ -266,6 +271,16 @@ try {
   const opened = (await logText()).split("\n").length;
   await until(async () => (await logText()).split("\n").length > opened + 2, 30_000, "new lines show up in the open log by themselves", logText);
   await until(async () => (await state()).rows[0].live[0] == "live", 60_000, "and the column marks the new commit live when it's done", state);
+  // Then its tests pass (watched after the deploy, which a fast deploy would otherwise finish first).
+  await until(async () => (await state()).merge, 20_000, "its tests pass (the production gate's fake), and Merge turns on", state);
+  s = await state();
+  expect(s.merge && s.mergeShown && s.ahead.startsWith("1 commit"), "and the Merge button shows, enabled", s);
+  // The dots: circles only; hollow orange for only on staging, solid green for on main.
+  const [top, below] = s.rows;
+  const [, , topBg, topBorder] = top.staging.split("|"), [, , belowBg, belowBorder] = below.staging.split("|");
+  expect(s.rows.every((x) => x.staging.startsWith("circle|")), "every dot is a circle, untransformed", s.rows);
+  expect(topBorder != topBg && /rgb\((19[0-9]|2\d\d), (9\d|1[0-2]\d|1[5-9]\d), \d{1,2}\)/.test(topBorder), "a commit only on staging: a hollow orange circle", top);
+  expect(belowBg == belowBorder && /rgb\(\d{1,2}, 1[0-4]\d, \d{2}\)/.test(belowBg), "a commit on main too: a solid green circle", below);
   await p.screenshot(join(SHOTS, "source-log.png"));
   await click("#log-close");
   await p.screenshot(join(SHOTS, "source-light.png"));
@@ -304,7 +319,8 @@ try {
   // Merge to a chosen commit from the page: hover the row, click "Merge to here".
   const rowAt = await p.eval<{ x: number; y: number }>(`(() => { const r = document.querySelector("#grid .row .subj").getBoundingClientRect(); return { x: r.x + 40, y: r.y + r.height / 2 }; })()`);
   await p.mouse("mouseMoved", rowAt.x, rowAt.y);
-  await until(async () => p.eval(`getComputedStyle(document.querySelector("#grid .row button.here")).display != "none"`), 5_000, "hovering a staging-only commit offers Merge to here");
+  await gateGreen(polled2);
+  await until(async () => p.eval(`!!document.querySelector("#grid .row button.here") && getComputedStyle(document.querySelector("#grid .row button.here")).display != "none"`), 15_000, "hovering a staging-only commit whose tests passed offers Merge to here");
   await click("#grid .row button.here");
   await until(async () => (await state()).rows.find((x) => x.sha == polled2)?.kind.includes("on-main"), 10_000, "Merge to here moves main to that commit", state);
   expect((await p.eval<string>(`document.getElementById("merge-hint").textContent`)) == "", "and leaves no message after it");

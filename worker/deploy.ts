@@ -25,6 +25,7 @@ import { mockCloudflare } from "../deploy/mock";
 import { deployPage, mockConsentPage } from "../deploy/page";
 import { mayDeploy, page, whoOf, type Platform } from "../front";
 import { isDev } from "./auth";
+import { cookieName, cookies } from "./cookies";
 import type { Env } from "./env";
 
 const COOKIE = "erga_deploy", OAUTH_COOKIE = "erga_deploy_oauth";
@@ -133,6 +134,5 @@ async function sealKey(env: Env, half: string): Promise<string> {
 
 const rand = (n: number) => b64u(crypto.getRandomValues(new Uint8Array(n)));
 const b64u = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-const cookies = (request: Request) => new Map((request.headers.get("cookie") ?? "").split(/;\s*/).filter(Boolean).map((c) => { const i = c.indexOf("="); return [c.slice(0, i), c.slice(i + 1)] as [string, string]; }));
 const cookie = (request: Request, name: string, value: string, maxAge: number, path: string) =>
-  `${name}=${value}; Path=${path}; Max-Age=${maxAge}; HttpOnly; SameSite=Lax${new URL(request.url).protocol == "https:" ? "; Secure" : ""}`;
+  `${cookieName(request, name)}=${value}; Path=${path}; Max-Age=${maxAge}; HttpOnly; SameSite=Lax${new URL(request.url).protocol == "https:" ? "; Secure" : ""}`;

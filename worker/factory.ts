@@ -10,8 +10,9 @@
 //   GET  /api/factory                      { enabled, vms, claude: { signedIn, at, by } }
 //   GET  /api/factory/tasks[/<id>]         the tasks, each with its log (the last 200 lines; one task's, all
 //                                          of them with ?log=all) and screenshots
-//   POST /api/factory/tasks                { title, description, startAfter?, mergeAfter? }: a new task (its branch,
-//                                          then its VM, unless it waits for a startAfter task to merge)
+//   POST /api/factory/tasks                { title, description, startAfter?, mergeAfter?, local? }: a new task (its branch,
+//                                          then its VM, unless it waits for a startAfter task to merge). With
+//                                          local: { machine } it is a local task: no VM; the agent that asked runs it
 //   PATCH /api/factory/tasks/<id>          { startAfter?, mergeAfter? }: changes its dependencies (lists of ids, or null)
 //   POST /api/factory/tasks/<id>/merge     into staging (one merge at a time), then the branch is deleted; 409 while
 //                                          a dependency isn't merged (or merging ahead of it)
@@ -45,6 +46,16 @@
 //   GET  /api/admin/guide                  what an outside agent with an admin token reads first: the admin
 //                                          APIs, how to call them, and the token's limits (factory/agent.ts)
 //   GET  /api/factory/guide                the same guide (its old address)
+//
+// A local task (factory/task.ts; README, The factory, "Local tasks") has no VM: a local agent (Claude Code on the
+// admin's own machine) runs it in its own checkout, and reports with an admin token on the VMs' routes below
+// (brief, inbox, log, branch, preview, screenshots, PATCH with a status), for a local task only. And:
+//
+//   POST  /api/factory/tasks/<id>/git           { token, repo, branch }: a git token that pushes the local task's branch
+//                                               only (two hours), so its agent pushes through Erga's Git endpoint
+//
+// Merge starts a VM for the merge job only (merge.ts, in a fresh clone of the pushed branch); a conflict makes the
+// task "needs agent" and tells the local agent (its inbox). Restart hands a local task to a VM, from its pushed branch.
 //
 // The VMs call back with their task's token (Authorization: Bearer fct...),
 // which reaches their own task only:
@@ -92,7 +103,8 @@ import { adminGuide, adminTools, dashboardTools, factoryTools, sourceTools, star
 import { FACTORY_IDENTITY, githubIdOf, type Identity, personIdentity } from "../factory/author";
 import { containersHost } from "../factory/cloudflare";
 import { b64url } from "../factory/git-grant";
-import { branchName, claudeToken, hideTokens, resolvePrompt, restartPrompt, taskPrompt } from "../factory/prompt";
+import { branchName, claudeToken, hideTokens, localResolvePrompt, resolvePrompt, restartPrompt, taskPrompt } from "../factory/prompt";
+import { landedIn, recovery, type StagingLog } from "../factory/recover";
 import { type Stalled, stalledOf } from "../factory/stall";
 import { whoOf } from "../front";
 import { sessionOf } from "./auth";
@@ -138,7 +150,17 @@ export interface Task {
   stalled?: Stalled;
   /** Instructions sent while it works that its Claude Code hasn't got yet (it gets them when its current step ends). */
   waiting?: number;
+  /** A local task: no VM; a local agent runs it (who, on which machine, since when). Null for a VM's task. */
+  local: Local | null;
+  /** A local task that was handed to a VM (Restart): who ran it locally, on which machine. */
+  handedFrom: string | null;
 }
+
+/** Who runs a local task: "koomen’s agent (Laptop)" on "pete-mbp", since a time. */
+export interface Local { by: string; machine: string; since: string }
+
+/** "koomen’s agent (Laptop) on pete-mbp". */
+export const runsWhere = (l: Local) => `${l.by} on ${l.machine}`;
 
 const enc = new TextEncoder();
 const now = () => new Date().toISOString();
@@ -263,9 +285,14 @@ type Row = {
   asked: string | null;
   /** The person who added it (a login): its commits' author, whether they added it themselves or through an agent. Null before #68. */
   person: string | null;
+  /** JSON Local: a local task, run by a local agent with no VM. Null for a VM's task (and once it's handed to a VM). */
+  local: string | null;
+  /** Who ran it locally (runsWhere), once Restart handed it to a VM. */
+  handed: string | null;
 };
 
-const list = (json: string | null): number[] => { try { const v = JSON.parse(json ?? "[]"); return Array.isArray(v) ? v.map(Number) : []; } catch { return []; } };
+const localOf = (r: Row): Local | null => { try { return r.local ? JSON.parse(r.local) as Local : null; } catch { return null; } };
+const list =(json: string | null): number[] => { try { const v = JSON.parse(json ?? "[]"); return Array.isArray(v) ? v.map(Number) : []; } catch { return []; } };
 const asked = (r: Row): { at: string; by: string; text: string }[] => { try { const v = JSON.parse(r.asked ?? "[]"); return Array.isArray(v) ? v : []; } catch { return []; } };
 // "needs agent" is a merge that hasn't happened yet: to the dependency rules, a task that isn't merged or merging.
 const depOf = (r: Row): DepTask => ({ id: r.id, status: r.status as DepStatus, startAfter: list(r.start_after), mergeAfter: list(r.merge_after) });
@@ -285,6 +312,8 @@ export class Factory extends DurableObject<Env> {
   private merges: Promise<void> = Promise.resolve();
   /** Each task's restarts in this object's life: a launch that a restart overtook stops the VM it started, and runs nothing. */
   private epochs = new Map<number, number>();
+  /** The VMs a restart is saving now (relaunch), so a second restart doesn't save the same one again. */
+  private saving = new Set<string>();
   /** Queued tasks whose VM is being started (so a second start doesn't start another). */
   private starting = new Set<number>();
   /** The dependency rules (factory/deps.ts), over this object's tasks. */
@@ -308,11 +337,13 @@ export class Factory extends DurableObject<Env> {
     this.sql.exec(`CREATE TABLE IF NOT EXISTS agent_prefs (login TEXT PRIMARY KEY, prefs TEXT NOT NULL, updated INTEGER NOT NULL)`);
     // Dependencies (#49), on a table made before them.
     const cols = this.sql.exec<{ name: string }>("PRAGMA table_info(tasks)").toArray().map((c) => c.name);
-    for (const c of ["start_after", "merge_after", "merge_by", "run", "asked", "person"]) if (!cols.includes(c)) this.sql.exec(`ALTER TABLE tasks ADD COLUMN ${c} TEXT`);
-    // A merge the object was stopped in the middle of goes back to ready to merge, saying so.
-    for (const r of this.sql.exec<Row>("SELECT * FROM tasks WHERE status = 'merging'").toArray()) {
-      this.update(r.id, { status: "complete", error: "The merge was stopped in the middle (the factory restarted). Merge again." });
-    }
+    for (const c of ["start_after", "merge_after", "merge_by", "run", "asked", "person", "local", "handed"]) if (!cols.includes(c)) this.sql.exec(`ALTER TABLE tasks ADD COLUMN ${c} TEXT`);
+    // A merge the object was stopped in the middle of (any deploy of this server resets it): merged if staging has it
+    // (its VM moved staging before the object heard), else back to ready to merge (factory/recover.ts).
+    for (const { id } of this.sql.exec<{ id: number }>("SELECT id FROM tasks WHERE status = 'merging'").toArray()) this.ctx.waitUntil(this.mergeCutOff(id));
+    // A launch the object was stopped in the middle of (restart, revise and resolve launch in waitUntil): a task that
+    // works or needs its agent, with no run started or no VM up, is launched again (factory/recover.ts, recovery).
+    for (const { id } of this.sql.exec<{ id: number }>("SELECT id FROM tasks WHERE status IN ('working', 'needs agent')").toArray()) this.ctx.waitUntil(this.recover(id));
     // Every task starts by itself, with no button: when it is added, or when the tasks it waits for merge. One whose VM
     // was starting when the object stopped (each merge deploys staging, which restarts it) is still queued with no VM:
     // it starts again here.
@@ -342,6 +373,7 @@ export class Factory extends DurableObject<Env> {
       ...(this.starting.has(r.id) ? { starting: true } : {}),
       ...(stalled ? { stalled } : {}),
       ...(waiting ? { waiting } : {}),
+      local: localOf(r), handedFrom: r.handed,
     };
   }
 
@@ -365,9 +397,11 @@ export class Factory extends DurableObject<Env> {
 
   /** The task's Claude Code takes the instructions that wait (the VM's hook, as a step ends, or run.ts, as it starts Claude Code). */
   async take(id: number, how: string): Promise<{ asks: Ask[]; text: string }> {
-    if (this.row(id)?.status != "working") return { asks: [], text: "" };
+    const r = this.row(id);
+    // A local task's agent also takes the factory's word on a merge that needs it (needs agent).
+    if (r?.status != "working" && !(r?.status == "needs agent" && r.local)) return { asks: [], text: "" };
     const asks = this.takeAsks(id);
-    if (asks.length) this.note(id, `Claude Code got the instructions from ${whoAsked(asks)}${how ? ` ${how.slice(0, 300)}` : ""}`);
+    if (asks.length) this.note(id, `${r.local ? "The local agent" : "Claude Code"} got the instructions from ${whoAsked(asks)}${how ? ` ${how.slice(0, 300)}` : ""}`);
     return { asks, text: joinAsks(asks) };
   }
 
@@ -401,7 +435,7 @@ export class Factory extends DurableObject<Env> {
    * change log (/admin/changes), the one who prompted the agent (`by` when not given); `via`: how, when not in person.
    * The task's person (its commits' author) is `user`, or `by`.
    */
-  async add(input: { title: string; description: string; by: string; user?: string; via?: string; origin: string; startAfter?: unknown; mergeAfter?: unknown }): Promise<Task> {
+  async add(input: { title: string; description: string; by: string; user?: string; via?: string; origin: string; startAfter?: unknown; mergeAfter?: unknown; local?: { machine?: unknown } }): Promise<Task> {
     const title = input.title.trim().slice(0, 200), description = input.description.trim().slice(0, 20000);
     if (!title) throw new Error("A task needs a title.");
     // A new task can't be in a cycle: nothing waits for it yet.
@@ -411,7 +445,10 @@ export class Factory extends DurableObject<Env> {
     const id = this.sql.exec<{ id: number }>(`INSERT INTO tasks (title, description, status, branch, origin, by_login, person, created, updated, start_after, merge_after) VALUES (?, ?, 'queued', '', ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
       title, description || title, input.origin, input.by, (input.user ?? input.by).toLowerCase(), at, at, deps.startAfter ? JSON.stringify(deps.startAfter) : null, deps.mergeAfter ? JSON.stringify(deps.mergeAfter) : null).one().id;
     this.sql.exec("UPDATE tasks SET branch = ? WHERE id = ?", branchName(id, title), id);
-    this.note(id, `Added by ${input.by}${depsNote(deps)}`);
+    // A local task: the agent that asked runs it, on its own machine, with no VM.
+    const local: Local | null = input.local ? { by: input.by, machine: String(input.local.machine ?? "").trim().slice(0, 80) || "an unnamed machine", since: at } : null;
+    if (local) this.sql.exec("UPDATE tasks SET local = ? WHERE id = ?", JSON.stringify(local), id);
+    this.note(id, `Added by ${input.by}${depsNote(deps)}${local ? `: a local task, run by ${runsWhere(local)} (no VM)` : ""}`);
     await this.logged(input.user ?? input.by, { key: "task", from: null, to: null, task: { id, title, event: "added" }, ...(input.via ? { via: input.via } : {}) });
     const waiting = this.deps.unmetStart(depOf(this.row(id)!));
     if (waiting.length) this.note(id, `Queued: waiting for ${ids(waiting)} to merge (no VM until then)`);
@@ -421,6 +458,12 @@ export class Factory extends DurableObject<Env> {
 
   /** Starts a queued task's VM and job, once (the caller checked that nothing blocks it). */
   private begin(id: number) {
+    // A local task has no VM: it works now, and its agent makes the branch (task start).
+    const r = this.row(id);
+    if (r?.local) {
+      if (r.status == "queued") this.update(id, { status: "working" }, `Working: nothing blocks it now. ${runsWhere(localOf(r)!)} makes ${r.branch} from staging (task start) and works on it`);
+      return;
+    }
     if (this.starting.has(id)) return;
     this.starting.add(id);
     this.ctx.waitUntil(this.launch(id, "work").finally(() => { this.starting.delete(id); this.changed(id); }));
@@ -558,7 +601,33 @@ export class Factory extends DurableObject<Env> {
   async brief(id: number) {
     const r = this.row(id);
     if (!r) return null;
-    return { title: r.title, branch: r.branch, base: "staging", prompt: taskPrompt({ ...r, base: "staging" }), instructions: r.instructions, restart: restartPrompt(r, asked(r)), maxTurns: 200 };
+    return { title: r.title, branch: r.branch, base: "staging", prompt: taskPrompt({ ...r, base: "staging" }), instructions: r.instructions, restart: restartPrompt(r, asked(r), r.handed), maxTurns: 300 };
+  }
+
+  /** Why a local agent (an admin token) may not report on this task, or null: it must be a local task, not done. */
+  async localRefusal(id: number): Promise<{ error: string; status: number } | null> {
+    const r = this.row(id);
+    if (!r) return { error: "no such task", status: 404 };
+    if (!r.local) return { error: r.handed ? `Task #${id} was handed to a VM: it isn't yours any more. Stop working on it.` : `Task #${id} isn't a local task: its VM reports on it.`, status: 409 };
+    if (["merged", "discarded"].includes(r.status)) return { error: `task #${id} is ${r.status}`, status: 409 };
+    return null;
+  }
+
+  /**
+   * A local task's git token (POST .../git): reads staging, main and its branch, and pushes its branch only, for two
+   * hours (factory/git-grant.ts), as a VM's. Its agent pushes through Erga's Git endpoint with it; the repository's
+   * rules stay as they are (no admin token pushes a task's branch).
+   */
+  async localGit(id: number, origin: string): Promise<{ token: string; repo: string; branch: string } | { error: string; status: number }> {
+    const no = await this.localRefusal(id);
+    if (no) return no;
+    const r = this.row(id)!;
+    const host = vmHost(this.env, origin);
+    try {
+      return { token: await gitToken(this.env, "task", r.branch, r.person ?? r.by_login), repo: typeof host == "string" ? `${origin}/git/erga.git` : host.repo(origin), branch: r.branch };
+    } catch (e) {
+      return { error: (e as Error).message, status: 503 };
+    }
   }
 
   /** A VM's report on its task. */
@@ -573,6 +642,14 @@ export class Factory extends DurableObject<Env> {
       case "log": this.note(id, String(body.message ?? "")); break;
       case "branch": this.update(id, { base: String(body.base ?? "") || null }); break;
       case "preview":
+        // A local task's preview is wherever its agent runs the app (its own machine, often localhost): a full URL.
+        if (r.local) {
+          let to: URL | null = null;
+          try { to = new URL(String(body.url ?? "")); } catch { /* below */ }
+          if (!to || !/^https?:$/.test(to.protocol)) return { ok: false, error: "url: the preview's address, http:// or https://" };
+          this.update(id, { preview_origin: to.origin, preview_path: to.pathname + to.search }, `Preview up: ${to.href} (on ${localOf(r)!.machine})`);
+          break;
+        }
         // A path on the preview's own host, never another (//evil.example/, @evil.example: /open redirects there).
         if (!/^\/(?![\/\\])/.test(String(body.path || "/"))) return { ok: false, error: "path: a path on the preview's host, starting with one /" };
         this.update(id, { preview_path: String(body.path || "/") }, `Preview up: ${r.preview_origin}${body.path || "/"}`); break;
@@ -588,13 +665,20 @@ export class Factory extends DurableObject<Env> {
           if (body.status == "complete") {
             this.update(id, { status: "merging", error: null, commit_sha: body.commit ? String(body.commit) : r.commit_sha }, `Claude Code: ${String(body.summary ?? "done").slice(0, 1500)}`);
             this.note(id, "The merge goes on");
-            this.queueMerge(id, r.merge_by ?? r.by_login);
+            // Its Claude Code said done: the merge gives it a short while to end (merge.ts, LIMITS.stopReported).
+            this.queueMerge(id, r.merge_by ?? r.by_login, true);
           } else if (body.status == "failed") this.backToReady(id, `Claude Code couldn't finish the merge: ${String(body.error ?? "failed")}`);
           else return { ok: false, error: "status: complete or failed" };
           return { ok: true };
         }
+        // A local agent that says done while instructions wait for it: it takes them first (task inbox), and works on.
+        if (r.local && body.status == "complete" && this.waiting(id).length) {
+          const n = this.waiting(id).length;
+          this.note(id, `The local agent said it was done, but ${n} instruction${n == 1 ? "" : "s"} wait${n == 1 ? "s" : ""} for it: still working`);
+          return { ok: false, error: `${n} instruction${n == 1 ? "" : "s"} from the board wait${n == 1 ? "s" : ""} for this task: run \`task inbox\`, do ${n == 1 ? "it" : "them"}, then \`task done\` again.` };
+        }
         // It ended before its Claude Code got the instructions that wait: it works on them now, in a new run.
-        const asks = ["complete", "failed"].includes(body.status) ? this.takeAsks(id) : [];
+        const asks = ["complete", "failed"].includes(body.status) && !r.local ? this.takeAsks(id) : [];
         if (asks.length) {
           const said = body.status == "complete" ? "said it was done" : `failed (${String(body.error ?? "").slice(0, 300)})`;
           this.update(id, { instructions: joinAsks(asks), summary: body.status == "complete" ? String(body.summary ?? "") : r.summary, commit_sha: body.commit ? String(body.commit) : r.commit_sha, error: null, run: null },
@@ -631,11 +715,19 @@ export class Factory extends DurableObject<Env> {
     if (!r) return { ok: false, error: "no such task" };
     if (!["complete", "failed", "working"].includes(r.status)) return { ok: false, error: `task #${id} is ${r.status}: it takes instructions while it works, or when it's ready to merge or failed` };
     if (!instructions.trim()) return { ok: false, error: "Say what to change." };
-    if (r.status == "working") {
-      // Claude Code works on, and gets them when its current step ends (the VM's hook): nothing it did is lost.
+    if (r.status == "working" || r.local) {
+      // Claude Code works on, and gets them when its current step ends (the VM's hook): nothing it did is lost. A local
+      // task's agent gets them with `task inbox` (it asks when a step ends, and before it says done); one that was
+      // ready to merge or failed works again.
+      if (r.local && r.status != "working") {
+        const why = this.deps.startRefusal(depOf(r));
+        if (why) return { ok: false, error: why };
+      }
       this.sql.exec("INSERT INTO asks (task, by_login, text, at) VALUES (?, ?, ?, ?)", id, by, instructions.trim().slice(0, 20000), now());
-      this.update(id, { asked: JSON.stringify([...asked(r), { at: now(), by, text: instructions.trim().slice(0, 20000) }]) });
-      this.note(id, `${by} asked, while it works: ${instructions.trim().slice(0, 500)}`);
+      this.update(id, { asked: JSON.stringify([...asked(r), { at: now(), by, text: instructions.trim().slice(0, 20000) }]), ...(r.status != "working" ? { status: "working", error: null } : {}) });
+      this.note(id, r.local
+        ? `${by} asked${r.status == "working" ? ", while it works" : ""}: ${instructions.trim().slice(0, 500)} (${runsWhere(localOf(r)!)} gets it with task inbox)`
+        : `${by} asked, while it works: ${instructions.trim().slice(0, 500)}`);
       return { ok: true };
     }
     const why = this.deps.startRefusal(depOf(r));
@@ -643,7 +735,8 @@ export class Factory extends DurableObject<Env> {
     // Any sent while it worked that its Claude Code never got (its VM stopped first) go with them.
     const older = joinAsks(this.takeAsks(id));
     const text = instructions.trim().slice(0, 20000);
-    this.update(id, { instructions: (older ? older + "\n\n" : "") + text, asked: JSON.stringify([...asked(r), { at: now(), by, text }]), status: "working", error: null }, `${by} asked: ${instructions.trim().slice(0, 500)}`);
+    // No run until the launch starts one (run: null): a reset before that leaves a task that recover() launches again.
+    this.update(id, { instructions: (older ? older + "\n\n" : "") + text, asked: JSON.stringify([...asked(r), { at: now(), by, text }]), status: "working", error: null, run: null }, `${by} asked: ${instructions.trim().slice(0, 500)}`);
     this.ctx.waitUntil(this.launch(id, "revise"));
     return { ok: true };
   }
@@ -662,6 +755,14 @@ export class Factory extends DurableObject<Env> {
     if (["merged", "discarded"].includes(r.status)) return { ok: false, error: `task #${id} is ${r.status}: it can't restart` };
     const why = this.deps.startRefusal(depOf(r));
     if (why) return { ok: false, error: why };
+    // A local task is handed to a VM: its local agent's reports are refused from now on, and a fresh VM goes on from
+    // what it pushed to the branch (what it didn't push stays on its machine). The board names it, in the brief too.
+    const local = localOf(r);
+    if (local) {
+      this.update(id, { local: null, handed: runsWhere(local) },
+        `Handed to a VM by ${by}: ${runsWhere(local)} ran it (the task was ${r.status == "complete" ? "ready to merge" : r.status}). Its reports are refused from now on; a VM goes on from what it pushed to ${r.branch}`);
+      // Instructions it never took go to the VM's Claude Code in its brief (asked): taken below, as for any restart.
+    }
     // A queued task that never ran has nothing to restart: it starts (again, if its VM was starting).
     if (r.status == "queued" && !r.vm) {
       if (!this.starting.has(id)) this.note(id, `Started by ${by}`);
@@ -674,20 +775,58 @@ export class Factory extends DurableObject<Env> {
     // Instructions sent while it worked, that the old Claude Code never got: in the restart's brief (asked), so taken here.
     this.takeAsks(id);
     // No run is current any more: the old Claude Code's reports are refused from now on. A merge that is running sees
-    // the task isn't merging any more, and does nothing with its answer.
-    this.update(id, { status: "working", error: null, run: null, merge_by: null, vm: null, preview_origin: null, preview_path: null },
+    // the task isn't merging any more, and does nothing with its answer. The old VM stays on the task until it is
+    // saved and stopped (relaunch), so that a reset meanwhile leaves a task that recover() saves and launches again.
+    this.update(id, { status: "working", error: null, run: null, merge_by: null, preview_origin: null, preview_path: null },
       `Restarted by ${by} (the task was ${was}): ${r.vm ? `the work in VM ${r.vm} is saved, then a fresh VM` : "a fresh VM"} starts Claude Code with the task's prompt and ${asked(r).length} earlier instruction${asked(r).length == 1 ? "" : "s"}`);
-    this.ctx.waitUntil((async () => {
-      const host = vmHost(this.env, r.origin);
-      if (r.vm && typeof host != "string") {
+    this.ctx.waitUntil(this.relaunch(id, r, epoch));
+    return { ok: true };
+  }
+
+  /** A restart's work: the old VM, if it's up, saves the work and stops; then a fresh VM starts Claude Code with the restart brief. */
+  private async relaunch(id: number, r: Row, epoch: number) {
+    const host = vmHost(this.env, r.origin);
+    // Another restart saves this VM already (restarted twice): this one only launches, if it is still the latest.
+    if (r.vm && typeof host != "string" && !this.saving.has(r.vm)) {
+      this.saving.add(r.vm);
+      try {
         await this.save(id, r, host);
         await host.stop(r.vm).catch(() => {});
         this.note(id, `VM ${r.vm} stopped`);
-      }
-      // Restarted again meanwhile: that restart goes on instead.
-      if (this.epochs.get(id) == epoch) await this.launch(id, "restart");
-    })());
-    return { ok: true };
+      } finally { this.saving.delete(r.vm); }
+    }
+    // Restarted again meanwhile: that restart goes on instead. Discarded meanwhile: nothing.
+    if (this.epochs.get(id) != epoch || this.row(id)?.status != "working") return;
+    if (this.row(id)?.vm) this.update(id, { vm: null, preview_origin: null, preview_path: null });
+    await this.launch(id, "restart");
+  }
+
+  /**
+   * A new object's look at a task that works or needs its agent (factory/recover.ts, recovery): the old object may
+   * have been reset between the save and the launch of a restart, or before a revise's or a resolve's launch.
+   */
+  private async recover(id: number) {
+    const r = this.row(id);
+    // A local task has no VM by design: its own agent goes on with it (or the board hands it to a VM).
+    if (!r || r.local) return;
+    const host = vmHost(this.env, r.origin);
+    if (typeof host == "string") return;
+    const up = !!r.vm && (await host.alive(r.vm).catch(() => false));
+    // Changed while we asked (a restart, a report, a launch): that goes on instead.
+    const later = this.row(id);
+    if (!later || later.status != r.status || later.run != r.run || later.vm != r.vm || this.epochs.has(id)) return;
+    const what = recovery(r, up);
+    if (what == "none") return;
+    if (what == "back to ready") return this.backToReady(id, "The factory restarted before Claude Code was woken to finish the merge, and the task's VM is gone. Merge again.");
+    if (what == "resolve") {
+      this.note(id, "Waking Claude Code for the merge again: the factory restarted before it was woken");
+      return this.launch(id, "resolve");
+    }
+    const epoch = 1;
+    this.epochs.set(id, epoch);
+    const n = asked(r).length;
+    this.update(id, { run: null }, `Starting again: the factory restarted before the task's run of Claude Code started${r.vm ? (up ? ` (VM ${r.vm} saves the work first)` : ` (VM ${r.vm} is gone)`) : ""}. A fresh VM starts from ${r.branch} with the task's prompt and its ${n} earlier instruction${n == 1 ? "" : "s"}`);
+    await this.relaunch(id, { ...r, vm: up ? r.vm : null }, epoch);
   }
 
   /** A restart's first step, in the old VM if it's still up: Claude Code stopped, the work committed and pushed (merge.ts save). */
@@ -724,13 +863,14 @@ export class Factory extends DurableObject<Env> {
   }
 
   /** The task's merge, after the ones asked for before it (one at a time). */
-  private queueMerge(id: number, by: string) {
-    const run = this.merges.then(() => this.doMerge(id, by));
+  private queueMerge(id: number, by: string, reported = false) {
+    const run = this.merges.then(() => this.doMerge(id, by, reported));
     this.merges = run.catch(() => {});
     this.ctx.waitUntil(run);
   }
 
-  private async doMerge(id: number, by: string) {
+  /** `reported`: the task's Claude Code has just said done (a resolve), so the job waits for it a short while only. */
+  private async doMerge(id: number, by: string, reported = false) {
     const r = this.row(id)!;
     // Discarded meanwhile (while it waited for its turn).
     if (r.status != "merging") return;
@@ -739,6 +879,12 @@ export class Factory extends DurableObject<Env> {
     // A dependency that hasn't merged (its merge, queued ahead of this one, failed; or one added meanwhile).
     const waiting = this.deps.mergeTimeRefusal(depOf(r));
     if (waiting) return this.backToReady(id, waiting);
+    // Staging has it already: a merge that ended while the factory restarted (factory/recover.ts). Merged, with no job.
+    const landed = await this.landed(r);
+    if (landed) {
+      if (this.row(id)?.status != "merging") return;
+      return this.mergeDone(id, by, landed, `Staging has this task's merge already (${landed.slice(0, 10)}): merged, with no new merge`);
+    }
     try {
       this.note(id, `Merging staging into ${r.branch}, then ${r.branch} into staging (the preview stops)`);
       const vm = await this.vmFor(id, host);
@@ -746,32 +892,84 @@ export class Factory extends DurableObject<Env> {
       this.update(id, { preview_path: null });
       let timer: ReturnType<typeof setTimeout> | undefined;
       const out = await Promise.race([
-        host.job(vm, "merge.ts", ["merge", r.branch, r.title], await this.jobEnv(id, "merge", by), true),
+        host.job(vm, "merge.ts", ["merge", r.branch, r.title], { ...(await this.jobEnv(id, "merge", by)), ...(reported ? { FACTORY_RUN_REPORTED: "1" } : {}) }, true),
         new Promise<never>((_, no) => { timer = setTimeout(() => no(new Error(`the merge job didn't answer in ${MERGE_JOB_MS / 60_000} minutes`)), MERGE_JOB_MS); }),
       ]).finally(() => clearTimeout(timer));
       const res = resultOf(out);
       if (this.row(id)?.status != "merging") return;
+      if (!res.ok && res.needsAgent && r.local) {
+        // A local task's merge VM has no Claude Code: it stops, and the local agent finishes the merge in its own
+        // checkout (its inbox has the factory's instructions); its `task done` runs the merge again. Or Restart hands
+        // the task to a VM.
+        await host.stop(vm).catch(() => {});
+        this.update(id, { status: "needs agent", error: res.error ?? "the merge stopped", vm: null, preview_origin: null }, `Needs agent: ${String(res.error ?? "").split("\n")[0].slice(0, 400)} VM ${vm} stopped. ${runsWhere(localOf(r)!)} is told to finish the merge (task inbox); Restart hands it to a VM instead.`);
+        this.sql.exec("INSERT INTO asks (task, by_login, text, at) VALUES (?, ?, ?, ?)", id, "the factory", localResolvePrompt(r, res), now());
+        this.changed(id);
+        return;
+      }
       if (!res.ok && res.needsAgent) {
         // The task's own Claude Code finishes it, in its clone, in the same session; then the merge goes on.
-        this.update(id, { status: "needs agent", error: res.error ?? "the merge stopped", instructions: resolvePrompt(r, res) },
+        // run: null until the resolve's launch starts one (a reset before that: recover() wakes it again).
+        this.update(id, { status: "needs agent", error: res.error ?? "the merge stopped", instructions: resolvePrompt(r, res), run: null },
           `Needs agent: ${String(res.error ?? "").split("\n")[0].slice(0, 400)} Claude Code is woken to finish the merge.`);
         this.ctx.waitUntil(this.launch(id, "resolve"));
         return;
       }
       if (!res.ok) return this.backToReady(id, `The merge failed: ${res.error}`);
-      await host.stop(vm).catch(() => {});
-      this.update(id, { status: "merged", merged_at: now(), merge_commit: String(res.commit), vm: null, preview_origin: null, merge_by: null }, `Merged into staging as ${String(res.commit).slice(0, 10)}; ${r.branch} deleted; VM stopped`);
-      await this.logged(by, { key: "task", from: null, to: null, task: { id, title: r.title, event: "merged", commit: String(res.commit) } });
-      this.tellDependents(id);
-      // Staging moved. On Cloudflare the push went through Erga's Git endpoint, which tells the deploy pipeline itself
-      // (worker/source-host.ts, deployHook): staging.erga.dev builds and deploys it. Locally the repository is the dev
-      // server's own, which no deploy reads.
-      this.note(id, host.kind == "local" ? "Staging moved (the local repository: nothing deploys it)" : "Staging moved: staging.erga.dev deploys it now (see /admin/factory)");
+      await this.mergeDone(id, by, String(res.commit), res.already ? `Staging had this task's merge already (${String(res.commit).slice(0, 10)}): merged` : `Merged into staging as ${String(res.commit).slice(0, 10)}; ${r.branch} deleted`);
     } catch (e) {
       // Restarted (or discarded) meanwhile: its VM was stopped under the merge.
       if (this.row(id)?.status != "merging") return;
       this.backToReady(id, `The merge failed: ${(e as Error).message}`);
     }
+  }
+
+  /** A merge that reached staging (as `commit`): the VM stopped, the task merged, the change log, the dependents told. */
+  private async mergeDone(id: number, by: string, commit: string, message: string) {
+    const r = this.row(id)!;
+    const host = vmHost(this.env, r.origin);
+    if (r.vm && typeof host != "string") await host.stop(r.vm).catch(() => {});
+    this.update(id, { status: "merged", merged_at: now(), merge_commit: commit, vm: null, preview_origin: null, merge_by: null }, `${message}; VM stopped`);
+    await this.logged(by, { key: "task", from: null, to: null, task: { id, title: r.title, event: "merged", commit } });
+    this.tellDependents(id);
+    // Staging moved. On Cloudflare the push went through Erga's Git endpoint, which tells the deploy pipeline itself
+    // (worker/source-host.ts, deployHook): staging.erga.dev builds and deploys it. Locally the repository is the dev
+    // server's own, which no deploy reads.
+    this.note(id, typeof host != "string" && host.kind == "local" ? "Staging moved (the local repository: nothing deploys it)" : "Staging moved: staging.erga.dev deploys it now (see /admin/factory)");
+  }
+
+  /** A merge this object was cut off from (a reset): merged if staging has it, else back to ready to merge. */
+  private async mergeCutOff(id: number) {
+    const r = this.row(id);
+    if (!r) return;
+    const landed = await this.landed(r);
+    if (this.row(id)?.status != "merging") return;
+    if (landed) return this.mergeDone(id, r.merge_by ?? r.by_login, landed, `The factory restarted during the merge, but staging has it: merged as ${landed.slice(0, 10)}`);
+    this.update(id, { status: "complete", merge_by: null, error: "The merge was stopped in the middle (the factory restarted). Merge again." }, "Merge stopped: the factory restarted, and staging doesn't have the merge");
+  }
+
+  /** Staging's commit that merged the task, if any (factory/recover.ts, landedIn); null when it can't say. */
+  private async landed(r: Row): Promise<string | null> {
+    try {
+      const log = await this.stagingLog(r.origin);
+      return log ? landedIn(log, { branch: r.branch, commit: r.commit_sha, base: r.base }) : null;
+    } catch (e) {
+      console.log(`factory: couldn't read staging for task #${r.id}: ${(e as Error).message}`);
+      return null;
+    }
+  }
+
+  /** The repository's branches and staging's newest commits: the dev server's repository locally, else Erga's own (SourceHost). */
+  private async stagingLog(origin: string): Promise<StagingLog | null> {
+    if (this.env.ERGA_LINK_SECRET && this.env.DEV_LOGIN) {
+      const r = await fetch(`${origin}/__factory/vm?link=${this.env.ERGA_LINK_SECRET}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ op: "staging" }) });
+      if (!r.ok) throw new Error(`the dev server answered ${r.status}`);
+      return await r.json() as StagingLog;
+    }
+    if (!hasSource(this.env)) return null;
+    const log = await this.env.SOURCE.getByName("erga").stagingLog(origin);
+    if ("error" in log) throw new Error(log.error);
+    return log;
   }
 
   async discard(id: number, by: string, origin?: string): Promise<{ ok: boolean; error?: string }> {
@@ -963,6 +1161,26 @@ export class Factory extends DurableObject<Env> {
       },
       agentTokens: async () => (await tokensOf(this.env).list(login)).map((t) => ({ id: t.id, label: t.label, kind: t.kind, scope: t.scope, docId: t.docId, created: t.created, expires: t.expires, lastUsed: t.lastUsed })),
       revokeAgentToken: (id) => tokensOf(this.env).revoke(login, id),
+      testRuns: async (limit) => {
+        const g = await pipeline().gateList(limit);
+        return { ...g, runs: g.runs.map((r) => ({ ...r, started: new Date(r.started).toISOString(), ended: r.ended ? new Date(r.ended).toISOString() : null, shards: r.shards.map((s) => ({ n: s.n, state: s.state, phase: s.phase, rerun: s.rerun, items: s.items.map((i) => i.name), failed: s.results.filter((x) => !x.ok).map((x) => x.name), error: s.error, secs: s.ended ? Math.round((s.ended - s.started) / 1000) : null })) })) };
+      },
+      testRun: async (commit, shard) => {
+        if (!/^[0-9a-f]{40}$/.test(commit)) throw new Error("Name the commit by its full sha (40 hex digits): list_test_runs and list_branches list them.");
+        const r = await pipeline().gateGet(commit);
+        return { ...r, ...(shard ? { log: (await pipeline().gateLog(commit, shard)) ?? `shard ${shard} has no log (yet)` } : {}) };
+      },
+      runTests: async (commit) => {
+        let sha = commit;
+        if (!sha) {
+          const view = await source().branches(state.origin) as { branches: { name: string; commit: string | null }[] };
+          sha = view.branches.find((b) => b.name == "staging")?.commit ?? undefined;
+          if (!sha) throw new Error("staging has no commits yet.");
+        }
+        if (!/^[0-9a-f]{40}$/.test(sha)) throw new Error("Name the commit by its full sha (40 hex digits).");
+        const run = await pipeline().gateStart(sha, login);
+        return { done: `The tests of ${sha.slice(0, 10)} run now (${run.shards.length} shards); list_test_runs follows them`, state: run.state };
+      },
     };
   }
 
@@ -1101,7 +1319,7 @@ export class Factory extends DurableObject<Env> {
 }
 
 /** A merge or discard job's result: its output's FACTORY-RESULT line. */
-function resultOf(out: { code: number; output: string } | null): { ok: boolean; error?: string; commit?: string; needsAgent?: boolean; kind?: string; step?: string; files?: string[]; stopped?: boolean; saved?: string } {
+function resultOf(out: { code: number; output: string } | null): { ok: boolean; error?: string; commit?: string; needsAgent?: boolean; kind?: string; step?: string; files?: string[]; stopped?: boolean; saved?: string; already?: boolean } {
   const line = out?.output.split("\n").reverse().find((l) => l.startsWith("FACTORY-RESULT "));
   if (!line) return { ok: false, error: `the job ended without a result (exit ${out?.code}): ${out?.output.slice(-400) ?? ""}` };
   return JSON.parse(line.slice("FACTORY-RESULT ".length));
@@ -1197,7 +1415,7 @@ export const factoryEnabled = enabled;
 /** /api/factory/... */
 export async function factoryApi(request: Request, env: Env, url: URL): Promise<Response> {
   const path = url.pathname.replace(/\/$/, "");
-  const m = /^\/api\/factory\/tasks\/(\d+)(?:\/(brief|inbox|log|branch|preview|screenshots|merge|discard|revise|restart|open|start))?$/.exec(path);
+  const m = /^\/api\/factory\/tasks\/(\d+)(?:\/(brief|inbox|log|branch|preview|screenshots|merge|discard|revise|restart|open|start|git))?$/.exec(path);
   const id = m ? Number(m[1]) : null, action = m?.[2] ?? "";
 
   // A VM, with its task's token.
@@ -1232,6 +1450,27 @@ export async function factoryApi(request: Request, env: Env, url: URL): Promise<
   if (agent && path == "/api/factory/claude" && request.method == "PUT") return json({ error: `The Claude token is a secret: it's pasted only on ${url.origin}/admin/api-keys, never by an agent. An agent may sign the factory out (DELETE).` }, 403);
   const f = factory(env);
   const on = await enabled(env);
+  // A local task's agent (factory/task.ts), with an admin token: the VMs' report routes, for a local task only, and
+  // its git token. (A PATCH without a status is a change of dependencies, below.)
+  let patch: Record<string, unknown> | null = null;
+  if (id != null && !action && request.method == "PATCH") patch = await request.json().catch(() => null) as Record<string, unknown> | null;
+  if (id != null && (["brief", "inbox", "log", "branch", "preview", "screenshots", "git"].includes(action) || (patch && typeof patch == "object" && "status" in patch))) {
+    const no = await f.localRefusal(id);
+    if (no) return json({ error: no.error }, no.status);
+    const m = request.method;
+    if (action == "brief" && m == "GET") return json(await f.brief(id));
+    if (action == "inbox" && m == "GET") return json(await f.inbox(id));
+    if (action == "inbox" && m == "POST") return json(await f.take(id, String(((await request.json().catch(() => ({}))) as { how?: unknown }).how ?? "")));
+    if (action == "git" && m == "POST") { const r = await f.localGit(id, url.origin); return "error" in r ? json({ error: r.error }, r.status) : json(r); }
+    if (action == "screenshots" && m == "POST") {
+      const r = await f.addShot(id, new Uint8Array(await request.arrayBuffer()), url.searchParams.get("caption") ?? "", url.searchParams.get("replace") == "1");
+      return json(r, r.ok ? 200 : 400);
+    }
+    const kind = patch ? "status" : (["log", "branch", "preview"].includes(action) && m == "POST" ? action : null);
+    if (!kind) return json({ error: "Not found" }, 404);
+    const r = await f.report(id, kind as "log", patch ?? await request.json().catch(() => ({})));
+    return json(r, r.ok ? 200 : 409);
+  }
   if (path == "/api/factory" && request.method == "GET") {
     const vms = await vmsInfo(env, url.origin);
     const host = vmHost(env, url.origin);
@@ -1268,9 +1507,10 @@ export async function factoryApi(request: Request, env: Env, url: URL): Promise<
   // The preview, for the person asking: on Cloudflare with a ticket for its host (factory/cloudflare.ts).
   if (id != null && action == "open" && request.method == "GET") {
     const t = await f.task(id);
-    if (!t?.url || !t.vm) return new Response("This task has no preview now.", { status: 404 });
+    // A local task's preview is on its agent's machine (no VM, no ticket): the link its agent gave.
+    if (!t?.url || !(t.vm || t.local)) return new Response("This task has no preview now.", { status: 404 });
     const to = new URL(t.url);
-    if (to.protocol == "https:") to.searchParams.set("factory_ticket", await previewTicket(env, t.vm));
+    if (to.protocol == "https:" && t.vm && !t.local) to.searchParams.set("factory_ticket", await previewTicket(env, t.vm));
     return new Response(null, { status: 302, headers: { Location: to.toString() } });
   }
   if (id != null && !action && request.method == "GET") { const t = await f.task(id, url.searchParams.get("log") == "all"); return t ? json(t) : json({ error: "Not found" }, 404); }
@@ -1283,12 +1523,14 @@ export async function factoryApi(request: Request, env: Env, url: URL): Promise<
   // Everything that changes something needs the factory on.
   if (!on) return json({ error: "The factory is off: an admin turns it on with the factory setting (/admin)." }, 409);
   if (path == "/api/factory/tasks" && request.method == "POST") {
-    const body = await request.json().catch(() => ({})) as { title?: string; description?: string; startAfter?: unknown; mergeAfter?: unknown };
-    try { return json(await f.add({ title: String(body.title ?? ""), description: String(body.description ?? ""), by, user: admin.login, ...(agent ? { via: `an outside agent (${agent.label})` } : {}), origin: url.origin, startAfter: body.startAfter, mergeAfter: body.mergeAfter }), 201); }
+    const body = await request.json().catch(() => ({})) as { title?: string; description?: string; startAfter?: unknown; mergeAfter?: unknown; local?: unknown };
+    // local: { machine } (or true): a local task, run by the agent that asks, on that machine (factory/task.ts).
+    const local = body.local ? { machine: typeof body.local == "object" ? (body.local as { machine?: unknown }).machine : undefined } : undefined;
+    try { return json(await f.add({ title: String(body.title ?? ""), description: String(body.description ?? ""), by, user: admin.login, ...(agent ? { via: `an outside agent (${agent.label})` } : {}), origin: url.origin, startAfter: body.startAfter, mergeAfter: body.mergeAfter, local }), 201); }
     catch (e) { return json({ error: (e as Error).message }, 400); }
   }
   if (id != null && !action && request.method == "PATCH") {
-    const body = await request.json().catch(() => null);
+    const body = patch;
     if (!body || typeof body != "object" || Array.isArray(body)) return json({ error: "send JSON: { startAfter, mergeAfter }" }, 400);
     const r = await f.setDeps(id, body as Record<string, unknown>, by, url.origin);
     return r.ok ? json(await f.task(id)) : json({ error: r.error }, r.status ?? 409);

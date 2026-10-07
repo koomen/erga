@@ -9,8 +9,9 @@
 
 import common from "./common.ts?raw";
 import fakeClaude from "./fake-claude.ts?raw";
+import gate from "./gate.ts?raw";
 import merge from "./merge.ts?raw";
 import run from "./run.ts?raw";
 import task from "./task.ts?raw";
 
-export const VM_SCRIPTS: Record<string, string> = { "common.ts": common, "fake-claude.ts": fakeClaude, "merge.ts": merge, "run.ts": run, "task.ts": task };
+export const VM_SCRIPTS: Record<string, string> = { "common.ts": common, "fake-claude.ts": fakeClaude, "gate.ts": gate, "merge.ts": merge, "run.ts": run, "task.ts": task };

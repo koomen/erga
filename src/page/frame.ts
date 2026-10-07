@@ -89,6 +89,23 @@ const stateFrom = (json: unknown) => EditorState.fromJSON(json, { extensions: do
 function start(m: Extract<ToFrame, { type: "init" }>) {
   if (page) return;
   if (m.timescale) window.__ergaTimescale = m.timescale;
+  // Where the page was scrolled to before a reload for a new release (live.ts): there once it renders.
+  // (Its images may still be loading, so the page may not be that long yet: tried again for a moment, until it gets
+  // there or someone else scrolls it.)
+  if (typeof m.scroll == "number" && Number.isFinite(m.scroll) && m.scroll > 0) {
+    const y = restoreScroll = m.scroll, until = Date.now() + 3000;
+    let last: number | null = null;
+    const again = () => {
+      const w = frame.contentWindow;
+      if (Date.now() > until || !w) return;
+      if (!frame.dataset.ready || restoreScroll != null) { setTimeout(again, 100); return; }
+      if (Math.abs(w.scrollY - y) < 2 || (last != null && Math.abs(w.scrollY - last) >= 2)) return;
+      w.scrollTo(0, y);
+      last = w.scrollY;
+      setTimeout(again, 100);
+    };
+    setTimeout(again, 100);
+  }
   relay = new Relay(m.version, (version, changes) => post({ type: "push", version, changes: changes.toJSON() }));
   const state = EditorState.fromJSON(m.state, { extensions: docExtensions(m.kind) }, { history: historyField });
   page = new PageEditor({
@@ -105,10 +122,11 @@ function start(m: Extract<ToFrame, { type: "init" }>) {
       // A presentation's pictures of its steps are out of date once its text changes (front.ts, HOST_SCRIPT).
       if (u.docChanged) window.ergaHost?.changed?.();
       if (u.rendered) {
-        if (restoreScroll != null) { frame.contentWindow?.scrollTo(0, restoreScroll); restoreScroll = null; }
         watchPage();
         syncBackdrop();
+        // (Shown first: the host page puts it where the plain page was scrolled, which a kept position then overrides.)
         if (!frame.dataset.ready) { frame.dataset.ready = "1"; window.ergaHost?.ready(); }
+        if (restoreScroll != null) { frame.contentWindow?.scrollTo(0, restoreScroll); restoreScroll = null; }
       }
       queueSnapshot(u.rendered);
     },
@@ -155,6 +173,7 @@ function queueSnapshot(rendered = false) {
         has: { strong: page.hasStyle("strong"), em: page.hasStyle("em"), code: page.hasStyle("code") },
         link: page.linkAt(),
       },
+      scrollY: Math.round(frame.contentWindow?.scrollY ?? 0),
     };
     post({ type: "update", rendered: renderedSince, snapshot });
     renderedSince = false;

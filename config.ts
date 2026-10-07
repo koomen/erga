@@ -190,7 +190,11 @@ export interface SettingChange {
   /** A factory task (key "task"): added to the board, or merged into staging (`commit`: the merge commit). `from` and `to` are null. */
   task?: { id: number; title: string; event: "added" | "merged"; commit?: string };
   /** main moved forward to staging (key "main"): the production deploy. `from` and `to` are main's old and new heads (null: none); `commits`, the newest that came (at most 50), of `total`. */
-  release?: { commits: { sha: string; subject: string }[]; total: number };
+  release?: {
+    commits: { sha: string; subject: string }[]; total: number;
+    /** main moved past the production gate (its tests hadn't passed): an admin's emergency override, with their reason and what the gate said. */
+    override?: { reason: string; gate: string };
+  };
   /** How the version's `by` did it, when not in person: "the factory's agent", "a shared agent (label)". */
   via?: string;
 }

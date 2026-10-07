@@ -26,12 +26,13 @@ import { expect, until } from "./suite/harness";
 const ok = (what: string) => console.log(`ok   ${what}`);
 const SECRET = `staging-admins-${crypto.randomUUID()}`;
 const HOOK = "mock-hook-secret-0123456789abcdef";
-const SIGNED_OUT = "erga_signed_out=1";
 
 const [staging, plain] = await Promise.all([
   startHost(null, { env: { ERGA_DEPLOY_MOCK: "1", ERGA_DEPLOY_TARGET: "staging", SESSION_SECRET: SECRET } }),
   startHost(null, { env: { SESSION_SECRET: SECRET } }),
 ]);
+// Signed out on either server: locally each names its cookies for its port (worker/cookies.ts).
+const SIGNED_OUT = `erga_signed_out_${staging.port}=1; erga_signed_out_${plain.port}=1`;
 
 const at = (host: Host) => {
   const root = host.root;
@@ -41,7 +42,7 @@ const at = (host: Host) => {
     page: (path: string, headers: Record<string, string> = {}) => get(path, { headers: { Accept: "text/html", ...headers } }),
     async signIn(as: string | null): Promise<string> {
       const r = await get(`/auth/github?${as ? `as=${as}&` : ""}next=/docs`);
-      return r.headers.getSetCookie().map((x) => x.split(";")[0]).find((x) => x.startsWith("erga_session="))!;
+      return r.headers.getSetCookie().map((x) => x.split(";")[0]).find((x) => /^erga_session(_\d+)?=/.test(x))!;
     },
     async mint(cookie: string, fields: Record<string, string>): Promise<string> {
       const html = await (await get("/tokens/new", { method: "POST", headers: { Cookie: cookie, Origin: root }, body: new URLSearchParams(fields) })).text();
@@ -149,13 +150,16 @@ try {
   expect((await s.get("/api/deploys/staging/hook", { method: "POST", body: "{}" })).status == 404, "and without it, its own door says no");
   r = await s.get("/api/deploys/staging/log", { headers: { Authorization: `Bearer ${HOOK}` } });
   expect(r.status == 200, "another of Erga's servers reads the log with the secret", r.status);
+  r = await s.get("/api/gate", { headers: { Authorization: `Bearer ${HOOK}`, Cookie: SIGNED_OUT } });
+  expect(r.status == 200, "production reads staging's test runs with the secret (the production gate)", r.status);
+  expect((await s.get("/api/gate", { headers: { Cookie: SIGNED_OUT } })).status != 200, "and without it, the test runs are refused");
   expect((await s.get("/api/snapshot/docs", { method: "POST", body: "{}" })).status == 404, "the snapshot endpoint is its own door's (SNAPSHOT_TOKEN)");
   r = await s.get("/api/factory/tasks/1/brief", { headers: { Authorization: "Bearer fct.1.9999999999.0000000000000000000000000000000000000000000000000000000000000000" } });
   let body = (await r.json().catch(() => ({}))) as { error?: string; adminsOnly?: boolean };
   expect(r.status == 403 && !body.adminsOnly && /token/.test(body.error ?? ""), "a factory VM's callback reaches the factory, which checks its task token", r.status, body);
   r = await s.get("/git/erga.git/info/refs?service=git-upload-pack", { headers: { Authorization: `Basic ${btoa("x:fgt.e30.0000000000000000000000000000000000000000000000000000000000000000")}` } });
   expect(r.status == 401 && (await r.text()).includes("factory token"), "a factory VM's git token reaches the Git endpoint, which checks it", r.status);
-  ok("open without an admin: the version check, the hook and peer reads with the secret, snapshots, the factory VMs' callbacks and git token");
+  ok("open without an admin: the version check, the hook, peer reads and the test runs with the secret, snapshots, the factory VMs' callbacks and git token");
 
   // ---------------------------------------------------------------- no deploy target: as before
   const p = at(plain);

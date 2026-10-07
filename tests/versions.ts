@@ -28,7 +28,7 @@ const ok = (what: string) => { checks.push(what); console.log(`ok   ${what}`); }
 
 async function signIn(as: string): Promise<string> {
   const r = await fetch(`${base}/auth/github?as=${as}&next=/docs`, { redirect: "manual" });
-  return r.headers.getSetCookie().map((c) => c.split(";")[0]).find((c) => c.startsWith("erga_session="))!;
+  return r.headers.getSetCookie().map((c) => c.split(";")[0]).find((c) => /^erga_session(_\d+)?=/.test(c))!;
 }
 const owner = `vtest${Date.now().toString(36)}`;
 const cookie = await signIn(owner);

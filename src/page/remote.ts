@@ -40,6 +40,9 @@ export interface RemotePageConfig {
   onBackdrop: (b: Backdrop) => void;
   /** The page needs rendering again to show the latest change. */
   onStale: () => void;
+  /** Where the caret starts, and where the page is scrolled to once it renders (a reload for a new release kept them: live.ts). */
+  selection?: { anchor: number; head: number };
+  scroll?: number;
   /** A link on the page to another of the document's pages was followed (its path in the document). */
   onOpen?: (path: string) => void;
 }
@@ -65,7 +68,8 @@ export class RemotePage {
     this.kind = config.kind;
     this.frame = config.frame;
     this.tracking = config.tracking;
-    this.state = EditorState.create({ doc: config.text });
+    const sel = config.selection && selectionFrom(config.selection.anchor, config.selection.head, config.text.length);
+    this.state = EditorState.create({ doc: config.text, ...(sel ? { selection: sel } : {}) });
     window.addEventListener("message", (e) => {
       if (e.source != this.frame.contentWindow || e.origin != config.origin || typeof e.data?.type != "string") return;
       // The frame's host page is up (again: it reloaded): ask it for the editor afresh.
@@ -106,7 +110,9 @@ export class RemotePage {
         this.ready = true;
         this.authority.reset();
         const timescale = (globalThis as { __ergaTimescale?: number }).__ergaTimescale;
-        this.post({ type: "init", kind: this.kind, dir: c.dir ?? "", state: this.state.toJSON(), version: this.authority.version, markdownHead: c.markdownHead, self: c.self, tracking: this.tracking, ...(timescale ? { timescale } : {}) });
+        this.post({ type: "init", kind: this.kind, dir: c.dir ?? "", state: this.state.toJSON(), version: this.authority.version, markdownHead: c.markdownHead, self: c.self, tracking: this.tracking, ...(timescale ? { timescale } : {}), ...(c.scroll ? { scroll: c.scroll } : {}) });
+        // Only the first frame: one that loads again later starts where it renders.
+        c.scroll = undefined;
         // A focus asked for before the frame was up only if the frame still has it: focus moved on since (the pages
         // card opened, the agent's box) stays where it went.
         for (const q of this.queue.splice(0)) if (q.type != "focus" || document.activeElement == this.frame) this.post(q);
@@ -230,6 +236,8 @@ export class RemotePage {
   title(): string { return this.snapshot.title; }
   /** The width of the page's text column. */
   get column(): number { return this.snapshot.column; }
+  /** Where the page is scrolled to, as it last said. */
+  get scrollY(): number { const y = Number(this.snapshot.scrollY); return Number.isFinite(y) && y > 0 ? y : 0; }
   render(): void { this.post({ type: "render" }); }
   focus(): void { this.frame.focus(); this.post({ type: "focus" }); }
   reveal(pos: number): void { this.post({ type: "reveal", pos }); }

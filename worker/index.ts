@@ -29,6 +29,8 @@
 //                              Every /admin page has the same layout (admin-layout.ts), and every /admin route is
 //                              for the server's admins only, checked here first (adminGate) and by its own door.
 //   /page.js, /style.css, ...  the editor's own files (static assets)
+//   GET /api/release           the build of each of them (build.json, site.sh): open pages follow a redeploy with it
+//                              (worker/live.ts, src/page/live.ts), and every page of the site's own gets live.js
 //
 // On staging (deploy/targets.json `adminsOnly`) every route above, and the documents' pages origin, is for Erga's admins
 // only: one guard before them all (worker/admins-only.ts lists what's exempt, and why).
@@ -40,7 +42,7 @@
 //   POST /__erga/link              makes (or finds) the document for a file or folder, for whoever's signed in
 //   /__erga/mirror/<id>            the WebSocket the document reaches its files on disk through
 
-import { accountOf, withAccount } from "../account";
+import { accountOf, OWN_ACCOUNT, withAccount } from "../account";
 import { idShaped, slugify } from "../directory";
 import { frontDoor, mayDeploy, OWNER, whoOf, withTokens } from "../front";
 import { serverApi, tokensDoor } from "../server-api";
@@ -58,6 +60,7 @@ import type { Env } from "./env";
 import { simulateLatency, tallied } from "./timing";
 import { pagesSite, platform } from "./platform";
 import { adminsOnlyGate } from "./admins-only";
+import { releaseApi, withLive } from "./live";
 
 export { Deployer } from "./deployer";
 export { DocHost } from "./doc-host";
@@ -76,11 +79,15 @@ export default {
       const response = await route(request, env, url, ctx);
       // Every page of the site's own has who you are in its upper right (account.ts); a document's pages origin never does.
       if (response.status == 101 || pagesSite(env, url)) return response;
-      return withAccount(response, async () => {
+      // A document's own HTML (its files under /d/<id>/, the homepage served directly) is its own: nothing of the site's goes in.
+      const own = response.headers.has(OWN_ACCOUNT);
+      const page = await withAccount(response, async () => {
         const session = await sessionOf(env, request);
         const dir = directoryOf(env);
         return accountOf(session, !!session && !session.test && (await dir.users.isAdmin(whoOf(session))), await mayDeploy(dir, session));
       }, url.pathname + url.search);
+      // And every page of the site's own follows a redeploy (worker/live.ts); not the editor's own files (editor.html is a part of a page).
+      return own || isAsset(url.pathname) || url.pathname == "/editor.html" ? page : withLive(page, request);
     });
     if (answer.status == 101) return answer;
     return timed(answer, [`worker;dur=${Date.now() - started}`, ...timing]);
@@ -106,7 +113,7 @@ function timed(response: Response, entries: string[]): Response {
 
 async function route(request: Request, env: Env, url: URL, ctx: ExecutionContext): Promise<Response> {
   const path = url.pathname;
-  const assets = path == "/page.js" || path == "/frame.js" || path == "/settings.js" || path == "/pages-tree.js" || path == "/factory-agent.js" || path == "/admin-share.js" || path == "/admin-nav.js" || path == "/style.css" || path.startsWith("/fonts/");
+  const assets = isAsset(path);
   // A factory VM's preview (factory/cloudflare.ts), on Cloudflare only: <vm>.<FACTORY_PREVIEW_DOMAIN>.
   if (env.FACTORY_PREVIEW_DOMAIN) {
     const preview = await previewDoor(request, env, (vm, ticket) => previewTicketOk(env, vm, ticket));
@@ -158,6 +165,8 @@ async function route(request: Request, env: Env, url: URL, ctx: ExecutionContext
   }
   // Each admin's agent conversation and panel, kept in the Factory object (worker/factory.ts): before the server's API, which has the rest of /api/.
   if (isAdminAgentPath(path)) return adminAgentApi(request, env, url);
+  // The build of each of the editor's files, for open pages to see a redeploy by (worker/live.ts): anyone may ask.
+  if (path == "/api/release" && read) return releaseApi(env, url);
   // What an outside agent with an admin token reads first (Share with agent): the admin APIs (worker/factory.ts).
   if (path == "/api/admin/guide") return adminGuideApi(request, env, url);
   // The factory (experimental): its API, admins only (worker/factory.ts); its board is on /admin/factory (worker/source.ts).
@@ -171,8 +180,12 @@ async function route(request: Request, env: Env, url: URL, ctx: ExecutionContext
   return frontDoor(request, platform(env));
 }
 
+/** The editor's own files (static assets, site.sh). */
+const ASSET_FILES = new Set(["/page.js", "/frame.js", "/settings.js", "/pages-tree.js", "/factory-agent.js", "/admin-share.js", "/admin-nav.js", "/live.js", "/style.css"]);
+const isAsset = (path: string) => ASSET_FILES.has(path) || path.startsWith("/fonts/");
+
 /** A path that may be one of the homepage's files at the root: /<name>.<ext> or /<folder>/<name>.<ext>, but none of the app's own. */
-const APP_FILES = new Set(["/page.js", "/frame.js", "/factory-agent.js", "/admin-share.js", "/admin-nav.js", "/style.css", "/editor.html", "/llms.txt"]);
+const APP_FILES = new Set(["/page.js", "/frame.js", "/factory-agent.js", "/admin-share.js", "/admin-nav.js", "/live.js", "/style.css", "/editor.html", "/llms.txt"]);
 const isHomeFilePath = (path: string) => !APP_FILES.has(path) && !path.startsWith("/fonts/") && !path.startsWith("/d/") && /^\/(?:[^/]+\/)?[^/]*\.[^/]+$/.test(path);
 
 /**

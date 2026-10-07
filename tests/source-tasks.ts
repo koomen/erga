@@ -32,7 +32,7 @@ const commit = (dir: string, subject: string) => must(dir, "commit", "-q", "--al
 /** Seeds `root`: main at 120 commits (more than the list's 100), then on staging two factory tasks (the first with staging merged into it on the way) among plain commits. */
 async function seed(root: string) {
   const r = await fetch(`${root}/auth/github?next=/docs`, { redirect: "manual" });
-  const cookie = r.headers.getSetCookie().map((x) => x.split(";")[0]).find((x) => x.startsWith("erga_session="))!;
+  const cookie = r.headers.getSetCookie().map((x) => x.split(";")[0]).find((x) => /^erga_session(_\d+)?=/.test(x))!;
   const page = await (await fetch(`${root}/tokens/new`, { method: "POST", headers: { Cookie: cookie, Origin: root }, body: new URLSearchParams({ label: "Git", scope: "admin" }) })).text();
   const token = /<pre class="secret">(erga_[^<]+)<\/pre>/.exec(page)?.[1] ?? "";
   expect(token, "an admin's token", page.slice(0, 300));

@@ -45,12 +45,18 @@ export class SourceHost extends DurableObject<Env> {
         // main moved: the production deploy, in the change log (/admin/changes), with the commits it brought.
         if (m.branch == "main") {
           ctx.waitUntil((async () => {
-            const change = { key: "main", from: m.old == ZERO ? null : m.old, to: m.new, release: this.repo.newCommits(m.old, m.new) };
+            const change = { key: "main", from: m.old == ZERO ? null : m.old, to: m.new, release: { ...this.repo.newCommits(m.old, m.new), ...(m.override ? { override: m.override } : {}) } };
             await directoryOf(env).config.record(m.by, [change], m.at);
           })().catch((e) => console.error("change log (main):", e)));
         }
       },
       changed: () => ctx.waitUntil(publishEvent({ type: "source" }, env).catch(() => {})),
+      // The production gate (deploy/gate.ts): main only to a commit whose full test run passed. The Pipeline object has
+      // it (staging's server, and locally) or asks staging's server (production); one that can't tell refuses.
+      gate: async (commit) => {
+        const v = await env.PIPELINE.getByName("deploys").gateVerdict(commit).catch((e: Error) => ({ ok: false, reason: `Production deploys only a staging commit whose full test run passed, and the test results couldn't be read (${e.message}).` }));
+        return v.ok ? null : `${v.reason ?? "The tests haven't passed."} See ${this.origin || "the Factory page"}${this.origin ? "/admin/factory" : ""}#tests-${commit.slice(0, 12)} (GET /api/gate/${commit}).`;
+      },
       background: (work) => ctx.waitUntil(work),
     });
   }
@@ -83,9 +89,14 @@ export class SourceHost extends DurableObject<Env> {
     }
   }
 
+  /** The factory: the branches and staging's newest commits (SourceRepo.stagingLog), or { error }. */
+  async stagingLog(origin: string): Promise<{ heads: Record<string, string>; commits: { sha: string; subject: string }[] } | { error: string }> {
+    try { return await this.at(origin).stagingLog(); } catch (e) { return { error: (e as Error).message }; }
+  }
+
   /** A merge, as POST /api/source/merge asks: { commit } or { error, status }. */
-  async merge(origin: string, who: Actor, commit?: string): Promise<{ commit: string; fastForward: boolean; upToDate: boolean } | { error: string; status: number }> {
-    try { return await this.at(origin).merge(who, commit); } catch (e) {
+  async merge(origin: string, who: Actor, commit?: string, override?: string): Promise<{ commit: string; fastForward: boolean; upToDate: boolean; override?: boolean } | { error: string; status: number }> {
+    try { return await this.at(origin).merge(who, commit, override); } catch (e) {
       if (e instanceof SourceError) return { error: e.message, status: e.status };
       return { error: `The merge failed: ${(e as Error).message}`, status: 502 };
     }

@@ -7,6 +7,8 @@ import { checkGitToken, mintGitToken, pushedRefs, refsAllowed } from "../dev/fac
 import { branchName, claudeToken, restartPrompt, taskPrompt } from "../factory/prompt";
 import { quietFor, STALL_MS, stalledOf } from "../factory/stall";
 import { commitIdentity, FACTORY_IDENTITY, githubIdOf, personIdentity } from "../factory/author";
+import { landedIn, recovery } from "../factory/recover";
+import { maxTurnsHit } from "../factory/vm/common";
 
 test("branch names: task/<id>-<slug of the title>", () => {
   expect(branchName(46, "Experimental: the task queue inside Erga, with Claude Code in Cloudflare VMs")).toBe("task/46-experimental-the-task-queue-inside-erga");
@@ -265,4 +267,45 @@ test("a task's commits are by its person: their GitHub name and noreply address;
   expect(await githubIdOf("ada", answer(404, { message: "Not Found" }))).toBeNull();
   expect(await githubIdOf("ada", answer(200, { id: "42" }))).toBeNull();
   expect(await githubIdOf("ada", (async () => { throw new Error("offline"); }) as unknown as typeof fetch)).toBeNull();
+});
+
+test("a merge the factory was cut off from: staging's \"Merge <branch>:\" commit, or the branch gone with its commit in staging", () => {
+  const C = "c".repeat(40);
+  const log = { heads: { staging: A, main: B }, commits: [{ sha: A, subject: "Merge task/12-other: Other" }, { sha: B, subject: "Merge task/1-x: X" }, { sha: C, subject: "Factory task #3" }] };
+  const t = (branch: string, commit: string | null, base: string | null = null) => landedIn(log, { branch, commit, base });
+  expect(t("task/1-x", null)).toBe(B);
+  // task/1- is not task/12-.
+  expect(t("task/12-other", null)).toBe(A);
+  expect(t("task/2-y", null)).toBeNull();
+  // No merge commit, but the branch is gone and its last commit is in staging.
+  expect(t("task/3-z", C)).toBe(C);
+  // Not when the branch is still there, nor when the task made no commit (its commit is the staging it started from).
+  expect(landedIn({ ...log, heads: { ...log.heads, "task/3-z": C } }, { branch: "task/3-z", commit: C, base: null })).toBeNull();
+  expect(t("task/3-z", C, C)).toBeNull();
+  expect(t("task/3-z", "d".repeat(40))).toBeNull();
+});
+
+test("a task the factory was cut off from: launched again only when no run of it can be going", () => {
+  const r = (status: string, vm: string | null, run: string | null, up: boolean) => recovery({ status, vm, run }, up);
+  // A run started in a VM that is up: it goes on (never a second launch).
+  expect(r("working", "vm1", "run1", true)).toBe("none");
+  expect(r("needs agent", "vm1", "run1", true)).toBe("none");
+  // A restart or a revise cut off before its run started, or a VM that is gone: launched again from the branch.
+  expect(r("working", null, null, false)).toBe("restart");
+  expect(r("working", "vm1", null, true)).toBe("restart");
+  expect(r("working", "vm1", "run1", false)).toBe("restart");
+  expect(r("working", null, "run1", false)).toBe("restart");
+  // A resolve cut off before its run started: woken in the VM with the merge's clone, or back to ready without it.
+  expect(r("needs agent", "vm1", null, true)).toBe("resolve");
+  expect(r("needs agent", "vm1", null, false)).toBe("back to ready");
+  expect(r("needs agent", null, "run1", false)).toBe("back to ready");
+  // Nothing else is touched.
+  for (const s of ["queued", "complete", "merging", "merged", "failed", "discarded"]) expect(r(s, null, null, false)).toBe("none");
+});
+
+test("Claude Code stopped at --max-turns: its result event says so", () => {
+  expect(maxTurnsHit({ type: "result", subtype: "error_max_turns", is_error: true })).toBe(true);
+  expect(maxTurnsHit({ type: "result", subtype: "success", result: "done" })).toBe(false);
+  expect(maxTurnsHit({ type: "assistant", subtype: "error_max_turns" })).toBe(false);
+  expect(maxTurnsHit(null)).toBe(false);
 });
