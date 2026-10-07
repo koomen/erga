@@ -9,7 +9,10 @@
 //                               (and staging, for a merge).
 //   GET  /api/source/branches   staging and main: each head and its last 25 commits (staging: also the 5 just after main), and the mirror's status
 //   POST /api/source/merge      { from: "staging", to: "main", commit? }: main fast-forwards to staging's head (or to
-//                               that staging commit): { commit } or 4xx { error } (admins)
+//                               that staging commit): { commit } or 4xx { error } (admins). Only to a commit whose full
+//                               test run passed (the production gate, deploy/gate.ts): else 409 with why and where its
+//                               run is. { override: "reason" } moves it anyway: an admin signed in in a browser only
+//                               (never a token or an agent), and the change log keeps the reason.
 //   POST /api/source/mirror     brings the GitHub mirror up to date now (admins)
 //   /admin/factory              the Factory page (admins): the factory's board, this dashboard and the factory's agent
 //   /source, /admin/source      redirect to /admin/factory
@@ -29,6 +32,7 @@ import { factoryEnabled } from "./factory";
 import { artifactsRemote, githubUrl, hasSource } from "./artifacts";
 import { directoryOf, tokensOf } from "./d1";
 import { LOCKED } from "../users";
+import { byLine, SYSTEM, VIA } from "../attribution";
 import type { Env } from "./env";
 import { readAllowed, verifyGitToken, type GitGrant } from "../factory/git-grant";
 import { gitSecret } from "./factory";
@@ -61,20 +65,22 @@ export async function sourceGit(request: Request, env: Env, url: URL): Promise<R
     const grant = key ? await verifyGitToken(key, secret) : null;
     if (!grant) return challenge("That factory token isn't working (it may have ended, or the factory's key changed).");
     if (!hasSource(env)) return new Response(`${notSetUp}\n`, { status: 503 });
-    return git(request, env, url, rest, { login: grant.by ?? "factory", name: "Erga factory" }, grant);
+    // The task's person (or whoever asked for the merge), via the factory (attribution.ts); SYSTEM for an older token with no one.
+    return git(request, env, url, rest, { login: grant.by ?? SYSTEM, name: "Erga factory", via: grant.via ?? "the factory" }, grant);
   }
   // A token (tokens.ts) with the admin scope, whose person is an admin now. A read with any other credential is a read all the same.
   const token = await tokensOf(env).verify(secret).catch(() => null);
   const refuse = (why: string) => new Response(`${why}\n`, { status: 403, headers: { "Content-Type": "text/plain" } });
   if (!token) return read ? anonymous() : challenge(`That token isn't working (it may have expired or been revoked). ${howTo}`);
   if (token.scope != "admin" || token.testBy) return read ? anonymous() : refuse(`That token's scope is ${token.scope}: pushing needs a token with the admin scope. Make one at ${url.origin}/tokens.`);
-  const who = { login: token.login, name: token.name };
+  // The person, via the agent that holds their token (attribution.ts).
+  const who = { login: token.login, name: token.name, via: VIA.token(token.label) };
   const dir = directoryOf(env);
   if (!(await dir.users.allowed(who.login)) || !(await dir.users.isAdmin({ login: who.login, test: false }))) {
     return read ? anonymous() : refuse(`Only admins can push to Erga's repository, and ${who.login} isn't one.`);
   }
   if (!hasSource(env)) return new Response(`${notSetUp}\n`, { status: 503 });
-  return git(request, env, url, rest, { login: who.login, name: who.name });
+  return git(request, env, url, rest, who);
 }
 
 /** Git itself, for someone allowed: clones and fetches from Artifacts, pushes through SourceRepo (with a factory VM's grant, if it's one). */
@@ -101,7 +107,7 @@ async function adminOf(request: Request, env: Env, platform: Platform, url: URL)
   const users = directoryOf(env).users;
   if (session.test || !(await users.isAdmin(whoOf(session)))) return json({ error: "Only admins can do that." }, 403);
   if (!(await users.actsAsAdmin(whoOf(session)))) return json({ error: LOCKED, locked: true }, 403);
-  return { actor: { login: session.login.toLowerCase(), name: session.name }, bearer: !!session.agent };
+  return { actor: { login: session.login.toLowerCase(), name: session.name, ...(session.agent ? { via: VIA.token(session.agent.label) } : {}) }, bearer: !!session.agent };
 }
 
 /** /api/source/... (the events, /api/events, are the deploy pipeline's hub: worker/deploys.ts). */
@@ -116,12 +122,17 @@ export async function sourceApi(request: Request, env: Env, platform: Platform, 
       return json({ ...view, mirror: { ...view.mirror, url: view.mirror.url ?? githubUrl(env) }, remote: `${url.origin}/git/erga.git` });
     }
     if (url.pathname == "/api/source/merge" && request.method == "POST") {
-      const body = (await request.json().catch(() => ({}))) as { from?: string; to?: string; commit?: string };
+      const body = (await request.json().catch(() => ({}))) as { from?: string; to?: string; commit?: string; override?: unknown };
       if ((body.from ?? "staging") != "staging" || (body.to ?? "main") != "main") return json({ error: "main only follows staging: merge from staging to main." }, 400);
-      const r = await host(env).merge(url.origin, who.actor, body.commit);
+      // The emergency override of the production gate: a person, in a browser, with a reason; never a token or an agent.
+      if (body.override != null) {
+        if (who.bearer) return json({ error: "Only an admin signed in in a browser can override the tests (on the Factory page): never a token or an agent." }, 403);
+        if (typeof body.override != "string" || body.override.trim().length < 10) return json({ error: "An override needs a reason of at least 10 characters: it goes in the change log." }, 400);
+      }
+      const r = await host(env).merge(url.origin, who.actor, body.commit, typeof body.override == "string" ? body.override : undefined);
       return "error" in r ? json({ error: r.error }, r.status) : json(r);
     }
-    if (url.pathname == "/api/source/mirror" && request.method == "POST") return json({ mirror: await host(env).mirrorNow(url.origin) });
+    if (url.pathname == "/api/source/mirror" && request.method == "POST") return json({ mirror: await host(env).mirrorNow(url.origin, byLine(who.actor.login, who.actor.via)) });
   } catch (e) {
     return json({ error: `Erga couldn't reach its repository: ${(e as Error).message}` }, 502);
   }

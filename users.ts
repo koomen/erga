@@ -19,7 +19,8 @@
 // requests don't each ask the database; a change made through this object
 // is seen at once.
 
-import type { Sql } from "./directory.ts";
+import { changeLogEntry } from "./attribution.ts";
+import type { Sql, Statement } from "./directory.ts";
 
 export type ServerRole = "user" | "admin";
 
@@ -39,6 +40,8 @@ export interface User {
   created: number;
   /** The admin who added them; null for those who came in through ADMINS. */
   addedBy: string | null;
+  /** How `addedBy` added them, when not in person (attribution.ts): "their admin agent", "a shared agent (label)". */
+  addedVia?: string | null;
   /** When they last used the server (to the nearest few minutes); null if never. */
   lastSeen: number | null;
   /** Their GitHub account id (users.github_id), from their last sign-in; null until then. */
@@ -52,7 +55,11 @@ export interface User {
  * scope (tokens.ts). Every admin-only call needs it, and the person must be
  * an admin too (actsAsAdmin). The front door sets `admin`.
  */
-export interface Actor { login: string; test?: boolean; admin?: boolean }
+export interface Actor {
+  login: string; test?: boolean; admin?: boolean;
+  /** How they act, when not in person: through one of their agents (attribution.ts, VIA). What they change is recorded under their login, with this. */
+  via?: string;
+}
 
 /** What an admin-only call says to someone who isn't one, or a change it can't make (the message says why). */
 export class NotAllowed extends Error {}
@@ -66,7 +73,7 @@ const REMEMBER_MS = 10_000;
 /** How often someone's last_seen is written, at most. */
 const SEEN_EVERY_MS = 5 * 60_000;
 
-interface Row { login: string; name: string; role: ServerRole; deploy?: number | null; created: number; added_by: string | null; last_seen: number | null; github_id?: number | null }
+interface Row { login: string; name: string; role: ServerRole; deploy?: number | null; created: number; added_by: string | null; added_via?: string | null; last_seen: number | null; github_id?: number | null }
 
 export class Users {
   private readonly admins: Set<string>;
@@ -174,10 +181,13 @@ export class Users {
     if (!LOGIN.test(login)) throw new NotAllowed(`"${login}" isn't a GitHub login.`);
     const role = opts.role ?? "user";
     if (role != "admin" && this.isBootstrapAdmin(login)) throw new NotAllowed(`${login} is an admin by the deploy (ADMINS): change it there.`);
-    await this.sql.run(
-      `INSERT INTO users (login, name, role, created, added_by) VALUES (?1, ?2, ?3, ?4, ?5)
+    const had = await this.get(login), at = Date.now();
+    await this.sql.batch([
+      [`INSERT INTO users (login, name, role, created, added_by, added_via) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
        ON CONFLICT (login) DO UPDATE SET role = ?3`,
-      login, opts.name?.trim() || login, this.isBootstrapAdmin(login) ? "admin" : role, Date.now(), by.login.toLowerCase());
+      login, opts.name?.trim() || login, this.isBootstrapAdmin(login) ? "admin" : role, at, by.login.toLowerCase(), by.via ?? null],
+      this.logged(by, at, had && had.created != 0 ? { login, event: "role", role } : { login, event: "added", role }),
+    ]);
     this.known.delete(login);
     return (await this.get(login))!;
   }
@@ -190,7 +200,7 @@ export class Users {
     const user = await this.get(login);
     if (!user) throw new NotAllowed(`${login} isn't a user: add them first.`);
     if (role != "admin" && user.role == "admin") await this.mustKeepAnAdmin(by, login);
-    await this.sql.run("UPDATE users SET role = ?2 WHERE login = ?1", login, role);
+    await this.sql.batch([["UPDATE users SET role = ?2 WHERE login = ?1", login, role], this.logged(by, Date.now(), { login, event: "role", role })]);
     this.known.delete(login);
     return (await this.get(login))!;
   }
@@ -203,7 +213,7 @@ export class Users {
     if (!user) throw new NotAllowed(`${login} isn't a user: add them first.`);
     // A bootstrap admin who hasn't signed in yet has no row: make it, as signing in would.
     if (user.created == 0) await this.sql.run("INSERT INTO users (login, name, role, created) VALUES (?1, ?1, 'admin', ?2) ON CONFLICT (login) DO NOTHING", login, Date.now());
-    await this.sql.run("UPDATE users SET deploy = ?2 WHERE login = ?1", login, deploy ? 1 : 0);
+    await this.sql.batch([["UPDATE users SET deploy = ?2 WHERE login = ?1", login, deploy ? 1 : 0], this.logged(by, Date.now(), { login, event: "deploy", deploy })]);
     this.known.delete(login);
     return (await this.get(login))!;
   }
@@ -214,7 +224,7 @@ export class Users {
     login = login.toLowerCase();
     if (this.isBootstrapAdmin(login)) throw new NotAllowed(`${login} is an admin by the deploy (ADMINS): take them out there.`);
     if ((await this.get(login))?.role == "admin") await this.mustKeepAnAdmin(by, login);
-    await this.sql.run("DELETE FROM users WHERE login = ?1", login);
+    await this.sql.batch([["DELETE FROM users WHERE login = ?1", login], this.logged(by, Date.now(), { login, event: "removed" })]);
     this.known.delete(login);
   }
 
@@ -225,6 +235,11 @@ export class Users {
     others.delete(login);
     if (others.size > 0) return;
     throw new NotAllowed(`${login == by.login.toLowerCase() ? "You're" : `${login} is`} the last admin: make someone else an admin first, so the server keeps one.`);
+  }
+
+  /** The change log's entry for a change to a user (config.ts, SettingChange.user), under the admin who made it and how. */
+  private logged(by: Actor, at: number, user: { login: string; event: "added" | "role" | "deploy" | "removed"; role?: string; deploy?: boolean }): Statement {
+    return changeLogEntry(at, by.login, by.via, [{ key: "user", from: null, to: null, user }]);
   }
 
   /** Throws NotAllowed unless `by` is an admin with admin power (actsAsAdmin). */
@@ -238,7 +253,7 @@ export class Users {
     const bootstrap = this.isBootstrapAdmin(r.login), role = bootstrap ? "admin" : r.role;
     return {
       login: r.login, name: r.name, role, deploy: !!r.deploy, mayDeploy: role == "admin" || !!r.deploy, bootstrap,
-      created: Number(r.created), addedBy: r.added_by, lastSeen: r.last_seen == null ? null : Number(r.last_seen),
+      created: Number(r.created), addedBy: r.added_by, addedVia: r.added_via ?? null, lastSeen: r.last_seen == null ? null : Number(r.last_seen),
       githubId: r.github_id == null ? null : Number(r.github_id),
     };
   }

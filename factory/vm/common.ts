@@ -79,6 +79,11 @@ export const LIMITS = {
   /** An earlier run that is still going when a merge or another run starts: the time it gets to end by itself (it reported, and says its last words). */
   stopRun: 30,
   /**
+   * The same, for the merge that goes on right after a resolve: that run said `task done` a moment ago, and only says
+   * its last words. The full stopRun there kept every such merge waiting up to 30 s for nothing.
+   */
+  stopReported: 10,
+  /**
    * Instructions sent while Claude Code works reach it when its current step ends. When one command of its still runs
    * this long after they came (and had run this long), that command is stopped, so they reach Claude Code anyway.
    */
@@ -237,6 +242,12 @@ export function realClaude(): boolean {
 export const MODEL = () => process.env.FACTORY_MODEL?.trim() || "opus";
 
 /** Claude Code's complaint that it can't use the model, made plain: which model, and the setting that picks it. */
+/** Claude Code's last event when it stopped at --max-turns (stream-json): run.ts then wakes it once to finish. */
+export const maxTurnsHit = (ev: any): boolean => ev?.type == "result" && ev.subtype == "error_max_turns";
+
+/** The turns Claude Code gets when it is woken after --max-turns: enough to commit and report, not to start again. */
+export const FINISH_TURNS = 30;
+
 export function modelError(text: string): string | null {
   if (!/issue with the selected model|model.{0,40}(not exist|not found|access)|invalid model/i.test(text)) return null;
   return `Claude Code can't use the model "${MODEL()}" (the factory_model setting, /admin). Pick another model there, e.g. opus or sonnet. Claude Code said: ${text.trim().slice(0, 300)}`;

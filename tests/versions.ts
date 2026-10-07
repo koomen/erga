@@ -28,7 +28,7 @@ const ok = (what: string) => { checks.push(what); console.log(`ok   ${what}`); }
 
 async function signIn(as: string): Promise<string> {
   const r = await fetch(`${base}/auth/github?as=${as}&next=/docs`, { redirect: "manual" });
-  return r.headers.getSetCookie().map((c) => c.split(";")[0]).find((c) => c.startsWith("erga_session="))!;
+  return r.headers.getSetCookie().map((c) => c.split(";")[0]).find((c) => /^erga_session(_\d+)?=/.test(c))!;
 }
 const owner = `vtest${Date.now().toString(36)}`;
 const cookie = await signIn(owner);
@@ -234,7 +234,7 @@ try {
   expect((await (await pagesFetch(mine.shown)).text()).includes("pending-publish"), "and viewers still see it");
   t = await tool("restore_version", { version: "v1" });
   s = await state(id);
-  expect(t.status == 200 && s.current.description == "Restored version 1" && s.current.authors.some((a) => a.endsWith("agent")), "restore_version, by the agent", { t, current: s.current });
+  expect(t.status == 200 && s.current.description == "Restored version 1" && s.current.authors.some((a) => a == `${owner}, via a shared agent (versions test)`), "restore_version, by the agent", { t, current: s.current });
   await publish(id, { mode: "latest" });
   ok("restoring a version: a new current version, live in open editors, published version unchanged; also as an agent tool");
 

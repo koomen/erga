@@ -6,8 +6,10 @@ node_modules/
 **/.env.*
 !**/.env.example
 
-# cf build output and local state
+# cf build output and local state (and Vite's cache, vite.config.ts)
 .cloudflare/
+# A running dev server's address (dev.ts)
+.dev-url
 .site/
 .site.*/
 .dev.vars

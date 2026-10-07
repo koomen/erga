@@ -41,7 +41,8 @@ import { cleanRel, docFile, makeHost, relativeUrl } from "../host";
 import { resolvePage } from "../tree";
 import { agentToolsFor } from "../server-tools";
 import { FileStore, Room, StateStore, StoreError } from "../room";
-import { agentName, assets, authorOf, files as texts, folders, isTextPath, type Author } from "../src/room/doc";
+import { VIA } from "../attribution";
+import { assets, authorOf, editorOf, files as texts, folders, isTextPath, type Author } from "../src/room/doc";
 import { describeChange, fallbackDescription, firePublished, publicVersion, versionNumber, Versions, type KV, type Published, type PublishRequest, type PublishResult, type RestoreResult, type StoredVersion, type Version, type VersionsState } from "../versions";
 import * as Y from "yjs";
 import { decodeValue, encodeValue, type DocSnapshot } from "../deploy/snapshot";
@@ -146,11 +147,20 @@ export class DocHost extends DurableObject<Env> {
    * What the room holds is written first, so a file replaces the text as it
    * is now (only edits made while it arrives merge with it). Text files go through the room's
    * push; others (images) are stored and the room told. `remove` deletes
-   * files. Says what it did with each.
+   * files. Says what it did with each. `by`: who the edits are by, as a
+   * version records it ("ada", "ada, via a shared agent (CI)": byLine).
    */
-  async publish(files: Record<string, string | Uint8Array>, remove: string[]): Promise<{ written: string[]; removed: string[]; refused: { path: string; why: string }[] }> {
+  async publish(files: Record<string, string | Uint8Array>, remove: string[], by?: string): Promise<{ written: string[]; removed: string[]; refused: { path: string; why: string }[] }> {
     const opened = await (this.open ??= this.load());
     if (!opened) { this.open = null; throw new Error("There's no such document."); }
+    this.publisher = by ?? null;
+    try { return await this.publishNow(opened, files, remove); } finally { this.publisher = null; }
+  }
+
+  /** Who the files arriving whole now are by (publish), for the version. */
+  private publisher: string | null = null;
+
+  private async publishNow(opened: Opened, files: Record<string, string | Uint8Array>, remove: string[]): Promise<{ written: string[]; removed: string[]; refused: { path: string; why: string }[] }> {
     const meta = (await this.ctx.storage.get<Meta>(META))!;
     const out = { written: [] as string[], removed: [] as string[], refused: [] as { path: string; why: string }[] };
     const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false });
@@ -675,7 +685,7 @@ export class DocHost extends DurableObject<Env> {
     await this.cutSoon("restore");
     const files = await this.versions.files(v);
     if (path != null) {
-      const out = await this.publish({ [path]: files.get(path)! }, []);
+      const out = await this.publish({ [path]: files.get(path)! }, [], by);
       if (out.refused.length) return { ok: false, status: 409, error: `Couldn't restore ${path}: ${out.refused[0].why}.` };
       const made = await this.cutSoon("restored", { authors: [by], description: `Restored ${path} from version ${v.n}` });
       return { ok: true, current: publicVersion(made ?? (await this.versions.latest())!), from: v.id, files: [path] };
@@ -685,7 +695,7 @@ export class DocHost extends DurableObject<Env> {
     const keep = [...files.keys(), ...(v.folders ?? [])];
     for (const d of room.folderPaths()) if (!keep.some((p) => p == d || p.startsWith(`${d}/`)) && room.exists(d) == "folder") await Effect.runPromise(room.remove(d)).catch(() => {});
     const now = new Set((await r.opened.current()).keys());
-    const out = await this.publish(Object.fromEntries(files), [...now].filter((p) => !files.has(p)));
+    const out = await this.publish(Object.fromEntries(files), [...now].filter((p) => !files.has(p)), by);
     for (const d of v.folders ?? []) if (room.exists(d) != "folder") await Effect.runPromise(room.mkdir(d)).catch(() => {});
     if (out.refused.length) console.log(`restoring ${v.id}: ${out.refused.map((x) => `${x.path} (${x.why})`).join(", ")}`);
     const made = await this.cutSoon("restored", { authors: [by], description: `Restored version ${v.n}` });
@@ -780,7 +790,8 @@ export class DocHost extends DurableObject<Env> {
       only: meta.disk?.only ? meta.index : undefined,
       personOf: (req) => personOf(new Headers(req.headers as Record<string, string>)),
       // The front door sets x-erga-agent only on a request whose agent token it checked.
-      agentOf: (req) => (req.headers["x-erga-agent"] ? personOf(new Headers(req.headers as Record<string, string>)) : null),
+      // With x-erga-via, how the person acts through it (attribution.ts): "a shared agent (label)".
+      agentOf: (req) => (req.headers["x-erga-agent"] ? { ...personOf(new Headers(req.headers as Record<string, string>)), via: viaOf(req.headers["x-erga-via"]) } : null),
       // Their agent edits only if they may (and only while they may).
       canEdit: (person) => this.editors.get(person.id) ?? false,
       mayPublish: (req) => req.headers["x-erga-access"] == "edit",
@@ -790,7 +801,7 @@ export class DocHost extends DurableObject<Env> {
       // Its title and address, renamed as whoever asks (test people are "test-...": they may rename only test documents).
       naming: (person) => naming({ login: person.id, test: person.id.startsWith("test-") }),
       // Sharing this document (or another), the documents list (list, make, delete), and for an admin the server's settings and users, as the person.
-      serverTools: (person) => agentToolsFor({ dir: directoryOf(this.env), who: { login: person.id, test: person.id.startsWith("test-") }, here: this.idOf(meta), platform: platform(this.env) }),
+      serverTools: (person) => agentToolsFor({ dir: directoryOf(this.env), who: { login: person.id, test: person.id.startsWith("test-"), via: VIA.agent }, here: this.idOf(meta), platform: platform(this.env) }),
       // An agent's turn is one version, and where its next diff_versions starts from ("last_turn").
       turnEnded: () => this.cutSoon("agent turn").then(async (v) => (v ?? (await this.versions.latest()))?.id ?? null),
       versions: {
@@ -813,7 +824,7 @@ export class DocHost extends DurableObject<Env> {
     room.doc.on("afterTransaction", (tr: Y.Transaction) => {
       if (!touchesFiles(room.doc, tr)) return;
       const a = authorOf(room.doc, tr);
-      this.noteEdit(a ? (a.kind == "agent" ? agentName(a.user) : a.kind == "disk" ? (meta.disk ? "on disk" : "files published") : a.user) : null);
+      this.noteEdit(a ? (a.kind == "disk" ? (meta.disk ? "on disk" : this.publisher ?? "files published") : editorOf(a)) : null);
     });
     const naming = namingFor(directoryOf(this.env), this.idOf(meta), () => titleOf(room.text(meta.index) ?? "", meta.index));
 
@@ -947,6 +958,12 @@ function bytesOf(data: string | ArrayBuffer | ArrayBufferView): Uint8Array {
   if (typeof data == "string") return new TextEncoder().encode(data);
   if (ArrayBuffer.isView(data)) return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
   return new Uint8Array(data);
+}
+
+/** How an outside agent's person acts through it, as the front door said (x-erga-via, JSON; attribution.ts). */
+function viaOf(header: string | undefined): string {
+  try { const v = JSON.parse(header ?? ""); if (typeof v == "string" && v) return v; } catch { /* none */ }
+  return VIA.token("");
 }
 
 /** The person the front door vouched for (anonymous if it didn't: the pages origin's requests for files). */

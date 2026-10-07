@@ -222,7 +222,7 @@ export const SERVER_TOOLS: ServerToolDef[] = [
     }),
     run: async (args, { dir, who }) => {
       const { versions, total } = await dir.config.history(who, { limit: Math.min(100, Number(args.limit) || 20), ...(args.before != null ? { before: Number(args.before) } : {}) });
-      return { total, changes: versions.map((v) => ({ n: v.n, at: iso(v.at), by: v.by, changes: v.changes })) };
+      return { total, changes: versions.map((v) => ({ n: v.n, at: iso(v.at), by: v.by, ...(v.via ? { via: v.via } : {}), changes: v.changes })) };
     },
   },
   {
@@ -233,7 +233,7 @@ export const SERVER_TOOLS: ServerToolDef[] = [
     description: "Admins only. The server's API keys (Anthropic, OpenAI, the GitHub mirror token, the Cloudflare deploy token), as /admin/api-keys shows them: whether each is stored, its last four characters, who set it and when, and whether a Worker secret stands in. Never the key itself. An admin sets, replaces or clears a key only on /admin/api-keys, so a key never goes through a conversation.",
     parameters: Type.Object({}),
     run: async (_args, { dir, who }) => (await dir.credentials.list(who)).map((c) => ({
-      name: c.name, label: c.label, description: c.description, stored: c.set, last4: c.last4, updated: iso(c.updated), updatedBy: c.updatedBy, workerSecret: c.fallback,
+      name: c.name, label: c.label, description: c.description, stored: c.set, last4: c.last4, updated: iso(c.updated), updatedBy: c.updatedBy, ...(c.updatedVia ? { updatedVia: c.updatedVia } : {}), workerSecret: c.fallback,
     })),
   },
 
@@ -396,7 +396,7 @@ function described(doc: DocRow, { origin }: ToolWho) {
 async function permissionsOf(dir: Directory, id: string) {
   return (await dir.permissions(id)).map((p) => ({
     login: p.login, role: p.role, ...(p.login == ANYONE ? { means: "anyone signed in who has the link" } : {}),
-    granted: new Date(p.granted).toISOString(), ...(p.grantedBy ? { grantedBy: p.grantedBy } : {}),
+    granted: new Date(p.granted).toISOString(), ...(p.grantedBy ? { grantedBy: p.grantedBy } : {}), ...(p.grantedVia ? { grantedVia: p.grantedVia } : {}),
   }));
 }
 
@@ -410,9 +410,9 @@ const iso = (t: number | null) => (t ? new Date(t).toISOString() : null);
 
 function entryOf(e: ConfigEntry) {
   const locked = e.locked;
-  return { key: e.key, description: e.description, value: e.value, default: e.default, source: e.source, locked, ...(locked ? { deployed: e.deployed, note: "Locked by the deploy (server.config.ts): it can't be changed here." } : {}), updated: iso(e.updated), updatedBy: e.updatedBy };
+  return { key: e.key, description: e.description, value: e.value, default: e.default, source: e.source, locked, ...(locked ? { deployed: e.deployed, note: "Locked by the deploy (server.config.ts): it can't be changed here." } : {}), updated: iso(e.updated), updatedBy: e.updatedBy, ...(e.updatedVia ? { updatedVia: e.updatedVia } : {}) };
 }
 
 function userOf(u: User) {
-  return { login: u.login, name: u.name, role: u.role, deploy: u.deploy, mayDeploy: u.mayDeploy, bootstrap: u.bootstrap, added: u.created ? iso(u.created) : null, addedBy: u.addedBy, lastSeen: iso(u.lastSeen) };
+  return { login: u.login, name: u.name, role: u.role, deploy: u.deploy, mayDeploy: u.mayDeploy, bootstrap: u.bootstrap, added: u.created ? iso(u.created) : null, addedBy: u.addedBy, ...(u.addedVia ? { addedVia: u.addedVia } : {}), lastSeen: iso(u.lastSeen) };
 }

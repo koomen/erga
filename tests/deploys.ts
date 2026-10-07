@@ -132,7 +132,7 @@ try {
   // ---------------------------------------------------------------- who may
   const signIn = async (login: string) => {
     const res = await fetch(`${host.root}/auth/github?as=${login}&next=/`, { redirect: "manual" });
-    return res.headers.getSetCookie().map((c) => c.split(";")[0]).find((c) => c.startsWith("erga_session="))!;
+    return res.headers.getSetCookie().map((c) => c.split(";")[0]).find((c) => /^erga_session(_\d+)?=/.test(c))!;
   };
   const bo = await signIn("bo");
   expect((await api("/api/deploys", { headers: { Cookie: bo } })).status == 403, "someone who isn't an admin can't read the status");

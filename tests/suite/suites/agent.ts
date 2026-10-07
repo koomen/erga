@@ -44,7 +44,7 @@ export const agent: Test[] = [
       await until(() => b.str().includes("<h1>Launch notes, revised"), 3000, "Bo sees the agent's edit");
       ctx.metric("prompt to edit seen", performance.now() - t0);
       const by = b.seen.find((s) => s.inserted.includes("revised"));
-      expect(by?.author == "Ada’s agent" && by.kind == "agent", "attributed to Ada's agent", b.seen);
+      expect(by?.author == "Ada, via their agent" && by.kind == "agent", "attributed to Ada's agent", b.seen);
       expect(log.items.some((i) => i.kind == "tool" && i.name == "edit" && i.status == "done"), "the log shows the edit", log.items);
       expect(log.items.some((i) => i.kind == "assistant" && i.text == "Done."), "and the reply");
       await until(async () => (await d.stored(d.path))?.text.includes("<h1>Launch notes, revised"), 5000, "stored");
@@ -58,7 +58,7 @@ export const agent: Test[] = [
       const b = await Participant.join(d, "Bo");
       ctx.defer(() => b.destroy());
       await runScript(d, "Ada", [edit(d.path, "<h1>Launch notes", "<h1>Launch notes!"), { text: "Done.", delay: 1500 }], { wait: false });
-      const agentState = () => b.others().find((o) => o.user.kind == "agent" && o.user.name == "Ada’s agent");
+      const agentState = () => b.others().find((o) => o.user.kind == "agent" && o.user.name == "Ada, via their agent");
       await until(() => agentState()?.busy, 3000, "Bo sees the agent busy");
       await until(() => agentState()?.cursor, 3000, "with a caret");
       const at = b.resolve(agentState()!.cursor!.anchor)!;
@@ -117,7 +117,7 @@ export const agent: Test[] = [
       await until(() => !b.str().includes("TWO"), 3000, "the last change is gone");
       expect(b.str().includes("ONE") && b.str().includes("BO "), "the earlier change and Bo's edit stay");
       const by = b.seen.at(-1);
-      expect(by?.author == "Ada’s agent", "the undo is attributed to the agent", b.seen.slice(-2));
+      expect(by?.author == "Ada, via their agent", "the undo is attributed to the agent", b.seen.slice(-2));
       r = await (await d.fetch("/api/agent/undo?user=Ada", { method: "POST" }, "Ada")).json() as { ok: boolean };
       await until(() => !b.str().includes("ONE"), 3000, "then the first");
       expect(b.str().includes("BO "), "Bo's edit still stays");
@@ -146,7 +146,7 @@ export const agent: Test[] = [
       const ed = await run("edit", edit(d.path, "<h1>Launch notes", "<h1>Launch notes EXT").args);
       expect(ed.body.ok, "edit succeeds", ed);
       await until(() => b.str().includes("Launch notes EXT"), 3000, "Bo sees the external agent's edit");
-      expect(b.seen.at(-1)?.author == "Ada’s agent", "attributed to Ada's agent", b.seen.slice(-2));
+      expect(b.seen.at(-1)?.author == "Ada, via their agent", "attributed to Ada's agent", b.seen.slice(-2));
       const bad = await run("edit", { path: d.path });
       expect(bad.status == 400 && /edits/.test(bad.body.error ?? ""), "bad arguments say what's wrong", bad);
       expect((await run("nope", {})).status == 404, "an unknown tool is a 404");

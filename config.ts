@@ -145,6 +145,8 @@ export interface ConfigEntry {
   /** When it was last set, and by whom (null if it never was, or it's locked). */
   updated: number | null;
   updatedBy: string | null;
+  /** How `updatedBy` set it, when not in person (attribution.ts): "their admin agent", "a shared agent (label)". */
+  updatedVia?: string | null;
 }
 
 /**
@@ -190,8 +192,16 @@ export interface SettingChange {
   /** A factory task (key "task"): added to the board, or merged into staging (`commit`: the merge commit). `from` and `to` are null. */
   task?: { id: number; title: string; event: "added" | "merged"; commit?: string };
   /** main moved forward to staging (key "main"): the production deploy. `from` and `to` are main's old and new heads (null: none); `commits`, the newest that came (at most 50), of `total`. */
-  release?: { commits: { sha: string; subject: string }[]; total: number };
-  /** How the version's `by` did it, when not in person: "the factory's agent", "a shared agent (label)". */
+  release?: {
+    commits: { sha: string; subject: string }[]; total: number;
+    /** main moved past the production gate (its tests hadn't passed): an admin's emergency override, with their reason and what the gate said. */
+    override?: { reason: string; gate: string };
+  };
+  /** A user (key "user"): added, their role or deploy role changed, or removed. `from` and `to` are null. */
+  user?: { login: string; event: "added" | "role" | "deploy" | "removed"; role?: string; deploy?: boolean };
+  /** An agent token (key "token"): revoked (`by` revoked it; `of`, whose it was). `from` and `to` are null. */
+  token?: { id: string; label: string; event: "revoked"; of: string };
+  /** Before #69, how the version's `by` did it, kept on the change; now on the version (SettingsVersion.via). */
   via?: string;
 }
 
@@ -200,11 +210,14 @@ export interface SettingsVersion {
   /** 1, 2, 3..., in the order they were made. */
   n: number;
   at: number;
+  /** The person's login (SYSTEM for the server itself: attribution.ts). */
   by: string;
+  /** How they did it, when not in person (attribution.ts): "their admin agent", "a shared agent (label)", "the factory (task #3)". */
+  via?: string;
   changes: SettingChange[];
 }
 
-interface Row { key: string; value: string; updated: number; updated_by: string | null }
+interface Row { key: string; value: string; updated: number; updated_by: string | null; updated_via?: string | null }
 /**
  * By key: a parsed value someone sets, checked against more than the
  * setting's parser knows (the directory, who's setting it). Answers the value
@@ -259,7 +272,7 @@ export class ServerConfig<S extends Settings = typeof SETTINGS> {
     if (this.isLocked(key)) return { ...base, value: this.locked[key], source: "locked", locked: true, deployed: this.locked[key], updated: null, updatedBy: null };
     if (row) {
       try {
-        return { ...base, value: s.parse(JSON.parse(row.value)), source: "set", locked: false, updated: Number(row.updated), updatedBy: row.updated_by };
+        return { ...base, value: s.parse(JSON.parse(row.value)), source: "set", locked: false, updated: Number(row.updated), updatedBy: row.updated_by, updatedVia: row.updated_via ?? null };
       } catch { /* a value an older or newer version took: the default stands */ }
     }
     return { ...base, value: s.default, source: "default", locked: false, updated: null, updatedBy: null };
@@ -280,7 +293,7 @@ export class ServerConfig<S extends Settings = typeof SETTINGS> {
     try { parsed = s.parse(value); } catch (e) { throw new ConfigError(`${key} ${(e as Error).message}.`); }
     const check = Object.hasOwn(this.checks, key) ? this.checks[key] : undefined;
     if (check && parsed != null) parsed = await check(by, parsed);
-    await this.write(key, JSON.stringify(parsed), by.login.toLowerCase());
+    await this.write(key, JSON.stringify(parsed), by.login.toLowerCase(), by.via ?? null);
     this.rows = null;
     await this.tell(key);
     return this.entry(key);
@@ -322,7 +335,7 @@ export class ServerConfig<S extends Settings = typeof SETTINGS> {
     await this.users.mustAdmin(by);
     this.setting(key);
     if (this.isLocked(key)) throw new NotAllowed(`${key} is fixed by the deploy (server.config.ts), so it can't be changed here: it stays ${JSON.stringify(this.locked[key])}.`);
-    await this.write(key, null, by.login.toLowerCase());
+    await this.write(key, null, by.login.toLowerCase(), by.via ?? null);
     this.rows = null;
     await this.tell(key);
     return this.entry(key);
@@ -337,14 +350,16 @@ export class ServerConfig<S extends Settings = typeof SETTINGS> {
     await this.users.mustAdmin(by);
     const limit = Math.max(1, Math.min(Math.floor(opts.limit ?? 20), 1000));
     const [rows, [count]] = await Promise.all([
-      this.sql.all<{ n: number; at: number; by: string; changes: string }>(
+      this.sql.all<{ n: number; at: number; by: string; via?: string | null; changes: string }>(
         "SELECT * FROM server_config_versions WHERE n < ?1 ORDER BY n DESC LIMIT ?2", opts.before ?? Number.MAX_SAFE_INTEGER, limit),
       this.sql.all<{ total: number }>("SELECT COUNT(*) AS total FROM server_config_versions"),
     ]);
     const versions = rows.map((r) => {
       let changes: SettingChange[] = [];
       try { changes = JSON.parse(r.changes); } catch { /* a row nobody can read: no changes to show */ }
-      return { n: Number(r.n), at: Number(r.at), by: r.by, changes };
+      // Before #69 a version's via was on its change.
+      const via = r.via ?? changes.find((c) => c.via)?.via;
+      return { n: Number(r.n), at: Number(r.at), by: r.by, ...(via ? { via } : {}), changes };
     });
     return { versions, total: Number(count?.total ?? 0) };
   }
@@ -352,11 +367,12 @@ export class ServerConfig<S extends Settings = typeof SETTINGS> {
   /**
    * The server's own record of something an admin did that isn't a setting
    * (a factory task added or merged, main moved to production): a version
-   * with these changes, by `by`. No check here: the caller made the change
+   * with these changes, by `by` (a login, or SYSTEM), `via` how when not in
+   * person (attribution.ts). No check here: the caller made the change
    * already, as `by`.
    */
-  async record(by: string, changes: SettingChange[], at = Date.now()): Promise<void> {
-    if (changes.length) await this.sql.run("INSERT INTO server_config_versions (at, by, changes) VALUES (?1, ?2, ?3)", at, by.toLowerCase(), JSON.stringify(changes));
+  async record(by: string, changes: SettingChange[], at = Date.now(), via: string | null = null): Promise<void> {
+    if (changes.length) await this.sql.run("INSERT INTO server_config_versions (at, by, changes, via) VALUES (?1, ?2, ?3, ?4)", at, by.toLowerCase(), JSON.stringify(changes), via);
   }
 
   /** A key's value as a row's JSON makes it (null: no row), as `entry` reads it: its default when there's none, or it won't parse. */
@@ -384,17 +400,17 @@ export class ServerConfig<S extends Settings = typeof SETTINGS> {
    * admins), each version says truly what it changed, and none is recorded
    * twice. If another write came in between, it reads again and tries again.
    */
-  private async write(key: string, json: string | null, by: string): Promise<void> {
+  private async write(key: string, json: string | null, by: string, via: string | null): Promise<void> {
     for (let tries = 0; tries < 5; tries++) {
       const before = await this.stored(key), at = Date.now();
       const change = this.change(key, before, json);
       const still = "(SELECT value FROM server_config WHERE key = ?1) IS ?2";
       await this.sql.batch([
-        ...(change ? [[`INSERT INTO server_config_versions (at, by, changes) SELECT ?3, ?4, ?5 WHERE ${still}`, key, before, at, by, JSON.stringify([json == null ? { ...change, reset: true } : change])] as Statement] : []),
+        ...(change ? [[`INSERT INTO server_config_versions (at, by, changes, via) SELECT ?3, ?4, ?5, ?6 WHERE ${still}`, key, before, at, by, JSON.stringify([json == null ? { ...change, reset: true } : change]), via] as Statement] : []),
         json == null
           ? ["DELETE FROM server_config WHERE key = ?1 AND value IS ?2", key, before]
-          : [`INSERT INTO server_config (key, value, updated, updated_by) SELECT ?1, ?3, ?4, ?5 WHERE ${still}
-              ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated = excluded.updated, updated_by = excluded.updated_by`, key, before, json, at, by],
+          : [`INSERT INTO server_config (key, value, updated, updated_by, updated_via) SELECT ?1, ?3, ?4, ?5, ?6 WHERE ${still}
+              ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated = excluded.updated, updated_by = excluded.updated_by, updated_via = excluded.updated_via`, key, before, json, at, by, via],
       ]);
       if ((await this.stored(key)) === json) return;
     }

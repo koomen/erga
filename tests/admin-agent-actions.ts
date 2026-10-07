@@ -59,7 +59,7 @@ try {
   tools = await say("Discard it.", [{ tool: "discard_task", args: { id: 1 } }], "Discarded #1.");
   expect(tools.at(-1)?.status == "done", "discard_task answered", tools.at(-1));
   const task = await p.eval<{ status: string; log: { message: string }[] }>(`fetch("/api/factory/tasks/1").then((r) => r.json())`);
-  expect(task.status == "discarded" && task.log.some((l) => l.message == "Discarded by tester"), "the task is discarded, and its log names the admin", task);
+  expect(task.status == "discarded" && task.log.some((l) => l.message == "Discarded by tester, via their admin agent"), "the task is discarded, and its log names the admin, via their agent", task);
   ok("discard_task discards a task, under the admin's name, as the board's Discard does");
 
   tools = await say("Deploy production, then show me where things are.", [

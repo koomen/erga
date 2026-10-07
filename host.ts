@@ -46,7 +46,7 @@ export interface HostOptions {
    * Whom an external agent's request acts for: the person its token stands
    * for, as the front door vouched (null if it came without one).
    */
-  readonly agentOf: (request: HttpServerRequest.HttpServerRequest) => { id: string; name: string } | null;
+  readonly agentOf: (request: HttpServerRequest.HttpServerRequest) => { id: string; name: string; via?: string } | null;
   /** The document's public address for a request, for the external agent's guide. */
   readonly baseUrl: (request: HttpServerRequest.HttpServerRequest) => string;
   /** A person's picture, if the platform knows one (hosted: their GitHub avatar). */
@@ -302,9 +302,10 @@ export function makeHost(opts: HostOptions) {
     }))
     .handle("tools", () => Effect.map(extSession, (s) => ({ ok: true as const, tools: s.tools() })))
     .handle("run", ({ params: { name }, payload }) => Effect.gen(function* () {
+      const user = yield* Person;
       const s = yield* extSession;
       if (!s.tools().some((t) => t.name == name)) return yield* new NoSuchTool({ ok: false, error: `There's no tool named "${name}". The tools are: ${s.tools().map((t) => t.name).join(", ")}.` });
-      const content = yield* Effect.tryPromise({ try: () => s.runTool(name, payload), catch: (e) => new ToolFailed({ ok: false, error: (e as Error).message }) });
+      const content = yield* Effect.tryPromise({ try: () => s.runTool(name, payload, user.via), catch: (e) => new ToolFailed({ ok: false, error: (e as Error).message }) });
       return { ok: true as const, content };
     })));
 

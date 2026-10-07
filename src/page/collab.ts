@@ -211,6 +211,39 @@ export class Collab {
     return { anchor, head: c.head ? abs(c.head) : null };
   }
 
+  /**
+   * Whether this tab's edits are on their way to the room: connected, synced, and nothing left in the socket's buffer
+   * (live.ts waits for it before a reload for a new release). False while offline: they're kept here until it's back.
+   */
+  async flushed(): Promise<boolean> {
+    const p = this.provider as WebsocketProvider & { ws: WebSocket | null };
+    for (let i = 0; i < 60; i++) {
+      if (!p.wsconnected || !p.synced || !p.ws) return false;
+      if (p.ws.bufferedAmount == 0) { await new Promise((r) => setTimeout(r, 150)); return p.wsconnected; }
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    return false;
+  }
+
+  /**
+   * Everything this tab holds of the room, for the page that reloads in its place (live.ts), with the room's epoch:
+   * merged into the room after the reload, it brings back any edit that hadn't reached it (and changes nothing
+   * otherwise). Null when it's too big to keep in the tab.
+   */
+  held(max = 1_500_000): { epoch: string; update: string } | null {
+    const u = Y.encodeStateAsUpdate(this.doc);
+    if (u.length * 4 / 3 > max) return null;
+    let bin = "";
+    for (let i = 0; i < u.length; i += 0x8000) bin += String.fromCharCode(...u.subarray(i, i + 0x8000));
+    return { epoch: String(roomInfo(this.doc).get("epoch") ?? ""), update: btoa(bin) };
+  }
+
+  /** Merges what the page before a reload held (held()), if it's of this same room's history. */
+  merge(held: { epoch: string; update: string } | undefined): void {
+    if (!held || typeof held.update != "string" || held.epoch != String(roomInfo(this.doc).get("epoch") ?? "")) return;
+    try { Y.applyUpdate(this.doc, Uint8Array.from(atob(held.update), (c) => c.charCodeAt(0)), "held"); } catch (e) { console.warn("couldn't merge the edits kept across the reload", e); }
+  }
+
   /** This tab's state vector, so the host can wait until the room has its edits. */
   vector(): string { return stateVector(this.doc); }
 

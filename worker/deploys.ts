@@ -20,6 +20,17 @@
 //   POST /api/snapshot/docs[/import]    SNAPSHOT_TOKEN: read documents' storage (any server), write it (staging only)
 //   GET  /admin/deploys                 redirects to /admin/factory: the dashboard of source and deploys
 //
+// The production gate (deploy/gate.ts, worker/gate.ts): each staging commit's full test run. Staging's server runs
+// it; production's answers these from staging's (the routes take DEPLOY_HOOK_SECRET too, for that).
+//
+//   GET  /api/gate[?limit=N]            admins (or another of Erga's servers): the runs, newest first {runs, runner,
+//                                       shards, host}: each {commit, state, attempt, trigger, started, ended, shards,
+//                                       failed, flaky, error}
+//   GET  /api/gate/<sha>                admins (or another server): one commit's run and the verdict {run, verdict:
+//                                       {ok, state, reason}}: may main move to it?
+//   GET  /api/gate/<sha>/log?shard=N    admins (or another server): a shard's log, once it ended {log}
+//   POST /api/gate/<sha>/run            admins (or another server, {by}): run the commit's tests (again) {run}
+//
 // "Admins" are the server's admins signed in, in a browser or with an agent
 // token; a test person never.
 
@@ -28,10 +39,11 @@ import { PRODUCTION } from "../deploy/targets";
 import { whoOf, withTokens, type Platform } from "../front";
 import type { Env } from "./env";
 import { LOCKED } from "../users";
+import { byLine } from "../attribution";
 
 /** Whether this path is one of these routes. */
 export const isDeploysPath = (path: string) =>
-  path == "/api/deploys" || path.startsWith("/api/deploys/") || path == "/api/events" || path.startsWith("/api/snapshot/") || path == "/admin/deploys";
+  path == "/api/deploys" || path.startsWith("/api/deploys/") || path == "/api/events" || path.startsWith("/api/snapshot/") || path == "/admin/deploys" || path == "/api/gate" || path.startsWith("/api/gate/");
 
 export async function deploysDoor(request: Request, env: Env, base: Platform): Promise<Response> {
   const url = new URL(request.url);
@@ -86,6 +98,10 @@ export async function deploysDoor(request: Request, env: Env, base: Platform): P
     return Response.json({ error: "Not found" }, { status: 404 });
   }
 
+  // The production gate: another of Erga's servers (production asks staging's), or admins (below).
+  const isGate = path == "/api/gate" || path.startsWith("/api/gate/");
+  if (isGate && peer(request, env)) return gateAnswer(request, env, url, path, null);
+
   // Admins only, from here.
   const platform = withTokens(base, url);
   const session = await platform.sessionOf(request);
@@ -93,6 +109,11 @@ export async function deploysDoor(request: Request, env: Env, base: Platform): P
   if (!admin) return Response.json({ error: session ? "Only an admin can do that." : "Sign in as an admin, or use an admin-scope token (/tokens)." }, { status: session ? 403 : 401 });
   // Admin power: the browser's, or an admin-scope token's.
   if (!(await platform.directory.users.actsAsAdmin(whoOf(session!)))) return Response.json({ error: LOCKED, locked: true }, { status: 403 });
+  if (isGate) {
+    // From this site's pages, or an agent's token: never another site's form.
+    if (method == "POST" && !session!.agent && request.headers.get("origin") != url.origin) return Response.json({ error: "Forbidden" }, { status: 403 });
+    return gateAnswer(request, env, url, path, session!.login);
+  }
   if (path == "/api/events" && method == "GET") return stub().fetch(new Request(url, request));
   if (path == "/api/deploys" && method == "GET") return Response.json(await stub().status(Number(url.searchParams.get("history") ?? 0) || 0), noStore);
   if (logOf && method == "GET") return logAnswer(logOf);
@@ -102,10 +123,37 @@ export async function deploysDoor(request: Request, env: Env, base: Platform): P
     // From this site's pages, or an agent's token: never another site's form.
     if (!session!.agent && request.headers.get("origin") != url.origin) return Response.json({ error: "Forbidden" }, { status: 403 });
     const fresh = ((await request.json().catch(() => ({}))) as { fresh?: unknown }).fresh === true;
-    const r = fresh ? await stub().redeployWith(name, `redeploy by ${session!.login}`, { fresh }) : await stub().redeploy(name, `redeploy by ${session!.login}`);
+    const r = fresh ? await stub().redeployWith(name, `redeploy by ${byLine(session!.login.toLowerCase(), whoOf(session!).via)}`, { fresh }) : await stub().redeploy(name, `redeploy by ${byLine(session!.login.toLowerCase(), whoOf(session!).via)}`);
     return r.ok ? Response.json({ ok: true, target: r.status }) : Response.json({ ok: false, error: r.error }, { status: r.status ?? 400 });
   }
   return Response.json({ error: `There's nothing at ${method} ${path}.` }, { status: 404 });
+}
+
+/** /api/gate...: for an admin (`by`, their login) or another of Erga's servers (null; a run names who asked there). */
+async function gateAnswer(request: Request, env: Env, url: URL, path: string, by: string | null): Promise<Response> {
+  const stub = env.PIPELINE.getByName("deploys");
+  const noStore = { headers: { "Cache-Control": "no-store" } };
+  const fail = (e: unknown, status = 502) => Response.json({ error: (e as Error)?.message ?? String(e) }, { status });
+  try {
+    if (path == "/api/gate" && request.method == "GET") {
+      const limit = Math.max(1, Math.min(200, Number(url.searchParams.get("limit") ?? 50) || 50));
+      return Response.json(await stub.gateList(limit), noStore);
+    }
+    const [, sha, what] = /^\/api\/gate\/([0-9a-f]{40})(?:\/(log|run))?$/.exec(path) ?? [];
+    if (!sha) return Response.json({ error: "Name the commit by its full id (40 hex digits): /api/gate/<sha>." }, { status: 404 });
+    if (!what && request.method == "GET") return Response.json(await stub.gateGet(sha), noStore);
+    if (what == "log" && request.method == "GET") {
+      const shard = Number(url.searchParams.get("shard") ?? 0);
+      if (!(shard >= 1)) return Response.json({ error: "Which shard? ?shard=1, 2, ..." }, { status: 400 });
+      return Response.json({ log: await stub.gateLog(sha, shard) }, noStore);
+    }
+    if (what == "run" && request.method == "POST") {
+      const body = (await request.json().catch(() => ({}))) as { by?: string };
+      const who = by ?? (typeof body.by == "string" && body.by ? `${body.by.slice(0, 40)} (passed on)` : "another server");
+      return Response.json({ run: await stub.gateStart(sha, who) });
+    }
+  } catch (e) { return fail(e); }
+  return Response.json({ error: `There's nothing at ${request.method} ${path}.` }, { status: 404 });
 }
 
 /** The request carries this server's DEPLOY_HOOK_SECRET (staging's admins-only guard asks too: worker/admins-only.ts). */

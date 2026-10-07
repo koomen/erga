@@ -35,7 +35,7 @@ const login = `wtest${Date.now().toString(36)}`;
 const template = (name: string) => readFileSync(new URL(`../templates/${name}/index.html`, import.meta.url), "utf8");
 
 const signedIn = await fetch(`${base}/auth/github?as=${login}&next=/docs`, { redirect: "manual" });
-const cookie = signedIn.headers.getSetCookie().map((c) => c.split(";")[0]).find((c) => c.startsWith("erga_session="));
+const cookie = signedIn.headers.getSetCookie().map((c) => c.split(";")[0]).find((c) => /^erga_session(_\d+)?=/.test(c));
 if (!cookie) throw new Error(`signing in at ${base}: ${signedIn.status} (is DEV_LOGIN set in .dev.vars?)`);
 const get = (path: string, init: RequestInit = {}) => fetch(base + path, { redirect: "manual", ...init, headers: { Cookie: cookie, ...(init.headers as Record<string, string>) } });
 const docs = async () => (await get("/docs")).text();
@@ -173,7 +173,7 @@ async function serverApiScenario() {
   // Someone else's document: nothing until it's shared; shared to edit, the agent edits, but still can't delete it.
   const otherLogin = `wother${Date.now().toString(36)}`;
   const other = await fetch(`${base}/auth/github?as=${otherLogin}&next=/new`, { redirect: "manual" });
-  const otherCookie = other.headers.getSetCookie().map((c) => c.split(";")[0]).find((c) => c.startsWith("erga_session="))!;
+  const otherCookie = other.headers.getSetCookie().map((c) => c.split(";")[0]).find((c) => /^erga_session(_\d+)?=/.test(c))!;
   const theirs = (await fetch(`${base}/new`, { redirect: "manual", headers: { Cookie: otherCookie } })).headers.get("location")!.replace(/#edit$/, "");
   const theirId = ((await (await fetch(`${base}${theirs}/api/name`, { headers: { Cookie: otherCookie } })).json()) as Name).id;
   t = await tool("read", { document: theirs, path: "index.html" });
@@ -213,7 +213,7 @@ async function serverApiScenario() {
 /** Signs in (no `as`: the dev server's DEV_LOGIN, an admin), mints a token there (admin scope for the admin), and returns a tool caller. */
 async function tokenFor(as: string | null) {
   const r = await fetch(`${base}/auth/github?${as ? `as=${as}&` : ""}next=/docs`, { redirect: "manual" });
-  const c = r.headers.getSetCookie().map((x) => x.split(";")[0]).find((x) => x.startsWith("erga_session="))!;
+  const c = r.headers.getSetCookie().map((x) => x.split(";")[0]).find((x) => /^erga_session(_\d+)?=/.test(x))!;
   const page = await (await fetch(`${base}/tokens/new`, { method: "POST", headers: { Cookie: c, Origin: origin }, body: new URLSearchParams({ label: "Admin test", scope: as ? "documents" : "admin" }) })).text();
   const token = /<pre class="secret">(erga_[^<]+)<\/pre>/.exec(page)?.[1] ?? "";
   expect(token, `a token for ${as ?? "DEV_LOGIN"}`, page.slice(0, 300));

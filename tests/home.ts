@@ -227,7 +227,7 @@ try {
   // ---------------------------------------------------------------- security
   const signIn = await get("/auth/github?as=Ada");
   const cookie = signIn.headers.get("set-cookie") ?? "";
-  expect(/erga_session=[^;]+;.*HttpOnly/i.test(cookie) && /SameSite=Lax/i.test(cookie), "the session cookie is HttpOnly", cookie);
+  expect(/erga_session(_\d+)?=[^;]+;.*HttpOnly/i.test(cookie) && /SameSite=Lax/i.test(cookie), "the session cookie is HttpOnly", cookie);
   // Bo (a user) can't change the homepage or deploy it, nor edit it.
   expect((await post(`/api/docs/${secondId}/home`, { isHome: false }, "Bo")).status == 404, "Bo can't even see a document that isn't shared with him");
   await get(`/docs/share`, { method: "POST", headers: { Origin: root }, body: new URLSearchParams({ id: secondId, login: "bo", role: "viewer" }) });

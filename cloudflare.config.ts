@@ -113,6 +113,8 @@ export default defineConfig(({ mode }) => ({
         ERGA_VERSION_MAX_MS: bindings.text(process.env.ERGA_VERSION_MAX_MS ?? ""),
         // tests/bench.ts --latency: each call to the database or a document waits this long first (worker/timing.ts).
         ERGA_REMOTE_LATENCY_MS: bindings.text(process.env.ERGA_REMOTE_LATENCY_MS ?? ""),
+        // The production gate's simulated shards (deploy/gate.ts, fakeRunner): how long each takes (tests shorten it).
+        ERGA_GATE_FAKE_MS: bindings.text(process.env.ERGA_GATE_FAKE_MS ?? ""),
 
         // "1": /deploy and the branch deploys talk to a pretend Cloudflare (deploy/mock.ts), for their tests and for trying them safely.
         ERGA_DEPLOY_MOCK: bindings.text(process.env.ERGA_DEPLOY_MOCK ?? ""),

@@ -2,7 +2,7 @@
 // (worker/source.ts, source/repo.ts) and the dev server's stand-in does
 // (dev/factory.ts). The Worker mints them (worker/factory.ts, gitToken):
 //
-//   fgt.<base64url of the UTF-8 JSON { scope, branch, exp, by?, id? }>.<hex HMAC-SHA256 of that, with HMAC(secret, "erga-factory-git")>
+//   fgt.<base64url of the UTF-8 JSON { scope, branch, exp, by?, via?, id? }>.<hex HMAC-SHA256 of that, with HMAC(secret, "erga-factory-git")>
 //
 // A task's token reads staging, main and its own branch (task/…), and pushes
 // its own branch, deleting it included. A merge token also moves staging,
@@ -21,8 +21,10 @@ export interface GitGrant {
   branch: string;
   /** Seconds since 1970. */
   exp: number;
-  /** The admin who asked (a merge's: whoever pressed Merge), for the push's record and its deploy. */
+  /** The admin who asked (a login: the task's person, or for a merge whoever pressed Merge), for the push's record and its deploy. */
   by?: string;
+  /** How they did it (attribution.ts): "the factory (task #3)". */
+  via?: string;
   /** A merge token's own id: it moves staging once (source/repo.ts keeps the ids it has spent). */
   id?: string;
 }

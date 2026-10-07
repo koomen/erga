@@ -1,0 +1,71 @@
+// The production gate's server side (deploy/gate.ts has the rules): where
+// its shards run, and its routes (in worker/deploys.ts's table).
+//
+// The gate runs in staging's server (in the Pipeline object, beside the
+// branch deploys) and in local development; production's server asks
+// staging's for each answer, with DEPLOY_HOOK_SECRET, so the two dashboards
+// show the same runs and production's merge checks staging's result. If
+// staging's server doesn't answer, production refuses to move main, and says
+// why.
+//
+// On Cloudflare a shard is a FactoryVm (factory/cloudflare.ts) named
+// gate-<commit>-<attempt>-<n>: the factory's image, standard-4, its job
+// `run.ts gate run ...` (factory/vm/gate.ts), cloning the commit from this
+// server's own Git endpoint (reads need no token). Locally, and with
+// ERGA_DEPLOY_MOCK=1, the fake runner (deploy/gate.ts, fakeRunner) stands in.
+
+import { fakeRunner, type GateRunner, type ShardReport } from "../deploy/gate";
+import { isTargetName, TARGETS } from "../deploy/targets";
+import type { Env } from "./env";
+
+/** Whether this server runs the gate itself: staging's, and any that isn't production (local development). */
+export function gateRunsHere(env: Env): boolean {
+  if (env.ERGA_DEPLOY_MOCK == "1" || (env.ERGA_LINK_SECRET && env.DEV_LOGIN)) return true;
+  return env.DEPLOY_TARGET?.trim() != "production";
+}
+
+/** Where the shards run on this server: the factory's VMs, the local fake, or why there's none. */
+export function gateRunner(env: Env, subject: (commit: string) => Promise<string | null>): GateRunner | string {
+  if (env.ERGA_DEPLOY_MOCK == "1" || (env.ERGA_LINK_SECRET && env.DEV_LOGIN)) {
+    return fakeRunner({ delayMs: Number(env.ERGA_GATE_FAKE_MS) || 1500, subject });
+  }
+  if (!env.FACTORY_VM) return "it has no VMs (the FactoryVm binding: README, The factory, On Cloudflare).";
+  const self = env.DEPLOY_TARGET?.trim() ?? "";
+  if (!isTargetName(self)) return "it isn't one of Erga's deploy targets (DEPLOY_TARGET).";
+  return vmRunner(env.FACTORY_VM, `https://${TARGETS[self].host}/git/erga.git`);
+}
+
+/** The part of FactoryVm the gate uses. */
+interface VmStub {
+  boot(): Promise<void>;
+  job(script: string, args: string[], env: Record<string, string>, wait: boolean): Promise<{ code: number; output: string } | null>;
+  alive(): Promise<boolean>;
+  stop(): Promise<void>;
+}
+
+/** Shards in the factory's VMs (one FactoryVm each), cloning from `repo`. */
+export function vmRunner(ns: { getByName(name: string): unknown }, repo: string): GateRunner {
+  const vm = (name: string) => ns.getByName(name) as VmStub;
+  return {
+    kind: "Cloudflare Containers (standard-4)",
+    async start(spec) {
+      const v = vm(spec.vm);
+      await v.boot();
+      await v.job("run.ts", ["gate", "run", spec.commit, String(spec.shard), String(spec.of), ...(spec.files ? ["--files", spec.files.join(",")] : [])], { REPO_URL: repo, FACTORY_WORK: "/work" }, false);
+    },
+    async poll(name) {
+      const v = vm(name);
+      if (!(await v.alive())) return "gone";
+      const out = await v.job("run.ts", ["gate", "status"], { FACTORY_WORK: "/work" }, true);
+      return parseStatus(out?.output ?? "");
+    },
+    stop: (name) => vm(name).stop(),
+  };
+}
+
+/** The shard's `gate status` line (factory/vm/gate.ts). */
+export function parseStatus(output: string): ShardReport {
+  const line = output.split("\n").reverse().find((l) => l.startsWith("GATE-STATUS "));
+  if (!line) throw new Error(`the VM said no status: ${output.slice(-300)}`);
+  return JSON.parse(line.slice("GATE-STATUS ".length)) as ShardReport;
+}

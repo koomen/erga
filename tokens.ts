@@ -27,6 +27,7 @@
 // it's rotated); a token made at /tokens or for an agent is shown once.
 
 import type { Directory, Sql } from "./directory";
+import { changeLogEntry } from "./attribution";
 
 
 /** A token as its person's list shows it (never the token itself). */
@@ -197,10 +198,19 @@ export class Tokens {
   }
 
   /** Turns one of someone's tokens off; false if they have none by that id. */
-  async revoke(login: string, id: string): Promise<boolean> {
-    const [row] = await this.sql.all<{ id: string }>("SELECT id FROM agent_tokens WHERE id = ?1 AND login = ?2", id, login.toLowerCase());
+  /**
+   * Turns one of `login`'s tokens off. `via`: how they did it, when not in
+   * person (attribution.ts): the change log (/admin/changes) records it under
+   * them, with that.
+   */
+  async revoke(login: string, id: string, via?: string | null): Promise<boolean> {
+    login = login.toLowerCase();
+    const [row] = await this.sql.all<{ id: string; label: string }>("SELECT id, label FROM agent_tokens WHERE id = ?1 AND login = ?2", id, login);
     if (!row) return false;
-    await this.sql.run("DELETE FROM agent_tokens WHERE id = ?1", id);
+    await this.sql.batch([
+      ["DELETE FROM agent_tokens WHERE id = ?1", id],
+      changeLogEntry(Date.now(), login, via, [{ key: "token", from: null, to: null, token: { id, label: row.label, event: "revoked", of: login } }]),
+    ]);
     return true;
   }
 

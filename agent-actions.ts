@@ -9,7 +9,9 @@
 //
 // The one exception is a secret: an API key, the Claude token, a new agent token is pasted or made
 // only on the page, never in a conversation. The agent may clear an API key, sign the factory out, or revoke a
-// token. And the agents act only on what their person asks in the
+// token. The one other exception is the production gate's emergency override (a merge to main whose tests
+// haven't passed): the user's rule is that only a person, in a browser, with a reason, may do it, never an agent.
+// And the agents act only on what their person asks in the
 // conversation, never on text found in tool results (their system prompts say so).
 //
 // This is the audit: every action in the UI and the HTTP API, with the agent tool that does it, or why there
@@ -36,6 +38,9 @@ export interface AgentAction {
 const SECRET = "a secret: pasted or made only on the page, never in a conversation";
 const PANEL = "the agent panel itself (the conversation, its model, stop, undo)";
 const STREAM = "the page's live updates (server-sent events)";
+const VM = "a task's own worker (its VM, or a local task's agent: factory/task.ts), not a person's action";
+/** The production gate's emergency override (deploy/gate.ts): the user's rule keeps it from every agent and token. */
+export const OVERRIDE = "an emergency step for a person in a browser only, logged with their reason: never an agent's or a token's (the user's rule)";
 
 export const AGENT_ACTIONS: AgentAction[] = [
   // ------------------------------------------------------------ /admin: settings, change log, users, API keys (admin.ts)
@@ -76,18 +81,24 @@ export const AGENT_ACTIONS: AgentAction[] = [
   { route: "POST /api/factory/agent", domain: "none", action: "A message to the admin agent", exempt: PANEL },
   { route: "POST /api/factory/agent/abort|reset", domain: "none", action: "Stop the admin agent, or start a new conversation", exempt: PANEL },
   { route: "POST /api/factory/agent/model", domain: "none", action: "Switch the admin agent's model", exempt: PANEL },
-  // A task's VM, with its task's token.
-  { route: "GET /api/factory/tasks/<id>/brief", domain: "none", action: "A VM reads its task", exempt: "a task's VM" },
-  { route: "GET /api/factory/tasks/<id>/inbox", domain: "none", action: "A VM reads new instructions", exempt: "a task's VM" },
-  { route: "POST /api/factory/tasks/<id>/inbox", domain: "none", action: "A VM takes new instructions", exempt: "a task's VM" },
-  { route: "POST /api/factory/tasks/<id>/log", domain: "none", action: "A VM writes its log", exempt: "a task's VM" },
-  { route: "POST /api/factory/tasks/<id>/branch", domain: "none", action: "A VM says its branch is made", exempt: "a task's VM" },
-  { route: "POST /api/factory/tasks/<id>/preview", domain: "none", action: "A VM says its preview is up", exempt: "a task's VM" },
-  { route: "POST /api/factory/tasks/<id>/screenshots", domain: "none", action: "A VM adds a screenshot", exempt: "a task's VM" },
+  // A task's VM, with its task's token; or a local task's own agent (factory/task.ts), with an admin token.
+  { route: "GET /api/factory/tasks/<id>/brief", domain: "none", action: "A VM reads its task", exempt: VM },
+  { route: "GET /api/factory/tasks/<id>/inbox", domain: "none", action: "A VM reads new instructions", exempt: VM },
+  { route: "POST /api/factory/tasks/<id>/inbox", domain: "none", action: "A VM takes new instructions", exempt: VM },
+  { route: "POST /api/factory/tasks/<id>/log", domain: "none", action: "A VM writes its log", exempt: VM },
+  { route: "POST /api/factory/tasks/<id>/branch", domain: "none", action: "A VM says its branch is made", exempt: VM },
+  { route: "POST /api/factory/tasks/<id>/preview", domain: "none", action: "A VM says its preview is up", exempt: VM },
+  { route: "POST /api/factory/tasks/<id>/screenshots", domain: "none", action: "A VM adds a screenshot", exempt: VM },
+  { route: "POST /api/factory/tasks/<id>/git", domain: "none", action: "A local task's agent gets a git token for its branch (task push)", exempt: `${VM}: a push credential, and the admin agent never pushes` },
 
   // ------------------------------------------------------------ /admin/factory: the dashboard of source and deploys
   { route: "GET /api/source/branches", domain: "admin", action: "Read staging, main and the mirror (Factory, dashboard)", tool: "list_branches" },
   { route: "POST /api/source/merge", domain: "admin", action: "Move main to staging: deploy production (Factory, dashboard)", tool: "deploy_production" },
+  { route: "POST /api/source/merge override=", domain: "admin", action: "Move main past the production gate, with a reason (Factory, dashboard: Override)", exempt: OVERRIDE },
+  { route: "GET /api/gate[?limit=N]", domain: "admin", action: "Read the production gate's test runs (Factory, dashboard: tests)", tool: "list_test_runs" },
+  { route: "GET /api/gate/<sha>", domain: "admin", action: "Read a commit's test run and verdict (Factory, dashboard: a tests cell)", tool: "get_test_run" },
+  { route: "GET /api/gate/<sha>/log?shard=N", domain: "admin", action: "Read a test shard's log (Factory, dashboard: Log)", tool: "get_test_run" },
+  { route: "POST /api/gate/<sha>/run", domain: "admin", action: "Run a commit's tests (again) (Factory, dashboard: Run tests, Run again)", tool: "run_tests" },
   { route: "POST /api/source/mirror", domain: "admin", action: "Update the GitHub mirror now (Factory, dashboard)", tool: "sync_mirror" },
   { route: "GET /api/deploys[?history=N]", domain: "admin", action: "Read the deploys (Factory, dashboard)", tool: "list_deploys" },
   { route: "GET /api/deploys/<name>/history[?limit=N]", domain: "admin", action: "Read a target's past deploys (Factory, dashboard)", tool: "list_deploys" },
@@ -96,6 +107,7 @@ export const AGENT_ACTIONS: AgentAction[] = [
   { route: "POST /api/deploys/<name> fresh=", domain: "admin", action: "Redeploy staging with a fresh copy of production's data ({fresh: true})", tool: "redeploy" },
   { route: "GET /api/events", domain: "none", action: "The dashboard's live updates", exempt: STREAM },
   { route: "GET /admin/deploys", domain: "none", action: "An old address of the dashboard", exempt: "a redirect" },
+  { route: "GET /api/release", domain: "none", action: "An open page asks whether its code is still the server's (after a redeploy)", exempt: "the page's own check, not a person's action" },
   { route: "GET /api/deploys/version", domain: "none", action: "The release this server runs", exempt: "the deploy pipeline's, server to server" },
   { route: "GET /api/deploys/status[?history=N]", domain: "none", action: "Another server's deploys", exempt: "the deploy pipeline's, server to server" },
   { route: "POST /api/deploys/<name>/hook", domain: "none", action: "Another server says a branch moved", exempt: "the deploy pipeline's, server to server" },

@@ -17,7 +17,9 @@
 // so that the same Claude Code can be woken there to finish it. First it
 // stops the task's preview (a dev server that has run for hours can block a
 // build), and waits for the task's Claude Code to end, if it still runs (it
-// said done and says its last words): stopped after LIMITS.stopRun, so it
+// said done and says its last words): stopped after LIMITS.stopRun, or
+// LIMITS.stopReported when the factory says that run has just reported done
+// (FACTORY_RUN_REPORTED=1: the merge that goes on after a resolve), so it
 // never works in the clone while the merge does, nor overlaps the next run. Every step has a time limit (common.ts, LIMITS). When a step
 // conflicts, fails or times out, the merge stops and answers `needsAgent`
 // with the reason and the log, and leaves the clone as it is (a conflict
@@ -25,10 +27,14 @@
 // wakes the task's Claude Code (run.ts resolve), and when it says done, runs
 // this merge again. If staging moves meanwhile, the push is tried again on
 // the new staging (three times).
+//
+// Run again after it ended (the factory restarted before it heard the answer,
+// and Merge was pressed again): the branch is gone, and staging has its
+// "Merge BRANCH:" commit. That is a success, with that commit.
 
-import { existsSync, mkdirSync, mkdtempSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { api, CLONE, env, git, result, scrub, StepFailed, type StepResult, testHooks, WORK } from "./common.ts";
+import { api, CLONE, env, git, LIMITS, log, result, scrub, StepFailed, type StepResult, testHooks, WORK } from "./common.ts";
 import { stopPreview, stopRun } from "./task.ts";
 
 const [what, branch, title = ""] = process.argv.slice(2);
@@ -44,7 +50,8 @@ async function merge(): Promise<Record<string, unknown>> {
   process.env.FACTORY_HOOK_PREFIX = "merge:";
   const stopped = await stopPreview();
   if (stopped.length) console.log(`stopped the preview (${stopped.join(", ")})`);
-  if (await stopRun()) console.log("stopped the task's Claude Code: it was still going");
+  const grace = process.env.FACTORY_RUN_REPORTED == "1" ? LIMITS.stopReported : LIMITS.stopRun;
+  if (await stopRun(grace)) await log(`The merge stopped the task's Claude Code: it still ran ${grace}s after the merge started`);
   const dir = CLONE();
   try {
     // The task's clone (a VM that was replaced has none: a new one).
@@ -52,6 +59,14 @@ async function merge(): Promise<Record<string, unknown>> {
     if (fresh) await git(["clone", "--quiet", "--no-checkout", env("REPO_URL"), dir], WORK(), { name: "clone" });
     // A merge that the task's Claude Code didn't finish before (it failed): dropped, to start again.
     if ((await git(["rev-parse", "-q", "--verify", "MERGE_HEAD"], dir, { quiet: true })).code == 0) await git(["merge", "--abort"], dir, { quiet: true });
+    // The branch is gone: this merge may have ended before (staging moved, the branch deleted), unheard.
+    const there = await git(["ls-remote", "--heads", "origin", `refs/heads/${branch}`], dir, { quiet: true });
+    if (there.code == 0 && !there.out.trim()) {
+      await git(["fetch", "--quiet", "origin", "staging"], dir);
+      const merged = (await git(["log", "-n", "200", "--format=%H %s", "origin/staging"], dir, { quiet: true })).out.split("\n").find((l) => l.slice(41).startsWith(`Merge ${branch}:`));
+      if (merged) return { ok: true, commit: merged.slice(0, 40), already: true };
+      return { ok: false, error: `${branch} isn't in the repository any more, and staging has no merge of it.` };
+    }
     await git(["fetch", "--quiet", "origin", "staging", branch], dir);
     const on = (await git(["rev-parse", "--abbrev-ref", "HEAD"], dir, { quiet: true })).out;
     if (on != branch) {
@@ -86,6 +101,9 @@ async function merge(): Promise<Record<string, unknown>> {
       const moved = await git(["push", "--quiet", "origin", `${commit}:refs/heads/staging`], dir, { quiet: true, name: "push-staging" });
       if (moved.code == 0) {
         await git(["push", "--quiet", "origin", "--delete", branch], dir, { quiet: true, name: "delete" });
+        // A test of a factory that restarts before it hears the answer (tests/factory-reset.ts): the stand-in only.
+        const pause = /\[factory-test: pause after merge (\d+)\]/.exec(process.env.FACTORY_TEST_HOOKS ?? "");
+        if (pause) { await log(`The merge moved staging and deleted ${branch}; it answers in ${pause[1]}s (a test hook)`); await Bun.sleep(Number(pause[1]) * 1000); }
         return { ok: true, commit };
       }
       if (moved.timedOut) return needsAgent("timeout", "push-staging", stepFailure("Pushing staging", moved));
@@ -120,6 +138,15 @@ async function save(): Promise<Record<string, unknown>> {
   mkdirSync(WORK(), { recursive: true });
   await stopPreview();
   const stopped = await stopRun(0);
+  // A test of a factory that restarts during a restart (tests/factory-reset.ts), once: the stand-in only.
+  const brief = await api("/brief").catch(() => null) as { prompt?: string } | null;
+  if (brief?.prompt) testHooks(brief.prompt);
+  const pause =/\[factory-test: pause in save (\d+)\]/.exec(process.env.FACTORY_TEST_HOOKS ?? "");
+  if (pause && !existsSync(join(WORK(), ".paused-save"))) {
+    writeFileSync(join(WORK(), ".paused-save"), "");
+    await log(`The save stopped Claude Code; it goes on in ${pause[1]}s (a test hook)`);
+    await Bun.sleep(Number(pause[1]) * 1000);
+  }
   const dir = CLONE();
   if (!existsSync(join(dir, ".git"))) return { ok: true, stopped, saved: "no clone in the VM: nothing to save" };
   const notes: string[] = [];

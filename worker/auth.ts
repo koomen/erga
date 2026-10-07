@@ -11,6 +11,7 @@
 // (ids starting "test"), so the test suite can run against erga.dev.
 
 import { confirmAction, fromElsewhere, page, safeNext, type Session } from "../front";
+import { cookieName, cookies } from "./cookies";
 import { directoryOf } from "./d1";
 import type { Env } from "./env";
 
@@ -39,17 +40,8 @@ async function unsign(env: Env, signed: string): Promise<string | null> {
   } catch { return null; }
 }
 
-function cookies(request: Request): Map<string, string> {
-  const out = new Map<string, string>();
-  for (const part of (request.headers.get("cookie") ?? "").split(";")) {
-    const i = part.indexOf("=");
-    if (i > 0) out.set(part.slice(0, i).trim(), part.slice(i + 1).trim());
-  }
-  return out;
-}
-
 const cookie = (request: Request, name: string, value: string, maxAge: number) =>
-  `${name}=${value}; Path=/; Max-Age=${maxAge}; HttpOnly; SameSite=Lax${new URL(request.url).protocol == "https:" ? "; Secure" : ""}`;
+  `${cookieName(request, name)}=${value}; Path=/; Max-Age=${maxAge}; HttpOnly; SameSite=Lax${new URL(request.url).protocol == "https:" ? "; Secure" : ""}`;
 
 /**
  * The signed-in person, if the session cookie is valid and unexpired. In

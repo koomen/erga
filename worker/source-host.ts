@@ -9,6 +9,7 @@
 import { DurableObject } from "cloudflare:workers";
 import { deployHook, publishEvent } from "../deploy/index";
 import { ZERO } from "../source/git";
+import { byLine } from "../attribution";
 import { SourceError, SourceRepo, type Actor } from "../source/repo";
 import { artifactsRemote, githubRemote } from "./artifacts";
 import { directoryOf, keptKeys } from "./d1";
@@ -41,16 +42,22 @@ export class SourceHost extends DurableObject<Env> {
       github: () => githubRemote(keys(), this.origin),
       moved: (m) => {
         ctx.waitUntil(publishEvent({ type: "source", branch: m.branch, commit: m.new }, env).catch(() => {}));
-        ctx.waitUntil(deployHook(m.branch, m.new, env, `${m.how} by ${m.by}`).catch((e) => console.error(`deploy hook (${m.branch}):`, e)));
+        ctx.waitUntil(deployHook(m.branch, m.new, env, `${m.how} by ${byLine(m.by, m.via)}`).catch((e) => console.error(`deploy hook (${m.branch}):`, e)));
         // main moved: the production deploy, in the change log (/admin/changes), with the commits it brought.
         if (m.branch == "main") {
           ctx.waitUntil((async () => {
-            const change = { key: "main", from: m.old == ZERO ? null : m.old, to: m.new, release: this.repo.newCommits(m.old, m.new) };
-            await directoryOf(env).config.record(m.by, [change], m.at);
+            const change = { key: "main", from: m.old == ZERO ? null : m.old, to: m.new, release: { ...this.repo.newCommits(m.old, m.new), ...(m.override ? { override: m.override } : {}) } };
+            await directoryOf(env).config.record(m.by, [change], m.at, m.via ?? null);
           })().catch((e) => console.error("change log (main):", e)));
         }
       },
       changed: () => ctx.waitUntil(publishEvent({ type: "source" }, env).catch(() => {})),
+      // The production gate (deploy/gate.ts): main only to a commit whose full test run passed. The Pipeline object has
+      // it (staging's server, and locally) or asks staging's server (production); one that can't tell refuses.
+      gate: async (commit) => {
+        const v = await env.PIPELINE.getByName("deploys").gateVerdict(commit).catch((e: Error) => ({ ok: false, reason: `Production deploys only a staging commit whose full test run passed, and the test results couldn't be read (${e.message}).` }));
+        return v.ok ? null : `${v.reason ?? "The tests haven't passed."} See ${this.origin || "the Factory page"}${this.origin ? "/admin/factory" : ""}#tests-${commit.slice(0, 12)} (GET /api/gate/${commit}).`;
+      },
       background: (work) => ctx.waitUntil(work),
     });
   }
@@ -73,7 +80,8 @@ export class SourceHost extends DurableObject<Env> {
 
   advertise(origin: string, grant?: GitGrant) { return this.at(origin).advertise(grant); }
   branches(origin: string) { return this.at(origin).branches(); }
-  mirrorNow(origin: string) { return this.at(origin).mirror(); }
+  /** `by`: who asked (attribution.ts, byLine). */
+  mirrorNow(origin: string, by?: string) { return this.at(origin).mirror(by); }
   files(origin: string, commit: string) { return this.at(origin).files(commit); }
 
   /** The factory's agent reading the source (source/browse.ts): the answer, or { error } it can act on. */
@@ -83,9 +91,14 @@ export class SourceHost extends DurableObject<Env> {
     }
   }
 
+  /** The factory: the branches and staging's newest commits (SourceRepo.stagingLog), or { error }. */
+  async stagingLog(origin: string): Promise<{ heads: Record<string, string>; commits: { sha: string; subject: string }[] } | { error: string }> {
+    try { return await this.at(origin).stagingLog(); } catch (e) { return { error: (e as Error).message }; }
+  }
+
   /** A merge, as POST /api/source/merge asks: { commit } or { error, status }. */
-  async merge(origin: string, who: Actor, commit?: string): Promise<{ commit: string; fastForward: boolean; upToDate: boolean } | { error: string; status: number }> {
-    try { return await this.at(origin).merge(who, commit); } catch (e) {
+  async merge(origin: string, who: Actor, commit?: string, override?: string): Promise<{ commit: string; fastForward: boolean; upToDate: boolean; override?: boolean } | { error: string; status: number }> {
+    try { return await this.at(origin).merge(who, commit, override); } catch (e) {
       if (e instanceof SourceError) return { error: e.message, status: e.status };
       return { error: `The merge failed: ${(e as Error).message}`, status: 502 };
     }

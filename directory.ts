@@ -97,12 +97,18 @@ export interface Who {
   admin?: boolean;
   /** A document token's document (tokens.ts): they may touch this one document, and no other. */
   onlyDoc?: string;
+  /** How they act, when not in person: through one of their agents (attribution.ts, VIA). Recorded beside their login. */
+  via?: string;
 }
 /** The login a permission for anyone signed in (who has the link) is under. */
 export const ANYONE = "*";
 
 /** One person's (or anyone's, "*") permission on a document. */
-export interface Permission { login: string; role: Role; granted: number; grantedBy: string | null }
+export interface Permission {
+  login: string; role: Role; granted: number; grantedBy: string | null;
+  /** How `grantedBy` shared it, when not in person (attribution.ts): "their agent", "a shared agent (label)". */
+  grantedVia?: string | null;
+}
 
 const RANK: Record<Role, number> = { viewer: 1, editor: 2, owner: 3 };
 const ALLOWS: Record<Action, Role> = { open: "viewer", edit: "editor", rename: "editor", delete: "owner", share: "owner" };
@@ -494,9 +500,9 @@ export class Directory {
 
   /** Everyone with a permission on a document: its owner first, then by login ("*" first among the rest). */
   async permissions(id: string): Promise<Permission[]> {
-    const rows = await this.sql.all<{ login: string; role: Role; granted: number; granted_by: string | null }>(
-      "SELECT login, role, granted, granted_by FROM permissions WHERE doc_id = ?1 ORDER BY role = 'owner' DESC, login", id);
-    return rows.map((r) => ({ login: r.login, role: r.role, granted: Number(r.granted), grantedBy: r.granted_by }));
+    const rows = await this.sql.all<{ login: string; role: Role; granted: number; granted_by: string | null; granted_via: string | null }>(
+      "SELECT login, role, granted, granted_by, granted_via FROM permissions WHERE doc_id = ?1 ORDER BY role = 'owner' DESC, login", id);
+    return rows.map((r) => ({ login: r.login, role: r.role, granted: Number(r.granted), grantedBy: r.granted_by, ...(r.granted_via ? { grantedVia: r.granted_via } : {}) }));
   }
 
   /**
@@ -519,9 +525,9 @@ export class Directory {
     }
     if (role == null) await this.sql.run("DELETE FROM permissions WHERE doc_id = ?1 AND login = ?2", id, login);
     else await this.sql.run(
-      `INSERT INTO permissions (doc_id, login, role, granted, granted_by) VALUES (?1, ?2, ?3, ?4, ?5)
-       ON CONFLICT (doc_id, login) DO UPDATE SET role = ?3, granted = ?4, granted_by = ?5`,
-      id, login, role, Date.now(), who.login.toLowerCase());
+      `INSERT INTO permissions (doc_id, login, role, granted, granted_by, granted_via) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+       ON CONFLICT (doc_id, login) DO UPDATE SET role = ?3, granted = ?4, granted_by = ?5, granted_via = ?6`,
+      id, login, role, Date.now(), who.login.toLowerCase(), who.via ?? null);
     return this.permissions(id);
   }
 }
