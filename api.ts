@@ -46,7 +46,8 @@ export class NameRefused extends Schema.TaggedError<NameRefused>()("NameRefused"
 // ------------------------------------------------------------ who's asking
 
 /** The person a request acts for. */
-export class Person extends Context.Service<Person, { readonly id: string; readonly name: string }>()("erga/Person") {}
+/** Who's asking; an outside agent's request also says how they act through it (`via`, attribution.ts: "a shared agent (label)"). */
+export class Person extends Context.Service<Person, { readonly id: string; readonly name: string; readonly via?: string }>()("erga/Person") {}
 
 /** Who a request is from: the person the front door vouched for (its session, or ?user= in local development). */
 export class PersonFromRequest extends HttpApiMiddleware.Service<PersonFromRequest, { provides: Person }>()("erga/PersonFromRequest") {}

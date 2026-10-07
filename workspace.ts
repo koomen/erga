@@ -62,7 +62,8 @@ export class YjsWorkspace implements Workspace {
 
   constructor(
     private doc: Y.Doc,
-    private me: Author,
+    /** Who its edits are by (a function: an outside agent's calls are by it, via its token: agent.ts). */
+    private me: Author | (() => Author),
     /** The agent acts with its user's permissions, checked as it acts. */
     private canEdit: () => boolean,
     /** Transaction origin for the agent's edits (its undo manager tracks it). */
@@ -151,7 +152,7 @@ export class YjsWorkspace implements Workspace {
         if (c.to > c.from) t.delete(c.from, c.to - c.from);
         if (c.insert) t.insert(c.from, c.insert);
       }
-      if (minimal.every((c) => !c.insert)) stamp(this.doc, this.me);
+      if (minimal.every((c) => !c.insert)) stamp(this.doc, typeof this.me == "function" ? this.me() : this.me);
     }, this.origin);
     // What the agent now believes the file says: what it saw, with its edits.
     let seen: string | null = this.seen.get(path) ?? null;
@@ -195,7 +196,7 @@ export class YjsWorkspace implements Workspace {
     changes.iterChanges((_fa, _ta, _fb, toB) => { at = toB; });
     this.doc.transact(() => {
       const { inserted, deleted } = applyChanges(t, changes);
-      if (deleted && !inserted) stamp(this.doc, this.me);
+      if (deleted && !inserted) stamp(this.doc, typeof this.me == "function" ? this.me() : this.me);
     }, this.origin);
     this.see(path, t.toString());
     return { path, at, summary: changes.empty ? `No change to ${path}.` : `Wrote ${path}.` };

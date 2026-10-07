@@ -31,6 +31,7 @@ import { link, mayDeploy, whoOf, type Platform } from "../front";
 import { HOME_FILES, homeHeader, IDLE, renderHome, type DeployStatus } from "../home";
 import { mimeOf } from "../host";
 import { directoryOf } from "./d1";
+import { byLine, SYSTEM } from "../attribution";
 import type { Env } from "./env";
 import { publishedFiles } from "./published";
 
@@ -59,6 +60,8 @@ interface State {
   docId: string | null;
   /** Deploy again as soon as the one under way is done (it was asked for meanwhile). */
   again?: boolean;
+  /** Who asked for the latest deploy (byLine); the system's own (after a publish, a new homepage) when not set. */
+  by?: string | null;
 }
 
 const STATE = "state", LIVE = "live", FILE = "f:";
@@ -89,7 +92,7 @@ export class Home extends DurableObject<Env> {
   /** The deploy's state, as the API gives it. */
   async status(): Promise<DeployStatus> {
     const iso = (t: number | null) => (t == null ? null : new Date(t).toISOString());
-    return { state: this.s.state, at: iso(this.s.at), scheduledFor: iso(this.s.scheduledFor), version: this.s.version, error: this.s.state == "failed" ? this.s.error : null };
+    return { state: this.s.state, at: iso(this.s.at), scheduledFor: iso(this.s.scheduledFor), version: this.s.version, error: this.s.state == "failed" ? this.s.error : null, by: this.s.by ?? byLine(SYSTEM) };
   }
 
   /** The homepage's document as the database has it now (not as an isolate remembers it). */
@@ -121,6 +124,7 @@ export class Home extends DurableObject<Env> {
     if (home?.id != docId) return this.status();
     this.s.docId = docId;
     this.s.scheduledFor = Date.now() + this.delay();
+    this.s.by = null;
     if (this.s.state != "deploying") {
       this.s.state = "scheduled";
       await this.ctx.storage.setAlarm(this.s.scheduledFor);
@@ -131,8 +135,9 @@ export class Home extends DurableObject<Env> {
   }
 
   /** Deploys now (Redeploy now), whatever was scheduled. */
-  async deploy(): Promise<DeployStatus> {
+  async deploy(by?: string): Promise<DeployStatus> {
     this.s.scheduledFor = null;
+    this.s.by = by ?? null;
     if (this.s.state == "deploying") this.s.again = true;
     else {
       this.s.state = "deploying";

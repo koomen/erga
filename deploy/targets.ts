@@ -105,6 +105,8 @@ export const FACTORY: { image: string } = data.factory;
  * app, not production's: until someone makes it (on GitHub, by hand: GitHub
  * has no API for OAuth apps), puts its Client ID here and sets its secret
  * (`bunx cf workers secrets update GITHUB_CLIENT_SECRET --name erga-staging`),
+ * or pastes both on production's Authentication page (/admin/auth, which
+ * sets staging's through staging's server: worker/auth-settings.ts),
  * /auth/github on staging shows a page saying so (worker/auth.ts).
  * Every target gets ADMINS.
  */

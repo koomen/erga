@@ -18,7 +18,8 @@
 //   - A server with no key stored uses the Worker secret of the same name
 //     (`withCredentials`), so a server deployed without this page still works.
 
-import type { Param, Sql, Statement } from "./directory.ts";
+import { changeLogEntry } from "./attribution.ts";
+import type { Sql, Statement } from "./directory.ts";
 import type { Actor, Users } from "./users.ts";
 
 /**
@@ -41,7 +42,7 @@ export const CREDENTIALS = {
 export const DEPLOY_SECRETS = [
   { env: "SESSION_SECRET", service: "Erga", description: "Signs sessions, agent tokens and admin tokens. If it changes, everyone is signed out.", why: "It is the root key of every sign-in." },
   { env: "FACTORY_KEY", service: "Erga", description: "Encrypts the keys on this page and the Claude plan token, and signs the factory's VM tokens.", why: "The keys on this page are encrypted with it." },
-  { env: "GITHUB_CLIENT_SECRET", service: "GitHub", description: "Signs people in with GitHub (the OAuth app).", why: "A wrong value stops every sign-in, the admin's too." },
+  { env: "GITHUB_CLIENT_SECRET", service: "GitHub", description: "Signs people in with GitHub (the OAuth app). The Authentication page (/admin/auth) shows whether it works, and can set another app's values over it.", why: "A wrong value stops every sign-in, the admin's too: the Authentication page checks values with GitHub before it uses them." },
   { env: "SNAPSHOT_TOKEN", service: "Erga", description: "Lets staging copy production's documents.", why: "Production and staging must have the same value." },
   { env: "DEPLOY_HOOK_SECRET", service: "Erga", description: "Lets production and staging tell each other that a branch moved.", why: "Production and staging must have the same value." },
 ] as const;
@@ -66,6 +67,8 @@ export interface CredentialEntry {
   last4: string | null;
   updated: number | null;
   updatedBy: string | null;
+  /** How `updatedBy` did it, when not in person (attribution.ts). */
+  updatedVia?: string | null;
   /** The deploy has a Worker secret of the same name: the server uses it while none is stored here. */
   fallback: boolean;
   /** This server has the secret to encrypt with, so it can store a key. */
@@ -75,7 +78,7 @@ export interface CredentialEntry {
 /** A key that can't be stored (not one, or no secret to encrypt it with): the message says why. */
 export class CredentialError extends Error {}
 
-interface Row { name: string; iv: string; data: string; last4: string; updated: number; updated_by: string }
+interface Row { name: string; iv: string; data: string; last4: string; updated: number; updated_by: string; updated_via?: string | null }
 
 const enc = new TextEncoder();
 const b64 = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes));
@@ -113,7 +116,7 @@ export class Credentials {
     const rows = new Map((await this.sql.all<Row>("SELECT name, last4, updated, updated_by FROM credentials")).map((r) => [r.name, r]));
     return (Object.keys(CREDENTIALS) as CredentialName[]).map((name) => {
       const c = CREDENTIALS[name], r = rows.get(name);
-      return { name, env: c.env, label: c.label, service: c.service, description: c.description, set: !!r, last4: r?.last4 ?? null, updated: r ? Number(r.updated) : null, updatedBy: r?.updated_by ?? null, fallback: this.fallback(c.env), canStore: !!this.aesKey };
+      return { name, env: c.env, label: c.label, service: c.service, description: c.description, set: !!r, last4: r?.last4 ?? null, updated: r ? Number(r.updated) : null, updatedBy: r?.updated_by ?? null, updatedVia: r?.updated_via ?? null, fallback: this.fallback(c.env), canStore: !!this.aesKey };
     });
   }
 
@@ -136,10 +139,10 @@ export class Credentials {
     const data = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv, additionalData: enc.encode(n) }, await this.aesKey, enc.encode(key)));
     const had = await this.has(n), at = Date.now(), login = by.login.toLowerCase();
     await this.sql.batch([
-      [`INSERT INTO credentials (name, iv, data, last4, updated, updated_by) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
-        ON CONFLICT (name) DO UPDATE SET iv = excluded.iv, data = excluded.data, last4 = excluded.last4, updated = excluded.updated, updated_by = excluded.updated_by`,
-        n, b64(iv), b64(data), key.slice(-4), at, login],
-      this.logged(n, had ? "replaced" : "set", at, login),
+      [`INSERT INTO credentials (name, iv, data, last4, updated, updated_by, updated_via) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+        ON CONFLICT (name) DO UPDATE SET iv = excluded.iv, data = excluded.data, last4 = excluded.last4, updated = excluded.updated, updated_by = excluded.updated_by, updated_via = excluded.updated_via`,
+        n, b64(iv), b64(data), key.slice(-4), at, login, by.via ?? null],
+      this.logged(n, had ? "replaced" : "set", at, login, by.via),
     ]);
     return (await this.list(by)).find((e) => e.name == n)!;
   }
@@ -150,7 +153,7 @@ export class Credentials {
     const n = this.nameOf(name);
     if (await this.has(n)) {
       const at = Date.now(), login = by.login.toLowerCase();
-      await this.sql.batch([["DELETE FROM credentials WHERE name = ?1", n], this.logged(n, "cleared", at, login)]);
+      await this.sql.batch([["DELETE FROM credentials WHERE name = ?1", n], this.logged(n, "cleared", at, login, by.via)]);
     }
     return (await this.list(by)).find((e) => e.name == n)!;
   }
@@ -182,9 +185,8 @@ export class Credentials {
   }
 
   /** The change log's line for it (config.ts's server_config_versions): what happened to which key, never the key. */
-  private logged(name: CredentialName, what: "set" | "replaced" | "cleared", at: number, by: string): Statement {
-    const change = { key: CREDENTIALS[name].env, from: null, to: null, credential: what };
-    return ["INSERT INTO server_config_versions (at, by, changes) VALUES (?1, ?2, ?3)", at, by, JSON.stringify([change]) as Param];
+  private logged(name: CredentialName, what: "set" | "replaced" | "cleared", at: number, by: string, via?: string): Statement {
+    return changeLogEntry(at, by, via, [{ key: CREDENTIALS[name].env, from: null, to: null, credential: what }]);
   }
 }
 

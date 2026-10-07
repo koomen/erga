@@ -41,8 +41,10 @@
 
 import { OWN_ACCOUNT } from "./account.ts";
 import { adminDoor } from "./admin.ts";
+import { VIA } from "./attribution.ts";
 import { type Directory, type DocRow, type Grant, type Permission, type Role, type Route, type Who, NotAllowed, roleMay, UNTITLED } from "./directory.ts";
 import type { AgentToken, Tokens } from "./tokens.ts";
+import type { AuthOps } from "./auth-apps.ts";
 
 import type { PublishRequest, PublishResult, RestoreResult, Version, VersionsState } from "./versions.ts";
 import { pageAddress, resolvePage } from "./tree.ts";
@@ -135,6 +137,8 @@ export interface Platform {
   directory: Directory;
   /** Agent tokens (tokens.ts). */
   tokens: Tokens;
+  /** How people sign in (auth-apps.ts): this server's and the other deploy target's GitHub app, as `origin`'s server. */
+  auth?(origin: string): AuthOps;
 
   /** A test token for the test suite, minted by `login` (shown on /tokens), where the platform makes them. */
   testToken?(login: string): Promise<{ token: string; expires: Date }>;
@@ -147,9 +151,9 @@ export interface Platform {
     create(doc: Route, files: Record<string, string | Uint8Array>, index: string, opts: { test?: boolean; expires: number | null; modified?: number }): Promise<boolean>;
     /**
      * Files arriving whole into an existing document (a publish): written,
-     * and merged into its room as edits; `remove` deletes files.
+     * and merged into its room as edits; `remove` deletes files; `by`: who, as a version records it (byLine).
      */
-    publish(doc: Route, files: Record<string, string | Uint8Array>, remove: string[]): Promise<{ written: string[]; removed: string[]; refused: { path: string; why: string }[] }>;
+    publish(doc: Route, files: Record<string, string | Uint8Array>, remove: string[], by?: string): Promise<{ written: string[]; removed: string[]; refused: { path: string; why: string }[] }>;
     /** Every file a document holds. */
     paths(doc: Route): Promise<string[]>;
     /** A document's page (index.html, index.md...), or null if it has no host. */
@@ -202,7 +206,7 @@ export async function frontDoor(request: Request, base: Platform): Promise<Respo
   if (path == "/docs") return listDocs(platform, request);
   if (path == "/docs/delete" && request.method == "POST") return deleteDoc(platform, request);
   if (path == "/docs/share") return shareDoc(platform, request);
-  if (path == "/admin" || path == "/admin/changes" || path == "/admin/settings" || path == "/admin/users" || path == "/admin/api-keys" || path == "/admin/credentials" || path == "/admin/share") return adminDoor(platform, request);
+  if (path == "/admin" || path == "/admin/changes" || path == "/admin/settings" || path == "/admin/users" || path == "/admin/api-keys" || path == "/admin/credentials" || path == "/admin/share" || path == "/admin/auth" || path == "/admin/auth/status") return adminDoor(platform, request);
 
   const [, first, second, rest] = /^\/([^/]+)\/([^/]+)(\/.*)?$/.exec(path) ?? [];
   const nothing = () => page("Not found", "There's no document here. <a href=\"/\">Back to the start</a>.", 404);
@@ -325,6 +329,8 @@ export const accessOf = (role: Role | null): "edit" | "view" | null =>
 export const whoOf = (session: Session): Who => ({
   login: session.login.toLowerCase(), test: !!session.test, ...(session.test ? { by: session.test.by.toLowerCase() } : {}),
   ...(session.admin && !session.test ? { admin: true } : {}), ...(session.onlyDoc != null ? { onlyDoc: session.onlyDoc } : {}),
+  // An agent with their token acts for them: what it does is theirs, via it (attribution.ts).
+  ...(session.agent ? { via: VIA.token(session.agent.label) } : {}),
 });
 
 const refused = (session: Session) => session.test
@@ -2025,12 +2031,15 @@ export function forwarded(request: Request, url: URL, rest: string, base: string
   headers.delete("x-erga-person");
   headers.delete("x-erga-access");
   headers.delete("x-erga-agent");
+  headers.delete("x-erga-via");
   headers.delete("authorization");
   headers.set("x-erga-base", base);
   if (session) headers.set("x-erga-person", JSON.stringify({ id: session.login.toLowerCase(), name: session.name }));
   if (session && access) headers.set("x-erga-access", access);
   // Only an agent token's request may call a document's external agent tools (host.ts).
   if (session?.agent) headers.set("x-erga-agent", session.agent.id);
+  // How the person acts there (attribution.ts): through this token's agent, by its label (JSON: a header is ASCII).
+  if (session?.agent) headers.set("x-erga-via", JSON.stringify(VIA.token(session.agent.label)).replace(/[\u007f-\uffff]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`));
   return new Request(inner, { method: request.method, headers, body: request.body, redirect: "manual" });
 }
 

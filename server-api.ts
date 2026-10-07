@@ -37,6 +37,7 @@ import { documentToolSpecs, type ToolContent, type ToolSpec } from "./agent";
 import { type Action, type DocRow, type Route, nameOf, roleMay } from "./directory";
 import type { PublishRequest } from "./versions";
 import { accessOf, appPage, brand, esc, forwarded, fromElsewhere, ICON, ID, makeDoc, newDocId, page, safeNext, startingFiles, TIMES_SCRIPT, type Platform, type Session, whoOf } from "./front";
+import { byLine, VIA } from "./attribution";
 import { findDocument, runServerTool, SERVER_TOOLS, ToolError, type ToolWho } from "./server-tools";
 import { cleanRel } from "./host";
 import { LABEL_MAX, normalCode, REQUEST_MINUTES, SCOPES, ScopeError, type AgentToken, type Scope } from "./tokens";
@@ -159,7 +160,7 @@ export const TOOLS: ServerTool[] = [
       const remove = new Set(stringList(args.delete, "delete").map((p) => cleanPath(p)));
       if (args.replace === true) for (const p of await ctx.platform.docs.paths(doc)) if (!(p in files)) remove.add(p);
       if (!Object.keys(files).length && !remove.size) throw new ToolError("Nothing to do: give files, delete, or replace.");
-      const r = await ctx.platform.docs.publish(doc, files, [...remove]);
+      const r = await ctx.platform.docs.publish(doc, files, [...remove], byLine(ctx.session.login.toLowerCase(), whoOf(ctx.session).via));
       return { ...described((await ctx.platform.directory.get(doc.id)) ?? doc, ctx), ...r };
     },
   },
@@ -202,7 +203,7 @@ export const TOOLS: ServerTool[] = [
     description: "Turns one of the person's agent tokens off, by id (list_tokens). Revoking your own ends your access.",
     parameters: { type: "object", properties: { id: str("The token's id.") }, required: ["id"] },
     run: async (args, { session, platform }) => {
-      if (!(await platform.tokens.revoke(session.login, String(args.id ?? "")))) throw new ToolError(`You have no token "${args.id}".`, 404);
+      if (!(await platform.tokens.revoke(session.login, String(args.id ?? ""), whoOf(session).via))) throw new ToolError(`You have no token "${args.id}".`, 404);
       return { revoked: args.id };
     },
   },
@@ -230,7 +231,7 @@ function documentTools(): ServerTool[] {
 }
 
 /** What a tool in server-tools.ts runs with, for an agent token's person. */
-const toolWho = (ctx: ToolContext): ToolWho => ({ dir: ctx.platform.directory, who: whoOf(ctx.session), origin: ctx.origin });
+const toolWho = (ctx: ToolContext): ToolWho => ({ dir: ctx.platform.directory, who: whoOf(ctx.session), origin: ctx.origin, auth: ctx.platform.auth?.(ctx.origin) });
 
 /** The tools the editor's agent has too (server-tools.ts): sharing, and the admin ones. The documents list's are in TOOLS above, with files. */
 const sharedTools: ServerTool[] = SERVER_TOOLS.filter((t) => !t.docs).map((t) => ({
@@ -436,8 +437,8 @@ async function versionsApi(request: Request, platform: Platform, session: Sessio
   if (!session.agent && request.headers.get("origin") != url.origin) return fail(`Only this site's own pages may ${what}.`, 403);
   if (!canEdit) return fail(`You may only view this document, so you can't ${what} it.`, 403);
   if (what == "restore") {
-    // An agent token's restore is its person's agent's; a person's is theirs.
-    const by = session.agent ? `${session.login.toLowerCase()}’s agent` : session.login.toLowerCase();
+    // A person's restore is theirs; an agent token's is its person's, via it ("ada, via a shared agent (CI)").
+    const by = byLine(session.login.toLowerCase(), whoOf(session).via);
     // Optionally one file only: {"path": "blog/post.html"}.
     const body = (await request.json().catch(() => null)) as { path?: unknown } | null;
     const path = typeof body?.path == "string" && body.path ? body.path : null;

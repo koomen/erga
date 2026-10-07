@@ -81,7 +81,7 @@ try {
   expect(reg.code == 0 && a > 0, "task new registers a local task", reg.out);
   const ta = await task(a);
   const staging0 = branches(host.state).staging;
-  expect(ta.status == "working" && !ta.vm && ta.local?.machine == "test-laptop" && ta.local?.by == "tester’s agent (Laptop agent)", "it works, with no VM, run by the agent on its machine", ta);
+  expect(ta.status == "working" && !ta.vm && ta.local?.machine == "test-laptop" && ta.local?.by == "tester, via a shared agent (Laptop agent)", "it works, with no VM, run by the agent on its machine", ta);
   expect(ta.branch == `task/${a}-local-hello` && ta.base == staging0 && branches(host.state)[ta.branch] == staging0, "its branch is made from staging and pushed", { ta, b: branches(host.state) });
   expect(git(dirA, "rev-parse", "--abbrev-ref", "HEAD").stdout.trim() == ta.branch, "the checkout is on the task's branch");
   expect(reg.out.includes("task inbox") && reg.out.includes("task done"), "it tells the agent how to report", reg.out);
@@ -115,7 +115,7 @@ try {
   await p.eval(`document.querySelector('[data-open="${a}"]').click()`);
   await until(() => p.eval(`document.getElementById("dlg").open`), 5000, "the detail opens");
   const detail = await p.eval<string>(`document.getElementById("dlg").innerText`);
-  expect(detail.includes("Runs locally: tester’s agent (Laptop agent) on test-laptop") && detail.includes("Hand to a VM") && detail.includes("Send to the local agent"), "the detail: who runs it where, Hand to a VM, Send to the local agent", detail.slice(0, 900));
+  expect(detail.includes("Runs locally: tester, via a shared agent (Laptop agent) on test-laptop") && detail.includes("Hand to a VM") && detail.includes("Send to the local agent"), "the detail: who runs it where, Hand to a VM, Send to the local agent", detail.slice(0, 900));
   await p.screenshot(join(SHOTS, "factory-local-detail.png"));
   await p.eval(`document.querySelector('[data-act="close"]').click()`);
   ok("the board: a local chip with the machine; the detail says who runs it, with Hand to a VM");
@@ -195,7 +195,7 @@ try {
   expect(!te2.stalled && stalledOf(te2, Date.now() + 6 * 60_000), "a quiet local task is stalled after 5 minutes, as a VM's is", te2.stalled);
   expect((await api(`/tasks/${e}/restart`, { method: "POST" })).status == 200, "Hand to a VM (Restart)");
   const te3 = await task(e);
-  expect(!te3.local && te3.handedFrom == "tester’s agent (Laptop agent) on test-laptop" && await logged(e, "Handed to a VM by tester"), "it is a VM's task now, and the log says from whom", te3);
+  expect(!te3.local && te3.handedFrom == "tester, via a shared agent (Laptop agent) on test-laptop" && await logged(e, "Handed to a VM by tester"), "it is a VM's task now, and the log says from whom", te3);
   const refused = local(dirE, "log", "I'm back");
   expect(refused.code != 0 && refused.out.includes("handed to a VM"), "the old local agent's reports are refused", refused.out);
   await until(async () => (await task(e)).status == "complete", STEP, "the VM's stand-in finishes it", () => logOf(e));

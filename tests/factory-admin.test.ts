@@ -109,7 +109,9 @@ test("users the agent adds are added by the admin; without admin power, or the g
 
   const notAdmin = await session(dir, "ada", true).run([{ tool: "set_setting", args: { key: "factory", value: "on" } }]);
   expect(notAdmin[0]).toMatchObject({ status: "error", detail: expect.stringMatching(/Only an admin/) });
-  expect((await dir.config.history({ login: "root", admin: true })).total).toBe(0);
+  // The change log has the user added (#69), and no setting changed.
+  const { versions } = await dir.config.history({ login: "root", admin: true });
+  expect(versions.map((v) => v.changes.map((c) => c.key))).toEqual([["user"]]);
 });
 
 test("the board's buttons, the dashboard, keys and tokens: each tool does what the page does, as the admin, and says what changed", async () => {

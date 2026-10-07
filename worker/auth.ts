@@ -6,11 +6,19 @@
 // or a login in ADMINS), and a session lasts only while its person still is
 // one (checked on every request, remembered for a few seconds).
 //
+// The GitHub OAuth app is the deploy's (GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET),
+// or the one an admin set on /admin/auth (worker/auth-settings.ts). New values
+// set there while the app in use works wait for a test sign-in: /auth/github
+// ?app=pending signs in with them, and an admin's sign-in that works puts them
+// in use (auth-apps.ts, the lockout rules). Everyone else keeps signing in with
+// the values that work.
+//
 // A signed-in person can also mint a test token (/tokens): it signs in
 // throwaway test people (Ada, Bo...) who can open only test documents
 // (ids starting "test"), so the test suite can run against erga.dev.
 
 import { confirmAction, fromElsewhere, page, safeNext, type Session } from "../front";
+import { signInApp, testedSignIn } from "./auth-settings";
 import { cookieName, cookies } from "./cookies";
 import { directoryOf } from "./d1";
 import type { Env } from "./env";
@@ -113,11 +121,15 @@ export async function startSignIn(env: Env, request: Request): Promise<Response>
     const login = url.searchParams.get("as") || env.DEV_LOGIN!;
     return signIn(env, request, { login, name: login }, next);
   }
+  // A test sign-in with the values that wait on /admin/auth: the state says so, for the callback.
+  const testing = url.searchParams.get("app") == "pending";
+  const app = await signInApp(env, testing ? "pending" : "active");
+  if (testing && !app) return nothingToTest();
   // No GitHub OAuth app yet (staging's, until an admin makes one): GitHub would answer a 404, so say so here instead.
-  if (!env.GITHUB_CLIENT_ID?.trim()) return noOAuthApp(url.origin);
-  const state = b64(crypto.getRandomValues(new Uint8Array(18)));
+  if (!app?.clientId) return noOAuthApp(url.origin);
+  const state = (testing ? TESTING : "") + b64(crypto.getRandomValues(new Uint8Array(18)));
   const github = new URL("https://github.com/login/oauth/authorize");
-  github.searchParams.set("client_id", env.GITHUB_CLIENT_ID);
+  github.searchParams.set("client_id", app.clientId);
   github.searchParams.set("redirect_uri", `${url.origin}/auth/github/callback`);
   github.searchParams.set("scope", "read:user");
   github.searchParams.set("state", state);
@@ -128,27 +140,39 @@ export async function startSignIn(env: Env, request: Request): Promise<Response>
   });
 }
 
+/** A state that starts so is a test sign-in with the pending values ("." is never in b64's output). */
+const TESTING = "p.";
+
+const nothingToTest = () => page("Nothing to test", `No new sign-in values wait for a test. <a href="/admin/auth">Authentication</a>`, 404);
+
 /** The sign-in routes on a server with no GitHub OAuth app (GITHUB_CLIENT_ID empty): a page saying what an admin does. */
-const noOAuthApp = (origin: string) => page("Sign-in isn't set up", `Sign-in isn't set up on this server: it has no GitHub OAuth app. An admin sets GITHUB_CLIENT_ID: they make an OAuth app on GitHub (homepage ${escape(origin)}, callback ${escape(origin)}/auth/github/callback), put its Client ID in <code>GITHUB_CLIENT_ID</code> (for Erga's own targets, <code>deploy/targets.json</code>; <code>deploy/targets.ts</code> says how), set its client secret as the <code>GITHUB_CLIENT_SECRET</code> secret, and deploy.`, 503);
+const noOAuthApp = (origin: string) => page("Sign-in isn't set up", `Sign-in isn't set up on this server: it has no GitHub OAuth app. An admin makes an OAuth app on GitHub (homepage ${escape(origin)}, callback ${escape(origin)}/auth/github/callback), and pastes its Client ID and client secret on the Authentication page (/admin/auth; staging's are set on production's). Or they put its Client ID in <code>GITHUB_CLIENT_ID</code> (for Erga's own targets, <code>deploy/targets.json</code>; <code>deploy/targets.ts</code> says how), set its client secret as the <code>GITHUB_CLIENT_SECRET</code> secret, and deploy.`, 503);
 
 /** /auth/github/callback: GitHub sends the person back with a code to trade for who they are. */
 export async function finishSignIn(env: Env, request: Request): Promise<Response> {
   const url = new URL(request.url);
-  if (!isDev(env, url) && !env.GITHUB_CLIENT_ID?.trim()) return noOAuthApp(url.origin);
   const saved = cookies(request).get(STATE);
   const value = saved && await unsign(env, saved);
   const [state, next] = value ? value.split("|") : [];
+  const testing = !!state?.startsWith(TESTING);
+  const app = isDev(env, url) ? null : await signInApp(env, testing ? "pending" : "active");
+  if (!isDev(env, url) && !app?.clientId) return testing ? nothingToTest() : noOAuthApp(url.origin);
   if (!state || state != url.searchParams.get("state")) return page("Sign-in expired", "That sign-in link is stale. <a href=\"/\">Start again</a>.", 400);
 
   const token = await fetch("https://github.com/login/oauth/access_token", {
     method: "POST",
     headers: { Accept: "application/json", "Content-Type": "application/json" },
-    body: JSON.stringify({ client_id: env.GITHUB_CLIENT_ID, client_secret: env.GITHUB_CLIENT_SECRET, code: url.searchParams.get("code"), redirect_uri: `${url.origin}/auth/github/callback` }),
+    body: JSON.stringify({ client_id: app?.clientId ?? env.GITHUB_CLIENT_ID, client_secret: app?.secret ?? env.GITHUB_CLIENT_SECRET, code: url.searchParams.get("code"), redirect_uri: `${url.origin}/auth/github/callback` }),
   }).then((r) => r.json() as Promise<{ access_token?: string; error?: string; error_description?: string }>);
   if (!token.access_token) {
     // GitHub's own reason (e.g. incorrect_client_credentials: a wrong GITHUB_CLIENT_SECRET) goes to the logs and the page.
     console.log(`GitHub sign-in failed: ${token.error}: ${token.error_description}`);
-    return page("Sign-in failed", `GitHub didn't let you in${token.error ? ` (${escape(token.error_description ?? token.error)})` : ""}. <a href="/">Try again</a>.`, 400);
+    const why = token.error ? ` (${escape(token.error_description ?? token.error)})` : "";
+    if (testing && app) {
+      await testedSignIn(env, app.clientId, { ok: false, error: `GitHub refused the sign-in: ${token.error_description ?? token.error ?? "no reason given"}.` });
+      return page("Test sign-in failed", `GitHub didn't sign you in with the new values${why}. Sign-in still uses the values that worked before. <a href="/admin/auth">Authentication</a>`, 400);
+    }
+    return page("Sign-in failed", `GitHub didn't let you in${why}. <a href="/">Try again</a>.`, 400);
   }
   const user = await fetch("https://api.github.com/user", {
     headers: { Authorization: `Bearer ${token.access_token}`, Accept: "application/vnd.github+json", "User-Agent": "erga.dev" },
@@ -158,6 +182,8 @@ export async function finishSignIn(env: Env, request: Request): Promise<Response
   if (!(await users(env).signedIn(user.login, user.name?.trim() || user.login))) return page("Invite only", `Erga is invite-only for now, and <b>${escape(user.login)}</b> isn't on the list yet.`, 403);
   // Their GitHub id: the factory authors their tasks' commits with their noreply address (worker/factory.ts, personOf).
   if (typeof user.id == "number") await users(env).setGithubId(user.login, user.id).catch(() => {});
+  // A test sign-in with the pending values worked: an admin's puts them in use (worker/auth-settings.ts).
+  if (testing && app) await testedSignIn(env, app.clientId, { ok: true, login: user.login, admin: await users(env).isAdmin({ login: user.login }) });
   return signIn(env, request, { login: user.login, name: user.name?.trim().split(/\s+/)[0] || user.login }, safeNext(next ?? null));
 }
 

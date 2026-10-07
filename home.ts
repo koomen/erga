@@ -18,6 +18,7 @@
 import { ACCOUNT_STYLE, accountMarkup, type Account } from "./account.ts";
 import { ConfigError } from "./config.ts";
 import { LOCKED } from "./users.ts";
+import { byLine } from "./attribution.ts";
 import { NotAllowed, roleMay, type DocRow } from "./directory.ts";
 import { cloneButton, editButton, esc, FADE, fromElsewhere, link, VIEW_STYLE, whoOf, type Platform } from "./front.ts";
 import { NEW_DOC_SCRIPT, NEW_DOC_STYLE, newDocButton, newDocMenu } from "./templates.ts";
@@ -36,6 +37,8 @@ export interface DeployStatus {
   version: number | null;
   /** Why the last deploy failed, while it's failed. */
   error: string | null;
+  /** Who asked for the latest deploy (attribution.ts, byLine): "ada", "ada, via their admin agent", or "the system" (one after a publish, or a new homepage). */
+  by?: string | null;
 }
 
 export const IDLE: DeployStatus = { state: "idle", at: null, scheduledFor: null, version: null, error: null };
@@ -44,7 +47,8 @@ export const IDLE: DeployStatus = { state: "idle", at: null, scheduledFor: null,
 export interface HomeDeploys {
   status(): Promise<DeployStatus>;
   /** Deploys now; answers the status (deploying). */
-  deploy(): Promise<DeployStatus>;
+  /** `by`: who asks (byLine). */
+  deploy(by?: string): Promise<DeployStatus>;
 }
 
 /** The page as deployed, split where the controls go (they differ for each person). */
@@ -277,7 +281,7 @@ export async function homeApi(request: Request, platform: Platform, deploys: Hom
   if (!unlocked) return json({ error: LOCKED, locked: true }, 403);
   if (action == "deploy") {
     if ((await dir.homeId()) != doc.id) return json({ error: "This document isn't the homepage." }, 409);
-    await deploys.deploy();
+    await deploys.deploy(byLine(who.login, who.via));
     after?.();
     return json(await state());
   }

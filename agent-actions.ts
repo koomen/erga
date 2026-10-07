@@ -2,13 +2,13 @@
 // domain, so they can ask for anything there in words.
 //
 //   the admin agent     (factory/agent.ts: on every /admin page) everything on /admin: the settings, the API keys,
-//                       the change log, the users, the factory's board, the dashboard of source and deploys, the
+//                       sign-in (Authentication), the change log, the users, the factory's board, the dashboard of source and deploys, the
 //                       homepage's deploy, and the admin's own agent tokens (/settings)
 //   the document agent  (agent.ts, with server-tools.ts: in the editor) everything a person does with a document in
 //                       the editor and on the documents list (/docs)
 //
-// The one exception is a secret: an API key, the Claude token, a new agent token is pasted or made
-// only on the page, never in a conversation. The agent may clear an API key, sign the factory out, or revoke a
+// The one exception is a secret: an API key, the Claude token, a GitHub app's secret, a new agent token is pasted
+// or made only on the page, never in a conversation. The agent may clear an API key, sign the factory out, or revoke a
 // token. The one other exception is the production gate's emergency override (a merge to main whose tests
 // haven't passed): the user's rule is that only a person, in a browser, with a reason, may do it, never an agent.
 // And the agents act only on what their person asks in the
@@ -58,6 +58,11 @@ export const AGENT_ACTIONS: AgentAction[] = [
   { route: "GET /admin/api-keys", domain: "admin", action: "Read the API keys' status (API keys)", tool: "list_api_keys" },
   { route: "POST /admin/credentials", domain: "admin", action: "Clear an API key (API keys)", tool: "clear_api_key" },
   { route: "POST /admin/credentials", domain: "admin", action: "Set or replace an API key (API keys)", exempt: SECRET },
+  { route: "GET /admin/auth", domain: "admin", action: "Read how people sign in, here and on the other server (Authentication)", tool: "get_sign_in_status" },
+  { route: "GET /admin/auth/status", domain: "admin", action: "Read the same, as JSON, with live checks (Authentication)", tool: "get_sign_in_status" },
+  { route: "POST /admin/auth do=save", domain: "admin", action: "Set a GitHub app's client ID and secret (Authentication)", exempt: SECRET },
+  { route: "POST /admin/auth do=discard", domain: "admin", action: "Discard new values that wait for a test sign-in (Authentication)", tool: "clear_sign_in_app" },
+  { route: "POST /admin/auth do=clear", domain: "admin", action: "Clear the values set on the page: back to the deploy's (Authentication)", tool: "clear_sign_in_app" },
   { route: "POST /admin/share", domain: "admin", action: "Make an admin token for an outside agent (Share with agent, every admin page)", exempt: SECRET },
 
   // ------------------------------------------------------------ /admin/factory: the board (worker/factory.ts)
@@ -111,6 +116,8 @@ export const AGENT_ACTIONS: AgentAction[] = [
   { route: "GET /api/deploys/version", domain: "none", action: "The release this server runs", exempt: "the deploy pipeline's, server to server" },
   { route: "GET /api/deploys/status[?history=N]", domain: "none", action: "Another server's deploys", exempt: "the deploy pipeline's, server to server" },
   { route: "POST /api/deploys/<name>/hook", domain: "none", action: "Another server says a branch moved", exempt: "the deploy pipeline's, server to server" },
+  { route: "GET /api/sign-in/status", domain: "none", action: "Another server reads this one's sign-in status", exempt: "server to server, with the shared secret (production's Authentication page shows staging's)" },
+  { route: "POST /api/sign-in/github", domain: "none", action: "Production's Authentication page sets staging's GitHub app", exempt: "server to server, with the shared secret: the admin's action is POST /admin/auth" },
   { route: "POST /api/snapshot/docs[/import]", domain: "none", action: "Staging copies production's documents", exempt: "the deploy pipeline's, server to server" },
 
   // ------------------------------------------------------------ the homepage (home.ts: in the editor's settings, admins only)

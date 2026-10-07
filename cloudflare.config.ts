@@ -83,7 +83,9 @@ export default defineConfig(({ mode }) => ({
       ADMINS: bindings.text(PROD.vars.ADMINS),
       // The settings the deploy fixes, as JSON (server.config.ts; config.ts). Admins set the rest.
       SERVER_CONFIG: bindings.text(JSON.stringify(deployed())),
-      GITHUB_CLIENT_ID: bindings.text(PROD.vars.GITHUB_CLIENT_ID),
+      // Locally, the client ID of the target the dev server plays (ERGA_DEPLOY_TARGET), else production's.
+      // ERGA_GITHUB_CLIENT_ID (development only) overrides the target's, "" for none: tests simulate a target with no app.
+      GITHUB_CLIENT_ID: bindings.text(mode == "development" && process.env.ERGA_GITHUB_CLIENT_ID !== undefined ? process.env.ERGA_GITHUB_CLIENT_ID : mode == "development" && TARGETS.targets[process.env.ERGA_DEPLOY_TARGET ?? ""] ? TARGETS.targets[process.env.ERGA_DEPLOY_TARGET!].vars.GITHUB_CLIENT_ID ?? "" : PROD.vars.GITHUB_CLIENT_ID),
 
       // Which branch-deploy target this server is (deploy/targets.ts): the pipeline sets it on each target it deploys
       // ("staging" on erga-staging; empty on a server /deploy made). Branch deploys run only with CLOUDFLARE_DEPLOY_TOKEN
@@ -116,6 +118,9 @@ export default defineConfig(({ mode }) => ({
         // The production gate's simulated shards (deploy/gate.ts, fakeRunner): how long each takes (tests shorten it).
         ERGA_GATE_FAKE_MS: bindings.text(process.env.ERGA_GATE_FAKE_MS ?? ""),
 
+        // Sign-in's settings (worker/auth-settings.ts), for the tests: a stand-in for github.com, and the other target's server.
+        ERGA_GITHUB_ORIGIN: bindings.text(process.env.ERGA_GITHUB_ORIGIN ?? ""),
+        ERGA_PEER_ORIGIN: bindings.text(process.env.ERGA_PEER_ORIGIN ?? ""),
         // "1": /deploy and the branch deploys talk to a pretend Cloudflare (deploy/mock.ts), for their tests and for trying them safely.
         ERGA_DEPLOY_MOCK: bindings.text(process.env.ERGA_DEPLOY_MOCK ?? ""),
         // The dev server's address (dev.ts), where its stand-ins for Artifacts and GitHub answer (dev/git-server.ts).

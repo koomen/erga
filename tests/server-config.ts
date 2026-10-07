@@ -102,7 +102,7 @@ try {
   await p.eval(`location.href = "/admin/changes", true`);
   await until(() => p.eval<boolean>(`location.pathname == "/admin/changes" && document.querySelector("h1")?.textContent == "Change log"`), 10_000, "/admin/changes opens, titled Change log");
   const side = await p.eval<string[]>(`[...document.querySelectorAll(".admin-side a")].map((a) => a.textContent + " " + a.getAttribute("href") + (a.getAttribute("aria-current") ? " *" : ""))`);
-  expect(JSON.stringify(side.slice(0, 3)) == JSON.stringify(["Settings /admin", "API keys /admin/api-keys", "Change log /admin/changes *"]), "the sidebar has Change log after Settings and API keys, marked as this page", side);
+  expect(JSON.stringify(side.slice(0, 4)) == JSON.stringify(["Settings /admin", "API keys /admin/api-keys", "Authentication /admin/auth", "Change log /admin/changes *"]), "the sidebar has Change log after Settings, API keys and Authentication, marked as this page", side);
   await until(() => p.eval<boolean>(`document.querySelectorAll("ol.changes > li.change").length == 5`), 10_000, "the change log lists the 5 changes");
   const log = await p.eval<string[]>(`[...document.querySelectorAll("ol.changes > li.change")].map((li) => li.querySelector(".by").textContent + ": " + li.querySelector(".what").textContent.replace(/\\s+/g, " ").trim())`);
   // The changes made above, newest first, each once (landing_document was none already: no change, no version).

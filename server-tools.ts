@@ -14,6 +14,10 @@
 //   list_setting_changes                the settings' change log (config.ts history), admins only
 //   list_api_keys, clear_api_key        which API keys are set (credentials.ts), never a key, and clearing one,
 //                                       admins only; a key is set only on /admin/api-keys, never in a conversation
+//   get_sign_in_status,                 how people sign in (auth-apps.ts): this server's GitHub app and the other deploy
+//   clear_sign_in_app                   target's, never a secret; clearing the values set on /admin/auth, or discarding
+//                                       those that wait for a test sign-in. Admins only, with ToolWho.auth; an app's
+//                                       values are set only on /admin/auth, never in a conversation
 //   list_users, add_user,               who may sign in, and who's an admin (users.ts),
 //   set_user_role, set_user_deploy,     admins only
 //   remove_user
@@ -33,6 +37,7 @@ import type { AgentTool } from "@mariozechner/pi-agent-core";
 import { Type, type TObject } from "typebox";
 import { ConfigError, type ConfigEntry } from "./config.ts";
 import { CredentialError } from "./credentials.ts";
+import { AuthError, type AuthOps, type AuthStatus, type OtherStatus } from "./auth-apps.ts";
 import { type Action, type Directory, type DocRow, type Grant, type Route, type Who, ANYONE, NotAllowed, nameOf } from "./directory.ts";
 import { ID, makeDoc, newDocId, OWNER, startingFiles, type Platform } from "./front.ts";
 import { TEMPLATES, templateById } from "./templates.ts";
@@ -53,6 +58,8 @@ export interface ToolWho {
   readonly origin?: string;
   /** The platform (front.ts): for the documents list's tools (`docs`), which only the editor's agent gets. */
   readonly platform?: Platform;
+  /** Sign-in's settings (auth-apps.ts), where the server has them: for the sign-in tools. */
+  readonly auth?: AuthOps;
 }
 
 export interface ServerToolDef {
@@ -222,7 +229,7 @@ export const SERVER_TOOLS: ServerToolDef[] = [
     }),
     run: async (args, { dir, who }) => {
       const { versions, total } = await dir.config.history(who, { limit: Math.min(100, Number(args.limit) || 20), ...(args.before != null ? { before: Number(args.before) } : {}) });
-      return { total, changes: versions.map((v) => ({ n: v.n, at: iso(v.at), by: v.by, changes: v.changes })) };
+      return { total, changes: versions.map((v) => ({ n: v.n, at: iso(v.at), by: v.by, ...(v.via ? { via: v.via } : {}), changes: v.changes })) };
     },
   },
   {
@@ -233,7 +240,7 @@ export const SERVER_TOOLS: ServerToolDef[] = [
     description: "Admins only. The server's API keys (Anthropic, OpenAI, the GitHub mirror token, the Cloudflare deploy token), as /admin/api-keys shows them: whether each is stored, its last four characters, who set it and when, and whether a Worker secret stands in. Never the key itself. An admin sets, replaces or clears a key only on /admin/api-keys, so a key never goes through a conversation.",
     parameters: Type.Object({}),
     run: async (_args, { dir, who }) => (await dir.credentials.list(who)).map((c) => ({
-      name: c.name, label: c.label, description: c.description, stored: c.set, last4: c.last4, updated: iso(c.updated), updatedBy: c.updatedBy, workerSecret: c.fallback,
+      name: c.name, label: c.label, description: c.description, stored: c.set, last4: c.last4, updated: iso(c.updated), updatedBy: c.updatedBy, ...(c.updatedVia ? { updatedVia: c.updatedVia } : {}), workerSecret: c.fallback,
     })),
   },
 
@@ -247,6 +254,37 @@ export const SERVER_TOOLS: ServerToolDef[] = [
     run: async (args, { dir, who }) => {
       const c = await dir.credentials.clear(who, String(args.name ?? ""));
       return { cleared: c.name, label: c.label, stored: c.set, workerSecret: c.fallback };
+    },
+  },
+
+  // ------------------------------------------------------------ sign-in (admins)
+  {
+    name: "get_sign_in_status",
+    label: "Read how people sign in",
+    activity: "reading how people sign in",
+    admin: true,
+    description: "Admins only. How people sign in, as /admin/auth shows it: for this server and the other deploy target (production and staging), the GitHub OAuth app's client ID (public) and where it comes from (the deploy, or set on /admin/auth), whether its client secret is set (never the secret), the homepage and callback URLs the app must have, a live check with GitHub (working, misconfigured and why, not set up, unknown), values that wait for a test sign-in, and, where the app doesn't work, the steps to make one. An app's values are pasted only on /admin/auth, never in a conversation.",
+    parameters: Type.Object({}),
+    run: async (_args, ctx) => {
+      const { here, other } = await authOf(ctx).status(ctx.who);
+      return { thisServer: signInOf(here), otherServer: other ? signInOf(other) : null };
+    },
+  },
+  {
+    name: "clear_sign_in_app",
+    label: "Clear sign-in values",
+    activity: "clearing sign-in values",
+    admin: true,
+    description: "Admins only. Clears the GitHub app values set on /admin/auth, as Clear there does: sign-in goes back to the deploy's values. With what: \"pending\", it only discards new values that wait for a test sign-in (Discard), and sign-in keeps the values in use. server: \"here\" (this server, the default) or \"other\" (the other deploy target: production may change staging's, not the other way round). It refuses when the values set on the page work and the deploy's don't, since everyone would stop being able to sign in; force: true clears anyway, and only when the person says so after you told them that. Setting an app's values is done only on /admin/auth.",
+    parameters: Type.Object({
+      server: Type.Optional(Type.Union([Type.Literal("here"), Type.Literal("other")], { description: "here (default) or other" })),
+      what: Type.Optional(Type.Union([Type.Literal("all"), Type.Literal("pending")], { description: "all (default): the values set on the page; pending: only those that wait for a test sign-in" })),
+      force: Type.Optional(Type.Boolean({ description: "Clear even if sign-in would stop working: only when the person says so" })),
+    }),
+    run: async (args, ctx) => {
+      const server = args.server == "other" ? "other" : "here";
+      if (args.what == "pending") return { server, ...(await authOf(ctx).discard(ctx.who, server)) };
+      return { server, ...(await authOf(ctx).clear(ctx.who, server, args.force === true)) };
     },
   },
 
@@ -327,7 +365,7 @@ export async function runServerTool(tool: ServerToolDef, args: Record<string, un
   } catch (e) {
     if (e instanceof ToolError) throw e;
     if (e instanceof NotAllowed) throw new ToolError(e.message, /no such|isn't a user/i.test(e.message) ? 404 : 403);
-    if (e instanceof ConfigError || e instanceof CredentialError) throw new ToolError(e.message, 400);
+    if (e instanceof ConfigError || e instanceof CredentialError || e instanceof AuthError) throw new ToolError(e.message, 400);
     throw e;
   }
 }
@@ -396,7 +434,7 @@ function described(doc: DocRow, { origin }: ToolWho) {
 async function permissionsOf(dir: Directory, id: string) {
   return (await dir.permissions(id)).map((p) => ({
     login: p.login, role: p.role, ...(p.login == ANYONE ? { means: "anyone signed in who has the link" } : {}),
-    granted: new Date(p.granted).toISOString(), ...(p.grantedBy ? { grantedBy: p.grantedBy } : {}),
+    granted: new Date(p.granted).toISOString(), ...(p.grantedBy ? { grantedBy: p.grantedBy } : {}), ...(p.grantedVia ? { grantedVia: p.grantedVia } : {}),
   }));
 }
 
@@ -410,9 +448,30 @@ const iso = (t: number | null) => (t ? new Date(t).toISOString() : null);
 
 function entryOf(e: ConfigEntry) {
   const locked = e.locked;
-  return { key: e.key, description: e.description, value: e.value, default: e.default, source: e.source, locked, ...(locked ? { deployed: e.deployed, note: "Locked by the deploy (server.config.ts): it can't be changed here." } : {}), updated: iso(e.updated), updatedBy: e.updatedBy };
+  return { key: e.key, description: e.description, value: e.value, default: e.default, source: e.source, locked, ...(locked ? { deployed: e.deployed, note: "Locked by the deploy (server.config.ts): it can't be changed here." } : {}), updated: iso(e.updated), updatedBy: e.updatedBy, ...(e.updatedVia ? { updatedVia: e.updatedVia } : {}) };
 }
 
 function userOf(u: User) {
-  return { login: u.login, name: u.name, role: u.role, deploy: u.deploy, mayDeploy: u.mayDeploy, bootstrap: u.bootstrap, added: u.created ? iso(u.created) : null, addedBy: u.addedBy, lastSeen: iso(u.lastSeen) };
+  return { login: u.login, name: u.name, role: u.role, deploy: u.deploy, mayDeploy: u.mayDeploy, bootstrap: u.bootstrap, added: u.created ? iso(u.created) : null, addedBy: u.addedBy, ...(u.addedVia ? { addedVia: u.addedVia } : {}), lastSeen: iso(u.lastSeen) };
+}
+
+/** Sign-in's settings, where this agent has them. */
+function authOf(ctx: ToolWho): AuthOps {
+  if (!ctx.auth) throw new ToolError("This server's sign-in settings aren't reachable from here.", 404);
+  return ctx.auth;
+}
+
+/** A server's sign-in, as an agent reads it: never a secret. */
+function signInOf(s: AuthStatus | OtherStatus) {
+  if ("error" in s) return { target: s.target, origin: s.origin, reachable: false, error: s.error };
+  return {
+    target: s.target, origin: s.origin, provider: s.provider, state: s.check.state, summary: s.check.summary, reasons: s.check.reasons,
+    clientId: s.inUse.clientId, clientIdFrom: s.inUse.source == "page" ? "/admin/auth" : "the deploy", secretSet: s.inUse.secretSet,
+    homepageUrl: s.homepageUrl, callbackUrl: s.callbackUrl, localDevelopment: s.dev || undefined,
+    deploy: { clientId: s.deploy.clientId, secretSet: s.deploy.secretSet },
+    setOnPage: s.page ? { clientId: s.page.clientId, updated: iso(s.page.updated), updatedBy: s.page.updatedBy, ...(s.page.updatedVia ? { updatedVia: s.page.updatedVia } : {}) } : null,
+    waitingForTestSignIn: s.pending ? { clientId: s.pending.clientId, updated: iso(s.pending.updated), updatedBy: s.pending.updatedBy, check: s.pendingCheck?.summary, lastTest: s.pending.test ?? null } : null,
+    takesValuesFrom: s.takesFrom, canKeepValues: s.canStore,
+    setupSteps: s.setup,
+  };
 }

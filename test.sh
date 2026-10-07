@@ -19,6 +19,7 @@
 #                     scoped tokens: /tokens, each scope, expiry, the device flow and git push (tests/scoped-tokens.ts),
 #                     the admin pages' layout, and who may reach them (tests/admin-layout.ts),
 #                     the admin pages as one page, the agent panel staying across them (tests/admin-nav.ts),
+#                     the Authentication page: sign-in's GitHub apps on production and staging (tests/admin-auth.ts),
 #                     the viewer's controls fading while you read (tests/fade.ts),
 #                     a presentation's steps, viewing and editing (tests/steps.ts),
 #                     the Slides template, stepped through viewing and editing (tests/slides.ts),
@@ -38,6 +39,7 @@
 #                     files attached in the agent panel (tests/attach.ts),
 #                     instructions for a working task (tests/factory-instruct.ts),
 #                     who the factory's commits are by (tests/factory-authors.ts),
+#                     every agent action attributed to its person (tests/attribution.ts),
 #                     the factory across a reset of its Durable Object, and at Claude Code's limits (tests/factory-reset.ts),
 #                     local tasks, run by a local agent with no VM (tests/factory-local.ts),
 #                     the admin agent reading Erga's own source, in the Worker (tests/admin-agent-source.ts),
@@ -55,6 +57,12 @@
 #                             (tests/changed.ts: each test's "// covers:" line, a unit test's imports);
 #                             the way to test while you work
 #   ./test.sh tests/x.ts ...  only these test files (a unit test too), in the same pool
+#
+# Each file has a time limit: three times its seconds in brackets below (a file alone; in the pool, on a busy
+# machine, they take twice that), at least 45 s, at most 240 s (tests/factory.ts needs that in a busy pool; TEST_FILE_TIMEOUT=s
+# gives every file that limit). tests/run-file.ts runs it in the tests' own environment (tests/hermetic.ts), and past
+# the limit stops it (it prints the waits it was in, tests/stop.ts) and kills everything under it. A file that hits its
+# limit stops the whole run at once, and the report names it.
 set -euo pipefail
 cd "$(dirname "$0")"
 start=$(date +%s)
@@ -86,6 +94,12 @@ report() { # report NAME: its block, all of it when it failed
   echo "=== $name $([[ $rc == 0 ]] && echo ok || echo FAILED) ($(cat "$tmp/$name.time")s)"
   # Passing lines are noise once it's green; show everything when it isn't.
   if [[ $rc == 0 ]]; then grep -vE "^(ok |MATCH|PASS|\s*$)" "$tmp/$name.log" | tail -5 || true; else cat "$tmp/$name.log"; failed+=("$name"); fi
+  # Hit its time limit (tests/run-file.ts): stop everything now, rather than wait on the rest.
+  if [[ $rc == 124 ]]; then
+    echo; echo "TIMED OUT: $name hit its time limit of $(cat "$tmp/$name.limit")s. Stopping the run (the other files still running are stopped too)."
+    for j in $(jobs -p); do pkill -TERM -P "$j" 2>/dev/null || true; done
+    echo "FAILED: ${failed[*]} ($(( $(date +%s) - start ))s)"; exit 1
+  fi
 }
 reap() { # reports the tests that have finished, and frees their slots
   local i keep_n=() keep_w=()
@@ -110,7 +124,12 @@ run() { # run WEIGHT NAME CMD...: in the background once WEIGHT slots are free (
     fi
   fi
   while (( used > 0 && used + weight > jobs )); do sleep 0.2; reap; done
-  ( t0=$(date +%s); rc=0; "$@" >"$tmp/$name.log" 2>&1 || rc=$?; echo $rc >"$tmp/$name.rc"; echo $(( $(date +%s) - t0 )) >"$tmp/$name.time" ) &
+  # Its limit: three times its seconds in brackets on its run line here, 45 s to 240 s.
+  local secs limit
+  secs=$(grep -E "^run [0-9]+ $name " "$0" | sed -nE 's/.*# \[([0-9]+)\].*/\1/p' | head -1 || true)
+  limit=${TEST_FILE_TIMEOUT:-$(( ${secs:-60} * 3 < 45 ? 45 : ${secs:-60} * 3 > 240 ? 240 : ${secs:-60} * 3 ))}
+  echo "$limit" >"$tmp/$name.limit"
+  ( t0=$(date +%s); rc=0; bun tests/run-file.ts --limit "$limit" -- "$@" >"$tmp/$name.log" 2>&1 || rc=$?; echo $rc >"$tmp/$name.rc"; echo $(( $(date +%s) - t0 )) >"$tmp/$name.time" ) &
   names+=("$name"); weights+=("$weight"); used=$(( used + weight ))
 }
 collect() { # waits for everything running
@@ -121,9 +140,9 @@ echo "$jobs slots: $why"
 # Longest first (seconds each takes alone on a Mac, in brackets), so the pool ends together. A weight over 1: a file
 # that runs many servers at once itself (tests/page.ts's scenarios; the multiplayer suite runs a test per CPU).
 # The factory (experimental), with simulated VMs; `bun tests/factory.ts --docker` runs real containers, by hand.
-run 2 factory bun tests/factory.ts                       # [57]
+run 2 factory bun tests/factory.ts                       # [90]
 run 1 tree bun tests/tree.ts                             # [36]
-run 1 source bun tests/source.ts                         # [29]
+run 1 source bun tests/source.ts                         # [60]
 run 1 redeploy bun tests/redeploy.ts                     # [30]
 run 1 home bun tests/home.ts                             # [29]
 run 3 page bun tests/page.ts                             # [27]
@@ -131,6 +150,7 @@ run 1 account bun tests/account.ts                       # [26]
 run 1 settings bun tests/settings.ts                     # [25]
 run 3 suite bun tests/suite/run.ts --skip latency        # [22]
 run 1 fade bun tests/fade.ts                             # [20]
+run 1 attribution bun tests/attribution.ts
 run 1 front bun tests/worker.ts --local                  # [19]
 run 1 band bun tests/band.ts                             # [18]
 run 1 new-doc bun tests/new-doc.ts                       # [15]
@@ -143,7 +163,7 @@ run 1 switch bun tests/switch.ts                         # [17]
 run 1 deploy bun tests/deploy.ts                         # [16]
 run 1 scoped-tokens bun tests/scoped-tokens.ts           # [10]
 run 1 landing bun tests/landing.ts                       # [14]
-run 1 factory-cards bun tests/factory-cards.ts           # [14]
+run 1 factory-cards bun tests/factory-cards.ts           # [20]
 run 1 factory-chime bun tests/factory-chime.ts           # [20]
 run 1 factory-instruct bun tests/factory-instruct.ts     # [70]
 run 1 factory-authors bun tests/factory-authors.ts       # [20]
@@ -162,6 +182,7 @@ run 1 isolation bun tests/isolation.ts                   # [4]
 
 run 1 admin-layout bun tests/admin-layout.ts             # [8]
 run 1 admin-nav bun tests/admin-nav.ts                   # [6]
+run 1 admin-auth bun tests/admin-auth.ts                 # [15]
 run 1 admin-agent-chat bun tests/admin-agent-chat.ts     # [30]
 run 1 admin-agent-source bun tests/admin-agent-source.ts # [15]
 run 1 admin-agent-actions bun tests/admin-agent-actions.ts # [20]

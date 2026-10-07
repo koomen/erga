@@ -373,7 +373,7 @@ try {
   ]));
   await until(async () => (await replies()).includes(`Queued #${next}: it merges after #5.`), 15_000, "the agent answers", panel);
   const queued = await task(next);
-  expect(queued.title == "Add a footer note" && JSON.stringify(queued.mergeAfter) == "[5]" && queued.by == "tester’s agent" && queued.log[0].message.startsWith("Added by tester’s agent"), "the agent queued a task, as the admin's agent, with its dependency", { queued, panel: await panel() });
+  expect(queued.title == "Add a footer note" && JSON.stringify(queued.mergeAfter) == "[5]" && queued.by == "tester, via their admin agent" && queued.log[0].message.startsWith("Added by tester, via their admin agent"), "the agent queued a task, as the admin's agent, with its dependency", { queued, panel: await panel() });
   const said = await panel();
   expect(said.includes("Read the board") && said.includes("Queued Add a footer note") && said.includes(`Read #${next}`), "the panel shows each call, as the editor's does", said);
   await until(async () => (await column(p, "queued")).includes("Add a footer note") || (await column(p, "working")).includes("Add a footer note") || (await column(p, "ready-to-merge")).includes("Add a footer note"), 10_000, "its card shows on the board");
@@ -390,7 +390,7 @@ try {
   ]));
   await until(async () => (await replies()).includes("Asked for a shorter note."), 15_000, "the agent answers again", panel);
   const revised = await task(next);
-  expect(revised.log.some((l: any) => l.message.startsWith("tester’s agent asked: Make the note shorter.")) && !revised.mergeAfter.length, "it sent instructions and dropped the dependency", revised.log.slice(-6));
+  expect(revised.log.some((l: any) => l.message.startsWith("tester, via their admin agent asked: Make the note shorter.")) && !revised.mergeAfter.length, "it sent instructions and dropped the dependency", revised.log.slice(-6));
   expect(await p.eval(`!!document.querySelector("#agent-log .msg-tool.done img.shot")`), "the screenshot it looked at shows in the panel");
   await until(async () => (await task(next)).status == "complete", STEP, "the task is ready again");
   // It merges only when asked (it has merge_task and discard_task now: tests/admin-agent-actions.ts runs them); here it only reads.
@@ -462,15 +462,15 @@ try {
   expect((await as("")).ok && (await as("/tasks")).ok && (await as(`/tasks/${next}`)).ok, "it reads the factory and its tasks");
   const byShared = await as("/tasks", { json: { title: "Shared agent's task", description: "From outside.", startAfter: [next] } });
   const sharedTask = await byShared.json() as any;
-  expect(byShared.status == 201 && sharedTask.by == "tester’s agent (Claude Code 🤖)" && JSON.stringify(sharedTask.startAfter) == `[${next}]`, "it queues a task, with a dependency, as the admin's agent", sharedTask);
+  expect(byShared.status == 201 && sharedTask.by == "tester, via a shared agent (Claude Code 🤖)" && JSON.stringify(sharedTask.startAfter) == `[${next}]`, "it queues a task, with a dependency, as the admin's agent", sharedTask);
   expect((await as(`/tasks/${sharedTask.id}`, { method: "PATCH", json: { startAfter: null, mergeAfter: [next] } })).status == 200, "it changes dependencies");
   // Free of its start dependency, it starts by itself: its VM gets a git token with the agent's name, and the stand-in pushes with it.
   await until(async () => (await task(sharedTask.id)).status == "complete", STEP, "the outside agent's task starts its VM, pushes its branch and is ready to merge", async () => { const t = await task(sharedTask.id); return { status: t.status, error: t.error, log: t.log.slice(-4) }; });
   expect(!!branches(host.state)[(await task(sharedTask.id)).branch], "its branch reached the repository, pushed with its git token", branches(host.state));
   expect((await as(`/tasks/${next}/revise`, { json: { instructions: "One more word." } })).status == 200, "it sends instructions");
-  // The board's buttons, as the admin (a merge would move staging under the tests that follow: Discard goes through the same door).
+  // The board's buttons, as the admin via it (a merge would move staging under the tests that follow: Discard goes through the same door).
   const discarded = await as(`/tasks/${sharedTask.id}/discard`, { method: "POST", json: {} });
-  expect(discarded.status == 200 && (await task(sharedTask.id)).log.some((l: any) => l.message == "Discarded by tester"), "it presses the board's buttons (Discard), under the admin's name", discarded.status);
+  expect(discarded.status == 200 && (await task(sharedTask.id)).log.some((l: any) => l.message == "Discarded by tester, via a shared agent (Claude Code 🤖)"), "it presses the board's buttons (Discard), as the admin, via it", discarded.status);
   const events = new AbortController();
   const stream = await as("/events", { signal: events.signal });
   expect(stream.ok && (stream.headers.get("content-type") ?? "").startsWith("text/event-stream"), "it follows the board's events", stream.status);
@@ -497,14 +497,14 @@ try {
   // (The production deploy, main moved: tests/source-gap.ts.)
   await p.navigate(`${root}/admin/changes`);
   await until(() => p.eval(`!!document.querySelector("li.change")`), 10_000, "the change log lists changes");
-  const log = await p.eval<{ by: string; what: string }[]>(`[...document.querySelectorAll("li.change")].map((li) => ({ by: li.querySelector(".by").textContent, what: li.querySelector(".what").textContent.replace(/\\s+/g, " ").trim() }))`);
+  const log = await p.eval<{ by: string; via: string | null; what: string }[]>(`[...document.querySelectorAll("li.change")].map((li) => ({ by: li.querySelector(".by").textContent, via: li.querySelector(".via")?.dataset.via ?? null, what: li.querySelector(".what").textContent.replace(/\\s+/g, " ").trim() }))`);
   const find = (start: string) => log.find((l) => l.what.startsWith(start));
   expect(find("task #1 added: Say hello on the front page")?.by == "tester", "a task added on the board, by its admin", log);
   expect(find(`task #1 merged into staging as ${merged.mergeCommit.slice(0, 7)}: Say hello on the front page`)?.by == "tester", "task #1's merge, by who merged it", log);
   const byAgent = find(`task #${next} added: Add a footer note`);
-  expect(byAgent?.by == "tester" && byAgent.what.endsWith("via the factory's agent"), "a task the agent added: credited to the admin who prompted it, via the agent", byAgent);
+  expect(byAgent?.by == "tester" && byAgent.via == "their admin agent", "a task the agent added: credited to the admin who prompted it, via the agent", byAgent);
   const sharedLine = find(`task #${sharedTask.id} added: Shared agent's task`);
-  expect(sharedLine?.by == "tester" && sharedLine.what.includes("via an outside agent (Claude Code 🤖)"), "a task an outside agent added: credited to the token's admin", sharedLine);
+  expect(sharedLine?.by == "tester" && sharedLine.via == "a shared agent (Claude Code 🤖)", "a task a shared agent added: credited to the token's admin", sharedLine);
   await p.screenshot(join(SHOTS, "factory-change-log.png"));
   await p.navigate(`${root}/admin/factory`);
   await until(() => p.eval(`!!document.querySelector('[data-col="queued"]')`), 15_000, "back on the board");
