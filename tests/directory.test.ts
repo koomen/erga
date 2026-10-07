@@ -8,8 +8,6 @@ import { expect, test } from "bun:test";
 import { ConfigError, deployedSettings, parseDeployed, SETTINGS } from "../config";
 import serverConfig from "../server.config";
 import { Directory, NameError, NotAllowed, slugify, type Param, type Sql } from "../directory";
-/** An unlock of admin access (admin-keys.ts), as the front door gives an admin who signed a challenge with their SSH key. */
-const U = { key: "test", until: Infinity };
 
 const MIGRATIONS = new URL("../migrations/", import.meta.url).pathname;
 
@@ -142,29 +140,29 @@ test("users: who may sign in, bootstrap admins and server roles", async () => {
   expect(await users.signedIn("ada", "Ada")).toBeNull();
   expect(await users.allowed("ada")).toBe(false);
   await expect(users.add({ login: "ada" }, "ada")).rejects.toBeInstanceOf(NotAllowed);
-  expect(await users.add({ login: "root", unlocked: U }, "Ada")).toMatchObject({ login: "ada", role: "user", addedBy: "root", lastSeen: null });
+  expect(await users.add({ login: "root", admin: true }, "Ada")).toMatchObject({ login: "ada", role: "user", addedBy: "root", lastSeen: null });
   expect(await users.allowed("ada")).toBe(true);
   expect(await users.signedIn("ada", "Ada Lovelace")).toMatchObject({ name: "Ada Lovelace" });
   // Coming back without a name keeps it.
   expect((await users.signedIn("ada"))?.name).toBe("Ada Lovelace");
   expect(await users.isAdmin("ada")).toBe(false);
   // Admins make admins; a test person never is one; bootstrap admins can't be demoted or removed here.
-  await users.setRole({ login: "root", unlocked: U }, "ada", "admin");
+  await users.setRole({ login: "root", admin: true }, "ada", "admin");
   expect(await users.isAdmin("ada")).toBe(true);
   expect(await users.isAdmin({ login: "ada", test: true })).toBe(false);
   await expect(users.setRole({ login: "ada" }, "root", "user")).rejects.toBeInstanceOf(NotAllowed);
   await expect(users.remove({ login: "ada" }, "root")).rejects.toBeInstanceOf(NotAllowed);
   await expect(users.add({ login: "ada" }, "not a login!")).rejects.toBeInstanceOf(NotAllowed);
-  // An admin acts only with admin access unlocked by their SSH key (admin-keys.ts).
-  await expect(users.list({ login: "ada" })).rejects.toThrow(/locked/);
-  await expect(users.list({ login: "ada", unlocked: { key: "k", until: Date.now() - 1 } })).rejects.toThrow(/locked/);
-  expect(await users.isUnlocked({ login: "ada", unlocked: U })).toBe(true);
-  expect(await users.isUnlocked({ login: "ada", test: true, unlocked: U })).toBe(false);
-  expect((await users.list({ login: "ada", unlocked: U })).map((u) => [u.login, u.role])).toEqual([["ada", "admin"], ["root", "admin"]]);
+  // An admin acts only with admin power (a browser session, or an admin-scope token).
+  await expect(users.list({ login: "ada" })).rejects.toThrow(/no admin power/);
+  await expect(users.list({ login: "ada", admin: false })).rejects.toThrow(/no admin power/);
+  expect(await users.actsAsAdmin({ login: "ada", admin: true })).toBe(true);
+  expect(await users.actsAsAdmin({ login: "ada", test: true, admin: true })).toBe(false);
+  expect((await users.list({ login: "ada", admin: true })).map((u) => [u.login, u.role])).toEqual([["ada", "admin"], ["root", "admin"]]);
   await expect(users.list({ login: "bo" })).rejects.toBeInstanceOf(NotAllowed);
   // Removed, they may no longer sign in (at once here; within seconds on other isolates).
-  await users.setRole({ login: "root", unlocked: U }, "ada", "user");
-  await users.remove({ login: "root", unlocked: U }, "ada");
+  await users.setRole({ login: "root", admin: true }, "ada", "user");
+  await users.remove({ login: "root", admin: true }, "ada");
   expect(await users.allowed("ada")).toBe(false);
   // Local development makes anyone's row as they come.
   expect(await users.signedIn("bo", "Bo", { create: true })).toMatchObject({ login: "bo", role: "user", addedBy: null });
@@ -175,11 +173,11 @@ test("users: the deploy role, and the server always keeps an admin", async () =>
   const sql = memory(), { users } = fresh({}, sql);
   await sql.run("INSERT INTO users (login, name, role, created) VALUES ('ada', 'Ada', 'admin', 1)");
   await users.signedIn("bo", "Bo", { create: true });
-  const ada = { login: "ada", unlocked: U };
+  const ada = { login: "ada", admin: true };
   // Users have no deploy role until an admin grants it; only an admin may.
   expect(await users.hasDeploy("bo")).toBe(false);
-  await expect(users.setDeploy({ login: "bo", unlocked: U }, "bo", true)).rejects.toBeInstanceOf(NotAllowed);
-  await expect(users.setDeploy({ login: "ada" }, "bo", true)).rejects.toThrow(/locked/);
+  await expect(users.setDeploy({ login: "bo", admin: true }, "bo", true)).rejects.toBeInstanceOf(NotAllowed);
+  await expect(users.setDeploy({ login: "ada" }, "bo", true)).rejects.toThrow(/no admin power/);
   expect(await users.setDeploy(ada, "Bo", true)).toMatchObject({ login: "bo", role: "user", deploy: true });
   expect(await users.hasDeploy("bo")).toBe(true);
   expect(await users.hasDeploy({ login: "bo", test: true })).toBe(false);
@@ -196,20 +194,20 @@ test("users: the deploy role, and the server always keeps an admin", async () =>
   expect(await users.isAdmin("ada")).toBe(true);
   // With a second admin, they may; then that one is the last.
   await users.setRole(ada, "bo", "admin");
-  const bo = { login: "bo", unlocked: U };
+  const bo = { login: "bo", admin: true };
   expect((await users.setRole(ada, "ada", "user")).role).toBe("user");
   await expect(users.remove(bo, "bo")).rejects.toThrow(/You're the last admin/);
   // Bootstrap admins count, signed in or not; one may have the deploy role too.
   const boot = fresh({ admins: ["root"] });
-  const root = { login: "root", unlocked: U };
+  const root = { login: "root", admin: true };
   await boot.users.add(root, "cy", { role: "admin" });
-  expect((await boot.users.setRole({ login: "cy", unlocked: U }, "cy", "user")).role).toBe("user");
+  expect((await boot.users.setRole({ login: "cy", admin: true }, "cy", "user")).role).toBe("user");
   expect(await boot.users.setDeploy(root, "root", true)).toMatchObject({ login: "root", role: "admin", bootstrap: true, deploy: true });
 });
 
 test("server config: defaults, admins set and reset, the deploy locks", async () => {
   const dir = fresh({ admins: ["root"] });
-  const admin = { login: "root", unlocked: U }, user = { login: "bo" };
+  const admin = { login: "root", admin: true }, user = { login: "bo" };
   const { config } = dir;
   expect(await config.get("delete_docs_after_hours")).toBe(24);
   expect(await config.entry("delete_docs_after_hours")).toMatchObject({ value: 24, default: 24, source: "default", updated: null });
@@ -235,7 +233,7 @@ test("server config: defaults, admins set and reset, the deploy locks", async ()
 
 test("server config: each change is a version, with who, when, and from what to what", async () => {
   const dir = fresh({ admins: ["root", "ada"] });
-  const root = { login: "Root", unlocked: U }, ada = { login: "ada", unlocked: U }, user = { login: "bo" };
+  const root = { login: "Root", admin: true }, ada = { login: "ada", admin: true }, user = { login: "bo" };
   const { config } = dir;
   expect(await config.history(root)).toEqual({ versions: [], total: 0 });
   await expect(config.history(user)).rejects.toBeInstanceOf(NotAllowed);
@@ -282,7 +280,7 @@ test("server config: each change is a version, with who, when, and from what to 
 });
 
 test("server config: delete_docs_after_hours can be never (null)", async () => {
-  const admin = { login: "root", unlocked: U };
+  const admin = { login: "root", admin: true };
   const { config } = fresh({ admins: ["root"] });
   expect(await config.set(admin, "delete_docs_after_hours", null)).toMatchObject({ value: null, source: "set", default: 24 });
   expect(await config.get("delete_docs_after_hours")).toBeNull();
@@ -308,7 +306,7 @@ test("server config: a value under the old unedited_hours key is dropped by the 
 });
 
 test("server config: what the deploy fixes is locked, with its deployed value", async () => {
-  const admin = { login: "root", unlocked: U };
+  const admin = { login: "root", admin: true };
   const sql = memory();
   // Before the deploy locks it, an admin sets it.
   await fresh({ admins: ["root"] }, sql).config.set(admin, "delete_docs_after_hours", 48);
@@ -351,7 +349,7 @@ test("landing_document: an admin who may edit the document chooses it, by addres
   const one = (await dir.add(doc("aaaaaaaa", "Front page"))).doc;
   await dir.add(doc("tttttttt", "Test", { test: true }));
   expect(await dir.landing()).toBeNull();
-  const ada = { login: "ada", unlocked: U }, root = { login: "root", unlocked: U };
+  const ada = { login: "ada", admin: true }, root = { login: "root", admin: true };
   // A document an admin may not edit, even an admin's choosing: refused; a missing one or a test one: no such document.
   await expect(dir.config.set(root, "landing_document", `/ada/${one.slug}`)).rejects.toThrow(/Only someone who may edit \/ada\//);
   await expect(dir.config.set(ada, "landing_document", "/ada/nothing-here")).rejects.toThrow(ConfigError);
@@ -372,7 +370,7 @@ test("landing_document: an admin who may edit the document chooses it, by addres
 test("the front page: only admins may edit it while it is one", async () => {
   const changed: string[] = [];
   const dir = fresh({ admins: ["ada"], changed: async (key) => { changed.push(key); } });
-  const ada = { login: "ada", unlocked: U };
+  const ada = { login: "ada", admin: true };
   await dir.users.add(ada, "bo", { role: "user" });
   await dir.users.add(ada, "cy", { role: "admin" });
   const one = (await dir.add(doc("aaaaaaaa", "Front page"))).doc;
@@ -395,12 +393,12 @@ test("the front page: only admins may edit it while it is one", async () => {
   await expect(dir.share(ada, one.id, "*", "editor")).rejects.toThrow(/only admins may edit it/);
   await dir.share(ada, one.id, "*", "viewer");
   // An admin editor made a user only views it (users are remembered a few seconds: a fresh directory on the same database asks again).
-  expect(await dir.access({ login: "cy", unlocked: U }, one)).toBe("editor");
-  // An admin editor who hasn't unlocked admin access with their SSH key (admin-keys.ts) only views it too: editing it changes the site.
+  expect(await dir.access({ login: "cy", admin: true }, one)).toBe("editor");
+  // An admin editor without admin power (a documents token) only views it too: editing it changes the site.
   expect(await dir.access({ login: "cy" }, one)).toBe("viewer");
   await dir.users.setRole(ada, "cy", "user");
   const again = new Directory((dir as unknown as { sql: Sql }).sql, { admins: ["ada"] });
-  expect(await again.access({ login: "cy", unlocked: U }, one)).toBe("viewer");
+  expect(await again.access({ login: "cy", admin: true }, one)).toBe("viewer");
   expect((await again.openAs({ login: "cy" }, "ada", one.slug))?.role).toBe("viewer");
   expect(await again.may({ login: "cy" }, "edit", one)).toBe(false);
   // Not the front page any more: their permission counts again.

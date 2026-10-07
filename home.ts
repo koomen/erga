@@ -258,11 +258,11 @@ export async function homeApi(request: Request, platform: Platform, deploys: Hom
   const dir = platform.directory;
   const doc = await dir.get(id);
   const who = whoOf(session);
-  const [role, admin, unlocked] = await Promise.all([doc ? dir.access(who, doc) : null, session.test ? false : dir.users.isAdmin(who), session.test ? false : dir.users.isUnlocked(who)]);
+  const [role, admin, unlocked] = await Promise.all([doc ? dir.access(who, doc) : null, session.test ? false : dir.users.isAdmin(who), session.test ? false : dir.users.actsAsAdmin(who)]);
   if (!doc || doc.test || (!role && !admin)) return json({ error: "There's no such document." }, 404);
   const state = async () => {
     const isHome = (await dir.homeId()) == doc.id;
-    // An admin who hasn't unlocked admin access with their SSH key (admin-keys.ts) is told so (locked), and can't set it until they do.
+    // An admin acting through a token without the admin scope is told so (locked), and can't set it with that token.
     const canSet = unlocked && !dir.config.isLocked("landing_document") && roleMay(await dir.access(who, doc), "edit");
     return { isHome, canSet, locked: admin && !unlocked, blocked: isHome ? null : await dir.homeBlocked(doc.id), deploy: isHome ? await deploys.status() : IDLE };
   };

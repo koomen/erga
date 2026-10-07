@@ -4,7 +4,7 @@
 import { parseDeployed } from "../config";
 import { Directory, type Param, type Sql } from "../directory";
 import { Tokens } from "../tokens";
-import { AdminKeys } from "../admin-keys";
+
 import { withCredentials } from "../credentials";
 import type { Env } from "./env";
 import { counted } from "./timing";
@@ -68,14 +68,5 @@ export function keptKeys(ctx: DurableObjectState, env: Env): () => Env {
 
 /** Agent tokens (tokens.ts), on the same database. */
 export function tokensOf(env: Env): Tokens {
-  return new Tokens(sqlOn(env.DB), env.SESSION_SECRET);
-}
-
-// One per isolate, so its memory of which keys are there (a few seconds) lasts across requests.
-let adminKeys: { db: D1Database; keys: AdminKeys } | null = null;
-
-/** Admins' SSH keys and their unlocks (admin-keys.ts), on the same database. */
-export function adminKeysOf(env: Env): AdminKeys {
-  if (adminKeys?.db !== env.DB) adminKeys = { db: env.DB, keys: new AdminKeys(sqlOn(env.DB), env.SESSION_SECRET) };
-  return adminKeys.keys;
+  return new Tokens(sqlOn(env.DB), env.SESSION_SECRET, directoryOf(env));
 }

@@ -111,7 +111,7 @@ async function serverApiScenario() {
   };
   const me = await tool("whoami", {});
   expect(me.status == 200 && me.data?.login == login && me.data?.token?.label == "Worker test agent", "the token stands for its person", me);
-  expect((await get("/tokens")).headers.get("location") == "/settings" && (await (await get("/settings")).text()).includes("Worker test agent"), "/settings lists it (/tokens leads there)");
+  expect((await (await get("/tokens")).text()).includes("Worker test agent") && (await (await get("/settings")).text()).includes("Worker test agent"), "/tokens lists it (and /settings)");
   ok("an agent asks for a token, its person approves, and it acts as them");
 
   // Publishing a folder from the command line: multipart, each part named by its path.
@@ -209,11 +209,11 @@ async function serverApiScenario() {
   ok("tokens made at /tokens work until revoked, from /tokens or by the API");
 }
 
-/** Signs in (no `as`: the dev server's DEV_LOGIN, an admin), mints an agent token there, and returns a tool caller. */
+/** Signs in (no `as`: the dev server's DEV_LOGIN, an admin), mints a token there (admin scope for the admin), and returns a tool caller. */
 async function tokenFor(as: string | null) {
   const r = await fetch(`${base}/auth/github?${as ? `as=${as}&` : ""}next=/docs`, { redirect: "manual" });
   const c = r.headers.getSetCookie().map((x) => x.split(";")[0]).find((x) => x.startsWith("erga_session="))!;
-  const page = await (await fetch(`${base}/tokens/new`, { method: "POST", headers: { Cookie: c, Origin: origin }, body: new URLSearchParams({ label: "Admin test" }) })).text();
+  const page = await (await fetch(`${base}/tokens/new`, { method: "POST", headers: { Cookie: c, Origin: origin }, body: new URLSearchParams({ label: "Admin test", scope: as ? "documents" : "admin" }) })).text();
   const token = /<pre class="secret">(erga_[^<]+)<\/pre>/.exec(page)?.[1] ?? "";
   expect(token, `a token for ${as ?? "DEV_LOGIN"}`, page.slice(0, 300));
   const auth = { Authorization: `Bearer ${token}` };
@@ -276,9 +276,9 @@ async function adminScenario() {
   t = await admin.call("add_user", { login: newcomer });
   expect(t.status == 200 && t.data.role == "user" && t.data.addedBy == adminLogin, "add_user", t);
   t = await admin.call("set_user_role", { login: login, role: "admin" });
-  expect(t.status == 200 && t.data.role == "admin" && (await person.names()).includes("set_setting"), "set_user_role makes someone an admin, and their token gets the tools", t);
-  t = await person.call("set_user_role", { login: login, role: "user" });
-  expect(t.status == 200 && !(await person.names()).includes("set_setting"), "and back", t);
+  expect(t.status == 200 && t.data.role == "admin" && !(await person.names()).includes("set_setting"), "set_user_role makes someone an admin; their documents token still has no admin tools", t);
+  t = await admin.call("set_user_role", { login: login, role: "user" });
+  expect(t.status == 200 && t.data.role == "user", "and back", t);
   t = await admin.call("list_users");
   expect(t.data.some((u: { login: string; bootstrap: boolean }) => u.login == adminLogin && u.bootstrap) && t.data.some((u: { login: string }) => u.login == newcomer), "list_users", t.text.slice(0, 300));
   t = await admin.call("set_user_role", { login: adminLogin, role: "user" });
@@ -298,8 +298,8 @@ async function adminScenario() {
   expect(t.status == 200 && t.data.permissions.length == 2, "document_access", t);
   ok("an owner's agent shares a document over the API; nobody else's can");
 
-  // The editor's own agent never has the admin tools, even an admin's with admin access unlocked: a document's host carries no
-  // unlock, and a document's text can steer its agent (README, Admin SSH keys).
+  // The editor's own agent never has the admin tools, even an admin's: a document's host carries no
+  // admin power, and a document's text can steer its agent (README, Tokens).
   const adminDoc = ((await (await fetch(`${base}${blank}/api/name`, { headers: { Cookie: admin.cookie } })).json()) as Name).id;
   let tools = await agentRun(adminDoc, admin.cookie, [{ tool: "set_setting", args: { key: "delete_docs_after_hours", value: 30 } }, { tool: "add_user", args: { login: newcomer, role: "admin" } }, { text: "Done." }]);
   expect(tools.length == 2 && tools.every((x) => x.status == "error"), "an admin's agent in the editor has no admin tools", tools);

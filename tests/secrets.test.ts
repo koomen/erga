@@ -4,7 +4,7 @@
 import { Database } from "bun:sqlite";
 import { readdirSync, readFileSync } from "node:fs";
 import { expect, test } from "bun:test";
-import type { Param, Sql } from "../directory";
+import { Directory, type Param, type Sql } from "../directory";
 import { Tokens } from "../tokens";
 
 const MIGRATIONS = new URL("../migrations/", import.meta.url).pathname;
@@ -22,13 +22,14 @@ function memory(): Sql {
 
 test("an agent token works only on the server whose secret made it, not on a copy of its database (staging's)", async () => {
   const sql = memory();
-  const production = new Tokens(sql, "production-secret-".repeat(3)), staging = new Tokens(sql, "staging-secret-".repeat(3));
-  const { token } = await production.mint({ login: "ada", name: "Ada" }, "Claude Code");
+  const dir = new Directory(sql);
+  const production = new Tokens(sql, "production-secret-".repeat(3), dir), staging = new Tokens(sql, "staging-secret-".repeat(3), dir);
+  const { token } = await production.mint({ login: "ada", name: "Ada" }, "Claude Code", { scope: "documents" });
   expect((await production.verify(token))?.login).toBe("ada");
   // Staging holds the same rows (its database is a copy of production's), but not production's secret.
   expect(await staging.verify(token)).toBeNull();
   // Its own tokens still work there.
-  const own = await staging.mint({ login: "ada", name: "Ada" }, "Claude Code");
+  const own = await staging.mint({ login: "ada", name: "Ada" }, "Claude Code", { scope: "documents" });
   expect((await staging.verify(own.token))?.login).toBe("ada");
   expect(await production.verify(own.token)).toBeNull();
 });

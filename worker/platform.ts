@@ -6,8 +6,8 @@
 
 import type { Route } from "../directory";
 import { OWNER, type Platform } from "../front";
-import { devUnlocked, isDev, keysRequired, mintTestToken, sessionOf } from "./auth";
-import { adminKeysOf, directoryOf, tokensOf } from "./d1";
+import { isDev, mintTestToken, sessionOf } from "./auth";
+import { directoryOf, tokensOf } from "./d1";
 import type { Env } from "./env";
 import { counted } from "./timing";
 
@@ -69,9 +69,6 @@ export const platform = (env: Env): Platform => {
     pagesShared: (url) => (local(url) ? null : env.PAGES_HOST?.trim() || null),
     secret: env.SESSION_SECRET,
     tokens: tokensOf(env),
-    adminKeys: adminKeysOf(env),
-    devUnlocked: (url) => devUnlocked(env, url),
-    keysRequired: () => keysRequired(env),
     testToken: (login) => mintTestToken(env, login),
     docs: {
       create: (doc, files, index, opts) => counted("doc", () => host(doc).create(doc.owner, doc.id, files, index, opts)),

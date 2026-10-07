@@ -1,5 +1,5 @@
 // The Factory page, /admin/factory (worker/source.ts), for admins with admin
-// access unlocked: the one place to manage Erga's own source, its deploys and
+// access: the one place to manage Erga's own source, its deploys and
 // the factory's tasks. Three parts, on one page: the factory's task board
 // (factory/page.ts), the source and deploy dashboard (below), and the
 // factory's agent (factory/agent.ts; its panel is src/page/factory-agent.ts,
@@ -692,7 +692,7 @@ function mirrorDialog(c: SourcePageConfig): string {
   </dialog>`;
 }
 
-/** /admin/factory: the factory's board, the source and deploy dashboard, and the factory's agent, on one page (admins, unlocked). */
+/** /admin/factory: the factory's board, the source and deploy dashboard, and the factory's agent, on one page (admins). */
 export function adminFactoryPage(c: SourcePageConfig): Response {
   if (!c.admin) return plainPage("Not found", "There's nothing here. <a href=\"/\">Back to the start</a>.", 404);
   return adminResponse({ session: c.session, title: "Factory", here: "factory", wide: true, style: PAGE_STYLE + scopeCss(BOARD_STYLE, "#tasks") + scopeCss(SOURCE_STYLE, "#source-pane"), body: `

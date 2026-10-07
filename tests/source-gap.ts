@@ -30,7 +30,7 @@ const commits = (dir: string, from: number, to: number) => { for (let i = from; 
 async function seed(root: string, ahead: number) {
   const r = await fetch(`${root}/auth/github?next=/docs`, { redirect: "manual" });
   const cookie = r.headers.getSetCookie().map((x) => x.split(";")[0]).find((x) => x.startsWith("erga_session="))!;
-  const page = await (await fetch(`${root}/tokens/new`, { method: "POST", headers: { Cookie: cookie, Origin: root }, body: new URLSearchParams({ label: "Git" }) })).text();
+  const page = await (await fetch(`${root}/tokens/new`, { method: "POST", headers: { Cookie: cookie, Origin: root }, body: new URLSearchParams({ label: "Git", scope: "admin" }) })).text();
   const token = /<pre class="secret">(erga_[^<]+)<\/pre>/.exec(page)?.[1] ?? "";
   expect(token, "an admin's token", page.slice(0, 300));
   const src = mkdtempSync(join(tmpdir(), "erga-gap-"));

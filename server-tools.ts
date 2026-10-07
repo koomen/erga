@@ -18,11 +18,11 @@
 //   set_user_role, set_user_deploy,     admins only
 //   remove_user
 //
-// An admin tool is offered only to an admin who has unlocked admin access
-// with their SSH key (`toolsFor`; admin-keys.ts): an external agent with an
-// admin token, and the factory's own agent (factory/agent.ts, `adminTools`),
+// An admin tool is offered only to an admin with admin power (`toolsFor`;
+// Users.actsAsAdmin): an external agent with an admin-scope token (tokens.ts),
+// and the factory's own agent (factory/agent.ts, `adminTools`),
 // acting as the admin whose session it is. The editor's agent never has them (a document's host never
-// carries an unlock, and a document's text could steer its agent). The
+// carries admin power, and a document's text could steer its agent). The
 // directory checks again on every call (Users.mustAdmin), so a tool list
 // that's gone stale (an unlock ended, someone stopped being an admin) still
 // can't do anything.
@@ -310,9 +310,9 @@ export const SERVER_TOOLS: ServerToolDef[] = [
   },
 ];
 
-/** The tools someone may use: the admin ones only for an admin who has unlocked admin access (admin-keys.ts). */
+/** The tools someone may use: the admin ones only for an admin with admin power (Users.actsAsAdmin). */
 export async function toolsFor(dir: Directory, who: Who): Promise<ServerToolDef[]> {
-  const admin = await dir.users.isUnlocked(who);
+  const admin = await dir.users.actsAsAdmin(who);
   return SERVER_TOOLS.filter((t) => admin || !t.admin);
 }
 
@@ -321,7 +321,7 @@ export async function toolsFor(dir: Directory, who: Who): Promise<ServerToolDef[
  * allowed: 403; a bad value: 400).
  */
 export async function runServerTool(tool: ServerToolDef, args: Record<string, unknown>, ctx: ToolWho): Promise<string | object> {
-  if (tool.admin && !(await ctx.dir.users.isUnlocked(ctx.who))) throw new ToolError((await ctx.dir.users.isAdmin(ctx.who)) ? LOCKED : "Only an admin can do that.", 403);
+  if (tool.admin && !(await ctx.dir.users.actsAsAdmin(ctx.who))) throw new ToolError((await ctx.dir.users.isAdmin(ctx.who)) ? LOCKED : "Only an admin can do that.", 403);
   try {
     return await tool.run(args, ctx);
   } catch (e) {

@@ -65,15 +65,14 @@ try {
     { tool: "list_branches" },
     { tool: "deploy_production" },
     { tool: "list_deploys", args: { history: 2 } },
-    { tool: "list_admin_keys" },
     { tool: "list_agent_tokens" },
     { tool: "list_factory_tokens" },
     { tool: "merge_task", args: { id: 1 } },
   ], "Production is at staging.");
-  const last = tools.slice(-7);
-  expect(last.map((t) => `${t.name} ${t.status}`).join() == "list_branches done,deploy_production done,list_deploys done,list_admin_keys done,list_agent_tokens done,list_factory_tokens done,merge_task error", "each dashboard tool answered", last);
-  expect(/discarded/.test(last[6].detail ?? ""), "a discarded task can't merge: the error says why", last[6]);
-  ok("list_branches, deploy_production, list_deploys, list_admin_keys, list_agent_tokens and list_factory_tokens answer in the Worker");
+  const last = tools.slice(-6);
+  expect(last.map((t) => `${t.name} ${t.status}`).join() == "list_branches done,deploy_production done,list_deploys done,list_agent_tokens done,list_factory_tokens done,merge_task error", "each dashboard tool answered", last);
+  expect(/discarded/.test(last[5].detail ?? ""), "a discarded task can't merge: the error says why", last[5]);
+  ok("list_branches, deploy_production, list_deploys, list_agent_tokens and list_factory_tokens answer in the Worker");
   const changes = await p.eval<string>(`fetch("/admin/changes").then((r) => r.text())`);
   expect(/factory/.test(changes) && /tester/.test(changes), "the change log names the admin for the setting");
   await shot(p, "admin");

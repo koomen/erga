@@ -165,8 +165,7 @@
   .graph li.task .sub { color: var(--ink); }
   .graph .sub b { font: 600 11px ui-monospace, monospace; color: var(--muted); margin-right: 4px; }
   .graph li.task:hover .sub b { color: var(--accent); }
-  #login { margin: 0 16px 10px; padding: 8px 12px; border: 1px solid var(--warn); border-radius: 8px; background: var(--card); font-size: 13px; overflow-wrap: anywhere; }
-  #login a { color: var(--accent); font-weight: 600; }
+  #push-failed { margin: 0 16px 10px; padding: 8px 12px; border: 1px solid var(--warn); border-radius: 8px; background: var(--card); font-size: 13px; overflow-wrap: anywhere; }
   #tip { position: fixed; z-index: 6; pointer-events: none; max-width: 340px; background: var(--card); color: var(--ink); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,.14); padding: 7px 10px; font-size: 12px; display: none; }
   #tip .s { font-weight: 600; overflow-wrap: anywhere; }
   #tip .m { color: var(--muted); margin-top: 2px; font-size: 11px; }
@@ -179,7 +178,7 @@
   <span class="live" id="live">connecting</span>
   <a href="/api" target="_blank">API</a>
 </header>
-<div id="login" hidden></div>
+<div id="push-failed" hidden></div>
 <main id="board"><div id="cols"></div><section class="col branches" data-col="branches"><h2><span>Branches</span><span class="n" id="branches-n"></span></h2><div class="legend"><span><i></i>main</span><span><i class="o"></i><span id="origin-branch">origin/main</span></span></div><ol class="graph" id="graph"></ol></section></main>
 <div id="tip"></div>
 <dialog id="dlg"></dialog>
@@ -326,11 +325,10 @@ function renderBranches() {
   n.title = history.unreleased ? `origin/${history.originBranch} has ${history.unreleased} commit(s) origin/main doesn't: tq release (or Merge on erga.dev/source) moves main there` : "";
   n.classList.toggle("unpushed", !!history.unpushed);
   document.getElementById("origin-branch").textContent = `origin/${history.originBranch || "main"}`;
-  const login = document.getElementById("login"), l = history.login;
-  login.hidden = !l;
-  if (l) login.innerHTML = l.approve_url
-    ? `Signing in to origin needs you, once: open <a href="${esc(l.approve_url)}" target="_blank" rel="noopener">${esc(l.approve_url)}</a> and approve it (code <b>${esc(l.user_code ?? "")}</b>). Until then the queue can't fetch or push.`
-    : `Signing in to origin failed: ${esc(l.error ?? "")}`;
+  // The last push to origin failed (a 401 says: make an admin token and store it): the queue pushes again by itself.
+  const failed = document.getElementById("push-failed"), p = history.pushed;
+  failed.hidden = !p || p.ok;
+  if (p && !p.ok) failed.textContent = `origin/${history.originBranch || "main"} didn't take the last push: ${p.said}`;
 }
 
 const tip = document.getElementById("tip");

@@ -36,7 +36,7 @@
 // whose permission says otherwise only views it (homeLimit).
 
 import { ConfigError, ServerConfig } from "./config.ts";
-import type { Unlock } from "./admin-keys.ts";
+
 import { NotAllowed, Users } from "./users.ts";
 import { Credentials } from "./credentials.ts";
 
@@ -91,7 +91,13 @@ export type Action = "open" | "edit" | "rename" | "delete" | "share";
  * test person (who may touch only test documents), and if so whose test
  * token signed them in (`by`, lowercase).
  */
-export interface Who { login: string; test?: boolean; by?: string; /** An unlock of admin access (admin-keys.ts), checked by the front door. */ unlocked?: Unlock | null }
+export interface Who {
+  login: string; test?: boolean; by?: string;
+  /** Comes with admin power (users.ts, Actor.admin): a browser session, or an admin token. Set by the front door. */
+  admin?: boolean;
+  /** A document token's document (tokens.ts): they may touch this one document, and no other. */
+  onlyDoc?: string;
+}
 /** The login a permission for anyone signed in (who has the link) is under. */
 export const ANYONE = "*";
 
@@ -190,7 +196,7 @@ export class Directory {
         landing_document: async (by, value) => {
           const doc = await this.find(String(value));
           if (!doc || doc.test) throw new ConfigError(`landing_document: there's no document at ${JSON.stringify(value)}. Give its address (/<owner>/<slug>), URL or id.`);
-          if (!(await this.may({ login: by.login.toLowerCase(), test: !!by.test, unlocked: by.unlocked }, "edit", doc))) throw new NotAllowed(`Only someone who may edit /${doc.owner}/${doc.slug} can make it the front page: it shows the document to everyone.`);
+          if (!(await this.may({ login: by.login.toLowerCase(), test: !!by.test, admin: by.admin }, "edit", doc))) throw new NotAllowed(`Only someone who may edit /${doc.owner}/${doc.slug} can make it the front page: it shows the document to everyone.`);
           const blocked = await this.homeBlocked(doc.id);
           if (blocked) throw new NotAllowed(blocked);
           return doc.id;
@@ -246,15 +252,15 @@ export class Directory {
 
   /**
    * The front page's editing is for admins only (homeBlocked), and only
-   * while they've unlocked admin access with their SSH key (admin-keys.ts):
-   * its scripts run on this site itself, so editing it is changing the app.
+   * with admin power (Users.actsAsAdmin: not through a token without the admin
+   * scope): its scripts run on this site itself, so editing it is changing the app.
    * Anyone else, whatever their permission says (an admin since made a user,
-   * or an admin who hasn't unlocked), only views it while it's the front page.
+   * or an admin's documents token), only views it while it's the front page.
    */
   private async homeLimit(who: Who, id: string, role: Role | null): Promise<Role | null> {
     if (role != "owner" && role != "editor") return role;
     if ((await this.homeId()) != id) return role;
-    return (await this.users.isUnlocked(who)) ? role : "viewer";
+    return (await this.users.actsAsAdmin(who)) ? role : "viewer";
   }
 
   async get(id: string): Promise<DocRow | null> {
@@ -293,8 +299,9 @@ export class Directory {
    * query, since a document's page needs both before it can answer.
    */
   async openAs(who: Who, owner: string, segment: string): Promise<{ doc: DocRow; role: Role | null } | null> {
-    // A test person's role follows from the document alone (access asks nothing more of the database).
-    if (who.test) {
+    // A test person's role follows from the document alone (access asks nothing more of the database), and a
+    // document token's person has a role only on its document (access).
+    if (who.test || who.onlyDoc != null) {
       const doc = owner == "d" ? await this.get(segment) : (await this.locate(owner, segment))?.doc ?? null;
       return doc && { doc, role: await this.access(who, doc) };
     }
@@ -469,10 +476,12 @@ export class Directory {
   /**
    * What someone may do with a document, as a role: the better of their own
    * permission and anyone's ("*"); a test person is an editor of their
-   * token's minter's test documents and nothing else. Null: nothing at all.
+   * token's minter's test documents and nothing else. A document token's
+   * person (`onlyDoc`) has nothing on any other document. Null: nothing at all.
    */
   async access(who: Who | null, doc: { id: string; owner: string; test: boolean }): Promise<Role | null> {
     if (!who) return null;
+    if (who.onlyDoc != null && who.onlyDoc != doc.id) return null;
     if (who.test) return doc.test && who.by != null && who.by.toLowerCase() == doc.owner ? "editor" : null;
     const rows = await this.sql.all<{ role: Role }>("SELECT role FROM permissions WHERE doc_id = ?1 AND login IN (?2, ?3)", doc.id, who.login.toLowerCase(), ANYONE);
     return this.homeLimit(who, doc.id, rows.reduce<Role | null>((best, r) => (best && RANK[best] >= RANK[r.role] ? best : r.role), null));

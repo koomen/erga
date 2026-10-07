@@ -31,10 +31,12 @@ re-reads main and origin's branch every 1.5s and right after a merge, fetches
 origin every 60s (`TASK_QUEUE_FETCH`), and sends changes to the board
 (`GET /api/history`, and a `history` event on `/api/events`).
 
-For Erga, origin is Erga's own Git endpoint, and the queue sets that up
-itself: see the main README, "Pushes from this machine: the task queue"
-(origin, the push to staging, signing in with `source/git-credential.ts`,
-and `tq release` for production).
+The queue uses the main checkout's origin and push config as they are. For
+Erga, origin is Erga's own Git endpoint, and Git signs in with the admin
+token stored in its credentials (main README, Tokens). When origin refuses
+it (a 401), the merge fails with "make an admin token at
+https://erga.dev/tokens and store it (README)". `tq release` moves
+production.
 
 Merging (AGENTS.md, "Merging") never resolves anything itself. The queue
 stops the task's preview and anything still running in its worktree

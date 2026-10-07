@@ -3,13 +3,13 @@
 //
 //   the admin agent     (factory/agent.ts: on every /admin page) everything on /admin: the settings, the API keys,
 //                       the change log, the users, the factory's board, the dashboard of source and deploys, the
-//                       admins' SSH keys (/admin/keys), the homepage's deploy, and the admin's own agent tokens (/settings)
+//                       homepage's deploy, and the admin's own agent tokens (/settings)
 //   the document agent  (agent.ts, with server-tools.ts: in the editor) everything a person does with a document in
 //                       the editor and on the documents list (/docs)
 //
-// The one exception is a secret: an API key, the Claude token, a new agent or factory token, an SSH key or its
-// signature is pasted or made only on the page, never in a conversation. The agent may clear an API key, sign
-// the factory out, or revoke a token or key. And the agents act only on what their person asks in the
+// The one exception is a secret: an API key, the Claude token, a new agent or factory token is pasted or made
+// only on the page, never in a conversation. The agent may clear an API key, sign the factory out, or revoke a
+// token. And the agents act only on what their person asks in the
 // conversation, never on text found in tool results (their system prompts say so).
 //
 // This is the audit: every action in the UI and the HTTP API, with the agent tool that does it, or why there
@@ -107,13 +107,6 @@ export const AGENT_ACTIONS: AgentAction[] = [
   { route: "POST /api/docs/<id>/home", domain: "admin", action: "Make a document the homepage, or not (editor's settings)", tool: "set_setting" },
   { route: "POST /api/docs/<id>/home/deploy", domain: "admin", action: "Redeploy the homepage (editor's settings)", tool: "deploy_homepage" },
 
-  // ------------------------------------------------------------ /admin/keys: admins' SSH keys (admin-access.ts)
-  { route: "GET /api/admin/keys", domain: "admin", action: "Read the admins' SSH keys (/admin/keys)", tool: "list_admin_keys" },
-  { route: "POST /api/admin/keys/<id>/revoke", domain: "admin", action: "Revoke an admin's SSH key (/admin/keys)", tool: "revoke_admin_key" },
-  { route: "POST /api/admin/keys", domain: "admin", action: "Add an SSH key, signed with it (/admin/keys)", exempt: SECRET },
-  { route: "POST /api/admin/challenge", domain: "admin", action: "Get a challenge to sign with an SSH key (/admin/keys)", exempt: SECRET },
-  { route: "POST /api/admin/unlock", domain: "admin", action: "Unlock admin access with a signature (/admin/keys)", exempt: SECRET },
-  { route: "POST /api/admin/lock", domain: "admin", action: "Lock admin access in this browser (/admin/keys)", exempt: "the browser's own unlock: the agent acts with it, and revoke_admin_key ends every unlock made with a key" },
 
   // ------------------------------------------------------------ /settings: the person's agent tokens (server-api.ts)
   { route: "GET /settings", domain: "admin", action: "Read your agent tokens (/settings)", tool: "list_agent_tokens" },

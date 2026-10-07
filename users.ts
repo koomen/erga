@@ -19,7 +19,6 @@
 // requests don't each ask the database; a change made through this object
 // is seen at once.
 
-import type { Unlock } from "./admin-keys.ts";
 import type { Sql } from "./directory.ts";
 
 export type ServerRole = "user" | "admin";
@@ -46,17 +45,18 @@ export interface User {
 
 /**
  * Someone acting, to a guarded call: a login (lowercase), whether they're a
- * test person (never an admin), and whether they've unlocked admin access
- * with one of their SSH keys (admin-keys.ts), which every admin-only call
- * needs. The front door sets `unlocked` only after checking the unlock.
+ * test person (never an admin), and whether they come with admin power
+ * (`admin`): a signed-in browser session does, a token only with the admin
+ * scope (tokens.ts). Every admin-only call needs it, and the person must be
+ * an admin too (actsAsAdmin). The front door sets `admin`.
  */
-export interface Actor { login: string; test?: boolean; unlocked?: Unlock | null }
+export interface Actor { login: string; test?: boolean; admin?: boolean }
 
 /** What an admin-only call says to someone who isn't one, or a change it can't make (the message says why). */
 export class NotAllowed extends Error {}
 
-/** What an admin who hasn't unlocked admin access is told, wherever they try. */
-export const LOCKED = "Admin access is locked: unlock it with your admin SSH key first (/admin/keys; for an agent, an admin token from admin-login.ts).";
+/** What an admin acting through a token without the admin scope is told, wherever they try. */
+export const LOCKED = "This token has no admin power: make a token with the admin scope at /tokens.";
 
 const LOGIN = /^[a-z0-9](?:[a-z0-9-]{0,38})$/;
 /** How long a looked-up user is trusted before asking again. */
@@ -113,12 +113,11 @@ export class Users {
   }
 
   /**
-   * Whether `who` may use admin power now: an admin who has unlocked admin
-   * access with one of their SSH keys (the unlock unexpired). Being an
-   * admin (isAdmin) only says who may unlock.
+   * Whether `who` may use admin power now: they come with it (Actor.admin: a
+   * browser session, or an admin token) and they're an admin, as of now.
    */
-  async isUnlocked(who: Actor | string): Promise<boolean> {
-    if (typeof who == "string" || !who.unlocked || !(who.unlocked.until > Date.now())) return false;
+  async actsAsAdmin(who: Actor | string): Promise<boolean> {
+    if (typeof who == "string" || !who.admin) return false;
     return this.isAdmin(who);
   }
 
@@ -182,7 +181,6 @@ export class Users {
     if (!user) throw new NotAllowed(`${login} isn't a user: add them first.`);
     if (role != "admin" && user.role == "admin") await this.mustKeepAnAdmin(by, login);
     await this.sql.run("UPDATE users SET role = ?2 WHERE login = ?1", login, role);
-    if (role != "admin") await this.revokeKeys(by, login);
     this.known.delete(login);
     return (await this.get(login))!;
   }
@@ -207,7 +205,6 @@ export class Users {
     if (this.isBootstrapAdmin(login)) throw new NotAllowed(`${login} is an admin by the deploy (ADMINS): take them out there.`);
     if ((await this.get(login))?.role == "admin") await this.mustKeepAnAdmin(by, login);
     await this.sql.run("DELETE FROM users WHERE login = ?1", login);
-    await this.revokeKeys(by, login);
     this.known.delete(login);
   }
 
@@ -220,14 +217,9 @@ export class Users {
     throw new NotAllowed(`${login == by.login.toLowerCase() ? "You're" : `${login} is`} the last admin: make someone else an admin first, so the server keeps one.`);
   }
 
-  /** Someone who stops being an admin loses their admin SSH keys (admin-keys.ts): made an admin again, they add keys again. */
-  private async revokeKeys(by: Actor, login: string): Promise<void> {
-    await this.sql.run("UPDATE admin_keys SET revoked = ?2, revoked_by = ?3 WHERE login = ?1 AND revoked IS NULL", login, Date.now(), by.login.toLowerCase());
-  }
-
-  /** Throws NotAllowed unless `by` is an admin who has unlocked admin access (isUnlocked). */
+  /** Throws NotAllowed unless `by` is an admin with admin power (actsAsAdmin). */
   async mustAdmin(by: Actor): Promise<void> {
-    if (await this.isUnlocked(by)) return;
+    if (await this.actsAsAdmin(by)) return;
     if (await this.isAdmin(by)) throw new NotAllowed(LOCKED);
     throw new NotAllowed("Only an admin can do that.");
   }

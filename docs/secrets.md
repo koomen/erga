@@ -26,8 +26,8 @@ database, the object or the Worker's settings through Cloudflare.
 ## Worker secrets (deploy-time)
 
 ### `SESSION_SECRET`
-- **For**: the server's root signing key. It signs session cookies (`worker/auth.ts`), OAuth state cookies, test tokens (`erga_test_…`), documents' pages tokens (`/t/<token>/`, `front.ts`), admin unlock cookies and admin tokens (`erga_admin_…`, `admin-keys.ts`). It derives agent tokens (`erga_…`, `tokens.ts`) and, with a cookie half, the key that seals a person's Cloudflare token on `/deploy` (`worker/deploy.ts`). Locally it also stands in for `FACTORY_KEY`.
-- **Without it**: nobody can sign in. If it changes, every session, agent token, share token, admin token, test token and pages link stops working.
+- **For**: the server's root signing key. It signs session cookies (`worker/auth.ts`), OAuth state cookies, test tokens (`erga_test_…`), documents' pages tokens (`/t/<token>/`, `front.ts`). It derives agent tokens (`erga_…`, `tokens.ts`) and, with a cookie half, the key that seals a person's Cloudflare token on `/deploy` (`worker/deploy.ts`). Locally it also stands in for `FACTORY_KEY`.
+- **Without it**: nobody can sign in. If it changes, every session, agent token (any scope), share token, test token and pages link stops working.
 - **Set**: a Worker secret on each server. `deploy/setup.ts` makes a random one for staging, `/deploy` makes one for each new server, and `bun start` writes one to `.dev.vars` locally.
 - **At rest**: only as a Worker secret.
 - **Who reads it**: the Worker's code, and anyone who can read or change the Worker's secrets in Cloudflare.
@@ -100,27 +100,22 @@ database, the object or the Worker's settings through Cloudflare.
 ### The Claude plan token (`CLAUDE_CODE_OAUTH_TOKEN`)
 - **For**: the factory's VMs run Claude Code on a Pro or Max plan (`claude setup-token` prints it: `sk-ant-oat01-…`, valid for one year).
 - **Without it**: the factory's VMs run a scripted stand-in.
-- **Set**: an admin pastes it on the board (`/admin/factory`, "Claude: not signed in") or on `/admin/api-keys` (the Claude plan token). An unlocked admin and a same-origin request are necessary.
+- **Set**: an admin pastes it on the board (`/admin/factory`, "Claude: not signed in") or on `/admin/api-keys` (the Claude plan token). An admin in a browser and a same-origin request are necessary.
 - **At rest**: **encrypted**, AES-GCM with a key from `FACTORY_KEY`, in the `Factory` Durable Object's `secrets` table.
 - **Who reads it**: no route returns it (`GET /api/factory/claude` says only whether there is one, who set it and when). Since this audit, only the jobs that run Claude Code get it in their environment. The merge, save, stop and discard jobs do not. Any command Claude Code runs in the VM can read it.
 - **Admin panel?** **Admin panel** (it is there already).
 
 ### Agent tokens (`erga_…`), including the share button's
-- **For**: an agent (Claude Code, Codex, a script, the editor's share card) acting as one person: the server's API, `/mcp`, documents' `/api/ext`. While admin SSH keys are not required (`ERGA_ADMIN_KEYS_REQUIRED` empty, the default), an admin's plain agent token also has admin power. Since this audit, the share button's token never does.
+- **For**: the only credential for agents, scripts, the API, `/mcp`, documents' `/api/ext` and git push. Each has a scope: `document` (one document), `documents` (the person's documents, no admin power) or `admin` (all the person can do; only admins make one; admin power checked live with `Users.isAdmin`; git push needs it). The share button's token is a `documents` token (README, Tokens).
 - **Set**: per person: `/tokens`, the share button, or an agent's device-flow request (`/api/auth/request`, its polling code `ergareq_…`).
 - **At rest**: only the SHA-256 is in D1 (`agent_tokens`). The token is an HMAC of its id with `SESSION_SECRET`, so the share button can show its token again. Since this audit, a token works only on the server whose secret made it: production's tokens do not work on staging, although staging's D1 is a copy of production's.
-- **Exposure**: the share token goes into prompts for outside agents. No expiry. Revoke on `/tokens`.
-- **Admin panel?** Per person.
-
-### Admin tokens (`erga_admin_…`) and the admin unlock cookie
-- **For**: admin power for an agent or a browser, unlocked by signing a challenge with the admin's SSH key (`admin-keys.ts`, `admin-login.ts`).
-- **At rest**: not stored. Signed with a key from `SESSION_SECRET`. They last up to 12 hours, and revoking the key ends them. The SSH public keys are in D1 (they are not secret).
+- **Exposure**: the share token goes into prompts for outside agents. A token has an expiry if its maker chose one; an expired token stops working. Revoke on `/tokens`.
 - **Admin panel?** Per person.
 
 ### Factory tokens (`erga_factory_…`)
 - **For**: "Share with agent" on the factory: an outside agent may create, read and instruct tasks, and nothing else.
-- **At rest**: only the SHA-256, in the `Factory` Durable Object. They last up to 12 hours and can be revoked.
-- **Admin panel?** Per person (unlocked admins).
+- **At rest**: only the SHA-256, in the `Factory` Durable Object. They last up to 12 hours, can be revoked, and work only while their maker is an admin.
+- **Admin panel?** Per person (admins).
 
 ### The factory's VM tokens: task tokens (`fct.…`), git tokens (`fgt.…`), preview tickets, `FACTORY_AGENT_SECRET`
 - **For**: a task's VM reports on its task (`fct`), pushes its branch (`fgt`, task scope; merge scope also moves `staging`, once, only to the merge itself, for 35 minutes: README, "What a task's VM can reach"), and an admin opens its preview (ticket, then a cookie on the preview's host). `FACTORY_AGENT_SECRET` is random for each VM and lets only the factory reach the VM's agent.
@@ -154,8 +149,7 @@ database, the object or the Worker's settings through Cloudflare.
 ## On the operator's machine
 
 - The Cloudflare login (`bunx cf auth login`) or `CLOUDFLARE_API_TOKEN`, and `CLOUDFLARE_TOKEN_MAKER` (Account API Tokens Edit, for `deploy/setup.ts`). Use them only in the shell that runs the setup, never in a file.
-- The admin's SSH private key: it mints admin tokens.
-- The task queue's admin token for `origin` (`source/git-credential.ts`): in the macOS keychain (or a 0600 file in tests), renewed every hour.
+- The admin token that git push uses (scope `admin`, made at `/tokens`), in Git's credential store (`git credential approve`; README, Tokens).
 
 ## Keys entered on the admin pages
 
@@ -172,7 +166,7 @@ copy of production's. Do as the Claude token does instead:
 2. Show back only whether there is a key, who set it and when (and perhaps
    its last four characters). Never return the key itself.
 3. Record "key changed by …" in the change log, never the value.
-4. Accept a change only from an unlocked admin, with a same-origin request.
+4. Accept a change only from an admin in a browser, with a same-origin request.
 5. Keep the Worker secret as a fallback, so a server deployed without the
    admin pages' key still works.
 
@@ -186,8 +180,8 @@ The table keeps the last four characters in plain text, for the page.
 
 ## Audit of 2026-10-06: findings, by severity
 
-Fixed in this task (each with a test in `tests/secrets.test.ts`,
-`tests/admin-open.ts` or `development/task-queue/test.ts`):
+Fixed in this task (each with a test in `tests/secrets.test.ts`
+or `development/task-queue/test.ts`):
 
 1. High: the local task queue (port 4700) checked nothing about who asked, so
    a web page in the user's browser could make it run a command (a preview's
@@ -223,10 +217,9 @@ Not fixed (design changes, for their own tasks):
    document) and `DEPLOY_HOOK_SECRET`. Any code that reaches `staging` can read
    or change production's data. Fix: production pushes its copy to staging,
    or staging moves to its own Cloudflare account.
-3. High: while admin SSH keys are off (the default), an admin's plain agent
-   token (no expiry) has full admin power, up to a production merge. Fix: turn
-   `ERGA_ADMIN_KEYS_REQUIRED` back on, or give admin power only to
-   `erga_admin_…` tokens, and give agent tokens an expiry.
+3. High (fixed by task #65): an admin's plain agent token (no expiry) had
+   full admin power, up to a production merge. Now only a token with the
+   `admin` scope has admin power, and any token can have an expiry.
 4. Medium: the Claude token is in the environment of every command Claude
    Code runs, and the VM has the internet. A prompt injection can send it out.
    Fix: narrow the VM's egress, or proxy Anthropic's API through the Worker.

@@ -3,7 +3,7 @@
 // with its stand-ins for Artifacts and GitHub (dev/git-server.ts):
 //
 //   - the Git endpoint's auth: no token (reads in, pushes 401), a token that
-//     isn't one, a user who isn't an admin, an admin; an anonymous clone,
+//     isn't one, a documents token, an admin's admin token; an anonymous clone,
 //     fetch and ls-remote, and an anonymous push refused;
 //   - seeding with source/import.ts, then a real `git clone`, `git push`
 //     (a fast-forward, and a rewrite main refuses) and `git pull`;
@@ -44,11 +44,11 @@ const host = await startHost(null, { env: { ERGA_DEPLOY_MOCK: "1", ERGA_DEPLOY_T
 const root = host.root, origin = root;
 const get = (path: string, init: RequestInit = {}) => fetch(root + path, { redirect: "manual", ...init });
 
-/** Signs in as someone (no `as`: DEV_LOGIN, "tester", an admin) and mints an agent token. */
+/** Signs in as someone (no `as`: DEV_LOGIN, "tester", an admin) and mints a token: admin scope for an admin, documents for anyone else. */
 async function tokenFor(as: string | null): Promise<{ token: string; cookie: string }> {
   const r = await fetch(`${root}/auth/github?${as ? `as=${as}&` : ""}next=/docs`, { redirect: "manual" });
   const cookie = r.headers.getSetCookie().map((x) => x.split(";")[0]).find((x) => x.startsWith("erga_session="))!;
-  const page = await (await fetch(`${root}/tokens/new`, { method: "POST", headers: { Cookie: cookie, Origin: origin }, body: new URLSearchParams({ label: "Git" }) })).text();
+  const page = await (await fetch(`${root}/tokens/new`, { method: "POST", headers: { Cookie: cookie, Origin: origin }, body: new URLSearchParams({ label: "Git", scope: as ? "documents" : "admin" }) })).text();
   const token = /<pre class="secret">(erga_[^<]+)<\/pre>/.exec(page)?.[1] ?? "";
   expect(token, `a token for ${as ?? "tester"}`, page.slice(0, 300));
   return { token, cookie };
@@ -76,13 +76,16 @@ try {
   expect(r.status == 401 && (r.headers.get("www-authenticate") ?? "").startsWith("Basic"), "no token, a push: 401, asking for Basic credentials (git then asks for them)", r.status);
   r = await get("/git/erga.git/git-receive-pack", { method: "POST", body: "0000" });
   expect(r.status == 401, "no token, a push's POST: 401", r.status);
-  r = await refs(`Basic ${btoa("x:erga_not_a_token")}`);
-  expect(r.status == 401, "a token that isn't one: 401", r.status);
+  const pushRefs = (auth: string) => get("/git/erga.git/info/refs?service=git-receive-pack", { headers: { Authorization: auth } });
+  r = await pushRefs(`Basic ${btoa("x:erga_not_a_token")}`);
+  expect(r.status == 401, "a token that isn't one, a push: 401", r.status);
+  r = await pushRefs(`Basic ${btoa(`x:${bo.token}`)}`);
+  expect(r.status == 403 && (await r.text()).includes("admin scope"), "a documents token, a push: 403", r.status);
   r = await refs(`Basic ${btoa(`x:${bo.token}`)}`);
-  expect(r.status == 403 && (await r.text()).includes("Only admins"), "a user who isn't an admin: 403", r.status);
+  expect(r.status == 200, "a documents token, a read: in (reads are public)", r.status);
   r = await refs(`Basic ${btoa(`anyone:${admin.token}`)}`);
   expect(r.status == 200 && (r.headers.get("content-type") ?? "").includes("git-upload-pack"), "an admin's token, any username: in", r.status);
-  ok("the Git endpoint: no token reads but can't push, a non-admin 403, an admin in");
+  ok("the Git endpoint: no token reads but can't push, a documents token 403, an admin's admin token in");
 
   // ---- Seed, clone, push, pull ---------------------------------------------------------------
   const src = scratch();
@@ -118,7 +121,7 @@ try {
   commit(anon, "anon.txt", "anon\n", "Anonymous");
   const anonPush = git(anon, "push", "origin", "HEAD:staging");
   expect(!anonPush.ok && /401|Authentication failed|could not read Username/i.test(anonPush.err), "an anonymous git push is refused (401)", anonPush.err);
-  expect(git(anon, "push", remote(bo.token), "HEAD:staging").err.includes("403"), "a git push with a non-admin's token is refused (403)");
+  expect(git(anon, "push", remote(bo.token), "HEAD:staging").err.includes("403"), "a git push with a documents token is refused (403)");
   expect(must(anon, "ls-remote", remote(null), "refs/heads/staging").split(/\s/)[0] == must(anon, "rev-parse", "HEAD~1"), "and staging didn't move");
   ok("anyone clones, fetches and lists without credentials; an anonymous push is refused");
   const b = join(scratch(), "b");
