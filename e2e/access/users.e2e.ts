@@ -56,7 +56,7 @@ test("someone who isn't an admin gets not found for the page, and every change t
   const s = await own();
   const [a, b] = await people(s.root);
   expect((await getter(s.root)(`/admin/users?user=${a}`)).status).toBe(404);
-  for (const fields of [{ do: "deploy", login: a, deploy: "1" }, { do: "role", login: a, role: "admin" }, { do: "remove", login: b }]) {
+  for (const fields of <Record<string, string>[]>[{ do: "deploy", login: a, deploy: "1" }, { do: "role", login: a, role: "admin" }, { do: "remove", login: b }]) {
     expect({ fields, status: (await post(s.root, "/admin/users", fields, a)).status }).toEqual({ fields, status: 403 });
   }
   expect((await post(s.root, "/admin/users", { do: "deploy", login: a, deploy: "maybe" })).status).toBe(403);

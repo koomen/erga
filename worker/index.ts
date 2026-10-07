@@ -101,7 +101,7 @@ export default {
 
 /**
  * How long the Worker took over a response (Server-Timing, which the browser's
- * network panel and tests/bench.ts show): time waiting on the database, a
+ * network panel and e2e/load-bench.ts show): time waiting on the database, a
  * document's Durable Object and the like (a Worker's clock moves only across I/O).
  */
 function timed(response: Response, entries: string[]): Response {

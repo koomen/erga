@@ -59,16 +59,16 @@ test("in the browser: add a user typed with Enter, one picked from the list, tak
   try {
     await page.goto(`${s.root}/admin`);
     await expect.poll(() => row(page, `!!li?.querySelector("input.pick")`)).toBe(true);
-    expect(await row(page, `li.querySelector(".save").disabled`)).toBe(true);
+    expect(await row<boolean>(page, `li.querySelector(".save").disabled`)).toBe(true);
     // Typed, then Enter; then picked from the list (an input event with no inputType).
     const pick = page.locator('li.setting[data-key="deploy_users"] input.pick');
     await pick.fill("Carol");
     await pick.press("Enter");
     await row(page, `(() => { const pick = li.querySelector("input.pick"); pick.value = "bob"; pick.dispatchEvent(new Event("input")); })()`);
-    expect(await row(page, `[...li.querySelectorAll(".chip")].map((c) => c.dataset.login).join(" ")`)).toBe("alice carol bob");
+    expect(await row<string>(page, `[...li.querySelectorAll(".chip")].map((c) => c.dataset.login).join(" ")`)).toBe("alice carol bob");
     await page.locator('li.setting[data-key="deploy_users"] .chip[data-login="alice"] .unpick').click();
-    expect(await row(page, `li.querySelector("[name=value]").value`)).toBe(`["carol","bob"]`);
-    expect(await row(page, `li.querySelector(".save").disabled`)).toBe(false);
+    expect(await row<string>(page, `li.querySelector("[name=value]").value`)).toBe(`["carol","bob"]`);
+    expect(await row<boolean>(page, `li.querySelector(".save").disabled`)).toBe(false);
     await page.locator('li.setting[data-key="deploy_users"] .save').click();
     await expect.poll(() => s.saved).toEqual([{ key: "deploy_users", value: ["carol", "bob"] }]);
     // The stand-in serves only the admin page, its stylesheet and fonts: the other files the page asks for are not found.

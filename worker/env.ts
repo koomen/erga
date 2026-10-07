@@ -101,7 +101,7 @@ export interface Env {
   ERGA_AGENT_MODEL?: string;
   /** Local development only: what the dev server (dev/plugin.ts) proves itself with to link files on disk. */
   ERGA_LINK_SECRET?: string;
-  /** Local development only: a wait before every call to the database or a document, standing in for erga.dev's distances (tests/bench.ts --latency; worker/timing.ts). */
+  /** Local development only: a wait before every call to the database or a document, standing in for erga.dev's distances (e2e/load-bench.ts --latency; worker/timing.ts). */
   ERGA_REMOTE_LATENCY_MS?: string;
   /** Local development only (the tests): a stand-in for github.com that sign-in's live check asks (worker/auth-settings.ts). */
   ERGA_GITHUB_ORIGIN?: string;

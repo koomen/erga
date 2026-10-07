@@ -1,9 +1,11 @@
 // How fast a document loads, viewing and editing: a repeatable benchmark in
-// headless Chrome (tests/cdp.ts).
+// headless Chromium (playwright-core, the e2e suite's browser), run by hand. It
+// prints numbers rather than passing or failing, so it is a script, not a
+// *.bench.e2e.ts (those check a limit on a server of the suite's own).
 //
-//   bun tests/bench.ts                       starts a dev server of its own (tests/host.ts) and measures it
-//   bun tests/bench.ts --prod                the same Worker built for production (vite build) and run by vite preview
-//   bun tests/bench.ts --url http://127.0.0.1:4400   a server that's already running (signed in as DEV_LOGIN)
+//   bun e2e/load-bench.ts                    starts a dev server of its own (e2e/server.ts) and measures it
+//   bun e2e/load-bench.ts --prod             the same Worker built for production (vite build) and run by vite preview
+//   bun e2e/load-bench.ts --url http://127.0.0.1:4400   a server that's already running (signed in as DEV_LOGIN)
 //     --runs 5            runs of each case (medians are printed; default 3)
 //     --profile desktop   or mobile (Slow 4G: 150ms, 1.6Mbps down, 4x slower CPU, a phone's screen), or both (default)
 //     --only viewer       cases whose name contains this (front, viewer, editor, switch)
@@ -35,13 +37,20 @@
 //
 // Server timings: each response from the front door says where its time
 // went (Server-Timing), which --waterfall prints beside each request.
+//
+// The browser runs every frame in one process (site isolation off): the page's
+// one DevTools session then sees every frame's requests and paints, and the
+// mobile profile's network and CPU limits apply to the document's frame too,
+// from its first request. (Chrome on a phone doesn't isolate sites either.)
 
-import { mkdtempSync, rmSync, writeFileSync } from "fs";
-import { constants as zlibConstants, createGzip } from "zlib";
-import { tmpdir } from "os";
-import { join } from "path";
-import { Browser, Page, ROOT } from "./cdp";
-import { startHost, freePort, type Host } from "./host";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { constants as zlibConstants, createGzip } from "node:zlib";
+import { chromium, type Browser, type CDPSession, type Page as PwPage } from "playwright-core";
+import { ROOT } from "./env";
+import { freePort, startServer, type Server } from "./server";
 
 const args = process.argv.slice(2);
 const opt = (name: string) => { const i = args.indexOf(name); return i >= 0 ? args[i + 1] : undefined; };
@@ -65,14 +74,20 @@ interface Run { ttfb: number; fcp: number; visible: number; lcp: number; load: n
 
 // ---------------------------------------------------------------- the server
 
-let host: Host | null = null;
-let stopPreview: (() => void) | null = null;
+let host: Server | null = null;
+/** What stops the preview server, if one runs. */
+const stopPreview: (() => void)[] = [];
 let root = opt("--url")?.replace(/\/$/, "");
 if (!root && args.includes("--prod")) root = await startPreview();
-if (!root) { host = await startHost(null, { processEnv: LATENCY ? { ERGA_REMOTE_LATENCY_MS: LATENCY } : {} }); root = host.root; }
+if (!root) {
+  // The editor's files, built once (the dev server serves them as built: e2e/server.ts), as the e2e suite does.
+  if (!process.env.ERGA_BUILT && spawnSync(join(ROOT, "site.sh"), { cwd: ROOT, stdio: ["ignore", "ignore", "inherit"], timeout: 180_000 }).status != 0) throw new Error("site.sh failed");
+  host = await startServer({ processEnv: LATENCY ? { ERGA_REMOTE_LATENCY_MS: LATENCY } : {} });
+  root = host.root;
+}
 // Compressed, as Cloudflare compresses what erga.dev sends (the dev server and vite preview don't): a proxy in front.
 const upstream = root;
-if (!args.includes("--no-gzip") && !opt("--url")) root = compressing(upstream);
+if (!args.includes("--no-gzip") && !opt("--url")) root = await compressing(upstream);
 
 /**
  * A proxy that gzips text on its way to the browser, when the browser takes
@@ -80,10 +95,10 @@ if (!args.includes("--no-gzip") && !opt("--url")) root = compressing(upstream);
  * passes WebSockets through. The Host header goes through as the browser sent
  * it, so the Worker's addresses (the pages origins included) point here.
  */
-function compressing(target: string): string {
-  const port = freePort();
+async function compressing(target: string): Promise<string> {
+  const port = await freePort();
   const to = new URL(target);
-  Bun.serve<{ url: string; protocols: string | null }, {}>({
+  Bun.serve<{ url: string; protocols: string | null }>({
     hostname: "127.0.0.1", port,
     async fetch(req, server) {
       const url = new URL(req.url);
@@ -120,7 +135,7 @@ function compressing(target: string): string {
         up.binaryType = "arraybuffer";
         const queue: (string | ArrayBuffer | Uint8Array)[] = [];
         (ws.data as any).up = up; (ws.data as any).queue = queue;
-        up.onopen = () => { for (const m of queue.splice(0)) up.send(m); };
+        up.onopen = () => { for (const m of queue.splice(0)) up.send(m as any); };
         up.onmessage = (e) => ws.send(e.data as any);
         up.onclose = (e) => ws.close(e.code >= 4000 || e.code == 1000 ? e.code : 1000, e.reason);
       },
@@ -187,7 +202,7 @@ ${Array.from({ length: 12 }, (_, i) => `<h2>Section ${i + 1}</h2>\n<p>${PARA.rep
  * erga.dev's than the dev server's, which transforms modules as they're asked for.
  */
 async function startPreview(): Promise<string> {
-  const port = freePort();
+  const port = await freePort();
   const scratch = mkdtempSync(join(tmpdir(), "erga-bench-"));
   const envDir = join(scratch, "env");
   Bun.spawnSync(["mkdir", "-p", envDir]);
@@ -199,7 +214,7 @@ async function startPreview(): Promise<string> {
   const build = Bun.spawnSync(["node", vite, "build", "--mode", "development", "--outDir", join(scratch, "dist")], { cwd: ROOT, env, stdout: "pipe", stderr: "pipe" });
   if (build.exitCode) throw new Error(`vite build failed:\n${build.stderr}`);
   const proc = Bun.spawn(["node", vite, "preview", "--mode", "development", "--outDir", join(scratch, "dist"), "--port", String(port), "--strictPort"], { cwd: ROOT, env, stdout: "pipe", stderr: "pipe" });
-  stopPreview = () => { proc.kill(); rmSync(scratch, { recursive: true, force: true }); };
+  stopPreview.push(() => { proc.kill(); rmSync(scratch, { recursive: true, force: true }); });
   const url = `http://127.0.0.1:${port}`;
   for (let i = 0; i < 400; i++) {
     try { if ((await fetch(`${url}/style.css`)).ok) break; } catch { /* not up yet */ }
@@ -212,6 +227,34 @@ async function startPreview(): Promise<string> {
 }
 
 // ---------------------------------------------------------------- one load
+
+type Event = { method: string; params: any };
+/** A tab: Playwright's page and its DevTools session, which the measurements read. */
+interface Page {
+  pw: PwPage;
+  send(method: string, params?: object): Promise<any>;
+  eval<T>(expr: string): Promise<T>;
+  /** Hears every event below while set. */
+  onAny: ((e: Event) => void) | null;
+  close(): Promise<void>;
+}
+const EVENTS = ["Network.requestWillBeSent", "Network.responseReceived", "Network.loadingFinished", "Network.webSocketCreated", "Network.webSocketWillSendHandshakeRequest",
+  "Network.webSocketHandshakeResponseReceived", "Page.frameNavigated", "Page.lifecycleEvent", "Page.loadEventFired", "PerformanceTimeline.timelineEventAdded"];
+
+/** A tab in a fresh profile (nothing cached, no storage). */
+async function newPage(browser: Browser): Promise<Page> {
+  const context = await browser.newContext();
+  const pw = await context.newPage();
+  const cdp: CDPSession = await context.newCDPSession(pw);
+  const page: Page = {
+    pw, onAny: null,
+    send: (method, params = {}) => cdp.send(method as any, params as any),
+    eval: (expr) => pw.evaluate(expr),
+    close: () => context.close(),
+  };
+  for (const method of EVENTS) cdp.on(method as any, (params: any) => page.onAny?.({ method, params }));
+  return page;
+}
 
 /**
  * Loads `url` in `page` under `profile`, following every frame's requests and
@@ -226,9 +269,8 @@ async function measure(page: Page, url: string | null, profile: Profile, opts: {
   const paints: { frame: string; name: string; mono: number }[] = [];
   const lcps: { frame: string; wall: number }[] = [];
   let t0mono = 0, t0wall = 0, loadMono = 0;
-  const sessions: (string | undefined)[] = [undefined];
-  const setUp = async (session?: string) => {
-    const s = (m: string, p: any = {}) => page.send(m, p, 30_000, session);
+  const setUp = async () => {
+    const s = (m: string, p: any = {}) => page.send(m, p);
     await Promise.all([s("Network.enable"), s("Page.enable"), s("Page.setLifecycleEventsEnabled", { enabled: true }), s("PerformanceTimeline.enable", { eventTypes: ["largest-contentful-paint"] }).catch(() => {}),
       s("Network.setCacheDisabled", { cacheDisabled: false }),
       profile.net ? s("Network.emulateNetworkConditions", { offline: false, ...profile.net }) : null,
@@ -236,14 +278,10 @@ async function measure(page: Page, url: string | null, profile: Profile, opts: {
   };
   page.onAny = (d) => {
     const p = d.params;
-    // By request id alone: a frame's navigation is reported to its parent's session, and its end to the frame's own.
     const key = (id: string) => id;
-    if (d.method == "Target.attachedToTarget") {
-      const session = p.sessionId;
-      sessions.push(session);
-      setUp(session).catch(() => {}).finally(() => page.send("Runtime.runIfWaitingForDebugger", {}, 10_000, session).catch(() => {}));
-    } else if (d.method == "Network.requestWillBeSent") {
-      if (!t0mono && p.type == "Document" && p.request.url == url) { t0mono = p.timestamp; t0wall = p.wallTime; }
+    if (d.method == "Network.requestWillBeSent") {
+      // (A request's URL has no fragment: the editor's address ends in #edit.)
+      if (!t0mono && p.type == "Document" && p.request.url == url?.replace(/#.*$/, "")) { t0mono = p.timestamp; t0wall = p.wallTime; }
       // The same request can be announced again (a redirect, or a frame's navigation to its own session): the first counts.
       if (!requests.has(key(p.requestId))) requests.set(key(p.requestId), { url: p.request.url, start: p.timestamp, bytes: 0, type: p.type });
     } else if (d.method == "Network.responseReceived") {
@@ -268,14 +306,13 @@ async function measure(page: Page, url: string | null, profile: Profile, opts: {
       frames.set(p.frame.id, p.frame.url);
     } else if (d.method == "Page.lifecycleEvent") {
       paints.push({ frame: p.frameId, name: p.name, mono: p.timestamp });
-    } else if (d.method == "Page.loadEventFired" && !d.sessionId) {
+    } else if (d.method == "Page.loadEventFired") {
       loadMono = p.timestamp;
     } else if (d.method == "PerformanceTimeline.timelineEventAdded" && p.event.type == "largest-contentful-paint") {
       lcps.push({ frame: p.event.frameId, wall: p.event.time });
     }
   };
   await setUp();
-  await page.send("Target.setAutoAttach", { autoAttach: true, waitForDebuggerOnStart: true, flatten: true });
   await page.send("Emulation.setDeviceMetricsOverride", { width: profile.width, height: profile.height, deviceScaleFactor: profile.scale, mobile: profile.mobile });
   await page.send("Page.addScriptToEvaluateOnNewDocument", { source: READY_PROBE });
 
@@ -300,7 +337,7 @@ async function measure(page: Page, url: string | null, profile: Profile, opts: {
     else quietSince = 0;
   }
   page.onAny = null;
-  for (const s of sessions) if (s) page.send("Network.emulateNetworkConditions", { offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1 }, 5_000, s).catch(() => {});
+  await page.send("Network.emulateNetworkConditions", { offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1 }).catch(() => {});
 
   const readyWall = opts.editable ? await page.eval<number | null>("window.__benchReady ?? null") : null;
   // The clocks: CDP's monotonic seconds for requests and paints, wall seconds for LCP and the probe.
@@ -349,14 +386,14 @@ interface Case { name: string; run: (browser: Browser, profile: Profile) => Prom
 
 /** A page in a fresh profile (nothing cached, no storage), loaded cold and then again warm. */
 async function coldWarm(browser: Browser, profile: Profile, url: string, editable: boolean) {
-  const context = await browser.context();
-  const page = await browser.page(context);
-  await page.send("Runtime.enable");
+  const page = await newPage(browser);
   try {
     const cold = await measure(page, url, profile, { editable });
+    // Away first: the same address again, #edit and all, would be a jump within the page, not a load.
+    await page.pw.goto("about:blank");
     const warm = await measure(page, url, profile, { editable });
     return { cold, warm };
-  } finally { page.close(); }
+  } finally { await page.close(); }
 }
 
 /**
@@ -379,9 +416,7 @@ const CASES: Case[] = [
     name: "switch", run: async (browser, profile) => {
       // The viewer, then the pencil: cold (the editor's files fetched while idle, or not yet) and warm (back out and in again).
       const address = await makeDoc();
-      const context = await browser.context();
-      const page = await browser.page(context);
-      await page.send("Runtime.enable");
+      const page = await newPage(browser);
       try {
         await measure(page, `${root}${address}`, profile);
         await Bun.sleep(1500); // the idle prefetch, as someone reading first would give it
@@ -391,7 +426,7 @@ const CASES: Case[] = [
         await Bun.sleep(800);
         const warm = await measure(page, null, profile, { editable: true, act: pencil });
         return { cold, warm };
-      } finally { page.close(); }
+      } finally { await page.close(); }
     },
   },
 ];
@@ -405,7 +440,8 @@ const all: Record<string, Run[]> = {};
 await fetch(`${root}/`).then((r) => r.text());
 await makeDoc();
 
-const browser = await Browser.launch();
+// Every frame in one process: see the header.
+const browser = await chromium.launch({ args: ["--disable-features=IsolateOrigins,site-per-process", "--disable-site-isolation-trials"] });
 try {
   for (const profileName of PROFILES) {
     const profile = PROFILE[profileName];
@@ -419,9 +455,9 @@ try {
     }
   }
 } finally {
-  browser.close();
-  await host?.dispose();
-  stopPreview?.();
+  await browser.close();
+  host?.dispose();
+  for (const stop of stopPreview) stop();
 }
 
 const pad = (s: string, n: number) => s.padStart(n);

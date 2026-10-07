@@ -2,7 +2,7 @@
 // how many times it asked the database (D1) and documents' Durable Objects,
 // and how long those took, added up (calls made at once each count). On
 // erga.dev each is a round trip from wherever the Worker runs, so the count is
-// what makes a page slow or fast; tests/bench.ts prints it beside each request.
+// what makes a page slow or fast; e2e/load-bench.ts prints it beside each request.
 
 import { AsyncLocalStorage } from "node:async_hooks";
 
@@ -21,7 +21,7 @@ export async function tallied<T>(f: () => Promise<T>): Promise<{ value: T; timin
 }
 
 /**
- * Local development only (ERGA_REMOTE_LATENCY_MS, which tests/bench.ts sets):
+ * Local development only (ERGA_REMOTE_LATENCY_MS, which e2e/load-bench.ts sets):
  * how long each call to the database or a document waits first, standing in
  * for the distance between a Worker and them on erga.dev. Never set there.
  */

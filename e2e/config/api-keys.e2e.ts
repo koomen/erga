@@ -23,14 +23,14 @@ test("paste the Anthropic key and Save: the page shows only its last four charac
   const s = await own(), page = tab.page;
   tab.strict = true;
   await keysPage(page, s.root);
-  expect(await row(page, "anthropic", `li.querySelector(".save").disabled`)).toBe(true);
-  expect(await row(page, "anthropic", `li.querySelector("input").type`)).toBe("password");
+  expect(await row<boolean>(page, "anthropic", `li.querySelector(".save").disabled`)).toBe(true);
+  expect(await row<string>(page, "anthropic", `li.querySelector("input").type`)).toBe("password");
   await paste(page, "anthropic", ANTHROPIC);
   await page.locator('li.credential[data-name="anthropic"] .save').click();
   await expect.poll(() => stateLine(page, "anthropic")).toContain("…Ab12");
-  expect(await row(page, "anthropic", `li.querySelector("input").value`)).toBe("");
+  expect(await row<string>(page, "anthropic", `li.querySelector("input").value`)).toBe("");
   expect(await page.evaluate(() => document.documentElement.outerHTML)).not.toContain(ANTHROPIC.slice(0, 20));
-  expect(await row(page, "anthropic", `li.querySelector(".save").textContent`)).toBe("Replace");
+  expect(await row<string>(page, "anthropic", `li.querySelector(".save").textContent`)).toBe("Replace");
   // A reload: the server keeps it, and its page never holds it.
   const html = await (await fetch(`${s.root}/admin/api-keys`)).text();
   expect(html).toContain(`ends in <span class="last4">…Ab12</span>`);
@@ -52,11 +52,11 @@ test("the Claude plan's token: Not set at first with no Clear; pasted and saved,
   expect((await fetch(`${s.root}/api/factory/claude`, { method: "DELETE", headers: { Origin: s.root } })).ok).toBe(true);
   await keysPage(page, s.root);
   await expect.poll(() => stateLine(page, "claude")).toMatch(/^Not set/);
-  expect(await row(page, "claude", `getComputedStyle(li.querySelector(".clear")).display`)).toBe("none");
+  expect(await row<string>(page, "claude", `getComputedStyle(li.querySelector(".clear")).display`)).toBe("none");
   await paste(page, "claude", OAT);
   await page.locator('li.credential[data-name="claude"] .save').click();
   await expect.poll(async () => (await (await fetch(`${s.root}/api/factory/claude`)).json()).signedIn).toBe(true);
   await expect.poll(() => stateLine(page, "claude")).toContain("by tester");
-  expect(await row(page, "claude", `getComputedStyle(li.querySelector(".clear")).display`)).not.toBe("none");
+  expect(await row<string>(page, "claude", `getComputedStyle(li.querySelector(".clear")).display`)).not.toBe("none");
   expect(await page.evaluate(() => document.documentElement.outerHTML)).not.toContain(OAT.slice(0, 20));
 });
