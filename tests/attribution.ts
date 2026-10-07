@@ -144,8 +144,8 @@ try {
     const p = await browser.page(await browser.context());
     await p.open(`${root}/admin/changes`, { width: 1100, height: 900, scale: 2 });
     await until(() => p.eval(`!!document.querySelector("li.change")`), 10_000, "the change log lists changes");
-    const rows = await p.eval<{ by: string; via: string | null }[]>(`[...document.querySelectorAll("li.change")].map((li) => ({ by: li.querySelector(".when .by").textContent, via: li.querySelector(".when .via")?.textContent ?? null }))`);
-    for (const via of ["via their admin agent", `via a shared agent (${LABEL})`, `via a shared agent (${BOARD})`]) {
+    const rows = await p.eval<{ by: string; via: string | null }[]>(`[...document.querySelectorAll("li.change")].map((li) => ({ by: li.querySelector(".by").textContent, via: li.querySelector(".via")?.dataset.via ?? null }))`);
+    for (const via of ["their admin agent", `a shared agent (${LABEL})`, `a shared agent (${BOARD})`]) {
       expect(rows.some((r) => r.by == "tester" && r.via == via), `the change log shows "tester" and "${via}"`, rows);
     }
     expect(rows.some((r) => r.by == "tester" && r.via == null), "and tester's own change, with no via", rows);
