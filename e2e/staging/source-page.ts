@@ -5,6 +5,7 @@ import { mkdtempSync } from "node:fs";
 import { join } from "node:path";
 import { cleanEnv, ROOT } from "../env";
 import { expect, type Page, type Server } from "../fixtures";
+import { gateGreen, merge } from "./staging";
 
 export interface SourceState {
   rows: { subject: string; sha: string; kind: string; staging: string; live: string[] }[];
@@ -64,4 +65,11 @@ export async function seedLog(s: Server, token: string, n: number) {
   for (let i = 1; i <= n; i++) empty(src, `Commit ${i}`);
   const r = spawnSync("bun", [join(ROOT, "source/import.ts"), s.root, "--from", src], { encoding: "utf8", env: cleanEnv({ ERGA_TOKEN: token }), timeout: 60_000 });
   if (r.status != 0) throw new Error(`source/import.ts: ${r.stdout}${r.stderr}`);
+}
+
+/** Main moved forward to `commit` (its tests run first: main moves only to a commit whose tests passed). */
+export async function moveMain(s: Server, who: { token: string; cookie: string }, commit: string) {
+  await gateGreen(s, who.token, commit);
+  const r = await merge(s, who, "token", { commit });
+  expect(r.status, JSON.stringify(r.body)).toBe(200);
 }

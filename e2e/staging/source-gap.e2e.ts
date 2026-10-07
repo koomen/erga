@@ -5,18 +5,11 @@
 // A server of the file's own, its repository seeded once; each test first moves main to staging's head, then pushes
 // commits of its own, so none depends on another.
 import { beforeTests, expect, servers, test, type Page, type Server } from "../fixtures";
-import { empty, gitAt, seedLog } from "./source-page";
-import { admin, clone, gateGreen, heads, merge, must } from "./staging";
+import { empty, gitAt, moveMain, seedLog } from "./source-page";
+import { admin, clone, heads, must } from "./staging";
 
 const own = () => servers.of("source-gap");
 await beforeTests(async () => { const s = await own(); await seedLog(s, (await admin(s)).token, 30); });
-
-/** Main moved forward to `commit` (its tests run first: main moves only to a commit whose tests passed). */
-async function moveMain(s: Server, who: { token: string; cookie: string }, commit: string) {
-  await gateGreen(s, who.token, commit);
-  const r = await merge(s, who, "token", { commit });
-  expect(r.status, JSON.stringify(r.body)).toBe(200);
-}
 
 /** Main at staging's head, then `n` new commits on staging ("<tag> 1" to n): the clone, the tag, and the commits' ids, oldest first. */
 async function ahead(s: Server, n: number) {
