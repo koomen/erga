@@ -89,9 +89,10 @@ import type { SettingChange } from "../config";
 import { SIGN_IN_KEY, type Unlock } from "../admin-keys";
 import { type Blocked, dependents, depRules, depsNote, type DepStatus, type DepTask, ids } from "../development/task-queue/deps";
 import type { ToolWho } from "../server-tools";
+import type { SourceAnswer, SourceRead } from "../source/browse";
 import { panelPrefs, restoredLog, restoredMessages, storedLog, storedMessages, type PanelPrefs } from "../factory/chat-store";
 import { emptyLog, type Log, type LogEvent } from "../src/page/agent-log";
-import { adminTools, factoryGuide, factoryTools, startFactoryAgent, type FactoryAgent, type FactoryOps } from "../factory/agent";
+import { adminTools, factoryGuide, factoryTools, sourceTools, startFactoryAgent, type FactoryAgent, type FactoryOps } from "../factory/agent";
 import { containersHost } from "../factory/cloudflare";
 import { b64url } from "../factory/git-grant";
 import { branchName, claudeToken, hideTokens, resolvePrompt, restartPrompt, taskPrompt } from "../factory/prompt";
@@ -102,6 +103,7 @@ import { isDev, keysRequired, sessionOf } from "./auth";
 import { agentName } from "../src/room/doc";
 import { checkAttachments } from "../src/page/attach";
 import { adminKeysOf, directoryOf, factoryKey, withKeys } from "./d1";
+import { hasSource } from "./artifacts";
 import type { Env } from "./env";
 
 /** "needs agent": a merge stopped (a conflict, or a step that failed or timed out) and the task's Claude Code is finishing it. */
@@ -895,8 +897,15 @@ export class Factory extends DurableObject<Env> {
     };
     // The admin tools act as the admin, with their latest unlock: the settings' change log names them, not the agent.
     const as = (): ToolWho => ({ dir: directoryOf(this.env), who: { login, unlocked: state.unlock }, origin: state.origin });
+    // The source tools read the server's copy of Erga's repository (SourceHost), read-only.
+    const readSource = async (q: SourceRead): Promise<SourceAnswer> => {
+      if (!hasSource(this.env)) throw new Error("Erga's repository isn't set up on this server: it needs the Artifacts binding (README, Erga's own source).");
+      const r = await this.env.SOURCE.getByName("erga").read(state.origin, q);
+      if ("error" in r) throw new Error(r.error);
+      return r;
+    };
     const stored = this.storedChat(login);
-    const agent = startFactoryAgent({ cfg, owner: login, tools: [...factoryTools(ops, guard), ...adminTools(as, guard)], restore: stored ?? undefined });
+    const agent = startFactoryAgent({ cfg, owner: login, tools: [...factoryTools(ops, guard), ...adminTools(as, guard), ...sourceTools(readSource, guard)], restore: stored ?? undefined });
     agent.subscribe((ev) => { this.event({ type: "agent", ev }, login); this.chatChanged(login, ev); });
     s = Object.assign(state, { agent });
     this.agents.set(login, s);

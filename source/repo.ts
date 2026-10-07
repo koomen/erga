@@ -32,6 +32,7 @@ import {
   toSideBand, utf8, ZERO, type Commit,
 } from "./git.ts";
 import { fetchPack, lsRefs, receiveAdvert, receivePack, RemoteError, type RefUpdate, type Remote } from "./remote.ts";
+import { BrowseError, cleanPath, list, read, search, snapshotOf, type Snapshot, type SourceAnswer, type SourceRead } from "./browse.ts";
 import { mergeShape, refsAllowed, type CommitFacts, type GitGrant } from "../factory/git-grant.ts";
 
 export const BRANCHES = ["staging", "main"] as const;
@@ -88,6 +89,8 @@ export interface RepoDeps {
   db: Db;
   /** The Artifacts repo, with a write token. */
   artifacts(): Promise<Remote>;
+  /** The Artifacts repo with a read token, for reading the source (`read`); the write token's if not given. */
+  reader?(): Promise<Remote>;
   /** The GitHub mirror (with its token), or null when there's none. */
   github(): Remote | null;
   /** A branch moved (after a push or a merge). */
@@ -107,6 +110,8 @@ export class SourceRepo {
   private graph: Map<string, Node> | null = null;
   private mirroring: Promise<MirrorStatus> | null = null;
   private mirrorAgain = false;
+  /** The commits `read` read last, the newest last: a few, as each holds every file. */
+  private snapshots = new Map<string, Promise<Snapshot>>();
 
   constructor(private deps: RepoDeps) {
     const db = deps.db;
@@ -586,6 +591,77 @@ export class SourceRepo {
     };
     walk(parseCommit(c.data).tree, "");
     return out;
+  }
+
+  // ---- Reading the source, for the factory's agent ------------------------------------
+
+  /**
+   * What the factory's agent's source tools ask (source/browse.ts): a folder's listing, a file's lines, a search,
+   * or the log, at a branch (staging if none is named; also main, or a task's branch) or a commit. Read-only: it
+   * only lists refs and fetches, with a read token. Throws a SourceError the agent can act on.
+   */
+  async read(q: SourceRead): Promise<SourceAnswer> {
+    const remote = await (this.deps.reader ?? this.deps.artifacts)();
+    const { ref, commit, head } = await this.resolve(remote, q.ref);
+    try {
+      if (q.op == "log") {
+        if (!head) throw new SourceError("The log starts at a branch: name one (staging, main or a task's branch), not a commit.");
+        await this.locked(() => this.sync(remote, [commit]));
+        const skip = Math.max(0, Math.floor(Number(q.skip) || 0)), limit = Math.max(1, Math.min(LOG, Math.floor(Number(q.limit) || 20)));
+        const rows = this.log(commit, skip + limit).slice(skip);
+        if (!rows.length) return { ref, commit, text: `${ref} has no commits past the first ${skip}.` };
+        const lines = rows.map((r) => `${r.sha.slice(0, 10)} ${new Date(r.at).toISOString().slice(0, 16).replace("T", " ")} ${r.author}: ${r.subject}${r.parents.includes(" ") ? " (merge)" : ""}`);
+        const more = rows.length == limit ? `\n… older commits: skip ${skip + limit}.` : "";
+        return { ref, commit, text: `${ref} (${commit.slice(0, 10)}), commits ${skip + 1} to ${skip + rows.length}, newest first:\n${lines.join("\n")}${more}` };
+      }
+      const snap = await this.snapshot(remote, commit, head);
+      const text = q.op == "list" ? list(snap, cleanPath(q.path), !!q.recursive)
+        : q.op == "read" ? read(snap, cleanPath(q.path), q.from, q.to)
+          : search(snap, q);
+      return { ref, commit, text };
+    } catch (e) {
+      throw e instanceof BrowseError ? new SourceError(e.message) : e;
+    }
+  }
+
+  /**
+   * A branch's head, or a commit (all 40 hex digits, or the first 7 or more of one the index has): staging if none.
+   * `head`: it is a branch's head, which Artifacts sends; another commit, it may refuse.
+   */
+  private async resolve(remote: Remote, asked?: string): Promise<{ ref: string; commit: string; head: boolean }> {
+    const name = String(asked ?? "").trim().replace(/^refs\/heads\//, "").replace(/^origin\//, "") || "staging";
+    const { refs } = await lsRefs(remote);
+    const branches = [...refs].filter(([r]) => !r.startsWith(QUARANTINE));
+    const hit = branches.find(([r]) => r == `refs/heads/${name}`);
+    if (hit) return { ref: name, commit: hit[1], head: true };
+    if (/^[0-9a-f]{7,40}$/i.test(name)) {
+      const sha = name.toLowerCase();
+      const heads = branches.filter(([, s]) => s.startsWith(sha));
+      if (heads.length == 1) return { ref: heads[0][0].slice("refs/heads/".length), commit: heads[0][1], head: true };
+      if (isSha(sha)) return { ref: sha.slice(0, 10), commit: sha, head: false };
+      const known = this.deps.db.exec<{ sha: string }>("SELECT sha FROM commits WHERE sha LIKE ? LIMIT 2", `${sha}%`);
+      if (known.length == 1) return { ref: sha, commit: known[0].sha, head: false };
+      if (known.length > 1) throw new SourceError(`More than one commit starts with ${sha}: give more of it.`);
+    }
+    const rank = (b: string) => (b == "staging" ? 0 : b == "main" ? 1 : 2);
+    const names = branches.map(([r]) => r.slice("refs/heads/".length)).sort((a, b) => rank(a) - rank(b) || (a < b ? -1 : 1));
+    throw new SourceError(`There's no branch or known commit "${name}". The branches: ${names.slice(0, 30).join(", ")}${names.length > 30 ? `, and ${names.length - 30} more` : ""}.`, 404);
+  }
+
+  /** A commit's files: fetched once, then kept (the last 3 commits read). */
+  private snapshot(remote: Remote, commit: string, head: boolean): Promise<Snapshot> {
+    let s = this.snapshots.get(commit);
+    if (s) { this.snapshots.delete(commit); this.snapshots.set(commit, s); return s; }
+    s = (async () => {
+      const objects = await readPack(await fetchPack(remote, { wants: [commit], deepen: 1 })).catch((e: unknown) => {
+        throw new SourceError(head ? `Artifacts didn't send ${commit.slice(0, 10)}: ${(e as Error).message}` : `Artifacts didn't send commit ${commit.slice(0, 10)} (it may send only a branch's head): name a branch instead.`, 502);
+      });
+      try { return snapshotOf(commit, objects); } catch (e) { throw new SourceError(`Artifacts didn't send all of ${commit.slice(0, 10)}: ${(e as Error).message}`, 502); }
+    })();
+    s.catch(() => this.snapshots.delete(commit));
+    this.snapshots.set(commit, s);
+    while (this.snapshots.size > 3) this.snapshots.delete(this.snapshots.keys().next().value!);
+    return s;
   }
 }
 
