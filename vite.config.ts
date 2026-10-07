@@ -17,7 +17,8 @@ process.env.ERGA_LINK_SECRET ||= randomBytes(24).toString("hex");
 
 export default defineConfig({
   // The editor's own files, gathered by site.sh: they're the Worker's static assets.
-  publicDir: ".site",
+  // (A test that changes them works on a copy: ERGA_SITE_DIR, tests/redeploy.ts.)
+  publicDir: process.env.ERGA_SITE_DIR || ".site",
   // Tests point these elsewhere: their own .dev.vars, and a cache of their own so servers started at once don't trip on each other.
   // The cache is the checkout's own, not node_modules/.vite: a worktree's node_modules may be a link to another checkout's.
   envDir: process.env.ERGA_ENV_DIR || undefined,

@@ -62,7 +62,11 @@ it reports with the `task` command, and never merges.
    `adminsOnly` in `deploy/targets.json`). Keep it so: a new route or
    origin goes behind that guard, and any exemption (server to server, the
    factory's VMs, sign-in) is listed there with its reason.
-3. **New rules go here.** When the user gives a standing instruction
+3. **Open pages survive a redeploy** (README, Redeploys and open pages): a
+   new live connection reconnects with backoff and reads its state again,
+   and tells live.js (`src/page/live-client.ts`); page state that a reload
+   would lose is kept with `keep` and read back with `restore.ts`.
+4. **New rules go here.** When the user gives a standing instruction
    ("always…", "from now on…"), add it to AGENTS.md, not to an agent's own
    memory, so every agent sees it.
 
