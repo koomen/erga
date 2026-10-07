@@ -105,22 +105,20 @@ database, the object or the Worker's settings through Cloudflare.
 - **Who reads it**: no route returns it (`GET /api/factory/claude` says only whether there is one, who set it and when). Since this audit, only the jobs that run Claude Code get it in their environment. The merge, save, stop and discard jobs do not. Any command Claude Code runs in the VM can read it.
 - **Admin panel?** **Admin panel** (it is there already).
 
-### Agent tokens (`erga_…`), including the share button's
-- **For**: the only credential for agents, scripts, the API, `/mcp`, documents' `/api/ext` and git push. Each has a scope: `document` (one document), `documents` (the person's documents, no admin power) or `admin` (all the person can do; only admins make one; admin power checked live with `Users.isAdmin`; git push needs it). The share button's token is a `documents` token (README, Tokens).
-- **Set**: per person: `/tokens`, the share button, or an agent's device-flow request (`/api/auth/request`, its polling code `ergareq_…`).
+### Agent tokens (`erga_…`), including the share buttons'
+- **For**: the only credential for agents, scripts, the API, `/mcp`, documents' `/api/ext`, the factory's API and git push. Each has a scope: `document` (one document), `documents` (the person's documents, no admin power) or `admin` (all the person can do; only admins make one; admin power checked live with `Users.isAdmin`; git push needs it). The editor's share button's token is a `documents` token. "Share with agent" on the admin pages makes an `admin` token that ends in at most 12 hours (README, Tokens).
+- **Set**: per person: `/tokens`, the editor's share button, Share with agent on the admin pages (`POST /admin/share`), or an agent's device-flow request (`/api/auth/request`, its polling code `ergareq_…`). No token can make or approve another: only a person signed in in a browser can.
 - **At rest**: only the SHA-256 is in D1 (`agent_tokens`). The token is an HMAC of its id with `SESSION_SECRET`, so the share button can show its token again. Since this audit, a token works only on the server whose secret made it: production's tokens do not work on staging, although staging's D1 is a copy of production's.
-- **Exposure**: the share token goes into prompts for outside agents. A token has an expiry if its maker chose one; an expired token stops working. Revoke on `/tokens`.
+- **Exposure**: the share buttons' tokens go into prompts for outside agents; Share with agent's carries admin power until it ends (12 hours at most). A token has an expiry if its maker chose one; an expired token stops working. Revoke on `/tokens`.
 - **Admin panel?** Per person.
 
-### Factory tokens (`erga_factory_…`)
-- **For**: "Share with agent" on the factory: an outside agent may create, read and instruct tasks, and nothing else.
-- **At rest**: only the SHA-256, in the `Factory` Durable Object. They last up to 12 hours, can be revoked, and work only while their maker is an admin.
-- **Admin panel?** Per person (admins).
+### Factory tokens (`erga_factory_…`): gone
+- Share with agent made these until it made admin tokens (above). The `Factory` Durable Object dropped their table, so none works; the factory's API answers one with 401, saying to ask for a new token.
 
 ### The factory's VM tokens: task tokens (`fct.…`), git tokens (`fgt.…`), preview tickets, `FACTORY_AGENT_SECRET`
 - **For**: a task's VM reports on its task (`fct`), pushes its branch (`fgt`, task scope; merge scope also moves `staging`, once, only to the merge itself, for 35 minutes: README, "What a task's VM can reach"), and an admin opens its preview (ticket, then a cookie on the preview's host). `FACTORY_AGENT_SECRET` is random for each VM and lets only the factory reach the VM's agent.
 - **At rest**: not stored (signed with keys from `FACTORY_KEY`). They are in the VM job's environment.
-- **Exposure**: the VM's own code can read them. Since this audit, the factory hides anything shaped like a token in what a VM reports (log lines, summaries, errors, captions), because the board and factory-token holders read that text.
+- **Exposure**: the VM's own code can read them. Since this audit, the factory hides anything shaped like a token in what a VM reports (log lines, summaries, errors, captions), because the board and outside agents with admin tokens read that text.
 
 ### Test tokens (`erga_test_…`)
 - **For**: the test suite against erga.dev (`ERGA_TEST_TOKEN=… bun run test:prod`). They sign in throwaway test people who can open only test documents.

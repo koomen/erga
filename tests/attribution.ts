@@ -11,7 +11,7 @@
 //                        "tester, via a shared agent (Attribution test)"
 //   the admin agent      changes a user's role, adds a task, merges it:
 //                        "tester, via their admin agent"
-//   a factory token      adds a task: "tester, via a shared agent (Board agent)"
+//   an admin token       adds a task: "tester, via a shared agent (Share with agent)"
 //   the factory's VM     works on that task: its commits are tester's, and the log
 //                        says who asked for the merge
 //
@@ -33,7 +33,7 @@ const host = await startHost(null, {
 });
 const root = host.base.replace(/\/+$/, "");
 const origin = new URL(root).origin;
-const LABEL = "Attribution test", BOARD = "Board agent";
+const LABEL = "Attribution test", BOARD = "Share with agent";
 
 const signIn = async (as: string) => (await fetch(`${root}/auth/github?as=${as}&next=/docs`, { redirect: "manual" })).headers.getSetCookie().map((c) => c.split(";")[0]).find((c) => c.startsWith("erga_session="))!;
 const cookie = await signIn("tester");
@@ -116,12 +116,12 @@ try {
   expect(byToken((c) => c.task?.id == t1.id && c.task.event == "added")?.via == "their admin agent", "the task added: tester, via their admin agent", log.slice(0, 4));
   ok("the admin agent: a role change and a task, tester's, via their admin agent");
 
-  // A factory token (an outside agent on the board): a task.
-  const factoryToken = ((await (await post("/api/factory/tokens", { label: BOARD, hours: 1 })).json()) as { token: string }).token;
+  // Share with agent's admin token (an outside agent on the board): a task.
+  const factoryToken = ((await (await get("/admin/share", { method: "POST", body: new URLSearchParams({}) })).json()) as { token: string }).token;
   const made = await fetch(`${root}/api/factory/tasks`, { method: "POST", headers: { Authorization: `Bearer ${factoryToken}`, "Content-Type": "application/json" }, body: JSON.stringify({ title: "The board agent's task", description: "Another note." }) });
   const t2 = await made.json() as any;
-  expect(made.status == 201 && t2.by == `tester, via a shared agent (${BOARD})` && t2.person == "tester", "a factory token's task: tester's, via the shared agent", t2);
-  ok("a factory token: its task is tester's, via the shared agent");
+  expect(made.status == 201 && t2.by == `tester, via a shared agent (${BOARD})` && t2.person == "tester", "Share with agent's token's task: tester's, via the shared agent", t2);
+  ok("Share with agent's token: its task is tester's, via the shared agent");
 
   // The factory's VM: it works on the task as tester's; the admin agent merges it.
   await until(async () => (await task(t2.id)).status == "complete", STEP, "the VM finishes the task", async () => (await task(t2.id)).log.slice(-4));

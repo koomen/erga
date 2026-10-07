@@ -142,3 +142,33 @@ test("the device flow carries the scope, the document and the expiry; the person
   expect(await tokens.deny(admin.user_code)).toBe(true);
   expect((await tokens.collect(admin.code)).status).toBe("gone");
 });
+
+test("Share with agent's admin token: admins only, ends within 12 hours, shown again until near its end or rotated, apart from the editor's", async () => {
+  const { tokens, sql, call } = await server();
+  await expect(tokens.shareAdmin(bo, false)).rejects.toThrow(/Only an admin/);
+  const editor = await tokens.share(ada, false);
+  const first = await tokens.shareAdmin(ada, false);
+  expect([first.info.scope, first.info.kind, first.info.label]).toEqual(["admin", "share", "Share with agent"]);
+  const left = first.info.expires! - Date.now();
+  expect(left > 11.9 * 3600_000 && left <= 12 * 3600_000).toBe(true);
+  expect((await tokens.shareAdmin(ada, false, 99)).token).toBe(first.token);
+  expect((await call(first.token, "list_users")).status).toBe(200);
+  // The editor's share button keeps its own token, a documents token, and neither replaces the other.
+  expect((await tokens.share(ada, false)).token).toBe(editor.token);
+  expect((await tokens.share(ada, false)).info.scope).toBe("documents");
+  // New token: the old one stops at once.
+  const second = await tokens.shareAdmin(ada, true);
+  expect(second.token).not.toBe(first.token);
+  expect(await tokens.verify(first.token)).toBeNull();
+  expect((await tokens.share(ada, false)).token).toBe(editor.token);
+  // Near its end, the card gets a new one; the old one ends by itself.
+  await sql.run("UPDATE agent_tokens SET expires = ?2 WHERE id = ?1", second.info.id, Date.now() + 10 * 60_000);
+  const third = await tokens.shareAdmin(ada, false, 2);
+  expect(third.token).not.toBe(second.token);
+  expect(third.info.expires! - Date.now()).toBeLessThanOrEqual(2 * 3600_000);
+  expect((await tokens.verify(second.token))?.id).toBe(second.info.id);
+  // Listed (and so revocable) with the person's other tokens.
+  expect((await tokens.list("ada")).filter((t) => t.kind == "share").map((t) => t.scope).sort()).toEqual(["admin", "admin", "documents"]);
+  expect(await tokens.revoke("ada", third.info.id)).toBe(true);
+  expect(await tokens.verify(third.token)).toBeNull();
+});

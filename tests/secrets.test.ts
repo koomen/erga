@@ -34,7 +34,7 @@ test("an agent token works only on the server whose secret made it, not on a cop
   expect(await production.verify(own.token)).toBeNull();
 });
 
-test("text from a factory VM keeps no token: the board and factory tokens' holders read it", async () => {
+test("text from a factory VM keeps no token: the board and outside agents with admin tokens read it", async () => {
   const { hideTokens } = await import("../factory/prompt");
   const claude = "sk-ant-oat01-" + "Ab3_-x".repeat(12), task = "fct.12.1790000000." + "0f".repeat(32), git = "fgt.eyJzY29wZSI6InRhc2sifQ." + "a1".repeat(32);
   const said = hideTokens(`debug: ${claude} then ${task}, ${git}; erga_${"k".repeat(43)} erga_admin_${"q".repeat(40)} erga_factory_0123_${"z".repeat(32)}`);

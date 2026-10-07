@@ -71,7 +71,8 @@ try {
     ["POST /api/source/merge", await mallory("/api/source/merge", { method: "POST", headers: { Origin: root, "Content-Type": "application/json" }, body: "{}" })],
     ["GET /api/deploys", await mallory("/api/deploys")],
     ["GET /api/factory/tasks", await mallory("/api/factory/tasks")],
-    ["POST /api/factory/tokens", await mallory("/api/factory/tokens", { method: "POST", headers: { Origin: root, "Content-Type": "application/json" }, body: "{}" })],
+    ["POST /admin/share", await mallory("/admin/share", { method: "POST", headers: { Origin: root }, body: new URLSearchParams({}) })],
+    ["GET /api/admin/guide", await mallory("/api/admin/guide")],
   );
   for (const [what, r] of refused) {
     const body = await r.text();
@@ -127,7 +128,7 @@ try {
   // Share with agent, from the header, on a page that isn't the factory's.
   await p.eval(`document.getElementById("btn-share").click()`);
   await until(() => p.eval<boolean>(`!!document.getElementById("share") && !document.getElementById("share").hidden && document.getElementById("btn-share").getAttribute("aria-expanded") == "true"`), 5000, "Share with agent opens its card on /admin/users");
-  await until(() => p.eval<boolean>(`document.getElementById("share-prompt").value.includes("erga_factory_") || document.getElementById("share-status").textContent.length > 0`), 10_000, "the card gets a token, or says why not");
+  await until(() => p.eval<boolean>(`/erga_[A-Za-z0-9_-]{20,}/.test(document.getElementById("share-prompt").value) || document.getElementById("share-status").textContent.length > 0`), 10_000, "the card gets a token, or says why not");
   await p.screenshot(join(SHOTS, "admin-users-share.png"));
   expect(p.errors.length == 0, "no errors in the console", p.errors);
   // The agent: open beside the page; collapsed to a round button in the lower left (its button, Esc, ⌘J), remembered.

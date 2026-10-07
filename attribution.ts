@@ -6,7 +6,7 @@
 //   their agent                 the editor's agent, in one of their documents
 //   their admin agent           the agent on the admin pages (factory/agent.ts)
 //   a shared agent (<label>)    an agent with one of their tokens: the server's
-//                               API, MCP, /api/ext, Git pushes, a factory token
+//                               API, MCP, /api/ext, Git pushes, the admin APIs
 //   the factory (task #<n>)     a factory VM, working on a task they added
 //
 // Shown together: "koomen, via their agent". Nothing is attributed to an
@@ -20,7 +20,7 @@ export const VIA = {
   agent: "their agent",
   /** The admin agent (factory/agent.ts). */
   admin: "their admin agent",
-  /** An agent with one of their tokens (tokens.ts, a factory token): its label. */
+  /** An agent with one of their tokens (tokens.ts): its label. */
   token: (label: string) => `a shared agent (${label.trim() || "no label"})`,
   /** A factory VM, on a task they added. */
   factory: (task: number) => `the factory (task #${task})`,
