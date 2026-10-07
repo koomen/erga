@@ -12,6 +12,7 @@
 //   servers.main()     a dev server, signed in as DEV_LOGIN, with no agent key
 //   servers.agent()    the same with an agent key that is never used (the agent's UI comes on)
 //   servers.factory()  the factory with simulated VMs and the scripted agent model
+//   servers.suite()    the multiplayer suite's: the scripted agent model, and a short write delay (e2e/suite/suite.ts)
 //   startServer()      a server for one test alone (test.ts disposes of it, see `tab.own`)
 //
 // Per test: `tab`, the attempt's own page in a fresh browser context (the web
@@ -57,7 +58,14 @@ export const servers = {
     const initial = await (await fetch(`${s.root}/api/factory`)).json() as { enabled: boolean };
     return Object.assign(s, { secret, initial });
   }),
+  suite: once("suite", () => startServer({ env: SUITE_ENV })),
 };
+
+/**
+ * The multiplayer suite's server settings. A short write delay: the suite waits on storage a lot. Not too short:
+ * tests share a server, and one that makes an edit "not yet stored" needs its next request in first.
+ */
+export const SUITE_ENV = { ERGA_AGENT_MODEL: "script", ERGA_WRITE_DELAY_MS: "200" };
 
 export interface Tab {
   page: Page;

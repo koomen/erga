@@ -22,7 +22,7 @@
 import { cpSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync, mkdirSync, statSync } from "fs";
 import { tmpdir } from "os";
 import { dirname, join, relative } from "path";
-import { startHost, type Host } from "../host";
+import type { Host } from "../host";
 
 /**
  * What a target can do beyond the contract:
@@ -106,7 +106,7 @@ export function readFixture(name: string): Record<string, string> {
 
 const indexOf = (files: Record<string, string>) => ["index.html", "index.htm", "index.md"].find((n) => n in files) ?? Object.keys(files)[0];
 
-function makeDoc(base: string, headers: Record<string, string>, fixture: Record<string, string>, extra: Partial<Doc> & { dispose(): Promise<void> }, perUser: Record<string, Record<string, string>> = {}): Doc {
+export function makeDoc(base: string, headers: Record<string, string>, fixture: Record<string, string>, extra: Partial<Doc> & { dispose(): Promise<void> }, perUser: Record<string, Record<string, string>> = {}): Doc {
   const doc: Doc = {
     base,
     path: indexOf(fixture),
@@ -158,6 +158,8 @@ export class LocalTarget implements Target {
   }
 
   async newDoc(fixture: string, needs: Capability[] = []): Promise<Doc> {
+    // (Loaded here: the e2e suite, on Node, imports this file for RemoteTarget and makeDoc, and tests/host.ts is Bun's.)
+    const { startHost } = await import("../host");
     const dir = mkdtempSync(join(tmpdir(), "erga-suite-"));
     cpSync(join(FIXTURES, fixture), dir, { recursive: true });
     const writeDisk = (p: string, data: string | Uint8Array) => { const full = join(dir, p); mkdirSync(dirname(full), { recursive: true }); writeFileSync(full, data); };

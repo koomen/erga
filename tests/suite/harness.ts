@@ -3,7 +3,9 @@
 // itself, so tests are independent and can run in any order or alone.
 
 import type { Capability, Doc, Target } from "./target";
-import { waiting } from "../stop";
+
+/** What each until() is waiting on, for a report of the step that hung (run.ts sets it to tests/stop.ts's; e2e has its own). */
+export const hooks = { waiting: (_what: string): (() => void) => () => {} };
 
 export interface Ctx {
   target: Target;
@@ -45,7 +47,7 @@ export function expect(cond: unknown, what: string, detail?: unknown): asserts c
 /** Waits until `f` holds, polling; fails with `what` after `ms`. */
 export async function until(f: () => unknown | Promise<unknown>, ms: number, what: string, detail?: () => unknown): Promise<void> {
   const t0 = Date.now();
-  const done = waiting(`until: ${what}`);
+  const done = hooks.waiting(`until: ${what}`);
   try {
     for (;;) {
       try { if (await f()) return; } catch { /* not yet */ }

@@ -18,7 +18,8 @@
 
 import { writeFileSync } from "fs";
 import { testJobs } from "../cores";
-import { runTests, type Result, type Test } from "./harness";
+import { hooks, runTests, type Result, type Test } from "./harness";
+import { waiting } from "../stop";
 import { LocalTarget, RemoteTarget, type Target } from "./target";
 import { sync } from "./suites/sync";
 import { fuzz } from "./suites/fuzz";
@@ -28,6 +29,8 @@ import { robustness } from "./suites/robustness";
 import { agent } from "./suites/agent";
 import { latency } from "./suites/latency";
 import { browserTests, closeBrowser } from "./suites/browser";
+
+hooks.waiting = waiting;
 
 const SUITES: { name: string; tests: Test[] }[] = [
   { name: "sync", tests: sync },
