@@ -18,7 +18,7 @@ test("a pasted token connects; a failed step says why, plainly, and offers to tr
   await p.fill("gh-secret", "0123456789abcdef0123456789abcdef01234567");
   await p.click("#github-next");
   await p.click("#go");
-  await expect.poll(() => p.text("#run-error"), { timeout: 20_000 }).not.toBe("");
+  await expect.poll(() => p.text("#run-error"), { timeout: 15_000 }).not.toBe("");
   expect(await p.text("#run-error")).toMatch(/^Stopped at “Upload the Worker, with its settings and secrets”\. Cloudflare had a problem on its side while we tried to upload the Worker \(Cloudflare said: An unknown error has occurred \[code 10013\]\)/);
   expect(await page.evaluate(() => (document.querySelector("#progress li.failed") as HTMLElement | null)?.dataset.id == "worker" && !document.getElementById("run-actions")!.hidden)).toBe(true);
   expect((await p.session()).connected, "the token is kept to try again").toBe(true);

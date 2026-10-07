@@ -30,7 +30,7 @@ test("where it goes, a GitHub app, the review; the deploy shows its steps, finis
 
   await p.click("#go");
   await expect.poll(() => page.evaluate(() => document.querySelectorAll("#progress li.done").length >= 2 && !!document.querySelector("#progress li.running, #progress li.pending")), { timeout: 10_000 }).toBe(true);
-  await expect.poll(() => page.evaluate(() => !document.getElementById("live")!.hidden), { timeout: 20_000 }).toBe(true);
+  await expect.poll(() => page.evaluate(() => !document.getElementById("live")!.hidden), { timeout: 15_000 }).toBe(true);
   expect(await page.evaluate(() => document.querySelectorAll("#progress li.done").length)).toBe(8);
   const live = await p.text("#live");
   expect(live).toContain("write.myerga.com");
