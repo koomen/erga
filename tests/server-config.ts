@@ -9,6 +9,7 @@
 // Screenshots of /admin both ways land in tests/cdp.ts's SHOTS.
 //
 //   bun tests/server-config.ts
+// covers: server.config.ts config.ts worker/d1.ts admin.ts directory.ts
 
 import { join } from "path";
 import { Browser, SHOTS } from "./cdp";

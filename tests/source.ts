@@ -22,6 +22,7 @@
 // Screenshots land in tests/cdp.ts's SHOTS.
 //
 //   bun tests/source.ts [--keep]     (--keep leaves the server running, seeded)
+// covers: source/ worker/source.ts worker/source-host.ts worker/artifacts.ts dev/git-server.ts dev/mirror.ts
 
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, writeFileSync } from "node:fs";

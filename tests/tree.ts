@@ -24,6 +24,7 @@
 // and the editor at its own address. Screenshots land in tests/cdp.ts's SHOTS.
 //
 //   bun tests/tree.ts
+// covers: src/page/tree.ts tree.ts
 
 import { cpSync, mkdtempSync } from "fs";
 import { tmpdir } from "os";

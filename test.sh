@@ -43,10 +43,25 @@
 #
 # Not here, run by hand: tests/agent.ts (the real model, costs a little)
 # and tests/suite/run.ts --long (bigger, slower, real idle-eviction waits).
+#
+#   ./test.sh --changed       only the tests that cover what changed since this branch left staging
+#                             (tests/changed.ts: each test's "// covers:" line, a unit test's imports);
+#                             the way to test while you work
+#   ./test.sh tests/x.ts ...  only these test files (a unit test too), in the same pool
 set -euo pipefail
 cd "$(dirname "$0")"
 start=$(date +%s)
-if [[ $# -gt 0 ]]; then echo "usage: ./test.sh   (TEST_JOBS=n: how many slots at once; TEST_CORES_PER_JOB=c: one per c cores, default 2; tests/cores.ts)" >&2; exit 2; fi
+usage() { echo "usage: ./test.sh [--changed | tests/x.ts ...]   (TEST_JOBS=n: how many slots at once; TEST_CORES_PER_JOB=c: one per c cores, default 2; tests/cores.ts; TEST_BASE: what --changed compares with)" >&2; exit 2; }
+# Which tests: all (no arguments), those that cover the change (--changed), or those named. `picked` has one a line.
+picked=""; some=0
+if [[ $# == 1 && $1 == --changed ]]; then
+  picked=$(bun tests/changed.ts); some=1
+  if [[ -z $picked ]]; then echo "No test covers what changed."; exit 0; fi
+elif [[ $# -gt 0 ]]; then
+  for f in "$@"; do [[ $f == tests/*.ts && -f $f ]] || usage; picked+="$f"$'\n'; done; some=1
+fi
+chosen() { [[ $some == 0 ]] || grep -qxF "$1" <<<"$picked"; }
+ran=""
 # The editor's files, once, for every dev server the tests start.
 ./site.sh >/dev/null
 export ERGA_BUILT=1
@@ -75,6 +90,18 @@ reap() { # reports the tests that have finished, and frees their slots
 }
 run() { # run WEIGHT NAME CMD...: in the background once WEIGHT slots are free (or nothing else runs), output to a file
   local weight=$1 name=$2; shift 2
+  # Only the tests picked (--changed, or named): a file's run, if it's picked; the unit tests, those picked.
+  if [[ $some == 1 ]]; then
+    if [[ "$*" == "bun test ./tests/" ]]; then
+      local units; units=$(grep -E '^tests/[^/]+\.test\.ts$' <<<"$picked" | sed 's|^|./|' || true)
+      [[ -n $units ]] || return 0
+      set -- bun test $units
+    else
+      local a file=""; for a in "$@"; do [[ $a == tests/*.ts ]] && { file=$a; break; }; done
+      chosen "$file" || return 0
+      ran+="$file"$'\n'
+    fi
+  fi
   while (( used > 0 && used + weight > jobs )); do sleep 0.2; reap; done
   ( t0=$(date +%s); rc=0; "$@" >"$tmp/$name.log" 2>&1 || rc=$?; echo $rc >"$tmp/$name.rc"; echo $(( $(date +%s) - t0 )) >"$tmp/$name.time" ) &
   names+=("$name"); weights+=("$weight"); used=$(( used + weight ))
@@ -133,6 +160,13 @@ collect
 # Live reload alone too: it edits files and waits on rebuilds, which a busy machine slows.
 run 1 reload bun tests/reload.ts                         # [14]
 collect
+# A named test file test.sh doesn't run itself (tests/agent.ts, say): it runs now, on its own.
+if [[ $some == 1 ]]; then
+  while read -r f; do
+    if [[ -n $f && $f != *.test.ts ]] && ! grep -qxF "$f" <<<"$ran"; then run 1 "$(basename "$f" .ts)" bun "$f"; fi
+  done <<<"$picked"
+  collect
+fi
 
 echo
 if [[ ${#failed[@]} == 0 ]]; then echo "all passing ($(( $(date +%s) - start ))s)"; else echo "FAILED: ${failed[*]} ($(( $(date +%s) - start ))s)"; exit 1; fi

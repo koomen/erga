@@ -42,6 +42,7 @@
 // 13. Restart while the task works: its Claude Code (the stand-in) is stopped, its uncommitted work committed and
 //    pushed, and a fresh VM goes on from the branch.
 // Screenshots land in tests/cdp.ts's SHOTS (factory-*.png).
+// covers: factory/ worker/factory.ts dev/factory.ts dev/git-server.ts worker/source.ts source/ tokens.ts src/page/factory-agent.ts src/page/agent-chat.ts src/page/share-agent.ts src/page/admin-share.ts
 
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readdirSync, readFileSync } from "node:fs";

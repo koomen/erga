@@ -11,6 +11,7 @@
 // each step land in tests/cdp.ts's SHOTS (deploy-*.png).
 //
 //   bun tests/deploy.ts
+// covers: deploy/ worker/deploy.ts worker/deployer.ts
 
 import { existsSync } from "fs";
 import { join } from "path";

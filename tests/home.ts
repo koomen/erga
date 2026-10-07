@@ -22,6 +22,7 @@
 //     a fresh homepage from landing/; a locked setting can't be changed.
 //
 //   bun tests/home.ts
+// covers: home.ts worker/home.ts worker/published.ts front.ts
 
 import { join } from "path";
 import { Browser, Page, SHOTS } from "./cdp";

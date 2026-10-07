@@ -11,6 +11,7 @@
 //
 //   bun tests/pages.ts
 //   bun tests/pages.ts --keep     leaves the server running, with the sample document, and prints where
+// covers: tree.ts src/page/tree.ts server-api.ts api.ts worker/doc-host.ts
 
 import { join } from "path";
 import { Browser, SHOTS } from "./cdp";

@@ -9,6 +9,7 @@
 // Screenshots land in tests/cdp.ts's SHOTS.
 //
 //   bun tests/new-doc.ts
+// covers: templates.ts templates/ front.ts
 
 import { readFileSync } from "fs";
 import { join } from "path";

@@ -14,6 +14,7 @@
 // Screenshots land in tests/cdp.ts's SHOTS.
 //
 //   bun tests/scoped-tokens.ts [--keep]     (--keep leaves the server running)
+// covers: tokens.ts worker/auth.ts source/http.ts server-api.ts admin.ts
 
 import { join } from "node:path";
 import { Browser, SHOTS } from "./cdp";

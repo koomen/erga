@@ -16,6 +16,7 @@
 //     every page, and on a phone the links are a row.
 //
 //   bun tests/admin-layout.ts [--keep]   (--keep: leave the server running)
+// covers: admin-layout.ts admin.ts users.ts directory.ts src/page/admin-share.ts src/page/share-agent.ts src/page/admin-nav.ts
 
 import { join } from "path";
 import { Browser, SHOTS } from "./cdp";

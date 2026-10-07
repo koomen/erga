@@ -14,6 +14,7 @@
 // what last.
 //
 //   bun tests/deploys.ts [--keep]     (--keep leaves the server running, with a deploy done)
+// covers: deploy/ worker/deploys.ts worker/pipeline.ts worker/deployer.ts worker/source.ts
 
 import { existsSync } from "fs";
 import { join } from "path";

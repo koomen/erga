@@ -129,6 +129,7 @@ test("the worker brief asks for targeted tests in a 5-minute budget, not the who
   expect(p).toContain("under 5 minutes");
   expect(p).toContain("only the tests that cover what you changed");
   expect(p).toContain("task run --timeout 180 -- bun test");
+  expect(p).toContain("./test.sh --changed");
   expect(p).toContain("shared infrastructure");
   expect(p).toContain("never by default");
   expect(p).not.toContain("--timeout 900");

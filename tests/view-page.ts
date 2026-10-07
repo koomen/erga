@@ -6,6 +6,7 @@
 // size and in which mode, that width, height and color_scheme change it,
 // and that the agent's context and the view_page tool say the same.
 //   bun tests/view-page.ts
+// covers: src/page/frame.ts agent.ts
 
 import { Browser, ROOT, type Page } from "./cdp";
 import { freePort, startHost } from "./host";

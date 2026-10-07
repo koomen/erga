@@ -19,7 +19,10 @@ Work in a checkout on this machine, with the user watching if they like:
    (`tests/cdp.ts` drives it); never drive the user's own browser unless
    they ask.
 4. **Test what you changed**: the tests that cover it, and new ones where
-   they belong. Run `./test.sh` (the whole suite) only when the change
+   they belong. `./test.sh --changed` runs exactly those (each test's
+   `// covers:` line and each unit test's imports say what it covers; a new
+   test file that test.sh runs needs one); `./test.sh tests/x.ts ...` runs
+   the files you name. Run `./test.sh` with no arguments (the whole suite) only when the change
    touches shared infrastructure (the test harness, the build, the server's
    core).
 5. **Commit and push only when the user asks.** `origin` is Erga's own Git

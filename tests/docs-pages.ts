@@ -7,6 +7,7 @@
 // tests/cdp.ts's SHOTS.
 //
 //   bun tests/docs-pages.ts
+// covers: src/page/tree.ts tree.ts front.ts
 
 import { cpSync, mkdtempSync } from "fs";
 import { tmpdir } from "os";

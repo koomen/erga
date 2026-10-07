@@ -9,6 +9,7 @@
 // tools (list_versions, read_version, diff_versions, publish_version) over the API.
 //
 //   bun tests/versions.ts
+// covers: versions.ts worker/doc-host.ts src/page/versions.ts server-tools.ts
 
 import { Browser } from "./cdp";
 import { startHost } from "./host";

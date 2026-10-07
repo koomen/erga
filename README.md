@@ -3169,8 +3169,25 @@ and the editor's timers (how long notes stay up, how marks fade) run at a
 fraction of real time under test (`window.__ergaTimescale`, `ms` in
 `src/page/editor.ts`).
 
-    ./test.sh          # every test file: ~3.5 minutes on a 10-core Mac
-    bun run typecheck  # tsc over the host, the editor and the suite
+    ./test.sh            # every test file: ~3.5 minutes on a 10-core Mac
+    ./test.sh --changed  # only the tests that cover what changed since staging
+    ./test.sh tests/tree.ts tests/tree.test.ts   # only these files
+    bun run typecheck    # tsc over the host, the editor and the suite
+
+**Only the tests that cover a change** (`tests/changed.ts`). `--changed`
+compares the checkout, committed or not, with where its branch left staging
+(`TEST_BASE` picks another base) and runs, in the same pool, the tests that
+cover the files that differ: a test file test.sh runs names what it covers in
+a header line (`// covers: src/page/tree.ts tree.ts templates/`: files, folders
+ending in `/`, or globs), and also covers itself and the helpers under `tests/`
+it imports; a unit test (`tests/*.test.ts`) covers everything it imports. A
+change to shared infrastructure (`SHARED`: test.sh, the build, the test
+harness, the Worker's entry) runs everything. It says what it picked and
+why, and names the changed files no test covers; `bun tests/changed.ts
+FILE...` asks without running anything. `tests/changed.test.ts` fails when
+a test file test.sh runs has no covers line, or a pattern names nothing.
+This is how agents test while they work (AGENTS.md; the factory's workers
+too, `factory/prompt.ts`); the whole suite is for shared infrastructure.
 
 `./test.sh` runs the files in a pool, the longest first: one for every two
 usable cores, as each file has dev servers and a Chrome of its own, and more

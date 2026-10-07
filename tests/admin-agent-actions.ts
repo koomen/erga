@@ -9,6 +9,7 @@
 //
 //   bun tests/admin-agent-actions.ts            the checks
 //   bun tests/admin-agent-actions.ts --shots    and screenshots, in tests/cdp.ts's SHOTS
+// covers: agent-actions.ts factory/agent.ts server-tools.ts agent.ts worker/factory.ts src/page/factory-agent.ts src/page/agent-chat.ts
 
 import { mkdirSync } from "fs";
 import { join } from "path";

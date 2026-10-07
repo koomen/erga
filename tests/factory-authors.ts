@@ -13,6 +13,7 @@
 // merges tester's: the "Merge staging into task/…" commit is by tester (the
 // task's person), and the merge into staging by Ada (who pressed Merge), both
 // committed by Erga factory.
+// covers: factory/ worker/factory.ts dev/factory.ts users.ts worker/auth.ts tokens.ts
 
 import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync } from "node:fs";

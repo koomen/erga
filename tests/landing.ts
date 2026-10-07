@@ -18,6 +18,7 @@
 // Screenshots of / and the editor land in tests/cdp.ts's SHOTS.
 //
 //   bun tests/landing.ts
+// covers: landing/ front.ts worker/home.ts
 
 import { readdirSync, readFileSync } from "fs";
 import { join } from "path";

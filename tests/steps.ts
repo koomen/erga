@@ -12,6 +12,7 @@
 //
 //   bun tests/steps.ts            the checks
 //   bun tests/steps.ts --shots    and screenshots, in tests/cdp.ts's SHOTS
+// covers: front.ts DOCUMENT_PROMPT.md templates/
 
 import { cpSync, mkdirSync, mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";

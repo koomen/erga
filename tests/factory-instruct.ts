@@ -13,6 +13,7 @@
 // 3. A run that says done before it got them: the factory gives them to a
 //    new run on the same branch, and the task is ready to merge again.
 // The log shows each sent instruction, and when Claude Code got it.
+// covers: factory/vm/ factory/prompt.ts worker/factory.ts dev/factory.ts
 
 import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync } from "node:fs";

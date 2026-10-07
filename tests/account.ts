@@ -14,6 +14,7 @@
 // Screenshots (light, dark, phone) land in tests/cdp.ts's SHOTS.
 //
 //   bun tests/account.ts
+// covers: account.ts admin-layout.ts front.ts home.ts worker/auth.ts
 
 import { join } from "path";
 import { Browser, type Page, SHOTS } from "./cdp";

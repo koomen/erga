@@ -16,6 +16,7 @@
 //
 //   bun tests/band.ts            the checks
 //   bun tests/band.ts --shots    and screenshots, in tests/cdp.ts's SHOTS
+// covers: front.ts src/page/base.ts style.css
 
 import { cpSync, mkdirSync, mkdtempSync } from "fs";
 import { tmpdir } from "os";

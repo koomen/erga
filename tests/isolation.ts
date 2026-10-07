@@ -8,6 +8,7 @@
 // edits this one document as the viewer, and nothing else.)
 //
 //   bun tests/isolation.ts
+// covers: src/page/bridge.ts front.ts worker/doc-host.ts
 
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";

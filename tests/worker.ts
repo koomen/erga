@@ -20,6 +20,7 @@
 //   bun tests/worker.ts --local        a dev server of its own (tests/host.ts)
 //
 // Each run signs in as a fresh person, so it starts from an empty list.
+// covers: front.ts api.ts server-api.ts directory.ts users.ts worker/doc-host.ts
 
 import { readFileSync } from "fs";
 import { Browser } from "./cdp";

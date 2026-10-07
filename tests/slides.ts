@@ -11,6 +11,7 @@
 //
 //   bun tests/slides.ts            the checks
 //   bun tests/slides.ts --shots    and screenshots, in tests/cdp.ts's SHOTS
+// covers: templates/slides/ templates.ts front.ts
 
 import { mkdirSync } from "fs";
 import { join } from "path";

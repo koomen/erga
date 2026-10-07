@@ -7,6 +7,7 @@
 //
 //   bun tests/solar-system.ts            the checks
 //   bun tests/solar-system.ts --shots    and screenshots, in tests/cdp.ts's SHOTS
+// covers: templates/solar-system/ templates.ts front.ts
 
 import { mkdirSync, readFileSync } from "fs";
 import { join } from "path";
