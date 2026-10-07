@@ -31,6 +31,7 @@ export const AREAS: Record<string, string[]> = {
     "factory/", "worker/factory.ts", "dev/factory.ts", "dev/git-server.ts", "worker/source.ts", "source/", "tokens.ts",
     "src/page/factory-agent.ts", "src/page/agent-chat.ts", "src/page/share-agent.ts", "src/page/admin-share.ts", "factory-agent.js", "admin-share.js",
   ],
+  "e2e/viewer/": ["front.ts", "home.ts", "account.ts", "src/page/base.ts", "style.css", "src/page/main.ts", "src/page/layout.ts", "tests/fixtures/"],
 };
 
 /** Changes that need every test: the tests' own machinery, the build, the server's core. */
