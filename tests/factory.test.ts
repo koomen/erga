@@ -132,11 +132,21 @@ test("the worker brief asks for targeted tests in a 5-minute budget, not the who
   expect(p).toContain("only the tests that cover what you changed");
   expect(p).toContain("task run --timeout 180 -- bun test");
   expect(p).toContain("task run --timeout 300 -- bun run test`");
-  expect(p).toContain("./test.sh --changed");
   expect(p).toContain("shared infrastructure");
   expect(p).toContain("never by default");
   expect(p).not.toContain("--timeout 900");
-  expect(p).not.toContain("for the whole suite)");
+  expect(p).not.toContain("test.sh");
+});
+
+test("the worker brief maps the repository and asks for batched work, and sends it to no README or docs", () => {
+  const p = taskPrompt({ id: 1, title: "T", description: "D", branch: "task/1-t", base: "staging" });
+  expect(p).toContain("Where things are:");
+  for (const file of ["worker/index.ts", "room.ts", "src/page/", "factory/vm/", "deploy/cloudflare.ts", "e2e/affected.ts"]) expect(p).toContain(file);
+  expect(p).toContain("batch independent reads and commands in one turn");
+  expect(p).toContain("subagents for broad searches");
+  expect(p).not.toContain("README");
+  expect(p).not.toContain("Read AGENTS.md");
+  expect(p).not.toContain("docs/");
 });
 
 test("a long Claude Code run with no new output repeats no line on the board; it says it is still working, at most once a minute", async () => {
