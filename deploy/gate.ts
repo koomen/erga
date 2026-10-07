@@ -27,8 +27,8 @@
 // it can be tried and tested without Cloudflare.
 
 /**
- * How many VMs a run uses: test.sh's ~425 s of pool time on a Mac and e2e's ~1340 s of test time (four workers: ~335 s)
- * in six ~125 s shares (the longest file, an e2e one, is ~100 s alone).
+ * How many VMs a run uses: test.sh's ~425 s of pool time on a Mac and e2e's ~1340 s of test time (two workers: ~670 s)
+ * in six ~220 s shares (the longest file, an e2e one, is ~100 s alone).
  */
 export const SHARDS = 6;
 /** How often a running shard is asked how it does. */

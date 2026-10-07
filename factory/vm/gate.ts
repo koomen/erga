@@ -48,8 +48,11 @@ export interface GateStatus {
 export const TYPECHECK_SECS = 45;
 /** The pool's slots in a shard's VM: test.sh runs one file per two cores (tests/cores.ts), and a VM has 4. */
 export const SLOTS = 2;
-/** e2e's workers in a shard's VM: one per core (e2e.config.ts). */
-export const E2E_SLOTS = 4;
+/**
+ * e2e's workers in a shard's VM (TEST_JOBS): two in its 4 cores. Each worker runs a dev server and a Chromium; four
+ * at once in 4 cores starved each other (in a 4-CPU container: tests timed out, the run took 167 s; with two, 128 s).
+ */
+export const E2E_SLOTS = 2;
 /** An e2e file's seconds when e2e/timings.json doesn't have it yet: this for each test in it. */
 export const E2E_SECS_PER_TEST = 10;
 
@@ -262,10 +265,10 @@ async function run(commit: string, shard: number, of: number, files: string[] | 
   }
   const e2eFiles = e2eItemsHere.map((i) => i.files[0]);
   if (e2eFiles.length) {
-    // CI: every file, each failed test once more, the report written. TEST_JOBS isn't set: one worker per core.
+    // CI: every file, each failed test once more, the report written.
     const report = join(CLONE(), ".e2e/report.json");
     rmSync(report, { force: true });
-    const e = await sh(["bun", "run", "test:e2e", ...e2eFiles], { cwd: CLONE(), timeout: LIMITS.e2e, env: { CI: "1" } });
+    const e = await sh(["bun", "run", "test:e2e", ...e2eFiles], { cwd: CLONE(), timeout: LIMITS.e2e, env: { CI: "1", TEST_JOBS: String(E2E_SLOTS) } });
     let r: E2EReport | null = null;
     try { r = JSON.parse(readFileSync(report, "utf8")) as E2EReport; } catch { note("e2e wrote no report"); }
     results.push(...e2eResults(e2eFiles, r, e.code));
