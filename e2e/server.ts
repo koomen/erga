@@ -26,6 +26,8 @@ export interface ServerOptions {
   processEnv?: Record<string, string>;
   /** Up to how long to wait for it to answer. */
   startMs?: number;
+  /** This port, not a free one: for servers that name each other's address as they start (servers.pair). No second try if it's taken. */
+  port?: number;
 }
 
 export interface Server {
@@ -49,7 +51,7 @@ export interface Server {
 }
 
 /** A port nothing listens on right now (dev.ts refuses a taken one, and we try again). */
-function freePort(): Promise<number> {
+export function freePort(): Promise<number> {
   return new Promise((resolve, reject) => {
     const s = createServer();
     s.unref();
@@ -122,7 +124,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<Server> {
   live.add(server);
   const until = Date.now() + (opts.startMs ?? 90_000);
   for (let attempt = 0; ; attempt++) {
-    port = await freePort();
+    port = opts.port ?? await freePort();
     const root = `http://127.0.0.1:${port}`;
     output = "";
     const p = proc = spawn("bun", [join(ROOT, "dev.ts"), "--port", String(port), "--no-open"], { cwd: ROOT, env, stdio: ["ignore", "pipe", "pipe"], detached: true });
@@ -142,7 +144,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<Server> {
       await new Promise((r) => setTimeout(r, 50));
     }
     // Another server took the port between freePort and dev.ts: once more, on another.
-    if (exited != null && /port \d+ is taken/.test(output) && attempt < 3) continue;
+    if (exited != null && /port \d+ is taken/.test(output) && attempt < 3 && !opts.port) continue;
     server.dispose();
     throw new Error(`the dev server didn't start (${exited != null ? `exit ${exited}` : "timed out"}):\n${output.slice(-4000)}`);
   }
