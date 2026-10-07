@@ -312,7 +312,13 @@ export interface Target {
  * What runs on from one step to the next (and across a restart, deploy/branches.ts keeps it): the database, the version,
  * the documents staging had before, and why the version went up without the factory's containers (if it did).
  */
-export interface Carry { dbId?: string; version?: string; oldDocs?: string[]; noVms?: string }
+export interface Carry { dbId?: string; version?: string; oldDocs?: string[]; noVms?: string; existing?: boolean }
+
+/**
+ * The steps a target with a snapshot (staging) runs while its commit builds (deploy/branches.ts): they need no
+ * release (the snapshot's database step makes the database afresh, with no check of the release's migrations).
+ */
+export const BEFORE_BUILD: readonly StepId[] = ["account", "database", "data"];
 
 export const targetHost = (t: Pick<Target, "app" | "workerName" | "subdomain">) => (t.app.kind == "domain" ? t.app.hostname : `${t.workerName}.${t.subdomain}.workers.dev`);
 export const targetSharedPagesHost = (t: Pick<Target, "workerName" | "subdomain">) => `${t.workerName}-pages.${t.subdomain}.workers.dev`;
@@ -373,6 +379,8 @@ export function guardTarget(t: Target): string | null {
 export async function runPipeline(cf: Cloudflare, release: Release | null, target: Target, opts: {
   report: Report; site?: Fetch; sleep?: (ms: number) => Promise<void>; waitMs?: number;
   from?: StepId; carry?: Carry; checkpoint?: (done: StepId, carry: Carry) => Promise<void> | void;
+  /** Stops after this step (staging's steps before the build: BEFORE_BUILD); the next run starts after it, with the same carry. */
+  until?: StepId;
   /** Stops the run between steps, throwing the signal's reason: a step that has begun always ends first. */
   signal?: AbortSignal;
   /** A machine's deploy (deploy/run.ts): makes sure the registry has the factory's image (building and pushing it with Docker). */
@@ -394,12 +402,14 @@ export async function runPipeline(cf: Cloudflare, release: Release | null, targe
     if (!release) throw new DeployError("This step needs the build, which is gone (the server restarted part way): deploy again.");
     return release;
   };
+  const end = opts.until ? steps.indexOf(opts.until) + 1 : steps.length;
+  if (end < 1) throw new DeployError(`This deploy has no step "${opts.until}".`);
   if (release) carry.version = release.version;
-  let existing = false;
 
   /** The Worker's upload: its modules, and its metadata (with the factory's image when `vms`). */
   const uploadWorker = async (rel: Release, assetsJwt: string, vms: boolean) => {
-    const metadata = workerMetadata(rel, target, { dbId: carry.dbId!, assetsJwt, pagesHost, existing, vms });
+    // Whether the Worker was there: the account step's answer, kept in the carry (it may have run in an earlier call, before the build).
+    const metadata = workerMetadata(rel, target, { dbId: carry.dbId!, assetsJwt, pagesHost, existing: !!carry.existing, vms });
     const form = new FormData();
     form.set("metadata", JSON.stringify(metadata));
     for (const [name, bytes] of Object.entries(rel.modules)) form.append(name, new File([new Uint8Array(bytes)], name, { type: "application/javascript+module" }));
@@ -428,7 +438,7 @@ export async function runPipeline(cf: Cloudflare, release: Release | null, targe
       if (found && !ours(found)) {
         throw new DeployError(`Your account already has a Worker called ${target.workerName} that isn't Erga. So it isn't overwritten, the deploy stops here: delete or rename that Worker, then deploy again.`);
       }
-      existing = !!found;
+      carry.existing = !!found;
       return `${account?.name ?? target.accountId}${found ? `; ${target.workerName} is already there and will be replaced${target.keepSecrets ? "" : " (everyone signs in again)"}` : ""}`;
     },
 
@@ -628,7 +638,7 @@ export async function runPipeline(cf: Cloudflare, release: Release | null, targe
     },
   };
 
-  for (const id of steps.slice(start)) {
+  for (const id of steps.slice(start, end)) {
     signal?.throwIfAborted();
     report(id, "running");
     const detail = await run[id]();

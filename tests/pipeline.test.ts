@@ -15,7 +15,7 @@
 // way, the new version finishing the deploy.
 
 import { beforeAll, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { ATTEMPTS, BranchDeploys, HISTORY_KEEP, RESUME_MS, targetOf, type DeployEnv, type DeployRecord, type Deps, type LogLine, type TargetStatus } from "../deploy/branches";
@@ -23,6 +23,7 @@ import { fromBase64, unpackRelease } from "../deploy/bundle";
 import { packRelease } from "../deploy/builder/build";
 import { handle as builderServer } from "../deploy/builder/server";
 import { containerBuilder, ndjsonLines } from "../deploy/builder/client";
+import { CACHE_KEEP, CHUNK, cachedBuild, releaseKey, storageStore, toolchainKey } from "../deploy/builder/cache";
 import { ALL_STEPS, Cloudflare, guardTarget, loadRelease, runPipeline, type Release, type Target } from "../deploy/cloudflare";
 import { FLEET_ACCOUNT, MOCK_HOOK_SECRET, MOCK_SNAPSHOT_TOKEN, mockBuilder, mockCloudflare, namespaceId, PROD_DB, PROD_DOCS, scriptTag, type MockState } from "../deploy/mock";
 import { memoryStore, snapshotDoor } from "../deploy/snapshot";
@@ -966,5 +967,328 @@ describe("the one-time setup", () => {
     const noCreds = Bun.spawnSync(["bun", join(ROOT, "deploy/run.ts"), "staging", "--yes"], { cwd: ROOT, env: { ...process.env, CLOUDFLARE_API_TOKEN: "", CLOUDFLARE_ACCOUNT_ID: "" } });
     expect(noCreds.exitCode).toBe(1);
     expect(noCreds.stderr.toString()).toContain("Set CLOUDFLARE_ACCOUNT_ID");
+  });
+});
+
+describe("staging's data copy runs while the commit builds", () => {
+  const stagingEnv = () => env({ DEPLOY_TARGET: "staging", CLOUDFLARE_DEPLOY_TOKEN: "mock-staging-deploy-token" });
+  const imported = (mock: ReturnType<typeof mockCloudflare>) => mock.state.calls.some((c) => c.includes("/import"));
+  /** A builder that ends only once the database copy is done (it never would if the copy waited for the build), or fails when told. */
+  const waitsForCopy = (mock: ReturnType<typeof mockCloudflare>, o: { fail?: string; hang?: boolean } = {}) => {
+    const b = {
+      built: [] as string[], stopped: [] as string[], sawCopy: false,
+      async build({ commit }: { commit: string }, log: (l: string) => void, signal?: AbortSignal): Promise<Release> {
+        log("$ bun install --frozen-lockfile");
+        if (o.fail) throw new Error(o.fail);
+        for (let i = 0; i < 400 && (o.hang || !imported(mock)); i++) {
+          if (signal?.aborted) { b.stopped.push(commit); throw signal.reason; }
+          await new Promise((r) => setTimeout(r, 5));
+        }
+        b.sawCopy = imported(mock);
+        b.built.push(commit);
+        return { ...release, version: commit.slice(0, 12) };
+      },
+    };
+    return b;
+  };
+
+  test("the account, database and data steps run during the build; the rest after it, on the copy's database", async () => {
+    const mock = mockCloudflare({ fleet: true });
+    await bootstrap(mock);
+    const builder = waitsForCopy(mock);
+    const server = new Server(mock, builder as never, "erga-staging", stagingEnv());
+    const before = productionOf(mock.state);
+    await server.instance.hook("staging", SHA2);
+    await server.settle();
+    expect(builder.sawCopy).toBe(true);
+    const t = await server.status("staging");
+    expect(t).toMatchObject({ state: "deployed", deployed: SHA2, error: null });
+    expect(t.steps.map((x) => `${x.id}:${x.status}`)).toEqual(["build:done", ...ALL_STEPS.map((s) => `${s.id}:done`)]);
+    // The copy's steps ended before the build did; the migrations started only after it.
+    const lines = (await server.instance.logOf("staging"))!.lines;
+    const at = (re: RegExp) => lines.findIndex((l) => re.test(l.text));
+    expect(at(/^Copy production's database into it: done/)).toBeGreaterThan(-1);
+    expect(at(/^Copy production's database into it: done/)).toBeLessThan(at(/^built release/));
+    expect(at(/^Set up the database's tables…/)).toBeGreaterThan(at(/^built release/));
+    // The Worker went up on the copy's database, with the tombstone (the Worker was there: the account step's answer, carried over).
+    const db = mock.state.databases.find((d) => d.name == "erga-staging")!;
+    expect(bindingsOf(mock.state, "erga-staging").DB.database_id).toBe(db.uuid);
+    expect(db.rows).toEqual(mock.state.databases.find((d) => d.uuid == PROD_DB)!.rows!);
+    expect(mock.state.scripts["erga-staging"].metadata.exports.DocList).toEqual({ type: "durable-object", state: "deleted" });
+    expect(writesToProduction(mock.state)).toEqual([]);
+    expect(productionOf(mock.state)).toBe(before);
+  });
+
+  test("production copies nothing: no step runs before its build ends", async () => {
+    const mock = mockCloudflare({ fleet: true });
+    const inner = mockBuilder(async () => release);
+    const seen: string[] = [];
+    const builder = { ...inner, build: async (o: any, log: any, signal: any) => { const r = await inner.build(o, log, signal); seen.push(...mock.state.calls); return r; } };
+    const server = new Server(mock, builder as never, "erga", env({ DEPLOY_TARGET: "production" }));
+    await server.instance.hook("main", SHA2);
+    await server.settle();
+    expect(await server.status("production")).toMatchObject({ state: "deployed", deployed: SHA2 });
+    expect(seen.filter((c) => !c.includes("/artifacts/"))).toEqual([]); // only the source's read token, for the build
+  });
+
+  test("the build fails: the copy stops after its step, the deploy fails at the build, nothing goes up", async () => {
+    const mock = mockCloudflare({ fleet: true });
+    await bootstrap(mock);
+    const uploads = mock.state.versions["erga-staging"];
+    const server = new Server(mock, waitsForCopy(mock, { fail: "bun install: lockfile changed" }) as never, "erga-staging", stagingEnv());
+    await server.instance.hook("staging", SHA2);
+    await server.settle();
+    const t = await server.status("staging");
+    expect(t).toMatchObject({ state: "failed", error: "Stopped at “Build the commit”. Something went wrong: bun install: lockfile changed" });
+    expect(t.steps.filter((x) => x.status == "failed").map((x) => x.id)).toEqual(["build"]);
+    expect(t.steps.find((x) => x.id == "worker")!.status).toBe("pending");
+    expect(mock.state.versions["erga-staging"]).toBe(uploads);
+    expect(server.version()).toBe(SHA1.slice(0, 12));
+  });
+
+  test("the copy fails: the build is stopped, and the deploy fails at the copy's step; Redeploy finishes it", async () => {
+    const mock = mockCloudflare({ fleet: true });
+    await bootstrap(mock);
+    const builder = waitsForCopy(mock, { hang: true });
+    const server = new Server(mock, builder as never, "erga-staging", stagingEnv());
+    mock.state.failNext = "data";
+    await server.instance.hook("staging", SHA2);
+    await server.settle();
+    const t = await server.status("staging");
+    expect(t.state).toBe("failed");
+    expect(t.error).toContain("Stopped at “Copy production's database into it”.");
+    expect(t.steps.find((x) => x.id == "build")!.status).toBe("cancelled");
+    expect(t.steps.filter((x) => x.status == "failed").map((x) => x.id)).toEqual(["data"]);
+    expect(builder.stopped).toEqual([SHA2]);
+    expect(server.version()).toBe(SHA1.slice(0, 12));
+    const again = new Server(mock, waitsForCopy(mock) as never, "erga-staging", stagingEnv());
+    again.storage = server.storage;
+    again.start();
+    expect((await again.instance.redeploy("staging")).ok).toBe(true);
+    await again.settle();
+    expect(await again.status("staging")).toMatchObject({ state: "deployed", deployed: SHA2 });
+  });
+
+  test("a newer push during the copy cancels both sides; the newer one deploys", async () => {
+    const mock = mockCloudflare({ fleet: true });
+    await bootstrap(mock);
+    const builder = waitsForCopy(mock, { hang: true });
+    const server = new Server(mock, builder as never, "erga-staging", stagingEnv());
+    await server.instance.hook("staging", SHA2, "push by ada");
+    server.scheduled = [];
+    let pushed: Promise<void> | null = null;
+    const watch = setInterval(() => { if (!pushed && mock.state.calls.some((c) => c.startsWith("POST") && c.endsWith("/d1/database"))) pushed = server.instance.hook("staging", SHA3, "push by bo"); }, 0);
+    await server.instance.alarm();
+    clearInterval(watch);
+    await pushed;
+    const mid = await server.status("staging");
+    expect(mid).toMatchObject({ state: "cancelled", commit: SHA2, pending: SHA3 });
+    expect(builder.stopped).toEqual([SHA2]);
+    expect(mid.steps.find((x) => x.id == "build")!.status).toBe("cancelled");
+    expect(mid.steps.find((x) => x.id == "migrations")!.status).toBe("cancelled");
+    expect((await server.instance.logOf("staging"))!.lines.map((l) => l.text)).toContainEqual(expect.stringContaining("its database is the new copy already"));
+    const next = new Server(mock, waitsForCopy(mock) as never, "erga-staging", stagingEnv());
+    next.storage = server.storage;
+    next.start();
+    next.scheduled = [0];
+    await next.settle();
+    expect(await next.status("staging")).toMatchObject({ state: "deployed", deployed: SHA3 });
+    expect(next.version()).toBe(SHA3.slice(0, 12));
+  });
+
+  test("a restart during the copy (before the upload): it runs again from the top by itself", async () => {
+    const mock = mockCloudflare({ fleet: true });
+    await bootstrap(mock);
+    const server = new Server(mock, waitsForCopy(mock) as never, "erga-staging", stagingEnv());
+    const s = server;
+    const watch = setInterval(() => { if (mock.state.calls.some((c) => c.endsWith("/export"))) s.alive.on = false; }, 0);
+    await s.instance.hook("staging", SHA2, "push by ada");
+    s.scheduled = [];
+    await s.instance.alarm().catch(() => {});
+    clearInterval(watch);
+    server.start();
+    await server.instance.alarm();
+    await server.settle();
+    expect(await server.status("staging")).toMatchObject({ state: "deployed", deployed: SHA2 });
+    const history = (await server.instance.historyOf("staging"))!;
+    expect(history.map((r) => r.state)).toEqual(["deployed", "failed"]);
+    expect(history[0].trigger).toBe("push by ada, again after a restart");
+    expect(bindingsOf(mock.state, "erga-staging").DB.database_id).toBe(mock.state.databases.find((d) => d.name == "erga-staging")!.uuid);
+  });
+});
+
+describe("the release cache", () => {
+  const memStore = () => {
+    const m = new Map<string, { line: string; at: number; branch?: string }>();
+    return { m, get: async (k: string) => m.get(k) ?? null, put: async (k: string, line: string, meta: { at: number; branch?: string }) => { m.set(k, { line, ...meta }); } };
+  };
+  const body = (commit: string, branch: string) => JSON.stringify({ source: { cloneUrl: "x", token: "t" }, commit, branch });
+  const src = { cloneUrl: "x", token: "t" };
+
+  test("a commit built for staging is reused by production's build of it: no second build, the same release; a new toolchain builds again", async () => {
+    const bundle = packRelease(join(ROOT, ".site/release"));
+    let builds = 0;
+    const fake = async (o: { log: (l: string) => void }) => { builds++; o.log("$ bun install"); return bundle; };
+    const store = memStore();
+    const toolchain = await toolchainKey({ bun: "1.4.2", builderVersion: "v-1" });
+    const kept: Promise<unknown>[] = [];
+    // The builder Worker, as worker.ts has it: the cache in front of the container's server.
+    const worker = (tc: string | null) => ({ fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const req = new Request(new URL(String(input)), init);
+      if (new URL(req.url).pathname != "/build") return builderServer(req, fake as never);
+      return cachedBuild(await req.text(), { store, toolchain: tc, keep: (p) => kept.push(p), build: (b) => builderServer(new Request(req.url, { method: "POST", body: b }), fake as never) });
+    }) as typeof fetch });
+    const first = await containerBuilder(worker(toolchain)).build({ commit: SHA2, branch: "staging", source: src }, () => {});
+    await Promise.all(kept);
+    expect(builds).toBe(1);
+    expect([...store.m.values()].map((v) => v.branch)).toEqual(["staging"]);
+    const again: string[] = [];
+    const second = await containerBuilder(worker(toolchain)).build({ commit: SHA2, branch: "main", source: src }, (l) => again.push(l));
+    expect(builds).toBe(1);
+    expect(again).toHaveLength(1);
+    expect(again[0]).toMatch(/^release cache: 222222222222 was built at .* \(for staging\) by this builder: that release is reused/);
+    expect(second.version).toBe(first.version);
+    expect(second.worker).toEqual(first.worker);
+    for (const [n, b] of Object.entries(first.modules)) expect(second.modules[n]).toEqual(b);
+    for (const [p, b] of Object.entries(first.assets)) expect(second.assets[p]).toEqual(b);
+
+    // A new toolchain (the builder deployed again: a new image; a new Bun): a miss, and a build.
+    const other = await toolchainKey({ bun: "1.4.2", builderVersion: "v-2" });
+    expect(other).not.toBe(toolchain);
+    expect(await toolchainKey({ bun: "1.5.0", builderVersion: "v-1" })).not.toBe(toolchain);
+    await containerBuilder(worker(other)).build({ commit: SHA2, branch: "main", source: src }, () => {});
+    await Promise.all(kept);
+    expect(builds).toBe(2);
+    expect(store.m.size).toBe(2);
+    // No builder version (so no toolchain), or a short commit id: nothing kept or reused.
+    expect(await toolchainKey({ bun: "1.4.2", builderVersion: undefined })).toBeNull();
+    expect(releaseKey(SHA2.slice(0, 12), toolchain)).toBeNull();
+    expect(releaseKey(SHA2, null)).toBeNull();
+    await containerBuilder(worker(null)).build({ commit: SHA2, branch: "main", source: src }, () => {});
+    await containerBuilder(worker(toolchain)).build({ commit: SHA2.slice(0, 12), branch: "main", source: src }, () => {});
+    await Promise.all(kept);
+    expect(builds).toBe(4);
+    expect(store.m.size).toBe(2);
+  });
+
+  test("only a release the build ended with is kept: not a failed build, a log line, or a cancelled build", async () => {
+    const store = memStore();
+    const toolchain = await toolchainKey({ bun: "1.4.2", builderVersion: "v-1" });
+    const kept: Promise<unknown>[] = [];
+    const o = (build: () => Promise<Response>) => ({ store, toolchain, keep: (p: Promise<unknown>) => kept.push(p), build });
+    await (await cachedBuild(body(SHA3, "staging"), o(async () => new Response(`${JSON.stringify({ log: "x" })}\n${JSON.stringify({ error: "bun install failed" })}\n`)))).text();
+    await (await cachedBuild(body(SHA3, "staging"), o(async () => new Response(`${JSON.stringify({ log: '{"bundle":"no"}' })}\n`)))).text();
+    const cancelled = await cachedBuild(body(SHA3, "staging"), o(async () => new Response(new ReadableStream({ start(c) { c.enqueue(new TextEncoder().encode(`${JSON.stringify({ bundle: "{}" })}\n`)); } }))));
+    const reader = cancelled.body!.getReader();
+    await reader.read();
+    await reader.cancel();
+    await Promise.all(kept);
+    expect(store.m.size).toBe(0);
+    // A refused build (409, 503) is passed on as it is.
+    expect((await cachedBuild(body(SHA3, "staging"), o(async () => Response.json({ error: "busy" }, { status: 409 })))).status).toBe(409);
+  });
+
+  test("the same kept release on two targets: each gets its own settings, names, database and secrets at the upload", async () => {
+    const store = memStore();
+    const toolchain = await toolchainKey({ bun: "1.4.2", builderVersion: "v-1" });
+    const bundle = new TextDecoder().decode(packRelease(join(ROOT, ".site/release")));
+    const kept: Promise<unknown>[] = [];
+    await (await cachedBuild(body(SHA2, "staging"), { store, toolchain, keep: (p) => kept.push(p), build: async () => new Response(`${JSON.stringify({ bundle })}\n`) })).text();
+    await Promise.all(kept);
+    const hit = await cachedBuild(body(SHA2, "main"), { store, toolchain, build: async () => { throw new Error("no build on a hit"); } });
+    const line = (await hit.text()).trim().split("\n").map((l) => JSON.parse(l)).find((m) => m.bundle)!;
+    expect(line.bundle).toBe(bundle);
+    const reused = await unpackRelease(line.bundle, SHA2.slice(0, 12));
+    const mock = mockCloudflare({ fleet: true });
+    await deployTo(staging({ secrets: stagingSecrets }), mock, reused);
+    await deployTo(targetOf(TARGETS.production, env()), mock, await unpackRelease(line.bundle, SHA2.slice(0, 12)));
+    const s = bindingsOf(mock.state, "erga-staging"), p = bindingsOf(mock.state, "erga");
+    expect([s.DEPLOY_TARGET.text, p.DEPLOY_TARGET.text]).toEqual(["staging", "production"]);
+    expect([s.SNAPSHOT_IMPORT.text, p.SNAPSHOT_IMPORT.text]).toEqual(["1", ""]);
+    expect([s.PAGES_DOMAIN.text, p.PAGES_DOMAIN.text]).toEqual(["erga-pages-staging.dev", "erga-pages.dev"]);
+    expect(p.DB.database_id).toBe(PROD_DB);
+    expect(s.DB.database_id).not.toBe(PROD_DB);
+    expect(s.GITHUB_CLIENT_ID.text).toBe(TARGETS.staging.vars.GITHUB_CLIENT_ID);
+    expect(p.GITHUB_CLIENT_ID.text).toBe(TARGETS.production.vars.GITHUB_CLIENT_ID);
+    expect(mock.state.secrets["erga-staging"].SESSION_SECRET).not.toBe(mock.state.secrets.erga.SESSION_SECRET);
+    expect([s.ERGA_VERSION.text, p.ERGA_VERSION.text]).toEqual([SHA2.slice(0, 12), SHA2.slice(0, 12)]);
+    expect(mock.state.domains.filter((d) => d.service == "erga-staging").map((d) => d.hostname)).toEqual(["staging.erga.dev"]);
+  });
+
+  test("kept in a Durable Object's storage in parts, the newest CACHE_KEEP only; a release with a part missing is a miss", async () => {
+    const m = new Map<string, unknown>();
+    const store = storageStore({
+      get: (async (k: string | string[]) => (Array.isArray(k) ? new Map(k.filter((x) => m.has(x)).map((x) => [x, m.get(x)])) : m.get(k))) as never,
+      put: async (e: Record<string, unknown>) => { for (const [k, v] of Object.entries(e)) m.set(k, v); },
+      delete: async (ks: string[]) => ks.filter((k) => m.delete(k)).length,
+    });
+    const big = "x".repeat(CHUNK * 2 + 10);
+    await store.put("a", big, { at: 1, branch: "staging" });
+    expect([...m.keys()].filter((k) => k.startsWith("release:a:"))).toHaveLength(3);
+    expect(await store.get("a")).toEqual({ line: big, at: 1, branch: "staging" });
+    expect(await store.get("b")).toBeNull();
+    for (let i = 0; i < CACHE_KEEP; i++) await store.put(`k${i}`, `line ${i}`, { at: 2 + i });
+    expect(await store.get("a")).toBeNull();
+    expect([...m.keys()].some((k) => k.startsWith("release:a"))).toBe(false);
+    expect(await store.get("k0")).toMatchObject({ line: "line 0" });
+    m.delete("release:k1:0");
+    expect(await store.get("k1")).toBeNull();
+  });
+
+  test("the Bun in the cache's key is the image's, and the builder knows its own version", () => {
+    const docker = readFileSync(join(ROOT, "deploy/builder/Dockerfile"), "utf8").match(/^FROM oven\/bun:([\d.]+)/m)?.[1];
+    const worker = readFileSync(join(ROOT, "deploy/builder/worker.ts"), "utf8").match(/BUILDER_BUN = "([\d.]+)"/)?.[1];
+    expect(worker).toBe(docker!);
+    expect(readFileSync(join(ROOT, "deploy/builder/wrangler.jsonc"), "utf8")).toContain('"version_metadata": { "binding": "CF_VERSION_METADATA" }');
+  });
+});
+
+describe("the builder fetches only the commit", () => {
+  const sh = (cwd: string, ...cmd: string[]) => {
+    const r = Bun.spawnSync(cmd, { cwd, env: { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" } });
+    if (r.exitCode != 0) throw new Error(`${cmd.join(" ")}: ${r.stderr}`);
+    return r.stdout.toString().trim();
+  };
+
+  test("depth 1: by its id, else the branch's head; the branch's history only when the commit is further back", async () => {
+    const { buildCommit, spawnRunner } = await import("../deploy/builder/build");
+    const tmp = mkdtempSync(join(tmpdir(), "erga-fetch-"));
+    try {
+      const repo = join(tmp, "repo");
+      sh(tmp, "git", "init", "-q", "-b", "staging", repo);
+      const commits: string[] = [];
+      for (const n of [1, 2, 3]) { writeFileSync(join(repo, "f.txt"), `${n}\n`); sh(repo, "git", "add", "."); sh(repo, "git", "commit", "-qm", `c${n}`); commits.push(sh(repo, "git", "rev-parse", "HEAD")); }
+      const url = `file://${repo}`;
+      const build = async (commit: string, o: { byId?: boolean } = {}) => {
+        const dir = join(tmp, `w-${commit.slice(0, 7)}-${o.byId === false ? "branch" : "id"}`), cmds: string[] = [], log: string[] = [];
+        // Real git (a server that won't fetch by id refuses it here); the build's other steps are stubbed.
+        const run = async (cmd: string[], x: Parameters<typeof spawnRunner>[1]) => {
+          cmds.push(cmd.join(" "));
+          if (cmd[0] == "git") {
+            if (o.byId === false && cmd[1] == "fetch" && cmd.at(-1) == commit) throw new Error("not our ref");
+            return spawnRunner(cmd, x);
+          }
+          if (cmd.join(" ") == "bun deploy/release.ts") { mkdirSync(join(dir, ".site/release"), { recursive: true }); writeFileSync(join(dir, ".site/release/release.json"), "{}"); }
+        };
+        await buildCommit({ source: { cloneUrl: url }, commit, branch: "staging", dir, log: (l) => log.push(l), run });
+        return { dir, cmds, log, depth: Number(sh(dir, "git", "rev-list", "--count", "HEAD")), head: sh(dir, "git", "rev-parse", "HEAD") };
+      };
+      // The head, by its id: one commit of history.
+      const head = await build(commits[2]);
+      expect(head.head).toBe(commits[2]);
+      expect(head.depth).toBe(1);
+      expect(head.cmds.filter((c) => c.startsWith("git fetch"))).toEqual([`git fetch -q --no-tags --depth 1 ${url} ${commits[2]}`]);
+      expect(sh(head.dir, "git", "rev-parse", "--is-shallow-repository")).toBe("true");
+      expect(head.cmds.slice(-3)).toEqual(["bun install --frozen-lockfile", "./site.sh", "bun deploy/release.ts"]);
+      // A server that won't fetch by id: the branch's head, depth 1.
+      const byBranch = await build(commits[2], { byId: false });
+      expect(byBranch.head).toBe(commits[2]);
+      expect(byBranch.depth).toBe(1);
+      expect(byBranch.log).toContain("the source doesn't serve a commit by its id: fetching staging's head");
+      // The branch moved on since: its history, and the commit checked out.
+      const older = await build(commits[0], { byId: false });
+      expect(older.head).toBe(commits[0]);
+      expect(older.log).toContain(`staging has moved on from ${commits[0].slice(0, 12)}: fetching its history`);
+    } finally { rmSync(tmp, { recursive: true, force: true }); }
   });
 });

@@ -32,8 +32,16 @@
 // A deploy that's running when a newer one for its target comes is
 // cancelled: it stops before its next step (its build is stopped too), never
 // half way through one, and the newer one starts as soon as it has. Stopped
-// before the Worker's upload, nothing on the target changed: it stays on its
-// last good version. Stopped after, the newer deploy replaces what went up.
+// before the Worker's upload, the target's Worker didn't change: it stays on
+// its last good version (but staging's database: its copy of production's is
+// made while the commit builds, so a deploy stopped, or a build failed, after
+// that leaves staging's old version on a deleted database until a deploy
+// works). Stopped after, the newer deploy replaces what went up.
+//
+// Production builds the same commits staging built (main moves only to a
+// staging commit): the builder keeps each release it builds, by commit and
+// toolchain, and answers production's build of it from there
+// (deploy/builder/cache.ts, which says why that's safe).
 // A deploy the server's restart interrupted is not carried on if a newer one
 // waits: it's cancelled too, and the newer one runs.
 //
@@ -44,7 +52,7 @@
 // HISTORY_KEEP of each target, in the same storage (the Pipeline Durable
 // Object's).
 
-import { ALL_STEPS, Cloudflare, DeployError, runPipeline, stepsFor, workerVersion, type Carry, type Fetch, type Release, type StepId, type Target } from "./cloudflare";
+import { ALL_STEPS, BEFORE_BUILD, Cloudflare, DeployError, runPipeline, stepsFor, workerVersion, type Carry, type Fetch, type Release, type StepId, type Target } from "./cloudflare";
 import { sourceFor, type Source } from "./source";
 import { imageRef } from "./containers";
 import { BUILDER, FACTORY, isTargetName, PRODUCTION, SOURCE, TARGETS, targetNames, type TargetName, type TargetSpec } from "./targets";
@@ -165,8 +173,14 @@ export class Superseded extends Error {
 }
 
 const LOG_LINES = 200;
-/** How long after the Worker's upload the new version is woken to finish a deploy its upload interrupted. */
-export const RESUME_MS = 20_000;
+/**
+ * How long after the Worker's upload the new version is woken to finish a deploy its upload interrupted. Nothing
+ * needs it long (it was 20 s from the first version, with no reason given): an alarm that comes while the old
+ * version still runs the deploy (the upload not done yet) is put off by this much again (alarm(), `running`), and
+ * the new version checks the upload went through (resume: the Worker's ERGA_VERSION) and waits for the release to
+ * answer (the live step). Shorter: the deploy carries on sooner after its restart.
+ */
+export const RESUME_MS = 5_000;
 /**
  * How many times a deploy runs, in all, when restarts of the server stop it
  * before its upload (Cloudflare resets a Durable Object now and then: a new
@@ -561,16 +575,43 @@ export class BranchDeploys {
     try {
       const cf = new Cloudflare(this.deps.env.CLOUDFLARE_DEPLOY_TOKEN!.trim(), this.deps.net);
       const accountId = this.deps.env.CLOUDFLARE_ACCOUNT_ID!.trim();
-      const source = (await this.deps.source?.(commit)) ?? await sourceFor(cf, accountId);
+      // Staging's copy of production's data (the account, its database made afresh, production's database copied in)
+      // runs while the commit builds: those steps need no release. The rest waits for the build.
+      const early = targetOf(spec, this.deps.env).snapshot ? BEFORE_BUILD : [];
+      // Either side failing stops the other (before its next step, or its build's commands), and the deploy fails
+      // at the step that failed; a cancel (abort) stops both, and the deploy is cancelled.
+      const both = new AbortController();
+      const stopBoth = () => both.abort(abort.signal.reason);
+      abort.signal.addEventListener("abort", stopBoth, { once: true });
+      let failure: { e: unknown; step: StepStatus["id"] | null } | null = null;
+      const fail = (stepOf: () => StepStatus["id"] | null) => (e: unknown): never => {
+        if (!failure && !both.signal.aborted) { failure = { e, step: stepOf() }; both.abort(e); }
+        throw e;
+      };
+      const building = (async () => {
+        const source = (await this.deps.source?.(commit)) ?? await sourceFor(cf, accountId);
+        both.signal.throwIfAborted();
+        return this.deps.builder!.build({ commit, branch: spec.branch, source }, (l) => { this.line(s, l, "build"); void this.save(s); }, both.signal);
+      })().catch(fail(() => "build"));
+      const copying = early.length
+        ? this.pipeline(s, null, null, both.signal, early[early.length - 1]).catch(fail(() => s.status.steps.find((x) => x.id != "build" && x.status == "running")?.id ?? null))
+        : Promise.resolve();
+      const [built] = await Promise.allSettled([building, copying]);
+      abort.signal.removeEventListener("abort", stopBoth);
       abort.signal.throwIfAborted();
-      const release = await this.deps.builder!.build({ commit, branch: spec.branch, source }, (l) => { this.line(s, l, "build"); void this.save(s); }, abort.signal);
-      abort.signal.throwIfAborted();
+      if (failure) {
+        const { e, step: at } = failure as { e: unknown; step: StepStatus["id"] | null };
+        // The side that was stopped because the other failed: cancelled, so the deploy fails at the step that failed.
+        for (const x of s.status.steps) if (x.status == "running" && x.id != at) x.status = "cancelled";
+        throw e;
+      }
+      const release = (built as PromiseFulfilledResult<Release>).value;
       step(s, "build", "done", `release ${release.version}`);
       this.line(s, `built release ${release.version}`, "build");
       s.status.state = "deploying";
       s.status.at = this.now();
       await this.save(s);
-      await this.pipeline(s, release, null, abort.signal);
+      await this.pipeline(s, release, s.run!.cursor, abort.signal);
     } catch (e) {
       if (abort.signal.aborted) await this.cancelled(s, abort.signal.reason);
       else await this.failed(s, e);
@@ -632,14 +673,17 @@ export class BranchDeploys {
     }
   }
 
-  /** The pipeline on this server's target, from `from` (null: the top), keeping each step's end so a restart can carry on. */
-  private async pipeline(s: Stored, release: Release | null, from: StepId | null, signal?: AbortSignal): Promise<void> {
+  /**
+   * The pipeline on this server's target, from `from` (null: the top), keeping each step's end so a restart can carry
+   * on. With `until`, only up to that step (staging's data copy, while the build runs), and the deploy isn't over.
+   */
+  private async pipeline(s: Stored, release: Release | null, from: StepId | null, signal?: AbortSignal, until?: StepId): Promise<void> {
     const target = targetOf(TARGETS[s.status.name], this.deps.env);
     const run = s.run!;
     const steps = stepsFor(target).map((x) => x.id);
     await runPipeline(new Cloudflare(this.deps.env.CLOUDFLARE_DEPLOY_TOKEN!.trim(), this.deps.net), release, target, {
       site: this.deps.net, sleep: this.deps.sleep, waitMs: this.deps.waitMs, signal,
-      from: from ?? undefined, carry: run.carry,
+      from: from ?? undefined, until, carry: run.carry,
       report: (id, status, detail) => {
         step(s, id, status, detail);
         this.line(s, `${ALL_STEPS.find((x) => x.id == id)?.title}${status == "running" ? "…" : `: ${status}${detail ? `, ${detail}` : ""}`}`, id);
@@ -654,6 +698,7 @@ export class BranchDeploys {
         await this.save(s);
       },
     });
+    if (until) return;
     s.status = { ...s.status, state: "deployed", at: this.now(), error: null, deployed: run.commit, liveDeploy: run.deployId };
     this.line(s, `deployed ${run.commit.slice(0, 12)}: https://${TARGETS[s.status.name].host}`);
     s.run = null;
@@ -687,7 +732,7 @@ export class BranchDeploys {
     s.oldDocs = run?.carry.oldDocs ?? s.oldDocs;
     this.line(s, `cancelled: ${by ? `${by.commit.slice(0, 12)} is newer` : "stopped"}. ${uploaded
       ? "This version was already up; the next deploy replaces it."
-      : `Nothing went up: ${host} stays on ${s.status.deployed ? s.status.deployed.slice(0, 12) : "what it had"}.`}`);
+      : `Nothing went up: ${host} stays on ${s.status.deployed ? s.status.deployed.slice(0, 12) : "what it had"}${run?.carry.dbId && TARGETS[s.status.name].snapshotFrom ? " (its database is the new copy already: the next deploy puts a version on it)" : ""}.`}`);
     if (run) {
       const list = await this.records(s.status.name);
       const rec = list.find((r) => r.id == run.deployId);
