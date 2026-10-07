@@ -50,6 +50,31 @@ export interface FactoryOps {
   setDeps(id: number, body: Record<string, unknown>): Promise<{ ok: boolean; error?: string }>;
   revise(id: number, instructions: string): Promise<{ ok: boolean; error?: string }>;
   shot(file: string): Promise<Uint8Array | null>;
+  /** The board's buttons: Start (a queued task), Merge, Discard and Restart, as the admin. */
+  start(id: number): Promise<{ ok: boolean; error?: string }>;
+  merge(id: number): Promise<{ ok: boolean; error?: string }>;
+  discard(id: number): Promise<{ ok: boolean; error?: string }>;
+  restart(id: number): Promise<{ ok: boolean; error?: string }>;
+  /** Share with agent: the factory tokens (never a secret), and revoking one. */
+  tokens(): Promise<object[]>;
+  revokeToken(id: string): Promise<boolean>;
+  /** The Claude plan's sign-in (a token is pasted only on /admin/api-keys): forgets it. */
+  signOutClaude(): Promise<void>;
+}
+
+/** What the dashboard tools do, as the admin: the source and deploys dashboard on /admin/factory, admin keys and agent tokens. */
+export interface DashboardOps {
+  branches(): Promise<object>;
+  /** main to staging's head (or to that staging commit): production deploys it. */
+  release(commit?: string): Promise<object>;
+  mirror(): Promise<object>;
+  deploys(history: number): Promise<object>;
+  deployLog(target: string, deploy?: string): Promise<object | null>;
+  redeploy(target: string): Promise<object>;
+  adminKeys(): Promise<object[]>;
+  revokeAdminKey(id: string): Promise<object>;
+  agentTokens(): Promise<object[]>;
+  revokeAgentToken(id: string): Promise<boolean>;
 }
 
 const STATUS: Record<string, string> = { queued: "queued", working: "working", complete: "ready to merge", merging: "merging", "needs agent": "needs agent", merged: "merged", failed: "failed", discarded: "discarded" };
@@ -135,6 +160,87 @@ export function factoryTools(ops: FactoryOps, guard: () => Promise<void>): Agent
         const r = await ops.revise(Number(a.id), String(a.instructions ?? ""));
         if (!r.ok) throw new Error(r.error ?? "refused");
         return text(brief((await ops.task(Number(a.id)))!));
+      }),
+    tool("start_task", "Start a task", "Starts a queued task now, as the board's Start button does: its VM starts and Claude Code does the work. Refused while a startAfter task isn't merged. The task's log says who started it.",
+      Type.Object({ id: Type.Integer({ description: "The task's id" }) }),
+      async (a) => button(ops.start, a.id, "Started")),
+    tool("merge_task", "Merge a task", "Merges a task that is ready to merge into staging, as the board's Merge button does: staging merged into its branch, then its branch into staging (one merge at a time); then the branch is deleted, and staging deploys itself to staging's server. Refused while a dependency isn't merged. The merge goes on after the answer: get_task follows it (merging, then merged, or needs agent). The task's log and the change log (/admin/changes) say who merged it.",
+      Type.Object({ id: Type.Integer({ description: "The task's id" }) }),
+      async (a) => button(ops.merge, a.id, "Merge requested for")),
+    tool("discard_task", "Discard a task", "Discards a task, as the board's Discard button does: its branch is deleted and its VM stopped, and its work is lost. Not for a task that is merging, merged or discarded. The task's log says who discarded it.",
+      Type.Object({ id: Type.Integer({ description: "The task's id" }) }),
+      async (a) => button(ops.discard, a.id, "Discarded")),
+    tool("restart_task", "Restart a task", "Restarts a task that isn't merged or discarded (working, merging, needs agent, ready to merge, failed, stuck), as the board's Restart button does: its VM saves the work (commits and pushes it) and stops, then a fresh VM starts Claude Code with the task's prompt and every earlier instruction. The task's log says who restarted it.",
+      Type.Object({ id: Type.Integer({ description: "The task's id" }) }),
+      async (a) => button(ops.restart, a.id, "Restarted")),
+    tool("list_factory_tokens", "Read the shared tokens", "The factory tokens made with Share with agent (for outside agents), of the last week, newest first: id, whose, label, when made, when it ends, when last used, and if revoked, when and by whom. Never a token itself: a new one is made only on the page, where it shows once.",
+      Type.Object({}), async () => text((await ops.tokens()).map(times))),
+    tool("revoke_factory_token", "Revoke a shared token", "Revokes a factory token (list_factory_tokens lists them), as Share with agent's Revoke does: the outside agent that holds it can't reach the factory any more.",
+      Type.Object({ id: Type.String({ description: "The token's id" }) }),
+      async (a) => {
+        if (!(await ops.revokeToken(String(a.id ?? "")))) throw new Error(`There's no working factory token "${a.id}". list_factory_tokens lists them.`);
+        return text({ revoked: a.id, tokens: (await ops.tokens()).map(times) });
+      }),
+    tool("sign_out_claude", "Sign the factory out of Claude", "Forgets the Claude plan's token that the factory's VMs use, as Sign out does on /admin/api-keys: tasks then run with a scripted stand-in until someone signs in again. Signing in needs a token, which is pasted only on /admin/api-keys, never in this conversation.",
+      Type.Object({}), async () => { await ops.signOutClaude(); return text("The factory is signed out of the Claude plan. To sign in again, paste a token (claude setup-token) on /admin/api-keys."); }),
+  ];
+
+  async function button(run: (id: number) => Promise<{ ok: boolean; error?: string }>, id: unknown, done: string) {
+    const t = await need(id);
+    const r = await run(t.id);
+    if (!r.ok) throw new Error(r.error ?? "refused");
+    return text({ done: `${done} task #${t.id}: ${t.title}`, task: brief((await ops.task(t.id))!) });
+  }
+}
+
+/** Times (ms since the epoch) as ISO strings, for the model. */
+const times = (o: object) => Object.fromEntries(Object.entries(o).map(([k, v]) => [k, typeof v == "number" && v > 1e12 ? new Date(v).toISOString() : v]));
+
+/**
+ * The dashboard tools: the source and deploys dashboard on /admin/factory (staging and main, the mirror, every
+ * target's deploys and their logs, a redeploy, main moved to staging: production), the admins' SSH keys
+ * (/admin/keys: read and revoke; a key is added only there, signed with it) and the admin's own agent tokens
+ * (/settings: read and revoke; made, and an agent's request approved, only there). They act as the admin: the
+ * change log, the keys' log and the deploys' triggers name them. `guard` checks first, as for the other tools.
+ */
+export function dashboardTools(ops: DashboardOps, guard: () => Promise<void>): AgentTool[] {
+  const tool = (name: string, label: string, description: string, parameters: ReturnType<typeof Type.Object>, run: (a: Record<string, unknown>) => Promise<unknown>): AgentTool => ({
+    name, label, description, parameters,
+    execute: async (_id, params) => { await guard(); return text(await run(params as Record<string, unknown>)); },
+  });
+  const TARGET = Type.String({ description: "The deploy target: staging or production (list_deploys lists them)" });
+  return [
+    tool("list_branches", "Read staging and main", "The source dashboard's branches: staging and main, each one's head and its latest commits (staging also lists the commits main doesn't have yet: what deploy_production releases), and the GitHub mirror's status.",
+      Type.Object({}), () => ops.branches()),
+    tool("deploy_production", "Deploy production", "Moves main forward to staging's head (or to an earlier staging commit), as the dashboard's merge to main does: production deploys it. main only follows staging. The change log (/admin/changes) says who did it, with the commits it released. Use it only when the admin asks in this conversation to release or deploy production.",
+      Type.Object({ commit: Type.Optional(Type.String({ description: "A staging commit's sha, to release up to it only (default: staging's head)" })) }),
+      (a) => ops.release(typeof a.commit == "string" && a.commit.trim() ? a.commit.trim() : undefined)),
+    tool("sync_mirror", "Update the GitHub mirror", "Brings the GitHub mirror up to date now, as the dashboard's sync button does (it also follows by itself). Answers the mirror's status.",
+      Type.Object({}), () => ops.mirror()),
+    tool("list_deploys", "Read the deploys", "Every deploy target (staging, production): what it runs, its deploy now (state, commit, steps) and its last deploys, newest first (history: how many, default 5, at most 50).",
+      Type.Object({ history: Type.Optional(Type.Integer({ description: "How many past deploys of each target (default 5)" })) }),
+      (a) => ops.deploys(Math.max(0, Math.min(50, a.history == null ? 5 : Number(a.history) || 0)))),
+    tool("deploy_log", "Read a deploy's log", "A deploy's log, as the dashboard shows it: the target's latest deploy, or the one named. The last 200 lines unless you ask for more (up to 1000).",
+      Type.Object({ target: TARGET, deploy: Type.Optional(Type.String({ description: "The deploy's id (list_deploys); default: the latest" })), lines: Type.Optional(Type.Integer({ description: "How many lines, the last (default 200)" })) }),
+      async (a) => {
+        const log = await ops.deployLog(String(a.target ?? ""), typeof a.deploy == "string" && a.deploy ? a.deploy : undefined) as { lines?: unknown[] } | null;
+        if (!log) throw new Error(`No such deploy: ${a.target}${a.deploy ? ` ${a.deploy}` : ""}. list_deploys lists them.`);
+        const n = Math.max(1, Math.min(1000, Number(a.lines) || 200)), lines = log.lines ?? [];
+        return { ...log, lines: lines.slice(-n), ...(lines.length > n ? { cut: `the last ${n} of ${lines.length} lines` } : {}) };
+      }),
+    tool("redeploy", "Redeploy a target", "Deploys a target's branch head again now (staging: staging; production: main), as the dashboard's Redeploy does. The deploy says who asked for it.",
+      Type.Object({ target: TARGET }), (a) => ops.redeploy(String(a.target ?? ""))),
+    tool("list_admin_keys", "Read the admin keys", "The admins' SSH keys (/admin/keys): yours and every other admin's, with name, fingerprint, when added and last used, and if revoked, when and by whom. A key is added only on /admin/keys, by its admin, signed with it.",
+      Type.Object({}), () => ops.adminKeys()),
+    tool("revoke_admin_key", "Revoke an admin key", "Revokes an admin's SSH key (list_admin_keys lists them; yours or another admin's), as Revoke on /admin/keys does: every unlock made with it ends at once. If your own admin access was unlocked with it, this conversation's admin access ends too. The keys' log says who revoked it.",
+      Type.Object({ id: Type.String({ description: "The key's id" }) }), (a) => ops.revokeAdminKey(String(a.id ?? ""))),
+    tool("list_agent_tokens", "Read your agent tokens", "Your own agent tokens (/settings): id, label, kind (share: the editor's share button's), when made and last used. Never a token itself: a token is made, or an agent's request for one approved, only on /settings.",
+      Type.Object({}), async () => (await ops.agentTokens()).map(times)),
+    tool("revoke_agent_token", "Revoke an agent token", "Revokes one of your own agent tokens (list_agent_tokens lists them), as Revoke on /settings does: the agent that holds it can't act as you any more.",
+      Type.Object({ id: Type.String({ description: "The token's id" }) }),
+      async (a) => {
+        if (!(await ops.revokeAgentToken(String(a.id ?? "")))) throw new Error(`You have no token "${a.id}". list_agent_tokens lists them.`);
+        return { revoked: a.id };
       }),
   ];
 }
