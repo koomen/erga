@@ -2,7 +2,7 @@
 // a fixture, drives headless Chrome with real clicks and keys, and reads the
 // file back from disk after each edit. Runs the HTML and the Markdown
 // fixture. (Two people at once: tests/suite, `bun tests/suite/run.ts --suite browser`.)
-//   bun tests/page.ts [html|select|md|format|view|agent|reload|enter|indent] [--keep]   (--keep leaves the host running and prints its URL)
+//   bun tests/page.ts [html|select|md|format|view|agent|reload|enter|join|indent] [--keep]   (--keep leaves the host running and prints its URL)
 
 import { Browser, MOD, ROOT, SHOTS } from "./cdp";
 import { startHost } from "./host";
@@ -14,7 +14,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { testJobs } from "./cores";
 
 const keep = process.argv.includes("--keep");
-const only = process.argv.find((a) => a == "html" || a == "select" || a == "md" || a == "agent" || a == "format" || a == "view" || a == "reload" || a == "enter" || a == "indent");
+const only = process.argv.find((a) => a == "html" || a == "select" || a == "md" || a == "agent" || a == "format" || a == "view" || a == "reload" || a == "enter" || a == "join" || a == "indent");
 
 // Scenarios run at once, each in its own host and tab; each one's lines are
 // collected and printed together when it finishes.
@@ -997,12 +997,12 @@ async function htmlIndentScenario(browser: Browser) {
   await start("li li:last-child");
   await press("Tab");
   check("Tab again: three levels", flat(await list()) == "<ul><li><p>Faster builds</p><ul><li><p>A <strong>new</strong> editor</p><ul><li>Fewer bugs</li></ul></li></ul></li></ul>", await list());
-  check("on the page too", (await s.count("li li li")) == 1 && await editable());
+  check("on the page too", await until(async () => (await s.count("li li li")) == 1 && await editable()));
   await p.key("z", UNDO); await Bun.sleep(150);
   check("undo takes the last indent back", flat(await list()) == "<ul><li><p>Faster builds</p><ul><li>A <strong>new</strong> editor</li><li>Fewer bugs</li></ul></li></ul>", await list());
   if (process.platform == "darwin") await p.key("z", MOD.Meta | MOD.Shift); else await p.key("y", MOD.Ctrl);
   await Bun.sleep(150);
-  check("redo puts it back", (await s.count("li li li")) == 1 && await editable(), await list());
+  check("redo puts it back", await until(async () => (await s.count("li li li")) == 1 && await editable()), await list());
   await p.screenshot(`${SHOTS}/indent-html-list.png`);
   check("no page errors", p.errors.length == 0, p.errors.join("\n"));
   await s.close();
@@ -1092,6 +1092,97 @@ async function enterScenario(browser: Browser) {
   await s.close();
 }
 
+/** Backspace at the start of a block joins it to the one before: the block goes, its content moves, the caret stays at the join. */
+async function joinScenario(browser: Browser) {
+  say("\nBackspace joins a block to the one before");
+  const s = await session(browser, "join", "index.html");
+  const { p, F } = s;
+  const mod = process.platform == "darwin" ? MOD.Meta : MOD.Ctrl;
+  const original = await s.source();
+  const main = async () => (await s.source()).match(/<main>[\s\S]*<\/main>/)?.[0];
+  const caret = () => p.eval<number>("ergaPage.state.selection.main.head");
+  /** Puts the caret at the start of an element's text and presses Backspace. */
+  const backspaceAt = async (sel: string) => {
+    await s.clickEnd(sel);
+    await p.key("Home");
+    await Bun.sleep(60);
+    await p.key("Backspace");
+    await Bun.sleep(100);
+  };
+  // [what, the block, the source after the join with "|" at the caret, the block before, its text after]
+  const cases: [string, string, string, string, string][] = [
+    ["a paragraph into a paragraph", "#beta", `<p id="alpha">Press Backspace at the <em>start</em>|of a paragraph to join it.</p>\n    <h2`, "#alpha", "Press Backspace at the startof a paragraph to join it."],
+    ["a heading into a paragraph, which stays a paragraph", "#head", `<p id="beta">of a paragraph to join it.|A heading</p>\n    <p id="gamma">`, "#beta", "of a paragraph to join it.A heading"],
+    ["a paragraph into a heading, which stays a heading", "#gamma", `<h2 id="head">A heading|keeps its own type.</h2>\n    <ul>`, "#head", "A headingkeeps its own type."],
+    ["the first list item into the paragraph before the list", "#one", `<p id="gamma">keeps its own type.|Item one</p>\n    <ul>\n      <li id="two">`, "#gamma", "keeps its own type.Item one"],
+    ["a list item into the one before", "#two", `<li id="one">Item one|Item two</li>\n    </ul>`, "#one", "Item oneItem two"],
+    ["a paragraph after a list into its last item", "#after", `<li id="two">Item two|after the list.</li>\n    </ul>\n    <blockquote>`, "#two", "Item twoafter the list."],
+    ["a quote's only paragraph, and the quote with it", "#quoted", `<p id="after">after the list.|A quote</p>\n    <figure>`, "#after", "after the list.A quote"],
+  ];
+  for (const [what, sel, joined, prevSel, prevText] of cases) {
+    const plain = joined.replace("|", "");
+    await backspaceAt(sel);
+    const src = await s.source();
+    check(`${what}: joins`, src.includes(plain) && !src.includes(`id="${sel.slice(1)}"`), await main());
+    check(`${what}: the page shows it`, await until(async () => (await s.count(sel)) == 0 && (await s.textOf(prevSel)) == prevText), await s.textOf(prevSel).catch(() => "?"));
+    const want = src.indexOf(plain) + joined.indexOf("|");
+    check(`${what}: the caret is at the join`, (await caret()) == want && await p.frame<boolean>(`${F}.activeElement.matches(${JSON.stringify(prevSel)})`), `${await caret()}, not ${want}`);
+    await p.key("z", mod);
+    check(`${what}: one undo brings back both blocks`, await until(async () => (await s.source()) == original && (await s.count(sel)) == 1), await main());
+  }
+  check("a quote with nothing left goes", !/<blockquote>/.test((await (async () => { await backspaceAt("#quoted"); return s.source(); })())), await main());
+  await p.key("z", mod);
+  await until(async () => (await s.source()) == original);
+
+  // Both items into the paragraph: the empty list goes too. Typing goes in at the join.
+  await backspaceAt("#two");
+  await p.key("Home");
+  await p.key("Backspace");
+  await Bun.sleep(100);
+  await p.type("+");
+  await Bun.sleep(120);
+  check("a list with nothing left goes, and typing goes in at the join", (await s.source()).includes(`<p id="gamma">keeps its own type.+Item oneItem two</p>\n    <p id="after">`), await main());
+  check("saved to disk", await waitFor(() => s.disk().includes("type.+Item oneItem two</p>"), 3000));
+  await p.key("z", mod); await p.key("z", mod); await p.key("z", mod);
+  check("and undo brings the list back", await until(async () => (await s.source()) == original && (await s.count("li")) == 2), await main());
+
+  await backspaceAt("h1");
+  check("in the first block, Backspace does nothing", (await s.source()) == original && (await caret()) == original.indexOf("Joining blocks</h1>"), await main());
+  await backspaceAt("#cap");
+  check("with a picture between, Backspace does nothing", (await s.source()) == original, await main());
+
+  // Delete at the end of a block joins the next one to it the same way.
+  await s.clickEnd("#head");
+  await p.key("Delete");
+  await Bun.sleep(100);
+  check("Delete at the end joins the next block", (await s.source()).includes(`<h2 id="head">A headingkeeps its own type.</h2>`), await main());
+  check("no page errors", p.errors.length == 0, p.errors.join("\n"));
+  await s.close();
+
+  // Markdown: the marks between the blocks go (a heading's, a list item's).
+  const m = await session(browser, "md", "index.md");
+  const mdOriginal = await m.source();
+  await m.clickEnd("h2");
+  await m.p.key("Home");
+  await m.p.key("Backspace");
+  await Bun.sleep(100);
+  let md = await m.source();
+  check("Markdown: a heading joins the paragraph before", md.includes("has an ampersand.Things to do\n\n- Water") && (await m.count("h2")) == 0, md.slice(0, 260));
+  check("Markdown: the caret is at the join", (await m.p.eval<number>("ergaPage.state.selection.main.head")) == md.indexOf("Things to do"));
+  await m.p.key("z", mod);
+  check("Markdown: one undo brings back both", await until(async () => (await m.source()) == mdOriginal));
+  // In a list item the first Backspace takes the marker off (tests/page.ts md), the second joins.
+  await m.clickEnd("li:first-child");
+  await m.p.key("Home");
+  await m.p.key("Backspace");
+  await m.p.key("Backspace");
+  await Bun.sleep(100);
+  md = await m.source();
+  check("Markdown: then the list item joins the heading, which stays a heading", md.includes("## Things to doWater the plants\n- Call") && (await m.textOf("h2")) == "Things to doWater the plants", md.slice(0, 260));
+  check("Markdown: no page errors", m.p.errors.length == 0, m.p.errors.join("\n"));
+  await m.close();
+}
+
 /** evaluate_page's run, in this tab: an expression in view_page's render, its result as JSON; read-only, with a time limit and a size cap. */
 async function evaluateScenario(browser: Browser) {
   say("\nInspecting the page for the agent");
@@ -1134,7 +1225,7 @@ const SCENARIOS: [string, (b: Browser) => Promise<void>][] = [
   ["format", formatScenario], ["view", evaluateScenario],
   ["agent", agentOffScenario], ["agent", shareScenario], ["agent", modelScenario], ["agent", agentEmptyScenario], ["agent", voiceScenario],
   ["reload", backdropReloadScenario],
-  ["enter", enterScenario],
+  ["enter", enterScenario], ["join", joinScenario],
   ["indent", indentScenario], ["indent", htmlIndentScenario],
 ];
 const browser = await Browser.launch();

@@ -1,8 +1,9 @@
 // Erga's own source, hosted by Erga: the routes (the repository itself is
 // source/repo.ts, in its Durable Object, worker/source-host.ts).
 //
-//   /git/erga.git/...           Git smart HTTP: clone, fetch, pull and push. HTTP Basic with any username and
-//                               an admin token (admin-keys.ts, admin-login.ts) as the password. main takes fast-forwards only.
+//   /git/erga.git/...           Git smart HTTP: clone, fetch, pull and push. Reads (clone, fetch, ls-remote) need no
+//                               credentials. A push needs HTTP Basic with any username and an admin token
+//                               (admin-keys.ts, admin-login.ts) as the password. main takes fast-forwards only.
 //                               A factory VM's git token (fgt.…, factory/git-grant.ts) reaches its own task's branch only
 //                               (and staging, for a merge).
 //   GET  /api/source/branches   staging and main: each head and its last 25 commits (staging: also the 5 just after main), and the mirror's status
@@ -38,7 +39,12 @@ const host = (env: Env) => env.SOURCE.getByName("erga");
 const json = (body: unknown, status = 200) => Response.json(body, { status, headers: { "Cache-Control": "no-store" } });
 const notSetUp = "Erga's repository isn't set up on this server: it needs the Artifacts binding (see README, Erga's own source).";
 
-/** /git/erga.git: who's asking (an admin's agent token, as the password), then Git. */
+/** A read (clone, fetch, ls-remote: git-upload-pack's two requests), which anyone may make without credentials. */
+export function isGitRead(request: Request, rest: string, url: URL): boolean {
+  return (rest == "/info/refs" && request.method == "GET" && url.searchParams.get("service") == "git-upload-pack") || (rest == "/git-upload-pack" && request.method == "POST");
+}
+
+/** /git/erga.git: who's asking (an admin's agent token, as the password), then Git. Reads need no one. */
 export async function sourceGit(request: Request, env: Env, url: URL): Promise<Response> {
   const rest = url.pathname.slice("/git/erga.git".length);
   const auth = request.headers.get("authorization") ?? "";
@@ -47,7 +53,12 @@ export async function sourceGit(request: Request, env: Env, url: URL): Promise<R
   if (basic) { try { const d = atob(basic); secret = d.slice(d.indexOf(":") + 1); } catch { secret = null; } }
   const challenge = (why: string) => new Response(`${why}\n`, { status: 401, headers: { "WWW-Authenticate": 'Basic realm="Erga", charset="UTF-8"', "Content-Type": "text/plain" } });
   const howTo = "Erga's Git endpoint needs an admin token, made by signing a challenge with your admin SSH key: `ERGA_TOKEN=<agent token> bun admin-login.ts " + url.origin + "` prints one. Then any username, and the admin token as the password.";
-  if (!secret) return challenge(howTo);
+  if (!secret) {
+    // Anyone may clone and fetch; only a push (git-receive-pack) asks who's there.
+    if (!isGitRead(request, rest, url)) return challenge(howTo);
+    if (!hasSource(env)) return new Response(`${notSetUp}\n`, { status: 503 });
+    return git(request, env, url, rest, { login: "anonymous", name: "Anonymous" });
+  }
   // A factory VM's git token (worker/factory.ts, gitToken): its own task's branch, and staging for a merge (factory/git-grant.ts).
   if (secret.startsWith("fgt.")) {
     const key = gitSecret(env);

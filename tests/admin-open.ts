@@ -166,7 +166,7 @@ try {
     ["GET /api/deploys", await get("/api/deploys", { headers: out })],
     ["GET /api/source/branches", await get("/api/source/branches", { headers: out })],
     ["GET /api/factory/tasks", await get("/api/factory/tasks", { headers: out })],
-    ["GET /git/erga.git/info/refs", await get("/git/erga.git/info/refs?service=git-upload-pack", { headers: out })],
+    ["GET /git/erga.git/info/refs (push)", await get("/git/erga.git/info/refs?service=git-receive-pack", { headers: out })],
     ["POST /git/erga.git/git-receive-pack", await get("/git/erga.git/git-receive-pack", { method: "POST", headers: out, body: "0000" })],
     ["POST /admin/users", await get("/admin/users", { method: "POST", headers: { Origin: root, ...out }, body: new URLSearchParams({ do: "add", login: "mallory", role: "admin" }) })],
     ...await changes({ Origin: root, ...out }, home),

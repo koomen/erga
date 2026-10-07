@@ -1432,27 +1432,68 @@ export class PageEditor {
     return true;
   }
 
-  /** Joins two adjacent units: the source between their contents goes away. */
+  /**
+   * Joins two units: `next` goes, and its content moves to the end of `prev`,
+   * which keeps its own tag. The caret goes to the join.
+   */
   private join(prevId: number, nextId: number): boolean {
     const prev = this.units[prevId], next = this.units[nextId];
     if (!prev || !next) return false;
     const src = this.state.doc.toString();
     if (this.kind == "html") {
-      if (!M.adjacent(src, prev, next)) return false;
-      if (!this.verify(prev) || !this.verify(next)) return false;
-      const from = prev.contentTo, to = next.contentFrom;
-      const kept = contentIn(src, prev, prev.contentFrom, from) || contentIn(src, next, to, next.contentTo);
-      const drops = this.placeholderDrops(src, [prev, next], from, to, kept);
-      this.dispatch({ changes: [{ from, to }, ...drops], selection: { anchor: from - dropped(drops, from) }, userEvent: "delete.backward", scrollIntoView: true });
+      const changes = this.joinHtml(src, prev, next);
+      if (!changes) return false;
+      const set = this.state.changes(changes);
+      this.dispatch({ changes: set, selection: { anchor: set.mapPos(changes.at, -1) }, userEvent: "delete.backward", scrollIntoView: true });
       return true;
     }
-    // Markdown: the blank line (or list marker) between the blocks.
+    // Markdown: the blank line (or list, quote or heading marker) between the blocks.
     const from = prev.contentTo, to = next.contentFrom;
     if (from >= to) return false;
     const between = src.slice(from, to);
-    if (!/^[\s>*+-]*(\d+[.)])?\s*$/.test(between)) return false;
-    this.dispatch({ changes: { from, to, insert: /\s$/.test(src.slice(from - 1, from)) ? "" : " " }, selection: { anchor: from }, userEvent: "delete.backward", scrollIntoView: true });
+    if (!/^[\s>*+#-]*(\d+[.)])?\s*$/.test(between) || /^\s*([-*_])(\s*\1){2,}\s*$/m.test(between)) return false;
+    this.dispatch({ changes: { from, to }, selection: { anchor: from }, userEvent: "delete.backward", scrollIntoView: true });
     return true;
+  }
+
+  /**
+   * The changes that join two HTML units, or null if they can't be: they are
+   * table cells, or something other than the tags of the blocks around them
+   * lies between them (a picture, a widget). `next`'s element goes, with any
+   * element around it that it leaves empty (a list of one item, say), and its
+   * content goes after `prev`'s text. `at` is the join, before the changes.
+   */
+  private joinHtml(src: string, prev: M.Unit, next: M.Unit): (({ from: number; to?: number; insert?: string })[] & { at: number }) | null {
+    if (prev.to > next.from || !next.node || !this.verify(prev) || !this.verify(next)) return null;
+    if (/^(td|th|caption)$/.test(prev.tag) || /^(td|th|caption)$/.test(next.tag)) return null;
+    const between = src.slice(prev.to, next.from);
+    if (!/^(\s|<\/?(ul|ol|li|dl|dt|dd|blockquote|div|section|article|aside|header|footer|main|nav|figure|details|menu)(\s[^>]*)?>)*$/i.test(between) || /data-erga-noedit/i.test(between)) return null;
+    // The element that goes: next's, or the one around it that holds nothing else, but not one around prev too.
+    let gone: M.ElementNode = next.node;
+    for (let up = gone.parent; up?.parent && up.from >= prev.to; up = up.parent) {
+      const only = up.children.every((c) => c == gone || (c.kind == "text" && !/\S/.test(src.slice(c.from, c.to))));
+      if (!only) break;
+      gone = up;
+    }
+    const pre = prev.tag == "pre" || next.tag == "pre";
+    // The join: after prev's text, before the spaces and line breaks the page doesn't show.
+    let at = prev.contentTo;
+    if (!pre) while (at > prev.contentFrom && /\s/.test(src[at - 1])) at--;
+    let moved = "";
+    if (contentIn(src, next, next.contentFrom, next.contentTo)) {
+      moved = src.slice(next.contentFrom, next.contentTo);
+      if (!pre) moved = moved.trim();
+    }
+    // Spaces and line breaks before the element go with it, so no blank line is left.
+    let goFrom = gone.from;
+    while (goFrom > prev.to && /\s/.test(src[goFrom - 1])) goFrom--;
+    const changes: { from: number; to?: number; insert?: string }[] = [];
+    const br = placeholderBr(src, prev);
+    // Two blank blocks: one <br> stays, to keep the one left a line high.
+    if (!moved && !br && placeholderBr(src, next) && !contentIn(src, prev, prev.contentFrom, prev.contentTo)) moved = "<br>";
+    if (br && moved && br.to <= at) changes.push(br);
+    changes.push({ from: at, insert: moved }, { from: goFrom, to: gone.to });
+    return Object.assign(changes, { at });
   }
 
   /** Enter: split the block (Shift: a line break). */
