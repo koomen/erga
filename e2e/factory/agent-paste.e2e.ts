@@ -2,7 +2,7 @@
 import { expect, test, until } from "../fixtures";
 import { board, factory, servers, TASK_MS, type Board } from "./factory";
 
-test.beforeAll(async () => { await servers.factory(); });
+await servers.factory();
 
 const sayTo = (b: Board, text: string) => b.eval(`(() => { const i = document.getElementById("agent-input"); i.value = ${JSON.stringify(text)}; i.dispatchEvent(new Event("input")); document.getElementById("agent-send").click(); return true; })()`);
 const panel = (b: Board) => b.eval<string>(`document.getElementById("agent-log").innerText`);

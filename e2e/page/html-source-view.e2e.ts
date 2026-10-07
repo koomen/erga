@@ -2,7 +2,7 @@
 import { expect, servers, test } from "../fixtures";
 import { F, openEditor } from "../editor";
 
-test.beforeAll(async () => { await servers.main(); });
+await servers.main();
 
 test("⌘⇧P shows the file, and again goes back to a page that edits", async ({ tab }) => {
   const ed = await openEditor(tab, await servers.main(), "page");

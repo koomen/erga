@@ -3,7 +3,7 @@ import { expect, servers, test } from "../fixtures";
 import { multi } from "./tree";
 import { open, up } from "./pages";
 
-test.beforeAll(async () => { await servers.main(); });
+await servers.main();
 
 test("the first click on the title, with no hover first, opens it with its rows", async ({ tab }) => {
   tab.strict = true;

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { expect, servers, test, until } from "../fixtures";
 import { act, clickOn, menuItem, multi, NOT_DOCUMENTS, openCard, openTreeEditor, paths, press, rows, type } from "./tree";
 
-test.beforeAll(async () => { await servers.main(); });
+await servers.main();
 
 test("a page arriving on disk shows, by its title", async ({ tab }) => {
   const page = tab.page;

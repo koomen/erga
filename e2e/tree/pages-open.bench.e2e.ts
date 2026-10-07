@@ -6,7 +6,7 @@ import { expect, servers, test } from "../fixtures";
 import { multi } from "./tree";
 import { open, up } from "./pages";
 
-test.beforeAll(async () => { await servers.main(); });
+await servers.main();
 
 const LATENCY = 100, BOUND = Number(process.env.PAGES_OPEN_BOUND ?? 80);
 const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));

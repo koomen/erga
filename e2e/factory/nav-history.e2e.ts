@@ -2,7 +2,7 @@
 import { expect, servers, test } from "../fixtures";
 import { admin, click, navState } from "./nav";
 
-test.beforeAll(async () => { await servers.factory(); });
+await servers.factory();
 
 test("back and forward go between the admin pages without a load", async ({ tab }) => {
   tab.strict = true;

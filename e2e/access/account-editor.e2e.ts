@@ -3,7 +3,7 @@
 import { expect, servers, test, until, type Page } from "../fixtures";
 import { clickOn, inFrames, inPage, newDoc } from "./access";
 
-test.beforeAll(async () => { await servers.main(); });
+await servers.main();
 
 /** A new document, open in the editor at 1100×720, its controls shown: its editor address. */
 async function editing(page: Page): Promise<string> {

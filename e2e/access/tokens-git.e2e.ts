@@ -4,7 +4,7 @@
 import { expect, servers, test } from "../fixtures";
 import { getter, mint, signIn, tool, unique } from "./access";
 
-test.beforeAll(async () => { await servers.main(); });
+await servers.main();
 
 test("git push: no token 401 saying where to make one, a documents token 403, a non-admin's admin token 403, an admin's admin token in; a user can't make an admin token", async () => {
   const root = (await servers.main()).root;

@@ -3,7 +3,7 @@ import { expect, test } from "../fixtures";
 import { factory, servers } from "./factory";
 import { localAgent, MACHINE } from "./local";
 
-test.beforeAll(async () => { await servers.factory(); });
+await servers.factory();
 
 test("task new registers a local task: working, no VM, run by the agent on its machine; its branch made from staging and pushed; the checkout on it; it says how to report; the admin may report over the API", async () => {
   const s = await servers.factory(), f = factory(s);

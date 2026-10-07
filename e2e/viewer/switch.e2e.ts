@@ -5,7 +5,7 @@
 import { expect, servers, test } from "../fixtures";
 import { rects, switchToEditing, viewerReady } from "./switch";
 
-test.beforeAll(async () => { await servers.main(); });
+await servers.main();
 
 for (const kind of ["light", "dark"] as const) {
   test(`${kind} page: the page makes room for the agent only once the agent can be seen, and the agent ends up open`, async ({ tab }) => {

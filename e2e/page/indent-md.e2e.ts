@@ -2,7 +2,7 @@
 import { expect, servers, test } from "../fixtures";
 import { F, openEditor, type Editor } from "../editor";
 
-test.beforeAll(async () => { await servers.main(); });
+await servers.main();
 
 const list = async (ed: Editor) => (await ed.source()).match(/- Water[\s\S]*?\n(?=\n)/)?.[0] ?? "";
 const start = async (ed: Editor, selector: string) => { await ed.clickEnd(selector); await ed.press("Home"); await ed.idle(); };

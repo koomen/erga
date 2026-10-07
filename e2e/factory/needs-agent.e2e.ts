@@ -2,7 +2,7 @@
 import { expect, test, until } from "../fixtures";
 import { board, factory, servers, TASK_MS } from "./factory";
 
-test.beforeAll(async () => { await servers.factory(); });
+await servers.factory();
 
 // Two tasks done, a merge, then a merge that waits for its stand-in to resolve the conflict (8 s by its script).
 test("a conflict with staging: needs agent (Merge and instructions refused, the reason on the card and in the detail, the preview stopped); the agent panel reads it; the same VM's stand-in resolves it and the merge goes on to merged", { timeout: 3 * TASK_MS }, async ({ tab }) => {

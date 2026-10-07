@@ -2,7 +2,7 @@
 import { expect, servers, test } from "../fixtures";
 import { openEditor } from "../editor";
 
-test.beforeAll(async () => { await servers.main(); });
+await servers.main();
 
 test("the share button opens a prompt naming the page's API and a token that works; Escape closes it", async ({ tab }) => {
   const ed = await openEditor(tab, await servers.main(), "noedit");

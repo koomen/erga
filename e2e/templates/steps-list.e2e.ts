@@ -3,7 +3,7 @@
 import { expect, servers, test } from "../fixtures";
 import { atStep, bar, clickOn, inPage, openTab } from "./templates";
 
-test.beforeAll(async () => { await servers.main(); });
+await servers.main();
 
 test("the list shows four steps with their labels and the page's pictures; a click goes to a step; closed and opened again, the same pictures", async ({ tab }) => {
   const s = await servers.main();

@@ -2,7 +2,7 @@
 import { expect, servers, test, until } from "../fixtures";
 import { clickOn, multi, row, signIn, js } from "./tree";
 
-test.beforeAll(async () => { await servers.main(); });
+await servers.main();
 
 test("for a viewer the tree has no add, rename, move or delete, no keys that change it, and its pages open in the viewer", async ({ tab }) => {
   const server = await servers.main();

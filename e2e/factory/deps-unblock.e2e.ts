@@ -2,7 +2,7 @@
 import { expect, test, until } from "../fixtures";
 import { board, factory, servers, TASK_MS } from "./factory";
 
-test.beforeAll(async () => { await servers.factory(); });
+await servers.factory();
 
 // A task done, its merge, then the task waiting for it done.
 test("a dependency removed with its × on the board; the task merges, the one waiting for it starts by itself, says why, and the board hears it", { timeout: 3 * TASK_MS }, async ({ tab }) => {

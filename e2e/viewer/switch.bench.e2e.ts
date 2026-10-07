@@ -6,7 +6,7 @@ import { expect, servers, test } from "../fixtures";
 import { BG, H, W, rects, switchToEditing, viewerReady } from "./switch";
 import { pause, record, throttle } from "./viewer";
 
-test.beforeAll(async () => { await servers.main(); });
+await servers.main();
 
 for (const kind of ["light", "dark"] as const) {
   test(`${kind} page: no white block, no blank document, no jump in any frame of the first switch`, async ({ tab }) => {

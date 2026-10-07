@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { expect, servers, settle, test } from "../fixtures";
 import { F, openEditor } from "../editor";
 
-test.beforeAll(async () => { await servers.main(); });
+await servers.main();
 
 test("with the system in dark mode, the Markdown page and the shell stay light, and there is no theme toggle", async ({ tab }) => {
   const ed = await openEditor(tab, await servers.main(), "md");

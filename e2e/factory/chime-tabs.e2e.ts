@@ -2,7 +2,7 @@
 import { expect, servers, test } from "../fixtures";
 import { chimeBoard, decided, type ChimeTab } from "./chime";
 
-test.beforeAll(async () => { await servers.main(); });
+await servers.main();
 
 const total = async (ts: ChimeTab[]) => (await Promise.all(ts.map((t) => t.notes()))).reduce((x, y) => x + y, 0);
 

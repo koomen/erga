@@ -2,7 +2,7 @@
 import { expect, servers, test } from "../fixtures";
 import { focused, multi, NOT_DOCUMENTS, openCard, openTreeEditor, rows, js } from "./tree";
 
-test.beforeAll(async () => { await servers.main(); });
+await servers.main();
 
 test("the title opens the tree: the document by its title as the root row, marked as the page you're on, its pages under it, folders first; focus goes to the page you're on", async ({ tab }) => {
   const page = tab.page;

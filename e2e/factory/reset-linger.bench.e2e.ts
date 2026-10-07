@@ -4,7 +4,7 @@ import { expect, test } from "../fixtures";
 import { servers, TASK_MS } from "./factory";
 import { mergeAfterResolve } from "./reset";
 
-test.beforeAll(async () => { await servers.factory(); });
+await servers.factory();
 
 test("the merge ends less than 22 s after the stand-in said done", { timeout: 4 * TASK_MS }, async () => {
   const { waited } = await mergeAfterResolve(await servers.factory());

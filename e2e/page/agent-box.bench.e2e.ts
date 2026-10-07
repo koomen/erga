@@ -2,7 +2,7 @@
 import { expect, servers, test } from "../fixtures";
 import { openEditor } from "../editor";
 
-test.beforeAll(async () => { await servers.agent(); });
+await servers.agent();
 
 test("the agent box grows with its text, easing through the heights between", async ({ tab }) => {
   const ed = await openEditor(tab, await servers.agent(), "page");

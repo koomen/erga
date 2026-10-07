@@ -2,7 +2,7 @@
 import { expect, test } from "../fixtures";
 import { factory, servers, TASK_MS } from "./factory";
 
-test.beforeAll(async () => { await servers.factory(); });
+await servers.factory();
 
 // Two runs of the stand-in: the one that stops at its limit, and the one woken to finish.
 test("a stand-in that stops at its turn limit (--max-turns) without reporting is woken once to finish, and the task is ready to merge, not failed", { timeout: 2 * TASK_MS }, async () => {

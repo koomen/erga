@@ -3,7 +3,7 @@
 import { expect, servers, test, until } from "../fixtures";
 import { clickOn, corner, inPage } from "./access";
 
-test.beforeAll(async () => { await servers.main(); });
+await servers.main();
 
 test("on /docs, your avatar in the upper right opens your menu; Escape closes it; without its picture, your initial on your colour", async ({ tab }) => {
   const page = tab.page;

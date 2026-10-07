@@ -2,11 +2,13 @@
 // and deleted the branch (a test hook pauses the job there).
 import { expect, test } from "../fixtures";
 import { TASK_MS } from "./factory";
-import { OWN_SERVER_MS, ownFactory } from "./reset";
+import { ownFactory, startOwnFactory } from "./reset";
 
-// A server of its own, a task, its merge, a restart, and the task after it.
-test("the server restarts while a merge waits for its answer, after staging moved: the task is merged with staging's commit, never needed its agent, and the task that starts after it starts by itself", { timeout: 2 * OWN_SERVER_MS + 3 * TASK_MS }, async ({ tab }) => {
-  const f = await ownFactory(tab);
+await startOwnFactory("reset-merge");
+
+// A task, its merge, a restart, and the task after it.
+test("the server restarts while a merge waits for its answer, after staging moved: the task is merged with staging's commit, never needed its agent, and the task that starts after it starts by itself", { timeout: 3 * TASK_MS }, async () => {
+  const f = await ownFactory("reset-merge");
   const c = await f.make("Note C, merged across a restart", "Put a note on the front page. [factory-test: pause after merge 120]");
   const d = await f.make("After C", "Put a note on the front page.", { startAfter: [c] });
   await f.until(c, "complete");

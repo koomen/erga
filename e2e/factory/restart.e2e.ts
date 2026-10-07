@@ -2,7 +2,7 @@
 import { expect, test, until } from "../fixtures";
 import { board, factory, servers, TASK_MS } from "./factory";
 
-test.beforeAll(async () => { await servers.factory(); });
+await servers.factory();
 
 test("Restart, from a finished task's detail (its card has Merge and no Restart): the same branch, a fresh VM, the work saved first, and the instructions sent before", { timeout: 3 * TASK_MS }, async ({ tab }) => {
   const s = await servers.factory(), f = factory(s);

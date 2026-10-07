@@ -4,7 +4,7 @@ import { realpathSync } from "node:fs";
 import { expect, test, until } from "../fixtures";
 import { factory, servers, TASK_MS } from "./factory";
 
-test.beforeAll(async () => { await servers.factory(); });
+await servers.factory();
 
 // Two tasks done, a merge, then a merge that fails, and the factory stopping a stand-in that lingers 120 s.
 test("back to ready to merge, with the reason, and that Claude Code is stopped", { timeout: 3 * TASK_MS }, async () => {

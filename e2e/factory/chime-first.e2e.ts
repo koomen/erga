@@ -2,7 +2,7 @@
 import { expect, servers, test } from "../fixtures";
 import { chimeBoard, decided } from "./chime";
 
-test.beforeAll(async () => { await servers.main(); });
+await servers.main();
 
 test("nothing plays on the board's first read, nor for a change before a click on the page; after a click, a task that becomes ready to merge plays one chime", async ({ tab }) => {
   tab.strict = true;

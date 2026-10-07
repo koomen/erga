@@ -3,7 +3,7 @@ import { expect, test, until } from "../fixtures";
 import { factory, servers } from "./factory";
 import { unique, who } from "./who";
 
-test.beforeAll(async () => { await servers.factory(); });
+await servers.factory();
 
 test("the admin agent's role change and task are tester's, via their admin agent: on the task, its log, and the change log", async () => {
   const s = await servers.factory(), w = who(s), f = factory(s);

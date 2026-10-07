@@ -2,11 +2,13 @@
 // VM's save.
 import { expect, test } from "../fixtures";
 import { TASK_MS } from "./factory";
-import { OWN_SERVER_MS, ownFactory } from "./reset";
+import { ownFactory, startOwnFactory } from "./reset";
 
-// A server of its own, a task that works on, its restart, the server's restart, and a fresh VM's run.
-test("the server restarts in the middle of a restart: the task starts again by itself, once; the old VM saved the uncommitted work and stopped; a fresh VM finishes it from the pushed branch", { timeout: 2 * OWN_SERVER_MS + 2 * TASK_MS }, async ({ tab }) => {
-  const f = await ownFactory(tab);
+await startOwnFactory("reset-restart");
+
+// A task that works on, its restart, the server's restart, and a fresh VM's run.
+test("the server restarts in the middle of a restart: the task starts again by itself, once; the old VM saved the uncommitted work and stopped; a fresh VM finishes it from the pushed branch", { timeout: 2 * TASK_MS }, async () => {
+  const f = await ownFactory("reset-restart");
   const e = await f.make("Restarted across a restart", "Put a note on the front page. [factory-test: keep working] [factory-test: pause in save 120]");
   await f.until(e, "working", TASK_MS, (t) => t.log.some((l) => l.message.includes("keeps working")));
   const vm = (await f.task(e)).vm;

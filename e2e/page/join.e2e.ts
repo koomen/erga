@@ -2,7 +2,7 @@
 import { expect, servers, test } from "../fixtures";
 import { F, openEditor, type Editor } from "../editor";
 
-test.beforeAll(async () => { await servers.main(); });
+await servers.main();
 
 /** Puts the caret at the start of an element's text and presses Backspace, waiting for each step. */
 export async function backspaceAt(ed: Editor, sel: string) {

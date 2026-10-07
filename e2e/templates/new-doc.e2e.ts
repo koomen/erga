@@ -9,7 +9,7 @@ import { ROOT } from "../env";
 import { TEMPLATES } from "../../templates";
 import { editorReady, idOf, newDoc, openTab } from "./templates";
 
-test.beforeAll(async () => { await servers.main(); });
+await servers.main();
 
 // The picker's root: the page's own document, or the front page's controls' shadow root (home.ts) when it's served directly.
 const ROOT_OF = `(document.querySelector("erga-controls")?.shadowRoot ?? document)`;

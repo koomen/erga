@@ -4,7 +4,7 @@ import { expect, test } from "../fixtures";
 import { factory, servers, TASK_MS } from "./factory";
 import { admin, author, commits, FACTORY } from "./people";
 
-test.beforeAll(async () => { await servers.factory(); });
+await servers.factory();
 
 // Two tasks done at once, then two merges one after the other.
 test("tester merges Grace's task (the merge is tester's); then Ada merges tester's task, behind staging: the merge is Ada's, and Merge staging into the branch is tester's", { timeout: 3 * TASK_MS }, async () => {

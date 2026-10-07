@@ -2,7 +2,7 @@
 import { expect, servers, test } from "../fixtures";
 import { openEditor } from "../editor";
 
-test.beforeAll(async () => { await servers.main(); });
+await servers.main();
 
 test("a heading joins the paragraph before, the caret at the join; one undo brings back both", async ({ tab }) => {
   const ed = await openEditor(tab, await servers.main(), "md");

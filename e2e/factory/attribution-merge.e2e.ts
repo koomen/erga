@@ -4,7 +4,7 @@ import { expect, test } from "../fixtures";
 import { factory, servers, TASK_MS } from "./factory";
 import { unique, who } from "./who";
 
-test.beforeAll(async () => { await servers.factory(); });
+await servers.factory();
 
 // A task done, then its merge.
 test("Share with agent's token's task is tester's, via the shared agent; the VM's commits are tester's; the merge the admin agent asked for is tester's, via it, in the task's log and the change log", { timeout: 2 * TASK_MS }, async () => {

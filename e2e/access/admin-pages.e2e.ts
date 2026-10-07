@@ -3,7 +3,7 @@
 import { expect, servers, test } from "../fixtures";
 import { getter } from "./access";
 
-test.beforeAll(async () => { await servers.main(); });
+await servers.main();
 
 const SIDE = ["Settings /admin", "API keys /admin/api-keys", "Authentication /admin/auth", "Change log /admin/changes", "Users /admin/users", "Factory /admin/factory"];
 

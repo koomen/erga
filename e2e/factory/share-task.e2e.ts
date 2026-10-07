@@ -2,7 +2,7 @@
 import { expect, test, until } from "../fixtures";
 import { board, factory, servers, TASK_MS } from "./factory";
 
-test.beforeAll(async () => { await servers.factory(); });
+await servers.factory();
 
 const TOKEN = /erga_[A-Za-z0-9_-]{20,}/;
 const bearer = (token: string) => ({ Authorization: `Bearer ${token}` });

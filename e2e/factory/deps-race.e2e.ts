@@ -2,7 +2,7 @@
 import { expect, test } from "../fixtures";
 import { factory, servers, TASK_MS } from "./factory";
 
-test.beforeAll(async () => { await servers.factory(); });
+await servers.factory();
 
 // Three tasks done, then two merges and a refusal, one after another.
 test("a merge queued behind its dependency's is checked again when its turn comes, and refused when the dependency didn't merge", { timeout: 3 * TASK_MS }, async () => {

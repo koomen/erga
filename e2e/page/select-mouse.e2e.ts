@@ -2,7 +2,7 @@
 import { expect, servers, test } from "../fixtures";
 import { F, openEditor, type Editor } from "../editor";
 
-test.beforeAll(async () => { await servers.main(); });
+await servers.main();
 
 const domText = (ed: Editor) => ed.frame<string>(`${F}.getSelection().toString()`);
 const hosts = (ed: Editor) => ed.frame<boolean>(`[...${F}.querySelectorAll("[data-erga-id]:not(.erga-locked)")].every((el) => el.getAttribute("contenteditable") == "true")`);

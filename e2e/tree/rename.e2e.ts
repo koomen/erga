@@ -2,7 +2,7 @@
 import { expect, servers, test, until } from "../fixtures";
 import { act, menuItem, multi, openCard, openTreeEditor, press, row, type, js } from "./tree";
 
-test.beforeAll(async () => { await servers.main(); });
+await servers.main();
 
 test("F2 renames a page in place: its readable name, no .html; Enter renames it on disk", async ({ tab }) => {
   const page = tab.page;

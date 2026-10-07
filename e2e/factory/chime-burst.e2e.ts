@@ -2,7 +2,7 @@
 import { expect, servers, test } from "../fixtures";
 import { chimeBoard, decided } from "./chime";
 
-test.beforeAll(async () => { await servers.main(); });
+await servers.main();
 
 test("two tasks that fail at the same moment play one chime", async ({ tab }) => {
   tab.strict = true;

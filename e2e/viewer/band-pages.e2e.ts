@@ -5,7 +5,7 @@ import { expect, servers, test } from "../fixtures";
 import { topDoc } from "./band";
 import { diff, docShows, frameTop, inPage, lum, openViewer, sample, screenshot } from "./viewer";
 
-test.beforeAll(async () => { await servers.main(); });
+await servers.main();
 
 test("following a link from the dark page to the light one and back, the band takes each page's colour", async ({ tab }) => {
   tab.strict = true;

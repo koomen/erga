@@ -3,7 +3,7 @@
 import { expect, servers, test, until } from "../fixtures";
 import { getter, mint, publish, signIn, tool } from "./access";
 
-test.beforeAll(async () => { await servers.main(); });
+await servers.main();
 
 const ask = async (root: string, body: object) => (await (await fetch(`${root}/api/auth/request`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })).json()) as { code: string; user_code: string; approve_url: string };
 const poll = (root: string, code: string) => fetch(`${root}/api/auth/poll`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code }) });

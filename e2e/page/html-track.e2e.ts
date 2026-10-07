@@ -2,7 +2,7 @@
 import { expect, servers, test } from "../fixtures";
 import { openEditor } from "../editor";
 
-test.beforeAll(async () => { await servers.main(); });
+await servers.main();
 
 test("tracking marks your edits and the disk's; it's a diff, so typing and deleting leaves no mark; a letter added marks the letter; off clears it", async ({ tab }) => {
   const ed = await openEditor(tab, await servers.main(), "page");

@@ -4,7 +4,7 @@
 import { expect, servers, test, until } from "../fixtures";
 import { clickOn, corner } from "./access";
 
-test.beforeAll(async () => { await servers.main(); });
+await servers.main();
 
 test("signed out: a person in a circle whose menu has only Sign in, which comes back to the same page, signed in", async ({ tab }) => {
   const page = tab.page, root = (await servers.main()).root;

@@ -2,7 +2,7 @@
 import { expect, servers, test } from "../fixtures";
 import { getter, mint, publish, tool } from "./access";
 
-test.beforeAll(async () => { await servers.main(); });
+await servers.main();
 
 test("a document token reads its document, and not another; it neither lists nor makes documents, nor reads another's versions or page", async () => {
   const root = (await servers.main()).root;

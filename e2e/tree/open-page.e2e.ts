@@ -2,7 +2,7 @@
 import { expect, servers, test } from "../fixtures";
 import { clickOn, clickToGo, multi, openCard, openTreeEditor, paths, row } from "./tree";
 
-test.beforeAll(async () => { await servers.main(); });
+await servers.main();
 
 test("clicking a page goes to its address in the editor (…/contact#edit); back on the document, the folder opened before is still open", async ({ tab }) => {
   const page = tab.page;

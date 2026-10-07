@@ -2,7 +2,7 @@
 import { expect, servers, test } from "../fixtures";
 import { openEditor, type Editor } from "../editor";
 
-test.beforeAll(async () => { await servers.agent(); });
+await servers.agent();
 
 const paneOpen = (ed: Editor) => ed.eval<boolean>(`document.body.classList.contains("agent-open") && !document.getElementById("agent").inert`);
 /** Out of the editor or back in, done when the shell says so. */

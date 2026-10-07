@@ -3,7 +3,9 @@
 import { expect, servers, test } from "../fixtures";
 import { FADED, ROOT_EXPR, controls, homeReady, opacityIs, openFade, type Mode } from "./fade";
 
-test.beforeAll(async () => { await homeReady(await servers.main()); });
+// The homepage served directly, before any test (servers.main() gives nothing where the runner only lists the tests).
+const home = await servers.main();
+if (home) await homeReady(home);
 
 for (const mode of ["doc", "home"] as Mode[]) {
   test(`${mode == "home" ? "the homepage" : "a document's page"}, reduced motion: no transition on the opacity; scrolled, never between whole and faded`, async ({ tab }) => {

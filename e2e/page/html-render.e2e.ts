@@ -2,7 +2,7 @@
 import { expect, servers, settle, test } from "../fixtures";
 import { F, openEditor } from "../editor";
 
-test.beforeAll(async () => { await servers.main(); });
+await servers.main();
 
 test("the page renders as units; a widget's button is a plain button; the units are the editing hosts; svg text isn't editable", async ({ tab }) => {
   const ed = await openEditor(tab, await servers.main(), "page");

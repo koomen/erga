@@ -2,7 +2,7 @@
 import { expect, servers, test, until } from "../fixtures";
 import { act, clickOn, menuItem, multi, openCard, openTreeEditor, press, row, js } from "./tree";
 
-test.beforeAll(async () => { await servers.main(); });
+await servers.main();
 
 test("Delete page deletes it at once; Delete folder asks first, in its row; Escape keeps it; the Delete key and the confirm button delete it and what's in it", async ({ tab }) => {
   const page = tab.page;

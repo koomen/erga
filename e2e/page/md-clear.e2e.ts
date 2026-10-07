@@ -2,7 +2,7 @@
 import { expect, servers, test } from "../fixtures";
 import { openEditor } from "../editor";
 
-test.beforeAll(async () => { await servers.main(); });
+await servers.main();
 
 test("⌘\\ in Markdown drops the marks and the link syntax, and a heading's #s", async ({ tab }) => {
   const ed = await openEditor(tab, await servers.main(), "md");

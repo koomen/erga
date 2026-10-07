@@ -2,7 +2,7 @@
 import { expect, servers, test } from "../fixtures";
 import { openEditor } from "../editor";
 
-test.beforeAll(async () => { await servers.main(); });
+await servers.main();
 
 test("Enter in a quote continues it: two paragraphs", async ({ tab }) => {
   const ed = await openEditor(tab, await servers.main(), "md");

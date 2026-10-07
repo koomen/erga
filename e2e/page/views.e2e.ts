@@ -2,7 +2,7 @@
 import { expect, servers, test } from "../fixtures";
 import { F, openEditor } from "../editor";
 
-test.beforeAll(async () => { await servers.main(); });
+await servers.main();
 
 test("the view button shows three views; an HTML file's Markdown view is read-only, as wide as the text, and says so", async ({ tab }) => {
   const ed = await openEditor(tab, await servers.main(), "page");

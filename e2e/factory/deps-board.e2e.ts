@@ -2,7 +2,7 @@
 import { expect, test, until } from "../fixtures";
 import { board, factory, servers } from "./factory";
 
-test.beforeAll(async () => { await servers.factory(); });
+await servers.factory();
 
 test("a dependency added in a task's detail (merges after another), and the detail lists it", async ({ tab }) => {
   const s = await servers.factory(), f = factory(s);

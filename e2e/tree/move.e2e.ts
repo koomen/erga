@@ -2,7 +2,7 @@
 import { expect, servers, test, until } from "../fixtures";
 import { act, menuItem, menuItems, multi, openCard, openTreeEditor, rows, js } from "./tree";
 
-test.beforeAll(async () => { await servers.main(); });
+await servers.main();
 
 test("a page's menu says page (never document); Move page to… moves it into a folder", async ({ tab }) => {
   const page = tab.page;

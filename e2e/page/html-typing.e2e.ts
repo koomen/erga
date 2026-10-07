@@ -2,7 +2,7 @@
 import { expect, servers, test } from "../fixtures";
 import { F, openEditor } from "../editor";
 
-test.beforeAll(async () => { await servers.main(); });
+await servers.main();
 
 test("typing updates the page, the source and the file; the arrows cross into the next unit and back", async ({ tab }) => {
   const ed = await openEditor(tab, await servers.main(), "page");

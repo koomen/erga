@@ -2,7 +2,7 @@
 import { expect, servers, test } from "../fixtures";
 import { openEditor } from "../editor";
 
-test.beforeAll(async () => { await servers.main(); });
+await servers.main();
 
 test("Enter at the end of an item makes an empty sibling, and typing fills it", async ({ tab }) => {
   const ed = await openEditor(tab, await servers.main(), "page");

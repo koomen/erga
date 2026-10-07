@@ -3,7 +3,7 @@
 import { expect, servers, test } from "../fixtures";
 import { F, openEditor, type Editor } from "../editor";
 
-test.beforeAll(async () => { await servers.main(); });
+await servers.main();
 
 type Ev = { value?: string; note?: string; error?: string; errors: string[] };
 const ev = (ed: Editor, expr: string, more = "") => ed.eval<Ev>(`ergaPage.captureView({ evaluate: ${JSON.stringify(expr)}${more} })`);

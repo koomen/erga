@@ -5,7 +5,7 @@ import { expect, servers, test, type Page } from "../fixtures";
 import { topDoc } from "./band";
 import { diff, docShows, frameTop, inPage, lum, openViewer, pause, record, sample, throttle } from "./viewer";
 
-test.beforeAll(async () => { await servers.main(); });
+await servers.main();
 
 const W = 1200, H = 760;
 

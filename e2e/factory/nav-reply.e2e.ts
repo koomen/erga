@@ -2,7 +2,7 @@
 import { expect, servers, test } from "../fixtures";
 import { admin, ask, click, navState, words } from "./nav";
 
-test.beforeAll(async () => { await servers.factory(); });
+await servers.factory();
 
 test("a sidebar link shows Users without a load: its address, title, breadcrumb and mark, the same document and agent panel; a reply asked for on Settings arrives on Change log, in the same panel", async ({ tab }) => {
   tab.strict = true;

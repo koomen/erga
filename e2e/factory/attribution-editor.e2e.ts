@@ -3,7 +3,7 @@ import { expect, test, until } from "../fixtures";
 import { servers } from "./factory";
 import { unique, who } from "./who";
 
-test.beforeAll(async () => { await servers.factory(); });
+await servers.factory();
 
 test("the editor's agent's edit is a version by \"tester, via their agent\", and its share is tester's, via their agent", async () => {
   const w = who(await servers.factory());

@@ -5,7 +5,7 @@ import { board, factory, servers } from "./factory";
 import { join } from "node:path";
 import { localAgent, MACHINE } from "./local";
 
-test.beforeAll(async () => { await servers.factory(); });
+await servers.factory();
 
 test("task log, task shot and task done: ready to merge, pushed, with its summary, the line and the screenshot; the card has a local chip with the machine; the detail says who runs it where, with Hand to a VM and Send to the local agent", async ({ tab }) => {
   const s = await servers.factory(), f = factory(s);

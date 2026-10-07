@@ -4,15 +4,25 @@
 // worker-scoped fixtures (test.extend's run for every test), so these live in
 // a registry in this module, which a worker imports once (e2e imports each
 // test file afresh for every file and retry, but not the modules it imports).
-// A file starts the ones it needs in test.beforeAll, which has a budget of its
-// own, so a test's time limit never pays for a server. They stop when the
-// worker exits (server.ts), and e2e/run.ts sweeps up after a worker that was
-// killed.
 //
-//   servers.main()     a dev server, signed in as DEV_LOGIN, with no agent key
-//   servers.agent()    the same with an agent key that is never used (the agent's UI comes on)
-//   servers.factory()  the factory with simulated VMs and the scripted agent model
-//   startServer()      a server for one test alone (test.ts disposes of it, see `tab.own`)
+// A file starts the servers it needs at its top level, as the worker imports
+// it: `await servers.factory();`. e2e waits for that import with no time limit
+// (a beforeAll has the test's 15 s, and under load a server takes longer to
+// start, which skipped the whole file), so no test or hook pays for a server.
+// The runner imports every file too, only to list its tests: there servers.*
+// start nothing (WORKER). A test still calls servers.x() for the server (at
+// once: started), which also starts again one that stopped by itself. They
+// stop when the worker exits (server.ts), and e2e/run.ts sweeps up after a
+// worker that was killed.
+//
+//   servers.main()       a dev server, signed in as DEV_LOGIN, with no agent key
+//   servers.agent()      the same with an agent key that is never used (the agent's UI comes on)
+//   servers.factory()    the factory with simulated VMs and the scripted agent model
+//   servers.of(key, o)   a kind one file needs alone (its own settings, or one it changes or restarts),
+//                        started with ServerOptions `o`: `const own = () => servers.of("deploy-page");`
+//                        (the worker keeps the last file's only)
+//   startServer()        a server for one test alone, started inside its time limit (test.ts disposes
+//                        of it, see `tab.own`): only where each attempt needs a fresh one
 //
 // Per test: `tab`, the attempt's own page in a fresh browser context (the web
 // engine makes one per attempt), as Playwright's Page, with the page's errors
@@ -40,8 +50,13 @@ export interface FactoryServer extends Server {
   initial: { enabled: boolean };
 }
 
+/** Whether this process is one of e2e's workers (forked with an IPC channel), not the runner, which only lists the tests. */
+const WORKER = typeof process.send == "function";
+
 const started = new Map<string, Promise<Server>>();
 const once = <T extends Server>(key: string, make: () => Promise<T>) => (): Promise<T> => {
+  // Listing the tests: nothing runs, so nothing starts (and nothing may use what this gives).
+  if (!WORKER) return Promise.resolve(null as unknown as T);
   let s = started.get(key);
   if (!s) { s = make(); started.set(key, s); s.catch(() => started.delete(key)); }
   // One that stopped by itself (server.ts says why) is started again, for the tests after.
@@ -59,6 +74,14 @@ export const servers = {
     const initial = await (await fetch(`${s.root}/api/factory`)).json() as { enabled: boolean };
     return Object.assign(s, { secret, initial });
   }),
+  /**
+   * A kind of server one file needs (`key`, its own), started with `opts` the first time. A worker keeps one such
+   * server: the next file's (another key) disposes of it, as files run one after another. So one key for each file.
+   */
+  of(key: string, opts: ServerOptions = {}): Promise<Server> {
+    if (WORKER) for (const [k, s] of started) if (k.startsWith("of:") && k != `of:${key}`) { started.delete(k); s.then((x) => x.dispose(), () => {}); }
+    return once(`of:${key}`, () => startServer(opts))();
+  },
 };
 
 export interface Tab {

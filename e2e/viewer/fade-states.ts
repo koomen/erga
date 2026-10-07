@@ -6,9 +6,11 @@ import { sample, screenshot } from "./viewer";
 
 const W = 1300, H = 860;
 
-export function fadeStates(mode: Mode) {
+/** Awaited at a file's top level: the server, and the homepage served directly, before any test (fixtures.ts). */
+export async function fadeStates(mode: Mode) {
   const name = mode == "home" ? "the homepage" : "a document's page";
-  test.beforeAll(async () => { const s = await servers.main(); if (mode == "home") await homeReady(s); });
+  const s = await servers.main();
+  if (s && mode == "home") await homeReady(s);
 
   test(`${name}: whole at the top, faded once scrolled (the band keeping its colour), whole again at the top`, async ({ tab }) => {
     const page = tab.page;

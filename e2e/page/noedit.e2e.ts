@@ -2,7 +2,7 @@
 import { expect, servers, test } from "../fixtures";
 import { F, openEditor } from "../editor";
 
-test.beforeAll(async () => { await servers.main(); });
+await servers.main();
 
 test("a no-edit section has no editable text, and a no-edit span inside a paragraph is fenced off", async ({ tab }) => {
   const ed = await openEditor(tab, await servers.main(), "noedit");

@@ -4,7 +4,7 @@ import { expect, test } from "../fixtures";
 import { factory, servers, TASK_MS } from "./factory";
 import { localAgent } from "./local";
 
-test.beforeAll(async () => { await servers.factory(); });
+await servers.factory();
 
 // One merge job in a simulated VM.
 test("a local task registered to start after another waits, and task start is refused; when the other merges it works, with no VM, and task start makes its branch from the new staging", { timeout: TASK_MS }, async () => {

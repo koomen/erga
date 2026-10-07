@@ -2,7 +2,7 @@
 import { expect, servers, test, until } from "../fixtures";
 import { admin, ask, click, mark, navState, words } from "./nav";
 
-test.beforeAll(async () => { await servers.factory(); });
+await servers.factory();
 
 test("a deep link opens Users whole, with the agent's conversation so far; a page shown in place and reloaded is the one the server makes", async ({ tab }) => {
   tab.strict = true;

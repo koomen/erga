@@ -3,7 +3,9 @@
 import { servers, test, type Page } from "../fixtures";
 import { FADED, controls, homeReady, opacityIs, openFade, wheel, type Mode } from "./fade";
 
-test.beforeAll(async () => { await homeReady(await servers.main()); });
+// The homepage served directly, before any test (servers.main() gives nothing where the runner only lists the tests).
+const home = await servers.main();
+if (home) await homeReady(home);
 
 const W = 390, H = 844;
 

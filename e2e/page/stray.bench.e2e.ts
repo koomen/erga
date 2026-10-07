@@ -2,7 +2,7 @@
 import { expect, servers, test } from "../fixtures";
 import { openEditor } from "../editor";
 
-test.beforeAll(async () => { await servers.main(); });
+await servers.main();
 
 const TS = 0.4, MIN = 5000 * TS;
 const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));

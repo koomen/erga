@@ -3,7 +3,7 @@
 import { expect, test } from "../fixtures";
 import { factory, servers, TASK_MS } from "./factory";
 
-test.beforeAll(async () => { await servers.factory(); });
+await servers.factory();
 
 // Two runs of the stand-in.
 test("a run that says done before it got the instructions: a new run gets them, on the same branch, and the task is ready to merge again", { timeout: 2 * TASK_MS }, async () => {

@@ -5,7 +5,7 @@
 import { expect, servers, test, until, type Page } from "../fixtures";
 import { getter, newDoc, unique } from "./access";
 
-test.beforeAll(async () => { await servers.main(); });
+await servers.main();
 
 const crumbs = (page: Page) => page.evaluate(() => {
   const base = (el: Element) => { const i = document.createElement("i"); i.style.cssText = "display:inline-block;width:0;height:0"; el.appendChild(i); const y = i.getBoundingClientRect().bottom; i.remove(); return y; };

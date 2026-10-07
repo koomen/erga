@@ -3,7 +3,7 @@ import type { Page } from "playwright-core";
 import { expect, servers, test, until } from "../fixtures";
 import { act, clickOn, clickToGo, menuItem, multi, NOT_DOCUMENTS, press, row, rows, type, type Doc, js } from "./tree";
 
-test.beforeAll(async () => { await servers.main(); });
+await servers.main();
 
 /** Documents, up with the tree's script, and `doc`'s pages open beneath its row. */
 async function openDocs(page: Page, doc: Doc) {

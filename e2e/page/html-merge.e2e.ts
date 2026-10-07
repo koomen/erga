@@ -2,7 +2,7 @@
 import { expect, servers, test } from "../fixtures";
 import { openEditor } from "../editor";
 
-test.beforeAll(async () => { await servers.main(); });
+await servers.main();
 
 test("typing and a disk edit at once: both survive, marked; ⌘Z takes back the typing only, ⌘⇧Z brings it back", async ({ tab }) => {
   const ed = await openEditor(tab, await servers.main(), "page");

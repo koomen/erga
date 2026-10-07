@@ -9,7 +9,7 @@ import { editor, F } from "../editor";
 import { expect, servers, test, until } from "../fixtures";
 import { unique } from "./access";
 
-test.beforeAll(async () => { await servers.main(); });
+await servers.main();
 
 // The page knows the editor's address (anyone can guess erga.dev) and tries its luck there.
 const thief = (shell: string) => `<!doctype html>

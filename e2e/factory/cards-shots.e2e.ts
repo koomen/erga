@@ -2,7 +2,7 @@
 import { expect, servers, test, type Page } from "../fixtures";
 import { cardBoard } from "./cards";
 
-test.beforeAll(async () => { await servers.main(); });
+await servers.main();
 
 const detail = (page: Page) => page.evaluate(`(() => {
   const d = document.getElementById("dlg"), r = d.getBoundingClientRect();

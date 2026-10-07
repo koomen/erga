@@ -2,7 +2,7 @@
 import { expect, servers, test } from "../fixtures";
 import { openEditor } from "../editor";
 
-test.beforeAll(async () => { await servers.agent(); });
+await servers.agent();
 
 test("an unsent message in the agent box survives a reload, and a cleared box stays cleared", async ({ tab }) => {
   const ed = await openEditor(tab, await servers.agent(), "page");

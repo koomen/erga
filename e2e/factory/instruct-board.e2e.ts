@@ -3,7 +3,7 @@
 import { expect, test, until } from "../fixtures";
 import { board, factory, servers, TASK_MS } from "./factory";
 
-test.beforeAll(async () => { await servers.factory(); });
+await servers.factory();
 
 // A task, with a command of 15 s in it.
 test("a working task's detail view takes instructions (empty ones refused); the log shows them; Claude Code gets them when its command ends, and the change has them", { timeout: TASK_MS + 30_000 }, async ({ tab }) => {

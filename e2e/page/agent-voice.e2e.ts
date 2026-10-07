@@ -4,7 +4,7 @@ import { expect, servers, test } from "../fixtures";
 import { openEditor, type Editor } from "../editor";
 import type { Tab } from "../fixtures";
 
-test.beforeAll(async () => { await servers.agent(); });
+await servers.agent();
 
 type State = { on: string | null; input: string; readOnly: boolean; send: string | null; title: string; sent: string[]; recs: number };
 

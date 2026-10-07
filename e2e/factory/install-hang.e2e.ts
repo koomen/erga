@@ -2,7 +2,7 @@
 import { expect, test } from "../fixtures";
 import { factory, servers, TASK_MS } from "./factory";
 
-test.beforeAll(async () => { await servers.factory(); });
+await servers.factory();
 
 test("a `bun install` that hangs is killed at its limit, and the stand-in is told and installs again", { timeout: TASK_MS + 15_000 }, async () => {
   const s = await servers.factory(), f = factory(s);

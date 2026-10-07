@@ -9,7 +9,7 @@ import { ROOT } from "../env";
 import { atStep, bar, clickOn, editorReady, idOf, newDoc, openTab } from "./templates";
 import { view } from "./solar";
 
-test.beforeAll(async () => { await servers.main(); });
+await servers.main();
 
 const LABELS = ["The solar system", "Mercury", "Venus", "Earth", "Mars", "Jupiter", "Saturn", "Uranus", "Neptune"];
 const moves = async (page: Page) => { const a = await view(page); await expect.poll(async () => (await view(page)).pixels != a.pixels).toBe(true); return a; };

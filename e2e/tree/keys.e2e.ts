@@ -2,7 +2,7 @@
 import { expect, servers, test } from "../fixtures";
 import { clickOn, focused, multi, openCard, openTreeEditor, paths, press, row } from "./tree";
 
-test.beforeAll(async () => { await servers.main(); });
+await servers.main();
 
 test("clicking a folder opens it; ← closes it, → opens it, → again goes in; ↓ moves down; Home and End go to the first and the last", async ({ tab }) => {
   const page = tab.page;

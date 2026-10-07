@@ -2,7 +2,7 @@
 import { expect, test } from "../fixtures";
 import { board, factory, servers } from "./factory";
 
-test.beforeAll(async () => { await servers.factory(); });
+await servers.factory();
 
 test("off by default: the board says so, adding a task is refused, and someone who isn't an admin gets a 404", async ({ tab }) => {
   const s = await servers.factory();

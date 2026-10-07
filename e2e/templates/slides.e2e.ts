@@ -4,7 +4,7 @@ import type { Page } from "playwright-core";
 import { expect, servers, test } from "../fixtures";
 import { atStep, bar, clickOn, clickTextEnd, editorReady, inPage, newDoc, openTab, rawKey } from "./templates";
 
-test.beforeAll(async () => { await servers.main(); });
+await servers.main();
 
 const LABELS = ["Untitled presentation", "Second slide"];
 

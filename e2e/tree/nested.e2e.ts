@@ -3,7 +3,7 @@ import type { Page } from "playwright-core";
 import { expect, servers, test, until } from "../fixtures";
 import { agentClosed, multi, js } from "./tree";
 
-test.beforeAll(async () => { await servers.main(); });
+await servers.main();
 
 type Look = { width: string; image: number; font: boolean } | null;
 

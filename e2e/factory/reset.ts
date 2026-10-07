@@ -1,21 +1,27 @@
 // The factory at Claude Code's limits and when its Durable Object resets (tests/factory-reset.ts). The reset is
-// the dev server killed and started again on the same state (server.ts, restart), so those tests have a server
-// of their own (tab.own).
+// the dev server killed and started again on the same state (server.ts, restart), so each of those files has a
+// server of its own (servers.of).
 
-import { expect, type Tab, type FactoryServer } from "../fixtures";
+import { expect, servers, type FactoryServer } from "../fixtures";
 import { factory, TASK_MS } from "./factory";
 
-/** A factory server for this test alone, as servers.factory makes one, and the factory on. */
-export async function ownFactory(tab: Tab) {
-  const secret = `factory-test-${crypto.randomUUID()}`;
-  const s = await tab.own({ env: { ERGA_AGENT_MODEL: "script", ERGA_FACTORY_RUNNER: "sim", ERGA_LINK_SECRET: secret, ERGA_FACTORY_SIM_NO_SCRIPTS: "1" } });
-  const f = factory(Object.assign(s, { secret, initial: { enabled: false } }) as FactoryServer);
+/** The server's secret, one for each key (this module is imported once by a worker). */
+const secrets = new Map<string, string>();
+const options = (key: string) => {
+  if (!secrets.has(key)) secrets.set(key, `factory-test-${crypto.randomUUID()}`);
+  return { env: { ERGA_AGENT_MODEL: "script", ERGA_FACTORY_RUNNER: "sim", ERGA_LINK_SECRET: secrets.get(key)!, ERGA_FACTORY_SIM_NO_SCRIPTS: "1" } };
+};
+
+/** A factory server for one file alone (`key`), as servers.factory makes one: awaited at the file's top level, it starts before any test. */
+export const startOwnFactory = (key: string) => servers.of(key, options(key));
+
+/** That file's factory server, in a test, and the factory on. */
+export async function ownFactory(key: string) {
+  const s = await startOwnFactory(key);
+  const f = factory(Object.assign(s, { secret: secrets.get(key)!, initial: { enabled: false } }) as FactoryServer);
   await f.on();
   return f;
 }
-
-/** Up to how long a server of the test's own takes to start, at most (server.ts waits as long). */
-export const OWN_SERVER_MS = 90_000;
 
 /**
  * A merge right after a resolve: A and B both put a note under the front page's heading, so merging staging into

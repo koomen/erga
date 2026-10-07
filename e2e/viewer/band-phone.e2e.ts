@@ -5,7 +5,7 @@ import { expect, servers, test, until } from "../fixtures";
 import { layout, layoutOk, topDoc, type Layout } from "./band";
 import { diff, docShows, openViewer } from "./viewer";
 
-test.beforeAll(async () => { await servers.main(); });
+await servers.main();
 
 for (const doc of ["light", "dark"] as const) for (const mode of ["view", "edit"] as const) {
   const tone = doc == "light" ? "light" : "dark";

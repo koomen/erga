@@ -2,7 +2,7 @@
 import { expect, servers, test } from "../fixtures";
 import { F, openEditor } from "../editor";
 
-test.beforeAll(async () => { await servers.main(); });
+await servers.main();
 
 test("the HTML view selects across lines with a drag, and Backspace deletes them", async ({ tab }) => {
   const ed = await openEditor(tab, await servers.main(), "page");

@@ -2,7 +2,7 @@
 import { expect, servers, test } from "../fixtures";
 import { openEditor } from "../editor";
 
-test.beforeAll(async () => { await servers.main(); });
+await servers.main();
 
 test("the page can be captured in the browser for the agent, and so can one element; a selector that matches nothing says so", async ({ tab }) => {
   const ed = await openEditor(tab, await servers.main(), "page");

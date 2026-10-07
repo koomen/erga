@@ -2,7 +2,7 @@
 import { expect, servers, test } from "../fixtures";
 import { cardBoard } from "./cards";
 
-test.beforeAll(async () => { await servers.main(); });
+await servers.main();
 
 test("a working task quiet for 12 minutes has a stalled badge (with since when) on its card and in its detail view, and no other does; a new log line clears both", async ({ tab }) => {
   tab.strict = true;

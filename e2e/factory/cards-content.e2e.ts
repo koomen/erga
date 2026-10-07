@@ -3,7 +3,7 @@
 import { expect, servers, test } from "../fixtures";
 import { buttonRows, cardBoard, cardTasks, CARDS } from "./cards";
 
-test.beforeAll(async () => { await servers.main(); });
+await servers.main();
 
 const readCards = (page: import("../fixtures").Page) => page.evaluate(`[...document.querySelectorAll("#board .card")].map((c) => {
   const title = c.querySelector(".title"), time = c.querySelector(".when");

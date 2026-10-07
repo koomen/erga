@@ -2,7 +2,7 @@
 import { expect, servers, test } from "../fixtures";
 import { cardBoard } from "./cards";
 
-test.beforeAll(async () => { await servers.main(); });
+await servers.main();
 
 test("the detail view keeps Preview, Restart, Discard and Merge in every state, an off one with its reason as a tooltip, its spinner round; an off Merge says why under them, with a dashed border and a not-allowed cursor", async ({ tab }) => {
   tab.strict = true;

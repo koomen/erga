@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { expect, servers, test } from "../fixtures";
 import { F, openEditor } from "../editor";
 
-test.beforeAll(async () => { await servers.agent(); });
+await servers.agent();
 
 test("an empty message: Send says to type one, pressing it says so in the panel, and typing enables it and clears the hint", async ({ tab }) => {
   const ed = await openEditor(tab, await servers.agent(), "page");

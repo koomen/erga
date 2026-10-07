@@ -2,7 +2,7 @@
 import { expect, servers, test } from "../fixtures";
 import { openEditor } from "../editor";
 
-test.beforeAll(async () => { await servers.main(); });
+await servers.main();
 
 test("⌘B wraps the selection in <strong>, and again takes it off", async ({ tab }) => {
   const ed = await openEditor(tab, await servers.main(), "page");

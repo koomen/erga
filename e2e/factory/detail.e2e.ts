@@ -2,7 +2,7 @@
 import { expect, test, until } from "../fixtures";
 import { board, factory, servers, TASK_MS } from "./factory";
 
-test.beforeAll(async () => { await servers.factory(); });
+await servers.factory();
 
 test("a finished task's detail: its branch, summary, instructions box and preview, with the screenshot; Preview, Restart, Discard and Merge, and no Start", { timeout: TASK_MS + 15_000 }, async ({ tab }) => {
   const s = await servers.factory(), f = factory(s);

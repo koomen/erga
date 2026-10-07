@@ -3,7 +3,7 @@
 import { expect, servers, test } from "../fixtures";
 import { getter, newDoc } from "./access";
 
-test.beforeAll(async () => { await servers.main(); });
+await servers.main();
 
 test("every page of the site's own has your avatar in its corner", async () => {
   const get = getter((await servers.main()).root);

@@ -3,7 +3,7 @@ import { expect, test, until } from "../fixtures";
 import { servers } from "./factory";
 import { freshHours, SETTING, unique, who } from "./who";
 
-test.beforeAll(async () => { await servers.factory(); });
+await servers.factory();
 
 test("a shared agent (/api/ext and MCP): its edits and published files are a version by tester via it, none by an agent alone; a setting, a user added over MCP and a token revoked are each tester's, via the token's agent; the users list says so", async () => {
   const s = await servers.factory(), w = who(s);

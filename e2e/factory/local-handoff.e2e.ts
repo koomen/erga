@@ -5,7 +5,7 @@ import { expect, test } from "../fixtures";
 import { factory, servers, TASK_MS } from "./factory";
 import { localAgent, MACHINE } from "./local";
 
-test.beforeAll(async () => { await servers.factory(); });
+await servers.factory();
 
 // A task done by a simulated VM.
 test("a quiet local task is stalled after 5 minutes; Hand to a VM: a VM's task now, the log says from whom, the old agent is refused; the VM goes on from the pushed branch, told it was a local task", { timeout: TASK_MS + 15_000 }, async () => {

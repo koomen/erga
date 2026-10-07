@@ -2,7 +2,7 @@
 import { expect, servers, test } from "../fixtures";
 import { openEditor, TIMESCALE } from "../editor";
 
-test.beforeAll(async () => { await servers.agent(); });
+await servers.agent();
 
 test("leaving voice mode doesn't send what was left in the box later", async ({ tab }) => {
   await tab.page.addInitScript(() => {

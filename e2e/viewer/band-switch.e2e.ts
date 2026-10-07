@@ -5,7 +5,7 @@ import { expect, servers, test } from "../fixtures";
 import { topDoc } from "./band";
 import { docShows, frameTop, openViewer, throttle } from "./viewer";
 
-test.beforeAll(async () => { await servers.main(); });
+await servers.main();
 
 test("into the editor (the agent opening too) and back: the document's top stays where it is", async ({ tab }) => {
   tab.strict = true;

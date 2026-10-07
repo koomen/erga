@@ -8,7 +8,7 @@ import { cleanEnv } from "../env";
 import { expect, test } from "../fixtures";
 import { factory, servers } from "./factory";
 
-test.beforeAll(async () => { await servers.factory(); });
+await servers.factory();
 
 test("a made-up VM token is refused; a task's git token clones but can't push staging; with no token, no repository", async () => {
   const s = await servers.factory(), f = factory(s);

@@ -2,7 +2,7 @@
 import { expect, servers, test } from "../fixtures";
 import { cardBoard, fits } from "./cards";
 
-test.beforeAll(async () => { await servers.main(); });
+await servers.main();
 
 for (const dark of [false, true]) {
   const look = dark ? "dark" : "light";

@@ -2,7 +2,7 @@
 import { expect, test, until } from "../fixtures";
 import { board, servers } from "./factory";
 
-test.beforeAll(async () => { await servers.factory(); });
+await servers.factory();
 
 test("/admin/source, /source and /admin/deploys redirect to /admin/factory", async () => {
   const s = await servers.factory();

@@ -3,7 +3,7 @@ import { expect, test, until } from "../fixtures";
 import { servers } from "./factory";
 import { freshHours, SETTING, unique, who } from "./who";
 
-test.beforeAll(async () => { await servers.factory(); });
+await servers.factory();
 
 test("/admin/changes shows \"tester\" and beside it how: their admin agent, a shared agent (its label), a shared agent (Share with agent), or nothing in person; every change is by a person's login", async ({ tab }) => {
   const s = await servers.factory(), w = who(s);

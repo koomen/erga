@@ -2,7 +2,7 @@
 import { expect, servers, test } from "../fixtures";
 import { openEditor, type Editor } from "../editor";
 
-test.beforeAll(async () => { await servers.main(); });
+await servers.main();
 
 type Toast = { text: string; shown: boolean; fix: boolean; fixDisabled: string | null; fixTitle: string };
 const toast = (ed: Editor) => ed.eval<Toast>(`(() => { const t = document.getElementById("toast"), b = t.querySelector(".toast-fix"); return { text: t.querySelector(".toast-text")?.textContent ?? t.textContent, shown: t.classList.contains("show"), fix: !!b, fixDisabled: b?.getAttribute("aria-disabled") ?? null, fixTitle: b?.title ?? "" }; })()`);

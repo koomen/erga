@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import { expect, test } from "../fixtures";
 import { factory, servers, TASK_MS } from "./factory";
 
-test.beforeAll(async () => { await servers.factory(); });
+await servers.factory();
 
 // A task done, a merge whose push hangs to its 3 s limit, then the stand-in and the merge again.
 test("a merge's push that hangs is killed at its limit with its whole process tree; needs agent; the stand-in is woken; the merge goes on to merged, in one VM", { timeout: 2 * TASK_MS }, async () => {

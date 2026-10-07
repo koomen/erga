@@ -2,7 +2,7 @@
 import { expect, servers, test } from "../fixtures";
 import { F, openEditor, type Editor } from "../editor";
 
-test.beforeAll(async () => { await servers.main(); });
+await servers.main();
 
 const btn = (ed: Editor) => ed.eval<{ disabled: string | null; pressed: string | null }>(`(() => { const b = document.getElementById("btn-pause"); return { disabled: b.getAttribute("aria-disabled"), pressed: b.getAttribute("aria-pressed") }; })()`);
 const slide = (ed: Editor) => ed.frame<number>(`${F}.defaultView.slide`);

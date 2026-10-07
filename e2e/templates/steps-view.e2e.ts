@@ -3,7 +3,7 @@
 import { expect, servers, settle, test } from "../fixtures";
 import { atStep, bar, clickOn, frameAt, inPage, openTab } from "./templates";
 
-test.beforeAll(async () => { await servers.main(); });
+await servers.main();
 
 test("a page without steps has no step controls", async ({ tab }) => {
   const s = await servers.main();

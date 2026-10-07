@@ -2,7 +2,7 @@
 import { expect, servers, test } from "../fixtures";
 import { act, multi, openCard, openTreeEditor, press, js } from "./tree";
 
-test.beforeAll(async () => { await servers.main(); });
+await servers.main();
 
 test("the root row's pencil opens the title and address card", async ({ tab }) => {
   const page = tab.page;

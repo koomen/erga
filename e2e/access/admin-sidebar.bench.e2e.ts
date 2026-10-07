@@ -1,7 +1,7 @@
 // The admin sidebar's collapse, part-way (tests/admin-layout.ts, in headless Chrome): timing, so a bench.
 import { expect, servers, test, until } from "../fixtures";
 
-test.beforeAll(async () => { await servers.main(); });
+await servers.main();
 
 test("90 ms after the click the sidebar is part-way between open and a rail of icons", async ({ tab }) => {
   const page = tab.page;

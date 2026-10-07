@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { expect, servers, test } from "../fixtures";
 import { F, openEditor, TIMESCALE } from "../editor";
 
-test.beforeAll(async () => { await servers.main(); });
+await servers.main();
 
 test("a disk edit reaches the page, patched in place, with the change marked exactly, and the marks fade", async ({ tab }) => {
   const ed = await openEditor(tab, await servers.main(), "page");

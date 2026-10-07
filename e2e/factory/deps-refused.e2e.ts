@@ -2,7 +2,7 @@
 import { expect, test } from "../fixtures";
 import { factory, servers } from "./factory";
 
-test.beforeAll(async () => { await servers.factory(); });
+await servers.factory();
 
 test("a dependency on a task that doesn't exist, a discarded one or a malformed id is refused; so are a task on itself and a cycle", async () => {
   const s = await servers.factory(), f = factory(s);

@@ -2,7 +2,7 @@
 import { expect, servers, test } from "../fixtures";
 import { openEditor } from "../editor";
 
-test.beforeAll(async () => { await servers.main(); });
+await servers.main();
 
 test("typed Markdown becomes styling and the marks go; an underscore inside a word isn't a shortcut", async ({ tab }) => {
   const ed = await openEditor(tab, await servers.main(), "page");

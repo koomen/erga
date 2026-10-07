@@ -2,7 +2,7 @@
 import { expect, servers, test } from "../fixtures";
 import { openEditor } from "../editor";
 
-test.beforeAll(async () => { await servers.main(); });
+await servers.main();
 
 test("front matter is not rendered; the page renders as units", async ({ tab }) => {
   const ed = await openEditor(tab, await servers.main(), "md");

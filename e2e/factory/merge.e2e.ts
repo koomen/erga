@@ -2,7 +2,7 @@
 import { expect, test, until } from "../fixtures";
 import { board, factory, servers, TASK_MS } from "./factory";
 
-test.beforeAll(async () => { await servers.factory(); });
+await servers.factory();
 
 // A task done, then its merge: two runs of the simulated VM's jobs.
 const TWO_STEPS = { timeout: 2 * TASK_MS };

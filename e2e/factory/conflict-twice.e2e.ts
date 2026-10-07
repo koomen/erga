@@ -3,7 +3,7 @@
 import { expect, test } from "../fixtures";
 import { factory, servers, TASK_MS } from "./factory";
 
-test.beforeAll(async () => { await servers.factory(); });
+await servers.factory();
 
 // Three tasks done and three merges, two of them through the stand-in, which lingers 3 s after each.
 test("each wake-up gets its own report, each merge after one waits for that run to end, and the task merges", { timeout: 4 * TASK_MS }, async () => {

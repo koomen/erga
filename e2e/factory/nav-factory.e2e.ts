@@ -2,7 +2,7 @@
 import { expect, servers, test, until } from "../fixtures";
 import { admin, click, navState } from "./nav";
 
-test.beforeAll(async () => { await servers.factory(); });
+await servers.factory();
 
 test("the Factory page's board runs in place; leaving it (the breadcrumb's Admin) takes its board API and tab with it; back, it runs again, live; a saved setting shows the page again in place", async ({ tab }) => {
   tab.strict = true;

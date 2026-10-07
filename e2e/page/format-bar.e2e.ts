@@ -2,7 +2,7 @@
 import { expect, servers, test } from "../fixtures";
 import { F, openEditor } from "../editor";
 
-test.beforeAll(async () => { await servers.main(); });
+await servers.main();
 
 test("selecting text shows the style bar; ⌘B across the end of a bold word bolds the rest as valid HTML; the bar shows bold, and its italic works", async ({ tab }) => {
   const ed = await openEditor(tab, await servers.main(), "page");

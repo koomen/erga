@@ -6,7 +6,7 @@ import { expect, test, until } from "../fixtures";
 import { board, factory, servers, TASK_MS } from "./factory";
 import { localAgent } from "./local";
 
-test.beforeAll(async () => { await servers.factory(); });
+await servers.factory();
 
 // Two merge jobs, one after the other, the second across a resolve.
 test("two local tasks write the same file; the second's merge conflicts: needs agent (the card says so), the VM stopped, its inbox says how; task pull --staging stops at the conflict; the agent resolves and says done; the merge goes on, and staging has both lines", { timeout: 2 * TASK_MS }, async ({ tab }) => {

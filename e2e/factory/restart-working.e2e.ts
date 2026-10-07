@@ -2,7 +2,7 @@
 import { expect, test, until } from "../fixtures";
 import { board, factory, servers, TASK_MS } from "./factory";
 
-test.beforeAll(async () => { await servers.factory(); });
+await servers.factory();
 
 test("Restart while the task works: its Claude Code stopped, its uncommitted work committed and pushed, a fresh VM goes on from it, and the stopped run reports nothing", { timeout: 2 * TASK_MS }, async () => {
   const s = await servers.factory(), f = factory(s);

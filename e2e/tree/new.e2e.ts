@@ -2,7 +2,7 @@
 import { expect, servers, test, until } from "../fixtures";
 import { act, clickOn, focused, menuItem, multi, openCard, openTreeEditor, press, rows, type, js } from "./tree";
 
-test.beforeAll(async () => { await servers.main(); });
+await servers.main();
 
 test("New folder (the foot) asks for its name in place and makes it; its + menu's New page makes a page in it, named without .html, then .html on disk", async ({ tab }) => {
   const page = tab.page;

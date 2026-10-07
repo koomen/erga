@@ -5,7 +5,7 @@ import { expect, test, until } from "../fixtures";
 import { board, factory, servers, TASK_MS } from "./factory";
 import { admin, author, commits, FACTORY } from "./people";
 
-test.beforeAll(async () => { await servers.factory(); });
+await servers.factory();
 
 // Three tasks done at once by simulated VMs.
 test("each way of adding a task (a session, the admin agent, Share with agent's token) gives it its person, whose name is on its commits, committed by the factory; the detail view names the person", { timeout: TASK_MS + 15_000 }, async ({ tab }) => {

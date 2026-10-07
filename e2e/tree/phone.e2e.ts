@@ -2,7 +2,7 @@
 import { expect, servers, test, until } from "../fixtures";
 import { multi, openTreeEditor, js } from "./tree";
 
-test.beforeAll(async () => { await servers.main(); });
+await servers.main();
 
 test("on a phone the tree fits the screen", async ({ tab }) => {
   const page = tab.page;

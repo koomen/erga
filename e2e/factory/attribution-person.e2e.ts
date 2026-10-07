@@ -3,7 +3,7 @@ import { expect, test } from "../fixtures";
 import { servers } from "./factory";
 import { freshHours, SETTING, unique, who } from "./who";
 
-test.beforeAll(async () => { await servers.factory(); });
+await servers.factory();
 
 test("a setting set in person (on /admin) is recorded as tester alone, with no via", async () => {
   const w = who(await servers.factory());

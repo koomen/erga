@@ -2,7 +2,7 @@
 import { expect, test, until } from "../fixtures";
 import { board, factory, servers } from "./factory";
 
-test.beforeAll(async () => { await servers.factory(); });
+await servers.factory();
 
 test("a bad token is refused with the reason; a wrapped one is taken, on the page and by the server; a good one is stored, never shown, and signed out", async ({ tab }) => {
   const s = await servers.factory(), f = factory(s);

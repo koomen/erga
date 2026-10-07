@@ -3,7 +3,7 @@ import { expect, test } from "../fixtures";
 import { servers, TASK_MS } from "./factory";
 import { mergeAfterResolve } from "./reset";
 
-test.beforeAll(async () => { await servers.factory(); });
+await servers.factory();
 
 // Two tasks done at once, a merge, and a second merge across a conflict, its resolve and the stand-in's 10 s.
 test("the merge after a resolve stops the stand-in that lingers after it said done, 10 s after the merge started", { timeout: 4 * TASK_MS }, async () => {

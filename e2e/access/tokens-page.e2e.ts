@@ -3,7 +3,7 @@
 import { expect, servers, test, until } from "../fixtures";
 import { mint, publish, unique } from "./access";
 
-test.beforeAll(async () => { await servers.main(); });
+await servers.main();
 
 test("an admin is offered every scope; a one-document token with an expiry is shown once with its scope, document and expiry, then listed so", async ({ tab }) => {
   const root = (await servers.main()).root, page = tab.page;

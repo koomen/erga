@@ -2,7 +2,7 @@
 import { expect, test, until } from "../fixtures";
 import { board, factory, servers, TASK_MS } from "./factory";
 
-test.beforeAll(async () => { await servers.factory(); });
+await servers.factory();
 
 test("a discarded dependency blocks the tasks that start or merge after it; the card says so; once the dependency is removed, the task starts by itself", { timeout: TASK_MS + 15_000 }, async ({ tab }) => {
   const s = await servers.factory(), f = factory(s);

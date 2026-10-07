@@ -2,7 +2,7 @@
 import { expect, servers, test } from "../fixtures";
 import { chimeBoard, look } from "./chime";
 
-test.beforeAll(async () => { await servers.main(); });
+await servers.main();
 
 test("while the tab is hidden, its title counts the tasks that need the admin (\"(2) ...\"); the count goes when the admin looks", async ({ tab }) => {
   tab.strict = true;

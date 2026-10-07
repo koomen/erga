@@ -5,7 +5,7 @@ import { expect, servers, test } from "../fixtures";
 import { templateById } from "../../templates";
 import { bar, clickOn, editorReady, inPage, newDoc, openTab } from "./templates";
 
-test.beforeAll(async () => { await servers.main(); });
+await servers.main();
 
 const LABELS = ["One big canvas", "Zoom out, zoom in", "Make it yours", "Add a frame"];
 

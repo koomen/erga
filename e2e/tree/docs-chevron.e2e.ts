@@ -3,7 +3,7 @@ import type { Page } from "playwright-core";
 import { expect, servers, test } from "../fixtures";
 import { clickOn, multi } from "./tree";
 
-test.beforeAll(async () => { await servers.main(); });
+await servers.main();
 
 type State = { expanded: string | null; turned: boolean; shown: boolean; rows: number; text: string };
 /** What a document's row shows: whether the chevron says open, it's turned, and its pages show (and how). */

@@ -2,7 +2,7 @@
 import { expect, servers, test } from "../fixtures";
 import { chimeBoard, decided, look } from "./chime";
 
-test.beforeAll(async () => { await servers.main(); });
+await servers.main();
 
 test("the admin's own Merge on a card, failed at once (back to ready to merge), plays none", async ({ tab }) => {
   tab.strict = true;

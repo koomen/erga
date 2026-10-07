@@ -2,7 +2,7 @@
 import { expect, servers, test } from "../fixtures";
 import { F, openEditor, type Editor } from "../editor";
 
-test.beforeAll(async () => { await servers.main(); });
+await servers.main();
 
 const html = (ed: Editor, sel: string) => ed.frame<string>(`${F}.querySelector(${JSON.stringify(sel)}).innerHTML`);
 

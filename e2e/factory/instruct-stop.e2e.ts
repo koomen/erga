@@ -3,7 +3,7 @@
 import { expect, test } from "../fixtures";
 import { factory, servers, TASK_MS } from "./factory";
 
-test.beforeAll(async () => { await servers.factory(); });
+await servers.factory();
 
 test("a command that runs on is stopped a while after instructions came, and Claude Code gets them with why", { timeout: TASK_MS + 15_000 }, async () => {
   const s = await servers.factory(), f = factory(s);

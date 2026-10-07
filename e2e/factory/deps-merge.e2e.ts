@@ -2,7 +2,7 @@
 import { expect, test } from "../fixtures";
 import { board, factory, servers, TASK_MS } from "./factory";
 
-test.beforeAll(async () => { await servers.factory(); });
+await servers.factory();
 
 test("a blocked merge is refused (409), and on the board Merge is off with the reason", { timeout: TASK_MS + 15_000 }, async ({ tab }) => {
   const s = await servers.factory(), f = factory(s);

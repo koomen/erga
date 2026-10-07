@@ -4,7 +4,7 @@ import { expect, test } from "../fixtures";
 import { factory, servers, TASK_MS } from "./factory";
 import { localAgent } from "./local";
 
-test.beforeAll(async () => { await servers.factory(); });
+await servers.factory();
 
 // The merge job runs in a simulated VM.
 test("Merge on a local task: staging gets \"Merge task/<id>-<slug>: title\" (--no-ff) with its work; the branch is deleted; the VM was started for the job and is stopped; a merged task takes no more reports", { timeout: TASK_MS }, async () => {

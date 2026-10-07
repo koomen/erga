@@ -4,7 +4,7 @@ import { expect, servers, test } from "../fixtures";
 import { atStep, bar, clickOn, newDoc, openTab } from "./templates";
 import { view } from "./solar";
 
-test.beforeAll(async () => { await servers.main(); });
+await servers.main();
 
 const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));
 

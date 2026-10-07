@@ -3,7 +3,7 @@
 import { expect, servers, settle, test } from "../fixtures";
 import { atStep, bar, clickOn, clickTextEnd, editorReady, frameAt, inPage, openTab, rawKey } from "./templates";
 
-test.beforeAll(async () => { await servers.main(); });
+await servers.main();
 
 test("editing: forward and → outside the text go to a step; ← in the heading's text stays; an edit relabels and redraws the list", async ({ tab }) => {
   const s = await servers.main();

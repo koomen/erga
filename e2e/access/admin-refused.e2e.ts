@@ -3,15 +3,17 @@
 import { expect, servers, test, type Server } from "../fixtures";
 import { getter, mint, unique } from "./access";
 
-test.beforeAll(async () => { await servers.main(); });
+await servers.main();
+// deploy_page is a setting for the whole server: changed on the worker's shared one, it would change what other tests
+// see (the account menu's Deploy your own), so the test that sets it has a server of this file's own.
+const own = () => servers.of("deploy-page");
+await own();
 
 /** As someone else, by the dev server's ?user=. */
 const as = (s: Server, who: string) => (path: string, init: RequestInit = {}) => getter(s.root)(path + (path.includes("?") ? "&" : "?") + `user=${who}`, init);
 
-// deploy_page is a setting for the whole server: changed on the worker's shared one, it would change what other tests
-// see (the account menu's Deploy your own), so this test has a server of its own (a few seconds; more under load).
-test("deploy_page lets a user use /deploy, and never into an admin page or API; they stay a user", { timeout: 60_000 }, async ({ tab }) => {
-  const s = await tab.own(), root = s.root, get = getter(root);
+test("deploy_page lets a user use /deploy, and never into an admin page or API; they stay a user", async () => {
+  const s = await own(), root = s.root, get = getter(root);
   expect((await get("/admin/settings", { method: "POST", headers: { Origin: root }, body: new URLSearchParams({ key: "deploy_page", value: JSON.stringify("users") }) })).ok).toBe(true);
   const login = unique("Mallory"), user = as(s, login);
   expect((await user("/deploy")).status).toBe(200);

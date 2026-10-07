@@ -3,7 +3,7 @@
 import { expect, servers, test, type Tab } from "../fixtures";
 import { F, openEditor, type Editor } from "../editor";
 
-test.beforeAll(async () => { await servers.main(); });
+await servers.main();
 
 // Less compressed than elsewhere (tests/page.ts did the same): the toast's minimum, scaled, is what this file's checks wait out.
 const TS = 0.4;

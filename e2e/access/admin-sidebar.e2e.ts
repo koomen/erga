@@ -4,7 +4,7 @@
 // admin-sidebar.bench.e2e.ts.
 import { expect, servers, test, until, type Page } from "../fixtures";
 
-test.beforeAll(async () => { await servers.main(); });
+await servers.main();
 
 const widths = (page: Page) => page.evaluate(() => ({
   side: document.getElementById("admin-side")!.getBoundingClientRect().width, main: document.querySelector("main")!.getBoundingClientRect().width,

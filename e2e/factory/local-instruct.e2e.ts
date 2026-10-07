@@ -4,7 +4,7 @@ import { expect, test } from "../fixtures";
 import { factory, servers } from "./factory";
 import { localAgent } from "./local";
 
-test.beforeAll(async () => { await servers.factory(); });
+await servers.factory();
 
 test("instructions sent to a finished local task: it works again with no VM; task done is refused while they wait; task inbox shows them once and the log says so; done again is ready to merge", async () => {
   const s = await servers.factory(), f = factory(s);

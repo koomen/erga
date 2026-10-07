@@ -2,7 +2,7 @@
 import { expect, servers, test, type Page } from "../fixtures";
 import { openEditor } from "../editor";
 
-test.beforeAll(async () => { await servers.agent(); });
+await servers.agent();
 
 const select = (p: Page) => p.evaluate(`(() => { const s = document.getElementById("agent-model-select"); return s && { value: s.value, text: s.selectedOptions[0]?.text, options: [...s.options].map((o) => o.text) }; })()`) as Promise<{ value: string; text: string; options: string[] } | null>;
 

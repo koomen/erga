@@ -2,7 +2,7 @@
 import { expect, servers, test, until } from "../fixtures";
 import { cardBoard } from "./cards";
 
-test.beforeAll(async () => { await servers.main(); });
+await servers.main();
 
 test("typing in the instructions through live updates of the task: the view shows them; the focus, the text, the cursor and a selection stay; the next key replaces the selection; a dependency's kind keeps its choice", async ({ tab }) => {
   tab.strict = true;
