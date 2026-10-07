@@ -2452,8 +2452,8 @@ files: a document has pages, and the tree shows only its pages (HTML and
 Markdown files) and the folders holding them (or nothing yet). The
 document's stylesheets, scripts, fonts and images are shared assets, out of sight, as are folders holding only those (`fonts/`,
 `assets/`); the API lists every file, and agents see them all. The tree of them
-(`src/page/tree.ts`, built on its own as `pages-tree.js` and loaded only when it's
-opened, so viewing never pays for it) shows in two places: in the editor, the
+(`src/page/tree.ts`, built on its own as `pages-tree.js` and loaded only by the
+editor and `/docs`, so viewing never pays for it) shows in two places: in the editor, the
 document's title in the breadcrumbs opens it in a card, the document as its
 first row and everything else under it; on `/docs`, the chevron left of each
 document opens its pages beneath its row. There they show at once: `/docs` loads
@@ -2462,6 +2462,10 @@ pages while the pointer rests on its row (or its chevron is focused or
 touched), and keeps each document's last answer for the tab, so a document
 opened again, or on the next visit, shows its pages straight away and reads
 them again behind (closed and opened within 4 seconds, not even that).
+The editor does the same for its card: once it's up and the tab is idle (or as
+the pointer heads for the title), it loads `pages-tree.js` and mounts the tree,
+still closed, from the answer kept for the tab (the same one `/docs` keeps), so
+the title opens it at once and reads it again behind.
 Folders open and close (remembered
 for the tab); pages show by their title when it's known (in the editor,
 read from the room as they're edited; "Untitled" counts as none), else by
@@ -3319,7 +3323,7 @@ back, merging edits from disk, the agent's exact-match edits and attribution.
 - `src/page/settings.ts`, `src/page/versions.ts`: document settings (the gear's
   popover: publishing, the homepage, versions), built on its own as `settings.js`
 - `package.json`: the pinned CodeMirror and Yjs packages the page editor bundles, and pi
-- `src/page/tree.ts`: a document's pages as a tree (built as `pages-tree.js`, loaded on demand), in the editor and on `/docs`
+- `src/page/tree.ts`: a document's pages as a tree (built as `pages-tree.js`, loaded by the editor and `/docs`, never the viewer), in the editor and on `/docs`
 - `style.css`: theme colours, typography and the editor's styling
 - `fonts/`: the self-hosted Inter web font
 - `tests/`: unit tests, `page.ts`, `smoke.ts` and `fixtures/` for the page
