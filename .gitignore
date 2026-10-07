@@ -23,3 +23,6 @@ node_modules/
 
 # The builder image's dependency cache, staged by deploy/setup.ts for its build only
 deploy/builder/deps/
+
+# The end-to-end tests: their report, traces and screenshots (e2e.config.ts)
+.e2e/

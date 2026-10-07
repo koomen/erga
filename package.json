@@ -43,9 +43,12 @@
   },
   "devDependencies": {
     "@cloudflare/vite-plugin": "2.0.0-beta.sha-ad79608dd",
+    "@e2e-dev/web": "0.13.0",
     "@types/bun": "1.4.2",
     "@types/turndown": "5.0.6",
     "cf": "1.0.0-beta.10",
+    "e2e": "0.18.0",
+    "playwright-core": "1.63.0",
     "typescript": "7.0.2",
     "vite": "8.3.1"
   }

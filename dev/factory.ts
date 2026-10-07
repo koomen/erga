@@ -304,8 +304,9 @@ function simRunner(stateDir: string, log: (line: string) => void): Runner {
         // The factory commits, as in a VM's image; the job's env (worker/factory.ts, jobEnv) names the author.
         GIT_CONFIG_GLOBAL: join(dir, "home", ".gitconfig"), GIT_AUTHOR_NAME: "Erga factory", GIT_AUTHOR_EMAIL: "factory@erga.dev",
         GIT_COMMITTER_NAME: "Erga factory", GIT_COMMITTER_EMAIL: "factory@erga.dev",
-        // What this machine has that a VM's image would: Bun's package cache (packages only), and for Chrome its HOME (task.ts, CHROME_HOME).
-        BUN_INSTALL_CACHE_DIR: process.env.BUN_INSTALL_CACHE_DIR || join(homedir(), ".bun", "install", "cache"), CHROME_HOME: homedir(),
+        // What this machine has that a VM's image would: Bun's package cache (packages only), and for Chrome its HOME (task.ts,
+        // CHROME_HOME; ERGA_CHROME_HOME when the server itself runs in a HOME of its own, as under the tests, e2e/env.ts).
+        BUN_INSTALL_CACHE_DIR: process.env.BUN_INSTALL_CACHE_DIR || join(homedir(), ".bun", "install", "cache"), CHROME_HOME: process.env.ERGA_CHROME_HOME || homedir(),
         FACTORY_WORK: join(dir, "work"), FACTORY_PREVIEW_PORT: String(port), FACTORY_PUBLIC_PORT: String(port), FACTORY_PREVIEW: "static",
         ...j.env,
       };
