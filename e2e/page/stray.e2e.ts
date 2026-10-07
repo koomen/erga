@@ -1,13 +1,13 @@
 // A paragraph whose HTML has a stray end tag: locked, saying why, and typing never lands somewhere else (tests/page.ts, "Stray end tag").
 // The toast's minimum time on screen is checked in stray.bench.e2e.ts (timing).
-import { expect, servers, test } from "../fixtures";
+import { expect, servers, test, type Tab } from "../fixtures";
 import { F, openEditor, type Editor } from "../editor";
 
 test.beforeAll(async () => { await servers.main(); });
 
 // Less compressed than elsewhere (tests/page.ts did the same): the toast's minimum, scaled, is what this file's checks wait out.
 const TS = 0.4;
-const open = (tab: Parameters<typeof openEditor>[0]) => servers.main().then((s) => openEditor(tab, s, "stray", { timescale: TS }));
+const open = async (tab: Tab): Promise<Editor> => openEditor(tab, await servers.main(), "stray", { timescale: TS });
 
 test("the malformed paragraph is locked, and its neighbours aren't", async ({ tab }) => {
   const ed = await open(tab);

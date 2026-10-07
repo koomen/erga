@@ -50,7 +50,7 @@ export function factory(s: FactoryServer) {
         .catch(async (e) => { throw new Error(`${(e as Error).message}\n${JSON.stringify(await Promise.all(all.map(async (id) => { const t = await f.task(id); return { id, status: t.status, error: t.error, log: t.log.slice(-6).map((l) => l.message) }; })), null, 1)}`); });
     },
     branches: () => branches(s.state),
-    git: (...args: string[]) => spawnSync("git", ["-C", f.repo, ...args], { encoding: "utf8", env: cleanEnv() }).stdout,
+    git: (...args: string[]) => spawnSync("git", ["-C", f.repo, ...args], { encoding: "utf8", timeout: 30_000, env: cleanEnv() }).stdout,
     /** The simulated VMs a task has had (their folders). */
     vmsOf(id: number) { const dir = join(s.state, "factory", "vms"); return existsSync(dir) ? readdirSync(dir).filter((n) => n.startsWith(`task-${id}-`)) : []; },
     /** The next task id the factory will give. */

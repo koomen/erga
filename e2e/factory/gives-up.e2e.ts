@@ -21,7 +21,7 @@ test("back to ready to merge, with the reason, and that Claude Code is stopped",
   const t = await f.task(h);
   expect(t.error).toContain("Claude Code couldn't finish the merge");
   // This server's stand-ins only (their working directory is a clone under its state): other workers' factories run at the same time.
-  const ours = (pid: string) => spawnSync("lsof", ["-a", "-p", pid, "-d", "cwd", "-Fn"], { encoding: "utf8" }).stdout.includes(realpathSync(s.state));
-  const left = spawnSync("pgrep", ["-f", "fake-claude.ts resolve"], { encoding: "utf8" }).stdout.trim().split("\n").filter((p) => p && ours(p));
+  const ours = (pid: string) => spawnSync("lsof", ["-a", "-p", pid, "-d", "cwd", "-Fn"], { encoding: "utf8", timeout: 30_000 }).stdout.includes(realpathSync(s.state));
+  const left = spawnSync("pgrep", ["-f", "fake-claude.ts resolve"], { encoding: "utf8", timeout: 30_000 }).stdout.trim().split("\n").filter((p) => p && ours(p));
   expect(left).toEqual([]);
 });

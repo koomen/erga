@@ -17,7 +17,7 @@ test("a merge's push that hangs is killed at its limit with its whole process tr
   expect(t.error?.startsWith("Pushing task/")).toBe(true);
   expect(t.error).toContain("timed out after 3s (its processes were killed)");
   // Its whole process tree was killed (two sleeps: the step's and its child's), in the VM that is still up.
-  expect(spawnSync("pgrep", ["-f", `sleep ${3000 + c}`], { encoding: "utf8" }).stdout.trim()).toBe("");
+  expect(spawnSync("pgrep", ["-f", `sleep ${3000 + c}`], { encoding: "utf8", timeout: 30_000 }).stdout.trim()).toBe("");
   await f.until(c, "merged");
   expect((await f.task(c)).log.filter((l) => /^VM \S+ started/.test(l.message)).length).toBe(1);
 });

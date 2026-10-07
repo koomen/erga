@@ -41,10 +41,11 @@ export interface FactoryServer extends Server {
 }
 
 const started = new Map<string, Promise<Server>>();
-const once = <T extends Server>(key: string, make: () => Promise<T>) => () => {
+const once = <T extends Server>(key: string, make: () => Promise<T>) => (): Promise<T> => {
   let s = started.get(key);
   if (!s) { s = make(); started.set(key, s); s.catch(() => started.delete(key)); }
-  return s as Promise<T>;
+  // One that stopped by itself (server.ts says why) is started again, for the tests after.
+  return s.then((x) => { if (x.alive()) return x; x.dispose(); started.delete(key); return once(key, make)(); }) as Promise<T>;
 };
 
 export const servers = {

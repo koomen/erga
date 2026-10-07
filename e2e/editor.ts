@@ -71,7 +71,7 @@ export async function openEditor(tab: Tab, server: Server, fixture: string, opts
 export function editor(page: Page, doc: { address: string; dir: string; file: string }) {
   let cached: Frame | null = null;
   /** The page editor's frame (found again after a reload or a fresh render). */
-  const editorFrame = () => until(async () => {
+  const editorFrame = () => until<Frame | null>(async () => {
     if (cached && !cached.isDetached()) return cached;
     for (const f of page.frames()) {
       if (f == page.mainFrame()) continue;
@@ -104,7 +104,7 @@ export function editor(page: Page, doc: { address: string; dir: string; file: st
     /** Evaluates an expression in the page editor's frame; again in a fresh frame if it was replaced meanwhile. */
     async frame<T = any>(expr: string): Promise<T> {
       for (let i = 0; ; i++) {
-        const f = await editorFrame();
+        const f = (await editorFrame())!;
         try { return await f.evaluate(expr) as T; }
         catch (e) { if (i > 20 || !/detached|destroyed|Target closed/.test((e as Error).message)) throw e; cached = null; }
       }

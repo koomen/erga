@@ -6,7 +6,7 @@
   "scripts": {
     "build": "./build.sh",
     "start": "bun dev.ts",
-    "test": "./test.sh",
+    "test": "bun e2e/run.ts",
     "typecheck": "tsc -p . && tsc -p worker",
     "site": "./site.sh",
     "deploy": "bun deploy/run.ts production",
@@ -14,7 +14,11 @@
     "setup:staging": "bun deploy/setup.ts",
     "release": "bun deploy/release.ts",
     "test:prod": "bun tests/suite/prod.ts",
-    "task": "bun factory/task.ts"
+    "task": "bun factory/task.ts",
+    "test:e2e": "bun e2e/run.ts --e2e",
+    "test:bench": "bun e2e/run.ts --bench",
+    "test:old": "./test.sh",
+    "test:browsers": "bunx @e2e-dev/web install chromium"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "0.91.1",

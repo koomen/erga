@@ -43,7 +43,8 @@ export function hermetic(): boolean {
     "",
   ].join("\n"));
   for (const k of Object.keys(process.env)) if (SECRET.test(k) && !k.startsWith("PLAYWRIGHT_")) delete process.env[k];
-  Object.assign(process.env, GIT, { HOME: home, XDG_CONFIG_HOME: join(home, ".config"), ERGA_TEST_HOME: home, ERGA_TEST_RUN: `run-${process.pid}-${Date.now()}` });
+  Object.assign(process.env, GIT, { HOME: home, XDG_CONFIG_HOME: join(home, ".config"), ERGA_TEST_HOME: home });
+  process.env.ERGA_TEST_RUN ??= `run-${process.pid}-${Date.now()}`;
   return true;
 }
 

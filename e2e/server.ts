@@ -38,6 +38,8 @@ export interface Server {
   scratch: string;
   /** What it printed lately. */
   output(): string;
+  /** Whether its process still runs. */
+  alive(): boolean;
   /** Links a file or folder as one of DEV_LOGIN's documents: the document's address (no #edit). */
   open(path: string): Promise<string>;
   /** Copies tests/fixtures/<name> into the scratch folder and links it: its folder and address. */
@@ -59,7 +61,7 @@ function freePort(): Promise<number> {
 /** Every process under `pid`. */
 function descendants(pid: number): number[] {
   const out: number[] = [];
-  for (const line of spawnSync("pgrep", ["-P", String(pid)], { encoding: "utf8" }).stdout?.split("\n") ?? []) {
+  for (const line of spawnSync("pgrep", ["-P", String(pid)], { encoding: "utf8", timeout: 30_000 }).stdout?.split("\n") ?? []) {
     const child = Number(line);
     if (child) out.push(child, ...descendants(child));
   }
@@ -91,6 +93,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<Server> {
   const server: Server = {
     root: "", port: 0, state, scratch,
     output: () => output,
+    alive: () => !!proc && proc.exitCode == null && proc.signalCode == null,
     async open(path) {
       const r = await fetch(`${server.root}/__erga/open`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path }), redirect: "manual" });
       const at = r.headers.get("location");
@@ -111,7 +114,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<Server> {
       server.stop();
       // What a simulated factory VM started detached (its preview, a stand-in) runs from a folder in the scratch one.
       // (The folder is a real path, /private/var/... on a Mac, so that is what its processes' command lines name.)
-      spawnSync("pkill", ["-9", "-f", scratch]);
+      spawnSync("pkill", ["-9", "-f", scratch], { timeout: 10_000 });
       live.delete(server);
       rmSync(scratch, { recursive: true, force: true });
     },
@@ -127,7 +130,11 @@ export async function startServer(opts: ServerOptions = {}): Promise<Server> {
     p.stdout!.on("data", take);
     p.stderr!.on("data", take);
     let exited: number | null = null;
-    p.on("exit", (code) => { exited = code ?? 1; });
+    p.on("exit", (code, signal) => {
+      exited = code ?? 1;
+      // Stopped by nobody: say why, for the test that finds it gone.
+      if (proc == p && server.root) console.error(`the dev server at ${server.root} stopped by itself (${signal ?? `exit ${code}`}):\n${output.slice(-3000)}`);
+    });
     // Up once a page that reads the database answers: the server migrates it as it starts.
     while (Date.now() < until && exited == null) {
       const ok = await fetch(`${root}/docs`, { redirect: "manual", signal: AbortSignal.timeout(5000) }).then((r) => r.ok, () => false);
