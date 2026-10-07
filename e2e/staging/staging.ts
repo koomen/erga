@@ -31,7 +31,7 @@ export async function mint(root: string, cookie: string, scope: "admin" | "docum
 /** The admin's session and admin token on `s`. */
 export async function admin(s: Server) {
   const cookie = await signIn(s.root);
-  return { cookie, token: await mint(s.root, cookie, "admin") };
+  return { cookie, token: await mint(s.root, cookie, "admin", "Git") };
 }
 
 export const git = (cwd: string, ...args: string[]) => {
@@ -162,4 +162,16 @@ export async function merge(s: Server, who: { token: string; cookie: string }, a
     body: JSON.stringify({ from: "staging", to: "main", ...body }),
   });
   return { status: r.status, body: await r.json() as { commit?: string; error?: string; override?: boolean; fastForward?: boolean; upToDate?: boolean } };
+}
+
+/** Main at staging's head, both deployed: a new commit pushed, its tests passed, merged; its id. */
+export async function level(s: Server, who: { token: string; cookie: string }, subject = "Level") {
+  await seed(s, who.token);
+  const c = clone(s, who.token);
+  const head = commit(c, "level.txt", `${crypto.randomUUID()}\n`, subject);
+  must(c, "push", "-q", "origin", "HEAD:staging");
+  await gateGreen(s, who.token, head);
+  expect((await merge(s, who, "token")).body.commit).toBe(head);
+  await until(async () => (await target(s, "staging")).deployed == head && (await target(s, "production")).deployed == head, 2 * DEPLOY_MS, "staging and production deploy it");
+  return { head, dir: c };
 }
