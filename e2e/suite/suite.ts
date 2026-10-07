@@ -194,3 +194,10 @@ function hash(s: string): number {
   for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619);
   return h >>> 0;
 }
+
+/** The names on the carets drawn on a person's page, "|"-joined. */
+export const peerNames = (p: Person) => p.frame<string>(`[...${p.F}.querySelectorAll("erga-peer-name")].map((e) => e.textContent).join("|")`);
+/** Whether a caret drawn on the page sits in the element. */
+export const caretIn = (p: Person, selector: string) => p.frame<boolean>(`(() => { const w = ${p.W}, r = ${p.F}.querySelector(${JSON.stringify(selector)}).getBoundingClientRect(); return [...${p.F}.querySelectorAll("erga-peer")].some((c) => { const y = parseFloat(c.style.top) - w.scrollY; return y >= r.top - 2 && y < r.bottom; }); })()`);
+/** Fails unless the person's tab had no errors. */
+export const noErrors = (p: Person, who: string) => { if (p.errors.length) throw new Error(`page errors (${who}):\n${p.errors.join("\n")}`); };
