@@ -33,6 +33,17 @@ export const AREAS: Record<string, string[]> = {
     "src/page/chime.ts", "src/page/admin-nav.ts", "admin-layout.ts", "admin.ts", "attribution.ts", "users.ts", "config.ts", "server-api.ts",
     "worker/doc-host.ts", "src/room/doc.ts", "migrations/0170_attribution.sql",
   ],
+  "e2e/access/": [
+    "account.ts", "admin-layout.ts", "admin.ts", "users.ts", "directory.ts", "tokens.ts", "front.ts", "home.ts", "worker/auth.ts", "worker/cookies.ts",
+    "worker/doc-host.ts", "source/http.ts", "server-api.ts", "src/page/bridge.ts", "src/page/admin-share.ts", "src/page/share-agent.ts", "src/page/admin-nav.ts",
+    "src/page/main.ts", "admin-share.js", "admin-nav.js",
+  ],
+  "e2e/templates/": ["templates.ts", "templates/", "front.ts", "DOCUMENT_PROMPT.md", "src/page/main.ts", "page.html", "tests/fixtures/steps/", "tests/fixtures/fade/"],
+  "e2e/tree/": [
+    "src/page/tree.ts", "pages-tree.js", "tree.ts", "front.ts", "src/page/main.ts", "src/page/remote.ts", "src/page/frame.ts", "page.html",
+    "worker/doc-host.ts", "tokens.ts", "server-tools.ts", "tests/fixtures/multi/",
+  ],
+  "e2e/viewer/": ["front.ts", "home.ts", "account.ts", "src/page/base.ts", "style.css", "src/page/main.ts", "src/page/layout.ts", "tests/fixtures/"],
 };
 
 /** Changes that need every test: the tests' own machinery, the build, the server's core. */
