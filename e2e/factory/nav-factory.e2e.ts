@@ -15,7 +15,8 @@ test("the Factory page's board runs in place; leaving it (the breadcrumb's Admin
   await expect.poll(async () => (await navState(p)).crumb).toBe("Settings");
   expect(await p.evaluate<boolean>(`!window.ergaBoard && !document.body.dataset.tab`)).toBe(true);
   await click(p, '.admin-side a[href="/admin/factory"]');
-  await until(() => p.evaluate(`!!window.ergaBoard && !!document.querySelector('#tasks [data-col="queued"]') && document.getElementById("live").textContent == "live"`), 5000, "the board runs again, live");
+  // Back, the board reads itself and opens its stream again: two answers from the server, slow at a load of 40.
+  await until(() => p.evaluate(`!!window.ergaBoard && !!document.querySelector('#tasks [data-col="queued"]') && document.getElementById("live").textContent == "live"`), 10_000, "the board runs again, live");
   await click(p, '.admin-side a[href="/admin"]');
   await expect.poll(async () => (await navState(p)).crumb).toBe("Settings");
 
