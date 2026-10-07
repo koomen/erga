@@ -37,6 +37,8 @@ const times = async (p: Page, text: string) => (await chat(p)).split(text).lengt
 const chat = (p: Page) => p.eval<string>(`document.getElementById("agent-log").textContent`);
 const ready = (p: Page) => until(() => p.eval<boolean>(`document.getElementById("agent-send").title == "Type a message to send it."`), 15_000, "the agent is on");
 async function say(p: Page, text: string) {
+  // The panel reads the conversation again once its event stream opens: a message sent before that may show late.
+  await Bun.sleep(1000);
   await p.eval(`(() => { const i = document.getElementById("agent-input"); i.value = ${JSON.stringify(text)}; i.dispatchEvent(new Event("input")); document.getElementById("agent-send").click(); })()`);
 }
 const api = (p: Page, method: string, path: string, body?: unknown) => p.eval<unknown>(`fetch(${JSON.stringify(path)}, { method: ${JSON.stringify(method)}, headers: { "Content-Type": "application/json" }${body ? `, body: ${JSON.stringify(JSON.stringify(body))}` : ""} }).then((r) => r.json())`);

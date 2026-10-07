@@ -113,6 +113,7 @@ run 1 deploys bun tests/deploys.ts                       # [5]
 run 1 isolation bun tests/isolation.ts                   # [4]
 run 1 admin-open bun tests/admin-open.ts                 # [3]
 run 1 admin-layout bun tests/admin-layout.ts             # [8]
+run 1 admin-agent-chat bun tests/admin-agent-chat.ts     # [30]
 run 1 view-page bun tests/view-page.ts                   # [9]
 collect
 # Latency is measured alone: other tests running would skew it.
