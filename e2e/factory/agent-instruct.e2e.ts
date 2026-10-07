@@ -30,7 +30,7 @@ test("it looks at a task's screenshot, sends it instructions and drops its depen
   ]));
   await expect.poll(() => replies(b), { timeout: 15_000 }).toContain(`Asked #${id} for a shorter note.`);
   const t = await f.task(id);
-  expect(t.log.some((l) => l.message.startsWith("tester’s agent asked: Make the note shorter."))).toBe(true);
+  expect(t.log.some((l) => l.message.startsWith("tester, via their admin agent asked: Make the note shorter."))).toBe(true);
   expect(t.mergeAfter).toEqual([]);
   expect(await b.eval<boolean>(`!!document.querySelector("#agent-log .msg-tool.done img.shot")`)).toBe(true);
   await f.until(id, "complete", TASK_MS, (x) => x.commit != t.commit);
