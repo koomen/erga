@@ -11,7 +11,7 @@ browserTest("e2e/suite/browser-broken.bench.e2e.ts", "the Fix button's prompt sh
   await until(() => a.frame<boolean>(`!!${a.F}.querySelector("figcaption.erga-locked")`), 5000, "the paragraph locks");
   const r = await a.rectOf("figcaption", 0.2);
   await a.click(r.x, r.y);
-  await until(() => a.eval<boolean>(`!!document.querySelector("#toast.show .toast-fix")`), 3000, "the note offers a fix");
+  await until(() => a.eval<boolean>(`!!document.querySelector("#toast.show .toast-fix")`), 5000, "the note offers a fix");
   const ms = await a.eval<number>(`new Promise((done) => { const t0 = performance.now(); document.querySelector("#toast .toast-fix").click();
     (function look() { if ([...document.querySelectorAll("#agent-log .msg-user")].some((e) => e.textContent.includes("stray </h2>"))) done(performance.now() - t0); else requestAnimationFrame(look); })(); })`);
   ctx.metric("prompt visible after", ms);

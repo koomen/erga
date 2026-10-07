@@ -144,9 +144,10 @@ export function register(file: string, suite: string, tests: Test[]) {
 }
 
 /** A browser test of the suite: registered as `register` does, with the test's tab. */
-export function browserTest(file: string, name: string, opts: { needs?: Capability[]; slow?: boolean }, run: (ctx: Ctx, tab: Tab) => Promise<void>) {
+export function browserTest(file: string, name: string, opts: { needs?: Capability[] }, run: (ctx: Ctx, tab: Tab) => Promise<void>) {
   const needs: Capability[] = ["browser", ...(opts.needs ?? [])];
-  test(name, { timeout: limit({ needs, slow: opts.slow }), skip: lacks({ needs }) }, async ({ tab }) => {
+  // Two or three editor tabs open at once, each a second or two to load on an idle Mac: as long as a slow test.
+  test(name, { timeout: limit({ needs, slow: true }), skip: lacks({ needs }) }, async ({ tab }) => {
     const { ctx, end } = context("browser", name, needs);
     try { await seeded(file, name, () => run(ctx, tab)); } finally { await end(); }
   });

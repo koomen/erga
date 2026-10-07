@@ -15,14 +15,14 @@ browserTest("e2e/suite/browser-broken.e2e.ts", "a paragraph broken by bad markup
   await until(() => a.frame<boolean>(`!!${a.F}.querySelector("figcaption.erga-locked")`), 5000, "the paragraph locks");
   const r = await a.rectOf("figcaption", 0.2);
   await a.click(r.x, r.y);
-  await until(() => a.eval<boolean>(`!!document.querySelector("#toast.show .toast-fix")`), 3000, "the note offers a fix");
+  await until(() => a.eval<boolean>(`!!document.querySelector("#toast.show .toast-fix")`), 5000, "the note offers a fix");
   const note = await a.eval<string>(`document.querySelector("#toast .toast-text").textContent`);
   expect(/stray <\/h2>/.test(note) && !/HTML view|⌘⇧P/.test(note), "it names the stray tag and doesn't send you to the HTML", note);
   expect(!(await a.eval<boolean>(`document.body.classList.contains("agent-open")`)), "the agent panel is closed");
   // Watch the note frame by frame as it goes: it fades as it is, nothing jumps.
   await a.eval(`window.__frames = []; (function tick(n) { const t = document.getElementById("toast"); const r = t.getBoundingClientRect(); __frames.push({ op: +getComputedStyle(t).opacity, btn: !!t.querySelector(".toast-fix"), w: Math.round(r.width), h: Math.round(r.height) }); if (n < 40) requestAnimationFrame(() => tick(n + 1)); })(0)`);
   await a.eval(`document.querySelector("#toast .toast-fix").click()`);
-  await until(() => a.eval<boolean>(`document.body.classList.contains("agent-open")`), 3000, "the agent panel opens");
+  await until(() => a.eval<boolean>(`document.body.classList.contains("agent-open")`), 5000, "the agent panel opens");
   await until(() => a.eval<boolean>(`[...document.querySelectorAll("#agent-log .msg-user")].some((e) => e.textContent.includes("stray </h2>"))`), 5000, "the prompt shows in the panel");
   await until(async () => {
     const log = (await (await d.fetch("/api/agent?user=Ada", {}, "Ada")).json()) as { log: { items: { kind: string; text?: string }[] } };

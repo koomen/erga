@@ -45,6 +45,9 @@ function edit(file: string, from: string | RegExp, to: string) {
 /** The front door's title for a document, whatever an earlier test made it. */
 const TITLE = /<title>\$\{esc\(title\)\} · Erga[^<]*<\/title>/;
 
+/** An expression: the page's stylesheets have a rule for the class. */
+const hasRule = (cls: string) => `[...document.styleSheets].some((s) => { try { return [...s.cssRules].some((r) => r.selectorText == ".${cls}"); } catch { return false; } })`;
+
 /** Opens Documents in the tab. */
 async function docs(page: Page) {
   await page.goto(`${root}/docs`);
@@ -76,18 +79,20 @@ test("another Worker module changes (worker/index.ts: Vite reloads the Worker): 
 test("the editor's own files change (style.css: they're rebuilt): the page reloads, with them, and they're what's served", { timeout: 45_000 }, async ({ tab }) => {
   tab.strict = true;
   await docs(tab.page);
-  await reloads(tab.page, () => edit("style.css", "\n", "\n.erga-reload-test { color: red; }\n"), "true");
-  expect(await (await fetch(`${root}/style.css`)).text()).toContain(".erga-reload-test");
+  const rule = `erga-reload-${crypto.randomUUID().slice(0, 8)}`;
+  await reloads(tab.page, () => edit("style.css", "\n", `\n.${rule} { color: red; }\n`), hasRule(rule));
+  expect(await (await fetch(`${root}/style.css`)).text()).toContain(`.${rule}`);
 });
 
 // Both at once, as an agent's edit often is: the restart and the rebuild end in one good page, never an error page.
 test("the front door and the editor's files change together: the page comes back with both, and stays", { timeout: 45_000 }, async ({ tab }) => {
   tab.strict = true;
   await docs(tab.page);
-  await reloads(tab.page, () => { edit("front.ts", TITLE, "<title>${esc(title)} · Erga, together</title>"); edit("style.css", "\n", "\n.erga-reload-together {}\n"); }, `document.title == "Documents · Erga, together"`);
-  // The server has done both (restarted, rebuilt), and whatever reload that set off, the tab is on the good page.
-  await until(async () => (await (await fetch(`${root}/style.css`)).text()).includes(".erga-reload-together"), 30_000, "the rebuilt files are served");
-  await until(() => tab.page.evaluate(`document.readyState == "complete" && document.title == "Documents · Erga, together"`).catch(() => false), 10_000, "the tab stays on the good page");
+  const rule = `erga-reload-${crypto.randomUUID().slice(0, 8)}`;
+  await reloads(tab.page, () => { edit("front.ts", TITLE, "<title>${esc(title)} · Erga, together</title>"); edit("style.css", "\n", `\n.${rule} { color: red; }\n`); }, `document.title == "Documents · Erga, together"`);
+  // The server has done both (restarted, rebuilt), and whatever reload that set off, the tab is on the good page, with both.
+  await until(async () => (await (await fetch(`${root}/style.css`)).text()).includes(`.${rule}`), 30_000, "the rebuilt files are served");
+  await until(() => tab.page.evaluate(`document.readyState == "complete" && document.title == "Documents · Erga, together" && ${hasRule(rule)}`).catch(() => false), 30_000, "the tab is on the good page, with both changes");
   withoutOutage(tab.errors);
 });
 
