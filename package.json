@@ -7,7 +7,7 @@
     "build": "./build.sh",
     "start": "bun dev.ts",
     "test": "bun e2e/run.ts",
-    "typecheck": "tsc -p . && tsc -p worker",
+    "typecheck": "node -e \"import('vite').then((v) => v.resolveConfig({}, 'serve'))\" && tsc -p . && tsc -p worker",
     "site": "./site.sh",
     "deploy": "bun deploy/run.ts production",
     "deploy:staging": "bun deploy/run.ts staging",

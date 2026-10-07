@@ -15,6 +15,8 @@
 // once: started), which also starts again one that stopped by itself. They
 // stop when the worker exits (server.ts), and e2e/run.ts sweeps up after a
 // worker that was killed.
+// Hooks get config.timeout (90 s, e2e.config.ts) as a backstop; each test still gets ERGA_TEST_MS
+// (15 s, which `test` below gives it).
 //
 //   servers.main()     a dev server, signed in as DEV_LOGIN, with no agent key
 //   servers.agent()    the same with an agent key that is never used (the agent's UI comes on)
@@ -141,7 +143,7 @@ export interface Tab {
   own(opts?: ServerOptions): Promise<Server>;
 }
 
-export const test = web.extend<{ tab: Tab }>({
+const extended = web.extend<{ tab: Tab }>({
   tab: async ({ browser }, use) => {
     // The attempt's page exists once something has navigated it.
     await browser.goto("about:blank");
@@ -158,6 +160,19 @@ export const test = web.extend<{ tab: Tab }>({
     if (tab.strict && errors.length) throw new Error(`the page had errors:\n${errors.join("\n")}`);
   },
 });
+
+/**
+ * e2e's `test`, each test with the time limit ERGA_TEST_MS (the config's) unless it names its own: e2e gives a test
+ * without one config.timeout, which is the hooks' budget and longer.
+ */
+export const test = new Proxy(extended, {
+  apply(target, self, args: unknown[]) {
+    const ms = Number(process.env.ERGA_TEST_MS) || undefined;
+    if (!ms) return Reflect.apply(target, self, args);
+    const [title, a, b] = args;
+    return b === undefined ? Reflect.apply(target, self, [title, { timeout: ms }, a]) : Reflect.apply(target, self, [title, { timeout: ms, ...(a as object) }, b]);
+  },
+}) as typeof extended;
 
 /**
  * Takes out of `errors` (in place) what the browser logs for requests that failed because the server was down

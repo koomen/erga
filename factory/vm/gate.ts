@@ -7,10 +7,12 @@
 //   bun run.ts gate run <commit> <shard> <of> [--files a,b,...]
 //       Clones Erga's repository (REPO_URL, reads need no token), checks the
 //       commit out, installs the dependencies, and runs this shard's share:
-//       the test files of test.sh (the commit's own) split into <of> shares
-//       balanced by the seconds test.sh notes for each, `bun run typecheck`
+//       the test files of test.sh and the end-to-end test files (e2e/, the
+//       commit's own) split into <of> shares balanced by their seconds (the
+//       ones test.sh notes for each, e2e/timings.json), `bun run typecheck`
 //       in one of them; or, with --files, those files (a rerun of flaky
-//       failures). Its state goes to $FACTORY_WORK/gate/status.json, its output
+//       failures). test.sh runs its files, then `bun run test:e2e` (CI=1:
+//       each failed test once more; what passed only then is flaky) runs its. Its state goes to $FACTORY_WORK/gate/status.json, its output
 //       to $FACTORY_WORK/gate/log.txt.
 //   bun run.ts gate status
 //       Prints "GATE-STATUS {json}": the state (none, running, done), the
@@ -22,10 +24,11 @@ import { spawn } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-/** One thing a shard runs: a test file of test.sh's (the unit tests as one item), or the typecheck. */
-export interface GateItem { name: string; files: string[]; secs: number; weight: number }
+/** One thing a shard runs: a test file of test.sh's (the unit tests as one item), an e2e file (`e2e`), or the typecheck. */
+export interface GateItem { name: string; files: string[]; secs: number; weight: number; e2e?: boolean }
 export interface GateShardPlan { items: GateItem[]; typecheck: boolean; /** Its estimated seconds, on a Mac, with the pool's slots. */ est: number }
-export interface GateResult { name: string; files: string[]; ok: boolean; secs: number }
+/** `flaky`: an e2e file's tests that failed and passed on their retry ("file › title"). */
+export interface GateResult { name: string; files: string[]; ok: boolean; secs: number; flaky?: string[] }
 export interface GateStatus {
   state: "none" | "running" | "done";
   phase?: string;
@@ -45,6 +48,13 @@ export interface GateStatus {
 export const TYPECHECK_SECS = 45;
 /** The pool's slots in a shard's VM: test.sh runs one file per two cores (tests/cores.ts), and a VM has 4. */
 export const SLOTS = 2;
+/**
+ * e2e's workers in a shard's VM (TEST_JOBS): two in its 4 cores. Each worker runs a dev server and a Chromium; four
+ * at once in 4 cores starved each other (in a 4-CPU container: tests timed out, the run took 167 s; with two, 128 s).
+ */
+export const E2E_SLOTS = 2;
+/** An e2e file's seconds when e2e/timings.json doesn't have it yet: this for each test in it. */
+export const E2E_SECS_PER_TEST = 10;
 
 /**
  * test.sh's runs, as items: `run WEIGHT NAME CMD... # [SECS]`. A file run twice (the multiplayer suite, and its
@@ -66,16 +76,26 @@ export function testItems(testSh: string, unitFiles: string[]): GateItem[] {
   return [...items.values()].filter((i) => i.files.length);
 }
 
-/** An item's share of a shard's time: its seconds times the slots it takes (test.sh runs a heavy one alone). */
-const cost = (i: GateItem) => (i.secs * Math.min(i.weight, SLOTS)) / SLOTS;
+/**
+ * The e2e files as items, their seconds from `timings` (e2e/timings.json) or `tests` (each file's count of tests,
+ * E2E_SECS_PER_TEST each). Bench files never run in the gate.
+ */
+export function e2eItems(files: string[], timings: Record<string, number>, tests: Record<string, number> = {}): GateItem[] {
+  return files.filter((f) => f.endsWith(".e2e.ts") && !f.endsWith(".bench.e2e.ts")).sort()
+    .map((f) => ({ name: f, files: [f], secs: timings[f] ?? E2E_SECS_PER_TEST * Math.max(1, tests[f] ?? 1), weight: 1, e2e: true }));
+}
+
+/** An item's share of a shard's time: its seconds times the slots it takes (test.sh runs a heavy one alone; e2e, E2E_SLOTS files at once). */
+const cost = (i: GateItem) => i.e2e ? i.secs / E2E_SLOTS : (i.secs * Math.min(i.weight, SLOTS)) / SLOTS;
 
 /**
  * The full run split into `n` shards, balanced: the longest first, each into the shard that would end soonest
- * (a shard ends no sooner than its longest item alone). The typecheck is one more item. The same input always
- * gives the same split, so each VM works out its own share.
+ * (a shard ends no sooner than its longest item alone). The typecheck is one more item, and each e2e file
+ * (`e2e`: e2eItems) one too. The same input always gives the same split, so each VM works out its own share.
  */
-export function planShards(testSh: string, unitFiles: string[], n: number, typecheck = true): GateShardPlan[] {
-  const items = testItems(testSh, unitFiles);
+export function planShards(testSh: string, unitFiles: string[], n: number, o: { typecheck?: boolean; e2e?: GateItem[] } = {}): GateShardPlan[] {
+  const typecheck = o.typecheck ?? true;
+  const items = [...testItems(testSh, unitFiles), ...(o.e2e ?? [])];
   const all: (GateItem & { tc?: boolean })[] = [...items, ...(typecheck ? [{ name: "typecheck", files: [], secs: TYPECHECK_SECS, weight: 1, tc: true }] : [])];
   all.sort((a, b) => cost(b) - cost(a) || b.secs - a.secs || a.name.localeCompare(b.name));
   const shards = Array.from({ length: Math.max(1, n) }, () => ({ items: [] as GateItem[], typecheck: false, load: 0, longest: 0 }));
@@ -97,6 +117,28 @@ export function reportLines(output: string): Map<string, { ok: boolean; secs: nu
   return out;
 }
 
+/** e2e's report (.e2e/report.json): what its tests did. */
+export interface E2EReport { run: { results: { file: string; titlePath: string[]; status: string; selected?: boolean; attempts?: { durationMs: number }[] }[]; errors?: unknown[] } }
+
+/**
+ * Each e2e file's result, from e2e's report: ok when each of its tests passed (at once, or on its retry: flaky,
+ * listed) or was skipped, and the run's errors don't name it (a failed hook skips the tests after it, and says so
+ * only there). A file the report doesn't have didn't run: it failed. `code`: e2e's exit code; one that says it
+ * failed though no file did (it stopped before its report) fails every file.
+ */
+export function e2eResults(files: string[], report: E2EReport | null, code: number): GateResult[] {
+  const out = files.map((f) => {
+    const tests = (report?.run.results ?? []).filter((r) => r.file == f && r.selected != false);
+    const secs = Math.round(tests.reduce((s, t) => s + (t.attempts ?? []).reduce((a, x) => a + x.durationMs, 0), 0) / 1000);
+    const flaky = tests.filter((t) => t.status == "flaky").map((t) => `${f} › ${t.titlePath.join(" › ")}`);
+    // The file by its path from the checkout, or absolute.
+    const erred = (report?.run.errors ?? []).some((e) => { const j = JSON.stringify(e); return j.includes(`"${f}"`) || j.includes(`/${f}"`); });
+    return { name: f, files: [f], ok: !erred && tests.length > 0 && tests.every((t) => ["passed", "flaky", "skipped"].includes(t.status)), secs, ...(flaky.length ? { flaky } : {}) };
+  });
+  if (code != 0 && out.every((r) => r.ok)) for (const r of out) r.ok = false;
+  return out;
+}
+
 /** test.sh's name for each file it runs (`run 1 tree bun tests/tree.ts`): file to names (the suite has two). */
 export function namesByFile(testSh: string): Map<string, string[]> {
   const out = new Map<string, string[]>();
@@ -115,7 +157,8 @@ const WORK = () => join(process.env.FACTORY_WORK ?? "/work", "gate");
 const STATUS = () => join(WORK(), "status.json");
 const LOG = () => join(WORK(), "log.txt");
 const CLONE = () => join(WORK(), "erga");
-const LIMITS = { clone: 300, fetch: 120, install: 600, typecheck: 600, tests: 30 * 60 };
+// e2e: its runner stops itself at 20 minutes (E2E_RUN_LIMIT_S); this is in case it doesn't.
+const LIMITS = { clone: 300, fetch: 120, install: 600, typecheck: 600, tests: 30 * 60, e2e: 25 * 60 };
 
 function readStatus(): GateStatus {
   try { return JSON.parse(readFileSync(STATUS(), "utf8")) as GateStatus; } catch { return { state: "none" }; }
@@ -146,6 +189,18 @@ function sh(cmd: string[], o: { cwd?: string; timeout: number; env?: Record<stri
   });
 }
 
+/** The commit's e2e files (not the bench's), their recorded seconds and their tests, for the split. */
+function e2eOf(root: string): GateItem[] {
+  if (!existsSync(join(root, "e2e"))) return [];
+  const files: string[] = [];
+  const walk = (dir: string) => { for (const e of readdirSync(join(root, dir), { withFileTypes: true })) { const p = `${dir}/${e.name}`; if (e.isDirectory()) walk(p); else if (p.endsWith(".e2e.ts")) files.push(p); } };
+  walk("e2e");
+  let timings: Record<string, number> = {};
+  try { timings = JSON.parse(readFileSync(join(root, "e2e/timings.json"), "utf8")); } catch { /* every file at its count of tests */ }
+  const tests = Object.fromEntries(files.map((f) => [f, readFileSync(join(root, f), "utf8").match(/^test\(/gm)?.length ?? 1]));
+  return e2eItems(files, timings, tests);
+}
+
 async function run(commit: string, shard: number, of: number, files: string[] | null): Promise<void> {
   if (!/^[0-9a-f]{40}$/.test(commit)) throw new Error(`not a commit: ${commit}`);
   rmSync(WORK(), { recursive: true, force: true });
@@ -172,17 +227,20 @@ async function run(commit: string, shard: number, of: number, files: string[] | 
   const units = readdirSync(join(CLONE(), "tests")).filter((f) => f.endsWith(".test.ts")).map((f) => `tests/${f}`);
   let items: { name: string; files: string[] }[];
   let typecheck: boolean;
+  const isE2e = (f: string) => f.endsWith(".e2e.ts");
   if (files) {
     // A rerun of the files that failed: each its own item (typecheck among them only if it failed).
     typecheck = files.includes("typecheck");
     items = files.filter((f) => f != "typecheck" && existsSync(join(CLONE(), f))).map((f) => ({ name: f, files: [f] }));
   } else {
-    const plan = planShards(testSh, units, of)[shard - 1];
+    const plan = planShards(testSh, units, of, { e2e: e2eOf(CLONE()) })[shard - 1];
     if (!plan) fail(`there's no shard ${shard} of ${of}`, "plan");
     items = plan.items.map((i) => ({ name: i.name, files: i.files }));
     typecheck = plan.typecheck;
   }
-  const listed = [...(typecheck ? [{ name: "typecheck", files: [] as string[] }] : []), ...items];
+  const e2eItemsHere = items.filter((i) => i.files.length == 1 && isE2e(i.files[0]));
+  items = items.filter((i) => !e2eItemsHere.includes(i));
+  const listed = [...(typecheck ? [{ name: "typecheck", files: [] as string[] }] : []), ...items, ...e2eItemsHere];
   const results: GateResult[] = [];
   status({ phase: "tests", items: listed, results });
   note(`shard ${shard} of ${of}: ${listed.map((i) => i.name).join(", ") || "nothing"}`);
@@ -203,6 +261,18 @@ async function run(commit: string, shard: number, of: number, files: string[] | 
       results.push({ name: i.name, files: i.files, ok: got.every((g) => g?.ok), secs: got.reduce((s, g) => s + (g?.secs ?? 0), 0) });
     }
     if (t.timedOut) note(`test.sh timed out after ${LIMITS.tests}s`);
+    status({ phase: "tests", items: listed, results });
+  }
+  const e2eFiles = e2eItemsHere.map((i) => i.files[0]);
+  if (e2eFiles.length) {
+    // CI: every file, each failed test once more, the report written.
+    const report = join(CLONE(), ".e2e/report.json");
+    rmSync(report, { force: true });
+    const e = await sh(["bun", "run", "test:e2e", ...e2eFiles], { cwd: CLONE(), timeout: LIMITS.e2e, env: { CI: "1", TEST_JOBS: String(E2E_SLOTS) } });
+    let r: E2EReport | null = null;
+    try { r = JSON.parse(readFileSync(report, "utf8")) as E2EReport; } catch { note("e2e wrote no report"); }
+    results.push(...e2eResults(e2eFiles, r, e.code));
+    if (e.timedOut) note(`e2e timed out after ${LIMITS.e2e}s`);
   }
   const code = results.every((r) => r.ok) ? 0 : 1;
   status({ state: "done", phase: "done", items: listed, results, code, ended: Date.now() });

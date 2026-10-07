@@ -22,7 +22,6 @@ test("in a list item the first Backspace takes the marker off, the second joins 
   await ed.clickEnd("li:first-child");
   await ed.press("Home");
   await ed.press("Backspace");
-  await ed.idle();
   await ed.press("Backspace");
   await expect.poll(() => ed.source()).toContain("## Things to doWater the plants\n- Call");
   expect(await ed.textOf("h2")).toBe("Things to doWater the plants");

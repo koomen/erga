@@ -11,7 +11,7 @@ async function backspaceAt(ed: Editor, sel: string, changes = true) {
   await expect.poll(() => ed.frame<boolean>(`(() => { const e = ${F}.querySelector(${JSON.stringify(sel)}), r = ${F}.getSelection().getRangeAt(0); if (!r.collapsed || !e.contains(r.startContainer)) return false; const x = r.cloneRange(); x.setStart(e, 0); return x.toString() == ""; })()`)).toBe(true);
   await ed.press("Backspace");
   if (changes) await expect.poll(() => ed.source()).not.toBe(before);
-  else await ed.idle();
+  else await ed.settle();
 }
 
 test("a quote with nothing left goes", async ({ tab }) => {
@@ -24,10 +24,8 @@ test("a list with nothing left goes, typing goes in at the join and reaches the 
   const ed = await openEditor(tab, await servers.main(), "join");
   const original = await ed.source();
   await backspaceAt(ed, "#two");
-  await ed.idle();
   await ed.press("Home");
   await ed.press("Backspace");
-  await ed.idle();
   await ed.type("+");
   await expect.poll(() => ed.source()).toContain(`<p id="gamma">keeps its own type.+Item oneItem two</p>\n    <p id="after">`);
   await expect.poll(() => ed.disk()).toContain("type.+Item oneItem two</p>");

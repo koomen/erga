@@ -61,7 +61,9 @@ window.addEventListener("message", (e: MessageEvent) => {
     case "tracking": page.setTracking(m.on); return;
     case "paused": page.setPaused(m.on); queueSnapshot(); return;
     case "render": restoreScroll = frame.contentWindow?.scrollY ?? 0; page.render(); return;
-    case "focus": page.focus(); return;
+    // The shell focuses this frame as it asks (Remote.focus): if this frame lost the focus since, something that opened
+    // after the ask has it (the pages card, the agent's box), and keeps it.
+    case "focus": if (document.hasFocus()) page.focus(); return;
     case "reveal": page.reveal(m.pos); return;
     case "peers": page.setPeers(m.peers); return;
     case "detach": detach(m.id); return;
@@ -69,6 +71,7 @@ window.addEventListener("message", (e: MessageEvent) => {
       relay.reset(m.version);
       detached = false;
       page.setState(stateFrom(m.state));
+      page.hold(false);
       return;
     case "style": {
       const why = m.op == "toggle" ? page.toggleStyle(m.style) : m.op == "clear" ? page.clearStyles() : page.setLink(m.url);
@@ -190,6 +193,7 @@ function detach(id: number) {
   if (!page || !relay) return;
   if (!relay.idle) { setTimeout(() => detach(id), 10); return; }
   detached = true;
+  page.hold(true);
   post({ type: "detached", id, state: stateJSON(page.state, historyField), version: relay.version });
 }
 

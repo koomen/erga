@@ -10,7 +10,6 @@ test("Enter at the end, then typing: the text fills the new paragraph, with no <
   const ed = await openEditor(tab, await servers.main(), "page");
   await ed.clickEnd("blockquote p");
   await ed.press("Enter");
-  await ed.idle();
   await ed.type("hello");
   await expect.poll(() => ed.source()).toMatch(/<p>Typing never waits\.<\/p>\s*<p>hello<\/p>/);
   expect(await html(ed, "blockquote p:nth-of-type(2)")).toBe("hello");
@@ -25,12 +24,10 @@ test("Enter twice keeps a blank paragraph, a line high, held open by a <br>; the
   const ed = await openEditor(tab, await servers.main(), "page");
   await ed.clickEnd("blockquote p");
   await ed.press("Enter");
-  await ed.idle();
   await ed.type("hello");
   await expect.poll(() => ed.source()).toMatch(/<p>hello<\/p>/);
   await ed.press("Enter");
   await ed.press("Enter");
-  await ed.idle();
   await ed.type("world");
   await expect.poll(() => ed.source()).toMatch(/<p>hello<\/p>\s*<p><br><\/p>\s*<p>world<\/p>/);
   expect(await html(ed, "blockquote p:nth-of-type(4)")).toBe("world");
@@ -54,7 +51,6 @@ test("Enter in the middle splits the block, and typing starts the second half", 
   const mid = await ed.frame<{ x: number; y: number }>(`(() => { const t = ${F}.querySelector("h2").firstChild; const r = ${F}.createRange(); r.setStart(t, 5); r.setEnd(t, 5); const b = r.getBoundingClientRect(); return { x: b.left, y: b.top + b.height / 2 }; })()`);
   await ed.click(f.x + mid.x, f.y + mid.y);
   await ed.press("Enter");
-  await ed.idle();
   await ed.type("X");
   await expect.poll(() => ed.source()).toMatch(/<h2>What <\/h2>\s*<h2>Xchanged<\/h2>/);
 });
@@ -63,7 +59,6 @@ test("pasting into a new paragraph leaves no <br>", async ({ tab }) => {
   const ed = await openEditor(tab, await servers.main(), "page");
   await ed.clickEnd("p.lede");
   await ed.press("Enter");
-  await ed.idle();
   await ed.frame(`(() => { const dt = new DataTransfer(); dt.setData("text/plain", "pasted"); ${F}.activeElement.dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true })); })()`);
   await expect.poll(() => ed.source()).toMatch(/<\/p>\s*<p class="lede">pasted<\/p>/);
 });
@@ -72,7 +67,6 @@ test("composing (IME) into a new paragraph leaves no <br>, and the page shows th
   const ed = await openEditor(tab, await servers.main(), "page");
   await ed.clickEnd("p.lede");
   await ed.press("Enter");
-  await ed.idle();
   await ed.compose(["か", "かな"], "仮名");
   await expect.poll(() => ed.source()).toMatch(/<\/p>\s*<p class="lede">仮名<\/p>/);
   expect(await ed.frame<string>(`${F}.activeElement.innerHTML`)).toBe("仮名");

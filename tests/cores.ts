@@ -5,9 +5,8 @@
 // the cgroup's CPU quota (v2 cpu.max, v1 cpu.cfs_quota_us / cpu.cfs_period_us) says what it may use. The smallest
 // wins. Memory caps it too: each test file runs a dev server and a Chrome (about TEST_MEM_PER_JOB_MB, 1024 MB).
 //
-//   TEST_JOBS=n            exactly n at once
-//   TEST_CORES_PER_JOB=c   one at once for every c usable cores (default 2; the factory's VMs set 3: Claude Code
-//                          and the preview share them)
+//   TEST_JOBS=n            exactly n at once (a factory task's VM sets 2: Claude Code and the preview share it)
+//   TEST_CORES_PER_JOB=c   one at once for every c usable cores (default 2)
 //   TEST_MEM_PER_JOB_MB=m  one at once for every m MB of memory (default 1024)
 //
 //   bun tests/cores.ts     prints "<jobs> <cores> <why>", for test.sh

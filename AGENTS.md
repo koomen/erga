@@ -48,12 +48,13 @@ The rest of local work:
    (`tests/cdp.ts` drives it); never drive the user's own browser unless
    they ask.
 4. **Test what you changed**: the tests that cover it, and new ones where
-   they belong. `./test.sh --changed` runs exactly those (each test's
-   `// covers:` line and each unit test's imports say what it covers; a new
-   test file that test.sh runs needs one); `./test.sh tests/x.ts ...` runs
-   the files you name. Run `./test.sh` with no arguments (the whole suite) only when the change
-   touches shared infrastructure (the test harness, the build, the server's
-   core).
+   they belong. `bun run test` runs the unit tests and the end-to-end tests
+   the change affects (e2e/affected.ts), and stops at the first failure;
+   `bun run test:e2e e2e/x/y.e2e.ts ...` runs the files you name. A new
+   end-to-end test is a small file in e2e/. Until the old harness (tests/*.ts
+   on tests/cdp.ts) is retired, also run `./test.sh --changed`. Run the whole
+   suite (`bun run test --all`, `./test.sh`) only when the change touches
+   shared infrastructure (the test harness, the build, the server's core).
 5. **Push your task's branch with `bun task`; push anything else only when
    the user asks.** `origin` is Erga's own Git
    endpoint (`https://erga.dev/git/erga.git`; GitHub, as `github`, is a
@@ -104,7 +105,7 @@ it reports with the `task` command, and never merges.
    memory, so every agent sees it.
 3. **Production deploys only on a green run.** main (erga.dev) moves only
    to a staging commit whose full test run passed: `./test.sh` (every
-   file) and `bun run typecheck` (the production gate, README, "The test
+   file), the end-to-end tests (`bun run test:e2e`) and `bun run typecheck` (the production gate, README, "The test
    gate"). Each staging commit's run starts by itself, in VMs, when staging
    moves. Every way to move main checks it: Merge on /admin/factory, the
    admin agent's `deploy_production`, the API and a push to `main`. No

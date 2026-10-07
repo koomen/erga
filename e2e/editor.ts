@@ -113,8 +113,9 @@ export function editor(page: Page, doc: { address: string; dir: string; file: st
     loaded: () => until(async () => await page.evaluate(`!!window.ergaPage && !!document.getElementById("agent-model")?.textContent`) && await ed.frame<boolean>(`!!${F}?.querySelector("[data-erga-id]")`), 10_000, "the editor loads"),
     settle: () => settle(page),
     /**
-     * After a change to the page's structure (an indent, a join, an undo): the page has rendered it and put the caret
-     * back in a unit. Keys sent before that can be lost (tests/page.ts waited a fixed 120 ms after each).
+     * The page is rendered and has the caret in a unit. Keys never need it (the editor holds keys that come while it
+     * renders the page afresh, and applies them after); a click does, after a change that renders the page afresh (an
+     * indent in an HTML list): a click on a page between two documents is lost.
      */
     async idle() {
       await settle(page);

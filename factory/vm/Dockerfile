@@ -1,8 +1,8 @@
 # The factory's VM image (experimental): what Claude Code needs to do one
 # task on Erga's source, and nothing of the source itself. A task clones the
 # repository when it starts (factory/vm/run.ts); the image only makes that
-# fast: Bun, Node (Vite runs on it), git, headless Chromium for screenshots,
-# the Claude Code CLI, and the repo's dependencies already in Bun's cache, so
+# fast: Bun, Node (Vite and the e2e CLI run on it), git, headless Chromium for
+# screenshots, the e2e engine's own Chromium for the tests, the Claude Code CLI, and the repo's dependencies already in Bun's cache, so
 # `bun install` in a fresh clone takes seconds.
 #
 # Built by factory/vm/build.ts, which stages the context (this file,
@@ -13,15 +13,24 @@
 # registry (factory/vm/push.ts) and each task's container starts from it
 # (README, The factory).
 ARG BUN_VERSION=1.4.2
-FROM node:24-bookworm-slim AS node
+# The e2e CLI needs Node 24.8 or later (or 22.22.3): pinned, as everything here.
+FROM node:24.21.0-bookworm-slim AS node
 
 FROM oven/bun:${BUN_VERSION}-debian
 COPY --from=node /usr/local/bin/node /usr/local/bin/node
+COPY --from=node /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/npm
+RUN ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm && ln -s ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx
 RUN apt-get update \
  && apt-get install -y --no-install-recommends git ca-certificates curl chromium fonts-liberation fonts-noto-color-emoji socat procps lsof \
  && rm -rf /var/lib/apt/lists/* \
  && mkdir -p /opt/erga-deps /opt/factory /work \
  && chown -R bun:bun /opt/erga-deps /opt/factory /work
+
+# The e2e engine's own Chromium and its libraries (e2e can't be told to launch /usr/bin/chromium), as root, readable
+# by all. The version is package.json's @e2e-dev/web: tests/gate.test.ts keeps the two equal.
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright
+RUN npx -y @e2e-dev/web@0.13.0 install chromium --with-deps && chmod -R a+rX /opt/ms-playwright \
+ && rm -rf /var/lib/apt/lists/* /root/.npm
 
 # Not root: Claude Code refuses to skip its permission prompts as root, and the task's code needs no more.
 USER bun
