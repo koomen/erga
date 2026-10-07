@@ -115,11 +115,6 @@ export async function admin(s: Server) {
   return { ...a, ...t };
 }
 
-/** Sets one of the server's settings as the admin, by the admin page's form (null: never). */
-export async function setSetting(s: Server, key: string, value: unknown) {
-  const r = await fetch(`${s.root}/admin/settings`, { method: "POST", headers: { Origin: s.root, Accept: "application/json" }, body: new URLSearchParams({ key, value: JSON.stringify(value) }) });
-  expect(r.ok, await r.clone().text()).toBe(true);
-}
 /** Runs `f`, then puts setting `key` back to its default, however `f` ends. */
 export async function resetting<T>(s: Server, key: string, f: () => Promise<T>): Promise<T> {
   try { return await f(); } finally { await fetch(`${s.root}/admin/settings`, { method: "POST", headers: { Origin: s.root, Accept: "application/json" }, body: new URLSearchParams({ key, reset: "1" }) }); }

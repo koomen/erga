@@ -2,7 +2,7 @@
 // reason and reset, delete_docs_after_hours set to never, users added, made admins and removed; nobody else sees
 // any of it. DEV_LOGIN ("tester") is an admin by the deploy, and a bootstrap one.
 import { expect, test, until } from "../fixtures";
-import { freshLogin, person, resetting, servers, setSetting, tools } from "./front";
+import { freshLogin, person, resetting, servers, tools } from "./front";
 
 test.beforeAll(async () => { await servers.script(); });
 
@@ -110,14 +110,14 @@ test("the admin page, in a browser, saves a setting (showing who set it), resets
     await page.goto(`${s.root}/admin?user=${ADMIN}`);
     await page.evaluate(`(() => { const i = document.querySelector('${row} input[name=value]'); i.value = "36"; i.dispatchEvent(new Event("input", { bubbles: true })); document.querySelector('${row} .save').click(); })()`);
     await expect.poll(setBy).toContain(`by ${ADMIN}`);
-    expect(await page.evaluate(`document.querySelector('${row} input[name=value]').value`)).toBe("36");
+    expect(await page.evaluate(`document.querySelector('${row} input[name=value]').value`) as string).toBe("36");
     await page.evaluate(`document.querySelector('${row} .reset').click()`);
     await expect.poll(isReset).toBe(true);
     await page.evaluate(`(() => { const m = document.querySelector('${row} select.mode'); m.value = "never"; m.dispatchEvent(new Event("change", { bubbles: true })); })()`);
-    expect(await page.evaluate(`document.querySelector('${row} .amount').hidden && !document.querySelector('${row} .save').disabled`)).toBe(true);
+    expect(await page.evaluate(`document.querySelector('${row} .amount').hidden && !document.querySelector('${row} .save').disabled`) as boolean).toBe(true);
     await page.evaluate(`document.querySelector('${row} .save').click()`);
     await expect.poll(setBy).toContain(`by ${ADMIN}`);
-    expect(await page.evaluate(`document.querySelector('${row} select.mode').value == "never" && document.querySelector('${row} .amount').hidden`)).toBe(true);
+    expect(await page.evaluate(`document.querySelector('${row} select.mode').value == "never" && document.querySelector('${row} .amount').hidden`) as boolean).toBe(true);
     await page.evaluate(`document.querySelector('${row} .reset').click()`);
     await expect.poll(isReset).toBe(true);
   });

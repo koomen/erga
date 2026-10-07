@@ -25,11 +25,20 @@ export const AREAS: Record<string, string[]> = {
     "src/page/editor.ts", "src/page/main.ts", "src/page/manuscript.ts", "src/page/markdown.ts", "src/page/merge.ts", "src/page/collab.ts",
     "src/page/remote.ts", "src/page/frame.ts", "src/page/bridge.ts", "src/page/layout.ts", "src/page/agent-chat.ts", "src/page/attach-ui.ts",
     "src/page/share-agent.ts", "room.ts", "src/room/", "host.ts", "agent.ts", "workspace.ts", "page.html", "page.js", "frame.js", "style.css",
-    "dev/agent-key.ts", "tests/fixtures/",
+    "dev/agent-key.ts", "tests/fixtures/", "src/page/attach.ts",
   ],
   "e2e/factory/": [
     "factory/", "worker/factory.ts", "dev/factory.ts", "dev/git-server.ts", "worker/source.ts", "source/", "tokens.ts",
     "src/page/factory-agent.ts", "src/page/agent-chat.ts", "src/page/share-agent.ts", "src/page/admin-share.ts", "factory-agent.js", "admin-share.js",
+  ],
+  "e2e/admin/": [
+    "factory/agent.ts", "factory/chat-store.ts", "worker/factory.ts", "worker/source-host.ts", "worker/artifacts.ts", "source/", "dev/git-server.ts",
+    "agent-actions.ts", "server-tools.ts", "agent.ts", "admin.ts", "admin-layout.ts", "src/page/factory-agent.ts", "src/page/agent-chat.ts",
+    "src/page/agent-log.ts", "src/page/attach-ui.ts", "src/page/layout.ts", "factory-agent.js",
+  ],
+  "e2e/front/": [
+    "front.ts", "api.ts", "server-api.ts", "server-tools.ts", "directory.ts", "users.ts", "tokens.ts", "admin.ts", "account.ts", "templates.ts",
+    "templates/", "worker/doc-host.ts", "worker/home.ts", "room.ts", "src/room/", "migrations/", "src/page/settings.ts", "tests/suite/client.ts",
   ],
 };
 

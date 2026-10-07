@@ -135,9 +135,9 @@ test("open tabs follow a rename, by anyone or by an edit to the heading: the add
   await page.evaluate(`window.__sameTab = true`);
   await p.rename(id, { title: "Renamed elsewhere" });
   await expect.poll(() => page.evaluate("location.pathname")).toBe(`/${p.login}/renamed-elsewhere`);
-  expect(await page.evaluate("document.title")).toBe("Renamed elsewhere");
-  expect(await page.evaluate(`document.getElementById("doc-title-text").textContent`)).toBe("Renamed elsewhere");
-  expect(await page.evaluate(`window.__sameTab === true`)).toBe(true);
+  expect(await page.evaluate("document.title") as string).toBe("Renamed elsewhere");
+  expect(await page.evaluate(`document.getElementById("doc-title-text").textContent`) as string).toBe("Renamed elsewhere");
+  expect(await page.evaluate(`window.__sameTab === true`) as boolean).toBe(true);
   // A title following the heading moves the tab too.
   await p.rename(id, { title: "", slug: "" });
   await p.share(id, "Bo", "editor");
@@ -146,6 +146,6 @@ test("open tabs follow a rename, by anyone or by an edit to the heading: the add
     const heading = /<h1[^>]*>([^<]*)<\/h1>/.exec(bo.text()?.toString() ?? "")?.[1] ?? "";
     bo.edit((y) => { const s = y.toString(), i = s.indexOf(heading, s.indexOf("<h1")); y.delete(i, heading.length); y.insert(i, "Heading moves tabs"); });
     await expect.poll(() => page.evaluate("location.pathname"), { timeout: 8000 }).toBe(`/${p.login}/heading-moves-tabs`);
-    expect(await page.evaluate(`window.__sameTab === true`)).toBe(true);
+    expect(await page.evaluate(`window.__sameTab === true`) as boolean).toBe(true);
   } finally { bo.destroy(); }
 });
