@@ -26,6 +26,8 @@ export interface ServerOptions {
   processEnv?: Record<string, string>;
   /** Up to how long to wait for it to answer. */
   startMs?: number;
+  /** The local state (ERGA_STATE_DIR) of a server stopped before, to start again on: a restart. Its owner disposes of it. */
+  state?: string;
 }
 
 export interface Server {
@@ -78,7 +80,7 @@ let fixtures = 0;
 
 export async function startServer(opts: ServerOptions = {}): Promise<Server> {
   const scratch = mkdtempSync(join(realpathSync(tmpdir()), "erga-e2e-"));
-  const state = join(scratch, "state"), envDir = join(scratch, "env");
+  const state = opts.state ?? join(scratch, "state"), envDir = join(scratch, "env");
   mkdirSync(envDir);
   const vars: Record<string, string> = { DEV_LOGIN: "tester", SESSION_SECRET: crypto.randomUUID(), ...opts.env };
   writeFileSync(join(envDir, ".dev.vars"), Object.entries(vars).filter(([k, v]) => DEV_VARS.has(k) && v).map(([k, v]) => `${k}=${v}\n`).join(""));
