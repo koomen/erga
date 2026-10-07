@@ -394,12 +394,16 @@ type TreeModule = { mountTree: typeof mountTree };
   // ---------------------------------------------------------------- pages
 
   // The document's pages: the title opens them, as a tree (tree.ts, built on
-  // its own as pages-tree.js and loaded only now, so viewing never pays for it).
-  // Its first row is the document itself, whose pencil renames it (the naming
-  // card above); the rest are its other pages, folders and files. Pages open
-  // in the editor; the tree follows changes from other tabs and agents (a
-  // "tree" event, or a file coming or going in the room) and the titles of
-  // the pages as they're edited.
+  // its own as pages-tree.js, so viewing never pays for it). Its first row is
+  // the document itself, whose pencil renames it (the naming card above); the
+  // rest are its other pages, folders and files. Pages open in the editor; the
+  // tree follows changes from other tabs and agents (a "tree" event, or a file
+  // coming or going in the room) and the titles of the pages as they're edited.
+  // So the title opens it at once, the editor loads the script and mounts the
+  // tree, still closed, once it's up and the tab is idle (or sooner, as the
+  // pointer heads for the title); and it keeps the tree's last answer for the
+  // tab, as Documents does (the same key), so the next page shows it straight
+  // away and reads it again behind.
   let treeScript: Promise<TreeModule> | null = null;
   const loadTree = () => (window.ergaTree ? Promise.resolve(window.ergaTree) : (treeScript ??= new Promise<TreeModule>((resolve, reject) => {
     const s = Object.assign(document.createElement("script"), { src: "/pages-tree.js" });
@@ -407,9 +411,29 @@ type TreeModule = { mountTree: typeof mountTree };
     s.onerror = () => { treeScript = null; s.remove(); reject(new Error("Couldn't load the pages: check your connection and try again.")); };
     document.head.append(s);
   })));
-  // Fetched as the pointer heads for the title, so opening it is immediate.
-  titleBtn.addEventListener("pointerenter", () => { loadTree().catch(() => {}); }, { once: true });
-  titleBtn.addEventListener("focus", () => { loadTree().catch(() => {}); }, { once: true });
+  const keptKey = () => `erga:docs-tree:${docName!.id}`;
+  const kept = () => { try { return JSON.parse(sessionStorage.getItem(keptKey()) || "null") as Parameters<typeof mountTree>[1]["initial"]; } catch { return null; } };
+  const keep = (a: { entries: unknown[]; canEdit: boolean }) => { try { sessionStorage.setItem(keptKey(), JSON.stringify({ entries: a.entries, canEdit: a.canEdit })); } catch { /* private mode */ } };
+  /** The tree, mounted (closed or open) once its script is in: what opening it waits for, if anything. */
+  let treeReady: Promise<TreeHandle> | null = null;
+  const slot = $("pages-tree");
+  function prepareTree(): Promise<TreeHandle> {
+    if (!docName) return Promise.reject(new Error("no document"));
+    return (treeReady ??= loadTree().then((t) => {
+      if (tree) return tree;
+      slot.replaceChildren();
+      return (tree = t.mountTree(slot, {
+        id: docName!.id, base: docName!.address, editing: true, query: as, showRoot: true, label: "Pages",
+        rootTitle: docName!.title, titleOf: pageTitle, current: info!.path, hasRelativeLinks, initial: kept(), onChange: keep,
+        onRenameRoot: () => toggleNaming(true), navigate: (url, o) => goTo(url, o.replace),
+      }));
+    }, (e: Error) => { treeReady = null; throw e; }));
+  }
+  const ready = () => { prepareTree().catch(() => {}); };
+  if (editing()) (window.requestIdleCallback ?? setTimeout)(ready);
+  titleBtn.addEventListener("pointerenter", ready);
+  titleBtn.addEventListener("focus", ready);
+  titleBtn.addEventListener("pointerdown", ready);
   /** A page's title from its text, as the room has it: its first <h1>, else its <title>. */
   function pageTitle(path: string): string | null {
     const text = files(collab.doc).get(path)?.toString();
@@ -441,17 +465,9 @@ type TreeModule = { mountTree: typeof mountTree };
     toggleNaming(false);
     docSettings?.toggle(false);
     if (tree) { tree.refresh(); tree.focus(); return; }
-    const slot = $("pages-tree");
-    loadTree().then((t) => {
-      if (tree || !docName) return;
-      slot.replaceChildren();
-      tree = t.mountTree(slot, {
-        id: docName.id, base: docName.address, editing: true, query: as, showRoot: true, label: "Pages",
-        rootTitle: docName.title, titleOf: pageTitle, current: info!.path, hasRelativeLinks,
-        onRenameRoot: () => toggleNaming(true), navigate: (url, o) => goTo(url, o.replace),
-      });
-      if (!pagesCard.hidden) tree.focus();
-    }, (e: Error) => {
+    // Its script isn't in yet (the tab wasn't idle, or it failed before): a quiet line until it is.
+    slot.replaceChildren(Object.assign(document.createElement("p"), { className: "naming-status", textContent: "Loading pages…" }));
+    prepareTree().then((t) => { if (!pagesCard.hidden) t.focus(); }, (e: Error) => {
       slot.replaceChildren(Object.assign(document.createElement("p"), { className: "naming-status error", textContent: e.message }));
       pagesCard.hidden = true; pagesCard.hidden = false;
     });
@@ -1048,7 +1064,8 @@ Once you've read the guide, await further instructions.`;
         syncPause();
         const t = page.title().slice(0, 200);
         document.title = docName?.title ?? (t ? `${t} · ${info!.name}` : info!.name);
-        if (!agentPanel.contains(document.activeElement) && mode == "text") page.focus();
+        // Not out of the agent panel or an open card (the pages and their menus, the title and address): the page rendering again mustn't take focus from them.
+        if (!agentPanel.contains(document.activeElement) && !document.activeElement?.closest(".help, .et-menu") && mode == "text") page.focus();
         queuePeers();
       }
       queueFmt();
