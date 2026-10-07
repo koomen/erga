@@ -80,6 +80,8 @@ export async function person(s: Server, login = freshLogin()) {
       return token;
     },
   };
+  // Their first request with the cookie gives them a user's row (worker/auth.ts), as opening their list does.
+  expect((await get("/docs")).ok).toBe(true);
   return p;
 }
 export type Person = Awaited<ReturnType<typeof person>>;
