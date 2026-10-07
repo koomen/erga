@@ -293,6 +293,7 @@ function simRunner(stateDir: string, log: (line: string) => void): Runner {
       const env: Record<string, string> = {
         // Nothing of this machine's own environment but what runs things: no tokens, no HOME with credentials in it.
         PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: join(dir, "home"), TMPDIR: join(dir, "home"),
+        // The factory commits, as in a VM's image; the job's env (worker/factory.ts, jobEnv) names the author.
         GIT_CONFIG_GLOBAL: join(dir, "home", ".gitconfig"), GIT_AUTHOR_NAME: "Erga factory", GIT_AUTHOR_EMAIL: "factory@erga.dev",
         GIT_COMMITTER_NAME: "Erga factory", GIT_COMMITTER_EMAIL: "factory@erga.dev",
         // What this machine has that a VM's image would: Bun's package cache (packages only), and for Chrome its HOME (task.ts, CHROME_HOME).

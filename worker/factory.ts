@@ -90,6 +90,7 @@ import type { SourceAnswer, SourceRead } from "../source/browse";
 import { panelPrefs, restoredLog, restoredMessages, storedLog, storedMessages, type PanelPrefs } from "../factory/chat-store";
 import { emptyLog, type Log, type LogEvent } from "../src/page/agent-log";
 import { adminTools, dashboardTools, factoryGuide, factoryTools, sourceTools, startFactoryAgent, type DashboardOps, type FactoryAgent, type FactoryOps } from "../factory/agent";
+import { FACTORY_IDENTITY, githubIdOf, type Identity, personIdentity } from "../factory/author";
 import { containersHost } from "../factory/cloudflare";
 import { b64url } from "../factory/git-grant";
 import { branchName, claudeToken, hideTokens, resolvePrompt, restartPrompt, taskPrompt } from "../factory/prompt";
@@ -116,7 +117,12 @@ export interface Task {
   commit: string | null; summary: string | null; error: string | null;
   /** The task's preview, where the user opens it (null until the VM says it's up, and after the VM stops). */
   url: string | null;
-  vm: string | null; by: string; createdAt: string; updatedAt: string; mergedAt: string | null; mergeCommit: string | null;
+  vm: string | null;
+  /** Who added it, as the board says it: an admin, or their agent ("koomen’s agent"). */
+  by: string;
+  /** The person who added it (their login), in person or through an agent: the author of the task's commits. Null for a task from before. */
+  person: string | null;
+  createdAt: string; updatedAt: string; mergedAt: string | null; mergeCommit: string | null;
   log: { at: string; message: string }[];
   screenshots: { file: string; caption: string; at: string }[];
   /** Don't start until these tasks are merged. */
@@ -254,6 +260,8 @@ type Row = {
   run: string | null;
   /** JSON: every instruction the user sent ("Send to Claude Code"), [{ at, by, text }], for a restart's brief. */
   asked: string | null;
+  /** The person who added it (a login): its commits' author, whether they added it themselves or through an agent. Null before #68. */
+  person: string | null;
 };
 
 /** A factory token: erga_factory_<id>_<secret>. */
@@ -305,7 +313,7 @@ export class Factory extends DurableObject<Env> {
     this.sql.exec(`CREATE TABLE IF NOT EXISTS agent_prefs (login TEXT PRIMARY KEY, prefs TEXT NOT NULL, updated INTEGER NOT NULL)`);
     // Dependencies (#49), on a table made before them.
     const cols = this.sql.exec<{ name: string }>("PRAGMA table_info(tasks)").toArray().map((c) => c.name);
-    for (const c of ["start_after", "merge_after", "merge_by", "run", "asked"]) if (!cols.includes(c)) this.sql.exec(`ALTER TABLE tasks ADD COLUMN ${c} TEXT`);
+    for (const c of ["start_after", "merge_after", "merge_by", "run", "asked", "person"]) if (!cols.includes(c)) this.sql.exec(`ALTER TABLE tasks ADD COLUMN ${c} TEXT`);
     // A merge the object was stopped in the middle of goes back to ready to merge, saying so.
     for (const r of this.sql.exec<Row>("SELECT * FROM tasks WHERE status = 'merging'").toArray()) {
       this.update(r.id, { status: "complete", error: "The merge was stopped in the middle (the factory restarted). Merge again." });
@@ -332,7 +340,7 @@ export class Factory extends DurableObject<Env> {
     return {
       id: r.id, title: r.title, description: r.description, status: r.status, branch: r.branch, base: r.base, commit: r.commit_sha,
       summary: r.summary, error: r.error, url: r.preview_origin && r.preview_path != null ? r.preview_origin + r.preview_path : null,
-      vm: r.vm, by: r.by_login, createdAt: r.created, updatedAt: r.updated, mergedAt: r.merged_at, mergeCommit: r.merge_commit, log, screenshots,
+      vm: r.vm, by: r.by_login, person: r.person, createdAt: r.created, updatedAt: r.updated, mergedAt: r.merged_at, mergeCommit: r.merge_commit, log, screenshots,
       startAfter: list(r.start_after), mergeAfter: list(r.merge_after),
       ...(this.deps.blocked(depOf(r)) ? { blockedBy: this.deps.blocked(depOf(r)) } : {}),
       ...(this.starting.has(r.id) ? { starting: true } : {}),
@@ -395,6 +403,7 @@ export class Factory extends DurableObject<Env> {
   /**
    * A new task. `by`: who the board says added it (an admin, or their agent); `user`: the admin to credit in the
    * change log (/admin/changes), the one who prompted the agent (`by` when not given); `via`: how, when not in person.
+   * The task's person (its commits' author) is `user`, or `by`.
    */
   async add(input: { title: string; description: string; by: string; user?: string; via?: string; origin: string; startAfter?: unknown; mergeAfter?: unknown }): Promise<Task> {
     const title = input.title.trim().slice(0, 200), description = input.description.trim().slice(0, 20000);
@@ -403,8 +412,8 @@ export class Factory extends DurableObject<Env> {
     const deps = this.deps.depChanges(Object.fromEntries(Object.entries({ startAfter: input.startAfter, mergeAfter: input.mergeAfter }).filter(([, v]) => v !== undefined)));
     if (typeof deps == "string") throw new Error(deps);
     const at = now();
-    const id = this.sql.exec<{ id: number }>(`INSERT INTO tasks (title, description, status, branch, origin, by_login, created, updated, start_after, merge_after) VALUES (?, ?, 'queued', '', ?, ?, ?, ?, ?, ?) RETURNING id`,
-      title, description || title, input.origin, input.by, at, at, deps.startAfter ? JSON.stringify(deps.startAfter) : null, deps.mergeAfter ? JSON.stringify(deps.mergeAfter) : null).one().id;
+    const id = this.sql.exec<{ id: number }>(`INSERT INTO tasks (title, description, status, branch, origin, by_login, person, created, updated, start_after, merge_after) VALUES (?, ?, 'queued', '', ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+      title, description || title, input.origin, input.by, (input.user ?? input.by).toLowerCase(), at, at, deps.startAfter ? JSON.stringify(deps.startAfter) : null, deps.mergeAfter ? JSON.stringify(deps.mergeAfter) : null).one().id;
     this.sql.exec("UPDATE tasks SET branch = ? WHERE id = ?", branchName(id, title), id);
     this.note(id, `Added by ${input.by}${depsNote(deps)}`);
     await this.logged(input.user ?? input.by, { key: "task", from: null, to: null, task: { id, title, event: "added" }, ...(input.via ? { via: input.via } : {}) });
@@ -526,7 +535,13 @@ export class Factory extends DurableObject<Env> {
     const r = this.row(id)!;
     const host = vmHost(this.env, r.origin) as VmHost;
     const token = claude ? await this.claudeToken() : null;
+    // The task's person authors its commits (Claude Code's, and "Merge staging into ..."); whoever pressed Merge, the
+    // merge into staging. The factory is always the committer.
+    const author = r.person ? await this.identity(r.person) : FACTORY_IDENTITY;
+    const merger = scope == "merge" && by ? await this.identity(by) : null;
     return {
+      GIT_AUTHOR_NAME: author.name, GIT_AUTHOR_EMAIL: author.email, GIT_COMMITTER_NAME: FACTORY_IDENTITY.name, GIT_COMMITTER_EMAIL: FACTORY_IDENTITY.email,
+      ...(merger ? { FACTORY_MERGE_AUTHOR_NAME: merger.name, FACTORY_MERGE_AUTHOR_EMAIL: merger.email } : {}),
       FACTORY_API: `${r.origin}/api/factory`, FACTORY_TASK: String(id), FACTORY_TOKEN: await taskToken(this.env, id),
       REPO_URL: host.repo(r.origin), REPO_TOKEN: await gitToken(this.env, scope, r.branch, by ?? r.by_login),
       FACTORY_MODEL: String((await directoryOf(this.env).config.get("factory_model")) ?? "opus"),
@@ -536,6 +551,11 @@ export class Factory extends DurableObject<Env> {
       TEST_CORES_PER_JOB: "3",
       ...(token ? { CLAUDE_CODE_OAUTH_TOKEN: token } : {}),
     };
+  }
+
+  /** A person's commit identity (factory/author.ts): GitHub asked for their id when their sign-in didn't give it, except locally. */
+  private identity(login: string): Promise<Identity> {
+    return personIdentity(directoryOf(this.env).users, login, this.env.DEV_LOGIN ? null : (l) => githubIdOf(l));
   }
 
   async brief(id: number) {

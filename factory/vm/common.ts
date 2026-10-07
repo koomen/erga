@@ -144,10 +144,10 @@ export class StepFailed extends Error {
 }
 
 /** git, in `cwd`, as a step with a time limit (fetch, push and clone get longer), with the repository's token as a header (from the environment, never on the command line or in output). */
-export async function git(args: string[], cwd = CLONE(), opts: { quiet?: boolean; name?: string } = {}): Promise<StepResult> {
+export async function git(args: string[], cwd = CLONE(), opts: { quiet?: boolean; name?: string; env?: Record<string, string> } = {}): Promise<StepResult> {
   const timeout = args[0] == "clone" ? LIMITS.clone : args[0] == "fetch" ? LIMITS.fetch : args[0] == "push" ? LIMITS.push : LIMITS.git;
   const name = opts.name ?? args[0];
-  const r = await step(["git", ...args], { name, timeout, cwd, env: gitAuth() });
+  const r = await step(["git", ...args], { name, timeout, cwd, env: { ...opts.env, ...gitAuth() } });
   if (r.code != 0 && !opts.quiet) throw new StepFailed(stepError(`git ${args[0]}`, r), r, name);
   return r;
 }

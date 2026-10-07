@@ -341,6 +341,8 @@ function renderDialog() {
   d.innerHTML = '<div class="dlg"><div class="dlg-head"><h3><span class="id">#' + t.id + '</span>' + esc(t.title) + ' <span class="status ' + cls(t.status) + '">' + esc(STATUS[t.status] || t.status) + '</span> ' + stalledBadge(t) + '</h3><button data-act="close">Close</button></div>' +
     '<div class="links">' + (t.url && t.status != "merged" ? '<a href="/api/factory/tasks/' + t.id + '/open" target="_blank">Open preview ↗</a><span class="muted">' + esc(t.url) + '</span>' : "") +
     '<span class="branch">' + esc(t.branch) + (t.base ? " from staging at " + esc(t.base.slice(0, 10)) : "") + '</span>' +
+    // Who added it (an admin, or their agent), and the person its commits are by (factory/author.ts).
+    '<span class="muted person" title="Its commits are authored by this person; Erga factory commits them">Added by ' + esc(t.by) + (t.person ? ' · commits by ' + esc(t.person) : '') + '</span>' +
     (t.mergeCommit ? '<span class="muted">merged as ' + esc(t.mergeCommit.slice(0, 10)) + '</span>' : "") + (t.vm ? '<span class="muted">VM ' + esc(t.vm) + '</span>' : "") + '</div>' +
     actions(t, true) +
     (stalledMs(t) ? '<div class="stalled-note" id="stalled-note">Stalled: ' + esc(stalledTip(t, stalledMs(t))) + '</div>' : "") +
