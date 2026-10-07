@@ -83,8 +83,9 @@ export default defineConfig(({ mode }) => ({
       ADMINS: bindings.text(PROD.vars.ADMINS),
       // The settings the deploy fixes, as JSON (server.config.ts; config.ts). Admins set the rest.
       SERVER_CONFIG: bindings.text(JSON.stringify(deployed())),
-      // Locally, the client ID of the target the dev server plays (ERGA_DEPLOY_TARGET: staging's is empty), else production's.
-      GITHUB_CLIENT_ID: bindings.text(mode == "development" && TARGETS.targets[process.env.ERGA_DEPLOY_TARGET ?? ""] ? TARGETS.targets[process.env.ERGA_DEPLOY_TARGET!].vars.GITHUB_CLIENT_ID ?? "" : PROD.vars.GITHUB_CLIENT_ID),
+      // Locally, the client ID of the target the dev server plays (ERGA_DEPLOY_TARGET), else production's.
+      // ERGA_GITHUB_CLIENT_ID (development only) overrides the target's, "" for none: tests simulate a target with no app.
+      GITHUB_CLIENT_ID: bindings.text(mode == "development" && process.env.ERGA_GITHUB_CLIENT_ID !== undefined ? process.env.ERGA_GITHUB_CLIENT_ID : mode == "development" && TARGETS.targets[process.env.ERGA_DEPLOY_TARGET ?? ""] ? TARGETS.targets[process.env.ERGA_DEPLOY_TARGET!].vars.GITHUB_CLIENT_ID ?? "" : PROD.vars.GITHUB_CLIENT_ID),
 
       // Which branch-deploy target this server is (deploy/targets.ts): the pipeline sets it on each target it deploys
       // ("staging" on erga-staging; empty on a server /deploy made). Branch deploys run only with CLOUDFLARE_DEPLOY_TOKEN

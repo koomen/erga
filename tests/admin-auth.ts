@@ -48,7 +48,7 @@ const GITHUB = `http://127.0.0.1:${github.port}`;
 const prodPort = freePort(), stagingPort = freePort();
 const [prod, staging] = await Promise.all([
   startHost(null, { port: prodPort, env: { ERGA_DEPLOY_MOCK: "1", ERGA_DEPLOY_TARGET: "production", GITHUB_CLIENT_SECRET: PROD_APP.secret, ERGA_GITHUB_ORIGIN: GITHUB, ERGA_PEER_ORIGIN: `http://127.0.0.1:${stagingPort}` } }),
-  startHost(null, { port: stagingPort, env: { ERGA_DEPLOY_MOCK: "1", ERGA_DEPLOY_TARGET: "staging", ERGA_GITHUB_ORIGIN: GITHUB, ERGA_PEER_ORIGIN: `http://127.0.0.1:${prodPort}` } }),
+  startHost(null, { port: stagingPort, env: { ERGA_DEPLOY_MOCK: "1", ERGA_DEPLOY_TARGET: "staging", ERGA_GITHUB_CLIENT_ID: "", ERGA_GITHUB_ORIGIN: GITHUB, ERGA_PEER_ORIGIN: `http://127.0.0.1:${prodPort}` } }),
 ]);
 const P = prod.root, S = staging.root;
 const form = (root: string, fields: Record<string, string>) => fetch(`${root}/admin/auth`, { method: "POST", headers: { Origin: root }, body: new URLSearchParams(fields) });
