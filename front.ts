@@ -1763,6 +1763,7 @@ function docsPage(session: Session, docs: Listed[], now: number, hours: number |
   .twist:focus-visible { outline: 2px solid var(--caret); outline-offset: 1px; }
   .labels span:first-child { padding-left: 22px; }
   ol.rows > li.sub { display: block; padding: 0 0 10px 18px; }
+  ol.rows > li.sub[hidden] { display: none; }
   .sub-tree { max-width: 560px; }
   .sub-tree.error { margin: 0; font-size: 13px; color: #c2410c; }
   /* Before the tree's script runs: a quiet line where its rows go, faded in only if it lasts. */
