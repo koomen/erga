@@ -37,6 +37,7 @@
 #                     who the factory's commits are by (tests/factory-authors.ts),
 #                     the admin agent reading Erga's own source, in the Worker (tests/admin-agent-source.ts),
 #                     the agents doing what their person does on the page, in the Worker (tests/admin-agent-actions.ts),
+#                     open pages across a redeploy: reconnecting, and reloading with their state (tests/redeploy.ts),
 #                     live reload (tests/reload.ts, in a copy of the checkout)
 #                     and the multiplayer suite, each
 #                     against dev servers of its own (tests/host.ts)
@@ -117,6 +118,7 @@ echo "$jobs slots: $why"
 run 2 factory bun tests/factory.ts                       # [57]
 run 1 tree bun tests/tree.ts                             # [36]
 run 1 source bun tests/source.ts                         # [29]
+run 1 redeploy bun tests/redeploy.ts                     # [30]
 run 1 home bun tests/home.ts                             # [29]
 run 3 page bun tests/page.ts                             # [27]
 run 1 account bun tests/account.ts                       # [26]

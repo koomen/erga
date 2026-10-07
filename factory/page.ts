@@ -556,16 +556,26 @@ async function load() {
   if (pageView.signal.aborted) return;
   renderInfo();
 }
+// The board's live updates. A break (the server restarting, a redeploy) shows only if it lasts; the stream is made
+// again if the browser gives up on it (an answer that isn't one, while the server restarts), a little later each time;
+// back, the board is read again. live.js hears of it too (src/page/live.ts).
+let tries = 0, liveTimer = 0;
 function connect() {
+  if (pageView.signal.aborted) return;
   const es = new EventSource("/api/factory/events");
-  es.onopen = () => { live = "live"; showLive(); load(); };
-  es.onerror = () => { live = "reconnecting"; showLive(); };
+  es.onopen = () => { tries = 0; clearTimeout(liveTimer); live = "live"; showLive(); load(); window.ergaLive?.connection("board", true); };
+  es.onerror = () => {
+    window.ergaLive?.connection("board", false);
+    clearTimeout(liveTimer);
+    liveTimer = setTimeout(() => { if (es.readyState != EventSource.OPEN) { live = "reconnecting"; showLive(); } }, 4000);
+    if (es.readyState == EventSource.CLOSED) setTimeout(connect, Math.min(10000, 500 * 2 ** tries++));
+  };
   es.onmessage = (e) => {
     const m = JSON.parse(e.data);
     if (m.type == "task") upsert(m.task);
     else if (m.type == "unblocked" || m.type == "blocked") toast("#" + m.id + " " + m.type + ": " + m.title + " (" + m.why.split(":")[0] + ")");
   };
-  pageView.onLeave(() => es.close());
+  pageView.onLeave(() => { es.close(); window.ergaLive?.connection("board", null); });
 }
 load().then(connect);
 setInterval(render, 30000);

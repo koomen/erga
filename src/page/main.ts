@@ -34,6 +34,8 @@ import { shareWithAgent } from "./share-agent";
 import type { Settings } from "./settings";
 import { dirOf, isPage, pageUrl } from "../../tree";
 import { mountLayout } from "./layout";
+import { backoff, live, transient } from "./live-client";
+import { restoredFor } from "./restore";
 
 const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 
@@ -79,6 +81,21 @@ const peersField = StateField.define<DecorationSet>({
 
 declare global {
   interface Window { ergaPage?: unknown; ergaShell?: { ready(): void; loadedEditing?: boolean }; ergaDocInfo?: { url: string; response: Promise<Response> } }
+}
+/** What the editor keeps of itself across a reload for a new release (live.ts, restore.ts). */
+interface EditorKept {
+  /** The page it was on: the rest applies only to the same one. */
+  path: string;
+  selection: { anchor: number; head: number };
+  scroll: number;
+  mode: "text" | "md" | "html";
+  pages: boolean;
+  settings: boolean;
+  help: boolean;
+  /** Files attached to the agent's next message. */
+  files: Attachment[];
+  /** Everything the tab held of the room (Collab.held), merged after the reload in case an edit hadn't reached it. */
+  held?: { epoch: string; update: string };
 }
 /** pages-tree.js, once loaded (it sets window.ergaTree). */
 type TreeModule = { mountTree: typeof mountTree };
@@ -149,6 +166,8 @@ type TreeModule = { mountTree: typeof mountTree };
   const asked = new URLSearchParams(location.search).get("user")?.trim();
   const as = asked ? `?user=${encodeURIComponent(asked)}` : "";
   let info: DocInfo | null = null;
+  // What this page kept of itself before it reloaded for a new release (live.ts, restore.ts), if it did.
+  const back = restoredFor<EditorKept>("editor");
   try {
     // The page asked for it already, as editing started (front.ts, EDIT_BOOT), if it's for this same address.
     const early = window.ergaDocInfo;
@@ -502,12 +521,18 @@ type TreeModule = { mountTree: typeof mountTree };
   }
   // The room writes files to disk as edits land; there's nothing to save
   // here. Without a connection, edits stay in this tab and sync on return.
-  let connected = true;
+  // A short break (the server restarting, a redeploy) passes unseen: the room
+  // reconnects by itself and live.js shows a quiet "Reconnecting…" if it
+  // takes a few seconds. Only a long one says more.
+  let connected = true, offlineTimer = 0, saidOffline = false;
+  const OFFLINE_NOTE_MS = 20_000;
   function connectionChanged(now: boolean) {
     if (now == connected) return;
     connected = now;
-    if (!now) setStatus("Offline: your edits are kept in this tab and sync when the host is back", "error");
-    else setStatus("Back online; edits synced");
+    live((l) => l.connection("room", now));
+    clearTimeout(offlineTimer);
+    if (!now) offlineTimer = window.setTimeout(() => { saidOffline = true; setStatus("Offline: your edits are kept in this tab and sync when the host is back", "error"); }, OFFLINE_NOTE_MS);
+    else if (saidOffline) { saidOffline = false; setStatus("Back online; edits synced"); }
   }
 
   /** Someone else's author entry as the marks show it. */
@@ -583,6 +608,7 @@ type TreeModule = { mountTree: typeof mountTree };
   // tabs only, over a WebSocket: an EventSource would hold one of the
   // browser's six connections to the host per tab, and with a few tabs open
   // every later request (sending a message) would queue forever.
+  let eventTries = 0;
   function listen() {
     const events = new WebSocket(`${location.protocol == "https:" ? "wss:" : "ws:"}//${location.host}${api("/api/events")}`);
     events.onmessage = (ev) => {
@@ -600,8 +626,9 @@ type TreeModule = { mountTree: typeof mountTree };
     // Events sent while the channel was down are gone; catch up from the transcript.
     // A rename missed meanwhile (or before it first opened) is caught up the same way.
     // The body's erga-listening class: the channel is up, so this tab hears its agent (and open_page counts it). Tests wait on it.
-    events.onopen = () => { document.body.classList.add("erga-listening"); if (opened) { loadAgent(); docSettings?.event("versions"); docSettings?.event("home"); } opened = true; refreshName(); stillHere(); };
-    events.onclose = () => { document.body.classList.remove("erga-listening"); setTimeout(listen, 1000); };
+    events.onopen = () => { eventTries = 0; live((l) => l.connection("events", true)); document.body.classList.add("erga-listening"); if (opened) { loadAgent(); docSettings?.event("versions"); docSettings?.event("home"); } opened = true; refreshName(); stillHere(); };
+    // Down (the server restarted, a redeploy): again, a little later each time it fails.
+    events.onclose = () => { live((l) => l.connection("events", false)); document.body.classList.remove("erga-listening"); setTimeout(listen, backoff(eventTries++)); };
   }
   let opened = false;
   listen();
@@ -1052,6 +1079,7 @@ Once you've read the guide, await further instructions.`;
     self,
     tracking: settings.track,
     extensions: sourceExtensions,
+    ...(back && back.path == pagePath ? { selection: back.selection, scroll: back.scroll } : {}),
     onLocal(changes) {
       collab.push(changes);
       hideChrome();
@@ -1092,6 +1120,7 @@ Once you've read the guide, await further instructions.`;
     },
     onActivity: (kind) => {
       activate();
+      if (kind == "key") live((l) => l.activity());
       if (kind == "key") { lastKeyAt = performance.now(); dismissExplanation(null); }
     },
     onBackdrop: (b) => applyBackdrop(b),
@@ -1415,7 +1444,14 @@ Once you've read the guide, await further instructions.`;
     const sent = agentChat.pending(text, fileRefs(files));
     // The agent reads the shared doc; `after` makes the host wait until the
     // room has every edit this tab had made (they travel over the WebSocket).
-    const res = await fetch(api("/api/agent"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text, context, after: collab.vector(), files }), signal: AbortSignal.timeout(files.length ? 60_000 : 15_000) }).catch((e: Error) => e);
+    // While the host restarts (a redeploy) it doesn't answer, or its gateway says so: the message waits and goes once it's back.
+    let res: Response | Error = new Error("not sent");
+    for (let i = 0, until = Date.now() + 45_000; ; i++) {
+      res = await fetch(api("/api/agent"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text, context, after: collab.vector(), files }), signal: AbortSignal.timeout(files.length ? 60_000 : 15_000) }).catch((e: Error) => e);
+      if (res instanceof Response ? res.ok || !transient(res) : res.name == "TimeoutError" || !transient(res)) break;
+      if (Date.now() + backoff(i) > until) break;
+      await new Promise((r) => setTimeout(r, backoff(i)));
+    }
     if (!(res instanceof Response) || !res.ok) {
       const reason = res instanceof Response ? ((await res.json().catch(() => null)) as { reason?: string } | null)?.reason ?? `the host answered ${res.status}` : res.name == "TimeoutError" ? "the editor's host didn't answer in time" : "the editor's host didn't answer";
       sent.fail(reason, () => ask(text, context, files));
@@ -1619,17 +1655,22 @@ Once you've read the guide, await further instructions.`;
     });
     agentModel.append(sel);
   }
+  let agentTries = 0, agentRetry = 0;
   function loadAgent() {
+    clearTimeout(agentRetry);
     fetch(api("/api/agent")).then((r) => {
-      if (!r.ok) throw new Error(r.status == 404 ? "this server doesn't have the agent" : `the host answered ${r.status}`);
+      if (!r.ok) throw Object.assign(new Error(r.status == 404 ? "this server doesn't have the agent" : `the host answered ${r.status}`), { again: transient(r) });
       return r.json();
-    }).then((a: AgentState) => {
+    }, (e: Error) => { throw Object.assign(e, { again: transient(e) }); }).then((a: AgentState) => {
+      agentTries = 0;
       agentOff = a.enabled ? null : `The agent is off: ${a.reason ?? "the host did not start it"}.`;
       renderModel(a.enabled ? a : null);
       if (a.log) { log.items = a.log.items; log.busy = a.log.busy; log.undoable = a.log.undoable; setAgentBusy(a.log.busy || busyAgents().length > 0); }
       renderLog();
       renderUndo();
-    }).catch((e: Error) => {
+    }).catch((e: Error & { again?: boolean }) => {
+      // The host restarting (a redeploy): ask again shortly, as the agent was, rather than call it off.
+      if (e.again && agentTries < 8) { agentRetry = window.setTimeout(loadAgent, backoff(agentTries++)); return; }
       agentOff = `The agent is off: ${e.message}.`;
       renderModel(null);
       renderLog();
@@ -1789,6 +1830,36 @@ Once you've read the guide, await further instructions.`;
       requestAnimationFrame(() => requestAnimationFrame(() => document.body.classList.remove("no-motion")));
     }
   } else openAgentOnEntry();
+
+  // ---------------------------------------------------------------- a new release
+
+  // The page reloads by itself for a new release of the editor (live.ts), once the room has this tab's edits,
+  // never while you drag or compose or speak, and comes back as it was: the page and its caret, where it was
+  // scrolled to, the view (page or source), the cards that were open, the files attached to the next message.
+  // (The agent's draft, the pane and its layout are kept in this browser anyway.)
+  live((l) => {
+    l.flush(() => collab.flushed());
+    l.hold(() => pointerDown ? "a pointer is down on the page" : voice ? "voice mode is on" : agentFiles.reading ? "files are being read" : null);
+    l.keep("editor", (): EditorKept => {
+      const sel = currentState().selection.main;
+      return {
+        path: pagePath, selection: { anchor: sel.anchor, head: sel.head }, scroll: mode == "text" ? page.scrollY : 0, mode,
+        pages: !pagesCard.hidden, settings: !!docSettings?.isOpen(), help: !help.hidden,
+        files: agentFiles.files, held: collab.held() ?? undefined,
+      };
+    });
+    // The first look at the editor's files: their builds, as it starts.
+    l.check("the editor started");
+  });
+  if (back && back.path == pagePath) {
+    // Any edit that hadn't reached the room before the reload goes now (merged: nothing changes if it had).
+    collab.merge(back.held);
+    if (back.mode && back.mode != "text") setMode(back.mode);
+    if (back.pages) requestAnimationFrame(() => togglePages(true));
+    if (back.settings) void loadSettings().then((s) => s?.toggle(true));
+    if (back.help) toggleHelp(true);
+    if (back.files?.length) agentFiles.restore(back.files);
+  }
 
   started = true;
   presenceChanged();

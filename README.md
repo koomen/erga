@@ -1401,6 +1401,47 @@ Still to do are the steps marked *(you)*.
    - After the merge, the old `*.staging.erga-pages.dev/*` route and DNS
      record on erga-pages.dev deleted.
 
+### Redeploys and open pages
+
+A deploy (or a restart of the dev server) happens under pages people have
+open, and nobody reloads by hand (`src/page/live.ts`, `worker/live.ts`):
+
+- **A change to the server only**: every live connection drops (a document's
+  room, `/api/events`, `/api/factory/events`) and comes back by itself, a
+  little later on each failure (0.5 s, doubling to 10 s). Back, each page
+  reads again what it shows: the room syncs (edits typed meanwhile go then),
+  the agent's conversation, the board, the document's name and pages. A
+  message to an agent sent meanwhile waits and goes (for up to 45 s). A
+  quiet "Reconnecting…" shows in a corner only after 4 s; the editor says it
+  is offline only after 20 s.
+- **A change to the pages' code**: `site.sh` lists the build of each client
+  file in `.site/build.json` (a bundle's own stamp, the last line `build.sh`
+  adds; a digest for `style.css` and `editor.html`), served at `GET
+  /api/release` with the release (`ERGA_VERSION`). Each page of the site's
+  own gets `live.js` and a meta `erga-build`, a digest of its inline scripts;
+  a GET of the page with `X-Erga-Check: build` answers that digest alone. A
+  page asks after a connection comes back, after a request fails oddly
+  (no answer, 5xx, an API's 400 or 404), when its tab is shown again, and
+  every minute. If no file it uses changed, nothing happens; if only
+  `style.css` did, the new one takes its place. Otherwise the page reloads
+  by itself: not while you type, compose, drag or hold the mouse button,
+  only once the room has the tab's edits, and at once when the tab is
+  hidden. It keeps its state in `sessionStorage` for that one reload
+  (`src/page/restore.ts`): every scroll position, form fields, the focus
+  and caret, and what each script keeps (the editor's page, selection,
+  scroll, view and open cards, the files attached to an agent's next
+  message, the open factory task). Drafts, panels and their layout are kept
+  in `localStorage` anyway. The tab's copy of the document goes along, and is
+  merged into the room after the reload, so no edit is lost even if the last
+  one hadn't arrived. A page that keeps reloading (two versions answering
+  while a deploy rolls out) waits longer each time.
+- A document's own frame and its own HTML (under `/d/<id>/`, the homepage
+  served directly) get nothing of this. Their frame reloads only with the
+  page around it.
+
+`tests/redeploy.ts` restarts a server under the editor, the Factory page and
+Documents, with the same client files and with new ones.
+
 ### Deploy your own
 
 `/deploy` puts a copy of the server on someone's own Cloudflare account,
@@ -3220,6 +3261,11 @@ sharing (the share dialog too) and what each role may do, `/admin` (settings and
 token) and the server's API for agents: asking for a token and approving it,
 publishing a folder, the tools over HTTP and MCP (with the person's own
 permissions), the share button's token, and revoking.
+`bun tests/redeploy.ts` restarts a server under an open editor (scrolled,
+a selection, a card, an agent draft with a file), the Factory page (a task's
+detail open) and Documents: with the same client files nothing reloads and
+an edit typed meanwhile arrives; with new ones every page reloads by itself
+and its state is back (README, Redeploys and open pages).
 `bun tests/account.ts` checks the corner on every page (signed in, signed
 out, the menu, signing in and back, the editor's avatar, light, dark and a
 phone). `bun tests/landing.ts` checks the front page the server makes: on a
@@ -3383,6 +3429,9 @@ back, merging edits from disk, the agent's exact-match edits and attribution.
 - `src/page/settings.ts`, `src/page/versions.ts`: document settings (the gear's
   popover: publishing, the homepage, versions), built on its own as `settings.js`
 - `package.json`: the pinned CodeMirror and Yjs packages the page editor bundles, and pi
+- `src/page/live.ts`, `src/page/live-client.ts`, `src/page/restore.ts`, `worker/live.ts`: open pages
+  across a redeploy (built as `live.js`, which the Worker adds to every page of its own): reconnecting,
+  noticing new client code, and reloading with the page's state (README, Redeploys and open pages)
 - `src/page/tree.ts`: a document's pages as a tree (built as `pages-tree.js`, loaded by the editor and `/docs`, never the viewer), in the editor and on `/docs`
 - `style.css`: theme colours, typography and the editor's styling
 - `fonts/`: the self-hosted Inter web font

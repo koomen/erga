@@ -95,6 +95,7 @@ export const AGENT_ACTIONS: AgentAction[] = [
   { route: "POST /api/deploys/<name>", domain: "admin", action: "Redeploy a target (Factory, dashboard)", tool: "redeploy" },
   { route: "GET /api/events", domain: "none", action: "The dashboard's live updates", exempt: STREAM },
   { route: "GET /admin/deploys", domain: "none", action: "An old address of the dashboard", exempt: "a redirect" },
+  { route: "GET /api/release", domain: "none", action: "An open page asks whether its code is still the server's (after a redeploy)", exempt: "the page's own check, not a person's action" },
   { route: "GET /api/deploys/version", domain: "none", action: "The release this server runs", exempt: "the deploy pipeline's, server to server" },
   { route: "GET /api/deploys/status[?history=N]", domain: "none", action: "Another server's deploys", exempt: "the deploy pipeline's, server to server" },
   { route: "POST /api/deploys/<name>/hook", domain: "none", action: "Another server says a branch moved", exempt: "the deploy pipeline's, server to server" },

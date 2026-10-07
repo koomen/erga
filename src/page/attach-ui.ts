@@ -29,6 +29,8 @@ export interface Attachments {
   /** Takes them all out (once sent). */
   clear(): void;
   add(files: Iterable<File>): Promise<void>;
+  /** Puts back files read before (kept across a reload for a new release: live.ts). */
+  restore(files: Attachment[]): void;
 }
 
 const dataUrl = (blob: Blob) => new Promise<string>((ok, fail) => { const r = new FileReader(); r.onload = () => ok(r.result as string); r.onerror = () => fail(r.error); r.readAsDataURL(blob); });
@@ -184,5 +186,10 @@ export function attachments(o: AttachOptions): Attachments {
     get reading() { return reading(); },
     clear() { slots = []; render(); },
     add,
+    restore(list) {
+      const ok = list.filter((f) => f && typeof f.name == "string" && (f.kind == "image" || f.kind == "text") && typeof f.data == "string").slice(0, MAX_FILES - slots.length);
+      slots.push(...ok.map((file) => ({ file })));
+      render();
+    },
   };
 }
