@@ -69,6 +69,7 @@ window.addEventListener("message", (e: MessageEvent) => {
       relay.reset(m.version);
       detached = false;
       page.setState(stateFrom(m.state));
+      page.hold(false);
       return;
     case "style": {
       const why = m.op == "toggle" ? page.toggleStyle(m.style) : m.op == "clear" ? page.clearStyles() : page.setLink(m.url);
@@ -185,6 +186,7 @@ function detach(id: number) {
   if (!page || !relay) return;
   if (!relay.idle) { setTimeout(() => detach(id), 10); return; }
   detached = true;
+  page.hold(true);
   post({ type: "detached", id, state: stateJSON(page.state, historyField), version: relay.version });
 }
 

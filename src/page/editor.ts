@@ -55,6 +55,11 @@ export interface PageProblem {
  */
 const PROBLEM_WATCH = `<script data-erga>(function(){var q=window.__ergaProblems=[];function r(p){window.__ergaReport?window.__ergaReport(p):q.push(p)}addEventListener("error",function(e){var t=e.target;if(t&&t!==window&&t.tagName){var u=t.getAttribute("src")||t.getAttribute("href");if(u)r({kind:"resource",tag:t.tagName.toLowerCase(),url:u})}else r({kind:"script",message:String(e.message||"Script error"),file:e.filename||"",line:e.lineno||0})},true);addEventListener("unhandledrejection",function(e){r({kind:"script",message:"Unhandled promise rejection: "+String(e.reason&&e.reason.message||e.reason),file:"",line:0})})})()</script>`;
 
+/** A key or input that came while the editor couldn't take it (see hold, render), to apply once it can. */
+type HeldInput = { key: string; shift: boolean; alt: boolean; ctrl: boolean; meta: boolean } | { input: string; data: string | null };
+/** The selection moves a held arrow, Home or End key makes, if the editor doesn't take the key itself. */
+const MOVES: Record<string, [string, string]> = { ArrowLeft: ["backward", "character"], ArrowRight: ["forward", "character"], ArrowUp: ["backward", "line"], ArrowDown: ["forward", "line"], Home: ["backward", "lineboundary"], End: ["forward", "lineboundary"] };
+
 /** Who made a change, for its marks: a name and a colour. */
 export interface MarkAuthor { name: string; color: string }
 
@@ -439,6 +444,15 @@ export class PageEditor {
   /** Why each locked unit (see `verify`) can't be edited, for when someone clicks it. */
   private lockReasons = new WeakMap<Element, { message: string; fix?: string }>();
   private revealPending: number | null = null;
+  /** Keys and input held while the editor couldn't take them, oldest first (see release). */
+  private held: HeldInput[] = [];
+  /** Takes the keys while the page renders afresh (see render). */
+  private sink: HTMLTextAreaElement | null = null;
+  /** Set while the shell has the document (see hold). */
+  private holding = false;
+  /** Counts clicks on the page, to tell one made while holding (see setState). */
+  private pointerSeq = 0;
+  private heldPointer = 0;
 
   constructor(readonly config: PageEditorConfig) {
     this.state = config.state;
@@ -500,6 +514,8 @@ export class PageEditor {
     const hadFocus = this.hasFocus;
     const token = ++this.renderToken;
     this.rendering = true;
+    // Keys from now until the new page loads wait for it: a page between two documents takes none (Chrome drops them).
+    if (hadFocus) this.focusSink();
     this.unbind();
     const src = this.state.doc.toString();
     const a = this.analyze(src);
@@ -530,7 +546,10 @@ export class PageEditor {
       if (first && !M.unitAt(this.units, head)) {
         this.state = this.state.update({ selection: { anchor: M.textStart(first) }, annotations: noHistory() }).state;
       }
-      if (hadFocus) this.syncDOMSelection(true);
+      if (hadFocus) {
+        if (this.sink && this.sink.ownerDocument.activeElement == this.sink) this.frame.contentWindow?.focus();
+        this.syncDOMSelection(true);
+      }
       this.notify({ docChanged: false, selectionSet: false, rendered: true, changes: null, remote: false });
       if (this.pendingFlash.length) { this.flash(this.pendingFlash); this.pendingFlash = []; }
       this.markObserver?.disconnect();
@@ -540,6 +559,7 @@ export class PageEditor {
       const RO = (this.frame.contentWindow as (Window & typeof globalThis) | null)?.ResizeObserver;
       if (RO) { this.markObserver = new RO(() => this.queuePaint()); this.markObserver.observe(this.doc.documentElement); }
       this.paintMarks();
+      this.release();
     };
     this.frame.addEventListener("load", onLoad);
     this.frame.srcdoc = a.html;
@@ -819,7 +839,8 @@ export class PageEditor {
   /** Makes the DOM selection match the model's, focusing the unit that holds it. */
   syncDOMSelection(force = false): void {
     const doc = this.doc;
-    if (!doc || this.composing) return;
+    // Not into a page on its way out: the render puts the caret in the new one (focusing the old one would take the keys the render holds).
+    if (!doc || this.composing || this.rendering) return;
     if (!force && !this.activeUnit && !this.spanning) return;
     const main = this.state.selection.main;
     const across = this.across;
@@ -869,8 +890,8 @@ export class PageEditor {
       doc.addEventListener(type, f as EventListener, opts);
       this.cleanup.push(() => doc.removeEventListener(type, f as EventListener, opts));
     };
-    on("beforeinput", (e) => this.beforeinput(e as InputEvent));
-    on("keydown", (e) => this.keydown(e));
+    on("beforeinput", (e) => { if (!this.holdKey(e, { input: e.inputType, data: e.data })) this.beforeinput(e as InputEvent); });
+    on("keydown", (e) => { if (!this.holdKey(e, { key: e.key, shift: e.shiftKey, alt: e.altKey, ctrl: e.ctrlKey, meta: e.metaKey })) this.keydown(e); });
     on("compositionstart", (e) => { if (this.ours(e)) this.composing = true; });
     on("compositionend", (e) => { if (this.ours(e)) this.compositionend(); });
     on("selectionchange", () => this.selectionchange());
@@ -910,6 +931,7 @@ export class PageEditor {
   }
 
   private mousedown(e: MouseEvent): void {
+    if (e.button == 0) this.pointerSeq++;
     // A locked unit takes no caret; say why instead of doing nothing.
     const locked = (e.target as Element).closest?.(".erga-locked");
     if (locked && !(e.target as Element).closest('button, a[href], input, textarea, select, [contenteditable="true"]')) {
@@ -973,12 +995,13 @@ export class PageEditor {
     this.notify({ docChanged: false, selectionSet: true, rendered: false, changes: null, remote: false });
   }
 
-  private keydown(e: KeyboardEvent): void {
-    if (this.composing || e.isComposing) return;
+  /** Returns whether the editor took the key (the browser does nothing with it then). */
+  private keydown(e: KeyboardEvent): boolean {
+    if (this.composing || e.isComposing) return false;
     // App shortcuts work anywhere in the page; editing keys only in manuscript.
-    if (this.config.onKey?.(e)) { e.preventDefault(); e.stopPropagation(); return; }
-    if (this.spanning && this.spanKey(e)) { e.preventDefault(); e.stopPropagation(); return; }
-    if (!this.spanning && (!this.activeUnit || !this.ours(e))) return;
+    if (this.config.onKey?.(e)) { e.preventDefault(); e.stopPropagation(); return true; }
+    if (this.spanning && this.spanKey(e)) { e.preventDefault(); e.stopPropagation(); return true; }
+    if (!this.spanning && (!this.activeUnit || !this.ours(e))) return false;
     const mod = isMac ? e.metaKey : e.ctrlKey;
     const key = e.key.toLowerCase();
     let handled = false;
@@ -996,6 +1019,65 @@ export class PageEditor {
       e.preventDefault();
       e.stopPropagation();
     }
+    return handled;
+  }
+
+  /** Holds a key or input on the page while the shell has the document (see hold); returns whether it did. */
+  private holdKey(e: KeyboardEvent | InputEvent, h: HeldInput): boolean {
+    if (!this.holding || e.isComposing || !(this.ours(e) || this.spanning)) return false;
+    e.preventDefault();
+    e.stopPropagation();
+    this.held.push(h);
+    return true;
+  }
+
+  /** Focuses a stand-in outside the page, in this frame, that holds the keys and input it gets. */
+  private focusSink(): void {
+    const doc = this.frame.ownerDocument;
+    if (!this.sink?.isConnected) {
+      const sink = this.sink = doc.createElement("textarea");
+      sink.tabIndex = -1;
+      sink.setAttribute("aria-hidden", "true");
+      sink.style.cssText = "position:fixed;left:0;top:0;width:1px;height:1px;opacity:0;pointer-events:none;border:0;padding:0;resize:none";
+      // Stopped here: the frame's own shortcut keys (frame.ts) come in with the rest.
+      const hold = (e: Event, h: HeldInput) => { e.preventDefault(); e.stopPropagation(); this.held.push(h); };
+      sink.addEventListener("keydown", (e) => { if (!e.isComposing) hold(e, { key: e.key, shift: e.shiftKey, alt: e.altKey, ctrl: e.ctrlKey, meta: e.metaKey }); });
+      sink.addEventListener("beforeinput", (e) => hold(e, { input: e.inputType, data: e.data }));
+      doc.body.append(sink);
+    }
+    this.sink!.focus({ preventScroll: true });
+  }
+
+  /** Takes input on the page again, once it's rendered and not handed over: what was held meanwhile goes in first, in order. */
+  private release(): void {
+    if (this.holding || this.rendering || !this.doc) return;
+    for (const h of this.held.splice(0)) this.replay(h);
+  }
+
+  /**
+   * While the shell has the document (the source view), the page holds its
+   * keys; handed back (after setState), it applies them. The page shows
+   * again a moment before the shell's message comes, and a key typed then
+   * isn't lost.
+   */
+  hold(on: boolean): void {
+    this.holding = on;
+    if (on) this.heldPointer = this.pointerSeq;
+    else this.release();
+  }
+
+  /** Applies a held key or input as if it came now, in the unit with the caret: the editor's own keys, else what the browser does with it. */
+  private replay(h: HeldInput): void {
+    const base = () => ({ target: this.activeUnit ?? this.doc!.body, isComposing: false, preventDefault() {}, stopPropagation() {} });
+    const input = (inputType: string, data: string | null) => this.beforeinput({ ...base(), inputType, data, dataTransfer: null, getTargetRanges: () => [] } as unknown as InputEvent);
+    if ("input" in h) { input(h.input, h.data); return; }
+    if (this.keydown({ ...base(), key: h.key, shiftKey: h.shift, altKey: h.alt, ctrlKey: h.ctrl, metaKey: h.meta } as unknown as KeyboardEvent)) return;
+    if (h.ctrl || h.meta) return;
+    if (h.key == "Backspace") input(h.alt ? "deleteWordBackward" : "deleteContentBackward", null);
+    else if (h.key == "Delete") input(h.alt ? "deleteWordForward" : "deleteContentForward", null);
+    else if (h.key == "Enter") input(h.shift ? "insertLineBreak" : "insertParagraph", null);
+    else if ([...h.key].length == 1) input("insertText", h.key);
+    else if (MOVES[h.key]) this.doc!.getSelection()?.modify(h.shift ? "extend" : "move", MOVES[h.key][0], MOVES[h.key][1]);
   }
 
   /**
@@ -2358,13 +2440,30 @@ export class PageEditor {
     }
   }
 
-  /** Adopts a state edited elsewhere (the source view) and re-renders. */
+  /**
+   * Adopts a state edited elsewhere (the source view). Edits to the text
+   * blocks only are patched in, so the page stays as it is and takes a click
+   * or a key at once (a render replaces the page, and loses any meanwhile);
+   * anything else (a style, a script, the page's structure) renders afresh.
+   */
   setState(state: EditorState): void {
     if (state == this.state) return;
-    this.state = state;
+    const oldSrc = this.state.doc.toString(), oldUnits = this.units, src = state.doc.toString();
+    const changes = src != oldSrc ? changesBetween(oldSrc, src) : null;
+    // A click on the page after it was handed over (it shows again before the shell's message comes) put the caret: it stands.
+    const clicked = this.holding && this.pointerSeq != this.heldPointer && this.doc && !this.rendering ? this.readSelection() : null;
+    this.state = clicked ? state.update({ selection: changes ? clicked.map(changes) : clicked, annotations: noHistory() }).state : state;
     if (this.tracking) this.queueDiff();
     else this.marks = [];
-    this.render();
+    if (!this.doc || this.rendering || skeleton(oldSrc, oldUnits) != skeleton(src, this.analyze(src).units)) { this.render(); return; }
+    if (changes) this.applyChanges({ changes }, oldUnits, oldSrc);
+    if (this.rendering) return; // Patching couldn't show it: the render does.
+    const head = this.state.selection.main.head;
+    const first = this.units.find((u) => u.runs.some((r) => r.editable && /\S/.test(r.text))) ?? this.units[0];
+    if (first && !M.unitAt(this.units, head)) this.state = this.state.update({ selection: { anchor: M.textStart(first) }, annotations: noHistory() }).state;
+    if (this.hasFocus) this.syncDOMSelection(true);
+    this.notify({ docChanged: !!changes, selectionSet: true, rendered: false, changes: null, remote: false });
+    if (!this.tracking) this.paintMarks();
   }
 
   /** What CodeMirror's state commands (undo, the Markdown commands) dispatch through. */
