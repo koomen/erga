@@ -25,7 +25,7 @@ const picker = (page: Page) => page.evaluate(`(() => {
 /** Clicks the middle of the first visible element matching `selector` (in the picker's root). */
 async function clickOn(page: Page, selector: string) {
   const r = await until(() => page.evaluate(`(() => { const e = [...${ROOT_OF}.querySelectorAll(${JSON.stringify(selector)})].find((e) => e.getClientRects().length && getComputedStyle(e).visibility != "hidden"); const r = e?.getBoundingClientRect(); return r ? { x: r.x + r.width / 2, y: r.y + r.height / 2 } : null; })()`) as Promise<{ x: number; y: number } | null>, 5000, `${selector} on the page`);
-  await page.mouse.click(r.x, r.y);
+  await page.mouse.click(r!.x, r!.y);
   await settle(page);
 }
 
