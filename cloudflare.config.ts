@@ -84,9 +84,7 @@ export default defineConfig(({ mode }) => ({
       // The settings the deploy fixes, as JSON (server.config.ts; config.ts). Admins set the rest.
       SERVER_CONFIG: bindings.text(JSON.stringify(deployed())),
       GITHUB_CLIENT_ID: bindings.text(PROD.vars.GITHUB_CLIENT_ID),
-      // "1": admin power needs admin access unlocked with an admin SSH key (admin-keys.ts; README, Admin SSH keys).
-      // Empty (the default): a signed-in admin is enough. To turn the keys back on, make the default "1" here.
-      ERGA_ADMIN_KEYS_REQUIRED: bindings.text(process.env.ERGA_ADMIN_KEYS_REQUIRED ?? ""),
+
       // Which branch-deploy target this server is (deploy/targets.ts): the pipeline sets it on each target it deploys
       // ("staging" on erga-staging; empty on a server /deploy made). Branch deploys run only with CLOUDFLARE_DEPLOY_TOKEN
       // set too (a secret, deploy/setup.ts), so this alone deploys nothing. Locally: ERGA_DEPLOY_TARGET.
@@ -115,9 +113,7 @@ export default defineConfig(({ mode }) => ({
         ERGA_VERSION_MAX_MS: bindings.text(process.env.ERGA_VERSION_MAX_MS ?? ""),
         // tests/bench.ts --latency: each call to the database or a document waits this long first (worker/timing.ts).
         ERGA_REMOTE_LATENCY_MS: bindings.text(process.env.ERGA_REMOTE_LATENCY_MS ?? ""),
-        // "1": every admin counts as having unlocked admin access with their SSH key (admin-keys.ts), on localhost only:
-        // tests/host.ts sets it for the tests that aren't about admin keys. `bun start` leaves it off, as erga.dev is.
-        ERGA_ADMIN_UNLOCKED: bindings.text(process.env.ERGA_ADMIN_UNLOCKED ?? ""),
+
         // "1": /deploy and the branch deploys talk to a pretend Cloudflare (deploy/mock.ts), for their tests and for trying them safely.
         ERGA_DEPLOY_MOCK: bindings.text(process.env.ERGA_DEPLOY_MOCK ?? ""),
         // The dev server's address (dev.ts), where its stand-ins for Artifacts and GitHub answer (dev/git-server.ts).

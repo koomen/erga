@@ -27,7 +27,7 @@ import { ago, clock, nearNeed, pickerRows, RECENT, type Published, type Row, typ
 
 export interface Deploy { state: "idle" | "scheduled" | "deploying" | "deployed" | "failed"; at: string | null; scheduledFor: string | null; version: number | null; error: string | null }
 /** GET /api/docs/<id>/home. `blocked`: why this document can't be made the homepage (others may edit it), or null. */
-export interface Home { isHome: boolean; canSet: boolean; /** An admin who hasn't unlocked admin access with their SSH key (admin-keys.ts). */ locked?: boolean; blocked?: string | null; deploy: Deploy }
+export interface Home { isHome: boolean; canSet: boolean; /** An admin acting through a token without the admin scope (tokens.ts). */ locked?: boolean; blocked?: string | null; deploy: Deploy }
 
 export interface SettingsHost {
   /** The document's id (its /d/<id>). */
@@ -431,19 +431,13 @@ function mount(host: SettingsHost): Settings {
     const locked = !home.canSet || !!blocked || homeBusy;
     if (locked) homeSwitch.setAttribute("aria-disabled", "true"); else homeSwitch.removeAttribute("aria-disabled");
     homeExplain.textContent = !host.admin ? "Only admins can choose the homepage."
-      : home.locked ? "Admin access is locked. Unlock it with your admin SSH key to change the homepage or deploy it."
+      : home.locked ? "This token has no admin power. Make a token with the admin scope at /tokens to change the homepage or deploy it."
       : blocked ? blocked
       : !home.canSet && d.state == "deploying" ? "You can change this once the deploy finishes."
       : !home.canSet ? "You can't change the homepage here: the server's configuration fixes it, or you can't edit this document."
       : home.isHome ? "The site's front page shows this document. Each version you publish goes live a few minutes later."
       : "Turn on to make this the site's front page, in place of the current one.";
-    if (home.locked) {
-      const a = document.createElement("a");
-      a.href = `/admin/keys?next=${encodeURIComponent(location.pathname + location.hash)}`;
-      a.target = "_top";
-      a.textContent = "Unlock admin access";
-      homeExplain.append(" ", a);
-    }
+
     deployBox.hidden = !home.isHome;
     if (!home.isHome) return;
     const live = d.version != null ? ` · version ${d.version}` : "";
@@ -455,7 +449,7 @@ function mount(host: SettingsHost): Settings {
     statusEl.innerHTML = `<span class="ds-dot ${d.state}" aria-hidden="true"></span>${line}`;
     const can = host.admin && !home.locked && d.state != "deploying" && !homeBusy;
     if (can) { redeploy.removeAttribute("aria-disabled"); redeploy.title = "Deploy the published version now"; }
-    else { redeploy.setAttribute("aria-disabled", "true"); redeploy.title = !host.admin ? "Only admins can redeploy the homepage." : home.locked ? "Unlock admin access with your SSH key first." : "A deploy is running."; }
+    else { redeploy.setAttribute("aria-disabled", "true"); redeploy.title = !host.admin ? "Only admins can redeploy the homepage." : home.locked ? "This token has no admin power." : "A deploy is running."; }
     redeploy.textContent = d.state == "deploying" ? "Deploying…" : "Redeploy now";
   }
   function until(iso: string): string {

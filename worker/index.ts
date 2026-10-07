@@ -19,9 +19,9 @@
 //   /api/factory/...           the factory (experimental): tasks done by Claude Code in VMs, and its agent (worker/factory.ts)
 //   /api/deploys, /api/events  branch deploys' status and events, and deploy logs (worker/deploys.ts)
 //   /auth/test?token=&as=      a test person (Ada, Bo...) signed in with one; they open only test documents
-//   /git/erga.git/...          Erga's own repository, over Git smart HTTP (worker/source.ts; reads open, pushes need admin tokens)
+//   /git/erga.git/...          Erga's own repository, over Git smart HTTP (worker/source.ts; reads open, pushes need an admin's admin-scope token)
 //   /admin, /admin/changes, /admin/users   the server's settings, their change log, and its users (admin.ts)
-//   /admin/keys, /api/admin/...  admins' SSH keys, and unlocking admin access with them (admin-access.ts)
+
 //   /api/admin/agent/...       each admin's agent conversation and panel layout, kept (worker/factory.ts)
 //   /admin/factory, /api/source/...  the Factory page (the factory's board, the dashboard of source and deploys, and the
 //                              factory's agent; /source and /admin/source redirect there) and its API
@@ -40,9 +40,8 @@ import { accountOf, withAccount } from "../account";
 import { idShaped, slugify, type Route } from "../directory";
 import { frontDoor, mayDeploy, OWNER, whoOf, withTokens, type Platform } from "../front";
 import { serverApi, tokensDoor } from "../server-api";
-import { devUnlocked, finishSignIn, isDev, keysRequired, lockCookie, mintTestToken, sessionOf, signOut, startSignIn, testSignIn, unlockCookie } from "./auth";
-import { adminKeysOf, directoryOf, tokensOf } from "./d1";
-import { adminAccess, isAdminAccessPath } from "../admin-access";
+import { finishSignIn, isDev, mintTestToken, sessionOf, signOut, startSignIn, testSignIn } from "./auth";
+import { directoryOf, tokensOf } from "./d1";
 import { adminGate, isAdminPath } from "../admin-layout";
 import { deployDoor } from "./deploy";
 import { adminAgentApi, factoryApi, isAdminAgentPath, previewTicketOk } from "./factory";
@@ -182,14 +181,8 @@ async function route(request: Request, env: Env, url: URL, ctx: ExecutionContext
     const file = await serveHomeRoot(request, env, ctx);
     if (file) return file;
   }
-  // Each admin's agent conversation and panel, kept in the Factory object (worker/factory.ts): before the admin keys' /api/admin/.
+  // Each admin's agent conversation and panel, kept in the Factory object (worker/factory.ts): before the server's API, which has the rest of /api/.
   if (isAdminAgentPath(path)) return adminAgentApi(request, env, url);
-  // Admins' SSH keys and unlocking admin access with them (admin-access.ts): before the server's API, which has the rest of /api/.
-  if (isAdminAccessPath(path)) return adminAccess(request, withTokens(platform(env), url), {
-    unlockCookie: (login, unlock) => unlockCookie(env, request, login, unlock),
-    lockCookie: () => lockCookie(request),
-    local: isDev(env, url),
-  });
   // The factory (experimental): its API, admins only (worker/factory.ts); its board is on /admin/factory (worker/source.ts).
   if (path == "/api/factory" || path.startsWith("/api/factory/")) return factoryApi(request, env, url);
   // The server's API for agents, and people's agent tokens (server-api.ts).
@@ -226,9 +219,6 @@ const platform = (env: Env): Platform => {
     pagesShared: (url) => (local(url) ? null : env.PAGES_HOST?.trim() || null),
     secret: env.SESSION_SECRET,
     tokens: tokensOf(env),
-    adminKeys: adminKeysOf(env),
-    devUnlocked: (url) => devUnlocked(env, url),
-    keysRequired: () => keysRequired(env),
     testToken: (login) => mintTestToken(env, login),
     docs: {
       create: (doc, files, index, opts) => counted("doc", () => host(doc).create(doc.owner, doc.id, files, index, opts)),

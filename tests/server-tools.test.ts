@@ -7,8 +7,6 @@ import { readdirSync, readFileSync } from "node:fs";
 import { expect, test } from "bun:test";
 import { Directory, type Param, type Sql, type Who } from "../directory";
 import { agentToolsFor, runServerTool, SERVER_TOOLS, ToolError, toolsFor, type ToolWho } from "../server-tools";
-/** An unlock of admin access (admin-keys.ts), as the front door gives an admin who signed a challenge with their SSH key. */
-const U = { key: "test", until: Infinity };
 
 const MIGRATIONS = new URL("../migrations/", import.meta.url).pathname;
 
@@ -31,9 +29,9 @@ const failure = async (p: Promise<unknown>) => { try { await p; } catch (e) { re
 
 test("admin tools are offered to admins only, and refused to anyone else", async () => {
   const dir = fresh({ admins: ["root"] });
-  await dir.users.add({ login: "root", unlocked: U }, "bo");
+  await dir.users.add({ login: "root", admin: true }, "bo");
   const names = async (who: Who) => (await toolsFor(dir, who)).map((t) => t.name);
-  expect(await names({ login: "root", unlocked: U })).toContain("set_setting");
+  expect(await names({ login: "root", admin: true })).toContain("set_setting");
   expect(await names({ login: "bo" })).toEqual(["document_access", "share_document"]);
   expect(await names({ login: "root", test: true })).not.toContain("list_users");
   const e = await failure(run({ dir, who: { login: "bo" } }, "list_settings"));
@@ -41,14 +39,14 @@ test("admin tools are offered to admins only, and refused to anyone else", async
   expect(e.status).toBe(403);
   // The editor's agent gets the same, as pi tools.
   expect((await agentToolsFor({ dir, who: { login: "bo" } })).map((t) => t.name)).toEqual(["document_access", "share_document"]);
-  const forRoot = await agentToolsFor({ dir, who: { login: "root", unlocked: U } });
+  const forRoot = await agentToolsFor({ dir, who: { login: "root", admin: true } });
   const out = await forRoot.find((t) => t.name == "list_settings")!.execute("x", {});
   expect(JSON.parse((out.content[0] as { text: string }).text).map((e: { key: string }) => e.key)).toContain("delete_docs_after_hours");
 });
 
 test("settings: set, a number given as a string, bad values explained, reset, locked ones refused", async () => {
   const dir = fresh({ admins: ["root"] });
-  const root = { dir, who: { login: "root", unlocked: U } };
+  const root = { dir, who: { login: "root", admin: true } };
   expect((await run(root, "set_setting", { key: "delete_docs_after_hours", value: 48 })).value).toBe(48);
   const set = await run(root, "set_setting", { key: "delete_docs_after_hours", value: "12" });
   expect([set.value, set.source, set.updatedBy, set.locked]).toEqual([12, "set", "root", false]);
@@ -61,7 +59,7 @@ test("settings: set, a number given as a string, bad values explained, reset, lo
   expect((await run(root, "reset_setting", { key: "delete_docs_after_hours" })).source).toBe("default");
 
   const locked = fresh({ admins: ["root"], locked: { delete_docs_after_hours: 6 } });
-  const lroot = { dir: locked, who: { login: "root", unlocked: U } };
+  const lroot = { dir: locked, who: { login: "root", admin: true } };
   const entry = (await run(lroot, "list_settings")).find((e: { key: string }) => e.key == "delete_docs_after_hours");
   expect([entry.value, entry.source, entry.locked]).toEqual([6, "locked", true]);
   e = await failure(run(lroot, "set_setting", { key: "delete_docs_after_hours", value: 10 }));
@@ -72,20 +70,20 @@ test("settings: set, a number given as a string, bad values explained, reset, lo
 
 test("users: add, make admin, demote, remove; bootstrap admins and yourself are kept", async () => {
   const dir = fresh({ admins: ["root"] });
-  const root = { dir, who: { login: "root", unlocked: U } };
+  const root = { dir, who: { login: "root", admin: true } };
   expect(await run(root, "add_user", { login: "Bo", name: "Bo B" })).toMatchObject({ login: "bo", name: "Bo B", role: "user", addedBy: "root" });
   expect((await run(root, "set_user_role", { login: "bo", role: "admin" })).role).toBe("admin");
   // Bo, an admin now, has the tools.
-  expect((await toolsFor(dir, { login: "bo", unlocked: U })).some((t) => t.name == "list_users")).toBe(true);
-  // Without admin access unlocked by an SSH key (admin-keys.ts), an admin has none of them, and each is refused, saying so.
+  expect((await toolsFor(dir, { login: "bo", admin: true })).some((t) => t.name == "list_users")).toBe(true);
+  // Without admin power (a token without the admin scope), an admin has none of them, and each is refused, saying so.
   expect((await toolsFor(dir, { login: "bo" })).some((t) => t.name == "list_users")).toBe(false);
-  expect((await failure(run({ dir, who: { login: "bo" } }, "list_users"))).message).toMatch(/locked/);
-  expect((await run({ dir, who: { login: "bo", unlocked: U } }, "list_users")).map((u: { login: string; bootstrap: boolean }) => `${u.login}${u.bootstrap ? "*" : ""}`)).toEqual(["bo", "root*"]);
+  expect((await failure(run({ dir, who: { login: "bo" } }, "list_users"))).message).toMatch(/no admin power/);
+  expect((await run({ dir, who: { login: "bo", admin: true } }, "list_users")).map((u: { login: string; bootstrap: boolean }) => `${u.login}${u.bootstrap ? "*" : ""}`)).toEqual(["bo", "root*"]);
   let e = await failure(run(root, "set_user_role", { login: "root", role: "user" }));
   expect([e.status, /deploy/.test(e.message)]).toEqual([403, true]);
   e = await failure(run(root, "remove_user", { login: "root" }));
   expect(e.status).toBe(400);
-  e = await failure(run({ dir, who: { login: "bo", unlocked: U } }, "remove_user", { login: "root" }));
+  e = await failure(run({ dir, who: { login: "bo", admin: true } }, "remove_user", { login: "root" }));
   expect([e.status, /deploy/.test(e.message)]).toEqual([403, true]);
   e = await failure(run(root, "remove_user", { login: "nobody" }));
   expect(e.status).toBe(404);
@@ -97,12 +95,12 @@ test("users: add, make admin, demote, remove; bootstrap admins and yourself are 
 
 test("users: the deploy role, granted and revoked by an admin only", async () => {
   const dir = fresh({ admins: ["root"] });
-  const root = { dir, who: { login: "root", unlocked: U } };
+  const root = { dir, who: { login: "root", admin: true } };
   await run(root, "add_user", { login: "bo" });
   expect((await run(root, "list_users")).find((u: { login: string }) => u.login == "bo").deploy).toBe(false);
   expect(await run(root, "set_user_deploy", { login: "bo", deploy: true })).toMatchObject({ login: "bo", role: "user", deploy: true });
   expect(await dir.users.hasDeploy("bo")).toBe(true);
-  expect((await failure(run({ dir, who: { login: "bo", unlocked: U } }, "set_user_deploy", { login: "bo", deploy: false }))).status).toBe(403);
+  expect((await failure(run({ dir, who: { login: "bo", admin: true } }, "set_user_deploy", { login: "bo", deploy: false }))).status).toBe(403);
   expect((await run(root, "set_user_deploy", { login: "bo", deploy: false })).deploy).toBe(false);
   expect((await failure(run(root, "set_user_deploy", { login: "nobody", deploy: true }))).status).toBe(404);
 });

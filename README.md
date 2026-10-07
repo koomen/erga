@@ -767,7 +767,7 @@ They need only the directory and who's asking, so they run in a document's
 host for the editor's agent (`agentToolsFor`, given to the session by
 `worker/doc-host.ts`) and in the Worker for the server's API (`server-api.ts`
 adds them to its registry). The admin ones are offered only to an admin
-with admin access unlocked (`Users.isUnlocked`): a token's tool list
+with admin access unlocked (`Users.actsAsAdmin`): a token's tool list
 (`/api/ext/tools`, MCP `tools/list`, the personal guide) has them only for
 an admin token (an admin's plain agent token gets a line saying how to make
 one), and `/llms.txt` lists them as admins only. The editor's agent never
@@ -870,7 +870,7 @@ in `migrations/0110_admin_keys.sql`):
   ten seconds; at once in the isolate that revoked it). Lock now clears the
   cookie; signing out does too. A session carries the unlock as
   `Session.unlocked`, `whoOf` passes it on, and the directory's admin-only
-  calls check it (`Users.mustAdmin`, `isUnlocked`).
+  calls check it (`Users.mustAdmin`, `actsAsAdmin`).
 - *Git, unattended.* `source/git-credential.ts`, Git's credential helper for
   the Git endpoint, makes the admin token at the moment Git asks, with the
   SSH key (through ssh-agent) and an agent token kept in the macOS keychain;

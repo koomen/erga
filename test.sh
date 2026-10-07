@@ -14,8 +14,7 @@
 #                     branches deploying themselves, in the Worker (tests/deploys.ts),
 #                     who you are in every page's corner (tests/account.ts),
 #                     the + button and its picker of templates (tests/new-doc.ts),
-#                     admin SSH keys and unlocking admin access with them (tests/admin-keys.ts),
-#                     admin power for a signed-in admin while keys aren't required (tests/admin-open.ts),
+#                     scoped tokens: /tokens, each scope, expiry, the device flow and git push (tests/scoped-tokens.ts),
 #                     the admin pages' layout, and who may reach them (tests/admin-layout.ts),
 #                     the admin pages as one page, the agent panel staying across them (tests/admin-nav.ts),
 #                     the viewer's controls fading while you read (tests/fade.ts),
@@ -105,7 +104,7 @@ run 1 solar-system bun tests/solar-system.ts             # [15]
 run 1 pages bun tests/pages.ts                           # [17]
 run 1 switch bun tests/switch.ts                         # [17]
 run 1 deploy bun tests/deploy.ts                         # [16]
-run 1 admin-keys bun tests/admin-keys.ts                 # [16]
+run 1 scoped-tokens bun tests/scoped-tokens.ts           # [10]
 run 1 landing bun tests/landing.ts                       # [14]
 run 1 factory-cards bun tests/factory-cards.ts           # [14]
 run 1 factory-instruct bun tests/factory-instruct.ts     # [70]
@@ -117,7 +116,7 @@ run 2 unit bun test ./tests/                             # [11]
 run 1 deployed bun tests/server-config.ts                # [7]
 run 1 deploys bun tests/deploys.ts                       # [5]
 run 1 isolation bun tests/isolation.ts                   # [4]
-run 1 admin-open bun tests/admin-open.ts                 # [3]
+
 run 1 admin-layout bun tests/admin-layout.ts             # [8]
 run 1 admin-nav bun tests/admin-nav.ts                   # [6]
 run 1 admin-agent-chat bun tests/admin-agent-chat.ts     # [30]

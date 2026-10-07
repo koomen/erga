@@ -14,7 +14,7 @@
 //     server's own calls to the providers.
 //   - The change log gets "ANTHROPIC_API_KEY set by …", never the value.
 //   - Admins only (Users.mustAdmin); admin.ts takes changes only from an
-//     unlocked admin, in a browser, with a same-origin request.
+//     admin, in a browser, with a same-origin request.
 //   - A server with no key stored uses the Worker secret of the same name
 //     (`withCredentials`), so a server deployed without this page still works.
 

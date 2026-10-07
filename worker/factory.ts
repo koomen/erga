@@ -36,8 +36,8 @@
 //   POST /api/factory/agent/model          { model }: sonnet or opus-fast, from the next message
 //   (its events come on /api/factory/events, to that admin only: { type: "agent", ev })
 //
-// "Share with agent": factory tokens (erga_factory_...) for an outside agent, minted by an unlocked admin
-// in a browser, at most 12 hours, revocable, and ended with the key that unlocked the admin:
+// "Share with agent": factory tokens (erga_factory_...) for an outside agent, minted by an admin
+// in a browser, at most 12 hours, revocable; each works while its maker is still an admin:
 //
 //   GET  /api/factory/tokens               the tokens (never the secret), newest first
 //   POST /api/factory/tokens               { label?, hours? }: a new one, shown once
@@ -86,7 +86,7 @@ import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import { agentConfigFrom, isModelChoice, MODELS, type AgentConfig } from "../agent";
 import type { SettingChange } from "../config";
-import { SIGN_IN_KEY, type Unlock } from "../admin-keys";
+
 import { type Blocked, dependents, depRules, depsNote, type DepStatus, type DepTask, ids } from "../development/task-queue/deps";
 import type { ToolWho } from "../server-tools";
 import type { SourceAnswer, SourceRead } from "../source/browse";
@@ -98,11 +98,10 @@ import { b64url } from "../factory/git-grant";
 import { branchName, claudeToken, hideTokens, resolvePrompt, restartPrompt, taskPrompt } from "../factory/prompt";
 import { type Stalled, stalledOf } from "../factory/stall";
 import { whoOf } from "../front";
-import { LOCKED } from "../users";
-import { isDev, keysRequired, sessionOf } from "./auth";
+import { sessionOf } from "./auth";
 import { agentName } from "../src/room/doc";
 import { checkAttachments } from "../src/page/attach";
-import { adminKeysOf, directoryOf, factoryKey, withKeys } from "./d1";
+import { directoryOf, factoryKey, withKeys } from "./d1";
 import { hasSource } from "./artifacts";
 import type { Env } from "./env";
 
@@ -273,8 +272,8 @@ export class Factory extends DurableObject<Env> {
   private sql: SqlStorage;
   /** The event streams open, each with the admin it's for (agent events go to theirs only). */
   private clients = new Map<WritableStreamDefaultWriter<Uint8Array>, string | null>();
-  /** Each admin's agent (factory/agent.ts), with the unlock their page sent last and where the server is. */
-  private agents = new Map<string, { agent: FactoryAgent; unlock: Unlock; origin: string }>();
+  /** Each admin's agent (factory/agent.ts), with where the server is, as their page said last. */
+  private agents = new Map<string, { agent: FactoryAgent; origin: string }>();
   /** The agent's settings, read again after a minute, so a key an admin changes on /admin reaches it. */
   private agentCfg: { at: number; cfg: Promise<AgentConfig | { missing: string }> } | null = null;
   /** Conversations with a save waiting (a reply streams in: at most one save a second). */
@@ -857,28 +856,24 @@ export class Factory extends DurableObject<Env> {
   }
 
   /**
-   * Why the admin may not act now, or null: their unlock (the one their page sent last) must not have ended, its key
-   * must still be theirs (a revoked key ends it at once), and they must still be an admin. Every tool call asks.
+   * Why the admin may not act now, or null: they must still be an admin. Every tool call asks.
    */
-  private async refusal(login: string, unlock: Unlock): Promise<string | null> {
-    if (!(unlock.until > Date.now())) return LOCKED;
-    const keyOk = unlock.key == "local" ? !!(this.env.DEV_LOGIN && this.env.ERGA_LINK_SECRET) : unlock.key == SIGN_IN_KEY ? !keysRequired(this.env) : (await adminKeysOf(this.env).ownerOf(unlock.key)) == login;
-    if (!keyOk) return LOCKED;
+  private async refusal(login: string): Promise<string | null> {
     if (!(await directoryOf(this.env).users.isAdmin(login))) return "Only admins can use the factory.";
     return null;
   }
 
-  /** The admin's session, made the first time; the unlock and origin are the latest the page sent. */
-  private async session(login: string, unlock: Unlock, origin: string): Promise<{ agent: FactoryAgent; unlock: Unlock; origin: string } | string> {
+  /** The admin's session, made the first time; the origin is the latest the page sent. */
+  private async session(login: string, origin: string): Promise<{ agent: FactoryAgent; origin: string } | string> {
     const cfg = await this.config();
     if ("missing" in cfg) return cfg.missing;
     let s = this.agents.get(login);
-    if (s) { s.unlock = unlock; s.origin = origin; return s; }
+    if (s) { s.origin = origin; return s; }
     const by = agentName(login);
     const on = async () => {
       if ((await directoryOf(this.env).config.get("factory")) != "on") throw new Error("The factory is off: an admin turns it on with the factory setting (/admin).");
     };
-    const state = { unlock, origin };
+    const state = { origin };
     const ops: FactoryOps = {
       info: async () => {
         const host = vmHost(this.env, state.origin);
@@ -892,11 +887,11 @@ export class Factory extends DurableObject<Env> {
       shot: (file) => this.shot(file),
     };
     const guard = async () => {
-      const why = await this.refusal(login, state.unlock);
+      const why = await this.refusal(login);
       if (why) throw new Error(why);
     };
-    // The admin tools act as the admin, with their latest unlock: the settings' change log names them, not the agent.
-    const as = (): ToolWho => ({ dir: directoryOf(this.env), who: { login, unlocked: state.unlock }, origin: state.origin });
+    // The admin tools act as the admin, with admin power: the settings' change log names them, not the agent.
+    const as = (): ToolWho => ({ dir: directoryOf(this.env), who: { login, admin: true }, origin: state.origin });
     // The source tools read the server's copy of Erga's repository (SourceHost), read-only.
     const readSource = async (q: SourceRead): Promise<SourceAnswer> => {
       if (!hasSource(this.env)) throw new Error("Erga's repository isn't set up on this server: it needs the Artifacts binding (README, Erga's own source).");
@@ -912,17 +907,17 @@ export class Factory extends DurableObject<Env> {
     return s;
   }
 
-  async agentState(login: string, unlock: Unlock, origin: string) {
-    const s = await this.session(login, unlock, origin);
+  async agentState(login: string, origin: string) {
+    const s = await this.session(login, origin);
     if (typeof s == "string") return { enabled: false, reason: s };
     const models = s.agent.modelChoice ? Object.entries(MODELS).map(([id, m]) => ({ id, label: m.label })) : [];
     return { enabled: true, model: s.agent.model, choice: s.agent.modelChoice, models, log: s.agent.log() };
   }
 
-  async agentPrompt(login: string, unlock: Unlock, origin: string, text: string, context: string | null, attached?: unknown): Promise<{ ok: boolean; reason?: string }> {
-    const why = await this.refusal(login, unlock);
+  async agentPrompt(login: string, origin: string, text: string, context: string | null, attached?: unknown): Promise<{ ok: boolean; reason?: string }> {
+    const why = await this.refusal(login);
     if (why) return { ok: false, reason: why };
-    const s = await this.session(login, unlock, origin);
+    const s = await this.session(login, origin);
     if (typeof s == "string") return { ok: false, reason: `the agent is off: ${s}` };
     const files = checkAttachments(attached);
     if (typeof files == "string") return { ok: false, reason: files };
@@ -997,14 +992,14 @@ export class Factory extends DurableObject<Env> {
 
   // -- factory tokens, for outside agents ("Share with agent")
 
-  /** A new token for an outside agent: shown once. `key` is the admin key that unlocked the admin: revoking it ends the token. */
-  async mintToken(login: string, name: string, key: string, label: string, hours: number): Promise<{ token: string } & TokenView> {
+  /** A new token for an outside agent: shown once. It works while `login` is an admin (sharedAgentApi checks). */
+  async mintToken(login: string, name: string, label: string, hours: number): Promise<{ token: string } & TokenView> {
     const id = hex(crypto.getRandomValues(new Uint8Array(9)));
     const secret = b64url(crypto.getRandomValues(new Uint8Array(24)));
     const ms = Math.round(Math.max(1, Math.min(12, hours || 4)) * 3600_000);
     const at = Date.now();
     this.sql.exec("INSERT INTO agent_tokens (id, hash, login, name, label, unlock_key, created, expires) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-      id, hex(await crypto.subtle.digest("SHA-256", enc.encode(secret))), login, name, label.replace(/\s+/g, " ").trim().slice(0, 60) || "Outside agent", key, at, at + ms);
+      id, hex(await crypto.subtle.digest("SHA-256", enc.encode(secret))), login, name, label.replace(/\s+/g, " ").trim().slice(0, 60) || "Outside agent", "", at, at + ms);
     return { token: `${TOKEN_PREFIX}${id}_${secret}`, ...this.tokenView(this.sql.exec<TokenRow>("SELECT * FROM agent_tokens WHERE id = ?", id).one()) };
   }
 
@@ -1024,8 +1019,8 @@ export class Factory extends DurableObject<Env> {
     return true;
   }
 
-  /** Whose a token is, while it works (not revoked, not ended); the caller checks the key and the admin. */
-  async readToken(raw: string): Promise<{ id: string; login: string; name: string; label: string; key: string; expires: number } | null> {
+  /** Whose a token is, while it works (not revoked, not ended); the caller checks the admin. */
+  async readToken(raw: string): Promise<{ id: string; login: string; name: string; label: string; expires: number } | null> {
     const m = /^erga_factory_([0-9a-f]{18})_([A-Za-z0-9_-]{20,64})$/.exec(raw);
     if (!m) return null;
     const r = this.sql.exec<TokenRow>("SELECT * FROM agent_tokens WHERE id = ?", m[1]).toArray()[0];
@@ -1033,7 +1028,7 @@ export class Factory extends DurableObject<Env> {
     const want = enc.encode(r.hash), got = enc.encode(hex(await crypto.subtle.digest("SHA-256", enc.encode(m[2]))));
     if (want.length != got.length || !crypto.subtle.timingSafeEqual(want, got)) return null;
     if (!r.last_used || Date.now() - r.last_used > 60_000) this.sql.exec("UPDATE agent_tokens SET last_used = ? WHERE id = ?", Date.now(), r.id);
-    return { id: r.id, login: r.login, name: r.name, label: r.label, key: r.unlock_key, expires: r.expires };
+    return { id: r.id, login: r.login, name: r.name, label: r.label, expires: r.expires };
   }
 
   // -- live updates
@@ -1085,15 +1080,13 @@ const factory = (env: Env) => env.FACTORY.getByName("factory");
 const enabled = async (env: Env) => (await directoryOf(env).config.get("factory")) == "on";
 
 /**
- * An admin, signed in (the person, in a browser: agent tokens don't reach the factory), who has unlocked
- * admin access with their SSH key (admin-keys.ts); "locked" for an admin who hasn't yet.
+ * An admin, signed in (the person, in a browser: agent tokens don't reach the factory).
  */
-async function adminOf(env: Env, request: Request): Promise<{ login: string; name: string; unlock: Unlock } | "locked" | null> {
+async function adminOf(env: Env, request: Request): Promise<{ login: string; name: string } | null> {
   const session = await sessionOf(env, request);
   if (!session || session.test || (session as { agent?: unknown }).agent) return null;
-  const users = directoryOf(env).users, who = whoOf(session);
-  if (!(await users.isAdmin(who))) return null;
-  return (await users.isUnlocked(who)) && session.unlocked ? { login: session.login.toLowerCase(), name: session.name, unlock: session.unlocked } : "locked";
+  if (!(await directoryOf(env).users.actsAsAdmin(whoOf(session)))) return null;
+  return { login: session.login.toLowerCase(), name: session.name };
 }
 
 /**
@@ -1110,7 +1103,6 @@ export const isAdminAgentPath = (path: string) => path.startsWith("/api/admin/ag
 export async function adminAgentApi(request: Request, env: Env, url: URL): Promise<Response> {
   const admin = await adminOf(env, request);
   if (!admin) return json({ error: "Only admins have an admin agent." }, (await sessionOf(env, request)) ? 403 : 401);
-  if (admin == "locked") return json({ error: LOCKED, locked: true }, 403);
   if (request.method != "GET" && request.headers.get("origin") != url.origin) return json({ error: "Forbidden" }, 403);
   const f = factory(env), path = url.pathname, m = request.method;
   if (path == "/api/admin/agent/conversation") {
@@ -1129,14 +1121,13 @@ export const factoryEnabled = enabled;
 
 /**
  * An outside agent with a factory token ("Share with agent"): it may create, read and instruct tasks, as its
- * admin's agent, while the token works, its key is still the admin's, and they're still an admin.
+ * admin's agent, while the token works and they're still an admin.
  */
 async function sharedAgentApi(request: Request, env: Env, url: URL, raw: string, path: string, id: number | null, action: string): Promise<Response> {
   const f = factory(env);
   const t = await f.readToken(raw);
-  const keyOk = t && (t.key == "local" ? isDev(env, url) : t.key == SIGN_IN_KEY ? !keysRequired(env) : (await adminKeysOf(env).ownerOf(t.key)) == t.login);
-  if (!t || !keyOk || !(await directoryOf(env).users.isAdmin(t.login))) {
-    return json({ error: "That factory token doesn't work: it ended, was revoked, or the admin key that made it was. Ask an admin for a new one (Share with agent, on /admin/factory)." }, 401);
+  if (!t || !(await directoryOf(env).users.isAdmin(t.login))) {
+    return json({ error: "That factory token doesn't work: it ended, was revoked, or its maker is no longer an admin. Ask an admin for a new one (Share with agent, on /admin/factory)." }, 401);
   }
   const by = `${agentName(t.login)} (shared: ${t.label})`;
   const m = request.method;
@@ -1197,7 +1188,6 @@ export async function factoryApi(request: Request, env: Env, url: URL): Promise<
 
   const admin = await adminOf(env, request);
   if (!admin) return json({ error: "Only admins can use the factory." }, (await sessionOf(env, request)) ? 403 : 401);
-  if (admin == "locked") return json({ error: LOCKED, locked: true }, 403);
   if (request.method != "GET" && request.headers.get("origin") != url.origin) return json({ error: "Forbidden" }, 403);
   const f = factory(env);
   const on = await enabled(env);
@@ -1214,10 +1204,10 @@ export async function factoryApi(request: Request, env: Env, url: URL): Promise<
   if (path == "/api/factory/guide" && request.method == "GET") return new Response(factoryGuide({ origin: url.origin, owner: admin.login, label: "(your token's label)", expires: Date.now() + 4 * 3600_000 }), { headers: { "Content-Type": "text/markdown; charset=utf-8", "Cache-Control": "no-store" } });
   // The factory's own agent, for this admin.
   if (path == "/api/factory/agent") {
-    if (request.method == "GET") return json(await f.agentState(admin.login, admin.unlock, url.origin));
+    if (request.method == "GET") return json(await f.agentState(admin.login, url.origin));
     if (request.method == "POST") {
       const body = await request.json().catch(() => ({})) as { text?: unknown; context?: unknown; files?: unknown };
-      const r = await f.agentPrompt(admin.login, admin.unlock, url.origin, String(body.text ?? ""), typeof body.context == "string" ? body.context : null, body.files);
+      const r = await f.agentPrompt(admin.login, url.origin, String(body.text ?? ""), typeof body.context == "string" ? body.context : null, body.files);
       return json(r, r.ok ? 200 : 409);
     }
   }
@@ -1232,7 +1222,7 @@ export async function factoryApi(request: Request, env: Env, url: URL): Promise<
     if (request.method == "GET") return json({ tokens: await f.tokens() });
     if (request.method == "POST") {
       const body = await request.json().catch(() => ({})) as { label?: unknown; hours?: unknown };
-      return json(await f.mintToken(admin.login, admin.name, admin.unlock.key, String(body.label ?? ""), Number(body.hours) || 4), 201);
+      return json(await f.mintToken(admin.login, admin.name, String(body.label ?? ""), Number(body.hours) || 4), 201);
     }
   }
   const tok = /^\/api\/factory\/tokens\/([0-9a-f]{18})$/.exec(path)?.[1];

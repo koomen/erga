@@ -27,7 +27,7 @@ export function claudeToken(raw: string): { token: string } | { error: string } 
 
 /**
  * Text from a VM (a log line, a summary, an error, a caption), with anything shaped like a token hidden: a Claude
- * token, the factory's own (fct., fgt., erga_factory_) and Erga's (erga_, erga_admin_, erga_test_). The board and
+ * token, the factory's own (fct., fgt., erga_factory_) and Erga's (erga_, erga_test_). The board and
  * factory tokens' holders read this text, and the VM's code, which can read its own tokens, writes it.
  */
 export function hideTokens(s: string): string {
