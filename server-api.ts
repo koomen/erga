@@ -650,7 +650,7 @@ export async function tokensDoor(request: Request, platform: Platform): Promise<
     }
   }
   if (path == "/tokens/new" && post) {
-    const scope = field("scope") as Scope;
+    const scope = (field("scope") || "documents") as Scope;
     const expires = expiryOf(field("expires"));
     if (expires == "bad") return tokensPage(platform, session, url, { notice: error("That expiry isn't a date.") });
     try {
