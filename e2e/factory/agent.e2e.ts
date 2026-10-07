@@ -30,14 +30,14 @@ test("it reads the board, queues a task with a dependency as the admin's agent, 
   const t = await f.task(next);
   expect(t.title).toBe("Add a footer note");
   expect(t.mergeAfter).toEqual([dep]);
-  expect(t.by).toBe("tester’s agent");
-  expect(t.log[0].message.startsWith("Added by tester’s agent")).toBe(true);
+  expect(t.by).toBe("tester, via their admin agent");
+  expect(t.log[0].message.startsWith("Added by tester, via their admin agent")).toBe(true);
   const said = await panel(b);
   for (const call of ["Read the board", "Queued Add a footer note", `Read #${next}`]) expect(said).toContain(call);
   await expect.poll(async () => (await b.column("queued")) + (await b.column("working")) + (await b.column("ready-to-merge"))).toContain("Add a footer note");
   await tab.page.goto(`${s.root}/admin/changes`);
   await until(() => b.eval(`!!document.querySelector("li.change")`), 10_000, "the change log");
-  const line = await b.eval<{ by: string; what: string } | undefined>(`[...document.querySelectorAll("li.change")].map((li) => ({ by: li.querySelector(".by").textContent, what: li.querySelector(".what").textContent.replace(/\\s+/g, " ").trim() })).find((l) => l.what.startsWith("task #${next} added: Add a footer note"))`);
+  const line = await b.eval<{ by: string; via: string | null; what: string } | undefined>(`[...document.querySelectorAll("li.change")].map((li) => ({ by: li.querySelector(".by").textContent, via: li.querySelector(".via")?.dataset.via ?? null, what: li.querySelector(".what").textContent.replace(/\\s+/g, " ").trim() })).find((l) => l.what.startsWith("task #${next} added: Add a footer note"))`);
   expect(line?.by).toBe("tester");
-  expect(line?.what.endsWith("via the factory's agent")).toBe(true);
+  expect(line?.via).toBe("their admin agent");
 });

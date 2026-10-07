@@ -54,7 +54,9 @@ export const servers = {
   agent: once("agent", () => startServer({ env: { ANTHROPIC_API_KEY: "sk-ant-test-not-used" } })),
   factory: once("factory", async (): Promise<FactoryServer> => {
     const secret = `factory-test-${crypto.randomUUID()}`;
-    const s = await startServer({ env: { ERGA_AGENT_MODEL: "script", ERGA_FACTORY_RUNNER: "sim", ERGA_LINK_SECRET: secret, ERGA_FACTORY_SIM_NO_SCRIPTS: "1" } });
+    const s = await startServer({ env: { ERGA_AGENT_MODEL: "script", ERGA_FACTORY_RUNNER: "sim", ERGA_LINK_SECRET: secret, ERGA_FACTORY_SIM_NO_SCRIPTS: "1",
+      // A document's edits are a version soon after they stop (worker/doc-host.ts), for the attribution tests' editor agent.
+      ERGA_WRITE_DELAY_MS: "50", ERGA_VERSION_IDLE_MS: "800", ERGA_VERSION_MAX_MS: "6000" } });
     const initial = await (await fetch(`${s.root}/api/factory`)).json() as { enabled: boolean };
     return Object.assign(s, { secret, initial });
   }),

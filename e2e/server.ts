@@ -45,7 +45,7 @@ export interface Server {
   /** Copies tests/fixtures/<name> into the scratch folder and links it: its folder and address. */
   fixture(name: string): Promise<{ dir: string; address: string }>;
   stop(): void;
-  /** Stops it (as a crash would: killed, nothing flushed on the way out) and starts it again on the same state, and the same port if it's free. */
+  /** Kills it at once (as a deploy cuts a Durable Object off) and starts it again, on the same port and state. */
   restart(): Promise<void>;
   dispose(): void;
 }
@@ -126,31 +126,35 @@ export async function startServer(opts: ServerOptions = {}): Promise<Server> {
     },
   };
   live.add(server);
-  /** Starts dev.ts and waits until it answers: on `first` if given and free, else on a free port. */
-  async function launch(first?: number) {
+  /** Starts dev.ts on a free port (or on `fixed`, for a restart) and waits until it answers. */
+  async function launch(fixed?: number) {
     const until = Date.now() + (opts.startMs ?? 90_000);
     for (let attempt = 0; ; attempt++) {
-      port = attempt == 0 && first ? first : await freePort();
+      port = fixed ?? await freePort();
       const root = `http://127.0.0.1:${port}`;
       output = "";
       const p = proc = spawn("bun", [join(ROOT, "dev.ts"), "--port", String(port), "--no-open"], { cwd: ROOT, env, stdio: ["ignore", "pipe", "pipe"], detached: true });
       const take = (c: Buffer) => { output = (output + c.toString()).slice(-20_000); };
       p.stdout!.on("data", take);
       p.stderr!.on("data", take);
-      let exited: number | null = null;
+      let exited: number | null = null, up = false;
       p.on("exit", (code, signal) => {
         exited = code ?? 1;
-        // Stopped by nobody: say why, for the test that finds it gone.
-        if (proc == p && server.root) console.error(`the dev server at ${server.root} stopped by itself (${signal ?? `exit ${code}`}):\n${output.slice(-3000)}`);
+        // Stopped by nobody, once it was up: say why, for the test that finds it gone.
+        if (proc == p && up) console.error(`the dev server at ${server.root} stopped by itself (${signal ?? `exit ${code}`}):\n${output.slice(-3000)}`);
       });
       // Up once a page that reads the database answers: the server migrates it as it starts.
       while (Date.now() < until && exited == null) {
         const ok = await fetch(`${root}/docs`, { redirect: "manual", signal: AbortSignal.timeout(5000) }).then((r) => r.ok, () => false);
-        if (ok) { Object.assign(server, { root, port }); return; }
+        if (ok) { up = true; Object.assign(server, { root, port }); return; }
         await new Promise((r) => setTimeout(r, 50));
       }
-      // Another server took the port between freePort and dev.ts (or since this one last ran on it): once more, on another.
-      if (exited != null && /port \d+ is taken/.test(output) && attempt < 3) continue;
+      // Another server took the port between freePort and dev.ts: once more, on another. (A restart keeps its port: the
+      // killed one's socket may linger a moment, so it tries that port again.)
+      if (exited != null && /port \d+ is taken/.test(output) && attempt < (fixed ? 40 : 3)) {
+        if (fixed) await new Promise((r) => setTimeout(r, 250));
+        continue;
+      }
       server.dispose();
       throw new Error(`the dev server didn't start (${exited != null ? `exit ${exited}` : "timed out"}):\n${output.slice(-4000)}`);
     }
