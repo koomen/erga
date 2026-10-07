@@ -141,12 +141,16 @@ function chrome(): string {
  * Mac) don't exit after writing it: once the file is there and stops growing, the browser is stopped.
  */
 function chromeShot(url: string, file: string, profile: string): Promise<string> {
+  // Chromium on Linux puts its profile's lock, a Unix socket, in TMPDIR (TMPDIR/org.chromium.Chromium.XXXXXX/SingletonSocket),
+  // and stops at once ("Socket path too long") past the 108 bytes such a path may have. A simulated VM's TMPDIR is deep
+  // in the dev server's state (under the tests, in a scratch folder in /tmp): Chromium gets a short one of its own.
+  const tmp = mkdtempSync("/tmp/shot-");
   return new Promise((resolve) => {
     const p = spawn(chrome(), ["--headless", "--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage", "--hide-scrollbars", "--no-first-run",
       `--user-data-dir=${profile}`, "--window-size=1280,860", "--virtual-time-budget=10000", `--screenshot=${file}`, url], {
       stdio: ["ignore", "ignore", "pipe"], detached: true,
       // The local simulation gives jobs a HOME of their own, in which Chrome on a Mac hangs: it gets the real one (CHROME_HOME), and its own profile.
-      env: process.env.CHROME_HOME ? { ...process.env, HOME: process.env.CHROME_HOME } : process.env,
+      env: { ...process.env, TMPDIR: tmp, ...(process.env.CHROME_HOME ? { HOME: process.env.CHROME_HOME } : {}) },
     });
     let stderr = "", last = -1, settled = false;
     p.stderr.on("data", (c: Buffer) => { stderr = (stderr + c.toString()).slice(-4000); });
@@ -156,6 +160,7 @@ function chromeShot(url: string, file: string, profile: string): Promise<string>
       clearInterval(poll); clearTimeout(limit);
       // Chromium and its helpers: the whole group.
       try { process.kill(-p.pid!, "SIGKILL"); } catch { try { p.kill("SIGKILL"); } catch { /* gone */ } }
+      rmSync(tmp, { recursive: true, force: true });
       resolve(/Page load failed[^\n]*/.exec(stderr)?.[0] ?? stderr.slice(-800));
     };
     const poll = setInterval(() => {
