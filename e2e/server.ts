@@ -137,16 +137,16 @@ export async function startServer(opts: ServerOptions = {}): Promise<Server> {
       const take = (c: Buffer) => { output = (output + c.toString()).slice(-20_000); };
       p.stdout!.on("data", take);
       p.stderr!.on("data", take);
-      let exited: number | null = null;
+      let exited: number | null = null, up = false;
       p.on("exit", (code, signal) => {
         exited = code ?? 1;
-        // Stopped by nobody: say why, for the test that finds it gone.
-        if (proc == p && server.root) console.error(`the dev server at ${server.root} stopped by itself (${signal ?? `exit ${code}`}):\n${output.slice(-3000)}`);
+        // Stopped by nobody, once it was up: say why, for the test that finds it gone.
+        if (proc == p && up) console.error(`the dev server at ${server.root} stopped by itself (${signal ?? `exit ${code}`}):\n${output.slice(-3000)}`);
       });
       // Up once a page that reads the database answers: the server migrates it as it starts.
       while (Date.now() < until && exited == null) {
         const ok = await fetch(`${root}/docs`, { redirect: "manual", signal: AbortSignal.timeout(5000) }).then((r) => r.ok, () => false);
-        if (ok) { Object.assign(server, { root, port }); return; }
+        if (ok) { up = true; Object.assign(server, { root, port }); return; }
         await new Promise((r) => setTimeout(r, 50));
       }
       // Another server took the port between freePort and dev.ts: once more, on another. (A restart keeps its port: the
