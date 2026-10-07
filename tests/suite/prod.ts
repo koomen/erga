@@ -21,7 +21,7 @@ if (!token) {
 /** A test person's session cookie. */
 async function cookieFor(name: string): Promise<string> {
   const r = await fetch(`${base}/auth/test?token=${encodeURIComponent(token!)}&as=${encodeURIComponent(name)}`, { redirect: "manual" });
-  const cookie = (r.headers.getSetCookie?.() ?? [r.headers.get("set-cookie") ?? ""]).map((c) => c.split(";")[0]).find((c) => c.startsWith("erga_session="));
+  const cookie = (r.headers.getSetCookie?.() ?? [r.headers.get("set-cookie") ?? ""]).map((c) => c.split(";")[0]).find((c) => /^erga_session(_\d+)?=/.test(c));
   if (!cookie) throw new Error(`signing in ${name}: ${r.status} ${await r.text()}`);
   return cookie;
 }

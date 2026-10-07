@@ -12,6 +12,7 @@
 // numbers stay under a bound, and prints them.
 //
 //   bun tests/pages-open.ts
+// covers: src/page/tree.ts tree.ts front.ts
 
 import { cpSync, mkdtempSync } from "fs";
 import { tmpdir } from "os";

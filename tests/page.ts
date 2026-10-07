@@ -3,6 +3,7 @@
 // file back from disk after each edit. Runs the HTML and the Markdown
 // fixture. (Two people at once: tests/suite, `bun tests/suite/run.ts --suite browser`.)
 //   bun tests/page.ts [html|select|md|format|view|agent|reload|enter|join|indent] [--keep]   (--keep leaves the host running and prints its URL)
+// covers: src/page/editor.ts src/page/main.ts src/page/manuscript.ts src/page/markdown.ts src/page/merge.ts src/page/collab.ts src/page/remote.ts src/page/frame.ts src/page/bridge.ts src/page/layout.ts room.ts src/room/ host.ts agent.ts workspace.ts page.html
 
 import { Browser, MOD, ROOT, SHOTS } from "./cdp";
 import { startHost } from "./host";

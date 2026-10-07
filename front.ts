@@ -127,6 +127,11 @@ export interface Platform {
   pagesShared?(url: URL): string | null;
   /** Signs the tokens that open a document's files on its pages origin. */
   secret: string;
+  /**
+   * A server for Erga's admins alone (staging: deploy/targets.json `adminsOnly`; worker/admins-only.ts guards every
+   * request). Its pages tokens name the admin they were made for, so its pages origin can check them again.
+   */
+  adminsOnly?: boolean;
   /** Every document's address, title and permissions; the server's users and settings. */
   directory: Directory;
   /** Agent tokens (tokens.ts). */
@@ -410,9 +415,12 @@ const b64url = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes)).replac
  * Its expiry is rounded up to the next whole day, so the token, and with it the address of every file of the page, stays the
  * same all day: the browser's cache can answer for them (they're checked by ETag, front.ts's pagesDoor and host.ts's docFile).
  */
-export async function pagesToken(secret: string, owner: string, id: string, shell: string, now = Date.now(), opts: { published?: boolean } = {}): Promise<string> {
+export async function pagesToken(secret: string, owner: string, id: string, shell: string, now = Date.now(), opts: { published?: boolean; by?: string } = {}): Promise<string> {
   // published: for someone who may only view it, whose every file is the published version's (versions.ts), doc/ as pub/.
-  const claims = b64url(new TextEncoder().encode(JSON.stringify({ d: `${owner.toLowerCase()}/${id}`, e: Math.ceil((now / 1000 + WEEK) / DAY) * DAY, s: shell, ...(opts.published ? { p: 1 } : {}) })));
+  // by: whom it was made for, only on a server for admins alone (staging, Platform.adminsOnly): its pages origin lets the
+  // token in only while they're still an admin (worker/admins-only.ts). Elsewhere a token names nobody (a page's own
+  // scripts can read its address).
+  const claims = b64url(new TextEncoder().encode(JSON.stringify({ d: `${owner.toLowerCase()}/${id}`, e: Math.ceil((now / 1000 + WEEK) / DAY) * DAY, s: shell, ...(opts.published ? { p: 1 } : {}), ...(opts.by ? { a: opts.by.toLowerCase() } : {}) })));
   return `${claims}.${await hmac(secret, claims)}`;
 }
 
@@ -421,14 +429,14 @@ export async function readPagesToken(secret: string, token: string, owner: strin
   return (await readPagesClaims(secret, token, owner, id, now))?.shell ?? null;
 }
 
-/** What a good, current token for this document says: the editor's origin, and whether it opens only the published version. */
-export async function readPagesClaims(secret: string, token: string, owner: string, id: string, now = Date.now()): Promise<{ shell: string; published: boolean } | null> {
+/** What a good, current token for this document says: the editor's origin, whether it opens only the published version, and whom it was made for (if it says). */
+export async function readPagesClaims(secret: string, token: string, owner: string, id: string, now = Date.now()): Promise<{ shell: string; published: boolean; by?: string } | null> {
   const [claims, mac, extra] = token.split(".");
   if (!claims || !mac || extra != null || !sameText(mac, await hmac(secret, claims))) return null;
   try {
-    const c = JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(claims.replace(/-/g, "+").replace(/_/g, "/")), (ch) => ch.charCodeAt(0)))) as { d?: string; e?: number; s?: string; p?: number };
+    const c = JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(claims.replace(/-/g, "+").replace(/_/g, "/")), (ch) => ch.charCodeAt(0)))) as { d?: string; e?: number; s?: string; p?: number; a?: unknown };
     if (c.d != `${owner.toLowerCase()}/${id}` || !(Number(c.e) > now / 1000) || typeof c.s != "string") return null;
-    return new URL(c.s).origin == c.s ? { shell: c.s, published: c.p == 1 } : null;
+    return new URL(c.s).origin == c.s ? { shell: c.s, published: c.p == 1, ...(typeof c.a == "string" ? { by: c.a } : {}) } : null;
   } catch { return null; }
 }
 
@@ -828,7 +836,8 @@ async function viewDocument(platform: Platform, request: Request, opened: { doc:
   const editable = canEdit;
   const [token, account] = await Promise.all([
     // Someone who may not edit it sees only its published version, in every file the frame asks for.
-    pagesToken(platform.secret, doc.owner, doc.id, url.origin, undefined, { published: !canEdit }),
+    // On a server for admins alone (staging), the token names its admin, whom the pages origin checks again (worker/admins-only.ts).
+    pagesToken(platform.secret, doc.owner, doc.id, url.origin, undefined, { published: !canEdit, ...(platform.adminsOnly && session ? { by: session.login } : {}) }),
     editable && session ? accountMeta(platform, session) : "",
   ]);
   const host = `${origin}/t/${token}/`;

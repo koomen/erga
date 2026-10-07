@@ -14,6 +14,7 @@
 // what last.
 //
 //   bun tests/deploys.ts [--keep]     (--keep leaves the server running, with a deploy done)
+// covers: deploy/ worker/deploys.ts worker/pipeline.ts worker/deployer.ts worker/source.ts
 
 import { existsSync } from "fs";
 import { join } from "path";
@@ -81,7 +82,7 @@ try {
   await until(async () => (await stagingOf()).state == "deployed", 60_000, "staging builds and deploys itself", async () => JSON.stringify(await stagingOf(), null, 1));
   const done = await stagingOf();
   expect(done.commit == SHA1 && done.deployed == SHA1 && done.error == null, "the commit is live", done);
-  expect(done.steps.map((s: any) => s.id).join() == "build,account,database,data,migrations,assets,image,worker,vms,address,pages,live,documents" && done.steps.every((s: any) => s.status == "done"), "every step done, copying production's data included", done.steps);
+  expect(done.steps.map((s: any) => s.id).join() == "build,account,database,data,migrations,assets,image,worker,vms,address,pages,live,documents,cleanup" && done.steps.every((s: any) => s.status == "done"), "every step done, copying production's data included", done.steps);
   expect(done.steps.find((s: any) => s.id == "documents").detail.includes("3 documents copied"), "production's documents copied", done.steps);
   expect(done.log.some((l: string) => l.includes("build: $ bun install --frozen-lockfile")) && done.log.at(-1).includes(`deployed ${SHA1.slice(0, 12)}`), "the log says what happened, step by step", done.log);
   await until(() => events.filter((e) => e == "deploys").length > 8, 5000, "an event on each change", () => events.join());
@@ -131,7 +132,7 @@ try {
   // ---------------------------------------------------------------- who may
   const signIn = async (login: string) => {
     const res = await fetch(`${host.root}/auth/github?as=${login}&next=/`, { redirect: "manual" });
-    return res.headers.getSetCookie().map((c) => c.split(";")[0]).find((c) => c.startsWith("erga_session="))!;
+    return res.headers.getSetCookie().map((c) => c.split(";")[0]).find((c) => /^erga_session(_\d+)?=/.test(c))!;
   };
   const bo = await signIn("bo");
   expect((await api("/api/deploys", { headers: { Cookie: bo } })).status == 403, "someone who isn't an admin can't read the status");

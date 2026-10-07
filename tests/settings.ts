@@ -17,6 +17,7 @@
 // tests/cdp.ts's SHOTS.
 //
 //   bun tests/settings.ts
+// covers: src/page/settings.ts versions.ts worker/doc-host.ts worker/home.ts
 
 import { join } from "path";
 import { Browser, type Page, SHOTS } from "./cdp";

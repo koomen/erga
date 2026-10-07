@@ -14,6 +14,7 @@
 //   bun tests/suite/run.ts --live-agent         local, with the real model instead of the script
 //   bun tests/suite/run.ts --json out.json      also write the results as JSON
 //   bun tests/suite/run.ts --jobs 4             how many tests at once (default: one per usable core, tests/cores.ts, 2 to 16)
+// covers: room.ts src/room/ host.ts agent.ts workspace.ts server-api.ts api.ts
 
 import { writeFileSync } from "fs";
 import { testJobs } from "../cores";

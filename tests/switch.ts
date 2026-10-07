@@ -10,6 +10,7 @@
 //
 //   bun tests/switch.ts            the checks
 //   bun tests/switch.ts --frames   and the frames, as strips, in tests/cdp.ts's SHOTS
+// covers: front.ts src/page/main.ts src/page/layout.ts
 
 import { cpSync, mkdirSync, mkdtempSync } from "fs";
 import { tmpdir } from "os";

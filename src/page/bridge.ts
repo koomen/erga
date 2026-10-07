@@ -68,6 +68,8 @@ export interface Snapshot {
   canPause: boolean;
   paused: boolean;
   fmt: Fmt;
+  /** Where the page is scrolled to (kept across a reload for a new release: live.ts). */
+  scrollY?: number;
 }
 
 /** The page's background, as the shell paints its own canvas to match. */
@@ -75,7 +77,8 @@ export interface Backdrop { color: string; image: string }
 
 /** Shell → frame. */
 export type ToFrame =
-  | { type: "init"; kind: Kind; dir?: string; state: unknown; version: number; markdownHead: string; self: MarkAuthor; tracking: boolean; timescale?: number }
+  /** `scroll`: where to scroll the page once it first renders (the page reloaded for a new release kept it: live.ts). */
+  | { type: "init"; kind: Kind; dir?: string; state: unknown; version: number; markdownHead: string; self: MarkAuthor; tracking: boolean; timescale?: number; scroll?: number }
   | { type: "external"; changes: unknown; author: MarkAuthor | null; length: number }
   | { type: "ack" }
   | { type: "reject" }

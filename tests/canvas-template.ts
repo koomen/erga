@@ -11,6 +11,7 @@
 //
 //   bun tests/canvas-template.ts            the checks
 //   bun tests/canvas-template.ts --shots    and screenshots, in tests/cdp.ts's SHOTS
+// covers: templates/canvas/ templates.ts front.ts
 
 import { mkdirSync } from "fs";
 import { join } from "path";

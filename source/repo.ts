@@ -11,6 +11,13 @@
 // one of staging's commits. So the two never diverge, and there are no merge
 // commits or conflicts between them.
 //
+// main, which production deploys, moves only to a commit the production gate
+// passed (`gate`: deploy/gate.ts, its full test run green), on every path:
+// a merge (the dashboard, the admin agent, the API) and a push. A merge may
+// override it with a reason (an admin in a browser only: worker/source.ts),
+// which the change log keeps. Seeding an empty repository (main made for
+// the first time) is the one move the gate lets by.
+//
 // A push is staged before it lands: its objects go to Artifacts under a
 // quarantine branch (refs/heads/erga-incoming/...), Erga reads the new
 // commits back and checks them, and only then moves the real branches, each
@@ -83,7 +90,11 @@ export interface BranchInfo {
   afterMain?: CommitInfo[];
 }
 /** A branch moved: `by` (a login) did it, `via` how when not in person (attribution.ts). */
-export interface Move { branch: Branch; old: string; new: string; how: "push" | "merge"; by: string; via?: string | null; at: number }
+export interface Move {
+  branch: Branch; old: string; new: string; how: "push" | "merge"; by: string; via?: string | null; at: number;
+  /** main moved past the production gate (a merge's emergency override): the reason given, and what the gate said. */
+  override?: { reason: string; gate: string };
+}
 
 export class SourceError extends Error {
   constructor(message: string, readonly status = 400) { super(message); }
@@ -103,6 +114,11 @@ export interface RepoDeps {
   changed(): void;
   /** Work that outlives the request (the mirror). */
   background(work: Promise<unknown>): void;
+  /**
+   * The production gate (deploy/gate.ts): null when main may move to `commit` (its full test run passed), else why
+   * not. Every move of main asks it. Without it (the unit tests of this file), main isn't gated.
+   */
+  gate?(commit: string): Promise<string | null>;
   now?(): number;
 }
 
@@ -400,7 +416,15 @@ export class SourceRepo {
           // A merge token's staging move is checked against the task's branch as Artifacts has it (pushed first).
           const head = grant?.scope == "merge" ? refs.get(taskRef!) : undefined;
           await this.sync(remote, [...landed.map((c) => c.new), ...(head ? [head] : [])]);
-          const moving = this.allowed(landed, refs, statuses).filter((c) => {
+          // main only to a commit whose full test run passed (the production gate); no override on a push. Seeding an
+          // empty repository (main made for the first time: source/import.ts) is the one move it lets by.
+          // Asked after the branch rules, so a move they refuse says why they do.
+          const gated: typeof landed = [];
+          for (const c of this.allowed(landed, refs, statuses)) {
+            const why = c.branch == "main" && c.old != ZERO && this.deps.gate ? await this.deps.gate(c.new) : null;
+            if (why) statuses.set(c.ref, why.replace(/\s+/g, " ")); else gated.push(c);
+          }
+          const moving = gated.filter((c) => {
             if (grant?.scope != "merge" || c.branch != "staging") return true;
             const why = this.spent(grant.id) ? "this merge token has moved staging already: merge again"
               : mergeShape(grant, c.old, c.new, head, (sha) => this.commitFacts(sha), (a, b) => this.isAncestor(a, b));
@@ -501,8 +525,9 @@ export class SourceRepo {
    * commits that main doesn't have yet: always a fast-forward, since main
    * only follows staging. Returns where main is now.
    */
-  async merge(who: Actor, commit?: string): Promise<{ commit: string; fastForward: boolean; upToDate: boolean }> {
+  async merge(who: Actor, commit?: string, override?: string): Promise<{ commit: string; fastForward: boolean; upToDate: boolean; override?: boolean }> {
     if (commit != null && !isSha(commit)) throw new SourceError("Name the commit by its full id (40 hex digits).");
+    if (override != null && override.trim().length < 10) throw new SourceError("An override needs a reason of at least 10 characters: it goes in the change log.");
     return this.locked(async () => {
       const remote = await this.deps.artifacts();
       const { refs } = await lsRefs(remote);
@@ -513,11 +538,14 @@ export class SourceRepo {
       if (!this.isAncestor(target, staging)) throw new SourceError(`${target.slice(0, 7)} isn't one of staging's commits.`, 409);
       if (main && this.isAncestor(target, main)) return { commit: main, fastForward: false, upToDate: true };
       if (main && !this.isAncestor(main, target)) throw new SourceError("main has commits staging doesn't: that shouldn't happen. Push main's commits to staging first.", 409);
+      // The production gate: main moves only to a commit whose full test run passed, unless an admin overrides it.
+      const why = main && this.deps.gate ? await this.deps.gate(target) : null;
+      if (why && override == null) throw new SourceError(why, 409);
       const r = await receivePack(remote, [{ ref: REF("main"), old: main ?? ZERO, new: target }], await emptyPack());
       const said = r.unpack != "ok" ? r.unpack : r.refs.get(REF("main")) ?? "no answer";
       if (said != "ok") throw new SourceError(/stale|lock|old/i.test(said) ? "main moved while merging: try again." : `Artifacts refused it: ${said}`, 409);
-      this.recordMove({ branch: "main", old: main ?? ZERO, new: target, how: "merge", by: who.login, via: who.via ?? null, at: this.now() });
-      return { commit: target, fastForward: true, upToDate: false };
+      this.recordMove({ branch: "main", old: main ?? ZERO, new: target, how: "merge", by: who.login, via: who.via ?? null, at: this.now(), ...(why && override != null ? { override: { reason: override.trim().slice(0, 500), gate: why } } : {}) });
+      return { commit: target, fastForward: true, upToDate: false, ...(why && override != null ? { override: true } : {}) };
     });
   }
 
@@ -634,6 +662,19 @@ export class SourceRepo {
     } catch (e) {
       throw e instanceof BrowseError ? new SourceError(e.message) : e;
     }
+  }
+
+  /**
+   * For the factory (worker/factory.ts, factory/recover.ts): every branch's head, and staging's newest LOG commits
+   * (sha and subject), so it can see whether a task's merge reached staging. Read-only, with a read token.
+   */
+  async stagingLog(): Promise<{ heads: Record<string, string>; commits: { sha: string; subject: string }[] }> {
+    const remote = await (this.deps.reader ?? this.deps.artifacts)();
+    const { refs } = await lsRefs(remote);
+    const heads = Object.fromEntries([...refs].filter(([r]) => r.startsWith("refs/heads/") && !r.startsWith(QUARANTINE)).map(([r, s]) => [r.slice("refs/heads/".length), s]));
+    if (!heads.staging) return { heads, commits: [] };
+    await this.locked(() => this.sync(remote, [heads.staging]));
+    return { heads, commits: this.log(heads.staging, LOG).map((r) => ({ sha: r.sha, subject: r.subject })) };
   }
 
   /**

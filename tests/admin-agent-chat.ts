@@ -11,6 +11,7 @@
 //
 //   bun tests/admin-agent-chat.ts            the checks
 //   bun tests/admin-agent-chat.ts --shots    and screenshots, in tests/cdp.ts's SHOTS
+// covers: factory/chat-store.ts factory/agent.ts worker/factory.ts src/page/agent-chat.ts src/page/agent-log.ts src/page/factory-agent.ts src/page/layout.ts
 
 import { mkdirSync } from "fs";
 import { join } from "path";

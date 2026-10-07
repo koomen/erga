@@ -11,6 +11,7 @@
 //
 //   bun tests/pages.ts
 //   bun tests/pages.ts --keep     leaves the server running, with the sample document, and prints where
+// covers: tree.ts src/page/tree.ts server-api.ts api.ts worker/doc-host.ts
 
 import { join } from "path";
 import { Browser, SHOTS } from "./cdp";
@@ -29,7 +30,7 @@ const ok = (what: string) => { checks.push(what); console.log(`ok   ${what}`); }
 
 async function signIn(as: string | null) {
   const r = await fetch(`${base}/auth/github?${as ? `as=${as}&` : ""}next=/docs`, { redirect: "manual" });
-  const cookie = r.headers.getSetCookie().map((c) => c.split(";")[0]).find((c) => c.startsWith("erga_session="));
+  const cookie = r.headers.getSetCookie().map((c) => c.split(";")[0]).find((c) => /^erga_session(_\d+)?=/.test(c));
   if (!cookie) throw new Error(`signing in: ${r.status}`);
   return cookie;
 }

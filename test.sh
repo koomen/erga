@@ -10,8 +10,10 @@
 #                     (tests/worker.ts), documents with many pages (tests/pages.ts), the front page the server makes (tests/landing.ts),
 #                     the homepage served directly and its deploys (tests/home.ts),
 #                     the deploy page against a pretend Cloudflare (tests/deploy.ts),
+#                     the production gate: each staging commit's tests, and main only to a green one (tests/gate.ts),
 #                     Erga's own source: the Git endpoint, merges, the mirror and the Source page (tests/source.ts),
 #                     branches deploying themselves, in the Worker (tests/deploys.ts),
+#                     staging for admins only, and what stays open (tests/staging-admins.ts),
 #                     who you are in every page's corner (tests/account.ts),
 #                     the + button and its picker of templates (tests/new-doc.ts),
 #                     scoped tokens: /tokens, each scope, expiry, the device flow and git push (tests/scoped-tokens.ts),
@@ -32,22 +34,42 @@
 #                     what the agent's view_page sees: fonts, size, light or dark (tests/view-page.ts),
 #                     the factory, with simulated VMs (tests/factory.ts),
 #                     the factory board's compact cards (tests/factory-cards.ts),
+#                     the chime when a task or the agent needs the admin (tests/factory-chime.ts),
 #                     files attached in the agent panel (tests/attach.ts),
 #                     instructions for a working task (tests/factory-instruct.ts),
 #                     who the factory's commits are by (tests/factory-authors.ts),
 #                     every agent action attributed to its person (tests/attribution.ts),
+#                     the factory across a reset of its Durable Object, and at Claude Code's limits (tests/factory-reset.ts),
+#                     local tasks, run by a local agent with no VM (tests/factory-local.ts),
 #                     the admin agent reading Erga's own source, in the Worker (tests/admin-agent-source.ts),
 #                     the agents doing what their person does on the page, in the Worker (tests/admin-agent-actions.ts),
-#                     live reload (tests/reload.ts, in a copy of the checkout)
+#                     open pages across a redeploy: reconnecting, and reloading with their state (tests/redeploy.ts),
+#                     live reload (tests/reload.ts, in a copy of the checkout),
+#                     two checkouts' dev servers at once, sharing nothing (tests/checkouts.ts, in two copies)
 #                     and the multiplayer suite, each
 #                     against dev servers of its own (tests/host.ts)
 #
 # Not here, run by hand: tests/agent.ts (the real model, costs a little)
 # and tests/suite/run.ts --long (bigger, slower, real idle-eviction waits).
+#
+#   ./test.sh --changed       only the tests that cover what changed since this branch left staging
+#                             (tests/changed.ts: each test's "// covers:" line, a unit test's imports);
+#                             the way to test while you work
+#   ./test.sh tests/x.ts ...  only these test files (a unit test too), in the same pool
 set -euo pipefail
 cd "$(dirname "$0")"
 start=$(date +%s)
-if [[ $# -gt 0 ]]; then echo "usage: ./test.sh   (TEST_JOBS=n: how many slots at once; TEST_CORES_PER_JOB=c: one per c cores, default 2; tests/cores.ts)" >&2; exit 2; fi
+usage() { echo "usage: ./test.sh [--changed | tests/x.ts ...]   (TEST_JOBS=n: how many slots at once; TEST_CORES_PER_JOB=c: one per c cores, default 2; tests/cores.ts; TEST_BASE: what --changed compares with)" >&2; exit 2; }
+# Which tests: all (no arguments), those that cover the change (--changed), or those named. `picked` has one a line.
+picked=""; some=0
+if [[ $# == 1 && $1 == --changed ]]; then
+  picked=$(bun tests/changed.ts); some=1
+  if [[ -z $picked ]]; then echo "No test covers what changed."; exit 0; fi
+elif [[ $# -gt 0 ]]; then
+  for f in "$@"; do [[ $f == tests/*.ts && -f $f ]] || usage; picked+="$f"$'\n'; done; some=1
+fi
+chosen() { [[ $some == 0 ]] || grep -qxF "$1" <<<"$picked"; }
+ran=""
 # The editor's files, once, for every dev server the tests start.
 ./site.sh >/dev/null
 export ERGA_BUILT=1
@@ -76,6 +98,18 @@ reap() { # reports the tests that have finished, and frees their slots
 }
 run() { # run WEIGHT NAME CMD...: in the background once WEIGHT slots are free (or nothing else runs), output to a file
   local weight=$1 name=$2; shift 2
+  # Only the tests picked (--changed, or named): a file's run, if it's picked; the unit tests, those picked.
+  if [[ $some == 1 ]]; then
+    if [[ "$*" == "bun test ./tests/" ]]; then
+      local units; units=$(grep -E '^tests/[^/]+\.test\.ts$' <<<"$picked" | sed 's|^|./|' || true)
+      [[ -n $units ]] || return 0
+      set -- bun test $units
+    else
+      local a file=""; for a in "$@"; do [[ $a == tests/*.ts ]] && { file=$a; break; }; done
+      chosen "$file" || return 0
+      ran+="$file"$'\n'
+    fi
+  fi
   while (( used > 0 && used + weight > jobs )); do sleep 0.2; reap; done
   ( t0=$(date +%s); rc=0; "$@" >"$tmp/$name.log" 2>&1 || rc=$?; echo $rc >"$tmp/$name.rc"; echo $(( $(date +%s) - t0 )) >"$tmp/$name.time" ) &
   names+=("$name"); weights+=("$weight"); used=$(( used + weight ))
@@ -91,6 +125,7 @@ echo "$jobs slots: $why"
 run 2 factory bun tests/factory.ts                       # [57]
 run 1 tree bun tests/tree.ts                             # [36]
 run 1 source bun tests/source.ts                         # [29]
+run 1 redeploy bun tests/redeploy.ts                     # [30]
 run 1 home bun tests/home.ts                             # [29]
 run 3 page bun tests/page.ts                             # [27]
 run 1 account bun tests/account.ts                       # [26]
@@ -111,8 +146,11 @@ run 1 deploy bun tests/deploy.ts                         # [16]
 run 1 scoped-tokens bun tests/scoped-tokens.ts           # [10]
 run 1 landing bun tests/landing.ts                       # [14]
 run 1 factory-cards bun tests/factory-cards.ts           # [14]
+run 1 factory-chime bun tests/factory-chime.ts           # [20]
 run 1 factory-instruct bun tests/factory-instruct.ts     # [70]
 run 1 factory-authors bun tests/factory-authors.ts       # [20]
+run 1 factory-reset bun tests/factory-reset.ts           # [150]
+run 1 factory-local bun tests/factory-local.ts           # [21]
 run 1 versions bun tests/versions.ts                     # [13]
 run 1 attach bun tests/attach.ts                         # [10]
 run 1 docs-pages bun tests/docs-pages.ts                 # [6]
@@ -120,6 +158,8 @@ run 1 pages-open bun tests/pages-open.ts                 # [12]
 run 2 unit bun test ./tests/                             # [11]
 run 1 deployed bun tests/server-config.ts                # [7]
 run 1 deploys bun tests/deploys.ts                       # [5]
+run 1 staging-admins bun tests/staging-admins.ts         # [15]
+run 1 gate bun tests/gate.ts                             # [30]
 run 1 isolation bun tests/isolation.ts                   # [4]
 
 run 1 admin-layout bun tests/admin-layout.ts             # [8]
@@ -135,6 +175,16 @@ collect
 # Live reload alone too: it edits files and waits on rebuilds, which a busy machine slows.
 run 1 reload bun tests/reload.ts                         # [14]
 collect
+# Two checkouts' servers at once, with their default ports: alone, so no other test takes one of those ports meanwhile.
+run 1 checkouts bun tests/checkouts.ts                   # [40]
+collect
+# A named test file test.sh doesn't run itself (tests/agent.ts, say): it runs now, on its own.
+if [[ $some == 1 ]]; then
+  while read -r f; do
+    if [[ -n $f && $f != *.test.ts ]] && ! grep -qxF "$f" <<<"$ran"; then run 1 "$(basename "$f" .ts)" bun "$f"; fi
+  done <<<"$picked"
+  collect
+fi
 
 echo
 if [[ ${#failed[@]} == 0 ]]; then echo "all passing ($(( $(date +%s) - start ))s)"; else echo "FAILED: ${failed[*]} ($(( $(date +%s) - start ))s)"; exit 1; fi

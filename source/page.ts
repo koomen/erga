@@ -31,7 +31,15 @@
 // Only the live deploy has a background. Each target's status is in its column's head. Any deploy opens
 // its log, past or live (GET /api/deploys/<name>/log?deploy=<id>, then
 // { type: "deploy-log" } events). Merge moves main forward to staging's
-// head, or to the commit a row's "Merge to here" names. Also how to clone and
+// head, or to the commit a row's "Merge to here" names, only when that
+// commit's full test run passed: the tests column (the production gate,
+// deploy/gate.ts: GET /api/gate, { type: "gate" } events) shows each commit's
+// run (running, passed, failed, cancelled); a click opens it (its shards,
+// failed and flaky files, each shard's log, and Run again). Merge is off,
+// with the reason, until the commit is green; "Merge to newest green" moves
+// main to the newest staging commit that passed, when staging's head hasn't;
+// Override (an admin in a browser, with a reason for the change log) is the
+// emergency way past it. Also how to clone and
 // push, and the GitHub mirror's status (in the board's status row; a click
 // opens a dialog: the mirror's state and Push now, or how to turn it on). It updates by itself (/api/events) and
 // follows the system's light or dark.
@@ -73,7 +81,7 @@ const SOURCE_STYLE = `
   .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; box-sizing: border-box; flex: none; }
   .dot.staging-only { background: var(--bg); border: 2px solid var(--only-staging); }
   .dot.on-main { background: var(--on-main); border: 2px solid var(--on-main); }
-  .grid { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto auto 70px 132px 132px; align-items: center; }
+  .grid { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto auto 70px 100px 132px 132px; align-items: center; }
   .grid > .head { position: sticky; top: 0; z-index: 2; background: var(--bg); height: 44px; display: flex; align-items: flex-end; padding-bottom: 6px; box-sizing: border-box; border-bottom: 1px solid var(--rule);
     font-size: 11.5px; font-weight: 600; letter-spacing: .02em; color: var(--soft); white-space: nowrap; }
   .grid > .head.deploy { justify-content: flex-start; padding-left: 2px; }
@@ -159,7 +167,7 @@ const SOURCE_STYLE = `
   .gap .rail::before { content: ""; position: absolute; left: calc(50% - 1px); top: 0; bottom: 0; width: 0; height: auto; display: block; border-left: 2px dashed var(--only-staging); background: none; opacity: .5; }
   .gap .gap-text { grid-column: 2 / -1; padding: 0 6px; font: 12.5px var(--font-text); color: var(--soft); border-block: 1px dashed var(--rule); box-sizing: border-box; }
   .none { padding: 18px 4px; font-size: 13.5px; color: var(--soft); grid-column: 1 / -1; }
-  @media (max-width: 760px) { .grid { grid-template-columns: 22px minmax(0, 1fr) auto 80px 80px; } .who, .grid > .head.who-h, .row time, .grid > .head.time-h { display: none; } .target { max-width: 82px; } .row > .task-card { grid-column: 2 / span 2; } .target b { font-size: 10.5px; } .target .st span { display: none; }
+  @media (max-width: 760px) { .grid { grid-template-columns: 22px minmax(0, 1fr) auto 64px 80px 80px; } .who, .grid > .head.who-h, .row time, .grid > .head.time-h { display: none; } .target { max-width: 82px; } .row > .task-card { grid-column: 2 / span 2; } .target b { font-size: 10.5px; } .target .st span { display: none; }
     .dep { font-size: 11.5px; padding: 0 5px; } .dep .at { display: none; } }
   .boxes { display: grid; grid-template-columns: 1fr; gap: 18px; margin-top: 18px; }
   @media (max-width: 760px) { .boxes { grid-template-columns: 1fr; } }
@@ -173,6 +181,40 @@ const SOURCE_STYLE = `
   .setup ol { margin: 8px 0 0; padding-left: 20px; font-size: 14px; color: var(--fg); }
   .setup li { margin: 4px 0; }
   .setup code, .box code { font: 12.5px var(--font-mono); }
+  /* The tests column (the production gate): each commit's run, as plain text; green passed, red failed, orange running. */
+  .tests { min-width: 0; padding: 0 4px 0 2px; }
+  .gt { display: inline-flex; align-items: center; gap: 6px; width: 100%; min-width: 0; height: 22px; padding: 0 6px; border: 0; border-radius: 5px; background: transparent;
+    color: var(--soft); font: 500 12px var(--font-text); text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
+  .gt:hover { background: color-mix(in srgb, var(--chrome) 10%, transparent); }
+  .gt.passed { color: var(--on-main); font-weight: 600; }
+  .gt.failed { color: var(--bad); font-weight: 600; }
+  .gt.running { color: var(--only-staging); }
+  .gt.running::before { content: ""; flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--only-staging); animation: pulse 1.2s ease-in-out infinite; }
+  .gt.cancelled { color: var(--chrome); text-decoration: line-through; text-decoration-thickness: 1px; }
+  .gt.none { color: var(--chrome); font-weight: 400; }
+  .gt.none:not(:hover):not(:focus-visible) { opacity: .0; }
+  .row:hover .gt.none { opacity: 1; }
+  #merge-green[hidden], #merge-override[hidden] { display: none; }
+  #gate-hint:has(#gate-why:empty) { display: none; }
+  #gate-hint { margin: -4px 0 10px; font-size: 13.5px; text-align: right; color: var(--soft); }
+  #merge-override { border: 0; background: transparent; color: var(--soft); font: 500 12.5px var(--font-text); text-decoration: underline; cursor: pointer; padding: 0 4px; }
+  dialog#gate-dlg { width: min(820px, calc(100vw - 32px)); padding: 0; }
+  #gate-dlg .top { display: flex; align-items: center; gap: 10px; padding: 14px 16px 10px; border-bottom: 1px solid var(--rule); }
+  #gate-dlg h2 { margin: 0; font-size: 15px; flex: none; }
+  #gate-dlg .meta { font-size: 12.5px; color: var(--soft); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #gate-dlg .close { margin-left: auto; height: 30px; }
+  #gate-dlg .body { padding: 10px 16px 14px; font-size: 13px; }
+  #gate-dlg .verdict { margin: 0 0 8px; }
+  #gate-dlg .verdict.bad { color: var(--bad); } #gate-dlg .verdict.good { color: var(--on-main); }
+  #gate-dlg table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  #gate-dlg td, #gate-dlg th { text-align: left; padding: 4px 6px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+  #gate-dlg th { font-weight: 600; color: var(--soft); font-size: 11.5px; }
+  #gate-dlg td.items { color: var(--soft); overflow-wrap: anywhere; }
+  #gate-dlg td .bad { color: var(--bad); font-weight: 600; }
+  #gate-dlg .log-btn { height: 22px; padding: 0 8px; border: 1px solid var(--rule); border-radius: 6px; background: var(--bg); color: var(--fg); font: 500 12px var(--font-text); cursor: pointer; }
+  #gate-dlg pre { margin: 10px 0 0; max-height: 40vh; overflow: auto; font-size: 11.5px; white-space: pre-wrap; }
+  #gate-dlg pre:empty { display: none; }
+  #gate-dlg .actions { display: flex; gap: 8px; margin-top: 10px; }
   dialog#deploy-log { width: min(820px, calc(100vw - 32px)); padding: 0; }
   #deploy-log .top { display: flex; align-items: center; gap: 10px; padding: 14px 16px 10px; border-bottom: 1px solid var(--rule); }
   #deploy-log h2 { margin: 0; font-size: 15px; }
@@ -198,14 +240,16 @@ function sourceMarkup(c: SourcePageConfig): string {
   return `
   <div class="pane-head">
     <div class="head-title"><h2>git log</h2><button class="fold-all" type="button" id="fold-all" hidden>Collapse all</button></div>
-    <div class="head-actions"><div class="merge-row" id="merge-row" hidden><span class="count" id="ahead"></span><button class="new" id="merge" disabled>Merge staging into main</button></div></div>
+    <div class="head-actions"><div class="merge-row" id="merge-row" hidden><span class="count" id="ahead"></span><button class="pill" id="merge-green" type="button" hidden>Merge to newest green</button><button class="new" id="merge" disabled>Merge staging into main</button></div></div>
   </div>
   <p class="hint" id="merge-hint" role="status"></p>
+  <p class="hint" id="gate-hint" role="status"><span id="gate-why"></span> <button type="button" id="merge-override" hidden title="An emergency only: moves main without a green test run. The change log keeps your reason.">Override…</button></p>
   <section class="card" aria-label="Commits">
     <div class="legend"><span><i class="dot staging-only"></i>only on staging</span><span><i class="dot on-main"></i>on main too</span></div>
     <div class="grid" id="grid">
       <div class="head"></div>
       <div class="head" style="padding-left:6px">Commit</div><div class="head who-h"></div><div class="head"></div><div class="head time-h"></div>
+      <div class="head deploy" id="tests-head" title="The production gate: each staging commit's full test run (./test.sh and the typecheck, in VMs). main moves only to a commit that passed.">tests</div>
       ${target("staging", "staging")}${target("production", "production")}
       <div class="none" id="loading">Loading…</div>
     </div>
@@ -216,9 +260,14 @@ function sourceMarkup(c: SourcePageConfig): string {
       <pre><code>git remote add erga ${esc(remote)}
 git fetch erga
 git push erga HEAD:staging</code></pre>
-      <p>Git asks for a username and password: any username, and an agent token from <a href="/settings">Settings</a> as the password (admins only). main only follows staging: merge here, or push one of staging's commits to main.</p>
+      <p>Git asks for a username and password: any username, and an agent token from <a href="/settings">Settings</a> as the password (admins only). main only follows staging: merge here, or push one of staging's commits to main, once its tests passed.</p>
     </div>
   </section>
+  <dialog id="gate-dlg" aria-labelledby="gate-title">
+    <div class="top"><h2 id="gate-title">Test run</h2><span class="meta" id="gate-meta"></span><button class="pill close" type="button" id="gate-close">Close</button></div>
+    <div class="body"><p class="verdict" id="gate-verdict"></p><table><thead><tr><th>Shard</th><th>State</th><th>Time</th><th>Runs</th><th></th></tr></thead><tbody id="gate-shards"></tbody></table>
+    <div class="actions"><button class="pill" type="button" id="gate-again">Run again</button></div><pre id="gate-log"></pre></div>
+  </dialog>
   <dialog id="deploy-log" aria-labelledby="log-title">
     <div class="top"><h2 id="log-title">Deploy log</h2><span class="meta" id="log-meta"></span><button class="pill close" type="button" id="log-close">Close</button></div>
     <pre id="log-lines"></pre>
@@ -246,6 +295,8 @@ const SOURCE_SCRIPT = `
   /** When staging is far ahead of main: how many of its newest commits show above the break, and how many of main's below it. */
   const GAP_TOP = 11, GAP_MAIN = 6;
   let view = null, deploys = null, busy = false, drawn = false;
+  // The production gate's runs (GET /api/gate), by commit.
+  let gate = null, gateBy = new Map();
   // Which task cards are folded, kept in the browser: every task (the default), or none, except those flipped one by one.
   // So with "Collapse all" (or before any choice), a task merged later comes folded too.
   const FOLDS = "erga:source-folded-tasks";
@@ -300,6 +351,84 @@ const SOURCE_SCRIPT = `
     return "";
   }
 
+  // ---- the production gate (deploy/gate.ts) ----
+  const GATE_WORD = { running: "running", passed: "passed", failed: "failed", cancelled: "cancelled" };
+  /** Why main can't move to this commit (as the server says it: deploy/gate.ts, verdictOf), or "" when it can. */
+  function gateWhy(sha, r) {
+    const c = sha.slice(0, 7);
+    if (!r) return c + " has no test run yet: Run tests (the tests column), then merge.";
+    if (r.state == "passed") return "";
+    if (r.state == "running") return "The tests of " + c + " are still running (" + r.shards.filter((s) => s.ended).length + " of " + r.shards.length + " shards done): merge when it is green.";
+    if (r.state == "cancelled") return "The test run of " + c + " was cancelled: run it again, or merge a newer green commit.";
+    return "The tests of " + c + " failed" + (r.failed.length ? ": " + r.failed.slice(0, 4).join(", ") + (r.failed.length > 4 ? " and " + (r.failed.length - 4) + " more" : "") : (r.error ? ": " + r.error : "")) + ".";
+  }
+  function gateCell(sha) {
+    const r = gateBy.get(sha);
+    if (!r) return '<button class="gt none" type="button" data-gate="' + sha + '" title="No test run. Click to run the tests of this commit.">run tests</button>';
+    const done = r.shards.filter((s) => s.ended).length;
+    const text = r.state == "running" ? "running " + done + "/" + r.shards.length : (GATE_WORD[r.state] || r.state) + (r.state == "passed" && r.flaky.length ? "*" : "");
+    const tip = (r.state == "passed" ? "Passed" : r.state == "failed" ? "Failed" : r.state == "running" ? "Running" : "Cancelled") + " · " + sha.slice(0, 7) + " · " + r.trigger +
+      "\\nStarted " + new Date(r.started).toLocaleString() + (r.ended ? ", took " + took(r) : ", running for " + took(r)) +
+      (r.failed.length ? "\\nFailed: " + r.failed.join(", ") : "") + (r.flaky.length ? "\\nFlaky (passed when run again): " + r.flaky.join(", ") : "") + (r.error ? "\\n" + r.error : "") + "\\nClick for its shards and logs.";
+    return '<button class="gt ' + esc(r.state) + '" type="button" data-gate="' + sha + '" title="' + esc(tip) + '">' + esc(text) + "</button>";
+  }
+  let gateAsking = false;
+  async function loadGate() {
+    if (gateAsking) return;
+    gateAsking = true;
+    try {
+      const r = await fetch("/api/gate?limit=100", { headers: { Accept: "application/json" } }).catch(() => null);
+      const body = r && r.ok ? await r.json().catch(() => null) : null;
+      if (pageView.signal.aborted) return;
+      if (body) { gate = body; gateBy = new Map(body.runs.map((x) => [x.commit, x])); }
+      else if (r && r.status < 500) { gate = { runs: [] }; gateBy = new Map(); }
+      render();
+      if (gateOpen) drawGate();
+    } finally { gateAsking = false; }
+  }
+  const gateDlg = document.getElementById("gate-dlg");
+  let gateOpen = null; // { sha, shard: the log shown }
+  function drawGate() {
+    const sha = gateOpen.sha, r = gateBy.get(sha);
+    document.getElementById("gate-title").textContent = "Tests of " + sha.slice(0, 7);
+    document.getElementById("gate-meta").textContent = r ? [GATE_WORD[r.state] || r.state, "run " + r.attempt, r.trigger, new Date(r.started).toLocaleString() + (r.ended ? " · took " + took(r) : ""), gate?.runner ? "on " + gate.runner : ""].filter(Boolean).join(" · ") : "no run yet";
+    const v = document.getElementById("gate-verdict"), why = gateWhy(sha, r);
+    v.className = "verdict " + (why ? "bad" : "good");
+    v.textContent = why ? why : "Passed: main may move to this commit." + (r.flaky.length ? " Flaky (failed once, passed when run again): " + r.flaky.join(", ") + "." : "");
+    document.getElementById("gate-shards").innerHTML = (r?.shards ?? []).map((s) => {
+      const bad = s.results.filter((x) => !x.ok).map((x) => x.name);
+      const items = (s.items.length ? s.items.map((i) => bad.includes(i.name) ? '<span class="bad">' + esc(i.name) + "</span>" : esc(i.name)).join(", ") : s.phase ? "(" + esc(s.phase) + ")" : "") + (s.error ? ' <span class="bad">' + esc(s.error) + "</span>" : "");
+      const t = s.ended ? Math.round((s.ended - s.started) / 1000) + "s" : "";
+      return "<tr><td>" + s.n + (s.rerun ? " (rerun)" : "") + "</td><td>" + esc(s.state) + "</td><td>" + t + '</td><td class="items">' + items + "</td><td>" + (s.ended ? '<button class="log-btn" type="button" data-shard="' + s.n + '">Log</button>' : "") + "</td></tr>";
+    }).join("");
+    document.getElementById("gate-again").textContent = r ? (r.state == "running" ? "Running…" : "Run again") : "Run tests";
+    document.getElementById("gate-again").disabled = r?.state == "running";
+  }
+  function openGate(sha) {
+    gateOpen = { sha, shard: null };
+    document.getElementById("gate-log").textContent = "";
+    drawGate();
+    if (!gateDlg.open) gateDlg.showModal();
+  }
+  async function runTests(sha) {
+    const r = await fetch("/api/gate/" + sha + "/run", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }).catch(() => null);
+    const body = r ? await r.json().catch(() => ({})) : {};
+    if (!r || !r.ok) { hint.className = "hint error"; hint.textContent = body.error || "Couldn't start the tests."; }
+    await loadGate();
+  }
+  document.getElementById("gate-close").addEventListener("click", () => gateDlg.close());
+  gateDlg.addEventListener("close", () => { gateOpen = null; if (location.hash.startsWith("#tests-")) history.replaceState(null, "", location.pathname + location.search); });
+  document.getElementById("gate-again").addEventListener("click", () => { if (gateOpen) runTests(gateOpen.sha); });
+  document.getElementById("gate-shards").addEventListener("click", async (e) => {
+    const b = e.target.closest("button[data-shard]");
+    if (!b || !gateOpen) return;
+    const pre = document.getElementById("gate-log");
+    pre.textContent = "Loading…";
+    const r = await fetch("/api/gate/" + gateOpen.sha + "/log?shard=" + b.dataset.shard).catch(() => null);
+    const body = r && r.ok ? await r.json().catch(() => null) : null;
+    pre.textContent = body?.log || "No log for this shard.";
+  });
+
   function render() {
     if (!view) return;
     const staging = view.branches.find((b) => b.name == "staging"), main = view.branches.find((b) => b.name == "main");
@@ -342,8 +471,9 @@ const SOURCE_SCRIPT = `
         '<span class="rail ' + (up ? "up " : "") + (down ? "down " : "") + (x.inMain ? "on-main" : "") + '"><i class="dot ' + kind + '" title="' + (x.inMain ? "On main (and staging)" : "Only on staging") + '"></i></span>' +
         (card
           ? '<span class="task-card" data-fold="' + x.sha + '" title="' + esc(title) + '"><span class="task-name"><button class="fold" type="button" data-fold="' + x.sha + '" aria-expanded="' + !isFolded(x.sha) + '" aria-label="' + (isFolded(x.sha) ? "Expand" : "Collapse") + " task " + x.task.id + '"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 3.5 5 6.5 8 3.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></button>' +
-            '<span class="num">#' + x.task.id + '</span><span class="name">' + esc(x.task.title) + '</span>' + (x.inMain ? "" : '<button class="here" type="button" data-merge="' + x.sha + '" title="Move main forward to this commit">Merge to here</button>') + '<span class="n">' + n + " commit" + (n == 1 ? "" : "s") + "</span></span>" + tail + "</span>"
-          : '<span class="subj" title="' + esc(title) + '"><span>' + esc(x.subject) + "</span>" + (x.inMain ? "" : '<button class="here" type="button" data-merge="' + x.sha + '" title="Move main forward to this commit">Merge to here</button>') + "</span>" + tail) +
+            '<span class="num">#' + x.task.id + '</span><span class="name">' + esc(x.task.title) + '</span>' + (x.inMain || gateBy.get(x.sha)?.state != "passed" ? "" : '<button class="here" type="button" data-merge="' + x.sha + '" title="Move main forward to this commit (its tests passed)">Merge to here</button>') + '<span class="n">' + n + " commit" + (n == 1 ? "" : "s") + "</span></span>" + tail + "</span>"
+          : '<span class="subj" title="' + esc(title) + '"><span>' + esc(x.subject) + "</span>" + (x.inMain || gateBy.get(x.sha)?.state != "passed" ? "" : '<button class="here" type="button" data-merge="' + x.sha + '" title="Move main forward to this commit (its tests passed)">Merge to here</button>') + "</span>" + tail) +
+        '<span class="tests">' + gateCell(x.sha) + "</span>" +
         TARGETS.map((n) => '<span class="deps" data-target="' + n + '">' + deployCell(n, x.sha, groups[n]) + "</span>").join("");
       grid.insertBefore(r, prev ? prev.nextSibling : document.getElementById("target-production").parentElement.nextSibling);
       prev = r;
@@ -359,8 +489,19 @@ const SOURCE_SCRIPT = `
     drawn = true;
     const mergeBtn = document.getElementById("merge");
     // Nothing at all while main is at staging: no count, no button, no space. While a merge runs the button stays, disabled.
-    if (!busy) mergeBtn.disabled = document.getElementById("merge-row").hidden = !ahead;
+    if (!busy) document.getElementById("merge-row").hidden = !ahead;
     document.getElementById("ahead").textContent = !staging?.commit ? "" : ahead ? ahead + " commit" + (ahead == 1 ? "" : "s") + " to merge" : "";
+    // The production gate: Merge only when staging's head passed; else why, and the newest green commit after main, if any.
+    const headRun = staging?.commit ? gateBy.get(staging.commit) : null;
+    const why = !ahead ? "" : !gate ? "Reading the test runs…" : gateWhy(staging.commit, headRun);
+    if (!busy) mergeBtn.disabled = !ahead || !!why;
+    mergeBtn.title = why || "Moves main to staging's head: production deploys it.";
+    const green = ahead && why ? only.find((x) => gateBy.get(x.sha)?.state == "passed") : null;
+    const gb = document.getElementById("merge-green");
+    gb.hidden = !green || busy;
+    if (green) { gb.dataset.merge = green.sha; gb.textContent = "Merge to newest green (" + green.sha.slice(0, 7) + ")"; }
+    document.getElementById("gate-why").textContent = why && gate ? why : "";
+    document.getElementById("merge-override").hidden = !(why && gate && headRun?.state != "running");
     // The GitHub mirror: the fourth status in the board's row (factory/page.ts). Its title has the URL and any error; a click pushes now.
     const m = view.mirror, mp = document.getElementById("mirror-pill");
     if (mp) {
@@ -503,9 +644,26 @@ const SOURCE_SCRIPT = `
     await load();
   }
   mergeBtn.addEventListener("click", () => merge(null));
+  document.getElementById("merge-green").addEventListener("click", (e) => merge(e.currentTarget.dataset.merge));
+  // The emergency override: a person, here, with a reason the change log keeps (never an agent or a token).
+  document.getElementById("merge-override").addEventListener("click", async () => {
+    const reason = prompt("Move main to staging's head WITHOUT a green test run? This is for emergencies only. Your reason goes in the change log (at least 10 characters):");
+    if (reason == null) return;
+    busy = true; mergeBtn.disabled = true; hint.className = "hint"; hint.textContent = "Merging past the tests…";
+    try {
+      const r = await fetch("/api/source/merge", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ from: "staging", to: "main", override: reason }) });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(body.error || "The merge failed (HTTP " + r.status + ").");
+      hint.textContent = body.override ? "main moved past the tests: the change log keeps your reason." : "";
+    } catch (err) { hint.className = "hint error"; hint.textContent = err.message; }
+    busy = false;
+    await load();
+  });
   grid.addEventListener("click", (e) => {
     const b = e.target.closest("button[data-merge]");
     if (b) return merge(b.dataset.merge);
+    const g = e.target.closest("button[data-gate]");
+    if (g) { if (gateBy.get(g.dataset.gate)) openGate(g.dataset.gate); else runTests(g.dataset.gate); return; }
     const f = e.target.closest("[data-fold]");
     if (f) { const sha = f.dataset.fold; setFolded(sha, !isFolded(sha)); render(); }
   });
@@ -545,14 +703,18 @@ const SOURCE_SCRIPT = `
       let ev; try { ev = JSON.parse(e.data); } catch { return; }
       if (ev.type == "source") { load(); loadDeploys(); } // a move starts a deploy, here or on another server
       if (ev.type == "deploys") { heard = Date.now(); loadDeploys(); }
+      if (ev.type == "gate") { gateHeard = Date.now(); loadGate(); }
       if (ev.type == "deploy-log" && open && ev.target == open.target) {
         if (ev.deployId == open.deployId) { open.heard = Date.now(); append(ev.lines || []); open.shown += (ev.lines || []).length; }
         else if (!open.pinned) { open.heard = Date.now(); refreshLog(false); }
       }
     };
   }
+  let gateHeard = 0;
   listen();
-  load(); loadDeploys();
+  load(); loadDeploys(); loadGate().then(() => { const m = /^#tests-([0-9a-f]{7,40})$/.exec(location.hash); const sha = m ? [...gateBy.keys()].find((c) => c.startsWith(m[1])) : null; if (sha) openGate(sha); });
+  // Another server's runs (erga.dev's page shows staging's) send no events: while one runs and none came lately, ask every 5 s.
+  setInterval(() => { if (Date.now() - gateHeard > 4000 && gate?.runs?.some((r) => r.state == "running")) loadGate(); }, 5000);
   // Events don't tell everything: another server's deploy (erga.dev's page shows staging's, run by staging's server)
   // sends this page none, and a server that deploys itself cuts the stream and can miss its last change. So while
   // a deploy shows running (or the status didn't load) and no event came lately, ask for the status every two seconds.

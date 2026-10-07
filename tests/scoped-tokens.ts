@@ -14,6 +14,7 @@
 // Screenshots land in tests/cdp.ts's SHOTS.
 //
 //   bun tests/scoped-tokens.ts [--keep]     (--keep leaves the server running)
+// covers: tokens.ts worker/auth.ts source/http.ts server-api.ts admin.ts
 
 import { join } from "node:path";
 import { Browser, SHOTS } from "./cdp";
@@ -29,7 +30,7 @@ const get = (path: string, init: RequestInit = {}) => fetch(root + path, { redir
 /** Signs in as someone (no `as`: DEV_LOGIN, "tester", an admin): their session cookie. */
 async function signIn(as: string | null): Promise<string> {
   const r = await get(`/auth/github?${as ? `as=${as}&` : ""}next=/docs`);
-  return r.headers.getSetCookie().map((x) => x.split(";")[0]).find((x) => x.startsWith("erga_session="))!;
+  return r.headers.getSetCookie().map((x) => x.split(";")[0]).find((x) => /^erga_session(_\d+)?=/.test(x))!;
 }
 /** Makes a token at /tokens: the token, or the page's error. */
 async function mint(cookie: string, fields: Record<string, string>): Promise<{ token: string; page: string }> {

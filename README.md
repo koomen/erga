@@ -21,7 +21,8 @@ With [Bun](https://bun.sh) 1.4 or later (and Node, which runs Vite):
 
 `bun start` (`dev.ts`; `--help` lists its options) builds the editor and runs
 the same Worker as erga.dev, under Vite and the Cloudflare plugin, at
-`http://localhost:4400`. The first time, it makes `.dev.vars` for you (see
+`http://localhost:4400` (a worktree gets a port of its own: `bun start
+--print-url`). The first time, it makes `.dev.vars` for you (see
 `.dev.vars.example`): you're signed in as `DEV_LOGIN`. An `ANTHROPIC_API_KEY`
 turns the agent on: exported in the shell that runs `bun start`, or in
 `.dev.vars`. A real key in `.dev.vars` wins; a placeholder there (empty, short,
@@ -1095,7 +1096,8 @@ release answers at `/api/deploys/version`; copy production's documents in
 **Building.** A Worker can't run `bun install` or Vite, so a commit is built
 in a **Cloudflare Container**: the builder Worker `erga-builder`
 (`deploy/builder/`: `worker.ts`, its `wrangler.jsonc`, a `Dockerfile` with
-Bun 1.4.2, Node 22 and Git, and `server.ts`), which the servers reach over a
+Bun 1.4.2, Node 22 and Git, and `server.ts`; each build a `standard-4`
+container, 4 vCPU and 12 GiB, the largest Cloudflare offers), which the servers reach over a
 service binding (`BUILDER`) and which has no public address. The pipeline asks
 Artifacts for the repo's remote and a 15-minute read-only token
 (through the server's own Artifacts binding, `worker/source.ts`; the REST
@@ -1316,6 +1318,73 @@ checks the commit out, which a fast-forward keeps reachable; production
 builds the commit itself (it doesn't take staging's build), and a push to
 `main` never makes staging deploy.
 
+#### The test gate
+
+**Production deploys only on a green run** (AGENTS.md, Standing rules).
+Staging deploys every push at once, as before; `main` moves only to a
+staging commit whose full test run passed: `./test.sh` (every file) and
+`bun run typecheck`.
+
+- **Every staging commit is tested by itself.** When staging moves, its
+  server (the `Pipeline` object, beside its deploy: `deploy/gate.ts`,
+  `worker/gate.ts`) starts the commit's run at once, alongside the staging
+  deploy, so the result is usually there before anyone presses Merge. The
+  suite is split into 6 shards, each in a VM of its own, all at once: the
+  factory's `FactoryVm` containers with the factory's image (Bun, Chromium,
+  git) at `standard-4`, the largest instance type (4 vCPU, 12 GiB, 20 GB;
+  custom types go no higher). Each VM clones the commit from the server's
+  Git endpoint, installs, and runs its share with `./test.sh <files>`
+  (`factory/vm/gate.ts`, through `run.ts gate`, so the image needs nothing
+  new). The share is worked out in each VM from the commit's own `test.sh`:
+  the seconds noted for each file, longest first into the shard that ends
+  soonest (`planShards`); the typecheck is one more item. The full run is
+  ~425 s of pool time on a Mac; six shares are ~70 s each (the longest
+  file, `tests/factory-instruct.ts`, is 70 s alone), plus each VM's start,
+  clone, install and `site.sh`.
+- **One result per commit** (`GET /api/gate`, `/api/gate/<sha>`):
+  `running`, `passed`, `failed` or `cancelled`, which files failed, each
+  shard's items, times and log (`/api/gate/<sha>/log?shard=N`, its last
+  60 KB). A run whose failures are at most 5 test files (not the
+  typecheck) reruns those once, in one more VM: if they pass, the run passes
+  and records them as `flaky`. A shard whose VM stops, doesn't answer for
+  3 minutes or runs past 40 minutes fails. A newer staging commit cancels
+  the run still going (its VMs stop). `POST /api/gate/<sha>/run` runs any
+  commit's tests again ("Run again" on the page, the agent's `run_tests`).
+- **Every move of main asks it** (`source/repo.ts`, `gate`): Merge on
+  the Factory page, the admin agent's `deploy_production`, `POST
+  /api/source/merge` with a token, and a `git push` to `main`. A refusal
+  (409, or the push's error line) says why (no run, still running, which
+  files failed, cancelled) and links the run
+  (`/admin/factory#tests-<sha>`). `main` may move to an earlier green
+  staging commit while the head isn't green ("Merge to newest green", or
+  "Merge to here" on a green row). Only seeding an empty repository (main
+  made for the first time) passes without it.
+- **Production asks staging.** Production's server runs no tests: it reads
+  each result from staging's server (`/api/gate...` with
+  `DEPLOY_HOOK_SECRET`), so both dashboards show the same runs. If staging
+  doesn't answer, production refuses to move main, and says so.
+- **The override** is for emergencies: `{ override: "<reason>" }` on `POST
+  /api/source/merge`, from an admin signed in in a browser only ("Override…"
+  on the page, which asks for the reason). A token or an agent gets 403
+  (`agent-actions.ts` records why it has no tool). The reason needs 10
+  characters, and the change log shows "tests overridden" with it and what
+  the gate said. A push to `main` has no override.
+- **On the page**: a "tests" column beside staging's commits (passed,
+  failed, running n/6, cancelled; `passed*` had flaky files); a click opens
+  the run (its shards, failed and flaky files, each shard's log, Run again).
+  Merge is off until staging's head is green, with the reason under it.
+- **Cost**: 6 standard-4 VMs for a few minutes each, about $0.15 a run at
+  Containers' prices (above), plus one more VM for a rerun. They share the
+  factory's container application with its task VMs.
+
+Locally (`bun start`, and with `ERGA_DEPLOY_MOCK=1`) a fake runner stands in
+for the VMs (`fakeRunner`): each shard ends after `ERGA_GATE_FAKE_MS`
+(1.5 s), and a commit's subject decides the result: `[gate-fail]` fails a
+file every time, `[gate-flaky]` fails it once, `[gate-hang]` never ends,
+anything else passes. `tests/gate.test.ts` tests the split, a run's life and
+every path that moves main (with the VM's own job against a real git
+repository); `tests/gate.ts` tests it in the Worker and on the page.
+
 Locally, `ERGA_DEPLOY_MOCK=1 ERGA_DEPLOY_TARGET=staging bun start` makes the
 dev server staging, deploying into the mock Cloudflare's copy of Erga's
 account (`deploy/mock.ts`, `fleet`) with a mock builder; a push is
@@ -1432,6 +1501,47 @@ Still to do are the steps marked *(you)*.
      `*` AAAA `100::` record on the new zone.
    - After the merge, the old `*.staging.erga-pages.dev/*` route and DNS
      record on erga-pages.dev deleted.
+
+### Redeploys and open pages
+
+A deploy (or a restart of the dev server) happens under pages people have
+open, and nobody reloads by hand (`src/page/live.ts`, `worker/live.ts`):
+
+- **A change to the server only**: every live connection drops (a document's
+  room, `/api/events`, `/api/factory/events`) and comes back by itself, a
+  little later on each failure (0.5 s, doubling to 10 s). Back, each page
+  reads again what it shows: the room syncs (edits typed meanwhile go then),
+  the agent's conversation, the board, the document's name and pages. A
+  message to an agent sent meanwhile waits and goes (for up to 45 s). A
+  quiet "Reconnecting…" shows in a corner only after 4 s; the editor says it
+  is offline only after 20 s.
+- **A change to the pages' code**: `site.sh` lists the build of each client
+  file in `.site/build.json` (a bundle's own stamp, the last line `build.sh`
+  adds; a digest for `style.css` and `editor.html`), served at `GET
+  /api/release` with the release (`ERGA_VERSION`). Each page of the site's
+  own gets `live.js` and a meta `erga-build`, a digest of its inline scripts;
+  a GET of the page with `X-Erga-Check: build` answers that digest alone. A
+  page asks after a connection comes back, after a request fails oddly
+  (no answer, 5xx, an API's 400 or 404), when its tab is shown again, and
+  every minute. If no file it uses changed, nothing happens; if only
+  `style.css` did, the new one takes its place. Otherwise the page reloads
+  by itself: not while you type, compose, drag or hold the mouse button,
+  only once the room has the tab's edits, and at once when the tab is
+  hidden. It keeps its state in `sessionStorage` for that one reload
+  (`src/page/restore.ts`): every scroll position, form fields, the focus
+  and caret, and what each script keeps (the editor's page, selection,
+  scroll, view and open cards, the files attached to an agent's next
+  message, the open factory task). Drafts, panels and their layout are kept
+  in `localStorage` anyway. The tab's copy of the document goes along, and is
+  merged into the room after the reload, so no edit is lost even if the last
+  one hadn't arrived. A page that keeps reloading (two versions answering
+  while a deploy rolls out) waits longer each time.
+- A document's own frame and its own HTML (under `/d/<id>/`, the homepage
+  served directly) get nothing of this. Their frame reloads only with the
+  page around it.
+
+`tests/redeploy.ts` restarts a server under the editor, the Factory page and
+Documents, with the same client files and with new ones.
 
 ### Deploy your own
 
@@ -1725,9 +1835,10 @@ The factory is Erga's task queue, on
 `/admin/source` and `/source` redirect there): a board (Queued, Working, Ready to merge and Merging,
 with `needs agent` cards in Merging; merged tasks leave the board) where each task is done by Claude Code in a VM of its own: on staging.erga.dev and erga.dev a Cloudflare Container
 ([On Cloudflare](#on-cloudflare), below). It's a prototype: admins only, and
-off until an admin sets the `factory` setting to `on` (`/admin`). It does
-background tasks only; working with someone watching is done locally, with
-the development server (AGENTS.md).
+off until an admin sets the `factory` setting to `on` (`/admin`). Working
+with someone watching is done locally, with the development server
+(AGENTS.md), and registered on the board as a **local task** (below): a
+task with no VM, which a local agent runs and reports on itself.
 
 **A task is a branch.** Adding a task names its branch
 `task/<id>-<slug>` and starts a VM. In the VM
@@ -1841,6 +1952,64 @@ model, its turns, its tokens and its cost at API prices (`claudeLog`,
 `factory/vm/common.ts`). The board and the API show a log's last 200 lines;
 `GET /api/factory/tasks/<id>?log=all` gives every line, each with its
 time.
+
+**Local tasks.** A local agent (Claude Code on an admin's own machine, in its
+own checkout, with an admin token: [Tokens](#tokens)) registers its work as a
+task with no VM, so it is on the board like the others and, once merged, in
+staging's history the same way ("Merge task/<id>-<slug>: title", `--no-ff`).
+It runs the task itself and reports with `bun task` (`factory/task.ts`), the
+VMs' `task` command made to work outside a VM: it reads the server from
+`ERGA_URL` (or `git config erga.url`, or an `origin` that is an Erga Git
+endpoint), the admin token from `ERGA_TOKEN` (or Git's credential store for
+that server), and the task from the branch (`task/<id>-…`). The flow:
+
+    bun task new "Title" "The ask" [--start-after 12] [--merge-after 14]   # registers it, makes the branch from staging, pushes it
+    bun task log "Tests pass"                    # a log line
+    bun task shot shot.png "The new page"        # a screenshot (a file, or a URL: headless Chrome)
+    bun task preview http://localhost:4400/x     # where to see the change, if anywhere
+    bun task inbox [--wait 60]                   # instructions sent from the board, each one once
+    bun task push                                # the branch, through Erga's Git endpoint
+    bun task done "summary"                      # pushes, then ready to merge;  bun task fail "why"
+    bun task pull [--staging]                    # Erga's commits on the branch (and staging: for a conflict)
+    bun task status                              # the task as the board has it
+
+Over HTTP it is `POST /api/factory/tasks` with `"local": {"machine": "…"}`,
+then the VMs' own report routes (`log`, `inbox`, `branch`, `preview`,
+`screenshots`, `PATCH` with a status), which take an admin token for a local
+task only (409 for any other), and `POST /api/factory/tasks/<id>/git`, which
+answers a git token for the task's branch (the VMs' `fgt…`: it reads staging,
+main and that branch and pushes that branch only, for two hours). So the Git
+endpoint's rules don't change: no admin token pushes a `task/` branch, and
+`bun task push` sends the git token as a header, never on a command line.
+
+- *On the board*: a "local · <machine>" chip on the card, and in the detail
+  view who runs it and since when, "Send to the local agent", and **Hand to a
+  VM** in place of Restart. A local task starts working when it's added (or
+  when what it `startAfter`s merges: then `bun task start` makes its branch);
+  it has no VM and no preview of the factory's.
+- *Instructions* sent from the board wait in the task's inbox; the local agent
+  takes them with `bun task inbox` (the log says so), and `bun task done` is
+  refused while any wait. A task that is ready to merge or failed works again.
+- *Merge* is the board's Merge, as for any task, in the same merge queue, with
+  the same dependency checks. A local task has no VM, so the factory starts one
+  for the merge job only (`merge.ts merge`, in a fresh clone of the pushed
+  branch, with the merge's own git token and whoever pressed Merge as the
+  merge's author), and stops it after. A conflict, or a step that fails, makes
+  the task **needs agent**: the merge VM stops, and the local agent's inbox
+  gets the factory's instructions (`localResolvePrompt`, `factory/prompt.ts`:
+  `bun task pull --staging`, resolve, test, commit, `bun task done`, which
+  runs the merge again; `bun task fail` sends it back to ready to merge). Or the
+  admin hands it to a VM.
+- *Stale tasks*: a local agent can vanish (a laptop closed). The stall rule is
+  the same (no log line in 5 minutes: "stalled"). **Hand to a VM** (the
+  API's `restart`, the agent's `restart_task`) makes it a VM's task: a fresh
+  VM's Claude Code goes on from what the local agent pushed (told so in its
+  brief, `restartPrompt`), and the local agent's reports get 409 ("handed to a
+  VM"). Discard works as for any task.
+- *Limits*: work the local agent didn't push is not on the board and is lost
+  on a hand-over; its commits are authored by its own git identity (not
+  `factory/author.ts`'s); the preview is a link the local agent gives, often
+  to its own `localhost`, which only its machine opens.
 
 **Stalled tasks.** A task that is working or needs agent, and whose log has
 had no new line in 5 minutes, is *stalled* (`factory/stall.ts`): its Claude
@@ -1990,7 +2159,15 @@ stopped; the same VM's stand-in resolves it and the merge goes on to
 merged), a merge step that hangs (killed at its limit with its process
 tree, needs agent, then merged) and an install that hangs (the stand-in is
 told and installs again). `tests/factory.test.ts` tests the branch names and
-the git tokens' rules. `tests/factory-cards.ts` checks that the board's cards
+the git tokens' rules. `tests/factory-local.ts` tests local tasks end to end,
+with `bun factory/task.ts` in temporary clones as the local agent: register
+(the branch from staging, pushed), a log line, a screenshot and done; the
+board's local chip and detail; instructions from the board (done refused
+until `task inbox` takes them); a merge (a VM for the job only; "Merge
+task/…: title" on staging, the branch gone); a local task that waits for
+another and then works; a conflict (needs agent, the agent told, `task pull
+--staging`, resolved, merged); and a stale task handed to a VM, which goes on
+from the pushed branch while the old agent is refused. `tests/factory-cards.ts` checks that the board's cards
 stay compact, on a board of fixture tasks: a title on one line (the full
 title in its tooltip), no branch name (the detail has it), the last update
 as a short time on the title's line ("5m"), small buttons on one row, and
@@ -2010,6 +2187,10 @@ text and the other fields' values (`keepState` in `factory/page.ts`).
   and screenshots, the Claude token and each admin's
   agent session, and drives the VMs. The board (`factory/page.ts`, a part of
   `/admin/factory`) updates live from its event stream.
+- `factory/task.ts`: `bun task`, the `task` command outside a VM, for a
+  local task's agent (Local tasks, above). It reuses the VM's scripts
+  (`factory/vm/common.ts`, `task.ts`) with the admin token in place of the
+  task's own; the VM's copies don't change.
 - A `VmHost` starts and stops VMs and runs jobs in them. Locally it's the
   dev server (`dev/factory.ts`: Docker or the simulation, and the
   repository); on Cloudflare, Containers (`factory/cloudflare.ts`,
@@ -3201,8 +3382,25 @@ and the editor's timers (how long notes stay up, how marks fade) run at a
 fraction of real time under test (`window.__ergaTimescale`, `ms` in
 `src/page/editor.ts`).
 
-    ./test.sh          # every test file: ~3.5 minutes on a 10-core Mac
-    bun run typecheck  # tsc over the host, the editor and the suite
+    ./test.sh            # every test file: ~3.5 minutes on a 10-core Mac
+    ./test.sh --changed  # only the tests that cover what changed since staging
+    ./test.sh tests/tree.ts tests/tree.test.ts   # only these files
+    bun run typecheck    # tsc over the host, the editor and the suite
+
+**Only the tests that cover a change** (`tests/changed.ts`). `--changed`
+compares the checkout, committed or not, with where its branch left staging
+(`TEST_BASE` picks another base) and runs, in the same pool, the tests that
+cover the files that differ: a test file test.sh runs names what it covers in
+a header line (`// covers: src/page/tree.ts tree.ts templates/`: files, folders
+ending in `/`, or globs), and also covers itself and the helpers under `tests/`
+it imports; a unit test (`tests/*.test.ts`) covers everything it imports. A
+change to shared infrastructure (`SHARED`: test.sh, the build, the test
+harness, the Worker's entry) runs everything. It says what it picked and
+why, and names the changed files no test covers; `bun tests/changed.ts
+FILE...` asks without running anything. `tests/changed.test.ts` fails when
+a test file test.sh runs has no covers line, or a pattern names nothing.
+This is how agents test while they work (AGENTS.md; the factory's workers
+too, `factory/prompt.ts`); the whole suite is for shared infrastructure.
 
 `./test.sh` runs the files in a pool, the longest first: one for every two
 usable cores, as each file has dev servers and a Chrome of its own, and more
@@ -3235,6 +3433,11 @@ sharing (the share dialog too) and what each role may do, `/admin` (settings and
 token) and the server's API for agents: asking for a token and approving it,
 publishing a folder, the tools over HTTP and MCP (with the person's own
 permissions), the share button's token, and revoking.
+`bun tests/redeploy.ts` restarts a server under an open editor (scrolled,
+a selection, a card, an agent draft with a file), the Factory page (a task's
+detail open) and Documents: with the same client files nothing reloads and
+an edit typed meanwhile arrives; with new ones every page reloads by itself
+and its state is back (README, Redeploys and open pages).
 `bun tests/account.ts` checks the corner on every page (signed in, signed
 out, the menu, signing in and back, the editor's avatar, light, dark and a
 phone). `bun tests/landing.ts` checks the front page the server makes: on a
@@ -3336,6 +3539,7 @@ back, merging edits from disk, the agent's exact-match edits and attribution.
   for Artifacts and GitHub
 - `deploy/cloudflare.ts`: the one deploy pipeline (`runPipeline`: targets, steps, D1's export and import)
 - `deploy/targets.json`, `deploy/targets.ts`: Erga's own targets, production and staging (cloudflare.config.ts reads production's names there)
+- `deploy/gate.ts`, `worker/gate.ts`, `factory/vm/gate.ts`: the test gate (production only on a green run: each staging commit's tests, split across VMs)
 - `deploy/branches.ts`, `deploy/index.ts`, `worker/pipeline.ts`, `worker/deploys.ts`: branches deploying
   themselves (the hook, the queue, carrying on after the restart), their status, logs, events and routes
 - `deploy/snapshot.ts`: copying documents' Durable Objects from production into staging
@@ -3398,6 +3602,9 @@ back, merging edits from disk, the agent's exact-match edits and attribution.
 - `src/page/settings.ts`, `src/page/versions.ts`: document settings (the gear's
   popover: publishing, the homepage, versions), built on its own as `settings.js`
 - `package.json`: the pinned CodeMirror and Yjs packages the page editor bundles, and pi
+- `src/page/live.ts`, `src/page/live-client.ts`, `src/page/restore.ts`, `worker/live.ts`: open pages
+  across a redeploy (built as `live.js`, which the Worker adds to every page of its own): reconnecting,
+  noticing new client code, and reloading with the page's state (README, Redeploys and open pages)
 - `src/page/tree.ts`: a document's pages as a tree (built as `pages-tree.js`, loaded by the editor and `/docs`, never the viewer), in the editor and on `/docs`
 - `style.css`: theme colours, typography and the editor's styling
 - `fonts/`: the self-hosted Inter web font

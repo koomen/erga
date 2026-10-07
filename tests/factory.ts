@@ -42,9 +42,10 @@
 // 13. Restart while the task works: its Claude Code (the stand-in) is stopped, its uncommitted work committed and
 //    pushed, and a fresh VM goes on from the branch.
 // Screenshots land in tests/cdp.ts's SHOTS (factory-*.png).
+// covers: factory/ worker/factory.ts dev/factory.ts dev/git-server.ts worker/source.ts source/ tokens.ts src/page/factory-agent.ts src/page/agent-chat.ts src/page/share-agent.ts src/page/admin-share.ts
 
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { branches, dockerLabel, mintGitToken } from "../dev/factory";
@@ -605,7 +606,9 @@ try {
   await until(async () => (await statusOf(tH)) == "complete" && !!(await task(tH)).error, STEP, "H's merge fails", async () => (await task(tH)).log.slice(-4));
   await until(async () => (await task(tH)).log.some((l: any) => l.message == "Claude Code was stopped"), 30_000, "the factory stops H's stand-in", async () => (await task(tH)).log.slice(-4));
   const h = await task(tH);
-  const standIns = docker ? spawnSync("docker", ["exec", h.vm, "pgrep", "-f", "fake-claude.ts resolve"], { encoding: "utf8" }).stdout.trim() : spawnSync("pgrep", ["-f", "fake-claude.ts resolve"], { encoding: "utf8" }).stdout.trim();
+  // This server's stand-ins only (their working directory is a clone under its state): other factory tests may run at the same time.
+  const ours = (pid: string) => spawnSync("lsof", ["-a", "-p", pid, "-d", "cwd", "-Fn"], { encoding: "utf8" }).stdout.includes(realpathSync(host.state));
+  const standIns = docker ? spawnSync("docker", ["exec", h.vm, "pgrep", "-f", "fake-claude.ts resolve"], { encoding: "utf8" }).stdout.trim() : spawnSync("pgrep", ["-f", "fake-claude.ts resolve"], { encoding: "utf8" }).stdout.trim().split("\n").filter((p) => p && ours(p)).join(" ");
   expect(!standIns && h.error.includes("Claude Code couldn't finish the merge"), "H is back in ready to merge, and no stand-in still runs", standIns);
   ok("a merge whose Claude Code gives up: back to ready to merge, and that Claude Code is stopped");
 

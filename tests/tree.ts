@@ -24,6 +24,7 @@
 // and the editor at its own address. Screenshots land in tests/cdp.ts's SHOTS.
 //
 //   bun tests/tree.ts
+// covers: src/page/tree.ts tree.ts
 
 import { cpSync, mkdtempSync } from "fs";
 import { tmpdir } from "os";
@@ -44,7 +45,7 @@ const tree = async () => ((await (await fetch(`${host.root}/api/docs/${id}/tree`
 // Signed in (locally, /auth/github?as= signs in anyone), and an agent token for the API's tools, as the document's owner.
 async function signIn(as: string | null) {
   const r = await fetch(`${host.root}/auth/github?${as ? `as=${as}&` : ""}next=/docs`, { redirect: "manual" });
-  const cookie = r.headers.getSetCookie().map((c) => c.split(";")[0]).find((c) => c.startsWith("erga_session="));
+  const cookie = r.headers.getSetCookie().map((c) => c.split(";")[0]).find((c) => /^erga_session(_\d+)?=/.test(c));
   if (!cookie) throw new Error(`signing in: ${r.status}`);
   return cookie;
 }

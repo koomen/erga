@@ -27,6 +27,7 @@
 //   its choice (factory-detail-typing.png).
 // Screenshots land in tests/cdp.ts's SHOTS (factory-cards.png, factory-cards-dark.png). --html saves the board as one
 // static page (styles and images inlined, no scripts), to look at without a server.
+// covers: factory/page.ts src/page/factory-agent.ts
 
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";

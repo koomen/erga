@@ -10,6 +10,7 @@
 //   - no errors in the console.
 //
 //   bun tests/admin-nav.ts [--keep]   (--keep: leave the server running)
+// covers: src/page/admin-nav.ts admin-layout.ts admin.ts factory/page.ts src/page/factory-agent.ts src/page/agent-chat.ts
 
 import { join } from "path";
 import { Browser, SHOTS } from "./cdp";

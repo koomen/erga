@@ -2,14 +2,17 @@
 // Erga's own source, end to end, on a dev server of its own (tests/host.ts)
 // with its stand-ins for Artifacts and GitHub (dev/git-server.ts):
 //
-//   - the Git endpoint's auth: no token (reads in, pushes 401), a token that
-//     isn't one, a documents token, an admin's admin token; an anonymous clone,
-//     fetch and ls-remote, and an anonymous push refused;
+//   - the Git endpoint's auth: no token (401: the server plays staging, which
+//     is for admins only, so even reads need a token), a token that isn't one,
+//     a documents token (403), an admin's admin token; an anonymous clone and
+//     push refused;
 //   - seeding with source/import.ts, then a real `git clone`, `git push`
 //     (a fast-forward, and a rewrite main refuses) and `git pull`;
 //   - the strict model: main only follows staging, staging keeps main's
 //     commits; merging is a fast-forward of main, to staging's head or a
-//     chosen commit; who may merge, and a POST from another site;
+//     chosen commit; who may merge, and a POST from another site; main only
+//     to a commit whose tests passed (the production gate, with its local
+//     fake runner: tests/gate.ts tests it in full);
 //   - the GitHub mirror, after each move;
 //   - the Source page in headless Chrome: one list with one dot column and
 //     no header (circles only: hollow orange, only on staging; solid green,
@@ -22,6 +25,7 @@
 // Screenshots land in tests/cdp.ts's SHOTS.
 //
 //   bun tests/source.ts [--keep]     (--keep leaves the server running, seeded)
+// covers: source/ worker/source.ts worker/source-host.ts worker/artifacts.ts dev/git-server.ts dev/mirror.ts
 
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
@@ -44,13 +48,16 @@ const host = await startHost(null, { env: { ERGA_DEPLOY_MOCK: "1", ERGA_DEPLOY_T
 const root = host.root, origin = root;
 const get = (path: string, init: RequestInit = {}) => fetch(root + path, { redirect: "manual", ...init });
 
-/** Signs in as someone (no `as`: DEV_LOGIN, "tester", an admin) and mints a token: admin scope for an admin, documents for anyone else. */
-async function tokenFor(as: string | null): Promise<{ token: string; cookie: string }> {
-  const r = await fetch(`${root}/auth/github?${as ? `as=${as}&` : ""}next=/docs`, { redirect: "manual" });
-  const cookie = r.headers.getSetCookie().map((x) => x.split(";")[0]).find((x) => x.startsWith("erga_session="))!;
-  const page = await (await fetch(`${root}/tokens/new`, { method: "POST", headers: { Cookie: cookie, Origin: origin }, body: new URLSearchParams({ label: "Git", scope: as ? "documents" : "admin" }) })).text();
+/**
+ * Signs in as DEV_LOGIN ("tester", an admin) and mints a token: the admin scope, or the documents scope (no admin power).
+ * (Only an admin gets anywhere on staging, so the token without admin power is an admin's documents token.)
+ */
+async function tokenFor(scope: "admin" | "documents"): Promise<{ token: string; cookie: string }> {
+  const r = await fetch(`${root}/auth/github?next=/docs`, { redirect: "manual" });
+  const cookie = r.headers.getSetCookie().map((x) => x.split(";")[0]).find((x) => /^erga_session(_\d+)?=/.test(x))!;
+  const page = await (await fetch(`${root}/tokens/new`, { method: "POST", headers: { Cookie: cookie, Origin: origin }, body: new URLSearchParams({ label: "Git", scope }) })).text();
   const token = /<pre class="secret">(erga_[^<]+)<\/pre>/.exec(page)?.[1] ?? "";
-  expect(token, `a token for ${as ?? "tester"}`, page.slice(0, 300));
+  expect(token, `a ${scope} token`, page.slice(0, 300));
   return { token, cookie };
 }
 
@@ -66,12 +73,18 @@ const commit = (dir: string, file: string, text: string, message: string) => { w
 
 let browser: Browser | null = null;
 try {
-  const admin = await tokenFor(null), bo = await tokenFor("Bo");
+  const admin = await tokenFor("admin"), bo = await tokenFor("documents");
+  // The production gate (deploy/gate.ts): main moves only to a commit whose tests passed. Locally a fake runs them.
+  const gateOf = async (sha: string) => (await (await fetch(`${root}/api/gate/${sha}`, { headers: { Authorization: `Bearer ${admin.token}` } })).json()) as { run: { state: string } | null };
+  const gateGreen = async (sha: string) => {
+    if (!(await gateOf(sha)).run) await fetch(`${root}/api/gate/${sha}/run`, { method: "POST", headers: { Authorization: `Bearer ${admin.token}` } });
+    await until(async () => (await gateOf(sha)).run?.state == "passed", 20_000, `the tests of ${sha.slice(0, 7)} pass`, () => gateOf(sha));
+  };
 
   // ---- Who may reach the Git endpoint ------------------------------------------------
   const refs = (auth?: string) => get("/git/erga.git/info/refs?service=git-upload-pack", auth ? { headers: { Authorization: auth } } : {});
   let r = await refs();
-  expect(r.status == 200 && (r.headers.get("content-type") ?? "").includes("git-upload-pack"), "no token, a read: in", r.status);
+  expect(r.status == 401 && (r.headers.get("www-authenticate") ?? "").startsWith("Basic"), "no token, a read: 401 (staging is for admins only)", r.status);
   r = await get("/git/erga.git/info/refs?service=git-receive-pack");
   expect(r.status == 401 && (r.headers.get("www-authenticate") ?? "").startsWith("Basic"), "no token, a push: 401, asking for Basic credentials (git then asks for them)", r.status);
   r = await get("/git/erga.git/git-receive-pack", { method: "POST", body: "0000" });
@@ -82,10 +95,10 @@ try {
   r = await pushRefs(`Basic ${btoa(`x:${bo.token}`)}`);
   expect(r.status == 403 && (await r.text()).includes("admin scope"), "a documents token, a push: 403", r.status);
   r = await refs(`Basic ${btoa(`x:${bo.token}`)}`);
-  expect(r.status == 200, "a documents token, a read: in (reads are public)", r.status);
+  expect(r.status == 403, "a documents token, a read: 403 (staging is for admins only)", r.status);
   r = await refs(`Basic ${btoa(`anyone:${admin.token}`)}`);
   expect(r.status == 200 && (r.headers.get("content-type") ?? "").includes("git-upload-pack"), "an admin's token, any username: in", r.status);
-  ok("the Git endpoint: no token reads but can't push, a documents token 403, an admin's admin token in");
+  ok("the Git endpoint on staging: no token 401, a documents token 403, an admin's admin token in");
 
   // ---- Seed, clone, push, pull ---------------------------------------------------------------
   const src = scratch();
@@ -104,7 +117,10 @@ try {
   const early = git(a, "push", "origin", "main");
   expect(!early.ok && early.err.includes("main only follows staging"), "a push to main of a commit staging doesn't have is refused", early.err);
   const both = git(a, "push", "origin", "HEAD:staging", "HEAD:main");
-  expect(both.ok && both.err.includes("Erga: main is now") && both.err.includes("Erga: staging is now"), "pushed to staging and main at once, it lands, and Erga says so", both.err);
+  expect(!both.ok && both.err.includes("Erga: staging is now") && /no test run|still running/.test(both.err), "pushed to staging and main at once: staging lands, and main waits for the commit's tests (the production gate)", both.err);
+  await gateGreen(must(a, "rev-parse", "HEAD"));
+  const later = git(a, "push", "origin", "HEAD:main");
+  expect(later.ok && later.err.includes("Erga: main is now"), "once its tests passed, main takes it, and Erga says so", later.err);
   must(a, "reset", "-q", "--hard", "HEAD~1");
   commit(a, "app.ts", "export const x = 3;\n", "Rewritten");
   const dropped = git(a, "push", "--force", "origin", "HEAD:staging");
@@ -112,18 +128,21 @@ try {
   const back = git(a, "push", "--force", "origin", "HEAD~1:main");
   expect(!back.ok && back.err.includes("only moves forward"), "main never moves back", back.err);
   expect(git(a, "push", "origin", "HEAD:feature").err.includes("two branches"), "other branches are refused");
-  // Anyone reads: clone, fetch and ls-remote with no credentials. A push without them is refused.
+  // On staging even reads need an admin's token (worker/admins-only.ts): an anonymous clone is refused, as is a push.
+  // (No credential helper: one may have kept the admin token from the clones above for this address.)
+  const refusedClone = git(tmpdir(), "-c", "credential.helper=", "clone", "-q", remote(null), join(scratch(), "refused"));
+  expect(!refusedClone.ok && /401|Authentication failed|could not read Username/i.test(refusedClone.err), "an anonymous git clone is refused (401)", refusedClone.err);
   const anon = join(scratch(), "anon");
-  must(tmpdir(), "clone", "-q", remote(null), anon);
-  expect(must(anon, "log", "--format=%s", "origin/staging").split("\n")[0] == "Third", "an anonymous git clone brings the history");
-  expect(must(anon, "ls-remote", remote(null)).includes("refs/heads/staging"), "an anonymous git ls-remote lists the branches");
+  must(tmpdir(), "clone", "-q", remote(admin.token), anon);
+  expect(must(anon, "log", "--format=%s", "origin/staging").split("\n")[0] == "Third", "a git clone with an admin token brings the history");
+  expect(must(anon, "ls-remote", remote(admin.token)).includes("refs/heads/staging"), "git ls-remote lists the branches");
   must(anon, "fetch", "-q", "origin");
   commit(anon, "anon.txt", "anon\n", "Anonymous");
-  const anonPush = git(anon, "push", "origin", "HEAD:staging");
+  const anonPush = git(anon, "-c", "credential.helper=", "push", remote(null), "HEAD:staging");
   expect(!anonPush.ok && /401|Authentication failed|could not read Username/i.test(anonPush.err), "an anonymous git push is refused (401)", anonPush.err);
   expect(git(anon, "push", remote(bo.token), "HEAD:staging").err.includes("403"), "a git push with a documents token is refused (403)");
-  expect(must(anon, "ls-remote", remote(null), "refs/heads/staging").split(/\s/)[0] == must(anon, "rev-parse", "HEAD~1"), "and staging didn't move");
-  ok("anyone clones, fetches and lists without credentials; an anonymous push is refused");
+  expect(must(anon, "ls-remote", remote(admin.token), "refs/heads/staging").split(/\s/)[0] == must(anon, "rev-parse", "HEAD~1"), "and staging didn't move");
+  ok("an admin token clones, fetches and lists; an anonymous clone and push are refused");
   const b = join(scratch(), "b");
   must(tmpdir(), "clone", "-q", remote(admin.token), b);
   must(a, "fetch", "-q", "origin");
@@ -151,6 +170,8 @@ try {
   expect((await api("/api/source/merge", { method: "POST", as: "cookie", body: "{}", headers: { Origin: "https://evil.example" } })).status == 403, "a merge POSTed from another site is refused");
   expect((await api("/api/source/merge", { method: "POST", body: JSON.stringify({ from: "main", to: "staging" }) })).status == 400, "merging the other way is refused: main only follows staging");
   const fourth = staging.commits[1].sha;
+  await gateGreen(fourth);
+  await gateGreen(staging.commit);
   r = await api("/api/source/merge", { method: "POST", body: JSON.stringify({ from: "staging", to: "main", commit: fourth }) });
   let merged = await r.json() as { commit?: string; fastForward?: boolean; upToDate?: boolean; error?: string };
   expect(r.status == 200 && merged.commit == fourth && merged.fastForward === true, "main fast-forwards to a chosen staging commit", merged);
@@ -184,7 +205,7 @@ try {
   ok("each move of staging and main reaches the deploy pipeline (deployHook), which deploys it");
 
   // ---- The Source page ------------------------------------------------------------------------------
-  expect((await get("/admin/factory?user=Bo")).status == 404, "the Source page is for admins only");
+  expect((await get("/admin/factory?user=Bo")).status == 403, "the Source page is for admins only (on staging, the admins-only page)");
   const moved = await get("/source");
   expect(moved.status == 302 && moved.headers.get("location") == "/admin/factory", "/source redirects to /admin/factory", moved.status);
   browser = await Browser.launch();
@@ -236,14 +257,6 @@ try {
   must(b, "push", "-q", "origin", "staging");
   const sixth = must(b, "rev-parse", "HEAD");
   await until(async () => (await state()).rows[0]?.subject == "Staging only, live", 10_000, "the push shows up by itself", state);
-  s = await state();
-  expect(s.merge && s.mergeShown && s.ahead.startsWith("1 commit"), "and the Merge button shows, enabled", s);
-  // The dots: circles only; hollow orange for only on staging, solid green for on main.
-  const [top, below] = s.rows;
-  const [, , topBg, topBorder] = top.staging.split("|"), [, , belowBg, belowBorder] = below.staging.split("|");
-  expect(s.rows.every((x) => x.staging.startsWith("circle|")), "every dot is a circle, untransformed", s.rows);
-  expect(topBorder != topBg && /rgb\((19[0-9]|2\d\d), (9\d|1[0-2]\d|1[5-9]\d), \d{1,2}\)/.test(topBorder), "a commit only on staging: a hollow orange circle", top);
-  expect(belowBg == belowBorder && /rgb\(\d{1,2}, 1[0-4]\d, \d{2}\)/.test(belowBg), "a commit on main too: a solid green circle", below);
   // The live log: clicking staging's status opens it; its lines arrive as the deploy runs ({ type: "deploy-log" }).
   const click = async (sel: string) => {
     const at = await p.eval<{ x: number; y: number }>(`(() => { const r = document.querySelector(${JSON.stringify(sel)}).getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })()`);
@@ -256,6 +269,16 @@ try {
   const opened = (await logText()).split("\n").length;
   await until(async () => (await logText()).split("\n").length > opened + 2, 30_000, "new lines show up in the open log by themselves", logText);
   await until(async () => (await state()).rows[0].live[0] == "live", 60_000, "and the column marks the new commit live when it's done", state);
+  // Then its tests pass (watched after the deploy, which a fast deploy would otherwise finish first).
+  await until(async () => (await state()).merge, 20_000, "its tests pass (the production gate's fake), and Merge turns on", state);
+  s = await state();
+  expect(s.merge && s.mergeShown && s.ahead.startsWith("1 commit"), "and the Merge button shows, enabled", s);
+  // The dots: circles only; hollow orange for only on staging, solid green for on main.
+  const [top, below] = s.rows;
+  const [, , topBg, topBorder] = top.staging.split("|"), [, , belowBg, belowBorder] = below.staging.split("|");
+  expect(s.rows.every((x) => x.staging.startsWith("circle|")), "every dot is a circle, untransformed", s.rows);
+  expect(topBorder != topBg && /rgb\((19[0-9]|2\d\d), (9\d|1[0-2]\d|1[5-9]\d), \d{1,2}\)/.test(topBorder), "a commit only on staging: a hollow orange circle", top);
+  expect(belowBg == belowBorder && /rgb\(\d{1,2}, 1[0-4]\d, \d{2}\)/.test(belowBg), "a commit on main too: a solid green circle", below);
   await p.screenshot(join(SHOTS, "source-log.png"));
   await click("#log-close");
   await p.screenshot(join(SHOTS, "source-light.png"));
@@ -294,7 +317,8 @@ try {
   // Merge to a chosen commit from the page: hover the row, click "Merge to here".
   const rowAt = await p.eval<{ x: number; y: number }>(`(() => { const r = document.querySelector("#grid .row .subj").getBoundingClientRect(); return { x: r.x + 40, y: r.y + r.height / 2 }; })()`);
   await p.mouse("mouseMoved", rowAt.x, rowAt.y);
-  await until(async () => p.eval(`getComputedStyle(document.querySelector("#grid .row button.here")).display != "none"`), 5_000, "hovering a staging-only commit offers Merge to here");
+  await gateGreen(polled2);
+  await until(async () => p.eval(`!!document.querySelector("#grid .row button.here") && getComputedStyle(document.querySelector("#grid .row button.here")).display != "none"`), 15_000, "hovering a staging-only commit whose tests passed offers Merge to here");
   await click("#grid .row button.here");
   await until(async () => (await state()).rows.find((x) => x.sha == polled2)?.kind.includes("on-main"), 10_000, "Merge to here moves main to that commit", state);
   expect((await p.eval<string>(`document.getElementById("merge-hint").textContent`)) == "", "and leaves no message after it");

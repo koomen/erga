@@ -8,7 +8,7 @@
 //                                 from this checkout's HEAD, as staging and main. A factory token
 //                                 (worker/factory.ts, gitToken) is the password: a task's token pushes its
 //                                 own branch only; a merge token also moves staging. Nothing else is pushed.
-//   POST /__factory/vm?link=      the VMs: { op: "start" | "job" | "stop" | "alive" | "info", ... }, from the
+//   POST /__factory/vm?link=      the VMs: { op: "start" | "job" | "stop" | "alive" | "info" | "staging", ... }, from the
 //                                 Worker only (the dev server's secret)
 //
 // VMs are Docker containers of the factory's image (factory/vm/Dockerfile,
@@ -128,6 +128,14 @@ export function branches(stateDir: string): Record<string, string> {
   return out;
 }
 
+/** The branches, and staging's newest 100 commits (the factory's StagingLog, factory/recover.ts): did a task's merge reach staging? */
+export function stagingLog(stateDir: string): { heads: Record<string, string>; commits: { sha: string; subject: string }[] } {
+  const heads = branches(stateDir);
+  if (!heads.staging) return { heads, commits: [] };
+  const out = spawnSync("git", ["-C", join(stateDir, "factory", "erga.git"), "log", "-n", "100", "--format=%H %s", "staging"], { encoding: "utf8" }).stdout;
+  return { heads, commits: out.split("\n").filter(Boolean).map((l) => ({ sha: l.slice(0, 40), subject: l.slice(41) })) };
+}
+
 function httpBackend(root: string, path: string, req: IncomingMessage, body: Uint8Array, res: ServerResponse) {
   const url = new URL(req.url ?? "/", "http://x");
   const env: Record<string, string> = {
@@ -162,7 +170,7 @@ function httpBackend(root: string, path: string, req: IncomingMessage, body: Uin
 interface StartReq { op: "start"; task: number }
 interface JobReq { op: "job"; vm: string; script: "run.ts" | "merge.ts"; args: string[]; env: Record<string, string>; wait?: boolean }
 interface VmReq { op: "stop" | "alive"; vm: string }
-type Req = StartReq | JobReq | VmReq | { op: "info" };
+type Req = StartReq | JobReq | VmReq | { op: "info" } | { op: "staging" };
 
 /** What runs the VMs: Docker or the simulation. */
 interface Runner {
@@ -353,6 +361,7 @@ export function factoryDev(opts: { stateDir: string; secret: string; port: () =>
     try {
       switch (r.op) {
         case "info": ensureRepo(opts.stateDir); return json(res, 200, { runner: run.kind, branches: branches(opts.stateDir) });
+        case "staging": return json(res, 200, stagingLog(opts.stateDir));
         case "start": return json(res, 200, await run.start(r.task));
         case "job": return json(res, 200, (await run.job(r)) ?? { started: true });
         case "stop": await run.stop(r.vm); return json(res, 200, { ok: true });

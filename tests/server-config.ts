@@ -9,6 +9,7 @@
 // Screenshots of /admin both ways land in tests/cdp.ts's SHOTS.
 //
 //   bun tests/server-config.ts
+// covers: server.config.ts config.ts worker/d1.ts admin.ts directory.ts
 
 import { join } from "path";
 import { Browser, SHOTS } from "./cdp";
@@ -32,7 +33,7 @@ const host = await startHost(null, { env: { ERGA_SERVER_CONFIG: JSON.stringify({
 try {
   const login = `cfg${Date.now().toString(36)}`;
   const signedIn = await fetch(`${host.root}/auth/github?as=${login}&next=/docs`, { redirect: "manual" });
-  const cookie = signedIn.headers.getSetCookie().map((c) => c.split(";")[0]).find((c) => c.startsWith("erga_session="));
+  const cookie = signedIn.headers.getSetCookie().map((c) => c.split(";")[0]).find((c) => /^erga_session(_\d+)?=/.test(c));
   expect(cookie, "signed in", signedIn.status);
   const get = (path: string) => fetch(host.root + path, { redirect: "manual", headers: { Cookie: cookie } });
 
@@ -113,10 +114,10 @@ try {
   await p.screenshot(join(SHOTS, "admin-changes.png"));
   // Only admins: someone signed in who isn't one gets nothing.
   const other = await fetch(`${open.root}/auth/github?as=plain${Date.now().toString(36)}&next=/docs`, { redirect: "manual" });
-  const theirs = other.headers.getSetCookie().map((c) => c.split(";")[0]).find((c) => c.startsWith("erga_session="));
+  const theirs = other.headers.getSetCookie().map((c) => c.split(";")[0]).find((c) => /^erga_session(_\d+)?=/.test(c));
   const notAdmin = await fetch(`${open.root}/admin/changes`, { redirect: "manual", headers: { Cookie: theirs! } });
   expect(notAdmin.status == 404 && !(await notAdmin.text()).includes("factory_model"), "someone who isn't an admin can't see it", notAdmin.status);
-  const signedOut = await fetch(`${open.root}/admin/changes`, { redirect: "manual", headers: { Cookie: "erga_signed_out=1" } });
+  const signedOut = await fetch(`${open.root}/admin/changes`, { redirect: "manual", headers: { Cookie: `erga_signed_out_${open.port}=1` } });
   expect(signedOut.status == 302 && signedOut.headers.get("location")?.includes("next=%2Fadmin%2Fchanges"), "someone signed out is sent to sign in", signedOut.status);
   ok("/admin/changes lists the settings' changes, newest first, with when, who and what; only for admins");
 } finally {

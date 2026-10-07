@@ -6,6 +6,7 @@
 //
 //   bun tests/admin-agent-source.ts            the checks
 //   bun tests/admin-agent-source.ts --shots    and a screenshot, in tests/cdp.ts's SHOTS
+// covers: factory/agent.ts worker/factory.ts worker/source-host.ts worker/artifacts.ts source/
 
 import { mkdirSync } from "fs";
 import { join } from "path";

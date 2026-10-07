@@ -267,9 +267,11 @@ function eventItem(c: SettingChange): string {
   const r = c.release!;
   const commits = r.commits.map((x) => `<li>${sha(x.sha)} ${esc(x.subject)}</li>`).join("");
   const more = r.total > r.commits.length ? `<li class="more">and ${r.total - r.commits.length} older</li>` : "";
+  // Past the production gate (its tests hadn't passed): the admin's reason, and what the gate said.
+  const override = r.override ? ` <span class="badge" title="${esc(r.override.gate)}">tests overridden</span> <span class="title">${esc(r.override.reason)}</span>` : "";
   // Folded, so the entry stays on its line: the commits open under it.
   const list = r.commits.length ? ` <details><summary>${r.total} commit${r.total == 1 ? "" : "s"}</summary><ul class="commits">${commits}${more}</ul></details>` : "";
-  return `<li><span class="key">main</span> ${c.from ? sha(c.from) : "none"} <span class="to" aria-label="to">→</span> ${sha(c.to)}${list}</li>`;
+  return `<li><span class="key">main</span> ${c.from ? sha(c.from) : "none"} <span class="to" aria-label="to">→</span> ${sha(c.to)}${override}${list}</li>`;
 }
 
 /**

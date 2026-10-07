@@ -7,6 +7,7 @@
 // shows them, after a reload too. The factory's panel is the same code
 // (tests/factory.ts sends it an image).
 //   bun tests/attach.ts
+// covers: src/page/attach-ui.ts src/page/attach.ts src/page/agent-chat.ts agent.ts
 
 import { Browser, ROOT, SHOTS } from "./cdp";
 import { startHost } from "./host";

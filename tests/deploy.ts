@@ -11,6 +11,7 @@
 // each step land in tests/cdp.ts's SHOTS (deploy-*.png).
 //
 //   bun tests/deploy.ts
+// covers: deploy/ worker/deploy.ts worker/deployer.ts
 
 import { existsSync } from "fs";
 import { join } from "path";
@@ -160,7 +161,7 @@ try {
   // ---------------------------------------------------------------- who may open it
   const signIn = async (login: string) => {
     const r = await fetch(`${host.root}/auth/github?as=${login}&next=/deploy`, { redirect: "manual" });
-    return r.headers.getSetCookie().map((c) => c.split(";")[0]).find((c) => c.startsWith("erga_session="))!;
+    return r.headers.getSetCookie().map((c) => c.split(";")[0]).find((c) => /^erga_session(_\d+)?=/.test(c))!;
   };
   const bo = await signIn("bo");
   const asBo = await fetch(`${host.root}/deploy`, { headers: { Cookie: bo }, redirect: "manual" });

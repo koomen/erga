@@ -14,6 +14,7 @@
 //
 //   bun tests/fade.ts            the checks
 //   bun tests/fade.ts --shots    and screenshots, in tests/cdp.ts's SHOTS
+// covers: front.ts home.ts account.ts
 
 import { mkdirSync } from "fs";
 import { join } from "path";

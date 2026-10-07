@@ -9,7 +9,10 @@
 //                               (and staging, for a merge).
 //   GET  /api/source/branches   staging and main: each head and its last 25 commits (staging: also the 5 just after main), and the mirror's status
 //   POST /api/source/merge      { from: "staging", to: "main", commit? }: main fast-forwards to staging's head (or to
-//                               that staging commit): { commit } or 4xx { error } (admins)
+//                               that staging commit): { commit } or 4xx { error } (admins). Only to a commit whose full
+//                               test run passed (the production gate, deploy/gate.ts): else 409 with why and where its
+//                               run is. { override: "reason" } moves it anyway: an admin signed in in a browser only
+//                               (never a token or an agent), and the change log keeps the reason.
 //   POST /api/source/mirror     brings the GitHub mirror up to date now (admins)
 //   /admin/factory              the Factory page (admins): the factory's board, this dashboard and the factory's agent
 //   /source, /admin/source      redirect to /admin/factory
@@ -119,9 +122,14 @@ export async function sourceApi(request: Request, env: Env, platform: Platform, 
       return json({ ...view, mirror: { ...view.mirror, url: view.mirror.url ?? githubUrl(env) }, remote: `${url.origin}/git/erga.git` });
     }
     if (url.pathname == "/api/source/merge" && request.method == "POST") {
-      const body = (await request.json().catch(() => ({}))) as { from?: string; to?: string; commit?: string };
+      const body = (await request.json().catch(() => ({}))) as { from?: string; to?: string; commit?: string; override?: unknown };
       if ((body.from ?? "staging") != "staging" || (body.to ?? "main") != "main") return json({ error: "main only follows staging: merge from staging to main." }, 400);
-      const r = await host(env).merge(url.origin, who.actor, body.commit);
+      // The emergency override of the production gate: a person, in a browser, with a reason; never a token or an agent.
+      if (body.override != null) {
+        if (who.bearer) return json({ error: "Only an admin signed in in a browser can override the tests (on the Factory page): never a token or an agent." }, 403);
+        if (typeof body.override != "string" || body.override.trim().length < 10) return json({ error: "An override needs a reason of at least 10 characters: it goes in the change log." }, 400);
+      }
+      const r = await host(env).merge(url.origin, who.actor, body.commit, typeof body.override == "string" ? body.override : undefined);
       return "error" in r ? json({ error: r.error }, r.status) : json(r);
     }
     if (url.pathname == "/api/source/mirror" && request.method == "POST") return json({ mirror: await host(env).mirrorNow(url.origin, byLine(who.actor.login, who.actor.via)) });

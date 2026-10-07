@@ -7,6 +7,7 @@
 // Also: a document's own frame gets no script, and without --reload no page does.
 //
 //   bun tests/reload.ts
+// covers: dev/reload.ts
 
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
