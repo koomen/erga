@@ -150,13 +150,16 @@ try {
   expect((await s.get("/api/deploys/staging/hook", { method: "POST", body: "{}" })).status == 404, "and without it, its own door says no");
   r = await s.get("/api/deploys/staging/log", { headers: { Authorization: `Bearer ${HOOK}` } });
   expect(r.status == 200, "another of Erga's servers reads the log with the secret", r.status);
+  r = await s.get("/api/gate", { headers: { Authorization: `Bearer ${HOOK}`, Cookie: SIGNED_OUT } });
+  expect(r.status == 200, "production reads staging's test runs with the secret (the production gate)", r.status);
+  expect((await s.get("/api/gate", { headers: { Cookie: SIGNED_OUT } })).status != 200, "and without it, the test runs are refused");
   expect((await s.get("/api/snapshot/docs", { method: "POST", body: "{}" })).status == 404, "the snapshot endpoint is its own door's (SNAPSHOT_TOKEN)");
   r = await s.get("/api/factory/tasks/1/brief", { headers: { Authorization: "Bearer fct.1.9999999999.0000000000000000000000000000000000000000000000000000000000000000" } });
   let body = (await r.json().catch(() => ({}))) as { error?: string; adminsOnly?: boolean };
   expect(r.status == 403 && !body.adminsOnly && /token/.test(body.error ?? ""), "a factory VM's callback reaches the factory, which checks its task token", r.status, body);
   r = await s.get("/git/erga.git/info/refs?service=git-upload-pack", { headers: { Authorization: `Basic ${btoa("x:fgt.e30.0000000000000000000000000000000000000000000000000000000000000000")}` } });
   expect(r.status == 401 && (await r.text()).includes("factory token"), "a factory VM's git token reaches the Git endpoint, which checks it", r.status);
-  ok("open without an admin: the version check, the hook and peer reads with the secret, snapshots, the factory VMs' callbacks and git token");
+  ok("open without an admin: the version check, the hook, peer reads and the test runs with the secret, snapshots, the factory VMs' callbacks and git token");
 
   // ---------------------------------------------------------------- no deploy target: as before
   const p = at(plain);
