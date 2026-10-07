@@ -124,7 +124,7 @@ async function seeded(file: string, name: string, body: () => Promise<void>) {
   try { await body(); }
   catch (e) {
     const err = e instanceof Error ? e : new Error(String(e));
-    err.message += `\n(seed ${seed}: ERGA_SUITE_SEED=${seed} bun run test:e2e ${file} --grep ${JSON.stringify(name.slice(0, 40).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))})`;
+    err.message += `\n(seed ${seed}: ERGA_SUITE_SEED=${seed} bun run ${file.endsWith(".bench.e2e.ts") ? "test:bench" : "test:e2e"} ${file} --grep ${JSON.stringify(name.slice(0, 40).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))})`;
     throw err;
   }
 }
