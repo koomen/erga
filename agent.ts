@@ -210,7 +210,9 @@ export function beyondPrompt(owner: string, names: string[]): string {
   list_settings, set_setting and reset_setting for the server's settings (a setting the
   deploy locks can't be changed: say so), list_setting_changes for their change log,
   list_api_keys for which API keys are set (clear_api_key clears one; a key is set only
-  on /admin/api-keys, never in this conversation), and list_users, add_user, set_user_role,
+  on /admin/api-keys, never in this conversation), get_sign_in_status for how people sign
+  in (clear_sign_in_app clears the GitHub app values set on /admin/auth; they are set only
+  there, never in this conversation), and list_users, add_user, set_user_role,
   set_user_deploy and remove_user for who may sign in, who's an admin and who has the
   deploy role. These change the whole server, for
   everyone: use them only when ${owner} asks, and say exactly what you changed.`);

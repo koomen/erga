@@ -14,6 +14,7 @@
 // to set. To add a setting, add it to SETTINGS; nothing in the database
 // changes.
 
+import type { SignInChange } from "./auth-apps.ts";
 import type { Sql, Statement } from "./directory.ts";
 import { NotAllowed, type Actor, type Users } from "./users.ts";
 
@@ -201,6 +202,8 @@ export interface SettingChange {
   user?: { login: string; event: "added" | "role" | "deploy" | "removed"; role?: string; deploy?: boolean };
   /** An agent token (key "token"): revoked (`by` revoked it; `of`, whose it was). `from` and `to` are null. */
   token?: { id: string; label: string; event: "revoked"; of: string };
+  /** A server's sign-in app (key "sign-in"; auth-apps.ts): set, waiting for a test sign-in, put in use by one, discarded or cleared. Never the secret. */
+  signIn?: SignInChange;
   /** Before #69, how the version's `by` did it, kept on the change; now on the version (SettingsVersion.via). */
   via?: string;
 }

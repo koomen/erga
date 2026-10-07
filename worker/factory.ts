@@ -96,6 +96,7 @@ import { agentConfigFrom, isModelChoice, MODELS, type AgentConfig } from "../age
 import type { SettingChange } from "../config";
 import { type Blocked, dependents, depRules, depsNote, type DepStatus, type DepTask, ids } from "../factory/deps";
 import type { ToolWho } from "../server-tools";
+import { authOps } from "./auth-settings";
 import type { SourceAnswer, SourceRead } from "../source/browse";
 import { panelPrefs, restoredLog, restoredMessages, storedLog, storedMessages, type PanelPrefs } from "../factory/chat-store";
 import { emptyLog, type Log, type LogEvent } from "../src/page/agent-log";
@@ -1121,7 +1122,7 @@ export class Factory extends DurableObject<Env> {
       if (why) throw new Error(why);
     };
     // The admin tools act as the admin, with admin power, via their agent: the change log names them, and how.
-    const as = (): ToolWho => ({ dir: directoryOf(this.env), who: { login, admin: true, via: VIA.admin }, origin: state.origin });
+    const as = (): ToolWho => ({ dir: directoryOf(this.env), who: { login, admin: true, via: VIA.admin }, origin: state.origin, auth: authOps(this.env, state.origin) });
     // The source tools read the server's copy of Erga's repository (SourceHost), read-only.
     const readSource = async (q: SourceRead): Promise<SourceAnswer> => {
       if (!hasSource(this.env)) throw new Error("Erga's repository isn't set up on this server: it needs the Artifacts binding (README, Erga's own source).");

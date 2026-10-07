@@ -7,6 +7,7 @@
 import type { Route } from "../directory";
 import { OWNER, type Platform } from "../front";
 import { isDev, mintTestToken, sessionOf } from "./auth";
+import { authOps } from "./auth-settings";
 import { directoryOf, tokensOf } from "./d1";
 import type { Env } from "./env";
 import { counted } from "./timing";
@@ -71,6 +72,7 @@ export const platform = (env: Env): Platform => {
     secret: env.SESSION_SECRET,
     adminsOnly: isAdminsOnly(env.DEPLOY_TARGET),
     tokens: tokensOf(env),
+    auth: (origin) => authOps(env, origin),
     testToken: (login) => mintTestToken(env, login),
     docs: {
       create: (doc, files, index, opts) => counted("doc", () => host(doc).create(doc.owner, doc.id, files, index, opts)),

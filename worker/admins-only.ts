@@ -24,6 +24,9 @@
 //                                   logs and history, with the shared secret (worker/deploys.ts checks it)
 //   /api/gate... with DEPLOY_HOOK_SECRET
 //                                   production reads (and starts) staging's test runs before it moves main (deploy/gate.ts)
+//   /api/sign-in/... with DEPLOY_HOOK_SECRET
+//                                   production's Authentication page reads staging's sign-in status, and sets staging's
+//                                   GitHub app: until staging has one, no admin can sign in there (worker/auth-settings.ts)
 //   /api/snapshot/...               the deploy copying production's documents in, with SNAPSHOT_TOKEN (deploy/snapshot.ts)
 //   /api/factory/tasks/<id>/... with "Bearer fct.…"
 //                                   a factory VM reporting on its own task (worker/factory.ts checks the token)
@@ -42,6 +45,7 @@
 import { isAdminsOnly, TARGETS } from "../deploy/targets";
 import { esc, page, pagesHost, readPagesClaims, safeNext, whoOf, withTokens } from "../front";
 import { directoryOf } from "./d1";
+import { isSignInPath } from "./auth-settings";
 import { peer } from "./deploys";
 import type { Env } from "./env";
 import { pagesSite, platform } from "./platform";
@@ -63,6 +67,7 @@ function exempt(request: Request, env: Env, url: URL): boolean {
   if (/^\/api\/deploys\/[a-z]+\/hook\/?$/.test(path) || path == "/api/deploys/status") return true;
   if (path.startsWith("/api/deploys/") && peer(request, env)) return true;
   if ((path == "/api/gate" || path.startsWith("/api/gate/")) && peer(request, env)) return true;
+  if (isSignInPath(path) && peer(request, env)) return true;
   if (path.startsWith("/api/snapshot/")) return true;
   if (path.startsWith("/api/factory/tasks/") && /^Bearer\s+fct\./.test(auth)) return true;
   if ((path == "/git/erga.git" || path.startsWith("/git/erga.git/")) && gitSecret(auth)?.startsWith("fgt.")) return true;

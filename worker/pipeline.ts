@@ -8,7 +8,8 @@
 // published here, e.g. task #39's {type: "source"}).
 //
 // Each target's deploy history (deploy/branches.ts: the last 100 deploys and
-// their logs) is in this object's storage too.
+// their logs) is in this object's storage too, and so are the sign-in values an
+// admin sets on /admin/auth (worker/auth-settings.ts).
 //
 // In local development with ERGA_DEPLOY_MOCK=1 it deploys to the mock
 // Cloudflare's Erga account (deploy/mock.ts, fleet) with the mock builder,
@@ -210,6 +211,13 @@ export class Pipeline extends DurableObject<Env> {
     return this.deploys.remoteHook(name, body);
   }
   async alarm(): Promise<void> { await Promise.all([this.deploys.alarm(), this.peer?.alarm(), this.gate?.alarm().catch((e) => console.error("gate:", e))]); }
+
+  // ---- sign-in's values set on /admin/auth (auth-apps.ts, worker/auth-settings.ts): this server's own, here and not
+  // in D1, which staging replaces with a copy of production's. Keys "auth:<provider>"; the secret in them is encrypted.
+
+  authGet(key: string): Promise<unknown> { return this.ctx.storage.get(key); }
+  authPut(key: string, value: unknown): Promise<void> { return this.ctx.storage.put(key, value); }
+  async authDelete(key: string): Promise<void> { await this.ctx.storage.delete(key); }
 
   /** An event to everyone listening on /api/events. */
   publish(event: { type: string } & Record<string, unknown>): void {

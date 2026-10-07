@@ -44,6 +44,7 @@ import { adminDoor } from "./admin.ts";
 import { VIA } from "./attribution.ts";
 import { type Directory, type DocRow, type Grant, type Permission, type Role, type Route, type Who, NotAllowed, roleMay, UNTITLED } from "./directory.ts";
 import type { AgentToken, Tokens } from "./tokens.ts";
+import type { AuthOps } from "./auth-apps.ts";
 
 import type { PublishRequest, PublishResult, RestoreResult, Version, VersionsState } from "./versions.ts";
 import { pageAddress, resolvePage } from "./tree.ts";
@@ -136,6 +137,8 @@ export interface Platform {
   directory: Directory;
   /** Agent tokens (tokens.ts). */
   tokens: Tokens;
+  /** How people sign in (auth-apps.ts): this server's and the other deploy target's GitHub app, as `origin`'s server. */
+  auth?(origin: string): AuthOps;
 
   /** A test token for the test suite, minted by `login` (shown on /tokens), where the platform makes them. */
   testToken?(login: string): Promise<{ token: string; expires: Date }>;
@@ -203,7 +206,7 @@ export async function frontDoor(request: Request, base: Platform): Promise<Respo
   if (path == "/docs") return listDocs(platform, request);
   if (path == "/docs/delete" && request.method == "POST") return deleteDoc(platform, request);
   if (path == "/docs/share") return shareDoc(platform, request);
-  if (path == "/admin" || path == "/admin/changes" || path == "/admin/settings" || path == "/admin/users" || path == "/admin/api-keys" || path == "/admin/credentials" || path == "/admin/share") return adminDoor(platform, request);
+  if (path == "/admin" || path == "/admin/changes" || path == "/admin/settings" || path == "/admin/users" || path == "/admin/api-keys" || path == "/admin/credentials" || path == "/admin/share" || path == "/admin/auth" || path == "/admin/auth/status") return adminDoor(platform, request);
 
   const [, first, second, rest] = /^\/([^/]+)\/([^/]+)(\/.*)?$/.exec(path) ?? [];
   const nothing = () => page("Not found", "There's no document here. <a href=\"/\">Back to the start</a>.", 404);

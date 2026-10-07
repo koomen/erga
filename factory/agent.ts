@@ -6,7 +6,7 @@
 // its preview and its screenshots, and the board's buttons (start, merge,
 // discard, restart) and the Claude sign-out. And
 // the admin tools of server-tools.ts (`adminTools`): the settings on /admin,
-// their change log, the API keys (read, clear), and the users. And read-only
+// their change log, the API keys (read, clear), sign-in (read, clear: /admin/auth), and the users. And read-only
 // tools for Erga's own source (`sourceTools`: list, read, search and the git
 // log, at a branch or commit) in the server's copy of its repository
 // (source/browse.ts). And the dashboard's (`dashboardTools`): staging and
@@ -326,6 +326,8 @@ export const FACTORY_TOOL_VERBS: Record<string, [string, string]> = {
   set_user_deploy: ["Changing the deploy role of", "Changed the deploy role of"],
   remove_user: ["Removing", "Removed"],
   clear_api_key: ["Clearing", "Cleared"],
+  get_sign_in_status: ["Reading how people sign in", "Read how people sign in"],
+  clear_sign_in_app: ["Clearing the sign-in values of", "Cleared the sign-in values of"],
   merge_task: ["Merging", "Merged"],
   discard_task: ["Discarding", "Discarded"],
   restart_task: ["Restarting", "Restarted"],
@@ -413,6 +415,12 @@ For the server (the admin pages, /admin), you act as ${owner}, with their admin 
   are set only on /admin/api-keys: if ${owner} wants to set one, tell them to paste it
   there, never in this conversation. If they paste a key or token here anyway, don't use
   it or repeat it: tell them to set it on the page and to replace it, as it is no longer secret.
+- get_sign_in_status reads how people sign in (/admin/auth): the GitHub OAuth app of this
+  server and of the other deploy target, a live check of each, and how to make one where
+  it's missing. clear_sign_in_app clears the values set on /admin/auth (back to the
+  deploy's), or with what: "pending" discards new values that wait for a test sign-in.
+  An app's client ID and secret are pasted only on /admin/auth, never here: if ${owner}
+  wants an app set, give them the steps and send them to that page.
 - list_users, add_user, set_user_role, set_user_deploy and remove_user: who may sign in,
   who is an admin, and who has the deploy role.
 - These change the whole server, for everyone. Use them only when ${owner} asks in this
@@ -491,6 +499,7 @@ function about(name: string, args: unknown): string | null {
   if (typeof a.key == "string") return a.key;
   if (typeof a.target == "string") return a.target;
   if (name == "clear_api_key" && typeof a.name == "string") return a.name;
+  if (name == "clear_sign_in_app") return `${a.server == "other" ? "the other server" : "this server"}${a.what == "pending" ? " (pending)" : ""}`;
   if (name == "deploy_production") return typeof a.commit == "string" && a.commit ? `main to ${a.commit.slice(0, 10)}` : "main to staging";
   if (/^revoke_/.test(name) && typeof a.id == "string") return a.id;
   if (typeof a.login == "string") return a.login;
@@ -615,6 +624,8 @@ ${o.origin}/mcp, and \`GET ${api}/ext\` is the whole guide to them.
     list_users, add_user, set_user_role,        the users and their roles (/admin/users); nobody may demote or remove the last
       set_user_deploy, remove_user              admin, nor a bootstrap admin
     list_api_keys, clear_api_key                which API keys are set (never a key), and clearing one (/admin/api-keys)
+    get_sign_in_status, clear_sign_in_app       how people sign in, here and on the other server (never a secret), and
+                                                clearing the GitHub app values set on /admin/auth
     list_tokens, revoke_token                   ${o.owner}'s agent tokens (/tokens), this one too
     whoami, list_documents, ...                 ${o.owner}'s documents, as on ${o.origin}/docs
 

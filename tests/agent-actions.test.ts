@@ -19,7 +19,7 @@ const read = (file: string) => readFileSync(ROOT + file, "utf8");
 
 /** The files whose opening comment is a route table ("//   POST /api/...   what it does"). */
 const ROUTE_TABLES = [
-  "worker/index.ts", "worker/factory.ts", "worker/source.ts", "worker/deploys.ts", "worker/deploy.ts", "worker/home.ts",
+  "worker/index.ts", "worker/factory.ts", "worker/source.ts", "worker/deploys.ts", "worker/deploy.ts", "worker/home.ts", "worker/auth-settings.ts",
   "admin.ts", "server-api.ts", "front.ts", "home.ts", "host.ts",
 ];
 /** The pages' own scripts (and the pages that carry theirs inline): every route they call must be audited. */
@@ -118,12 +118,12 @@ test("only a secret, the production gate's override, or what isn't a person's ac
 
 test("the known gaps are closed: merge, discard, restart, production's deploy, the dashboard, keys and tokens", () => {
   for (const t of ["merge_task", "discard_task", "restart_task", "deploy_production", "sync_mirror", "list_branches", "list_deploys", "deploy_log", "redeploy", "deploy_homepage",
-    "clear_api_key", "list_agent_tokens", "revoke_agent_token", "sign_out_claude"]) expect(ADMIN).toContain(t);
+    "clear_api_key", "list_agent_tokens", "revoke_agent_token", "sign_out_claude", "get_sign_in_status", "clear_sign_in_app"]) expect(ADMIN).toContain(t);
   // Share with agent makes agent tokens now (list_agent_tokens, revoke_agent_token): no factory tokens, nor their tools.
   for (const t of ["list_factory_tokens", "revoke_factory_token"]) expect(ADMIN).not.toContain(t);
   for (const t of ["list_documents", "create_document", "delete_document"]) expect(DOCUMENT).toContain(t);
   // Never a tool that sets a secret.
-  for (const t of [...ADMIN, ...DOCUMENT]) expect(t).not.toMatch(/^(set|add|make|mint|create)_(api_key|token|claude)/);
+  for (const t of [...ADMIN, ...DOCUMENT]) expect(t).not.toMatch(/^(set|add|make|mint|create|save)_(api_key|token|claude|sign_in)/);
   expect(new Set(ADMIN).size).toBe(ADMIN.length);
 });
 

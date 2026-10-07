@@ -6,6 +6,9 @@
 //   /admin/changes             the Change log: the settings' versions, factory tasks added and merged, and production deploys, newest first; ?before=n for older ones
 //   /admin/users               the Users page: their roles (admin, deploy) as switches, when they joined, add and remove
 //   /admin/api-keys            the API keys page: every key Erga needs from the services it calls (GET /admin/credentials redirects here)
+//   /admin/auth                the Authentication page: how people sign in (GitHub), on this server and the other deploy target
+//   GET /admin/auth/status     the same as JSON {here, other} (auth-apps.ts, AuthStatus: never a secret), with live checks
+//   POST /admin/auth           server (here or other), and do=save (clientId, secret), do=discard (the values that wait for a test sign-in) or do=clear (force=1: even if sign-in would stop)
 //   POST /admin/settings       key, and value (JSON; null for never) to set it, or reset=1 to put it back to its default
 //   POST /admin/users          do=add (login, role), do=role (login, role), do=deploy (login, deploy: 1 or 0) or do=remove (login)
 //   POST /admin/credentials    name (anthropic, openai, github_mirror, cloudflare_deploy), and value to set or replace its key, or clear=1 to remove it
@@ -17,8 +20,14 @@
 // the factory keeps (its own API); and, read-only, the secrets only the
 // deploy sets. The page never gets a saved key back, nor does any answer here.
 //
+// The Authentication page (auth-apps.ts, worker/auth-settings.ts) shows each
+// server's GitHub OAuth app: its client ID (public), whether its secret is
+// set (never the secret), the URLs GitHub needs, a live check, and how to
+// make one. A client ID and secret pasted there win over the deploy's, after
+// GitHub accepts them, and with the lockout rules auth-apps.ts gives.
+//
 // Every page has the layout every admin page shares (admin-layout.ts): the
-// breadcrumb, Share with agent, and the sidebar to Settings, API keys, Change log, Users and Factory.
+// breadcrumb, Share with agent, and the sidebar to Settings, API keys, Authentication, Change log, Users and Factory.
 //
 // The POSTs answer JSON ({ entry } or { user } or { ok }, or { error } with
 // the message the directory gave, for a person to act on) and come only from
@@ -35,6 +44,7 @@ import { adminResponse } from "./admin-layout.ts";
 import { NotAllowed, type ServerRole, type User } from "./users.ts";
 import { CredentialError, type CredentialEntry, type DeploySecretEntry } from "./credentials.ts";
 import { ScopeError } from "./tokens.ts";
+import { AuthError, type AuthStatus, type CheckState, type OtherStatus } from "./auth-apps.ts";
 
 /** /admin and its POSTs. */
 export async function adminDoor(platform: Platform, request: Request): Promise<Response> {
@@ -57,6 +67,12 @@ export async function adminDoor(platform: Platform, request: Request): Promise<R
       return changesPage(platform, session!, Number.isInteger(before) && before > 0 ? before : undefined);
     }
     if (url.pathname == "/admin/api-keys") return apiKeysPage(platform, session!);
+    if (url.pathname == "/admin/auth" || url.pathname == "/admin/auth/status") {
+      const auth = platform.auth?.(url.origin);
+      if (!auth) return notFound();
+      const status = await auth.status(who!);
+      return url.pathname == "/admin/auth" ? authPage(session!, status) : Response.json(status, { headers: { "Cache-Control": "no-store" } });
+    }
     return url.pathname == "/admin/users" ? usersPage(platform, session!) : settingsPage(platform, session!);
   }
   if (request.method != "POST") return notFound();
@@ -76,6 +92,18 @@ export async function adminDoor(platform: Platform, request: Request): Promise<R
       const credentials = platform.directory.credentials, name = field("name");
       // The answer says what the page shows: never the key.
       return Response.json({ credential: form.get("clear") ? await credentials.clear(who!, name) : await credentials.set(who!, name, field("value")) });
+    }
+    if (url.pathname == "/admin/auth") {
+      const auth = platform.auth?.(url.origin);
+      if (!auth) return Response.json({ error: "This server has no sign-in settings." }, { status: 404 });
+      const server = field("server") == "other" ? "other" : "here";
+      // The answers say what the page shows: never the secret.
+      switch (field("do")) {
+        case "save": return Response.json({ result: await auth.save(who!, server, { clientId: field("clientId"), secret: field("secret") }) });
+        case "discard": return Response.json({ result: await auth.discard(who!, server) });
+        case "clear": return Response.json({ result: await auth.clear(who!, server, field("force") == "1") });
+        default: return Response.json({ error: "do= save, discard or clear" }, { status: 400 });
+      }
     }
     if (url.pathname == "/admin/settings") {
       const key = field("key");
@@ -102,7 +130,7 @@ export async function adminDoor(platform: Platform, request: Request): Promise<R
     }
   } catch (e) {
     if (e instanceof NotAllowed || e instanceof ScopeError) return Response.json({ error: e.message }, { status: 403 });
-    if (e instanceof ConfigError || e instanceof CredentialError) return Response.json({ error: e.message }, { status: 400 });
+    if (e instanceof ConfigError || e instanceof CredentialError || e instanceof AuthError) return Response.json({ error: e.message }, { status: 400 });
     throw e;
   }
 }
@@ -258,6 +286,12 @@ function eventItem(c: SettingChange): string {
       : u.event == "role" ? `made ${esc(u.role ?? "user")}` : `deploy role ${u.deploy ? "granted" : "revoked"}`;
     return `<li><span class="key">user</span> <span class="title">${esc(u.login)}</span> ${what}</li>`;
   }
+  if (c.signIn) {
+    const a = c.signIn, server = a.target ? `${esc(a.target)}'s` : "the";
+    const what = a.event == "set" ? `in use: client ID <code>${esc(a.clientId ?? "")}</code>` : a.event == "pending" ? `client ID <code>${esc(a.clientId ?? "")}</code> waits for a test sign-in`
+      : a.event == "tested" ? `client ID <code>${esc(a.clientId ?? "")}</code> in use after a test sign-in` : a.event == "discarded" ? `new values discarded` : "cleared: the deploy's values again";
+    return `<li><span class="key">sign-in</span> ${server} GitHub app ${what}</li>`;
+  }
   if (c.token) return `<li><span class="key">token</span> <span class="title">${esc(c.token.label)}</span> (${esc(c.token.of)}’s) revoked</li>`;
   const sha = (s: unknown) => `<code class="sha" title="${esc(String(s))}">${esc(String(s).slice(0, 7))}</code>`;
   if (c.task) {
@@ -285,7 +319,7 @@ function changeRow(v: SettingsVersion, kinds: Record<string, string | undefined>
     const doc = kinds[key] == "document" && x != null ? docs.get(String(x)) : undefined;
     return `<span class="was">${esc(doc ? doc.address : shown(x, kinds[key]))}</span>`;
   };
-  const what = v.changes.map((c) => c.task || c.release || c.user || c.token ? eventItem(c) : c.credential ? `<li><span class="key">${esc(c.key)}</span> key ${esc(c.credential)}</li>` : `<li><span class="key">${esc(c.key)}</span> ${value(c.key, c.from)} <span class="to" aria-label="to">→</span> ${value(c.key, c.to)}${c.reset ? ` <span class="badge">reset</span>` : ""}</li>`).join("");
+  const what = v.changes.map((c) => c.task || c.release || c.user || c.token || c.signIn ? eventItem(c) : c.credential ? `<li><span class="key">${esc(c.key)}</span> key ${esc(c.credential)}</li>` : `<li><span class="key">${esc(c.key)}</span> ${value(c.key, c.from)} <span class="to" aria-label="to">→</span> ${value(c.key, c.to)}${c.reset ? ` <span class="badge">reset</span>` : ""}</li>`).join("");
   return `  <li class="change" data-n="${v.n}">
     <time datetime="${at}" title="${at.slice(0, 16).replace("T", " ")} UTC">${at.slice(0, 16).replace("T", " ")}</time>${byHtml(v.by, v.via)}<ul class="what">${what}</ul>
   </li>`;
@@ -557,6 +591,144 @@ ${deployed.map(deploySecretRow).join("\n")}
       if (!confirm("Clear the " + li.dataset.label + "? " + (li.dataset.fallback ? "The server goes back to the deploy's " + li.dataset.env + "." : "What uses it stops until someone sets a key again."))) return;
       say(hint, "Clearing\u2026");
       try { await post(form.action, { name: li.dataset.name, clear: "1" }); reload(); } catch (err) { say(hint, err.message, true); }
+    });
+  }
+</script>` });
+}
+
+// ------------------------------------------------------------ /admin/auth: how people sign in
+
+const STATE_LABEL: Record<CheckState, string> = { working: "Working", misconfigured: "Misconfigured", not_set_up: "Not set up", unknown: "Unknown" };
+
+const AUTH_STYLE = PAGE_STYLE + `
+  .server { margin: 0 0 22px; padding: 18px 20px 20px; border: 1px solid var(--rule); border-radius: 14px; }
+  .server > header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; margin: 0 0 6px; }
+  .server h3 { margin: 0; font-size: 15px; font-weight: 600; color: var(--fg-strong); }
+  .server h3 small { margin-left: 6px; font-size: 13px; font-weight: 400; color: var(--soft); }
+  .server .state { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 10px; border-radius: 999px; font-size: 12.5px; font-weight: 600; }
+  .server .state::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+  .state.working { color: #15803d; background: color-mix(in srgb, #15803d 13%, transparent); }
+  .state.misconfigured { color: #b91c1c; background: color-mix(in srgb, #b91c1c 12%, transparent); }
+  .state.not_set_up { color: #b45309; background: color-mix(in srgb, #b45309 13%, transparent); }
+  .state.unknown { color: var(--soft); background: color-mix(in srgb, var(--chrome) 14%, transparent); }
+  .server .summary { margin: 0 0 12px; font-size: 13.5px; color: var(--fg); }
+  .server .reasons { margin: -6px 0 12px; padding-left: 18px; font-size: 13px; color: var(--soft); }
+  .server dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 7px 18px; margin: 0 0 4px; font-size: 13.5px; }
+  .server dt { color: var(--soft); }
+  .server dd { margin: 0; min-width: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; color: var(--fg-strong); }
+  .server dd code { font-family: var(--font-mono); font-size: 12.5px; overflow-wrap: anywhere; }
+  .server dd .src { font-size: 12px; color: var(--soft); }
+  .server .copy { height: 22px; padding: 0 8px; border: 1px solid var(--rule); border-radius: 6px; background: var(--bg); color: var(--soft); font: inherit; font-size: 11.5px; cursor: pointer; }
+  .server .copy:hover { color: var(--fg-strong); }
+  .server .note { margin: 12px 0 0; font-size: 13px; color: var(--soft); }
+  .server .pending { margin: 14px 0 0; padding: 12px 14px; border-radius: 10px; background: color-mix(in srgb, var(--chrome) 9%, transparent); font-size: 13.5px; }
+  .server .pending p { margin: 0 0 8px; }
+  .server .pending .failed { color: #b91c1c; }
+  .server .row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  .server .row a.pill { text-decoration: none; }
+  .server details { margin: 14px 0 0; font-size: 13.5px; }
+  .server details > summary { cursor: pointer; color: var(--fg-strong); font-weight: 500; }
+  .server ol.steps { margin: 8px 0 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; color: var(--fg); }
+  .server form.configure { margin: 16px 0 0; padding-top: 14px; border-top: 1px solid var(--rule); display: grid; grid-template-columns: 1fr 1fr auto; gap: 8px; align-items: end; }
+  .server form.configure label { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; color: var(--soft); }
+  .server form.configure .input { width: 100%; font-family: var(--font-mono); font-size: 12.5px; }
+  .server form.configure .lede { grid-column: 1 / -1; margin: 0; }
+  .server .hint { margin: 8px 0 0; font-size: 13px; color: var(--soft); }
+  .server .hint.error { color: #b91c1c; }
+  @media (max-width: 640px) { .server form.configure { grid-template-columns: 1fr; } .server dl { grid-template-columns: 1fr; gap: 2px; } .server dd { margin-bottom: 6px; } }
+`;
+
+const who_ = (by: string, via?: string | null) => esc(byLine(by, via));
+
+/** One server's card: its state, its app's values, what waits for a test, how to make an app, and the form to set one. */
+function serverCard(s: AuthStatus | OtherStatus, o: { server: "here" | "other"; label: string; editable: boolean; session: Session; here: AuthStatus }): string {
+  const host = new URL(s.origin).host;
+  const head = (state: CheckState | null, text: string) => `<header><h3>${esc(o.label)}<small>${esc(host)}</small></h3>${state ? `<span class="state ${state}">${esc(text)}</span>` : ""}</header>`;
+  if ("error" in s) {
+    return `<section class="server" data-server="${o.server}" data-state="unreachable">${head("unknown", "Can't reach it")}
+      <p class="summary">This page can't read ${esc(host)}'s sign-in: ${esc(s.error)}</p>
+      <p class="note">Its own Authentication page is at <a href="${esc(s.origin)}/admin/auth">${esc(s.origin)}/admin/auth</a>.</p></section>`;
+  }
+  const src = (from: "page" | "deploy") => from == "page" ? "set on /admin/auth" : "from the deploy";
+  const copy = (text: string) => `<button type="button" class="copy" data-copy="${esc(text)}" aria-label="Copy ${esc(text)}">Copy</button>`;
+  const setBy = s.page ? ` · ${who_(s.page.updatedBy, s.page.updatedVia)}, ${esc(setAt(s.page.updated))}` : "";
+  const rows = `<dl>
+      <dt>Client ID</dt><dd>${s.inUse.clientId ? `<code class="client-id">${esc(s.inUse.clientId)}</code><span class="src">${src(s.inUse.source)}${s.inUse.source == "page" ? setBy : ""}</span>` : `<span class="src">Not set</span>`}</dd>
+      <dt>Client secret</dt><dd>${s.inUse.secretSet ? `Set<span class="src">${src(s.inUse.source)} · never shown</span>` : `<span class="src">Not set</span>`}</dd>
+      <dt>Homepage URL</dt><dd><code>${esc(s.homepageUrl)}</code>${copy(s.homepageUrl)}</dd>
+      <dt>Callback URL</dt><dd><code class="callback">${esc(s.callbackUrl)}</code>${copy(s.callbackUrl)}</dd>
+    </dl>`;
+  const deployNote = s.inUse.source == "page" ? `<p class="note">The deploy's values: ${s.deploy.clientId ? `client ID <code>${esc(s.deploy.clientId)}</code>` : "no client ID"}, ${s.deploy.secretSet ? "a secret" : "no secret"}. Clear goes back to them.</p>` : "";
+  const devNote = s.dev ? `<p class="note">Local development: everyone signs in as the dev login, without GitHub, so this server doesn't use these values. A hosted server does.</p>` : "";
+  // A real sign-in is what checks the callback URL: on this server a link, on the other a link to its own sign-in.
+  const testUrl = `${o.server == "here" ? "" : s.origin}/auth/github?app=pending&next=/admin/auth`;
+  const test = s.pending?.test && !s.pending.test.ok ? `<p class="failed">The last test sign-in failed, ${esc(setAt(s.pending.test.at))}: ${esc(s.pending.test.error ?? "")}</p>` : "";
+  const pending = s.pending ? `<div class="pending">
+      <p><b>New values wait for a test sign-in.</b> Client ID <code>${esc(s.pending.clientId)}</code>, set by ${who_(s.pending.updatedBy, s.pending.updatedVia)}, ${esc(setAt(s.pending.updated))}. ${s.pendingCheck ? esc(s.pendingCheck.summary) : ""} Sign-in keeps the values in use until an admin signs in with the new ones.</p>
+      ${test}
+      <div class="row">${o.server == "here" || s.target ? `<a class="pill test" href="${esc(o.server == "here" ? link(testUrl, o.session) : testUrl)}">Test sign-in${o.server == "here" ? "" : ` on ${esc(host)}`}</a>` : ""}${o.editable ? `<button type="button" class="pill discard">Discard</button>` : ""}</div>
+    </div>` : "";
+  const reasons = s.check.reasons.length && s.check.state != "working" ? `<ul class="reasons">${s.check.reasons.map((r) => `<li>${esc(r)}</li>`).join("")}</ul>` : "";
+  const steps = s.setup ? `<details class="setup"${s.check.state == "not_set_up" ? " open" : ""}><summary>How to make ${s.check.state == "not_set_up" ? "its" : "a new"} GitHub OAuth app</summary><ol class="steps">${s.setup.map((x) => `<li>${esc(x).replace(/https:\/\/github\.com\/settings\/applications\/new/, (u) => `<a href="${u}" target="_blank" rel="noopener">${u}</a>`)}</li>`).join("")}</ol></details>` : "";
+  // Where the other server's values are set, when not here.
+  const elsewhere = !o.editable && o.server == "other" ? `<p class="note">${esc(host)}'s sign-in is set on its own Authentication page: <a href="${esc(s.origin)}/admin/auth">${esc(s.origin)}/admin/auth</a>.</p>` : "";
+  const cannot = !o.editable && o.server == "here" && !s.canStore ? `<p class="note">This server has no FACTORY_KEY to encrypt a secret with, so its values are set only in the deploy.</p>` : "";
+  const form = o.editable ? `<form class="configure" method="post" action="${esc(link("/admin/auth", o.session))}">
+      <p class="lede">${s.check.state == "working" ? "Paste another app's values to replace these. GitHub must accept them first, and they wait for a test sign-in before anyone else uses them." : "Paste the app's values. GitHub must accept them first; then sign-in uses them at once."}</p>
+      <input type="hidden" name="server" value="${o.server}">
+      <label>Client ID<input class="input" name="clientId" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Ov23li…" required></label>
+      <label>Client secret<input class="input" type="password" name="secret" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Paste the secret" required></label>
+      <div class="row"><button class="pill save">Save</button>${s.page ? `<button type="button" class="pill clear">Clear</button>` : ""}</div>
+    </form>` : "";
+  return `<section class="server" data-server="${o.server}" data-target="${esc(s.target ?? "")}" data-state="${s.check.state}">${head(s.check.state, STATE_LABEL[s.check.state])}
+    <p class="summary">${esc(s.check.summary)}</p>${reasons}
+    ${rows}${deployNote}${devNote}${pending}${steps}${elsewhere}${cannot}${form}
+    <p class="hint" role="status"></p>
+  </section>`;
+}
+
+/** /admin/auth: how people sign in, on this server and on the other deploy target. */
+function authPage(session: Session, status: { here: AuthStatus; other: OtherStatus | null }): Response {
+  const { here, other } = status;
+  const name = (t: string | null) => (t ? t[0].toUpperCase() + t.slice(1) : "This server");
+  const otherCard = other ? serverCard(other, { server: "other", label: name(other.target), editable: !("error" in other) && other.takesFrom == here.target && other.canStore, session, here }) : "";
+  return adminResponse({ session, title: "Authentication", here: "auth", style: AUTH_STYLE, body: `
+  <section aria-labelledby="auth-head" class="auth">
+    <h2 id="auth-head">Authentication</h2>
+    <p class="lede">People sign in with GitHub. Each server needs a GitHub OAuth app of its own, with its own callback URL. The deploy sets each app; values pasted here win over the deploy's while they are set. The client secret is kept encrypted and shown to nobody. A change never signs out anyone who is signed in.</p>
+    ${serverCard(here, { server: "here", label: here.target ? `${name(here.target)} (this server)` : "This server", editable: here.canStore, session, here })}
+    ${otherCard}
+  </section>
+<script>
+  ${POST_SCRIPT}
+  for (const card of document.querySelectorAll("section.server")) {
+    const hint = card.querySelector(".hint"), server = card.dataset.server;
+    for (const b of card.querySelectorAll("button.copy")) b.addEventListener("click", async () => {
+      try { await navigator.clipboard.writeText(b.dataset.copy); b.textContent = "Copied"; setTimeout(() => { b.textContent = "Copy"; }, 1500); } catch {}
+    });
+    const form = card.querySelector("form.configure");
+    form?.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      say(hint, "Checking the values with GitHub\u2026");
+      try {
+        const { result } = await post(form.action, { do: "save", server, clientId: form.elements.clientId.value, secret: form.elements.secret.value });
+        form.reset();
+        say(hint, result.message);
+        setTimeout(reload, 1200);
+      } catch (err) { say(hint, err.message, true); }
+    });
+    card.querySelector("button.discard")?.addEventListener("click", async () => {
+      if (!confirm("Discard the new values? Sign-in keeps the values in use.")) return;
+      try { await post(form.action, { do: "discard", server }); reload(); } catch (err) { say(hint, err.message, true); }
+    });
+    card.querySelector("button.clear")?.addEventListener("click", async () => {
+      if (!confirm("Clear the values set on this page? Sign-in goes back to the deploy's values.")) return;
+      say(hint, "Clearing\u2026");
+      try { await post(form.action, { do: "clear", server }); reload(); }
+      catch (err) {
+        if (!/force/.test(err.message) || !confirm(err.message + "\\n\\nClear anyway?")) { say(hint, err.message, true); return; }
+        try { await post(form.action, { do: "clear", server, force: "1" }); reload(); } catch (err2) { say(hint, err2.message, true); }
+      }
     });
   }
 </script>` });

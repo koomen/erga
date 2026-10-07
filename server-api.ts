@@ -231,7 +231,7 @@ function documentTools(): ServerTool[] {
 }
 
 /** What a tool in server-tools.ts runs with, for an agent token's person. */
-const toolWho = (ctx: ToolContext): ToolWho => ({ dir: ctx.platform.directory, who: whoOf(ctx.session), origin: ctx.origin });
+const toolWho = (ctx: ToolContext): ToolWho => ({ dir: ctx.platform.directory, who: whoOf(ctx.session), origin: ctx.origin, auth: ctx.platform.auth?.(ctx.origin) });
 
 /** The tools the editor's agent has too (server-tools.ts): sharing, and the admin ones. The documents list's are in TOOLS above, with files. */
 const sharedTools: ServerTool[] = SERVER_TOOLS.filter((t) => !t.docs).map((t) => ({

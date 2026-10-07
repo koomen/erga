@@ -19,6 +19,7 @@
 #                     scoped tokens: /tokens, each scope, expiry, the device flow and git push (tests/scoped-tokens.ts),
 #                     the admin pages' layout, and who may reach them (tests/admin-layout.ts),
 #                     the admin pages as one page, the agent panel staying across them (tests/admin-nav.ts),
+#                     the Authentication page: sign-in's GitHub apps on production and staging (tests/admin-auth.ts),
 #                     the viewer's controls fading while you read (tests/fade.ts),
 #                     a presentation's steps, viewing and editing (tests/steps.ts),
 #                     the Slides template, stepped through viewing and editing (tests/slides.ts),
@@ -164,6 +165,7 @@ run 1 isolation bun tests/isolation.ts                   # [4]
 
 run 1 admin-layout bun tests/admin-layout.ts             # [8]
 run 1 admin-nav bun tests/admin-nav.ts                   # [6]
+run 1 admin-auth bun tests/admin-auth.ts                 # [15]
 run 1 admin-agent-chat bun tests/admin-agent-chat.ts     # [30]
 run 1 admin-agent-source bun tests/admin-agent-source.ts # [15]
 run 1 admin-agent-actions bun tests/admin-agent-actions.ts # [20]

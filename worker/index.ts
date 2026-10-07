@@ -11,7 +11,10 @@
 //   /<owner>/<slug>            the editor on that document (for those it's shared with); /d/<id>,
 //                              /<owner>/<id> and old slugs redirect here
 //   /d/<id>/<rest>             the document's own host: /api/..., /doc/..., the sockets (also under the other addresses)
-//   /auth/github[/callback]    signing in; /auth/logout signs out
+//   /auth/github[/callback]    signing in; /auth/logout signs out; /auth/github?app=pending, a test sign-in with the
+//                              GitHub app values that wait on /admin/auth (worker/auth.ts)
+//   /api/sign-in/...           another of Erga's servers reads this one's sign-in status, or sets its GitHub app
+//                              (worker/auth-settings.ts, with DEPLOY_HOOK_SECRET)
 //   /llms.txt, /api/..., /mcp  the server's API for agents, with an agent token (server-api.ts, tokens.ts)
 //   /settings, /tokens/...     your settings: agent tokens, and a test token for running the test suite against erga.dev
 //   /deploy                    deploy Erga to your own Cloudflare account (worker/deploy.ts; the deploy_page setting,
@@ -20,7 +23,8 @@
 //   /api/deploys, /api/events  branch deploys' status and events, and deploy logs (worker/deploys.ts)
 //   /auth/test?token=&as=      a test person (Ada, Bo...) signed in with one; they open only test documents
 //   /git/erga.git/...          Erga's own repository, over Git smart HTTP (worker/source.ts; reads open, pushes need an admin's admin-scope token)
-//   /admin, /admin/changes, /admin/users   the server's settings, their change log, and its users (admin.ts)
+//   /admin, /admin/changes, /admin/users, /admin/auth   the server's settings, their change log, its users, and how
+//                              people sign in (admin.ts)
 
 //   /api/admin/agent/...       each admin's agent conversation and panel layout, kept (worker/factory.ts)
 //   /api/admin/guide           the guide for an outside agent with an admin token (Share with agent; worker/factory.ts)
@@ -54,6 +58,7 @@ import { adminAgentApi, adminGuideApi, factoryApi, isAdminAgentPath, previewTick
 import { previewDoor } from "../factory/cloudflare";
 import { sourceApi, sourceDoor, sourceGit } from "./source";
 import { deploysDoor, isDeploysPath } from "./deploys";
+import { isSignInPath, signInDoor } from "./auth-settings";
 import { forgetHome, serveHome, serveHomeFile, serveHomeRoot } from "./home";
 import { homeApi } from "../home";
 import type { Env } from "./env";
@@ -142,6 +147,8 @@ async function route(request: Request, env: Env, url: URL, ctx: ExecutionContext
   }
   if (path == "/source" || path == "/admin/source" || path == "/admin/factory") return sourceDoor(request, env, platform(env), url);
   if (path.startsWith("/api/source/")) return sourceApi(request, env, platform(env), url);
+  // Sign-in's status and GitHub app, server to server (worker/auth-settings.ts).
+  if (isSignInPath(path)) return signInDoor(request, env);
   // Branch deploys and their status, the event stream, and staging's snapshot endpoints (worker/deploys.ts).
   if (isDeploysPath(path)) return deploysDoor(request, env, platform(env));
   const read = request.method == "GET" || request.method == "HEAD";
