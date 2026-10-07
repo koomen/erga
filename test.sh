@@ -38,6 +38,7 @@
 #                     instructions for a working task (tests/factory-instruct.ts),
 #                     who the factory's commits are by (tests/factory-authors.ts),
 #                     the factory across a reset of its Durable Object, and at Claude Code's limits (tests/factory-reset.ts),
+#                     local tasks, run by a local agent with no VM (tests/factory-local.ts),
 #                     the admin agent reading Erga's own source, in the Worker (tests/admin-agent-source.ts),
 #                     the agents doing what their person does on the page, in the Worker (tests/admin-agent-actions.ts),
 #                     open pages across a redeploy: reconnecting, and reloading with their state (tests/redeploy.ts),
@@ -146,6 +147,7 @@ run 1 factory-chime bun tests/factory-chime.ts           # [20]
 run 1 factory-instruct bun tests/factory-instruct.ts     # [70]
 run 1 factory-authors bun tests/factory-authors.ts       # [20]
 run 1 factory-reset bun tests/factory-reset.ts           # [150]
+run 1 factory-local bun tests/factory-local.ts           # [21]
 run 1 versions bun tests/versions.ts                     # [13]
 run 1 attach bun tests/attach.ts                         # [10]
 run 1 docs-pages bun tests/docs-pages.ts                 # [6]

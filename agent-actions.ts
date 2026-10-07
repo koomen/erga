@@ -36,6 +36,7 @@ export interface AgentAction {
 const SECRET = "a secret: pasted or made only on the page, never in a conversation";
 const PANEL = "the agent panel itself (the conversation, its model, stop, undo)";
 const STREAM = "the page's live updates (server-sent events)";
+const VM = "a task's own worker (its VM, or a local task's agent: factory/task.ts), not a person's action";
 
 export const AGENT_ACTIONS: AgentAction[] = [
   // ------------------------------------------------------------ /admin: settings, change log, users, API keys (admin.ts)
@@ -76,14 +77,15 @@ export const AGENT_ACTIONS: AgentAction[] = [
   { route: "POST /api/factory/agent", domain: "none", action: "A message to the admin agent", exempt: PANEL },
   { route: "POST /api/factory/agent/abort|reset", domain: "none", action: "Stop the admin agent, or start a new conversation", exempt: PANEL },
   { route: "POST /api/factory/agent/model", domain: "none", action: "Switch the admin agent's model", exempt: PANEL },
-  // A task's VM, with its task's token.
-  { route: "GET /api/factory/tasks/<id>/brief", domain: "none", action: "A VM reads its task", exempt: "a task's VM" },
-  { route: "GET /api/factory/tasks/<id>/inbox", domain: "none", action: "A VM reads new instructions", exempt: "a task's VM" },
-  { route: "POST /api/factory/tasks/<id>/inbox", domain: "none", action: "A VM takes new instructions", exempt: "a task's VM" },
-  { route: "POST /api/factory/tasks/<id>/log", domain: "none", action: "A VM writes its log", exempt: "a task's VM" },
-  { route: "POST /api/factory/tasks/<id>/branch", domain: "none", action: "A VM says its branch is made", exempt: "a task's VM" },
-  { route: "POST /api/factory/tasks/<id>/preview", domain: "none", action: "A VM says its preview is up", exempt: "a task's VM" },
-  { route: "POST /api/factory/tasks/<id>/screenshots", domain: "none", action: "A VM adds a screenshot", exempt: "a task's VM" },
+  // A task's VM, with its task's token; or a local task's own agent (factory/task.ts), with an admin token.
+  { route: "GET /api/factory/tasks/<id>/brief", domain: "none", action: "A VM reads its task", exempt: VM },
+  { route: "GET /api/factory/tasks/<id>/inbox", domain: "none", action: "A VM reads new instructions", exempt: VM },
+  { route: "POST /api/factory/tasks/<id>/inbox", domain: "none", action: "A VM takes new instructions", exempt: VM },
+  { route: "POST /api/factory/tasks/<id>/log", domain: "none", action: "A VM writes its log", exempt: VM },
+  { route: "POST /api/factory/tasks/<id>/branch", domain: "none", action: "A VM says its branch is made", exempt: VM },
+  { route: "POST /api/factory/tasks/<id>/preview", domain: "none", action: "A VM says its preview is up", exempt: VM },
+  { route: "POST /api/factory/tasks/<id>/screenshots", domain: "none", action: "A VM adds a screenshot", exempt: VM },
+  { route: "POST /api/factory/tasks/<id>/git", domain: "none", action: "A local task's agent gets a git token for its branch (task push)", exempt: `${VM}: a push credential, and the admin agent never pushes` },
 
   // ------------------------------------------------------------ /admin/factory: the dashboard of source and deploys
   { route: "GET /api/source/branches", domain: "admin", action: "Read staging, main and the mirror (Factory, dashboard)", tool: "list_branches" },

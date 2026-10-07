@@ -126,6 +126,9 @@ export const BOARD_STYLE = `
   .chip.start { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, var(--line)); }
   .chip.stuck { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 45%, var(--line)); }
   .chip.stuck::before { background: currentColor; }
+  /* A local task (no VM: a local agent runs it): a chip with its machine, on the card's top line. */
+  .chip.local { flex: 0 1 auto; min-width: 0; max-width: 130px; overflow: hidden; text-overflow: ellipsis; color: var(--ok); border-color: color-mix(in srgb, var(--ok) 45%, var(--line)); }
+  .chip.local::before { border-radius: 2px; flex: none; }
   .card.blocked { background: color-mix(in srgb, var(--card) 55%, var(--panel)); border-style: dashed; box-shadow: none; }
   .card.blocked .title { color: var(--muted); }
   .actions-why { font-size: 11px; color: var(--muted); margin-top: 4px; }
@@ -210,7 +213,11 @@ const stalledMs = (t) => {
   return ms >= ${STALL_MS} ? ms : 0;
 };
 const quiet = (ms) => { const m = Math.floor(ms / 60000); return m < 60 ? m + " min" : Math.floor(m / 60) + " h" + (m % 60 ? " " + (m % 60) + " min" : ""); };
-const stalledTip = (t, ms) => "No new log line for " + quiet(ms) + ", since " + new Date(t.log.at(-1)?.at ?? t.updatedAt).toLocaleTimeString() + ". Claude Code may be hung, or in one long step.";
+const stalledTip = (t, ms) => "No new log line for " + quiet(ms) + ", since " + new Date(t.log.at(-1)?.at ?? t.updatedAt).toLocaleTimeString() + "." +
+  (t.local ? " The local agent may be gone (its machine asleep, say), or in one long step. Hand to a VM goes on from what it pushed." : " Claude Code may be hung, or in one long step.");
+/** A local task's runner: who, on which machine. */
+const runsWhere = (t) => t.local.by + " on " + t.local.machine;
+const localChip = (t) => t.local ? '<span class="chip local" title="' + esc("A local task: no VM. " + runsWhere(t) + " runs it, and reports with the task command.") + '">local · ' + esc(t.local.machine) + '</span>' : "";
 function stalledBadge(t) {
   const ms = stalledMs(t);
   return ms ? '<span class="stalled-badge" title="' + esc(stalledTip(t, ms)) + '">stalled ' + quiet(ms) + '</span>' : "";
@@ -249,11 +256,14 @@ function actions(t, inDialog) {
   // Restart: any time once the task has run (working, merging and stuck too): its VM saves the work, then a fresh one starts.
   if (!done && !(t.status == "queued" && !t.vm)) {
     const why = t.blockedBy?.start.length ? "Can't restart until " + ids(t.blockedBy.start) + " merge" + (t.blockedBy.start.length == 1 ? "s" : "") : null;
-    const stops = t.status == "working" ? "Stop Claude Code, save its work on the branch, and start it again in a fresh VM"
+    const stops = t.local ? "Stop waiting for " + runsWhere(t) + ": a fresh VM's Claude Code goes on from what it pushed to the branch, and its reports are refused from then on"
+      : t.status == "working" ? "Stop Claude Code, save its work on the branch, and start it again in a fresh VM"
       : ["merging", "needs agent"].includes(t.status) ? "Stop the merge and Claude Code, save the work on the branch, and start the task again in a fresh VM"
       : "Run the task again on its branch, in a fresh VM";
-    b.push(why ? off("restart", "Restart", why) : on("restart", "Restart", stops));
-  } else b.push(off("restart", "Restart", done ? gone : "The task hasn't run yet"));
+    const label = t.local ? "Hand to a VM" : "Restart";
+    b.push(why ? off("restart", label, why) : on("restart", label, stops));
+  } else if (t.local && !done && !t.blockedBy?.start.length) b.push(on("restart", "Hand to a VM", "Hand the task to a VM: it starts in a fresh VM when nothing blocks it, and the local agent's reports are refused"));
+  else b.push(off("restart", "Restart", done ? gone : "The task hasn't run yet"));
 
   if (!["merging", ...(done ? [t.status] : [])].includes(t.status))
     b.push({ key: "discard", on: true, html: () => armed.has(t.id) ? '<button class="confirm" data-btn="discard" data-act="discard" data-id="' + t.id + '">Discard branch?</button>' : '<button class="danger" data-btn="discard" data-act="arm" data-id="' + t.id + '" title="Delete the branch and stop the VM">Discard</button>' });
@@ -264,8 +274,9 @@ function actions(t, inDialog) {
     if (why) { b.push(off("merge", "Merge", why, "primary")); note = why; }
     else b.push(on("merge", "Merge", "Merge the branch into staging", "primary"));
   } else if (t.status == "needs agent") {
-    b.push(off("merge", "Merge", "Claude Code is finishing the merge", "primary"));
-    note = "Needs agent: the task’s Claude Code is finishing the merge, which then goes on by itself";
+    b.push(off("merge", "Merge", t.local ? "The local agent is finishing the merge" : "Claude Code is finishing the merge", "primary"));
+    note = t.local ? "Needs agent: " + runsWhere(t) + " is told to finish the merge in its checkout (task inbox); the merge then goes on by itself. Or hand the task to a VM"
+      : "Needs agent: the task’s Claude Code is finishing the merge, which then goes on by itself";
   } else if (t.status == "merging") b.push(busy("merge", t.log.at(-1)?.message.includes("waiting for") ? "Waiting…" : "Merging…", "The merge is running", "primary"));
   else b.push(off("merge", "Merge", done ? gone : t.status == "failed" ? "The task failed: restart it, or send more instructions" : "The task isn't ready to merge yet", "primary"));
 
@@ -288,7 +299,7 @@ function card(t) {
   const thumbs = t.screenshots.slice(-3).map((s) => '<img src="/api/factory/shots/' + esc(s.file) + '" alt="' + esc(s.caption) + '" loading="lazy">').join("");
   return '<div class="card ' + cls(t.status) + (waitsToStart(t) ? " blocked" : "") + (stalledMs(t) ? " stalled" : "") + '" data-open="' + t.id + '">' +
     '<div class="top"><span class="id">#' + t.id + '</span><span class="title" title="' + esc(t.title) + '">' + esc(t.title) + '</span>' +
-    (t.status == "failed" ? '<span class="flag">failed</span>' : t.status == "needs agent" ? '<span class="flag">needs agent</span>' : "") + stalledBadge(t) +
+    localChip(t) + (t.status == "failed" ? '<span class="flag">failed</span>' : t.status == "needs agent" ? '<span class="flag">needs agent</span>' : "") + stalledBadge(t) +
     '<span class="when" title="' + esc((when == t.mergedAt ? "Merged " : "Last update ") + new Date(when).toLocaleString()) + '">' + short(when) + '</span></div>' +
     (t.error ? (depChip(t) ? '<div class="last">' + depChip(t) + '</div>' : "") + '<div class="err" title="' + esc(t.error) + '">' + esc(t.error) + '</div>' + (t.status == "needs agent" && last ? '<div class="agent-now" title="' + esc(last.message) + '">Now: ' + esc(last.message) + '</div>' : "")
       : depChip(t) || (last && t.status != "merged") ? '<div class="last"' + (last ? ' title="' + esc(last.message) + '"' : "") + '>' + depChip(t) + (last && t.status != "merged" && !waitsToStart(t) ? esc(last.message) : "") + '</div>' : "") +
@@ -343,6 +354,9 @@ function renderDialog() {
     '<span class="branch">' + esc(t.branch) + (t.base ? " from staging at " + esc(t.base.slice(0, 10)) : "") + '</span>' +
     // Who added it (an admin, or their agent), and the person its commits are by (factory/author.ts).
     '<span class="muted person" title="Its commits are authored by this person; Erga factory commits them">Added by ' + esc(t.by) + (t.person ? ' · commits by ' + esc(t.person) : '') + '</span>' +
+    // A local task: who runs it, where (no VM); or one that was handed to a VM.
+    (t.local ? '<span class="local-where" title="A local task: no VM. Its agent reports with the task command; Hand to a VM gives it to a fresh VM.">' + localChip(t) + ' Runs locally: ' + esc(runsWhere(t)) + ', since ' + esc(new Date(t.local.since).toLocaleString()) + '</span>'
+      : t.handedFrom ? '<span class="muted">Ran locally (' + esc(t.handedFrom) + '), then handed to a VM</span>' : "") +
     (t.mergeCommit ? '<span class="muted">merged as ' + esc(t.mergeCommit.slice(0, 10)) + '</span>' : "") + (t.vm ? '<span class="muted">VM ' + esc(t.vm) + '</span>' : "") + '</div>' +
     actions(t, true) +
     (stalledMs(t) ? '<div class="stalled-note" id="stalled-note">Stalled: ' + esc(stalledTip(t, stalledMs(t))) + '</div>' : "") +
@@ -351,7 +365,8 @@ function renderDialog() {
     depsSection(t) +
     (t.summary ? '<section><h4>Summary</h4><div class="text">' + esc(t.summary) + '</div></section>' : "") +
     '<section><h4>The ask</h4><div class="text">' + esc(t.description) + '</div></section>' +
-    (revisable ? '<section><h4>More instructions</h4>' + (working ? '<p class="hint">Claude Code works on this task now. It gets these instructions when its current step ends, and keeps its work.' + (t.waiting ? ' ' + t.waiting + (t.waiting == 1 ? ' instruction waits' : ' instructions wait') + ' for it now.' : '') + '</p>' : '') + '<textarea id="instructions" placeholder="What Claude Code should change next">' + esc(keep) + '</textarea><div class="row"><span class="why" id="revise-why"></span><button class="primary" data-act="revise" data-id="' + t.id + '">Send to Claude Code</button></div></section>' : "") +
+    (revisable ? '<section><h4>More instructions</h4>' + (t.local ? '<p class="hint">' + esc(runsWhere(t)) + ' runs this task. It gets these instructions with <code>task inbox</code>, when a step ends.' + (t.waiting ? ' ' + t.waiting + (t.waiting == 1 ? ' instruction waits' : ' instructions wait') + ' for it now.' : '') + '</p>'
+      : working ? '<p class="hint">Claude Code works on this task now. It gets these instructions when its current step ends, and keeps its work.' + (t.waiting ? ' ' + t.waiting + (t.waiting == 1 ? ' instruction waits' : ' instructions wait') + ' for it now.' : '') + '</p>' : '') + '<textarea id="instructions" placeholder="What ' + (t.local ? "the local agent" : "Claude Code") + ' should change next">' + esc(keep) + '</textarea><div class="row"><span class="why" id="revise-why"></span><button class="primary" data-act="revise" data-id="' + t.id + '">' + (t.local ? "Send to the local agent" : "Send to Claude Code") + '</button></div></section>' : "") +
     '<section><h4>Log</h4><div class="log" id="task-log">' + log + '</div></section></div>';
   const l = $("task-log"); if (l) l.scrollTop = l.scrollHeight;
   if (!d.open) d.showModal();
