@@ -12,6 +12,7 @@
 //   servers.main()     a dev server, signed in as DEV_LOGIN, with no agent key
 //   servers.agent()    the same with an agent key that is never used (the agent's UI comes on)
 //   servers.factory()  the factory with simulated VMs and the scripted agent model
+//   servers.script()   a plain dev server whose agents (the editor's, the admin's) run on the scripted model
 //   servers.mock()     Cloudflare pretend (deploy/mock.ts), no deploy target: /deploy deploys to the mock
 //   servers.staging()  staging, deploying itself on the mock Cloudflare: admins only, its pipeline, the gate's fake runner
 //   servers.gate()     no deploy target, the production gate's fake runner (fast) and the scripted agent model
@@ -62,10 +63,15 @@ export const servers = {
   agent: once("agent", () => startServer({ env: { ANTHROPIC_API_KEY: "sk-ant-test-not-used" } })),
   factory: once("factory", async (): Promise<FactoryServer> => {
     const secret = `factory-test-${crypto.randomUUID()}`;
-    const s = await startServer({ env: { ERGA_AGENT_MODEL: "script", ERGA_FACTORY_RUNNER: "sim", ERGA_LINK_SECRET: secret, ERGA_FACTORY_SIM_NO_SCRIPTS: "1" } });
+    const s = await startServer({ env: { ERGA_AGENT_MODEL: "script", ERGA_FACTORY_RUNNER: "sim", ERGA_LINK_SECRET: secret, ERGA_FACTORY_SIM_NO_SCRIPTS: "1",
+      // A document's edits are a version soon after they stop (worker/doc-host.ts), for the attribution tests' editor agent.
+      ERGA_WRITE_DELAY_MS: "50", ERGA_VERSION_IDLE_MS: "800", ERGA_VERSION_MAX_MS: "6000" } });
     const initial = await (await fetch(`${s.root}/api/factory`)).json() as { enabled: boolean };
     return Object.assign(s, { secret, initial });
   }),
+  // The scripted model (agent.ts, "@script [...]"): a message plays the tool calls and replies it lists. A task the
+  // admin agent queues runs in a simulated VM, never in this machine's Docker.
+  script: once("script", () => startServer({ env: { ERGA_AGENT_MODEL: "script", ERGA_FACTORY_RUNNER: "sim", ERGA_FACTORY_SIM_NO_SCRIPTS: "1" } })),
   mock: once("mock", () => startServer({ env: { ERGA_DEPLOY_MOCK: "1" } })),
   staging: once("staging", () => startServer({ env: { ERGA_DEPLOY_MOCK: "1", ERGA_DEPLOY_TARGET: "staging", SESSION_SECRET: STAGING_SESSION_SECRET } })),
   // The fake runner's shards take 700 ms, not 1.5 s (worker/gate.ts).
