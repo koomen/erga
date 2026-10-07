@@ -50,6 +50,12 @@ export interface TargetSpec {
   /** Copy another target's data in on each deploy (staging: production's). */
   snapshotFrom?: TargetName;
   /**
+   * Only Erga's admins may use this target's server (staging, which runs on a copy of production's data): every request
+   * needs an admin's session or admin-scope token, with the few exemptions worker/admins-only.ts lists. The server
+   * knows from DEPLOY_TARGET, which the pipeline sets on each deploy, so no setting turns it off.
+   */
+  adminsOnly?: boolean;
+  /**
    * Branch moves this target's server hears of for other targets go on to
    * them (production tells staging of staging's, staging tells production of
    * main's). Production deploys main's head as its own repository has it,
@@ -95,12 +101,23 @@ export const FACTORY: { image: string } = data.factory;
  * The targets themselves are in targets.json (staging's GITHUB_CLIENT_ID is
  * its own GitHub OAuth app's: homepage https://staging.erga.dev, callback
  * https://staging.erga.dev/auth/github/callback; the runbook in the README).
+ * Staging is for admins only (`adminsOnly`), and its admins sign in with that
+ * app, not production's: until someone makes it (on GitHub, by hand: GitHub
+ * has no API for OAuth apps), puts its Client ID here and sets its secret
+ * (`bunx cf workers secrets update GITHUB_CLIENT_SECRET --name erga-staging`),
+ * /auth/github on staging shows a page saying so (worker/auth.ts).
  * Every target gets ADMINS.
  */
 export const TARGETS = Object.fromEntries(Object.entries(data.targets).map(([name, t]) => [name, { ...t, vars: { ADMINS, ...t.vars } }])) as unknown as Record<TargetName, TargetSpec>;
 
 export const targetNames = Object.keys(TARGETS) as TargetName[];
 export const isTargetName = (s: string): s is TargetName => s in TARGETS;
+
+/** Whether a server whose DEPLOY_TARGET is this is for Erga's admins only (`adminsOnly`: staging; worker/admins-only.ts). */
+export const isAdminsOnly = (deployTarget: string | undefined): boolean => {
+  const name = deployTarget?.trim() ?? "";
+  return Object.prototype.hasOwnProperty.call(TARGETS, name) && TARGETS[name as TargetName].adminsOnly == true;
+};
 
 /**
  * Names nothing but production may use: a deploy to another target that

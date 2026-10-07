@@ -121,6 +121,8 @@ export async function startSignIn(env: Env, request: Request): Promise<Response>
     const login = url.searchParams.get("as") || env.DEV_LOGIN!;
     return signIn(env, request, { login, name: login }, next);
   }
+  // No GitHub OAuth app yet (staging's, until an admin makes one): GitHub would answer a 404, so say so here instead.
+  if (!env.GITHUB_CLIENT_ID?.trim()) return noOAuthApp(url.origin);
   const state = b64(crypto.getRandomValues(new Uint8Array(18)));
   const github = new URL("https://github.com/login/oauth/authorize");
   github.searchParams.set("client_id", env.GITHUB_CLIENT_ID);
@@ -134,9 +136,13 @@ export async function startSignIn(env: Env, request: Request): Promise<Response>
   });
 }
 
+/** The sign-in routes on a server with no GitHub OAuth app (GITHUB_CLIENT_ID empty): a page saying what an admin does. */
+const noOAuthApp = (origin: string) => page("Sign-in isn't set up", `Sign-in isn't set up on this server: it has no GitHub OAuth app. An admin sets GITHUB_CLIENT_ID: they make an OAuth app on GitHub (homepage ${escape(origin)}, callback ${escape(origin)}/auth/github/callback), put its Client ID in <code>GITHUB_CLIENT_ID</code> (for Erga's own targets, <code>deploy/targets.json</code>; <code>deploy/targets.ts</code> says how), set its client secret as the <code>GITHUB_CLIENT_SECRET</code> secret, and deploy.`, 503);
+
 /** /auth/github/callback: GitHub sends the person back with a code to trade for who they are. */
 export async function finishSignIn(env: Env, request: Request): Promise<Response> {
   const url = new URL(request.url);
+  if (!isDev(env, url) && !env.GITHUB_CLIENT_ID?.trim()) return noOAuthApp(url.origin);
   const saved = cookies(request).get(STATE);
   const value = saved && await unsign(env, saved);
   const [state, next] = value ? value.split("|") : [];

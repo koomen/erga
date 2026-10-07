@@ -106,8 +106,8 @@ export async function deploysDoor(request: Request, env: Env, base: Platform): P
   return Response.json({ error: `There's nothing at ${method} ${path}.` }, { status: 404 });
 }
 
-/** The request carries this server's DEPLOY_HOOK_SECRET. */
-function peer(request: Request, env: Env): boolean {
+/** The request carries this server's DEPLOY_HOOK_SECRET (staging's admins-only guard asks too: worker/admins-only.ts). */
+export function peer(request: Request, env: Env): boolean {
   const secret = env.DEPLOY_HOOK_SECRET?.trim() || (env.ERGA_DEPLOY_MOCK == "1" ? "mock-hook-secret-0123456789abcdef" : "");
   const bearer = /^Bearer\s+(\S+)\s*$/i.exec(request.headers.get("authorization") ?? "")?.[1] ?? "";
   if (secret.length < 16 || bearer.length != secret.length) return false;

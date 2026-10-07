@@ -12,6 +12,7 @@
 #                     the deploy page against a pretend Cloudflare (tests/deploy.ts),
 #                     Erga's own source: the Git endpoint, merges, the mirror and the Source page (tests/source.ts),
 #                     branches deploying themselves, in the Worker (tests/deploys.ts),
+#                     staging for admins only, and what stays open (tests/staging-admins.ts),
 #                     who you are in every page's corner (tests/account.ts),
 #                     the + button and its picker of templates (tests/new-doc.ts),
 #                     scoped tokens: /tokens, each scope, expiry, the device flow and git push (tests/scoped-tokens.ts),
@@ -145,6 +146,7 @@ run 1 pages-open bun tests/pages-open.ts                 # [12]
 run 2 unit bun test ./tests/                             # [11]
 run 1 deployed bun tests/server-config.ts                # [7]
 run 1 deploys bun tests/deploys.ts                       # [5]
+run 1 staging-admins bun tests/staging-admins.ts         # [15]
 run 1 isolation bun tests/isolation.ts                   # [4]
 
 run 1 admin-layout bun tests/admin-layout.ts             # [8]
