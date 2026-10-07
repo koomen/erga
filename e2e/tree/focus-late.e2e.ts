@@ -15,7 +15,7 @@ test("the pages card, opened right after the shell asks the page for the focus, 
   // The ask (the shell does it on each render, main.ts onUpdate) and, before the frame gets it, the card.
   await page.evaluate(`(() => { ergaPage.page.focus(); document.getElementById("doc-title").click(); })()`);
   await until(() => frame.evaluate(`window.__afterFocus !== undefined`), 5000, "the frame gets the focus message");
-  expect(await frame.evaluate(`window.__afterFocus`)).toBe(false);
+  expect(await frame.evaluate(`window.__afterFocus`) as boolean).toBe(false);
   await expect.poll(() => page.evaluate(`!!document.activeElement?.closest("#pages")`)).toBe(true);
   expect(await focused(page)).not.toBe("IFRAME");
 });
