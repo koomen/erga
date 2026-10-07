@@ -1064,7 +1064,8 @@ release answers at `/api/deploys/version`; copy production's documents in
 **Building.** A Worker can't run `bun install` or Vite, so a commit is built
 in a **Cloudflare Container**: the builder Worker `erga-builder`
 (`deploy/builder/`: `worker.ts`, its `wrangler.jsonc`, a `Dockerfile` with
-Bun 1.4.2, Node 22 and Git, and `server.ts`), which the servers reach over a
+Bun 1.4.2, Node 22 and Git, and `server.ts`; each build a `standard-4`
+container, 4 vCPU and 12 GiB, the largest Cloudflare offers), which the servers reach over a
 service binding (`BUILDER`) and which has no public address. The pipeline asks
 Artifacts for the repo's remote and a 15-minute read-only token
 (through the server's own Artifacts binding, `worker/source.ts`; the REST
@@ -1284,6 +1285,73 @@ branch's head is a commit on that branch: the builder fetches the branch and
 checks the commit out, which a fast-forward keeps reachable; production
 builds the commit itself (it doesn't take staging's build), and a push to
 `main` never makes staging deploy.
+
+#### The test gate
+
+**Production deploys only on a green run** (AGENTS.md, Standing rules).
+Staging deploys every push at once, as before; `main` moves only to a
+staging commit whose full test run passed: `./test.sh` (every file) and
+`bun run typecheck`.
+
+- **Every staging commit is tested by itself.** When staging moves, its
+  server (the `Pipeline` object, beside its deploy: `deploy/gate.ts`,
+  `worker/gate.ts`) starts the commit's run at once, alongside the staging
+  deploy, so the result is usually there before anyone presses Merge. The
+  suite is split into 6 shards, each in a VM of its own, all at once: the
+  factory's `FactoryVm` containers with the factory's image (Bun, Chromium,
+  git) at `standard-4`, the largest instance type (4 vCPU, 12 GiB, 20 GB;
+  custom types go no higher). Each VM clones the commit from the server's
+  Git endpoint, installs, and runs its share with `./test.sh <files>`
+  (`factory/vm/gate.ts`, through `run.ts gate`, so the image needs nothing
+  new). The share is worked out in each VM from the commit's own `test.sh`:
+  the seconds noted for each file, longest first into the shard that ends
+  soonest (`planShards`); the typecheck is one more item. The full run is
+  ~425 s of pool time on a Mac; six shares are ~70 s each (the longest
+  file, `tests/factory-instruct.ts`, is 70 s alone), plus each VM's start,
+  clone, install and `site.sh`.
+- **One result per commit** (`GET /api/gate`, `/api/gate/<sha>`):
+  `running`, `passed`, `failed` or `cancelled`, which files failed, each
+  shard's items, times and log (`/api/gate/<sha>/log?shard=N`, its last
+  60 KB). A run whose failures are at most 5 test files (not the
+  typecheck) reruns those once, in one more VM: if they pass, the run passes
+  and records them as `flaky`. A shard whose VM stops, doesn't answer for
+  3 minutes or runs past 40 minutes fails. A newer staging commit cancels
+  the run still going (its VMs stop). `POST /api/gate/<sha>/run` runs any
+  commit's tests again ("Run again" on the page, the agent's `run_tests`).
+- **Every move of main asks it** (`source/repo.ts`, `gate`): Merge on
+  the Factory page, the admin agent's `deploy_production`, `POST
+  /api/source/merge` with a token, and a `git push` to `main`. A refusal
+  (409, or the push's error line) says why (no run, still running, which
+  files failed, cancelled) and links the run
+  (`/admin/factory#tests-<sha>`). `main` may move to an earlier green
+  staging commit while the head isn't green ("Merge to newest green", or
+  "Merge to here" on a green row). Only seeding an empty repository (main
+  made for the first time) passes without it.
+- **Production asks staging.** Production's server runs no tests: it reads
+  each result from staging's server (`/api/gate...` with
+  `DEPLOY_HOOK_SECRET`), so both dashboards show the same runs. If staging
+  doesn't answer, production refuses to move main, and says so.
+- **The override** is for emergencies: `{ override: "<reason>" }` on `POST
+  /api/source/merge`, from an admin signed in in a browser only ("Override…"
+  on the page, which asks for the reason). A token or an agent gets 403
+  (`agent-actions.ts` records why it has no tool). The reason needs 10
+  characters, and the change log shows "tests overridden" with it and what
+  the gate said. A push to `main` has no override.
+- **On the page**: a "tests" column beside staging's commits (passed,
+  failed, running n/6, cancelled; `passed*` had flaky files); a click opens
+  the run (its shards, failed and flaky files, each shard's log, Run again).
+  Merge is off until staging's head is green, with the reason under it.
+- **Cost**: 6 standard-4 VMs for a few minutes each, about $0.15 a run at
+  Containers' prices (above), plus one more VM for a rerun. They share the
+  factory's container application with its task VMs.
+
+Locally (`bun start`, and with `ERGA_DEPLOY_MOCK=1`) a fake runner stands in
+for the VMs (`fakeRunner`): each shard ends after `ERGA_GATE_FAKE_MS`
+(1.5 s), and a commit's subject decides the result: `[gate-fail]` fails a
+file every time, `[gate-flaky]` fails it once, `[gate-hang]` never ends,
+anything else passes. `tests/gate.test.ts` tests the split, a run's life and
+every path that moves main (with the VM's own job against a real git
+repository); `tests/gate.ts` tests it in the Worker and on the page.
 
 Locally, `ERGA_DEPLOY_MOCK=1 ERGA_DEPLOY_TARGET=staging bun start` makes the
 dev server staging, deploying into the mock Cloudflare's copy of Erga's
@@ -3439,6 +3507,7 @@ back, merging edits from disk, the agent's exact-match edits and attribution.
   for Artifacts and GitHub
 - `deploy/cloudflare.ts`: the one deploy pipeline (`runPipeline`: targets, steps, D1's export and import)
 - `deploy/targets.json`, `deploy/targets.ts`: Erga's own targets, production and staging (cloudflare.config.ts reads production's names there)
+- `deploy/gate.ts`, `worker/gate.ts`, `factory/vm/gate.ts`: the test gate (production only on a green run: each staging commit's tests, split across VMs)
 - `deploy/branches.ts`, `deploy/index.ts`, `worker/pipeline.ts`, `worker/deploys.ts`: branches deploying
   themselves (the hook, the queue, carrying on after the restart), their status, logs, events and routes
 - `deploy/snapshot.ts`: copying documents' Durable Objects from production into staging

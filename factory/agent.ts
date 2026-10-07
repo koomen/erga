@@ -76,6 +76,12 @@ export interface DashboardOps {
   deployHome(): Promise<object>;
   agentTokens(): Promise<object[]>;
   revokeAgentToken(id: string): Promise<boolean>;
+  /** The production gate (deploy/gate.ts): the test runs of staging's commits, newest first. */
+  testRuns(limit: number): Promise<object>;
+  /** One commit's run and its verdict (may main move to it?), with a shard's log if asked. */
+  testRun(commit: string, shard?: number): Promise<object>;
+  /** Runs a commit's tests again (default: staging's head), as Run tests on the dashboard does. */
+  runTests(commit?: string): Promise<object>;
 }
 
 const STATUS: Record<string, string> = { queued: "queued", working: "working", complete: "ready to merge", merging: "merging", "needs agent": "needs agent", merged: "merged", failed: "failed", discarded: "discarded" };
@@ -203,9 +209,18 @@ export function dashboardTools(ops: DashboardOps, guard: () => Promise<void>): A
   return [
     tool("list_branches", "Read staging and main", "The source dashboard's branches: staging and main, each one's head and its latest commits (staging also lists the commits main doesn't have yet: what deploy_production releases), and the GitHub mirror's status.",
       Type.Object({}), () => ops.branches()),
-    tool("deploy_production", "Deploy production", "Moves main forward to staging's head (or to an earlier staging commit), as the dashboard's merge to main does: production deploys it. main only follows staging. The change log (/admin/changes) says who did it, with the commits it released. Use it only when the admin asks in this conversation to release or deploy production.",
+    tool("deploy_production", "Deploy production", "Moves main forward to staging's head (or to an earlier staging commit), as the dashboard's merge to main does: production deploys it. main only follows staging, and only to a commit whose full test run passed (the production gate: list_test_runs); else it's refused with why (running, failed, or no run), and nothing moves. There is no override for an agent. The change log (/admin/changes) says who did it, with the commits it released. Use it only when the admin asks in this conversation to release or deploy production.",
       Type.Object({ commit: Type.Optional(Type.String({ description: "A staging commit's sha, to release up to it only (default: staging's head)" })) }),
       (a) => ops.release(typeof a.commit == "string" && a.commit.trim() ? a.commit.trim() : undefined)),
+    tool("list_test_runs", "Read the test runs", "The production gate: each staging commit's full test run (./test.sh and the typecheck, split across VMs), newest first: its state (running, passed, failed, cancelled), the failed and flaky files, each shard's items and times. Production deploys only a commit whose run passed.",
+      Type.Object({ limit: Type.Optional(Type.Integer({ description: "How many runs (default 10, at most 50)" })) }),
+      (a) => ops.testRuns(Math.max(1, Math.min(50, Number(a.limit) || 10)))),
+    tool("get_test_run", "Read a test run", "One staging commit's test run and its verdict (whether main may move to it, and why not), as the dashboard's tests column shows it; with shard, that shard's log (once it ended).",
+      Type.Object({ commit: Type.String({ description: "The commit's full sha (40 hex digits)" }), shard: Type.Optional(Type.Integer({ description: "A shard's number, for its log" })) }),
+      (a) => ops.testRun(String(a.commit ?? "").trim(), a.shard == null ? undefined : Number(a.shard))),
+    tool("run_tests", "Run the tests", "Runs a staging commit's full test run again (a failed, cancelled or flaky one), as Run tests on the dashboard does: in VMs, a few minutes. Default: staging's head.",
+      Type.Object({ commit: Type.Optional(Type.String({ description: "The commit's full sha (default: staging's head)" })) }),
+      (a) => ops.runTests(typeof a.commit == "string" && a.commit.trim() ? a.commit.trim() : undefined)),
     tool("sync_mirror", "Update the GitHub mirror", "Brings the GitHub mirror up to date now, as the dashboard's sync button does (it also follows by itself). Answers the mirror's status.",
       Type.Object({}), () => ops.mirror()),
     tool("list_deploys", "Read the deploys", "Every deploy target (staging, production): what it runs, its deploy now (state, commit, steps) and its last deploys, newest first (history: how many, default 5, at most 50).",
@@ -317,6 +332,9 @@ export const FACTORY_TOOL_VERBS: Record<string, [string, string]> = {
   sign_out_claude: ["Signing the factory out of Claude", "Signed the factory out of Claude"],
   list_branches: ["Reading staging and main", "Read staging and main"],
   deploy_production: ["Deploying production", "Deployed production"],
+  list_test_runs: ["Reading the test runs", "Read the test runs"],
+  get_test_run: ["Reading the test run of", "Read the test run of"],
+  run_tests: ["Running the tests of", "Started the tests of"],
   sync_mirror: ["Updating the mirror", "Updated the mirror"],
   list_deploys: ["Reading the deploys", "Read the deploys"],
   deploy_log: ["Reading the deploy log of", "Read the deploy log of"],
@@ -407,6 +425,11 @@ For staging, production and access (the dashboard on /admin/factory, and /settin
   have yet, and the GitHub mirror. deploy_production moves main to staging's head (or
   to an earlier staging commit): production deploys it, and the change log names
   ${owner}. sync_mirror updates the GitHub mirror now.
+- The production gate: main moves only to a staging commit whose full test run passed.
+  Each staging commit's tests run by themselves, in VMs, when staging moves.
+  list_test_runs reads the runs; get_test_run reads one commit's run, its verdict and a
+  shard's log; run_tests runs a commit's tests again. If deploy_production is refused,
+  say why, and offer an earlier green commit, or run_tests. You can't skip the gate.
 - list_deploys reads each target's deploys (staging, production); deploy_log reads a
   deploy's log; redeploy deploys a target's branch again. deploy_homepage deploys the
   homepage again.
@@ -658,7 +681,12 @@ refused (409), and you stop.
 **Erga's source and deploys** (the dashboard on ${o.origin}/admin/factory):
 
     GET   ${api}/source/branches                  staging and main: each head and its recent commits, and the GitHub mirror
-    POST  ${api}/source/merge                     {from: "staging", to: "main", commit?}: main moves to staging: production deploys it
+    POST  ${api}/source/merge                     {from: "staging", to: "main", commit?}: main moves to staging: production deploys it,
+                                                  only to a commit whose full test run passed (else 409, with why)
+    GET   ${api}/gate[?limit=N]                   the production gate: each staging commit's test run, newest first
+    GET   ${api}/gate/<sha>                       one commit's run and verdict {run, verdict: {ok, state, reason}}
+    GET   ${api}/gate/<sha>/log?shard=N           a shard's log
+    POST  ${api}/gate/<sha>/run                   run a commit's tests again
     POST  ${api}/source/mirror                    update the GitHub mirror now
     GET   ${api}/deploys[?history=N]              every deploy target's status, and its last N deploys
     GET   ${api}/deploys/<name>/history           a target's past deploys

@@ -22,6 +22,8 @@
 //   /api/deploys/<name>/hook, /api/deploys/status, and /api/deploys/... with DEPLOY_HOOK_SECRET
 //                                   server to server: production passes branch moves on and reads staging's status,
 //                                   logs and history, with the shared secret (worker/deploys.ts checks it)
+//   /api/gate... with DEPLOY_HOOK_SECRET
+//                                   production reads (and starts) staging's test runs before it moves main (deploy/gate.ts)
 //   /api/snapshot/...               the deploy copying production's documents in, with SNAPSHOT_TOKEN (deploy/snapshot.ts)
 //   /api/factory/tasks/<id>/... with "Bearer fct.…"
 //                                   a factory VM reporting on its own task (worker/factory.ts checks the token)
@@ -60,6 +62,7 @@ function exempt(request: Request, env: Env, url: URL): boolean {
   if (path == "/api/deploys/version") return method == "GET" || method == "HEAD";
   if (/^\/api\/deploys\/[a-z]+\/hook\/?$/.test(path) || path == "/api/deploys/status") return true;
   if (path.startsWith("/api/deploys/") && peer(request, env)) return true;
+  if ((path == "/api/gate" || path.startsWith("/api/gate/")) && peer(request, env)) return true;
   if (path.startsWith("/api/snapshot/")) return true;
   if (path.startsWith("/api/factory/tasks/") && /^Bearer\s+fct\./.test(auth)) return true;
   if ((path == "/git/erga.git" || path.startsWith("/git/erga.git/")) && gitSecret(auth)?.startsWith("fgt.")) return true;

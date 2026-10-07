@@ -9,7 +9,9 @@
 //
 // The one exception is a secret: an API key, the Claude token, a new agent token is pasted or made
 // only on the page, never in a conversation. The agent may clear an API key, sign the factory out, or revoke a
-// token. And the agents act only on what their person asks in the
+// token. The one other exception is the production gate's emergency override (a merge to main whose tests
+// haven't passed): the user's rule is that only a person, in a browser, with a reason, may do it, never an agent.
+// And the agents act only on what their person asks in the
 // conversation, never on text found in tool results (their system prompts say so).
 //
 // This is the audit: every action in the UI and the HTTP API, with the agent tool that does it, or why there
@@ -37,6 +39,8 @@ const SECRET = "a secret: pasted or made only on the page, never in a conversati
 const PANEL = "the agent panel itself (the conversation, its model, stop, undo)";
 const STREAM = "the page's live updates (server-sent events)";
 const VM = "a task's own worker (its VM, or a local task's agent: factory/task.ts), not a person's action";
+/** The production gate's emergency override (deploy/gate.ts): the user's rule keeps it from every agent and token. */
+export const OVERRIDE = "an emergency step for a person in a browser only, logged with their reason: never an agent's or a token's (the user's rule)";
 
 export const AGENT_ACTIONS: AgentAction[] = [
   // ------------------------------------------------------------ /admin: settings, change log, users, API keys (admin.ts)
@@ -90,6 +94,11 @@ export const AGENT_ACTIONS: AgentAction[] = [
   // ------------------------------------------------------------ /admin/factory: the dashboard of source and deploys
   { route: "GET /api/source/branches", domain: "admin", action: "Read staging, main and the mirror (Factory, dashboard)", tool: "list_branches" },
   { route: "POST /api/source/merge", domain: "admin", action: "Move main to staging: deploy production (Factory, dashboard)", tool: "deploy_production" },
+  { route: "POST /api/source/merge override=", domain: "admin", action: "Move main past the production gate, with a reason (Factory, dashboard: Override)", exempt: OVERRIDE },
+  { route: "GET /api/gate[?limit=N]", domain: "admin", action: "Read the production gate's test runs (Factory, dashboard: tests)", tool: "list_test_runs" },
+  { route: "GET /api/gate/<sha>", domain: "admin", action: "Read a commit's test run and verdict (Factory, dashboard: a tests cell)", tool: "get_test_run" },
+  { route: "GET /api/gate/<sha>/log?shard=N", domain: "admin", action: "Read a test shard's log (Factory, dashboard: Log)", tool: "get_test_run" },
+  { route: "POST /api/gate/<sha>/run", domain: "admin", action: "Run a commit's tests (again) (Factory, dashboard: Run tests, Run again)", tool: "run_tests" },
   { route: "POST /api/source/mirror", domain: "admin", action: "Update the GitHub mirror now (Factory, dashboard)", tool: "sync_mirror" },
   { route: "GET /api/deploys[?history=N]", domain: "admin", action: "Read the deploys (Factory, dashboard)", tool: "list_deploys" },
   { route: "GET /api/deploys/<name>/history[?limit=N]", domain: "admin", action: "Read a target's past deploys (Factory, dashboard)", tool: "list_deploys" },

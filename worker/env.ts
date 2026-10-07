@@ -102,6 +102,8 @@ export interface Env {
   ERGA_LINK_SECRET?: string;
   /** Local development only: a wait before every call to the database or a document, standing in for erga.dev's distances (tests/bench.ts --latency; worker/timing.ts). */
   ERGA_REMOTE_LATENCY_MS?: string;
+  /** Local development only: how long each simulated shard of the production gate takes (deploy/gate.ts, fakeRunner; 1500 ms by default). */
+  ERGA_GATE_FAKE_MS?: string;
   /** Erga's own repository (worker/source-host.ts): one Durable Object, "erga". */
   SOURCE: DurableObjectNamespace<SourceHost>;
   /**

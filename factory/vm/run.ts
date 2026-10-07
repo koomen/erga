@@ -285,7 +285,10 @@ async function kill(doomed: number[]) {
   signal("SIGKILL");
 }
 
-main().catch(async (e) => {
+// The production gate's shards (gate.ts): the image's agent runs only run.ts and merge.ts, so they come through here.
+if ((process.argv[2] as string) == "gate") {
+  import("./gate.ts").then((g) => g.gateMain(process.argv.slice(3))).catch((e) => { console.error(String((e as Error)?.message ?? e)); process.exit(1); });
+} else main().catch(async (e) => {
   const why = scrub((e as Error).message);
   console.error(why);
   await api("", { method: "PATCH", json: { ...runField(), status: "failed", error: `The VM's job failed: ${why}` } }).catch(() => {});
