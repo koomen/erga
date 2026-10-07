@@ -21,7 +21,7 @@ export async function signIn(root: string, as?: string): Promise<string> {
 }
 
 /** A token made on /tokens/new with `cookie`'s session: the admin scope, or the documents scope (no admin power). */
-export async function mint(root: string, cookie: string, scope: "admin" | "documents", label = scope): Promise<string> {
+export async function mint(root: string, cookie: string, scope: "admin" | "documents", label: string = scope): Promise<string> {
   const html = await (await fetch(`${root}/tokens/new`, { method: "POST", headers: { Cookie: cookie, Origin: root }, body: new URLSearchParams({ label, scope }) })).text();
   const token = /<pre class="secret">(erga_[^<]+)<\/pre>/.exec(html)?.[1] ?? "";
   expect(token, html.slice(0, 300)).toBeTruthy();
