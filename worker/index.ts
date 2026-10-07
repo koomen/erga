@@ -22,6 +22,7 @@
 //   /git/erga.git/...          Erga's own repository, over Git smart HTTP (worker/source.ts; admin tokens)
 //   /admin, /admin/changes, /admin/users   the server's settings, their change log, and its users (admin.ts)
 //   /admin/keys, /api/admin/...  admins' SSH keys, and unlocking admin access with them (admin-access.ts)
+//   /api/admin/agent/...       each admin's agent conversation and panel layout, kept (worker/factory.ts)
 //   /admin/factory, /api/source/...  the Factory page (the factory's board, the dashboard of source and deploys, and the
 //                              factory's agent; /source and /admin/source redirect there) and its API
 //                              Every /admin page has the same layout (admin-layout.ts), and every /admin route is
@@ -44,7 +45,7 @@ import { adminKeysOf, directoryOf, tokensOf } from "./d1";
 import { adminAccess, isAdminAccessPath } from "../admin-access";
 import { adminGate, isAdminPath } from "../admin-layout";
 import { deployDoor } from "./deploy";
-import { factoryApi, previewTicketOk } from "./factory";
+import { adminAgentApi, factoryApi, isAdminAgentPath, previewTicketOk } from "./factory";
 import { previewDoor } from "../factory/cloudflare";
 import { sourceApi, sourceDoor, sourceGit } from "./source";
 import { deploysDoor, isDeploysPath } from "./deploys";
@@ -181,6 +182,8 @@ async function route(request: Request, env: Env, url: URL, ctx: ExecutionContext
     const file = await serveHomeRoot(request, env, ctx);
     if (file) return file;
   }
+  // Each admin's agent conversation and panel, kept in the Factory object (worker/factory.ts): before the admin keys' /api/admin/.
+  if (isAdminAgentPath(path)) return adminAgentApi(request, env, url);
   // Admins' SSH keys and unlocking admin access with them (admin-access.ts): before the server's API, which has the rest of /api/.
   if (isAdminAccessPath(path)) return adminAccess(request, withTokens(platform(env), url), {
     unlockCookie: (login, unlock) => unlockCookie(env, request, login, unlock),

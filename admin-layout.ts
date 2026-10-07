@@ -190,14 +190,16 @@ const AGENT_SCRIPT = `<script>
   const root = document.documentElement, pane = document.getElementById("agent"), fab = document.getElementById("agent-fab");
   const narrow = matchMedia("(max-width: 999.98px)");
   const sync = () => { const open = !root.classList.contains("agent-closed"); pane.inert = !open; fab.setAttribute("aria-expanded", String(open)); };
+  const keep = (open) => { root.classList.toggle("agent-closed", !open); if (!narrow.matches) try { localStorage.setItem("erga:admin-agent", open ? "open" : "closed"); } catch {} sync(); };
   const show = (open) => {
-    root.classList.toggle("agent-closed", !open);
-    if (!narrow.matches) try { localStorage.setItem("erga:admin-agent", open ? "open" : "closed"); } catch {}
-    sync();
+    keep(open);
+    // On a wide window the server keeps it too, for the admin's other browsers (factory-agent.js).
+    if (!narrow.matches) window.dispatchEvent(new CustomEvent("erga:agent-toggled", { detail: { open } }));
     if (open) window.dispatchEvent(new Event("erga:agent-shown"));
     else fab.focus();
   };
-  window.ergaAgent = { show, open: () => !root.classList.contains("agent-closed") };
+  // set: as the server says the admin left it, on a wide window, without moving the focus.
+  window.ergaAgent = { show, set: (open) => { if (!narrow.matches && open == root.classList.contains("agent-closed")) keep(open); }, open: () => !root.classList.contains("agent-closed") };
   document.getElementById("agent-close").addEventListener("click", () => show(false));
   fab.addEventListener("click", () => show(true));
   pane.addEventListener("keydown", (e) => { if (e.key == "Escape" && !e.defaultPrevented) { e.preventDefault(); show(false); } });

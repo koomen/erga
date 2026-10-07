@@ -89,6 +89,8 @@ import type { SettingChange } from "../config";
 import { SIGN_IN_KEY, type Unlock } from "../admin-keys";
 import { type Blocked, dependents, depRules, depsNote, type DepStatus, type DepTask, ids } from "../development/task-queue/deps";
 import type { ToolWho } from "../server-tools";
+import { panelPrefs, restoredLog, restoredMessages, storedLog, storedMessages, type PanelPrefs } from "../factory/chat-store";
+import { emptyLog, type Log, type LogEvent } from "../src/page/agent-log";
 import { adminTools, factoryGuide, factoryTools, startFactoryAgent, type FactoryAgent, type FactoryOps } from "../factory/agent";
 import { containersHost } from "../factory/cloudflare";
 import { b64url } from "../factory/git-grant";
@@ -273,6 +275,8 @@ export class Factory extends DurableObject<Env> {
   private agents = new Map<string, { agent: FactoryAgent; unlock: Unlock; origin: string }>();
   /** The agent's settings, read again after a minute, so a key an admin changes on /admin reaches it. */
   private agentCfg: { at: number; cfg: Promise<AgentConfig | { missing: string }> } | null = null;
+  /** Conversations with a save waiting (a reply streams in: at most one save a second). */
+  private chatSaves = new Map<string, ReturnType<typeof setTimeout>>();
   private beat: ReturnType<typeof setInterval> | null = null;
   /** Merges run one at a time, in the order they were asked for. */
   private merges: Promise<void> = Promise.resolve();
@@ -297,6 +301,9 @@ export class Factory extends DurableObject<Env> {
       unlock_key TEXT NOT NULL, created INTEGER NOT NULL, expires INTEGER NOT NULL, revoked INTEGER, revoked_by TEXT, last_used INTEGER)`);
     // Instructions sent to a task while it works: its Claude Code takes them (taken) when its current step ends.
     this.sql.exec(`CREATE TABLE IF NOT EXISTS asks (n INTEGER PRIMARY KEY AUTOINCREMENT, task INTEGER NOT NULL, by_login TEXT NOT NULL, text TEXT NOT NULL, at TEXT NOT NULL, taken TEXT)`);
+    // Each admin's agent conversation (the transcript and the model's messages) and their panel's layout (factory/chat-store.ts).
+    this.sql.exec(`CREATE TABLE IF NOT EXISTS agent_chats (login TEXT PRIMARY KEY, log TEXT NOT NULL, messages TEXT NOT NULL, updated INTEGER NOT NULL)`);
+    this.sql.exec(`CREATE TABLE IF NOT EXISTS agent_prefs (login TEXT PRIMARY KEY, prefs TEXT NOT NULL, updated INTEGER NOT NULL)`);
     // Dependencies (#49), on a table made before them.
     const cols = this.sql.exec<{ name: string }>("PRAGMA table_info(tasks)").toArray().map((c) => c.name);
     for (const c of ["start_after", "merge_after", "merge_by", "run", "asked"]) if (!cols.includes(c)) this.sql.exec(`ALTER TABLE tasks ADD COLUMN ${c} TEXT`);
@@ -888,8 +895,9 @@ export class Factory extends DurableObject<Env> {
     };
     // The admin tools act as the admin, with their latest unlock: the settings' change log names them, not the agent.
     const as = (): ToolWho => ({ dir: directoryOf(this.env), who: { login, unlocked: state.unlock }, origin: state.origin });
-    const agent = startFactoryAgent({ cfg, owner: login, tools: [...factoryTools(ops, guard), ...adminTools(as, guard)] });
-    agent.subscribe((ev) => this.event({ type: "agent", ev }, login));
+    const stored = this.storedChat(login);
+    const agent = startFactoryAgent({ cfg, owner: login, tools: [...factoryTools(ops, guard), ...adminTools(as, guard)], restore: stored ?? undefined });
+    agent.subscribe((ev) => { this.event({ type: "agent", ev }, login); this.chatChanged(login, ev); });
     s = Object.assign(state, { agent });
     this.agents.set(login, s);
     return s;
@@ -914,11 +922,66 @@ export class Factory extends DurableObject<Env> {
     return { ok: true };
   }
 
+  // -- each admin's conversation, kept (factory/chat-store.ts): GET and DELETE /api/admin/agent/conversation
+
+  private storedChat(login: string): { log: Log; messages: ReturnType<typeof restoredMessages> } | null {
+    const r = this.sql.exec<{ log: string; messages: string }>("SELECT log, messages FROM agent_chats WHERE login = ?", login).toArray()[0];
+    return r ? { log: restoredLog(r.log), messages: restoredMessages(r.messages) } : null;
+  }
+
+  /** Saves the conversation: at once when a turn ends, a message is sent or a tool finishes; else within a second. */
+  private chatChanged(login: string, ev: LogEvent) {
+    const now = ev.t == "user" || ev.t == "reset" || ev.t == "error" || (ev.t == "busy" && !ev.busy) || (ev.t == "tool" && ev.status != "running");
+    if (now) { this.saveChat(login); return; }
+    if (!this.chatSaves.has(login)) this.chatSaves.set(login, setTimeout(() => this.saveChat(login), 1000));
+  }
+
+  private saveChat(login: string) {
+    clearTimeout(this.chatSaves.get(login));
+    this.chatSaves.delete(login);
+    const s = this.agents.get(login);
+    if (!s) return;
+    const log = s.agent.log();
+    if (!log.items.length) { this.sql.exec("DELETE FROM agent_chats WHERE login = ?", login); return; }
+    this.sql.exec("INSERT OR REPLACE INTO agent_chats (login, log, messages, updated) VALUES (?, ?, ?, ?)", login, storedLog(log), storedMessages(s.agent.messages()), Date.now());
+  }
+
+  /** The admin's conversation: the live one, or the one stored (the agent need not be on to read it). */
+  async conversation(login: string): Promise<Log> {
+    return this.agents.get(login)?.agent.log() ?? this.storedChat(login)?.log ?? emptyLog();
+  }
+
+  /** A new conversation: the turn stopped, the transcript and the model's messages gone, every tab told. */
+  async clearConversation(login: string): Promise<Log> {
+    const s = this.agents.get(login);
+    if (s) await s.agent.reset();
+    else this.event({ type: "agent", ev: { t: "reset" } }, login);
+    clearTimeout(this.chatSaves.get(login));
+    this.chatSaves.delete(login);
+    this.sql.exec("DELETE FROM agent_chats WHERE login = ?", login);
+    return emptyLog();
+  }
+
+  async agentPrefs(login: string): Promise<PanelPrefs> {
+    const r = this.sql.exec<{ prefs: string }>("SELECT prefs FROM agent_prefs WHERE login = ?", login).toArray()[0];
+    try { return panelPrefs(JSON.parse(r?.prefs ?? "{}")); } catch { return {}; }
+  }
+
+  /** Changes what's given (open, side, width), keeps the rest. */
+  async setAgentPrefs(login: string, body: unknown): Promise<PanelPrefs> {
+    const prefs = { ...(await this.agentPrefs(login)), ...panelPrefs(body) };
+    this.sql.exec("INSERT OR REPLACE INTO agent_prefs (login, prefs, updated) VALUES (?, ?, ?)", login, JSON.stringify(prefs), Date.now());
+    return prefs;
+  }
+
   async agentControl(login: string, op: "abort" | "reset" | "model", model?: string) {
     const s = this.agents.get(login);
-    if (!s) return { ok: op != "model", reason: "the agent hasn't started" };
+    if (!s) {
+      if (op == "reset") await this.clearConversation(login);
+      return { ok: op != "model", reason: "the agent hasn't started" };
+    }
     if (op == "abort") s.agent.abort();
-    else if (op == "reset") await s.agent.reset();
+    else if (op == "reset") await this.clearConversation(login);
     else if (!model || !isModelChoice(model) || !s.agent.setModel(model)) return { ok: false, reason: "that model isn't one of the choices" };
     return { ok: true, model: s.agent.model, choice: s.agent.modelChoice, models: s.agent.modelChoice ? Object.entries(MODELS).map(([id, m]) => ({ id, label: m.label })) : [] };
   }
@@ -1022,6 +1085,34 @@ async function adminOf(env: Env, request: Request): Promise<{ login: string; nam
   const users = directoryOf(env).users, who = whoOf(session);
   if (!(await users.isAdmin(who))) return null;
   return (await users.isUnlocked(who)) && session.unlocked ? { login: session.login.toLowerCase(), name: session.name, unlock: session.unlocked } : "locked";
+}
+
+/**
+ * Each admin's agent conversation and panel, kept in the Factory object, whatever admin page is open (and an
+ * /admin made one page later): the panel reads it on mount (src/page/factory-agent.ts).
+ *
+ *   GET    /api/admin/agent/conversation   { log: { items, busy, undoable } }: the admin's conversation
+ *   DELETE /api/admin/agent/conversation   a new conversation (the "New conversation" button)
+ *   GET    /api/admin/agent/prefs          { open?, side?, width? }: their panel, as they left it
+ *   PUT    /api/admin/agent/prefs          { open?, side?, width? }: changes what's given
+ */
+export const isAdminAgentPath = (path: string) => path.startsWith("/api/admin/agent/");
+
+export async function adminAgentApi(request: Request, env: Env, url: URL): Promise<Response> {
+  const admin = await adminOf(env, request);
+  if (!admin) return json({ error: "Only admins have an admin agent." }, (await sessionOf(env, request)) ? 403 : 401);
+  if (admin == "locked") return json({ error: LOCKED, locked: true }, 403);
+  if (request.method != "GET" && request.headers.get("origin") != url.origin) return json({ error: "Forbidden" }, 403);
+  const f = factory(env), path = url.pathname, m = request.method;
+  if (path == "/api/admin/agent/conversation") {
+    if (m == "GET") return json({ log: await f.conversation(admin.login) });
+    if (m == "DELETE") return json({ ok: true, log: await f.clearConversation(admin.login) });
+  }
+  if (path == "/api/admin/agent/prefs") {
+    if (m == "GET") return json(await f.agentPrefs(admin.login));
+    if (m == "PUT") return json(await f.setAgentPrefs(admin.login, await request.json().catch(() => ({}))));
+  }
+  return json({ error: "Not found" }, 404);
 }
 
 /** Whether the factory is on, for the page (worker/source.ts). */

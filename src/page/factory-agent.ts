@@ -8,6 +8,12 @@
 //                                      and on the factory's, which task is open on the board
 //   POST /api/factory/agent/abort|reset|model
 //   /api/factory/events                { type: "agent", ev } for this admin's agent (the board's events too)
+//   GET|DELETE /api/admin/agent/conversation   the conversation, kept on the server (read on mount); a new one
+//   GET|PUT    /api/admin/agent/prefs          the panel as the admin left it: open, side, width
+//
+// The conversation and the panel follow the admin from page to page, browser to browser and sign-in to
+// sign-in: the server keeps them (worker/factory.ts, factory/chat-store.ts). This browser keeps a copy of
+// the panel's state (admin-layout.ts, layout.ts), so a page paints it at once.
 //
 // Share with agent is in every admin page's header (admin-share.ts). Built
 // by build.sh to factory-agent.js.
@@ -16,10 +22,11 @@ import { chat } from "./agent-chat";
 import { fileRefs, type Attachment } from "./attach";
 import { attachments } from "./attach-ui";
 import type { Log, LogEvent } from "./agent-log";
-import { mountPaneLayout } from "./layout";
+import { mountPaneLayout, type PaneLayout } from "./layout";
 
 interface AgentState { enabled: boolean; reason?: string; model?: string | null; choice?: string | null; models?: { id: string; label: string }[]; log?: Log }
-declare global { interface Window { ergaBoard?: { openTask(): number | null; title(id: number): string | null; open(id: number): void } } }
+declare global { interface Window { ergaBoard?: { openTask(): number | null; title(id: number): string | null; open(id: number): void }; ergaAgent?: { set(open: boolean): void } } }
+interface Prefs { open?: boolean; side?: "left" | "right"; width?: number }
 
 const $ = (id: string) => document.getElementById(id)!;
 const store = {
@@ -49,7 +56,15 @@ const VERBS: Record<string, [string, string]> = {
 
 // Which side the agent is on, and how wide: dragged by its head and its inner edge, as in the editor (layout.ts).
 // Off on a narrow window, where the agent covers the page instead (admin-layout.ts).
-mountPaneLayout($("workspace"), $("agent-dock"), $("admin-panes"), $("agent").querySelector<HTMLElement>(".agent-head")!, matchMedia("(max-width: 999.98px)"));
+// Each change goes to the server too, and the server's (the admin's last, from any browser) is put on at load.
+const savePrefs = (p: Prefs) => { fetch("/api/admin/agent/prefs", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(p), keepalive: true }).catch(() => {}); };
+const panes = mountPaneLayout($("workspace"), $("agent-dock"), $("admin-panes"), $("agent").querySelector<HTMLElement>(".agent-head")!, matchMedia("(max-width: 999.98px)"), (l: PaneLayout) => savePrefs({ side: l.side, width: l.width }));
+window.addEventListener("erga:agent-toggled", (e) => savePrefs({ open: !!(e as CustomEvent<{ open: boolean }>).detail?.open }));
+fetch("/api/admin/agent/prefs").then((r) => (r.ok ? r.json() : null)).then((p: Prefs | null) => {
+  if (!p) return;
+  if (p.side || p.width) panes.set({ side: p.side ?? panes.layout.side, width: p.width ?? panes.layout.width });
+  if (typeof p.open == "boolean") window.ergaAgent?.set(p.open);
+}).catch(() => {});
 
 const input = $("agent-input") as HTMLTextAreaElement, send = $("agent-send") as HTMLButtonElement, hint = $("agent-hint");
 const talk = chat({ logEl: $("agent-log"), jump: $("agent-jump") as HTMLButtonElement, verbs: VERBS, imageAlt: "The screenshot the agent looked at" });
@@ -140,7 +155,10 @@ $("agent-form").addEventListener("submit", (e) => {
   if (send.classList.contains("stop")) fetch("/api/factory/agent/abort", { method: "POST" });
   else sendNow();
 });
-$("agent-reset").addEventListener("click", () => { fetch("/api/factory/agent/reset", { method: "POST" }); input.focus(); });
+$("agent-reset").addEventListener("click", () => {
+  fetch("/api/admin/agent/conversation", { method: "DELETE" }).then((r) => { if (!r.ok) showHint("Couldn't start a new conversation."); }, () => showHint("Couldn't start a new conversation."));
+  input.focus();
+});
 window.addEventListener("erga:agent-shown", () => { talk.follow(true); input.focus(); });
 
 // Which model the agent runs on: a menu when there's a choice, plain text otherwise (as in the editor).
@@ -167,11 +185,14 @@ function renderModel(m: AgentState | null) {
 let heard = 0;
 async function load(tries = 0): Promise<void> {
   const was = heard;
+  // The conversation from where the server keeps it, whether the agent is on or not.
+  const kept = fetch("/api/admin/agent/conversation").then((r) => (r.ok ? r.json() : null)).catch(() => null) as Promise<{ log?: Log } | null>;
   const a = await fetch("/api/factory/agent").then(async (r) => r.ok ? r.json() : Promise.reject(new Error(((await r.json().catch(() => null)) as { error?: string } | null)?.error?.replace(/\.$/, "") ?? `the server answered ${r.status}`))).catch((e: Error) => ({ enabled: false, reason: e.message })) as AgentState;
+  const l = (await kept)?.log ?? a.log;
   if (heard != was && tries < 5) return load(tries + 1);
   off = a.enabled ? null : `The agent is off: ${a.reason ?? "the server did not start it"}.`;
   renderModel(a);
-  if (a.log) { log.items = a.log.items; log.busy = a.log.busy; log.undoable = a.log.undoable; }
+  if (l) { log.items = l.items; log.busy = l.busy; log.undoable = l.undoable; }
   talk.render();
   renderBusy();
 }
