@@ -47,7 +47,7 @@ export function b64url(s: string | Uint8Array): string {
 /** The text in a base64url body: its bytes as UTF-8 (as the Worker mints them now), or, if they aren't valid UTF-8, as Latin-1 (as older tokens were, with btoa alone). */
 export function fromB64url(s: string): string {
   const bin = atob(s.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - (s.length % 4)) % 4));
-  try { return new TextDecoder("utf-8", { fatal: true }).decode(Uint8Array.from(bin, (c) => c.charCodeAt(0))); } catch { return bin; }
+  try { return new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(Uint8Array.from(bin, (c) => c.charCodeAt(0))); } catch { return bin; }
 }
 
 /** The grant a token carries, if `secret` signed it, it names a task branch, and it hasn't ended; else null. */
