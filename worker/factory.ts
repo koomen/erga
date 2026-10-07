@@ -8,7 +8,8 @@
 //   /admin/factory                         the board (factory/page.ts), on the Factory page (worker/source.ts),
 //                                          with the source dashboard and the factory's own agent
 //   GET  /api/factory                      { enabled, vms, claude: { signedIn, at, by } }
-//   GET  /api/factory/tasks[/<id>]         the tasks, each with its log and screenshots
+//   GET  /api/factory/tasks[/<id>]         the tasks, each with its log (the last 200 lines; one task's, all
+//                                          of them with ?log=all) and screenshots
 //   POST /api/factory/tasks                { title, description, startAfter?, mergeAfter? }: a new task (its branch,
 //                                          then its VM, unless it waits for a startAfter task to merge)
 //   PATCH /api/factory/tasks/<id>          { startAfter?, mergeAfter? }: changes its dependencies (lists of ids, or null)
@@ -326,8 +327,9 @@ export class Factory extends DurableObject<Env> {
 
   private row(id: number): Row | null { return this.sql.exec<Row>("SELECT * FROM tasks WHERE id = ?", id).toArray()[0] ?? null; }
 
-  private view(r: Row): Task {
-    const log = this.sql.exec<{ at: string; message: string }>("SELECT at, message FROM (SELECT * FROM logs WHERE task = ? ORDER BY n DESC LIMIT 200) ORDER BY n", r.id).toArray();
+  /** The task as the board and the API show it: the last 200 lines of its log, or every line with `allLog`. */
+  private view(r: Row, allLog = false): Task {
+    const log = this.sql.exec<{ at: string; message: string }>(`SELECT at, message FROM (SELECT * FROM logs WHERE task = ? ORDER BY n DESC${allLog ? "" : " LIMIT 200"}) ORDER BY n`, r.id).toArray();
     const screenshots = this.sql.exec<{ file: string; caption: string; at: string }>("SELECT file, caption, at FROM shots WHERE task = ? ORDER BY n", r.id).toArray();
     const stalled = stalledOf({ status: r.status, updatedAt: r.updated, log });
     const waiting = this.waiting(r.id).length;
@@ -344,7 +346,7 @@ export class Factory extends DurableObject<Env> {
   }
 
   async list(): Promise<Task[]> { return this.sql.exec<Row>("SELECT * FROM tasks ORDER BY id").toArray().map((r) => this.view(r)); }
-  async task(id: number): Promise<Task | null> { const r = this.row(id); return r && this.view(r); }
+  async task(id: number, allLog = false): Promise<Task | null> { const r = this.row(id); return r && this.view(r, allLog); }
 
   /** The instructions that wait for the task's Claude Code, oldest first. */
   private waiting(id: number): Ask[] {
@@ -1252,7 +1254,7 @@ export async function factoryApi(request: Request, env: Env, url: URL): Promise<
     if (to.protocol == "https:") to.searchParams.set("factory_ticket", await previewTicket(env, t.vm));
     return new Response(null, { status: 302, headers: { Location: to.toString() } });
   }
-  if (id != null && !action && request.method == "GET") { const t = await f.task(id); return t ? json(t) : json({ error: "Not found" }, 404); }
+  if (id != null && !action && request.method == "GET") { const t = await f.task(id, url.searchParams.get("log") == "all"); return t ? json(t) : json({ error: "Not found" }, 404); }
   if (path == "/api/factory/claude") {
     if (request.method == "GET") return json(await f.claude());
     const token = request.method == "DELETE" ? null : String(((await request.json().catch(() => ({}))) as { token?: string }).token ?? "");

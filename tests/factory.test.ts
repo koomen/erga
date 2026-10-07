@@ -161,6 +161,29 @@ test("a long Claude Code run with no new output repeats no line on the board; it
   expect(new Set(lines).size).toBe(lines.length);
 });
 
+test("the board says how long a slow tool call took, and the run's totals when it ends", async () => {
+  const { claudeLog, SLOW_TOOL_MS } = await import("../factory/vm/common");
+  let t = 1_000_000;
+  const board = claudeLog(() => t);
+  const call = (id: string, command: string) => board.event({ type: "assistant", message: { id: `msg_${id}`, content: [{ type: "tool_use", id, name: "Bash", input: { command } }] } });
+  const done = (id: string) => board.event({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: id, content: "ok" }] } });
+  expect(call("toolu_1", "ls")).toEqual(["Claude runs Bash: ls"]);
+  t += 1000;
+  expect(done("toolu_1")).toEqual([]);
+  t += 6000;
+  call("toolu_2", "./test.sh");
+  t += SLOW_TOOL_MS + 5 * 60_000;
+  expect(done("toolu_2")).toEqual(["Took 5.5 min: Bash: ./test.sh"]);
+  // The same result again (or one for a call it never saw) says nothing.
+  expect(done("toolu_2")).toEqual([]);
+  expect(board.event({ type: "system", subtype: "init", model: "claude-opus-5-5" })[0]).toStartWith("Claude Code uses the model claude-opus-5-5");
+  // Right after another line: not held back.
+  t += 100;
+  expect(board.event({ type: "result", duration_ms: 3_000_000, duration_api_ms: 1_800_000, num_turns: 87, total_cost_usd: 12.3,
+    usage: { input_tokens: 2000, cache_creation_input_tokens: 98_000, cache_read_input_tokens: 1_200_000, output_tokens: 41_000 } }))
+    .toEqual(["Claude Code's run ended: 50.0 min (30.0 min in the model), 87 turns, 1.3M tokens in (1.2M from the cache), 41k out, $12.30 at API prices"]);
+});
+
 test("a restarted task's Claude Code is told it was restarted, on its saved branch, with every earlier instruction in order", () => {
   const none = restartPrompt({ branch: "task/7-x" }, []);
   expect(none).toContain("restarted this task");

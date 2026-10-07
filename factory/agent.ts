@@ -601,6 +601,7 @@ finishing it; then the merge goes on by itself), merged, failed, discarded.
     GET   ${api}/factory/tasks                    every task, with its log and screenshots
     GET   ${api}/factory/tasks/<id>               one task: title, description (the ask), status, branch, summary, error,
                                                   url (its preview), startAfter, mergeAfter, blockedBy, stalled, log, screenshots
+                                                  (the log's last 200 lines; ?log=all gives every line, each with its time)
     POST  ${api}/factory/tasks                    {title, description, startAfter?, mergeAfter?}: a new task (201); it starts by itself
     PATCH ${api}/factory/tasks/<id>               {startAfter?, mergeAfter?}: change its dependencies (lists of ids, or null)
     POST  ${api}/factory/tasks/<id>/revise        {instructions}: more instructions, for a task that is working (its Claude Code

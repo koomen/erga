@@ -1799,6 +1799,17 @@ sends `{ type: "unblocked" | "blocked" }` (a toast on the board). On the
 board: a chip on the card ("waiting for #12", "merges after #12", "blocked by
 #12"), waiting tasks at the bottom of Queued, and Merge off with the reason.
 
+**Where the time goes.** A task's log says how long each slow part took:
+the VM's start (`VM … started in 41.2s`, the factory's side), the clone
+and branch (`VM ready in …`), `bun install` (`Dependencies installed in
+…`), each tool call of Claude Code's that took 30 s or more (`Took 5.5
+min: Bash: ./test.sh`, when it ends), and, when a run of Claude Code
+ends, its totals from its `result` event: its time, the part of it in the
+model, its turns, its tokens and its cost at API prices (`claudeLog`,
+`factory/vm/common.ts`). The board and the API show a log's last 200 lines;
+`GET /api/factory/tasks/<id>?log=all` gives every line, each with its
+time.
+
 **Stalled tasks.** A task that is working or needs agent, and whose log has
 had no new line in 5 minutes, is *stalled* (`factory/stall.ts`): its Claude
 Code may be hung, or in one long step. Its card and its detail view show a

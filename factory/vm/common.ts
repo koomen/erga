@@ -251,9 +251,15 @@ export const result = (value: Record<string, unknown>) => console.log(`FACTORY-R
  * has seen (by message id and place), words it has said before, or a line the same as the one before it, give nothing. A run that goes
  * quiet says "still working" at most once a minute. Lines come at most every 5 s; one that comes too soon waits
  * for the next `tick` (every 5 s), so a command right after Claude Code's words isn't lost.
+ * Two lines say where the time went, at once (they are rare): a tool call that took SLOW_TOOL_MS or more, when
+ * it ends, the run's totals (time, time in the model, turns, tokens, cost at API prices), when it ends, and the model
+ * it uses, when it starts.
  */
+export const SLOW_TOOL_MS = 30_000;
+
 export function claudeLog(now = () => Date.now()) {
   const seen = new Set<string>();
+  const tools = new Map<string, { at: number; what: string }>();
   const started = now();
   let last = "", lastAt = 0, quietSince = started, pending = "";
   const said = new Set<string>();
@@ -269,8 +275,23 @@ export function claudeLog(now = () => Date.now()) {
     last = line; lastAt = quietSince = now();
     return [line];
   };
+  // A line that says where the time went: never held back, and never held back by.
+  const timing = (line: string): string[] => { last = line; quietSince = now(); return [line]; };
   return {
     event(ev: any): string[] {
+      if (ev?.type == "user") {
+        const lines: string[] = [];
+        for (const c of Array.isArray(ev.message?.content) ? ev.message.content : []) {
+          const t = c?.type == "tool_result" ? tools.get(c.tool_use_id) : undefined;
+          if (!t) continue;
+          tools.delete(c.tool_use_id);
+          if (now() - t.at >= SLOW_TOOL_MS) lines.push(...timing(`Took ${secs(now() - t.at)}: ${t.what}`));
+        }
+        return lines;
+      }
+      if (ev?.type == "result") return timing(runTotals(ev));
+      // The model Claude Code really uses, as it says when it starts (the factory_model setting names an alias).
+      if (ev?.type == "system" && ev.subtype == "init" && typeof ev.model == "string") return timing(`Claude Code uses the model ${ev.model}${FAST() ? ", fast mode on" : ""}`);
       if (ev?.type != "assistant") return [];
       const lines: string[] = [];
       (ev.message?.content ?? []).forEach((c: any, i: number) => {
@@ -278,7 +299,11 @@ export function claudeLog(now = () => Date.now()) {
         if (seen.has(key)) return;
         seen.add(key);
         if (c.type == "text" && c.text?.trim()) lines.push(...out(`Claude: ${c.text.trim()}`));
-        if (c.type == "tool_use") lines.push(...out(`Claude runs ${c.name}: ${String(c.input?.command ?? c.input?.file_path ?? c.input?.pattern ?? c.input?.description ?? "").replace(/\s+/g, " ")}`));
+        if (c.type == "tool_use") {
+          const what = `${c.name}: ${scrub(String(c.input?.command ?? c.input?.file_path ?? c.input?.pattern ?? c.input?.description ?? "").replace(/\s+/g, " ")).slice(0, 200)}`;
+          if (c.id) tools.set(c.id, { at: now(), what });
+          lines.push(...out(`Claude runs ${what}`));
+        }
       });
       return lines;
     },
@@ -288,4 +313,21 @@ export function claudeLog(now = () => Date.now()) {
       return out(`Claude Code is still working, ${Math.round((now() - started) / 1000)}s`);
     },
   };
+}
+
+const secs = (ms: number) => ms >= 120_000 ? `${(ms / 60_000).toFixed(1)} min` : `${Math.round(ms / 1000)}s`;
+const count = (n: number) => n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : String(n);
+
+/** The line for Claude Code's `result` event: how long its run took, how much of that was the model, and what it used. */
+export function runTotals(ev: any): string {
+  const n = (v: unknown) => (typeof v == "number" && Number.isFinite(v) ? v : 0);
+  const u = ev.usage ?? {};
+  const read = n(u.cache_read_input_tokens), input = n(u.input_tokens) + n(u.cache_creation_input_tokens) + read;
+  const parts = [
+    `${secs(n(ev.duration_ms))} (${secs(n(ev.duration_api_ms))} in the model)`,
+    `${n(ev.num_turns)} turns`,
+    `${count(input)} tokens in (${count(read)} from the cache), ${count(n(u.output_tokens))} out`,
+    ...(typeof ev.total_cost_usd == "number" ? [`$${ev.total_cost_usd.toFixed(2)} at API prices`] : []),
+  ];
+  return `Claude Code's run ended${ev.is_error ? " with an error" : ""}: ${parts.join(", ")}`;
 }
