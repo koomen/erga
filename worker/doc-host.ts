@@ -46,6 +46,7 @@ import { describeChange, fallbackDescription, firePublished, publicVersion, vers
 import * as Y from "yjs";
 import { decodeValue, encodeValue, type DocSnapshot } from "../deploy/snapshot";
 import { directoryOf, withKeys } from "./d1";
+import { platform } from "./platform";
 import { DiskLink } from "./disk";
 import { publishedChanged } from "./published";
 import type { Env } from "./env";
@@ -788,8 +789,8 @@ export class DocHost extends DurableObject<Env> {
       avatarOf: (person) => (person.id.startsWith("test-") ? undefined : `${AVATARS}/${encodeURIComponent(person.id)}?s=64`),
       // Its title and address, renamed as whoever asks (test people are "test-...": they may rename only test documents).
       naming: (person) => naming({ login: person.id, test: person.id.startsWith("test-") }),
-      // Sharing this document (or another), and for an admin the server's settings and users, as the person.
-      serverTools: (person) => agentToolsFor({ dir: directoryOf(this.env), who: { login: person.id, test: person.id.startsWith("test-") }, here: this.idOf(meta) }),
+      // Sharing this document (or another), the documents list (list, make, delete), and for an admin the server's settings and users, as the person.
+      serverTools: (person) => agentToolsFor({ dir: directoryOf(this.env), who: { login: person.id, test: person.id.startsWith("test-") }, here: this.idOf(meta), platform: platform(this.env) }),
       // An agent's turn is one version, and where its next diff_versions starts from ("last_turn").
       turnEnded: () => this.cutSoon("agent turn").then(async (v) => (v ?? (await this.versions.latest()))?.id ?? null),
       versions: {

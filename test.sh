@@ -35,6 +35,7 @@
 #                     files attached in the agent panel (tests/attach.ts),
 #                     instructions for a working task (tests/factory-instruct.ts),
 #                     the admin agent reading Erga's own source, in the Worker (tests/admin-agent-source.ts),
+#                     the agents doing what their person does on the page, in the Worker (tests/admin-agent-actions.ts),
 #                     live reload (tests/reload.ts, in a copy of the checkout)
 #                     and the multiplayer suite, each
 #                     against dev servers of its own (tests/host.ts)
@@ -121,6 +122,7 @@ run 1 admin-layout bun tests/admin-layout.ts             # [8]
 run 1 admin-nav bun tests/admin-nav.ts                   # [6]
 run 1 admin-agent-chat bun tests/admin-agent-chat.ts     # [30]
 run 1 admin-agent-source bun tests/admin-agent-source.ts # [15]
+run 1 admin-agent-actions bun tests/admin-agent-actions.ts # [20]
 run 1 view-page bun tests/view-page.ts                   # [9]
 collect
 # Latency is measured alone: other tests running would skew it.

@@ -86,13 +86,12 @@ import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import { agentConfigFrom, isModelChoice, MODELS, type AgentConfig } from "../agent";
 import type { SettingChange } from "../config";
-
 import { type Blocked, dependents, depRules, depsNote, type DepStatus, type DepTask, ids } from "../development/task-queue/deps";
 import type { ToolWho } from "../server-tools";
 import type { SourceAnswer, SourceRead } from "../source/browse";
 import { panelPrefs, restoredLog, restoredMessages, storedLog, storedMessages, type PanelPrefs } from "../factory/chat-store";
 import { emptyLog, type Log, type LogEvent } from "../src/page/agent-log";
-import { adminTools, factoryGuide, factoryTools, sourceTools, startFactoryAgent, type FactoryAgent, type FactoryOps } from "../factory/agent";
+import { adminTools, dashboardTools, factoryGuide, factoryTools, sourceTools, startFactoryAgent, type DashboardOps, type FactoryAgent, type FactoryOps } from "../factory/agent";
 import { containersHost } from "../factory/cloudflare";
 import { b64url } from "../factory/git-grant";
 import { branchName, claudeToken, hideTokens, resolvePrompt, restartPrompt, taskPrompt } from "../factory/prompt";
@@ -101,7 +100,8 @@ import { whoOf } from "../front";
 import { sessionOf } from "./auth";
 import { agentName } from "../src/room/doc";
 import { checkAttachments } from "../src/page/attach";
-import { directoryOf, factoryKey, withKeys } from "./d1";
+import { directoryOf, factoryKey, tokensOf, withKeys } from "./d1";
+import { forgetHome } from "./home";
 import { hasSource } from "./artifacts";
 import type { Env } from "./env";
 
@@ -885,7 +885,16 @@ export class Factory extends DurableObject<Env> {
       setDeps: async (id, body) => { await on(); return this.setDeps(id, body, by, state.origin); },
       revise: async (id, instructions) => { await on(); return this.revise(id, instructions, by, state.origin); },
       shot: (file) => this.shot(file),
+      // The board's buttons, as the admin themselves (the task's log and the change log name them, as when they click).
+      start: async (id) => { await on(); return this.start(id, login, state.origin); },
+      merge: async (id) => { await on(); return this.merge(id, login, state.origin); },
+      discard: async (id) => { await on(); return this.discard(id, login, state.origin); },
+      restart: async (id) => { await on(); return this.restart(id, login, state.origin); },
+      tokens: () => this.tokens(),
+      revokeToken: (id) => this.revokeToken(id, login),
+      signOutClaude: async () => { await this.setClaude(null, login); },
     };
+    const dashboard = this.dashboard(login, state);
     const guard = async () => {
       const why = await this.refusal(login);
       if (why) throw new Error(why);
@@ -900,11 +909,50 @@ export class Factory extends DurableObject<Env> {
       return r;
     };
     const stored = this.storedChat(login);
-    const agent = startFactoryAgent({ cfg, owner: login, tools: [...factoryTools(ops, guard), ...adminTools(as, guard), ...sourceTools(readSource, guard)], restore: stored ?? undefined });
+    const agent = startFactoryAgent({ cfg, owner: login, tools: [...factoryTools(ops, guard), ...adminTools(as, guard), ...sourceTools(readSource, guard), ...dashboardTools(dashboard, guard)], restore: stored ?? undefined });
     agent.subscribe((ev) => { this.event({ type: "agent", ev }, login); this.chatChanged(login, ev); });
     s = Object.assign(state, { agent });
     this.agents.set(login, s);
     return s;
+  }
+
+  /**
+   * The dashboard tools' work (factory/agent.ts, dashboardTools), as the admin: the same calls the dashboard's API
+   * makes (worker/source.ts, worker/deploys.ts), and /settings' tokens (server-api.ts),
+   * so the change log and a deploy's trigger name the admin, as when they click.
+   */
+  private dashboard(login: string, state: { origin: string }): DashboardOps {
+    const source = () => {
+      if (!hasSource(this.env)) throw new Error("Erga's repository isn't set up on this server: it needs the Artifacts binding (README, Erga's own source).");
+      return this.env.SOURCE.getByName("erga");
+    };
+    const pipeline = () => this.env.PIPELINE.getByName("deploys");
+    const actor = async () => ({ login, name: (await directoryOf(this.env).users.get(login))?.name || login });
+    return {
+      branches: async () => source().branches(state.origin),
+      release: async (commit) => {
+        const r = await source().merge(state.origin, await actor(), commit);
+        if ("error" in r) throw new Error(r.error);
+        return { ...r, done: r.upToDate ? "main was at staging already: nothing to deploy" : `main moved to ${r.commit.slice(0, 10)}: production deploys it now (list_deploys follows it)` };
+      },
+      mirror: async () => ({ mirror: await source().mirrorNow(state.origin) }),
+      deploys: (history) => pipeline().status(history),
+      deployLog: (target, deploy) => pipeline().logOf(target, deploy),
+      redeploy: async (target) => {
+        const r = await pipeline().redeploy(target, `redeploy by ${login}`);
+        if (!r.ok) throw new Error(r.error ?? "refused");
+        return { done: `${target} redeploys now`, target: r.status };
+      },
+      deployHome: async () => {
+        const dir = directoryOf(this.env);
+        if (!(await dir.homeId())) throw new Error("No document is the homepage (the landing_document setting): there's nothing to deploy.");
+        const status = await this.env.HOME.getByName("home").deploy();
+        await forgetHome(new URL(state.origin)).catch(() => {});
+        return { done: "The homepage deploys now", status };
+      },
+      agentTokens: async () => (await tokensOf(this.env).list(login)).map((t) => ({ id: t.id, label: t.label, kind: t.kind, scope: t.scope, docId: t.docId, created: t.created, expires: t.expires, lastUsed: t.lastUsed })),
+      revokeAgentToken: (id) => tokensOf(this.env).revoke(login, id),
+    };
   }
 
   async agentState(login: string, origin: string) {
