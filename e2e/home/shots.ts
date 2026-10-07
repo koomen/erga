@@ -1,6 +1,6 @@
 // Pictures of a page as a device shows it, and how two pictures differ, pixel
 // by pixel (decoded and compared in the browser), for the homepage's
-// look-alike test (tests/home-shots.ts did this on tests/cdp.ts).
+// look-alike test.
 
 import type { BrowserContext, CDPSession, Page } from "playwright-core";
 import { until } from "../fixtures";

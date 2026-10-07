@@ -1,4 +1,4 @@
-// An install that hangs (tests/factory.ts, 12).
+// An install that hangs.
 import { expect, test } from "../fixtures";
 import { factory, servers, TASK_MS } from "./factory";
 

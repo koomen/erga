@@ -1,4 +1,4 @@
-// Documents' addresses (front.ts; tests/worker.ts): /d/<id>, /<owner>/<id> and the canonical /<owner>/<slug>, the
+// Documents' addresses (front.ts): /d/<id>, /<owner>/<id> and the canonical /<owner>/<slug>, the
 // viewer there and the editor with #edit, and no /edit route.
 import { expect, test } from "../fixtures";
 import { person, servers } from "./front";

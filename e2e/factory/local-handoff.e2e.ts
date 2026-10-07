@@ -1,4 +1,4 @@
-// A stale local task handed to a VM (tests/factory-local.ts, 8): the stand-in goes on from what the agent pushed,
+// A stale local task handed to a VM: the stand-in goes on from what the agent pushed,
 // and the agent's reports are refused.
 import { stalledOf } from "../../factory/stall";
 import { expect, test } from "../fixtures";

@@ -1,11 +1,11 @@
 // The band at the top of a document's page (front.ts, BAND_STYLE), for its
-// tests (tests/band.ts): the fixtures under tests/fixtures/top, each linked as a
+// tests: the fixtures under e2e/fixtures/top, each linked as a
 // document, and what the band and the controls look like once settled.
 
 import type { Page, Server } from "../fixtures";
 import { diff, inPage, sample, screenshot, type RGB } from "./viewer";
 
-/** A document from tests/fixtures/top/<name>: its address. */
+/** A document from e2e/fixtures/top/<name>: its address. */
 export const topDoc = async (server: Server, name: "light" | "dark" | "gradient" | "pages") => (await server.fixture(`top/${name}`)).address;
 
 /** The controls on the band, viewing and editing. */

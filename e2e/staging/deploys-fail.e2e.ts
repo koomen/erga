@@ -1,4 +1,4 @@
-// A build that fails (tests/deploys.ts): it says where and why, the last good commit stays live, the next push deploys.
+// A build that fails: it says where and why, the last good commit stays live, the next push deploys.
 import { expect, servers, test, until } from "../fixtures";
 import { DEPLOY_MS, hook, settled, sha, target } from "./staging";
 

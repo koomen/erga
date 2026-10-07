@@ -1,4 +1,4 @@
-// view_page's capture in other sizes and modes (src/page/frame.ts, agent.ts; tests/view-page.ts): width, height and
+// view_page's capture in other sizes and modes (src/page/frame.ts, agent.ts): width, height and
 // color_scheme change it, the view_page tool takes them, and a user in dark mode gets dark mode by default.
 import { expect, servers, test, until } from "../fixtures";
 import { capture, CAPTURES, DARK, expectColour, fontSite, openFonts as open, SCRIPT_DARK, SCRIPT_LIGHT, WHITE } from "./view-page";

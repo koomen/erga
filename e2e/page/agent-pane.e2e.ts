@@ -1,4 +1,4 @@
-// The agent pane going in and out of the editor (tests/page.ts, "Agent, empty message").
+// The agent pane going in and out of the editor ("Agent, empty message").
 import { expect, servers, test } from "../fixtures";
 import { openEditor, type Editor } from "../editor";
 

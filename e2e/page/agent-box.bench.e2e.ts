@@ -1,4 +1,4 @@
-// The agent box's height easing, frame by frame (tests/page.ts, "Agent, empty message"): timing, so a bench.
+// The agent box's height easing, frame by frame ("Agent, empty message"): timing, so a bench.
 import { expect, servers, test } from "../fixtures";
 import { openEditor } from "../editor";
 

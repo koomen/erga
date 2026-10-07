@@ -1,4 +1,4 @@
-// A push to staging deploys it, in the real Worker on the mock Cloudflare (tests/deploys.ts, "a push to staging" and
+// A push to staging deploys it, in the real Worker on the mock Cloudflare ("a push to staging" and
 // "the deploy's log"): its steps, production's data copied, the log whole and live as events.
 import { expect, servers, test, until } from "../fixtures";
 import { DEPLOY_MS, hook, listen, settled, sha, target } from "./staging";

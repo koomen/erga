@@ -1,4 +1,4 @@
-// The Solar system tour template (tests/solar-system.ts): nine steps, the overview and one for each planet; going
+// The Solar system tour template: nine steps, the overview and one for each planet; going
 // to a step flies the camera there, and the list shows the view from each step's camera. How soon the model moves
 // is timing, so it is in solar-system.bench.e2e.ts: here, only that it moves at all.
 import { readFileSync } from "node:fs";

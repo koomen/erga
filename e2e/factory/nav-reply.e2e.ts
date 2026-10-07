@@ -1,4 +1,4 @@
-// The admin pages as one page (tests/admin-nav.ts): a link in the sidebar shows the other page in place.
+// The admin pages as one page: a link in the sidebar shows the other page in place.
 import { expect, servers, test } from "../fixtures";
 import { admin, ask, click, navState, words } from "./nav";
 

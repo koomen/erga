@@ -1,4 +1,4 @@
-// The account corner in the pages the server sends (tests/account.ts, the markup): every page of the site's own has
+// The account corner in the pages the server sends (the markup): every page of the site's own has
 // it, the editor has its own, a document has none.
 import { expect, servers, test } from "../fixtures";
 import { getter, newDoc } from "./access";

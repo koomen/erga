@@ -1,4 +1,4 @@
-// Backspace at the start of a block joins it to the one before: the block goes, its content moves, the caret stays at the join (tests/page.ts, "Backspace joins a block to the one before").
+// Backspace at the start of a block joins it to the one before: the block goes, its content moves, the caret stays at the join ("Backspace joins a block to the one before").
 import { expect, servers, test } from "../fixtures";
 import { F, openEditor, type Editor } from "../editor";
 

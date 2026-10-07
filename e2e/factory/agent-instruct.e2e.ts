@@ -1,4 +1,4 @@
-// The factory's agent, with the scripted model (tests/factory.ts, 10).
+// The factory's agent, with the scripted model.
 import { expect, test, until } from "../fixtures";
 import { board, factory, servers, TASK_MS, type Board } from "./factory";
 
@@ -34,7 +34,7 @@ test("it looks at a task's screenshot, sends it instructions and drops its depen
   expect(t.mergeAfter).toEqual([]);
   expect(await b.eval<boolean>(`!!document.querySelector("#agent-log .msg-tool.done img.shot")`)).toBe(true);
   await f.until(id, "complete", TASK_MS, (x) => x.commit != t.commit);
-  // It merges only when asked (merge_task and discard_task: tests/admin-agent-actions.ts); here it only reads.
+  // It merges only when asked (merge_task and discard_task: e2e/admin); here it only reads.
   await sayTo(b, "Is it ready? @script " + JSON.stringify([{ tool: "get_task", args: { id } }, { text: `#${id} is ready for you to merge.` }]));
   await expect.poll(() => replies(b), { timeout: 15_000 }).toContain(`#${id} is ready for you to merge.`);
   expect(await f.status(id)).toBe("complete");

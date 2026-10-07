@@ -1,14 +1,12 @@
 // What the suite runs against. A target hands out documents; a document is
 // reached only through the deployment's public surface (the contract in
-// tests/suite/README.md): its shell, the room's WebSocket, the agent's HTTP
+// e2e/suite/README.md): its shell, the room's WebSocket, the agent's HTTP
 // endpoints, what's served and what's stored. Nothing here peeks inside the
 // server, so the same tests run against a local dev server and a deployment.
 //
-//   local    a dev server (tests/host.ts: the Worker under Vite, as `bun
-//            start` runs it) with the scripted agent model, and each
-//            document a scratch copy of a fixture linked from disk, so a
-//            test can edit its files there too. Tests share one server,
-//            except those that restart or kill it, which get their own.
+//   local    a worker's suite server (LocalTarget in e2e/suite/suite.ts):
+//            the scripted agent model, each document a scratch copy of a
+//            fixture linked from disk.
 //   remote   a deployed document at ERGA_TARGET_DOC (its URL must
 //            contain "test": the suite rewrites it), with optional auth
 //            (ERGA_TARGET_COOKIE, ERGA_TARGET_HEADERS as JSON,
@@ -22,7 +20,6 @@
 import { cpSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync, mkdirSync, statSync } from "fs";
 import { tmpdir } from "os";
 import { dirname, join, relative } from "path";
-import type { Host } from "../host";
 
 /**
  * What a target can do beyond the contract:
@@ -88,7 +85,7 @@ export interface Target {
 }
 
 const EDITOR = new URL("../../", import.meta.url).pathname;
-export const FIXTURES = join(EDITOR, "tests/fixtures");
+export const FIXTURES = join(EDITOR, "e2e/fixtures");
 
 /** A fixture folder's text files, keyed by path. */
 export function readFixture(name: string): Record<string, string> {
@@ -132,71 +129,6 @@ export function makeDoc(base: string, headers: Record<string, string>, fixture: 
     ...extra,
   };
   return doc;
-}
-
-// ------------------------------------------------------------ local
-
-export class LocalTarget implements Target {
-  name = "local";
-  parallel = true;
-  caps: Set<Capability>;
-  private shared: Promise<Host> | null = null;
-  constructor(private opts: { liveAgent?: boolean; browser?: boolean } = {}) {
-    this.caps = new Set<Capability>(["restart", "kill", "disk", "roles", opts.liveAgent ? "liveAgent" : "scriptedAgent", ...(opts.browser === false ? [] : ["browser" as const])]);
-  }
-
-  /**
-   * A short write delay: the suite waits on storage a lot, and aims at the
-   * delay where it matters. Not too short: tests share a server, and one
-   * that makes an edit "not yet stored" needs the next request in first.
-   */
-  private env(): Record<string, string> {
-    const env: Record<string, string> = { ERGA_WRITE_DELAY_MS: "200" };
-    if (this.opts.liveAgent) env.ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY ?? "";
-    else env.ERGA_AGENT_MODEL = "script";
-    return env;
-  }
-
-  async newDoc(fixture: string, needs: Capability[] = []): Promise<Doc> {
-    // (Loaded here: the e2e suite, on Node, imports this file for RemoteTarget and makeDoc, and tests/host.ts is Bun's.)
-    const { startHost } = await import("../host");
-    const dir = mkdtempSync(join(tmpdir(), "erga-suite-"));
-    cpSync(join(FIXTURES, fixture), dir, { recursive: true });
-    const writeDisk = (p: string, data: string | Uint8Array) => { const full = join(dir, p); mkdirSync(dirname(full), { recursive: true }); writeFileSync(full, data); };
-    const own = needs.includes("restart") || needs.includes("kill");
-    // The folder opens as a document of its own, edited in place, at an address that stays the same across restarts.
-    const host = own ? await startHost(dir, { env: this.env() }) : await (this.shared ??= startHost(null, { env: this.env() }));
-    const base = own ? host.base : await host.open(dir);
-    const info = (await (await fetch(`${base}/api/doc`)).json()) as { writeDelay?: number; docName?: { id: string } };
-    const writeDelay = info.writeDelay ?? 400;
-    return makeDoc(base, {}, readFixture(fixture), {
-      writeDelay,
-      writeDisk,
-      // As the dev server's own person (DEV_LOGIN), who opened it from disk and owns it.
-      async share(user: string, role: "editor" | "viewer" | null) {
-        const r = await fetch(`${host.root}/docs/share`, { method: "POST", headers: { Origin: host.root }, body: new URLSearchParams({ id: info.docName!.id, login: user, role: role ?? "none" }) });
-        if (!r.ok) throw new Error(`sharing with ${user}: ${r.status} ${await r.text()}`);
-      },
-      ...(own ? {
-        async restart(how: "graceful" | "kill" | "lose-state", whileDown?: () => Promise<void>) {
-          await host.stop(how == "graceful" ? "SIGTERM" : "SIGKILL");
-          // The documents' storage goes, the room's saved state with it; the folder is linked afresh on start.
-          if (how == "lose-state") rmSync(join(host.state, "v3"), { recursive: true, force: true });
-          await whileDown?.();
-          await host.start();
-        },
-      } : {}),
-      async dispose() {
-        if (own) await host.dispose();
-        else await host.forget(base);
-        rmSync(dir, { recursive: true, force: true });
-      },
-    });
-  }
-
-  async close() {
-    await (await this.shared)?.dispose();
-  }
 }
 
 // ------------------------------------------------------------ remote

@@ -1,4 +1,4 @@
-// Seeding Erga's repository (tests/source.ts, "Seed, clone, push, pull"): source/import.ts through the Git endpoint, to
+// Seeding Erga's repository ("Seed, clone, push, pull"): source/import.ts through the Git endpoint, to
 // main and staging, once. On a server of its own: a shared one's repository may be seeded already.
 import { spawnSync } from "node:child_process";
 import { mkdtempSync } from "node:fs";

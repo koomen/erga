@@ -1,4 +1,4 @@
-// The Source pane without events (tests/source.ts): a deploy run by another server sends this page none (erga.dev's
+// The Source pane without events: a deploy run by another server sends this page none (erga.dev's
 // page shows staging's), so a page whose /api/events is blocked still follows it: opened while a deploy runs, it shows
 // it live when done, without a reload, and its open log asks for new lines.
 import { expect, servers, test, until, type Page } from "../fixtures";

@@ -5,19 +5,16 @@ reach the server only through its public surface (the contract below), so
 the same run works against a local dev server and against the Cloudflare
 deployment:
 
-    bun tests/suite/run.ts                    # local: a dev server (bun start's), each test a folder linked from disk
-    bun tests/suite/run.ts --long             # bigger crowds, longer fuzzing, real 75s idle waits
-    bun tests/suite/run.ts --repeat 10        # ten runs, ten seeds
-    bun tests/suite/run.ts --suite fuzz --seed 4711     # replay one randomised run
-    bun tests/suite/run.ts --grep restart     # tests whose name matches
+    bun run test:e2e e2e/suite                # local: each worker's suite server, each test a folder linked from disk
+    ERGA_SUITE_LONG=1 bun run test:e2e e2e/suite        # bigger crowds, longer fuzzing, real 75s idle waits
+    bun run test:e2e e2e/suite --repeat-each 10         # ten runs, ten seeds
+    ERGA_SUITE_SEED=4711 bun run test:e2e e2e/suite/fuzz-1.e2e.ts   # replay one randomised run
+    bun run test:e2e e2e/suite --grep restart           # tests whose name matches
+    bun run test:bench e2e/suite/latency.bench.e2e.ts   # the latency budgets
 
-    ERGA_TARGET_DOC=https://edit.example.com/p/erga-test/doc \
-    ERGA_TARGET_USERS='{"Ada":{"Cookie":"..."},"Bo":{"Cookie":"..."}, ...}' \
-    ERGA_TARGET_CAPS=browser,scriptedAgent \
-    bun tests/suite/run.ts --remote           # a deployment
+    ERGA_TEST_TOKEN=erga_test_... bun run test:prod     # a deployment (e2e/suite/prod.ts, RemoteTarget in target.ts)
 
-A failing randomised test prints its seed and the command that replays it.
-`--json out.json` writes the results, metrics included, for a dashboard or CI.
+A failing randomised test prints its seed.
 
 ## What it checks
 
@@ -30,7 +27,7 @@ A failing randomised test prints its seed and the command that replays it.
 | robustness | random bytes, truncated/corrupt/unknown Yjs messages, a storm of 80 connections and ten ghosts, a 1MB paste, path traversal on every file endpoint, bad requests to the agent |
 | fuzz | seeded random edits from several hands with offline spells and (sometimes stale) publishes: everyone converges, storage and the served page match, a newcomer matches, and no token inserted is lost, duplicated or resurrected; arbitrary edits with unicode; newcomers mid-burst |
 | latency | edit propagation p50/p95/max, the slowest of twenty, join time, five people typing for ten seconds with no lag building up (budgets: 60ms locally, 400ms remote, or `ERGA_SUITE_P95_MS`) |
-| browser | real tabs in headless Chrome: typing on the page, carets and coloured marks, interleaved typing, ⌘Z only your own, the source view, a headless participant's edit on the page, the agent panel per person and `view_page` through the owner's tab, a tab riding out a restart, a refused tab offering a reload |
+| browser | real tabs in headless Chromium (browser-*.e2e.ts): typing on the page, carets and coloured marks, interleaved typing, ⌘Z only your own, the source view, a headless participant's edit on the page, the agent panel per person and `view_page` through the owner's tab, a tab riding out a restart, a refused tab offering a reload |
 
 Every test gets a fresh document. Capabilities a target lacks skip the tests
 that need them, and say so: `restart`, `kill`, `disk` (local only),

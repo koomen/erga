@@ -1,4 +1,4 @@
-// A local task whose merge conflicts (tests/factory-local.ts, 7): needs agent, the merge VM stopped, the agent's
+// A local task whose merge conflicts: needs agent, the merge VM stopped, the agent's
 // inbox says how; task pull --staging, resolve, task done, and the merge goes on to merged.
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";

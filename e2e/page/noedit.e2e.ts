@@ -1,4 +1,4 @@
-// Parts marked data-erga-noedit: never editable by hand, and clicking them says so (tests/page.ts, "No-edit parts").
+// Parts marked data-erga-noedit: never editable by hand, and clicking them says so ("No-edit parts").
 import { expect, servers, test } from "../fixtures";
 import { F, openEditor } from "../editor";
 

@@ -1,7 +1,7 @@
-// The multiplayer suite in real tabs (tests/suite/suites/browser.ts): the agent pane follows the agent's output
+// The multiplayer suite in real tabs (e2e/suite/suites/browser.ts): the agent pane follows the agent's output
 // until you scroll back, like a terminal.
 import { settle } from "../fixtures";
-import { expect, until } from "../../tests/suite/harness";
+import { expect, until } from "./harness";
 import { browserTest, noErrors, openAs } from "./suite";
 
 // Three scripted runs of the agent, the first with a screenshot: 6 s on an idle Mac, inside a browser test's 30 s.

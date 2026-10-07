@@ -1,4 +1,4 @@
-// A one-document token over HTTP (tests/scoped-tokens.ts, A document token): its document, and nothing else.
+// A one-document token over HTTP (A document token): its document, and nothing else.
 import { expect, servers, test } from "../fixtures";
 import { getter, mint, publish, tool } from "./access";
 

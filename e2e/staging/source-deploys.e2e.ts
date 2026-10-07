@@ -1,4 +1,4 @@
-// Each move of staging and main reaches the deploy pipeline (tests/source.ts, "Deploys"): staging (this server)
+// Each move of staging and main reaches the deploy pipeline ("Deploys"): staging (this server)
 // deploys staging's head; a merge to main deploys production (played in the mock).
 import { expect, servers, test, until } from "../fixtures";
 import { admin, clone, commit, DEPLOY_MS, gateGreen, merge, must, seed, settled, target } from "./staging";

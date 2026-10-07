@@ -1,4 +1,4 @@
-// Several checkouts, each with its own dev server, at once (dev.ts), from tests/checkouts.ts: two copies of this
+// Several checkouts, each with its own dev server, at once (dev.ts): two copies of this
 // checkout run `bun start` with no port or state of their own given, as two agents' worktrees would, and share
 // nothing. They take the ports dev.ts picks from their paths, so this file runs alone, with no other test's server
 // beside it (e2e.alone.config.ts: one worker, after the rest).

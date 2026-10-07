@@ -1,4 +1,4 @@
-// The homepage section of the settings: blocked, the switch, a publish scheduling a deploy, Redeploy now (tests/settings.ts).
+// The homepage section of the settings: blocked, the switch, a publish scheduling a deploy, Redeploy now.
 // These change which document is the server's homepage (landing_document): each puts it back after.
 import { expect, servers, SHORT, test } from "../fixtures";
 import { closeDrafts, draftDoc, openDocEditor } from "./settings";

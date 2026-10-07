@@ -1,4 +1,4 @@
-// main refuses a red commit on every path, and says why and where (tests/gate.ts); an earlier green commit may go out.
+// main refuses a red commit on every path, and says why and where; an earlier green commit may go out.
 import { expect, servers, test, until } from "../fixtures";
 import { admin, gateOf, git, merge, pusher } from "./staging";
 

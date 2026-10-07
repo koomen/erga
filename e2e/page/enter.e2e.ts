@@ -1,4 +1,4 @@
-// Enter makes an empty paragraph; typing into it leaves no placeholder <br> behind, on the page or in the file (tests/page.ts, "Enter and the placeholder <br>").
+// Enter makes an empty paragraph; typing into it leaves no placeholder <br> behind, on the page or in the file ("Enter and the placeholder <br>").
 import { expect, servers, test } from "../fixtures";
 import { F, openEditor, type Editor } from "../editor";
 

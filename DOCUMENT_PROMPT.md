@@ -178,7 +178,7 @@ A minimal presentation: each `section` is a step.
 </script>
 ```
 
-`tests/fixtures/steps/index.html` is a fuller example.
+`e2e/fixtures/steps/index.html` is a fuller example.
 
 ## Markdown documents
 

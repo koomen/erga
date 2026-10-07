@@ -1,4 +1,4 @@
-// The source view, ⌘⇧P (tests/page.ts, "HTML page").
+// The source view, ⌘⇧P ("HTML page").
 import { expect, servers, test } from "../fixtures";
 import { F, openEditor } from "../editor";
 

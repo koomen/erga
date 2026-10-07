@@ -1,4 +1,4 @@
-// Who did it (#69; tests/attribution.ts): a shared agent, with tester's admin token.
+// Who did it (#69): a shared agent, with tester's admin token.
 import { expect, test, until } from "../fixtures";
 import { servers } from "./factory";
 import { freshHours, SETTING, unique, who } from "./who";

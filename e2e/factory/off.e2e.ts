@@ -1,4 +1,4 @@
-// The factory off (tests/factory.ts, 1).
+// The factory off.
 import { expect, test } from "../fixtures";
 import { board, factory, servers } from "./factory";
 

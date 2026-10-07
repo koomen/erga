@@ -1,4 +1,4 @@
-// The GitHub mirror (tests/source.ts): each move is pushed to a pretend GitHub (dev/mirror.ts, dev/git-server.ts).
+// The GitHub mirror: each move is pushed to a pretend GitHub (dev/mirror.ts, dev/git-server.ts).
 import { expect, servers, test } from "../fixtures";
 import { admin, clone, commit, git, heads, must, seed } from "./staging";
 

@@ -1,4 +1,4 @@
-// A document's page can't act as whoever has it open (tests/isolation.ts; src/page/bridge.ts). The page here tries
+// A document's page can't act as whoever has it open (src/page/bridge.ts). The page here tries
 // everything a page written to steal would: reach the editor's window, read the session, call the editor's own site
 // as the viewer (their documents, their agent), and forge messages to the shell. It writes down what it got, and the
 // test reads that from the page. (It can still drive the page editor next to it, which is on its origin: that edits
@@ -63,7 +63,7 @@ test("the page runs on its own origin; it can't reach the editor's window, its c
   expect(String(loot.docs), "the documents list").toMatch(/^blocked/);
   expect(String(loot.agent), "the agent").toMatch(/^blocked/);
   // The forged edit went nowhere. The page posted it before it wrote its loot; an edit made after that, through the
-  // page editor, reaching the shell proves the shell has handled what came before it (tests/isolation.ts waited 500 ms).
+  // page editor, reaching the shell proves the shell has handled what came before it (the old harness waited 500 ms).
   await ed.clickEnd("h1");
   await ed.type("!");
   await until(async () => (await ed.source()).includes("Quarterly notes!</h1>"), 5000, "a real edit reaches the shell");

@@ -1,4 +1,4 @@
-// Move to…, and drag and drop, with the warning about relative links; the tree says page, not document (tests/tree.ts, "the editor": move).
+// Move to…, and drag and drop, with the warning about relative links; the tree says page, not document ("the editor": move).
 import { expect, servers, test, until } from "../fixtures";
 import { act, menuItem, menuItems, multi, openCard, openTreeEditor, rows, js } from "./tree";
 

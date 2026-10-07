@@ -1,4 +1,4 @@
-// The editor on a Markdown page: edits land in the source line (tests/page.ts, "Markdown page").
+// The editor on a Markdown page: edits land in the source line ("Markdown page").
 import { expect, servers, test } from "../fixtures";
 import { openEditor } from "../editor";
 

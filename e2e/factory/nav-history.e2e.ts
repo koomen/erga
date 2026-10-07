@@ -1,4 +1,4 @@
-// The admin pages as one page (tests/admin-nav.ts): back and forward.
+// The admin pages as one page: back and forward.
 import { expect, servers, test } from "../fixtures";
 import { admin, click, navState } from "./nav";
 

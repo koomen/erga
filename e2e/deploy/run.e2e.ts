@@ -1,4 +1,4 @@
-// A whole deploy from /deploy (tests/deploy.ts): where it goes (a bought domain, documents' pages on a second one), a
+// A whole deploy from /deploy: where it goes (a bought domain, documents' pages on a second one), a
 // GitHub app with its callback filled in, the review, every step as it goes, and then what the mock Cloudflare was
 // asked to do: the new server's settings, its domains, no secret in the clear, the OAuth token given back.
 import { expect, test } from "../fixtures";

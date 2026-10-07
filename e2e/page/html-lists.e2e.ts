@@ -1,4 +1,4 @@
-// Enter, Backspace and undo in an HTML list (tests/page.ts, "HTML page").
+// Enter, Backspace and undo in an HTML list ("HTML page").
 import { expect, servers, test } from "../fixtures";
 import { openEditor } from "../editor";
 

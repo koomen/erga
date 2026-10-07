@@ -1,4 +1,4 @@
-// Tab in an HTML list: a nested list goes in the item before, whose own text moves into a <p> so it stays editable (tests/page.ts, "Tab in an HTML list").
+// Tab in an HTML list: a nested list goes in the item before, whose own text moves into a <p> so it stays editable ("Tab in an HTML list").
 import { expect, servers, test } from "../fixtures";
 import { F, openEditor, type Editor } from "../editor";
 

@@ -1,4 +1,4 @@
-// ⌘B on an HTML page (tests/page.ts, "HTML page").
+// ⌘B on an HTML page ("HTML page").
 import { expect, servers, test } from "../fixtures";
 import { openEditor } from "../editor";
 

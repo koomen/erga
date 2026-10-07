@@ -1,4 +1,4 @@
-// The popover following the document live, Publish the current version, Edit on an old version, and errors (tests/settings.ts).
+// The popover following the document live, Publish the current version, Edit on an old version, and errors.
 import { expect, servers, test, type Tab } from "../fixtures";
 import { roomOf, Participant } from "./versions";
 import { another, closeDrafts, draftDoc, openDocEditor, viewerShows } from "./settings";

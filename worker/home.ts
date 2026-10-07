@@ -258,7 +258,7 @@ export class Home extends DurableObject<Env> {
     const published = await publishedFiles(this.env, doc.id);
     if (!published) throw new Error("The homepage's document has no files.");
     const page = published.files[published.index];
-    // Local development only: a page that asks for it fails its deploy (tests/home.ts checks what that leaves).
+    // Local development only: a page that asks for it fails its deploy (e2e/home/switch.e2e.ts checks what that leaves).
     if (this.env.ERGA_LINK_SECRET && String(typeof page == "string" ? page : new TextDecoder().decode(page ?? new Uint8Array())).includes("erga:test-fail-deploy")) {
       throw new Error("This test page asks for its deploy to fail.");
     }

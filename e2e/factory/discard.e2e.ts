@@ -1,4 +1,4 @@
-// Merge and discard, from the board (tests/factory.ts, 3 and 4; the change log).
+// Merge and discard, from the board (3 and 4; the change log).
 import { expect, test, until } from "../fixtures";
 import { board, factory, servers, TASK_MS } from "./factory";
 

@@ -1,4 +1,4 @@
-// Rename in place (F2, or the menu); the server's refusal in its own words (tests/tree.ts, "the editor": rename).
+// Rename in place (F2, or the menu); the server's refusal in its own words ("the editor": rename).
 import { expect, servers, test, until } from "../fixtures";
 import { act, menuItem, multi, openCard, openTreeEditor, press, row, type, js } from "./tree";
 

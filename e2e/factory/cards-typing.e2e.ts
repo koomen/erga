@@ -1,4 +1,4 @@
-// Live updates of the open task while the admin types in its detail view (tests/factory-cards.ts).
+// Live updates of the open task while the admin types in its detail view.
 import { expect, servers, test, until } from "../fixtures";
 import { cardBoard } from "./cards";
 

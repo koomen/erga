@@ -1,4 +1,4 @@
-// Making another document the homepage: its deploys, its files, isolation from the controls, and who may (tests/home.ts).
+// Making another document the homepage: its deploys, its files, isolation from the controls, and who may.
 import { expect, servers, SHORT, test } from "../fixtures";
 import { events, someone } from "../versions/versions";
 import { adminToken, deployed, fresh, front, get, home, post, publish, resetLanding } from "./home";

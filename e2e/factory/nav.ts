@@ -1,4 +1,4 @@
-// The admin pages as one page (src/page/admin-nav.ts; tests/admin-nav.ts), on the worker's factory server (the
+// The admin pages as one page (src/page/admin-nav.ts), on the worker's factory server (the
 // agent panel's scripted model). A mark on the document and on the agent panel's log tells a page shown in place
 // (both kept) from a load (both gone).
 

@@ -1,4 +1,4 @@
-// Open pages across a redeploy (tests/redeploy.ts, (a)): the server restarts with the same client files. No page
+// Open pages across a redeploy ((a)): the server restarts with the same client files. No page
 // reloads, each one reconnects, nothing shows an error, and an edit typed in the editor while the server was down
 // reaches the server once it's back.
 import { expect, test, until, withoutOutage } from "../fixtures";

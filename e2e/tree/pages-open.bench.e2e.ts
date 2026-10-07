@@ -1,4 +1,4 @@
-// How fast the editor's pages dropdown opens the first time, with 100 ms of network latency added (tests/pages-open.ts):
+// How fast the editor's pages dropdown opens the first time, with 100 ms of network latency added:
 // from the click to the tree's rows on screen. Each case on a fresh editor load, a few seconds after it's up (its idle
 // work done). PAGES_OPEN_BOUND (80 ms) is the bound for each.
 import type { Page } from "playwright-core";

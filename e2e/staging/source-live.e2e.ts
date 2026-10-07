@@ -1,4 +1,4 @@
-// The Source pane follows by itself (tests/source.ts, "Someone pushes to staging"): a push shows up without a reload,
+// The Source pane follows by itself ("Someone pushes to staging"): a push shows up without a reload,
 // staging's column shows the deploy running, its open log gets the new deploy's lines as they come, the column marks
 // the commit live; once its tests pass Merge turns on; the dots are circles, hollow orange only on staging, solid green
 // on main too.

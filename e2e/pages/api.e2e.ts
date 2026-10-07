@@ -1,4 +1,4 @@
-// The file tree's API: making, refusing, moving and deleting, and the events open editors hear (tests/pages.ts).
+// The file tree's API: making, refusing, moving and deleting, and the events open editors hear.
 import { expect, servers, test } from "../fixtures";
 import { events } from "../versions/versions";
 import { paths, site } from "./tree";

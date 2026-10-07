@@ -1473,7 +1473,7 @@ async function newDoc(platform: Platform, request: Request): Promise<Response> {
     return new Response(null, { status: 302, headers: { Location: `/${owner}/${wanted}#edit` } });
   }
   // Local development may name the document (the test suite wants "test" in its address),
-  // and say how soon it goes if nobody edits it (?unedited=<ms>, for tests/worker.ts).
+  // and say how soon it goes if nobody edits it (?unedited=<ms>, for e2e/front/lifetime.e2e.ts).
   const dev = platform.dev(url);
   const unedited = (dev && Number(params.get("unedited"))) || undefined;
   for (let tries = 0; tries < 5; tries++) {

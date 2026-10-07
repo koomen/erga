@@ -1,4 +1,4 @@
-// /new and the documents list (front.ts; tests/worker.ts): a blank document, its automatic address, the landing
+// /new and the documents list (front.ts): a blank document, its automatic address, the landing
 // page the server makes, and another site's link or form asking first.
 import { expect, test } from "../fixtures";
 import { person, servers, template } from "./front";
@@ -29,7 +29,7 @@ test("a second Untitled document gets the next free slug, /<you>/untitled-2", as
 });
 
 test("/new?from=landing copies the landing page the server makes, and / shows it", async () => {
-  // (tests/worker.ts checked this on a fresh server, before anything asked for the landing document; the worker's
+  // (The old harness checked this on a fresh server, before anything asked for the landing document; the worker's
   // server may have made it for an earlier test, which /new?from=landing and / don't tell apart.)
   const p = await person(await servers.script());
   const copy = await p.get("/new?from=landing");

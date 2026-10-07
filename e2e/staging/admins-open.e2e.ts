@@ -1,4 +1,4 @@
-// What stays open on staging without an admin (tests/staging-admins.ts, "what stays open"): each door checks its own
+// What stays open on staging without an admin ("what stays open"): each door checks its own
 // credential.
 import { expect, servers, test } from "../fixtures";
 import { get, signedOut } from "./admins";

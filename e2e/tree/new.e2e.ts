@@ -1,4 +1,4 @@
-// New folder and New page, at the top level and in a folder, named in place (tests/tree.ts, "the editor": New folder, New page).
+// New folder and New page, at the top level and in a folder, named in place ("the editor": New folder, New page).
 import { expect, servers, test, until } from "../fixtures";
 import { act, clickOn, focused, menuItem, multi, openCard, openTreeEditor, press, rows, type, js } from "./tree";
 

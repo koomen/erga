@@ -1,4 +1,4 @@
-// Who did it (#69; tests/attribution.ts): Share with agent's token adds a task, the factory's VM works on it as
+// Who did it (#69): Share with agent's token adds a task, the factory's VM works on it as
 // tester's, and the admin agent merges it.
 import { expect, test } from "../fixtures";
 import { factory, servers, TASK_MS } from "./factory";

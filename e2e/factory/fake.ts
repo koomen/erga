@@ -1,4 +1,4 @@
-// A board of fixture tasks for the board's own tests (tests/factory-cards.ts, factory-chime.ts): the page's
+// A board of fixture tasks for the board's own tests (factory-chime.ts): the page's
 // /api/factory requests are answered by the test (Playwright routing), so no VM runs and the plain dev server
 // does. Each test makes its own fake, so its tasks are its own to change.
 

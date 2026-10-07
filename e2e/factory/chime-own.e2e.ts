@@ -1,4 +1,4 @@
-// The chime (tests/factory-chime.ts): the admin's own step plays none.
+// The chime: the admin's own step plays none.
 import { expect, servers, test } from "../fixtures";
 import { chimeBoard, decided, look } from "./chime";
 

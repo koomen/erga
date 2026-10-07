@@ -4,8 +4,7 @@
 //
 // The document's page runs in a frame on its own origin: in the viewer the
 // host page's visible frame (iframe.on, front.ts), in the editor the page
-// editor's frame. `inPage` evaluates an expression in that page, as
-// tests/cdp.ts's inPage did.
+// editor's frame. `inPage` evaluates an expression in that page.
 
 import type { Page } from "playwright-core";
 import { settle, until, type Server, type Tab } from "../fixtures";

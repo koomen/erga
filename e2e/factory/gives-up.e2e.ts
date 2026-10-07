@@ -1,4 +1,4 @@
-// A merge whose Claude Code gives up, then goes on (tests/factory.ts, 12).
+// A merge whose Claude Code gives up, then goes on.
 import { spawnSync } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { expect, test, until } from "../fixtures";

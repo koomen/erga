@@ -1,4 +1,4 @@
-// The editor's title opens the tree: the document as its root row, its pages under it, documents only (tests/tree.ts, "the editor").
+// The editor's title opens the tree: the document as its root row, its pages under it, documents only ("the editor").
 import { expect, servers, test } from "../fixtures";
 import { focused, multi, NOT_DOCUMENTS, openCard, openTreeEditor, rows, js } from "./tree";
 

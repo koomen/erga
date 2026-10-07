@@ -1,4 +1,4 @@
-// Who did it (#69; tests/attribution.ts): in person.
+// Who did it (#69): in person.
 import { expect, test } from "../fixtures";
 import { servers } from "./factory";
 import { freshHours, SETTING, unique, who } from "./who";

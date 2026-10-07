@@ -1,4 +1,4 @@
-// A deploy that fails at a step (tests/deploy.ts): with a pasted token, on workers.dev; it says at which step and what
+// A deploy that fails at a step: with a pasted token, on workers.dev; it says at which step and what
 // Cloudflare said, offers to try again, and keeps the token for that.
 import { expect, test } from "../fixtures";
 import { openDeploy, servers } from "./deploy";

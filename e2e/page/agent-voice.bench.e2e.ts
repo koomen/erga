@@ -1,4 +1,4 @@
-// Voice mode: what was left in the box isn't sent later, after the pause timer (tests/page.ts, "Agent, voice mode"): it waits the timer out, so a bench.
+// Voice mode: what was left in the box isn't sent later, after the pause timer ("Agent, voice mode"): it waits the timer out, so a bench.
 import { expect, servers, test } from "../fixtures";
 import { openEditor, TIMESCALE } from "../editor";
 

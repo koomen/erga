@@ -1,4 +1,4 @@
-// Live reload (`bun start --reload`, dev/reload.ts), from tests/reload.ts: an open tab reloads by itself, showing the
+// Live reload (`bun start --reload`, dev/reload.ts): an open tab reloads by itself, showing the
 // change, when the Worker's front door changes (Vite restarts the server), when another Worker module changes (Vite
 // reloads the Worker), when the editor's own files change (dev.ts rebuilds them), and the page editor too. The edits
 // are made in a copy of this checkout (e2e/checkout.ts), with a server of its own for this file: each test makes

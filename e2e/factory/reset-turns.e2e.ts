@@ -1,4 +1,4 @@
-// Claude Code's turn limit (tests/factory-reset.ts, 1).
+// Claude Code's turn limit.
 import { expect, test } from "../fixtures";
 import { factory, servers, TASK_MS } from "./factory";
 

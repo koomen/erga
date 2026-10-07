@@ -1,4 +1,4 @@
-// Who the factory's commits are by (#68, factory/author.ts; tests/factory-authors.ts): a task added in a session,
+// Who the factory's commits are by (#68, factory/author.ts): a task added in a session,
 // by the admin agent and with a Share with agent token each records its person, and the stand-in's commits on its
 // branch are that person's, committed by Erga factory.
 import { expect, test, until } from "../fixtures";

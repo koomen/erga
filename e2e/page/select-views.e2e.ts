@@ -1,4 +1,4 @@
-// Selecting across lines in the HTML view, and across blocks in Markdown (tests/page.ts, "Selecting across paragraphs").
+// Selecting across lines in the HTML view, and across blocks in Markdown ("Selecting across paragraphs").
 import { expect, servers, test } from "../fixtures";
 import { F, openEditor } from "../editor";
 

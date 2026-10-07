@@ -1,4 +1,4 @@
-// The production gate on the Factory page (tests/gate.ts, "the page"): the tests column, Merge off with the reason,
+// The production gate on the Factory page ("the page"): the tests column, Merge off with the reason,
 // Merge to newest green, a run's shards and a shard's log.
 import { expect, servers, test, until, type Page } from "../fixtures";
 import { admin, gateOf, pusher } from "./staging";

@@ -1,4 +1,4 @@
-// Track changes: every change, yours or from disk, marked as a diff from when it was switched on (tests/page.ts, "HTML page").
+// Track changes: every change, yours or from disk, marked as a diff from when it was switched on ("HTML page").
 import { expect, servers, test } from "../fixtures";
 import { openEditor } from "../editor";
 

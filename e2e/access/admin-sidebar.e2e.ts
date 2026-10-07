@@ -1,4 +1,4 @@
-// The admin pages in the browser (tests/admin-layout.ts, in headless Chrome): the sidebar collapses and expands and
+// The admin pages in the browser (in headless Chrome): the sidebar collapses and expands and
 // is remembered, Share with agent opens its card, the admin's agent collapses to a round button and back, and a
 // phone has a row of links. How far the sidebar has moved part-way through its animation is timing:
 // admin-sidebar.bench.e2e.ts.

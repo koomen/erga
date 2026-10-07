@@ -1,4 +1,4 @@
-// The source API (tests/source.ts, "The API: branches and merging"): staging's commits and which main has; merging is
+// The source API ("The API: branches and merging"): staging's commits and which main has; merging is
 // always a fast-forward of main, to staging's head or a chosen commit; admins only, from this site only.
 import { expect, servers, test } from "../fixtures";
 import { admin, clone, commit, gateGreen, heads, merge, mint, must, seed } from "./staging";

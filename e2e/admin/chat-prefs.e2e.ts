@@ -1,5 +1,5 @@
 // The admin agent's panel, as the admin left it, follows them to a fresh browser (GET|PUT /api/admin/agent/prefs,
-// src/page/factory-agent.ts, src/page/layout.ts; tests/admin-agent-chat.ts). On a server of its own: the layout is
+// src/page/factory-agent.ts, src/page/layout.ts). On a server of its own: the layout is
 // the admin's, and would follow them into the other tests on a shared one.
 import { expect, test, until } from "../fixtures";
 import { panel } from "./admin";

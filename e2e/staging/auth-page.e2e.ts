@@ -1,4 +1,4 @@
-// The Authentication page in Chrome (tests/admin-auth.ts, "the page"): production working, staging not set up with the
+// The Authentication page in Chrome ("the page"): production working, staging not set up with the
 // steps to make its app; a wrong secret changes nothing; the right values set staging's app from production's page.
 import { expect, servers, test } from "../fixtures";
 import { newApp, PROD_APP, reset, status } from "./auth";

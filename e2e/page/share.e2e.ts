@@ -1,4 +1,4 @@
-// The share button: a prompt with this page's API and a working token (tests/page.ts, "Share with an agent").
+// The share button: a prompt with this page's API and a working token ("Share with an agent").
 import { expect, servers, test } from "../fixtures";
 import { openEditor } from "../editor";
 

@@ -1,4 +1,4 @@
-// A merge step that hangs (tests/factory.ts, 12).
+// A merge step that hangs.
 import { spawnSync } from "node:child_process";
 import { expect, test } from "../fixtures";
 import { factory, servers, TASK_MS } from "./factory";

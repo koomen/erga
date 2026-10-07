@@ -1,5 +1,5 @@
 // The admin agent's conversation, kept on the server (worker/factory.ts, factory/chat-store.ts;
-// GET|DELETE /api/admin/agent/conversation), on the scripted model (tests/admin-agent-chat.ts). A restart is in
+// GET|DELETE /api/admin/agent/conversation), on the scripted model. A restart is in
 // chat-restart.e2e.ts, the panel's layout in chat-prefs.e2e.ts.
 import { expect, servers, test } from "../fixtures";
 import { fresh, panel } from "./admin";

@@ -1,4 +1,4 @@
-// Edits made to the file on disk reach the open page (tests/page.ts, "HTML page").
+// Edits made to the file on disk reach the open page ("HTML page").
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, servers, test } from "../fixtures";

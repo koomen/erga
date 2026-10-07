@@ -1,4 +1,4 @@
-// Agents and the open editor of a page: what they see, and taking it to another page (tests/pages.ts).
+// Agents and the open editor of a page: what they see, and taking it to another page.
 import { expect, servers, test, type Tab } from "../fixtures";
 import { editing, inFrames, ready, site, where } from "./tree";
 

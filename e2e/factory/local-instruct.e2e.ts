@@ -1,4 +1,4 @@
-// Instructions from the board to a local task (tests/factory-local.ts, 4): done is refused while they wait, and
+// Instructions from the board to a local task: done is refused while they wait, and
 // task inbox gives them once.
 import { expect, test } from "../fixtures";
 import { factory, servers } from "./factory";

@@ -1,4 +1,4 @@
-// The settings on a phone, and over a dark page (tests/settings.ts).
+// The settings on a phone, and over a dark page.
 import { expect, servers, test } from "../fixtures";
 import { closeDrafts, draftDoc, openDocEditor } from "./settings";
 

@@ -1,4 +1,4 @@
-// The admin pages as one page (tests/admin-nav.ts): a deep link and a reload open the page whole.
+// The admin pages as one page: a deep link and a reload open the page whole.
 import { expect, servers, test, until } from "../fixtures";
 import { admin, ask, click, mark, navState, words } from "./nav";
 

@@ -1,4 +1,4 @@
-// Who did it (#69; tests/attribution.ts): the admin agent.
+// Who did it (#69): the admin agent.
 import { expect, test, until } from "../fixtures";
 import { factory, servers } from "./factory";
 import { unique, who } from "./who";

@@ -1,4 +1,4 @@
-// A merge right after a resolve (tests/factory-reset.ts, 2). How soon it ends is a timing check: reset-linger.bench.e2e.ts.
+// A merge right after a resolve. How soon it ends is a timing check: reset-linger.bench.e2e.ts.
 import { expect, test } from "../fixtures";
 import { servers, TASK_MS } from "./factory";
 import { mergeAfterResolve } from "./reset";

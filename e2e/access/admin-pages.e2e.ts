@@ -1,4 +1,4 @@
-// The admin pages' shared layout and their old addresses (tests/admin-layout.ts, the layout), as the server sends
+// The admin pages' shared layout and their old addresses (the layout), as the server sends
 // them to tester, local development's admin.
 import { expect, servers, test } from "../fixtures";
 import { getter } from "./access";

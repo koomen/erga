@@ -1,4 +1,4 @@
-// view_page's capture, done in the tab: the page as it is, or one element (tests/page.ts, "Styling and views").
+// view_page's capture, done in the tab: the page as it is, or one element ("Styling and views").
 import { expect, servers, test } from "../fixtures";
 import { openEditor } from "../editor";
 

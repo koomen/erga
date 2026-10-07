@@ -1,4 +1,4 @@
-// The Slides template (tests/slides.ts): two 16:9 slides, one at a time, as large as the window allows; one step for
+// The Slides template: two 16:9 slides, one at a time, as large as the window allows; one step for
 // each, labelled with its title; the buttons, the arrow keys and the list step through them, viewing and editing.
 import type { Page } from "playwright-core";
 import { expect, servers, test } from "../fixtures";

@@ -1,4 +1,4 @@
-// Addresses resolving to pages, and the pages origin's relative redirects (tests/pages.ts).
+// Addresses resolving to pages, and the pages origin's relative redirects.
 import { expect, servers, test } from "../fixtures";
 import { pagesFetch } from "../versions/versions";
 import { PAGE, site, type Site } from "./tree";

@@ -1,6 +1,6 @@
-// The multiplayer suite in real tabs (tests/suite/suites/browser.ts): the agent panel is per person, view_page goes
+// The multiplayer suite in real tabs (e2e/suite/suites/browser.ts): the agent panel is per person, view_page goes
 // through its owner's tab, a message that can't be sent says so.
-import { expect, until } from "../../tests/suite/harness";
+import { expect, until } from "./harness";
 import { browserTest, noErrors, openAs, peerNames } from "./suite";
 
 const FILE = "e2e/suite/browser-agent.e2e.ts";

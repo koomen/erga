@@ -1,4 +1,4 @@
-// Someone who isn't an admin on staging (tests/staging-admins.ts): refused everywhere, a document they made while
+// Someone who isn't an admin on staging: refused everywhere, a document they made while
 // they were an admin, its frame on the pages origin, its room, MCP and git included.
 import { expect, servers, test, until } from "../fixtures";
 import { frameOf, get, mcp, page, pagesFetch, publish, refusedJson, tool, upgrade } from "./admins";

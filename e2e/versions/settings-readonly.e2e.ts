@@ -1,4 +1,4 @@
-// Settings for someone who may only view (tests/settings.ts).
+// Settings for someone who may only view.
 import { expect, servers, test } from "../fixtures";
 import { closeDrafts, draftDoc, openDocEditor, rect, viewerShows } from "./settings";
 

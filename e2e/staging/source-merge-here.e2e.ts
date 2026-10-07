@@ -1,4 +1,4 @@
-// Merge to here on the Factory page (tests/source.ts): hovering a commit only on staging whose tests passed offers
+// Merge to here on the Factory page: hovering a commit only on staging whose tests passed offers
 // "Merge to here", which moves main to it, and production deploys it.
 import { expect, servers, test, until } from "../fixtures";
 import { admin, clone, commit, DEPLOY_MS, gateGreen, heads, must, seed, settled, target } from "./staging";

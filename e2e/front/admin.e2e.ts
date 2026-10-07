@@ -1,4 +1,4 @@
-// Admins configure the server on /admin (admin.ts, users.ts; tests/worker.ts): settings set, refused with the
+// Admins configure the server on /admin (admin.ts, users.ts): settings set, refused with the
 // reason and reset, delete_docs_after_hours set to never, users added, made admins and removed; nobody else sees
 // any of it. DEV_LOGIN ("tester") is an admin by the deploy, and a bootstrap one.
 import { expect, test, until } from "../fixtures";

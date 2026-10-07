@@ -1,4 +1,4 @@
-// A merge queued behind its dependency's (tests/factory.ts, 8).
+// A merge queued behind its dependency's.
 import { expect, test } from "../fixtures";
 import { factory, servers, TASK_MS } from "./factory";
 

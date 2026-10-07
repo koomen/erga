@@ -1,4 +1,4 @@
-// The board of fixture tasks the card tests share (tests/factory-cards.ts): a card in each state, served by
+// The board of fixture tasks the card tests share: a card in each state, served by
 // fake.ts, on the plain dev server.
 
 import { expect, servers, until, type Page } from "../fixtures";

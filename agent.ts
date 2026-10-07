@@ -26,7 +26,7 @@
 //   ERGA_AGENT_EFFORT   low | medium (default) | high | xhigh | max
 //
 // ERGA_AGENT_MODEL=script swaps the model for a scripted one (see
-// `scriptModel`), for the test suite in tests/suite/: deterministic, free,
+// `scriptModel`), for the test suites (e2e/suite, servers.script in e2e/fixtures.ts): deterministic, free,
 // and it needs no key. Never set it on a deployment real people use.
 
 import * as Config from "effect/Config";

@@ -1,4 +1,4 @@
-// A local task registered (tests/factory-local.ts, 1): no VM, its branch from staging pushed with a git token of its own.
+// A local task registered: no VM, its branch from staging pushed with a git token of its own.
 import { expect, test } from "../fixtures";
 import { factory, servers } from "./factory";
 import { localAgent, MACHINE } from "./local";

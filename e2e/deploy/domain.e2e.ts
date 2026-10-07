@@ -1,4 +1,4 @@
-// Buying a domain on /deploy (tests/deploy.ts): only after its price is shown and confirmed.
+// Buying a domain on /deploy: only after its price is shown and confirmed.
 import { expect, test } from "../fixtures";
 import { openDeploy, servers } from "./deploy";
 

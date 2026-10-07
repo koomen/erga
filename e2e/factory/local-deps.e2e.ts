@@ -1,4 +1,4 @@
-// A local task that starts after another (tests/factory-local.ts, 6): it waits (task start refused), and works
+// A local task that starts after another: it waits (task start refused), and works
 // once the other merges.
 import { expect, test } from "../fixtures";
 import { factory, servers, TASK_MS } from "./factory";

@@ -1,4 +1,4 @@
-// A presentation's list of steps in the viewer (tests/steps.ts): the page's own pictures, labelled, the current one
+// A presentation's list of steps in the viewer: the page's own pictures, labelled, the current one
 // marked; a click goes to a step; the pictures are kept while the page stays the same.
 import { expect, servers, test } from "../fixtures";
 import { atStep, bar, clickOn, inPage, openTab } from "./templates";

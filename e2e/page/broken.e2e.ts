@@ -1,4 +1,4 @@
-// A page with problems nobody asked about: each explained in turn, with a button to have the agent fix it (tests/page.ts, "Broken page").
+// A page with problems nobody asked about: each explained in turn, with a button to have the agent fix it ("Broken page").
 import { expect, servers, test } from "../fixtures";
 import { openEditor, type Editor } from "../editor";
 

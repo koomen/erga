@@ -1,4 +1,4 @@
-// Who may open /deploy (tests/deploy.ts, "who may open it"): anyone signed in by default (deploy_page: users), with no
+// Who may open /deploy ("who may open it"): anyone signed in by default (deploy_page: users), with no
 // admin rights for it; "admins" limits it; "off" hides it. Each test sets deploy_page back as it found it.
 import { expect, test } from "../fixtures";
 import { servers, signIn } from "./deploy";

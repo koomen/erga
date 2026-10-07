@@ -1,4 +1,4 @@
-// Joins that empty a quote or a list, joins that do nothing, and Delete (tests/page.ts, "Backspace joins a block to the one before").
+// Joins that empty a quote or a list, joins that do nothing, and Delete ("Backspace joins a block to the one before").
 import { expect, servers, test } from "../fixtures";
 import { F, openEditor, type Editor } from "../editor";
 

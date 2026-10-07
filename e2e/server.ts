@@ -50,7 +50,7 @@ export interface Server {
   alive(): boolean;
   /** Links a file or folder as one of DEV_LOGIN's documents: the document's address (no #edit). */
   open(path: string): Promise<string>;
-  /** Copies tests/fixtures/<name> into the scratch folder and links it: its folder and address. */
+  /** Copies e2e/fixtures/<name> into the scratch folder and links it: its folder and address. */
   fixture(name: string): Promise<{ dir: string; address: string }>;
   stop(): void;
   /**
@@ -121,7 +121,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<Server> {
     },
     async fixture(name) {
       const dir = join(scratch, "docs", `${name}-${++fixtures}`);
-      cpSync(join(ROOT, "tests/fixtures", name), dir, { recursive: true });
+      cpSync(join(ROOT, "e2e/fixtures", name), dir, { recursive: true });
       return { dir, address: await server.open(dir) };
     },
     stop() {

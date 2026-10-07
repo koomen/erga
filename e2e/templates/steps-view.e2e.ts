@@ -1,4 +1,4 @@
-// A presentation's steps in the viewer (tests/steps.ts): the controls under a page with window.ergaSteps, none
+// A presentation's steps in the viewer: the controls under a page with window.ergaSteps, none
 // under a page without, and the buttons and arrow keys going to a step.
 import { expect, servers, settle, test } from "../fixtures";
 import { atStep, bar, clickOn, frameAt, inPage, openTab } from "./templates";

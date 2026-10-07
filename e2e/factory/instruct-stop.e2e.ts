@@ -1,4 +1,4 @@
-// Instructions to a task whose command runs on (tests/factory-instruct.ts, 2): the command is stopped a while after
+// Instructions to a task whose command runs on: the command is stopped a while after
 // they came (a test hook: 3 s), and the stand-in gets them with why.
 import { expect, test } from "../fixtures";
 import { factory, servers, TASK_MS } from "./factory";

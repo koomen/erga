@@ -1,4 +1,4 @@
-// Nested pages in the viewer and the editor, in a browser (tests/pages.ts).
+// Nested pages in the viewer and the editor, in a browser.
 import { expect, servers, test } from "../fixtures";
 import { editor, F } from "../editor";
 import { site, styled, where, ready, editing } from "./tree";

@@ -1,5 +1,5 @@
 // The admin agent's conversation survives the server restarting, even mid-reply (worker/factory.ts,
-// factory/chat-store.ts; tests/admin-agent-chat.ts). Each test restarts a server of its own.
+// factory/chat-store.ts). Each test restarts a server of its own.
 import { expect, test, until } from "../fixtures";
 import { panel } from "./admin";
 

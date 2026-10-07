@@ -1,4 +1,4 @@
-// How the Factory page looks with the source pane (tests/source.ts): the status row (the connection, the VMs, Claude,
+// How the Factory page looks with the source pane: the status row (the connection, the VMs, Claude,
 // the GitHub mirror: each a dot and a label), dark when the system is, and a phone with staging ahead: the count and
 // the button, and no sideways scrolling (main at staging on a phone: source-page.e2e.ts).
 import { expect, servers, test } from "../fixtures";

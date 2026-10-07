@@ -1,4 +1,4 @@
-// The Solar system tour's motion, timed (tests/solar-system.ts): the overview's planets move within 400 ms, and the
+// The Solar system tour's motion, timed: the overview's planets move within 400 ms, and the
 // camera is on its way to Earth within 700 ms of the step. Timing, so a bench (`bun run test:bench`).
 import { expect, servers, test } from "../fixtures";
 import { atStep, bar, clickOn, newDoc, openTab } from "./templates";

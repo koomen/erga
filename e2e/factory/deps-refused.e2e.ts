@@ -1,4 +1,4 @@
-// Dependencies that are refused (tests/factory.ts, 8).
+// Dependencies that are refused.
 import { expect, test } from "../fixtures";
 import { factory, servers } from "./factory";
 

@@ -1,4 +1,4 @@
-// The deploy targets' status on staging (tests/deploys.ts, "the status"): GET /api/deploys and /api/deploys/version.
+// The deploy targets' status on staging ("the status"): GET /api/deploys and /api/deploys/version.
 import { expect, servers, test } from "../fixtures";
 import type { Target } from "./staging";
 

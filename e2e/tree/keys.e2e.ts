@@ -1,4 +1,4 @@
-// Folders open and close by click and by key; ↑ ↓ ← → Home End move (tests/tree.ts, "the editor": open and close a folder).
+// Folders open and close by click and by key; ↑ ↓ ← → Home End move ("the editor": open and close a folder).
 import { expect, servers, test } from "../fixtures";
 import { clickOn, focused, multi, openCard, openTreeEditor, paths, press, row } from "./tree";
 

@@ -1,4 +1,4 @@
-// Who may not reach the admin pages (tests/admin-layout.ts, the guard): a user whom deploy_page lets use /deploy,
+// Who may not reach the admin pages (the guard): a user whom deploy_page lets use /deploy,
 // someone signed out, and an admin's agent token.
 import { expect, servers, test, type Server } from "../fixtures";
 import { getter, mint, unique } from "./access";

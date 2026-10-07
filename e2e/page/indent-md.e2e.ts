@@ -1,4 +1,4 @@
-// Tab and Shift+Tab at the start of a Markdown list item (tests/page.ts, "Tab in a list").
+// Tab and Shift+Tab at the start of a Markdown list item ("Tab in a list").
 import { expect, servers, test } from "../fixtures";
 import { F, openEditor, type Editor } from "../editor";
 

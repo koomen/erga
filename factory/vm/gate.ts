@@ -230,13 +230,10 @@ async function run(commit: string, shard: number, of: number, files: string[] | 
     const reports = [".e2e/report.json", ".e2e-alone/report.json"].map((f) => join(CLONE(), f));
     for (const f of reports) rmSync(f, { force: true });
     const e = await sh(["bun", "run", "test:e2e", ...e2eFiles], { cwd: CLONE(), timeout: LIMITS.e2e, env: { CI: "1", TEST_JOBS: String(E2E_SLOTS) } });
-    let r: E2EReport | null = null;
-    for (const f of reports.filter(existsSync)) {
-      try {
-        const one = JSON.parse(readFileSync(f, "utf8")) as E2EReport;
-        r = { run: { results: [...(r?.run.results ?? []), ...one.run.results], errors: [...(r?.run.errors ?? []), ...(one.run.errors ?? [])] } };
-      } catch { note(`e2e's report ${f} isn't JSON`); }
-    }
+    const read = reports.filter(existsSync).flatMap((f) => {
+      try { return [JSON.parse(readFileSync(f, "utf8")) as E2EReport]; } catch { note(`e2e's report ${f} isn't JSON`); return []; }
+    });
+    const r: E2EReport | null = read.length ? { run: { results: read.flatMap((x) => x.run.results), errors: read.flatMap((x) => x.run.errors ?? []) } } : null;
     if (!r) note("e2e wrote no report");
     results.push(...e2eResults(e2eFiles, r, e.code));
     if (e.timedOut) note(`e2e timed out after ${LIMITS.e2e}s`);

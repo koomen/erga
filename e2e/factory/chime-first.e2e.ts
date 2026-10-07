@@ -1,4 +1,4 @@
-// The chime (tests/factory-chime.ts): never on the board's first read, never before a click, once for a task ready to merge.
+// The chime: never on the board's first read, never before a click, once for a task ready to merge.
 import { expect, servers, test } from "../fixtures";
 import { chimeBoard, decided } from "./chime";
 

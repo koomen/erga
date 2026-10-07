@@ -1,4 +1,4 @@
-// Markdown as you type, on an HTML page (tests/page.ts, "Styling and views").
+// Markdown as you type, on an HTML page ("Styling and views").
 import { expect, servers, test } from "../fixtures";
 import { openEditor } from "../editor";
 

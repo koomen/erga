@@ -1,4 +1,4 @@
-// The server restarts in the middle of a task's restart (tests/factory-reset.ts, 4): a test hook pauses the old
+// The server restarts in the middle of a task's restart: a test hook pauses the old
 // VM's save.
 import { expect, test } from "../fixtures";
 import { TASK_MS } from "./factory";

@@ -1,5 +1,5 @@
 // The viewer's controls fading once the page is scrolled (front.ts, FADE), for
-// their tests (tests/fade.ts): on a document's page (the page in a frame on its
+// their tests: on a document's page (the page in a frame on its
 // own origin) and on the homepage (served directly, its controls in a shadow
 // root: home.ts).
 

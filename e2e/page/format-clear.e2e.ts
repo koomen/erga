@@ -1,4 +1,4 @@
-// Clear formatting, ⌘\ and the bar's button (tests/page.ts, "Styling and views").
+// Clear formatting, ⌘\ and the bar's button ("Styling and views").
 import { expect, servers, test } from "../fixtures";
 import { F, openEditor } from "../editor";
 

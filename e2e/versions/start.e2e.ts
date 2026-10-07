@@ -1,4 +1,4 @@
-// A new document's first version, and a burst of edits as one version (tests/versions.ts).
+// A new document's first version, and a burst of edits as one version.
 import { expect, servers, SHORT, test } from "../fixtures";
 import { events, person, someone } from "./versions";
 

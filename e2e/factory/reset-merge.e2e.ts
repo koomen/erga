@@ -1,4 +1,4 @@
-// The server restarts while a merge waits for its answer (tests/factory-reset.ts, 3): after the VM moved staging
+// The server restarts while a merge waits for its answer: after the VM moved staging
 // and deleted the branch (a test hook pauses the job there).
 import { expect, test } from "../fixtures";
 import { TASK_MS } from "./factory";

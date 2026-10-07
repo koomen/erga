@@ -1,4 +1,4 @@
-// What a card shows (tests/factory-cards.ts): one line of title, no branch, a short time, only the steps that work,
+// What a card shows: one line of title, no branch, a short time, only the steps that work,
 // thumbnails, each column in id order, and Discard that asks first.
 import { expect, servers, test } from "../fixtures";
 import { buttonRows, cardBoard, cardTasks, CARDS } from "./cards";

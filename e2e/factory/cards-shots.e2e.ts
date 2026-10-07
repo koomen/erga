@@ -1,4 +1,4 @@
-// The detail view's screenshots (tests/factory-cards.ts): first, three in a row, a click to enlarge, the arrow keys.
+// The detail view's screenshots: first, three in a row, a click to enlarge, the arrow keys.
 import { expect, servers, test, type Page } from "../fixtures";
 import { cardBoard } from "./cards";
 

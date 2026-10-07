@@ -1,4 +1,4 @@
-// The production gate's runs (tests/gate.ts, "a green commit, then a red one", "rerun"): each push to staging runs the
+// The production gate's runs ("a green commit, then a red one", "rerun"): each push to staging runs the
 // commit's tests by itself (the fake runner: a commit's subject decides), and a run runs again.
 import { expect, servers, test, until } from "../fixtures";
 import { admin, gateOf, pusher, type GateRun } from "./staging";

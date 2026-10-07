@@ -1,4 +1,4 @@
-// The admin agent's sign-in tools with an admin token (tests/admin-auth.ts): the status of both servers, discarding,
+// The admin agent's sign-in tools with an admin token: the status of both servers, discarding,
 // and a clear that asks for force first; no tool sets a secret.
 import { expect, servers, test } from "../fixtures";
 import { form, newApp, PROD_APP, reset, status, tools } from "./auth";

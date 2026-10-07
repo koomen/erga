@@ -1,4 +1,4 @@
-// The tree follows changes without a reload: a file on disk, another tab, an agent (tests/tree.ts, "Live").
+// The tree follows changes without a reload: a file on disk, another tab, an agent ("Live").
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, servers, test, until } from "../fixtures";

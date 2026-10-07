@@ -1,4 +1,4 @@
-// Typing and an edit on disk at the same moment (tests/page.ts, "HTML page").
+// Typing and an edit on disk at the same moment ("HTML page").
 import { expect, servers, test } from "../fixtures";
 import { openEditor } from "../editor";
 

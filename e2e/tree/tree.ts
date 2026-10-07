@@ -1,6 +1,6 @@
-// Helpers for the tree's tests (src/page/tree.ts, built as pages-tree.js;
-// tests/tree.ts, docs-pages.ts and pages-open.ts before): a fresh copy of
-// tests/fixtures/multi linked as one of DEV_LOGIN's documents, the server's
+// Helpers for the tree's tests (src/page/tree.ts, built as pages-tree.js):
+// a fresh copy of
+// e2e/fixtures/multi linked as one of DEV_LOGIN's documents, the server's
 // own view of its files, the agents' tools over a token, and the tree's rows
 // read and clicked in a tab (the editor's title card, or a row on Documents).
 //
@@ -30,7 +30,7 @@ export async function signIn(server: Server, as: string | null) {
 
 export type Doc = Awaited<ReturnType<typeof multi>>;
 
-/** A fresh copy of tests/fixtures/multi, linked as a document, with ways to read and change it as the server and an agent. */
+/** A fresh copy of e2e/fixtures/multi, linked as a document, with ways to read and change it as the server and an agent. */
 export async function multi(server: Server) {
   const { dir, address: base } = await server.fixture("multi");
   const info = (await (await fetch(`${base}/api/doc`)).json()) as { docName: { id: string; address: string } };
@@ -163,7 +163,7 @@ export const focused = (page: Page) => page.evaluate(`document.activeElement?.cl
 const RAW: Record<string, number> = { Home: 36, End: 35, ArrowLeft: 37, ArrowUp: 38, ArrowRight: 39, ArrowDown: 40, F2: 113 };
 
 /**
- * Presses a key. Home, End, the arrows and F2 go as plain DevTools key events, as tests/cdp.ts sent them: Playwright
+ * Presses a key. Home, End, the arrows and F2 go as plain DevTools key events: Playwright
  * on a Mac turns some into the Mac's own editing commands.
  */
 export async function press(page: Page, key: string) {

@@ -1,4 +1,4 @@
-// The chime (tests/factory-chime.ts): a burst of tasks is one chime.
+// The chime: a burst of tasks is one chime.
 import { expect, servers, test } from "../fixtures";
 import { chimeBoard, decided } from "./chime";
 

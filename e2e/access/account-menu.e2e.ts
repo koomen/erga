@@ -1,4 +1,4 @@
-// The account corner in the browser, on the site's own pages (tests/account.ts): your avatar's menu on /docs, light,
+// The account corner in the browser, on the site's own pages: your avatar's menu on /docs, light,
 // dark and a phone, and its place on the front page.
 import { expect, servers, test, until } from "../fixtures";
 import { clickOn, corner, inPage } from "./access";

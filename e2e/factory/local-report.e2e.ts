@@ -1,4 +1,4 @@
-// A local task reports (tests/factory-local.ts, 2 and 3): a log line, a screenshot, done; and the board shows it
+// A local task reports (2 and 3): a log line, a screenshot, done; and the board shows it
 // as local, on its machine, with Hand to a VM.
 import { expect, test, until } from "../fixtures";
 import { board, factory, servers } from "./factory";

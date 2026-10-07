@@ -1,4 +1,4 @@
-// Deploy history (tests/source.ts, "Deploy history"): a push while a deploy runs cancels it; a build that fails; each
+// Deploy history ("Deploy history"): a push while a deploy runs cancels it; a build that fails; each
 // deploy with what started it and when, one live; a past deploy's log; the page shows each beside its commit, a past
 // badge opens its log, and a redeploy of a commit shows once, the newest; the badges are plain text.
 import { expect, servers, test, until } from "../fixtures";

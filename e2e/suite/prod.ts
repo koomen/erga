@@ -5,7 +5,7 @@
 //   ERGA_TEST_TOKEN=erga_test_... bun run test:prod [e2e run arguments: --grep, files under e2e/suite, ...]
 //
 // The token signs in test people (Tester, Ada, Bo, ...), each with their own session cookie, and the suite's
-// remote target (tests/suite/target.ts) makes each test a fresh test document (/new?id=test...), whose agent is the
+// remote target (e2e/suite/target.ts) makes each test a fresh test document (/new?id=test...), whose agent is the
 // scripted one if the deployment runs it (ERGA_TARGET_CAPS, "browser,scriptedAgent" by default; leave scriptedAgent
 // out for production). The correctness tests run first, then the latency bench (budget 400 ms, or ERGA_SUITE_P95_MS).
 // The cookies go to the tests in a file only this user can read (ERGA_SUITE_TARGET, e2e/suite/suite.ts), removed after.

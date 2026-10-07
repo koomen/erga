@@ -1,4 +1,4 @@
-// A server with no deploy target is unchanged by staging's guard (tests/staging-admins.ts, "no deploy target").
+// A server with no deploy target is unchanged by staging's guard ("no deploy target").
 import { expect, servers, test } from "../fixtures";
 import { frameOf, get, page, pagesFetch, publish } from "./admins";
 import { mint, signIn } from "./staging";

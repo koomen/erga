@@ -1,4 +1,4 @@
-// The first / on a fresh server, and a landing_document the deploy locks: a server of their own each (tests/home.ts).
+// The first / on a fresh server, and a landing_document the deploy locks: a server of their own each.
 import { expect, test } from "../fixtures";
 import { adminToken, front, get, home, publish } from "./home";
 

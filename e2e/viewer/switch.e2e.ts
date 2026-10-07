@@ -1,4 +1,4 @@
-// The first switch into editing, after a hard reload, on a slow network (tests/switch.ts): with the agent left open,
+// The first switch into editing, after a hard reload, on a slow network: with the agent left open,
 // the page slides over to make room for it only once the agent can be seen (what made the flash before), on every
 // animation frame, and the agent ends up open with the editor shown. On a light page and a dark one. The frames
 // themselves (no white or blank block, no jump) are a bench: switch.bench.e2e.ts.

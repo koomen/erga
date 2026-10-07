@@ -1,4 +1,4 @@
-// The chime's tests (src/page/chime.ts; tests/factory-chime.ts): a board of fixture tasks (fake.ts) in one or two
+// The chime's tests (src/page/chime.ts): a board of fixture tasks (fake.ts) in one or two
 // tabs of the test's browser context, with AudioContext replaced by a stub that counts the notes it starts (a
 // chime is two). The old file waited fixed times to see that nothing played; here the stub also records the
 // points where the chime decides, so each check waits for a decision, not for time:

@@ -1,4 +1,4 @@
-// Lockout (tests/admin-auth.ts): new values for a working app wait for a test sign-in, and can be discarded; a clear
+// Lockout: new values for a working app wait for a test sign-in, and can be discarded; a clear
 // that would stop sign-in is refused; values GitHub doesn't know are refused.
 import { expect, servers, test } from "../fixtures";
 import { form, newApp, PROD_APP, reset, status } from "./auth";

@@ -1,4 +1,4 @@
-// New documents from a template (tests/new-doc.ts): /new?template=<id> makes each template's document and refuses
+// New documents from a template: /new?template=<id> makes each template's document and refuses
 // one that isn't there; the + button in the viewer, the editor and (signed out) the front page opens the picker,
 // in the app's typeface, and picking a template makes the document and opens it in the editor.
 import { readFileSync } from "node:fs";

@@ -1,4 +1,4 @@
-// Dependencies on the board: added in a task's detail, and asked for by the New task form (tests/factory.ts, 8).
+// Dependencies on the board: added in a task's detail, and asked for by the New task form.
 import { expect, test, until } from "../fixtures";
 import { board, factory, servers } from "./factory";
 

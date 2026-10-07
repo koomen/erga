@@ -1,4 +1,4 @@
-// With prefers-reduced-motion, the controls fade with no transition, to the same opacity (tests/fade.ts, reduced()),
+// With prefers-reduced-motion, the controls fade with no transition, to the same opacity (reduced()),
 // on a document's page and on the homepage.
 import { expect, servers, test } from "../fixtures";
 import { FADED, ROOT_EXPR, controls, homeReady, opacityIs, openFade, type Mode } from "./fade";

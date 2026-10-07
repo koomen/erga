@@ -1,4 +1,4 @@
-// Pushing to Erga's repository (tests/source.ts): main only follows staging, and only to a commit whose tests passed
+// Pushing to Erga's repository: main only follows staging, and only to a commit whose tests passed
 // (the production gate); staging keeps main's commits; main never moves back; no other branches; a fetch brings what
 // another pushed.
 import { expect, servers, test } from "../fixtures";

@@ -3,8 +3,7 @@
 //
 //   1. A changed test file (e2e/**/*.e2e.ts) runs.
 //   2. A changed file under an area below runs that area's folder of tests.
-//   3. Text that no test reads (Markdown, docs/, the old harness under tests/,
-//      which test.sh runs) needs none.
+//   3. Text that no test reads (Markdown, docs/) needs none.
 //   4. Anything else, and anything in ALL, runs every test.
 //
 // So the table only ever narrows a run; a file it doesn't know runs everything.
@@ -25,7 +24,7 @@ export const AREAS: Record<string, string[]> = {
     "src/page/editor.ts", "src/page/main.ts", "src/page/manuscript.ts", "src/page/markdown.ts", "src/page/merge.ts", "src/page/collab.ts",
     "src/page/remote.ts", "src/page/frame.ts", "src/page/bridge.ts", "src/page/layout.ts", "src/page/agent-chat.ts", "src/page/attach-ui.ts",
     "src/page/share-agent.ts", "room.ts", "src/room/", "host.ts", "agent.ts", "workspace.ts", "page.html", "page.js", "frame.js", "style.css",
-    "dev/agent-key.ts", "tests/fixtures/", "src/page/attach.ts",
+    "dev/agent-key.ts", "e2e/fixtures/", "src/page/attach.ts",
   ],
   "e2e/factory/": [
     "factory/", "worker/factory.ts", "dev/factory.ts", "dev/git-server.ts", "worker/source.ts", "source/", "tokens.ts",
@@ -35,7 +34,7 @@ export const AREAS: Record<string, string[]> = {
   ],
   "e2e/suite/": [
     "room.ts", "src/room/", "host.ts", "agent.ts", "workspace.ts", "server-api.ts", "api.ts", "attribution.ts", "tokens.ts", "worker/doc-host.ts",
-    "src/page/main.ts", "src/page/collab.ts", "src/page/bridge.ts", "src/page/frame.ts", "src/page/agent-chat.ts", "page.js", "frame.js", "tests/suite/",
+    "src/page/main.ts", "src/page/collab.ts", "src/page/bridge.ts", "src/page/frame.ts", "src/page/agent-chat.ts", "page.js", "frame.js", "e2e/suite/",
   ],
   "e2e/redeploy/": [
     "src/page/live.ts", "src/page/live-client.ts", "src/page/restore.ts", "worker/live.ts", "src/page/collab.ts", "src/page/attach-ui.ts", "src/page/main.ts",
@@ -43,7 +42,7 @@ export const AREAS: Record<string, string[]> = {
   ],
   "e2e/reload/": ["dev/reload.ts", "front.ts"],
   "e2e/alone/": ["vite.config.ts", "worker/cookies.ts", "worker/auth.ts"],
-  "e2e/versions/": ["versions.ts", "src/page/versions.ts", "src/page/settings.ts", "settings.js", "worker/home.ts", "tests/suite/client.ts", "src/room/"],
+  "e2e/versions/": ["versions.ts", "src/page/versions.ts", "src/page/settings.ts", "settings.js", "worker/home.ts", "e2e/suite/client.ts", "src/room/"],
   "e2e/pages/": ["tree.ts", "src/page/tree.ts", "pages-tree.js", "src/page/frame.ts", "frame.js"],
   "e2e/home/": ["home.ts", "worker/home.ts", "worker/published.ts", "landing/"],
   "e2e/config/": ["config.ts", "worker/d1.ts"],
@@ -60,25 +59,25 @@ export const AREAS: Record<string, string[]> = {
   ],
   "e2e/front/": [
     "front.ts", "api.ts", "server-api.ts", "server-tools.ts", "directory.ts", "users.ts", "tokens.ts", "admin.ts", "account.ts", "templates.ts",
-    "templates/", "worker/doc-host.ts", "worker/home.ts", "room.ts", "src/room/", "migrations/", "src/page/settings.ts", "tests/suite/client.ts",
+    "templates/", "worker/doc-host.ts", "worker/home.ts", "room.ts", "src/room/", "migrations/", "src/page/settings.ts", "e2e/suite/client.ts",
   ],
   "e2e/access/": [
     "account.ts", "admin-layout.ts", "admin.ts", "users.ts", "directory.ts", "tokens.ts", "front.ts", "home.ts", "worker/auth.ts", "worker/cookies.ts",
     "worker/doc-host.ts", "source/http.ts", "server-api.ts", "src/page/bridge.ts", "src/page/admin-share.ts", "src/page/share-agent.ts", "src/page/admin-nav.ts",
     "src/page/main.ts", "admin-share.js", "admin-nav.js",
   ],
-  "e2e/templates/": ["templates.ts", "templates/", "front.ts", "DOCUMENT_PROMPT.md", "src/page/main.ts", "page.html", "tests/fixtures/steps/", "tests/fixtures/fade/"],
+  "e2e/templates/": ["templates.ts", "templates/", "front.ts", "DOCUMENT_PROMPT.md", "src/page/main.ts", "page.html", "e2e/fixtures/steps/", "e2e/fixtures/fade/"],
   "e2e/tree/": [
     "src/page/tree.ts", "pages-tree.js", "tree.ts", "front.ts", "src/page/main.ts", "src/page/remote.ts", "src/page/frame.ts", "page.html",
-    "worker/doc-host.ts", "tokens.ts", "server-tools.ts", "tests/fixtures/multi/",
+    "worker/doc-host.ts", "tokens.ts", "server-tools.ts", "e2e/fixtures/multi/",
   ],
-  "e2e/viewer/": ["front.ts", "home.ts", "account.ts", "src/page/base.ts", "style.css", "src/page/main.ts", "src/page/layout.ts", "tests/fixtures/"],
+  "e2e/viewer/": ["front.ts", "home.ts", "account.ts", "src/page/base.ts", "style.css", "src/page/main.ts", "src/page/layout.ts", "e2e/fixtures/"],
 };
 
 /** Changes that need every test: the tests' own machinery, the build, the server's core. */
 export const ALL = [
   "e2e/", "e2e.config.ts", "e2e.bench.config.ts", "package.json", "bun.lock", "tsconfig.json", "site.sh", "build.sh", "dev.ts", "dev/plugin.ts",
-  "vite.config.ts", "cloudflare.config.ts", "server.config.ts", "worker/index.ts", "worker/env.ts", "worker/auth.ts", "worker/platform.ts", "tests/cores.ts",
+  "vite.config.ts", "cloudflare.config.ts", "server.config.ts", "worker/index.ts", "worker/env.ts", "worker/auth.ts", "worker/platform.ts", "e2e/cores.ts",
 ];
 
 /** Text no test reads. */

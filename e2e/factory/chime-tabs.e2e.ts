@@ -1,4 +1,4 @@
-// The chime with two admin tabs (tests/factory-chime.ts): one plays; the bell mutes both.
+// The chime with two admin tabs: one plays; the bell mutes both.
 import { expect, servers, test } from "../fixtures";
 import { chimeBoard, decided, type ChimeTab } from "./chime";
 

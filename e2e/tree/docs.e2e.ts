@@ -1,4 +1,4 @@
-// The tree on Documents: each document's chevron opens its pages beneath its row (tests/tree.ts, "Documents").
+// The tree on Documents: each document's chevron opens its pages beneath its row ("Documents").
 import type { Page } from "playwright-core";
 import { expect, servers, test, until } from "../fixtures";
 import { act, clickOn, clickToGo, menuItem, multi, NOT_DOCUMENTS, press, row, rows, type, type Doc, js } from "./tree";

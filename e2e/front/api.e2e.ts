@@ -1,4 +1,4 @@
-// The server's API for agents (server-api.ts, tokens.ts; tests/worker.ts): /llms.txt, agent tokens (asked for by an
+// The server's API for agents (server-api.ts, tokens.ts): /llms.txt, agent tokens (asked for by an
 // agent and approved, made at /tokens, the share button's), publishing a folder as a document, every tool over HTTP
 // and MCP with the person's own permissions, and revoking.
 import { expect, test } from "../fixtures";

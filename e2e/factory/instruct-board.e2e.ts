@@ -1,4 +1,4 @@
-// Instructions sent to a task while it works, on the board (tests/factory-instruct.ts, 1): the stand-in gets them
+// Instructions sent to a task while it works, on the board: the stand-in gets them
 // when its current command ends (none stopped), and works them into its change.
 import { expect, test, until } from "../fixtures";
 import { board, factory, servers, TASK_MS } from "./factory";

@@ -1,4 +1,4 @@
-// How long a document lasts (worker/doc-host.ts, front.ts; tests/worker.ts): one nobody edits goes on time, one
+// How long a document lasts (worker/doc-host.ts, front.ts): one nobody edits goes on time, one
 // edited or open stays, and one deleted from the list is gone, addresses and all.
 import { expect, test, until } from "../fixtures";
 import { person, servers, tools } from "./front";

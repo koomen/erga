@@ -1,6 +1,6 @@
-// How soon the prompt shows after the broken paragraph's Fix button (tests/suite/suites/browser.ts, "at once":
+// How soon the prompt shows after the broken paragraph's Fix button (e2e/suite/suites/browser.ts, "at once":
 // within a second). A bench: it measures time, which a busy machine moves.
-import { expect, until } from "../../tests/suite/harness";
+import { expect, until } from "./harness";
 import { browserTest, openAs } from "./suite";
 
 browserTest("e2e/suite/browser-broken.bench.e2e.ts", "the Fix button's prompt shows in the agent panel at once", { needs: ["scriptedAgent"] }, async (ctx, tab) => {

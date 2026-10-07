@@ -1,4 +1,4 @@
-// Merges held back by a dependency (tests/factory.ts, 8).
+// Merges held back by a dependency.
 import { expect, test } from "../fixtures";
 import { board, factory, servers, TASK_MS } from "./factory";
 

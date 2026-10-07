@@ -1,4 +1,4 @@
-// The settings popover: loaded lazily, hanging from the gear, opened and closed by mouse and keyboard (tests/settings.ts).
+// The settings popover: loaded lazily, hanging from the gear, opened and closed by mouse and keyboard.
 import { expect, servers, test } from "../fixtures";
 import { closeDrafts, draftDoc, openDocEditor } from "./settings";
 

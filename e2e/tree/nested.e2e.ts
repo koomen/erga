@@ -1,4 +1,4 @@
-// A document two folders down renders whole, with the stylesheet, image and font from folders above it (tests/tree.ts, "a nested document renders whole").
+// A document two folders down renders whole, with the stylesheet, image and font from folders above it ("a nested document renders whole").
 import type { Page } from "playwright-core";
 import { expect, servers, test, until } from "../fixtures";
 import { agentClosed, multi, js } from "./tree";

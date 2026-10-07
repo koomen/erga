@@ -1,4 +1,4 @@
-// Who did it (#69, attribution.ts; tests/attribution.ts), on the worker's factory server: tester (DEV_LOGIN) acts
+// Who did it (#69, attribution.ts), on the worker's factory server: tester (DEV_LOGIN) acts
 // in person, through the editor's agent, with an admin token (a shared agent), through the admin agent, and with
 // Share with agent's token. Each test makes its own token, label, users and values, so it finds its own changes
 // in the server's one change log.

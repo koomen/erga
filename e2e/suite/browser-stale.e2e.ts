@@ -1,5 +1,5 @@
-// The multiplayer suite in real tabs (tests/suite/suites/browser.ts): a tab whose history the room lost says so.
-import { expect, until } from "../../tests/suite/harness";
+// The multiplayer suite in real tabs (e2e/suite/suites/browser.ts): a tab whose history the room lost says so.
+import { expect, until } from "./harness";
 import { browserTest, openAs } from "./suite";
 
 browserTest("e2e/suite/browser-stale.e2e.ts", "a tab the room can't merge any more says so and offers a reload", { needs: ["kill"] }, async (ctx, tab) => {

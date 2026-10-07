@@ -1,4 +1,4 @@
-// A stalled task (tests/factory-cards.ts): working or needs agent, with no new log line in 5 minutes.
+// A stalled task: working or needs agent, with no new log line in 5 minutes.
 import { expect, servers, test } from "../fixtures";
 import { cardBoard } from "./cards";
 

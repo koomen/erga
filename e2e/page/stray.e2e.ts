@@ -1,11 +1,11 @@
-// A paragraph whose HTML has a stray end tag: locked, saying why, and typing never lands somewhere else (tests/page.ts, "Stray end tag").
+// A paragraph whose HTML has a stray end tag: locked, saying why, and typing never lands somewhere else ("Stray end tag").
 // The toast's minimum time on screen is checked in stray.bench.e2e.ts (timing).
 import { expect, servers, test, type Tab } from "../fixtures";
 import { F, openEditor, type Editor } from "../editor";
 
 await servers.main();
 
-// Less compressed than elsewhere (tests/page.ts did the same): the toast's minimum, scaled, is what this file's checks wait out.
+// Less compressed than elsewhere (the old harness did the same): the toast's minimum, scaled, is what this file's checks wait out.
 const TS = 0.4;
 const open = async (tab: Tab): Promise<Editor> => openEditor(tab, await servers.main(), "stray", { timescale: TS });
 

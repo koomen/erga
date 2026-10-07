@@ -1,5 +1,5 @@
 // The agents do what their person does on the page, in the Worker, on the scripted model (agent-actions.ts has the
-// rule; tests/admin-agent-actions.ts): the admin agent on /admin/factory, and the editor's agent on the documents.
+// rule): the admin agent on /admin/factory, and the editor's agent on the documents.
 import { expect, servers, test, until } from "../fixtures";
 import { fresh, panel, stagingFromHere } from "./admin";
 

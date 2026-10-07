@@ -1,4 +1,4 @@
-// One page, /admin/factory: the board, the source dashboard and the agent (tests/factory.ts, 9).
+// One page, /admin/factory: the board, the source dashboard and the agent.
 import { expect, test, until } from "../fixtures";
 import { board, servers } from "./factory";
 

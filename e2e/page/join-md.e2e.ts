@@ -1,4 +1,4 @@
-// Joins in Markdown: the marks between the blocks go (tests/page.ts, "Backspace joins a block to the one before").
+// Joins in Markdown: the marks between the blocks go ("Backspace joins a block to the one before").
 import { expect, servers, test } from "../fixtures";
 import { openEditor } from "../editor";
 

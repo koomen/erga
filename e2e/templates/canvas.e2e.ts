@@ -1,4 +1,4 @@
-// The Canvas presentation template (tests/canvas-template.ts): frames on one large canvas, each a step; going to the
+// The Canvas presentation template: frames on one large canvas, each a step; going to the
 // next step zooms out to the whole canvas, then in on the next frame, which ends in the middle; viewing and editing.
 import type { Page } from "playwright-core";
 import { expect, servers, test } from "../fixtures";

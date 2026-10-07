@@ -1,4 +1,4 @@
-// Who may publish, and what viewers see in "manual" and "latest" (tests/versions.ts).
+// Who may publish, and what viewers see in "manual" and "latest".
 import { expect, servers, test } from "../fixtures";
 import { cut, events, intoHeading, pagesFetch, person, someone, type Get } from "./versions";
 

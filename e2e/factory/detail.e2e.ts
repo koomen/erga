@@ -1,4 +1,4 @@
-// A task's detail on the board (tests/factory.ts, 2).
+// A task's detail on the board.
 import { expect, test, until } from "../fixtures";
 import { board, factory, servers, TASK_MS } from "./factory";
 

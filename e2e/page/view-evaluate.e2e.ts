@@ -1,5 +1,5 @@
 // evaluate_page's run, in the tab: an expression in view_page's render, its result as JSON;
-// read-only, with a time limit and a size cap (tests/page.ts, "Inspecting the page for the agent").
+// read-only, with a time limit and a size cap ("Inspecting the page for the agent").
 import { expect, servers, test } from "../fixtures";
 import { F, openEditor, type Editor } from "../editor";
 

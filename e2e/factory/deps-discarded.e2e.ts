@@ -1,4 +1,4 @@
-// A discarded dependency blocks its dependents until it's removed (tests/factory.ts, 8).
+// A discarded dependency blocks its dependents until it's removed.
 import { expect, test, until } from "../fixtures";
 import { board, factory, servers, TASK_MS } from "./factory";
 

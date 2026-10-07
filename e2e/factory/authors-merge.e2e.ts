@@ -1,4 +1,4 @@
-// Who a merge's commits are by (#68, factory/author.ts; tests/factory-authors.ts): "Merge staging into task/…" is
+// Who a merge's commits are by (#68, factory/author.ts): "Merge staging into task/…" is
 // the task's person's, and the merge into staging is whoever pressed Merge's, both committed by Erga factory.
 import { expect, test } from "../fixtures";
 import { factory, servers, TASK_MS } from "./factory";

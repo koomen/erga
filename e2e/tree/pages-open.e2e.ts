@@ -1,4 +1,4 @@
-// The editor's pages dropdown opens with its rows the first time it's clicked (tests/pages-open.ts, without its timing: pages-open.bench.e2e.ts).
+// The editor's pages dropdown opens with its rows the first time it's clicked (without its timing: pages-open.bench.e2e.ts).
 import { expect, servers, test } from "../fixtures";
 import { multi } from "./tree";
 import { open, up } from "./pages";

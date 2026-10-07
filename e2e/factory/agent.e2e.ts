@@ -1,4 +1,4 @@
-// The factory's agent, with the scripted model (tests/factory.ts, 10).
+// The factory's agent, with the scripted model.
 import { expect, test, until } from "../fixtures";
 import { board, factory, servers, TASK_MS, type Board } from "./factory";
 

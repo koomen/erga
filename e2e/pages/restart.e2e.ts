@@ -1,4 +1,4 @@
-// Folders last across a restart (tests/pages.ts).
+// Folders last across a restart.
 import { expect, test } from "../fixtures";
 import { paths, site } from "./tree";
 

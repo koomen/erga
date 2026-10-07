@@ -1,4 +1,4 @@
-// A document's page runs on the document's own origin (front.ts, worker/doc-host.ts; tests/worker.ts), whose files
+// A document's page runs on the document's own origin (front.ts, worker/doc-host.ts), whose files
 // open only with the editor's token, and loads fast: files checked by ETag, the frame's host page kept by version.
 import { request } from "node:http";
 import { expect, test } from "../fixtures";

@@ -1,4 +1,4 @@
-// The editor's breadcrumbs (tests/account.ts): Documents and the title on one baseline, the title's descenders (g, y,
+// The editor's breadcrumbs: Documents and the title on one baseline, the title's descenders (g, y,
 // p) not clipped, light and dark; the arrow midway between the two words' ink (not their boxes); a long title still
 // ends in an ellipsis. (A zero-size inline-block's bottom sits on its line's baseline; a canvas measures each text's
 // ink from where its box starts.)

@@ -1,4 +1,4 @@
-// A local task merged (tests/factory-local.ts, 5): a VM for the merge job only, a --no-ff merge commit named after
+// A local task merged: a VM for the merge job only, a --no-ff merge commit named after
 // the task, the branch gone, and no more reports from the agent.
 import { expect, test } from "../fixtures";
 import { factory, servers, TASK_MS } from "./factory";

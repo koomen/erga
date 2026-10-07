@@ -1,4 +1,4 @@
-// The agent panel across a reload (tests/page.ts, "Agent, empty message").
+// The agent panel across a reload ("Agent, empty message").
 import { expect, servers, test } from "../fixtures";
 import { openEditor } from "../editor";
 

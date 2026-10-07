@@ -1,5 +1,5 @@
-// The multiplayer suite in real tabs (tests/suite/suites/browser.ts): the source view follows others' typing.
-import { until } from "../../tests/suite/harness";
+// The multiplayer suite in real tabs (e2e/suite/suites/browser.ts): the source view follows others' typing.
+import { until } from "./harness";
 import { browserTest, noErrors, openAs, peerNames } from "./suite";
 
 browserTest("e2e/suite/browser-source.e2e.ts", "the source view follows others' typing and shows their caret; the page redraws it after", {}, async (ctx, tab) => {

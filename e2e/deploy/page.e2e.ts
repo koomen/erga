@@ -1,4 +1,4 @@
-// /deploy opens for an admin (tests/deploy.ts): breadcrumbs in the upper left, no notice of the mock; a bad token is
+// /deploy opens for an admin: breadcrumbs in the upper left, no notice of the mock; a bad token is
 // refused in plain words; Authorize with Cloudflare bounces to its consent page and back, connected.
 import { expect, test } from "../fixtures";
 import { openDeploy, servers } from "./deploy";

@@ -1,4 +1,4 @@
-// The Source pane with main at staging (tests/source.ts, "The Source page"): one list of staging's commits with one dot
+// The Source pane with main at staging ("The Source page"): one list of staging's commits with one dot
 // column and no header, nothing to merge so no Merge button and no space for it, a plain page, the deploy columns with
 // what each target has live; on a phone too. Admins only; /source redirects here.
 import { expect, servers, test } from "../fixtures";

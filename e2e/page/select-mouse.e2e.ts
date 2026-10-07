@@ -1,4 +1,4 @@
-// Selections across units by mouse, then delete, copy and cut (tests/page.ts, "Selecting across paragraphs").
+// Selections across units by mouse, then delete, copy and cut ("Selecting across paragraphs").
 import { expect, servers, test } from "../fixtures";
 import { F, openEditor, type Editor } from "../editor";
 

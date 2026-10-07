@@ -1,4 +1,4 @@
-// Who may reach Erga's Git endpoint on staging (tests/source.ts, "Who may reach the Git endpoint"): no token 401 (even
+// Who may reach Erga's Git endpoint on staging ("Who may reach the Git endpoint"): no token 401 (even
 // a read: staging is for admins only), a token that isn't one 401, a documents token 403, an admin's admin token in;
 // an anonymous clone and push, and a push with a documents token, are refused.
 import { expect, servers, test } from "../fixtures";

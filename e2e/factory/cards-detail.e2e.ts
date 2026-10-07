@@ -1,4 +1,4 @@
-// The detail view's steps (tests/factory-cards.ts): all four, always; an off one looks off and says why.
+// The detail view's steps: all four, always; an off one looks off and says why.
 import { expect, servers, test } from "../fixtures";
 import { cardBoard } from "./cards";
 

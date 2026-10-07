@@ -1,4 +1,4 @@
-// The band frame by frame (tests/band.ts, 2. "Frame by frame" and 3. "A document of two pages"): screencasts, which
+// The band frame by frame (2. "Frame by frame" and 3. "A document of two pages"): screencasts, which
 // see what each painted frame shows, so what they find moves with the machine's load. The settled states are checked
 // in the gate (band-desktop, band-phone, band-pages, band-switch).
 import { expect, servers, test, type Page } from "../fixtures";

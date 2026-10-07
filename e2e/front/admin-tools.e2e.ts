@@ -1,4 +1,4 @@
-// Admins configure the server, and owners share documents, through the same tools (server-tools.ts; tests/worker.ts):
+// Admins configure the server, and owners share documents, through the same tools (server-tools.ts):
 // over the API with an agent token, and in the editor's agent on the scripted model, which never has the admin tools.
 import { expect, test, until } from "../fixtures";
 import { admin, freshLogin, person, resetting, servers, tools } from "./front";

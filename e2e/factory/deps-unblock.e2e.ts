@@ -1,4 +1,4 @@
-// Unblocking: a dependency removed on the board; when one merges, the task waiting for it starts by itself (tests/factory.ts, 8).
+// Unblocking: a dependency removed on the board; when one merges, the task waiting for it starts by itself.
 import { expect, test, until } from "../fixtures";
 import { board, factory, servers, TASK_MS } from "./factory";
 

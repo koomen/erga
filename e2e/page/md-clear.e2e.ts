@@ -1,4 +1,4 @@
-// Clear formatting, and headings typed as Markdown, in a Markdown file (tests/page.ts, "Markdown page").
+// Clear formatting, and headings typed as Markdown, in a Markdown file ("Markdown page").
 import { expect, servers, test } from "../fixtures";
 import { openEditor } from "../editor";
 

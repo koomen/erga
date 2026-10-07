@@ -1,4 +1,4 @@
-// The admin pages as one page (tests/admin-nav.ts): the Factory page's board, and a saved setting.
+// The admin pages as one page: the Factory page's board, and a saved setting.
 import { expect, servers, test, until } from "../fixtures";
 import { admin, click, navState } from "./nav";
 

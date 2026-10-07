@@ -132,7 +132,6 @@ test("the worker brief asks for targeted tests in a 5-minute budget, not the who
   expect(p).toContain("only the tests that cover what you changed");
   expect(p).toContain("task run --timeout 180 -- bun test");
   expect(p).toContain("task run --timeout 300 -- bun run test`");
-  expect(p).toContain("./test.sh --changed");
   expect(p).toContain("shared infrastructure");
   expect(p).toContain("never by default");
   expect(p).not.toContain("--timeout 900");
@@ -145,7 +144,7 @@ test("a long Claude Code run with no new output repeats no line on the board; it
   const board = claudeLog(() => t);
   const lines: string[] = [];
   const text = { type: "text", text: "While the suite runs, I'll work out how to give the preview a seeded repository." };
-  const tool = { type: "tool_use", id: "toolu_1", name: "Bash", input: { command: "./test.sh" } };
+  const tool = { type: "tool_use", id: "toolu_1", name: "Bash", input: { command: "bun run test" } };
   // Claude Code sends the message again, with more in it, and the same text block again, seconds apart.
   lines.push(...board.event({ type: "assistant", message: { id: "msg_1", content: [text] } }));
   t += 6000; lines.push(...board.event({ type: "assistant", message: { id: "msg_1", content: [text, tool] } }));
@@ -158,7 +157,7 @@ test("a long Claude Code run with no new output repeats no line on the board; it
   for (let i = 0; i < 120; i++) { t += 5000; lines.push(...board.tick()); }
   const words = lines.filter((l) => l.startsWith("Claude:"));
   expect(words).toEqual([`Claude: ${text.text}`, "Claude: Now the build."]);
-  expect(lines.filter((l) => l.startsWith("Claude runs"))).toEqual(["Claude runs Bash: ./test.sh", "Claude runs Bash: bun run build"]);
+  expect(lines.filter((l) => l.startsWith("Claude runs"))).toEqual(["Claude runs Bash: bun run test", "Claude runs Bash: bun run build"]);
   const still = lines.filter((l) => l.includes("still working"));
   expect(still.length).toBeGreaterThan(0);
   expect(still.length).toBeLessThanOrEqual(10);
@@ -175,9 +174,9 @@ test("the board says how long a slow tool call took, and the run's totals when i
   t += 1000;
   expect(done("toolu_1")).toEqual([]);
   t += 6000;
-  call("toolu_2", "./test.sh");
+  call("toolu_2", "bun run test");
   t += SLOW_TOOL_MS + 5 * 60_000;
-  expect(done("toolu_2")).toEqual(["Took 5.5 min: Bash: ./test.sh"]);
+  expect(done("toolu_2")).toEqual(["Took 5.5 min: Bash: bun run test"]);
   // The same result again (or one for a call it never saw) says nothing.
   expect(done("toolu_2")).toEqual([]);
   expect(board.event({ type: "system", subtype: "init", model: "claude-opus-5-5" })[0]).toStartWith("Claude Code uses the model claude-opus-5-5");

@@ -1,4 +1,4 @@
-// A merge that conflicts: needs agent, and the task's own Claude Code (the stand-in, fake-claude.ts) resolves it (tests/factory.ts, 12).
+// A merge that conflicts: needs agent, and the task's own Claude Code (the stand-in, fake-claude.ts) resolves it.
 import { expect, test, until } from "../fixtures";
 import { board, factory, servers, TASK_MS } from "./factory";
 

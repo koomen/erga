@@ -1,4 +1,4 @@
-// The style bar and the style shortcuts across inline elements (tests/page.ts, "Styling and views").
+// The style bar and the style shortcuts across inline elements ("Styling and views").
 import { expect, servers, test } from "../fixtures";
 import { F, openEditor } from "../editor";
 

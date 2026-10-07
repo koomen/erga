@@ -1,4 +1,4 @@
-// Restoring a version: a new current version, live in open editors (tests/versions.ts).
+// Restoring a version: a new current version, live in open editors.
 import { expect, servers, test } from "../fixtures";
 import { cut, intoHeading, person, someone, tools } from "./versions";
 

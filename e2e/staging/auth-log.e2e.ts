@@ -1,4 +1,4 @@
-// The change log on both servers says who changed which app, never a secret (tests/admin-auth.ts, "the change log").
+// The change log on both servers says who changed which app, never a secret ("the change log").
 import { expect, servers, test } from "../fixtures";
 import { form, newApp, PROD_APP, reset } from "./auth";
 

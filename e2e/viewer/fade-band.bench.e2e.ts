@@ -1,4 +1,4 @@
-// The band behind the controls keeps its colour in every frame of the fade (tests/fade.ts, viewer()): a screencast,
+// The band behind the controls keeps its colour in every frame of the fade (viewer()): a screencast,
 // which sees what each painted frame shows, so what it finds moves with the machine's load. The gate compares the
 // settled band before and after (fade-doc, fade-home).
 import { expect, servers, test } from "../fixtures";

@@ -1,4 +1,4 @@
-// The tree at phone width (tests/tree.ts, "A phone").
+// The tree at phone width ("A phone").
 import { expect, servers, test, until } from "../fixtures";
 import { multi, openTreeEditor, js } from "./tree";
 

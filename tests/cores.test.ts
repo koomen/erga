@@ -1,10 +1,10 @@
-// tests/cores.ts: how many tests at once, from fake cgroup files.
+// e2e/cores.ts: how many tests at once, from fake cgroup files.
 
 import { expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { cgroupCores, testJobs } from "./cores";
+import { cgroupCores, testJobs } from "../e2e/cores";
 
 const GB = 2 ** 30;
 function cgroup(files: Record<string, string>): string {

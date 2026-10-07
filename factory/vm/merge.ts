@@ -101,7 +101,7 @@ async function merge(): Promise<Record<string, unknown>> {
       const moved = await git(["push", "--quiet", "origin", `${commit}:refs/heads/staging`], dir, { quiet: true, name: "push-staging" });
       if (moved.code == 0) {
         await git(["push", "--quiet", "origin", "--delete", branch], dir, { quiet: true, name: "delete" });
-        // A test of a factory that restarts before it hears the answer (tests/factory-reset.ts): the stand-in only.
+        // A test of a factory that restarts before it hears the answer (e2e/factory/reset-*.e2e.ts): the stand-in only.
         const pause = /\[factory-test: pause after merge (\d+)\]/.exec(process.env.FACTORY_TEST_HOOKS ?? "");
         if (pause) { await log(`The merge moved staging and deleted ${branch}; it answers in ${pause[1]}s (a test hook)`); await Bun.sleep(Number(pause[1]) * 1000); }
         return { ok: true, commit };
@@ -138,7 +138,7 @@ async function save(): Promise<Record<string, unknown>> {
   mkdirSync(WORK(), { recursive: true });
   await stopPreview();
   const stopped = await stopRun(0);
-  // A test of a factory that restarts during a restart (tests/factory-reset.ts), once: the stand-in only.
+  // A test of a factory that restarts during a restart (e2e/factory/reset-*.e2e.ts), once: the stand-in only.
   const brief = await api("/brief").catch(() => null) as { prompt?: string } | null;
   if (brief?.prompt) testHooks(brief.prompt);
   const pause =/\[factory-test: pause in save (\d+)\]/.exec(process.env.FACTORY_TEST_HOOKS ?? "");

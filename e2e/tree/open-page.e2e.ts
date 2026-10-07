@@ -1,4 +1,4 @@
-// Clicking a page opens it in the editor, at its address; folders stay open for the tab (tests/tree.ts, "the editor").
+// Clicking a page opens it in the editor, at its address; folders stay open for the tab ("the editor").
 import { expect, servers, test } from "../fixtures";
 import { clickOn, clickToGo, multi, openCard, openTreeEditor, paths, row } from "./tree";
 

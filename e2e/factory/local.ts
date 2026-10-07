@@ -1,4 +1,4 @@
-// A "local agent" for the factory's local-task tests (tests/factory-local.ts): `bun factory/task.ts` run in a clone
+// A "local agent" for the factory's local-task tests: `bun factory/task.ts` run in a clone
 // of the factory server's repository, with an admin token (ERGA_TOKEN), as Claude Code on a laptop runs it. Each
 // test makes its own token and clones; the clones are in the server's scratch folder, so they go with it.
 //

@@ -1,4 +1,4 @@
-// The front page as its owner, others and admins use it (front.ts, worker/home.ts; tests/landing.ts).
+// The front page as its owner, others and admins use it (front.ts, worker/home.ts).
 // Each test starts from a fresh front page, and leaves one for the next (home.ts).
 import { readFileSync } from "node:fs";
 import { join } from "node:path";

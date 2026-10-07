@@ -1,4 +1,4 @@
-// Scoped tokens and Git (tests/scoped-tokens.ts, Git: who may push). Asking to push (info/refs for
+// Scoped tokens and Git (Git: who may push). Asking to push (info/refs for
 // git-receive-pack) is enough to see who may: nothing is pushed. The second person has a name of this test's own,
 // so making them an admin and a user again touches no one else on the worker's server.
 import { expect, servers, test } from "../fixtures";

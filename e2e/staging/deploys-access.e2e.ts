@@ -1,4 +1,4 @@
-// Who may see and do what with staging's deploys (tests/deploys.ts, "who may", and /admin/deploys).
+// Who may see and do what with staging's deploys ("who may", and /admin/deploys).
 import { expect, servers, test } from "../fixtures";
 import { signIn } from "./staging";
 

@@ -1,4 +1,4 @@
-// No dark mode, and a coloured page's background from the first frame (tests/page.ts, "System in dark mode", "Reload with a coloured page").
+// No dark mode, and a coloured page's background from the first frame ("System in dark mode", "Reload with a coloured page").
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, servers, settle, test } from "../fixtures";

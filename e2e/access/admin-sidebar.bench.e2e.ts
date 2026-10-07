@@ -1,4 +1,4 @@
-// The admin sidebar's collapse, part-way (tests/admin-layout.ts, in headless Chrome): timing, so a bench.
+// The admin sidebar's collapse, part-way (in headless Chrome): timing, so a bench.
 import { expect, servers, test, until } from "../fixtures";
 
 await servers.main();

@@ -1,4 +1,4 @@
-// The view switcher: the page, its Markdown and its HTML (tests/page.ts, "Styling and views").
+// The view switcher: the page, its Markdown and its HTML ("Styling and views").
 import { expect, servers, test } from "../fixtures";
 import { F, openEditor } from "../editor";
 

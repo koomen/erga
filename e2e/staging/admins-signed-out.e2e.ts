@@ -1,4 +1,4 @@
-// Staging signed out (tests/staging-admins.ts, "signed out"): the sign-in page, JSON 403 for the API and MCP, git asks
+// Staging signed out ("signed out"): the sign-in page, JSON 403 for the API and MCP, git asks
 // for a token; signing in and the static files still open.
 import { spawnSync } from "node:child_process";
 import { cleanEnv } from "../env";

@@ -1,4 +1,4 @@
-// Who did it (#69; tests/attribution.ts): the editor's agent.
+// Who did it (#69): the editor's agent.
 import { expect, test, until } from "../fixtures";
 import { servers } from "./factory";
 import { unique, who } from "./who";

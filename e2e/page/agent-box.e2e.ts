@@ -1,4 +1,4 @@
-// The agent's message box (tests/page.ts, "Agent, empty message").
+// The agent's message box ("Agent, empty message").
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, servers, test } from "../fixtures";

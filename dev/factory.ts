@@ -284,7 +284,7 @@ function simRunner(stateDir: string, log: (line: string) => void): Runner {
       const name = `task-${task}-${randomBytes(3).toString("hex")}`;
       mkdirSync(join(root, name, "home"), { recursive: true });
       mkdirSync(join(root, name, "work"), { recursive: true });
-      // Tests (tests/factory.ts, ERGA_FACTORY_SIM_NO_SCRIPTS) skip packages' install scripts, by the VM's own Bun settings
+      // Tests (e2e/factory, ERGA_FACTORY_SIM_NO_SCRIPTS) skip packages' install scripts, by the VM's own Bun settings
       // (its HOME's .bunfig.toml): they cost seconds a VM (a Mac checks each fresh copy of workerd's and esbuild's
       // binaries on its first run), and a simulated VM's preview, a static one, runs neither.
       if (process.env.ERGA_FACTORY_SIM_NO_SCRIPTS) writeFileSync(join(root, name, "home", ".bunfig.toml"), "[install]\nignoreScripts = true\n");

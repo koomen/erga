@@ -593,8 +593,8 @@ export class Factory extends DurableObject<Env> {
       REPO_URL: host.repo(r.origin), REPO_TOKEN: await gitToken(this.env, scope, r.branch, by?.login ?? r.person ?? r.by_login, VIA.factory(id)),
       FACTORY_MODEL: String((await directoryOf(this.env).config.get("factory_model")) ?? "opus"),
       FACTORY_FAST: (await directoryOf(this.env).config.get("factory_fast")) == "off" ? "0" : "1",
-      // The tests in a 4-vCPU VM that Claude Code and the preview share: two e2e workers (e2e.config.ts), two of
-      // test.sh's files at a time (tests/cores.ts). A container may not see its own share of the host's cores, so it's
+      // The tests in a 4-vCPU VM that Claude Code and the preview share: two e2e workers (e2e.config.ts,
+      // e2e/cores.ts). A container may not see its own share of the host's cores, so it's
       // said here. (A gate shard's VM has the whole VM for its tests: factory/vm/gate.ts.)
       TEST_JOBS: "2",
       ...(token ? { CLAUDE_CODE_OAUTH_TOKEN: token } : {}),

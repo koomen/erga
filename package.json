@@ -17,7 +17,6 @@
     "task": "bun factory/task.ts",
     "test:e2e": "bun e2e/run.ts --e2e",
     "test:bench": "bun e2e/run.ts --bench",
-    "test:old": "./test.sh",
     "test:browsers": "bunx @e2e-dev/web install chromium"
   },
   "dependencies": {

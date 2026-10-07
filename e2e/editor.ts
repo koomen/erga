@@ -39,7 +39,7 @@ export interface OpenOptions {
 
 export type Editor = Awaited<ReturnType<typeof openEditor>>;
 
-/** Opens a copy of tests/fixtures/<fixture> in the editor, in the test's tab. */
+/** Opens a copy of e2e/fixtures/<fixture> in the editor, in the test's tab. */
 export async function openEditor(tab: Tab, server: Server, fixture: string, opts: OpenOptions = {}) {
   const page = tab.page;
   tab.strict = !opts.allowErrors;
@@ -171,7 +171,7 @@ export function editor(page: Page, doc: { address: string; dir: string; file: st
     },
     /**
      * Presses a key or a combination ("Enter", "ControlOrMeta+b", "Shift+Tab"). Home, End and the arrows go as plain
-     * key events (rawKey), as tests/cdp.ts sent them: Playwright on a Mac turns them into the Mac's own editing
+     * key events (rawKey) through DevTools: Playwright on a Mac turns them into the Mac's own editing
      * commands (Home scrolls instead of moving the caret, Shift+ArrowUp selects by its own rules).
      */
     async press(combo: string) {

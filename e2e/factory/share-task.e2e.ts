@@ -1,4 +1,4 @@
-// Share with agent: an admin token in the editor's card (tests/factory.ts, 11).
+// Share with agent: an admin token in the editor's card.
 import { expect, test, until } from "../fixtures";
 import { board, factory, servers, TASK_MS } from "./factory";
 

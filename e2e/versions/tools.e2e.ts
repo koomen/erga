@@ -1,4 +1,4 @@
-// The agent's version tools, over the server's API with an agent token (tests/versions.ts).
+// The agent's version tools, over the server's API with an agent token.
 import { expect, servers, test } from "../fixtures";
 import { cut, intoHeading, person, scripted, someone, tools } from "./versions";
 

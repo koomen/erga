@@ -1,4 +1,4 @@
-// More instructions, and Restart (tests/factory.ts, 5).
+// More instructions, and Restart.
 import { expect, test, until } from "../fixtures";
 import { board, factory, servers, TASK_MS } from "./factory";
 

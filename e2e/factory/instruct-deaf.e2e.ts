@@ -1,4 +1,4 @@
-// Instructions to a run that says done before it got them (tests/factory-instruct.ts, 3): the factory gives them to
+// Instructions to a run that says done before it got them: the factory gives them to
 // a new run on the same branch.
 import { expect, test } from "../fixtures";
 import { factory, servers, TASK_MS } from "./factory";

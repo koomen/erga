@@ -1,4 +1,4 @@
-// The chime's count in a hidden tab's title (tests/factory-chime.ts).
+// The chime's count in a hidden tab's title.
 import { expect, servers, test } from "../fixtures";
 import { chimeBoard, look } from "./chime";
 

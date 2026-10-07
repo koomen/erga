@@ -1,4 +1,4 @@
-// Pausing the page: one that defines window.ergaPause stops answering clicks, so its text can be edited; one that doesn't says so (tests/page.ts, "Pausing the page").
+// Pausing the page: one that defines window.ergaPause stops answering clicks, so its text can be edited; one that doesn't says so ("Pausing the page").
 import { expect, servers, test } from "../fixtures";
 import { F, openEditor, type Editor } from "../editor";
 

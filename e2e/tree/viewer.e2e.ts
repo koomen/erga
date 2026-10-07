@@ -1,4 +1,4 @@
-// Someone who may only view a document sees its tree read-only (tests/tree.ts, "a viewer").
+// Someone who may only view a document sees its tree read-only ("a viewer").
 import { expect, servers, test, until } from "../fixtures";
 import { clickOn, multi, row, signIn, js } from "./tree";
 

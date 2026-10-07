@@ -1,4 +1,4 @@
-// Selections across units by keyboard (tests/page.ts, "Selecting across paragraphs").
+// Selections across units by keyboard ("Selecting across paragraphs").
 import { expect, servers, test } from "../fixtures";
 import { F, openEditor, type Editor } from "../editor";
 

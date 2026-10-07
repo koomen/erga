@@ -1,4 +1,4 @@
-// Open pages across a redeploy (tests/redeploy.ts, (b)): the server restarts with changed client files (page.js,
+// Open pages across a redeploy ((b)): the server restarts with changed client files (page.js,
 // factory-agent.js and live.js, in a copy of .site: ERGA_SITE_DIR). Every page reloads by itself, and the editor's
 // caret, scroll, card, draft and file, the open task and the agent's draft on the Factory page are all back.
 import { cpSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";

@@ -1,4 +1,4 @@
-// The band's layout and colour on a desktop (tests/band.ts, 1. "Layout and colour"): on pages whose first line sits
+// The band's layout and colour on a desktop (1. "Layout and colour"): on pages whose first line sits
 // at their very top edge, viewing and editing, no control covers the document's text, the controls sit on the band
 // above the document, the band is the document's colour at its top edge, and the controls' tone suits the page.
 import { expect, servers, test, until } from "../fixtures";

@@ -1,4 +1,4 @@
-// The servers' peer route for sign-in (tests/admin-auth.ts, "the peer route"): not found on production without the
+// The servers' peer route for sign-in ("the peer route"): not found on production without the
 // shared secret, refused by staging's admins-only guard without it, the status with it (never a secret); production
 // takes values from nobody.
 import { expect, servers, test } from "../fixtures";

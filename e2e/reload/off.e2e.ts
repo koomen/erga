@@ -1,4 +1,4 @@
-// Live reload (tests/reload.ts): without --reload, no page gets the script.
+// Live reload: without --reload, no page gets the script.
 import { expect, servers, test } from "../fixtures";
 
 await servers.main();

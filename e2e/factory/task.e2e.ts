@@ -1,4 +1,4 @@
-// A task, start to ready to merge (tests/factory.ts, 2).
+// A task, start to ready to merge.
 import { expect, test, until } from "../fixtures";
 import { board, factory, servers, TASK_MS } from "./factory";
 

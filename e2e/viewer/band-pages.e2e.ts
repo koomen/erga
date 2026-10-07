@@ -1,4 +1,4 @@
-// The band follows the page (tests/band.ts, 3. "A document of two pages"): following a link from the dark page to the
+// The band follows the page (3. "A document of two pages"): following a link from the dark page to the
 // light one and back, the band settles to each page's colour and the controls' tone follows. The frame-by-frame
 // check (no frame between shows the band off the page's colour) is a bench: band-frames.bench.e2e.ts.
 import { expect, servers, test } from "../fixtures";

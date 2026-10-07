@@ -2,12 +2,12 @@
 // src/page/settings.ts), on servers.short(): people signed in by cookie, a
 // document's versions and publishing over the HTTP API, an agent token and its
 // tools, and someone in the document's room (a headless Yjs participant, as an
-// editor's tab is: tests/suite/client.ts).
+// editor's tab is: e2e/suite/client.ts).
 
 import { request } from "node:http";
 import type * as Y from "yjs";
-import { Participant } from "../../tests/suite/client";
-import type { Doc } from "../../tests/suite/target";
+import { Participant } from "../suite/client";
+import type { Doc } from "../suite/target";
 import { until, type Server } from "../fixtures";
 
 export { Participant };

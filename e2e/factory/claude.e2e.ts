@@ -1,4 +1,4 @@
-// The Claude sign-in: stored, never shown, signed out again (tests/factory.ts, 7).
+// The Claude sign-in: stored, never shown, signed out again.
 import { expect, test, until } from "../fixtures";
 import { board, factory, servers } from "./factory";
 

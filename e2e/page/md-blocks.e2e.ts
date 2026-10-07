@@ -1,4 +1,4 @@
-// Enter and Backspace in Markdown quotes, lists and tables (tests/page.ts, "Markdown page").
+// Enter and Backspace in Markdown quotes, lists and tables ("Markdown page").
 import { expect, servers, test } from "../fixtures";
 import { openEditor } from "../editor";
 

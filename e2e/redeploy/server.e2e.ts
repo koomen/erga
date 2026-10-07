@@ -1,4 +1,4 @@
-// Open pages across a redeploy, the server's side (tests/redeploy.ts): GET /api/release, each page's build and the
+// Open pages across a redeploy, the server's side: GET /api/release, each page's build and the
 // X-Erga-Check answer, and nothing of the site's in a document's own HTML (worker/live.ts).
 import { expect, servers, test } from "../fixtures";
 import { longDoc } from "./pages";

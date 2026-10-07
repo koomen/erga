@@ -1,4 +1,4 @@
-// Delete: a page at once, a folder after a question in its row; the root document stays (tests/tree.ts, "the editor": delete).
+// Delete: a page at once, a folder after a question in its row; the root document stays ("the editor": delete).
 import { expect, servers, test, until } from "../fixtures";
 import { act, clickOn, menuItem, multi, openCard, openTreeEditor, press, row, js } from "./tree";
 

@@ -1,5 +1,5 @@
 // The admin agent reading Erga's own source in the Worker (worker/factory.ts, worker/source-host.ts, the pretend
-// Artifacts with a read token), on the scripted model, from the panel on /admin/factory (tests/admin-agent-source.ts).
+// Artifacts with a read token), on the scripted model, from the panel on /admin/factory.
 import { expect, servers, test } from "../fixtures";
 import { fresh, panel, stagingFromHere } from "./admin";
 

@@ -1,4 +1,4 @@
-// The first switch into editing, frame by frame (tests/switch.ts): a screencast of the switch, sampled on a grid. No
+// The first switch into editing, frame by frame: a screencast of the switch, sampled on a grid. No
 // frame shows a white block where the agent opens, none loses the document, and the document slides over rather
 // than jumps. What it sees moves with the machine's load (frames drop when it's busy); the gate has the
 // animation-frame check (switch.e2e.ts).

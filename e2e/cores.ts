@@ -1,15 +1,14 @@
-// How many test files (or scenarios, or browsers) to run at once: one answer for test.sh, tests/page.ts and
-// tests/cdp.ts's pool, from the cores this machine really has for us.
+// How many e2e workers to run at once (e2e.config.ts), from the cores this machine really has for us.
 //
 // In a container, os.availableParallelism() and nproc can report the host's cores, not the container's share:
 // the cgroup's CPU quota (v2 cpu.max, v1 cpu.cfs_quota_us / cpu.cfs_period_us) says what it may use. The smallest
-// wins. Memory caps it too: each test file runs a dev server and a Chrome (about TEST_MEM_PER_JOB_MB, 1024 MB).
+// wins. Memory caps it too: each worker runs a dev server and a Chromium (about TEST_MEM_PER_JOB_MB, 1024 MB).
 //
 //   TEST_JOBS=n            exactly n at once (a factory task's VM sets 2: Claude Code and the preview share it)
 //   TEST_CORES_PER_JOB=c   one at once for every c usable cores (default 2)
 //   TEST_MEM_PER_JOB_MB=m  one at once for every m MB of memory (default 1024)
 //
-//   bun tests/cores.ts     prints "<jobs> <cores> <why>", for test.sh
+//   bun e2e/cores.ts     prints "<jobs> <cores> <why>"
 
 import { readFileSync } from "node:fs";
 import { availableParallelism, totalmem } from "node:os";

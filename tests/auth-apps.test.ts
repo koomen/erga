@@ -4,7 +4,7 @@
 // that stops sign-in), the status the page shows, and sign-in using them
 // (worker/auth.ts, worker/auth-settings.ts), with GitHub and the Durable Object
 // stood in for. The routes and staging's guard are tested in the Worker
-// (tests/admin-auth.ts).
+// (e2e/staging/auth-*.e2e.ts).
 
 import { expect, test } from "bun:test";
 import { type AppCheck, type AppContext, type AppValues, AuthApps, AuthError, cachedCheck, checkGithubApp, checkValues, clearApp, discardApp, inUse, saveApp, type SignInChange, statusOf } from "../auth-apps";

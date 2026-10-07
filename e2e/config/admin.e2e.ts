@@ -1,4 +1,4 @@
-// The settings on /admin, unlocked: setting them, their controls, and the change log (admin.ts; tests/server-config.ts).
+// The settings on /admin, unlocked: setting them, their controls, and the change log (admin.ts).
 // Each test starts a server of its own: they count every change since the server started.
 import { expect, test, until } from "../fixtures";
 import { adminPage, plainCookie } from "./config";

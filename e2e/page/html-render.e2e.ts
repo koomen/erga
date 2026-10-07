@@ -1,4 +1,4 @@
-// The editor on an HTML page: what is editable, and what isn't (tests/page.ts, "HTML page").
+// The editor on an HTML page: what is editable, and what isn't ("HTML page").
 import { expect, servers, settle, test } from "../fixtures";
 import { F, openEditor } from "../editor";
 

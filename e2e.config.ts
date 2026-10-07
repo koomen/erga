@@ -25,7 +25,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { E2EConfig } from "e2e";
-import { testJobs } from "./tests/cores";
+import { testJobs } from "./e2e/cores";
 import { cleanEnv, hermetic, ROOT } from "./e2e/env";
 import { engine } from "./e2e/engine";
 
@@ -43,7 +43,7 @@ if (hermetic() && !process.env.ERGA_BUILT) {
   process.env.ERGA_BUILT = "1";
 }
 
-/** One worker for each usable core (a container's CPU quota, memory: tests/cores.ts); TEST_JOBS=n picks it. */
+/** One worker for each usable core (a container's CPU quota, memory: e2e/cores.ts); TEST_JOBS=n picks it. */
 const workers = testJobs({ env: { TEST_JOBS: process.env.TEST_JOBS, TEST_CORES_PER_JOB: "1", TEST_MEM_PER_JOB_MB: process.env.TEST_MEM_PER_JOB_MB } }).jobs;
 
 export default {

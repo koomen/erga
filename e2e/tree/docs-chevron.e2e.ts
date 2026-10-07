@@ -1,4 +1,4 @@
-// Documents: each document's chevron opens its pages beneath its row and closes them, always saying which; what's open is kept for the tab (tests/docs-pages.ts).
+// Documents: each document's chevron opens its pages beneath its row and closes them, always saying which; what's open is kept for the tab.
 import type { Page } from "playwright-core";
 import { expect, servers, test } from "../fixtures";
 import { clickOn, multi } from "./tree";

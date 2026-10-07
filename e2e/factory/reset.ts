@@ -1,4 +1,4 @@
-// The factory at Claude Code's limits and when its Durable Object resets (tests/factory-reset.ts). The reset is
+// The factory at Claude Code's limits and when its Durable Object resets. The reset is
 // the dev server killed and started again on the same state (server.ts, restart), so each of those files has a
 // server of its own (servers.of).
 

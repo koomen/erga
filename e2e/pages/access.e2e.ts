@@ -1,4 +1,4 @@
-// Who may use the tree (tests/pages.ts).
+// Who may use the tree.
 import { expect, servers, test } from "../fixtures";
 import { person, someone } from "../versions/versions";
 import { paths, site } from "./tree";

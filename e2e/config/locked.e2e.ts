@@ -1,4 +1,4 @@
-// A setting the deploy fixes reaches the Worker and wins (server.config.ts → cloudflare.config.ts → worker/d1.ts; tests/server-config.ts).
+// A setting the deploy fixes reaches the Worker and wins (server.config.ts → cloudflare.config.ts → worker/d1.ts).
 import { expect, test } from "../fixtures";
 import { adminPage, plainCookie } from "./config";
 

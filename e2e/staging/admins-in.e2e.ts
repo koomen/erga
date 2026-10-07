@@ -1,4 +1,4 @@
-// Admins on staging (tests/staging-admins.ts, "admins"): an admin's session and admin token are in, the pages
+// Admins on staging ("admins"): an admin's session and admin token are in, the pages
 // origin's frame too; their documents token has no admin power, and a pages token that names nobody is refused.
 import { pagesToken } from "../../front";
 import { expect, servers, STAGING_SESSION_SECRET, test } from "../fixtures";

@@ -1,4 +1,4 @@
-// The board's cards: their buttons fit (tests/factory-cards.ts), at four narrow columns and at two, light and dark.
+// The board's cards: their buttons fit, at four narrow columns and at two, light and dark.
 import { expect, servers, test } from "../fixtures";
 import { cardBoard, fits } from "./cards";
 

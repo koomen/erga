@@ -1,4 +1,4 @@
-// What a VM's token and a task's git token reach (tests/factory.ts, 6).
+// What a VM's token and a task's git token reach.
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";

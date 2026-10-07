@@ -1,4 +1,4 @@
-// The admin agent and the production gate (tests/gate.ts), with the scripted model: deploy_production is refused with
+// The admin agent and the production gate, with the scripted model: deploy_production is refused with
 // the reason, list_test_runs and get_test_run answer, run_tests starts a run.
 import { expect, servers, test, until, type Page } from "../fixtures";
 import { admin, gateOf, pusher } from "./staging";

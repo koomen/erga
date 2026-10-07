@@ -1,4 +1,4 @@
-// Latest and Manual, and the published-version picker's windows (tests/settings.ts).
+// Latest and Manual, and the published-version picker's windows.
 import { expect, servers, test } from "../fixtures";
 import { another, closeDrafts, draftDoc, openDocEditor, viewerShows } from "./settings";
 

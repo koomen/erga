@@ -1,4 +1,4 @@
-// Redeploy (tests/deploys.ts): a new deploy of staging's commit, with a log of its own whose lines arrive live.
+// Redeploy: a new deploy of staging's commit, with a log of its own whose lines arrive live.
 import { expect, servers, test, until } from "../fixtures";
 import { DEPLOY_MS, hook, listen, settled, sha, target } from "./staging";
 

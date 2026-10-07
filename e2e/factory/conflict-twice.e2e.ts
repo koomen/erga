@@ -1,4 +1,4 @@
-// A merge that conflicts twice in a row (tests/factory.ts, 12). On 2026-10-05 the first run, still ending, took the
+// A merge that conflicts twice in a row. On 2026-10-05 the first run, still ending, took the
 // second conflict for its own failure, and failed the merge.
 import { expect, test } from "../fixtures";
 import { factory, servers, TASK_MS } from "./factory";

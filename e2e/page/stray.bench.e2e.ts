@@ -1,4 +1,4 @@
-// The stray-tag toast's minimum time on screen (tests/page.ts, "Stray end tag"): timing, so a bench.
+// The stray-tag toast's minimum time on screen ("Stray end tag"): timing, so a bench.
 import { expect, servers, test } from "../fixtures";
 import { openEditor } from "../editor";
 

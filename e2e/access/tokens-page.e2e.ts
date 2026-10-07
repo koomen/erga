@@ -1,4 +1,4 @@
-// /tokens in the browser (tests/scoped-tokens.ts, /tokens in headless Chrome): make a one-document token with an
+// /tokens in the browser (/tokens in headless Chrome): make a one-document token with an
 // expiry, shown once, then listed with its scope, document and expiry; the Admin scope offered to an admin only.
 import { expect, servers, test, until } from "../fixtures";
 import { mint, publish, unique } from "./access";

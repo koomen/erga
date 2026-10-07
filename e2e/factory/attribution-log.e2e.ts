@@ -1,4 +1,4 @@
-// Who did it (#69; tests/attribution.ts): the change log page shows each change's person, and how they did it.
+// Who did it (#69): the change log page shows each change's person, and how they did it.
 import { expect, test, until } from "../fixtures";
 import { servers } from "./factory";
 import { freshHours, SETTING, unique, who } from "./who";

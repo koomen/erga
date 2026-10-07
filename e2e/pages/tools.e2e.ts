@@ -1,4 +1,4 @@
-// The agents' file tools: over the token API and MCP, and the editor's own agent (tests/pages.ts).
+// The agents' file tools: over the token API and MCP, and the editor's own agent.
 import { expect, servers, test } from "../fixtures";
 import { paths, site } from "./tree";
 
