@@ -12,10 +12,10 @@ test("a quiet local task is stalled after 5 minutes; Hand to a VM: a VM's task n
   const s = await servers.factory(), f = factory(s);
   await f.on();
   const agent = await localAgent(s);
-  const dir = agent.checkout("handoff");
-  const e = agent.register(dir, "Local, then a VM", "Add a note file.");
-  agent.commit(dir, `local-e-${e}.txt`, "E's unfinished work\n", "E: work in progress");
-  expect(agent.task(dir, "push").code).toBe(0);
+  const dir = await agent.checkout("handoff");
+  const e = await agent.register(dir, "Local, then a VM", "Add a note file.");
+  await agent.commit(dir, `local-e-${e}.txt`, "E's unfinished work\n", "E: work in progress");
+  expect((await agent.task(dir, "push")).code).toBe(0);
   const te = await f.task(e) as any;
   expect(te.stalled).toBeFalsy();
   expect(stalledOf(te, Date.now() + 6 * 60_000)).toBeTruthy();
@@ -24,7 +24,7 @@ test("a quiet local task is stalled after 5 minutes; Hand to a VM: a VM's task n
   expect(te2.local).toBeFalsy();
   expect(te2.handedFrom).toBe(`${agent.by} on ${MACHINE}`);
   expect(await f.logged(e, "Handed to a VM by tester")).toBe(true);
-  const refused = agent.task(dir, "log", "I'm back");
+  const refused = await agent.task(dir, "log", "I'm back");
   expect(refused.code).not.toBe(0);
   expect(refused.out).toContain("handed to a VM");
   await f.until(e, "complete");

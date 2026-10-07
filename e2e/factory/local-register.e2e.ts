@@ -9,8 +9,8 @@ test("task new registers a local task: working, no VM, run by the agent on its m
   const s = await servers.factory(), f = factory(s);
   await f.on();
   const agent = await localAgent(s);
-  const dir = agent.checkout("register");
-  const reg = agent.task(dir, "new", "Local hello", "Add a note file, from a local agent.");
+  const dir = await agent.checkout("register");
+  const reg = await agent.task(dir, "new", "Local hello", "Add a note file, from a local agent.");
   const a = Number(/Registered task #(\d+)/.exec(reg.out)?.[1]);
   expect(reg.code == 0 && a > 0, reg.out).toBe(true);
   expect(reg.out).toContain("task inbox");
@@ -20,7 +20,7 @@ test("task new registers a local task: working, no VM, run by the agent on its m
   expect(t.branch).toBe(`task/${a}-local-hello`);
   expect(t.base).toBe(b.staging);
   expect(b[t.branch]).toBe(b.staging);
-  expect(agent.git(dir, "rev-parse", "--abbrev-ref", "HEAD").stdout.trim()).toBe(t.branch);
+  expect((await agent.git(dir, "rev-parse", "--abbrev-ref", "HEAD")).stdout.trim()).toBe(t.branch);
   const mine = await fetch(`${s.root}/api/factory/tasks/${a}/log`, { method: "POST", headers: { Origin: s.root, "Content-Type": "application/json" }, body: JSON.stringify({ message: "hi" }) });
   expect(mine.ok).toBe(true);
 });

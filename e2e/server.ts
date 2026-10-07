@@ -26,6 +26,8 @@ export interface ServerOptions {
   processEnv?: Record<string, string>;
   /** Up to how long to wait for it to answer. */
   startMs?: number;
+  /** This port, not a free one: for servers that name each other's address as they start (servers.pair). No second try if it's taken. */
+  port?: number;
 }
 
 export interface Server {
@@ -51,7 +53,7 @@ export interface Server {
 }
 
 /** A port nothing listens on right now (dev.ts refuses a taken one, and we try again). */
-function freePort(): Promise<number> {
+export function freePort(): Promise<number> {
   return new Promise((resolve, reject) => {
     const s = createServer();
     s.unref();
@@ -107,14 +109,14 @@ export async function startServer(opts: ServerOptions = {}): Promise<Server> {
       cpSync(join(ROOT, "tests/fixtures", name), dir, { recursive: true });
       return { dir, address: await server.open(dir) };
     },
-    async restart() {
-      server.stop();
-      await launch(port);
-    },
     stop() {
       const p = proc;
       proc = null;
       if (p?.pid) kill([p.pid, ...descendants(p.pid)]);
+    },
+    async restart() {
+      server.stop();
+      await launch(server.port, true);
     },
     dispose() {
       server.stop();
@@ -126,8 +128,8 @@ export async function startServer(opts: ServerOptions = {}): Promise<Server> {
     },
   };
   live.add(server);
-  /** Starts dev.ts on a free port (or on `fixed`, for a restart) and waits until it answers. */
-  async function launch(fixed?: number) {
+  /** Starts dev.ts on a free port (or on `fixed`) and waits until it answers; `again`: a restart, which waits for its own port. */
+  async function launch(fixed?: number, again = false) {
     const until = Date.now() + (opts.startMs ?? 90_000);
     for (let attempt = 0; ; attempt++) {
       port = fixed ?? await freePort();
@@ -151,14 +153,14 @@ export async function startServer(opts: ServerOptions = {}): Promise<Server> {
       }
       // Another server took the port between freePort and dev.ts: once more, on another. (A restart keeps its port: the
       // killed one's socket may linger a moment, so it tries that port again.)
-      if (exited != null && /port \d+ is taken/.test(output) && attempt < (fixed ? 40 : 3)) {
-        if (fixed) await new Promise((r) => setTimeout(r, 250));
+      if (exited != null && /port \d+ is taken/.test(output) && !(fixed && !again) && attempt < (again ? 40 : 3)) {
+        if (again) await new Promise((r) => setTimeout(r, 250));
         continue;
       }
       server.dispose();
       throw new Error(`the dev server didn't start (${exited != null ? `exit ${exited}` : "timed out"}):\n${output.slice(-4000)}`);
     }
   }
-  await launch();
+  await launch(opts.port);
   return server;
 }

@@ -11,11 +11,11 @@ test("Merge on a local task: staging gets \"Merge task/<id>-<slug>: title\" (--n
   const s = await servers.factory(), f = factory(s);
   await f.on();
   const agent = await localAgent(s);
-  const dir = agent.checkout("merge");
-  const a = agent.register(dir, "Local merge", "Add a note file, from a local agent.");
+  const dir = await agent.checkout("merge");
+  const a = await agent.register(dir, "Local merge", "Add a note file, from a local agent.");
   const file = `local-merge-${a}.txt`;
-  agent.commit(dir, file, "A note from a local agent.\n", "Add a local note");
-  expect(agent.task(dir, "done", "This task adds a note file.").code).toBe(0);
+  await agent.commit(dir, file, "A note from a local agent.\n", "Add a local note");
+  expect((await agent.task(dir, "done", "This task adds a note file.")).code).toBe(0);
   const branch = (await f.task(a)).branch;
   expect((await f.api(`/tasks/${a}/merge`, { method: "POST" })).status).toBe(202);
   await f.until(a, "merged");
@@ -28,7 +28,7 @@ test("Merge on a local task: staging gets \"Merge task/<id>-<slug>: title\" (--n
   expect(f.branches()[branch]).toBeUndefined();
   expect(t.vm).toBeFalsy();
   expect(await f.logged(a, "started for the job")).toBe(true);
-  const after = agent.task(dir, "log", "Still here");
+  const after = await agent.task(dir, "log", "Still here");
   expect(after.code).not.toBe(0);
   expect(after.out).toContain("merged");
 });

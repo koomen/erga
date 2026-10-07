@@ -15,14 +15,19 @@
 // stop when the worker exits (server.ts), and e2e/run.ts sweeps up after a
 // worker that was killed.
 //
-//   servers.main()       a dev server, signed in as DEV_LOGIN, with no agent key
-//   servers.agent()      the same with an agent key that is never used (the agent's UI comes on)
-//   servers.factory()    the factory with simulated VMs and the scripted agent model
-//   servers.of(key, o)   a kind one file needs alone (its own settings, or one it changes or restarts),
-//                        started with ServerOptions `o`: `const own = () => servers.of("deploy-page");`
-//                        (the worker keeps the last file's only)
-//   startServer()        a server for one test alone, started inside its time limit (test.ts disposes
-//                        of it, see `tab.own`): only where each attempt needs a fresh one
+//   servers.main()     a dev server, signed in as DEV_LOGIN, with no agent key
+//   servers.agent()    the same with an agent key that is never used (the agent's UI comes on)
+//   servers.factory()  the factory with simulated VMs and the scripted agent model
+//   servers.script()   a plain dev server whose agents (the editor's, the admin's) run on the scripted model
+//   servers.mock()     Cloudflare pretend (deploy/mock.ts), no deploy target: /deploy deploys to the mock
+//   servers.staging()  staging, deploying itself on the mock Cloudflare: admins only, its pipeline, the gate's fake runner
+//   servers.gate()     no deploy target, the production gate's fake runner (fast) and the scripted agent model
+//   servers.pair()     production and staging, each the other's peer with the mock's shared secret, and a stand-in GitHub
+//   servers.of(key, o) a kind one file needs alone (its own settings, or one it changes or restarts),
+//                      started with ServerOptions `o`: `const own = () => servers.of("deploy-page");`
+//                      (the worker keeps the last file's only)
+//   startServer()      a server for one test alone, started inside its time limit (test.ts disposes
+//                      of it, see `tab.own`): only where each attempt needs a fresh one
 //
 // Per test: `tab`, the attempt's own page in a fresh browser context (the web
 // engine makes one per attempt), as Playwright's Page, with the page's errors
@@ -39,10 +44,11 @@ import { surfaceOf, test as web } from "@e2e-dev/web";
 import { expect } from "e2e";
 import type { Page } from "playwright-core";
 import { engine } from "./engine";
+import { startPair, type Pair } from "./pair";
 import { startServer, type Server, type ServerOptions } from "./server";
 
 export { expect };
-export type { Page, Server };
+export type { Page, Pair, Server };
 
 /** The factory's dev server: its secret (for minting git tokens), and how it answered before any test changed a setting. */
 export interface FactoryServer extends Server {
@@ -50,11 +56,15 @@ export interface FactoryServer extends Server {
   initial: { enabled: boolean };
 }
 
+/** Staging's SESSION_SECRET (servers.staging), for a test that makes a pages token as another server would. */
+export const STAGING_SESSION_SECRET = `staging-${crypto.randomUUID()}`;
+
+type Disposable = { alive(): boolean; dispose(): void };
+const started = new Map<string, Promise<Disposable>>();
 /** Whether this process is one of e2e's workers (forked with an IPC channel), not the runner, which only lists the tests. */
 const WORKER = typeof process.send == "function";
 
-const started = new Map<string, Promise<Server>>();
-const once = <T extends Server>(key: string, make: () => Promise<T>) => (): Promise<T> => {
+const once = <T extends Disposable>(key: string, make: () => Promise<T>) => (): Promise<T> => {
   // Listing the tests: nothing runs, so nothing starts (and nothing may use what this gives).
   if (!WORKER) return Promise.resolve(null as unknown as T);
   let s = started.get(key);
@@ -74,13 +84,21 @@ export const servers = {
     const initial = await (await fetch(`${s.root}/api/factory`)).json() as { enabled: boolean };
     return Object.assign(s, { secret, initial });
   }),
+  // The scripted model (agent.ts, "@script [...]"): a message plays the tool calls and replies it lists. A task the
+  // admin agent queues runs in a simulated VM, never in this machine's Docker.
+  script: once("script", () => startServer({ env: { ERGA_AGENT_MODEL: "script", ERGA_FACTORY_RUNNER: "sim", ERGA_FACTORY_SIM_NO_SCRIPTS: "1" } })),
+  mock: once("mock", () => startServer({ env: { ERGA_DEPLOY_MOCK: "1" } })),
+  staging: once("staging", () => startServer({ env: { ERGA_DEPLOY_MOCK: "1", ERGA_DEPLOY_TARGET: "staging", SESSION_SECRET: STAGING_SESSION_SECRET } })),
+  // The fake runner's shards take 700 ms, not 1.5 s (worker/gate.ts).
+  gate: once("gate", () => startServer({ env: { ERGA_AGENT_MODEL: "script", ERGA_GATE_FAKE_MS: "700" } })),
+  pair: once("pair", () => startPair()),
   /**
    * A kind of server one file needs (`key`, its own), started with `opts` the first time. A worker keeps one such
    * server: the next file's (another key) disposes of it, as files run one after another. So one key for each file.
    */
   of(key: string, opts: ServerOptions = {}): Promise<Server> {
     if (WORKER) for (const [k, s] of started) if (k.startsWith("of:") && k != `of:${key}`) { started.delete(k); s.then((x) => x.dispose(), () => {}); }
-    return once(`of:${key}`, () => startServer(opts))();
+    return once(`of:${key}`, () => startServer(opts))() as Promise<Server>;
   },
 };
 
