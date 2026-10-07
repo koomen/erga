@@ -56,11 +56,18 @@ export function httpBackend(root: string, req: GitRequest): Promise<GitResponse>
     p.stdout.on("data", (b: Buffer) => out.push(b));
     p.stderr.on("data", (b: Buffer) => err.push(b));
     p.on("error", reject);
-    p.on("close", () => {
+    p.on("close", (code, signal) => {
       const all = Buffer.concat(out);
       let split = all.indexOf("\r\n\r\n"), skip = 4;
       if (split < 0) { split = all.indexOf("\n\n"); skip = 2; }
-      if (split < 0) return resolve({ status: 500, headers: { "content-type": "text/plain" }, body: new Uint8Array(Buffer.concat(err)) });
+      // It failed (upload-pack or receive-pack died part-way): its headers said 200 before it did, and what follows is
+      // half a pack, which a client reads as "expected 'packfile'". The client gets an error and git's own message
+      // instead (git shows a text/plain body as "remote: ..."). A status of its own (404, 403) is an answer: kept.
+      const said = split < 0 ? "" : all.subarray(0, split).toString();
+      if (split < 0 || ((code != 0 || signal) && !/^status:/im.test(said))) {
+        const why = Buffer.concat(err).toString().trim() || `git http-backend ${signal ? `was stopped (${signal})` : `exited with ${code}`}`;
+        return resolve({ status: 500, headers: { "content-type": "text/plain" }, body: new TextEncoder().encode(`${why}\n`) });
+      }
       const headers: Record<string, string> = {};
       let status = 200;
       for (const line of all.subarray(0, split).toString().split(/\r?\n/)) {

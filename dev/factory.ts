@@ -29,6 +29,7 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { gunzipSync } from "node:zlib";
 import { dockerUp, ensureImage } from "../factory/vm/build.ts";
+import { httpBackend } from "./git-server.ts";
 import { isTaskBranch, refsAllowed, type GitGrant } from "../factory/git-grant.ts";
 
 export { refsAllowed, type GitGrant };
@@ -134,35 +135,6 @@ export function stagingLog(stateDir: string): { heads: Record<string, string>; c
   if (!heads.staging) return { heads, commits: [] };
   const out = spawnSync("git", ["-C", join(stateDir, "factory", "erga.git"), "log", "-n", "100", "--format=%H %s", "staging"], { encoding: "utf8" }).stdout;
   return { heads, commits: out.split("\n").filter(Boolean).map((l) => ({ sha: l.slice(0, 40), subject: l.slice(41) })) };
-}
-
-function httpBackend(root: string, path: string, req: IncomingMessage, body: Uint8Array, res: ServerResponse) {
-  const url = new URL(req.url ?? "/", "http://x");
-  const env: Record<string, string> = {
-    PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: process.env.HOME ?? "/tmp", GIT_CONFIG_NOSYSTEM: "1",
-    GIT_PROJECT_ROOT: root, GIT_HTTP_EXPORT_ALL: "1", PATH_INFO: path, REQUEST_METHOD: req.method ?? "GET",
-    QUERY_STRING: url.search.slice(1), CONTENT_LENGTH: String(body.length), CONTENT_TYPE: req.headers["content-type"] ?? "", REMOTE_USER: "factory", REMOTE_ADDR: "127.0.0.1",
-  };
-  if (req.headers["git-protocol"]) env.GIT_PROTOCOL = String(req.headers["git-protocol"]);
-  const p = spawn("git", ["http-backend"], { env });
-  const out: Buffer[] = [];
-  p.stdout.on("data", (b: Buffer) => out.push(b));
-  p.on("close", () => {
-    const all = Buffer.concat(out);
-    let split = all.indexOf("\r\n\r\n"), skip = 4;
-    if (split < 0) { split = all.indexOf("\n\n"); skip = 2; }
-    if (split < 0) { res.writeHead(500).end("git http-backend failed"); return; }
-    let status = 200;
-    const headers: Record<string, string> = {};
-    for (const line of all.subarray(0, split).toString().split(/\r?\n/)) {
-      const i = line.indexOf(":");
-      if (i < 0) continue;
-      const k = line.slice(0, i).trim().toLowerCase(), v = line.slice(i + 1).trim();
-      if (k == "status") status = parseInt(v, 10); else headers[k] = v;
-    }
-    res.writeHead(status, headers).end(all.subarray(split + skip));
-  });
-  p.stdin.end(Buffer.from(body));
 }
 
 // ---- the VMs -------------------------------------------------------------------------
@@ -347,13 +319,20 @@ export function factoryDev(opts: { stateDir: string; secret: string; port: () =>
     const grant = (() => { const t = tokenOf(req.headers.authorization); return t ? checkGitToken(opts.secret, t) : null; })();
     if (!grant) return void res.writeHead(401, { "WWW-Authenticate": 'Basic realm="Erga factory"', "Content-Type": "text/plain" }).end("a factory token is needed\n");
     let body = await read(req);
+    // A body over 1 KB comes gzipped (a fetch with many wants or haves, a push); http-backend reads it as gzip only
+    // when told (HTTP_CONTENT_ENCODING), so a body read here is passed on as read.
+    let encoding = req.headers["content-encoding"];
     if (rest.endsWith("/git-receive-pack")) {
-      if (req.headers["content-encoding"] == "gzip") body = new Uint8Array(gunzipSync(body));
+      if (encoding == "gzip") { body = new Uint8Array(gunzipSync(body)); encoding = undefined; }
       const why = refsAllowed(grant, pushedRefs(body));
       if (why) return void res.writeHead(403, { "Content-Type": "text/plain" }).end(`${why}\n`);
     }
     const dir = ensureRepo(opts.stateDir);
-    httpBackend(join(dir, ".."), `/erga.git${rest}`, { ...req, headers: { ...req.headers, "content-encoding": undefined } } as IncomingMessage, body, res);
+    const url = new URL(req.url ?? "/", "http://x");
+    const headers = { "content-type": req.headers["content-type"], "git-protocol": req.headers["git-protocol"] as string | undefined, "content-encoding": encoding };
+    const r = await httpBackend(join(dir, ".."), { method: req.method ?? "GET", path: `/erga.git${rest}`, query: url.search.slice(1), headers, body });
+    if (r.status >= 500) opts.log(`factory: git ${rest}: ${r.status} ${new TextDecoder().decode(r.body).trim().slice(0, 500)}`);
+    res.writeHead(r.status, r.headers).end(r.body);
   }
 
   async function vm(req: IncomingMessage, res: ServerResponse) {
