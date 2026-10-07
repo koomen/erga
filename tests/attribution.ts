@@ -19,6 +19,7 @@
 // them, in headless Chrome.
 //
 //   bun tests/attribution.ts
+// covers: attribution.ts admin.ts users.ts config.ts server-api.ts worker/doc-host.ts src/room/doc.ts factory/git-grant.ts migrations/0170_attribution.sql
 
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
