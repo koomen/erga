@@ -38,6 +38,7 @@
 #                     files attached in the agent panel (tests/attach.ts),
 #                     instructions for a working task (tests/factory-instruct.ts),
 #                     who the factory's commits are by (tests/factory-authors.ts),
+#                     every agent action attributed to its person (tests/attribution.ts),
 #                     the factory across a reset of its Durable Object, and at Claude Code's limits (tests/factory-reset.ts),
 #                     local tasks, run by a local agent with no VM (tests/factory-local.ts),
 #                     the admin agent reading Erga's own source, in the Worker (tests/admin-agent-source.ts),
@@ -131,6 +132,7 @@ run 1 account bun tests/account.ts                       # [26]
 run 1 settings bun tests/settings.ts                     # [25]
 run 3 suite bun tests/suite/run.ts --skip latency        # [22]
 run 1 fade bun tests/fade.ts                             # [20]
+run 1 attribution bun tests/attribution.ts
 run 1 front bun tests/worker.ts --local                  # [19]
 run 1 band bun tests/band.ts                             # [18]
 run 1 new-doc bun tests/new-doc.ts                       # [15]

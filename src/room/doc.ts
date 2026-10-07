@@ -19,6 +19,7 @@
 //            history came from.
 
 import * as Y from "yjs";
+import { byLine, VIA } from "../../attribution";
 import { ChangeSet, type ChangeSpec } from "@codemirror/state";
 
 export type AuthorKind = "person" | "agent" | "disk";
@@ -26,13 +27,15 @@ export type AuthorKind = "person" | "agent" | "disk";
 export interface Author {
   /** Stable id of the person (an agent shares its owner's). */
   user: string;
-  /** Shown on cursors and marks: "Pete", "Pete's agent", "On disk". */
+  /** Shown on cursors and marks: "Pete", "Pete, via their agent", "On disk". */
   name: string;
   /** A colour from PALETTE. */
   color: string;
   kind: AuthorKind;
   /** Their picture, if signed in with one (a GitHub avatar's URL). */
   avatar?: string;
+  /** An agent's: how its person acts through it (attribution.ts), "their agent" or "a shared agent (label)". Its edits are `user`'s, via this. */
+  via?: string;
 }
 
 export const files = (doc: Y.Doc) => doc.getMap<Y.Text>("files");
@@ -67,7 +70,11 @@ export function colorFor(user: string, agent = false): string {
   return PALETTE[agent ? (i + PALETTE.length / 2) % PALETTE.length : i];
 }
 
+/** What an agent calls itself ("Pete’s agent"). Its work is attributed to its person, via it: byLine (attribution.ts). */
 export const agentName = (owner: string) => `${owner}’s agent`;
+
+/** Who an edit is by, as a version records it (attribution.ts): a person's login, and an agent's person, via it ("pete, via their agent"). */
+export const editorOf = (a: Author): string => (a.kind == "agent" ? byLine(a.user, a.via ?? VIA.agent) : a.user);
 
 /** Records who this doc's client is, so its edits can be attributed. */
 export function introduce(doc: Y.Doc, me: Author): void {

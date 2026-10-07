@@ -32,6 +32,7 @@ import { factoryEnabled } from "./factory";
 import { artifactsRemote, githubUrl, hasSource } from "./artifacts";
 import { directoryOf, tokensOf } from "./d1";
 import { LOCKED } from "../users";
+import { byLine, SYSTEM, VIA } from "../attribution";
 import type { Env } from "./env";
 import { readAllowed, verifyGitToken, type GitGrant } from "../factory/git-grant";
 import { gitSecret } from "./factory";
@@ -64,20 +65,22 @@ export async function sourceGit(request: Request, env: Env, url: URL): Promise<R
     const grant = key ? await verifyGitToken(key, secret) : null;
     if (!grant) return challenge("That factory token isn't working (it may have ended, or the factory's key changed).");
     if (!hasSource(env)) return new Response(`${notSetUp}\n`, { status: 503 });
-    return git(request, env, url, rest, { login: grant.by ?? "factory", name: "Erga factory" }, grant);
+    // The task's person (or whoever asked for the merge), via the factory (attribution.ts); SYSTEM for an older token with no one.
+    return git(request, env, url, rest, { login: grant.by ?? SYSTEM, name: "Erga factory", via: grant.via ?? "the factory" }, grant);
   }
   // A token (tokens.ts) with the admin scope, whose person is an admin now. A read with any other credential is a read all the same.
   const token = await tokensOf(env).verify(secret).catch(() => null);
   const refuse = (why: string) => new Response(`${why}\n`, { status: 403, headers: { "Content-Type": "text/plain" } });
   if (!token) return read ? anonymous() : challenge(`That token isn't working (it may have expired or been revoked). ${howTo}`);
   if (token.scope != "admin" || token.testBy) return read ? anonymous() : refuse(`That token's scope is ${token.scope}: pushing needs a token with the admin scope. Make one at ${url.origin}/tokens.`);
-  const who = { login: token.login, name: token.name };
+  // The person, via the agent that holds their token (attribution.ts).
+  const who = { login: token.login, name: token.name, via: VIA.token(token.label) };
   const dir = directoryOf(env);
   if (!(await dir.users.allowed(who.login)) || !(await dir.users.isAdmin({ login: who.login, test: false }))) {
     return read ? anonymous() : refuse(`Only admins can push to Erga's repository, and ${who.login} isn't one.`);
   }
   if (!hasSource(env)) return new Response(`${notSetUp}\n`, { status: 503 });
-  return git(request, env, url, rest, { login: who.login, name: who.name });
+  return git(request, env, url, rest, who);
 }
 
 /** Git itself, for someone allowed: clones and fetches from Artifacts, pushes through SourceRepo (with a factory VM's grant, if it's one). */
@@ -104,7 +107,7 @@ async function adminOf(request: Request, env: Env, platform: Platform, url: URL)
   const users = directoryOf(env).users;
   if (session.test || !(await users.isAdmin(whoOf(session)))) return json({ error: "Only admins can do that." }, 403);
   if (!(await users.actsAsAdmin(whoOf(session)))) return json({ error: LOCKED, locked: true }, 403);
-  return { actor: { login: session.login.toLowerCase(), name: session.name }, bearer: !!session.agent };
+  return { actor: { login: session.login.toLowerCase(), name: session.name, ...(session.agent ? { via: VIA.token(session.agent.label) } : {}) }, bearer: !!session.agent };
 }
 
 /** /api/source/... (the events, /api/events, are the deploy pipeline's hub: worker/deploys.ts). */
@@ -129,7 +132,7 @@ export async function sourceApi(request: Request, env: Env, platform: Platform, 
       const r = await host(env).merge(url.origin, who.actor, body.commit, typeof body.override == "string" ? body.override : undefined);
       return "error" in r ? json({ error: r.error }, r.status) : json(r);
     }
-    if (url.pathname == "/api/source/mirror" && request.method == "POST") return json({ mirror: await host(env).mirrorNow(url.origin) });
+    if (url.pathname == "/api/source/mirror" && request.method == "POST") return json({ mirror: await host(env).mirrorNow(url.origin, byLine(who.actor.login, who.actor.via)) });
   } catch (e) {
     return json({ error: `Erga couldn't reach its repository: ${(e as Error).message}` }, 502);
   }

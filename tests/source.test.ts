@@ -166,7 +166,9 @@ describe("Erga's Git endpoint", () => {
     expect((await git(src, "push", "erga", ":staging")).ok).toBe(false);
     // Merge: main moves to a chosen staging commit, then to staging's head; never anywhere else.
     const sixth = await must(src, "rev-parse", "HEAD~2");
-    let r = await f.repo.merge(ada, sixth);
+    let r = await f.repo.merge({ ...ada, via: "their admin agent" }, sixth);
+    // The move is the person's, with how they did it (#69, attribution.ts).
+    expect(f.moves.at(-1)).toMatchObject({ branch: "main", by: "ada", via: "their admin agent" });
     expect(r).toEqual({ commit: sixth, fastForward: true, upToDate: false });
     await expect(f.repo.merge(ada, "0".repeat(39) + "1")).rejects.toThrow(/isn't one of staging's commits/);
     r = await f.repo.merge(ada);

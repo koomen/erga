@@ -155,7 +155,7 @@ async function route(request: Request, env: Env, url: URL, ctx: ExecutionContext
   const [, homeId, homeAction] = /^\/api\/docs\/([a-z0-9]{8})\/home(?:\/(deploy))?\/?$/.exec(path) ?? [];
   if (homeId) {
     const home = env.HOME.getByName("home");
-    return homeApi(request, withTokens(platform(env), url), { status: () => home.status(), deploy: () => home.deploy() }, homeId, (homeAction ?? "") as "" | "deploy", () => { ctx.waitUntil(forgetHome(url)); });
+    return homeApi(request, withTokens(platform(env), url), { status: () => home.status(), deploy: (by) => home.deploy(by) }, homeId, (homeAction ?? "") as "" | "deploy", () => { ctx.waitUntil(forgetHome(url)); });
   }
   // The homepage's own files at the root (its other pages, files its script asks for by a relative URL): a file's name,
   // at the top or one folder down, and not one of the app's addresses (which never have a dot there).

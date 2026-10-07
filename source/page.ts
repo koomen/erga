@@ -509,7 +509,7 @@ const SOURCE_SCRIPT = `
       mp.className = "pill " + (m.state == "off" ? "" : m.state == "pushing" ? "pushing" : m.error ? "off" : "on");
       mp.textContent = "GitHub: " + (m.state == "off" ? "off" : m.state == "pushing" ? "pushing…" : m.error ? "behind" : m.lastPushAt ? "up to date" : "not pushed yet");
       const where = String(m.url || "").includes("/__github/") ? "A pretend GitHub, in the dev server (local development never pushes to the real one)" : String(m.url || "").replace(/^https?:\\/\\//, "").replace(/\\.git$/, "");
-      mp.title = (m.state == "off" ? "Off: the server has no GITHUB_MIRROR_TOKEN. Click for how to turn it on." : (m.lastPushAt ? "Last pushed " + ago(m.lastPushAt) : "Not pushed yet") + (m.error ? ". " + m.error : "") + ". Click to push now.") + (where ? "\\n" + where : "");
+      mp.title = (m.state == "off" ? "Off: the server has no GITHUB_MIRROR_TOKEN. Click for how to turn it on." : (m.lastPushAt ? "Last pushed " + ago(m.lastPushAt) + (m.lastPushBy ? ", for " + m.lastPushBy : "") : "Not pushed yet") + (m.error ? ". " + m.error : "") + ". Click to push now.") + (where ? "\\n" + where : "");
       mp.setAttribute("aria-haspopup", "dialog");
       renderMirror(where);
     }
@@ -526,7 +526,7 @@ const SOURCE_SCRIPT = `
     push.disabled = m.state == "pushing";
     push.textContent = m.state == "pushing" ? "Pushing…" : "Push now";
     if (off) return;
-    document.getElementById("mirror-state").textContent = "GitHub sync is on. " + (m.state == "pushing" ? "It pushes now." : m.lastPushAt ? "Last pushed " + ago(m.lastPushAt) + "." : "Not pushed yet.");
+    document.getElementById("mirror-state").textContent = "GitHub sync is on. " + (m.state == "pushing" ? "It pushes now." : m.lastPushAt ? "Last pushed " + ago(m.lastPushAt) + (m.lastPushBy ? ", for " + m.lastPushBy : "") + "." : "Not pushed yet.");
     document.getElementById("mirror-where").textContent = where ? "Where: " + where : "";
     const err = document.getElementById("mirror-error");
     err.hidden = !m.error;
