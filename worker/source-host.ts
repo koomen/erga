@@ -83,6 +83,11 @@ export class SourceHost extends DurableObject<Env> {
     }
   }
 
+  /** The factory: the branches and staging's newest commits (SourceRepo.stagingLog), or { error }. */
+  async stagingLog(origin: string): Promise<{ heads: Record<string, string>; commits: { sha: string; subject: string }[] } | { error: string }> {
+    try { return await this.at(origin).stagingLog(); } catch (e) { return { error: (e as Error).message }; }
+  }
+
   /** A merge, as POST /api/source/merge asks: { commit } or { error, status }. */
   async merge(origin: string, who: Actor, commit?: string): Promise<{ commit: string; fastForward: boolean; upToDate: boolean } | { error: string; status: number }> {
     try { return await this.at(origin).merge(who, commit); } catch (e) {

@@ -93,6 +93,7 @@ import { FACTORY_IDENTITY, githubIdOf, type Identity, personIdentity } from "../
 import { containersHost } from "../factory/cloudflare";
 import { b64url } from "../factory/git-grant";
 import { branchName, claudeToken, hideTokens, resolvePrompt, restartPrompt, taskPrompt } from "../factory/prompt";
+import { landedIn, recovery, type StagingLog } from "../factory/recover";
 import { type Stalled, stalledOf } from "../factory/stall";
 import { whoOf } from "../front";
 import { sessionOf } from "./auth";
@@ -285,6 +286,8 @@ export class Factory extends DurableObject<Env> {
   private merges: Promise<void> = Promise.resolve();
   /** Each task's restarts in this object's life: a launch that a restart overtook stops the VM it started, and runs nothing. */
   private epochs = new Map<number, number>();
+  /** The VMs a restart is saving now (relaunch), so a second restart doesn't save the same one again. */
+  private saving = new Set<string>();
   /** Queued tasks whose VM is being started (so a second start doesn't start another). */
   private starting = new Set<number>();
   /** The dependency rules (factory/deps.ts), over this object's tasks. */
@@ -309,10 +312,12 @@ export class Factory extends DurableObject<Env> {
     // Dependencies (#49), on a table made before them.
     const cols = this.sql.exec<{ name: string }>("PRAGMA table_info(tasks)").toArray().map((c) => c.name);
     for (const c of ["start_after", "merge_after", "merge_by", "run", "asked", "person"]) if (!cols.includes(c)) this.sql.exec(`ALTER TABLE tasks ADD COLUMN ${c} TEXT`);
-    // A merge the object was stopped in the middle of goes back to ready to merge, saying so.
-    for (const r of this.sql.exec<Row>("SELECT * FROM tasks WHERE status = 'merging'").toArray()) {
-      this.update(r.id, { status: "complete", error: "The merge was stopped in the middle (the factory restarted). Merge again." });
-    }
+    // A merge the object was stopped in the middle of (any deploy of this server resets it): merged if staging has it
+    // (its VM moved staging before the object heard), else back to ready to merge (factory/recover.ts).
+    for (const { id } of this.sql.exec<{ id: number }>("SELECT id FROM tasks WHERE status = 'merging'").toArray()) this.ctx.waitUntil(this.mergeCutOff(id));
+    // A launch the object was stopped in the middle of (restart, revise and resolve launch in waitUntil): a task that
+    // works or needs its agent, with no run started or no VM up, is launched again (factory/recover.ts, recovery).
+    for (const { id } of this.sql.exec<{ id: number }>("SELECT id FROM tasks WHERE status IN ('working', 'needs agent')").toArray()) this.ctx.waitUntil(this.recover(id));
     // Every task starts by itself, with no button: when it is added, or when the tasks it waits for merge. One whose VM
     // was starting when the object stopped (each merge deploys staging, which restarts it) is still queued with no VM:
     // it starts again here.
@@ -557,7 +562,7 @@ export class Factory extends DurableObject<Env> {
   async brief(id: number) {
     const r = this.row(id);
     if (!r) return null;
-    return { title: r.title, branch: r.branch, base: "staging", prompt: taskPrompt({ ...r, base: "staging" }), instructions: r.instructions, restart: restartPrompt(r, asked(r)), maxTurns: 200 };
+    return { title: r.title, branch: r.branch, base: "staging", prompt: taskPrompt({ ...r, base: "staging" }), instructions: r.instructions, restart: restartPrompt(r, asked(r)), maxTurns: 300 };
   }
 
   /** A VM's report on its task. */
@@ -587,7 +592,8 @@ export class Factory extends DurableObject<Env> {
           if (body.status == "complete") {
             this.update(id, { status: "merging", error: null, commit_sha: body.commit ? String(body.commit) : r.commit_sha }, `Claude Code: ${String(body.summary ?? "done").slice(0, 1500)}`);
             this.note(id, "The merge goes on");
-            this.queueMerge(id, r.merge_by ?? r.by_login);
+            // Its Claude Code said done: the merge gives it a short while to end (merge.ts, LIMITS.stopReported).
+            this.queueMerge(id, r.merge_by ?? r.by_login, true);
           } else if (body.status == "failed") this.backToReady(id, `Claude Code couldn't finish the merge: ${String(body.error ?? "failed")}`);
           else return { ok: false, error: "status: complete or failed" };
           return { ok: true };
@@ -642,7 +648,8 @@ export class Factory extends DurableObject<Env> {
     // Any sent while it worked that its Claude Code never got (its VM stopped first) go with them.
     const older = joinAsks(this.takeAsks(id));
     const text = instructions.trim().slice(0, 20000);
-    this.update(id, { instructions: (older ? older + "\n\n" : "") + text, asked: JSON.stringify([...asked(r), { at: now(), by, text }]), status: "working", error: null }, `${by} asked: ${instructions.trim().slice(0, 500)}`);
+    // No run until the launch starts one (run: null): a reset before that leaves a task that recover() launches again.
+    this.update(id, { instructions: (older ? older + "\n\n" : "") + text, asked: JSON.stringify([...asked(r), { at: now(), by, text }]), status: "working", error: null, run: null }, `${by} asked: ${instructions.trim().slice(0, 500)}`);
     this.ctx.waitUntil(this.launch(id, "revise"));
     return { ok: true };
   }
@@ -673,20 +680,57 @@ export class Factory extends DurableObject<Env> {
     // Instructions sent while it worked, that the old Claude Code never got: in the restart's brief (asked), so taken here.
     this.takeAsks(id);
     // No run is current any more: the old Claude Code's reports are refused from now on. A merge that is running sees
-    // the task isn't merging any more, and does nothing with its answer.
-    this.update(id, { status: "working", error: null, run: null, merge_by: null, vm: null, preview_origin: null, preview_path: null },
+    // the task isn't merging any more, and does nothing with its answer. The old VM stays on the task until it is
+    // saved and stopped (relaunch), so that a reset meanwhile leaves a task that recover() saves and launches again.
+    this.update(id, { status: "working", error: null, run: null, merge_by: null, preview_origin: null, preview_path: null },
       `Restarted by ${by} (the task was ${was}): ${r.vm ? `the work in VM ${r.vm} is saved, then a fresh VM` : "a fresh VM"} starts Claude Code with the task's prompt and ${asked(r).length} earlier instruction${asked(r).length == 1 ? "" : "s"}`);
-    this.ctx.waitUntil((async () => {
-      const host = vmHost(this.env, r.origin);
-      if (r.vm && typeof host != "string") {
+    this.ctx.waitUntil(this.relaunch(id, r, epoch));
+    return { ok: true };
+  }
+
+  /** A restart's work: the old VM, if it's up, saves the work and stops; then a fresh VM starts Claude Code with the restart brief. */
+  private async relaunch(id: number, r: Row, epoch: number) {
+    const host = vmHost(this.env, r.origin);
+    // Another restart saves this VM already (restarted twice): this one only launches, if it is still the latest.
+    if (r.vm && typeof host != "string" && !this.saving.has(r.vm)) {
+      this.saving.add(r.vm);
+      try {
         await this.save(id, r, host);
         await host.stop(r.vm).catch(() => {});
         this.note(id, `VM ${r.vm} stopped`);
-      }
-      // Restarted again meanwhile: that restart goes on instead.
-      if (this.epochs.get(id) == epoch) await this.launch(id, "restart");
-    })());
-    return { ok: true };
+      } finally { this.saving.delete(r.vm); }
+    }
+    // Restarted again meanwhile: that restart goes on instead. Discarded meanwhile: nothing.
+    if (this.epochs.get(id) != epoch || this.row(id)?.status != "working") return;
+    if (this.row(id)?.vm) this.update(id, { vm: null, preview_origin: null, preview_path: null });
+    await this.launch(id, "restart");
+  }
+
+  /**
+   * A new object's look at a task that works or needs its agent (factory/recover.ts, recovery): the old object may
+   * have been reset between the save and the launch of a restart, or before a revise's or a resolve's launch.
+   */
+  private async recover(id: number) {
+    const r = this.row(id);
+    if (!r) return;
+    const host = vmHost(this.env, r.origin);
+    if (typeof host == "string") return;
+    const up = !!r.vm && (await host.alive(r.vm).catch(() => false));
+    // Changed while we asked (a restart, a report, a launch): that goes on instead.
+    const later = this.row(id);
+    if (!later || later.status != r.status || later.run != r.run || later.vm != r.vm || this.epochs.has(id)) return;
+    const what = recovery(r, up);
+    if (what == "none") return;
+    if (what == "back to ready") return this.backToReady(id, "The factory restarted before Claude Code was woken to finish the merge, and the task's VM is gone. Merge again.");
+    if (what == "resolve") {
+      this.note(id, "Waking Claude Code for the merge again: the factory restarted before it was woken");
+      return this.launch(id, "resolve");
+    }
+    const epoch = 1;
+    this.epochs.set(id, epoch);
+    const n = asked(r).length;
+    this.update(id, { run: null }, `Starting again: the factory restarted before the task's run of Claude Code started${r.vm ? (up ? ` (VM ${r.vm} saves the work first)` : ` (VM ${r.vm} is gone)`) : ""}. A fresh VM starts from ${r.branch} with the task's prompt and its ${n} earlier instruction${n == 1 ? "" : "s"}`);
+    await this.relaunch(id, { ...r, vm: up ? r.vm : null }, epoch);
   }
 
   /** A restart's first step, in the old VM if it's still up: Claude Code stopped, the work committed and pushed (merge.ts save). */
@@ -723,13 +767,14 @@ export class Factory extends DurableObject<Env> {
   }
 
   /** The task's merge, after the ones asked for before it (one at a time). */
-  private queueMerge(id: number, by: string) {
-    const run = this.merges.then(() => this.doMerge(id, by));
+  private queueMerge(id: number, by: string, reported = false) {
+    const run = this.merges.then(() => this.doMerge(id, by, reported));
     this.merges = run.catch(() => {});
     this.ctx.waitUntil(run);
   }
 
-  private async doMerge(id: number, by: string) {
+  /** `reported`: the task's Claude Code has just said done (a resolve), so the job waits for it a short while only. */
+  private async doMerge(id: number, by: string, reported = false) {
     const r = this.row(id)!;
     // Discarded meanwhile (while it waited for its turn).
     if (r.status != "merging") return;
@@ -738,6 +783,12 @@ export class Factory extends DurableObject<Env> {
     // A dependency that hasn't merged (its merge, queued ahead of this one, failed; or one added meanwhile).
     const waiting = this.deps.mergeTimeRefusal(depOf(r));
     if (waiting) return this.backToReady(id, waiting);
+    // Staging has it already: a merge that ended while the factory restarted (factory/recover.ts). Merged, with no job.
+    const landed = await this.landed(r);
+    if (landed) {
+      if (this.row(id)?.status != "merging") return;
+      return this.mergeDone(id, by, landed, `Staging has this task's merge already (${landed.slice(0, 10)}): merged, with no new merge`);
+    }
     try {
       this.note(id, `Merging staging into ${r.branch}, then ${r.branch} into staging (the preview stops)`);
       const vm = await this.vmFor(id, host);
@@ -745,32 +796,74 @@ export class Factory extends DurableObject<Env> {
       this.update(id, { preview_path: null });
       let timer: ReturnType<typeof setTimeout> | undefined;
       const out = await Promise.race([
-        host.job(vm, "merge.ts", ["merge", r.branch, r.title], await this.jobEnv(id, "merge", by), true),
+        host.job(vm, "merge.ts", ["merge", r.branch, r.title], { ...(await this.jobEnv(id, "merge", by)), ...(reported ? { FACTORY_RUN_REPORTED: "1" } : {}) }, true),
         new Promise<never>((_, no) => { timer = setTimeout(() => no(new Error(`the merge job didn't answer in ${MERGE_JOB_MS / 60_000} minutes`)), MERGE_JOB_MS); }),
       ]).finally(() => clearTimeout(timer));
       const res = resultOf(out);
       if (this.row(id)?.status != "merging") return;
       if (!res.ok && res.needsAgent) {
         // The task's own Claude Code finishes it, in its clone, in the same session; then the merge goes on.
-        this.update(id, { status: "needs agent", error: res.error ?? "the merge stopped", instructions: resolvePrompt(r, res) },
+        // run: null until the resolve's launch starts one (a reset before that: recover() wakes it again).
+        this.update(id, { status: "needs agent", error: res.error ?? "the merge stopped", instructions: resolvePrompt(r, res), run: null },
           `Needs agent: ${String(res.error ?? "").split("\n")[0].slice(0, 400)} Claude Code is woken to finish the merge.`);
         this.ctx.waitUntil(this.launch(id, "resolve"));
         return;
       }
       if (!res.ok) return this.backToReady(id, `The merge failed: ${res.error}`);
-      await host.stop(vm).catch(() => {});
-      this.update(id, { status: "merged", merged_at: now(), merge_commit: String(res.commit), vm: null, preview_origin: null, merge_by: null }, `Merged into staging as ${String(res.commit).slice(0, 10)}; ${r.branch} deleted; VM stopped`);
-      await this.logged(by, { key: "task", from: null, to: null, task: { id, title: r.title, event: "merged", commit: String(res.commit) } });
-      this.tellDependents(id);
-      // Staging moved. On Cloudflare the push went through Erga's Git endpoint, which tells the deploy pipeline itself
-      // (worker/source-host.ts, deployHook): staging.erga.dev builds and deploys it. Locally the repository is the dev
-      // server's own, which no deploy reads.
-      this.note(id, host.kind == "local" ? "Staging moved (the local repository: nothing deploys it)" : "Staging moved: staging.erga.dev deploys it now (see /admin/factory)");
+      await this.mergeDone(id, by, String(res.commit), res.already ? `Staging had this task's merge already (${String(res.commit).slice(0, 10)}): merged` : `Merged into staging as ${String(res.commit).slice(0, 10)}; ${r.branch} deleted`);
     } catch (e) {
       // Restarted (or discarded) meanwhile: its VM was stopped under the merge.
       if (this.row(id)?.status != "merging") return;
       this.backToReady(id, `The merge failed: ${(e as Error).message}`);
     }
+  }
+
+  /** A merge that reached staging (as `commit`): the VM stopped, the task merged, the change log, the dependents told. */
+  private async mergeDone(id: number, by: string, commit: string, message: string) {
+    const r = this.row(id)!;
+    const host = vmHost(this.env, r.origin);
+    if (r.vm && typeof host != "string") await host.stop(r.vm).catch(() => {});
+    this.update(id, { status: "merged", merged_at: now(), merge_commit: commit, vm: null, preview_origin: null, merge_by: null }, `${message}; VM stopped`);
+    await this.logged(by, { key: "task", from: null, to: null, task: { id, title: r.title, event: "merged", commit } });
+    this.tellDependents(id);
+    // Staging moved. On Cloudflare the push went through Erga's Git endpoint, which tells the deploy pipeline itself
+    // (worker/source-host.ts, deployHook): staging.erga.dev builds and deploys it. Locally the repository is the dev
+    // server's own, which no deploy reads.
+    this.note(id, typeof host != "string" && host.kind == "local" ? "Staging moved (the local repository: nothing deploys it)" : "Staging moved: staging.erga.dev deploys it now (see /admin/factory)");
+  }
+
+  /** A merge this object was cut off from (a reset): merged if staging has it, else back to ready to merge. */
+  private async mergeCutOff(id: number) {
+    const r = this.row(id);
+    if (!r) return;
+    const landed = await this.landed(r);
+    if (this.row(id)?.status != "merging") return;
+    if (landed) return this.mergeDone(id, r.merge_by ?? r.by_login, landed, `The factory restarted during the merge, but staging has it: merged as ${landed.slice(0, 10)}`);
+    this.update(id, { status: "complete", merge_by: null, error: "The merge was stopped in the middle (the factory restarted). Merge again." }, "Merge stopped: the factory restarted, and staging doesn't have the merge");
+  }
+
+  /** Staging's commit that merged the task, if any (factory/recover.ts, landedIn); null when it can't say. */
+  private async landed(r: Row): Promise<string | null> {
+    try {
+      const log = await this.stagingLog(r.origin);
+      return log ? landedIn(log, { branch: r.branch, commit: r.commit_sha, base: r.base }) : null;
+    } catch (e) {
+      console.log(`factory: couldn't read staging for task #${r.id}: ${(e as Error).message}`);
+      return null;
+    }
+  }
+
+  /** The repository's branches and staging's newest commits: the dev server's repository locally, else Erga's own (SourceHost). */
+  private async stagingLog(origin: string): Promise<StagingLog | null> {
+    if (this.env.ERGA_LINK_SECRET && this.env.DEV_LOGIN) {
+      const r = await fetch(`${origin}/__factory/vm?link=${this.env.ERGA_LINK_SECRET}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ op: "staging" }) });
+      if (!r.ok) throw new Error(`the dev server answered ${r.status}`);
+      return await r.json() as StagingLog;
+    }
+    if (!hasSource(this.env)) return null;
+    const log = await this.env.SOURCE.getByName("erga").stagingLog(origin);
+    if ("error" in log) throw new Error(log.error);
+    return log;
   }
 
   async discard(id: number, by: string, origin?: string): Promise<{ ok: boolean; error?: string }> {
@@ -1100,7 +1193,7 @@ export class Factory extends DurableObject<Env> {
 }
 
 /** A merge or discard job's result: its output's FACTORY-RESULT line. */
-function resultOf(out: { code: number; output: string } | null): { ok: boolean; error?: string; commit?: string; needsAgent?: boolean; kind?: string; step?: string; files?: string[]; stopped?: boolean; saved?: string } {
+function resultOf(out: { code: number; output: string } | null): { ok: boolean; error?: string; commit?: string; needsAgent?: boolean; kind?: string; step?: string; files?: string[]; stopped?: boolean; saved?: string; already?: boolean } {
   const line = out?.output.split("\n").reverse().find((l) => l.startsWith("FACTORY-RESULT "));
   if (!line) return { ok: false, error: `the job ended without a result (exit ${out?.code}): ${out?.output.slice(-400) ?? ""}` };
   return JSON.parse(line.slice("FACTORY-RESULT ".length));

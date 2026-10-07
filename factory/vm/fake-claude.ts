@@ -20,7 +20,9 @@
 // N]" makes it go on for N seconds after it says done (or fails), as Claude
 // Code does while it says its last words (the merge must wait for it, or stop
 // it, before it runs again). `woken` (it ran past its
-// limit): it says done.
+// limit, or used all its turns): it says done. "[factory-test: max turns]"
+// makes its first run stop as Claude Code does at --max-turns, without
+// reporting (run.ts wakes it).
 //
 // Instructions sent while it works: it asks for them as Claude Code's hooks do
 // (task.ts hook) after each of its steps, and puts the first of them in its
@@ -59,6 +61,12 @@ if (job == "work" && brief.prompt.includes("[factory-test: keep working]")) {
   await Bun.sleep(600_000);
 }
 if (job == "woken") { await done("The stand-in was woken after its limit, and finished."); process.exit(0); }
+// "[factory-test: max turns]": it stops as Claude Code does at --max-turns (its last event says so), without reporting.
+if (job == "work" && brief.prompt.includes("[factory-test: max turns]")) {
+  console.log(JSON.stringify({ type: "result", subtype: "error_max_turns", is_error: true, num_turns: 300 }));
+  await log("The stand-in stops at its turn limit, without saying done");
+  process.exit(1);
+}
 // The dependencies, if the factory's install failed or hung (it says so in Claude Code's instructions): again, under a limit.
 if (!existsSync(join(CLONE(), "node_modules"))) {
   const r = spawnSync("task", ["run", "--timeout", "600", "--", "bun", "install"], { cwd: CLONE(), stdio: "inherit" });

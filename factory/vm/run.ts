@@ -31,7 +31,9 @@
 // Claude Code has worked on it yet). A failed or hung install wakes Claude
 // Code with its log, as the first thing in its instructions. Claude Code that
 // runs past its limit is stopped and woken once (--continue) to finish; a
-// second time, the task fails.
+// second time, the task fails. Claude Code that stops at --max-turns (the
+// brief's maxTurns, 300) without saying done or failed is woken once the same
+// way, with FINISH_TURNS turns to commit and report.
 //
 // Instructions sent while Claude Code works (the factory keeps them for the
 // task) reach it when its current step ends: this job asks the factory every
@@ -43,7 +45,7 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { api, claudeLog, CLONE, env, git, INBOX, LIMITS, log, MODEL, modelError, prepareClaude, realClaude, REPORTED, runField, scrub, step, stepError, STOPPED, testHooks, WORK } from "./common.ts";
+import { api, claudeLog, CLONE, env, FINISH_TURNS, git, INBOX, LIMITS, log, maxTurnsHit, MODEL, modelError, prepareClaude, realClaude, REPORTED, runField, scrub, step, stepError, STOPPED, testHooks, WORK } from "./common.ts";
 import { pidFile, pushBranch, stopRun } from "./task.ts";
 
 const job = (process.argv[2] ?? "work") as Job;
@@ -120,12 +122,16 @@ async function main() {
     }
   }
 
-  // 3. Claude Code, or the stand-in, with a time limit; woken once if it runs past it.
+  // 3. Claude Code, or the stand-in, with a time limit; woken once if it uses all its turns, and once if it runs past its limit.
   const limit = job == "resolve" ? LIMITS.resolve : LIMITS.claude;
   let res = await claude(brief, wake, limit, false);
+  if (res.maxTurns && !existsSync(REPORTED())) {
+    await log(`Claude Code used all its ${brief.maxTurns ?? 300} turns (--max-turns) without saying done or failed. Waking it to finish.`);
+    res = await claude(brief, "", Math.min(limit, 3600), "turns");
+  }
   if (res.timedOut && !existsSync(REPORTED())) {
     await log(`Claude Code ran past its limit (${limit / 60} min): stopped, with everything it started. Waking it to finish.`);
-    res = await claude(brief, "", Math.min(limit, 3600), true);
+    res = await claude(brief, "", Math.min(limit, 3600), "late");
     if (res.timedOut && !existsSync(REPORTED())) {
       await api("", { method: "PATCH", json: { ...runField(), status: "failed", error: `Claude Code ran past its limit twice (${limit / 60} min, then ${Math.min(limit, 3600) / 60} min) and was stopped.${res.lastText ? ` Its last words: ${scrub(res.lastText).slice(0, 600)}` : ""}` } });
       return;
@@ -149,18 +155,20 @@ async function main() {
 const claudeStarted = (pid: number) => writeFileSync(pidFile("claude"), String(pid));
 
 /**
- * One run of Claude Code (or the stand-in), as a step with a time limit. `woken`: it ran past its limit before,
- * and is told so, in the same session. Claude Code's words and the commands it runs go on the board, at most
+ * One run of Claude Code (or the stand-in), as a step with a time limit. `woken`: it ran past its limit before
+ * ("late"), or used all its turns ("turns"), and is told so, in the same session. Claude Code's words and the commands it runs go on the board, at most
  * every 5 seconds, so the board (and the factory's agent) can see what it's doing.
  */
-async function claude(brief: Brief, wake: string, limit: number, woken: boolean): Promise<{ code: number; timedOut: boolean; lastText: string; badModel?: string | null }> {
+async function claude(brief: Brief, wake: string, limit: number, woken: false | "late" | "turns"): Promise<{ code: number; timedOut: boolean; lastText: string; badModel?: string | null; maxTurns?: boolean }> {
+  const turns = `You were stopped: you used all ${brief.maxTurns ?? 300} turns the factory gives a run (--max-turns). Don't start new work. Finish now, in at most ${FINISH_TURNS} turns: commit what is worth keeping, then task done "summary" (or task fail "why").`;
   const late = `You were stopped: you ran for more than ${limit / 60} minutes, the factory's limit, and everything you had started was killed. Something probably hung (a dev server, a test or a build that waits forever). Don't run it again without a time limit (task run --timeout SECONDS -- CMD). Finish now: commit, then task done "summary" (or task fail "why").`;
   if (!realClaude()) {
     if (!woken) await log(process.env.CLAUDE_CODE_OAUTH_TOKEN ? "The scripted stand-in runs (FACTORY_FAKE=1)" : "No Claude sign-in: the scripted stand-in runs instead of Claude Code");
     const inbox = watchInbox();
-    const r = await step(["bun", join(import.meta.dirname, "fake-claude.ts"), woken ? "woken" : job, "--model", MODEL()], { name: "claude", timeout: limit, cwd: CLONE(), echo: true, onStart: inbox.started, onLine: (line) => { try { inbox.event(JSON.parse(line)); } catch { /* its own words */ } } });
+    let maxTurns = false;
+    const r = await step(["bun", join(import.meta.dirname, "fake-claude.ts"), woken ? "woken" : job, "--model", MODEL()], { name: "claude", timeout: limit, cwd: CLONE(), echo: true, onStart: inbox.started, onLine: (line) => { try { const ev = JSON.parse(line); maxTurns ||= maxTurnsHit(ev); inbox.event(ev); } catch { /* its own words */ } } });
     inbox.stop();
-    return { code: r.code, timedOut: r.timedOut, lastText: "" };
+    return { code: r.code, timedOut: r.timedOut, lastText: "", maxTurns };
   }
   prepareClaude();
   // The same session as before, when this VM has it (more instructions, a merge, a wake-up); else the task's whole brief first.
@@ -170,15 +178,16 @@ async function claude(brief: Brief, wake: string, limit: number, woken: boolean)
     : job == "restart" ? brief.restart ?? "The user restarted this task."
     : job == "revise" ? `The user looked at your work and asks for more:\n\n${brief.instructions}`
     : brief.instructions!;
-  const prompt = woken ? late : continuing ? wake + asked : `${brief.prompt}\n\n${wake}${job == "work" ? "" : asked}`;
+  const prompt = woken == "turns" ? turns : woken ? late : continuing ? wake + asked : `${brief.prompt}\n\n${wake}${job == "work" ? "" : asked}`;
   if (!woken) await log(job == "revise" ? "Claude Code is working on the new instructions" : job == "resolve" ? "Claude Code is working on the merge" : job == "restart" ? "Claude Code started again, with the task's prompt and its earlier instructions" : "Claude Code started");
   let lastText = "";
   let badModel: string | null = null;
+  let maxTurns = false;
   // Each line once; a quiet run says "still working" at most once a minute.
   const board = claudeLog();
   const quiet = setInterval(() => { for (const l of board.tick()) log(l); }, 5000);
   const inbox = watchInbox();
-  const r = await step(["claude", "-p", prompt, ...(continuing ? ["--continue"] : []), "--model", MODEL(), "--dangerously-skip-permissions", "--output-format", "stream-json", "--verbose", "--max-turns", String(brief.maxTurns ?? 200)], {
+  const r = await step(["claude", "-p", prompt, ...(continuing ? ["--continue"] : []), "--model", MODEL(), "--dangerously-skip-permissions", "--output-format", "stream-json", "--verbose", "--max-turns", String(woken == "turns" ? FINISH_TURNS : brief.maxTurns ?? 300)], {
     name: "claude", timeout: limit, cwd: CLONE(), echo: true, onStart: inbox.started,
     onLine: (line) => {
       let ev: any;
@@ -186,13 +195,14 @@ async function claude(brief: Brief, wake: string, limit: number, woken: boolean)
       if (ev.type == "assistant") for (const c of ev.message?.content ?? []) if (c.type == "text" && c.text?.trim()) lastText = c.text.trim();
       for (const l of board.event(ev)) log(l);
       inbox.event(ev);
+      maxTurns ||= maxTurnsHit(ev);
       if (ev.type == "result" && typeof ev.result == "string") { lastText = ev.result.trim(); if (ev.is_error) badModel ??= modelError(lastText); }
     },
   });
   clearInterval(quiet);
   inbox.stop();
   if (r.err) process.stderr.write(r.err.slice(-4000) + "\n");
-  return { code: r.code, timedOut: r.timedOut, lastText, badModel };
+  return { code: r.code, timedOut: r.timedOut, lastText, badModel, maxTurns };
 }
 
 /**
