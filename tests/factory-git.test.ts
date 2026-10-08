@@ -4,7 +4,9 @@
 //   - a fetch whose request git gzips (more than 1 KB of wants or haves: a
 //     repository with many branches, as a busy factory's has) clones whole;
 //   - when git http-backend fails, the client gets an error status with
-//     git's own message, not a 200 with a broken pack ("expected 'packfile'").
+//     git's own message, not a 200 with a broken pack ("expected 'packfile'");
+//   - when git http-backend exits before it reads the body, the write to it
+//     fails (EPIPE) without stopping the server.
 
 import { afterAll, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
 import { spawn, spawnSync } from "node:child_process";
@@ -86,4 +88,10 @@ test("git http-backend's failure is an error status with git's message, not a 20
   // A gzipped request is read as gzip (HTTP_CONTENT_ENCODING): the same request, the same answer.
   const z = await httpBackend(root, { method: "POST", path: "/erga.git/git-upload-pack", query: "", headers: { "content-type": "application/x-git-upload-pack-request", "git-protocol": "version=2", "content-encoding": "gzip" }, body: gzipSync(body) });
   expect(new TextDecoder().decode(z.body)).toContain("not our ref");
+});
+
+test("git http-backend that exits before it reads the body answers, and doesn't stop the server (EPIPE)", async () => {
+  // A push to a repository that isn't there: git answers 404 without reading the 8 MB body.
+  const r = await httpBackend(join(dir, "state", "factory"), { method: "POST", path: "/missing.git/git-receive-pack", query: "", headers: { "content-type": "application/x-git-receive-pack-request" }, body: new Uint8Array(8 << 20) });
+  expect(r.status).toBe(404);
 });

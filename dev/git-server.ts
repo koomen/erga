@@ -79,6 +79,9 @@ export function httpBackend(root: string, req: GitRequest): Promise<GitResponse>
       }
       resolve({ status, headers, body: new Uint8Array(all.subarray(split + skip)) });
     });
+    // git can exit before it reads the whole body (it refused, or had all it needed): the write then fails with EPIPE,
+    // which unhandled stops the dev server, Vite and all. "close" above answers either way.
+    p.stdin.on("error", () => {});
     p.stdin.end(Buffer.from(req.body));
   });
 }
