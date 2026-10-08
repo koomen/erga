@@ -7,7 +7,7 @@ await servers.factory();
 // A simulated VM does the whole task.
 const ONE_TASK = { timeout: TASK_MS + 15_000 };
 
-test("a task added on the board shows its card, and moves to Ready to merge by itself, with its thumbnail", ONE_TASK, async ({ tab }) => {
+test("a task added on the board shows its card, and moves to Ready to merge by itself, its screenshot in its detail view", ONE_TASK, async ({ tab }) => {
   const s = await servers.factory(), f = factory(s);
   await f.on();
   const b = await board(tab.page, s.root);
@@ -20,7 +20,9 @@ test("a task added on the board shows its card, and moves to Ready to merge by i
   await expect.poll(async () => (await b.column("queued")) + (await b.column("working"))).toContain("Say hello");
   await f.until(id, "complete");
   await expect.poll(() => b.column("ready-to-merge")).toContain("Say hello");
-  await expect.poll(() => b.eval<boolean>(`(() => { const ims = [...document.querySelectorAll('[data-open="${id}"] .thumbs img')]; return ims.length > 0 && ims.every((i) => i.complete && i.naturalWidth > 0); })()`)).toBe(true);
+  // The card has no thumbnails: its detail view has the screenshot.
+  await b.click(`[data-open="${id}"]`);
+  await expect.poll(() => b.eval<boolean>(`(() => { const ims = [...document.querySelectorAll("#dlg .shots img")]; return ims.length > 0 && ims.every((i) => i.complete && i.naturalWidth > 0); })()`)).toBe(true);
   expect((await f.task(id)).branch).toBe(`task/${id}-say-hello-on-the-front-page`);
 });
 

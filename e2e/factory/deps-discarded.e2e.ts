@@ -24,7 +24,7 @@ test("a discarded dependency blocks the tasks that start or merge after it; the 
   expect(f.vmsOf(starter)).toEqual([]);
   expect((await f.api("/tasks", { json: { title: "After a discarded one", startAfter: [dep] } })).status).toBe(400);
   const b = await board(tab.page, s.root);
-  await expect.poll(() => b.eval<boolean>(`(() => { const c = document.querySelector('[data-open="${starter}"]'); return !!c && c.innerText.includes("blocked by #${dep}"); })()`)).toBe(true);
+  await expect.poll(() => b.eval<boolean>(`(() => { const c = document.querySelector('[data-open="${starter}"]'); const m = c?.querySelector(".m.waits.bad"); return !!m && m.textContent == "#${dep}" && m.title.startsWith("Blocked: #${dep} was discarded"); })()`)).toBe(true);
   const cleared = await f.api(`/tasks/${starter}`, { method: "PATCH", json: { startAfter: null } });
   expect(cleared.status).toBe(200);
   expect(cleared.body.blockedBy).toBeFalsy();

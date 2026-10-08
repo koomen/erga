@@ -14,9 +14,9 @@ export const cardTasks = () => tasks(
   ["Tests run in the factory VM without lsof", "working", 12, "Running tests/factory.ts under a time limit of 180 seconds"],
   ["Dark mode for the outline panel", "failed", 45, "failed", { error: "The build failed: src/page/outline.ts(12,3): Property 'x' does not exist." }],
   ["Show word counts in the document list, with a total for each folder", "complete", 70, "ready to merge", { url: "http://localhost:4400/", screenshots: [shot("a.png"), shot("b.png"), shot("c.png"), shot("d.png")] }],
-  ["Faster first paint on the reader page", "complete", 8, "ready to merge", { url: "http://localhost:4401/", blockedBy: { start: [], merge: [3], stuck: [], reason: ["merges after #3"] } }],
+  ["Faster first paint on the reader page", "complete", 8, "ready to merge", { url: "http://localhost:4401/", blockedBy: { start: [], merge: [3], stuck: [], reason: "can't merge until #3 merges" } }],
   ["Keyboard shortcuts help dialog", "queued", 1, "queued", { starting: true }],
-  ["Export a document as EPUB, with the cover image and the table of contents", "queued", 4, "queued", { startAfter: [6], blockedBy: { start: [6], merge: [], stuck: [], reason: ["waits for #6 to merge"] } }],
+  ["Export a document as EPUB, with the cover image and the table of contents", "queued", 4, "queued", { startAfter: [6], blockedBy: { start: [6], merge: [], stuck: [], reason: "waiting for #6 to merge" } }],
   ["Resolve the merge with staging", "needs agent", 3, "Merging origin/staging into the branch", { error: "conflicts merging origin/staging: README.md" }],
   ["Spell check in the editor", "merging", 1, "Merging origin/staging into the branch", { url: "http://localhost:4402/" }],
 );
@@ -47,25 +47,27 @@ export async function shown(page: Page) {
   await until(() => page.evaluate(`document.querySelectorAll("#board .card").length == ${CARDS} && document.fonts.status == "loaded"`), 10_000, "the board draws its cards");
 }
 
-/** Each card's buttons, read where the board is: which show, whether they fit, the main one, the spinner. */
+/** Each card's buttons, read where the board is: their order, which work, whether they fit one row, their tooltips. */
 export const buttonRows = (page: Page) => page.evaluate(`[...document.querySelectorAll("#board .card")].map((c) => {
   const bs = [...c.querySelectorAll(".actions > *")], box = c.getBoundingClientRect(), r = bs.map((e) => e.getBoundingClientRect());
-  const pad = parseFloat(getComputedStyle(c).paddingRight), last = bs.at(-1), lr = r.at(-1), spin = c.querySelector(".spin");
+  const pad = parseFloat(getComputedStyle(c).paddingRight), last = bs.at(-1), lr = r.at(-1), spin = c.querySelector(".actions .spin");
   const sr = spin?.getBoundingClientRect();
-  return { id: Number(c.dataset.open), keys: bs.map((e) => e.dataset.btn), inside: r.every((x) => x.left >= box.left && x.right <= box.right),
+  return { id: Number(c.dataset.open), keys: bs.map((e) => e.dataset.btn), on: bs.filter((e) => e.dataset.act || e.tagName == "A").map((e) => e.dataset.btn),
+    inside: r.every((x) => x.left >= box.left && x.right <= box.right), oneRow: r.every((x) => Math.abs(x.top - r[0].top) < 1),
     overlap: r.some((a, i) => r.some((b, j) => i < j && a.left < b.right - 0.5 && b.left < a.right - 0.5 && a.top < b.bottom - 0.5 && b.top < a.bottom - 0.5)),
-    cut: bs.filter((e) => e.scrollWidth > e.clientWidth + 1).map((e) => e.dataset.btn), off: c.querySelectorAll("button:disabled").length,
-    mainRight: !last || Math.abs(box.right - pad - 1 - lr.right) < 3 || Math.abs(box.right - pad - lr.right) < 3,
-    main: last && (last.classList.contains("primary") || last.classList.contains("busy")) ? last.dataset.btn + (last.classList.contains("busy") ? ":busy" : "") : "",
+    tips: bs.map((e) => e.title), labels: bs.map((e) => e.getAttribute("aria-label")), text: bs.map((e) => e.textContent.trim()).join(""),
+    mergeRight: !!lr && Math.abs(box.right - pad - lr.right) < 6,
     spin: sr ? { w: sr.width, h: sr.height, anim: getComputedStyle(spin).animationName } : null };
-})`) as Promise<{ id: number; keys: string[]; inside: boolean; overlap: boolean; cut: string[]; off: number; mainRight: boolean; main: string; spin: { w: number; h: number; anim: string } | null }[]>;
+})`) as Promise<{ id: number; keys: string[]; on: string[]; inside: boolean; oneRow: boolean; overlap: boolean; tips: string[]; labels: string[]; text: string; mergeRight: boolean; spin: { w: number; h: number; anim: string } | null }[]>;
 
-/** The buttons fit inside each card, apart, their labels whole; no off ones; the main one on the right; a round spinner. */
+/** On each card: the four icon buttons in one order, in one row inside the card, apart, each with its tooltip; Merge on the right; a round spinner. */
 export async function fits(page: Page) {
   for (const r of await buttonRows(page)) {
-    expect(r.inside && !r.overlap && !r.cut.length, `card #${r.id}: ${JSON.stringify(r)}`).toBe(true);
-    expect(r.off, `card #${r.id}`).toBe(0);
-    if (r.main) expect(r.mainRight, `card #${r.id}'s main step is on the right`).toBe(true);
+    expect(r.keys, `card #${r.id}'s buttons`).toEqual(["discard", "restart", "preview", "merge"]);
+    expect(r.inside && r.oneRow && !r.overlap, `card #${r.id}: ${JSON.stringify(r)}`).toBe(true);
+    expect(r.text, `card #${r.id}'s buttons are icons, no words`).toBe("");
+    expect(r.tips.every((t) => t.length > 10) && r.labels.every(Boolean), `card #${r.id}'s tooltips: ${JSON.stringify(r.tips)}`).toBe(true);
+    expect(r.mergeRight, `card #${r.id}'s Merge is on the right`).toBe(true);
     if (r.spin) expect(Math.abs(r.spin.w - r.spin.h) < 0.5 && r.spin.w >= 11 && r.spin.anim != "none", `card #${r.id}'s spinner: ${JSON.stringify(r.spin)}`).toBe(true);
   }
 }

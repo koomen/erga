@@ -19,9 +19,9 @@ import { STALL_MS } from "./stall";
 
 export const BOARD_STYLE = `
   :root { --ink: var(--fg-strong); --muted: var(--soft); --line: var(--rule); --card: var(--bg); --panel: color-mix(in srgb, var(--chrome) 9%, var(--bg));
-    --accent: var(--caret); --ok: #1f7a4d; --warn: #b26a00; --bad: #b3261e; --shadow: 0 1px 2px rgba(0,0,0,.05); }
-  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --ok: #4cc38a; --warn: #f0a742; --bad: #ff7b72; --shadow: 0 1px 2px rgba(0,0,0,.4); } }
-  :root[data-theme="dark"] { --ok: #4cc38a; --warn: #f0a742; --bad: #ff7b72; --shadow: 0 1px 2px rgba(0,0,0,.4); }
+    --accent: var(--caret); --ok: #1f7a4d; --warn: #b26a00; --bad: #b3261e; --shadow: 0 1px 2px rgba(0,0,0,.05); --on-accent: #fff; }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --ok: #4cc38a; --warn: #f0a742; --bad: #ff7b72; --shadow: 0 1px 2px rgba(0,0,0,.4); --on-accent: #0d1218; } }
+  :root[data-theme="dark"] { --ok: #4cc38a; --warn: #f0a742; --bad: #ff7b72; --shadow: 0 1px 2px rgba(0,0,0,.4); --on-accent: #0d1218; }
   .pills { display: flex; flex-wrap: wrap; gap: 4px 16px; align-items: center; }
   .pill { height: 26px; font-size: 12px; font-weight: 500; color: var(--muted); display: inline-flex; align-items: center; gap: 6px; border: 0; border-radius: 0; padding: 0; background: none; box-shadow: none; }
   .pill::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
@@ -38,39 +38,16 @@ export const BOARD_STYLE = `
   .col h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 2px 4px 10px; min-height: 26px; display: flex; justify-content: space-between; align-items: center; }
   .col h2 button { text-transform: none; letter-spacing: 0; }
   .empty { color: var(--muted); font-size: 12px; padding: 8px 4px; border: 0; text-align: left; }
-  .card { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 6px; margin-bottom: 6px; min-width: 0; box-shadow: var(--shadow); cursor: pointer; }
-  .card:hover { border-color: var(--muted); }
-  .card.failed { border-left: 3px solid var(--bad); }
-  .card.merging { border-left: 3px solid var(--warn); }
-  .card.needs-agent { border-left: 3px solid var(--bad); }
-  .card .agent-now { margin-top: 2px; font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .top { display: flex; gap: 6px; align-items: baseline; min-width: 0; }
   .id { color: var(--muted); font: 11px ui-monospace, monospace; flex: none; }
   .title { font-weight: 600; flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--ink); }
-  .card .title { font-size: 13px; }
-  /* On the card's title line: failed or needs agent, and the last update as a short time ("5m"). */
-  .when { flex: none; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
-  .flag { flex: none; color: var(--bad); font-size: 11px; font-weight: 600; }
   /* Stalled (factory/stall.ts): working or needs agent, and no new log line in 5 minutes. Not "blocked", which is a dependency. */
   .stalled-badge { flex: none; color: var(--warn); font-size: 11px; font-weight: 600; border: 1px solid currentColor; border-radius: 999px; padding: 1px 6px; line-height: 14px; white-space: nowrap; }
   h3 .stalled-badge { font-size: 11px; vertical-align: 2px; }
-  .card.stalled { border-left: 3px solid var(--warn); }
   .stalled-note { color: var(--warn); font-size: 13px; margin-top: 8px; padding: 6px 10px; border: 1px solid color-mix(in srgb, var(--warn) 45%, var(--line)); border-radius: 6px; }
-  .last { color: var(--muted); font-size: 12px; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .last .chip { margin-right: 6px; vertical-align: 1px; }
   .err { color: var(--bad); font-size: 12px; margin-top: 2px; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-  .thumbs { display: flex; gap: 4px; margin-top: 4px; overflow: hidden; }
-  .thumbs img { height: 40px; border-radius: 4px; border: 1px solid var(--line); object-fit: cover; max-width: 72px; }
   .actions { display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; align-items: center; }
   .actions [data-btn="merge"] { margin-left: auto; }
-  /* On a card, only the steps that work (see actions): small buttons at their own width, the main step (or a spinner)
-     on the right. They wrap to a second row rather than squeeze, so a label never overflows. */
-  .card .actions { gap: 4px; margin-top: 4px; }
-  .card .actions > * { flex: none; font-size: 11px; line-height: 16px; padding: 1px 8px; border-radius: 5px; white-space: nowrap; }
-  .card .actions > .primary, .card .actions > .busy { margin-left: auto; }
-  .card .actions > .primary { font-weight: 600; }
   .busy { display: inline-flex; align-items: center; gap: 6px; color: var(--warn); font-weight: 500; }
-  .card .actions > .busy { padding: 1px 0; }
   button, .btn { font: inherit; font-size: 12px; border: 1px solid var(--line); background: var(--card); color: var(--ink); border-radius: 6px; padding: 4px 10px; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; gap: 5px; }
   button:hover, .btn:hover { border-color: var(--muted); }
   button.primary, .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
@@ -82,6 +59,47 @@ export const BOARD_STYLE = `
   /* Off: no fill, a dashed border and faint text, so it can't pass for a button that works. */
   button:disabled, button.primary:disabled, button.danger:disabled { background: transparent; border-style: dashed; border-color: var(--line); color: var(--muted); opacity: .6; cursor: not-allowed; }
   button:disabled:hover { border-color: var(--line); }
+  /* The cards (see card): quiet rows in one box per column, no coloured edges. The buttons open under a card on hover
+     (after 70 ms, so a pointer passing over doesn't open it) or keyboard focus: the row's height eases from 0fr to 1fr
+     of a grid, the rows under it move with it, and the buttons fade and slide in. On a touch screen they always show. */
+  .cards:has(> .card) { background: var(--card); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; box-shadow: var(--shadow); }
+  .card { padding: 8px 10px; border-top: 1px solid var(--line); min-width: 0; cursor: pointer; outline: none; transition: background-color .15s ease; }
+  .card:first-child { border-top: 0; }
+  .card:hover, .card:focus-within, .card.open { background: color-mix(in srgb, var(--chrome) 9%, var(--card)); }
+  .card:focus-visible { box-shadow: inset 0 0 0 2px var(--accent); }
+  .card .title { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; white-space: normal; overflow-wrap: anywhere; font-size: 13px; line-height: 1.3; }
+  .card .title .id { margin-right: 5px; font-size: 11.5px; }
+  .card.blocked .title { color: var(--muted); }
+  /* The line of exceptions: items with a "·" between them; when they wrap, the "·" that would start a line is clipped off. */
+  .card .meta { margin-top: 3px; font-size: 11.5px; line-height: 17px; color: var(--muted); overflow: hidden; }
+  .card .meta > div { display: flex; flex-wrap: wrap; align-items: center; margin-left: -11px; }
+  .card .m { display: inline-flex; align-items: center; gap: 4px; min-width: 0; max-width: calc(100% - 11px); white-space: nowrap; }
+  .card .m::before { content: "·"; flex: none; width: 11px; margin-right: -4px; text-align: center; color: var(--chrome); }
+  .card .m .t { overflow: hidden; text-overflow: ellipsis; }
+  .card .m svg { flex: none; width: 12px; height: 12px; }
+  .card .m.bad { color: var(--bad); } .card .m.warn { color: var(--warn); } .card .m.flag { font-weight: 600; }
+  .card .m .spin { width: 10px; height: 10px; border-width: 1.5px; }
+  .card .step { color: var(--muted); font-size: 12px; margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .card .err { margin-top: 3px; }
+  .card .x { display: grid; grid-template-rows: 0fr; transition: grid-template-rows .18s cubic-bezier(.2,.7,.3,1); }
+  .card .x > div { min-height: 0; overflow: hidden; }
+  .card .actions { flex-wrap: nowrap; gap: 2px; margin: 0 -4px 0 -5px; padding-top: 6px; opacity: 0; transform: translateY(-4px); transition: opacity .14s ease, transform .18s cubic-bezier(.2,.7,.3,1); }
+  .card:hover .x, .card.open .x { grid-template-rows: 1fr; transition-delay: 70ms; }
+  .card:hover .actions, .card.open .actions { opacity: 1; transform: none; transition-delay: 110ms; }
+  .card:focus-within .x { grid-template-rows: 1fr; transition-delay: 0s; }
+  .card:focus-within .actions { opacity: 1; transform: none; transition-delay: 40ms; }
+  @media (hover: none) { .card .x { grid-template-rows: 1fr; } .card .actions { opacity: 1; transform: none; } }
+  @media (prefers-reduced-motion: reduce) { .card, .card .x, .card .actions { transition: none; } }
+  /* The icon buttons: the words in the tooltip; an off one faint; Merge filled when it works. */
+  .card .ib { flex: none; width: 26px; height: 24px; padding: 0; justify-content: center; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--muted); }
+  .card .ib svg { width: 15px; height: 15px; }
+  .card .ib:hover:not(:disabled) { background: var(--panel); border-color: var(--line); color: var(--ink); }
+  .card .ib.primary:not(:disabled) { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+  .card .ib.primary:not(:disabled):hover { background: color-mix(in srgb, var(--accent) 88%, var(--ink)); }
+  .card .ib.confirm { background: var(--bad); border-color: var(--bad); color: #fff; }
+  .card .ib:disabled { background: transparent; border: 1px solid transparent; color: var(--muted); opacity: .35; cursor: default; }
+  .card .ib:has(.spin):disabled { opacity: 1; color: var(--warn); }
+  .card .ib .spin { width: 12px; height: 12px; border-color: currentColor; border-right-color: transparent; }
   .spin { display: inline-block; flex: none; box-sizing: border-box; width: 12px; height: 12px; border: 2px solid var(--warn); border-right-color: transparent; border-radius: 50%; animation: s .8s linear infinite; }
   @keyframes s { to { transform: rotate(360deg); } }
   dialog { border: 1px solid var(--line); border-radius: 12px; background: var(--card); color: var(--ink); width: min(900px, calc(100vw - 32px)); max-height: calc(100vh - 48px); padding: 0; font-size: 14px; }
@@ -129,8 +147,6 @@ export const BOARD_STYLE = `
   /* A local task (no VM: a local agent runs it): a chip with its machine, on the card's top line. */
   .chip.local { flex: 0 1 auto; min-width: 0; max-width: 130px; overflow: hidden; text-overflow: ellipsis; color: var(--ok); border-color: color-mix(in srgb, var(--ok) 45%, var(--line)); }
   .chip.local::before { border-radius: 2px; flex: none; }
-  .card.blocked { background: color-mix(in srgb, var(--card) 55%, var(--panel)); border-style: dashed; box-shadow: none; }
-  .card.blocked .title { color: var(--muted); }
   .actions-why { font-size: 11px; color: var(--muted); margin-top: 4px; }
   .deps { display: grid; gap: 6px; }
   .dep { display: flex; align-items: center; gap: 8px; font-size: 13px; padding: 6px 10px; background: var(--panel); border-radius: 6px; }
@@ -229,21 +245,21 @@ const waitsToStart = (t) => t.status == "queued" && !!(t.blockedBy?.start.length
  * In the detail view (inDialog), all four, in one order: Preview, Restart, Discard, Merge
  * (on the right); one that doesn't apply to its status is off, and its tooltip and the line under them say why. An
  * off button has no data-act: it does nothing, and [data-act="…"] finds the buttons that work.
- * On a card, only the ones that work, the task's main step (Merge, or else Preview) filled and on the right,
- * and no off ones: the card's chip, flag or error says why a step waits. Restart is in the detail view only while the
- * task is ready to merge or merging, where it is rarely the next step. A running start or merge shows as a spinner.
+ * On a card, the same four as icons, in the card's own order: Discard, Restart (or Hand to a VM), Preview, Merge;
+ * an off one is faint, its tooltip says why. A running merge shows as a spinner in Merge's place; a starting VM, as
+ * a spinner on the card's line of exceptions.
  */
 function actions(t, inDialog) {
-  const off = (key, label, why, cls) => ({ key, html: '<button' + (cls ? ' class="' + cls + '"' : "") + ' data-btn="' + key + '" disabled title="' + esc(why) + '">' + label + '</button>' });
-  const on = (key, label, title, cls) => ({ key, on: true, html: (main) => '<button' + (cls || main ? ' class="' + [cls, main && "primary"].filter(Boolean).join(" ") + '"' : "") + ' data-btn="' + key + '" data-act="' + key + '" data-id="' + t.id + '"' + (title ? ' title="' + esc(title) + '"' : "") + '>' + label + '</button>' });
-  const busy = (key, label, title, cls) => ({ key, busy: label, html: '<button' + (cls ? ' class="' + cls + '"' : "") + ' data-btn="' + key + '" disabled title="' + title + '"><span class="spin"></span> ' + label + '</button>' });
+  const off = (key, label, why, cls) => ({ key, label, why, html: '<button' + (cls ? ' class="' + cls + '"' : "") + ' data-btn="' + key + '" disabled title="' + esc(why) + '">' + label + '</button>' });
+  const on = (key, label, title, cls) => ({ key, label, title, on: true, html: (main) => '<button' + (cls || main ? ' class="' + [cls, main && "primary"].filter(Boolean).join(" ") + '"' : "") + ' data-btn="' + key + '" data-act="' + key + '" data-id="' + t.id + '"' + (title ? ' title="' + esc(title) + '"' : "") + '>' + label + '</button>' });
+  const busy = (key, label, title, cls) => ({ key, label: "Merge", busy: label, title, html: '<button' + (cls ? ' class="' + cls + '"' : "") + ' data-btn="' + key + '" disabled title="' + title + '"><span class="spin"></span> ' + label + '</button>' });
   const done = ["merged", "discarded"].includes(t.status);
   const gone = t.status == "merged" ? "The task is merged" : "The task is discarded";
   const b = [];
   // In the detail view, why the next step waits (a queued task's start, or Merge), under the buttons.
   let note = null;
 
-  if (t.url && !done) b.push({ key: "preview", on: true, html: (main) => '<a class="btn' + (main ? " primary" : "") + '" data-btn="preview" href="/api/factory/tasks/' + t.id + '/open" target="_blank" title="Open the preview" onclick="event.stopPropagation()">Preview</a>' });
+  if (t.url && !done) b.push({ key: "preview", label: "Preview", title: "Open the preview", on: true, html: (main) => '<a class="btn' + (main ? " primary" : "") + '" data-btn="preview" href="/api/factory/tasks/' + t.id + '/open" target="_blank" title="Open the preview" onclick="event.stopPropagation()">Preview</a>' });
   else b.push(off("preview", "Preview", done ? gone + ": its preview is gone" : t.status == "queued" ? "No preview yet: the task hasn't started" : "No preview yet: Claude Code starts one when there's something to see"));
 
   // A queued task: why it waits (under the buttons), or a spinner while its VM starts.
@@ -266,7 +282,7 @@ function actions(t, inDialog) {
   else b.push(off("restart", "Restart", done ? gone : "The task hasn't run yet"));
 
   if (!["merging", ...(done ? [t.status] : [])].includes(t.status))
-    b.push({ key: "discard", on: true, html: () => armed.has(t.id) ? '<button class="confirm" data-btn="discard" data-act="discard" data-id="' + t.id + '">Discard branch?</button>' : '<button class="danger" data-btn="discard" data-act="arm" data-id="' + t.id + '" title="Delete the branch and stop the VM">Discard</button>' });
+    b.push({ key: "discard", label: "Discard", title: "Delete the branch and stop the VM", on: true, html: () => armed.has(t.id) ? '<button class="confirm" data-btn="discard" data-act="discard" data-id="' + t.id + '">Discard branch?</button>' : '<button class="danger" data-btn="discard" data-act="arm" data-id="' + t.id + '" title="Delete the branch and stop the VM">Discard</button>' });
   else b.push(off("discard", "Discard", done ? gone : "The task is merging", "danger"));
 
   if (t.status == "complete") {
@@ -283,41 +299,94 @@ function actions(t, inDialog) {
   const html = (x, main) => typeof x.html == "function" ? x.html(main) : x.html;
   if (inDialog) return '<div class="actions">' + b.map((x) => html(x, false)).join("") + '</div>' + (note ? '<div class="why actions-why">' + esc(note) + '</div>' : "");
 
-  const quiet = ["complete", "merging"].includes(t.status) ? ["restart"] : [];
-  const shown = b.filter((x) => x.on && !quiet.includes(x.key));
-  const spin = b.find((x) => x.busy);
-  // A running start or merge is the main step: the spinner takes its place.
-  const main = spin ? null : ["merge", "preview"].map((k) => shown.find((x) => x.key == k)).find(Boolean);
-  const rest = shown.filter((x) => x != main).map((x) => html(x, false));
-  const end = spin ? '<span class="busy" data-btn="' + spin.key + '" title="' + (spin.key == "merge" ? "The merge is running" : "The VM is starting") + '"><span class="spin"></span>' + spin.busy + '</span>' : main ? html(main, true) : "";
-  return rest.length || end ? '<div class="actions">' + rest.join("") + end + '</div>' : "";
+  // On a card: all four as icons, always in one order (Discard on the left, Merge on the right), each one off
+  // (faint, and its tooltip says why) when it doesn't apply. The tooltip says what each one does.
+  return '<div class="actions">' + ["discard", "restart", "preview", "merge"].map((k) => iconButton(t, b.find((x) => x.key == k))).join("") + '</div>';
 }
 
+/** Each button's icon (a local task's Restart is Hand to a VM: a cloud and an arrow up). */
+const ICONS = {
+  discard: '<path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/>',
+  restart: '<path d="M4 12a8 8 0 1 0 2.3-5.7L4 8.5"/><path d="M4 4v4.5h4.5"/>',
+  handoff: '<path d="M7 18a5 5 0 1 1 1-9.9A6 6 0 0 1 19.5 10 4 4 0 0 1 18 18h-2"/><path d="M12 20v-7M9 15.5l3-3 3 3"/>',
+  preview: '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
+  merge: '<circle cx="6" cy="5" r="2"/><circle cx="6" cy="19" r="2"/><circle cx="18" cy="12" r="2"/><path d="M6 7v10M6 9c0 3 3 3 6 3h4"/>',
+  link: '<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>',
+  clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  laptop: '<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M1 20h22"/>',
+};
+const svg = (name) => '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + ICONS[name] + '</svg>';
+
+/** One of the card's icon buttons, from its entry in actions: on, off (with why), or running (a spinner). */
+function iconButton(t, x) {
+  const icon = svg(x.label == "Hand to a VM" ? "handoff" : x.key);
+  const attrs = (tip, label) => ' data-btn="' + x.key + '" title="' + esc(tip) + '" aria-label="' + esc(label) + '"';
+  if (x.busy) return '<button class="ib primary"' + attrs(x.label + ": " + x.title, x.label) + ' disabled><span class="spin"></span></button>';
+  if (!x.on) return '<button class="ib"' + attrs(x.label + " (off): " + x.why, x.label) + ' disabled>' + icon + '</button>';
+  if (x.key == "preview") return '<a class="ib"' + attrs(x.label + ": " + x.title, x.label) + ' href="/api/factory/tasks/' + t.id + '/open" target="_blank" onclick="event.stopPropagation()">' + icon + '</a>';
+  if (x.key == "discard" && armed.has(t.id)) return '<button class="ib confirm"' + attrs("Click again to discard: delete the branch and stop the VM", "Discard branch?") + ' data-act="discard" data-id="' + t.id + '">' + icon + '</button>';
+  return '<button class="ib' + (x.key == "merge" ? " primary" : "") + '"' + attrs(x.label + ": " + x.title, x.label) + ' data-act="' + (x.key == "discard" ? "arm" : x.key) + '" data-id="' + t.id + '">' + icon + '</button>';
+}
+
+/**
+ * A card says only what its column doesn't: the id and the title (up to two lines), then, if there is one, a line of
+ * exceptions, icons where the icon is clear (the words in the tooltip): a spinner while its VM starts, a link and the
+ * tasks it waits for (red: blocked), a clock and how long it has been quiet (stalled), "needs agent", a laptop and
+ * the machine for a local task. Then a working task's latest step, or what went wrong. No time: the stalled flag
+ * says when a task has gone quiet, and the detail view has the times. The buttons open under it on hover or focus.
+ */
 function card(t) {
-  const last = t.log[t.log.length - 1];
-  const when = t.status == "merged" && t.mergedAt ? t.mergedAt : t.updatedAt;
-  const thumbs = t.screenshots.slice(-3).map((s) => '<img src="/api/factory/shots/' + esc(s.file) + '" alt="' + esc(s.caption) + '" loading="lazy">').join("");
-  return '<div class="card ' + cls(t.status) + (waitsToStart(t) ? " blocked" : "") + (stalledMs(t) ? " stalled" : "") + '" data-open="' + t.id + '">' +
-    '<div class="top"><span class="id">#' + t.id + '</span><span class="title" title="' + esc(t.title) + '">' + esc(t.title) + '</span>' +
-    localChip(t) + (t.status == "failed" ? '<span class="flag">failed</span>' : t.status == "needs agent" ? '<span class="flag">needs agent</span>' : "") + stalledBadge(t) +
-    '<span class="when" title="' + esc((when == t.mergedAt ? "Merged " : "Last update ") + new Date(when).toLocaleString()) + '">' + short(when) + '</span></div>' +
-    (t.error ? (depChip(t) ? '<div class="last">' + depChip(t) + '</div>' : "") + '<div class="err" title="' + esc(t.error) + '">' + esc(t.error) + '</div>' + (t.status == "needs agent" && last ? '<div class="agent-now" title="' + esc(last.message) + '">Now: ' + esc(last.message) + '</div>' : "")
-      : depChip(t) || (last && t.status != "merged") ? '<div class="last"' + (last ? ' title="' + esc(last.message) + '"' : "") + '>' + depChip(t) + (last && t.status != "merged" && !waitsToStart(t) ? esc(last.message) : "") + '</div>' : "") +
-    (thumbs && t.status != "merged" ? '<div class="thumbs">' + thumbs + '</div>' : "") +
-    actions(t, false) + '</div>';
+  const last = t.log[t.log.length - 1], ms = stalledMs(t), b = t.blockedBy;
+  const m = (cls, tip, html) => '<span class="m' + (cls ? " " + cls : "") + '"' + (tip ? ' title="' + esc(tip) + '"' : "") + '>' + html + '</span>';
+  const words = (s) => '<span class="t">' + esc(s) + '</span>';
+  const bits = [];
+  if (t.status == "queued" && !t.vm && t.starting && !waitsToStart(t)) bits.push(m("warn starting", "Starting: the VM is starting", '<span class="spin"></span>'));
+  if (b) bits.push(m("waits" + (b.stuck.length ? " bad" : ""), b.reason[0].toUpperCase() + b.reason.slice(1), svg("link") + words(ids(b.stuck.length ? b.stuck : b.start.length ? b.start : b.merge))));
+  if (ms) bits.push(m("warn quiet", "Stalled: " + stalledTip(t, ms), svg("clock") + words(quiet(ms))));
+  if (t.status == "needs agent") bits.push(m("bad flag", "", words("needs agent")));
+  else if (t.status == "failed" && !t.error) bits.push(m("bad flag", "", words("failed")));
+  if (t.local) {
+    const machine = t.local.machine.endsWith(".local") ? t.local.machine.slice(0, -6) : t.local.machine;
+    bits.push(m("where", "A local task: no VM. " + runsWhere(t) + " runs it, and reports with the task command.", svg("laptop") + words(machine)));
+  }
+  const says = t.error ? '<div class="err" title="' + esc(t.error) + '">' + esc(t.error) + '</div>'
+    : t.status == "working" && last ? '<div class="step" title="' + esc(last.message) + '">' + esc(last.message) + '</div>' : "";
+  return '<div class="card ' + cls(t.status) + (waitsToStart(t) ? " blocked" : "") + (ms ? " stalled" : "") + '" data-open="' + t.id + '" tabindex="0">' +
+    '<div class="title" title="' + esc(t.title) + '"><span class="id">#' + t.id + '</span>' + esc(t.title) + '</div>' +
+    (bits.length ? '<div class="meta"><div>' + bits.join("") + '</div></div>' : "") + says +
+    '<div class="x"><div>' + actions(t, false) + '</div></div></div>';
 }
 
 function render() {
-  $("board").innerHTML = COLUMNS.map((c) => {
+  const board = $("board");
+  if (board.children.length != COLUMNS.length) board.innerHTML = COLUMNS.map((c) => '<section class="col" data-col="' + c.title.toLowerCase().replace(/\\W+/g, "-") + '"><h2></h2><div class="cards"></div></section>').join("");
+  COLUMNS.forEach((c, i) => {
     let list = tasks.filter((t) => c.statuses.includes(t.status));
     // A stable order, by id (oldest first): a card moves only when its status changes, not as its task logs progress.
     list.sort((a, b) => a.id - b.id);
     // Queued: the ones that can start first; the ones waiting on others below them.
     if (c.title == "Queued") list.sort((a, b) => waitsToStart(a) - waitsToStart(b));
     const add = c.title == "Queued" && info && info.enabled ? '<button id="new" data-act="new">New task</button>' : "";
-    return '<section class="col" data-col="' + c.title.toLowerCase().replace(/\\W+/g, "-") + '"><h2><span>' + c.title + ' <span class="n">' + (list.length || "") + '</span></span>' + add + '</h2>' +
-      (list.length ? list.map(card).join("") : '<div class="empty">' + (c.title == "Queued" ? "Nothing waiting" : "None") + '</div>') + '</section>';
-  }).join("");
+    const sec = board.children[i], h2 = sec.querySelector("h2"), box = sec.querySelector(".cards");
+    const head = '<span>' + c.title + ' <span class="n">' + (list.length || "") + '</span></span>' + add;
+    if (h2.dataset.html != head) { h2.innerHTML = head; h2.dataset.html = head; }
+    if (!list.length) { box.innerHTML = '<div class="empty">' + (c.title == "Queued" ? "Nothing waiting" : "None") + '</div>'; return; }
+    // A card whose markup is the same stays the same node: one under the pointer stays open, without opening again.
+    const had = new Map([...box.querySelectorAll(":scope > .card")].map((e) => [e.dataset.open, e]));
+    const nodes = list.map((t) => {
+      const html = card(t), old = had.get(String(t.id));
+      if (old && old.cardHtml == html) return old;
+      const tpl = document.createElement("template");
+      tpl.innerHTML = html;
+      const n = tpl.content.firstElementChild;
+      n.cardHtml = html;
+      // A changed card under the pointer: open at once, until the pointer leaves.
+      if (old?.matches(":hover")) { n.classList.add("open"); n.addEventListener("mouseleave", () => n.classList.remove("open"), { once: true }); }
+      return n;
+    });
+    nodes.forEach((n, j) => { if (box.children[j] != n) box.insertBefore(n, box.children[j] ?? null); });
+    while (box.children.length > nodes.length) box.lastElementChild.remove();
+  });
   if (openId != null) renderDialog();
 }
 
@@ -499,6 +568,7 @@ function upsert(t) {
 document.addEventListener("click", async (e) => {
   const el = e.target.closest("[data-act], [data-open]");
   if (!el) { if (e.target.id == "dlg" || e.target.id == "form") e.target.close(); return; }
+  if (el.dataset.open && !el.dataset.act && e.target.closest(".card .actions")) return;
   if (el.dataset.open && !el.dataset.act) { openId = Number(el.dataset.open); bigShot = null; renderDialog(); return; }
   e.stopPropagation();
   const id = Number(el.dataset.id), act = el.dataset.act;
@@ -534,6 +604,10 @@ document.addEventListener("click", async (e) => {
 // The close event comes a task after close(): a task opened again meanwhile (the dialog is open) stays open.
 $("dlg").addEventListener("close", () => { if (!$("dlg").open) { openId = null; bigShot = null; } });
 $("dlg").addEventListener("keydown", shotKey);
+// A card has the keyboard focus (Tab): Enter or Space opens its detail view, as a click does.
+document.addEventListener("keydown", (e) => {
+  if ((e.key == "Enter" || e.key == " ") && e.target.matches?.("#board .card")) { e.preventDefault(); e.target.click(); }
+}, { signal: pageView.signal });
 
 /**
  * The detail view's keys for its screenshots. Left and right go to the previous and next screenshot, around at

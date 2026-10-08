@@ -14,5 +14,5 @@ test("a blocked merge is refused (409), and on the board Merge is off with the r
   expect(r.status).toBe(409);
   expect(r.body.error).toContain(`can't merge until #${a} merges`);
   const b = await board(tab.page, s.root);
-  await expect.poll(() => b.eval<boolean>(`(() => { const c = document.querySelector('[data-col="ready-to-merge"] [data-open="${id}"]'); return !!c && !c.querySelector("[data-btn=merge]") && c.innerText.includes("merges after #${a}"); })()`)).toBe(true);
+  await expect.poll(() => b.eval<boolean>(`(() => { const c = document.querySelector('[data-col="ready-to-merge"] [data-open="${id}"]'); return !!c && !c.querySelector("[data-act=merge]") && c.querySelector(".m.waits")?.title == "Can't merge until #${a} merges"; })()`)).toBe(true);
 });

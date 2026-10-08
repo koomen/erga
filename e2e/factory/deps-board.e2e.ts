@@ -46,5 +46,5 @@ test("a task that starts after another, from the board's form: queued with no VM
   expect(restart.status).toBe(409);
   expect(restart.body.error).toContain(`can't start: waiting for #${before}`);
   expect(f.vmsOf(id)).toEqual([]);
-  await expect.poll(() => b.eval<boolean>(`(() => { const c = document.querySelector('[data-col="queued"] [data-open="${id}"]'); return !!c && c.classList.contains("blocked") && c.innerText.includes("waiting for #${before}") && !c.querySelector("[data-btn=start]"); })()`)).toBe(true);
+  await expect.poll(() => b.eval<boolean>(`(() => { const c = document.querySelector('[data-col="queued"] [data-open="${id}"]'); return !!c && c.classList.contains("blocked") && c.querySelector(".m.waits")?.title == "Waiting for #${before} to merge" && !c.querySelector(".starting"); })()`)).toBe(true);
 });

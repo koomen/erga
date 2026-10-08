@@ -27,7 +27,7 @@ test("a conflict with staging: needs agent (Merge and instructions refused, the 
   expect((await f.api(`/tasks/${b}/merge`, { method: "POST" })).status).toBe(409);
   expect((await f.api(`/tasks/${b}/revise`, { json: { instructions: "x" } })).status).toBe(409);
   const card = `[data-col="merging"] [data-open="${b}"]`;
-  await expect.poll(() => page.eval<boolean>(`(() => { const c = document.querySelector(${JSON.stringify(card)}); return !!c && !c.querySelector("[data-btn=merge]") && c.classList.contains("needs-agent") && c.innerText.toLowerCase().includes("needs agent") && c.innerText.includes("conflicts with staging in landing/index.html"); })()`)).toBe(true);
+  await expect.poll(() => page.eval<boolean>(`(() => { const c = document.querySelector(${JSON.stringify(card)}); return !!c && !c.querySelector("[data-act=merge]") && c.classList.contains("needs-agent") && c.innerText.toLowerCase().includes("needs agent") && c.innerText.includes("conflicts with staging in landing/index.html"); })()`)).toBe(true);
   await page.click(`[data-open="${b}"]`);
   await expect.poll(() => page.eval<boolean>(`document.getElementById("dlg").open && document.querySelector("#dlg .status.needs-agent")?.textContent == "needs agent"`)).toBe(true);
   await page.click('[data-act="close"]');
