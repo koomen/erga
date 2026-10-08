@@ -28,10 +28,25 @@ export async function mint(root: string, cookie: string, scope: "admin" | "docum
   return token;
 }
 
-/** The admin's session and admin token on `s`. */
+/**
+ * The admin's session and admin token on `s`. The admin also allows their pushes to staging for 10 minutes (the
+ * staging rule's override, in a browser: the session): the tests push to staging directly, where the factory's Merge
+ * would. A test of the rule itself pushes as an admin of its own.
+ */
 export async function admin(s: Server) {
   const cookie = await signIn(s.root);
+  expect((await allowPushes(s, cookie)).status).toBe(200);
   return { cookie, token: await mint(s.root, cookie, "admin", "Git") };
+}
+
+/** POST /api/source/staging-override: the admin's pushes to staging land for 10 minutes, with a reason; the session's (`cookie`) or a token's (`bearer`, refused). */
+export async function allowPushes(s: Server, cookie: string | null, reason = "The end-to-end tests push to staging directly", bearer?: string) {
+  const r = await fetch(`${s.root}/api/source/staging-override`, {
+    method: "POST", redirect: "manual",
+    headers: { "Content-Type": "application/json", ...(bearer ? { Authorization: `Bearer ${bearer}` } : { Cookie: cookie ?? "", Origin: s.root }) },
+    body: JSON.stringify({ reason }),
+  });
+  return { status: r.status, body: await r.json().catch(() => ({})) as { login?: string; reason?: string; until?: number; error?: string } };
 }
 
 export const git = (cwd: string, ...args: string[]) => {

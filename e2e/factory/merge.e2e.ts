@@ -7,7 +7,7 @@ await servers.factory();
 // A task done, then its merge: two runs of the simulated VM's jobs.
 const TWO_STEPS = { timeout: 2 * TASK_MS };
 
-test("merge, on the board: into staging as a --no-ff merge commit named after the task; the branch deleted, the VM and preview gone; the card leaves a board of four columns; the change log has who added and merged it", TWO_STEPS, async ({ tab }) => {
+test("merge, on the board: into staging as one squash commit (one parent; the task's title, then its summary; no task id); the branch deleted, the VM and preview gone; the card leaves a board of four columns; the change log has who added and merged it", TWO_STEPS, async ({ tab }) => {
   const s = await servers.factory(), f = factory(s);
   await f.on();
   const b = await board(tab.page, s.root);
@@ -20,15 +20,18 @@ test("merge, on the board: into staging as a --no-ff merge commit named after th
   await f.until(id, "complete");
   const t = await f.task(id);
   await until(() => b.eval(`!!document.querySelector('[data-col="ready-to-merge"] [data-open="${id}"] [data-act="merge"]')`), 10_000, "its Merge button");
+  const before = f.branches().staging;
   await b.click(`[data-col="ready-to-merge"] [data-open="${id}"] [data-act="merge"]`);
   await f.until(id, "merged");
   const merged = await f.task(id);
   const br = f.branches();
   expect(br[t.branch]).toBeUndefined();
   expect(br.staging).toBe(merged.mergeCommit);
-  const subject = f.git("log", "-1", "--format=%s %P", "staging").trim();
-  expect(subject.startsWith(`Merge task/${id}-merge-me-please: Merge me please`)).toBe(true);
-  expect(subject.split(" ").length).toBeGreaterThan(3);
+  expect(f.git("log", "-1", "--format=%P", "staging").trim()).toBe(before);
+  expect(f.git("log", "-1", "--format=%B", "staging").trim()).toBe(`Merge me please\n\n${merged.summary.trim() || "A note."}`);
+  // None of the branch's own commits is in staging's history.
+  expect(t.commit).toBeTruthy();
+  expect(f.git("log", "--format=%H", "staging").split("\n")).not.toContain(t.commit);
   expect(merged.vm).toBeFalsy();
   expect(merged.url).toBeFalsy();
   await expect.poll(() => b.eval<string>(`document.getElementById("board")?.innerText ?? ""`), { timeout: 15_000 }).not.toContain("Merge me please");

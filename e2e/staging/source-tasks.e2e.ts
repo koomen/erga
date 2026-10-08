@@ -1,12 +1,13 @@
-// The Source page's task cards (source/page.ts; tests/source-tasks.ts): a factory task's merge ("Merge
-// task/<id>-<slug>: title") shows as a long, thin card with the task's name, and the commits that came in with it (its
-// second parent's side, "Merge staging into task/…" included) follow it, their dots on the same rail, their subjects
-// indented. Other commits show as always. A card folds its commits away, "Collapse all" folds every card, and the
-// browser remembers it. A server of the file's own, main at 120 commits (more than the list's 100); each test pushes
+// The Source page's task cards (source/page.ts): a factory task's commit on staging shows as a long, thin card with
+// the task's name. Now each merge is one squash commit, which the server finds by the board's mergeCommit: its card
+// has no commits under it and doesn't fold (the last test). A merge from before squash merges ("Merge
+// task/<id>-<slug>: title") still shows as its card, and the commits that came in with it (its second parent's side,
+// "Merge staging into task/…" included) follow it, their dots on the same rail, their subjects indented. Other commits
+// show as always. A card folds its commits away, "Collapse all" folds every card, and the browser remembers it. A server of the file's own, main at 120 commits (more than the list's 100); each test pushes
 // two tasks of its own, among plain commits, on top of staging.
 import { beforeTests, expect, servers, test, type Page, type Server } from "../fixtures";
 import { empty, gitAt, moveMain, seedLog } from "./source-page";
-import { admin, clone, heads, must } from "./staging";
+import { admin, clone, commit as commitFile, heads, must } from "./staging";
 
 const own = () => servers.of("source-tasks");
 await beforeTests(async () => { const s = await own(); await seedLog(s, (await admin(s)).token, 120); });
@@ -50,7 +51,7 @@ type Row = { text: string; kind: string; shown: boolean; dot: number; textX: num
 const state = (page: Page) => page.evaluate(() => ({
   rows: [...document.querySelectorAll("#grid .row")].map((r) => {
     const card = r.querySelector(".task-card"), t = card ? card.querySelector(".name")! : r.querySelector(".subj span")!;
-    return { text: card ? "#" + card.querySelector(".num")!.textContent!.slice(1) + " " + t.textContent + " (" + card.querySelector(".n")!.textContent + ")" : t.textContent!,
+    return { text: card ? "#" + card.querySelector(".num")!.textContent!.slice(1) + " " + t.textContent + (card.querySelector(".n") ? " (" + card.querySelector(".n")!.textContent + ")" : "") : t.textContent!,
       kind: card ? "card" : r.classList.contains("in-task") ? "in-task" : "plain", shown: r.querySelector(".rail")!.getClientRects().length > 0,
       dot: Math.round(r.querySelector(".dot")!.getBoundingClientRect().x), textX: Math.round(t.getBoundingClientRect().x) };
   }) as Row[],
@@ -135,4 +136,30 @@ test("Collapse all folds every card, kept after a reload; Expand all unfolds the
   expect((await shown(page)).length).toBe(folded);
   await clickFoldAll(page);
   await expect.poll(async () => (await shown(page)).length).toBe(all);
+});
+
+test("a squash merge (one commit, the board's mergeCommit) is a card with no commits under it: no fold, no count", async ({ tab }) => {
+  tab.strict = true;
+  const s = await own(), page = tab.page, who = await admin(s);
+  const dir = clone(s, who.token);
+  const head = must(dir, "rev-parse", "HEAD");
+  if (heads(s, who.token).main != head) await moveMain(s, who, head);
+  const tag = crypto.randomUUID().slice(0, 4), id = 10000 + Math.floor(Math.random() * 89000);
+  // The commit the factory's merge makes: the task's title, then its summary.
+  const squash = commitFile(dir, `squash-${tag}.txt`, `${tag}\n`, `Add a pricing page ${tag}\n\nThis task adds a pricing page.`);
+  const plain = empty(dir, `Plain commit ${tag}`);
+  must(dir, "push", "-q", "origin", "HEAD:staging");
+  // The board's merged task, as the server adds it to the view (worker/source.ts, mergedTasks): this server's factory
+  // merges into a repository of its own (dev/factory.ts), so the test gives the view its task.
+  await page.route("**/api/source/branches", async (route) => {
+    const r = await route.fetch(), body = await r.json();
+    for (const b of body.branches) for (const x of b.commits) if (x.sha == squash) x.task = { id, branch: `task/${id}-add-a-pricing-page`, title: `Add a pricing page ${tag}`, commits: [] };
+    await route.fulfill({ response: r, json: body });
+  });
+  await openList(page, s.root, `Plain commit ${tag}`);
+  const rows = (await state(page)).rows;
+  expect(rows.slice(0, 2).map((r) => [r.text, r.kind])).toEqual([[`Plain commit ${tag}`, "plain"], [`#${id} Add a pricing page ${tag}`, "card"]]);
+  expect(await page.locator(`.row[data-sha="${squash}"] .fold`).count()).toBe(0);
+  expect(await page.locator(`.row[data-sha="${squash}"] .n`).count()).toBe(0);
+  expect(plain).not.toBe(squash);
 });
