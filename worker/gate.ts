@@ -67,7 +67,25 @@ export function vmRunner(ns: { getByName(name: string): unknown }, repo: string,
       const v = vm(name);
       if (!(await v.alive())) return "gone";
       const out = await v.job("run.ts", ["gate", "status"], { FACTORY_WORK: "/work" }, true);
-      return parseStatus(out?.output ?? "");
+      const report = parseStatus(out?.output ?? "");
+      // Done: its log, in pieces that fit the agent's answer (factory/vm/gate.ts, AGENT_TAIL).
+      if (report.state == "done" && report.logBytes) {
+        const parts: Uint8Array[] = [];
+        for (let from = 0; from < report.logBytes;) {
+          const piece = await v.job("run.ts", ["gate", "log", String(from)], { FACTORY_WORK: "/work" }, true);
+          const line = (piece?.output ?? "").split("\n").reverse().find((l) => l.startsWith("GATE-LOG "));
+          const bytes = line == null ? new Uint8Array() : Uint8Array.from(atob(line.slice("GATE-LOG ".length)), (c) => c.charCodeAt(0));
+          if (!bytes.length) break;
+          parts.push(bytes);
+          from += bytes.length;
+        }
+        const all = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+        let at = 0;
+        for (const p of parts) { all.set(p, at); at += p.length; }
+        report.log = new TextDecoder().decode(all);
+      }
+      delete report.logBytes;
+      return report;
     },
     stop: (name) => vm(name).stop(),
   };

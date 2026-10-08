@@ -44,6 +44,8 @@ export interface GateStatus {
   started?: number;
   ended?: number;
   log?: string;
+  /** Done: how many bytes of the log `gate log` gives, in pieces (the log isn't in the status line). */
+  logBytes?: number;
 }
 
 /** The typecheck's seconds, as an item of the split (tsc on a cold checkout). */
@@ -131,8 +133,25 @@ const CLONE = () => join(WORK(), "erga");
 // e2e: its runner stops itself at 20 minutes (E2E_RUN_LIMIT_S); this is in case it doesn't.
 const LIMITS = { clone: 300, fetch: 120, install: 600, typecheck: 600, unit: 10 * 60, e2e: 25 * 60 };
 
-/** How much of the log `gate status` gives while the shard runs. */
-const RUNNING_LOG = 8000;
+/**
+ * The most of a job's output the VM's agent answers with: its last 20,000 characters (factory/vm/agent.ts, which is in
+ * the image). A line `gate` prints must fit in it whole, or the gate reads no status: so the status line carries only a
+ * short tail of the log, and the whole log comes after the end in pieces (`gate log`).
+ */
+export const AGENT_TAIL = 20_000;
+/** How much of the log `gate status` gives while the shard runs (JSON-escaped, beside the items and results). */
+const RUNNING_LOG = 4000;
+/** How much of the log the gate gets once the shard ends, in bytes. */
+const DONE_LOG = 60_000;
+/** One `gate log` piece, in bytes: base64, 16,000 characters. */
+export const LOG_PIECE = 12_000;
+/** The log without its terminal colours: the last DONE_LOG bytes of it. */
+function logBytes(): Buffer {
+  let text = "";
+  try { text = readFileSync(LOG(), "utf8").replace(/\x1b\[[0-9;]*[A-Za-z]/g, ""); } catch { /* none yet */ }
+  const b = Buffer.from(text);
+  return b.subarray(Math.max(0, b.length - DONE_LOG));
+}
 /** How often the shard notes the VM's load and memory in its log. */
 const VITALS_MS = 20_000;
 
@@ -276,11 +295,16 @@ export async function gateMain(args: string[]): Promise<void> {
   const [what, ...rest] = args;
   if (what == "status") {
     const s = readStatus();
-    let log = "";
-    // Done: the log's tail for the record. Running: a shorter tail, which the gate keeps, so a VM that goes silent
-    // leaves its last lines behind.
-    if (s.state == "done" || s.state == "running") { try { log = readFileSync(LOG(), "utf8").slice(s.state == "done" ? -60_000 : -RUNNING_LOG); } catch { /* none */ } }
-    console.log(`GATE-STATUS ${JSON.stringify({ ...s, ...(log ? { log } : {}) })}`);
+    // Running: a short tail, which the gate keeps, so a VM that goes silent leaves its last lines behind.
+    // Done: the log's size; the gate reads it in pieces (`gate log`).
+    const extra = s.state == "running" ? { log: logBytes().toString().slice(-RUNNING_LOG) } : s.state == "done" ? { logBytes: logBytes().length } : {};
+    console.log(`GATE-STATUS ${JSON.stringify({ ...s, ...extra })}`);
+    return;
+  }
+  if (what == "log") {
+    // `gate log <from>`: LOG_PIECE bytes of the log from byte <from>, as base64 (a piece may end inside a character).
+    const from = Math.max(0, Number(rest[0]) || 0);
+    console.log(`GATE-LOG ${logBytes().subarray(from, from + LOG_PIECE).toString("base64")}`);
     return;
   }
   if (what == "run") {
@@ -294,7 +318,7 @@ export async function gateMain(args: string[]): Promise<void> {
     }
     return;
   }
-  throw new Error(`gate: run or status, not ${what}`);
+  throw new Error(`gate: run, status or log, not ${what}`);
 }
 
 if (import.meta.main) {

@@ -108,6 +108,8 @@ export interface ShardReport {
   code?: number;
   error?: string;
   log?: string;
+  /** Done: the log's size, which the runner reads in pieces (worker/gate.ts); it hands on `log`. */
+  logBytes?: number;
 }
 
 export interface ShardSpec { commit: string; vm: string; shard: number; of: number; files?: string[] }

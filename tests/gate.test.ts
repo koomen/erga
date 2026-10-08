@@ -9,7 +9,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DEPLOY_WAIT_MS, fakeRunner, RERUN_MAX, SILENT_MS, TestGate, verdictOf, vmName, type GateRunner, type ShardReport } from "../deploy/gate.ts";
-import { E2E_ALONE, E2E_SLOTS, e2eItems, e2eResults, planShards, TYPECHECK_SECS, UNIT_SECS, type E2EReport } from "../factory/vm/gate.ts";
+import { AGENT_TAIL, E2E_ALONE, E2E_SLOTS, e2eItems, e2eResults, planShards, TYPECHECK_SECS, UNIT_SECS, type E2EReport } from "../factory/vm/gate.ts";
 import { parseStatus, vmRunner } from "../worker/gate.ts";
 import { git, must, startFixture, type Fixture } from "./source-fixture.ts";
 
@@ -380,8 +380,13 @@ describe("the shard's job in a VM (factory/vm/gate.ts)", () => {
       const head = run(repo, "rev-parse", "HEAD");
       const work = join(dir, "work");
       const job = (...a: string[]) => spawnSync("bun", [join(ROOT, "factory/vm/run.ts"), "gate", ...a], { cwd: dir, encoding: "utf8", env: { ...process.env, REPO_URL: repo, FACTORY_WORK: work }, timeout: 60_000 });
-      const status = () => parseStatus(job("status").stdout);
-      expect(status().state).toBe("none");
+      // Read as staging reads it: the VM runner (worker/gate.ts), through an agent that answers with the last AGENT_TAIL
+      // characters of a job's output, as the image's does (factory/vm/agent.ts).
+      const agent = { getByName: () => ({ boot: async () => {}, alive: async () => true, stop: async () => {},
+        job: async (_script: string, args: string[]) => { const r = job(...args.slice(1)); return { code: r.status ?? 1, output: `${r.stdout}${r.stderr}`.slice(-AGENT_TAIL) }; } }) };
+      const runner = vmRunner(agent, repo, async () => "fgt.t");
+      const status = async () => (await runner.poll("vm")) as ShardReport;
+      expect((await status()).state).toBe("none");
       // A run's log starts with the VM's load and memory.
       // Each shard as the split has it, with the e2e files (not the bench's); together they run everything once.
       const files = ["e2e/x.e2e.ts", "e2e/y.e2e.ts", "e2e/z.e2e.ts", "e2e/w.bench.e2e.ts", "e2e/alone/q.e2e.ts"];
@@ -390,7 +395,7 @@ describe("the shard's job in a VM (factory/vm/gate.ts)", () => {
       const seen: string[] = [];
       for (const n of [1, 2]) {
         const r = job("run", head, String(n), "2");
-        const s: ShardReport = status();
+        const s: ShardReport = await status();
         const names = plan[n - 1].items.map((i) => i.name);
         expect(s.state).toBe("done");
         // The typecheck, the unit tests, then e2e's files.
@@ -409,10 +414,25 @@ describe("the shard's job in a VM (factory/vm/gate.ts)", () => {
       expect(seen.sort()).toEqual(["e2e/alone/q.e2e.ts", "e2e/x.e2e.ts", "e2e/y.e2e.ts", "e2e/z.e2e.ts", "typecheck", "unit"]);
       // A rerun of named files only: the unit test files as one item, and e2e's.
       expect(job("run", head, "3", "2", "--files", "tests/a.test.ts,e2e/y.e2e.ts,e2e/alone/q.e2e.ts").status).toBe(0);
-      expect(status()).toMatchObject({ state: "done", code: 0 });
-      expect(status().results?.map((x) => x.name)).toEqual(["unit", "e2e/y.e2e.ts", "e2e/alone/q.e2e.ts"]);
+      expect(await status()).toMatchObject({ state: "done", code: 0 });
+      expect((await status()).results?.map((x) => x.name)).toEqual(["unit", "e2e/y.e2e.ts", "e2e/alone/q.e2e.ts"]);
       expect(job("run", head, "3", "2", "--files", "tests/b.test.ts,e2e/z.e2e.ts").status).toBe(1);
-      expect(status().results).toMatchObject([{ name: "unit", files: ["tests/b.test.ts"], ok: false }, { name: "e2e/z.e2e.ts", ok: false }]);
+      expect((await status()).results).toMatchObject([{ name: "unit", files: ["tests/b.test.ts"], ok: false }, { name: "e2e/z.e2e.ts", ok: false }]);
+      // A long log, in colour, as e2e writes it: the status still reads whole, and the log's last 60,000 bytes come
+      // through, without the colours, every character whole (a piece may end inside one).
+      const line = (i: number) => `\x1b[32m✓\x1b[39m e2e/file-${i}.e2e.ts (1 test) — “ok” ${"·".repeat(40)}\n`;
+      writeFileSync(join(work, "gate/log.txt"), Array.from({ length: 4000 }, (_, i) => line(i)).join(""), { flag: "a" });
+      expect(job("status").stdout.length).toBeLessThan(AGENT_TAIL);
+      const long = await status();
+      expect(long.state).toBe("done");
+      expect(Buffer.byteLength(long.log ?? "")).toBeGreaterThan(59_000);
+      expect(long.log).not.toContain("\x1b");
+      expect(long.log).not.toContain("\uFFFD");
+      expect(long.log?.endsWith("✓ e2e/file-3999.e2e.ts (1 test) — “ok” " + "·".repeat(40) + "\n")).toBe(true);
+      // While it runs, the status carries a short tail only.
+      writeFileSync(join(work, "gate/status.json"), JSON.stringify({ state: "running", phase: "tests", items: Array.from({ length: 60 }, (_, i) => ({ name: `e2e/a-long-folder-name/file-${i}.e2e.ts`, files: [`e2e/a-long-folder-name/file-${i}.e2e.ts`] })) }));
+      expect(job("status").stdout.length).toBeLessThan(AGENT_TAIL);
+      expect((await status()).log).toContain("e2e/file-3999.e2e.ts");
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
   test("clones with REPO_TOKEN as a header (staging's Git endpoint is for admins), and never asks for a username", async () => {
