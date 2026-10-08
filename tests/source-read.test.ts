@@ -1,5 +1,5 @@
 // The factory's agent reading Erga's own source (source/browse.ts,
-// SourceRepo.read, factory/agent.ts `sourceTools`): list a folder, read a file
+// SourceRepo.read, admin-agent/agent.ts `sourceTools`): list a folder, read a file
 // or some of its lines, search, and the git log, at staging (the default), main,
 // a task's branch or a commit, in front of pretend Artifacts (real git,
 // tests/source-fixture.ts). Read-only: with a read token only, and no branch moves.
@@ -14,7 +14,7 @@ import { localToken } from "../dev/git-server.ts";
 import { lsRefs } from "../source/remote.ts";
 import { SourceRepo } from "../source/repo.ts";
 import type { SourceRead } from "../source/browse.ts";
-import { sourceTools, startFactoryAgent } from "../factory/agent.ts";
+import { sourceTools, startAdminAgent } from "../admin-agent/agent.ts";
 import { must, startFixture, type Fixture } from "./source-fixture.ts";
 
 setDefaultTimeout(30_000);
@@ -141,7 +141,7 @@ test("the agent's tools: each checks the admin first, and says the text is infor
 
   // On the scripted model, as the panel runs it: the call and its outcome go on the transcript.
   locked = false;
-  const agent = startFactoryAgent({ cfg: { apiKey: Redacted.make(""), model: "script", effort: "medium" }, owner: "root", tools });
+  const agent = startAdminAgent({ cfg: { apiKey: Redacted.make(""), model: "script", effort: "medium" }, owner: "root", tools });
   const seen = await new Promise<{ name: string; status: string; path: string | null }[]>((resolve) => {
     const s: { name: string; status: string; path: string | null }[] = [];
     const off = agent.subscribe((ev) => {

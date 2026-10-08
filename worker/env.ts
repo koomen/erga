@@ -1,8 +1,7 @@
 import type { ArtifactsBinding } from "./artifacts";
+import type { AdminAgentHost } from "./admin-agent";
 import type { Deployer } from "./deployer";
 import type { DocHost } from "./doc-host";
-import type { FactoryVm } from "../factory/cloudflare";
-import type { Factory } from "./factory";
 import type { SourceHost } from "./source-host";
 import type { Pipeline } from "./pipeline";
 import type { Home } from "./home";
@@ -13,21 +12,13 @@ export interface Env {
   DOCS: DurableObjectNamespace<DocHost>;
   /** The homepage's deploys and its served snapshot: one Durable Object, named "home" (worker/home.ts). */
   HOME: DurableObjectNamespace<Home>;
-  /** The factory (experimental; worker/factory.ts): its tasks, logs, screenshots and the Claude token, in one Durable Object, "factory". */
-  FACTORY: DurableObjectNamespace<Factory>;
+  /** Each admin's agent, its conversation and panel (worker/admin-agent.ts): one Durable Object, "admin". */
+  ADMIN_AGENT: DurableObjectNamespace<AdminAgentHost>;
   /**
-   * The factory's key (a Worker secret, `cf workers secrets update FACTORY_KEY`): it encrypts the
-   * stored Claude token and signs the VMs' tokens. Without it, a hosted server can't store a token.
+   * The server's key (a Worker secret, named for the factory it once served): it encrypts the API keys and sign-in
+   * secrets admins store (credentials.ts, auth-apps.ts). Without it, a hosted server can't store them.
    */
   FACTORY_KEY?: string;
-  /** The factory's VMs on Cloudflare: a container-backed Durable Object per VM (factory/cloudflare.ts). Absent until the runbook declares it. */
-  FACTORY_VM?: DurableObjectNamespace<FactoryVm>;
-  /** Where the VMs' previews show: <vm>.<FACTORY_PREVIEW_DOMAIN>, a wildcard route to this Worker (the documents' pages domain). */
-  FACTORY_PREVIEW_DOMAIN?: string;
-  /** The factory's image as the deploy declared it (a registry reference), if the container API doesn't list it under `images`. */
-  FACTORY_IMAGE?: string;
-  /** A VM's instance type (factory/cloudflare.ts: standard-4 when unset). */
-  FACTORY_VM_INSTANCE?: string;
   /** The server's database: users, settings and the directory of documents (directory.ts, users.ts, config.ts; migrations/). */
   DB: D1Database;
   /** The editor's own files (page.html as editor.html, page.js, style.css, fonts). */
@@ -107,8 +98,6 @@ export interface Env {
   ERGA_GITHUB_ORIGIN?: string;
   /** Local development only (the tests): the other deploy target's server, in place of https://<its host> (worker/auth-settings.ts). */
   ERGA_PEER_ORIGIN?: string;
-  /** Local development only: how long each simulated shard of the production gate takes (deploy/gate.ts, fakeRunner; 1500 ms by default). */
-  ERGA_GATE_FAKE_MS?: string;
   /** Erga's own repository (worker/source-host.ts): one Durable Object, "erga". */
   SOURCE: DurableObjectNamespace<SourceHost>;
   /**

@@ -11,11 +11,10 @@ import { deployHook, publishEvent } from "../deploy/index";
 import { ZERO } from "../source/git";
 import { byLine } from "../attribution";
 import { SourceError, SourceRepo, type Actor } from "../source/repo";
+import type { SourceAnswer, SourceRead } from "../source/browse";
 import { artifactsRemote, githubRemote } from "./artifacts";
 import { directoryOf, keptKeys } from "./d1";
 import type { Env } from "./env";
-import type { GitGrant } from "../factory/git-grant";
-import type { SourceAnswer, SourceRead } from "../source/browse";
 
 export class SourceHost extends DurableObject<Env> {
   private origin = "";
@@ -33,7 +32,7 @@ export class SourceHost extends DurableObject<Env> {
         if (!r) throw new SourceError("Erga's repository isn't set up on this server (no Artifacts binding).", 503);
         return r;
       },
-      // The source tools (factory/agent.ts) read with a read token: they can't write, whatever they ask.
+      // Reads use a read token: they can't write, whatever they ask.
       reader: async () => {
         const r = await artifactsRemote(env, "read", this.origin);
         if (!r) throw new SourceError("Erga's repository isn't set up on this server (no Artifacts binding).", 503);
@@ -52,12 +51,6 @@ export class SourceHost extends DurableObject<Env> {
         }
       },
       changed: () => ctx.waitUntil(publishEvent({ type: "source" }, env).catch(() => {})),
-      // The production gate (deploy/gate.ts): main only to a commit whose full test run passed. The Pipeline object has
-      // it (staging's server, and locally) or asks staging's server (production); one that can't tell refuses.
-      gate: async (commit) => {
-        const v = await env.PIPELINE.getByName("deploys").gateVerdict(commit).catch((e: Error) => ({ ok: false, reason: `Production deploys only a staging commit whose full test run passed, and the test results couldn't be read (${e.message}).` }));
-        return v.ok ? null : `${v.reason ?? "The tests haven't passed."} See ${this.origin || "the Factory page"}${this.origin ? "/admin/factory" : ""}#tests-${commit.slice(0, 12)} (GET /api/gate/${commit}).`;
-      },
       background: (work) => ctx.waitUntil(work),
     });
   }
@@ -70,35 +63,28 @@ export class SourceHost extends DurableObject<Env> {
     if (!actor) return new Response("Who's pushing?", { status: 400 });
     const repo = this.at(request.headers.get("x-erga-origin") ?? "");
     try {
-      // The Worker checked the factory token's signature (worker/source.ts) before it sent the grant here.
-      const grant = JSON.parse(request.headers.get("x-erga-grant") ?? "null") as GitGrant | null;
-      return new Response(await repo.receive(new Uint8Array(await request.arrayBuffer()), actor, grant ?? undefined) as BodyInit, { headers: { "Content-Type": "application/x-git-receive-pack-result" } });
+      return new Response(await repo.receive(new Uint8Array(await request.arrayBuffer()), actor) as BodyInit, { headers: { "Content-Type": "application/x-git-receive-pack-result" } });
     } catch (e) {
       return new Response(`${(e as Error).message}\n`, { status: e instanceof SourceError ? e.status : 502 });
     }
   }
 
-  advertise(origin: string, grant?: GitGrant) { return this.at(origin).advertise(grant); }
+  advertise(origin: string) { return this.at(origin).advertise(); }
   branches(origin: string) { return this.at(origin).branches(); }
   /** `by`: who asked (attribution.ts, byLine). */
   mirrorNow(origin: string, by?: string) { return this.at(origin).mirror(by); }
   files(origin: string, commit: string) { return this.at(origin).files(commit); }
 
-  /** The factory's agent reading the source (source/browse.ts): the answer, or { error } it can act on. */
+  /** A read of the source (source/browse.ts), as the deploy pipeline asks for a commit's migrations: the answer, or { error }. */
   async read(origin: string, q: SourceRead): Promise<SourceAnswer | { error: string }> {
     try { return await this.at(origin).read(q); } catch (e) {
       return { error: e instanceof SourceError ? e.message : `Erga couldn't read its repository: ${(e as Error).message}` };
     }
   }
 
-  /** The factory: the branches and staging's newest commits (SourceRepo.stagingLog), or { error }. */
-  async stagingLog(origin: string): Promise<{ heads: Record<string, string>; commits: { sha: string; subject: string }[] } | { error: string }> {
-    try { return await this.at(origin).stagingLog(); } catch (e) { return { error: (e as Error).message }; }
-  }
-
   /** A merge, as POST /api/source/merge asks: { commit } or { error, status }. */
-  async merge(origin: string, who: Actor, commit?: string, override?: string): Promise<{ commit: string; fastForward: boolean; upToDate: boolean; override?: boolean } | { error: string; status: number }> {
-    try { return await this.at(origin).merge(who, commit, override); } catch (e) {
+  async merge(origin: string, who: Actor, commit?: string): Promise<{ commit: string; fastForward: boolean; upToDate: boolean } | { error: string; status: number }> {
+    try { return await this.at(origin).merge(who, commit); } catch (e) {
       if (e instanceof SourceError) return { error: e.message, status: e.status };
       return { error: `The merge failed: ${(e as Error).message}`, status: 502 };
     }

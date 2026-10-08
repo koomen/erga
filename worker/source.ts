@@ -5,17 +5,12 @@
 //                               credentials. A push needs HTTP Basic with any username and an admin-scope token
 //                               (tokens.ts, made at /tokens) as the password, whose person is an admin. main takes
 //                               fast-forwards only.
-//                               A factory VM's git token (fgt.…, factory/git-grant.ts) reaches its own task's branch only
-//                               (and staging, for a merge).
 //   GET  /api/source/branches   staging and main: each head and its last 25 commits (staging: also the 5 just after main), and the mirror's status
 //   POST /api/source/merge      { from: "staging", to: "main", commit? }: main fast-forwards to staging's head (or to
-//                               that staging commit): { commit } or 4xx { error } (admins). Only to a commit whose full
-//                               test run passed (the production gate, deploy/gate.ts): else 409 with why and where its
-//                               run is. { override: "reason" } moves it anyway: an admin signed in in a browser only
-//                               (never a token or an agent), and the change log keeps the reason.
+//                               that staging commit): { commit } or 4xx { error } (admins). Production deploys it.
 //   POST /api/source/mirror     brings the GitHub mirror up to date now (admins)
-//   /admin/factory              the Factory page (admins): the factory's board, this dashboard and the factory's agent
-//   /source, /admin/source      redirect to /admin/factory
+//   /admin/source               the Source page (admins): the history of staging and main, and their deploys
+//   /source, /admin/factory     redirect to /admin/source
 //
 // The API takes the app's session or an admin-scope token ("Authorization:
 // Bearer erga_..."), an admin's either way. A POST with the session alone
@@ -30,16 +25,13 @@ import { whoOf, withTokens } from "../front";
 import { tar } from "../source/git";
 import { gitHttp } from "../source/http";
 import type { Actor } from "../source/repo";
-import { adminFactoryPage } from "../source/page";
+import { adminSourcePage } from "../source/page";
 import { isTargetName, TARGETS, type TargetName } from "../deploy/targets";
-import { factoryEnabled } from "./factory";
 import { artifactsRemote, githubUrl, hasSource } from "./artifacts";
 import { directoryOf, tokensOf } from "./d1";
 import { LOCKED } from "../users";
-import { byLine, SYSTEM, VIA } from "../attribution";
+import { byLine, VIA } from "../attribution";
 import type { Env } from "./env";
-import { readAllowed, verifyGitToken, type GitGrant } from "../factory/git-grant";
-import { gitSecret } from "./factory";
 
 const host = (env: Env) => env.SOURCE.getByName("erga");
 const json = (body: unknown, status = 200) => Response.json(body, { status, headers: { "Cache-Control": "no-store" } });
@@ -63,15 +55,6 @@ export async function sourceGit(request: Request, env: Env, url: URL): Promise<R
   const anonymous = () => hasSource(env) ? git(request, env, url, rest, { login: "anonymous", name: "Anonymous" }) : new Response(`${notSetUp}\n`, { status: 503 });
   // Anyone may clone and fetch; only a push (git-receive-pack) asks who's there.
   if (!secret) return read ? anonymous() : challenge(howTo);
-  // A factory VM's git token (worker/factory.ts, gitToken): its own task's branch, and staging for a merge (factory/git-grant.ts).
-  if (secret.startsWith("fgt.")) {
-    const key = gitSecret(env);
-    const grant = key ? await verifyGitToken(key, secret) : null;
-    if (!grant) return challenge("That factory token isn't working (it may have ended, or the factory's key changed).");
-    if (!hasSource(env)) return new Response(`${notSetUp}\n`, { status: 503 });
-    // The task's person (or whoever asked for the merge), via the factory (attribution.ts); SYSTEM for an older token with no one.
-    return git(request, env, url, rest, { login: grant.by ?? SYSTEM, name: "Erga factory", via: grant.via ?? "the factory" }, grant);
-  }
   // A token (tokens.ts) with the admin scope, whose person is an admin now. A read with any other credential is a read all the same.
   const token = await tokensOf(env).verify(secret).catch(() => null);
   const refuse = (why: string) => new Response(`${why}\n`, { status: 403, headers: { "Content-Type": "text/plain" } });
@@ -87,16 +70,13 @@ export async function sourceGit(request: Request, env: Env, url: URL): Promise<R
   return git(request, env, url, rest, who);
 }
 
-/** Git itself, for someone allowed: clones and fetches from Artifacts, pushes through SourceRepo (with a factory VM's grant, if it's one). */
-function git(request: Request, env: Env, url: URL, rest: string, actor: Actor, grant?: GitGrant): Promise<Response> {
+/** Git itself, for someone allowed: clones and fetches from Artifacts, pushes through SourceRepo. */
+function git(request: Request, env: Env, url: URL, rest: string, actor: Actor): Promise<Response> {
   return gitHttp(request, rest, {
     upstream: async () => (await artifactsRemote(env, "read", url.origin))!,
-    advertise: () => host(env).advertise(url.origin, grant),
-    // A factory VM lists and fetches staging, main and its own task's branch only, never another task's.
-    ...(grant ? { reads: (ref: string) => readAllowed(grant, ref) } : {}),
+    advertise: () => host(env).advertise(url.origin),
     receive: async (body) => {
       const headers: Record<string, string> = { "x-erga-actor": JSON.stringify(actor), "x-erga-origin": url.origin };
-      if (grant) headers["x-erga-grant"] = JSON.stringify(grant);
       const r = await host(env).fetch(new Request(`${url.origin}/push`, { method: "POST", body: body as BodyInit, headers }));
       if (!r.ok) throw new Error(await r.text());
       return new Uint8Array(await r.arrayBuffer());
@@ -126,14 +106,9 @@ export async function sourceApi(request: Request, env: Env, platform: Platform, 
       return json({ ...view, mirror: { ...view.mirror, url: view.mirror.url ?? githubUrl(env) }, remote: `${url.origin}/git/erga.git` });
     }
     if (url.pathname == "/api/source/merge" && request.method == "POST") {
-      const body = (await request.json().catch(() => ({}))) as { from?: string; to?: string; commit?: string; override?: unknown };
+      const body = (await request.json().catch(() => ({}))) as { from?: string; to?: string; commit?: string };
       if ((body.from ?? "staging") != "staging" || (body.to ?? "main") != "main") return json({ error: "main only follows staging: merge from staging to main." }, 400);
-      // The emergency override of the production gate: a person, in a browser, with a reason; never a token or an agent.
-      if (body.override != null) {
-        if (who.bearer) return json({ error: "Only an admin signed in in a browser can override the tests (on the Factory page): never a token or an agent." }, 403);
-        if (typeof body.override != "string" || body.override.trim().length < 10) return json({ error: "An override needs a reason of at least 10 characters: it goes in the change log." }, 400);
-      }
-      const r = await host(env).merge(url.origin, who.actor, body.commit, typeof body.override == "string" ? body.override : undefined);
+      const r = await host(env).merge(url.origin, who.actor, body.commit);
       return "error" in r ? json({ error: r.error }, r.status) : json(r);
     }
     if (url.pathname == "/api/source/mirror" && request.method == "POST") return json({ mirror: await host(env).mirrorNow(url.origin, byLine(who.actor.login, who.actor.via)) });
@@ -143,14 +118,14 @@ export async function sourceApi(request: Request, env: Env, platform: Platform, 
   return json({ error: "Not found" }, 404);
 }
 
-/** /admin/factory: the page, for admins in a browser (/source and /admin/source redirect here). */
+/** /admin/source: the page, for admins in a browser (/source and /admin/factory redirect here). */
 export async function sourceDoor(request: Request, env: Env, platform: Platform, url: URL): Promise<Response> {
-  if (url.pathname != "/admin/factory") return new Response(null, { status: 302, headers: { Location: "/admin/factory" } });
+  if (url.pathname != "/admin/source") return new Response(null, { status: 302, headers: { Location: "/admin/source" } });
   const session = await platform.sessionOf(request);
-  if (!session) return new Response(null, { status: 302, headers: { Location: `/auth/github?next=${encodeURIComponent("/admin/factory")}` } });
+  if (!session) return new Response(null, { status: 302, headers: { Location: `/auth/github?next=${encodeURIComponent("/admin/source")}` } });
   const users = directoryOf(env).users;
   const admin = !session.test && !session.agent && (await users.actsAsAdmin(whoOf(session)));
-  return adminFactoryPage({ session, admin, factory: admin && (await factoryEnabled(env)), ready: hasSource(env), origin: url.origin, mirrorUrl: githubUrl(env), worker: isTargetName(env.DEPLOY_TARGET ?? "") ? TARGETS[env.DEPLOY_TARGET as TargetName].worker : null });
+  return adminSourcePage({ session, admin, ready: hasSource(env), origin: url.origin, mirrorUrl: githubUrl(env), worker: isTargetName(env.DEPLOY_TARGET ?? "") ? TARGETS[env.DEPLOY_TARGET as TargetName].worker : null });
 }
 
 /**

@@ -16,8 +16,7 @@
 //                              agent: { token, id, label, expires }; the same one until it's near its end (12 hours), or rotated
 //
 // The API keys page (credentials.ts) shows whether each key is set, its
-// last four characters, and who set it when; the Claude plan token, which
-// the factory keeps (its own API); and, read-only, the secrets only the
+// last four characters, and who set it when; and, read-only, the secrets only the
 // deploy sets. The page never gets a saved key back, nor does any answer here.
 //
 // The Authentication page (auth-apps.ts, worker/auth-settings.ts) shows each
@@ -27,7 +26,7 @@
 // GitHub accepts them, and with the lockout rules auth-apps.ts gives.
 //
 // Every page has the layout every admin page shares (admin-layout.ts): the
-// breadcrumb, Share with agent, and the sidebar to Settings, API keys, Authentication, Change log, Users and Factory.
+// breadcrumb, Share with agent, and the sidebar to Settings, API keys, Authentication, Change log, Users and Source.
 //
 // The POSTs answer JSON ({ entry } or { user } or { ok }, or { error } with
 // the message the directory gave, for a person to act on) and come only from
@@ -483,24 +482,6 @@ ${settings.map((e) => settingRow(e, session, takesNever(e.key))).join("\n")}
 </script>` });
 }
 
-/**
- * The Claude plan token's row: the factory keeps it (worker/factory.ts, its
- * own encrypted table), so the page asks the factory's API whether there is
- * one, and sets or clears it there (PUT and DELETE /api/factory/claude).
- */
-const CLAUDE_ROW = `  <li class="setting credential" data-name="claude" data-label="Claude plan token" data-api="/api/factory/claude">
-    <div class="about">
-      <div class="head"><label class="key" for="key-claude">Claude plan token</label><span class="meta">CLAUDE_CODE_OAUTH_TOKEN</span></div>
-      <p class="desc">The factory's VMs run Claude Code on a Pro or Max plan with it. <span class="mono">claude setup-token</span> prints one (sk-ant-oat\u2026), good for a year.</p>
-      <p class="state-line">Checking\u2026</p>
-    </div>
-    <form class="value" method="post" action="/api/factory/claude">
-      <input class="input secret" type="password" name="value" id="key-claude" aria-label="Claude plan token" placeholder="Paste the token" autocomplete="off" autocapitalize="off" spellcheck="false" disabled>
-      <button class="pill save" disabled>Save</button><button type="button" class="pill clear" hidden>Clear</button>
-    </form>
-    <p class="hint" role="status"></p>
-  </li>`;
-
 /** A secret only the deploy sets: whether this server has it, what it is for, and why it isn't set here. */
 function deploySecretRow(d: DeploySecretEntry): string {
   const state = d.set ? `<span class="on">Set</span> in the deploy` : d.standIn ? "Not set. The session secret stands in for it." : "Not set.";
@@ -515,17 +496,14 @@ function deploySecretRow(d: DeploySecretEntry): string {
 
 /**
  * /admin/api-keys: every key and secret Erga needs from the services it
- * calls. The keys an admin sets here (credentials.ts, and the factory's
- * Claude plan token), each with whether it is set, its last four
+ * calls. The keys an admin sets here (credentials.ts), each with whether it is set, its last four
  * characters, and who set it when; then the secrets only the deploy sets,
  * read-only. The page never has a key.
  */
 async function apiKeysPage(platform: Platform, session: Session): Promise<Response> {
   const who = whoOf(session);
   const [credentials, deployed] = await Promise.all([platform.directory.credentials.list(who), platform.directory.credentials.deployed(who)]);
-  // The Claude plan token goes after the Anthropic and OpenAI keys, with the other AI keys.
   const rows = credentials.map((c) => credentialRow(c, session));
-  rows.splice(2, 0, CLAUDE_ROW);
   return adminResponse({ session, title: "API keys", here: "keys", style: SETTING_STYLE, body: `
   <section aria-labelledby="keys-head" class="credentials">
     <h2 id="keys-head">API keys</h2>
@@ -536,7 +514,7 @@ ${rows.join("\n")}
   </section>
   <section aria-labelledby="deploy-head" class="deploy-secrets">
     <h2 id="deploy-head">Set in the deploy <small>read-only</small></h2>
-    <p class="lede">These secrets are Worker secrets only. A wrong value here could lock every admin out, or break the other server, so this page doesn't change them. Set one with <span class="mono">bunx cf workers secrets update NAME</span>, or with <span class="mono">bun deploy/setup.ts</span>. The factory's VMs run on Cloudflare Containers, through the Worker's own binding: they need no key.</p>
+    <p class="lede">These secrets are Worker secrets only. A wrong value here could lock every admin out, or break the other server, so this page doesn't change them. Set one with <span class="mono">bunx cf workers secrets update NAME</span>, or with <span class="mono">bun deploy/setup.ts</span>.</p>
     <ol class="rows">
 ${deployed.map(deploySecretRow).join("\n")}
     </ol>
@@ -544,41 +522,8 @@ ${deployed.map(deploySecretRow).join("\n")}
 <script>
   ${TIMES_SCRIPT}
   ${POST_SCRIPT}
-  // The Claude plan token: the factory's API says whether there is one, and sets or clears it.
-  const claude = document.querySelector('li.credential[data-name="claude"]');
-  const claudeApi = async (method, body) => {
-    const r = await fetch(claude.dataset.api, { method, headers: { Accept: "application/json", ...(body ? { "Content-Type": "application/json" } : {}) }, body: body && JSON.stringify(body) }).catch(() => null);
-    const out = r ? await r.json().catch(() => ({})) : {};
-    if (!r || !r.ok) throw new Error(out.error || "Couldn't reach the factory: try again.");
-    return out;
-  };
-  const showClaude = (c) => {
-    const input = claude.querySelector("input"), save = claude.querySelector(".save"), clear = claude.querySelector(".clear");
-    claude.querySelector(".state-line").innerHTML = c.signedIn
-      ? '<span class="on">Set</span>' + (c.at ? " \u00B7 updated " + new Date(c.at).toISOString().slice(0, 10) + (c.by ? " by " + c.by.replace(/[&<>"]/g, "") : "") : "")
-      : "Not set. The factory's VMs run a scripted stand-in." + (c.canStore ? "" : " <b>This server has no FACTORY_KEY, so it can't store a token.</b>");
-    input.disabled = !c.canStore;
-    input.placeholder = c.signedIn ? "Paste a new token" : "Paste the token";
-    save.textContent = c.signedIn ? "Replace" : "Save";
-    clear.hidden = !c.signedIn;
-  };
-  claudeApi("GET").then(showClaude, (err) => { claude.querySelector(".state-line").textContent = "Unknown: " + err.message; });
-  {
-    const input = claude.querySelector("input"), save = claude.querySelector(".save"), hint = claude.querySelector(".hint");
-    input.addEventListener("input", () => { save.disabled = !input.value.trim(); say(hint, ""); });
-    claude.querySelector("form").addEventListener("submit", async (e) => {
-      e.preventDefault();
-      say(hint, "Saving\u2026");
-      try { showClaude(await claudeApi("PUT", { token: input.value })); input.value = ""; save.disabled = true; say(hint, "Saved."); } catch (err) { say(hint, err.message, true); }
-    });
-    claude.querySelector(".clear").addEventListener("click", async () => {
-      if (!confirm("Clear the Claude plan token? The factory's VMs run a scripted stand-in until someone sets one again.")) return;
-      say(hint, "Clearing\u2026");
-      try { showClaude(await claudeApi("DELETE")); say(hint, "Cleared."); } catch (err) { say(hint, err.message, true); }
-    });
-  }
   // API keys: Save sets or replaces the key typed in, Clear removes it. The answer never holds the key; the page reloads to show what it is now.
-  for (const li of document.querySelectorAll("li.credential:not([data-name=claude])")) {
+  for (const li of document.querySelectorAll("li.credential")) {
     const form = li.querySelector("form"), input = form.elements.value, save = li.querySelector(".save"), clear = li.querySelector(".clear"), hint = li.querySelector(".hint");
     if (input.disabled) continue;
     input.addEventListener("input", () => { save.disabled = !input.value.trim(); say(hint, ""); });

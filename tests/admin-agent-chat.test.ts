@@ -5,14 +5,14 @@
 import { expect, test } from "bun:test";
 import * as Redacted from "effect/Redacted";
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
-import { CUT, panelPrefs, restoredLog, restoredMessages, STOPPED, storedLog, storedMessages } from "../factory/chat-store";
-import { startFactoryAgent } from "../factory/agent";
+import { CUT, panelPrefs, restoredLog, restoredMessages, STOPPED, storedLog, storedMessages } from "../admin-agent/chat-store";
+import { startAdminAgent } from "../admin-agent/agent";
 import type { Log } from "../src/page/agent-log";
 
 const script = { apiKey: Redacted.make(""), model: "script" as const, effort: "medium" as const };
 
 /** Runs one message to the end of its turn. */
-function turn(agent: ReturnType<typeof startFactoryAgent>, text: string) {
+function turn(agent: ReturnType<typeof startAdminAgent>, text: string) {
   return new Promise<void>((resolve) => {
     const off = agent.subscribe((ev) => { if (ev.t == "busy" && !ev.busy) { off(); resolve(); } });
     agent.prompt(text, null);
@@ -20,11 +20,11 @@ function turn(agent: ReturnType<typeof startFactoryAgent>, text: string) {
 }
 
 test("a conversation stored and restored goes on where it was: the transcript and what the model remembers", async () => {
-  const a = startFactoryAgent({ cfg: script, owner: "root", tools: [] });
+  const a = startAdminAgent({ cfg: script, owner: "root", tools: [] });
   await turn(a, `@script [{"text":"Hello, root."}]`);
   const log = storedLog(a.log()), messages = storedMessages(a.messages());
 
-  const b = startFactoryAgent({ cfg: script, owner: "root", tools: [], restore: { log: restoredLog(log), messages: restoredMessages(messages) } });
+  const b = startAdminAgent({ cfg: script, owner: "root", tools: [], restore: { log: restoredLog(log), messages: restoredMessages(messages) } });
   expect(b.log().items).toEqual([{ kind: "user", text: `@script [{"text":"Hello, root."}]` }, { kind: "assistant", text: "Hello, root." }]);
   expect(b.messages().map((m) => (m as { role: string }).role)).toEqual(["user", "assistant"]);
   await turn(b, `@script [{"text":"Again."}]`);

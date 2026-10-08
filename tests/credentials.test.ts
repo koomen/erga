@@ -148,7 +148,7 @@ test("POST /admin/credentials: only from this site's pages; the answer never hol
   expect((await fetch(`${origin}/admin/credentials`, { redirect: "manual" })).headers.get("location")).toBe("/admin/api-keys");
   // The keys have their own page now: Settings has none of them; every key and deploy secret is on API keys.
   expect(await (await fetch(`${origin}/admin`)).text()).not.toContain("li class=\"setting credential");
-  for (const name of ["anthropic", "openai", "claude", "github_mirror", "cloudflare_deploy"]) expect(html).toContain(`data-name="${name}"`);
+  for (const name of ["anthropic", "openai", "github_mirror", "cloudflare_deploy"]) expect(html).toContain(`data-name="${name}"`);
   for (const env of ["SESSION_SECRET", "FACTORY_KEY", "GITHUB_CLIENT_SECRET", "SNAPSHOT_TOKEN", "DEPLOY_HOOK_SECRET"]) expect(html).toContain(`data-env="${env}"`);
   expect(html).toContain(`href="/admin/api-keys" aria-current="page"`);
 });

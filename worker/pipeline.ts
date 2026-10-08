@@ -30,8 +30,6 @@ import { keptKeys } from "./d1";
 import type { Env } from "./env";
 import { hasSource } from "./artifacts";
 import { sourceForBuild } from "./source";
-import { TestGate, verdictOf, type GateRun, type Verdict } from "../deploy/gate";
-import { gateRunner, gateRunsHere } from "./gate";
 
 export class Pipeline extends DurableObject<Env> {
   private deploys: BranchDeploys;
@@ -39,8 +37,6 @@ export class Pipeline extends DurableObject<Env> {
   private peer: BranchDeploys | null = null;
   private listeners = new Set<WritableStreamDefaultWriter<Uint8Array>>();
   private beat: ReturnType<typeof setInterval> | null = null;
-  /** The production gate (deploy/gate.ts): on staging's server and locally; production asks staging's (gateRemote). */
-  private gate: TestGate | null = null;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -105,79 +101,6 @@ export class Pipeline extends DurableObject<Env> {
     });
     this.deploys = make(env.DEPLOY_TARGET, "");
     if (peerName) this.peer = make(peerName, "peer:");
-    if (gateRunsHere(env)) {
-      // A commit's subject, for the local fake runner ("[gate-fail]", "[gate-flaky]", "[gate-hang]": deploy/gate.ts).
-      const subject = async (commit: string) => {
-        if (!hasSource(env)) return null;
-        const view = await env.SOURCE.getByName("erga").branches(env.ERGA_DEV_ORIGIN ?? "").catch(() => null);
-        for (const b of view?.branches ?? []) for (const c of (b as { commits: { sha: string; subject: string }[] }).commits) if (c.sha == commit) return c.subject;
-        return null;
-      };
-      const runner = gateRunner(env, subject);
-      this.gate = new TestGate({
-        storage: { get: (k) => ctx.storage.get(`gate:${k}`), put: (k, v) => ctx.storage.put(`gate:${k}`, v), delete: (k) => ctx.storage.delete(`gate:${k}`) },
-        runner,
-        // The local fake ends its shards in a second or two: ask more often than a real VM needs.
-        ...(typeof runner != "string" && runner.kind.startsWith("local") ? { pollMs: 300 } : {}),
-        schedule,
-        changed: (commit) => this.publish({ type: "gate", commit }),
-      });
-    }
-  }
-
-  // ---- the production gate (deploy/gate.ts; worker/gate.ts) -------------------------------
-
-  /** Staging's server, asked with the shared secret (production's gate answers are staging's). */
-  private async gateRemote<T>(path: string, init: { method?: string; body?: unknown } = {}): Promise<T> {
-    const secret = this.env.DEPLOY_HOOK_SECRET?.trim();
-    const host = TARGETS.staging.host;
-    if (!secret) throw new Error(`the test results are on ${host}, and this server has no DEPLOY_HOOK_SECRET to ask it`);
-    const r = await Promise.race([
-      fetch(`https://${host}${path}`, { method: init.method ?? "GET", headers: { Authorization: `Bearer ${secret}`, "Content-Type": "application/json" }, ...(init.body ? { body: JSON.stringify(init.body) } : {}) }),
-      new Promise<null>((ok) => setTimeout(() => ok(null), 8000)),
-    ]).catch((e) => { throw new Error(`couldn't reach ${host} for the test results (${(e as Error).message})`); });
-    if (!r) throw new Error(`${host} didn't answer for the test results in 8 s`);
-    const body = await r.json().catch(() => null) as (T & { error?: string }) | null;
-    if (!r.ok || !body) throw new Error(`${host} answered ${r.status} for the test results${body?.error ? `: ${body.error}` : ""}`);
-    return body;
-  }
-
-  /** The gate's runs, newest first, and where they run. */
-  async gateList(limit = 50): Promise<{ here: boolean; host: string; runner: string; shards: number; runs: GateRun[] }> {
-    if (this.gate) {
-      const self = this.env.DEPLOY_TARGET?.trim() ?? "";
-      return { here: true, host: isTargetName(self) ? TARGETS[self].host : "", runner: this.gate.runnerKind, shards: this.gate.shards, runs: await this.gate.list(limit) };
-    }
-    const theirs = await this.gateRemote<{ runner: string; shards: number; runs: GateRun[] }>(`/api/gate?limit=${limit}`);
-    return { ...theirs, here: false, host: TARGETS.staging.host };
-  }
-
-  /** One commit's run (null: none) and whether main may move to it. */
-  async gateGet(commit: string): Promise<{ run: GateRun | null; verdict: Verdict }> {
-    const run = this.gate ? await this.gate.get(commit) : (await this.gateRemote<{ run: GateRun | null }>(`/api/gate/${commit}`)).run;
-    return { run, verdict: { ...verdictOf(commit, run), run: null } };
-  }
-
-  /** A shard's log, once it ended. */
-  async gateLog(commit: string, shard: number): Promise<string | null> {
-    if (this.gate) return this.gate.log(commit, shard);
-    return (await this.gateRemote<{ log: string | null }>(`/api/gate/${commit}/log?shard=${shard}`)).log;
-  }
-
-  /** Runs a commit's tests (again): `by` asked. */
-  async gateStart(commit: string, by: string): Promise<GateRun> {
-    if (this.gate) return this.gate.start(commit, `run by ${by}`, { again: true });
-    return (await this.gateRemote<{ run: GateRun }>(`/api/gate/${commit}/run`, { method: "POST", body: { by } })).run;
-  }
-
-  /** Whether main may move to `commit`: { ok } or why not (a server that can't read the results refuses). */
-  async gateVerdict(commit: string): Promise<{ ok: boolean; state: string; reason: string | null }> {
-    try {
-      const { verdict } = await this.gateGet(commit);
-      return { ok: verdict.ok, state: verdict.state, reason: verdict.reason };
-    } catch (e) {
-      return { ok: false, state: "unknown", reason: `Production deploys only a staging commit whose full test run passed, and ${(e as Error).message}.` };
-    }
   }
 
   /** The mock's other server, at its host: what deploysDoor answers another of Erga's servers (worker/deploys.ts). */
@@ -198,19 +121,10 @@ export class Pipeline extends DurableObject<Env> {
   own(history = 0): Promise<(TargetStatus & { history?: DeployRecord[] }) | null> { return this.deploys.own(history); }
   logOf(name: string, deployId?: string): Promise<DeployLog | null> { return this.deploys.logOf(name, deployId); }
   historyOf(name: string, limit?: number): Promise<DeployRecord[] | null> { return this.deploys.historyOf(name, limit); }
-  async hook(branch: string, commit: string, trigger?: string): Promise<void> {
-    // A staging commit: its tests run at once, beside its deploy (the gate cancels the run of the commit before).
-    if (branch == "staging" && this.gate && /^[0-9a-f]{40}$/.test(commit)) await this.gate.start(commit, `staging moved (${trigger ?? "a push"})`, { supersede: true }).catch((e) => console.error("gate:", e));
-    return this.deploys.hook(branch, commit, trigger);
-  }
+  hook(branch: string, commit: string, trigger?: string): Promise<void> { return this.deploys.hook(branch, commit, trigger); }
   redeploy(name: string, trigger?: string) { return this.deploys.redeploy(name, trigger); }
-  async remoteHook(name: string, body: { branch?: string; commit?: string; redeploy?: boolean; trigger?: string }) {
-    if (body.branch == "staging" && this.gate && typeof body.commit == "string" && /^[0-9a-f]{40}$/.test(body.commit)) {
-      await this.gate.start(body.commit, `staging moved (${typeof body.trigger == "string" ? body.trigger.slice(0, 80) : "a move"}, passed on)`, { supersede: true }).catch((e) => console.error("gate:", e));
-    }
-    return this.deploys.remoteHook(name, body);
-  }
-  async alarm(): Promise<void> { await Promise.all([this.deploys.alarm(), this.peer?.alarm(), this.gate?.alarm().catch((e) => console.error("gate:", e))]); }
+  remoteHook(name: string, body: { branch?: string; commit?: string; redeploy?: boolean; trigger?: string }) { return this.deploys.remoteHook(name, body); }
+  async alarm(): Promise<void> { await Promise.all([this.deploys.alarm(), this.peer?.alarm()]); }
 
   // ---- sign-in's values set on /admin/auth (auth-apps.ts, worker/auth-settings.ts): this server's own, here and not
   // in D1, which staging replaces with a copy of production's. Keys "auth:<provider>"; the secret in them is encrypted.

@@ -27,9 +27,7 @@ import { CACHE_KEEP, CHUNK, cachedBuild, releaseKey, storageStore, toolchainKey 
 import { ALL_STEPS, Cloudflare, COPY_MAX_AGE_MS, copyName, copyReason, guardTarget, loadRelease, runPipeline, type Release, type Target } from "../deploy/cloudflare";
 import { FLEET_ACCOUNT, MOCK_HOOK_SECRET, MOCK_SNAPSHOT_TOKEN, mockBuilder, mockCloudflare, namespaceId, PROD_DB, PROD_DOCS, scriptTag, type MockState } from "../deploy/mock";
 import { memoryStore, snapshotDoor } from "../deploy/snapshot";
-import { FACTORY, TARGETS } from "../deploy/targets";
-import { imageTag } from "../factory/vm/build";
-import { updatePin } from "../factory/vm/push";
+import { TARGETS } from "../deploy/targets";
 
 const ROOT = new URL("..", import.meta.url).pathname;
 let release: Release;
@@ -199,7 +197,7 @@ describe("production", () => {
     const mock = mockCloudflare({ fleet: true });
     const secrets = { ...mock.state.secrets.erga };
     const { steps } = await deployTo(targetOf(TARGETS.production, env()), mock);
-    expect(steps.filter((s) => s.endsWith(":running")).map((s) => s.split(":")[0])).toEqual(["account", "database", "migrations", "assets", "image", "worker", "vms", "address", "pages", "live"]);
+    expect(steps.filter((s) => s.endsWith(":running")).map((s) => s.split(":")[0])).toEqual(["account", "database", "migrations", "assets", "worker", "address", "pages", "live"]);
     expect(steps).toContain("database:done using Erga's database from before (" + PROD_DB + ")");
     expect(mock.state.databases.length).toBe(1);
     expect(mock.state.deletedDatabases).toEqual([]);
@@ -429,7 +427,7 @@ describe("branches deploy themselves", () => {
       // Its log so far is kept, up to the upload.
       const kept = server.storage.get(`log:staging:${mid.run.deployId}`) as any;
       expect(kept.deployId).toBe(mid.run.deployId);
-      expect(["assets", "image", "worker"]).toContain(kept.lines.at(-1).step);
+      expect(["assets", "worker"]).toContain(kept.lines.at(-1).step);
       const before = kept.lines.length;
 
       // The new version (its settings from the Worker the old one uploaded) wakes up, sees its upload went up, and finishes the deploy.
@@ -720,118 +718,6 @@ describe("a newer deploy cancels the running one", () => {
   });
 });
 
-describe("the factory's VMs (Containers)", () => {
-  test("staging: the image prepared, named on the version for FactoryVm, the application made once, previews on the pages domain", async () => {
-    const mock = mockCloudflare({ fleet: true });
-    const target = staging({ secrets: stagingSecrets });
-    expect(target.factory).toEqual({ image: `registry.cloudflare.com/${FLEET_ACCOUNT}/erga-factory@${FACTORY.image.split("@")[1]}`, previews: "erga-pages-staging.dev" });
-    const { steps } = await deployTo(target, mock);
-    expect(steps).toContain(`image:done ${target.factory!.image}, ready`);
-    expect(mock.state.containers.prepared).toEqual([target.factory!.image]);
-    const meta = mock.state.scripts["erga-staging"].metadata;
-    expect(meta.containers).toEqual([{ name: "erga-staging-factoryvm", class_name: "FactoryVm", images: { factory: target.factory!.image } }]);
-    expect(meta.exports.FactoryVm).toEqual({ type: "durable-object", storage: "sqlite" });
-    const b = bindingsOf(mock.state, "erga-staging");
-    expect(b.FACTORY_VM).toMatchObject({ type: "durable_object_namespace", class_name: "FactoryVm" });
-    expect(b.FACTORY_PREVIEW_DOMAIN.text).toBe("erga-pages-staging.dev");
-    expect(b.FACTORY_IMAGE.text).toBe(target.factory!.image);
-    const ns = namespaceId("erga-staging", "FactoryVm");
-    expect(mock.state.containers.apps[ns]).toEqual({ name: "erga-staging-factoryvm", scheduling_policy: "durable_object", durable_objects: { namespace_id: ns } });
-    // Made after the upload, as wrangler does: one upload.
-    expect(steps.find((x) => x.startsWith("vms:done"))).toContain("made");
-    expect(mock.state.calls.filter((c) => c == "PUT /accounts/0123456789abcdef0123456789abcdef/workers/scripts/erga-staging").length).toBe(1);
-    // Again: the same application, found, not made twice, and one upload.
-    const before = mock.state.versions["erga-staging"];
-    const again = await deployTo(staging({ secrets: stagingSecrets }), mock);
-    expect(again.steps.find((x) => x.startsWith("vms:done"))).toContain("already there");
-    expect(mock.state.versions["erga-staging"]).toBe(before + 1);
-    expect(Object.keys(mock.state.containers.apps)).toEqual([ns]);
-    // An application that declares a smaller instance type is set to standard-4.
-    mock.state.containers.apps[ns].configuration = { instance_type: "standard-3" };
-    const third = await deployTo(staging({ secrets: stagingSecrets }), mock);
-    expect(third.steps.find((x) => x.startsWith("vms:done"))).toContain("instance type updated");
-    expect(mock.state.containers.apps[ns].configuration).toEqual({ instance_type: "standard-4" });
-  });
-
-  test("a deploy token that may not use Containers: the version goes up without the VMs, and the log says why", async () => {
-    const mock = mockCloudflare({ fleet: true, scopedContainers: "refuse" });
-    await deployTo(staging({ secrets: stagingSecrets }), mock);
-    // A token made through the API, as deploy/tokens.ts makes the servers' (Editor on erga-staging, no Containers).
-    const cf = new Cloudflare("mock-machine", mock.fetch);
-    const made = await cf.call<{ id: string; value: string }>("POST", `/accounts/${FLEET_ACCOUNT}/tokens`, "make a token", { name: "t", policies: [
-      { effect: "allow", permission_groups: [{ id: "7e79ec33834341f28dd431ab73884400" }], resources: { [`com.cloudflare.api.account.${FLEET_ACCOUNT}`]: { [`com.cloudflare.edge.worker.script.${scriptTag("erga-staging")}`]: "*" } } },
-      { effect: "allow", permission_groups: [{ id: "09b2857d1c31407795e75e3fed8617a1" }], resources: { [`com.cloudflare.api.account.${FLEET_ACCOUNT}`]: "*" } },
-      { effect: "allow", permission_groups: [{ id: "c8fed203ed3043cba015a93ad1616f1f" }, { id: "2072033d694d415a936eaeb94e6405b8" }, { id: "82e64a83756745bbbb1c9c2701bf816b" }], resources: Object.fromEntries(mock.state.zones.map((z) => [`com.cloudflare.api.account.zone.${z.id}`, "*"])) },
-    ] });
-    const steps: string[] = [];
-    await runPipeline(new Cloudflare(made!.value, mock.fetch), release, staging(), { ...quick, site: mock.fetch, report: (id, status, detail) => steps.push(`${id}:${status}${detail ? ` ${detail}` : ""}`) });
-    expect(steps.find((x) => x.startsWith("image:done"))).toContain("may not use Containers");
-    expect(steps.find((x) => x.startsWith("worker:done"))).toContain("without the factory's VMs");
-    expect(steps.find((x) => x.startsWith("vms:skipped"))).toBeTruthy();
-    const meta = mock.state.scripts["erga-staging"].metadata;
-    expect(meta.containers).toBeUndefined();
-    expect(bindingsOf(mock.state, "erga-staging").FACTORY_PREVIEW_DOMAIN).toBeUndefined();
-    // The rest of the deploy is the same: live, its release answering.
-    expect(steps.find((x) => x.startsWith("live:done"))).toBeTruthy();
-  });
-
-  test("a release from before the factory's VMs (no FactoryVm): both steps skipped, nothing about Containers asked", async () => {
-    const mock = mockCloudflare({ fleet: true });
-    const old: Release = { ...release, worker: { ...release.worker, exports: Object.fromEntries(Object.entries(release.worker.exports!).filter(([n]) => n != "FactoryVm")), env: Object.fromEntries(Object.entries(release.worker.env).filter(([n]) => n != "FACTORY_VM")) } };
-    const { steps } = await deployTo(staging({ secrets: stagingSecrets }), mock, old);
-    expect(steps.find((x) => x.startsWith("image:") && !x.endsWith(":running"))).toMatch(/^image:skipped/);
-    expect(steps.find((x) => x.startsWith("vms:") && !x.endsWith(":running"))).toMatch(/^vms:skipped/);
-    expect(mock.state.calls.some((c) => c.includes("/containers/"))).toBe(false);
-    expect(mock.state.scripts["erga-staging"].metadata.containers).toBeUndefined();
-  });
-
-  test("factory.image in deploy/targets.json is the image factory/vm/build.ts tags, pinned by its digest", () => {
-    expect(FACTORY.image).toMatch(/^erga-factory:[0-9a-f]{12}@sha256:[0-9a-f]{64}$/);
-    const pinned = FACTORY.image.split("@")[0], built = imageTag();
-    if (pinned != built) throw new Error(
-      `deploy/targets.json pins the factory image ${pinned}, but factory/vm/build.ts now tags ${built}: its inputs ` +
-      `(factory/vm/Dockerfile, factory/vm/agent.ts or .bun-version) changed. Run, with Docker running and the cf CLI's login:\n` +
-      `  CLOUDFLARE_ACCOUNT_ID=<id> bun factory/vm/push.ts --wait\n` +
-      `It pushes and prepares the new image, and writes its name into deploy/targets.json only once a container starts from it ` +
-      `(up to an hour after preparation); then commit deploy/targets.json. A deploy from a machine (deploy/run.ts) does the same (factory/vm/push.ts).`);
-  });
-
-  test("updatePin moves the pinned image only after a container starts from the new one", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "erga-pin-"));
-    const file = join(dir, "targets.json"), old = `erga-factory:${"a".repeat(12)}@sha256:${"1".repeat(64)}`, next = `erga-factory:${"b".repeat(12)}@sha256:${"2".repeat(64)}`;
-    const write = () => writeFileSync(file, JSON.stringify({ factory: { image: old }, targets: {} }, null, 2) + "\n");
-    const pinned = () => JSON.parse(readFileSync(file, "utf8")).factory.image;
-    const cf = null as never, steps: string[] = [];
-    const deps = (starts: boolean) => ({ file, tag: next.split("@")[0], push: async () => (steps.push("push"), next), prepare: async (ref: string) => void steps.push(`prepare ${ref}`), probe: async (img: string) => (steps.push(`probe ${img}`), starts) });
-    try {
-      write();
-      expect((await updatePin(cf, FLEET_ACCOUNT, () => {}, { ...deps(true), tag: old.split("@")[0] })).status).toBe("same");
-      expect(steps).toEqual([]);
-      // Pushed and prepared, but Containers doesn't start it yet: the pin stays.
-      const waiting = await updatePin(cf, FLEET_ACCOUNT, () => {}, deps(false));
-      expect(waiting.status).toBe("waiting");
-      expect(waiting.message).toContain("bun factory/vm/push.ts --wait");
-      expect(steps).toEqual(["push", `prepare registry.cloudflare.com/${FLEET_ACCOUNT}/erga-factory@sha256:${"2".repeat(64)}`, `probe ${next}`]);
-      expect(pinned()).toBe(old);
-      // No Docker or no Containers permission: the pin stays, and it says what's needed.
-      const failed = await updatePin(cf, FLEET_ACCOUNT, () => {}, { ...deps(true), push: async () => { throw new Error("Docker isn't running."); } });
-      expect(failed.status).toBe("failed");
-      expect(failed.message).toMatch(/Docker isn't running\..*bun factory\/vm\/push\.ts --wait/);
-      expect(pinned()).toBe(old);
-      // A probe that throws counts as no start.
-      expect((await updatePin(cf, FLEET_ACCOUNT, () => {}, { ...deps(true), probe: async () => { throw new Error("HTTP 500"); } })).status).toBe("waiting");
-      expect(pinned()).toBe(old);
-      // It starts: the pin moves, and the rest of the file stays.
-      const switched = await updatePin(cf, FLEET_ACCOUNT, () => {}, deps(true));
-      expect(switched.status).toBe("switched");
-      expect(pinned()).toBe(next);
-      expect(JSON.parse(readFileSync(file, "utf8")).targets).toEqual({});
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
-});
-
 describe("the builder", () => {
   test("the container's server streams the build and hands back the release; the pipeline's client reads it", async () => {
     const bundle = packRelease(join(ROOT, ".site/release"));
@@ -958,7 +844,7 @@ describe("the one-time setup", () => {
     const out = run.stdout.toString();
     expect(run.exitCode).toBe(0);
     expect(out).toContain("(the mock Cloudflare: nothing real)");
-    expect(out).toContain("secrets set: SESSION_SECRET, FACTORY_KEY, SNAPSHOT_TOKEN, DEPLOY_HOOK_SECRET, GITHUB_CLIENT_SECRET\n");
+    expect(out).toContain("secrets set: SESSION_SECRET, SNAPSHOT_TOKEN, DEPLOY_HOOK_SECRET, GITHUB_CLIENT_SECRET\n");
     expect(out).toContain("the zone's free Universal SSL certificate covers it (it covers *.erga-pages-staging.dev).");
     expect(out).toContain("There's one already (Universal SSL).");
     expect(out).toContain("Made and checked: it deploys erga-staging, reads erga.dev and erga-pages-staging.dev, and can't reach erga or write DNS and routes.");

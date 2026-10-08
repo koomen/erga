@@ -1,5 +1,5 @@
 // Attaching files to a message, in both agents' panels (main.ts, the
-// editor's; factory-agent.ts, the factory's): drop them on the panel, paste
+// editor's; admin-agent.ts, the admin's): drop them on the panel, paste
 // them (a screenshot, say) into the box, or pick them with the paperclip.
 // They wait as chips above the box, each with its ×, until the message goes.
 // Images go to the model as images (scaled down here when they're bigger than

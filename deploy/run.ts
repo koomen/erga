@@ -31,7 +31,6 @@ import { targetOf } from "./branches";
 import { buildIn } from "./builder/build";
 import { unpackRelease } from "./bundle";
 import { ALL_STEPS, Cloudflare, guardTarget, loadRelease, runPipeline, stepsFor, targetHost, type Fetch, type Release, type Target } from "./cloudflare";
-import { imageRef } from "./containers";
 import { machineCredential } from "./credential";
 import { FLEET_ACCOUNT, MOCK_SNAPSHOT_TOKEN, mockCloudflare } from "./mock";
 import { isTargetName, TARGETS, type TargetName } from "./targets";
@@ -121,23 +120,10 @@ export async function deployFromMachine(o: MachineDeploy): Promise<boolean> {
   const cf = new Cloudflare(token, net);
   await runPipeline(cf, release, target, {
     site: net,
-    // The factory's image: built and pushed from here if the registry hasn't it (Docker), as deploy/targets.json names it.
-    ...(mock ? {} : { pushImage: async (ref: string) => {
-      const { pushImage } = await import("../factory/vm/push");
-      const got = imageRef(accountId, await pushImage(cf, accountId, (l) => log(`image: ${l}`), ref));
-      if (got != ref) throw new Error(`The factory's image is ${got} now, not ${ref} as deploy/targets.json says: run bun factory/vm/push.ts, commit deploy/targets.json, and deploy again.`);
-    } }),
     report: (id, status, detail) => log(`${ALL_STEPS.find((s) => s.id == id)?.title}${status == "running" ? "…" : `: ${status}${detail ? `, ${detail}` : ""}`}`),
     ...(mock ? { sleep: async () => {}, waitMs: 2000 } : {}),
   });
   log(`Deployed ${commit.slice(0, 12)} to https://${targetHost(target)}.`);
-  // Then, if this checkout builds another factory image than the pinned one the deploy used: push and prepare it,
-  // start a container from it, and move the pin (deploy/targets.json, to commit) only if that works (factory/vm/push.ts).
-  if (!mock && spec.factory && commit == git("rev-parse", "HEAD")) {
-    const { updatePin } = await import("../factory/vm/push");
-    const pin = await updatePin(cf, accountId, (l) => log(`factory image: ${l}`));
-    if (pin.status != "same") log(`Factory image: ${pin.message}`);
-  }
   return true;
 }
 

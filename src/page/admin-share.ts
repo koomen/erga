@@ -18,7 +18,7 @@ if (button) shareWithAgent({
   button,
   title: "Share admin access with an agent",
   intro: "Paste this into an agent that can run commands (Claude Code, Codex…), then explain what you want it to do.",
-  note: `Anyone with this token can do what you can do on the admin pages, as your agent, for up to ${HOURS} hours: change settings and users, run factory tasks, merge, deploy and push. It can't make tokens or set API keys. New token turns the old one off; <a href="/tokens">your tokens</a> lists it, with Revoke.`,
+  note: `Anyone with this token can do what you can do on the admin pages, as your agent, for up to ${HOURS} hours: change settings and users, deploy and push. It can't make tokens or set API keys. New token turns the old one off; <a href="/tokens">your tokens</a> lists it, with Revoke.`,
   async token(rotate) {
     const body = new URLSearchParams(rotate ? { rotate: "1" } : {});
     const r = await fetch("/admin/share", { method: "POST", body, signal: AbortSignal.timeout(10_000) })
@@ -34,7 +34,7 @@ if (button) shareWithAgent({
 
 function promptFor(token: string, expires: number): string {
   const origin = location.origin;
-  return `I'd like your help running my Erga server, ${origin}, as its admin. With the token below you act as my agent, with my admin access: the server's settings and users, API keys' status, the change log, the factory (its task queue, where Claude Code builds each task in a VM), Erga's source and its deploys.
+  return `I'd like your help running my Erga server, ${origin}, as its admin. With the token below you act as my agent, with my admin access: the server's settings and users, API keys' status, the change log, Erga's source and its deploys.
 
 Token: ${token}
 (It works until ${new Date(expires).toLocaleString()}.)

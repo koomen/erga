@@ -19,17 +19,16 @@
 //   /settings, /tokens/...     your settings: agent tokens, and a test token for running the test suite against erga.dev
 //   /deploy                    deploy Erga to your own Cloudflare account (worker/deploy.ts; the deploy_page setting,
 //                              not an admin right); /admin/deploy redirects there
-//   /api/factory/...           the factory (experimental): tasks done by Claude Code in VMs, and its agent (worker/factory.ts)
 //   /api/deploys, /api/events  branch deploys' status and events, and deploy logs (worker/deploys.ts)
 //   /auth/test?token=&as=      a test person (Ada, Bo...) signed in with one; they open only test documents
 //   /git/erga.git/...          Erga's own repository, over Git smart HTTP (worker/source.ts; reads open, pushes need an admin's admin-scope token)
 //   /admin, /admin/changes, /admin/users, /admin/auth   the server's settings, their change log, its users, and how
 //                              people sign in (admin.ts)
 
-//   /api/admin/agent/...       each admin's agent conversation and panel layout, kept (worker/factory.ts)
-//   /api/admin/guide           the guide for an outside agent with an admin token (Share with agent; worker/factory.ts)
-//   /admin/factory, /api/source/...  the Factory page (the factory's board, the dashboard of source and deploys, and the
-//                              factory's agent; /source and /admin/source redirect there) and its API
+//   /api/admin/agent[/...]     each admin's agent: its messages, events, conversation and panel layout (worker/admin-agent.ts)
+//   /api/admin/guide           the guide for an outside agent with an admin token (Share with agent; worker/admin-agent.ts)
+//   /admin/source, /api/source/...  the Source page (the dashboard of source and deploys; /source and /admin/factory
+//                              redirect there) and its API
 //                              Every /admin page has the same layout (admin-layout.ts), and every /admin route is
 //                              for the server's admins only, checked here first (adminGate) and by its own door.
 //   /page.js, /style.css, ...  the editor's own files (static assets)
@@ -54,8 +53,7 @@ import { finishSignIn, isDev, sessionOf, signOut, startSignIn, testSignIn } from
 import { directoryOf } from "./d1";
 import { adminGate, isAdminPath } from "../admin-layout";
 import { deployDoor } from "./deploy";
-import { adminAgentApi, adminGuideApi, factoryApi, isAdminAgentPath, previewTicketOk } from "./factory";
-import { previewDoor } from "../factory/cloudflare";
+import { adminAgentApi, adminGuideApi, isAdminAgentPath } from "./admin-agent";
 import { sourceApi, sourceDoor, sourceGit } from "./source";
 import { deploysDoor, isDeploysPath } from "./deploys";
 import { isSignInPath, signInDoor } from "./auth-settings";
@@ -69,8 +67,7 @@ import { releaseApi, withLive } from "./live";
 
 export { Deployer } from "./deployer";
 export { DocHost } from "./doc-host";
-export { Factory } from "./factory";
-export { FactoryVm } from "../factory/cloudflare";
+export { AdminAgentHost } from "./admin-agent";
 export { Pipeline } from "./pipeline";
 export { SourceHost } from "./source-host";
 export { Home } from "./home";
@@ -119,11 +116,6 @@ function timed(response: Response, entries: string[]): Response {
 async function route(request: Request, env: Env, url: URL, ctx: ExecutionContext): Promise<Response> {
   const path = url.pathname;
   const assets = isAsset(path);
-  // A factory VM's preview (factory/cloudflare.ts), on Cloudflare only: <vm>.<FACTORY_PREVIEW_DOMAIN>.
-  if (env.FACTORY_PREVIEW_DOMAIN) {
-    const preview = await previewDoor(request, env, (vm, ticket) => previewTicketOk(env, vm, ticket));
-    if (preview) return preview;
-  }
   // Staging is for Erga's admins only (deploy/targets.json `adminsOnly`): every route after this, and the pages origin,
   // needs an admin's session or admin-scope token, but for the exemptions worker/admins-only.ts lists and explains.
   const refused = await adminsOnlyGate(request, env, url);
@@ -170,14 +162,12 @@ async function route(request: Request, env: Env, url: URL, ctx: ExecutionContext
     const file = await serveHomeRoot(request, env, ctx);
     if (file) return file;
   }
-  // Each admin's agent conversation and panel, kept in the Factory object (worker/factory.ts): before the server's API, which has the rest of /api/.
+  // Each admin's agent, its conversation and panel, in the AdminAgent object (worker/admin-agent.ts): before the server's API, which has the rest of /api/.
   if (isAdminAgentPath(path)) return adminAgentApi(request, env, url);
   // The build of each of the editor's files, for open pages to see a redeploy by (worker/live.ts): anyone may ask.
   if (path == "/api/release" && read) return releaseApi(env, url);
-  // What an outside agent with an admin token reads first (Share with agent): the admin APIs (worker/factory.ts).
+  // What an outside agent with an admin token reads first (Share with agent): the admin APIs (worker/admin-agent.ts).
   if (path == "/api/admin/guide") return adminGuideApi(request, env, url);
-  // The factory (experimental): its API, admins only (worker/factory.ts); its board is on /admin/factory (worker/source.ts).
-  if (path == "/api/factory" || path.startsWith("/api/factory/")) return factoryApi(request, env, url);
   // The server's API for agents, and people's agent tokens (server-api.ts).
   if (path == "/llms.txt" || path == "/mcp" || path == "/api" || path.startsWith("/api/")) return serverApi(request, withTokens(platform(env), url));
   if (path == "/settings" || path == "/tokens" || path.startsWith("/tokens/")) return tokensDoor(request, withTokens(platform(env), url));
@@ -188,11 +178,11 @@ async function route(request: Request, env: Env, url: URL, ctx: ExecutionContext
 }
 
 /** The editor's own files (static assets, site.sh). */
-const ASSET_FILES = new Set(["/page.js", "/frame.js", "/settings.js", "/pages-tree.js", "/factory-agent.js", "/admin-share.js", "/admin-nav.js", "/live.js", "/style.css"]);
+const ASSET_FILES = new Set(["/page.js", "/frame.js", "/settings.js", "/pages-tree.js", "/admin-agent.js", "/admin-share.js", "/admin-nav.js", "/live.js", "/style.css"]);
 const isAsset = (path: string) => ASSET_FILES.has(path) || path.startsWith("/fonts/");
 
 /** A path that may be one of the homepage's files at the root: /<name>.<ext> or /<folder>/<name>.<ext>, but none of the app's own. */
-const APP_FILES = new Set(["/page.js", "/frame.js", "/factory-agent.js", "/admin-share.js", "/admin-nav.js", "/live.js", "/style.css", "/editor.html", "/llms.txt"]);
+const APP_FILES = new Set(["/page.js", "/frame.js", "/admin-agent.js", "/admin-share.js", "/admin-nav.js", "/live.js", "/style.css", "/editor.html", "/llms.txt"]);
 const isHomeFilePath = (path: string) => !APP_FILES.has(path) && !path.startsWith("/fonts/") && !path.startsWith("/d/") && /^\/(?:[^/]+\/)?[^/]*\.[^/]+$/.test(path);
 
 /**

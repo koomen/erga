@@ -16,7 +16,7 @@ bun server.config.ts >/dev/null
 mkdir -p .site/fonts
 put() { local tmp; tmp="$(dirname ".site/$2")/.$(basename "$2").$$"; cp "$1" "$tmp" && mv -f "$tmp" ".site/$2"; }
 put page.html editor.html
-bundles="page.js frame.js settings.js pages-tree.js factory-agent.js admin-share.js admin-nav.js live.js"
+bundles="page.js frame.js settings.js pages-tree.js admin-agent.js admin-share.js admin-nav.js live.js"
 for f in style.css fonts/*; do put "$f" "$f"; done
 sha() { if command -v sha256sum >/dev/null; then sha256sum "$1"; else shasum -a 256 "$1"; fi | cut -c1-16; }
 manifest="{"

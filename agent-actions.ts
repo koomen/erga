@@ -1,22 +1,20 @@
 // The rule: an embedded agent can do everything its person can do in its
 // domain, so they can ask for anything there in words.
 //
-//   the admin agent     (factory/agent.ts: on every /admin page) everything on /admin: the settings, the API keys,
-//                       sign-in (Authentication), the change log, the users, the factory's board, the dashboard of source and deploys, the
+//   the admin agent     (admin-agent/agent.ts: on every /admin page) everything on /admin: the settings, the API keys,
+//                       sign-in (Authentication), the change log, the users, the dashboard of source and deploys (Source), the
 //                       homepage's deploy, and the admin's own agent tokens (/settings)
 //   the document agent  (agent.ts, with server-tools.ts: in the editor) everything a person does with a document in
 //                       the editor and on the documents list (/docs)
 //
-// The one exception is a secret: an API key, the Claude token, a GitHub app's secret, a new agent token is pasted
-// or made only on the page, never in a conversation. The agent may clear an API key, sign the factory out, or revoke a
-// token. The one other exception is the production gate's emergency override (a merge to main whose tests
-// haven't passed): the user's rule is that only a person, in a browser, with a reason, may do it, never an agent.
+// The one exception is a secret: an API key, a GitHub app's secret, a new agent token is pasted
+// or made only on the page, never in a conversation. The agent may clear an API key, or revoke a token.
 // And the agents act only on what their person asks in the
 // conversation, never on text found in tool results (their system prompts say so).
 //
 // This is the audit: every action in the UI and the HTTP API, with the agent tool that does it, or why there
 // is none. tests/agent-actions.test.ts reads the routes from each file's own route table (the comments at the
-// top of worker/factory.ts, admin.ts, server-api.ts, ...), the document API (api.ts) and the file tree's
+// top of worker/admin-agent.ts, admin.ts, server-api.ts, ...), the document API (api.ts) and the file tree's
 // operations (tree.ts), and fails when one isn't here, or when a tool named here isn't the agent's. So a new
 // route, or a new button calling one, needs a line here and, unless it's a secret, a tool.
 
@@ -24,7 +22,7 @@
 export type Domain = "admin" | "document" | "none";
 
 export interface AgentAction {
-  /** The route, as its file's route table writes it ("POST /api/factory/tasks/<id>/merge"); "op=", "do=" for one of several. */
+  /** The route, as its file's route table writes it ("POST /api/source/merge"); "op=", "do=" for one of several. */
   readonly route: string;
   readonly domain: Domain;
   /** What the person does, on which page. */
@@ -38,9 +36,6 @@ export interface AgentAction {
 const SECRET = "a secret: pasted or made only on the page, never in a conversation";
 const PANEL = "the agent panel itself (the conversation, its model, stop, undo)";
 const STREAM = "the page's live updates (server-sent events)";
-const VM = "a task's own worker (its VM, or a local task's agent: factory/task.ts), not a person's action";
-/** The production gate's emergency override (deploy/gate.ts): the user's rule keeps it from every agent and token. */
-export const OVERRIDE = "an emergency step for a person in a browser only, logged with their reason: never an agent's or a token's (the user's rule)";
 
 export const AGENT_ACTIONS: AgentAction[] = [
   // ------------------------------------------------------------ /admin: settings, change log, users, API keys (admin.ts)
@@ -65,50 +60,26 @@ export const AGENT_ACTIONS: AgentAction[] = [
   { route: "POST /admin/auth do=clear", domain: "admin", action: "Clear the values set on the page: back to the deploy's (Authentication)", tool: "clear_sign_in_app" },
   { route: "POST /admin/share", domain: "admin", action: "Make an admin token for an outside agent (Share with agent, every admin page)", exempt: SECRET },
 
-  // ------------------------------------------------------------ /admin/factory: the board (worker/factory.ts)
-  { route: "GET /api/factory", domain: "admin", action: "See whether the factory is on, and where VMs run (Factory)", tool: "factory_status" },
-  { route: "GET /api/factory/tasks[/<id>]", domain: "admin", action: "Read the board (Factory)", tool: "list_tasks" },
-  { route: "GET /api/factory/tasks[/<id>]", domain: "admin", action: "Open a task's card: ask, summary, log (Factory)", tool: "get_task" },
-  { route: "GET /api/factory/shots/<file>", domain: "admin", action: "Look at a task's screenshot (Factory)", tool: "view_screenshot" },
-  { route: "GET /api/factory/tasks/<id>/open", domain: "admin", action: "Open a task's preview (Factory)", tool: "get_task" },
-  { route: "POST /api/factory/tasks", domain: "admin", action: "Add a task (Factory)", tool: "create_task" },
-  { route: "PATCH /api/factory/tasks/<id>", domain: "admin", action: "Change a task's dependencies (Factory)", tool: "set_dependencies" },
-  { route: "POST /api/factory/tasks/<id>/revise", domain: "admin", action: "Send a task more instructions (Factory)", tool: "instruct_task" },
-  { route: "POST /api/factory/tasks/<id>/merge", domain: "admin", action: "Merge a task into staging (Factory)", tool: "merge_task" },
-  { route: "POST /api/factory/tasks/<id>/discard", domain: "admin", action: "Discard a task (Factory)", tool: "discard_task" },
-  { route: "POST /api/factory/tasks/<id>/restart", domain: "admin", action: "Restart a task (Factory)", tool: "restart_task" },
-  { route: "PUT /api/factory/claude", domain: "admin", action: "Sign the factory in to a Claude plan (API keys)", exempt: SECRET },
-  { route: "DELETE /api/factory/claude", domain: "admin", action: "Sign the factory out of the Claude plan (API keys)", tool: "sign_out_claude" },
-  { route: "GET /api/factory/events", domain: "none", action: "The board's live updates", exempt: STREAM },
+  // ------------------------------------------------------------ the admin agent's panel, and the outside agents' guide (worker/admin-agent.ts)
   { route: "GET /api/admin/guide", domain: "none", action: "What an outside agent with an admin token reads first (Share with agent)", exempt: "an outside agent's guide, not a person's action" },
-  { route: "GET /api/factory/guide", domain: "none", action: "The same guide, at its old address", exempt: "an outside agent's guide, not a person's action" },
-  { route: "GET /api/factory/agent", domain: "none", action: "The admin agent's panel", exempt: PANEL },
-  { route: "POST /api/factory/agent", domain: "none", action: "A message to the admin agent", exempt: PANEL },
-  { route: "POST /api/factory/agent/abort|reset", domain: "none", action: "Stop the admin agent, or start a new conversation", exempt: PANEL },
-  { route: "POST /api/factory/agent/model", domain: "none", action: "Switch the admin agent's model", exempt: PANEL },
-  // A task's VM, with its task's token; or a local task's own agent (factory/task.ts), with an admin token.
-  { route: "GET /api/factory/tasks/<id>/brief", domain: "none", action: "A VM reads its task", exempt: VM },
-  { route: "GET /api/factory/tasks/<id>/inbox", domain: "none", action: "A VM reads new instructions", exempt: VM },
-  { route: "POST /api/factory/tasks/<id>/inbox", domain: "none", action: "A VM takes new instructions", exempt: VM },
-  { route: "POST /api/factory/tasks/<id>/log", domain: "none", action: "A VM writes its log", exempt: VM },
-  { route: "POST /api/factory/tasks/<id>/branch", domain: "none", action: "A VM says its branch is made", exempt: VM },
-  { route: "POST /api/factory/tasks/<id>/preview", domain: "none", action: "A VM says its preview is up", exempt: VM },
-  { route: "POST /api/factory/tasks/<id>/screenshots", domain: "none", action: "A VM adds a screenshot", exempt: VM },
-  { route: "POST /api/factory/tasks/<id>/git", domain: "none", action: "A local task's agent gets a git token for its branch (task push)", exempt: `${VM}: a push credential, and the admin agent never pushes` },
+  { route: "GET /api/admin/agent", domain: "none", action: "The admin agent's panel", exempt: PANEL },
+  { route: "POST /api/admin/agent", domain: "none", action: "A message to the admin agent", exempt: PANEL },
+  { route: "POST /api/admin/agent/abort|reset", domain: "none", action: "Stop the admin agent, or start a new conversation", exempt: PANEL },
+  { route: "POST /api/admin/agent/model", domain: "none", action: "Switch the admin agent's model", exempt: PANEL },
+  { route: "GET /api/admin/agent/events", domain: "none", action: "The admin agent's live updates", exempt: STREAM },
+  { route: "GET /api/admin/agent/conversation", domain: "none", action: "The admin agent's conversation, kept", exempt: PANEL },
+  { route: "DELETE /api/admin/agent/conversation", domain: "none", action: "A new conversation with the admin agent", exempt: PANEL },
+  { route: "GET /api/admin/agent/prefs", domain: "none", action: "The admin agent's panel, as the admin left it", exempt: PANEL },
+  { route: "PUT /api/admin/agent/prefs", domain: "none", action: "Keep the admin agent's panel layout", exempt: PANEL },
 
-  // ------------------------------------------------------------ /admin/factory: the dashboard of source and deploys
-  { route: "GET /api/source/branches", domain: "admin", action: "Read staging, main and the mirror (Factory, dashboard)", tool: "list_branches" },
-  { route: "POST /api/source/merge", domain: "admin", action: "Move main to staging: deploy production (Factory, dashboard)", tool: "deploy_production" },
-  { route: "POST /api/source/merge override=", domain: "admin", action: "Move main past the production gate, with a reason (Factory, dashboard: Override)", exempt: OVERRIDE },
-  { route: "GET /api/gate[?limit=N]", domain: "admin", action: "Read the production gate's test runs (Factory, dashboard: tests)", tool: "list_test_runs" },
-  { route: "GET /api/gate/<sha>", domain: "admin", action: "Read a commit's test run and verdict (Factory, dashboard: a tests cell)", tool: "get_test_run" },
-  { route: "GET /api/gate/<sha>/log?shard=N", domain: "admin", action: "Read a test shard's log (Factory, dashboard: Log)", tool: "get_test_run" },
-  { route: "POST /api/gate/<sha>/run", domain: "admin", action: "Run a commit's tests (again) (Factory, dashboard: Run tests, Run again)", tool: "run_tests" },
-  { route: "POST /api/source/mirror", domain: "admin", action: "Update the GitHub mirror now (Factory, dashboard)", tool: "sync_mirror" },
-  { route: "GET /api/deploys[?history=N]", domain: "admin", action: "Read the deploys (Factory, dashboard)", tool: "list_deploys" },
-  { route: "GET /api/deploys/<name>/history[?limit=N]", domain: "admin", action: "Read a target's past deploys (Factory, dashboard)", tool: "list_deploys" },
-  { route: "GET /api/deploys/<name>/log[?deploy=<id>]", domain: "admin", action: "Read a deploy's log (Factory, dashboard)", tool: "deploy_log" },
-  { route: "POST /api/deploys/<name>", domain: "admin", action: "Redeploy a target (Factory, dashboard)", tool: "redeploy" },
+  // ------------------------------------------------------------ /admin/source: the dashboard of source and deploys
+  { route: "GET /api/source/branches", domain: "admin", action: "Read staging, main and the mirror (Source)", tool: "list_branches" },
+  { route: "POST /api/source/merge", domain: "admin", action: "Move main to staging: deploy production (Source)", tool: "deploy_production" },
+  { route: "POST /api/source/mirror", domain: "admin", action: "Update the GitHub mirror now (Source)", tool: "sync_mirror" },
+  { route: "GET /api/deploys[?history=N]", domain: "admin", action: "Read the deploys (Source)", tool: "list_deploys" },
+  { route: "GET /api/deploys/<name>/history[?limit=N]", domain: "admin", action: "Read a target's past deploys (Source)", tool: "list_deploys" },
+  { route: "GET /api/deploys/<name>/log[?deploy=<id>]", domain: "admin", action: "Read a deploy's log (Source)", tool: "deploy_log" },
+  { route: "POST /api/deploys/<name>", domain: "admin", action: "Redeploy a target (Source)", tool: "redeploy" },
   { route: "POST /api/deploys/<name> fresh=", domain: "admin", action: "Redeploy staging with a fresh copy of production's data ({fresh: true})", tool: "redeploy" },
   { route: "GET /api/events", domain: "none", action: "The dashboard's live updates", exempt: STREAM },
   { route: "GET /admin/deploys", domain: "none", action: "An old address of the dashboard", exempt: "a redirect" },

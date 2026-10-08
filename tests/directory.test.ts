@@ -145,7 +145,7 @@ test("users: who may sign in, bootstrap admins and server roles", async () => {
   expect(await users.signedIn("ada", "Ada Lovelace")).toMatchObject({ name: "Ada Lovelace" });
   // Coming back without a name keeps it.
   expect((await users.signedIn("ada"))?.name).toBe("Ada Lovelace");
-  // Their GitHub id, from the sign-in (the factory's commits use it: factory/author.ts); kept until it changes.
+  // Their GitHub id, from the sign-in; kept until it changes.
   expect((await users.get("ada"))?.githubId).toBeNull();
   await users.setGithubId("Ada", 583231);
   expect((await users.get("ada"))?.githubId).toBe(583231);
@@ -251,19 +251,19 @@ test("server config: each change is a version, with who, when, and from what to 
   await config.set(root, "delete_docs_after_hours", 48);
   await expect(config.set(root, "delete_docs_after_hours", 0)).rejects.toBeInstanceOf(ConfigError);
   await config.set(ada, "delete_docs_after_hours", "never");
-  await config.set(ada, "factory", "on");
+  await config.set(ada, "deploy_page", "off");
   await config.reset(root, "delete_docs_after_hours");
   await config.reset(root, "delete_docs_after_hours"); // already the default: no version
   // The server's own write (a claim) is recorded too, and only the one that wins.
-  expect(await config.claim("factory_model", null, "sonnet", "Erga")).toBe(true);
-  expect(await config.claim("factory_model", null, "haiku", "erga")).toBe(false);
+  expect(await config.claim("landing_document", null, "abcd1234", "Erga")).toBe(true);
+  expect(await config.claim("landing_document", null, "efgh5678", "erga")).toBe(false);
 
   const { versions, total } = await config.history(root);
   expect(total).toBe(5);
   expect(versions.map((v) => [v.n, v.by, v.changes])).toEqual([
-    [5, "erga", [{ key: "factory_model", from: "opus", to: "sonnet" }]],
+    [5, "erga", [{ key: "landing_document", from: null, to: "abcd1234" }]],
     [4, "root", [{ key: "delete_docs_after_hours", from: null, to: 24, reset: true }]],
-    [3, "ada", [{ key: "factory", from: "off", to: "on" }]],
+    [3, "ada", [{ key: "deploy_page", from: "users", to: "off" }]],
     [2, "ada", [{ key: "delete_docs_after_hours", from: 48, to: null }]],
     [1, "root", [{ key: "delete_docs_after_hours", from: 24, to: 48 }]],
   ]);
@@ -273,17 +273,17 @@ test("server config: each change is a version, with who, when, and from what to 
   expect((await config.history(root, { before: 4, limit: 2 })).versions.map((v) => v.n)).toEqual([3, 2]);
   // Two saves at once (a switch saved twice): one version. Two different ones: each says truly what it changed.
   await Promise.all([config.set(root, "deploy_page", "admins"), config.set(root, "deploy_page", "admins")]);
-  await Promise.all([config.set(root, "factory_fast", "off"), config.set(ada, "factory_fast", "on"), config.reset(root, "factory_fast")]);
+  await Promise.all([config.set(root, "delete_docs_after_hours", 12), config.set(ada, "delete_docs_after_hours", 36), config.reset(root, "delete_docs_after_hours")]);
   const raced = (await config.history(root)).versions.filter((v) => v.n > 5).reverse().map((v) => v.changes[0]);
-  expect(raced[0]).toEqual({ key: "deploy_page", from: "users", to: "admins" });
+  expect(raced[0]).toEqual({ key: "deploy_page", from: "off", to: "admins" });
   expect(raced.filter((c) => c.key == "deploy_page")).toHaveLength(1);
-  const fast = raced.filter((c) => c.key == "factory_fast");
-  for (let i = 1; i < fast.length; i++) expect(fast[i].from).toEqual(fast[i - 1].to);
-  expect(fast[0].from).toBe("on");
-  expect(fast.at(-1)?.to ?? "on").toBe(await config.get("factory_fast"));
+  const hours = raced.filter((c) => c.key == "delete_docs_after_hours");
+  for (let i = 1; i < hours.length; i++) expect(hours[i].from).toEqual(hours[i - 1].to);
+  expect(hours[0].from).toBe(24);
+  expect(hours.at(-1)?.to ?? 24).toBe(await config.get("delete_docs_after_hours"));
   // A locked key can't change, so it makes no version.
-  const locked = fresh({ admins: ["root"], locked: { factory: "on" } });
-  await expect(locked.config.set(root, "factory", "off")).rejects.toBeInstanceOf(NotAllowed);
+  const locked = fresh({ admins: ["root"], locked: { deploy_page: "off" } });
+  await expect(locked.config.set(root, "deploy_page", "admins")).rejects.toBeInstanceOf(NotAllowed);
   expect((await locked.config.history(root)).total).toBe(0);
 });
 

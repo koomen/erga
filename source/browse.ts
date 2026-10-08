@@ -1,4 +1,4 @@
-// Reading Erga's own source, for the factory's agent (factory/agent.ts,
+// Reading Erga's own source, for the admin's agent (admin-agent/agent.ts,
 // `sourceTools`): list a folder, read a file (or some of its lines) and search
 // the code, in one commit's files as Artifacts sent them (SourceRepo.read,
 // source/repo.ts, which also answers the log). Read-only: nothing here
@@ -35,7 +35,7 @@ export function snapshotOf(commit: string, objects: Map<string, GitObject>): Sna
   return { commit, files, dirs, bytes };
 }
 
-/** What the tools ask (the factory's agent → SourceHost → SourceRepo.read). Each one names a branch or commit; staging if not. */
+/** What the tools ask (the admin's agent → SourceHost → SourceRepo.read). Each one names a branch or commit; staging if not. */
 export type SourceRead =
   | { op: "list"; ref?: string; path?: string; recursive?: boolean }
   | { op: "read"; ref?: string; path: string; from?: number; to?: number }

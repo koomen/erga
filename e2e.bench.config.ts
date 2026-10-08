@@ -1,5 +1,5 @@
 // Timing and performance checks (e2e/**/*.bench.e2e.ts): `bun run test:bench`.
-// Never part of `bun run test` or the production gate: what they measure moves
+// Never part of `bun run test`: what they measure moves
 // with the machine's load. They run one file at a time, on an idle machine.
 
 import type { E2EConfig } from "e2e";

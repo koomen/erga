@@ -2,8 +2,8 @@
 # Builds page.js (the page editor's shell, from src/page/) as a classic script
 # that page.html loads, frame.js (the editor itself, which runs on each
 # document's own origin), settings.js (document settings) and pages-tree.js (a
-# document's pages), both loaded on demand, factory-agent.js (the agent
-# panel on /admin/factory), admin-share.js (Share with an agent, on every
+# document's pages), both loaded on demand, admin-agent.js (the admin's agent
+# panel, on every admin page), admin-share.js (Share with an agent, on every
 # admin page), admin-nav.js (the admin pages as one page) and live.js (on
 # every page of the site's own: it follows a redeploy), all into .site/ (the
 # Worker's static assets, site.sh): build output stays out of the repo's
@@ -34,8 +34,8 @@ bundle src/page/settings.ts settings.js "Erga page editor, document settings."
 echo "built settings.js ($(wc -c < $out/settings.js | tr -d " ") bytes)"
 # The pages tree (src/page/tree.ts): loaded only when someone opens it, in the editor or on Documents, so viewing never pays for it.
 bundle src/page/tree.ts pages-tree.js "Erga page editor, the pages tree."
-# The factory's agent panel on /admin/factory (src/page/factory-agent.ts): the editor's agent panel, for factory tasks.
-bundle src/page/factory-agent.ts factory-agent.js "Erga, the factory's agent panel."
+# The admin's agent panel, on every admin page (src/page/admin-agent.ts): the editor's agent panel, for the admin pages.
+bundle src/page/admin-agent.ts admin-agent.js "Erga, the admin's agent panel."
 # Share with an agent, in the header of every admin page (src/page/admin-share.ts, admin-layout.ts).
 bundle src/page/admin-share.ts admin-share.js "Erga, Share with an agent on the admin pages."
 # The admin area as one page (src/page/admin-nav.ts, admin-layout.ts): a link to another admin page changes only the page, so the agent panel stays.

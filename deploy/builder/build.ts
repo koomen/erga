@@ -66,7 +66,7 @@ export async function buildIn(o: { dir: string; commit: string; log: Log; run?: 
   if (o.nodeModules) { symlinkSync(o.nodeModules, join(o.dir, "node_modules"), "dir"); o.log(`node_modules: ${o.nodeModules}`); }
   else await run(["bun", "install", "--frozen-lockfile"], { cwd: o.dir, log: o.log });
   // Erga's own servers serve its source (the Artifacts binding, cloudflare.config.ts): the namespace the commit's
-  // own deploy/targets.json names, so a branch deploy keeps the Git endpoint the factory and pushes go through.
+  // own deploy/targets.json names, so a branch deploy keeps the Git endpoint pushes go through.
   const artifacts = artifactsNamespace(o.dir);
   const ns: Record<string, string> = artifacts ? { ERGA_ARTIFACTS_NAMESPACE: artifacts } : {};
   if (artifacts) o.log(`source: the Artifacts namespace ${artifacts} (deploy/targets.json)`);

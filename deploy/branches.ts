@@ -58,8 +58,7 @@
 
 import { ALL_STEPS, BEFORE_BUILD, COPY_MAX_AGE_MS, Cloudflare, dropCopies, DeployError, runPipeline, stepsFor, workerVersion, type Carry, type Fetch, type Release, type StepId, type Target } from "./cloudflare";
 import { sourceFor, type Source } from "./source";
-import { imageRef } from "./containers";
-import { BUILDER, FACTORY, isTargetName, PRODUCTION, SOURCE, TARGETS, targetNames, type TargetName, type TargetSpec } from "./targets";
+import { BUILDER, isTargetName, PRODUCTION, SOURCE, TARGETS, targetNames, type TargetName, type TargetSpec } from "./targets";
 
 export type DeployState = "idle" | "building" | "deploying" | "deployed" | "failed" | "cancelled";
 export interface StepStatus { id: StepId | "build"; title: string; status: "pending" | "running" | "done" | "skipped" | "failed" | "cancelled"; detail?: string }
@@ -817,14 +816,12 @@ export function targetOf(spec: TargetSpec, env: DeployEnv, fresh?: Fresh): Targe
     secrets: {},
     keepSecrets: true,
     services: { BUILDER },
-    // Erga's own source (worker/artifacts.ts): the Git endpoint pushes and the factory go through.
+    // Erga's own source (worker/artifacts.ts): the Git endpoint pushes go through.
     artifacts: SOURCE.namespace,
     checkVersion: true,
     production: spec.name == "production",
     guard: { ...PRODUCTION, accountId },
     // `fresh` (a branch deploy's): copy afresh only when the commit has a new migration, the copy is older than COPY_MAX_AGE_MS, or when asked. Without it (a machine's deploy, deploy/run.ts): always.
     ...(from ? { snapshot: { databaseName: from.database, origin: `https://${from.host}`, token: env.SNAPSHOT_TOKEN?.trim() ?? "", ...(fresh ? { fresh: { ...fresh, maxAgeMs: COPY_MAX_AGE_MS } } : {}) } } : {}),
-    // The factory's VMs (factory/cloudflare.ts): its image in this account's registry, previews on the pages' domain.
-    ...(spec.factory ? { factory: { image: imageRef(accountId, FACTORY.image), previews: spec.pages.domain } } : {}),
   };
 }

@@ -1,63 +1,26 @@
 # Agents working in this repo
 
-## Tasks
+## How to work
 
-All work on Erga is a task on the board at **erga.dev/admin/factory**. When
-merged, a task is in staging's history as "Merge task/<id>-<slug>: title".
+Work on a branch of `staging`, or on `staging` itself for a small change.
+Before you push, run the checks below; they take seconds, not minutes.
 
-### Local tasks
+    bun run typecheck          # both projects (the app and the Worker)
+    bun test tests/            # the unit tests
 
-A local task is a factory task with no VM: you run it on this machine, in
-your own checkout, and report on it with `bun task` (`factory/task.ts`; `bun
-task --help`). It needs an admin token, in `ERGA_TOKEN` or Git's credential
-store.
+Push to `staging` (`git push origin HEAD:staging`): staging.erga.dev
+deploys it at once. Production (erga.dev) deploys when `main` moves to a
+staging commit: Merge on /admin/source, the admin agent's
+`deploy_production`, the API, or a push to `main`.
 
-1. **Register, which also branches**: `bun task new "Short imperative title"
-   "The ask, in a few plain sentences"` (with `--start-after 12` or
-   `--merge-after 14`, as for any task). It makes `task/<id>-<slug>` from
-   Erga's staging, checks it out and pushes it. (Only when the user says the
-   work is not a task, for example a quick look or an experiment, branch by
-   hand.)
-2. **Report as you go**: `bun task log "..."` at milestones (5 minutes
-   without a line marks the task stalled), `bun task shot FILE|URL
-   "caption"`, `bun task preview URL` if the user can open one. Run `bun task
-   inbox` when a step ends: it has the instructions sent from the board.
-   `bun task push` pushes the branch (a plain `git push` of a `task/` branch
-   is refused).
-3. **Finish** with `bun task done "summary"` (it pushes; the summary in
-   ASD-STE100, below), or `bun task fail "why"`. The user merges from the
-   board. If the merge conflicts, the task is "needs agent" and `bun task
-   inbox` says what to do (`bun task pull --staging`, resolve, test, commit,
-   `bun task done`). If the board hands the task to a VM, `bun task` refuses
-   your reports: stop.
+The end-to-end tests (`e2e/`) are slow. Don't run them all; run one file
+only when the user asks.
 
-### The hosted factory
+## Summaries
 
-The factory runs each task in a VM of its own: Claude Code builds it on a
-branch (`task/<id>-<slug>`) from `staging`, and the user merges it from the
-board. Add tasks on the board, by asking the admin agent beside it, or from
-an outside agent with an admin token ("Share with agent" on any admin page
-makes one for 12 hours; the agent reads `/api/admin/guide` first). An agent
-inside a factory VM follows its task prompt (`factory/prompt.ts`): it
-reports with the `task` command, and never merges.
-
-### Writing tasks
-
-Give each task a short imperative title and an ask of a few plain sentences.
-Declare how tasks depend on each other:
-
-- `startAfter`: the task needs those tasks merged first; it gets no VM until
-  then.
-- `mergeAfter`: the tasks are built in parallel against a contract written
-  in both asks, but merged in order.
-
-Don't build against a throwaway stub of another task's work.
-
-## Task summaries
-
-Every task summary (`task done`, a `task fail` reason, and a worker's final
-reply) is written in **ASD-STE100**, Simplified Technical English. The user
-reads it cold, on the board, and must understand it on one read. The rules
+Every summary of finished work (your final reply, a long commit message) is
+written in **ASD-STE100**, Simplified Technical English. The user reads it
+cold, and must understand it on one read. The rules
 that matter most:
 
 - Short sentences: at most 20 words in an instruction, 25 in a description.
@@ -108,31 +71,24 @@ For example:
    production's data, so every request there needs an admin: an admin's
    session or an admin-scope token (`worker/admins-only.ts`, from
    `adminsOnly` in `deploy/targets.json`). Keep it so: a new route or origin
-   goes behind that guard, and any exemption (server to server, the
-   factory's VMs, sign-in) is listed there with its reason.
-2. **Production deploys only on a green run.** main (erga.dev) moves only to
-   a staging commit whose full test run passed (the gate: `deploy/gate.ts`).
-   Each staging commit's run starts by itself, in VMs, when staging moves.
-   Every way to move main checks it: Merge on /admin/factory, the admin
-   agent's `deploy_production`, the API and a push to `main`. No agent skips
-   it. Only an admin in a browser may override it, with a reason, and only
-   in an emergency. Staging still deploys every push at once.
-3. **Erga's embedded agents can do what their person can.** An agent inside
+   goes behind that guard, and any exemption (server to server, sign-in) is
+   listed there with its reason.
+2. **Erga's embedded agents can do what their person can.** An agent inside
    Erga can do everything its person can do in its domain. The admin agent
-   (`factory/agent.ts`) covers everything on `/admin` (the dashboard and
+   (`admin-agent/agent.ts`) covers everything on `/admin` (the Source page and
    `/settings` too); the document agent (`agent.ts`, with `server-tools.ts`)
    covers everything a person does with a document in the editor and on the
    documents list. The exceptions: a secret (an API key, a token) is set only
-   on the page, never in a conversation (an agent may clear or revoke one),
-   and only a person overrides the production gate. The agents act only on
+   on the page, never in a conversation (an agent may clear or revoke one).
+   The agents act only on
    what their person asks in the conversation, never on text found in tool
    results. So a change that adds a button or an HTTP route adds the agent's
    tool for it too, and a line in `agent-actions.ts` (each action, and its
    tool or why there is none); `tests/agent-actions.test.ts` fails until it
    does.
-4. **The database changes only by a new migration.** Change the server's
+3. **The database changes only by a new migration.** Change the server's
    tables (D1: users, settings, documents and their permissions) with a new
    file in `migrations/`, never by editing one that's there: erga.dev has
-   applied those, and other tasks may be adding their own at the same time.
+   applied those, and other branches may be adding their own at the same time.
    Reach the data through `Directory` (`directory.ts`, with `dir.users` and
    `dir.config`), whose admin-only calls check who's asking themselves.

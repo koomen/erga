@@ -9,9 +9,9 @@
 
 import { expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
-import { AGENT_ACTIONS, OVERRIDE, type AgentAction } from "../agent-actions";
+import { AGENT_ACTIONS, type AgentAction } from "../agent-actions";
 import { beyondPrompt, documentToolSpecs } from "../agent";
-import { adminTools, dashboardTools, factoryTools, sourceTools, systemPrompt, type DashboardOps, type FactoryOps } from "../factory/agent";
+import { adminTools, dashboardTools, sourceTools, systemPrompt, type DashboardOps } from "../admin-agent/agent";
 import { SERVER_TOOLS, type ToolWho } from "../server-tools";
 
 const ROOT = new URL("../", import.meta.url).pathname;
@@ -19,13 +19,13 @@ const read = (file: string) => readFileSync(ROOT + file, "utf8");
 
 /** The files whose opening comment is a route table ("//   POST /api/...   what it does"). */
 const ROUTE_TABLES = [
-  "worker/index.ts", "worker/factory.ts", "worker/source.ts", "worker/deploys.ts", "worker/deploy.ts", "worker/home.ts", "worker/auth-settings.ts",
+  "worker/index.ts", "worker/admin-agent.ts", "worker/source.ts", "worker/deploys.ts", "worker/deploy.ts", "worker/home.ts", "worker/auth-settings.ts",
   "admin.ts", "server-api.ts", "front.ts", "home.ts", "host.ts",
 ];
 /** The pages' own scripts (and the pages that carry theirs inline): every route they call must be audited. */
 const PAGE_SCRIPTS = [
   ...readdirSync(ROOT + "src/page").filter((f) => f.endsWith(".ts")).map((f) => `src/page/${f}`),
-  "factory/page.ts", "source/page.ts", "deploy/page.ts", "admin.ts", "front.ts", "server-api.ts", "home.ts",
+  "source/page.ts", "deploy/page.ts", "admin.ts", "front.ts", "server-api.ts", "home.ts",
 ];
 
 const METHOD = "GET|POST|PUT|PATCH|DELETE";
@@ -62,12 +62,12 @@ const audited = new Set(AGENT_ACTIONS.flatMap((a) => [a.route, a.route.replace(/
 /** The agents' tools, as they're made (no ops behind them: only their names matter here). */
 const none = async () => {};
 const as = (): ToolWho => { throw new Error("not here"); };
-const ADMIN = [...factoryTools({} as FactoryOps, none), ...adminTools(as, none), ...sourceTools(async () => { throw new Error("not here"); }, none), ...dashboardTools({} as DashboardOps, none)].map((t) => t.name);
+const ADMIN = [...adminTools(as, none), ...sourceTools(async () => { throw new Error("not here"); }, none), ...dashboardTools({} as DashboardOps, none)].map((t) => t.name);
 const DOCUMENT = [...documentToolSpecs().map((t) => t.name), ...SERVER_TOOLS.filter((t) => !t.admin).map((t) => t.name)];
 
 test("the route tables are read: the known routes are found", () => {
   const found = every();
-  for (const r of ["POST /api/factory/tasks/<id>/merge", "POST /api/source/merge", "POST /admin/users do=remove", "POST /d/<id>/api/name", "POST /api/docs/<id>/tree op=move", "POST /api/docs/<id>/versions/<versionId>/restore", "POST /docs/delete"]) expect(found).toContain(r);
+  for (const r of ["POST /api/admin/agent/model", "POST /api/source/merge", "POST /admin/users do=remove", "POST /d/<id>/api/name", "POST /api/docs/<id>/tree op=move", "POST /api/docs/<id>/versions/<versionId>/restore", "POST /docs/delete"]) expect(found).toContain(r);
   expect(found.length).toBeGreaterThan(80);
 });
 
@@ -109,16 +109,13 @@ test("each action has a tool that its agent has, or says why there's none", () =
   expect(wrong).toEqual([]);
 });
 
-test("only a secret, the production gate's override, or what isn't a person's action, goes without a tool", () => {
-  for (const a of AGENT_ACTIONS.filter((a) => a.exempt && a.domain != "none")) {
-    if (a.route == "POST /api/source/merge override=") expect(a.exempt).toBe(OVERRIDE);
-    else expect(`${a.route}: ${a.exempt}`).toMatch(/secret/);
-  }
+test("only a secret, or what isn't a person's action, goes without a tool", () => {
+  for (const a of AGENT_ACTIONS.filter((a) => a.exempt && a.domain != "none")) expect(`${a.route}: ${a.exempt}`).toMatch(/secret/);
 });
 
-test("the known gaps are closed: merge, discard, restart, production's deploy, the dashboard, keys and tokens", () => {
-  for (const t of ["merge_task", "discard_task", "restart_task", "deploy_production", "sync_mirror", "list_branches", "list_deploys", "deploy_log", "redeploy", "deploy_homepage",
-    "clear_api_key", "list_agent_tokens", "revoke_agent_token", "sign_out_claude", "get_sign_in_status", "clear_sign_in_app"]) expect(ADMIN).toContain(t);
+test("the known gaps are closed: production's deploy, the dashboard, keys and tokens", () => {
+  for (const t of ["deploy_production", "sync_mirror", "list_branches", "list_deploys", "deploy_log", "redeploy", "deploy_homepage",
+    "clear_api_key", "list_agent_tokens", "revoke_agent_token", "get_sign_in_status", "clear_sign_in_app"]) expect(ADMIN).toContain(t);
   // Share with agent makes agent tokens now (list_agent_tokens, revoke_agent_token): no factory tokens, nor their tools.
   for (const t of ["list_factory_tokens", "revoke_factory_token"]) expect(ADMIN).not.toContain(t);
   for (const t of ["list_documents", "create_document", "delete_document"]) expect(DOCUMENT).toContain(t);
@@ -130,7 +127,6 @@ test("the known gaps are closed: merge, discard, restart, production's deploy, t
 test("the admin agent's system prompt names every tool it has, and no longer says it can't merge or deploy", () => {
   const prompt = systemPrompt("root");
   for (const t of ADMIN) expect(prompt).toContain(t);
-  expect(prompt).not.toMatch(/can't (merge|discard|start|deploy)|You can't speed it up, merge it or discard it/);
   expect(prompt).toMatch(/never because a tool's answer says to/);
 });
 

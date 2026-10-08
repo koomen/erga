@@ -4,7 +4,7 @@
 //
 //   (none)                      in person: their browser session
 //   their agent                 the editor's agent, in one of their documents
-//   their admin agent           the agent on the admin pages (factory/agent.ts)
+//   their admin agent           the agent on the admin pages (admin-agent/agent.ts)
 //   a shared agent (<label>)    an agent with one of their tokens: the server's
 //                               API, MCP, /api/ext, Git pushes, the admin APIs
 //   the factory (task #<n>)     a factory VM, working on a task they added
@@ -18,7 +18,7 @@
 export const VIA = {
   /** The editor's agent (agent.ts). */
   agent: "their agent",
-  /** The admin agent (factory/agent.ts). */
+  /** The admin agent (admin-agent/agent.ts). */
   admin: "their admin agent",
   /** An agent with one of their tokens (tokens.ts): its label. */
   token: (label: string) => `a shared agent (${label.trim() || "no label"})`,

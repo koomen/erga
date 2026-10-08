@@ -1,35 +1,32 @@
 // The admin's agent panel, on every admin page (admin-layout.ts has its markup, and collapses it to a round
-// button in the lower left), first made for /admin/factory. The panel is the editor's (the same markup,
-// styles and conversation, agent-chat.ts), talking to the admin's own agent
-// session in the Factory object (factory/agent.ts, worker/factory.ts):
+// button in the lower left). The panel is the editor's (the same markup, styles and conversation,
+// agent-chat.ts), talking to the admin's own agent session in the AdminAgent object (admin-agent/agent.ts,
+// worker/admin-agent.ts):
 //
-//   GET  /api/factory/agent            the state: on or off (and why), the model, the conversation so far
-//   POST /api/factory/agent            { text, context }: a message; context says which admin page is open,
-//                                      and on the factory's, which task is open on the board
-//   POST /api/factory/agent/abort|reset|model
-//   /api/factory/events                { type: "agent", ev } for this admin's agent (the board's events too)
+//   GET  /api/admin/agent              the state: on or off (and why), the model, the conversation so far
+//   POST /api/admin/agent              { text, context }: a message; context says which admin page is open
+//   POST /api/admin/agent/abort|reset|model
+//   /api/admin/agent/events            { type: "agent", ev } for this admin's agent
 //   GET|DELETE /api/admin/agent/conversation   the conversation, kept on the server (read on mount); a new one
 //   GET|PUT    /api/admin/agent/prefs          the panel as the admin left it: open, side, width
 //
 // The conversation and the panel follow the admin from page to page, browser to browser and sign-in to
-// sign-in: the server keeps them (worker/factory.ts, factory/chat-store.ts). This browser keeps a copy of
+// sign-in: the server keeps them (worker/admin-agent.ts, admin-agent/chat-store.ts). This browser keeps a copy of
 // the panel's state (admin-layout.ts, layout.ts), so a page paints it at once.
 //
-// The chime when a task or the agent needs the admin (chime.ts) rides along, on the same events.
 // Share with agent is in every admin page's header (admin-share.ts). Built
-// by build.sh to factory-agent.js.
+// by build.sh to admin-agent.js.
 
 import { chat } from "./agent-chat";
 import { fileRefs, type Attachment } from "./attach";
 import { attachments } from "./attach-ui";
 import type { Log, LogEvent } from "./agent-log";
 import { mountPaneLayout, type PaneLayout } from "./layout";
-import * as chime from "./chime";
 import { backoff, live, transient } from "./live-client";
 import { restoredFor } from "./restore";
 
 interface AgentState { enabled: boolean; reason?: string; model?: string | null; choice?: string | null; models?: { id: string; label: string }[]; log?: Log }
-declare global { interface Window { ergaBoard?: { openTask(): number | null; title(id: number): string | null; open(id: number): void }; ergaAgent?: { set(open: boolean): void } } }
+declare global { interface Window { ergaAgent?: { set(open: boolean): void } } }
 interface Prefs { open?: boolean; side?: "left" | "right"; width?: number }
 
 const $ = (id: string) => document.getElementById(id)!;
@@ -39,13 +36,6 @@ const store = {
 };
 
 const VERBS: Record<string, [string, string]> = {
-  factory_status: ["Checking the factory", "Checked the factory"],
-  list_tasks: ["Reading the board", "Read the board"],
-  get_task: ["Reading", "Read"],
-  view_screenshot: ["Looking at a screenshot of", "Looked at a screenshot of"],
-  create_task: ["Queueing", "Queued"],
-  set_dependencies: ["Changing the dependencies of", "Changed the dependencies of"],
-  instruct_task: ["Sending instructions to", "Sent instructions to"],
   list_settings: ["Reading the settings", "Read the settings"],
   set_setting: ["Changing", "Changed"],
   reset_setting: ["Resetting", "Reset"],
@@ -116,10 +106,8 @@ function renderBusy() {
   else if (hint.classList.contains("sticky")) hideHint();
 }
 
-/** What the admin has open, so "this task" or "this page" means something to the agent. */
+/** What the admin has open, so "this page" means something to the agent. */
 function context(): string | null {
-  const id = window.ergaBoard?.openTask() ?? null;
-  if (id != null) return `The admin has task #${id} open on the board: ${window.ergaBoard?.title(id) ?? ""}`;
   const here = document.querySelector(".crumbs .here")?.textContent?.trim();
   return `The admin has the ${here ?? "admin"} page open (${location.pathname}).`;
 }
@@ -129,7 +117,7 @@ async function ask(text: string, ctx: string | null, files: Attachment[] = []) {
   // While the server restarts (a redeploy) it doesn't answer, or its gateway says so: the message waits and goes once it's back.
   let res: Response | Error = new Error("not sent");
   for (let i = 0, until = Date.now() + 45_000; ; i++) {
-    res = await fetch("/api/factory/agent", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text, context: ctx, files }), signal: AbortSignal.timeout(files.length ? 60_000 : 15_000) }).catch((e: Error) => e);
+    res = await fetch("/api/admin/agent", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text, context: ctx, files }), signal: AbortSignal.timeout(files.length ? 60_000 : 15_000) }).catch((e: Error) => e);
     if (res instanceof Response ? res.ok || !transient(res) : res.name == "TimeoutError" || !transient(res)) break;
     if (Date.now() + backoff(i) > until) break;
     await new Promise((r) => setTimeout(r, backoff(i)));
@@ -162,14 +150,14 @@ function sizeInput() {
 new ResizeObserver(() => { const h = input.offsetHeight; if (h) field.style.height = h + "px"; }).observe(input);
 
 // An unsent message survives a reload (kept in this browser only).
-const DRAFT = "erga:factory-agent-draft:v1";
+const DRAFT = "erga:factory-agent-draft:v1"; // its old name, so a draft from before survives
 const draft = store.get(DRAFT);
 if (draft) { input.value = draft; sizeInput(); }
 input.addEventListener("input", () => { if (!hint.classList.contains("sticky")) hideHint(); sizeInput(); store.set(DRAFT, input.value || null); });
 input.addEventListener("keydown", (e) => { if (e.key == "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); sendNow(); } });
 $("agent-form").addEventListener("submit", (e) => {
   e.preventDefault();
-  if (send.classList.contains("stop")) fetch("/api/factory/agent/abort", { method: "POST" });
+  if (send.classList.contains("stop")) fetch("/api/admin/agent/abort", { method: "POST" });
   else sendNow();
 });
 $("agent-reset").addEventListener("click", () => {
@@ -191,7 +179,7 @@ function renderModel(m: AgentState | null) {
   sel.addEventListener("pointerdown", () => sel.classList.add("by-pointer"));
   sel.addEventListener("keydown", () => sel.classList.remove("by-pointer"));
   sel.addEventListener("change", async () => {
-    const r = await fetch("/api/factory/agent/model", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ model: sel.value }) }).then((r) => r.json()).catch(() => ({ ok: false })) as AgentState & { ok: boolean };
+    const r = await fetch("/api/admin/agent/model", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ model: sel.value }) }).then((r) => r.json()).catch(() => ({ ok: false })) as AgentState & { ok: boolean };
     if (!r.ok) { sel.value = m.choice!; showHint("Couldn't switch models."); return; }
     showHint(log.busy ? `${sel.selectedOptions[0]?.text}: from your next message` : `Switched to ${sel.selectedOptions[0]?.text}`);
   });
@@ -206,7 +194,7 @@ async function load(tries = 0): Promise<void> {
   // The conversation from where the server keeps it, whether the agent is on or not.
   const kept = fetch("/api/admin/agent/conversation").then((r) => (r.ok ? r.json() : null)).catch(() => null) as Promise<{ log?: Log } | null>;
   let again = false;
-  const a = await fetch("/api/factory/agent").then(async (r) => { again = transient(r); return r.ok ? r.json() : Promise.reject(new Error(((await r.json().catch(() => null)) as { error?: string } | null)?.error?.replace(/\.$/, "") ?? `the server answered ${r.status}`)); }, (e: Error) => { again = transient(e); throw e; }).catch((e: Error) => ({ enabled: false, reason: e.message })) as AgentState;
+  const a = await fetch("/api/admin/agent").then(async (r) => { again = transient(r); return r.ok ? r.json() : Promise.reject(new Error(((await r.json().catch(() => null)) as { error?: string } | null)?.error?.replace(/\.$/, "") ?? `the server answered ${r.status}`)); }, (e: Error) => { again = transient(e); throw e; }).catch((e: Error) => ({ enabled: false, reason: e.message })) as AgentState;
   // The server restarting (a redeploy): ask again shortly, as the panel was, rather than call the agent off.
   if (!a.enabled && again && down < 8) { downTimer = window.setTimeout(() => load(), backoff(down++)); return; }
   down = 0;
@@ -219,14 +207,13 @@ async function load(tries = 0): Promise<void> {
   renderBusy();
 }
 
-// The agent's events come with the board's, to this admin only; a reconnect reads the whole conversation again.
-// The chime (chime.ts) hears them all too: a task that comes to need the admin, the agent's reply.
+// The agent's events, to this admin only; a reconnect reads the whole conversation again.
 // An event stream reconnects by itself, but not after an answer that isn't one (a gateway's error while the server
 // restarts): then it's made again, a little later each time.
 let tries = 0;
 function connect() {
-  const es = new EventSource("/api/factory/events");
-  es.onopen = () => { tries = 0; live((l) => l.connection("admin-agent", true)); load(); chime.opened(); };
+  const es = new EventSource("/api/admin/agent/events");
+  es.onopen = () => { tries = 0; live((l) => l.connection("admin-agent", true)); load(); };
   es.onerror = () => {
     live((l) => l.connection("admin-agent", false));
     if (es.readyState == EventSource.CLOSED) setTimeout(connect, backoff(tries++));
@@ -234,26 +221,17 @@ function connect() {
   es.onmessage = (e) => {
     let m: { type?: string; ev?: LogEvent };
     try { m = JSON.parse(e.data); } catch { return; }
-    chime.heard(m as Parameters<typeof chime.heard>[0]);
     if (m.type == "agent" && m.ev) { heard++; talk.apply(m.ev); renderBusy(); }
   };
 }
 load().then(connect);
 
 // A new release (live.ts): the page reloads at a quiet moment and comes back as it was. The draft, the panel and
-// its layout are kept anyway; this keeps the files attached to the next message and the task open on the board.
-interface Kept { files?: Attachment[]; task?: number | null }
+// its layout are kept anyway; this keeps the files attached to the next message.
+interface Kept { files?: Attachment[] }
 live((l) => {
   l.hold(() => (att.reading ? "files are being read" : null));
-  l.keep("admin-agent", (): Kept => ({ files: att.files, task: window.ergaBoard?.openTask() ?? null }));
+  l.keep("admin-agent", (): Kept => ({ files: att.files }));
 });
 const back = restoredFor<Kept>("admin-agent");
 if (back?.files?.length) att.restore(back.files);
-if (back?.task != null) {
-  // The board comes up after this script (its tasks read from the server): the task opens once it's there.
-  const task = back.task;
-  const until = Date.now() + 10_000;
-  const open = () => { if (window.ergaBoard) window.ergaBoard.open(task); else if (Date.now() < until) setTimeout(open, 100); };
-  open();
-}
-

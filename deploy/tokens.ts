@@ -99,7 +99,7 @@ export function describePlan(p: TokenPlan): string[] {
     `${PERMISSION.workerEditor}: ${p.workers.join(", ")} (nothing else)`,
     `${PERMISSION.d1Write}: the account's D1 databases (Cloudflare has no narrower scope for D1)`,
     `${PERMISSION.zoneRead}, ${PERMISSION.routesRead}, ${PERMISSION.dnsRead}: ${p.zones.join(", ")} (read only)`,
-    `Artifacts: none in the token. ${p.storedOn}'s own Artifacts binding (namespace ${SOURCE.namespace} only) reads and writes Erga's source; the factory and pushes write through its Git endpoint (/git/erga.git)`,
+    `Artifacts: none in the token. ${p.storedOn}'s own Artifacts binding (namespace ${SOURCE.namespace} only) reads and writes Erga's source; pushes write through its Git endpoint (/git/erga.git)`,
   ];
 }
 

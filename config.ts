@@ -81,36 +81,6 @@ export const SETTINGS = {
     parse: (v) => (v === null || v === "" ? null : text(300)(v) || null),
     kind: "document",
   }),
-  factory: setting<"off" | "on">({
-    description: "The factory (experimental): tasks that Claude Code does in VMs, each a branch merged into staging, on /admin/factory. off or on.",
-    default: "off",
-    parse: (v) => {
-      const s = typeof v == "string" ? v.trim().toLowerCase() : v === true ? "on" : v === false ? "off" : v;
-      if (s === "off" || s === "on") return s;
-      throw new ConfigError('must be "off" or "on"');
-    },
-    choices: ["off", "on"],
-  }),
-  factory_model: setting<string>({
-    description: "The model the factory's Claude Code uses (claude --model): an alias such as opus or sonnet, or a full model name. Each job reads it when it starts, so no new image is needed.",
-    default: "opus",
-    parse: (v) => {
-      const s = typeof v == "string" ? v.trim() : v;
-      if (typeof s == "string" && /^[A-Za-z0-9][A-Za-z0-9._\[\]-]{0,99}$/.test(s)) return s;
-      throw new ConfigError("must be a model alias (opus, sonnet) or a model name");
-    },
-    choices: ["opus", "sonnet", "haiku"],
-  }),
-  factory_fast: setting<"off" | "on">({
-    description: "Whether the factory's Claude Code runs in fast mode (its fastMode setting). on or off. Each job reads it when it starts.",
-    default: "on",
-    parse: (v) => {
-      const s = typeof v == "string" ? v.trim().toLowerCase() : v === true ? "on" : v === false ? "off" : v;
-      if (s === "off" || s === "on") return s;
-      throw new ConfigError('must be "off" or "on"');
-    },
-    choices: ["off", "on"],
-  }),
   deploy_page: setting<"off" | "admins" | "users">({
     description: "Who may use /deploy, to deploy Erga to their own Cloudflare account: off, admins (and users with the deploy role, on /admin/users) or users (anyone signed in).",
     default: "users",
@@ -190,7 +160,7 @@ export interface SettingChange {
   reset?: boolean;
   /** An API key admins enter (credentials.ts), by its Worker secret's name: what happened to it. `from` and `to` are null, never the key. */
   credential?: "set" | "replaced" | "cleared";
-  /** A factory task (key "task"): added to the board, or merged into staging (`commit`: the merge commit). `from` and `to` are null. */
+  /** A factory task (key "task", from before the factory was removed): added to the board, or merged into staging (`commit`: the merge commit). `from` and `to` are null. */
   task?: { id: number; title: string; event: "added" | "merged"; commit?: string };
   /** main moved forward to staging (key "main"): the production deploy. `from` and `to` are main's old and new heads (null: none); `commits`, the newest that came (at most 50), of `total`. */
   release?: {

@@ -499,7 +499,7 @@ kbd {
   .chrome, .help, .toast { display: none !important; }
 }
 
-/* Resizing and docking an agent panel (src/page/layout.ts): the editor's and /admin/factory's. The grip on the
+/* Resizing and docking an agent panel (src/page/layout.ts): the editor's and the admin pages'. The grip on the
    edge that faces the page shows its line on hover and while dragged; a panel dragged by its head is lifted,
    and the ghost shows the slot it will land in. Where each panel sits is the page's own (page.html, source/page.ts). */
 .agent-resize { position: absolute; top: 18px; bottom: 18px; right: -9px; width: 12px; cursor: col-resize; touch-action: none; z-index: 1; }
@@ -521,7 +521,7 @@ body.layout-dragging, body.layout-dragging * { cursor: grabbing !important; user
 
 /* ---------- The agent panel's insides ----------
    Its head, the conversation (src/page/agent-chat.ts) and the box: the editor's panel (page.html places it) and
-   the factory's on /admin/factory (source/page.ts) both use them. */
+   the admin's on the admin pages both use them. */
 
 .agent-head { display: flex; align-items: center; gap: 4px; padding: 10px 8px 6px 18px; }
 .agent-head .title { font-weight: 600; color: var(--fg-strong); }

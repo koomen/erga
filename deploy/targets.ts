@@ -70,12 +70,6 @@ export interface TargetSpec {
    * down, or can't deploy itself): deploy/branches.ts.
    */
   deploys: TargetName[];
-  /**
-   * The factory runs here with VMs (factory/cloudflare.ts): Cloudflare Containers from the factory's image (FACTORY,
-   * below), with previews on <vm>.<pages.domain>: the pages' wildcard route, DNS record and Universal SSL certificate
-   * already cover one label under it, so the previews need nothing new.
-   */
-  factory?: boolean;
 }
 
 import data from "./targets.json";
@@ -88,14 +82,6 @@ export const SOURCE: { namespace: string; repo: string } = data.source;
 
 /** The Worker that builds a commit (deploy/builder/): a container with bun and git, reached over a service binding. */
 export const BUILDER: string = data.builder;
-
-/**
- * The factory's VM image (factory/vm/Dockerfile): its name in the account's container registry,
- * erga-factory:<tag>@sha256:<digest>, with the tag factory/vm/build.ts gives it (tests/pipeline.test.ts checks
- * they're equal) and the digest the push got (Containers takes only digest-pinned images). A new Dockerfile or
- * agent needs a new image: `bun factory/vm/push.ts` builds, pushes and prepares it, and writes its name here.
- */
-export const FACTORY: { image: string } = data.factory;
 
 /**
  * The targets themselves are in targets.json (staging's GITHUB_CLIENT_ID is

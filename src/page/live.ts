@@ -4,7 +4,7 @@
 //
 // A redeploy (or a restart of the dev server) drops every live connection:
 // each script reconnects by itself and reads again what it shows
-// (collab.ts, main.ts, factory-agent.ts, factory/page.ts) and tells this
+// (collab.ts, main.ts, admin-agent.ts) and tells this
 // one (live-client.ts: `connection`). If a connection stays down for a while,
 // a small "Reconnecting…" note shows in a corner, and nothing else does.
 //

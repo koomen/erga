@@ -17,7 +17,6 @@
 //
 // Its routes, before the Worker's:
 //
-//   /__factory/...       the factory's local repository and VMs (dev/factory.ts)
 //   POST /__erga/open    path=<file or folder>: links it for whoever's signed in and goes to it
 //   POST /__erga/flush   ?link=<secret>: every linked document writes what it holds to disk now (dev.ts, before stopping)
 //   /__artifacts/..., /__github/...   stand-ins for Cloudflare Artifacts and GitHub, real Git (dev/git-server.ts):
@@ -36,7 +35,6 @@ import { ALPHABET } from "../front.ts";
 import { ignored } from "../src/room/doc.ts";
 import { gitServers } from "./git-server.ts";
 import type { FromDisk, ToDisk } from "./mirror.ts";
-import { factoryDev } from "./factory.ts";
 import { liveReload, type LiveReload } from "./reload.ts";
 
 const EDITOR = resolve(import.meta.dirname, "..");
@@ -109,10 +107,7 @@ export function ergaDev(opts: DevOptions): Plugin {
         return l;
       };
 
-      // The factory's local stand-ins: Erga's repository and the VMs (dev/factory.ts).
-      const factory = factoryDev({ stateDir: opts.stateDir, secret: opts.secret, port: () => (server.httpServer?.address() as AddressInfo | null)?.port ?? 0, log });
       server.middlewares.use((req, res, next) => {
-        if (req.url?.startsWith("/__factory/") && factory.handle(req, res)) return;
         const url = new URL(req.url ?? "/", "http://localhost");
         if (req.method == "POST" && url.pathname == "/__erga/open") return void open(req, res, url).catch(next);
         if (url.pathname.startsWith("/__artifacts/") || url.pathname.startsWith("/__github/")) return void git(req, res, url).catch(next);
@@ -189,7 +184,7 @@ export function ergaDev(opts: DevOptions): Plugin {
       const parent = Number(process.env.ERGA_PARENT);
       if (parent) setInterval(() => { try { process.kill(parent, 0); } catch { process.exit(1); } }, 1000).unref();
       // Closed (stopping, or Vite restarting it when its config changes): nothing of this one stays behind.
-      server.httpServer?.once("close", () => { unwatch(); factory.close(); live?.stop(); for (const m of mirrors.values()) m.stop(); });
+      server.httpServer?.once("close", () => { unwatch(); live?.stop(); for (const m of mirrors.values()) m.stop(); });
     },
   };
 }

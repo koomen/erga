@@ -6,13 +6,11 @@
 // Users.actsAsAdmin). Anyone else gets a page (signed out: sign in; signed in:
 // admins only, with a link to production) or a JSON 403, and Git a 401 that
 // asks for a token. This is the one guard, at the front door (worker/index.ts,
-// before every route but a factory preview's); production and servers made
+// before every route); production and servers made
 // by /deploy never run it.
 //
 // What gets in without an admin, and why (each one checks its own credential):
 //
-//   a factory VM's preview host     worker/index.ts answers it before this guard: its own ticket, which only the
-//                                   factory's board hands out (GET /api/factory/tasks/<id>/open, admins only)
 //   /auth/github[/callback], /auth/logout
 //                                   signing in and out: an admin must be able to sign in
 //   the editor's static files       /page.js, /style.css, /fonts/... and /editor.html: the app's own code, public in its
@@ -22,19 +20,11 @@
 //   /api/deploys/<name>/hook, /api/deploys/status, and /api/deploys/... with DEPLOY_HOOK_SECRET
 //                                   server to server: production passes branch moves on and reads staging's status,
 //                                   logs and history, with the shared secret (worker/deploys.ts checks it)
-//   /api/gate... with DEPLOY_HOOK_SECRET
-//                                   production reads (and starts) staging's test runs before it moves main (deploy/gate.ts)
 //   /api/sign-in/... with DEPLOY_HOOK_SECRET
 //                                   production's Authentication page reads staging's sign-in status, and sets staging's
 //                                   GitHub app: until staging has one, no admin can sign in there (worker/auth-settings.ts)
 //   /api/snapshot/...               the deploy copying production's documents in, with SNAPSHOT_TOKEN (deploy/snapshot.ts)
-//   /api/factory/tasks/<id>/... with "Bearer fct.…"
-//                                   a factory VM reporting on its own task (worker/factory.ts checks the token)
-//   /git/erga.git with an fgt.… token
-//                                   a factory VM's clone and push, its own task's branch only (worker/source.ts checks it)
 //   /__erga/...                     local development only, behind the dev server's secret (worker/index.ts, linked)
-//
-// (/__factory/... never reaches the Worker: the dev server answers it, locally.)
 //
 // Everything else needs an admin: documents and their sockets, /docs, the front page and the homepage, /new, /deploy,
 // /settings and /tokens, the APIs and MCP, the Git endpoint (anonymous reads too), and the documents' pages origin
@@ -54,23 +44,19 @@ import { pagesSite, platform } from "./platform";
 export const adminsOnly = (env: Pick<Env, "DEPLOY_TARGET">): boolean => isAdminsOnly(env.DEPLOY_TARGET);
 
 /** The editor's own files (worker/index.ts serves them from ASSETS). */
-const ASSET_FILES = new Set(["/page.js", "/frame.js", "/settings.js", "/pages-tree.js", "/factory-agent.js", "/admin-share.js", "/admin-nav.js", "/style.css", "/editor.html"]);
+const ASSET_FILES = new Set(["/page.js", "/frame.js", "/settings.js", "/pages-tree.js", "/admin-agent.js", "/admin-share.js", "/admin-nav.js", "/style.css", "/editor.html"]);
 
 /** The request needs no admin: one of the exemptions above. */
 function exempt(request: Request, env: Env, url: URL): boolean {
   const path = url.pathname;
   const method = request.method;
-  const auth = request.headers.get("authorization") ?? "";
   if (path == "/auth/github" || path == "/auth/github/callback" || path == "/auth/logout") return true;
   if (ASSET_FILES.has(path) || path.startsWith("/fonts/")) return method == "GET" || method == "HEAD";
   if (path == "/api/deploys/version") return method == "GET" || method == "HEAD";
   if (/^\/api\/deploys\/[a-z]+\/hook\/?$/.test(path) || path == "/api/deploys/status") return true;
   if (path.startsWith("/api/deploys/") && peer(request, env)) return true;
-  if ((path == "/api/gate" || path.startsWith("/api/gate/")) && peer(request, env)) return true;
   if (isSignInPath(path) && peer(request, env)) return true;
   if (path.startsWith("/api/snapshot/")) return true;
-  if (path.startsWith("/api/factory/tasks/") && /^Bearer\s+fct\./.test(auth)) return true;
-  if ((path == "/git/erga.git" || path.startsWith("/git/erga.git/")) && gitSecret(auth)?.startsWith("fgt.")) return true;
   if (path.startsWith("/__erga/")) return true;
   return false;
 }

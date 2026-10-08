@@ -48,12 +48,11 @@ export default defineConfig(({ mode }) => ({
       Pipeline: exports.durableObject({ storage: "sqlite" }),
       // The homepage's deploys and the snapshot / serves (worker/home.ts): one object, "home".
       Home: exports.durableObject({ storage: "sqlite" }),
-      // The factory (experimental, worker/factory.ts): its tasks and the stored Claude token, in one object, "factory".
-      Factory: exports.durableObject({ storage: "sqlite" }),
-      // The factory's VMs (factory/cloudflare.ts): one object per task's VM, each owning a Cloudflare Container. The deploy
-      // pipeline adds the container (its image, deploy/targets.json `factory`) on Erga's own targets; elsewhere (and
-      // locally, where the dev server runs the VMs) it's a plain object nothing uses.
-      FactoryVm: exports.durableObject({ storage: "sqlite" }),
+      // Each admin's agent, its conversation and panel (worker/admin-agent.ts): one object, "admin".
+      AdminAgentHost: exports.durableObject({ storage: "sqlite" }),
+      // The factory (its task queue) and its VMs: gone, with what they held.
+      Factory: exports.durableObject({ state: "deleted" }),
+      FactoryVm: exports.durableObject({ state: "deleted" }),
       // Each person's list of documents before the directory: gone, with what it held.
       DocList: exports.durableObject({ state: "deleted" }),
     },
@@ -71,8 +70,7 @@ export default defineConfig(({ mode }) => ({
         GITHUB_MIRROR_TOKEN: bindings.secret(),
       } : {}),
       HOME: bindings.durableObject({ worker: PROD.worker, exportName: "Home" }),
-      FACTORY: bindings.durableObject({ worker: PROD.worker, exportName: "Factory" }),
-      FACTORY_VM: bindings.durableObject({ worker: PROD.worker, exportName: "FactoryVm" }),
+      ADMIN_AGENT: bindings.durableObject({ worker: PROD.worker, exportName: "AdminAgentHost" }),
       // The server's database: users, settings and the directory. The deploy pipeline (deploy/cloudflare.ts) finds it by name, or
       // makes it, and applies migrations/ before each deploy. Locally (vite dev) it's a database of its own, at a fixed made-up id that
       // `bun run db:local` applies the migrations to.
@@ -115,8 +113,6 @@ export default defineConfig(({ mode }) => ({
         ERGA_VERSION_MAX_MS: bindings.text(process.env.ERGA_VERSION_MAX_MS ?? ""),
         // e2e/load-bench.ts --latency: each call to the database or a document waits this long first (worker/timing.ts).
         ERGA_REMOTE_LATENCY_MS: bindings.text(process.env.ERGA_REMOTE_LATENCY_MS ?? ""),
-        // The production gate's simulated shards (deploy/gate.ts, fakeRunner): how long each takes (tests shorten it).
-        ERGA_GATE_FAKE_MS: bindings.text(process.env.ERGA_GATE_FAKE_MS ?? ""),
 
         // Sign-in's settings (worker/auth-settings.ts), for the tests: a stand-in for github.com, and the other target's server.
         ERGA_GITHUB_ORIGIN: bindings.text(process.env.ERGA_GITHUB_ORIGIN ?? ""),

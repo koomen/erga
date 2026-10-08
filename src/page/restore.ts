@@ -2,7 +2,7 @@
 // one entry in the tab's sessionStorage, for the page at the same address,
 // written just before the reload. Every script of the reloaded page may read
 // it (live.js for the scroll, the forms and the focus; page.js for the
-// editor's caret, scroll, view and open cards; factory-agent.js for the open
+// editor's caret, scroll, view and open cards; admin-agent.js for the open
 // task and the files attached to the agent's next message), and only that
 // page: the first reader marks it with the page's start time, so the next
 // load (a reload by hand, a page opened later) finds it used and ignores it.

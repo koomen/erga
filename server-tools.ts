@@ -24,7 +24,7 @@
 //
 // An admin tool is offered only to an admin with admin power (`toolsFor`;
 // Users.actsAsAdmin): an external agent with an admin-scope token (tokens.ts),
-// and the factory's own agent (factory/agent.ts, `adminTools`),
+// and the admin's agent (admin-agent/agent.ts, `adminTools`),
 // acting as the admin whose session it is. The editor's agent never has them (a document's host never
 // carries admin power, and a document's text could steer its agent). The
 // directory checks again on every call (Users.mustAdmin), so a tool list

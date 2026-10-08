@@ -1,6 +1,6 @@
 // Files attached to a message for an agent: the rules both agents' panels
 // (attach-ui.ts) and both servers (host.ts for the editor's agent,
-// worker/factory.ts for the factory's) go by. Images go to the model as
+// worker/admin-agent.ts for the admin's) go by. Images go to the model as
 // images; text-like files (code, Markdown, CSV, JSON...) as text, after the
 // message. Anything else is refused, with a reason the person can act on.
 // The transcript keeps only a small thumbnail of each image (FileRef), so

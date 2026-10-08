@@ -39,8 +39,8 @@ export function directoryOf(env: Env): Directory {
 }
 
 /**
- * What signs the factory VMs' tokens and encrypts the Claude token (worker/factory.ts) and the API keys admins enter
- * (credentials.ts), each with a key of its own derived from it: FACTORY_KEY, or locally the session secret.
+ * What encrypts the API keys and sign-in secrets admins enter (credentials.ts, auth-apps.ts), each with a key of its
+ * own derived from it: FACTORY_KEY, or locally the session secret.
  */
 export function factoryKey(env: Env): string | null {
   if (env.FACTORY_KEY?.trim()) return env.FACTORY_KEY.trim();

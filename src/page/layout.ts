@@ -156,11 +156,11 @@ export function save(storage: Pick<Storage, "setItem"> | null, layout: Layout) {
 // ---------------------------------------------------------------- the admin pages' agent panel
 
 /**
- * The admin pages' agent panel (admin-layout.ts, src/page/factory-agent.ts): the
+ * The admin pages' agent panel (admin-layout.ts, src/page/admin-agent.ts): the
  * same grip and drag as the editor's agent, in a grid of two, the agent and
  * the board's column, either way round. Kept in this browser (PANE_KEY).
  */
-export const PANE_KEY = "erga:factory-layout:v1";
+export const PANE_KEY = "erga:factory-layout:v1"; // its old name, so a layout from before stays
 export interface PaneLayout { side: Side; width: number }
 export const PANE_DEFAULT: PaneLayout = { side: "left", width: AGENT_DEFAULT };
 /** The narrowest the board and the dashboard get while the agent is resized, and the gap between them and the agent. */
@@ -450,12 +450,12 @@ function slide(el: HTMLElement, from: DOMRect) {
 }
 
 /**
- * Puts PaneLayout on /admin/factory: --agent-w on the workspace (a grid of
+ * Puts PaneLayout on the admin pages: --agent-w on the workspace (a grid of
  * the agent's `dock` and the board's column, `panes`), .agent-right on it when
  * the agent is right of the board, the grip on the dock's inner edge, and the
  * dock dragged by the agent's head. Off where the window is `narrow` (tabs).
  * `saved` hears each layout the admin leaves it in (the server keeps it too:
- * factory-agent.ts); `set` puts one on (the server's, on another browser).
+ * admin-agent.ts); `set` puts one on (the server's, on another browser).
  */
 export function mountPaneLayout(workspace: HTMLElement, dock: HTMLElement, panes: HTMLElement, head: HTMLElement, narrow: MediaQueryList, saved?: (layout: PaneLayout) => void) {
   const storage = localStore();

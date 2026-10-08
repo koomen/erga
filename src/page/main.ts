@@ -1341,7 +1341,7 @@ Once you've read the guide, await further instructions.`;
   let voice: { rec: Recognition; before: string; sent: number; results: number; heard: string; partial: boolean; timer: number } | null = null;
   let hintTimer = 0;
 
-  // The conversation as the log shows it (agent-chat.ts, which the factory's panel on /admin/factory shares).
+  // The conversation as the log shows it (agent-chat.ts, which the admin's panel shares).
   const agentChat = chat({
     logEl: agentLog, jump: $("agent-jump") as HTMLButtonElement,
     verbs: { read: ["Reading", "Read"], edit: ["Editing", "Edited"], write: ["Writing", "Wrote"], ls: ["Listing", "Listed"], find: ["Finding files", "Found files"], grep: ["Searching", "Searched"], view_page: ["Looking at the page", "Looked at the page"], evaluate_page: ["Inspecting the page", "Inspected the page"] },
@@ -1349,7 +1349,7 @@ Once you've read the guide, await further instructions.`;
   });
   const log: Log = agentChat.log;
   const follow = agentChat.follow;
-  // Files to go with the next message: dropped on the panel, pasted, or picked (attach-ui.ts, as on /admin/factory).
+  // Files to go with the next message: dropped on the panel, pasted, or picked (attach-ui.ts, as on the admin pages).
   const agentFiles = attachments({ pane: agentPanel, form: $("agent-form"), input: agentInput, hint: (t) => showHint(t), changed: () => renderBusy() });
   function renderLog() {
     agentChat.render();
