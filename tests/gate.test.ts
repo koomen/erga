@@ -8,7 +8,7 @@ import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fakeRunner, RERUN_MAX, SILENT_MS, TestGate, verdictOf, vmName, type GateRunner, type ShardReport } from "../deploy/gate.ts";
+import { DEPLOY_WAIT_MS, fakeRunner, RERUN_MAX, SILENT_MS, TestGate, verdictOf, vmName, type GateRunner, type ShardReport } from "../deploy/gate.ts";
 import { E2E_ALONE, E2E_SLOTS, e2eItems, e2eResults, planShards, TYPECHECK_SECS, UNIT_SECS, type E2EReport } from "../factory/vm/gate.ts";
 import { parseStatus, vmRunner } from "../worker/gate.ts";
 import { git, must, startFixture, type Fixture } from "./source-fixture.ts";
@@ -76,7 +76,7 @@ describe("the shard split", () => {
 });
 
 /** A gate on a pretend clock, its storage in memory, with the fake runner (or another). */
-function makeGate(o: { runner?: GateRunner | string; subjects?: Record<string, string>; shards?: number } = {}) {
+function makeGate(o: { runner?: GateRunner | string; subjects?: Record<string, string>; shards?: number; deployed?: (commit: string) => Promise<boolean> } = {}) {
   let t = 1_000_000;
   const store = new Map<string, unknown>();
   const events: string[] = [];
@@ -88,6 +88,7 @@ function makeGate(o: { runner?: GateRunner | string; subjects?: Record<string, s
     now: () => t,
     shards: o.shards ?? 3,
     timer: () => {},
+    ...(o.deployed ? { deployed: o.deployed } : {}),
   });
   /** Moves the clock on and polls until nothing changes (each launch settles first). */
   const step = async (ms: number) => { t += ms; await new Promise((r) => setTimeout(r, 5)); await gate.alarm(); await new Promise((r) => setTimeout(r, 5)); await gate.alarm(); };
@@ -217,6 +218,58 @@ describe("a run", () => {
     await step(SILENT_MS + 1000);
     expect((await gate.get(sha("3")))?.shards[0].error).toContain("didn't answer");
     expect(await gate.log(sha("3"), 1)).toContain("memory available 0.1 GB");
+  });
+
+  test("a silent VM's failure says what the last try to reach it got", async () => {
+    const quiet: GateRunner = { kind: "test", start: async () => {}, stop: async () => {}, poll: async () => { throw new Error("the VM's agent answered 503: busy"); } };
+    const { gate, step } = makeGate({ runner: quiet, shards: 1 });
+    await gate.start(sha("4"), "push");
+    await step(10);
+    await step(SILENT_MS + 1000);
+    expect((await gate.get(sha("4")))?.shards[0].error).toBe("The VM didn't answer for 3 minutes (the last try: the VM's agent answered 503: busy).");
+  });
+
+  test("a staging move's run starts its VMs only when that commit's deploy ends, and its limits count from then", async () => {
+    let ended = false;
+    const started: string[] = [];
+    const fake = fakeRunner({ delayMs: 1000, now: () => at(), subject: async () => "a change" });
+    const runner: GateRunner = { ...fake, start: (spec) => { started.push(spec.vm); return fake.start(spec); } };
+    // The gate asks the server's deploys (worker/pipeline.ts): here, a flag.
+    const { gate, step, at } = makeGate({ runner, deployed: async () => ended });
+    const run = await gate.start(sha("5"), "staging moved (push by ada)", { supersede: true, afterDeploy: true });
+    expect(run.waits).toBe(true);
+    await step(SILENT_MS + 60_000);
+    expect(started).toEqual([]);
+    let v = await gate.verdict(sha("5"));
+    expect(v.state).toBe("running");
+    expect(v.reason).toContain("start when staging's deploy of it ends");
+    ended = true;
+    await step(10);
+    expect(started.length).toBe(3);
+    const going = await gate.get(sha("5"));
+    expect(going?.waits).toBeUndefined();
+    expect(going?.shards.every((s) => s.started == at())).toBe(true);
+    await step(1500);
+    expect((await gate.get(sha("5")))?.state).toBe("passed");
+    // A run someone asks for doesn't wait.
+    started.length = 0;
+    ended = false;
+    await gate.start(sha("6"), "run by ada", { again: true });
+    await step(10);
+    expect(started.length).toBe(3);
+    // A deploy that never says it ended: the VMs start after DEPLOY_WAIT_MS anyway.
+    started.length = 0;
+    await gate.start(sha("7"), "staging moved", { supersede: true, afterDeploy: true });
+    await step(DEPLOY_WAIT_MS + 1000);
+    expect(started.length).toBe(3);
+    // A newer move cancels a run that still waits; it never starts.
+    started.length = 0;
+    await gate.start(sha("8"), "staging moved", { supersede: true, afterDeploy: true });
+    await gate.start(sha("9"), "staging moved", { supersede: true, afterDeploy: true });
+    expect((await gate.get(sha("8")))?.state).toBe("cancelled");
+    ended = true;
+    await step(10);
+    expect(started.every((vm) => !vm.includes(sha("8").slice(0, 10)))).toBe(true);
   });
 
   test("the verdict for a commit with no run tells what to do", () => {

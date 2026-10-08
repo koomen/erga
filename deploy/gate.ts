@@ -39,6 +39,8 @@ export const SHARD_LIMIT_MS = 40 * 60_000;
 export const SILENT_MS = 3 * 60_000;
 /** Failures of at most this many files are run once more (flaky tests); more than that is a real failure. */
 export const RERUN_MAX = 5;
+/** The longest a run waits for this server's deploy of its commit before its VMs start anyway. */
+export const DEPLOY_WAIT_MS = 30 * 60_000;
 /** How many runs are kept (one per commit, newest first). */
 export const KEEP = 200;
 /** How much of a shard's log is kept. */
@@ -90,6 +92,11 @@ export interface GateRun {
   supersededBy?: string;
   /** Where the shards ran (the runner's kind). */
   runner: string;
+  /**
+   * Its VMs wait for this server's own deploy of the commit to end: that deploy's new Worker version restarts every
+   * VM it owns, which would stop the shards (deps.deployed).
+   */
+  waits?: boolean;
 }
 
 /** A shard as its VM says it is (factory/vm/gate.ts, `gate status`). */
@@ -127,6 +134,8 @@ export interface GateDeps {
   pollMs?: number;
   /** A timer while this object is up (an alarm doesn't fire while another, a deploy, runs): setTimeout. */
   timer?: (fn: () => void, ms: number) => void;
+  /** Whether this server's own deploy of `commit` ended (or moved on to another commit): a run of a staging move waits for it. */
+  deployed?(commit: string): Promise<boolean>;
 }
 
 /** A gate's answer for a commit: may main move to it? */
@@ -143,6 +152,7 @@ export function verdictOf(commit: string, run: GateRun | null): Verdict {
   const c = commit.slice(0, 7);
   if (!run) return { ok: false, state: "none", reason: `${c} has no test run yet. Production deploys only a staging commit whose full test run passed: run its tests on the Factory page (Run tests), then merge.`, run: null };
   if (run.state == "passed") return { ok: true, state: "passed", reason: null, run };
+  if (run.state == "running" && run.waits) return { ok: false, state: "running", reason: `The tests of ${c} start when staging's deploy of it ends. Production deploys only a commit whose full test run passed: merge when it is green.`, run };
   if (run.state == "running") {
     const done = run.shards.filter((s) => TERMINAL.includes(s.state)).length;
     return { ok: false, state: "running", reason: `The tests of ${c} are still running (${done} of ${run.shards.length} shards done). Production deploys only a commit whose full test run passed: merge when it is green.`, run };
@@ -199,8 +209,9 @@ export class TestGate {
   /**
    * A run of `commit`'s tests (staging moved to it, or someone asked): a new one, unless one runs for it already.
    * A run of another commit that still goes is cancelled: staging moved on (only with `supersede`).
+   * `afterDeploy`: staging moved, and its own deploy of the commit runs now: the VMs start when it ends (deps.deployed).
    */
-  async start(commit: string, trigger: string, o: { supersede?: boolean; again?: boolean } = {}): Promise<GateRun> {
+  async start(commit: string, trigger: string, o: { supersede?: boolean; again?: boolean; afterDeploy?: boolean } = {}): Promise<GateRun> {
     if (!isSha(commit)) throw new Error(`Not a commit (40 hex digits): ${commit}`);
     const had = await this.get(commit);
     if (had?.state == "running") return had;
@@ -222,10 +233,17 @@ export class TestGate {
     for (const s of had?.shards ?? []) await this.deps.storage.delete?.(logKey(commit, s.n));
     const of = this.shards;
     run.shards = Array.from({ length: of }, (_, i) => ({ n: i + 1, vm: vmName(commit, run.attempt, i + 1), state: "starting" as const, items: [], results: [], started: t, ended: null }));
+    if (o.afterDeploy && this.deps.deployed) run.waits = true;
     await this.save(run);
-    for (const s of run.shards) this.launch(run.commit, { commit, vm: s.vm, shard: s.n, of });
+    if (!run.waits) this.launchAll(run);
     await this.wake();
     return run;
+  }
+
+  /** Starts every shard of a new run. */
+  private launchAll(run: GateRun): void {
+    const of = run.shards.length;
+    for (const s of run.shards) this.launch(run.commit, { commit: run.commit, vm: s.vm, shard: s.n, of });
   }
 
   /** Starts a shard's VM and job, in the background: a start that fails fails the shard. */
@@ -291,13 +309,27 @@ export class TestGate {
     if (typeof runner == "string") return;
     for (const run of await this.list(10)) {
       if (run.state != "running") continue;
+      if (run.waits) {
+        const t = this.now();
+        const ended = await this.deps.deployed!(run.commit).catch(() => false);
+        if (!ended && t - run.started < DEPLOY_WAIT_MS) continue;
+        // Read again: it may have been cancelled meanwhile.
+        const fresh = await this.get(run.commit);
+        if (!fresh || fresh.state != "running" || fresh.attempt != run.attempt || !fresh.waits) continue;
+        delete fresh.waits;
+        for (const s of fresh.shards) s.started = t;
+        await this.save(fresh);
+        this.launchAll(fresh);
+        continue;
+      }
       const touched = new Set<string>();
       for (const s of run.shards) {
         if (TERMINAL.includes(s.state) || this.launching.has(s.vm)) continue;
         touched.add(s.vm);
         const t = this.now();
         let report: ShardReport | "gone" | null = null;
-        try { report = await runner.poll(s.vm); } catch { report = null; }
+        let why = "";
+        try { report = await runner.poll(s.vm); } catch (e) { report = null; why = String((e as Error)?.message ?? e).slice(0, 300); }
         if (report && report != "gone") {
           s.heard = t;
           if (report.phase) s.phase = report.phase;
@@ -318,7 +350,7 @@ export class TestGate {
             await runner.stop(s.vm).catch(() => {});
           } else if (s.state == "starting") s.state = "running";
         } else if (t - (s.heard ?? s.started) > SILENT_MS) {
-          this.fail(s, report == "gone" ? "The VM stopped before the shard ended." : `The VM didn't answer for ${Math.round(SILENT_MS / 60_000)} minutes.`);
+          this.fail(s, report == "gone" ? "The VM stopped before the shard ended." : `The VM didn't answer for ${Math.round(SILENT_MS / 60_000)} minutes${why ? ` (the last try: ${why})` : ""}.`);
           await runner.stop(s.vm).catch(() => {});
         }
         if (!TERMINAL.includes(s.state) && t - s.started > SHARD_LIMIT_MS) {
