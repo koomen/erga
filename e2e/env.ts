@@ -26,9 +26,7 @@ const GIT = {
 export function hermetic(): boolean {
   if (process.env.ERGA_TEST_HOME) return false;
   const real = homedir();
-  // Where this machine's downloads live, read before HOME moves: Playwright's browsers, Bun's package cache
-  // (a simulated factory VM installs from it, dev/factory.ts), Chrome's HOME for the factory's screenshots (a Mac's
-  // Chrome hangs in a fresh HOME, factory/vm/task.ts).
+  // Where this machine's downloads live, read before HOME moves: Playwright's browsers, Bun's package cache.
   process.env.PLAYWRIGHT_BROWSERS_PATH ??= process.platform == "darwin" ? join(real, "Library/Caches/ms-playwright") : join(process.env.XDG_CACHE_HOME || join(real, ".cache"), "ms-playwright");
   process.env.BUN_INSTALL_CACHE_DIR ??= join(real, ".bun/install/cache");
   process.env.ERGA_CHROME_HOME ??= real;
@@ -42,7 +40,7 @@ export function hermetic(): boolean {
     "[tag]", "\tgpgsign = false",
     "",
   ].join("\n"));
-  // The one secret kept, asked for by name: the live agent check's key (e2e/page/agent-live.e2e.ts), for its own server only.
+  // The one secret kept, asked for by name: the live agent check's key (e2e/full/page/agent-live.e2e.ts), for its own server only.
   if (process.env.ERGA_LIVE_AGENT == "1" && process.env.ANTHROPIC_API_KEY?.trim()) process.env.ERGA_LIVE_AGENT_KEY = process.env.ANTHROPIC_API_KEY.trim();
   for (const k of Object.keys(process.env)) if (SECRET.test(k) && !k.startsWith("PLAYWRIGHT_")) delete process.env[k];
   Object.assign(process.env, GIT, { HOME: home, XDG_CONFIG_HOME: join(home, ".config"), ERGA_TEST_HOME: home });

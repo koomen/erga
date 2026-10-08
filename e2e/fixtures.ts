@@ -7,7 +7,7 @@
 // test file afresh for every file and retry, but not the modules it imports).
 //
 // A file starts the servers it needs at its top level, as the worker imports
-// it: `await servers.factory();`. e2e waits for that import with no time limit
+// it: `await servers.main();`. e2e waits for that import with no time limit
 // (a beforeAll has the test's 15 s, and under load a server takes longer to
 // start, which skipped the whole file), so no test or hook pays for a server.
 // The runner imports every file too, only to list its tests: there servers.*
@@ -21,12 +21,7 @@
 //
 //   servers.main()     a dev server, signed in as DEV_LOGIN, with no agent key
 //   servers.agent()    the same with an agent key that is never used (the agent's UI comes on)
-//   servers.factory()  the factory with simulated VMs and the scripted agent model
 //   servers.script()   a plain dev server whose agents (the editor's, the admin's) run on the scripted model
-//   servers.mock()     Cloudflare pretend (deploy/mock.ts), no deploy target: /deploy deploys to the mock
-//   servers.staging()  staging, deploying itself on the mock Cloudflare: admins only, its pipeline, the gate's fake runner
-//   servers.gate()     no deploy target, the production gate's fake runner (fast) and the scripted agent model
-//   servers.pair()     production and staging, each the other's peer with the mock's shared secret, and a stand-in GitHub
 //   servers.short()    the scripted agent model, and short timings (SHORT): versions cut, homepages deployed, in seconds
 //   servers.suite()    the multiplayer suite's: the scripted agent model, and a short write delay (e2e/suite/suite.ts)
 //   servers.of(key, o) a kind one file needs alone (its own settings, or one it changes or restarts),
@@ -43,27 +38,17 @@
 // Playwright page underneath it (surfaceOf).
 //
 // Tests share a worker's server one after another, never at once, and each
-// makes its own data (documents, tasks, tokens), so none depends on another or
+// makes its own data (documents, tokens), so none depends on another or
 // on their order.
 
 import { surfaceOf, test as web } from "@e2e-dev/web";
 import { expect } from "e2e";
 import type { Page } from "playwright-core";
 import { engine } from "./engine";
-import { startPair, type Pair } from "./pair";
 import { startServer, type Server, type ServerOptions } from "./server";
 
 export { expect };
-export type { Page, Pair, Server };
-
-/** The factory's dev server: its secret (for minting git tokens), and how it answered before any test changed a setting. */
-export interface FactoryServer extends Server {
-  secret: string;
-  initial: { enabled: boolean };
-}
-
-/** Staging's SESSION_SECRET (servers.staging), for a test that makes a pages token as another server would. */
-export const STAGING_SESSION_SECRET = `staging-${crypto.randomUUID()}`;
+export type { Page, Server };
 
 type Disposable = { alive(): boolean; dispose(): void };
 const started = new Map<string, Promise<Disposable>>();
@@ -101,22 +86,8 @@ export const servers = {
     ERGA_AGENT_MODEL: "script", ERGA_WRITE_DELAY_MS: "50", ERGA_VERSION_IDLE_MS: String(SHORT.idle), ERGA_VERSION_MAX_MS: String(SHORT.max),
     ERGA_HOME_DELAY_MS: String(SHORT.homeDelay), ERGA_HOME_RECHECK_MS: "0",
   } })),
-  factory: once("factory", async (): Promise<FactoryServer> => {
-    const secret = `factory-test-${crypto.randomUUID()}`;
-    const s = await startServer({ env: { ERGA_AGENT_MODEL: "script", ERGA_FACTORY_RUNNER: "sim", ERGA_LINK_SECRET: secret, ERGA_FACTORY_SIM_NO_SCRIPTS: "1",
-      // A document's edits are a version soon after they stop (worker/doc-host.ts), for the attribution tests' editor agent.
-      ERGA_WRITE_DELAY_MS: "50", ERGA_VERSION_IDLE_MS: "800", ERGA_VERSION_MAX_MS: "6000" } });
-    const initial = await (await fetch(`${s.root}/api/factory`)).json() as { enabled: boolean };
-    return Object.assign(s, { secret, initial });
-  }),
-  // The scripted model (agent.ts, "@script [...]"): a message plays the tool calls and replies it lists. A task the
-  // admin agent queues runs in a simulated VM, never in this machine's Docker.
-  script: once("script", () => startServer({ env: { ERGA_AGENT_MODEL: "script", ERGA_FACTORY_RUNNER: "sim", ERGA_FACTORY_SIM_NO_SCRIPTS: "1" } })),
-  mock: once("mock", () => startServer({ env: { ERGA_DEPLOY_MOCK: "1" } })),
-  staging: once("staging", () => startServer({ env: { ERGA_DEPLOY_MOCK: "1", ERGA_DEPLOY_TARGET: "staging", SESSION_SECRET: STAGING_SESSION_SECRET } })),
-  // The fake runner's shards take 700 ms, not 1.5 s (worker/gate.ts).
-  gate: once("gate", () => startServer({ env: { ERGA_AGENT_MODEL: "script", ERGA_GATE_FAKE_MS: "700" } })),
-  pair: once("pair", () => startPair()),
+  // The scripted model (agent.ts, "@script [...]"): a message plays the tool calls and replies it lists.
+  script: once("script", () => startServer({ env: { ERGA_AGENT_MODEL: "script" } })),
   suite: once("suite", () => startServer({ env: SUITE_ENV })),
   /**
    * A kind of server one file needs (`key`, its own), started with `opts` the first time. A worker keeps one such

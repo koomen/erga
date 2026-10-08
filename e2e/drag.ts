@@ -1,6 +1,6 @@
 // Dragging the side panels (src/page/layout.ts: the editor's, mountLayout, and
 // the admin pages', mountPaneLayout) with the mouse, and waiting until they
-// stop moving. For e2e/page/layout-*.e2e.ts and e2e/factory/panel-*.e2e.ts.
+// stop moving. For e2e/full/page/layout-*.e2e.ts.
 
 import type { Page } from "playwright-core";
 import { settle, until } from "./fixtures";

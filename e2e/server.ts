@@ -5,8 +5,8 @@
 // ?user=, /auth/github?as=). The editor's files are built once, in
 // global-setup.ts (ERGA_BUILT).
 //
-// Stopping kills the whole tree at once (dev.ts, Vite, workerd, and anything a
-// simulated factory VM left running under the scratch folder): tests don't
+// Stopping kills the whole tree at once (dev.ts, Vite, workerd, and anything
+// left running under the scratch folder): tests don't
 // need the documents flushed to disk on the way out.
 
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
@@ -40,7 +40,7 @@ export interface Server {
   port: number;
   /** The `open` folder's document (no #edit), else `root`. */
   base: string;
-  /** The Worker's local state (ERGA_STATE_DIR): its Durable Objects, the factory's repository and VMs. */
+  /** The Worker's local state (ERGA_STATE_DIR): its Durable Objects. */
   state: string;
   /** The scratch folder everything of this server's is in. */
   scratch: string;
@@ -154,7 +154,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<Server> {
     },
     dispose() {
       server.stop();
-      // What a simulated factory VM started detached (its preview, a stand-in) runs from a folder in the scratch one.
+      // Anything a test started detached runs from a folder in the scratch one.
       // (The folder is a real path, /private/var/... on a Mac, so that is what its processes' command lines name.)
       spawnSync("pkill", ["-9", "-f", scratch], { timeout: 10_000 });
       live.delete(server);

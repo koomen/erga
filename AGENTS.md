@@ -3,18 +3,22 @@
 ## How to work
 
 Work on a branch of `staging`, or on `staging` itself for a small change.
-Before you push, run the checks below; they take seconds, not minutes.
+Before you push, run the tests:
 
-    bun run typecheck          # both projects (the app and the Worker)
-    bun test tests/            # the unit tests
+    bun run test               # the typecheck, the unit tests and the smoke run: under a minute
+
 
 Push to `staging` (`git push origin HEAD:staging`): staging.erga.dev
 deploys it at once. Production (erga.dev) deploys when `main` moves to a
 staging commit: Merge on /admin/source, the admin agent's
 `deploy_production`, the API, or a push to `main`.
 
-The end-to-end tests (`e2e/`) are slow. Don't run them all; run one file
-only when the user asks.
+The smoke run (`e2e/smoke/`) checks the editor's core in a real browser.
+Keep it small: it has a time limit (90 s), and a new test there should
+replace one. Every other end-to-end test is in `e2e/full/`. Run the whole
+suite (`bun run test:full`) only when the user asks for it; run one file or
+folder of it when you change that part (`bun run test:e2e
+e2e/full/page/html-typing.e2e.ts`).
 
 ## Summaries
 

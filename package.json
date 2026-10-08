@@ -13,9 +13,9 @@
     "deploy:staging": "bun deploy/run.ts staging",
     "setup:staging": "bun deploy/setup.ts",
     "release": "bun deploy/release.ts",
-    "test:prod": "bun e2e/suite/prod.ts",
+    "test:prod": "bun e2e/full/suite/prod.ts",
+    "test:full": "bun e2e/run.ts --full",
     "test:e2e": "bun e2e/run.ts --e2e",
-    "test:bench": "bun e2e/run.ts --bench",
     "test:browsers": "bunx @e2e-dev/web install chromium"
   },
   "dependencies": {
