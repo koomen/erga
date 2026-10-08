@@ -346,6 +346,25 @@ describe("the shard's job in a VM (factory/vm/gate.ts)", () => {
       expect(status().results).toMatchObject([{ name: "unit", files: ["tests/b.test.ts"], ok: false }, { name: "e2e/z.e2e.ts", ok: false }]);
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
+  test("clones with REPO_TOKEN as a header (staging's Git endpoint is for admins), and never asks for a username", async () => {
+    const seen: (string | null)[] = [];
+    // Staging's front door without the token: a 401 that asks for a username. The clone fails either way (no git here).
+    const server = Bun.serve({ port: 0, fetch: (req) => { seen.push(req.headers.get("authorization")); return new Response("no\n", { status: 401, headers: { "WWW-Authenticate": 'Basic realm="Erga"' } }); } });
+    const dir = mkdtempSync(join(tmpdir(), "gate-token-"));
+    try {
+      const p = Bun.spawn(["bun", join(ROOT, "factory/vm/run.ts"), "gate", "run", sha("a"), "1", "6"], {
+        cwd: dir, stdout: "pipe", stderr: "pipe",
+        env: { ...process.env, REPO_URL: `http://127.0.0.1:${server.port}/git/erga.git`, REPO_TOKEN: "fgt.secret", FACTORY_WORK: join(dir, "work") },
+      });
+      const code = await Promise.race([p.exited, Bun.sleep(30_000).then(() => { p.kill(); return "hung"; })]);
+      expect(code).toBe(1);
+      expect(seen.length).toBeGreaterThan(0);
+      expect(seen.every((a) => a == "Bearer fgt.secret")).toBe(true);
+      const log = readFileSync(join(dir, "work/gate/log.txt"), "utf8");
+      expect(log).toContain("the clone failed");
+      expect(log).not.toContain("fgt.secret");
+    } finally { server.stop(true); rmSync(dir, { recursive: true, force: true }); }
+  });
 });
 
 describe("the VM runner (worker/gate.ts)", () => {
@@ -355,13 +374,15 @@ describe("the VM runner (worker/gate.ts)", () => {
     const ns = { getByName: (name: string) => ({
       boot: async () => { calls.push(`boot ${name}`); },
       job: async (script: string, args: string[], env: Record<string, string>, wait: boolean) => {
-        calls.push(`job ${script} ${args.join(" ")} ${env.REPO_URL ?? ""} ${wait}`);
+        calls.push(`job ${script} ${args.join(" ")} ${env.REPO_URL ?? ""}${env.REPO_TOKEN ? ` token=${env.REPO_TOKEN}` : ""} ${wait}`);
         return wait ? { code: 0, output: `noise\nGATE-STATUS ${JSON.stringify({ state: "running", phase: "install" })}\n` } : null;
       },
       alive: async () => alive,
       stop: async () => { calls.push(`stop ${name}`); },
     }) };
-    const r = vmRunner(ns, "https://staging.erga.dev/git/erga.git");
+    // Staging's Git endpoint is for admins only: each shard clones with a fresh git token.
+    let n = 0;
+    const r = vmRunner(ns, "https://staging.erga.dev/git/erga.git", async () => `fgt.t${++n}`);
     await r.start({ commit: sha("a"), vm: "gate-x-1-1", shard: 1, of: 6 });
     await r.start({ commit: sha("a"), vm: "gate-x-1-7", shard: 7, of: 6, files: ["tests/a.ts", "tests/b.ts"] });
     expect(await r.poll("gate-x-1-1")).toEqual({ state: "running", phase: "install" });
@@ -369,8 +390,8 @@ describe("the VM runner (worker/gate.ts)", () => {
     expect(await r.poll("gate-x-1-1")).toBe("gone");
     await r.stop("gate-x-1-1");
     expect(calls).toEqual([
-      "boot gate-x-1-1", `job run.ts gate run ${sha("a")} 1 6 https://staging.erga.dev/git/erga.git false`,
-      "boot gate-x-1-7", `job run.ts gate run ${sha("a")} 7 6 --files tests/a.ts,tests/b.ts https://staging.erga.dev/git/erga.git false`,
+      "boot gate-x-1-1", `job run.ts gate run ${sha("a")} 1 6 https://staging.erga.dev/git/erga.git token=fgt.t1 false`,
+      "boot gate-x-1-7", `job run.ts gate run ${sha("a")} 7 6 --files tests/a.ts,tests/b.ts https://staging.erga.dev/git/erga.git token=fgt.t2 false`,
       "job run.ts gate status  true", "stop gate-x-1-1",
     ]);
     expect(() => parseStatus("no status here")).toThrow("no status");
