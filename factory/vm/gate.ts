@@ -186,7 +186,12 @@ async function run(commit: string, shard: number, of: number, files: string[] | 
   const token = process.env.REPO_TOKEN;
   const gitEnv = { GIT_TERMINAL_PROMPT: "0", ...(token ? { GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "http.extraHeader", GIT_CONFIG_VALUE_0: `Authorization: Bearer ${token}` } : {}) };
   const clone = await sh(["git", "clone", "--quiet", repo, CLONE()], { timeout: LIMITS.clone, env: gitEnv });
-  if (clone.code) fail(`the clone failed (exit ${clone.code})`, "clone");
+  if (clone.code) {
+    // What the Git endpoint says (git only says it couldn't sign in): its status and first line, never the token.
+    const r = await fetch(`${repo}/info/refs?service=git-upload-pack`, { headers: token ? { Authorization: `Bearer ${token}` } : {}, signal: AbortSignal.timeout(30_000) }).catch((e) => e as Error);
+    note(r instanceof Error ? `the Git endpoint didn't answer: ${r.message}` : `the Git endpoint answered ${r.status} ${token ? "with" : "with no"} git token: ${(await r.text().catch(() => "")).split("\n")[0].slice(0, 200)}`);
+    fail(`the clone failed (exit ${clone.code})`, "clone");
+  }
   if ((await sh(["git", "checkout", "--quiet", "--detach", commit], { cwd: CLONE(), timeout: 60 })).code) {
     // Not on staging's history as cloned (it moved on and back?): fetch main too, then try again.
     await sh(["git", "fetch", "--quiet", "origin", "main", "staging"], { cwd: CLONE(), timeout: LIMITS.fetch, env: gitEnv });

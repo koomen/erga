@@ -362,6 +362,7 @@ describe("the shard's job in a VM (factory/vm/gate.ts)", () => {
       expect(seen.every((a) => a == "Bearer fgt.secret")).toBe(true);
       const log = readFileSync(join(dir, "work/gate/log.txt"), "utf8");
       expect(log).toContain("the clone failed");
+      expect(log).toContain("the Git endpoint answered 401 with git token: no");
       expect(log).not.toContain("fgt.secret");
     } finally { server.stop(true); rmSync(dir, { recursive: true, force: true }); }
   });
