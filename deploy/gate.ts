@@ -6,7 +6,9 @@
 // Every staging commit gets a run, by itself, when staging moves: the suite
 // split into SHARDS shares (factory/vm/gate.ts, planShards, balanced by
 // each e2e file's seconds in e2e/timings.json), each in a VM of its own, all
-// at once.
+// at once. The VMs start when staging's deploy of the commit ends: its new
+// Worker version restarts every VM the Worker owns, and so stopped any run
+// that started beside it. A run someone asks for starts at once.
 // One result is kept for each commit: running, passed, failed or cancelled,
 // which files failed, each shard's items, times and log. A run whose
 // failures are a few test files reruns those files once, in one more VM: if

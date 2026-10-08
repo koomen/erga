@@ -78,7 +78,7 @@ export function clone(s: Server, token: string, branch = "staging") {
   return dir;
 }
 
-export type GateRun = { commit: string; state: string; attempt: number; failed: string[]; flaky: string[]; shards: { n: number; state: string; rerun?: boolean }[]; supersededBy?: string };
+export type GateRun = { commit: string; state: string; attempt: number; trigger: string; waits?: boolean; failed: string[]; flaky: string[]; shards: { n: number; state: string; rerun?: boolean }[]; supersededBy?: string };
 
 /** The production gate's run of `sha` (deploy/gate.ts), and its verdict. */
 export const gateOf = async (s: Server, token: string, sha: string) => (await (await fetch(`${s.root}/api/gate/${sha}`, { headers: { Authorization: `Bearer ${token}` } })).json()) as { run: GateRun | null; verdict: { ok: boolean; state: string; reason: string | null } };

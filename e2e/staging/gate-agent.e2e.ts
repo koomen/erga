@@ -45,5 +45,7 @@ test("the agent's run_tests starts the next attempt", { timeout: 2 * RUN_MS + 30
   const tools = await say(tab.page, "Run its tests again.", [{ tool: "run_tests", args: { commit: red } }], `Started ${red.slice(0, 7)}.`);
   expect(tools.at(-1)?.status).toBe("done");
   await until(async () => (await gateOf(s, a.token, red)).run?.attempt == 2, RUN_MS, "attempt 2");
+  // Who asked, and how (attribution.ts): the person, via their admin agent.
+  expect((await gateOf(s, a.token, red)).run?.trigger).toMatch(/^run by \S+, via their admin agent$/);
   await until(async () => (await gateOf(s, a.token, red)).run?.state == "failed", RUN_MS, "attempt 2 ends");
 });
