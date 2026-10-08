@@ -5,7 +5,8 @@
 // only, so run.ts hands these on to here, and the image needs nothing new).
 //
 //   bun run.ts gate run <commit> <shard> <of> [--files a,b,...]
-//       Clones Erga's repository (REPO_URL, reads need no token), checks the
+//       Clones Erga's repository (REPO_URL, with REPO_TOKEN when set: staging's
+//       Git endpoint is for admins and the factory's tokens), checks the
 //       commit out, installs the dependencies, and runs this shard's share:
 //       the end-to-end test files (e2e/, the commit's own), the unit tests
 //       (`bun test`, tests/*.test.ts, as one item) and `bun run typecheck`,
@@ -181,11 +182,14 @@ async function run(commit: string, shard: number, of: number, files: string[] | 
   status({ phase: "clone" });
   const repo = process.env.REPO_URL ?? "";
   if (!repo) fail("REPO_URL isn't set", "clone");
-  const clone = await sh(["git", "clone", "--quiet", repo, CLONE()], { timeout: LIMITS.clone });
+  // The token as a header, never on the command line nor in the clone's config; no prompt for a username.
+  const token = process.env.REPO_TOKEN;
+  const gitEnv = { GIT_TERMINAL_PROMPT: "0", ...(token ? { GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "http.extraHeader", GIT_CONFIG_VALUE_0: `Authorization: Bearer ${token}` } : {}) };
+  const clone = await sh(["git", "clone", "--quiet", repo, CLONE()], { timeout: LIMITS.clone, env: gitEnv });
   if (clone.code) fail(`the clone failed (exit ${clone.code})`, "clone");
   if ((await sh(["git", "checkout", "--quiet", "--detach", commit], { cwd: CLONE(), timeout: 60 })).code) {
     // Not on staging's history as cloned (it moved on and back?): fetch main too, then try again.
-    await sh(["git", "fetch", "--quiet", "origin", "main", "staging"], { cwd: CLONE(), timeout: LIMITS.fetch });
+    await sh(["git", "fetch", "--quiet", "origin", "main", "staging"], { cwd: CLONE(), timeout: LIMITS.fetch, env: gitEnv });
     if ((await sh(["git", "checkout", "--quiet", "--detach", commit], { cwd: CLONE(), timeout: 60 })).code) fail(`${commit.slice(0, 12)} isn't in the repository`, "clone");
   }
   status({ phase: "install" });
