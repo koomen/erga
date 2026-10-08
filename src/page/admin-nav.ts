@@ -88,7 +88,7 @@ function swap(doc: Document, next: HTMLElement) {
   const build = document.querySelector('meta[name="erga-build"]'), nextBuild = doc.querySelector('meta[name="erga-build"]');
   if (build && nextBuild) build.setAttribute("content", nextBuild.getAttribute("content") ?? "");
   const crumb = document.querySelector(".crumbs .here"), nextCrumb = doc.querySelector(".crumbs .here");
-  if (crumb && nextCrumb) crumb.textContent = nextCrumb.textContent;
+  if (crumb && nextCrumb) crumb.replaceChildren(...[...nextCrumb.childNodes].map((n) => n.cloneNode(true)));
   const marked = doc.querySelector('.admin-side a[aria-current="page"]')?.getAttribute("href");
   for (const a of document.querySelectorAll(".admin-side a")) {
     if (a.getAttribute("href") == marked) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");

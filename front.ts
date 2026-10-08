@@ -879,18 +879,18 @@ async function viewDocument(platform: Platform, request: Request, opened: { doc:
 <title>${esc(doc.title)}</title>
 <meta name="erga-doc" content="${esc(doc.id)}">
 <link rel="preconnect" href="${esc(origin)}">
-${meta}${backdrop}${opening}<style>${BAND_STYLE}</style>
+${meta}${backdrop}${opening}${crumbsFont(session)}<style>${BAND_STYLE}</style>
 <body>${editable ? `<script>${EDITING_BODY}</script>` : ""}
 ${frame}${editable ? `<script>${FRAME_SRC}</script>` : ""}
-<div class="erga-view-buttons">${newDocButton("erga-view-button")}${clone}${edit}</div>${newDocMenu((path) => link(path, session), !!session && !session.test && !session.agent)}${VIEW_STYLE}${NEW_DOC_STYLE}<script>${NEW_DOC_SCRIPT}ergaNewDoc(document);</script><script>${NAV_SCRIPT}</script><script>${BAND_BOOT}</script><script>${FADE_BOOT}</script>${STEPS_STYLE}<script>${STEPS_BOOT}</script>${editable ? `<script>${EDIT_BOOT}</script>` : ""}
+${viewCrumbs(session, landing ? null : doc.title)}<div class="erga-view-buttons">${newDocButton("erga-view-button")}${clone}${edit}</div>${newDocMenu((path) => link(path, session), !!session && !session.test && !session.agent)}${VIEW_STYLE}${NEW_DOC_STYLE}<script>${NEW_DOC_SCRIPT}ergaNewDoc(document);</script><script>${NAV_SCRIPT}</script><script>${BAND_BOOT}</script><script>${FADE_BOOT}</script>${STEPS_STYLE}<script>${STEPS_BOOT}</script>${editable ? `<script>${EDIT_BOOT}</script>` : ""}
 </body>
 </html>`, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "Referrer-Policy": "no-referrer", Link: `<${origin}>; rel=preconnect` } });
 }
 
 /** The viewer's Clone button (a copy of your own, at `href`): also the homepage's (home.ts). */
-export const cloneButton = (href: string) => `<a href="${esc(href)}" class="erga-view-button erga-clone-button" aria-label="Clone: make your own copy" data-tip="Clone"><svg viewBox="0 0 24 24" aria-hidden="true"><g transform="translate(0 1.25)"><rect x="8.75" y="8.75" width="10.5" height="10.5" rx="2"/><path d="M15.25 8.75V6.5a1.75 1.75 0 0 0-1.75-1.75H6.5A1.75 1.75 0 0 0 4.75 6.5v7c0 .97.78 1.75 1.75 1.75h2.25"/></g></svg></a>`;
+export const cloneButton = (href: string) => `<a href="${esc(href)}" class="erga-view-button erga-clone-button" aria-label="Clone: make your own copy" data-tip="Clone"><svg viewBox="0 0 24 24" aria-hidden="true"><g transform="translate(12 12) scale(1.0345) translate(-12 -13.25)" stroke-width="1.5467"><g transform="translate(0 1.25)"><rect x="8.75" y="8.75" width="10.5" height="10.5" rx="2"/><path d="M15.25 8.75V6.5a1.75 1.75 0 0 0-1.75-1.75H6.5A1.75 1.75 0 0 0 4.75 6.5v7c0 .97.78 1.75 1.75 1.75h2.25"/></g></g></svg></a>`;
 /** The viewer's pencil (Edit, the editor at `href`), blue while editing: also the homepage's (home.ts). */
-export const editButton = (href: string, editing: boolean) => `<a href="${esc(href)}" class="erga-view-button erga-edit-button" aria-label="Edit" aria-pressed="${editing}" data-tip="Edit"><svg viewBox="0 0 24 24" aria-hidden="true"><g transform="translate(0 1.25)"><path d="M4.75 19.25l1-4L15.6 5.4a1.4 1.4 0 0 1 2 0l1 1a1.4 1.4 0 0 1 0 2L8.75 18.25zM13.75 7.25l3 3"/></g></svg></a>`;
+export const editButton = (href: string, editing: boolean) => `<a href="${esc(href)}" class="erga-view-button erga-edit-button" aria-label="Edit" aria-pressed="${editing}" data-tip="Edit"><svg viewBox="0 0 24 24" aria-hidden="true"><g transform="translate(12 12) scale(1.0512) translate(-11.885 -13.365)" stroke-width="1.5221"><g transform="translate(0 1.25)"><path d="M4.75 19.25l1-4L15.6 5.4a1.4 1.4 0 0 1 2 0l1 1a1.4 1.4 0 0 1 0 2L8.75 18.25zM13.75 7.25l3 3"/></g></g></svg></a>`;
 
 /**
  * For whoever may edit, at the top of a document's page: opened with #edit, it
@@ -1039,7 +1039,9 @@ const EDIT_BOOT = `(() => {
     sync();
     body.append(Object.assign(document.createElement("script"), { src: "/page.js" }));
   })();
-  const editing = () => body.classList.contains("erga-editing");
+  // Editing, unless on the way out (erga-closing: the editor's own actions closing back into the pencil, page.html).
+  const editing = () => body.classList.contains("erga-editing") && !body.classList.contains("erga-closing");
+  let closing = 0;
   function go(edit, push) {
     // The editor already running on another page (the viewer went to it since): that page's editor, loaded afresh.
     if (edit && window.ergaPage?.pagePath != null && window.ergaPage.pagePath != (document.querySelector('meta[name="erga-page"]')?.content || window.ergaPage.pagePath)) {
@@ -1049,7 +1051,14 @@ const EDIT_BOOT = `(() => {
     }
     if (push) history.pushState(null, "", (location.pathname == "/" ? "/" : ergaPageAddress()) + location.search + (edit ? "#edit" : ""));
     if (edit == editing() && push !== null) return;
-    body.classList.toggle("erga-editing", edit);
+    clearTimeout(closing);
+    body.classList.remove("erga-closing");
+    if (!edit && ready && body.classList.contains("erga-editing") && !matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      // Out of the editor: its own actions close back into the pencil first (page.html, .edit-group, 420ms), with the editor's
+      // row still up; then the viewer's, the same buttons in the same places, takes over.
+      body.classList.add("erga-closing");
+      closing = setTimeout(() => { body.classList.remove("erga-closing", "erga-editing"); sync(); }, 420);
+    } else body.classList.toggle("erga-editing", edit);
     document.querySelector(".erga-edit-button")?.setAttribute("aria-pressed", String(edit));
     ask(edit ? "erga-edit" : "erga-view");
     window.ergaPage?.setEditing(edit);
@@ -1283,7 +1292,7 @@ async function startPage(platform: Platform, session: Session | null): Promise<R
   .start .hint { margin-top: 28px; font-size: 13px; }
   .start code { font-family: var(--font-mono); font-size: 12.5px; }
   .start .hint a { color: inherit; }`;
-  return new Response(appPage("Erga", style, `<main class="start">
+  return new Response(appPage("Erga", style, `${signedIn ? crumbs(session, []) : ""}<main class="start">
   <header><h1>Erga</h1></header>
   <p>Pages you edit where they're rendered, together with your agents.</p>
   <div class="actions">${actions}</div>
@@ -1311,7 +1320,7 @@ export const FADE_NEAR = 100;
 /** How see-through the faded controls are: faint, but still there to find. */
 export const FADED = 0.2;
 export const FADE = `function ergaFade(target, root) {
-  var NEAR = ${FADE_NEAR}, y = 0, mouse = null, tap = false, CONTROLS = ".erga-view-buttons, .erga-account";
+  var NEAR = ${FADE_NEAR}, y = 0, mouse = null, tap = false, CONTROLS = ".erga-view-buttons, .erga-account, .erga-crumbs";
   // How far (x, y) is from the nearest control (the account's button, not its menu).
   function distance(x, y) {
     var best = Infinity;
@@ -1378,13 +1387,29 @@ const FADE_BOOT = `(() => {
 
 export const VIEW_STYLE = `
 <style>
-  /* The editor's look (style.css, .icon-btn): small icons. Right of them is who you are (account.ts). No breadcrumbs: viewing, there's only the document. */
-  .erga-view-buttons { --chrome: #a1a1a9; --chrome-hover: #3f3f46; --fg: #1c1c1f; --soft: #6b6b73;
+  /* The editor's look (style.css, .icon-btn): small icons. Right of them is who you are (account.ts). Upper left, for
+     someone signed in, the breadcrumbs (viewCrumbs), where the editor's are (page.html, .chrome-nav) and as they look. */
+  :is(.erga-view-buttons, .erga-crumbs) { --chrome: #a1a1a9; --chrome-hover: #3f3f46; --fg: #1c1c1f; --fg-strong: #0d0d0f; --soft: #6b6b73;
     position: fixed; top: max(12px, env(safe-area-inset-top)); z-index: 1000; display: flex; align-items: center;
     font: 500 13px/1 "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
   .erga-view-buttons { right: max(56px, calc(env(safe-area-inset-right) + 40px)); gap: 2px; }
+  .erga-crumbs { left: max(14px, env(safe-area-inset-left)); height: 34px; min-width: 0; max-width: calc(100vw - 200px); margin: 0; font-size: 13.5px; }
+  /* Each step's box and arrow as the editor's, so going into the editor and out moves nothing. */
+  .erga-crumbs, .erga-crumbs > * { align-items: baseline; line-height: 34px; }
+  .erga-crumbs > * { display: flex; height: 34px; text-decoration: none; }
+  .erga-crumbs > :not(:last-child)::after { content: "›"; color: var(--chrome); opacity: 0.55; font-size: 13.5px; font-weight: 400; letter-spacing: normal; }
+  .erga-brand { flex: none; padding: 0 6px; font-size: 15px; font-weight: 650; letter-spacing: -0.02em; color: var(--fg-strong); }
+  .erga-brand::after { margin: 0 -6px 0 10px; }
+  .erga-crumbs a.erga-crumb { flex: none; padding: 0 10px; color: var(--soft); }
+  .erga-crumb::after { margin: 0 -6px 0 12px; }
+  .erga-crumbs .erga-here { padding: 0 8px; }
+  .erga-crumbs a:hover { opacity: 0.7; }
+  .erga-crumbs a:focus-visible { outline: 2px solid #3b7cf0; outline-offset: 1px; border-radius: 8px; }
+  .erga-crumbs .erga-here { min-width: 0; color: var(--fg); }
+  .erga-crumbs .erga-here span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  @media (max-width: 520px) { .erga-crumbs a.erga-crumb { display: none; } .erga-crumbs .erga-here { padding: 0 6px; } }
   /* On the band (BAND_STYLE), in the document's own colour: light or dark text to suit it, whatever the system's mode. */
-  html.page-dark .erga-view-buttons { --chrome: #8a8a94; --chrome-hover: #e4e4e9; --fg: #ececf1; --soft: #a1a1aa; }
+  html.page-dark :is(.erga-view-buttons, .erga-crumbs) { --chrome: #8a8a94; --chrome-hover: #e4e4e9; --fg: #ececf1; --fg-strong: #ececf1; --soft: #a1a1aa; }
   html.page-light .erga-account { --acc-bg: #fff; --acc-fg: #1c1c1f; --acc-soft: #6b6b73; --acc-chrome: #a1a1a9; --acc-ring: #e6e6ea; --acc-hover: rgba(161, 161, 169, .14); }
   html.page-dark .erga-account { --acc-bg: #1f1f23; --acc-fg: #ececf1; --acc-soft: #8f8f99; --acc-chrome: #8a8a94; --acc-ring: #2f2f35; --acc-hover: rgba(161, 161, 169, .16); }
   html:is(.page-dark, .page-light) .erga-account-btn:not(.erga-account-out) { box-shadow: 0 0 0 2px var(--band, var(--acc-bg)); }
@@ -1392,7 +1417,7 @@ export const VIEW_STYLE = `
     transition: color 150ms ease, background-color 150ms ease; }
   .erga-view-button:hover { color: var(--chrome-hover); background: color-mix(in srgb, var(--chrome) 12%, transparent); }
   /* Editing (or on the way into it), the pencil is blue, as the editor's own is. */
-  .erga-view-button[aria-pressed="true"], .erga-view-button[aria-pressed="true"]:hover { color: #3b7cf0; background: transparent; }
+  .erga-view-button[aria-pressed="true"] { color: #3b7cf0; }
   /* On the way into the editor the first time, while its code arrives, the pencil breathes (only if that takes a moment). */
   body.erga-editing:not(.erga-editor-ready) .erga-view-button[aria-pressed] svg { animation: erga-edit-wait 700ms ease-in-out 250ms infinite alternate; }
   @keyframes erga-edit-wait { to { opacity: 0.35; } }
@@ -1402,21 +1427,23 @@ export const VIEW_STYLE = `
     font-weight: 400; line-height: 1.3; letter-spacing: .01em; color: var(--soft); opacity: 0; pointer-events: none; }
   @media (hover: hover) { .erga-view-button:hover::after { opacity: 1; } }
   /* Into the editor and out (EDIT_BOOT): the controls you're going to are there at once, whole, and the ones you're leaving fade
-     out; so those in both (the pencil, your avatar) never go see-through. The editor's breadcrumbs simply go: viewing has none. */
+     out; so those in both (the pencil, your avatar, the breadcrumbs) never go see-through. */
   #erga-editor { opacity: 0; transition: opacity 200ms ease; }
   body.erga-editing.erga-editor-ready #erga-editor { opacity: 1; transition: none; }
   body:not(.erga-editing) #nav-docs { visibility: hidden; }
-  .erga-view-buttons, .erga-account { transition: none; }
-  body.erga-editing.erga-editor-ready :is(.erga-view-buttons, .erga-account) { opacity: 0; visibility: hidden; transition: opacity 200ms ease, visibility 0s 200ms; }
+  .erga-view-buttons, .erga-account, .erga-crumbs { transition: none; }
+  /* Editing, the editor's own breadcrumbs, just under the viewer's while those fade, take the clicks. */
+  body.erga-editing .erga-crumbs { pointer-events: none; }
+  body.erga-editing.erga-editor-ready :is(.erga-view-buttons, .erga-account, .erga-crumbs) { opacity: 0; visibility: hidden; transition: opacity 200ms ease, visibility 0s 200ms; }
   /* Faded once the page is scrolled (FADE): the controls themselves, not the band behind them nor your open menu. Quick and
      smooth, and with no motion at all for those who ask for less: just the change. */
-  .erga-view-buttons > *, .erga-account-btn { transition: opacity 180ms ease, color 150ms ease, background-color 150ms ease; }
-  html.erga-faded :is(.erga-view-buttons > *, .erga-account-btn) { opacity: ${FADED}; }
-  :host(.erga-faded) :is(.erga-view-buttons > *, .erga-account-btn) { opacity: ${FADED}; }
-  @media (prefers-reduced-motion: reduce) { .erga-view-buttons > *, .erga-account-btn { transition: color 150ms ease, background-color 150ms ease; } }
+  .erga-view-buttons > *, .erga-account-btn, .erga-crumbs > * { transition: opacity 180ms ease, color 150ms ease, background-color 150ms ease; }
+  html.erga-faded :is(.erga-view-buttons > *, .erga-account-btn, .erga-crumbs > *) { opacity: ${FADED}; }
+  :host(.erga-faded) :is(.erga-view-buttons > *, .erga-account-btn, .erga-crumbs > *) { opacity: ${FADED}; }
+  @media (prefers-reduced-motion: reduce) { .erga-view-buttons > *, .erga-account-btn, .erga-crumbs > * { transition: color 150ms ease, background-color 150ms ease; } }
   /* On a phone they'd sit over the text the whole way down: they stay at the top instead. */
   @media (max-width: 640px), (max-height: 480px) {
-    .erga-view-buttons { position: absolute; }
+    .erga-view-buttons, .erga-crumbs { position: absolute; }
   }
 </style>`;
 
@@ -1615,10 +1642,16 @@ export const APP_STYLE = `
   body { min-height: 100vh; margin: 0; display: flex; flex-direction: column; }
   .site-foot { padding: 24px 16px 32px; text-align: center; font-size: 12.5px; color: var(--chrome); }
   main { flex: 1; width: 100%; min-height: 0; box-sizing: border-box; max-width: 1080px; margin: 0 auto; padding: 120px 24px 96px; display: flex; flex-direction: column; }
-  /* The wordmark, upper left, on the same line as the account corner upper right (account.ts). */
-  .brand { position: absolute; top: max(14px, env(safe-area-inset-top)); left: max(20px, env(safe-area-inset-left)); height: 30px; display: flex; align-items: center;
-    font-size: 15px; font-weight: 650; letter-spacing: -0.02em; color: var(--fg-strong); text-decoration: none; }
+  /* The breadcrumbs (crumbs): the wordmark, then where you are, upper left, on the line of the account corner upper right
+     (account.ts). The viewer's (VIEW_STYLE) and the editor's (page.html) look the same, in the same place. */
+  .crumbs { position: absolute; top: max(14px, env(safe-area-inset-top)); left: max(20px, env(safe-area-inset-left)); height: 30px; display: flex; align-items: center; gap: 0; margin: 0; min-width: 0; max-width: calc(100vw - 140px); }
+  .brand { flex: none; display: flex; align-items: center; font-size: 15px; font-weight: 650; letter-spacing: -0.02em; color: var(--fg-strong); text-decoration: none; }
   .brand:hover { opacity: 0.7; }
+  .crumbs > :not(.brand)::before { content: "›"; margin: 0 9px 0 10px; color: var(--chrome); opacity: 0.55; font-weight: 400; }
+  .crumbs a.crumb { flex: none; display: flex; align-items: center; color: var(--soft); text-decoration: none; font-size: 13.5px; font-weight: 500; }
+  .crumbs a.crumb:hover { color: var(--fg-strong); }
+  .crumbs .here { display: flex; align-items: center; min-width: 0; margin: 0; font-size: 13.5px; line-height: inherit; font-weight: 500; letter-spacing: normal; color: var(--fg); }
+  .crumbs .here span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 36px; }
   h1 { margin: 0; font-size: 30px; line-height: 1.15; font-weight: 650; letter-spacing: -0.025em; color: var(--fg-strong); }
   .sub { margin: 6px 0 0; font-size: 14px; color: var(--soft); }
@@ -1631,7 +1664,7 @@ export const APP_STYLE = `
   .pill { border: 1px solid var(--rule); background: var(--bg); color: var(--fg-strong); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04); }
   .pill:hover:not(:disabled) { border-color: color-mix(in srgb, var(--chrome) 55%, var(--rule)); }
   .pill:disabled { color: var(--chrome); cursor: default; box-shadow: none; }
-  :is(.new, .doc, .act, .brand, dialog button, .pill, select):focus-visible { outline: 2px solid var(--caret); outline-offset: 2px; border-radius: 8px; }
+  :is(.new, .doc, .act, .brand, .crumb, dialog button, .pill, select):focus-visible { outline: 2px solid var(--caret); outline-offset: 2px; border-radius: 8px; }
   ol.rows { list-style: none; margin: 0; padding: 0; }
   ol.rows > li { display: flex; align-items: center; gap: 2px; border-bottom: 1px solid var(--rule); }
   ol.rows > li:first-child { border-top: 1px solid var(--rule); }
@@ -1682,8 +1715,33 @@ export const APP_STYLE = `
 /** The footer at the foot of Erga's own pages (not the editor's, nor a document's): the copyright, this year. */
 export const siteFooter = () => `<footer class="site-foot">© ${new Date().getUTCFullYear()} Erga</footer>`;
 
-/** The wordmark in the upper left of the app's own pages: back to the front page. */
-export const brand = (session: Session | null) => `<a class="brand" href="${esc(link("/", session))}">Erga</a>`;
+/** One step of the breadcrumbs: a page above this one (with its address), or this page (without). */
+export interface Crumb { label: string; href?: string }
+
+/**
+ * The breadcrumbs in the upper left of every page for someone signed in: the wordmark (back to the front page), then
+ * the pages above this one, then this one. `here` is the tag of this page's own crumb (the admin pages' is their <h1>).
+ */
+export function crumbs(session: Session | null, trail: Crumb[], here = "span"): string {
+  const steps = trail.map((c) => c.href
+    ? `<a class="crumb" href="${esc(link(c.href, session))}">${esc(c.label)}</a>`
+    : `<${here} class="here" aria-current="page"><span>${esc(c.label)}</span></${here}>`).join("");
+  return `<nav class="crumbs" aria-label="Breadcrumbs"><a class="brand" href="${esc(link("/", session))}">Erga</a>${steps}</nav>`;
+}
+
+/**
+ * The viewer's breadcrumbs (VIEW_STYLE), for someone signed in: Erga › Documents › the document, as the editor's
+ * (page.html). The front page's are the wordmark alone; a test person's skip Documents, as they have none. An agent sees none.
+ */
+/** The breadcrumbs' type (Inter, as the editor's), for a page that shows them (viewCrumbs) but has none of the app's style. */
+export const crumbsFont = (session: Session | null) => session && !session.agent ? `<link rel="stylesheet" href="/fonts/inter.css">` : "";
+
+export function viewCrumbs(session: Session | null, title: string | null): string {
+  if (!session || session.agent) return "";
+  const docs = session.test ? "" : `<a class="erga-crumb" href="${esc(link("/docs", session))}">Documents</a>`;
+  const here = title == null ? "" : `${docs}<span class="erga-here" aria-current="page"><span>${esc(title)}</span></span>`;
+  return `<nav class="erga-crumbs" aria-label="Breadcrumbs"><a class="erga-brand" href="${esc(link("/", session))}">Erga</a>${here}</nav>`;
+}
 
 /** Every <time datetime> in the reader's own language and zone: "5 minutes ago", "yesterday", the date. */
 export const TIMES_SCRIPT = `
@@ -1706,7 +1764,7 @@ export const ICON = {
   plus: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>`,
   chevron: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9.75 7.5 4.5 4.5-4.5 4.5"/></svg>`,
   /** Share with an agent: the editor's (page.html, #btn-share). */
-  agent: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15V3.5M7.5 8 12 3.5 16.5 8"/><path d="M8 11.5H6.5a1 1 0 0 0-1 1v7a1 1 0 0 0 1 1h11a1 1 0 0 0 1-1v-7a1 1 0 0 0-1-1H16"/></svg>`,
+  agent: `<svg viewBox="0 0 24 24" aria-hidden="true"><g transform="translate(12 12) scale(0.8824) translate(-12 -12)" stroke-width="1.8133"><path d="M12 15V3.5M7.5 8 12 3.5 16.5 8"/><path d="M8 11.5H6.5a1 1 0 0 0-1 1v7a1 1 0 0 0 1 1h11a1 1 0 0 0 1-1v-7a1 1 0 0 0-1-1H16"/></g></svg>`,
 };
 
 /** The page around a view (/docs, /admin): its title, the shared look and the view's own style. */
@@ -1810,7 +1868,7 @@ function docsPage(session: Session, docs: Listed[], now: number, hours: number |
   #share .buttons { justify-content: space-between; }
 `;
   const count = `${docs.length} document${docs.length == 1 ? "" : "s"}`;
-  return appPage("Documents", style, `${brand(session)}<main>
+  return appPage("Documents", style, `${crumbs(session, [{ label: "Documents" }])}<main>
   <header>
     <div><h1>Documents</h1>${docs.length ? `<p class="sub">${count}</p>` : ""}</div>
     <a class="pill" href="${esc(link("/new", session))}" title="New document" aria-label="New document">${ICON.plus}New</a>

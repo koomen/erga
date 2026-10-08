@@ -217,6 +217,32 @@ type TreeModule = { mountTree: typeof mountTree };
   // Your documents to go back to (test people have none), as whoever this tab is.
   $("nav-back").hidden = me.user.startsWith("test-");
   ($("nav-back") as HTMLAnchorElement).href = `/docs${as}`;
+  ($("nav-brand") as HTMLAnchorElement).href = `/${as}`;
+  // Clone, as the viewer's (front.ts, cloneButton): the same address.
+  const viewerClone = document.querySelector<HTMLAnchorElement>(".erga-clone-button");
+  if (viewerClone) { ($("btn-clone") as HTMLAnchorElement).href = viewerClone.href; $("btn-clone").hidden = false; }
+  // The editor's own page actions (page.html, .edit-group) open out of the pencil while editing and close back into it: they
+  // clip sideways while they move, and not once they're open and still (settled), so their tooltips reach past the group.
+  const editGroup = $("edit-group"), body = document.body;
+  const groupOpen = () => body.classList.contains("erga-editing") && body.classList.contains("erga-editor-ready") && !body.classList.contains("erga-closing");
+  const syncGroup = () => {
+    const open = groupOpen();
+    editGroup.inert = !open;
+    if (!open || !editGroup.classList.contains("settled")) editGroup.classList.toggle("settled", open && matchMedia("(prefers-reduced-motion: reduce)").matches);
+  };
+  editGroup.addEventListener("transitionend", (e) => { if (e.target == editGroup && e.propertyName == "grid-template-columns" && groupOpen()) editGroup.classList.add("settled"); });
+  new MutationObserver(syncGroup).observe(body, { attributes: true, attributeFilter: ["class"] });
+  syncGroup();
+  // The title in the breadcrumbs takes the room left of the controls (on a phone, little), and ends in an ellipsis.
+  const navRoom = () => {
+    const title = $("doc-title"), top = document.querySelector(".chrome-top");
+    if (!top || title.hidden) return;
+    title.style.setProperty("--room", `${Math.max(0, top.getBoundingClientRect().left - title.getBoundingClientRect().left - 8)}px`);
+  };
+  new ResizeObserver(navRoom).observe(document.querySelector(".chrome-top")!);
+  new ResizeObserver(navRoom).observe($("nav-docs"));
+  addEventListener("resize", navRoom);
+  $("nav-docs").addEventListener("transitionend", navRoom);
   /** The host's endpoints, as this person. */
   const api = (path: string) => `${BASE}${path}${as}`;
   /** The document's settings, once the gear has loaded them (loadSettings). */
@@ -375,7 +401,6 @@ type TreeModule = { mountTree: typeof mountTree };
     togglePages(false);
     showChrome();
     toggleHelp(false);
-    toggleShare(false);
     toggleSharing(false);
     toggleAccount(false);
     docSettings?.toggle(false);
@@ -478,7 +503,6 @@ type TreeModule = { mountTree: typeof mountTree };
     if (!open) return;
     showChrome();
     toggleHelp(false);
-    toggleShare(false);
     toggleSharing(false);
     toggleAccount(false);
     toggleNaming(false);
@@ -780,7 +804,7 @@ type TreeModule = { mountTree: typeof mountTree };
     account.hidden = !open;
     accountBtn?.setAttribute("aria-expanded", String(open));
     if (!open) return;
-    showChrome(); toggleHelp(false); toggleShare(false); toggleSharing(false); toggleNaming(false); togglePages(false); docSettings?.toggle(false);
+    showChrome(); toggleHelp(false); toggleSharing(false); toggleNaming(false); togglePages(false); docSettings?.toggle(false);
     $("account-name").textContent = me.name;
     $("account-login").textContent = me.name.toLowerCase() == me.user ? "" : me.user;
     const set = (id: string, href: string | undefined) => { const a = $(id) as HTMLAnchorElement; a.hidden = !href; if (href) a.href = href; };
@@ -811,7 +835,7 @@ type TreeModule = { mountTree: typeof mountTree };
   let anchor: { x: number; y: number; t: number } | null = null;
   let lastKeyAt = 0;
   function hideChrome() {
-    if (chromeHidden || docSettings?.isOpen() || !$("help").hidden || !$("share").hidden || !$("sharing").hidden || !$("naming").hidden || !$("account").hidden) return;
+    if (chromeHidden || docSettings?.isOpen() || !$("help").hidden || !$("sharing").hidden || !$("naming").hidden || !$("account").hidden) return;
     chromeHidden = true;
     anchor = null;
     document.body.classList.add("chrome-hidden");
@@ -849,7 +873,7 @@ type TreeModule = { mountTree: typeof mountTree };
   function toggleHelp(force?: boolean) {
     const open = typeof force == "boolean" ? force : help.hidden;
     help.hidden = !open;
-    if (open) { showChrome(); toggleShare(false); toggleSharing(false); toggleNaming(false); togglePages(false); toggleAccount(false); docSettings?.toggle(false); }
+    if (open) { showChrome(); toggleSharing(false); toggleNaming(false); togglePages(false); toggleAccount(false); docSettings?.toggle(false); }
   }
 
   // Share with an external agent: a prompt carrying this page's API and your
@@ -872,28 +896,26 @@ The same token works for the rest of Erga as me (my other documents, new ones, p
 
 Once you've read the guide, await further instructions.`;
   }
-  const { el: share, toggle: toggleShare } = shareWithAgent({
-    button: shareBtn,
-    title: "Let another agent edit this page",
-    intro: "Paste this into an agent that can run commands on this computer (Claude Code, Codex…), then explain what you want it to do.",
+  const { toggle: loadAgentShare } = shareWithAgent({
+    into: $("sharing-agent"),
+    title: "Share with an agent",
+    intro: "Paste a prompt into Claude Code, Codex or another agent that can run commands. It edits this page as you.",
     note: `Anyone with this token can act as you on Erga: edit this document as your agent, and your other documents too. New token turns the old one off; <a href="/settings" target="_blank">your settings</a> lists and revokes them all.`,
     token: (rotate) => fetch(api("/api/share"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ rotate }), signal: AbortSignal.timeout(10_000) })
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`the host answered ${r.status}`))) as Promise<{ token: string }>)
       .then((r) => r.token, (e: Error) => Promise.reject(e.name == "TimeoutError" ? new Error("the editor's host didn't answer") : e)),
     prompt: promptFor,
-    onOpen: () => { showChrome(); toggleHelp(false); toggleSharing(false); toggleNaming(false); togglePages(false); toggleAccount(false); docSettings?.toggle(false); },
   });
 
-  // Share with people: who may view or edit the document, and anyone signed
-  // in with the link. Only its owner may (the front door says where, meta
-  // erga-share); each change is saved as it's made (/docs/share, as on My
-  // Documents' share dialog).
-  const sharing = $("sharing"), peopleBtn = $("btn-people");
+  // Share (#btn-share, the Share card): with people, then with an agent (above). With people: who may view or edit the
+  // document, and anyone signed in with the link. Only its owner may (the front door says where, meta erga-share), so the
+  // card's people half shows for them alone; each change is saved as it's made (/docs/share, as on My Documents' share dialog).
+  const sharing = $("sharing");
   const sharingList = $("sharing-list"), sharingAdd = $("sharing-add") as HTMLFormElement;
   const sharingAnyone = $("sharing-anyone") as HTMLSelectElement, sharingStatus = $("sharing-status");
   const shareAt = document.querySelector<HTMLMetaElement>('meta[name="erga-share"]')?.content ?? "";
   const docId = BASE.replace(/^\/d\//, "");
-  peopleBtn.hidden = !shareAt;
+  $("sharing-people").hidden = !shareAt;
   type Shared = { permissions: { login: string; role: string }[]; notUsers?: string[] };
   const tellSharing = (text: string, error = false) => { sharingStatus.textContent = text; sharingStatus.classList.toggle("error", error); };
   async function shareCall(change?: { login: string; role: string }): Promise<Shared> {
@@ -909,14 +931,18 @@ Once you've read the guide, await further instructions.`;
     let anyone = "none";
     for (const p of permissions) {
       if (p.login == "*") { anyone = p.role; continue; }
-      const li = document.createElement("li");
+      const li = Object.assign(document.createElement("li"), { className: "share-grid" });
+      const face = Object.assign(document.createElement("span"), { className: "face", textContent: p.login.slice(0, 1).toUpperCase() });
+      face.setAttribute("aria-hidden", "true");
+      face.style.setProperty("--c", colorFor(p.login));
+      li.append(face);
       const who = Object.assign(document.createElement("span"), { className: "who", textContent: p.login });
       if (p.login == me.user) who.append(Object.assign(document.createElement("small"), { textContent: "you" }));
       if (pending.has(p.login)) who.append(Object.assign(document.createElement("small"), { className: "pending", textContent: "can't sign in yet", title: "Not a user of this server: an admin can add them" }));
       li.append(who);
-      if (p.role == "owner") li.append(Object.assign(document.createElement("span"), { className: "fixed", textContent: "Owner" }));
+      if (p.role == "owner") li.append(Object.assign(document.createElement("span"), { className: "fixed", textContent: "Owner" }), document.createElement("span"));
       else {
-        const role = document.createElement("select");
+        const role = Object.assign(document.createElement("select"), { className: "role" });
         role.setAttribute("aria-label", `Role for ${p.login}`);
         for (const [v, t] of [["editor", "Can edit"], ["viewer", "Can view"]]) role.append(new Option(t, v, false, v == p.role));
         role.addEventListener("change", () => changeSharing(p.login, role.value));
@@ -936,17 +962,18 @@ Once you've read the guide, await further instructions.`;
   }
   function toggleSharing(force?: boolean) {
     const open = typeof force == "boolean" ? force : sharing.hidden;
-    if (open && !shareAt) return;
     sharing.hidden = !open;
-    peopleBtn.setAttribute("aria-expanded", String(open));
+    shareBtn.setAttribute("aria-expanded", String(open));
     if (!open) return;
-    showChrome(); toggleHelp(false); toggleShare(false); toggleNaming(false); togglePages(false); toggleAccount(false); docSettings?.toggle(false);
+    showChrome(); toggleHelp(false); toggleNaming(false); togglePages(false); toggleAccount(false); docSettings?.toggle(false); showPauseCard(false);
+    loadAgentShare(true);
+    if (!shareAt) return;
     sharingAdd.reset();
     tellSharing("Loading…");
     (sharingAdd.elements.namedItem("login") as HTMLInputElement).focus();
     shareCall().then((d) => { renderSharing(d); tellSharing(""); }, (e: Error) => tellSharing(e.message, true));
   }
-  peopleBtn.addEventListener("click", () => toggleSharing());
+  shareBtn.addEventListener("click", () => toggleSharing());
   sharingAdd.addEventListener("submit", async (e) => {
     e.preventDefault();
     const input = sharingAdd.elements.namedItem("login") as HTMLInputElement;
@@ -954,9 +981,15 @@ Once you've read the guide, await further instructions.`;
     if (login && (await changeSharing(login, (sharingAdd.elements.namedItem("role") as HTMLSelectElement).value))) input.value = "";
   });
   sharingAnyone.addEventListener("change", () => changeSharing("*", sharingAnyone.value));
+  const copied = $("sharing-copied"), linkHint = copied.textContent;
+  let copiedTimer = 0;
   $("sharing-copy").addEventListener("click", async () => {
     const url = location.origin + (docName?.address ?? location.pathname);
-    tellSharing(await navigator.clipboard.writeText(url).then(() => `Link copied: ${url}`, () => url));
+    const ok = await navigator.clipboard.writeText(url).then(() => true, () => false);
+    if (!ok) { tellSharing(url); return; }
+    copied.textContent = "Copied";
+    clearTimeout(copiedTimer);
+    copiedTimer = window.setTimeout(() => { copied.textContent = linkHint; }, 2000);
   });
   // Document settings (publishing, versions, the homepage): the gear opens
   // them, a popover under it. Their code (src/page/settings.ts, settings.js)
@@ -969,7 +1002,7 @@ Once you've read the guide, await further instructions.`;
       s.onload = () => {
         docSettings = window.ergaSettings?.mount({
           docId, query: as, anchor: settingsBtn, admin: !!accountLinks?.admin,
-          onToggle: (open) => { if (open) { showChrome(); toggleHelp(false); toggleShare(false); toggleSharing(false); toggleNaming(false); togglePages(false); toggleAccount(false); } },
+          onToggle: (open) => { if (open) { showChrome(); toggleHelp(false); toggleSharing(false); toggleNaming(false); togglePages(false); toggleAccount(false); } },
         }) ?? null;
         resolve(docSettings);
       };
@@ -1114,7 +1147,6 @@ Once you've read the guide, await further instructions.`;
       if (!help.hidden) toggleHelp(false);
       if (!naming.hidden) toggleNaming(false);
       if (!pagesCard.hidden) togglePages(false);
-      if (!share.hidden) toggleShare(false);
       if (!sharing.hidden) toggleSharing(false);
       showPauseCard(false);
     },
@@ -1698,7 +1730,6 @@ Once you've read the guide, await further instructions.`;
       else if (!help.hidden) toggleHelp(false);
       else if (!naming.hidden) toggleNaming(false);
       else if (!pagesCard.hidden) { togglePages(false); titleBtn.focus(); }
-      else if (!share.hidden) toggleShare(false);
       else if (!sharing.hidden) toggleSharing(false);
       else if (!$("pause-card").hidden) showPauseCard(false);
       else if (agentPanel.contains(document.activeElement)) toggleAgent(false);
@@ -1755,7 +1786,7 @@ Once you've read the guide, await further instructions.`;
     if (open != (card.hidden == true)) return;
     card.hidden = !open;
     if (!open) return;
-    showChrome(); toggleHelp(false); toggleShare(false);
+    showChrome(); toggleHelp(false); toggleSharing(false);
     const fix = $("pause-fix");
     // aria-disabled, not disabled: it can still say why it can't.
     fix.setAttribute("aria-disabled", String(!!agentOff));
@@ -1783,8 +1814,7 @@ Once you've read the guide, await further instructions.`;
   for (const b of document.querySelectorAll(".chrome button")) b.addEventListener("mousedown", (e) => e.preventDefault());
   document.addEventListener("mousedown", (e) => {
     if (!help.hidden && !help.contains(e.target as Node)) toggleHelp(false);
-    if (!share.hidden && !share.contains(e.target as Node) && !shareBtn.contains(e.target as Node)) toggleShare(false);
-    if (!sharing.hidden && !sharing.contains(e.target as Node) && !peopleBtn.contains(e.target as Node)) toggleSharing(false);
+    if (!sharing.hidden && !sharing.contains(e.target as Node) && !shareBtn.contains(e.target as Node)) toggleSharing(false);
     if (!account.hidden && !account.contains(e.target as Node) && !accountBtn?.contains(e.target as Node)) toggleAccount(false);
     if (!$("pause-card").hidden && !$("pause-card").contains(e.target as Node) && !$("btn-pause").contains(e.target as Node)) showPauseCard(false);
   });
@@ -1811,7 +1841,7 @@ Once you've read the guide, await further instructions.`;
       return;
     }
     if (mode != "text") setMode("text");
-    toggleHelp(false); toggleShare(false); toggleSharing(false); toggleNaming(false); togglePages(false); toggleAccount(false); showPauseCard(false);
+    toggleHelp(false); toggleSharing(false); toggleNaming(false); togglePages(false); toggleAccount(false); showPauseCard(false);
     hideFmt();
     showAgent(false);
     stopVoice();

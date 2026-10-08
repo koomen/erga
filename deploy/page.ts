@@ -3,7 +3,7 @@
 // price), give it a GitHub app to sign in with, deploy, and watch each step.
 // One page; its script asks /deploy/api/* and redraws.
 
-import { appPage, esc } from "../front";
+import { appPage, crumbs, esc } from "../front";
 
 export interface DeployPageConfig {
   login: string;
@@ -21,11 +21,6 @@ export interface DeployPageConfig {
 
 const STYLE = `
   main { max-width: 760px; }
-  /* Breadcrumbs in the upper left, after the wordmark (as the editor's: Documents › its title). */
-  .crumbs { position: absolute; top: max(14px, env(safe-area-inset-top)); left: max(20px, env(safe-area-inset-left)); height: 30px; display: flex; align-items: center; gap: 0; }
-  .crumbs .brand { position: static; }
-  .crumbs .here { display: flex; align-items: center; font-size: 13.5px; font-weight: 500; color: var(--fg); }
-  .crumbs .here::before { content: "›"; margin: 0 9px 0 10px; color: var(--chrome); opacity: 0.55; font-weight: 400; }
   .steps { list-style: none; margin: 28px 0 0; padding: 0; counter-reset: step; }
   .step { position: relative; padding: 18px 0 22px 44px; border-top: 1px solid var(--rule); }
   .step::before { counter-increment: step; content: counter(step); position: absolute; left: 0; top: 18px; width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center;
@@ -97,7 +92,7 @@ const STYLE = `
 
 export function deployPage(c: DeployPageConfig): string {
   const perms = c.permissions.map((p) => `<li><b>${esc(label(p.key))}</b> (${p.type == "read" ? "read" : "edit"}): ${esc(p.why)}</li>`).join("");
-  const body = `<nav class="crumbs" aria-label="Breadcrumbs"><a class="brand" href="/">Erga</a><span class="here" aria-current="page">Deploy</span></nav><main>
+  const body = `${crumbs(null, [{ label: "Deploy" }])}<main>
   <header><div><h1>Deploy your own Erga</h1><p class="sub">A copy of this server on your own Cloudflare account, with you (${esc(c.login)}) as its admin: the same Worker, database and settings${c.release ? ` (release <code>${esc(c.release.version)}</code>)` : ""}.</p></div></header>
   ${c.release ? "" : `<p class="error">This server has no release to deploy yet: it's made when the server is deployed (<code>bun deploy/release.ts</code>).</p>`}
   <p class="error" id="top-error">${esc(c.error)}</p>

@@ -304,6 +304,7 @@ body.chrome-hidden .chrome-bottom:has(.status.error) { opacity: 1; }
 
 .icon-btn {
   position: relative;
+  -webkit-user-select: none; user-select: none;
   display: grid; place-items: center;
   width: 34px; height: 34px;
   padding: 0;
@@ -316,6 +317,8 @@ body.chrome-hidden .chrome-bottom:has(.status.error) { opacity: 1; }
 .icon-btn[hidden] { display: none; }
 .icon-btn:hover { color: var(--chrome-hover); background: color-mix(in srgb, var(--chrome) 12%, transparent); }
 .icon-btn:focus-visible, .stat:focus-visible { outline: 2px solid var(--caret); outline-offset: 1px; }
+/* Each page action's icon is drawn 15 units tall of its 24, centred: a group in it scales it there, and sets the stroke's
+   width back by the same amount (page.html, front.ts, templates.ts). So every icon in a header has the same height. */
 .icon-btn svg { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
 
 /* Show the icon for the mode you would switch *to*. */
@@ -344,8 +347,8 @@ body.previewing #btn-preview { color: var(--chrome-hover); }
 }
 /* Its card or menu is open, where the tooltip would be. */
 .icon-btn[aria-expanded="true"][data-tip]::after, .avatar[aria-expanded="true"][data-tip]::before { display: none; }
-/* A control that's on (tracking, paused, editing, its card open) is blue, nothing more: in the editor and on /admin/source. */
-.chrome-top :is(.icon-btn[aria-pressed="true"], .icon-btn[aria-expanded="true"]), .chrome-top :is(.icon-btn[aria-pressed="true"], .icon-btn[aria-expanded="true"]):hover { color: var(--caret); background: transparent; }
+/* A control that's on (tracking, paused, editing, its card open) is blue, and keeps the same hover as the others: in the editor and on /admin/source. */
+.chrome-top :is(.icon-btn[aria-pressed="true"], .icon-btn[aria-expanded="true"]) { color: var(--caret); }
 
 .stat {
   border: 0; background: none; padding: 6px 0; margin: 0;

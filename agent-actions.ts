@@ -119,7 +119,7 @@ export const AGENT_ACTIONS: AgentAction[] = [
   { route: "POST /docs/delete", domain: "document", action: "Delete a document (Documents)", tool: "delete_document" },
   { route: "GET /docs/share?id=", domain: "document", action: "See who a document is shared with (Documents, Share)", tool: "document_access" },
   { route: "POST /docs/share", domain: "document", action: "Share a document, change a role, or stop sharing (Documents and editor, Share)", tool: "share_document" },
-  { route: "POST /d/<id>/api/share", domain: "document", action: "The share button's token, for another agent (editor, Share with agent)", exempt: SECRET },
+  { route: "POST /d/<id>/api/share", domain: "document", action: "The Share card's agent token, for another agent (editor, Share: Share with an agent)", exempt: SECRET },
 
   // ------------------------------------------------------------ the editor (api.ts, tree.ts, server-api.ts)
   { route: "WS /d/<id>/api/room", domain: "document", action: "Edit the text (editor)", tool: "edit" },

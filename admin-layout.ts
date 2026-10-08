@@ -28,7 +28,7 @@
 // Only the page: who may see it is checked on the server, before any admin
 // page is made (adminGate, below, in worker/index.ts; and each page's own door).
 
-import { appPage, esc, ICON, link, page, type Platform, type Session, whoOf } from "./front.ts";
+import { appPage, crumbs as trail, esc, ICON, link, page, type Platform, type Session, whoOf } from "./front.ts";
 
 export type AdminSection = "settings" | "keys" | "auth" | "changes" | "users" | "source";
 
@@ -80,13 +80,7 @@ const AGENT = `<div class="agent-dock" id="agent-dock"><aside class="admin-agent
 <button type="button" class="agent-fab admin-fab" id="agent-fab" aria-label="Open the agent (⌘J)" title="Agent  ⌘J" aria-expanded="true" aria-controls="agent">${AGENT_ICON}</button>`;
 
 export const LAYOUT_STYLE = `
-  /* The header: the breadcrumb upper left, on the line of the account corner (account.ts) upper right; Share with agent left of it. */
-  .crumbs { position: absolute; top: max(14px, env(safe-area-inset-top)); left: max(20px, env(safe-area-inset-left)); height: 30px; display: flex; align-items: center; gap: 0; margin: 0; }
-  .crumbs .brand { position: static; }
-  .crumbs a.here-link { color: var(--soft); text-decoration: none; font-size: 13.5px; font-weight: 500; display: flex; align-items: center; }
-  .crumbs a.here-link:hover { color: var(--fg-strong); }
-  .crumbs > :not(.brand)::before { content: "›"; margin: 0 9px 0 10px; color: var(--chrome); opacity: 0.55; font-weight: 400; }
-  .crumbs .here { display: flex; align-items: center; margin: 0; font-size: 13.5px; line-height: inherit; font-weight: 500; letter-spacing: normal; color: var(--fg); }
+  /* The header: the breadcrumbs (front.ts, crumbs) upper left; Share with agent left of the account corner (account.ts) upper right. */
   /* The header bar: left of your avatar, as the editor's icons are; it scrolls with the page, as the avatar does. */
   .chrome-top { position: absolute; right: calc(max(16px, env(safe-area-inset-right)) + 38px); }
   /* The sidebar beside the page. */
@@ -233,7 +227,7 @@ const SIDEBAR_SCRIPT = `<script>
 
 /** An admin page, whole: the header, the sidebar and the page's own body. */
 export function adminLayout(o: AdminLayout): string {
-  const crumbs = `<nav class="crumbs" aria-label="Breadcrumbs"><a class="brand" href="${esc(link("/", o.session))}">Erga</a><a class="here-link" href="${esc(link("/admin", o.session))}">Admin</a><h1 class="here" aria-current="page">${esc(o.title)}</h1></nav>`;
+  const crumbs = trail(o.session, [{ label: "Admin", href: "/admin" }, { label: o.title }], "h1");
   // Share with agent: the editor's icon button (page.html, .chrome-top), the card from admin-share.js.
   const bar = `<div class="chrome chrome-top" role="toolbar" aria-label="Controls"><button type="button" class="icon-btn" id="btn-share" aria-label="Share with an agent" data-tip="Share with an agent" aria-expanded="false" aria-controls="share">${ICON.agent}</button></div>`;
   const links = SECTIONS.map((s) => `<li><a href="${esc(link(s.path, o.session))}"${s.key == o.here ? ` aria-current="page"` : ""}>${s.icon}<span class="label">${s.label}</span></a></li>`).join("");

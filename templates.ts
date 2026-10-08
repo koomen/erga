@@ -56,7 +56,7 @@ export function pickerRows(): ({ template: Template } | { group: string; templat
 
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 
-const PLUS = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5.5v13M5.5 12h13"/></svg>`;
+const PLUS = `<svg viewBox="0 0 24 24" aria-hidden="true"><g transform="translate(12 12) scale(1.1538) translate(-12 -12)" stroke-width="1.3867"><path d="M12 5.5v13M5.5 12h13"/></g></svg>`;
 
 /** The + button: `cls` gives it the look of the controls it sits with (the viewer's erga-view-button, the editor's icon-btn). */
 export const newDocButton = (cls: string) =>

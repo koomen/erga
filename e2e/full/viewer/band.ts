@@ -10,7 +10,7 @@ export const topDoc = async (server: Server, name: "light" | "dark" | "gradient"
 
 /** The controls on the band, viewing and editing. */
 const CONTROLS = {
-  view: `.erga-view-buttons > *, .erga-account-btn`,
+  view: `.erga-view-buttons > *, .erga-account-btn, .erga-crumbs > *`,
   edit: `#nav-docs > :not([hidden]), .chrome-top > :not(.people), .people > *, .me-slot > *`,
 };
 

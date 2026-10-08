@@ -21,7 +21,7 @@ import { ConfigError } from "./config.ts";
 import { LOCKED } from "./users.ts";
 import { byLine } from "./attribution.ts";
 import { NotAllowed, roleMay, type DocRow } from "./directory.ts";
-import { cloneButton, editButton, esc, FADE, fromElsewhere, link, VIEW_STYLE, whoOf, type Platform } from "./front.ts";
+import { cloneButton, crumbsFont, editButton, esc, FADE, fromElsewhere, link, VIEW_STYLE, viewCrumbs, whoOf, type Platform } from "./front.ts";
 import { NEW_DOC_SCRIPT, NEW_DOC_STYLE, newDocButton, newDocMenu } from "./templates.ts";
 
 /** Where a deploy's files are served: /_home/<gen>/<path>, each address never reused, so browsers keep them for good. */
@@ -180,7 +180,8 @@ export async function renderHome(opts: { index: string; files: Record<string, st
 export function homeHeader(o: { clone: string; edit: string | null; account: Account | null; here: string; doc?: string }): string {
   const session = o.account?.session ?? null;
   const buttons = `<div class="erga-view-buttons">${newDocButton("erga-view-button")}${cloneButton(o.clone)}${o.edit ? editButton(o.edit, false) : ""}</div>${newDocMenu((path) => link(path, session), !!session && !session.test)}`;
-  return `<erga-controls${o.doc ? ` data-doc="${esc(o.doc)}"` : ""}><template shadowrootmode="open"><style>${HOST_STYLE}</style><div class="band"></div>${buttons}${accountMarkup(o.account, o.here)}${VIEW_STYLE}${ACCOUNT_STYLE}${NEW_DOC_STYLE}</template></erga-controls><script>${HEADER_SCRIPT}</script>`;
+  // The font goes outside the shadow root: a font declared inside one isn't used.
+  return `${crumbsFont(session)}<erga-controls${o.doc ? ` data-doc="${esc(o.doc)}"` : ""}><template shadowrootmode="open"><style>${HOST_STYLE}</style><div class="band"></div>${viewCrumbs(session, null)}${buttons}${accountMarkup(o.account, o.here)}${VIEW_STYLE}${ACCOUNT_STYLE}${NEW_DOC_STYLE}</template></erga-controls><script>${HEADER_SCRIPT}</script>`;
 }
 
 // The host: nothing of the page's applies to it (its own !important rules win over the page's, from inside the shadow root).

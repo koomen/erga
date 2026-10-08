@@ -85,6 +85,8 @@ test("the editor's + opens the picker under it, in the window, in one typeface; 
   // The viewer's controls fade out over the editor's for 200 ms after it is ready, and take clicks meanwhile
   // (front.ts, `.erga-editor-ready :is(.erga-view-buttons, .erga-account)`): a click on + then hits the viewer's
   // Clone button and makes a copy. Click once + itself is what a click there reaches (the old test paused 500 ms).
+  // The editor's own controls open out of the pencil as it comes up, moving the + aside: it's clicked once they're open.
+  await expect.poll(() => page.evaluate(() => document.getElementById("edit-group")!.classList.contains("settled"))).toBe(true);
   await expect.poll(() => page.evaluate(() => { const b = document.querySelector("#btn-new")!, r = b.getBoundingClientRect(); return b.contains(document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2)); })).toBe(true);
   await clickOn(page, "#btn-new");
   const m = await picker(page);

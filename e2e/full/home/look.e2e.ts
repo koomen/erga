@@ -6,8 +6,10 @@ import { devicePage, diffPng, shoot, steady, VIEWS } from "./shots";
 await servers.short();
 test.afterEach(async () => { await resetLanding(await servers.short()); });
 
-// / differs from the viewer in one way: the page starts below the controls' band, so they never cover its top.
+// / differs from the viewer in two ways: the page starts below the controls' band, so they never cover its top; and its
+// breadcrumbs are the wordmark alone (the viewer's name the document), so the shots leave them out.
 const BAND = 58;
+const NO_CRUMBS = `for (const r of [document, document.querySelector("erga-controls")?.shadowRoot]) r?.querySelector(".erga-crumbs")?.style.setProperty("visibility", "hidden")`;
 
 for (const v of VIEWS) {
   test(`/ looks as the viewer shows its document, the page moved below the band: ${v.name} (pixel diff)`, async ({ tab }) => {
@@ -15,7 +17,7 @@ for (const v of VIEWS) {
     const { address } = await fresh(server);
     await deployed(server);
     const ctx = tab.page.context();
-    const a = await shoot(ctx, `${server.root}${address}`, v), b = await shoot(ctx, `${server.root}/`, v);
+    const a = await shoot(ctx, `${server.root}${address}`, v, NO_CRUMBS), b = await shoot(ctx, `${server.root}/`, v, NO_CRUMBS);
     // Where the viewer's page starts (0 while its frame fills the window).
     const q = await devicePage(ctx, v);
     await q.goto(`${server.root}${address}`);

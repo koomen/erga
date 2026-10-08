@@ -36,7 +36,7 @@ import { validateToolArguments } from "@mariozechner/pi-ai";
 import { documentToolSpecs, type ToolContent, type ToolSpec } from "./agent";
 import { type Action, type DocRow, type Route, nameOf, roleMay } from "./directory";
 import type { PublishRequest } from "./versions";
-import { accessOf, appPage, brand, esc, forwarded, fromElsewhere, ICON, ID, makeDoc, newDocId, page, safeNext, startingFiles, TIMES_SCRIPT, type Platform, type Session, whoOf } from "./front";
+import { accessOf, appPage, crumbs, esc, forwarded, fromElsewhere, ICON, ID, makeDoc, newDocId, page, safeNext, startingFiles, TIMES_SCRIPT, type Platform, type Session, whoOf } from "./front";
 import { byLine, VIA } from "./attribution";
 import { findDocument, runServerTool, SERVER_TOOLS, ToolError, type ToolWho } from "./server-tools";
 import { cleanRel } from "./host";
@@ -787,7 +787,7 @@ printf 'protocol=${esc(url.protocol.replace(":", ""))}\\nhost=${esc(url.host)}\\
   .notice.error { background: color-mix(in srgb, #c2410c 12%, transparent); }
   @media (max-width: 620px) { .labels { display: none; } .labels, ol.rows > li { grid-template-columns: minmax(0, 1fr) auto 40px; } ol.rows .what, ol.rows > li > time:nth-of-type(2), ol.rows > li > .never:nth-of-type(2) { display: none; } }
 `;
-  const html = appPage("Tokens", style, `${brand(session)}<main>
+  const html = appPage("Tokens", style, `${crumbs(session, [{ label: "Tokens" }])}<main>
   <header><div><h1>Tokens</h1></div></header>
   ${o.notice ?? ""}
   ${made}

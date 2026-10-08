@@ -31,18 +31,18 @@ test("your avatar, far right of the editor's controls with your GitHub picture, 
   expect(await page.evaluate(() => { const e = document.getElementById("btn-edit")!; return { pressed: e.getAttribute("aria-pressed"), hidden: e.hidden, href: e.getAttribute("href") }; })).toEqual({ pressed: "true", hidden: false, href: at.replace(/#edit$/, "") });
 });
 
-test("its owner adds someone, sees them listed with their role, and takes them off; the controls, right to left from your avatar", async ({ tab }) => {
+test("its owner adds someone, sees them listed with their role, and takes them off; the controls, left to right up to your avatar", async ({ tab }) => {
   const page = tab.page;
   await editing(page);
-  await clickOn(page, "#btn-people");
-  await until(() => page.evaluate(() => !document.getElementById("sharing")!.hidden && !!document.querySelector("#sharing-list li")), 5000, "the people button opens who has the document");
+  await clickOn(page, "#btn-share");
+  await until(() => page.evaluate(() => !document.getElementById("sharing")!.hidden && !!document.querySelector("#sharing-list li")), 5000, "the Share button opens who has the document");
   await page.evaluate(() => { const f = document.getElementById("sharing-add") as HTMLFormElement; (f.elements.namedItem("login") as HTMLInputElement).value = "ada"; (f.elements.namedItem("role") as HTMLSelectElement).value = "viewer"; f.requestSubmit(); });
-  await until(() => page.evaluate(() => [...document.querySelectorAll("#sharing-list li")].some((li) => li.textContent!.startsWith("ada") && li.querySelector("select")?.value == "viewer")), 5000, "adding someone lists them, with their role");
-  await page.evaluate(() => ([...document.querySelectorAll("#sharing-list li")].find((li) => li.textContent!.startsWith("ada"))!.querySelector(".remove") as HTMLElement).click());
-  await until(() => page.evaluate(() => ![...document.querySelectorAll("#sharing-list li")].some((li) => li.textContent!.startsWith("ada"))), 5000, "taking them off unlists them");
-  const order = await page.evaluate(() => [...document.querySelectorAll(".chrome-top > button:not([hidden]), .chrome-top > .mode, .chrome-top > a:not([hidden])")].map((e) => e.id).join(" "));
-  // Edit, new document (+), view, document settings, share with people, share with an agent, track changes, pause.
-  expect(order).toBe("btn-pause btn-track btn-share btn-people btn-settings mode btn-new btn-edit");
+  await until(() => page.evaluate(() => [...document.querySelectorAll("#sharing-list li")].some((li) => li.querySelector(".who")!.textContent!.startsWith("ada") && li.querySelector("select")?.value == "viewer")), 5000, "adding someone lists them, with their role");
+  await page.evaluate(() => ([...document.querySelectorAll("#sharing-list li")].find((li) => li.querySelector(".who")!.textContent!.startsWith("ada"))!.querySelector(".remove") as HTMLElement).click());
+  await until(() => page.evaluate(() => ![...document.querySelectorAll("#sharing-list li")].some((li) => li.querySelector(".who")!.textContent!.startsWith("ada"))), 5000, "taking them off unlists them");
+  const order = await page.evaluate(() => [...document.querySelectorAll(".chrome-top .icon-btn:not([hidden]), .chrome-top .mode")].map((e) => e.id).join(" "));
+  // New document (+), clone, then the editor's own (pause, track changes, share, document settings, view), then edit.
+  expect(order).toBe("btn-new btn-clone btn-pause btn-track btn-share btn-settings mode btn-edit");
   await page.keyboard.press("Escape");
 });
 
@@ -77,7 +77,7 @@ test("the pencil switches between viewing and editing without a reload, the docu
   const viewing = await bounce();
   expect(viewing.length).toBeGreaterThanOrEqual(3);
   for (const v of viewing) expect(v, "viewing, overscroll").toBe("none");
-  expect(await page.evaluate(() => !!document.querySelector(".erga-crumbs")), "viewing, breadcrumbs").toBe(false);
+  expect(await visible(".erga-crumbs"), "viewing, the viewer's breadcrumbs").toBe(true);
   expect(await page.evaluate(() => getComputedStyle(document.getElementById("nav-docs")!).visibility)).toBe("hidden");
   expect(await h1()).toBe(editingTop);
   await clickOn(page, ".erga-edit-button");

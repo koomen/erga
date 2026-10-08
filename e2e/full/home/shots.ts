@@ -35,11 +35,12 @@ export async function steady(p: Page) {
 }
 
 /** A picture of `url` as `view` shows it, once it's steady. */
-export async function shoot(context: BrowserContext, url: string, view: View): Promise<Buffer> {
+export async function shoot(context: BrowserContext, url: string, view: View, script?: string): Promise<Buffer> {
   const p = await devicePage(context, view);
   try {
     await p.goto(url);
     await steady(p);
+    if (script) await p.evaluate(script);
     const shot = (await p.cdp.send("Page.captureScreenshot", { format: "png" })) as { data: string };
     return Buffer.from(shot.data, "base64");
   } finally { await p.close(); }
