@@ -121,6 +121,12 @@ export class Pipeline extends DurableObject<Env> {
         ...(typeof runner != "string" && runner.kind.startsWith("local") ? { pollMs: 300 } : {}),
         schedule,
         changed: (commit) => this.publish({ type: "gate", commit }),
+        // A staging move's run starts its VMs once this server's deploy of the commit ends: the new Worker version
+        // restarts the VMs it owns. (A newer move cancels the run instead; DEPLOY_WAIT_MS bounds the wait.)
+        deployed: async (commit) => {
+          const own = await this.deploys.own();
+          return !own || (own.commit == commit && ["deployed", "failed", "cancelled"].includes(own.state));
+        },
       });
     }
   }
@@ -199,14 +205,14 @@ export class Pipeline extends DurableObject<Env> {
   logOf(name: string, deployId?: string): Promise<DeployLog | null> { return this.deploys.logOf(name, deployId); }
   historyOf(name: string, limit?: number): Promise<DeployRecord[] | null> { return this.deploys.historyOf(name, limit); }
   async hook(branch: string, commit: string, trigger?: string): Promise<void> {
-    // A staging commit: its tests run at once, beside its deploy (the gate cancels the run of the commit before).
-    if (branch == "staging" && this.gate && /^[0-9a-f]{40}$/.test(commit)) await this.gate.start(commit, `staging moved (${trigger ?? "a push"})`, { supersede: true }).catch((e) => console.error("gate:", e));
+    // A staging commit: its run is made at once (the gate cancels the run of the commit before), and its VMs start when its deploy ends.
+    if (branch == "staging" && this.gate && /^[0-9a-f]{40}$/.test(commit)) await this.gate.start(commit, `staging moved (${trigger ?? "a push"})`, { supersede: true, afterDeploy: true }).catch((e) => console.error("gate:", e));
     return this.deploys.hook(branch, commit, trigger);
   }
   redeploy(name: string, trigger?: string) { return this.deploys.redeploy(name, trigger); }
   async remoteHook(name: string, body: { branch?: string; commit?: string; redeploy?: boolean; trigger?: string }) {
     if (body.branch == "staging" && this.gate && typeof body.commit == "string" && /^[0-9a-f]{40}$/.test(body.commit)) {
-      await this.gate.start(body.commit, `staging moved (${typeof body.trigger == "string" ? body.trigger.slice(0, 80) : "a move"}, passed on)`, { supersede: true }).catch((e) => console.error("gate:", e));
+      await this.gate.start(body.commit, `staging moved (${typeof body.trigger == "string" ? body.trigger.slice(0, 80) : "a move"}, passed on)`, { supersede: true, afterDeploy: true }).catch((e) => console.error("gate:", e));
     }
     return this.deploys.remoteHook(name, body);
   }

@@ -112,7 +112,7 @@ export async function deploysDoor(request: Request, env: Env, base: Platform): P
   if (isGate) {
     // From this site's pages, or an agent's token: never another site's form.
     if (method == "POST" && !session!.agent && request.headers.get("origin") != url.origin) return Response.json({ error: "Forbidden" }, { status: 403 });
-    return gateAnswer(request, env, url, path, session!.login);
+    return gateAnswer(request, env, url, path, byLine(session!.login.toLowerCase(), whoOf(session!).via));
   }
   if (path == "/api/events" && method == "GET") return stub().fetch(new Request(url, request));
   if (path == "/api/deploys" && method == "GET") return Response.json(await stub().status(Number(url.searchParams.get("history") ?? 0) || 0), noStore);
@@ -129,7 +129,7 @@ export async function deploysDoor(request: Request, env: Env, base: Platform): P
   return Response.json({ error: `There's nothing at ${method} ${path}.` }, { status: 404 });
 }
 
-/** /api/gate...: for an admin (`by`, their login) or another of Erga's servers (null; a run names who asked there). */
+/** /api/gate...: for an admin (`by`, who asked and how: attribution.ts, byLine) or another of Erga's servers (null; a run names who asked there). */
 async function gateAnswer(request: Request, env: Env, url: URL, path: string, by: string | null): Promise<Response> {
   const stub = env.PIPELINE.getByName("deploys");
   const noStore = { headers: { "Cache-Control": "no-store" } };
@@ -149,7 +149,7 @@ async function gateAnswer(request: Request, env: Env, url: URL, path: string, by
     }
     if (what == "run" && request.method == "POST") {
       const body = (await request.json().catch(() => ({}))) as { by?: string };
-      const who = by ?? (typeof body.by == "string" && body.by ? `${body.by.slice(0, 40)} (passed on)` : "another server");
+      const who = by ?? (typeof body.by == "string" && body.by ? `${body.by.slice(0, 120)} (passed on)` : "another server");
       return Response.json({ run: await stub.gateStart(sha, who) });
     }
   } catch (e) { return fail(e); }

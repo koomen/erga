@@ -1205,7 +1205,7 @@ export class Factory extends DurableObject<Env> {
           if (!sha) throw new Error("staging has no commits yet.");
         }
         if (!/^[0-9a-f]{40}$/.test(sha)) throw new Error("Name the commit by its full sha (40 hex digits).");
-        const run = await pipeline().gateStart(sha, login);
+        const run = await pipeline().gateStart(sha, byLine(login, VIA.admin));
         return { done: `The tests of ${sha.slice(0, 10)} run now (${run.shards.length} shards); list_test_runs follows them`, state: run.state };
       },
     };

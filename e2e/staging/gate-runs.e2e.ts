@@ -26,13 +26,16 @@ test("Run again: the API starts the next attempt, which runs to its end", { time
   expect(r.status).toBe(200);
   const run = ((await r.json()) as { run: GateRun }).run;
   expect([run.attempt, run.state]).toEqual([2, "running"]);
+  // Asked with a token: who, and how (attribution.ts).
+  expect(run.trigger).toMatch(/^run by \S+, via a shared agent \(.*\)$/);
   await until(async () => (await gateOf(s, a.token, red)).run?.state == "failed", RUN_MS, "attempt 2 fails again");
 });
 
 test("a running commit is refused; a newer push cancels its run; a flaky run passes after its rerun, and says so", { timeout: 2 * RUN_MS + 15_000 }, async () => {
   const s = await servers.gate(), a = await admin(s), c = await pusher(s, a.token);
   const slow = c.push("A slow change [gate-hang]");
-  await until(async () => (await gateOf(s, a.token, slow)).run?.state == "running", RUN_MS, "the slow commit's run is running");
+  // Its VMs start once staging's deploy of it ends (until then the refusal says so): then it runs, and never ends.
+  await until(async () => { const run = (await gateOf(s, a.token, slow)).run; return run?.state == "running" && !run.waits; }, RUN_MS, "the slow commit's run is running");
   const r = await fetch(`${s.root}/api/source/merge`, { method: "POST", headers: { Authorization: `Bearer ${a.token}`, "Content-Type": "application/json" }, body: JSON.stringify({ from: "staging", to: "main" }) });
   expect(r.status).toBe(409);
   expect(((await r.json()) as { error: string }).error).toContain("still running");

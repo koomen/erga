@@ -8,8 +8,8 @@ import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fakeRunner, RERUN_MAX, SILENT_MS, TestGate, verdictOf, vmName, type GateRunner, type ShardReport } from "../deploy/gate.ts";
-import { E2E_ALONE, E2E_SLOTS, e2eItems, e2eResults, planShards, TYPECHECK_SECS, UNIT_SECS, type E2EReport } from "../factory/vm/gate.ts";
+import { DEPLOY_WAIT_MS, fakeRunner, RERUN_MAX, SILENT_MS, TestGate, verdictOf, vmName, type GateRunner, type ShardReport } from "../deploy/gate.ts";
+import { AGENT_TAIL, E2E_ALONE, E2E_SLOTS, e2eItems, e2eResults, planShards, TYPECHECK_SECS, UNIT_SECS, type E2EReport } from "../factory/vm/gate.ts";
 import { parseStatus, vmRunner } from "../worker/gate.ts";
 import { git, must, startFixture, type Fixture } from "./source-fixture.ts";
 
@@ -76,7 +76,7 @@ describe("the shard split", () => {
 });
 
 /** A gate on a pretend clock, its storage in memory, with the fake runner (or another). */
-function makeGate(o: { runner?: GateRunner | string; subjects?: Record<string, string>; shards?: number } = {}) {
+function makeGate(o: { runner?: GateRunner | string; subjects?: Record<string, string>; shards?: number; deployed?: (commit: string) => Promise<boolean> } = {}) {
   let t = 1_000_000;
   const store = new Map<string, unknown>();
   const events: string[] = [];
@@ -88,6 +88,7 @@ function makeGate(o: { runner?: GateRunner | string; subjects?: Record<string, s
     now: () => t,
     shards: o.shards ?? 3,
     timer: () => {},
+    ...(o.deployed ? { deployed: o.deployed } : {}),
   });
   /** Moves the clock on and polls until nothing changes (each launch settles first). */
   const step = async (ms: number) => { t += ms; await new Promise((r) => setTimeout(r, 5)); await gate.alarm(); await new Promise((r) => setTimeout(r, 5)); await gate.alarm(); };
@@ -219,6 +220,58 @@ describe("a run", () => {
     expect(await gate.log(sha("3"), 1)).toContain("memory available 0.1 GB");
   });
 
+  test("a silent VM's failure says what the last try to reach it got", async () => {
+    const quiet: GateRunner = { kind: "test", start: async () => {}, stop: async () => {}, poll: async () => { throw new Error("the VM's agent answered 503: busy"); } };
+    const { gate, step } = makeGate({ runner: quiet, shards: 1 });
+    await gate.start(sha("4"), "push");
+    await step(10);
+    await step(SILENT_MS + 1000);
+    expect((await gate.get(sha("4")))?.shards[0].error).toBe("The VM didn't answer for 3 minutes (the last try: the VM's agent answered 503: busy).");
+  });
+
+  test("a staging move's run starts its VMs only when that commit's deploy ends, and its limits count from then", async () => {
+    let ended = false;
+    const started: string[] = [];
+    const fake = fakeRunner({ delayMs: 1000, now: () => at(), subject: async () => "a change" });
+    const runner: GateRunner = { ...fake, start: (spec) => { started.push(spec.vm); return fake.start(spec); } };
+    // The gate asks the server's deploys (worker/pipeline.ts): here, a flag.
+    const { gate, step, at } = makeGate({ runner, deployed: async () => ended });
+    const run = await gate.start(sha("5"), "staging moved (push by ada)", { supersede: true, afterDeploy: true });
+    expect(run.waits).toBe(true);
+    await step(SILENT_MS + 60_000);
+    expect(started).toEqual([]);
+    let v = await gate.verdict(sha("5"));
+    expect(v.state).toBe("running");
+    expect(v.reason).toContain("start when staging's deploy of it ends");
+    ended = true;
+    await step(10);
+    expect(started.length).toBe(3);
+    const going = await gate.get(sha("5"));
+    expect(going?.waits).toBeUndefined();
+    expect(going?.shards.every((s) => s.started == at())).toBe(true);
+    await step(1500);
+    expect((await gate.get(sha("5")))?.state).toBe("passed");
+    // A run someone asks for doesn't wait.
+    started.length = 0;
+    ended = false;
+    await gate.start(sha("6"), "run by ada", { again: true });
+    await step(10);
+    expect(started.length).toBe(3);
+    // A deploy that never says it ended: the VMs start after DEPLOY_WAIT_MS anyway.
+    started.length = 0;
+    await gate.start(sha("7"), "staging moved", { supersede: true, afterDeploy: true });
+    await step(DEPLOY_WAIT_MS + 1000);
+    expect(started.length).toBe(3);
+    // A newer move cancels a run that still waits; it never starts.
+    started.length = 0;
+    await gate.start(sha("8"), "staging moved", { supersede: true, afterDeploy: true });
+    await gate.start(sha("9"), "staging moved", { supersede: true, afterDeploy: true });
+    expect((await gate.get(sha("8")))?.state).toBe("cancelled");
+    ended = true;
+    await step(10);
+    expect(started.every((vm) => !vm.includes(sha("8").slice(0, 10)))).toBe(true);
+  });
+
   test("the verdict for a commit with no run tells what to do", () => {
     const v = verdictOf(sha("9"), null);
     expect(v).toMatchObject({ ok: false, state: "none" });
@@ -327,8 +380,13 @@ describe("the shard's job in a VM (factory/vm/gate.ts)", () => {
       const head = run(repo, "rev-parse", "HEAD");
       const work = join(dir, "work");
       const job = (...a: string[]) => spawnSync("bun", [join(ROOT, "factory/vm/run.ts"), "gate", ...a], { cwd: dir, encoding: "utf8", env: { ...process.env, REPO_URL: repo, FACTORY_WORK: work }, timeout: 60_000 });
-      const status = () => parseStatus(job("status").stdout);
-      expect(status().state).toBe("none");
+      // Read as staging reads it: the VM runner (worker/gate.ts), through an agent that answers with the last AGENT_TAIL
+      // characters of a job's output, as the image's does (factory/vm/agent.ts).
+      const agent = { getByName: () => ({ boot: async () => {}, alive: async () => true, stop: async () => {},
+        job: async (_script: string, args: string[]) => { const r = job(...args.slice(1)); return { code: r.status ?? 1, output: `${r.stdout}${r.stderr}`.slice(-AGENT_TAIL) }; } }) };
+      const runner = vmRunner(agent, repo, async () => "fgt.t");
+      const status = async () => (await runner.poll("vm")) as ShardReport;
+      expect((await status()).state).toBe("none");
       // A run's log starts with the VM's load and memory.
       // Each shard as the split has it, with the e2e files (not the bench's); together they run everything once.
       const files = ["e2e/x.e2e.ts", "e2e/y.e2e.ts", "e2e/z.e2e.ts", "e2e/w.bench.e2e.ts", "e2e/alone/q.e2e.ts"];
@@ -337,7 +395,7 @@ describe("the shard's job in a VM (factory/vm/gate.ts)", () => {
       const seen: string[] = [];
       for (const n of [1, 2]) {
         const r = job("run", head, String(n), "2");
-        const s: ShardReport = status();
+        const s: ShardReport = await status();
         const names = plan[n - 1].items.map((i) => i.name);
         expect(s.state).toBe("done");
         // The typecheck, the unit tests, then e2e's files.
@@ -356,10 +414,25 @@ describe("the shard's job in a VM (factory/vm/gate.ts)", () => {
       expect(seen.sort()).toEqual(["e2e/alone/q.e2e.ts", "e2e/x.e2e.ts", "e2e/y.e2e.ts", "e2e/z.e2e.ts", "typecheck", "unit"]);
       // A rerun of named files only: the unit test files as one item, and e2e's.
       expect(job("run", head, "3", "2", "--files", "tests/a.test.ts,e2e/y.e2e.ts,e2e/alone/q.e2e.ts").status).toBe(0);
-      expect(status()).toMatchObject({ state: "done", code: 0 });
-      expect(status().results?.map((x) => x.name)).toEqual(["unit", "e2e/y.e2e.ts", "e2e/alone/q.e2e.ts"]);
+      expect(await status()).toMatchObject({ state: "done", code: 0 });
+      expect((await status()).results?.map((x) => x.name)).toEqual(["unit", "e2e/y.e2e.ts", "e2e/alone/q.e2e.ts"]);
       expect(job("run", head, "3", "2", "--files", "tests/b.test.ts,e2e/z.e2e.ts").status).toBe(1);
-      expect(status().results).toMatchObject([{ name: "unit", files: ["tests/b.test.ts"], ok: false }, { name: "e2e/z.e2e.ts", ok: false }]);
+      expect((await status()).results).toMatchObject([{ name: "unit", files: ["tests/b.test.ts"], ok: false }, { name: "e2e/z.e2e.ts", ok: false }]);
+      // A long log, in colour, as e2e writes it: the status still reads whole, and the log's last 60,000 bytes come
+      // through, without the colours, every character whole (a piece may end inside one).
+      const line = (i: number) => `\x1b[32m✓\x1b[39m e2e/file-${i}.e2e.ts (1 test) — “ok” ${"·".repeat(40)}\n`;
+      writeFileSync(join(work, "gate/log.txt"), Array.from({ length: 4000 }, (_, i) => line(i)).join(""), { flag: "a" });
+      expect(job("status").stdout.length).toBeLessThan(AGENT_TAIL);
+      const long = await status();
+      expect(long.state).toBe("done");
+      expect(Buffer.byteLength(long.log ?? "")).toBeGreaterThan(59_000);
+      expect(long.log).not.toContain("\x1b");
+      expect(long.log).not.toContain("\uFFFD");
+      expect(long.log?.endsWith("✓ e2e/file-3999.e2e.ts (1 test) — “ok” " + "·".repeat(40) + "\n")).toBe(true);
+      // While it runs, the status carries a short tail only.
+      writeFileSync(join(work, "gate/status.json"), JSON.stringify({ state: "running", phase: "tests", items: Array.from({ length: 60 }, (_, i) => ({ name: `e2e/a-long-folder-name/file-${i}.e2e.ts`, files: [`e2e/a-long-folder-name/file-${i}.e2e.ts`] })) }));
+      expect(job("status").stdout.length).toBeLessThan(AGENT_TAIL);
+      expect((await status()).log).toContain("e2e/file-3999.e2e.ts");
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
   test("clones with REPO_TOKEN as a header (staging's Git endpoint is for admins), and never asks for a username", async () => {
