@@ -47,7 +47,7 @@ test("TEST_JOBS is exact; TEST_CORES_PER_JOB tunes; never under one", () => {
 });
 
 test("memory caps it: the cgroup's limit, or the machine's", () => {
-  const p = testJobs({ env: {}, root: cgroup({ "memory.max": String(3 * GB) }), reported: 16, memory: 64 * GB });
+  const p = testJobs({ env: {}, root: cgroup({ "memory.max": String(6 * GB) }), reported: 16, memory: 64 * GB });
   expect(p.jobs).toBe(3);
   expect(p.why).toContain("memory");
   expect(testJobs({ env: { TEST_MEM_PER_JOB_MB: "4096" }, root: "/nonexistent", reported: 16, memory: 12 * GB }).jobs).toBe(3);

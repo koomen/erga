@@ -2,11 +2,12 @@
 //
 // In a container, os.availableParallelism() and nproc can report the host's cores, not the container's share:
 // the cgroup's CPU quota (v2 cpu.max, v1 cpu.cfs_quota_us / cpu.cfs_period_us) says what it may use. The smallest
-// wins. Memory caps it too: each worker runs a dev server and a Chromium (about TEST_MEM_PER_JOB_MB, 1024 MB).
+// wins. Memory caps it too: each worker runs a dev server (about 1.7 GB: Vite 1.2, workerd 0.4) and a Chromium
+// (TEST_MEM_PER_JOB_MB, 2048 MB).
 //
 //   TEST_JOBS=n            exactly n at once (a factory task's VM sets 2: Claude Code and the preview share it)
 //   TEST_CORES_PER_JOB=c   one at once for every c usable cores (default 2)
-//   TEST_MEM_PER_JOB_MB=m  one at once for every m MB of memory (default 1024)
+//   TEST_MEM_PER_JOB_MB=m  one at once for every m MB of memory (default 2048)
 //
 //   bun e2e/cores.ts     prints "<jobs> <cores> <why>"
 
@@ -52,7 +53,7 @@ export function testJobs(opts: { env?: Record<string, string | undefined>; root?
   const perJob = Number(env.TEST_CORES_PER_JOB) > 0 ? Number(env.TEST_CORES_PER_JOB) : 2;
   const byCores = Math.max(1, Math.floor(cores / perJob));
   const memory = Math.min(opts.memory ?? totalmem(), cgroupMemory(opts.root) ?? Infinity);
-  const memPerJob = (Number(env.TEST_MEM_PER_JOB_MB) > 0 ? Number(env.TEST_MEM_PER_JOB_MB) : 1024) * 2 ** 20;
+  const memPerJob = (Number(env.TEST_MEM_PER_JOB_MB) > 0 ? Number(env.TEST_MEM_PER_JOB_MB) : 2048) * 2 ** 20;
   const byMemory = Math.max(1, Math.floor(memory / memPerJob));
   const jobs = Math.min(byCores, byMemory);
   const why = `${coresWhy}, ${perJob} a job${env.TEST_CORES_PER_JOB ? " (TEST_CORES_PER_JOB)" : ""}` +
