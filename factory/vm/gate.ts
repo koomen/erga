@@ -23,6 +23,7 @@
 
 import { spawn } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { loadavg } from "node:os";
 import { join } from "node:path";
 
 /** One thing a shard runs: an e2e file, the unit tests (one item, "unit", its files tests/*.test.ts), or the typecheck. */
@@ -130,6 +131,21 @@ const CLONE = () => join(WORK(), "erga");
 // e2e: its runner stops itself at 20 minutes (E2E_RUN_LIMIT_S); this is in case it doesn't.
 const LIMITS = { clone: 300, fetch: 120, install: 600, typecheck: 600, unit: 10 * 60, e2e: 25 * 60 };
 
+/** How much of the log `gate status` gives while the shard runs. */
+const RUNNING_LOG = 8000;
+/** How often the shard notes the VM's load and memory in its log. */
+const VITALS_MS = 20_000;
+
+/** The VM's load and memory, as a log line: what the log shows before a VM goes silent. */
+function vitals(): string {
+  const read = (f: string) => { try { return readFileSync(f, "utf8"); } catch { return ""; } };
+  const kb = (k: string) => Number(new RegExp(`^${k}:\\s+(\\d+)`, "m").exec(read("/proc/meminfo"))?.[1] ?? NaN);
+  const gb = (bytes: number) => Number.isFinite(bytes) ? `${(bytes / 2 ** 30).toFixed(1)} GB` : "?";
+  const cg = Number(read("/sys/fs/cgroup/memory.current").trim() || NaN), max = read("/sys/fs/cgroup/memory.max").trim();
+  return `[vm] load ${loadavg().map((x) => x.toFixed(1)).join(" ")}; memory available ${gb(kb("MemAvailable") * 1024)} of ${gb(kb("MemTotal") * 1024)}` +
+    `; cgroup ${gb(cg)} of ${/^\d+$/.test(max) ? gb(Number(max)) : max || "?"}`;
+}
+
 function readStatus(): GateStatus {
   try { return JSON.parse(readFileSync(STATUS(), "utf8")) as GateStatus; } catch { return { state: "none" }; }
 }
@@ -179,6 +195,8 @@ async function run(commit: string, shard: number, of: number, files: string[] | 
   const base: GateStatus = { state: "running", commit, shard, of, started };
   const status = (s: Partial<GateStatus>) => writeStatus({ ...base, ...s });
   const fail = (error: string, phase: string): never => { status({ state: "done", phase, code: 1, error, ended: Date.now() }); note(error); process.exit(1); };
+  note(vitals());
+  setInterval(() => note(vitals()), VITALS_MS).unref();
   status({ phase: "clone" });
   const repo = process.env.REPO_URL ?? "";
   if (!repo) fail("REPO_URL isn't set", "clone");
@@ -259,7 +277,9 @@ export async function gateMain(args: string[]): Promise<void> {
   if (what == "status") {
     const s = readStatus();
     let log = "";
-    if (s.state == "done") { try { log = readFileSync(LOG(), "utf8").slice(-60_000); } catch { /* none */ } }
+    // Done: the log's tail for the record. Running: a shorter tail, which the gate keeps, so a VM that goes silent
+    // leaves its last lines behind.
+    if (s.state == "done" || s.state == "running") { try { log = readFileSync(LOG(), "utf8").slice(s.state == "done" ? -60_000 : -RUNNING_LOG); } catch { /* none */ } }
     console.log(`GATE-STATUS ${JSON.stringify({ ...s, ...(log ? { log } : {}) })}`);
     return;
   }

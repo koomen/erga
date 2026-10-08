@@ -205,6 +205,20 @@ describe("a run", () => {
     expect(run?.error).toContain("The VM stopped");
   });
 
+  test("a VM that goes silent leaves the log's tail it last sent, to read after", async () => {
+    let silent = false;
+    const quiet: GateRunner = { kind: "test", start: async () => {}, stop: async () => {},
+      poll: async () => { if (silent) throw new Error("no answer"); return { state: "running", phase: "tests", log: "[vm] load 9.0 9.0 9.0; memory available 0.1 GB\n" }; } };
+    const { gate, step } = makeGate({ runner: quiet, shards: 1 });
+    await gate.start(sha("3"), "push");
+    await step(10);
+    expect(await gate.log(sha("3"), 1)).toContain("[vm] load 9.0");
+    silent = true;
+    await step(SILENT_MS + 1000);
+    expect((await gate.get(sha("3")))?.shards[0].error).toContain("didn't answer");
+    expect(await gate.log(sha("3"), 1)).toContain("memory available 0.1 GB");
+  });
+
   test("the verdict for a commit with no run tells what to do", () => {
     const v = verdictOf(sha("9"), null);
     expect(v).toMatchObject({ ok: false, state: "none" });
@@ -315,6 +329,7 @@ describe("the shard's job in a VM (factory/vm/gate.ts)", () => {
       const job = (...a: string[]) => spawnSync("bun", [join(ROOT, "factory/vm/run.ts"), "gate", ...a], { cwd: dir, encoding: "utf8", env: { ...process.env, REPO_URL: repo, FACTORY_WORK: work }, timeout: 60_000 });
       const status = () => parseStatus(job("status").stdout);
       expect(status().state).toBe("none");
+      // A run's log starts with the VM's load and memory.
       // Each shard as the split has it, with the e2e files (not the bench's); together they run everything once.
       const files = ["e2e/x.e2e.ts", "e2e/y.e2e.ts", "e2e/z.e2e.ts", "e2e/w.bench.e2e.ts", "e2e/alone/q.e2e.ts"];
       const e2e = e2eItems(files, JSON.parse(readFileSync(join(repo, "e2e/timings.json"), "utf8")));
@@ -335,6 +350,7 @@ describe("the shard's job in a VM (factory/vm/gate.ts)", () => {
         if (names.includes("e2e/y.e2e.ts")) expect(s.results?.find((x) => x.name == "e2e/y.e2e.ts")).toMatchObject({ ok: true, flaky: ["e2e/y.e2e.ts › one"] });
         if (names.some((x) => x.startsWith("e2e/"))) expect(s.log).toContain("$ bun run test:e2e e2e/");
         expect(s.log).not.toContain("test.sh");
+        expect(s.log).toMatch(/^\[vm\] load [\d.]+ [\d.]+ [\d.]+; memory available/);
         seen.push(...(s.results ?? []).map((x) => x.name));
       }
       expect(seen.sort()).toEqual(["e2e/alone/q.e2e.ts", "e2e/x.e2e.ts", "e2e/y.e2e.ts", "e2e/z.e2e.ts", "typecheck", "unit"]);

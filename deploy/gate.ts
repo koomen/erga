@@ -178,7 +178,7 @@ export class TestGate {
 
   async verdict(commit: string): Promise<Verdict> { return verdictOf(commit, await this.get(commit)); }
 
-  /** A shard's log (the VM's output, its last LOG_KEEP characters), once it ended. */
+  /** A shard's log (the VM's output, its last LOG_KEEP characters): its tail while it runs, all of that once it ended. */
   async log(commit: string, n: number): Promise<string | null> {
     return (await this.deps.storage.get<string>(logKey(commit, n))) ?? null;
   }
@@ -303,6 +303,8 @@ export class TestGate {
           if (report.phase) s.phase = report.phase;
           if (report.items) s.items = report.items;
           if (report.results) s.results = report.results;
+          // While it runs, the log's tail: what is left to read if the VM goes silent.
+          if (report.log && report.state == "running") await this.deps.storage.put(logKey(run.commit, s.n), report.log.slice(-LOG_KEEP));
           if (report.state == "none" && s.state == "starting") {
             // Its start was cut short (this object restarted): start it again.
             this.launch(run.commit, { commit: run.commit, vm: s.vm, shard: s.n, of: run.shards.filter((x) => !x.rerun).length, ...(s.files ? { files: s.files } : {}) });
