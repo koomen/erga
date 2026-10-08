@@ -52,7 +52,7 @@ export async function must(cwd: string, ...args: string[]) {
 /** What the fixture's factory tokens are signed with (FACTORY_KEY on Cloudflare). */
 const FACTORY_SECRET = "test-factory-key";
 
-export function startFixture(opts: { mirror?: boolean; gate?: (commit: string) => Promise<string | null> } = {}): Fixture {
+export function startFixture(opts: { mirror?: boolean; gate?: (commit: string) => Promise<string | null>; now?: () => number } = {}): Fixture {
   const dir = mkdtempSync(join(tmpdir(), "erga-source-"));
   const secret = "test-secret";
   const background: Promise<unknown>[] = [];
@@ -67,6 +67,7 @@ export function startFixture(opts: { mirror?: boolean; gate?: (commit: string) =
     changed: () => {},
     background: (p) => background.push(p),
     ...(opts.gate ? { gate: opts.gate } : {}),
+    ...(opts.now ? { now: opts.now } : {}),
   });
   const server = Bun.serve({
     port: 0,
