@@ -4,8 +4,8 @@
 // Pure, so tests/factory.test.ts checks each case.
 //
 // 1. A merge: the task's VM may have moved staging and deleted the branch
-//    (factory/vm/merge.ts) before the object heard the answer. Staging says
-//    so (`landedIn`): the task is merged, as a merge that ends normally.
+//    (factory/vm/merge.ts) before the object heard the answer. The
+//    repository says so (`landedIn`): the task is merged, as a merge that ends normally.
 //    Before, it went back to ready to merge, and Merge again failed at
 //    `git fetch origin staging <branch>` (the branch was gone), woke Claude
 //    Code for nothing, and its dependents never started.
@@ -13,15 +13,22 @@
 //    waitUntil): the task works, or needs its agent, with no VM, or with no
 //    run started (`recovery`): it is launched again.
 
-/** Staging's newest commits, newest first, and every branch's head: what the server's repository says (dev/factory.ts locally, source/repo.ts on Cloudflare). */
-export interface StagingLog { heads: Record<string, string>; commits: { sha: string; subject: string }[] }
+/**
+ * Staging's newest commits, newest first, every branch's head, and which task branches merged as which of staging's
+ * commits (the merge token's push records it): what the server's repository says (dev/factory.ts locally,
+ * source/repo.ts on Cloudflare).
+ */
+export interface StagingLog { heads: Record<string, string>; commits: { sha: string; subject: string }[]; merges?: Record<string, string> }
 
 /**
- * Staging's commit that merged the task, or null. The merge job names it "Merge <branch>: <title>" (merge.ts).
- * Else, a branch that is gone, whose last commit is in staging: that commit (the task made at least one commit,
- * so it isn't the staging it started from).
+ * Staging's commit that merged the task, or null: the one the repository recorded for its branch (a squash merge,
+ * factory/vm/merge.ts). Before squash merges, the merge job named it "Merge <branch>: <title>". Else, a branch that is
+ * gone, whose last commit is in staging: that commit (the task made at least one commit, so it isn't the staging it
+ * started from).
  */
 export function landedIn(log: StagingLog, task: { branch: string; commit: string | null; base: string | null }): string | null {
+  const squash = log.merges?.[task.branch];
+  if (squash) return squash;
   const merge = log.commits.find((c) => c.subject.startsWith(`Merge ${task.branch}:`));
   if (merge) return merge.sha;
   if (task.branch in log.heads || !task.commit || task.commit == task.base) return null;

@@ -10,7 +10,7 @@ import { DurableObject } from "cloudflare:workers";
 import { deployHook, publishEvent } from "../deploy/index";
 import { ZERO } from "../source/git";
 import { byLine } from "../attribution";
-import { SourceError, SourceRepo, type Actor } from "../source/repo";
+import { SourceError, SourceRepo, type Actor, type MergedTask } from "../source/repo";
 import { artifactsRemote, githubRemote } from "./artifacts";
 import { directoryOf, keptKeys } from "./d1";
 import type { Env } from "./env";
@@ -43,6 +43,13 @@ export class SourceHost extends DurableObject<Env> {
       moved: (m) => {
         ctx.waitUntil(publishEvent({ type: "source", branch: m.branch, commit: m.new }, env).catch(() => {}));
         ctx.waitUntil(deployHook(m.branch, m.new, env, `${m.how} by ${byLine(m.by, m.via)}`).catch((e) => console.error(`deploy hook (${m.branch}):`, e)));
+        // staging moved by a push past the staging rule (an admin's override): in the change log, with the reason.
+        if (m.branch == "staging" && m.override) {
+          ctx.waitUntil((async () => {
+            const change = { key: "staging", from: m.old == ZERO ? null : m.old, to: m.new, release: { ...this.repo.newCommits(m.old, m.new), override: m.override } };
+            await directoryOf(env).config.record(m.by, [change], m.at, m.via ?? null);
+          })().catch((e) => console.error("change log (staging):", e)));
+        }
         // main moved: the production deploy, in the change log (/admin/changes), with the commits it brought.
         if (m.branch == "main") {
           ctx.waitUntil((async () => {
@@ -79,7 +86,20 @@ export class SourceHost extends DurableObject<Env> {
   }
 
   advertise(origin: string, grant?: GitGrant) { return this.at(origin).advertise(grant); }
-  branches(origin: string) { return this.at(origin).branches(); }
+  /** `merged`: the board's merged tasks, each by its commit on staging (the Source page's task cards). */
+  branches(origin: string, merged: MergedTask[] = []) { return this.at(origin).branches(merged); }
+
+  /** An admin's override of the staging rule (an admin in a browser: worker/source.ts checks it), with a reason, or { error }. */
+  async allowStagingPush(origin: string, who: Actor, reason: string): Promise<{ login: string; reason: string; until: number } | { error: string; status: number }> {
+    const repo = this.at(origin);
+    try {
+      const o = repo.allowStagingPush(who, reason);
+      await directoryOf(this.env).config.record(who.login, [{ key: "staging", from: null, to: null, stagingOverride: { reason: o.reason, until: o.until } }], o.at, who.via ?? null);
+      return o;
+    } catch (e) {
+      return { error: (e as Error).message, status: e instanceof SourceError ? e.status : 502 };
+    }
+  }
   /** `by`: who asked (attribution.ts, byLine). */
   mirrorNow(origin: string, by?: string) { return this.at(origin).mirror(by); }
   files(origin: string, commit: string) { return this.at(origin).files(commit); }
@@ -92,7 +112,7 @@ export class SourceHost extends DurableObject<Env> {
   }
 
   /** The factory: the branches and staging's newest commits (SourceRepo.stagingLog), or { error }. */
-  async stagingLog(origin: string): Promise<{ heads: Record<string, string>; commits: { sha: string; subject: string }[] } | { error: string }> {
+  async stagingLog(origin: string): Promise<{ heads: Record<string, string>; commits: { sha: string; subject: string }[]; merges: Record<string, string> } | { error: string }> {
     try { return await this.at(origin).stagingLog(); } catch (e) { return { error: (e as Error).message }; }
   }
 
