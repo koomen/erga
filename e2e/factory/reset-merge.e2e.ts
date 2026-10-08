@@ -27,7 +27,7 @@ test("the server restarts while a merge waits for its answer, after staging move
   const tc = await f.task(c);
   expect(tc.mergeCommit).toBe(staging);
   expect(f.branches().staging).toBe(staging);
-  expect(f.git("log", "-1", "--format=%s", tc.mergeCommit).startsWith(`Merge ${branch}:`)).toBe(true);
+  expect(f.git("log", "-1", "--format=%s", tc.mergeCommit).trim()).toBe("Note C, merged across a restart");
   const msgs = await f.msgs(c);
   expect(msgs.some((m) => m.startsWith("The factory restarted during the merge, but staging has it: merged as")), msgs.slice(-14).join("\n")).toBe(true);
   expect(msgs.some((m) => /Needs agent|Merge failed|Merge again/.test(m))).toBe(false);

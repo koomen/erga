@@ -283,10 +283,11 @@ describe("every path that moves main asks the gate", () => {
   let f: Fixture, src: string;
   const green = new Set<string>();
   const asked: string[] = [];
+  let clock = Date.now();
   const gate = async (commit: string) => { asked.push(commit); return green.has(commit) ? null : `The tests of ${commit.slice(0, 7)} are still running.`; };
   const ada = { login: "ada", name: "Ada" };
   beforeAll(async () => {
-    f = startFixture({ gate, mirror: false });
+    f = startFixture({ gate, mirror: false, now: () => clock });
     src = mkdtempSync(join(tmpdir(), "erga-gate-"));
     await must(src, "init", "-q", "-b", "main");
     writeFileSync(join(src, "a.txt"), "a\n");
@@ -294,6 +295,8 @@ describe("every path that moves main asks the gate", () => {
     green.add(await must(src, "rev-parse", "HEAD"));
     await must(src, "remote", "add", "erga", f.erga);
     expect((await git(src, "push", "erga", "main:main", "main:staging")).ok).toBe(true);
+    // These pushes to staging stand in for the factory's merges: Ada's override of the staging rule lets them land.
+    f.repo.allowStagingPush(ada, "The gate's tests push to staging directly");
   });
   afterAll(() => { f.stop(); rmSync(src, { recursive: true, force: true }); });
 
@@ -342,6 +345,17 @@ describe("every path that moves main asks the gate", () => {
     expect(heads).not.toContain(`${fifth}\trefs/heads/main`);
     green.add(fifth);
     expect((await git(src, "push", "erga", "HEAD:main")).ok).toBe(true);
+  });
+
+  test("with no override of the staging rule, a push of staging and main together moves neither", async () => {
+    clock += 11 * 60_000;
+    const sixth = await commit("Sixth");
+    green.add(sixth);
+    const both = await git(src, "push", "erga", "HEAD:staging", "HEAD:main");
+    expect(both.ok).toBe(false);
+    expect(both.err).toContain("staging moves only by the factory's Merge");
+    expect(both.err).toContain("main only follows staging");
+    expect(await must(src, "ls-remote", f.erga)).not.toContain(sixth);
   });
 });
 

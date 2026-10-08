@@ -40,7 +40,9 @@
 // main to the newest staging commit that passed, when staging's head hasn't;
 // Override (an admin in a browser, with a reason for the change log) is the
 // emergency way past it. Also how to clone and
-// push, and the GitHub mirror's status (in the board's status row; a click
+// push (staging moves only by the factory's Merge, one squash commit for each
+// task, which shows as the task's card; "Allow a push to staging", an admin in
+// a browser with a reason, is the emergency way past that rule), and the GitHub mirror's status (in the board's status row; a click
 // opens a dialog: the mirror's state and Push now, or how to turn it on). It updates by itself (/api/events) and
 // follows the system's light or dark.
 
@@ -144,6 +146,7 @@ const SOURCE_STYLE = `
   .task-card > * { display: flex; align-items: center; height: 100%; }
   .task-card .who, .task-card .sha { background: none; }
   .task-card .task-name { min-width: 0; gap: 7px; padding: 0 8px 0 4px; }
+  .row.squash .task-name { padding-left: 8px; }
   .task-card .fold { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; padding: 0; border: 0; border-radius: 4px; background: transparent; color: var(--soft); cursor: pointer; }
   .task-card .fold:hover { background: color-mix(in srgb, var(--chrome) 16%, transparent); }
   .task-card .fold:focus-visible { outline: 2px solid var(--caret); outline-offset: 0; }
@@ -258,9 +261,9 @@ function sourceMarkup(c: SourcePageConfig): string {
     <div class="box" id="clone">
       <h2>Clone and push</h2>
       <pre><code>git remote add erga ${esc(remote)}
-git fetch erga
-git push erga HEAD:staging</code></pre>
-      <p>Git asks for a username and password: any username, and an agent token from <a href="/settings">Settings</a> as the password (admins only). main only follows staging: merge here, or push one of staging's commits to main, once its tests passed.</p>
+git fetch erga</code></pre>
+      <p>staging moves only by the factory's Merge: one commit for each task, with the task's title and summary. main only follows staging: merge here, or push one of staging's commits to main, once its tests passed. A push needs any username, and an agent token from <a href="/settings">Settings</a> as the password (admins only).</p>
+      <p><button class="pill" type="button" id="staging-override" title="An emergency only: for 10 minutes, your pushes to staging land without the factory's Merge. The change log keeps your reason.">Allow a push to staging…</button> <span id="staging-open" role="status"></span></p>
     </div>
   </section>
   <dialog id="gate-dlg" aria-labelledby="gate-title">
@@ -449,9 +452,10 @@ const SOURCE_SCRIPT = `
     for (const [sha, r] of rows) if (!want.has(sha)) r.remove();
     grid.querySelector(".none.empty")?.remove();
     grid.querySelector(".gap")?.remove();
-    if (!commits.length) { grid.insertAdjacentHTML("beforeend", '<div class="none empty">No commits yet. Push one: git push erga HEAD:staging</div>'); }
+    if (!commits.length) { grid.insertAdjacentHTML("beforeend", '<div class="none empty">No commits yet. Fill the repository: bun source/import.ts</div>'); }
     let prev = null;
-    const cards = new Set(commits.filter((x) => x.task && !x.inTask).map((x) => x.sha));
+    // A task's card folds only an older merge's commits: a squash (one commit for the task, from the board) has none.
+    const cards = new Set(commits.filter((x) => x.task && !x.inTask && x.task.commits.length).map((x) => x.sha));
     const foldAll = document.getElementById("fold-all");
     foldAll.hidden = !cards.size;
     foldAll.textContent = cards.size && [...cards].every(isFolded) ? "Expand all" : "Collapse all";
@@ -460,7 +464,7 @@ const SOURCE_SCRIPT = `
       if (!r) { r = document.createElement("div"); r.dataset.sha = x.sha; }
       const kind = x.inMain ? "on-main" : "staging-only";
       const next = commits[i + 1], card = x.task && !x.inTask, member = x.inTask && cards.has(x.inTask);
-      r.className = "row " + kind + (card ? " task-row" + (isFolded(x.sha) ? " folded" : "") : "") +
+      r.className = "row " + kind + (card ? (cards.has(x.sha) ? " task-row" + (isFolded(x.sha) ? " folded" : "") : " task-row squash") : "") +
         (member ? " in-task" + (isFolded(x.inTask) ? " hide" : "") + (next?.inTask == x.inTask ? "" : " last") : "");
       if (member) r.dataset.task = x.inTask; else delete r.dataset.task;
       const up = i > 0, down = !!next || x.parents.length > 0, gapAfter = hidden && after.length && i == top.length - 1;
@@ -470,8 +474,8 @@ const SOURCE_SCRIPT = `
       r.innerHTML =
         '<span class="rail ' + (up ? "up " : "") + (down ? "down " : "") + (x.inMain ? "on-main" : "") + '"><i class="dot ' + kind + '" title="' + (x.inMain ? "On main (and staging)" : "Only on staging") + '"></i></span>' +
         (card
-          ? '<span class="task-card" data-fold="' + x.sha + '" title="' + esc(title) + '"><span class="task-name"><button class="fold" type="button" data-fold="' + x.sha + '" aria-expanded="' + !isFolded(x.sha) + '" aria-label="' + (isFolded(x.sha) ? "Expand" : "Collapse") + " task " + x.task.id + '"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 3.5 5 6.5 8 3.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></button>' +
-            '<span class="num">#' + x.task.id + '</span><span class="name">' + esc(x.task.title) + '</span>' + (x.inMain || gateBy.get(x.sha)?.state != "passed" ? "" : '<button class="here" type="button" data-merge="' + x.sha + '" title="Move main forward to this commit (its tests passed)">Merge to here</button>') + '<span class="n">' + n + " commit" + (n == 1 ? "" : "s") + "</span></span>" + tail + "</span>"
+          ? '<span class="task-card"' + (n ? ' data-fold="' + x.sha + '"' : "") + ' title="' + esc(title) + '"><span class="task-name">' + (n ? '<button class="fold" type="button" data-fold="' + x.sha + '" aria-expanded="' + !isFolded(x.sha) + '" aria-label="' + (isFolded(x.sha) ? "Expand" : "Collapse") + " task " + x.task.id + '"><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 3.5 5 6.5 8 3.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></button>' : "") +
+            '<span class="num">#' + x.task.id + '</span><span class="name">' + esc(x.task.title) + '</span>' + (x.inMain || gateBy.get(x.sha)?.state != "passed" ? "" : '<button class="here" type="button" data-merge="' + x.sha + '" title="Move main forward to this commit (its tests passed)">Merge to here</button>') + (n ? '<span class="n">' + n + " commit" + (n == 1 ? "" : "s") + "</span>" : "") + "</span>" + tail + "</span>"
           : '<span class="subj" title="' + esc(title) + '"><span>' + esc(x.subject) + "</span>" + (x.inMain || gateBy.get(x.sha)?.state != "passed" ? "" : '<button class="here" type="button" data-merge="' + x.sha + '" title="Move main forward to this commit (its tests passed)">Merge to here</button>') + "</span>" + tail) +
         '<span class="tests">' + gateCell(x.sha) + "</span>" +
         TARGETS.map((n) => '<span class="deps" data-target="' + n + '">' + deployCell(n, x.sha, groups[n]) + "</span>").join("");
@@ -551,7 +555,7 @@ const SOURCE_SCRIPT = `
       const body = await r.json();
       if (!r.ok) throw new Error(body.error || "HTTP " + r.status);
       if (pageView.signal.aborted) return;
-      view = body; render();
+      view = body; render(); showOverrides();
     } catch (e) {
       const l = document.getElementById("loading");
       if (l) l.textContent = e.message;
@@ -645,6 +649,22 @@ const SOURCE_SCRIPT = `
   }
   mergeBtn.addEventListener("click", () => merge(null));
   document.getElementById("merge-green").addEventListener("click", (e) => merge(e.currentTarget.dataset.merge));
+  // The staging rule's emergency override: the admins whose pushes to staging land now, and until when.
+  function showOverrides() {
+    const open = view?.stagingOverrides ?? [];
+    document.getElementById("staging-open").textContent = open.map((o) => "Pushes to staging by " + o.login + " land until " + new Date(o.until).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) + ": " + o.reason).join(" · ");
+  }
+  document.getElementById("staging-override").addEventListener("click", async () => {
+    const reason = prompt("Allow your pushes to staging for 10 minutes, without the factory's Merge? This is for emergencies only. Your reason goes in the change log (at least 10 characters):");
+    if (reason == null) return;
+    const out = document.getElementById("staging-open");
+    try {
+      const r = await fetch("/api/source/staging-override", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reason }) });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(body.error || "HTTP " + r.status);
+      await load();
+    } catch (err) { out.textContent = err.message; }
+  });
   // The emergency override: a person, here, with a reason the change log keeps (never an agent or a token).
   document.getElementById("merge-override").addEventListener("click", async () => {
     const reason = prompt("Move main to staging's head WITHOUT a green test run? This is for emergencies only. Your reason goes in the change log (at least 10 characters):");
@@ -668,7 +688,7 @@ const SOURCE_SCRIPT = `
     if (f) { const sha = f.dataset.fold; setFolded(sha, !isFolded(sha)); render(); }
   });
   document.getElementById("fold-all").addEventListener("click", () => {
-    const cards = [...grid.querySelectorAll(".row.task-row")].map((r) => r.dataset.sha);
+    const cards = [...grid.querySelectorAll(".row.task-row:not(.squash)")].map((r) => r.dataset.sha);
     folds = { all: !cards.every(isFolded), flip: [] };
     try { localStorage.setItem(FOLDS, JSON.stringify(folds)); } catch {}
     render();

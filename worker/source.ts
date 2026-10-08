@@ -4,7 +4,8 @@
 //   /git/erga.git/...           Git smart HTTP: clone, fetch, pull and push. Reads (clone, fetch, ls-remote) need no
 //                               credentials. A push needs HTTP Basic with any username and an admin-scope token
 //                               (tokens.ts, made at /tokens) as the password, whose person is an admin. main takes
-//                               fast-forwards only.
+//                               fast-forwards only. staging moves only by the factory's Merge (a merge token's push),
+//                               but while the pusher has an override open (below), and when it is made the first time.
 //                               A factory VM's git token (fgt.…, factory/git-grant.ts) reaches its own task's branch only
 //                               (and staging, for a merge).
 //   GET  /api/source/branches   staging and main: each head and its last 25 commits (staging: also the 5 just after main), and the mirror's status
@@ -13,6 +14,9 @@
 //                               test run passed (the production gate, deploy/gate.ts): else 409 with why and where its
 //                               run is. { override: "reason" } moves it anyway: an admin signed in in a browser only
 //                               (never a token or an agent), and the change log keeps the reason.
+//   POST /api/source/staging-override   { reason }: the staging rule's emergency override. The admin's pushes to
+//                               staging land for 10 minutes, each in the change log with the reason: { login, reason,
+//                               until }. An admin signed in in a browser only (never a token or an agent).
 //   POST /api/source/mirror     brings the GitHub mirror up to date now (admins)
 //   /admin/factory              the Factory page (admins): the factory's board, this dashboard and the factory's agent
 //   /source, /admin/source      redirect to /admin/factory
@@ -32,7 +36,7 @@ import { gitHttp } from "../source/http";
 import type { Actor } from "../source/repo";
 import { adminFactoryPage } from "../source/page";
 import { isTargetName, TARGETS, type TargetName } from "../deploy/targets";
-import { factoryEnabled } from "./factory";
+import { factoryEnabled, mergedTasks } from "./factory";
 import { artifactsRemote, githubUrl, hasSource } from "./artifacts";
 import { directoryOf, tokensOf } from "./d1";
 import { LOCKED } from "../users";
@@ -122,7 +126,8 @@ export async function sourceApi(request: Request, env: Env, platform: Platform, 
   if (!hasSource(env)) return json({ error: notSetUp }, 503);
   try {
     if (url.pathname == "/api/source/branches" && request.method == "GET") {
-      const view = await host(env).branches(url.origin);
+      // The board's merged tasks, so each one's commit on staging shows as its card.
+      const view = await host(env).branches(url.origin, await mergedTasks(env));
       return json({ ...view, mirror: { ...view.mirror, url: view.mirror.url ?? githubUrl(env) }, remote: `${url.origin}/git/erga.git` });
     }
     if (url.pathname == "/api/source/merge" && request.method == "POST") {
@@ -134,6 +139,14 @@ export async function sourceApi(request: Request, env: Env, platform: Platform, 
         if (typeof body.override != "string" || body.override.trim().length < 10) return json({ error: "An override needs a reason of at least 10 characters: it goes in the change log." }, 400);
       }
       const r = await host(env).merge(url.origin, who.actor, body.commit, typeof body.override == "string" ? body.override : undefined);
+      return "error" in r ? json({ error: r.error }, r.status) : json(r);
+    }
+    if (url.pathname == "/api/source/staging-override" && request.method == "POST") {
+      // The staging rule's emergency override, as the production gate's: a person, in a browser, with a reason.
+      if (who.bearer) return json({ error: "Only an admin signed in in a browser can allow pushes to staging (on the Factory page): never a token or an agent." }, 403);
+      const body = (await request.json().catch(() => ({}))) as { reason?: unknown };
+      if (typeof body.reason != "string" || body.reason.trim().length < 10) return json({ error: "An override needs a reason of at least 10 characters: it goes in the change log." }, 400);
+      const r = await host(env).allowStagingPush(url.origin, who.actor, body.reason);
       return "error" in r ? json({ error: r.error }, r.status) : json(r);
     }
     if (url.pathname == "/api/source/mirror" && request.method == "POST") return json({ mirror: await host(env).mirrorNow(url.origin, byLine(who.actor.login, who.actor.via)) });

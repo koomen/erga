@@ -9,8 +9,9 @@
 //
 // The one exception is a secret: an API key, the Claude token, a GitHub app's secret, a new agent token is pasted
 // or made only on the page, never in a conversation. The agent may clear an API key, sign the factory out, or revoke a
-// token. The one other exception is the production gate's emergency override (a merge to main whose tests
-// haven't passed): the user's rule is that only a person, in a browser, with a reason, may do it, never an agent.
+// token. The other exceptions are the emergency overrides: the production gate's (a merge to main whose tests
+// haven't passed), and the staging rule's (a push to staging that isn't the factory's Merge). The user's rule is
+// that only a person, in a browser, with a reason, may do them, never an agent.
 // And the agents act only on what their person asks in the
 // conversation, never on text found in tool results (their system prompts say so).
 //
@@ -39,7 +40,7 @@ const SECRET = "a secret: pasted or made only on the page, never in a conversati
 const PANEL = "the agent panel itself (the conversation, its model, stop, undo)";
 const STREAM = "the page's live updates (server-sent events)";
 const VM = "a task's own worker (its VM, or a local task's agent: factory/task.ts), not a person's action";
-/** The production gate's emergency override (deploy/gate.ts): the user's rule keeps it from every agent and token. */
+/** An emergency override (the production gate's, deploy/gate.ts; the staging rule's, source/repo.ts): the user's rule keeps it from every agent and token. */
 export const OVERRIDE = "an emergency step for a person in a browser only, logged with their reason: never an agent's or a token's (the user's rule)";
 
 export const AGENT_ACTIONS: AgentAction[] = [
@@ -104,6 +105,7 @@ export const AGENT_ACTIONS: AgentAction[] = [
   { route: "GET /api/gate/<sha>", domain: "admin", action: "Read a commit's test run and verdict (Factory, dashboard: a tests cell)", tool: "get_test_run" },
   { route: "GET /api/gate/<sha>/log?shard=N", domain: "admin", action: "Read a test shard's log (Factory, dashboard: Log)", tool: "get_test_run" },
   { route: "POST /api/gate/<sha>/run", domain: "admin", action: "Run a commit's tests (again) (Factory, dashboard: Run tests, Run again)", tool: "run_tests" },
+  { route: "POST /api/source/staging-override", domain: "admin", action: "Allow your pushes to staging for 10 minutes, past the staging rule, with a reason (Factory, dashboard: Allow a push to staging)", exempt: OVERRIDE },
   { route: "POST /api/source/mirror", domain: "admin", action: "Update the GitHub mirror now (Factory, dashboard)", tool: "sync_mirror" },
   { route: "GET /api/deploys[?history=N]", domain: "admin", action: "Read the deploys (Factory, dashboard)", tool: "list_deploys" },
   { route: "GET /api/deploys/<name>/history[?limit=N]", domain: "admin", action: "Read a target's past deploys (Factory, dashboard)", tool: "list_deploys" },

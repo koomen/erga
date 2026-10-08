@@ -7,7 +7,16 @@
 // The model is strict: only two branches, ever; staging is always at or
 // ahead of main; main only follows staging. A push to main must be one of
 // staging's commits (and forward of main); a push to staging must keep every
-// commit main has. Merging is moving main forward to staging's head, or to
+// commit main has.
+//
+// staging moves only by the factory's Merge: one squash commit for each task
+// (factory/vm/merge.ts), pushed with the merge's own git token (mergeShape).
+// Any other push to staging is refused, but two: seeding an empty repository
+// (staging made for the first time), and an admin's emergency override, which
+// an admin opens in a browser with a reason (worker/source.ts) for STAGING_OVERRIDE_MS:
+// their pushes to staging land meanwhile, and the change log keeps the reason.
+// Each task's commit on staging is kept by branch ("taskMerges"), so the
+// factory can tell that a merge landed (stagingLog, factory/recover.ts). Merging is moving main forward to staging's head, or to
 // one of staging's commits. So the two never diverge, and there are no merge
 // commits or conflicts between them.
 //
@@ -51,8 +60,12 @@ const QUARANTINE = "refs/heads/erga-incoming/";
 export const LOG = 100;
 /** At most how many commits a task's card holds. */
 export const TASK_COMMITS = 100;
-/** A task's merge commit, by the factory (factory/vm/merge.ts): "Merge task/<id>-<slug>: title". */
+/** A task's merge commit, as the factory made it before squash merges (#74): "Merge task/<id>-<slug>: title". */
 const TASK_MERGE = /^Merge (task\/(\d+)-[^\s:]*): (.+)$/;
+/** How long an admin's override of the staging rule lasts: their pushes to staging land meanwhile. */
+export const STAGING_OVERRIDE_MS = 10 * 60_000;
+/** What the staging rule says, to a push it refuses (and in the change log, by an override). */
+export const STAGING_RULE = "staging moves only by the factory's Merge (one commit for each task, on /admin/factory). In an emergency, an admin can allow pushes to staging for 10 minutes there (Source, \"Allow a push to staging\"), with a reason that the change log keeps.";
 /** How many of staging's commits just after main's head the Source page gets (BranchInfo.afterMain). */
 export const AFTER_MAIN = 5;
 
@@ -77,7 +90,10 @@ export interface MirrorStatus {
 
 export interface CommitInfo {
   sha: string; subject: string; author: string; email: string; at: number; parents: string[]; /** Reachable from main. */ inMain: boolean;
-  /** A task's merge ("Merge task/<id>-<slug>: title"): the task, and the commits that came in with it (from its second parent's side), newest first. */
+  /**
+   * A task's commit on staging (the board's mergeCommit: one squash commit, so `commits` is empty), or an older merge
+   * ("Merge task/<id>-<slug>: title"), with the commits that came in with it (from its second parent's side), newest first.
+   */
   task?: { id: number; branch: string; title: string; commits: string[] };
   /** One of a task's commits: the sha of the task's merge. */
   inTask?: string;
@@ -92,9 +108,15 @@ export interface BranchInfo {
 /** A branch moved: `by` (a login) did it, `via` how when not in person (attribution.ts). */
 export interface Move {
   branch: Branch; old: string; new: string; how: "push" | "merge"; by: string; via?: string | null; at: number;
-  /** main moved past the production gate (a merge's emergency override): the reason given, and what the gate said. */
+  /** main moved past the production gate (a merge's emergency override), or staging by a push past the staging rule (STAGING_RULE): the reason given, and what the rule said. */
   override?: { reason: string; gate: string };
 }
+
+/** A factory task merged as `commit` on staging (the board's mergeCommit). */
+export interface MergedTask { id: number; branch: string; title: string; commit: string }
+
+/** An admin's open override of the staging rule: until when, and why. */
+export interface StagingOverride { login: string; reason: string; at: number; until: number }
 
 export class SourceError extends Error {
   constructor(message: string, readonly status = 400) { super(message); }
@@ -265,7 +287,7 @@ export class SourceRepo {
   // ---- What the Source page shows ---------------------------------------------
 
   /** Each branch's head and its latest commits, which of them main has, and the mirror's status. */
-  async branches(): Promise<{ branches: BranchInfo[]; mirror: MirrorStatus; moves: Move[] }> {
+  async branches(merged: MergedTask[] = []): Promise<{ branches: BranchInfo[]; mirror: MirrorStatus; moves: Move[]; stagingOverrides: StagingOverride[] }> {
     const remote = await this.deps.artifacts();
     const { refs } = await lsRefs(remote);
     const heads = Object.fromEntries(BRANCHES.map((b) => [b, refs.get(REF(b)) ?? null])) as Record<Branch, string | null>;
@@ -274,32 +296,36 @@ export class SourceRepo {
       this.setState("tips", Object.fromEntries(BRANCHES.filter((b) => heads[b]).map((b) => [b, heads[b]])));
     });
     const onMain = heads.main ? this.ancestors(heads.main) : new Set<string>();
+    const tasks = new Map(merged.map((t) => [t.commit, t]));
     const branches = BRANCHES.map((name): BranchInfo => {
       const tip = heads[name];
       const commit = (r: Row): CommitInfo => ({ sha: r.sha, subject: r.subject, author: r.author, email: r.email, at: r.at, parents: r.parents ? r.parents.split(" ") : [], inMain: onMain.has(r.sha) });
-      const commits = tip ? this.withTasks(this.log(tip).map(commit), commit) : [];
+      const commits = tip ? this.withTasks(this.log(tip).map(commit), commit, tasks) : [];
       const info: BranchInfo = { name, commit: tip, commits };
       if (name == "staging" && tip) {
         const ahead = info.ahead = [...this.ancestors(tip)].filter((s) => !onMain.has(s)).length;
         // The last of staging's own commits, in log's order, until it has listed them all: those just after main's head.
         let seen = 0;
         const only = this.order(tip, (order) => { if (order.length && !onMain.has(order[order.length - 1])) seen++; return seen >= ahead; }).filter((s) => !onMain.has(s));
-        info.afterMain = this.withTasks(this.rows(only.slice(-AFTER_MAIN)).map(commit), commit, false);
+        info.afterMain = this.withTasks(this.rows(only.slice(-AFTER_MAIN)).map(commit), commit, tasks, false);
       }
       return info;
     });
-    return { branches, mirror: this.mirrorStatus(), moves: this.moves(10) };
+    return { branches, mirror: this.mirrorStatus(), moves: this.moves(10), stagingOverrides: this.stagingOverrides() };
   }
 
   /**
-   * Groups each task's commits under its merge: a task merge in `list` gets `task`, and its commits (those its second
-   * parent brings that its first parent doesn't have) follow it, newest first, marked `inTask`. With `complete`, the
-   * task's commits that `list` doesn't have are added, so a card holds all of them (up to TASK_COMMITS). Other commits
-   * keep their place.
+   * Marks each task's commit: one the board has as a task's mergeCommit (`tasks`, by sha: a squash, with no commits of
+   * its own) gets `task`. An older task merge ("Merge task/<id>-<slug>: title") gets it too, and its commits (those its
+   * second parent brings that its first parent doesn't have) follow it, newest first, marked `inTask`. With
+   * `complete`, those commits that `list` doesn't have are added, so a card holds all of them (up to TASK_COMMITS).
+   * Other commits keep their place.
    */
-  private withTasks(list: CommitInfo[], commit: (r: Row) => CommitInfo, complete = true): CommitInfo[] {
+  private withTasks(list: CommitInfo[], commit: (r: Row) => CommitInfo, tasks = new Map<string, MergedTask>(), complete = true): CommitInfo[] {
     const nodes = this.nodes(), claimed = new Map<string, string>(), members = new Map<string, string[]>();
     for (const x of list) {
+      const t = tasks.get(x.sha);
+      if (t && !claimed.has(x.sha)) { x.task = { id: t.id, branch: t.branch, title: t.title, commits: [] }; continue; }
       const m = TASK_MERGE.exec(x.subject);
       if (!m || x.parents.length < 2 || claimed.has(x.sha)) continue;
       const base = this.ancestors(x.parents[0]), seen = new Set<string>(), todo = [x.parents[1]];
@@ -384,6 +410,8 @@ export class SourceRepo {
       const accepted: (RefUpdate & { branch: Branch })[] = [];
       const taskRef = grant ? `refs/heads/${grant.branch}` : null;
       const tasks: RefUpdate[] = [];
+      // The staging rule: only the factory's merge moves it, but for seeding (no staging yet) and an admin's override.
+      const override = grant ? null : this.stagingOverride(who.login);
       for (const c of commands) {
         const branch = BRANCHES.find((b) => REF(b) == c.ref);
         const refused = grant ? refsAllowed(grant, [{ next: c.new, ref: c.ref }]) : null;
@@ -395,6 +423,7 @@ export class SourceRepo {
         else if (!branch) statuses.set(c.ref, "Erga has two branches, staging and main: push to one of those");
         else if (c.new == ZERO) statuses.set(c.ref, `${branch} can't be deleted`);
         else if ((refs.get(c.ref) ?? ZERO) != c.old) statuses.set(c.ref, "stale info: it moved since you fetched; fetch first");
+        else if (branch == "staging" && c.old != ZERO && grant?.scope != "merge" && !override) statuses.set(c.ref, STAGING_RULE);
         else accepted.push({ ...c, branch });
       }
       // Quarantine branches left by a push that stopped halfway go now too.
@@ -437,8 +466,9 @@ export class SourceRepo {
             const said = final.refs.get(c.ref) ?? final.unpack;
             statuses.set(c.ref, said);
             if (said == "ok") {
-              if (grant?.scope == "merge" && c.branch == "staging") this.spend(grant.id!);
-              this.recordMove({ branch: c.branch, old: c.old, new: c.new, how: "push", by: who.login, via: who.via ?? null, at: this.now() });
+              if (grant?.scope == "merge" && c.branch == "staging") { this.spend(grant.id!); this.noteMerge(grant.branch, c.new); }
+              const past = c.branch == "staging" && c.old != ZERO && grant?.scope != "merge" && override ? { override: { reason: override.reason, gate: STAGING_RULE } } : {};
+              this.recordMove({ branch: c.branch, old: c.old, new: c.new, how: "push", by: who.login, via: who.via ?? null, at: this.now(), ...past });
               const before = c.old == ZERO ? null : this.ancestors(c.old);
               const count = before ? [...this.ancestors(c.new)].filter((s) => !before.has(s)).length : null;
               messages.push(`Erga: ${c.branch} is now ${c.new.slice(0, 7)}${count != null ? ` (${count} new commit${count == 1 ? "" : "s"})` : ""}.`);
@@ -481,6 +511,36 @@ export class SourceRepo {
   private spent(id: string | undefined) { return !!id && (this.state<string[]>("spentMerges") ?? []).includes(id); }
   private spend(id: string) { this.setState("spentMerges", [...(this.state<string[]>("spentMerges") ?? []), id].slice(-500)); }
 
+  /** A task's branch merged into staging as `commit` (its merge token's push); the last 500 are kept. */
+  private noteMerge(branch: string, commit: string) {
+    const kept = Object.entries(this.state<Record<string, string>>("taskMerges") ?? {}).filter(([b]) => b != branch);
+    this.setState("taskMerges", Object.fromEntries([...kept, [branch, commit]].slice(-500)));
+  }
+
+  // ---- The staging rule's emergency override -----------------------------------------
+
+  /** The overrides of the staging rule that are open now. */
+  stagingOverrides(): StagingOverride[] {
+    const now = this.now();
+    return (this.state<StagingOverride[]>("stagingOverrides") ?? []).filter((o) => o.until > now);
+  }
+  private stagingOverride(login: string): StagingOverride | null {
+    return this.stagingOverrides().find((o) => o.login == login.toLowerCase()) ?? null;
+  }
+
+  /**
+   * Opens an override of the staging rule for `who` (an admin in a browser: worker/source.ts checks it), with a
+   * reason: their pushes to staging land for STAGING_OVERRIDE_MS, each with the reason in the change log.
+   */
+  allowStagingPush(who: Actor, reason: string): StagingOverride {
+    const why = reason.trim().replace(/\s+/g, " ");
+    if (why.length < 10) throw new SourceError("An override needs a reason of at least 10 characters: it goes in the change log.");
+    const at = this.now(), o: StagingOverride = { login: who.login.toLowerCase(), reason: why.slice(0, 500), at, until: at + STAGING_OVERRIDE_MS };
+    this.setState("stagingOverrides", [...this.stagingOverrides().filter((x) => x.login != o.login), o]);
+    this.deps.changed();
+    return o;
+  }
+
   private recordMove(m: Move) {
     this.deps.db.exec("INSERT INTO moves (branch, old, new, how, by, via, at) VALUES (?, ?, ?, ?, ?, ?, ?)", m.branch, m.old, m.new, m.how, m.by, m.via ?? null, m.at);
     const tips = this.state<Record<string, string>>("tips") ?? {};
@@ -504,7 +564,7 @@ export class SourceRepo {
         if (u.branch == "main") {
           if (u.old != ZERO && !this.isAncestor(u.old, u.new)) return refuse(u, "main only moves forward (fast-forward): it follows staging");
           const staging = after("staging");
-          if (staging == ZERO || !this.isAncestor(u.new, staging)) return refuse(u, "main only follows staging: push the commit to staging first (git push erga HEAD:staging), then merge it on the Source page, or push both at once (git push erga HEAD:staging HEAD:main)");
+          if (staging == ZERO || !this.isAncestor(u.new, staging)) return refuse(u, "main only follows staging: push one of staging's commits to main (git push erga <commit>:main), or merge it on the Factory page");
           return true;
         }
         const main = after("main");
@@ -665,16 +725,18 @@ export class SourceRepo {
   }
 
   /**
-   * For the factory (worker/factory.ts, factory/recover.ts): every branch's head, and staging's newest LOG commits
-   * (sha and subject), so it can see whether a task's merge reached staging. Read-only, with a read token.
+   * For the factory (worker/factory.ts, factory/recover.ts): every branch's head, staging's newest LOG commits (sha
+   * and subject), and which task branches merged as which of staging's commits, so it can see whether a task's merge
+   * reached staging. Read-only, with a read token.
    */
-  async stagingLog(): Promise<{ heads: Record<string, string>; commits: { sha: string; subject: string }[] }> {
+  async stagingLog(): Promise<{ heads: Record<string, string>; commits: { sha: string; subject: string }[]; merges: Record<string, string> }> {
     const remote = await (this.deps.reader ?? this.deps.artifacts)();
     const { refs } = await lsRefs(remote);
     const heads = Object.fromEntries([...refs].filter(([r]) => r.startsWith("refs/heads/") && !r.startsWith(QUARANTINE)).map(([r, s]) => [r.slice("refs/heads/".length), s]));
-    if (!heads.staging) return { heads, commits: [] };
+    if (!heads.staging) return { heads, commits: [], merges: {} };
     await this.locked(() => this.sync(remote, [heads.staging]));
-    return { heads, commits: this.log(heads.staging, LOG).map((r) => ({ sha: r.sha, subject: r.subject })) };
+    const merges = Object.fromEntries(Object.entries(this.state<Record<string, string>>("taskMerges") ?? {}).filter(([, sha]) => this.isAncestor(sha, heads.staging)));
+    return { heads, commits: this.log(heads.staging, LOG).map((r) => ({ sha: r.sha, subject: r.subject })), merges };
   }
 
   /**

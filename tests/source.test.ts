@@ -14,6 +14,7 @@ import { spawnSync } from "node:child_process";
 import zlib from "node:zlib";
 import { hashObject, inflate, parseCommit, parseTree, readPack, tar, text, treeBytes, utf8, writePack } from "../source/git.ts";
 import { git, must, startFixture, type Fixture } from "./source-fixture.ts";
+import { STAGING_OVERRIDE_MS, STAGING_RULE } from "../source/repo.ts";
 
 const scratch = () => mkdtempSync(join(tmpdir(), "erga-src-"));
 
@@ -139,8 +140,14 @@ describe("Erga's Git endpoint", () => {
     const early = await git(src, "push", "erga", "main");
     expect(early.ok).toBe(false);
     expect(early.err).toContain("main only follows staging");
+    // Straight to staging: refused too (the staging rule), until Ada opens an override (the factory's merge is below).
+    const direct = await git(src, "push", "erga", "HEAD:staging");
+    expect(direct.ok).toBe(false);
+    expect(direct.err).toContain("staging moves only by the factory's Merge");
+    f.repo.allowStagingPush(ada, "These tests push to staging directly");
     // To staging, then main: both land. Both at once lands too.
     expect((await git(src, "push", "erga", "HEAD:staging")).ok).toBe(true);
+    expect(f.moves.at(-1)).toMatchObject({ branch: "staging", by: "ada", override: { reason: "These tests push to staging directly", gate: STAGING_RULE } });
     expect((await git(src, "push", "erga", "HEAD:main")).ok).toBe(true);
     writeFileSync(join(src, "d.txt"), "d\n");
     await must(src, "add", "."); await must(src, "commit", "-qm", "Fifth");
@@ -259,43 +266,52 @@ describe("Erga's Git endpoint", () => {
     expect(f.moves.length).toBe(moves);
     // A bad or other secret's token: refused.
     expect((await git(vm, "push", task.replace(/fgt\.[^.]+\.[0-9a-f]{4}/, (m) => m.slice(0, -4) + "0000"), "HEAD:refs/heads/task/7-the-factory")).ok).toBe(false);
-    // The merge: a merge token moves staging, once, to the merge itself (as factory/vm/merge.ts makes it), recorded
-    // as the admin's push; never deletes it, never main, never another commit.
+    // The merge: a merge token moves staging, once, to the merge itself (as factory/vm/merge.ts makes it: one commit on
+    // staging with the branch's files, a squash), recorded as the admin's push, with no override of the staging rule;
+    // never deletes it, never main, never another commit.
     const merge = f.factory({ scope: "merge", branch: "task/7-the-factory", by: "ada", id: "merge-1" });
     await must(vm, "fetch", "-q", "origin");
     const base = await must(vm, "rev-parse", "origin/staging"), head = await must(vm, "rev-parse", "origin/task/7-the-factory");
-    const shaped = (tree: string, ...parents: string[]) => must(vm, "commit-tree", tree, ...parents.flatMap((x) => ["-p", x]), "-m", "Merge task/7-the-factory: the factory");
-    // Not the merge: other files (a change no one saw), staging alone on top, the parents the other way, an older token.
+    const shaped = (tree: string, ...parents: string[]) => must(vm, "commit-tree", tree, ...parents.flatMap((x) => ["-p", x]), "-m", "The factory\n\nWhat the task did.");
+    // Not the merge: other files (a change no one saw), a two-parent merge (the old form), the branch's head as the
+    // parent, the branch's head itself, an older token.
     writeFileSync(join(vm, "sneaky.txt"), "not in the branch\n");
     await must(vm, "add", "sneaky.txt");
     const otherTree = await must(vm, "write-tree");
     await must(vm, "reset", "-q", "--hard");
-    const sneaky = await git(vm, "push", merge, `${await shaped(otherTree, base, head)}:refs/heads/staging`);
+    const sneaky = await git(vm, "push", merge, `${await shaped(otherTree, base)}:refs/heads/staging`);
     expect(sneaky.ok).toBe(false);
     expect(sneaky.err).toContain("must have the files of task/7-the-factory");
-    expect((await git(vm, "push", merge, `${await shaped(`${head}^{tree}`, base)}:refs/heads/staging`)).err).toContain("two parents");
-    expect((await git(vm, "push", merge, `${await shaped(`${head}^{tree}`, head, base)}:refs/heads/staging`)).err).toContain("two parents");
-    expect((await git(vm, "push", merge, `${head}:refs/heads/staging`)).ok).toBe(false);
+    expect((await git(vm, "push", merge, `${await shaped(`${head}^{tree}`, base, head)}:refs/heads/staging`)).err).toContain("one parent");
+    expect((await git(vm, "push", merge, `${await shaped(`${head}^{tree}`, head)}:refs/heads/staging`)).err).toContain("one parent");
+    expect((await git(vm, "push", merge, `${head}:refs/heads/staging`)).err).toContain("one parent");
     const old = f.factory({ scope: "merge", branch: "task/7-the-factory", by: "ada" });
-    expect((await git(vm, "push", old, `${await shaped(`${head}^{tree}`, base, head)}:refs/heads/staging`)).err).toContain("older one");
+    expect((await git(vm, "push", old, `${await shaped(`${head}^{tree}`, base)}:refs/heads/staging`)).err).toContain("older one");
     expect(await must(src, "ls-remote", "erga", "staging")).toContain(base);
-    // The merge itself.
-    const merged = await shaped(`${head}^{tree}`, base, head);
+    // The merge itself; the repository keeps it as the branch's merge (the factory's StagingLog).
+    const merged = await shaped(`${head}^{tree}`, base);
     expect((await git(vm, "push", merge, `${merged}:refs/heads/staging`)).ok).toBe(true);
     expect(f.moves.at(-1)).toMatchObject({ branch: "staging", how: "push", by: "ada", new: merged });
+    expect(f.moves.at(-1)?.override).toBeUndefined();
+    expect((await f.repo.stagingLog()).merges).toMatchObject({ "task/7-the-factory": merged });
+    // The Source page: the board's merged task is its commit's card, with no commits of its own (a squash).
+    const card = (await f.repo.branches([{ id: 7, branch: "task/7-the-factory", title: "The factory", commit: merged }])).branches[0].commits[0];
+    expect(card).toMatchObject({ sha: merged, subject: "The factory", task: { id: 7, branch: "task/7-the-factory", title: "The factory", commits: [] } });
+    expect(card.inTask).toBeUndefined();
+    expect((await f.repo.branches()).branches[0].commits[0].task).toBeUndefined();
     // Once: the same token can't move staging again, even to a new merge of the branch.
     await must(vm, "checkout", "-q", "-B", "task/7-the-factory", merged);
     writeFileSync(join(vm, "task.txt"), "after the merge\n");
     await must(vm, "commit", "-qam", "After the merge");
-    expect((await git(vm, "push", task, "HEAD:refs/heads/task/7-the-factory")).ok).toBe(true);
-    const again = await git(vm, "push", merge, `${await shaped("HEAD^{tree}", merged, "HEAD")}:refs/heads/staging`);
+    expect((await git(vm, "push", "--force", task, "HEAD:refs/heads/task/7-the-factory")).ok).toBe(true);
+    const again = await git(vm, "push", merge, `${await shaped("HEAD^{tree}", merged)}:refs/heads/staging`);
     expect(again.err).toContain("moved staging already");
     // What factory/vm/merge.ts tells apart: a refusal (back to ready to merge) from staging having moved (it tries again).
     const stale = /fetch first|non-fast-forward|stale info/;
     expect(again.err).not.toMatch(stale);
     expect(sneaky.err).not.toMatch(stale);
     const fresh = f.factory({ scope: "merge", branch: "task/7-the-factory", by: "ada", id: "merge-2" });
-    expect((await git(vm, "push", fresh, `${await must(vm, "commit-tree", `${head}^{tree}`, "-p", base, "-p", head, "-m", "A merge made before staging moved")}:refs/heads/staging`)).err).toMatch(stale);
+    expect((await git(vm, "push", fresh, `${await must(vm, "commit-tree", `${head}^{tree}`, "-p", base, "-m", "A merge made before staging moved")}:refs/heads/staging`)).err).toMatch(stale);
     expect((await git(vm, "push", merge, ":refs/heads/staging")).ok).toBe(false);
     expect((await git(vm, "push", merge, "HEAD:main")).ok).toBe(false);
     // Then the task's branch is deleted, and gone.
@@ -306,5 +322,48 @@ describe("Erga's Git endpoint", () => {
     // The tests after this one carry on from staging as the merge left it.
     await must(src, "fetch", "-q", "erga");
     await must(src, "reset", "-q", "--hard", "erga/staging");
+  });
+
+  test("an older task merge (\"Merge task/<id>-<slug>: title\", two parents) still shows as its card, with the commits it brought", async () => {
+    await must(src, "checkout", "-q", "-b", "task/9-an-old-one");
+    for (const n of ["Old work", "More old work"]) { writeFileSync(join(src, `${n}.txt`), n); await must(src, "add", "."); await must(src, "commit", "-qm", n); }
+    await must(src, "checkout", "-q", "main");
+    await must(src, "reset", "-q", "--hard", "erga/staging");
+    await must(src, "merge", "-q", "--no-ff", "-m", "Merge task/9-an-old-one: An old one", "task/9-an-old-one");
+    expect((await git(src, "push", "erga", "HEAD:staging")).ok).toBe(true);
+    const [top, ...rest] = (await f.repo.branches()).branches[0].commits;
+    expect(top.task).toMatchObject({ id: 9, branch: "task/9-an-old-one", title: "An old one" });
+    expect(top.task!.commits.length).toBe(2);
+    expect(rest.slice(0, 2).map((x) => [x.subject, x.inTask])).toEqual([["More old work", top.sha], ["Old work", top.sha]]);
+  });
+});
+
+describe("the staging rule: only the factory's merge moves staging, but for an admin's override", () => {
+  let f: Fixture, src: string, clock = Date.now();
+  const ada = { login: "ada", name: "Ada" };
+  beforeAll(async () => { f = startFixture({ mirror: false, now: () => clock }); src = await seedRepo(); await must(src, "remote", "add", "erga", f.erga); });
+  afterAll(() => f.stop());
+  const next = async (name: string) => { writeFileSync(join(src, name), name); await must(src, "add", "."); await must(src, "commit", "-qm", name); };
+
+  test("seeding makes staging; then a push is refused, an override lets Ada's pushes land with the reason for 10 minutes, then it ends", async () => {
+    expect((await git(src, "push", "erga", "main:main", "main:staging")).ok).toBe(true);
+    await next("Fourth");
+    const refused = await git(src, "push", "erga", "HEAD:staging");
+    expect(refused.ok).toBe(false);
+    expect(refused.err).toContain(STAGING_RULE.slice(0, 60));
+    expect(f.moves.filter((m) => m.branch == "staging").length).toBe(1);
+    expect(() => f.repo.allowStagingPush(ada, "too short")).toThrow("at least 10 characters");
+    const o = f.repo.allowStagingPush(ada, "The factory is down: hotfix");
+    expect(o).toMatchObject({ login: "ada", reason: "The factory is down: hotfix", until: clock + STAGING_OVERRIDE_MS });
+    expect(f.repo.stagingOverrides()).toEqual([o]);
+    expect((await f.repo.branches()).stagingOverrides).toEqual([o]);
+    expect((await git(src, "push", "erga", "HEAD:staging")).ok).toBe(true);
+    expect(f.moves.at(-1)).toMatchObject({ branch: "staging", by: "ada", override: { reason: "The factory is down: hotfix", gate: STAGING_RULE } });
+    // Deleting staging stays refused, override or not.
+    expect((await git(src, "push", "erga", ":staging")).ok).toBe(false);
+    clock += STAGING_OVERRIDE_MS + 1;
+    expect(f.repo.stagingOverrides()).toEqual([]);
+    await next("Fifth");
+    expect((await git(src, "push", "erga", "HEAD:staging")).err).toContain("staging moves only by the factory's Merge");
   });
 });

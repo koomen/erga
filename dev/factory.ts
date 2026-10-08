@@ -7,7 +7,8 @@
 //                                 (factory/erga.git), served by real `git http-backend`. Made the first time
 //                                 from this checkout's HEAD, as staging and main. A factory token
 //                                 (worker/factory.ts, gitToken) is the password: a task's token pushes its
-//                                 own branch only; a merge token also moves staging. Nothing else is pushed.
+//                                 own branch only; a merge token also moves staging (each move kept, by branch,
+//                                 in factory/merges.json: the StagingLog's merges). Nothing else is pushed.
 //   POST /__factory/vm?link=      the VMs: { op: "start" | "job" | "stop" | "alive" | "info" | "staging", ... }, from the
 //                                 Worker only (the dev server's secret)
 //
@@ -129,12 +130,20 @@ export function branches(stateDir: string): Record<string, string> {
   return out;
 }
 
-/** The branches, and staging's newest 100 commits (the factory's StagingLog, factory/recover.ts): did a task's merge reach staging? */
-export function stagingLog(stateDir: string): { heads: Record<string, string>; commits: { sha: string; subject: string }[] } {
+/** Each task branch a merge token moved staging for, and to which commit (the StagingLog's merges). */
+const mergesFile = (stateDir: string) => join(stateDir, "factory", "merges.json");
+function merges(stateDir: string): Record<string, string> {
+  try { return JSON.parse(readFileSync(mergesFile(stateDir), "utf8")) as Record<string, string>; } catch { return {}; }
+}
+
+/** The branches, staging's newest 100 commits and the task merges staging has (the factory's StagingLog, factory/recover.ts): did a task's merge reach staging? */
+export function stagingLog(stateDir: string): { heads: Record<string, string>; commits: { sha: string; subject: string }[]; merges: Record<string, string> } {
   const heads = branches(stateDir);
-  if (!heads.staging) return { heads, commits: [] };
-  const out = spawnSync("git", ["-C", join(stateDir, "factory", "erga.git"), "log", "-n", "100", "--format=%H %s", "staging"], { encoding: "utf8" }).stdout;
-  return { heads, commits: out.split("\n").filter(Boolean).map((l) => ({ sha: l.slice(0, 40), subject: l.slice(41) })) };
+  if (!heads.staging) return { heads, commits: [], merges: {} };
+  const dir = join(stateDir, "factory", "erga.git");
+  const out = spawnSync("git", ["-C", dir, "log", "-n", "100", "--format=%H %s", "staging"], { encoding: "utf8" }).stdout;
+  const landed = Object.fromEntries(Object.entries(merges(stateDir)).filter(([, sha]) => spawnSync("git", ["-C", dir, "merge-base", "--is-ancestor", sha, "staging"]).status == 0));
+  return { heads, commits: out.split("\n").filter(Boolean).map((l) => ({ sha: l.slice(0, 40), subject: l.slice(41) })), merges: landed };
 }
 
 // ---- the VMs -------------------------------------------------------------------------
@@ -330,8 +339,13 @@ export function factoryDev(opts: { stateDir: string; secret: string; port: () =>
     const dir = ensureRepo(opts.stateDir);
     const url = new URL(req.url ?? "/", "http://x");
     const headers = { "content-type": req.headers["content-type"], "git-protocol": req.headers["git-protocol"] as string | undefined, "content-encoding": encoding };
+    const staging = () => branches(opts.stateDir).staging;
+    const before = grant.scope == "merge" && rest.endsWith("/git-receive-pack") ? staging() : null;
     const r = await httpBackend(join(dir, ".."), { method: req.method ?? "GET", path: `/erga.git${rest}`, query: url.search.slice(1), headers, body });
     if (r.status >= 500) opts.log(`factory: git ${rest}: ${r.status} ${new TextDecoder().decode(r.body).trim().slice(0, 500)}`);
+    // A merge token moved staging: the task's merge, kept by branch (the StagingLog's merges).
+    const after = before != null ? staging() : null;
+    if (after && after != before) writeFileSync(mergesFile(opts.stateDir), JSON.stringify({ ...merges(opts.stateDir), [grant.branch]: after }));
     res.writeHead(r.status, r.headers).end(r.body);
   }
 

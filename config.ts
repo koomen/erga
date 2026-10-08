@@ -192,12 +192,14 @@ export interface SettingChange {
   credential?: "set" | "replaced" | "cleared";
   /** A factory task (key "task"): added to the board, or merged into staging (`commit`: the merge commit). `from` and `to` are null. */
   task?: { id: number; title: string; event: "added" | "merged"; commit?: string };
-  /** main moved forward to staging (key "main"): the production deploy. `from` and `to` are main's old and new heads (null: none); `commits`, the newest that came (at most 50), of `total`. */
+  /** main moved forward to staging (key "main"): the production deploy; or staging moved by a push past the staging rule (key "staging", with `override`). `from` and `to` are the branch's old and new heads (null: none); `commits`, the newest that came (at most 50), of `total`. */
   release?: {
     commits: { sha: string; subject: string }[]; total: number;
-    /** main moved past the production gate (its tests hadn't passed): an admin's emergency override, with their reason and what the gate said. */
+    /** main moved past the production gate (its tests hadn't passed), or staging past the staging rule: an admin's emergency override, with their reason and what the gate or rule said. */
     override?: { reason: string; gate: string };
   };
+  /** An admin opened an override of the staging rule (key "staging"; source/repo.ts, STAGING_RULE): their pushes to staging land until `until` (ms). `from` and `to` are null. A push made under it is a `release` with `override`. */
+  stagingOverride?: { reason: string; until: number };
   /** A user (key "user"): added, their role or deploy role changed, or removed. `from` and `to` are null. */
   user?: { login: string; event: "added" | "role" | "deploy" | "removed"; role?: string; deploy?: boolean };
   /** An agent token (key "token"): revoked (`by` revoked it; `of`, whose it was). `from` and `to` are null. */

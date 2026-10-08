@@ -2,7 +2,7 @@
 // the merge's "Merge staging into task/…") are authored by the task's person:
 // the admin who added it, on the board, through the factory's agent, or with
 // their own agent's token. The merge into staging is authored by whoever
-// pressed Merge. The factory is always the committer, so it's clear that it
+// pressed Merge (one squash commit: factory/vm/merge.ts). The factory is always the committer, so it's clear that it
 // made the commit. worker/factory.ts gives each VM job the identities
 // (GIT_AUTHOR_*, GIT_COMMITTER_*, FACTORY_MERGE_AUTHOR_*: factory/vm/merge.ts).
 //

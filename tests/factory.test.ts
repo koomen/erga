@@ -280,7 +280,15 @@ test("a task's commits are by its person: their GitHub name and noreply address;
   expect(await githubIdOf("ada", (async () => { throw new Error("offline"); }) as unknown as typeof fetch)).toBeNull();
 });
 
-test("a merge the factory was cut off from: staging's \"Merge <branch>:\" commit, or the branch gone with its commit in staging", () => {
+test("a merge the factory was cut off from: the squash commit the repository recorded for the branch, before anything else", () => {
+  const S = "5".repeat(40);
+  const log = { heads: { staging: S }, commits: [{ sha: S, subject: "X" }, { sha: B, subject: "Merge task/1-x: X" }], merges: { "task/1-x": S } };
+  expect(landedIn(log, { branch: "task/1-x", commit: A, base: null })).toBe(S);
+  // A squash commit's subject is the task's title only: without the record, it isn't found by its subject.
+  expect(landedIn({ ...log, commits: [{ sha: S, subject: "Y" }], merges: {} }, { branch: "task/2-y", commit: A, base: null })).toBeNull();
+});
+
+test("a merge the factory was cut off from, before squash merges: staging's \"Merge <branch>:\" commit, or the branch gone with its commit in staging", () => {
   const C = "c".repeat(40);
   const log = { heads: { staging: A, main: B }, commits: [{ sha: A, subject: "Merge task/12-other: Other" }, { sha: B, subject: "Merge task/1-x: X" }, { sha: C, subject: "Factory task #3" }] };
   const t = (branch: string, commit: string | null, base: string | null = null) => landedIn(log, { branch, commit, base });

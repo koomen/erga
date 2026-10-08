@@ -1,7 +1,7 @@
 // The factory (experimental): Erga's task queue. Each task is a
 // branch of Erga's own repository, task/<id>-<slug>, made from staging, and
 // a VM in which Claude Code does the work and reports back. Merging a task
-// merges its branch into staging and deletes it; discarding it deletes it.
+// squashes its branch into one commit on staging and deletes it; discarding it deletes it.
 // Admins only, and only while the `factory` setting is "on".
 //
 // A VM is one Unix user, so the task's code (Claude Code, and anything a
@@ -81,7 +81,8 @@
 //                                               the task's current run (woken again since, or given up on) is refused
 //
 // Merge works in the task's own VM, in its clone (factory/vm/merge.ts): staging merged into the branch, then
-// staging moved to a --no-ff merge commit. A conflict, or a step that fails or times out, sets the task to
+// staging moved to one new commit with the branch's files (a squash: its message is the task's title, then its
+// summary, or its ask). The branch's own commits never reach staging. A conflict, or a step that fails or times out, sets the task to
 // "needs agent" (Merge off, the reason on the card) and wakes the task's own Claude Code (run.ts resolve, the
 // same session: --continue) with instructions to resolve, test under time limits and commit. When it says
 // done, the merge runs again by itself (stopping that Claude Code first, if it is still saying its last words);
@@ -396,6 +397,12 @@ export class Factory extends DurableObject<Env> {
   }
 
   async list(): Promise<Task[]> { return this.sql.exec<Row>("SELECT * FROM tasks ORDER BY id").toArray().map((r) => this.view(r)); }
+
+  /** Each merged task's commit on staging (mergeCommit), for the Source page's task cards (source/repo.ts, withTasks). */
+  async mergedTasks(): Promise<{ id: number; branch: string; title: string; commit: string }[]> {
+    return this.sql.exec<{ id: number; branch: string; title: string; merge_commit: string }>("SELECT id, branch, title, merge_commit FROM tasks WHERE status = 'merged' AND merge_commit IS NOT NULL ORDER BY id DESC LIMIT 1000")
+      .toArray().map((r) => ({ id: r.id, branch: r.branch, title: r.title, commit: r.merge_commit }));
+  }
   async task(id: number, allLog = false): Promise<Task | null> { const r = this.row(id); return r && this.view(r, allLog); }
 
   /** The instructions that wait for the task's Claude Code, oldest first. */
@@ -914,7 +921,7 @@ export class Factory extends DurableObject<Env> {
       this.update(id, { preview_path: null });
       let timer: ReturnType<typeof setTimeout> | undefined;
       const out = await Promise.race([
-        host.job(vm, "merge.ts", ["merge", r.branch, r.title], { ...(await this.jobEnv(id, "merge", by)), ...(reported ? { FACTORY_RUN_REPORTED: "1" } : {}) }, true),
+        host.job(vm, "merge.ts", ["merge", r.branch, r.title], { ...(await this.jobEnv(id, "merge", by)), FACTORY_MERGE_BODY: mergeBody(r), ...(reported ? { FACTORY_RUN_REPORTED: "1" } : {}) }, true),
         new Promise<never>((_, no) => { timer = setTimeout(() => no(new Error(`the merge job didn't answer in ${MERGE_JOB_MS / 60_000} minutes`)), MERGE_JOB_MS); }),
       ]).finally(() => clearTimeout(timer));
       const res = resultOf(out);
@@ -1439,6 +1446,9 @@ export async function adminAgentApi(request: Request, env: Env, url: URL): Promi
 /** Whether the factory is on, for the page (worker/source.ts). */
 export const factoryEnabled = enabled;
 
+/** Each merged task's commit on staging, from the board (the Source page's task cards); none when the board can't say. */
+export const mergedTasks = (env: Env) => factory(env).mergedTasks().catch(() => []);
+
 /** /api/factory/... */
 export async function factoryApi(request: Request, env: Env, url: URL): Promise<Response> {
   const path = url.pathname.replace(/\/$/, "");
@@ -1577,6 +1587,9 @@ type Ask = { n: number; by: string; via?: string | null; text: string; at: strin
 const whoAsked = (asks: Ask[]) => [...new Set(asks.map((a) => byLine(a.by, a.via)))].join(", ");
 
 /** Instructions sent while a task worked, for Claude Code: each with who sent it (and how), oldest first. */
+/** The body of a task's commit on staging (factory/vm/merge.ts): its summary from `task done`, else its ask. */
+export const mergeBody = (t: { summary: string | null; description: string }) => t.summary?.trim() || t.description.trim();
+
 export function joinAsks(asks: { by: string; via?: string | null; text: string }[]): string {
   return asks.map((a) => `${byLine(a.by, a.via)} asks: ${a.text}`).join("\n\n");
 }

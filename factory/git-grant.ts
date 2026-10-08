@@ -6,9 +6,9 @@
 //
 // A task's token reads staging, main and its own branch (task/…), and pushes
 // its own branch, deleting it included. A merge token also moves staging,
-// once, and only to the merge itself: one new commit on top of staging, whose
-// other parent is the task's branch as pushed (with staging in it), with that
-// branch's files (mergeShape). Nothing else: not main, not another task's
+// once, and only to the merge itself: one new commit on top of staging (its
+// only parent: a squash), with the files of the task's branch as pushed
+// (which has staging in it) (mergeShape). Nothing else: not main, not another task's
 // branch, no other commit on staging. The VM is one user, so the task's own
 // code can read the merge job's environment: a merge token taken that way
 // does no more than the merge the admin asked for.
@@ -78,8 +78,8 @@ export interface CommitFacts { tree: string; parents: string[] }
 
 /**
  * Whether a merge token's move of staging, from `old` to `next`, is the merge itself (factory/vm/merge.ts): `next`
- * has the parents [old, head], where `head` is the task's branch as it is now and has `old` in it, and `next` has
- * head's files. The reason if not. `commit` reads a commit (null if unknown); `isAncestor(a, b)`: b comes from a.
+ * has one parent, `old` (a squash), and the files of `head`, the task's branch as it is now, which has `old` in it.
+ * The reason if not. `commit` reads a commit (null if unknown); `isAncestor(a, b)`: b comes from a.
  */
 export function mergeShape(grant: GitGrant, old: string, next: string, head: string | undefined,
   commit: (sha: string) => CommitFacts | null, isAncestor: (a: string, b: string) => boolean): string | null {
@@ -89,7 +89,7 @@ export function mergeShape(grant: GitGrant, old: string, next: string, head: str
   if (!head) return why(`push ${grant.branch} first`);
   const c = commit(next), h = commit(head);
   if (!c || !h) return why("its commits aren't known");
-  if (c.parents.length != 2 || c.parents[0] != old || c.parents[1] != head) return why(`the new commit must have two parents: staging's head (${old.slice(0, 7)}), then the branch's (${head.slice(0, 7)})`);
+  if (c.parents.length != 1 || c.parents[0] != old) return why(`the new commit must have one parent, staging's head (${old.slice(0, 7)}): a squash of the branch`);
   if (!isAncestor(old, head)) return why(`merge staging into ${grant.branch} first, and push it`);
   if (c.tree != h.tree) return why(`the new commit must have the files of ${grant.branch} (${head.slice(0, 7)})`);
   return null;

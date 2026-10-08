@@ -109,9 +109,9 @@ test("each action has a tool that its agent has, or says why there's none", () =
   expect(wrong).toEqual([]);
 });
 
-test("only a secret, the production gate's override, or what isn't a person's action, goes without a tool", () => {
+test("only a secret, an emergency override (the production gate's, the staging rule's), or what isn't a person's action, goes without a tool", () => {
   for (const a of AGENT_ACTIONS.filter((a) => a.exempt && a.domain != "none")) {
-    if (a.route == "POST /api/source/merge override=") expect(a.exempt).toBe(OVERRIDE);
+    if (a.route == "POST /api/source/merge override=" || a.route == "POST /api/source/staging-override") expect(a.exempt).toBe(OVERRIDE);
     else expect(`${a.route}: ${a.exempt}`).toMatch(/secret/);
   }
 });

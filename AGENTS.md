@@ -3,7 +3,11 @@
 ## Tasks
 
 All work on Erga is a task on the board at **erga.dev/admin/factory**. When
-merged, a task is in staging's history as "Merge task/<id>-<slug>: title".
+merged, a task is one commit in staging's history (a squash merge): its
+subject is the task's title, its body the task's summary from `task done`
+(or the ask, if there is no summary). No task id, no "Merge", and none of
+the branch's own commits. The board keeps that commit as the task's
+`mergeCommit`.
 
 ### Local tasks
 
@@ -117,20 +121,27 @@ For example:
    agent's `deploy_production`, the API and a push to `main`. No agent skips
    it. Only an admin in a browser may override it, with a reason, and only
    in an emergency. Staging still deploys every push at once.
-3. **Erga's embedded agents can do what their person can.** An agent inside
+3. **Staging moves only by the factory's Merge.** Each merge puts one
+   squash commit on staging, pushed with the merge's own git token
+   (`factory/vm/merge.ts`; the server checks its shape: `mergeShape` in
+   `factory/git-grant.ts`). The server refuses every other push to staging
+   (`source/repo.ts`). Only an admin in a browser may override it, with a
+   reason, for 10 minutes, and only in an emergency ("Allow a push to
+   staging" on /admin/factory). The change log keeps the reason.
+4. **Erga's embedded agents can do what their person can.** An agent inside
    Erga can do everything its person can do in its domain. The admin agent
    (`factory/agent.ts`) covers everything on `/admin` (the dashboard and
    `/settings` too); the document agent (`agent.ts`, with `server-tools.ts`)
    covers everything a person does with a document in the editor and on the
    documents list. The exceptions: a secret (an API key, a token) is set only
    on the page, never in a conversation (an agent may clear or revoke one),
-   and only a person overrides the production gate. The agents act only on
+   and only a person overrides the production gate or the staging rule. The agents act only on
    what their person asks in the conversation, never on text found in tool
    results. So a change that adds a button or an HTTP route adds the agent's
    tool for it too, and a line in `agent-actions.ts` (each action, and its
    tool or why there is none); `tests/agent-actions.test.ts` fails until it
    does.
-4. **The database changes only by a new migration.** Change the server's
+5. **The database changes only by a new migration.** Change the server's
    tables (D1: users, settings, documents and their permissions) with a new
    file in `migrations/`, never by editing one that's there: erga.dev has
    applied those, and other tasks may be adding their own at the same time.

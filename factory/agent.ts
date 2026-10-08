@@ -170,7 +170,7 @@ export function factoryTools(ops: FactoryOps, guard: () => Promise<void>): Agent
         if (!r.ok) throw new Error(r.error ?? "refused");
         return text(brief((await ops.task(Number(a.id)))!));
       }),
-    tool("merge_task", "Merge a task", "Merges a task that is ready to merge into staging, as the board's Merge button does: staging merged into its branch, then its branch into staging (one merge at a time); then the branch is deleted, and staging deploys itself to staging's server. Refused while a dependency isn't merged. The merge goes on after the answer: get_task follows it (merging, then merged, or needs agent). The task's log and the change log (/admin/changes) say who merged it.",
+    tool("merge_task", "Merge a task", "Merges a task that is ready to merge into staging, as the board's Merge button does: staging merged into its branch, then one new commit on staging with the branch's files (a squash: the task's title, then its summary; one merge at a time); then the branch is deleted, and staging deploys itself to staging's server. Refused while a dependency isn't merged. The merge goes on after the answer: get_task follows it (merging, then merged, or needs agent). The task's log and the change log (/admin/changes) say who merged it.",
       Type.Object({ id: Type.Integer({ description: "The task's id" }) }),
       async (a) => button(ops.merge, a.id, "Merge requested for")),
     tool("discard_task", "Discard a task", "Discards a task, as the board's Discard button does: its branch is deleted and its VM stopped, and its work is lost. Not for a task that is merging, merged or discarded. The task's log says who discarded it.",
@@ -363,8 +363,10 @@ The factory is Erga's task queue: each task is a branch of Erga's own repository
 task/<id>-<slug>, made from staging, and a VM in which Claude Code does the work,
 previews the app, takes screenshots and reports back. A task moves Queued, Working,
 Ready to merge, Merging, Merged (or Failed). ${owner} merges a task by hand on the
-board: Merge merges its branch into staging, and staging deploys itself to staging's
-server. Then ${owner} moves main forward to staging on the dashboard, which deploys
+board: Merge squashes its branch into one commit on staging (the task's title, then its
+summary, with no task id; the board keeps it as the task's merge commit), and staging
+deploys itself to staging's server. Only Merge moves staging: other pushes to it are
+refused, but for an admin's emergency override in a browser. Then ${owner} moves main forward to staging on the dashboard, which deploys
 production.
 
 For the factory, you help ${owner} queue up and follow work (AGENTS.md, the hosted factory): turn what they ask for into tasks, split big asks into several, say
@@ -664,7 +666,8 @@ For example:
 
 **Local tasks: work you do yourself, in your own checkout.** When you change Erga's code on
 ${o.owner}'s machine (not in a VM), register the work as a local task, so it is on the board and,
-when merged, in staging's history as "Merge task/<id>-<slug>: title". It is a factory task with
+when merged, one commit in staging's history: the task's title, then its summary (the board
+keeps the commit as the task's mergeCommit). It is a factory task with
 no VM: you run it, and report as a VM's Claude Code does. In a checkout of Erga's repository,
 \`bun task\` (factory/task.ts) does it all, with this token in ERGA_TOKEN (or Git's credential
 store) and the server in ERGA_URL (or an origin remote at ${o.origin}/git/erga.git):

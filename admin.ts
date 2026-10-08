@@ -298,14 +298,15 @@ function eventItem(c: SettingChange): string {
     const what = c.task.event == "added" ? "added" : `merged into staging${c.task.commit ? ` as ${sha(c.task.commit)}` : ""}`;
     return `<li><span class="key">task #${c.task.id}</span> ${what}: <span class="title">${esc(c.task.title)}</span></li>`;
   }
+  if (c.stagingOverride) return `<li><span class="key">staging</span> pushes allowed until ${esc(new Date(c.stagingOverride.until).toISOString().slice(11, 16))} UTC <span class="badge">staging rule overridden</span> <span class="title">${esc(c.stagingOverride.reason)}</span></li>`;
   const r = c.release!;
   const commits = r.commits.map((x) => `<li>${sha(x.sha)} ${esc(x.subject)}</li>`).join("");
   const more = r.total > r.commits.length ? `<li class="more">and ${r.total - r.commits.length} older</li>` : "";
   // Past the production gate (its tests hadn't passed): the admin's reason, and what the gate said.
-  const override = r.override ? ` <span class="badge" title="${esc(r.override.gate)}">tests overridden</span> <span class="title">${esc(r.override.reason)}</span>` : "";
+  const override = r.override ? ` <span class="badge" title="${esc(r.override.gate)}">${c.key == "staging" ? "staging rule overridden" : "tests overridden"}</span> <span class="title">${esc(r.override.reason)}</span>` : "";
   // Folded, so the entry stays on its line: the commits open under it.
   const list = r.commits.length ? ` <details><summary>${r.total} commit${r.total == 1 ? "" : "s"}</summary><ul class="commits">${commits}${more}</ul></details>` : "";
-  return `<li><span class="key">main</span> ${c.from ? sha(c.from) : "none"} <span class="to" aria-label="to">→</span> ${sha(c.to)}${override}${list}</li>`;
+  return `<li><span class="key">${c.key == "staging" ? "staging" : "main"}</span> ${c.from ? sha(c.from) : "none"} <span class="to" aria-label="to">→</span> ${sha(c.to)}${override}${list}</li>`;
 }
 
 /**
@@ -319,7 +320,7 @@ function changeRow(v: SettingsVersion, kinds: Record<string, string | undefined>
     const doc = kinds[key] == "document" && x != null ? docs.get(String(x)) : undefined;
     return `<span class="was">${esc(doc ? doc.address : shown(x, kinds[key]))}</span>`;
   };
-  const what = v.changes.map((c) => c.task || c.release || c.user || c.token || c.signIn ? eventItem(c) : c.credential ? `<li><span class="key">${esc(c.key)}</span> key ${esc(c.credential)}</li>` : `<li><span class="key">${esc(c.key)}</span> ${value(c.key, c.from)} <span class="to" aria-label="to">→</span> ${value(c.key, c.to)}${c.reset ? ` <span class="badge">reset</span>` : ""}</li>`).join("");
+  const what = v.changes.map((c) => c.task || c.release || c.stagingOverride || c.user || c.token || c.signIn ? eventItem(c) : c.credential ? `<li><span class="key">${esc(c.key)}</span> key ${esc(c.credential)}</li>` : `<li><span class="key">${esc(c.key)}</span> ${value(c.key, c.from)} <span class="to" aria-label="to">→</span> ${value(c.key, c.to)}${c.reset ? ` <span class="badge">reset</span>` : ""}</li>`).join("");
   return `  <li class="change" data-n="${v.n}">
     <time datetime="${at}" title="${at.slice(0, 16).replace("T", " ")} UTC">${at.slice(0, 16).replace("T", " ")}</time>${byHtml(v.by, v.via)}<ul class="what">${what}</ul>
   </li>`;

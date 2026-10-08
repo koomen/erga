@@ -42,6 +42,9 @@ test("two local tasks write the same file; the second's merge conflicts: needs a
   const resolved = await agent.task(dirC, "done", "Kept both lines.");
   expect(resolved.code, resolved.out).toBe(0);
   await f.until(c, "merged");
-  expect(f.git("log", "-1", "--format=%s", "staging").trim()).toBe(`Merge ${tc.branch}: Shared line two`);
+  // One commit on staging: the title, then the summary of the first done (not the resolve's words); no merge of staging.
+  expect(f.git("log", "-1", "--format=%B", "staging").trim()).toBe(`Shared line two\n\n${(await f.task(c)).summary.trim()}`);
+  expect(f.git("log", "-1", "--format=%P", "staging").trim().split(" ").length).toBe(1);
+  expect(f.git("log", "--format=%s", "staging")).not.toContain(`Merge staging into ${tc.branch}`);
   expect(f.git("show", `staging:${file}`).trim()).toBe("line from B\nline from C");
 });

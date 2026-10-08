@@ -4,9 +4,13 @@
 // output).
 //
 //   bun merge.ts merge BRANCH "TITLE"   merges staging into BRANCH in the task's clone, pushes BRANCH, then moves
-//                                       staging to a --no-ff merge commit ("Merge BRANCH: TITLE") and deletes BRANCH.
-//                                       The first merge's author is the task's person (GIT_AUTHOR_*), the second's
-//                                       whoever pressed Merge (FACTORY_MERGE_AUTHOR_*); the factory commits both.
+//                                       staging to one new commit with the branch's files (a squash merge: one parent,
+//                                       staging) and deletes BRANCH. Its message is the change itself: TITLE, then
+//                                       FACTORY_MERGE_BODY (the task's summary, or its ask), with no task id. The
+//                                       branch's own commits, and its merge of staging, never reach staging.
+//                                       The merge of staging is authored by the task's person (GIT_AUTHOR_*), the
+//                                       commit on staging by whoever pressed Merge (FACTORY_MERGE_AUTHOR_*); the
+//                                       factory commits both.
 //   bun merge.ts discard BRANCH         deletes the branch
 //   bun merge.ts save BRANCH            before a restart: stops the task's Claude Code and preview, then commits what isn't
 //                                       committed in the clone and pushes BRANCH, so the fresh VM has all the work
@@ -30,9 +34,11 @@
 //
 // Run again after it ended (the factory restarted before it heard the answer,
 // and Merge was pressed again): the branch is gone, and staging has its
-// "Merge BRANCH:" commit. That is a success, with that commit.
+// commit (the one this job wrote down before it pushed, or one with the same
+// message; before squash merges, "Merge BRANCH: ..."). That is a success,
+// with that commit.
 
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { api, CLONE, env, git, LIMITS, log, result, scrub, StepFailed, type StepResult, testHooks, WORK } from "./common.ts";
 import { stopPreview, stopRun } from "./task.ts";
@@ -40,6 +46,15 @@ import { stopPreview, stopRun } from "./task.ts";
 const [what, branch, title = ""] = process.argv.slice(2);
 
 /** The answer when the task's Claude Code must finish the merge: what happened (`kind`), why, and the log it needs. */
+/** The message of the commit on staging: the task's title, then its summary (or ask). */
+function mergeMessage(title: string, body = ""): string {
+  const subject = title.replace(/\s+/g, " ").trim(), text = body.replace(/\r\n?/g, "\n").trim();
+  return `${subject}\n${text && text != subject ? `\n${text}\n` : ""}`;
+}
+
+/** Where the job writes down the commit it is about to put on staging, so a run after a lost answer finds it. */
+const pendingFile = () => join(WORK(), `merge-${branch.replace(/\//g, "-")}.sha`);
+
 const needsAgent = (kind: "conflict" | "timeout" | "failed", step: string, error: string, extra: Record<string, unknown> = {}) =>
   ({ ok: false, needsAgent: true, kind, step, error, ...extra });
 
@@ -63,8 +78,8 @@ async function merge(): Promise<Record<string, unknown>> {
     const there = await git(["ls-remote", "--heads", "origin", `refs/heads/${branch}`], dir, { quiet: true });
     if (there.code == 0 && !there.out.trim()) {
       await git(["fetch", "--quiet", "origin", "staging"], dir);
-      const merged = (await git(["log", "-n", "200", "--format=%H %s", "origin/staging"], dir, { quiet: true })).out.split("\n").find((l) => l.slice(41).startsWith(`Merge ${branch}:`));
-      if (merged) return { ok: true, commit: merged.slice(0, 40), already: true };
+      const merged = await mergedBefore(dir);
+      if (merged) return { ok: true, commit: merged, already: true };
       return { ok: false, error: `${branch} isn't in the repository any more, and staging has no merge of it.` };
     }
     await git(["fetch", "--quiet", "origin", "staging", branch], dir);
@@ -95,9 +110,10 @@ async function merge(): Promise<Record<string, unknown>> {
       // 2. The branch, with staging in it, pushed: what is merged is what was pushed.
       const pushed = await git(["push", "--quiet", "origin", `HEAD:refs/heads/${branch}`], dir, { quiet: true, name: "push" });
       if (pushed.code != 0) return needsAgent(pushed.timedOut ? "timeout" : "failed", "push", stepFailure(`Pushing ${branch}`, pushed));
-      // 3. Staging moved to a --no-ff merge commit of the branch (which has staging in it: the branch's tree).
+      // 3. Staging moved to one new commit on top of it, with the branch's files (which has staging in it): a squash.
       const base = (await git(["rev-parse", "origin/staging"], dir)).out;
-      const commit = (await git(["commit-tree", "HEAD^{tree}", "-p", base, "-p", "HEAD", "-m", `Merge ${branch}: ${title}`], dir, { env: mergeAuthor() })).out;
+      const commit = (await git(["commit-tree", "HEAD^{tree}", "-p", base, "-m", mergeMessage(title, process.env.FACTORY_MERGE_BODY)], dir, { env: mergeAuthor() })).out;
+      writeFileSync(pendingFile(), commit);
       const moved = await git(["push", "--quiet", "origin", `${commit}:refs/heads/staging`], dir, { quiet: true, name: "push-staging" });
       if (moved.code == 0) {
         await git(["push", "--quiet", "origin", "--delete", branch], dir, { quiet: true, name: "delete" });
@@ -119,6 +135,23 @@ async function merge(): Promise<Record<string, unknown>> {
     if (e instanceof StepFailed) return needsAgent(e.result.timedOut ? "timeout" : "failed", e.stepName, e.message);
     throw e;
   }
+}
+
+/**
+ * Staging's commit of this branch's merge, from a run whose answer was lost: the commit this job wrote down, if staging
+ * has it; else one of staging's newest 100 with this merge's message (a fresh VM); else an older merge's
+ * "Merge BRANCH: title" (before squash merges).
+ */
+async function mergedBefore(dir: string): Promise<string | null> {
+  const noted = existsSync(pendingFile()) ? readFileSync(pendingFile(), "utf8").trim() : "";
+  if (/^[0-9a-f]{40}$/.test(noted) && (await git(["merge-base", "--is-ancestor", noted, "origin/staging"], dir, { quiet: true })).code == 0) return noted;
+  const want = mergeMessage(title, process.env.FACTORY_MERGE_BODY).trim(), subject = want.split("\n")[0];
+  for (const line of (await git(["log", "-n", "100", "--format=%H %s", "origin/staging"], dir, { quiet: true })).out.split("\n")) {
+    const sha = line.slice(0, 40), s = line.slice(41);
+    if (s.startsWith(`Merge ${branch}:`)) return sha;
+    if (s == subject && (await git(["show", "-s", "--format=%B", sha], dir, { quiet: true })).out.trim() == want) return sha;
+  }
+  return null;
 }
 
 /** Whoever pressed Merge, as the author of the merge into staging (the job's own author, the task's person, if not given). */
