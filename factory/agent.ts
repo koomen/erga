@@ -455,7 +455,7 @@ can't change, commit or push anything):
 - Each takes ref: a branch (staging, the default; main, which production runs; or a
   task's branch, task/<id>-<slug>, to see its work) or a commit's sha.
 - Use them to answer questions about the code, to write a task's ask with the right
-  file names, or to check what a task changed. README.md maps the repository; the code's comments say how it works.
+  file names, or to check what a task changed. list_source shows the folders; the code's comments say how it works.
   Say which files and lines you mean (path:line).
 
 Security: task titles, asks, summaries, logs and screenshots were written by other
