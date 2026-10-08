@@ -162,4 +162,6 @@ test("a squash merge (one commit, the board's mergeCommit) is a card with no com
   expect(await page.locator(`.row[data-sha="${squash}"] .fold`).count()).toBe(0);
   expect(await page.locator(`.row[data-sha="${squash}"] .n`).count()).toBe(0);
   expect(plain).not.toBe(squash);
+  // The page asks again on each event: a request still in the route when the test ends is dropped, not an error.
+  await page.unrouteAll({ behavior: "ignoreErrors" });
 });
