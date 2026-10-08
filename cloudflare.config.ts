@@ -50,11 +50,9 @@ export default defineConfig(({ mode }) => ({
       Home: exports.durableObject({ storage: "sqlite" }),
       // Each admin's agent, its conversation and panel (worker/admin-agent.ts): one object, "admin".
       AdminAgentHost: exports.durableObject({ storage: "sqlite" }),
-      // The factory (its task queue): gone, with what it held.
+      // The factory (its task queue) and its VMs: gone, with what they held.
       Factory: exports.durableObject({ state: "deleted" }),
-      // The factory's VMs: an empty class nothing uses (worker/index.ts). Its Cloudflare container application still names
-      // it, and a deploy refuses to delete a class a container names: delete the application, then mark this deleted.
-      FactoryVm: exports.durableObject({ storage: "sqlite" }),
+      FactoryVm: exports.durableObject({ state: "deleted" }),
       // Each person's list of documents before the directory: gone, with what it held.
       DocList: exports.durableObject({ state: "deleted" }),
     },

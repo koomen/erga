@@ -45,7 +45,6 @@
 //   POST /__erga/link              makes (or finds) the document for a file or folder, for whoever's signed in
 //   /__erga/mirror/<id>            the WebSocket the document reaches its files on disk through
 
-import { DurableObject } from "cloudflare:workers";
 import { accountOf, OWN_ACCOUNT, withAccount } from "../account";
 import { idShaped, slugify } from "../directory";
 import { frontDoor, mayDeploy, OWNER, whoOf, withTokens } from "../front";
@@ -69,9 +68,6 @@ import { releaseApi, withLive } from "./live";
 export { Deployer } from "./deployer";
 export { DocHost } from "./doc-host";
 export { AdminAgentHost } from "./admin-agent";
-
-/** The factory's VMs, gone: an empty class until its container application is deleted (cloudflare.config.ts). */
-export class FactoryVm extends DurableObject<Env> {}
 export { Pipeline } from "./pipeline";
 export { SourceHost } from "./source-host";
 export { Home } from "./home";
