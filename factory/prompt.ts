@@ -68,7 +68,8 @@ Work fast: batch independent reads and commands in one turn, and use subagents f
 4. Make the result visible at one URL: \`task preview [/path]\` runs the app from this clone on port ${4400} and keeps it running after you finish. Pick the page that shows the change best, with any state it needs already set up, so the user only has to open it.
 5. Attach screenshots that show the change, where it has a visible side: \`task shot http://localhost:4400/path "caption"\` (headless Chromium takes it), or \`task shot /path/to/file.png "caption"\` for ones you took yourself. Add \`--replace\` to the first one of a fresh set.
 6. Run every build, test and server under a time limit: \`task run --timeout SECONDS -- CMD\` (it kills the command's whole process tree when the time is up, and exits 124). Keep each limit to a few minutes. If a command times out, find out why (a server left running, a port in use, a test that waits forever) before you run it again. Leave no processes behind: only the preview that \`task preview\` started may keep running. The factory also limits each step and your whole run: past it, it stops everything you started and tells you.
-7. Commit everything, then \`task done "summary"\`: it pushes your branch and marks the task ready to merge. The merge squashes your branch into one commit on staging, whose message is the task's title, then this summary: your own commits don't reach staging. Write the summary in ASD-STE100 (Simplified Technical English), as AGENTS.md ("Task summaries") shows: what changed for the user, results, limits, tests, and what the user must do. If you can't finish, \`task fail "why"\` instead.
+7. Get it ready to merge. A task is ready to merge only when (1) it is complete, (2) it has no conflicts with the latest staging, and (3) its tests pass, on the branch with the latest staging in it. So, at the end: commit everything; run \`task pull --staging\` (it merges the latest staging into your branch, and stops at a conflict); resolve any conflict, keeping both sides' intent, and commit; then run the tests again on that: \`task run --timeout 300 -- bun run test\` (the unit tests and the end-to-end tests the change affects), \`CI=1 task run --timeout 300 -- bun run test:e2e e2e/<folder>/\` for each e2e folder the change touches, and \`task run --timeout 300 -- bun run typecheck\`. Fix what fails, and do it again until all three hold. \`task done\` refuses a branch that lacks the latest staging.
+8. Then \`task done "summary"\`: it pushes your branch and marks the task ready to merge. The merge squashes your branch into one commit on staging, whose message is the task's title, then this summary: your own commits don't reach staging. Write the summary in ASD-STE100 (Simplified Technical English), as AGENTS.md ("Task summaries") shows: what changed for the user, results, limits, tests, and what the user must do. If you can't finish, \`task fail "why"\` instead.
 
 The user can send you more instructions while you work: they come to you when a step of yours ends. Do them as part of this task.
 
@@ -110,8 +111,8 @@ ${(res.error ?? "").slice(0, 4000)}
 
 Finish the merge in your checkout, on ${t.branch}:
 1. ${res.kind == "conflict" ? "Run `task pull --staging`: it merges Erga's staging into your branch and stops at the conflicts. Resolve them, keeping both sides' intent (staging's changes and your task's)." : "Find out why, and fix what is yours to fix (`task pull --staging` brings in Erga's staging). If it was the network or the repository, say so."}
-2. Run the tests that cover what changed, under time limits. Leave no processes behind.
-3. Commit. Don't push to staging or main, and don't merge into them yourself.
+2. Run the tests on the branch with staging in it, under time limits: \`bun run test\`, the e2e folders the change touches (\`CI=1 bun run test:e2e e2e/<folder>/\`) and \`bun run typecheck\`. Leave no processes behind.
+3. Commit. Don't push to staging or main, and don't merge into them yourself. (\`task done\` refuses a branch that lacks the latest staging: if staging moved meanwhile, run \`task pull --staging\` again.)
 4. Run \`task done "what you did, in one or two sentences"\`: it pushes the branch, and the factory runs the merge again by itself. If you can't finish it, \`task fail "why"\`: the task goes back to ready to merge, with your reason.`;
 }
 
@@ -139,7 +140,11 @@ export function localTaskNote(t: { id: number; branch: string }): string {
   task shot FILE|URL "caption"   a screenshot (--replace drops the old ones first)
   task preview URL               where the user can see the change, if anywhere
   task push                      pushes the branch through Erga's Git endpoint
+  task pull --staging            merges Erga's latest staging into the branch, and stops at a conflict for you
   task done "summary"            pushes, then marks the task ready to merge (ASD-STE100, AGENTS.md "Task summaries")
   task fail "why"                marks it failed
-Commit as you go. Don't merge, and don't push to staging or main: the user merges from the board.`;
+Commit as you go. A task is ready to merge only when (1) it is complete, (2) it has no conflicts with the latest staging,
+and (3) its tests pass, on the branch with the latest staging in it. So before task done: task pull --staging, resolve
+any conflict and commit, then run bun run test, the e2e folders the change touches (CI=1 bun run test:e2e e2e/<folder>/)
+and bun run typecheck, each under a time limit. task done refuses a branch that lacks the latest staging. Don't merge, and don't push to staging or main: the user merges from the board.`;
 }

@@ -678,8 +678,15 @@ store) and the server in ERGA_URL (or an origin remote at ${o.origin}/git/erga.g
     bun task inbox                 instructions sent from the board: run it when a step ends, and before done
     bun task shot FILE|URL "caption"   a screenshot;   bun task preview URL   where to see the change
     bun task push                  pushes the branch (a git token for that branch only, from the factory)
+    bun task pull --staging        merges the latest staging into the branch, stops at a conflict for you
     bun task done "summary"        pushes, then ready to merge (the summary in ASD-STE100);  bun task fail "why"
-    bun task pull --staging        after "needs agent": merges staging in, stops at the conflict for you
+
+A task is ready to merge only when (1) it is complete, (2) it has no conflicts with the latest
+staging, and (3) its tests pass, on the branch with the latest staging in it. So before \`bun task
+done\`: run \`bun task pull --staging\`, resolve any conflict and commit, then run \`bun run test\`,
+the e2e folders the change touches (\`CI=1 bun run test:e2e e2e/<folder>/\`) and
+\`bun run typecheck\`, each under a time limit. \`bun task done\` fetches staging, and refuses a branch that
+lacks it. A task in a VM does the same (its prompt says so).
 
 The same over HTTP, for a local task only: POST ${api}/factory/tasks with "local": {"machine":
 "<name>"}; then the VMs' report routes, with this token: POST .../tasks/<id>/log {message},

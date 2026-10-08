@@ -189,6 +189,25 @@ export function gitAuth(): Record<string, string> {
   return { GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "http.extraHeader", GIT_CONFIG_VALUE_0: `Authorization: Bearer ${token}`, GIT_TERMINAL_PROMPT: "0" };
 }
 
+/**
+ * What `task done` checks of the rule (AGENTS.md, standing rule 6): the branch has the latest staging in it. Fetches
+ * staging from `remote` into `cwd`'s clone; answers null when HEAD has it (or the repository has no staging), else
+ * why `task done` is refused and what to do. `pull` is the command that brings staging in, where this runs. The
+ * tests themselves aren't run here: the agent runs them, on the branch with staging in it.
+ */
+export async function stagingMissing(remote: string, cwd: string, pull: string): Promise<string | null> {
+  const fetched = await git(["fetch", "--quiet", remote, "staging"], cwd, { quiet: true, name: "fetch-staging" });
+  if (fetched.code != 0) {
+    if (/couldn't find remote ref/i.test(fetched.err)) return null;
+    return `The check couldn't fetch Erga's staging (to see that this branch has it). Try again. ${stepError("git fetch", fetched)}`;
+  }
+  const head = (await git(["rev-parse", "FETCH_HEAD"], cwd)).out;
+  if ((await git(["merge-base", "--is-ancestor", head, "HEAD"], cwd, { quiet: true })).code == 0) return null;
+  return `This branch doesn't have the latest staging (${head.slice(0, 10)}) in it. A task is ready to merge only when it is complete, `
+    + `has no conflicts with the latest staging, and its tests pass with that staging in it. Run \`${pull}\`, resolve any conflict and commit, `
+    + "run the tests (`bun run test`, the e2e folders the change touches with CI=1, and `bun run typecheck`), then `task done` again.";
+}
+
 /** Text with any of the job's secrets taken out, for logs. */
 export function scrub(s: string): string {
   for (const name of ["REPO_TOKEN", "FACTORY_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"]) {

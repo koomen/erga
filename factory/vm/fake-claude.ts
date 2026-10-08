@@ -7,7 +7,10 @@
 //      (landing/index.html), and commits it.
 //   2. Runs the preview (`task preview`: the app itself, or with
 //      FACTORY_PREVIEW=static just the landing folder) and screenshots it.
-//   3. Says it's done (`task done`), which pushes the branch.
+//   3. Brings in the latest staging (`task pull`), as the rule asks before
+//      done (AGENTS.md, standing rule 6), keeping both sides' lines at a
+//      conflict.
+//   4. Says it's done (`task done`), which pushes the branch.
 //
 // `resolve` (a merge that needs it, with the factory's instructions): it
 // resolves conflicts by keeping both sides' lines, commits the merge, runs a
@@ -37,7 +40,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { api, CLONE, git, log, TASK, WORK } from "./common.ts";
-import { done, fail, preview, shot } from "./task.ts";
+import { done, fail, preview, pullStaging, shot } from "./task.ts";
 
 // Takes Claude Code's --model (the factory_model setting) like the real one, and says which.
 const args = process.argv.slice(2);
@@ -60,7 +63,7 @@ if (job == "work" && brief.prompt.includes("[factory-test: keep working]")) {
   await log("The stand-in wrote factory-wip.txt, doesn't commit it, and keeps working");
   await Bun.sleep(600_000);
 }
-if (job == "woken") { await done("The stand-in was woken after its limit, and finished."); process.exit(0); }
+if (job == "woken") { await currentWithStaging(); await done("The stand-in was woken after its limit, and finished."); process.exit(0); }
 // "[factory-test: max turns]": it stops as Claude Code does at --max-turns (its last event says so), without reporting.
 if (job == "work" && brief.prompt.includes("[factory-test: max turns]")) {
   console.log(JSON.stringify({ type: "result", subtype: "error_max_turns", is_error: true, num_turns: 300 }));
@@ -100,6 +103,7 @@ await preview("/", statics ? "landing" : undefined);
 await log("Preview up");
 const port = process.env.FACTORY_PREVIEW_PORT ?? "4400";
 await shot(`http://localhost:${port}/`, `The front page, with task #${TASK()}'s note`, true);
+await currentWithStaging();
 await done([
   `This task puts a note on the front page. The scripted stand-in made it, not Claude Code.`,
   ``,
@@ -124,6 +128,29 @@ async function between(tool: string): Promise<string> {
 
 function escape(s: string) { return s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!); }
 
+/** The conflicted files, with both sides' lines kept (ours first: the stand-in's notes are lines that can sit side by side), added. */
+async function keepBoth(): Promise<string[]> {
+  const files = (await git(["diff", "--name-only", "--diff-filter=U"], CLONE(), { quiet: true })).out.split("\n").filter(Boolean);
+  for (const f of files) {
+    const text = readFileSync(join(CLONE(), f), "utf8").replace(/^<<<<<<< [^\n]*\n([^]*?)^=======\n([^]*?)^>>>>>>> [^\n]*\n/gm, "$1$2");
+    writeFileSync(join(CLONE(), f), text);
+    await git(["add", f]);
+  }
+  return files;
+}
+
+/** The latest staging merged in before done (task pull), as the rule asks; a conflict resolved with both sides kept. */
+async function currentWithStaging() {
+  try {
+    await log(`The stand-in brought in the latest ${await pullStaging()}`);
+  } catch (e) {
+    const files = await keepBoth();
+    if (!files.length) throw e;
+    await git(["commit", "--quiet", "--no-edit"]);
+    await log(`The stand-in merged the latest staging: conflicts in ${files.join(", ")}, both sides kept`);
+  }
+}
+
 /** A merge that needs the task's Claude Code: conflicts resolved (both sides kept), committed, checked, done. */
 async function resolve() {
   await log(`The stand-in reads the merge's instructions: ${(brief.instructions ?? "").split("\n")[0].slice(0, 200)}`);
@@ -142,12 +169,7 @@ async function resolve() {
     await fail(files.length ? `The branch conflicts with staging in ${files.join(", ")}, and the stand-in can't resolve it.` : "The stand-in can't finish the merge.");
     return;
   }
-  for (const f of files) {
-    // Both sides' lines, ours first: the stand-in's notes are lines that can sit side by side.
-    const text = readFileSync(join(CLONE(), f), "utf8").replace(/^<<<<<<< [^\n]*\n([^]*?)^=======\n([^]*?)^>>>>>>> [^\n]*\n/gm, "$1$2");
-    writeFileSync(join(CLONE(), f), text);
-    await git(["add", f]);
-  }
+  await keepBoth();
   if (files.length) {
     await git(["commit", "--quiet", "--no-edit"]);
     await log(`Resolved the conflicts in ${files.join(", ")} (both sides kept) and committed the merge`);

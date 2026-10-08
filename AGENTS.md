@@ -28,8 +28,15 @@ store.
    inbox` when a step ends: it has the instructions sent from the board.
    `bun task push` pushes the branch (a plain `git push` of a `task/` branch
    is refused).
-3. **Finish** with `bun task done "summary"` (it pushes; the summary in
-   ASD-STE100, below), or `bun task fail "why"`. The user merges from the
+3. **Get it ready to merge** (standing rule 6): commit, run `bun task pull
+   --staging` (it merges the latest staging into your branch, and stops at a
+   conflict), resolve any conflict and commit, then run the tests on that:
+   `bun run test`, the e2e folders the change touches (`CI=1 bun run
+   test:e2e e2e/<folder>/`) and `bun run typecheck`, each under a time limit.
+   Fix what fails, and do it again until all pass.
+4. **Finish** with `bun task done "summary"` (it pushes; the summary in
+   ASD-STE100, below), or `bun task fail "why"`. `bun task done` fetches
+   staging, and refuses a branch that lacks it. The user merges from the
    board. If the merge conflicts, the task is "needs agent" and `bun task
    inbox` says what to do (`bun task pull --staging`, resolve, test, commit,
    `bun task done`). If the board hands the task to a VM, `bun task` refuses
@@ -43,7 +50,8 @@ board. Add tasks on the board, by asking the admin agent beside it, or from
 an outside agent with an admin token ("Share with agent" on any admin page
 makes one for 12 hours; the agent reads `/api/admin/guide` first). An agent
 inside a factory VM follows its task prompt (`factory/prompt.ts`): it
-reports with the `task` command, and never merges.
+reports with the `task` command, gets the task ready to merge as rule 6
+says (`task pull --staging` there), and never merges.
 
 ### Writing tasks
 
@@ -147,3 +155,15 @@ For example:
    applied those, and other tasks may be adding their own at the same time.
    Reach the data through `Directory` (`directory.ts`, with `dir.users` and
    `dir.config`), whose admin-only calls check who's asking themselves.
+6. **A task is ready to merge only when it is complete, current and
+   green.** That is: (1) it does all of its ask, (2) it has no conflicts
+   with the latest staging commit, and (3) its tests pass, on the branch
+   with the latest staging in it. This applies to every agent, local or in
+   a factory VM. Before `task done`: bring in the latest staging (`bun task
+   pull --staging`; `task pull --staging` in a VM), resolve any conflict,
+   then run `bun run test`, the e2e folders the change touches with `CI=1`,
+   and `bun run typecheck`. `task done` fetches staging and refuses a branch
+   that lacks it (`stagingMissing` in `factory/vm/common.ts`). It does not
+   run the tests: you do. The one exception is a VM's Claude Code that
+   finishes a merge ("needs agent"): the merge brings in staging again
+   itself, and stops at any new conflict.

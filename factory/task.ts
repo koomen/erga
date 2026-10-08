@@ -15,7 +15,8 @@
 //   bun task push                   pushes the branch through Erga's Git endpoint
 //   bun task pull [--staging]       brings in the branch's commits from Erga (the factory's merge adds some); --staging
 //                                   merges Erga's staging too, and stops at a conflict, for you to resolve
-//   bun task done "summary"         pushes, then marks the task ready to merge (refused while instructions wait)
+//   bun task done "summary"         pushes, then marks the task ready to merge (refused while instructions wait, and
+//                                   while the branch lacks Erga's latest staging: AGENTS.md, standing rule 6)
 //   bun task fail "why"             marks it failed
 //   bun task run [--timeout SECONDS] -- CMD...   a command under a time limit (its whole process tree killed; exit 124)
 //
@@ -30,7 +31,7 @@ import { readFileSync } from "node:fs";
 import { hostname } from "node:os";
 import { basename } from "node:path";
 import { localTaskNote } from "./prompt.ts";
-import { api, scrub, step } from "./vm/common.ts";
+import { api, scrub, stagingMissing, step } from "./vm/common.ts";
 import { shot } from "./vm/task.ts";
 
 /** A local git command (no network), in the current checkout: its output, or "" when it fails. */
@@ -212,6 +213,8 @@ if (import.meta.main) {
         const id = taskOfBranch();
         connect(id);
         if (dirty()) throw new Error("This checkout has uncommitted changes: commit them first.");
+        const missing = await stagingMissing((await gitGrant()).repo, process.cwd(), "bun task pull --staging");
+        if (missing) throw new Error(missing);
         const commit = await push();
         await api("", { method: "PATCH", json: { status: "complete", summary: rest.join(" "), commit } });
         console.log(`task #${id} is ready to merge (or its merge goes on)`);

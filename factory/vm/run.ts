@@ -66,6 +66,8 @@ async function main() {
   mkdirSync(WORK(), { recursive: true });
   // This run's own id (the factory's, else one of its own), for its report (common.ts, RUN).
   process.env.FACTORY_JOB_RUN = process.env.FACTORY_RUN || crypto.randomUUID().slice(0, 8);
+  // Which job this is, for `task done` (task.ts, done: a resolve's skips the staging check).
+  process.env.FACTORY_JOB = job;
   rmSync(REPORTED(), { force: true });
   // One run at a time: an earlier one still going (it said done, and the merge woke Claude Code again) ends first.
   if (await stopRun()) await log(`An earlier run of Claude Code was still going after ${LIMITS.stopRun}s: stopped, with everything it started`);
