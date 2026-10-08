@@ -1,6 +1,7 @@
 // The tests' fixtures, on e2e (tester-army/e2e) and its web engine.
 //
-// Per worker, started on first use: dev servers (servers.*). e2e has no
+// Per worker, started on first use: dev servers (servers.*), one of the named
+// kinds and one servers.of at a time (`once`). e2e has no
 // worker-scoped fixtures (test.extend's run for every test), so these live in
 // a registry in this module, which a worker imports once (e2e imports each
 // test file afresh for every file and retry, but not the modules it imports).
@@ -69,10 +70,19 @@ const started = new Map<string, Promise<Disposable>>();
 /** Whether this process is one of e2e's workers (forked with an IPC channel), not the runner, which only lists the tests. */
 const WORKER = typeof process.send == "function";
 
+/** Disposes of the worker's servers whose keys `drop` picks: a kind no later file of this worker may need. */
+const disposeWhere = (drop: (key: string) => boolean) => {
+  for (const [k, s] of started) if (drop(k)) { started.delete(k); s.then((x) => x.dispose(), () => {}); }
+};
+
 const once = <T extends Disposable>(key: string, make: () => Promise<T>) => (): Promise<T> => {
   // Listing the tests: nothing runs, so nothing starts (and nothing may use what this gives).
   if (!WORKER) return Promise.resolve(null as unknown as T);
   let s = started.get(key);
+  // A worker keeps one server of the named kinds (servers.main to servers.suite), the last file's: no file needs two
+  // (with its helpers), and a dev server holds about 1.7 GB (Vite 1.2, workerd 0.4). Kept, every kind a worker met
+  // added up: in the gate's 12 GB VM, two workers reached ten servers, and the kernel killed processes in every shard.
+  if (!s && !key.startsWith("of:")) disposeWhere((k) => !k.startsWith("of:"));
   if (!s) { s = make(); started.set(key, s); s.catch(() => started.delete(key)); }
   // One that stopped by itself (server.ts says why) is started again, for the tests after.
   return s.then((x) => { if (x.alive()) return x; x.dispose(); started.delete(key); return once(key, make)(); }) as Promise<T>;
@@ -113,7 +123,7 @@ export const servers = {
    * server: the next file's (another key) disposes of it, as files run one after another. So one key for each file.
    */
   of(key: string, opts: ServerOptions = {}): Promise<Server> {
-    if (WORKER) for (const [k, s] of started) if (k.startsWith("of:") && k != `of:${key}`) { started.delete(k); s.then((x) => x.dispose(), () => {}); }
+    if (WORKER) disposeWhere((k) => k.startsWith("of:") && k != `of:${key}`);
     return once(`of:${key}`, () => startServer(opts))() as Promise<Server>;
   },
 };
