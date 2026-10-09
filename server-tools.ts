@@ -18,6 +18,9 @@
 //   clear_sign_in_app                   target's, never a secret; clearing the values set on /admin/auth, or discarding
 //                                       those that wait for a test sign-in. Admins only, with ToolWho.auth; an app's
 //                                       values are set only on /admin/auth, never in a conversation
+//   domain_status, publish_to_domain,   a document's site at a domain of the person's own, from their Cloudflare account
+//   deploy_domain, remove_domain,       (site-publish.ts), where the platform has it (ToolWho.sites); the token is
+//   disconnect_cloudflare               pasted only on /settings, never in a conversation (the agent may disconnect it)
 //   list_users, add_user,               who may sign in, and who's an admin (users.ts),
 //   set_user_role, set_user_deploy,     admins only
 //   remove_user
@@ -42,6 +45,9 @@ import { type Action, type Directory, type DocRow, type Grant, type Route, type 
 import { ID, makeDoc, newDocId, OWNER, startingFiles, type Platform } from "./front.ts";
 import { TEMPLATES, templateById } from "./templates.ts";
 import { LOCKED, type User } from "./users.ts";
+import { publishTo, siteView, zonesOf, type SiteOps } from "./site-publish.ts";
+import { SiteError } from "./sites.ts";
+import { byLine } from "./attribution.ts";
 
 /** A tool's failure, worded for the agent to act on; `status` is the HTTP status the REST API answers. */
 export class ToolError extends Error {
@@ -60,6 +66,8 @@ export interface ToolWho {
   readonly platform?: Platform;
   /** Sign-in's settings (auth-apps.ts), where the server has them: for the sign-in tools. */
   readonly auth?: AuthOps;
+  /** Documents' sites on the person's Cloudflare account (site-publish.ts), where the server has them: for the domain tools. */
+  readonly sites?: SiteOps;
 }
 
 export interface ServerToolDef {
@@ -74,6 +82,8 @@ export interface ServerToolDef {
   readonly admin?: boolean;
   /** The documents list's (needs ToolWho.platform): for the editor's agent; the REST API has its own (server-api.ts). */
   readonly docs?: boolean;
+  /** The domain tools (need ToolWho.sites): an agent is given them only where the server has sites. */
+  readonly sites?: boolean;
   /** Its answer: text, or JSON (shown as text). Throws a ToolError (or NotAllowed, ConfigError) the agent can act on. */
   run(args: Record<string, unknown>, ctx: ToolWho): Promise<string | object>;
 }
@@ -169,6 +179,86 @@ export const SERVER_TOOLS: ServerToolDef[] = [
       const platform = docsOf(ctx);
       if (!(await platform.docs.delete(doc))) await platform.directory.remove(doc.id);
       return { deleted: described(doc, ctx) };
+    },
+  },
+
+  // ------------------------------------------------------------ a document at the person's own domain (site-publish.ts)
+  {
+    name: "domain_status",
+    sites: true,
+    label: "Custom domain",
+    activity: "checking the custom domain",
+    description: "Whether a document is published at a domain of the person's own (served from their Cloudflare account), and how its deploys are going: its address, the version that's live, a deploy that's scheduled, running or failed (and why). Also whether the person has connected Cloudflare, and the domains (zones) their token reaches, to choose a hostname from. Connecting is done only on /settings, where they paste a token: never ask for the token in the conversation.",
+    parameters: Type.Object({ document: DOCUMENT }),
+    run: async (args, ctx) => {
+      const ops = sitesOf(ctx), doc = await findDocument(ctx, args.document, "open");
+      const site = await ctx.dir.sites.get(doc.id);
+      const connection = await ctx.dir.cloudflare.info(ctx.who.login);
+      const zones = connection.connected ? await zonesOf(ctx.dir, ops, ctx.who.login) : null;
+      return {
+        document: described(doc, ctx), site: site ? { ...siteView(site), deploy: await ops.status(doc.id) } : null,
+        cloudflare: connection.connected ? { connected: true, accounts: connection.accounts.map((a) => a.name), ...(zones && "zones" in zones ? { domains: zones.zones.map((z) => z.name) } : { error: zones?.error }) }
+          : { connected: false, connect: `${ctx.origin ?? ""}/settings#cloudflare` },
+      };
+    },
+  },
+  {
+    name: "publish_to_domain",
+    sites: true,
+    label: "Publish to a domain",
+    activity: "publishing to a domain",
+    description: "Publishes a document at a hostname on one of the person's own domains (such as notes.example.com, or the domain itself), as Custom domain in the editor's settings does: Erga puts the published version up as a Worker in their Cloudflare account, on that hostname, and puts each new published version up after it. Needs their Cloudflare connection (domain_status says; they connect only on /settings). The first deploy runs at once; check domain_status for how it went.",
+    parameters: Type.Object({ document: DOCUMENT, hostname: Type.String({ description: "The site's address, on one of their domains: notes.example.com" }) }),
+    run: async (args, ctx) => {
+      const ops = sitesOf(ctx), doc = await findDocument(ctx, args.document, "edit");
+      try {
+        const site = await publishTo(ctx.dir, ops, doc, ctx.who.login, String(args.hostname ?? ""), ctx.who.via);
+        return { document: described(doc, ctx), site: siteView(site), deploy: await ops.deploy(doc.id, byLine(ctx.who.login, ctx.who.via)) };
+      } catch (e) {
+        if (e instanceof SiteError) throw new ToolError(e.message, e.status);
+        throw e;
+      }
+    },
+  },
+  {
+    name: "deploy_domain",
+    sites: true,
+    label: "Deploy to the domain",
+    activity: "deploying to the domain",
+    description: "Puts a document's published version up at its domain again, now (Deploy now in the editor's settings), instead of waiting for the next publish.",
+    parameters: Type.Object({ document: DOCUMENT }),
+    run: async (args, ctx) => {
+      const ops = sitesOf(ctx), doc = await findDocument(ctx, args.document, "edit");
+      if (!(await ctx.dir.sites.get(doc.id))) throw new ToolError("This document isn't published to a domain.", 409);
+      return { document: described(doc, ctx), deploy: await ops.deploy(doc.id, byLine(ctx.who.login, ctx.who.via)) };
+    },
+  },
+  {
+    name: "remove_domain",
+    sites: true,
+    label: "Remove the domain",
+    activity: "taking the site down",
+    description: "Takes a document's site down (Remove under Custom domain): its custom domain and its Worker go from the Cloudflare account, and Erga stops publishing there. The document itself stays as it is.",
+    parameters: Type.Object({ document: DOCUMENT }),
+    run: async (args, ctx) => {
+      const ops = sitesOf(ctx), doc = await findDocument(ctx, args.document, "edit");
+      const site = await ctx.dir.sites.get(doc.id);
+      if (!site) return { document: described(doc, ctx), site: null };
+      const refused = await ops.remove(doc.id, site);
+      await ctx.dir.sites.remove(doc.id);
+      return { document: described(doc, ctx), removed: site.hostname, ...(refused ? { warning: `Cloudflare didn't take it down: ${refused} Delete the Worker ${site.script} in the Cloudflare dashboard.` } : {}) };
+    },
+  },
+  {
+    name: "disconnect_cloudflare",
+    sites: true,
+    label: "Disconnect Cloudflare",
+    activity: "disconnecting Cloudflare",
+    description: "Forgets the person's Cloudflare token (Disconnect on /settings). Their sites stay up as they are, but stop following their documents until they connect again, which they do only on /settings.",
+    parameters: Type.Object({}),
+    run: async (_args, ctx) => {
+      const c = await ctx.dir.cloudflare.remove(ctx.who.login);
+      return { connected: c.connected, sites: (await ctx.dir.sites.list(ctx.who.login)).map((s) => s.hostname) };
     },
   },
 
@@ -372,7 +462,7 @@ export async function runServerTool(tool: ServerToolDef, args: Record<string, un
 
 /** The tools as the editor's agent takes them (pi's AgentTool), for someone in a document. */
 export async function agentToolsFor(ctx: ToolWho): Promise<AgentTool[]> {
-  return (await toolsFor(ctx.dir, ctx.who)).filter((t) => !t.docs || ctx.platform).map((t): AgentTool => ({
+  return (await toolsFor(ctx.dir, ctx.who)).filter((t) => (!t.docs || ctx.platform) && (!t.sites || ctx.sites)).map((t): AgentTool => ({
     name: t.name,
     label: t.label,
     description: t.description,
@@ -393,6 +483,13 @@ export const SERVER_TOOL_ACTIVITY: Record<string, string> = Object.fromEntries(S
  * The document an agent names (an address, a URL, an id, or one of the
  * person's slugs; nothing for the one it's in), if they may do `action` with it.
  */
+/** The platform's sites, or a refusal the agent can pass on. */
+function sitesOf(ctx: ToolWho): SiteOps {
+  if (!ctx.sites) throw new ToolError("This server can't publish documents to a domain.", 501);
+  if (ctx.who.test) throw new ToolError("Test people can't publish to a domain.", 403);
+  return ctx.sites;
+}
+
 export async function findDocument(ctx: ToolWho, ref: unknown, action: Action): Promise<DocRow> {
   const { dir, who } = ctx;
   if ((ref == null || ref === "") && ctx.here) ref = ctx.here;

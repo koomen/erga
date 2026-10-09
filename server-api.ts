@@ -17,7 +17,9 @@
 //   GET  /api/docs/<id>/tree       a document's file tree; POST does a tree operation (tree.ts). For people
 //                                  signed in (the tree's UI) as well as tokens
 //   /tokens, /tokens/...           a person's tokens: make one (a scope, an expiry), revoke one, approve or deny an agent's request
-//   /settings                      their settings: the test token, and a link to /tokens
+//   /settings                      their settings: their Cloudflare connection, the test token, and a link to /tokens
+//   POST /settings/cloudflare      connects their Cloudflare account: a token they paste (site-publish.ts), page only
+//   POST /settings/cloudflare/disconnect   forgets it
 //
 // The Worker (worker/index.ts) sends those paths here, with the platform
 // that knows agent tokens (front.ts, withTokens). The share button's token
@@ -43,6 +45,9 @@ import { cleanRel } from "./host";
 import { LABEL_MAX, normalCode, REQUEST_MINUTES, SCOPES, ScopeError, type AgentToken, type Scope } from "./tokens";
 import { LOCKED } from "./users";
 import { TEMPLATES, templateById } from "./templates";
+import { SITE_PERMISSIONS, tokenTemplateUrl, verifyToken } from "./site-publish";
+import { SiteError } from "./sites";
+import { DeployError } from "./deploy/cloudflare";
 
 // ---------------------------------------------------------------- the registry
 
@@ -231,7 +236,7 @@ function documentTools(): ServerTool[] {
 }
 
 /** What a tool in server-tools.ts runs with, for an agent token's person. */
-const toolWho = (ctx: ToolContext): ToolWho => ({ dir: ctx.platform.directory, who: whoOf(ctx.session), origin: ctx.origin, auth: ctx.platform.auth?.(ctx.origin) });
+const toolWho = (ctx: ToolContext): ToolWho => ({ dir: ctx.platform.directory, who: whoOf(ctx.session), origin: ctx.origin, auth: ctx.platform.auth?.(ctx.origin), sites: ctx.platform.sites?.(ctx.origin) });
 
 /** The tools the editor's agent has too (server-tools.ts): sharing, and the admin ones. The documents list's are in TOOLS above, with files. */
 const sharedTools: ServerTool[] = SERVER_TOOLS.filter((t) => !t.docs).map((t) => ({
@@ -637,6 +642,7 @@ export async function tokensDoor(request: Request, platform: Platform): Promise<
   const form = post ? await request.formData() : null;
   const field = (k: string) => String(form?.get(k) ?? "");
   const who = { login: session.login, name: session.name };
+  const origin = url.origin;
   const error = (message: string) => `<p class="notice error">${esc(message)}</p>`;
 
   if (path == "/tokens/approve") {
@@ -667,6 +673,24 @@ export async function tokensDoor(request: Request, platform: Platform): Promise<
       if (e instanceof ScopeError) return tokensPage(platform, session, url, { notice: error(e.message) });
       throw e;
     }
+  }
+  if (path == "/settings/cloudflare" && post) {
+    const token = field("token").trim();
+    if (!token) return tokensPage(platform, session, url, { notice: error("Paste the Cloudflare API token first.") });
+    try {
+      const ops = platform.sites?.(origin);
+      if (!ops) return tokensPage(platform, session, url, { notice: error("This server can't publish to Cloudflare.") });
+      const accounts = await verifyToken(token, ops.net(token));
+      await platform.directory.cloudflare.save(session.login, token, accounts);
+      return new Response(null, { status: 303, headers: { Location: "/settings?connected=cloudflare#cloudflare" } });
+    } catch (e) {
+      if (e instanceof SiteError || e instanceof DeployError) return tokensPage(platform, session, url, { notice: error(e.message), anchor: "cloudflare" });
+      throw e;
+    }
+  }
+  if (path == "/settings/cloudflare/disconnect" && post) {
+    await platform.directory.cloudflare.remove(session.login);
+    return new Response(null, { status: 303, headers: { Location: "/settings#cloudflare" } });
   }
   if (path == "/tokens/revoke" && post) {
     await platform.tokens.revoke(session.login, field("id"));
@@ -702,11 +726,12 @@ ${may ? `<p class="notice error">${esc(may)}</p>` : ""}
 <form class="buttons" method="post" action="/tokens/approve"><input type="hidden" name="code" value="${esc(code)}">${may ? "" : `<button class="new" name="answer" value="approve">Approve</button>`}<button class="deny" name="answer" value="deny">Deny</button></form></section>`;
 }
 
-async function tokensPage(platform: Platform, session: Session, url: URL, o: { notice?: string; made?: { token: string; info: AgentToken } }): Promise<Response> {
+async function tokensPage(platform: Platform, session: Session, url: URL, o: { notice?: string; made?: { token: string; info: AgentToken }; anchor?: string }): Promise<Response> {
   const origin = url.origin;
-  const [list, docs, admin] = await Promise.all([
-    platform.tokens.list(session.login), platform.docs.list(session.login), platform.directory.users.isAdmin(whoOf(session)),
+  const [list, docs, admin, cloudflare] = await Promise.all([
+    platform.tokens.list(session.login), platform.docs.list(session.login), platform.directory.users.isAdmin(whoOf(session)), cloudflareBlock(platform, session, url, o.anchor == "cloudflare" ? o.notice : undefined),
   ]);
+  if (o.anchor == "cloudflare") o = { ...o, notice: undefined };
   const when = (t: number | null) => (t ? `<time datetime="${new Date(t).toISOString()}">${new Date(t).toISOString().slice(0, 10)}</time>` : `<span class="never">Never</span>`);
   const scopeCell = async (t: AgentToken) => t.scope == "document" ? `<span class="scope">One document</span> ${await docLabel(platform, t.docId)}` : `<span class="scope">${SCOPE_NAMES[t.scope]}</span>`;
   // Rows as the documents list's: its name (and whether it's the share button's), its scope, when it expires, when it was last used, revoke on hover.
@@ -785,10 +810,32 @@ printf 'protocol=${esc(url.protocol.replace(":", ""))}\\nhost=${esc(url.host)}\\
   .code { font: 600 26px/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: 0.08em; color: var(--fg-strong); }
   .notice { margin: 0 0 24px; padding: 12px 14px; border-radius: 10px; font-size: 14px; background: color-mix(in srgb, var(--caret) 10%, transparent); }
   .notice.error { background: color-mix(in srgb, #c2410c 12%, transparent); }
+  .cf { max-width: 640px; }
+  .cf-card { padding: 18px 20px; border: 1px solid var(--rule); border-radius: 12px; font-size: 14px; }
+  .cf-card.on { display: flex; align-items: center; gap: 14px; }
+  .cf-card .cf-mark { flex: none; width: 34px; height: 34px; border-radius: 9px; display: grid; place-items: center; background: color-mix(in srgb, #f38020 14%, transparent); }
+  .cf-card .cf-mark svg { width: 20px; height: 20px; }
+  .cf-card .cf-who { flex: 1; min-width: 0; }
+  .cf-card .cf-who b { display: block; font-weight: 600; color: var(--fg-strong); }
+  .cf-card .cf-who span { font-size: 13px; color: var(--soft); }
+  .cf-card button.deny { font: inherit; font-size: 13px; padding: 6px 12px; border: 1px solid var(--rule); border-radius: 999px; background: transparent; color: var(--soft); cursor: pointer; }
+  .cf-steps { margin: 0 0 14px; padding-left: 20px; font-size: 14px; line-height: 1.6; }
+  .cf-steps li { margin-bottom: 6px; }
+  .cf-steps a { color: var(--fg-strong); text-underline-offset: 0.2em; }
+  .cf-perms { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 2px; padding: 0; list-style: none; }
+  .cf-perms li { margin: 0; padding: 2px 9px; border-radius: 999px; font-size: 12px; color: var(--soft); background: color-mix(in srgb, var(--chrome) 12%, transparent); }
+  .cf-form { display: flex; gap: 8px; align-items: center; }
+  .cf-form input { flex: 1; min-width: 0; font: 13px ui-monospace, SFMono-Regular, Menlo, monospace; padding: 8px 10px; border: 1px solid var(--rule); border-radius: 8px; background: transparent; color: var(--fg-strong); }
+  .cf-sites { list-style: none; margin: 14px 0 0; padding: 0; font-size: 13.5px; }
+  .cf-sites li { display: flex; gap: 10px; align-items: baseline; padding: 8px 0; border-top: 1px solid var(--rule); }
+  .cf-sites li a { color: var(--fg-strong); font-weight: 550; text-decoration: none; }
+  .cf-sites li a:hover { text-decoration: underline; }
+  .cf-sites li span { color: var(--soft); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   @media (max-width: 620px) { .labels { display: none; } .labels, ol.rows > li { grid-template-columns: minmax(0, 1fr) auto 40px; } ol.rows .what, ol.rows > li > time:nth-of-type(2), ol.rows > li > .never:nth-of-type(2) { display: none; } }
 `;
-  const html = appPage("Tokens", style, `${crumbs(session, [{ label: "Tokens" }])}<main>
-  <header><div><h1>Tokens</h1></div></header>
+  const title = url.pathname.startsWith("/settings") ? "Settings" : "Tokens";
+  const html = appPage(title, style, `${crumbs(session, [{ label: title }])}<main>
+  <header><div><h1>${title}</h1></div></header>
   ${o.notice ?? ""}
   ${made}
   <section class="part">
@@ -809,17 +856,54 @@ printf 'protocol=${esc(url.protocol.replace(":", ""))}\\nhost=${esc(url.host)}\\
     <div class="buttons"><button class="pill">${ICON.plus}Make token</button></div>
   </form>
   </section>
+  ${cloudflare}
   ${testBlock}
 </main>
 <script>
   ${TIMES_SCRIPT}
   for (const t of document.querySelectorAll("time.day")) t.textContent = new Date(t.dateTime).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+  for (const f of document.querySelectorAll("form[data-confirm]")) f.addEventListener("submit", (e) => { if (!confirm(f.dataset.confirm)) e.preventDefault(); });
   for (const f of document.querySelectorAll("form[data-label]")) f.addEventListener("submit", (e) => { if (!confirm("Revoke \\u201c" + f.dataset.label + "\\u201d? Agents using it lose access at once.")) e.preventDefault(); });
   // Picking a document picks the one-document scope.
   const pick = document.querySelector(".doc-pick"), one = document.querySelector("input[name=scope][value=document]");
   pick?.addEventListener("change", () => { if (one && !one.disabled) one.checked = true; });
 </script>`);
   return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
+}
+
+/** The Cloudflare logo's cloud, small, for the connection's card. */
+const CLOUD = `<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#f38020" d="M16.6 16.9c.2-.5.1-1-.2-1.3-.3-.3-.7-.5-1.1-.5l-8.8-.1c-.1 0-.1 0-.2-.1v-.2c0-.1.1-.1.2-.1l8.9-.1c1-.1 2.2-.9 2.6-2l.5-1.4.1-.2C18 8.1 15.7 6 12.9 6c-2.6 0-4.8 1.7-5.6 4-.5-.4-1.2-.6-1.9-.5-1.2.1-2.2 1.1-2.3 2.4 0 .3 0 .6.1.9C1.3 12.8 0 14.2 0 15.8c0 .2 0 .3.1.5 0 .1.1.1.2.1h16.2c.1 0 .2-.1.2-.2l-.1.7z"/><path fill="#faae40" d="M19.4 11.2h-.2l-.1.1-.3 1.1c-.2.5-.1 1 .2 1.3.3.3.7.5 1.1.5l1.9.1c.1 0 .1 0 .2.1v.2c0 .1-.1.1-.2.1l-1.9.1c-1 .1-2.2.9-2.6 2l-.1.4c0 .1 0 .1.1.1h6.6c.1 0 .2 0 .2-.1.1-.4.2-.8.2-1.2 0-2.6-2.1-4.8-4.8-4.8z"/></svg>`;
+
+/** /settings' Cloudflare section: connect (a token pasted, with the link that makes it), or who's connected and the sites it deploys. */
+async function cloudflareBlock(platform: Platform, session: Session, url: URL, notice?: string): Promise<string> {
+  if (!platform.sites) return "";
+  const dir = platform.directory;
+  const [c, sites] = await Promise.all([dir.cloudflare.info(session.login), dir.sites.list(session.login)]);
+  const docs = new Map((await Promise.all(sites.map((s) => dir.get(s.docId)))).filter((d) => d != null).map((d) => [d.id, d]));
+  const siteList = sites.length ? `<ul class="cf-sites">${sites.map((s) => { const d = docs.get(s.docId); return `<li><a href="https://${esc(s.hostname)}/" target="_blank" rel="noopener">${esc(s.hostname)}</a><span>${d ? `${esc(d.title)} · /${esc(d.owner)}/${esc(d.slug)}` : "a document that's gone"}</span></li>`; }).join("")}</ul>` : "";
+  const connected = url.searchParams.get("connected") == "cloudflare" && c.connected ? `<p class="notice">Connected. Open a document's settings (the gear in the editor) and choose a domain under Custom domain.</p>` : "";
+  const body = c.connected ? `${connected}<div class="cf-card on"><span class="cf-mark">${CLOUD}</span>
+    <div class="cf-who"><b>${esc(c.accounts.map((a) => a.name).join(", ") || "Cloudflare")}</b><span>Token ending in ${esc(c.last4 ?? "")} · connected ${c.updated ? day(c.updated) : ""}</span></div>
+    <form method="post" action="/settings/cloudflare/disconnect" data-confirm="Disconnect Cloudflare? Your sites stay up, but they stop following your documents until you connect again."><button class="deny">Disconnect</button></form></div>
+    ${sites.length ? `<p class="sub" style="margin-top:18px">Your documents on your domains:</p>${siteList}` : ""}`
+    : `<div class="cf-card">
+    ${c.unreadable ? `<p class="notice error">The token you connected doesn't open on this server. Connect again.</p>` : ""}
+    <ol class="cf-steps">
+      <li><a href="${esc(tokenTemplateUrl())}" target="_blank" rel="noopener">Make a Cloudflare API token</a>. The link fills in what Erga needs, and nothing more:
+        <ul class="cf-perms">${SITE_PERMISSIONS.map((p) => `<li title="To ${esc(p.why)}">${esc(p.label)}</li>`).join("")}</ul>
+        You can limit it to some of your domains.</li>
+      <li>Paste the token here.</li>
+    </ol>
+    ${c.canStore ? `<form class="cf-form" method="post" action="/settings/cloudflare"><input name="token" type="password" placeholder="Cloudflare API token" autocomplete="off" spellcheck="false" aria-label="Cloudflare API token" required><button class="pill">Connect</button></form>`
+      : `<p class="notice error">This server has no FACTORY_KEY to encrypt a token with, so it can't keep one.</p>`}
+    ${siteList}
+  </div>`;
+  return `<section class="part cf" id="cloudflare">
+  <h2>Cloudflare</h2>
+  <p class="sub">Publish documents at your own domains, from your own Cloudflare account. Erga keeps the token encrypted, and never shows it again.</p>
+  ${notice ?? ""}
+  ${body}
+</section>`;
 }
 
 // ---------------------------------------------------------------- the guide

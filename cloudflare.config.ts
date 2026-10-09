@@ -48,6 +48,8 @@ export default defineConfig(({ mode }) => ({
       Pipeline: exports.durableObject({ storage: "sqlite" }),
       // The homepage's deploys and the snapshot / serves (worker/home.ts): one object, "home".
       Home: exports.durableObject({ storage: "sqlite" }),
+      // Each document's site on its person's own Cloudflare account (worker/site-host.ts, site-publish.ts): one object per document that has one.
+      SiteHost: exports.durableObject({ storage: "sqlite" }),
       // Each admin's agent, its conversation and panel (worker/admin-agent.ts): one object, "admin".
       AdminAgentHost: exports.durableObject({ storage: "sqlite" }),
       // The factory (its task queue) and its VMs: gone, with what they held.
@@ -70,6 +72,7 @@ export default defineConfig(({ mode }) => ({
         GITHUB_MIRROR_TOKEN: bindings.secret(),
       } : {}),
       HOME: bindings.durableObject({ worker: PROD.worker, exportName: "Home" }),
+      SITES: bindings.durableObject({ worker: PROD.worker, exportName: "SiteHost" }),
       ADMIN_AGENT: bindings.durableObject({ worker: PROD.worker, exportName: "AdminAgentHost" }),
       // The server's database: users, settings and the directory. The deploy pipeline (deploy/cloudflare.ts) finds it by name, or
       // makes it, and applies migrations/ before each deploy. Locally (vite dev) it's a database of its own, at a fixed made-up id that
@@ -108,6 +111,8 @@ export default defineConfig(({ mode }) => ({
         // The homepage's deploys (worker/home.ts): how long after a change the next runs, and how often / checks for one (tests shorten both).
         ERGA_HOME_DELAY_MS: bindings.text(process.env.ERGA_HOME_DELAY_MS ?? ""),
         ERGA_HOME_RECHECK_MS: bindings.text(process.env.ERGA_HOME_RECHECK_MS ?? ""),
+        // Documents' sites on Cloudflare (worker/site-host.ts): how long after a publish the next deploy runs.
+        ERGA_SITE_DELAY_MS: bindings.text(process.env.ERGA_SITE_DELAY_MS ?? ""),
         // When versions are cut (worker/doc-host.ts): how long edits pause first, and the longest burst one version holds.
         ERGA_VERSION_IDLE_MS: bindings.text(process.env.ERGA_VERSION_IDLE_MS ?? ""),
         ERGA_VERSION_MAX_MS: bindings.text(process.env.ERGA_VERSION_MAX_MS ?? ""),

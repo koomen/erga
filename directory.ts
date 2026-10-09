@@ -39,6 +39,7 @@ import { ConfigError, ServerConfig } from "./config.ts";
 
 import { NotAllowed, Users } from "./users.ts";
 import { Credentials } from "./credentials.ts";
+import { CloudflareConnections, Sites } from "./sites.ts";
 
 export { NotAllowed };
 
@@ -183,6 +184,10 @@ export class Directory {
   readonly config: ServerConfig;
   /** The API keys admins enter, encrypted. */
   readonly credentials: Credentials;
+  /** Each person's Cloudflare connection, encrypted (sites.ts). */
+  readonly cloudflare: CloudflareConnections;
+  /** Documents published to a domain in their person's Cloudflare account (sites.ts). */
+  readonly sites: Sites;
 
   /**
    * `admins`: the deploy's bootstrap admins (users.ts). `locked`: settings
@@ -193,6 +198,8 @@ export class Directory {
   constructor(private sql: Sql, opts: { admins?: Iterable<string>; locked?: Record<string, unknown>; changed?: (key: string) => Promise<void>; credentialSecret?: string | null; fallback?: (env: string) => boolean } = {}) {
     this.users = new Users(sql, opts.admins);
     this.credentials = new Credentials(sql, this.users, opts.credentialSecret ?? null, opts.fallback);
+    this.cloudflare = new CloudflareConnections(sql, opts.credentialSecret ?? null);
+    this.sites = new Sites(sql);
     this.config = new ServerConfig(sql, this.users, {
       locked: opts.locked,
       changed: opts.changed,

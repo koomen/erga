@@ -12,6 +12,7 @@ import { directoryOf, tokensOf } from "./d1";
 import type { Env } from "./env";
 import { counted } from "./timing";
 import { isAdminsOnly } from "../deploy/targets";
+import { siteOps } from "./site-host";
 
 
 /** The templates' files, by template then path ("doc" → { "index.html": "..." }). Text files only. */
@@ -73,6 +74,7 @@ export const platform = (env: Env): Platform => {
     adminsOnly: isAdminsOnly(env.DEPLOY_TARGET),
     tokens: tokensOf(env),
     auth: (origin) => authOps(env, origin),
+    sites: (origin) => siteOps(env, origin),
     testToken: (login) => mintTestToken(env, login),
     docs: {
       create: (doc, files, index, opts) => counted("doc", () => host(doc).create(doc.owner, doc.id, files, index, opts)),

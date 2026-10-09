@@ -20,7 +20,7 @@ const read = (file: string) => readFileSync(ROOT + file, "utf8");
 /** The files whose opening comment is a route table ("//   POST /api/...   what it does"). */
 const ROUTE_TABLES = [
   "worker/index.ts", "worker/admin-agent.ts", "worker/source.ts", "worker/deploys.ts", "worker/deploy.ts", "worker/home.ts", "worker/auth-settings.ts",
-  "admin.ts", "server-api.ts", "front.ts", "home.ts", "host.ts",
+  "admin.ts", "server-api.ts", "front.ts", "home.ts", "host.ts", "site-publish.ts",
 ];
 /** The pages' own scripts (and the pages that carry theirs inline): every route they call must be audited. */
 const PAGE_SCRIPTS = [

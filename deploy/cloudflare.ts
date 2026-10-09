@@ -883,8 +883,8 @@ export async function assetHash(path: string, bytes: Uint8Array): Promise<string
   return Array.from(digest, (b) => b.toString(16).padStart(2, "0")).join("").slice(0, 32);
 }
 
-const TYPES: Record<string, string> = { html: "text/html", js: "application/javascript", css: "text/css", json: "application/json", svg: "image/svg+xml", woff2: "font/woff2", woff: "font/woff", png: "image/png", ico: "image/x-icon", txt: "text/plain", md: "text/markdown" };
-const typeOf = (path: string) => TYPES[/\.([^./]+)$/.exec(path)?.[1]?.toLowerCase() ?? ""] ?? "application/octet-stream";
+const TYPES: Record<string, string> = { html: "text/html", js: "application/javascript", css: "text/css", json: "application/json", svg: "image/svg+xml", woff2: "font/woff2", woff: "font/woff", png: "image/png", ico: "image/x-icon", txt: "text/plain", md: "text/markdown", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp", avif: "image/avif", pdf: "application/pdf", xml: "application/xml", mp4: "video/mp4", webmanifest: "application/manifest+json" };
+export const typeOf = (path: string) => TYPES[/\.([^./]+)$/.exec(path)?.[1]?.toLowerCase() ?? ""] ?? "application/octet-stream";
 
 /**
  * Uploads the assets Cloudflare doesn't have yet; the completion token for
@@ -894,7 +894,7 @@ const typeOf = (path: string) => TYPES[/\.([^./]+)$/.exec(path)?.[1]?.toLowerCas
  * (wrangler_single_asset_uploads), each file on its own as its raw bytes.
  * Each upload is tried up to four times.
  */
-async function uploadAssets(cf: Cloudflare, acc: string, worker: string, assets: Record<string, Uint8Array>): Promise<string> {
+export async function uploadAssets(cf: Cloudflare, acc: string, worker: string, assets: Record<string, Uint8Array>, label = "the editor's files"): Promise<string> {
   const manifest: Record<string, { hash: string; size: number }> = {};
   const byHash = new Map<string, string>();
   for (const [path, bytes] of Object.entries(assets)) {
@@ -902,8 +902,8 @@ async function uploadAssets(cf: Cloudflare, acc: string, worker: string, assets:
     manifest[path] = { hash, size: bytes.byteLength };
     byHash.set(hash, path);
   }
-  const session = await cf.call<{ jwt: string; buckets?: string[][] }>("POST", `${acc}/workers/scripts/${worker}/assets-upload-session`, "start uploading the editor's files", { manifest });
-  if (!session?.jwt) throw new DeployError("Cloudflare didn't start the upload of the editor's files (no upload token came back). Deploy again.");
+  const session = await cf.call<{ jwt: string; buckets?: string[][] }>("POST", `${acc}/workers/scripts/${worker}/assets-upload-session`, `start uploading ${label}`, { manifest });
+  if (!session?.jwt) throw new DeployError(`Cloudflare didn't start the upload of ${label} (no upload token came back). Deploy again.`);
   const buckets = (session.buckets ?? []).filter((b) => b.length);
   if (!buckets.length) return session.jwt;
   const single = jwtClaims(session.jwt).wrangler_single_asset_uploads === true;
@@ -923,7 +923,7 @@ async function uploadAssets(cf: Cloudflare, acc: string, worker: string, assets:
         } else {
           const form = new FormData();
           for (const hash of bucket) { const path = pathOf(hash); form.append(hash, new File([b64(assets[path])], hash, { type: typeOf(path) })); }
-          done = await cf.call<{ jwt?: string }>("POST", `${acc}/workers/assets/upload?base64=true`, "upload the editor's files", form, { bearer: session.jwt });
+          done = await cf.call<{ jwt?: string }>("POST", `${acc}/workers/assets/upload?base64=true`, `upload ${label}`, form, { bearer: session.jwt });
         }
         if (done?.jwt) jwt = done.jwt;
         break;
@@ -933,7 +933,7 @@ async function uploadAssets(cf: Cloudflare, acc: string, worker: string, assets:
       }
     }
   }
-  if (!jwt) throw new DeployError("Cloudflare took the editor's files but didn't say the upload was complete (no completion token). Deploy again: files already up aren't sent twice.");
+  if (!jwt) throw new DeployError(`Cloudflare took ${label} but didn't say the upload was complete (no completion token). Deploy again: files already up aren't sent twice.`);
   return jwt;
 }
 

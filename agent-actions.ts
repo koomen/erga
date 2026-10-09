@@ -96,6 +96,14 @@ export const AGENT_ACTIONS: AgentAction[] = [
   { route: "POST /api/docs/<id>/home", domain: "admin", action: "Make a document the homepage, or not (editor's settings)", tool: "set_setting" },
   { route: "POST /api/docs/<id>/home/deploy", domain: "admin", action: "Redeploy the homepage (editor's settings)", tool: "deploy_homepage" },
 
+  // ------------------------------------------------------------ a document at the person's own domain (site-publish.ts: in the editor's settings)
+  { route: "GET /api/docs/<id>/site", domain: "document", action: "See a document's custom domain, its deploys and your domains (editor's settings, Custom domain)", tool: "domain_status" },
+  { route: "POST /api/docs/<id>/site", domain: "document", action: "Publish a document at a domain of yours (editor's settings, Custom domain)", tool: "publish_to_domain" },
+  { route: "POST /api/docs/<id>/site/deploy", domain: "document", action: "Deploy to the domain now (editor's settings, Custom domain)", tool: "deploy_domain" },
+  { route: "DELETE /api/docs/<id>/site", domain: "document", action: "Take the site down (editor's settings, Custom domain)", tool: "remove_domain" },
+  { route: "POST /settings/cloudflare", domain: "document", action: "Connect your Cloudflare account with an API token (/settings)", exempt: SECRET },
+  { route: "POST /settings/cloudflare/disconnect", domain: "document", action: "Disconnect your Cloudflare account (/settings)", tool: "disconnect_cloudflare" },
+  { route: "GET /__erga/site/<host>/<path>", domain: "none", action: "A site on the pretend Cloudflare (local development)", exempt: "the dev server's" },
 
   // ------------------------------------------------------------ /settings: the person's agent tokens (server-api.ts)
   { route: "GET /settings", domain: "admin", action: "Read your agent tokens, Share with agent's too (/settings)", tool: "list_agent_tokens" },

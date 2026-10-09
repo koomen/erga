@@ -57,6 +57,9 @@ export interface MockState {
   databases: { uuid: string; name: string; statements: string[]; migrations: string[]; tables: string[]; rows?: string[] }[];
   scripts: Record<string, { metadata: Record<string, any>; modules: string[]; workersDev: boolean; tags: string[]; namespaces: string[] }>;
   assets: { manifest: Record<string, { hash: string; size: number }>; uploaded: string[] };
+  /** Each asset's bytes, by hash (base64), and each Worker's files as its last upload had them (path -> hash): what mockSite serves. */
+  blobs: Record<string, string>;
+  served: Record<string, Record<string, string>>;
   domains: { hostname: string; service: string; zone_id: string }[];
   routes: Record<string, { pattern: string; script: string }[]>;
   dns: Record<string, { type: string; name: string; content: string; proxied: boolean }[]>;
@@ -99,6 +102,27 @@ export const scriptTag = (name: string) => createHash("md5").update(`script:${na
 export const namespaceId = (script: string, className: string) => createHash("md5").update(`ns:${script}:${className}`).digest("hex");
 
 const ACCOUNT_ID = "0123456789abcdef0123456789abcdef";
+/** A custom domain's id: fixed by its hostname, here. */
+const domainId = (hostname: string) => createHash("md5").update(`domain:${hostname}`).digest("hex");
+const b64 = (bytes: Uint8Array) => { let s = ""; for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000)); return btoa(s); };
+
+/**
+ * What a hostname on the mock's custom domains would answer for `path`: the
+ * file its Worker's last upload had there (as html_handling "auto-trailing-slash"
+ * finds a page: /, /about, /about/), or null. For the tests and the dev server
+ * to see a site as it was published (sites.ts).
+ */
+export function mockSite(state: MockState, hostname: string, path: string): { bytes: Uint8Array; path: string } | null {
+  const d = state.domains.find((x) => x.hostname == hostname);
+  const files = d && state.served[d.service];
+  if (!files) return null;
+  const p = decodeURIComponent(path.replace(/^\/+/, ""));
+  for (const c of [p, `${p}.html`, `${p.replace(/\/$/, "")}/index.html`, p == "" ? "index.html" : null]) {
+    const hash = c != null ? files["/" + c] : undefined;
+    if (hash && state.blobs[hash] != null) return { bytes: Uint8Array.from(atob(state.blobs[hash]), (ch) => ch.charCodeAt(0)), path: "/" + c };
+  }
+  return null;
+}
 
 /** A JWT-shaped token with these claims (the deploy reads wrangler_single_asset_uploads from the upload one). */
 const jwt = (claims: Record<string, unknown>) => `${btoa(JSON.stringify({ alg: "none" }))}.${btoa(JSON.stringify(claims)).replace(/=+$/, "")}.mock`;
@@ -132,7 +156,7 @@ export function mockCloudflare(opts: {
     account: { id: ACCOUNT_ID, name: "Ada's account" },
     subdomain: "ada-mock",
     zones: [{ id: "zone0000000000000000000000000001", name: "ada-example.com", status: "active" }, { id: "zone0000000000000000000000000002", name: "ada-pages.net", status: "active" }],
-    databases: [], scripts: {}, assets: { manifest: {}, uploaded: [] }, domains: [], routes: {}, dns: {}, registrations: [], calls: [], revoked: 0,
+    databases: [], scripts: {}, assets: { manifest: {}, uploaded: [] }, blobs: {}, served: {}, domains: [], routes: {}, dns: {}, registrations: [], calls: [], revoked: 0,
     secrets: {}, docs: {}, versions: {}, deletedDatabases: [], failNext: null, tokens: [], containers: { prepared: [], apps: {} },
   };
   /** Tokens' values, by token id (never in `state`). */
@@ -314,14 +338,16 @@ export function mockCloudflare(opts: {
         if (one) {
           if (!opts.singleAssetUploads) return fail(400, 10002, "single asset uploads aren't enabled for this session");
           if (!known(one[1])) return fail(400, 10002, `unexpected ${one[1]}`);
-          await req.arrayBuffer();
+          state.blobs[one[1]] = b64(new Uint8Array(await req.arrayBuffer()));
           state.assets.uploaded.push(one[1]);
         } else if (rest == "/workers/assets/upload?base64=true") {
           if (opts.singleAssetUploads) return fail(400, 10002, "this session takes one file at a time");
           const form = await req.formData();
           for (const [hash, value] of form.entries() as Iterable<[string, File | string]>) {
             if (typeof value == "string" || !known(hash)) return fail(400, 10002, `unexpected ${hash}`);
-            atob(await value.text());
+            const text = await value.text();
+            atob(text);
+            state.blobs[hash] = text;
             state.assets.uploaded.push(hash);
           }
         } else return fail(400, 10002, "base64=true is required");
@@ -360,8 +386,16 @@ export function mockCloudflare(opts: {
         const keptBindings = Object.keys(kept).filter((n) => !named.has(n)).map((name) => ({ type: "secret_text", name, text: kept[name] }));
         state.scripts[r[1]] = { metadata: redact({ ...meta, bindings: [...(meta.bindings ?? []), ...keptBindings] }), modules, workersDev: prev?.workersDev ?? false, tags: meta.tags ?? [], namespaces };
         state.versions[r[1]] = (state.versions[r[1]] ?? 0) + 1;
+        if (meta.assets) state.served[r[1]] = Object.fromEntries(Object.entries(state.assets.manifest).map(([p, f]) => [p, f.hash]));
         opts.onUpload?.(r[1], state.scripts[r[1]].metadata);
         return ok({ id: r[1], tags: meta.tags ?? [] });
+      }
+      if (m == "DELETE" && (r = /^\/workers\/scripts\/([^/?]+)(?:\?.*)?$/.exec(rest))) {
+        if (!state.scripts[r[1]]) return fail(404, 10007, "This Worker does not exist on your account.");
+        if (state.domains.some((d) => d.service == r![1]) && !rest.includes("force=true")) return fail(400, 10064, "This Worker is still attached to a custom domain");
+        delete state.scripts[r[1]]; delete state.served[r[1]];
+        state.domains = state.domains.filter((d) => d.service != r![1]);
+        return ok(null);
       }
       if (m == "POST" && (r = /^\/workers\/scripts\/([^/]+)\/subdomain$/.exec(rest))) {
         if (!state.scripts[r[1]]) return fail(404, 10007, "script not found");
@@ -423,7 +457,13 @@ export function mockCloudflare(opts: {
       }
       if (m == "GET" && rest.startsWith("/workers/domains")) {
         const hostname = new URLSearchParams(rest.split("?")[1] ?? "").get("hostname");
-        return ok(state.domains.filter((d) => !hostname || d.hostname == hostname).map((d) => ({ id: hex(8), ...d })));
+        return ok(state.domains.filter((d) => !hostname || d.hostname == hostname).map((d) => ({ id: domainId(d.hostname), zone_name: state.zones.find((z) => z.id == d.zone_id)?.name, ...d })));
+      }
+      if (m == "DELETE" && (r = /^\/workers\/domains\/([0-9a-f]+)$/.exec(rest))) {
+        const d = state.domains.find((x) => domainId(x.hostname) == r![1]);
+        if (!d) return fail(404, 100114, "Domain not found");
+        state.domains = state.domains.filter((x) => x != d);
+        return ok(null);
       }
       if (m == "PUT" && rest == "/workers/domains") {
         const d = await body();
@@ -432,8 +472,9 @@ export function mockCloudflare(opts: {
         if (!state.zones.some((z) => z.id == d.zone_id && (d.hostname == z.name || d.hostname.endsWith(`.${z.name}`)))) return fail(400, 100117, "Hostname is not in the zone");
         if (state.domains.some((x) => x.hostname == d.hostname && x.service != d.service)) return fail(409, 100116, "Hostname is already in use by another Worker");
         state.domains = state.domains.filter((x) => x.hostname != d.hostname);
+        if ((state.dns[d.zone_id] ?? []).some((x) => x.name == d.hostname)) return fail(409, 100117, "Hostname already has externally managed DNS records (A, CNAME, etc). Either delete them, try a different hostname, or use the option 'override_existing_dns_record' to override.");
         state.domains.push({ hostname: d.hostname, service: d.service, zone_id: d.zone_id });
-        return ok(d);
+        return ok({ id: domainId(d.hostname), ...d });
       }
       if (m == "GET" && rest.startsWith("/registrar/domain-search?")) {
         const q = (new URLSearchParams(rest.split("?")[1]).get("q") ?? "").replace(/\..*$/, "");
@@ -460,7 +501,7 @@ export function mockCloudflare(opts: {
       const name = new URLSearchParams(path.split("?")[1]).get("name");
       const t = token.startsWith("mock-scoped-") ? tokenOf(token) : null;
       const readable = (id: string) => !t || t.policies.some((p) => p.permission_groups.some((g) => GROUPS[g.id] == "Zone Read") && keysOf(p).includes(`com.cloudflare.api.account.zone.${id}`));
-      return ok(state.zones.filter((z) => (!name || z.name == name) && readable(z.id)));
+      return ok(state.zones.filter((z) => (!name || z.name == name) && readable(z.id)).map((z) => ({ ...z, account: { id: state.account.id, name: state.account.name } })));
     }
     if ((r = /^\/zones\/([^/?]+)(\/[^?]*)(?:\?(.*))?$/.exec(path))) {
       const [, zone, rest, query] = r;

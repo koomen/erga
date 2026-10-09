@@ -20,6 +20,7 @@
 //   /deploy                    deploy Erga to your own Cloudflare account (worker/deploy.ts; the deploy_page setting,
 //                              not an admin right); /admin/deploy redirects there
 //   /api/deploys, /api/events  branch deploys' status and events, and deploy logs (worker/deploys.ts)
+//   /api/docs/<id>/site        a document's site on its person's Cloudflare account (site-publish.ts, worker/site-host.ts)
 //   /auth/test?token=&as=      a test person (Ada, Bo...) signed in with one; they open only test documents
 //   /git/erga.git/...          Erga's own repository, over Git smart HTTP (worker/source.ts; reads open, pushes need an admin's admin-scope token)
 //   /admin, /admin/changes, /admin/users, /admin/auth   the server's settings, their change log, its users, and how
@@ -44,6 +45,7 @@
 //   POST /__erga/migrate           brings the local D1 up to date with migrations/ (as it starts)
 //   POST /__erga/link              makes (or finds) the document for a file or folder, for whoever's signed in
 //   /__erga/mirror/<id>            the WebSocket the document reaches its files on disk through
+//   /__erga/site/<host>/<path>     a site on the pretend Cloudflare (ERGA_DEPLOY_MOCK=1), as a reader would see it
 
 import { accountOf, OWN_ACCOUNT, withAccount } from "../account";
 import { idShaped, slugify } from "../directory";
@@ -59,6 +61,8 @@ import { deploysDoor, isDeploysPath } from "./deploys";
 import { isSignInPath, signInDoor } from "./auth-settings";
 import { forgetHome, serveHome, serveHomeFile, serveHomeRoot } from "./home";
 import { homeApi } from "../home";
+import { siteApi } from "../site-publish";
+import { mockSiteFile, siteOps } from "./site-host";
 import type { Env } from "./env";
 import { simulateLatency, tallied } from "./timing";
 import { pagesSite, platform } from "./platform";
@@ -71,6 +75,7 @@ export { AdminAgentHost } from "./admin-agent";
 export { Pipeline } from "./pipeline";
 export { SourceHost } from "./source-host";
 export { Home } from "./home";
+export { SiteHost } from "./site-host";
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -156,6 +161,9 @@ async function route(request: Request, env: Env, url: URL, ctx: ExecutionContext
     const home = env.HOME.getByName("home");
     return homeApi(request, withTokens(platform(env), url), { status: () => home.status(), deploy: (by) => home.deploy(by) }, homeId, (homeAction ?? "") as "" | "deploy", () => { ctx.waitUntil(forgetHome(url)); });
   }
+  // A document's site on its person's Cloudflare account, and its deploys (site-publish.ts, worker/site-host.ts).
+  const [, siteId, siteAction] = /^\/api\/docs\/([a-z0-9]{8})\/site(?:\/(deploy))?\/?$/.exec(path) ?? [];
+  if (siteId) return siteApi(request, withTokens(platform(env), url), siteOps(env, url.origin), siteId, (siteAction ?? "") as "" | "deploy");
   // The homepage's own files at the root (its other pages, files its script asks for by a relative URL): a file's name,
   // at the top or one folder down, and not one of the app's addresses (which never have a dot there).
   if (read && isHomeFilePath(path)) {
@@ -170,7 +178,12 @@ async function route(request: Request, env: Env, url: URL, ctx: ExecutionContext
   if (path == "/api/admin/guide") return adminGuideApi(request, env, url);
   // The server's API for agents, and people's agent tokens (server-api.ts).
   if (path == "/llms.txt" || path == "/mcp" || path == "/api" || path.startsWith("/api/")) return serverApi(request, withTokens(platform(env), url));
-  if (path == "/settings" || path == "/tokens" || path.startsWith("/tokens/")) return tokensDoor(request, withTokens(platform(env), url));
+  if (path == "/settings" || path.startsWith("/settings/") || path == "/tokens" || path.startsWith("/tokens/")) return tokensDoor(request, withTokens(platform(env), url));
+  // Local development: a site on the pretend Cloudflare, as a reader would see it (worker/site-host.ts).
+  if (path.startsWith("/__erga/site/") && isDev(env, url)) {
+    const [, host, rest] = /^\/__erga\/site\/([^/]+)(\/.*)?$/.exec(path) ?? [];
+    return (host && mockSiteFile(env, host, rest ?? "/")) || new Response("Not found", { status: 404 });
+  }
   if (path.startsWith("/__erga/")) return linked(env, request, url);
   // Deploying Erga to your own Cloudflare account (worker/deploy.ts).
   if (path == "/deploy" || path.startsWith("/deploy/")) return deployDoor(request, env, platform(env));

@@ -5,6 +5,7 @@ import type { DocHost } from "./doc-host";
 import type { SourceHost } from "./source-host";
 import type { Pipeline } from "./pipeline";
 import type { Home } from "./home";
+import type { SiteHost } from "./site-host";
 
 /** The Worker's bindings (cloudflare.config.ts); secrets are set with `cf workers secrets update`. */
 export interface Env {
@@ -14,6 +15,8 @@ export interface Env {
   HOME: DurableObjectNamespace<Home>;
   /** Each admin's agent, its conversation and panel (worker/admin-agent.ts): one Durable Object, "admin". */
   ADMIN_AGENT: DurableObjectNamespace<AdminAgentHost>;
+  /** Each document's site on its person's Cloudflare account, its deploys (worker/site-host.ts): one Durable Object per document that has one, named by its id. */
+  SITES: DurableObjectNamespace<SiteHost>;
   /**
    * The server's key (a Worker secret, named for the factory it once served): it encrypts the API keys and sign-in
    * secrets admins store (credentials.ts, auth-apps.ts). Without it, a hosted server can't store them.
@@ -85,6 +88,8 @@ export interface Env {
   BUILDER?: Fetcher;
   /** Local development only: "1" has /deploy and the branch deploys talk to a pretend Cloudflare (deploy/mock.ts), never the real one. */
   ERGA_DEPLOY_MOCK?: string;
+  /** Local development only: how long after a publish a document's site deploys (worker/site-host.ts; tests shorten it). */
+  ERGA_SITE_DELAY_MS?: string;
   /** Local development only: sign in as this login without GitHub (honoured only on localhost). */
   DEV_LOGIN?: string;
 

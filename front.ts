@@ -39,6 +39,7 @@
 // Worker. The rule for when an unedited document goes (`afterUnedited`) is
 // here; the document's alarm applies it.
 
+import type { SiteOps } from "./site-publish.ts";
 import { OWN_ACCOUNT } from "./account.ts";
 import { adminDoor } from "./admin.ts";
 import { VIA } from "./attribution.ts";
@@ -140,6 +141,8 @@ export interface Platform {
   tokens: Tokens;
   /** How people sign in (auth-apps.ts): this server's and the other deploy target's GitHub app, as `origin`'s server. */
   auth?(origin: string): AuthOps;
+  /** Documents' sites on their person's Cloudflare account (site-publish.ts), as `origin`'s server, where the platform has them. */
+  sites?(origin: string): SiteOps;
 
   /** A test token for the test suite, minted by `login` (shown on /tokens), where the platform makes them. */
   testToken?(login: string): Promise<{ token: string; expires: Date }>;

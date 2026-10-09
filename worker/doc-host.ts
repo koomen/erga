@@ -49,6 +49,7 @@ import { agentSettings } from "./agent-settings";
 import { platform } from "./platform";
 import { DiskLink } from "./disk";
 import { publishedChanged } from "./published";
+import { siteChanged, siteOps } from "./site-host";
 import type { Env } from "./env";
 
 /**
@@ -294,6 +295,13 @@ export class DocHost extends DurableObject<Env> {
     await this.ctx.storage.deleteAll();
     this.versions = new Versions(kvOf(this.ctx.storage));
     this.pub = undefined;
+    // If it had a site on its person's Cloudflare account, the site comes down too (worker/site-host.ts).
+    const site = await directoryOf(this.env).sites.get(this.idOf(meta)).catch(() => null);
+    if (site) {
+      const refused = await this.env.SITES.getByName(site.docId).remove(site.docId, site).catch((e) => String(e));
+      if (refused) console.log(`couldn't take down ${site.hostname}: ${refused}`);
+      await directoryOf(this.env).sites.remove(site.docId);
+    }
     await directoryOf(this.env).remove(this.idOf(meta));
     // If it was the homepage, its snapshot goes too (the next / makes another).
     await this.env.HOME?.getByName("home").forget(this.idOf(meta)).catch((e) => console.log(`couldn't tell the homepage: ${e}`));
@@ -595,6 +603,8 @@ export class DocHost extends DurableObject<Env> {
     // If it's the homepage, its next deploy is scheduled (published.ts).
     this.ctx.waitUntil(directoryOf(this.env).homeId().then((home) => home == docId ? publishedChanged(this.env, docId) : undefined)
       .catch((e) => console.log(`couldn't schedule the homepage's deploy: ${e}`)));
+    // If it has a site on its person's Cloudflare account, the site's next deploy is scheduled (worker/site-host.ts).
+    this.ctx.waitUntil(siteChanged(this.env, docId).catch((e) => console.log(`couldn't schedule ${docId}'s site deploy: ${e}`)));
   }
 
   /** Opens the document and waits for any cut under way (the first, when it opens, makes sure there is a version). */
@@ -802,7 +812,7 @@ export class DocHost extends DurableObject<Env> {
       // Its title and address, renamed as whoever asks (test people are "test-...": they may rename only test documents).
       naming: (person) => naming({ login: person.id, test: person.id.startsWith("test-") }),
       // Sharing this document (or another), the documents list (list, make, delete), and for an admin the server's settings and users, as the person.
-      serverTools: (person) => agentToolsFor({ dir: directoryOf(this.env), who: { login: person.id, test: person.id.startsWith("test-"), via: VIA.agent }, here: this.idOf(meta), platform: platform(this.env) }),
+      serverTools: (person) => agentToolsFor({ dir: directoryOf(this.env), who: { login: person.id, test: person.id.startsWith("test-"), via: VIA.agent }, here: this.idOf(meta), platform: platform(this.env), sites: siteOps(this.env, "") }),
       // An agent's turn is one version, and where its next diff_versions starts from ("last_turn").
       turnEnded: () => this.cutSoon("agent turn").then(async (v) => (v ?? (await this.versions.latest()))?.id ?? null),
       versions: {

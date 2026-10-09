@@ -60,7 +60,9 @@ test("Edit on a version: shown on hover at once and on focus, not on the current
     const opacity = (sel: string) => s.eval<string>(`getComputedStyle(document.querySelector(${JSON.stringify(sel)})).opacity`);
     expect(await s.eval<boolean>(`!!document.querySelector(${JSON.stringify(edit(20))})`)).toBe(false);
     expect(await opacity(edit(17))).toBe("0");
-    const row = (await s.rect(`#ds-list li[data-n="17"]`))!;
+    // The popover scrolls (the Custom domain section above can push the list below its fold): the row in view first.
+    await s.eval(`document.querySelector('#ds-list li[data-n="17"]').scrollIntoView({ block: "nearest" })`);
+    const row = (await s.steadyRect(`#ds-list li[data-n="17"]`))!;
     await tab.page.mouse.move(row.left + 60, row.y);
     expect(await opacity(edit(17))).toBe("1");
     expect(await opacity(edit(16))).toBe("0");

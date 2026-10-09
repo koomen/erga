@@ -12,14 +12,19 @@
 //     Below it, "Publish the current version" when that isn't the published one.
 //   - Homepage (for admins, and on the homepage itself): whether this is the
 //     server's homepage, how its deploy is going, and Redeploy now.
+//   - Custom domain: the document published at a domain of the person's own,
+//     from their Cloudflare account (site-publish.ts): Connect Cloudflare
+//     (on /settings) if they haven't, else a name and one of their domains,
+//     and once it's up, the site's address, how its deploy is going, Deploy
+//     now and Remove.
 //   - Versions: the latest ten, each with its number, the model's five-word
 //     description (a quiet placeholder until it arrives), when and who; the
 //     current and the published one marked. Edit, on hover or focus, makes a
 //     copy of a version the current one (POST .../versions/<id>/restore).
 //
 // It talks to the server's API as the shared contract says (versions.ts
-// and home.ts), and refreshes on the event
-// channel's { type: "versions" } and { type: "home" } (main.ts passes them on).
+// home.ts and site-publish.ts), and refreshes on the event channel's
+// { type: "versions" }, { type: "home" } and { type: "site" } (main.ts passes them on).
 // Someone who can't edit sees it all read-only, with a line saying why: what
 // viewers see is worth knowing even when you can't change it.
 
@@ -28,6 +33,17 @@ import { ago, clock, nearNeed, pickerRows, RECENT, type Published, type Row, typ
 export interface Deploy { state: "idle" | "scheduled" | "deploying" | "deployed" | "failed"; at: string | null; scheduledFor: string | null; version: number | null; error: string | null }
 /** GET /api/docs/<id>/home. `blocked`: why this document can't be made the homepage (others may edit it), or null. */
 export interface Home { isHome: boolean; canSet: boolean; /** An admin acting through a token without the admin scope (tokens.ts). */ locked?: boolean; blocked?: string | null; deploy: Deploy }
+
+/** GET /api/docs/<id>/site (site-publish.ts). */
+export interface SiteState {
+  canEdit: boolean;
+  connection: { connected: boolean; last4: string | null; accounts: { id: string; name: string }[]; canStore: boolean; unreadable: boolean };
+  site: { hostname: string; url: string; zone: string; by: string; created: string; dashboard: string } | null;
+  deploy: Deploy & { by?: string | null };
+  zones?: { id: string; name: string; account: { id: string; name: string } }[];
+  zonesError?: string;
+  warning?: string;
+}
 
 export interface SettingsHost {
   /** The document's id (its /d/<id>). */
@@ -149,6 +165,32 @@ html.page-dark body:not(.source) .ds-error { color: #ff9d94; }
 .ds-menu .ds-more { color: var(--soft); font-size: 12px; }
 .ds-menu .ds-more .ds-dots { letter-spacing: 2px; color: var(--chrome); }
 .ds-menu [role="separator"] { height: 1px; margin: 4px 6px; background: var(--rule); }
+#ds-site-body > .ds-explain:first-child { margin-top: 0; }
+.ds-site-row { display: flex; align-items: stretch; gap: 6px; }
+.ds-input {
+  flex: 1 1 40%; min-width: 0; min-height: 36px; box-sizing: border-box; padding: 6px 10px; border: 1px solid var(--panel-border); border-radius: 9px;
+  background: var(--code-bg); color: var(--fg-strong, var(--fg)); font: 500 13.5px/1.3 var(--font-text); text-align: right;
+}
+.ds-input::placeholder { color: var(--chrome); font-weight: 400; }
+.ds-input:focus { outline: 2px solid var(--caret); outline-offset: 1px; border-color: var(--caret); }
+.ds-dot-sep { align-self: center; font: 600 14px var(--font-text); color: var(--soft); }
+select.ds-select { flex: 1 1 60%; min-width: 0; appearance: none; padding-right: 26px; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M3 4.5 6 7.5l3-3' fill='none' stroke='%23999' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 9px center; background-size: 12px; }
+.ds-site-go { margin-top: 10px; display: flex; align-items: center; gap: 10px; }
+.ds-btn.primary { background: var(--caret); border-color: var(--caret); color: #fff; }
+.ds-btn.primary:hover { border-color: var(--caret); filter: brightness(1.06); }
+.ds-site-live { display: flex; align-items: center; gap: 8px; min-width: 0; font: 600 14px/1.3 var(--font-text); }
+.ds-site-live a { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg-strong, var(--fg)); text-decoration: none; }
+.ds-site-live a:hover { text-decoration: underline; text-underline-offset: 0.2em; }
+.ds-site-live svg { flex: none; width: 12px; height: 12px; fill: none; stroke: var(--soft); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.ds-site-acts { display: flex; align-items: center; gap: 6px; margin-top: 10px; }
+.ds-site-acts .ds-quiet { margin-left: auto; }
+.ds-quiet { font: 500 12px var(--font-text); color: var(--soft); background: none; border: 0; padding: 4px 2px; cursor: pointer; text-decoration: underline; text-decoration-color: var(--rule); text-underline-offset: 0.2em; }
+.ds-quiet:hover { color: var(--fg); }
+.ds-quiet.armed { color: #b42318; text-decoration-color: currentColor; }
+.ds-site-foot { margin: 8px 0 0; font-size: 11.5px; color: var(--chrome); }
+.ds-site-foot a { color: inherit; }
+a.ds-btn { display: inline-flex; align-items: center; gap: 6px; text-decoration: none; }
+a.ds-btn svg { width: 14px; height: 14px; }
 @media (max-width: 520px) {
   .help.ds { z-index: 22; top: auto; left: 0; right: 0; bottom: 0; width: auto; max-height: min(82vh, calc(100% - var(--top-clear))); border-radius: 16px 16px 0 0; border-bottom: 0; padding-bottom: env(safe-area-inset-bottom); animation: ds-sheet 240ms var(--agent-ease, ease); }
   .ds section { padding: 14px 18px; }
@@ -202,6 +244,13 @@ function mount(host: SettingsHost): Settings {
       </div>
       <p class="ds-error" id="ds-home-error" role="alert"></p>
     </section>
+    <section class="ds-site" id="ds-site" hidden aria-labelledby="ds-site-label">
+      <div class="ds-field">
+        <span class="ds-label" id="ds-site-label">Custom domain</span>
+        <div id="ds-site-body"></div>
+      </div>
+      <p class="ds-error" id="ds-site-error" role="alert"></p>
+    </section>
     <section class="ds-history" aria-labelledby="ds-history-title">
       <h3 id="ds-history-title">Versions <small id="ds-total"></small></h3>
       <ol class="ds-list" id="ds-list" aria-label="Recent versions"></ol>
@@ -215,6 +264,7 @@ function mount(host: SettingsHost): Settings {
   const list = $("ds-list"), totalEl = $("ds-total"), foot = $("ds-foot"), histError = $("ds-hist-error"), pubCurrent = $("ds-pub-current");
   const homeSec = $("ds-home"), homeSwitch = $("ds-home-switch"), homeExplain = $("ds-home-explain");
   const deployBox = $("ds-deploy"), statusEl = $("ds-status"), redeploy = $("ds-redeploy"), homeError = $("ds-home-error");
+  const siteSec = $("ds-site"), siteBody = $("ds-site-body"), siteError = $("ds-site-error");
 
   // ------------------------------------------------------------ the server
 
@@ -248,7 +298,11 @@ function mount(host: SettingsHost): Settings {
   let publishing = false;
   let home: Home | null = null;
   let homeBusy = false;
-  let loadSeq = 0, homeSeq = 0;
+  let loadSeq = 0, homeSeq = 0, siteSeq = 0;
+  let site: SiteState | null = null;
+  let siteBusy = false, removeArmed = false;
+  /** What's typed in the name, kept across redraws. */
+  let siteName = "", siteZone = "";
 
   const add = (vs: Version[]) => { for (const v of vs) loaded.set(v.n, v); };
   /**
@@ -296,6 +350,15 @@ function mount(host: SettingsHost): Settings {
     if (seq != homeSeq) return;
     home = h;
     renderHome();
+  }
+
+  async function loadSite() {
+    const seq = ++siteSeq;
+    let st: SiteState | null = null;
+    try { st = await call<SiteState>("site", undefined, { zones: "1" }); } catch (e) { if (seq == siteSeq) siteError.textContent = `Couldn't load the custom domain: ${(e as Error).message}`; }
+    if (seq != siteSeq) return;
+    if (st) { site = st; siteError.textContent = st.zonesError && st.connection.connected && !st.site ? st.zonesError : ""; }
+    renderSite();
   }
 
   async function publish(next: Published, body: unknown) {
@@ -452,8 +515,10 @@ function mount(host: SettingsHost): Settings {
     else { redeploy.setAttribute("aria-disabled", "true"); redeploy.title = !host.admin ? "Only admins can redeploy the homepage." : home.locked ? "This token has no admin power." : "A deploy is running."; }
     redeploy.textContent = d.state == "deploying" ? "Deploying…" : "Redeploy now";
   }
-  function until(iso: string): string {
-    const m = Math.round((Date.parse(iso) - Date.now()) / 60000);
+  function until(iso: string, seconds = false): string {
+    const ms = Date.parse(iso) - Date.now();
+    if (seconds && ms < 90_000) return ms <= 1000 ? "any moment" : `in ${plural(Math.round(ms / 1000), "second")}`;
+    const m = Math.round(ms / 60000);
     return m <= 0 ? "any moment" : `in ${plural(m, "minute")}`;
   }
 
@@ -481,6 +546,102 @@ function mount(host: SettingsHost): Settings {
     homeBusy = false;
     loadHome();
   });
+
+  // ------------------------------------------------------------ custom domain
+
+  const EXT = `<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M4.5 2.5h-2v7h7v-2M7 2.5h2.5V5M9.5 2.5 5.5 6.5"/></svg>`;
+  function renderSite() {
+    siteSec.hidden = !site || (!site.site && !site.canEdit);
+    if (!site || siteSec.hidden) return;
+    const st = site, d = st.deploy;
+    if (st.site) {
+      const live = d.version != null ? ` · version ${d.version}` : "";
+      const line = d.state == "deploying" ? `<b>Deploying…</b>`
+        : d.state == "scheduled" && d.scheduledFor ? `<span><b>New version goes live ${esc(until(d.scheduledFor, true))}.</b>${d.at ? ` Live now${live}.` : ""}</span>`
+        : d.state == "failed" ? `<span><b>Failed:</b> ${esc(d.error || "the deploy didn't finish.")}${d.at ? ` The last good deploy${live} is still live.` : ""}</span>`
+        : d.at ? `<span><b>Live</b>${live} · ${esc(ago(d.at))}</span>` : `<span>Not deployed yet</span>`;
+      const can = st.canEdit && !siteBusy && d.state != "deploying";
+      siteBody.innerHTML = `<div class="ds-site-live"><a href="${esc(st.site.url)}" target="_blank" rel="noopener" id="ds-site-link">${esc(st.site.hostname)}</a>${EXT}</div>
+        <div class="ds-deploy"><div class="ds-status" role="status" aria-live="polite"><span class="ds-dot ${d.state}" aria-hidden="true"></span>${line}</div></div>
+        ${st.canEdit ? `<div class="ds-site-acts">
+          <button type="button" class="ds-btn" id="ds-site-deploy"${can ? "" : ` aria-disabled="true"`}>${d.state == "deploying" ? "Deploying…" : "Deploy now"}</button>
+          <a class="ds-btn" href="${esc(st.site.dashboard)}" target="_blank" rel="noopener">Open in Cloudflare</a>
+          <button type="button" class="ds-quiet${removeArmed ? " armed" : ""}" id="ds-site-remove"${siteBusy ? ` aria-disabled="true"` : ""}>${removeArmed ? "Click again to take it down" : "Remove"}</button>
+        </div>` : ""}
+        <p class="ds-site-foot">From ${esc(st.site.by)}’s Cloudflare account. Each new published version goes live there within a minute.</p>`;
+      return;
+    }
+    const c = st.connection;
+    if (!c.connected) {
+      siteBody.innerHTML = `<p class="ds-explain">Publish this document at a domain of yours, such as <b>notes.example.com</b>. It is served from your own Cloudflare account, and follows each published version.</p>
+        <div class="ds-site-go"><a class="ds-btn primary" id="ds-site-connect" href="/settings#cloudflare" target="_blank" rel="noopener">${c.unreadable ? "Connect Cloudflare again" : "Connect Cloudflare"}</a></div>`;
+      return;
+    }
+    const zones = st.zones ?? [];
+    if (!zones.length) {
+      siteBody.innerHTML = `<p class="ds-explain">${esc(st.zonesError ? "" : "Your Cloudflare token reaches no domains. Add a domain to Cloudflare, or give the token Zone Read on your domains.")}</p>
+        <div class="ds-site-go"><a class="ds-btn" href="/settings#cloudflare" target="_blank" rel="noopener">Cloudflare settings</a></div>`;
+      return;
+    }
+    if (!zones.some((z) => z.id == siteZone)) siteZone = zones[0].id;
+    const accounts = new Set(zones.map((z) => z.account.id)).size > 1;
+    siteBody.innerHTML = `<div class="ds-site-row">
+        <input class="ds-input" id="ds-site-name" placeholder="name" aria-label="Name (leave empty for the domain itself)" autocomplete="off" spellcheck="false" value="${esc(siteName)}">
+        <span class="ds-dot-sep" aria-hidden="true">.</span>
+        <select class="ds-select" id="ds-site-zone" aria-label="Your domain">${zones.map((z) => `<option value="${esc(z.id)}"${z.id == siteZone ? " selected" : ""}>${esc(z.name)}${accounts ? ` (${esc(z.account.name)})` : ""}</option>`).join("")}</select>
+      </div>
+      <div class="ds-site-go"><button type="button" class="ds-btn primary" id="ds-site-publish"${siteBusy ? ` aria-disabled="true"` : ""}>${siteBusy ? "Publishing…" : `Publish to ${esc(hostnameNow() ?? "")}`}</button></div>
+      <p class="ds-explain">Cloudflare serves the published version from your account (${esc(c.accounts.map((a) => a.name).join(", "))}). Leave the name empty to use the domain itself.</p>`;
+  }
+  function hostnameNow(): string | null {
+    const zone = site?.zones?.find((z) => z.id == siteZone);
+    if (!zone) return null;
+    const name = siteName.trim().toLowerCase().replace(/\.+$/, "");
+    return name ? `${name}.${zone.name}` : zone.name;
+  }
+  siteBody.addEventListener("input", (e) => {
+    const t = e.target as HTMLElement;
+    if (t.id == "ds-site-name") siteName = (t as HTMLInputElement).value;
+    const b = siteBody.querySelector<HTMLElement>("#ds-site-publish");
+    if (b && !siteBusy) b.textContent = `Publish to ${hostnameNow() ?? ""}`;
+  });
+  siteBody.addEventListener("change", (e) => {
+    const t = e.target as HTMLElement;
+    if (t.id == "ds-site-zone") { siteZone = (t as HTMLSelectElement).value; const b = siteBody.querySelector<HTMLElement>("#ds-site-publish"); if (b && !siteBusy) b.textContent = `Publish to ${hostnameNow() ?? ""}`; }
+  });
+  siteBody.addEventListener("keydown", (e) => { if (e.key == "Enter" && (e.target as HTMLElement).id == "ds-site-name") { e.preventDefault(); publishSite(); } });
+  async function siteCall(path: string, init: RequestInit, failed: string) {
+    siteBusy = true;
+    siteError.textContent = "";
+    renderSite();
+    try {
+      const st = await call<SiteState>(path, init);
+      site = { ...st, zones: site?.zones };
+      if (st.warning) siteError.textContent = st.warning;
+    } catch (e) { siteError.textContent = `${failed}: ${(e as Error).message}`; }
+    siteBusy = false;
+    renderSite();
+    // The deploy may have finished before this answer came back (its event refreshed first): read it again.
+    loadSite();
+  }
+  async function publishSite() {
+    const hostname = hostnameNow();
+    if (!hostname || siteBusy) return;
+    await siteCall("site", { method: "POST", body: JSON.stringify({ hostname }) }, `Couldn't publish to ${hostname}`);
+  }
+  siteBody.addEventListener("click", async (e) => {
+    const b = (e.target as Element).closest<HTMLElement>("button");
+    if (!b || b.getAttribute("aria-disabled") == "true") return;
+    if (b.id == "ds-site-publish") return publishSite();
+    if (b.id == "ds-site-deploy") return siteCall("site/deploy", { method: "POST" }, "Couldn't deploy");
+    if (b.id == "ds-site-remove") {
+      if (!removeArmed) { removeArmed = true; renderSite(); setTimeout(() => { removeArmed = false; renderSite(); }, 4000); return; }
+      removeArmed = false;
+      await siteCall("site", { method: "DELETE" }, "Couldn't take the site down");
+    }
+  });
+  // Back from connecting Cloudflare in another tab: the section shows the domains.
+  window.addEventListener("focus", () => { if (!pop.hidden && site && !site.connection.connected) loadSite(); });
 
   // ------------------------------------------------------------ menus
 
@@ -644,12 +805,20 @@ function mount(host: SettingsHost): Settings {
     pubError.textContent = "";
     homeError.textContent = "";
     histError.textContent = "";
+    siteError.textContent = "";
     render();
     renderHome();
+    renderSite();
     loadVersions();
     loadHome();
+    loadSite();
     // Relative times ("4 min ago", "in 3 minutes") move on while it's open.
-    ticker = window.setInterval(() => { render(); renderHome(); }, 30_000);
+    // The site's countdown ("goes live in 20 seconds") every 5 seconds, the rest every 30.
+    let tick = 0;
+    ticker = window.setInterval(() => {
+      if (++tick % 6 == 0) { render(); renderHome(); }
+      if (!siteBusy && !siteBody.contains(document.activeElement)) renderSite();
+    }, 5_000);
     pop.tabIndex = -1;
     (modeBtn.getAttribute("aria-disabled") == "true" ? pop : modeBtn).focus();
   }
@@ -677,9 +846,9 @@ function mount(host: SettingsHost): Settings {
     event(type) {
       if (pop.hidden) { if (type == "versions") data = null; return; }
       // A burst (a version cut, then its description) is one refresh.
-      if (type != "home" && type != "versions") return;
+      if (type != "home" && type != "versions" && type != "site") return;
       clearTimeout(pending[type]);
-      pending[type] = window.setTimeout(() => (type == "home" ? loadHome() : loadVersions()), 120);
+      pending[type] = window.setTimeout(() => (type == "home" ? loadHome() : type == "site" ? loadSite() : loadVersions()), 120);
     },
     contains,
   };

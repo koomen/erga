@@ -661,7 +661,7 @@ type TreeModule = { mountTree: typeof mountTree };
       else if (msg.type == "model") renderModel(msg as unknown as ModelState);
       else if (msg.type == "view" && msg.id) answerView(msg.id, msg.req ?? {});
       else if (msg.type == "name" && msg.name) showName(msg.name);
-      else if (msg.type == "versions" || msg.type == "home") docSettings?.event(msg.type);
+      else if (msg.type == "versions" || msg.type == "home" || msg.type == "site") docSettings?.event(msg.type);
       else if (msg.type == "tree") treeChanged(msg);
       // Your agent (or an external one, as you) opened another page: go there (open_page).
       else if (msg.type == "open" && msg.path && msg.path != info!.path) openPage(msg.path);
@@ -669,7 +669,7 @@ type TreeModule = { mountTree: typeof mountTree };
     // Events sent while the channel was down are gone; catch up from the transcript.
     // A rename missed meanwhile (or before it first opened) is caught up the same way.
     // The body's erga-listening class: the channel is up, so this tab hears its agent (and open_page counts it). Tests wait on it.
-    events.onopen = () => { eventTries = 0; live((l) => l.connection("events", true)); document.body.classList.add("erga-listening"); if (opened) { loadAgent(); docSettings?.event("versions"); docSettings?.event("home"); } opened = true; refreshName(); stillHere(); };
+    events.onopen = () => { eventTries = 0; live((l) => l.connection("events", true)); document.body.classList.add("erga-listening"); if (opened) { loadAgent(); docSettings?.event("versions"); docSettings?.event("home"); docSettings?.event("site"); } opened = true; refreshName(); stillHere(); };
     // Down (the server restarted, a redeploy): again, a little later each time it fails.
     events.onclose = () => { live((l) => l.connection("events", false)); document.body.classList.remove("erga-listening"); setTimeout(listen, backoff(eventTries++)); };
   }
