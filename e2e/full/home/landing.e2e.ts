@@ -35,15 +35,16 @@ test("its owner edits it in the editor, and / shows the edit", { timeout: 30_000
   await tab.page.goto(`${server.root}${address}#edit`);
   const ed = editor(tab.page, { address, dir: "", file: "" });
   await expect.poll(() => tab.page.evaluate(() => document.body.classList.contains("erga-editor-ready"))).toBe(true);
-  await expect.poll(() => ed.frame<string | null>(`${F}?.querySelector("h1")?.getAttribute("contenteditable") ?? null`)).toBe("true");
-  // Its fonts first: the heading moves when they load.
+  // The first paragraph: the heading is the logo, which isn't edited (data-erga-noedit).
+  await expect.poll(() => ed.frame<string | null>(`${F}?.querySelector("p.lede")?.getAttribute("contenteditable") ?? null`)).toBe("true");
+  // Its fonts first: the text moves when they load.
   await ed.frame(`${F}.fonts.ready.then(() => true)`);
-  await ed.clickEnd("h1");
-  // The caret at the heading's end, wherever the click put it.
-  await ed.frame(`(() => { const h = ${F}.querySelector("h1"); ${F}.getSelection().collapse(h, h.childNodes.length); return true; })()`);
-  await ed.type(" home");
-  await expect.poll(async () => (await get(server, `/d/${id}/doc/index.html`)).text()).toContain("<h1>Erga home</h1>");
-  await expect.poll(async () => (await front(server)).html, { timeout: SHORT.idle + SHORT.homeDelay + 5_000 }).toContain("<title>Erga home</title>"); // a version, then a deploy
+  await ed.clickEnd("p.lede");
+  // The caret at the paragraph's end, wherever the click put it.
+  await ed.frame(`(() => { const p = ${F}.querySelector("p.lede"); ${F}.getSelection().collapse(p, p.childNodes.length); return true; })()`);
+  await ed.type(" At home.");
+  await expect.poll(async () => (await get(server, `/d/${id}/doc/index.html`)).text()).toContain("for them. At home.</p>");
+  await expect.poll(async () => (await front(server)).html, { timeout: SHORT.idle + SHORT.homeDelay + 5_000 }).toContain("for them. At home.</p>"); // a version, then a deploy
   expect(docOf((await front(server)).html)).toBe(id);
 });
 

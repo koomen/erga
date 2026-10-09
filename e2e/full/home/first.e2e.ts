@@ -14,7 +14,7 @@ test("on a fresh server the first / is the viewer and starts the first deploy; t
   const now = await front(server);
   expect(now.timing).toMatch(/home;desc="(home|memory|cache)"/);
   expect(now.html).not.toContain('<iframe id="frame"');
-  expect(now.html).toContain("<h1>Erga");
+  expect(now.html).toContain(`<h1 class="logo"`);
   expect(now.headers.get("content-security-policy") ?? "").toContain("frame-ancestors 'self'");
   expect(now.headers.get("cache-control")).toBe("private, no-cache");
   const id = ((await (await get(server, "/tester/landing/api/doc")).json()) as { docName: { id: string } }).docName.id;

@@ -170,6 +170,6 @@ test("isHome: false clears it: the next / makes a fresh homepage from landing/ a
   const { server, id } = await secondHome();
   const cleared = (await (await post(server, `/api/docs/${id}/home`, { isHome: false })).json()) as { isHome: boolean; deploy: { state: string } };
   expect(cleared).toMatchObject({ isHome: false, deploy: { state: "idle" } });
-  await expect.poll(async () => { const f = (await front(server)).html; return !f.includes("Second home") && (f.includes("<h1>Erga") || f.includes('<iframe id="frame"')); }).toBe(true);
-  await expect.poll(async () => { const f = await front(server); return f.direct && f.html.includes("<h1>Erga"); }).toBe(true);
+  await expect.poll(async () => { const f = (await front(server)).html; return !f.includes("Second home") && (f.includes(`<h1 class="logo"`) || f.includes('<iframe id="frame"')); }).toBe(true);
+  await expect.poll(async () => { const f = await front(server); return f.direct && f.html.includes(`<h1 class="logo"`); }).toBe(true);
 });

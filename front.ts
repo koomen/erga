@@ -48,6 +48,7 @@ import type { AuthOps } from "./auth-apps.ts";
 
 import type { PublishRequest, PublishResult, RestoreResult, Version, VersionsState } from "./versions.ts";
 import { pageAddress, resolvePage } from "./tree.ts";
+import { FAVICON_LINK, WORDMARK } from "./logo/logo.ts";
 import { NEW_DOC_SCRIPT, NEW_DOC_STYLE, newDocButton, newDocMenu, templateById, TEMPLATES, type Template } from "./templates.ts";
 
 /** Who's signed in. */
@@ -945,6 +946,7 @@ async function viewDocument(platform: Platform, request: Request, opened: { doc:
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <title>${esc(doc.title)}</title>
+${FAVICON_LINK}
 <meta name="erga-doc" content="${esc(doc.id)}">
 <link rel="preconnect" href="${esc(origin)}">
 ${meta}${backdrop}${opening}${crumbsFont(session)}<style>${BAND_STYLE}</style>
@@ -1866,7 +1868,7 @@ export function crumbs(session: Session | null, trail: Crumb[], here = "span"): 
   const steps = trail.map((c) => c.href
     ? `<a class="crumb" href="${esc(link(c.href, session))}">${esc(c.label)}</a>`
     : `<${here} class="here" aria-current="page"><span>${esc(c.label)}</span></${here}>`).join("");
-  return `<nav class="crumbs" aria-label="Breadcrumbs"><a class="brand" href="${esc(link("/", session))}">Erga</a>${steps}</nav>`;
+  return `<nav class="crumbs" aria-label="Breadcrumbs"><a class="brand" href="${esc(link("/", session))}"><span>${WORDMARK}</span></a>${steps}</nav>`;
 }
 
 /**
@@ -1880,7 +1882,7 @@ export function viewCrumbs(session: Session | null, title: string | null): strin
   if (!session || session.agent) return "";
   const docs = session.test ? "" : `<a class="erga-crumb" href="${esc(link("/docs", session))}">Documents</a>`;
   const here = title == null ? "" : `${docs}<span class="erga-here" aria-current="page"><span>${esc(title)}</span></span>`;
-  return `<nav class="erga-crumbs" aria-label="Breadcrumbs"><a class="erga-brand" href="${esc(link("/", session))}">Erga</a>${here}</nav>`;
+  return `<nav class="erga-crumbs" aria-label="Breadcrumbs"><a class="erga-brand" href="${esc(link("/", session))}"><span>${WORDMARK}</span></a>${here}</nav>`;
 }
 
 /** Every <time datetime> in the reader's own language and zone: "5 minutes ago", "yesterday", the date. */
@@ -1913,6 +1915,7 @@ export const appPage = (title: string, style: string, body: string, footer = tru
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${esc(title)} · Erga</title>
+${FAVICON_LINK}
 <link rel="stylesheet" href="/fonts/inter.css">
 <link rel="stylesheet" href="/style.css">
 <style>${APP_STYLE}${style}</style>
@@ -2268,7 +2271,7 @@ const decodeEntities = (s: string) => s.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi,
 
 /** A small page for when there's nothing to show, or something about signing in goes wrong. */
 export function page(title: string, html: string, status: number): Response {
-  return new Response(`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${title} · Erga</title>
+  return new Response(`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${title} · Erga</title>${FAVICON_LINK}
 <style>body{font:17px/1.6 system-ui,sans-serif;max-width:32rem;margin:20vh auto;padding:0 16px;color:#1b2330;background:#f7f8fa}h1{font-size:1.4rem}a{color:#1f5f8b}
 .site-foot{position:fixed;left:0;right:0;bottom:24px;text-align:center;font-size:13px;color:#8a93a1}
 @media(prefers-color-scheme:dark){body{color:#e4e8ee;background:#12161d}a{color:#7fb6e0}}</style><h1>${title}</h1><p>${html}</p>${siteFooter()}`, { status, headers: { "Content-Type": "text/html; charset=utf-8" } });
