@@ -1,4 +1,4 @@
-// The editor's header and agent pane take the page's background (frame.ts, syncBackdrop; main.ts, applyBackdrop), and
+// The editor's header and the room around the page take the page's background (frame.ts, syncBackdrop; main.ts, applyBackdrop), and
 // follow it whichever way it changes: the agent's edit to a style rule (shown in place, not rendered: morph.ts), its
 // undo, a script change (the page rendered afresh in a new frame), and a change typed in the source view.
 import { expect, servers, test, until } from "../../fixtures";
@@ -6,7 +6,7 @@ import { F, openEditor, type Editor } from "../../editor";
 
 await servers.script();
 
-/** The shell's colour: what the header and the panels are painted from, and whether its controls are drawn for a dark page. */
+/** The shell's colour: what the band and the room beside the page are painted, and whether the header's controls are drawn for a dark page. */
 const shell = (ed: Editor) => ed.eval<string>(`(() => { const r = document.documentElement; return getComputedStyle(r).getPropertyValue("--page-bg").trim() + (r.classList.contains("page-dark") ? " dark" : ""); })()`);
 const page = (ed: Editor) => ed.frame<string>(`getComputedStyle(${F}.body).backgroundColor`);
 

@@ -538,12 +538,13 @@ const HOST_SCRIPT = `(function () {
   }
   // The shell's controls fade once the page is scrolled (FADE): it hears where the page shown is scrolled to, and where the
   // pointer is over it (in this page's coordinates; the shell places them), at most once a frame.
+  // (Exactly too, sx and sy, for the canvas the shell paints around the frame: see canvasOf.)
   var scrolled = null, pointer = null;
   function report(f) {
     try {
       if (!f.classList.contains("on")) return;
-      var y = Math.max(0, Math.round(f.contentWindow.scrollY));
-      if (y !== scrolled) { scrolled = y; parent.postMessage({ type: "erga-scroll", y: y }, SHELL); }
+      var w = f.contentWindow, y = Math.max(0, Math.round(w.scrollY)), at = w.scrollX + "," + w.scrollY;
+      if (at !== scrolled) { scrolled = at; parent.postMessage({ type: "erga-scroll", y: y, sx: w.scrollX, sy: w.scrollY }, SHELL); }
     } catch (e) {}
   }
   function follow(f) {
@@ -572,17 +573,77 @@ const HOST_SCRIPT = `(function () {
   try { known = localStorage.getItem("erga:band"); } catch (e) {}
   function reveal() { document.documentElement.classList.remove("wait"); }
   if (known == null) { document.documentElement.classList.add("wait"); setTimeout(reveal, 500); }
+  // (Its own colour; else, for one that's only a gradient, the gradient's colour at the top.)
   function solid(cs) {
+    var c = cs.backgroundColor;
+    if (!clear(c)) return c;
     var img = cs.backgroundImage, stops = img && img != "none" && /gradient/.test(img) ? img.match(/rgba?\\([^)]*\\)/g) : null;
     if (stops) return /^linear-gradient\\((to top|0deg|360deg)[,)]/.test(img) ? stops[stops.length - 1] : stops[0];
-    var c = cs.backgroundColor;
-    return /^(transparent|rgba\\([^)]*,\\s*0\\))$/.test(c) ? "" : c;
+    return "";
   }
   function colourOf(f) {
     var d = f.contentDocument, w = f.contentWindow;
     if (!d || !w || !d.documentElement || d.URL == "about:blank" || (!d.body && d.readyState == "loading")) return null;
     var c = solid(w.getComputedStyle(d.documentElement));
     if (!c && d.body) c = solid(w.getComputedStyle(d.body));
+    return c;
+  }
+  // The page's canvas, so the shell paints the room around the frame (the band above it, the room beside it that the agent
+  // opens) as the page would if it reached there (BAND_BOOT, paintCanvas): the background the browser gives the canvas (the
+  // root's, or the body's when the root has none), its layers sized and placed against the root's box as the browser does,
+  // in the page's own coordinates (the shell follows its scroll: erga-scroll). Gradients and images only: an image goes as
+  // its file, once fetched here (the shell mustn't fetch the page's addresses as you); one that can't be is left out.
+  // "tile": a layer repeats in tiles smaller than the page (a pattern), which carry on around it; else the page's edges do.
+  var canvasSaid = "", pictures = {};
+  function clear(c) { return /^(transparent|rgba\\([^)]*,\\s*0\\))$/.test(c); }
+  function layers(v) {
+    var out = [], depth = 0, quote = "", from = 0;
+    for (var i = 0; i < v.length; i++) {
+      var ch = v[i];
+      if (quote) { if (ch == "\\\\") i++; else if (ch == quote) quote = ""; }
+      else if (ch == '"' || ch == "'") quote = ch;
+      else if (ch == "(") depth++;
+      else if (ch == ")") depth--;
+      else if (ch == "," && !depth) { out.push(v.slice(from, i).trim()); from = i + 1; }
+    }
+    out.push(v.slice(from).trim());
+    return out;
+  }
+  /** An image's file: undefined while it's being fetched, null if it can't be. */
+  function picture(u) {
+    if (u in pictures) return pictures[u];
+    pictures[u] = undefined;
+    fetch(u).then(function (r) { return r.ok ? r.blob() : null; }).then(function (b) {
+      pictures[u] = b && /^image\\//.test(b.type) && b.size < 4e6 ? b : null;
+    }, function () { pictures[u] = null; });
+    return undefined;
+  }
+  function canvasOf(f) {
+    var d = f.contentDocument, w = f.contentWindow, root = d && d.documentElement;
+    if (!root || !w || d.URL == "about:blank" || (!d.body && d.readyState == "loading")) return null;
+    var cs = w.getComputedStyle(root);
+    if (cs.backgroundImage == "none" && clear(cs.backgroundColor) && d.body) cs = w.getComputedStyle(d.body);
+    var c = { color: clear(cs.backgroundColor) ? "" : cs.backgroundColor, image: "", files: [], urls: [] };
+    if (cs.backgroundImage == "none") return c;
+    var images = layers(cs.backgroundImage), sizes = layers(cs.backgroundSize), repeats = layers(cs.backgroundRepeat), tile = false;
+    for (var i = 0; i < images.length; i++) {
+      var m = /^url\\("((?:[^"\\\\]|\\\\.)*)"\\)$/.exec(images[i]);
+      if (m) {
+        var file = picture(m[1]);
+        if (file === undefined) return null;
+        if (!file) { images[i] = "none"; continue; }
+        images[i] = 'url("erga-file:' + c.files.length + '")';
+        c.files.push(file); c.urls.push(m[1]);
+      } else if (!/^(repeating-)?(linear|radial|conic)-gradient\\(/.test(images[i])) { images[i] = "none"; continue; }
+      var size = sizes[i % sizes.length], whole = /^(cover|contain|100%( 100%| auto)?|auto( 100%| auto)?)$/.test(size) && !(m && /^auto( auto)?$/.test(size));
+      if ((!whole || /^repeating-/.test(images[i])) && repeats[i % repeats.length] != "no-repeat") tile = true;
+    }
+    if (images.every(function (v) { return v == "none"; })) return c;
+    var fr = f.getBoundingClientRect(), r = root.getBoundingClientRect(), fixed = /fixed/.test(cs.backgroundAttachment);
+    c.image = images.join(", "); c.size = cs.backgroundSize; c.position = cs.backgroundPosition; c.repeat = cs.backgroundRepeat;
+    c.tile = tile; c.fixed = fixed;
+    c.x = fixed ? fr.left : fr.left + r.left + w.scrollX; c.y = fixed ? fr.top : fr.top + r.top + w.scrollY;
+    c.w = fixed ? fr.width : r.width; c.h = fixed ? fr.height : r.height;
     return c;
   }
   // A new page in a colour of its own (a link to another of the document's pages) waits out of sight in the same way, so
@@ -594,6 +655,13 @@ const HOST_SCRIPT = `(function () {
       // The fade's too (above), from as soon as the page shown has a document (well before its load event, on a page with
       // large images), and again after it goes to another of the document's pages.
       if (f) follow(f);
+      // (The canvas first: the shell has painted both once it answers the colour, erga-band-ok.)
+      var cv = f && c != null ? canvasOf(f) : null;
+      if (cv) {
+        var key = JSON.stringify(cv);
+        delete cv.urls;
+        if (key != canvasSaid) { canvasSaid = key; parent.postMessage({ type: "erga-canvas", canvas: cv }, SHELL); }
+      }
       if (c != null && c !== band) {
         if (band != null && shown && f.contentDocument != shown) { document.documentElement.classList.add("wait"); setTimeout(reveal, 300); }
         band = c;
@@ -881,7 +949,7 @@ async function viewDocument(platform: Platform, request: Request, opened: { doc:
 <link rel="preconnect" href="${esc(origin)}">
 ${meta}${backdrop}${opening}${crumbsFont(session)}<style>${BAND_STYLE}</style>
 <body>${editable ? `<script>${EDITING_BODY}</script>` : ""}
-${frame}${editable ? `<script>${FRAME_SRC}</script>` : ""}
+<div class="erga-canvas" aria-hidden="true"><div></div></div>${frame}${editable ? `<script>${FRAME_SRC}</script>` : ""}
 ${viewCrumbs(session, landing ? null : doc.title)}<div class="erga-view-buttons">${newDocButton("erga-view-button")}${clone}${edit}</div>${newDocMenu((path) => link(path, session), !!session && !session.test && !session.agent)}${VIEW_STYLE}${NEW_DOC_STYLE}<script>${NEW_DOC_SCRIPT}ergaNewDoc(document);</script><script>${NAV_SCRIPT}</script><script>${BAND_BOOT}</script><script>${FADE_BOOT}</script>${STEPS_STYLE}<script>${STEPS_BOOT}</script>${editable ? `<script>${EDIT_BOOT}</script>` : ""}
 </body>
 </html>`, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "Referrer-Policy": "no-referrer", Link: `<${origin}>; rel=preconnect` } });
@@ -946,8 +1014,9 @@ const NAV_SCRIPT = `(() => {
 /**
  * The band at the top of a document's page (viewDocument), where the
  * controls are: the document's frame starts below it, so they never cover
- * the document, and it takes the document's own background, as a solid
- * colour, so it reads as part of the page. --band-h is the controls' row
+ * the document, and it takes the document's own background, so it reads as
+ * part of the page: its colour, and over that its gradient or image
+ * (.erga-canvas, which has the frame's box; BAND_BOOT paints it). --band-h is the controls' row
  * (34px, at max(12px, the notch)) and a 10px gap; the editor's page.html
  * keeps the frame there too. Until the frame says (BAND_BOOT), the colour
  * is the one this document had last time on this browser, and the
@@ -956,7 +1025,12 @@ const NAV_SCRIPT = `(() => {
 const BAND_STYLE = `:root { --band-h: calc(max(12px, env(safe-area-inset-top)) + 44px); }
 html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: none; }
 html { background: var(--page-bg, var(--band, #fff)); }
-#frame { position: fixed; left: 0; top: var(--band-h); width: 100%; height: calc(100% - var(--band-h)); border: 0; display: block; background: transparent; }`;
+#frame { position: fixed; left: 0; top: var(--band-h); width: 100%; height: calc(100% - var(--band-h)); border: 0; display: block; background: transparent; }
+.erga-canvas { position: fixed; left: 0; top: var(--band-h); width: 100%; height: calc(100% - var(--band-h)); pointer-events: none; }
+.erga-canvas > div { position: absolute; left: 0; top: 0; }
+.erga-canvas :is(i, b) { position: absolute; display: block; }
+.erga-canvas b { overflow: hidden; }
+.erga-canvas i { box-sizing: content-box; background-origin: content-box; }`;
 
 /** Sets the band's colour (ergaBand(id, colour)), or the one remembered for document `id` (ergaBand(id)); and the controls' tone to suit. Answers the tone. */
 const BAND_HEAD = `window.ergaBand = function (id, color) {
@@ -978,8 +1052,74 @@ const BAND_HEAD = `window.ergaBand = function (id, color) {
 const BAND_BOOT = `(() => {
   const frame = document.getElementById("frame"), pages = new URL(frame.src || frame.dataset.src, location.href).origin;
   const id = document.querySelector('meta[name="erga-doc"]').content;
+  // The page's canvas (HOST_SCRIPT, canvasOf), behind the frame, reaching out from it over the band and the room beside
+  // the page, and scrolled with the page. Its layers are placed against the page's root box (the <i>'s content box), as
+  // the browser places the canvas's. A pattern ("tile") carries on in its tiles all round; anything else (a gradient
+  // across the page) carries on as the page's edges: the edge's row or column of pixels (a <b> that shows only that line),
+  // stretched out (scaled) over the band and the room beside. Below, it repeats, as the page itself does there. Until the
+  // frame says, the canvas this document had last time on this browser, if it was gradients only.
+  const room = document.querySelector(".erga-canvas"), sheet = room.firstElementChild, KEY = "erga:canvas:v1:" + id, FAR = 4000;
+  let canvas = null, urls = [], sx = 0, sy = 0;
+  const px = (n) => (Number.isFinite(n) ? n : 0) + "px";
+  function scrolled() { sheet.style.transform = canvas && !canvas.fixed ? \`translate(\${px(-sx)}, \${px(-sy)})\` : ""; }
+  function paintCanvas(c, files) {
+    for (const u of urls) URL.revokeObjectURL(u);
+    urls = [];
+    sheet.replaceChildren();
+    canvas = null;
+    if (!c || typeof c.image != "string" || !c.image) return scrolled();
+    let image = c.image;
+    // Its images: the files sent (erga-file:n), each at an address of this page's own; nothing else.
+    if (/url\\(/i.test(image.replace(/url\\("erga-file:\\d+"\\)/g, "")) || /image-set|image\\(|element\\(|cross-fade/i.test(image)) return scrolled();
+    image = image.replace(/url\\("erga-file:(\\d+)"\\)/g, (_, n) => {
+      const f = files?.[n];
+      if (!(f instanceof Blob) || !/^image\\//.test(f.type)) return "none";
+      const u = URL.createObjectURL(f);
+      urls.push(u);
+      return \`url("\${u}")\`;
+    });
+    const look = { backgroundColor: c.color, backgroundImage: image, backgroundSize: c.size, backgroundPosition: c.position, backgroundRepeat: c.repeat };
+    const ok = { backgroundColor: "color", backgroundImage: "background-image", backgroundSize: "background-size", backgroundPosition: "background-position", backgroundRepeat: "background-repeat" };
+    for (const k in look) if (typeof look[k] != "string" || (look[k] && !CSS.supports(ok[k], look[k]))) look[k] = "";
+    if (!look.backgroundImage) return scrolled();
+    const x = Number(c.x), y = Number(c.y), w = Math.max(1, Number(c.w) || 0), h = Math.max(1, Number(c.h) || 0);
+    const sheetOf = (at, l, t, extra) => {
+      const i = document.createElement("i");
+      Object.assign(i.style, look, { left: px(l), top: px(t), width: px(w), height: px(h) }, extra);
+      at.append(i);
+      return i;
+    };
+    if (c.tile) sheetOf(sheet, x, y, { padding: px(FAR), margin: px(-FAR) });
+    else {
+      sheetOf(sheet, x, y, { paddingBottom: px(FAR) });
+      // Each edge: [left, top, width, height] of the line it shows, where the page is drawn in it, and which way it stretches.
+      for (const [l, t, bw, bh, dx, origin, scale] of [
+        [x, y - 1, w, 1, 0, "50% 100%", \`scaleY(\${FAR})\`],
+        [x - 1, y, 1, h, 0, "100% 50%", \`scaleX(\${FAR})\`],
+        [x + w, y, 1, h, 1 - w, "0 50%", \`scaleX(\${FAR})\`],
+        [x - 1, y - 1, 1, 1, 0, "100% 100%", \`scale(\${FAR})\`],
+        [x + w, y - 1, 1, 1, 1 - w, "0 100%", \`scale(\${FAR})\`],
+      ]) {
+        const b = document.createElement("b");
+        Object.assign(b.style, { left: px(l), top: px(t), width: px(bw), height: px(bh), transformOrigin: origin, transform: scale });
+        sheetOf(b, dx, 0);
+        sheet.append(b);
+      }
+    }
+    canvas = { fixed: !!c.fixed };
+    scrolled();
+  }
+  try { const kept = JSON.parse(localStorage.getItem(KEY) || "null"); if (kept) paintCanvas(kept, []); } catch (e) {}
   addEventListener("message", (e) => {
-    if (e.source != frame.contentWindow || e.origin != pages || e.data?.type != "erga-band") return;
+    if (e.source != frame.contentWindow || e.origin != pages) return;
+    if (e.data?.type == "erga-scroll") { sx = Number(e.data.sx) || 0; sy = Number(e.data.sy) || 0; return scrolled(); }
+    if (e.data?.type == "erga-canvas") {
+      const c = e.data.canvas;
+      paintCanvas(c, c?.files);
+      try { if (c && !c.files?.length) localStorage.setItem(KEY, JSON.stringify({ ...c, files: [] })); else localStorage.removeItem(KEY); } catch (e) {}
+      return;
+    }
+    if (e.data?.type != "erga-band") return;
     const c = e.data.color;
     if (typeof c != "string" || c.length > 200 || /url\\(/i.test(c)) return;
     window.ergaBand(id, c);

@@ -24,14 +24,15 @@ test("on a phone: the top row fits, the settings are a sheet from the bottom, an
   expect(m.left >= 0 && m.right <= vw && m.top >= 0 && m.bottom <= vh).toBe(true);
 });
 
-test("on a page with a dark background, the popover is dark too", async ({ tab }) => {
+test("on a page with a dark background, the popover is the editor's own dark card, with none of the page's colour", async ({ tab }) => {
   const server = await servers.short();
   const doc = await draftDoc(server, "Night notes", 4, "body{background:#14161c;color:#e8e8ee;font:18px/1.6 Georgia,serif;max-width:36rem;margin:15vh auto}");
   tab.strict = true;
   const s = await openDocEditor(tab.page, server, doc.address, { dark: true });
   await expect.poll(() => s.eval<boolean>(`document.documentElement.classList.contains("page-dark")`)).toBe(true);
   await s.open();
-  const bg = await s.eval<string>(`getComputedStyle(document.getElementById("doc-settings")).backgroundColor`);
-  const lum = (bg.match(/[\d.]+/g) ?? []).slice(0, 3).map(Number).reduce((a, c) => a + c, 0) / 3;
-  expect(lum).toBeLessThan(90);
+  const look = await s.eval<string[]>(`(() => { const cs = getComputedStyle(document.getElementById("doc-settings")); return [cs.backgroundColor, cs.color]; })()`);
+  const lum = (c: string) => (c.match(/[\d.]+/g) ?? []).slice(0, 3).map(Number).reduce((a, n) => a + n, 0) / 3;
+  expect(look[0], "its background is the dark card's").toBe("rgba(32, 32, 36, 0.94)");
+  expect(lum(look[1]), `its text (${look[1]})`).toBeGreaterThan(180);
 });

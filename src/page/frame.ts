@@ -265,7 +265,12 @@ function syncBackdrop(always = false) {
   const transparent = (cs: CSSStyleDeclaration) => cs.backgroundImage == "none" && /^(transparent|rgba\([^)]*,\s*0\))$/.test(cs.backgroundColor);
   let cs = win.getComputedStyle(d.documentElement);
   if (transparent(cs) && d.body) cs = win.getComputedStyle(d.body);
-  const backdrop: Backdrop = { color: transparent(cs) ? "" : cs.backgroundColor, image: cs.backgroundImage == "none" ? "" : cs.backgroundImage };
+  // (A page that's only a gradient: the gradient's colour at the top, as the header sits there; the gradient itself is
+  // the host page's to tell, front.ts canvasOf.)
+  const clear = /^(transparent|rgba\([^)]*,\s*0\))$/.test(cs.backgroundColor), img = cs.backgroundImage;
+  const stops = clear && /gradient/.test(img) ? img.match(/rgba?\([^)]*\)/g) : null;
+  const top = stops ? (/^linear-gradient\((to top|0deg|360deg)[,)]/.test(img) ? stops[stops.length - 1] : stops[0]) : "";
+  const backdrop: Backdrop = { color: clear ? top : cs.backgroundColor, image: img == "none" ? "" : img };
   const said = JSON.stringify(backdrop);
   if (!always && said == backdropSaid) return;
   backdropSaid = said;

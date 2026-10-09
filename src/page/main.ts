@@ -124,14 +124,16 @@ type TreeModule = { mountTree: typeof mountTree };
 
   // There is no dark mode: the documents shown here are rendered as their
   // authors made them, and most don't support one. The shell and the Markdown
-  // template are always light (data-theme="light" pins style.css), and the
-  // floating controls take their colours from the page under them.
-  // The shell paints its canvas with the page's background and tints the
-  // floating UI to match (see page.html), so opening the agent never reveals
-  // a strip of a different colour. The page's background is its root's, or
-  // its body's when the root has none, as the browser itself would paint it.
-  // The page reports its background (frame.ts). Only colours and gradients
-  // are taken: an image would be fetched from here, as you.
+  // template are always light (data-theme="light" pins style.css). The
+  // floating cards are the editor's light cards, or its dark ones on a dark
+  // page (page.html): never a colour of the page's. The header's text and
+  // icons turn light on a dark page too.
+  // The shell paints its canvas with the page's background colour (and its
+  // gradient or image over that: front.ts, BAND_BOOT), so opening the agent
+  // never reveals a strip of a different colour. The page's background is its
+  // root's, or its body's when the root has none, as the browser itself would
+  // paint it. The page reports its colour (frame.ts): for one that's only a
+  // gradient, the gradient's colour at the top.
   // The first one is what the agent's opening uncovers on the way into the editor (openAgentOnEntry), so that waits for it.
   // It lands at once, as every later one does: the band above the page (front.ts, BAND_STYLE) shows it too, and must keep
   // up with the page.
@@ -143,16 +145,14 @@ type TreeModule = { mountTree: typeof mountTree };
     const first = !backdropSeen;
     backdropSeen = true;
     const color = b.color && CSS.supports("color", b.color) ? b.color : info.kind == "md" ? "" : "#ffffff";
-    const image = b.image && !/url\(|image-set\(|image\(|element\(/i.test(b.image) && CSS.supports("background-image", b.image) ? b.image : "";
     const root = document.documentElement.style;
     if (color) root.setProperty("--page-bg", color); else root.removeProperty("--page-bg");
-    if (image) root.setProperty("--page-bg-image", image); else root.removeProperty("--page-bg-image");
     const rgb = (color || getComputedStyle(document.documentElement).getPropertyValue("--bg")).match(/[\d.]+/g)?.map(Number);
     const dark = !!rgb && rgb.length >= 3 && (0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2]) / 255 < 0.45;
     document.documentElement.classList.toggle("page-dark", !!color && dark);
     document.documentElement.classList.toggle("page-light", !!color && !dark);
     // Remembered so the next load paints it before the page arrives (see page.html), not white first.
-    store.set("erga:backdrop:v1", JSON.stringify({ bg: color, image, tone: color ? (dark ? "page-dark" : "page-light") : "" }));
+    store.set("erga:backdrop:v1", JSON.stringify({ bg: color, tone: color ? (dark ? "page-dark" : "page-light") : "" }));
     if (first) backdropKnown();
   }
 
