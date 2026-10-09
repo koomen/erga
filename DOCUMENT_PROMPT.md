@@ -112,6 +112,15 @@ rendered page:
     can open beside it, viewing and editing alike. The ← and → keys step too,
     except while someone types in the page's text. See "Presentations" below.
 
+12. **Let a page be its own editor.** When a page holds something people
+    will change by more than typing (add a card, delete a row, move a node of
+    a tree), give it editing controls of its own: in the editor, its script
+    draws buttons, and a click sends edits to its source through
+    `window.ergaEditor.apply`. Erga makes them as one change, one undo step,
+    and refuses any that would break the page. Offer this when you make such
+    a page, or when someone asks to make one editable. See "Editing
+    controls" below.
+
 ## Presentations
 
 A page is a presentation when `window.ergaSteps` is an object with these
@@ -179,6 +188,94 @@ A minimal presentation: each `section` is a step.
 ```
 
 `e2e/fixtures/steps/index.html` is a fuller example.
+
+## Editing controls
+
+In the editor, and only there, a page has `window.ergaEditor` (before its
+first script runs) and its `<html>` element has the attribute
+`data-erga-editing`. Outside the editor neither exists, so the page shows as
+it always does, controls and all left out.
+
+| Member | What it does |
+|---|---|
+| `editing` | `true`. |
+| `apply(edits)` | Makes a list of edits to the page's source, all of them or none. Answers a Promise of `{ ok: true }` or `{ ok: false, error }`, the error saying why. |
+
+Each edit names elements of the page as the script sees them:
+
+| Edit | What it does |
+|---|---|
+| `{ op: "insert", html, after: el }` | Puts new HTML after `el`; or `before: el`, `into: el` (last in it), `prepend: el` (first in it). |
+| `{ op: "remove", el }` | Removes `el`, with everything in it. |
+| `{ op: "move", el, after: other }` | Moves `el`; `before`, `into` and `prepend` too. |
+| `{ op: "replace", el, html }` | Puts new HTML in the place of `el`. |
+| `{ op: "attr", el, name, value }` | Sets an attribute of `el`; `value: null` removes it. |
+
+What Erga makes sure of, so the page can't break itself:
+
+- Every element named is in the source. One the script made isn't, and the
+  edit is refused.
+- New HTML is well-formed (every tag closed), with no `<script>`, no `on…`
+  attribute and no `data-erga` attribute. Erga indents it to match the code
+  around it, so it can be written on one line.
+- All the edits in one call refer to the source as it was before the call,
+  and none may fall inside an element another removes or replaces.
+- Edits come only right after the person clicks or presses a key on the
+  page: a page can't change itself as it loads, or on a timer.
+- When Erga refuses, it says why to the person and offers to ask the agent
+  to fix the page.
+
+How to write the controls:
+
+- Make every control a `<button>`. Erga never puts a caret in a button, and a
+  click on one is the page's. Style it (`cursor: pointer`) so it looks like
+  one. Text in a `div` or `span` is text to edit, not a control.
+- Draw the controls from the page's script, only when `window.ergaEditor`
+  exists, so the source holds only what readers see. Put them in elements of
+  their own (a `div` of buttons in a card, an `li` for an add button at the
+  end of a list), never inside a paragraph or heading (rule 5).
+- After an edit the page may render again, so draw the controls in a
+  function you can run more than once, and run it on a `MutationObserver` as
+  well as at the start. Handle clicks with one listener on `document`.
+- Keep a new item's markup in a `<template>` and insert its `innerHTML`.
+  Erga selects the new text, so people type over its placeholder.
+
+A tree of views that edits itself:
+
+```html
+<ul class="tree">
+  <li><div class="card"><h3>Front page</h3><p class="url">/</p></div></li>
+  <li><div class="card"><h3>Settings</h3><p class="url">/settings</p></div></li>
+</ul>
+<template id="new-card">
+  <li><div class="card"><h3>New view</h3><p class="url">/path</p></div></li>
+</template>
+<script>
+  const editor = window.ergaEditor;
+  if (editor) {
+    const fresh = () => document.getElementById("new-card").innerHTML;
+    const items = (ul) => [...ul.children].filter((li) => !li.classList.contains("add"));
+    function draw() {
+      for (const card of document.querySelectorAll(".card:not(:has(> .ctl))"))
+        card.insertAdjacentHTML("beforeend", `<div class="ctl"><button class="up">↑</button><button class="del">Delete</button></div>`);
+      for (const ul of document.querySelectorAll("ul.tree:not(:has(> li.add))"))
+        ul.insertAdjacentHTML("beforeend", `<li class="add"><button class="new">+ New view</button></li>`);
+    }
+    document.addEventListener("click", (e) => {
+      const b = e.target.closest("button");
+      if (!b) return;
+      const li = b.closest("li"), list = items(li.parentElement), i = list.indexOf(li);
+      if (b.matches(".new")) editor.apply([list.length ? { op: "insert", after: list.at(-1), html: fresh() } : { op: "insert", into: li.parentElement, html: fresh() }]);
+      if (b.matches(".del")) editor.apply([{ op: "remove", el: li }]);
+      if (b.matches(".up") && i > 0) editor.apply([{ op: "move", el: li, before: list[i - 1] }]);
+    });
+    draw();
+    new MutationObserver(draw).observe(document.body, { childList: true, subtree: true });
+  }
+</script>
+```
+
+`e2e/fixtures/self-edit/index.html` is a fuller example.
 
 ## Markdown documents
 

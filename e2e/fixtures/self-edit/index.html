@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Erga information architecture</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@500&family=Instrument+Serif&display=swap">
+<style>
+  /* Information architecture: Erga's views as a tree. Each card is a view: its name, its address, what's on it. */
+  :root {
+    --bg: #fff; --card: #fff; --ink: #111; --muted: #777; --line: #d9d9d9; --chip: #f3f3f3; --accent: #e2480f;
+    --serif: "Instrument Serif", "Iowan Old Style", Georgia, serif;
+    --body: "Geist", "Helvetica Neue", Arial, sans-serif;
+    --mono: "Geist Mono", ui-monospace, Menlo, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) { --bg: #0e0e0e; --card: #161616; --ink: #f2f2f2; --muted: #999; --line: #333; --chip: #222; --accent: #ff7a45; color-scheme: dark; }
+  }
+  :root[data-theme="dark"] { --bg: #0e0e0e; --card: #161616; --ink: #f2f2f2; --muted: #999; --line: #333; --chip: #222; --accent: #ff7a45; color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--body); -webkit-font-smoothing: antialiased; }
+  p, h1, h3 { margin: 0; }
+  main { max-width: 48rem; margin: 0 auto; padding: 96px 16px 120px; display: grid; gap: 56px; }
+  header { display: grid; gap: 14px; }
+  .kicker { font: 500 12px/1 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--accent); }
+  h1 { font: 400 clamp(34px, 5vw, 48px)/1.08 var(--serif); letter-spacing: -.015em; }
+
+  /* The tree: each level indented, joined to its parent by an elbow line. */
+  .root { font: 500 13px/1 var(--mono); color: var(--muted); padding-left: 2px; margin-bottom: 4px; }
+  .branch { list-style: none; margin: 0; padding: 0 0 0 20px; }
+  .branch .branch { padding-left: 44px; }
+  .branch > li { position: relative; padding: 10px 0 10px 32px; }
+  .branch > li::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; border-left: 1.5px solid var(--line); }
+  .branch > li:last-child::before { bottom: auto; height: 39px; }
+  .branch > li::after { content: ""; position: absolute; left: 0; top: 38px; width: 32px; border-top: 1.5px solid var(--line); }
+
+  /* A view. */
+  .view { display: inline-grid; gap: 10px; min-width: min(100%, 360px); max-width: 100%; padding: 16px 18px; background: var(--card); border: 1.5px solid var(--line); border-radius: 14px; }
+  .view.main { border-color: var(--ink); }
+  .view-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; }
+  .view h3 { font: 600 17px/1.3 var(--body); }
+  .url { font: 500 12.5px/1.3 var(--mono); color: var(--accent); }
+  .has { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+  .has li { font-size: 13px; line-height: 1; padding: 6px 10px; border-radius: 999px; background: var(--chip); }
+  /* Editing controls: only in Erga's editor, where the script below draws them. */
+  .ctl { display: flex; gap: 4px; margin-top: 2px; }
+  .ctl button, .add-row button { font: 500 12px/1 var(--body); color: var(--muted); background: var(--chip); border: 0; border-radius: 6px; padding: 5px 8px; cursor: pointer; }
+  .ctl button:hover, .add-row button:hover { color: var(--ink); }
+  .ctl button.del:hover { color: var(--accent); }
+  .add-row button { border: 1.5px dashed var(--line); background: none; padding: 8px 12px; border-radius: 10px; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <p class="kicker">Information architecture</p>
+    <h1>Erga, view by view.</h1>
+  </header>
+
+  <div class="map">
+    <p class="root">erga.dev</p>
+    <ul class="branch">
+      <li>
+        <div class="view main">
+          <div class="view-head"><h3>Front page</h3><p class="url">/</p></div>
+        </div>
+      </li>
+      <li>
+        <div class="view main">
+          <div class="view-head"><h3>Documents</h3><p class="url">/docs</p></div>
+        </div>
+        <ul class="branch">
+          <li>
+            <div class="view">
+              <div class="view-head"><h3>New document</h3><p class="url">/new</p></div>
+            </div>
+          </li>
+          <li>
+            <div class="view main">
+              <div class="view-head"><h3>Document</h3><p class="url">/owner/slug</p></div>
+            </div>
+            <ul class="branch">
+              <li>
+                <div class="view">
+                  <div class="view-head"><h3>Page</h3><p class="url">/owner/slug/page</p></div>
+                </div>
+              </li>
+              <li>
+                <div class="view">
+                  <div class="view-head"><h3>Editor</h3><p class="url">#edit</p></div>
+                </div>
+              </li>
+            </ul>
+          </li>
+        </ul>
+      </li>
+      <li>
+        <div class="view main">
+          <div class="view-head"><h3>Settings</h3><p class="url">/settings</p></div>
+        </div>
+      </li>
+      <li>
+        <div class="view main">
+          <div class="view-head"><h3>Admin</h3><p class="url">/admin</p></div>
+        </div>
+      </li>
+    </ul>
+  </div>
+  <template id="new-view">
+    <li>
+      <div class="view">
+        <div class="view-head"><h3>New view</h3><p class="url">/path</p></div>
+      </div>
+    </li>
+  </template>
+</main>
+<script>
+  // In Erga's editor, the tree edits itself: each view gets buttons, each list a "New view" row.
+  // A button sends its edit to the editor (ergaEditor.apply), which changes the page's source.
+  (() => {
+    const editor = window.ergaEditor;
+    if (!editor) return;
+    const newView = () => document.getElementById("new-view").innerHTML;
+    const button = (name, label, title) => `<button class="${name}" title="${title}">${label}</button>`;
+    const views = (ul) => [...ul.children].filter((li) => li.localName == "li" && !li.classList.contains("add-row"));
+
+    function decorate() {
+      for (const view of document.querySelectorAll(".map .view")) {
+        if (view.querySelector(":scope > .ctl")) continue;
+        const ctl = document.createElement("div");
+        ctl.className = "ctl";
+        ctl.innerHTML = button("up", "↑", "Move up") + button("down", "↓", "Move down") + button("child", "+ Under", "Add a view under this one") + button("del", "Delete", "Delete this view");
+        view.append(ctl);
+      }
+      for (const ul of document.querySelectorAll(".map ul.branch")) {
+        let row = ul.querySelector(":scope > li.add-row");
+        if (!row) {
+          row = document.createElement("li");
+          row.className = "add-row";
+          row.innerHTML = button("add", "+ New view", "Add a view here");
+        }
+        if (row != ul.lastElementChild) ul.append(row);
+      }
+    }
+
+    document.addEventListener("click", (e) => {
+      const b = e.target.closest(".map button");
+      if (!b) return;
+      const li = b.closest("li"), ul = li.parentElement, siblings = views(ul), i = siblings.indexOf(li);
+      let edits = null;
+      if (b.classList.contains("add")) edits = siblings.length ? [{ op: "insert", after: siblings.at(-1), html: newView() }] : [{ op: "insert", into: ul, html: newView() }];
+      else if (b.classList.contains("del")) edits = [{ op: "remove", el: li }];
+      else if (b.classList.contains("up") && i > 0) edits = [{ op: "move", el: li, before: siblings[i - 1] }];
+      else if (b.classList.contains("down") && i < siblings.length - 1) edits = [{ op: "move", el: li, after: siblings[i + 1] }];
+      else if (b.classList.contains("child")) {
+        const sub = li.querySelector(":scope > ul.branch");
+        edits = sub ? [{ op: "insert", after: views(sub).at(-1), html: newView() }] : [{ op: "insert", into: li, html: `<ul class="branch">${newView()}</ul>` }];
+      }
+      if (edits) editor.apply(edits).then((r) => { if (!r.ok) console.warn(r.error); });
+    });
+
+    decorate();
+    new MutationObserver(decorate).observe(document.querySelector(".map"), { childList: true, subtree: true });
+  })();
+</script>
+</body>
+</html>
+

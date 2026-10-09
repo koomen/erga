@@ -25,6 +25,7 @@ import * as M from "./manuscript";
 import { analyzeMarkdown, escapeMarkdownText, parseMarkdown, type Node as MdNode } from "./markdown";
 import { changesBetween } from "./merge";
 import { applyMorph, planMorph } from "./morph";
+import { planPageEdits, type PageOp } from "./page-edits";
 
 export type Kind = "html" | "md";
 
@@ -55,6 +56,17 @@ export interface PageProblem {
  * listen), and hands them to the editor once it's there (`__ergaReport`).
  */
 const PROBLEM_WATCH = `<script data-erga>(function(){var q=window.__ergaProblems=[];function r(p){window.__ergaReport?window.__ergaReport(p):q.push(p)}addEventListener("error",function(e){var t=e.target;if(t&&t!==window&&t.tagName){var u=t.getAttribute("src")||t.getAttribute("href");if(u)r({kind:"resource",tag:t.tagName.toLowerCase(),url:u})}else r({kind:"script",message:String(e.message||"Script error"),file:e.filename||"",line:e.lineno||0})},true);addEventListener("unhandledrejection",function(e){r({kind:"script",message:"Unhandled promise rejection: "+String(e.reason&&e.reason.message||e.reason),file:"",line:0})})})()</script>`;
+
+/**
+ * Put in an HTML page's <head> after PROBLEM_WATCH: tells the page it's in the
+ * editor (DOCUMENT_PROMPT.md, "Editing controls") and gives it
+ * `ergaEditor.apply(ops)`, which hands the page's edits to the editor once
+ * it's there (`__ergaApply`).
+ */
+const EDIT_API = `<script data-erga>(function(){var q=[];window.__ergaApplyQueue=q;window.ergaEditor=Object.freeze({editing:true,apply:function(ops){return new Promise(function(done){window.__ergaApply?done(window.__ergaApply(ops)):q.push([ops,done])})}});document.documentElement.setAttribute("data-erga-editing","")})()</script>`;
+
+/** How long after the person's click or key the page's controls may edit it: as long as a browser's user activation lasts. */
+const GESTURE_MS = 5000;
 
 /** A key or input that came while the editor couldn't take it (see hold, render), to apply once it can. */
 type HeldInput = { key: string; shift: boolean; alt: boolean; ctrl: boolean; meta: boolean } | { input: string; data: string | null };
@@ -495,7 +507,7 @@ export class PageEditor {
 
   private injectHead(html: string): string {
     // <base> first, before any script: Chrome's preload scanner otherwise fetches the page's files against the frame's own address too (404s).
-    const inject = `<base href="${this.config.base}">${PROBLEM_WATCH}<style data-erga>${PAGE_STYLE}</style>`;
+    const inject = `<base href="${this.config.base}">${PROBLEM_WATCH}${EDIT_API}<style data-erga>${PAGE_STYLE}</style>`;
     const m = /<head(\s[^>]*)?>/i.exec(html);
     if (m) return html.slice(0, m.index + m[0].length) + inject + html.slice(m.index + m[0].length);
     const h = /<html(\s[^>]*)?>/i.exec(html);
@@ -552,6 +564,7 @@ export class PageEditor {
       if (old) { this.frame = target; this.next = null; }
       this.doc = this.frame.contentDocument!;
       this.watchProblems();
+      this.takePageEdits();
       this.collectEls();
       this.bind();
       // A new page starts live: tell it it's paused again, if it still can be.
@@ -693,6 +706,96 @@ export class PageEditor {
     win.__ergaReport = report;
     this.reportRaw = report;
     for (const raw of win.__ergaProblems ?? []) report(raw);
+  }
+
+  // ------------------------------------------------------------ page edits
+
+  /** When the person last clicked or pressed a key on the page (performance.now()). */
+  private lastGesture = -Infinity;
+
+  /** Takes the page's own edits (`ergaEditor.apply`, see EDIT_API): those it made before the editor was there, then each as it comes. */
+  private takePageEdits(): void {
+    type EditWindow = Window & { __ergaApply?: (ops: unknown) => { ok: boolean; error?: string }; __ergaApplyQueue?: [unknown, (r: unknown) => void][] };
+    const win = this.frame.contentWindow as EditWindow | null;
+    if (!win) return;
+    win.__ergaApply = (ops) => this.applyPageEdits(win, ops);
+    for (const [ops, done] of win.__ergaApplyQueue?.splice(0) ?? []) done(win.__ergaApply(ops));
+  }
+
+  /**
+   * A list of edits from the page's own controls, made to the source as one
+   * change (one undo step), or refused whole. Only right after the person
+   * clicks or types on the page: a page can't rewrite itself on its own (on
+   * load, on a timer), which with several people editing would never stop.
+   */
+  private applyPageEdits(win: Window, ops: unknown): { ok: boolean; error?: string } {
+    const refuse = (error: string) => {
+      this.config.onNotice?.(`The page's controls asked for an edit that can't be made: ${error}.`, `The page's editing controls (ergaEditor.apply) asked for an edit the editor refused: “${error}”. Fix the page's script or markup so its controls work.`);
+      return { ok: false, error };
+    };
+    if (performance.now() - this.lastGesture > ms(GESTURE_MS)) return refuse("ergaEditor.apply works only when the person has just clicked or pressed a key on the page");
+    if (win != this.frame.contentWindow || this.rendering) return refuse("the page is being rendered again; try once more");
+    if (this.kind != "html") return refuse("only HTML pages can edit themselves");
+    if (!Array.isArray(ops)) return refuse("apply takes a list of edits");
+    // A fresh analysis: its units match the page's data-erga-id numbers, and their elements are in one parse of the source as it is.
+    const src = this.state.doc.toString(), fresh = M.analyzeHtml(src, this.decoder);
+    let root = fresh.units[0]?.node ?? M.parseHtml(src);
+    while (root.parent) root = root.parent;
+    const isEl = (x: unknown): x is Element => !!x && (x as Node).nodeType == 1;
+    const resolved = ops.map((op) => {
+      if (!op || typeof op != "object") return op;
+      const out: Record<string, unknown> = { ...op };
+      for (const k of ["el", "before", "after", "into", "prepend"]) if (k in out) out[k] = isEl(out[k]) ? this.sourceOf(out[k] as Element, fresh.units) : null;
+      return out;
+    }) as PageOp<M.ElementNode | null>[];
+    const plan = planPageEdits(src, root, resolved);
+    if ("error" in plan) return refuse(plan.error);
+    if (!plan.changes.length) return { ok: true };
+    const set = this.state.changes(plan.changes);
+    const inserted = plan.changes.find((c) => c.insert.trim());
+    const at = set.mapPos((inserted ?? plan.changes[0]).from, -1);
+    this.dispatch({ changes: set, userEvent: "input.page" });
+    // The caret goes where the change is, so typing and undo go on from there: new text selected, to type over it.
+    const u = this.units.find((x) => x.to > at && x.runs.some((r) => r.editable)) ?? this.units.at(-1);
+    if (u) this.dispatch({ selection: inserted ? { anchor: M.textStart(u), head: M.textEnd(u) } : { anchor: M.textEnd(u) } });
+    // The page's controls are usually in what changed, so the page no longer matches what it was rendered from and the
+    // change can't be morphed in: the page then renders afresh (in place, at the same text), its script drawing them again.
+    if (this.stale || !this.domHtml) this.render();
+    this.focus();
+    return { ok: true };
+  }
+
+  /**
+   * The source element (in the parse `units` come from) a rendered
+   * element comes from: up from a text block inside it, level by level, or
+   * else by its place among its parent's elements, past those the page's
+   * script added. Null if it isn't from the source.
+   */
+  private sourceOf(el: Element, units: M.Unit[]): M.ElementNode | null {
+    const host = el.matches("[data-erga-id]") ? el : el.querySelector("[data-erga-id]");
+    const unit = host && units[Number(host.getAttribute("data-erga-id"))];
+    if (host && unit?.node && unit.tag == host.localName) {
+      let d: Element | null = host, n: M.ElementNode | null = unit.node;
+      while (d && n && d != el) {
+        if (d.localName != n.tag) return null;
+        d = d.parentElement;
+        n = n.parent;
+      }
+      return d == el && n && n.tag == el.localName ? n : null;
+    }
+    const parentEl = el.parentElement;
+    const parent = parentEl && this.sourceOf(parentEl, units);
+    if (!parent) return null;
+    const kids = parent.children.filter((c): c is M.ElementNode => c.kind == "element");
+    let j = 0;
+    for (const d of parentEl.children) {
+      if (d.localName.startsWith("erga-")) continue;
+      if (j < kids.length && kids[j].tag == d.localName) {
+        if (d == el) return kids[j];
+        j++;
+      } else if (d == el) return null;
+    }
+    return null;
   }
 
   // ------------------------------------------------------------ pausing
@@ -881,6 +984,8 @@ export class PageEditor {
 
   /** The DOM selection as a model selection, if it lies in manuscript (or, across units, starts and ends near it). */
   readSelection(): EditorSelection | null {
+    // While a render is in flight the page on screen is the old one, its units no longer this.units: its selection says nothing.
+    if (this.rendering) return null;
     const sel = this.doc?.getSelection();
     if (!sel || !sel.anchorNode || !sel.focusNode) return null;
     let anchor = this.posFromDOM(sel.anchorNode, sel.anchorOffset);
@@ -1017,6 +1122,9 @@ export class PageEditor {
     on("dragstart", (e) => { if (this.ours(e)) e.preventDefault(); });
     on("drop", (e) => { if (this.ours(e)) e.preventDefault(); });
     on("mousedown", (e) => this.mousedown(e));
+    // What lets the page's own controls edit it (applyPageEdits): the person's own clicks and keys, not a script's.
+    on("pointerdown", (e) => { if (e.isTrusted) this.lastGesture = performance.now(); }, { capture: true });
+    on("keydown", (e) => { if (e.isTrusted) this.lastGesture = performance.now(); }, { capture: true });
     on("mousemove", (e) => { this.drag(e); this.config.onPointer?.(e); });
     on("mouseup", () => { if (this.dragFrom) { this.dragFrom = null; this.settleSpan(); } });
   }
