@@ -113,4 +113,5 @@ test("the agent edits above the view as it works: each edit shows at once and th
   still(await reading(), true);
   expect(await ed.eval<boolean>(`document.getElementById("refresh-pill").hidden`)).toBe(true);
   expect(await ed.frame<number>(`document.querySelectorAll("#page").length`), "one page frame").toBe(1);
+  expect(await ed.frame<boolean>(`!!${F}.querySelector("style[data-erga-caret]")`), "the new page draws your caret too (caret.ts)").toBe(true);
 });
