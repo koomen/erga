@@ -25,6 +25,14 @@
 //                                   GitHub app: until staging has one, no admin can sign in there (worker/auth-settings.ts)
 //   /api/snapshot/...               the deploy copying production's documents in, with SNAPSHOT_TOKEN (deploy/snapshot.ts)
 //   /__erga/...                     local development only, behind the dev server's secret (worker/index.ts, linked)
+//   the API, MCP and documents' own routes with an admin's token of another scope (document, documents)
+//                                   an admin shares a document with an outside agent (the editor's Share card) and it
+//                                   must work here as on production: /llms.txt, /api, /api/ext/..., /mcp, /api/publish,
+//                                   /api/docs/<id>/(versions|publish|tree), and /<owner or d>/<doc>/(api|doc)/..., and
+//                                   nothing else (worker/token-paths.ts). The token's person must be an admin at each request, as
+//                                   for the pages origin; a test person's token never passes. Past this guard the token's
+//                                   own scope decides, as on production (tokens.ts, server-api.ts, front.ts): no admin
+//                                   power, so no /admin, settings, users, deploys, credentials, Source page or Git
 //
 // Everything else needs an admin: documents and their sockets, /docs, the front page and the homepage, /new, /deploy,
 // /settings and /tokens, the APIs and MCP, the Git endpoint (anonymous reads too), and the documents' pages origin
@@ -39,6 +47,7 @@ import { isSignInPath } from "./auth-settings";
 import { peer } from "./deploys";
 import type { Env } from "./env";
 import { pagesSite, platform } from "./platform";
+import { tokenPath } from "./token-paths";
 
 /** Whether this server is for Erga's admins only: its deploy target says so (staging). */
 export const adminsOnly = (env: Pick<Env, "DEPLOY_TARGET">): boolean => isAdminsOnly(env.DEPLOY_TARGET);
@@ -92,10 +101,13 @@ export async function adminsOnlyGate(request: Request, env: Env, url: URL): Prom
   const secret = git ? gitSecret(request.headers.get("authorization") ?? "") : null;
   const session = git && !secret ? null : await withTokens(base, url).sessionOf(git ? new Request(url, { headers: { authorization: `Bearer ${secret}` } }) : request);
   if (session && (await users.actsAsAdmin(whoOf(session)))) return null;
+  // An admin's token of another scope: the API, MCP and documents' routes only (the exemption above), then its own scope.
+  const adminsToken = !!session?.agent && !session.test && (await users.isAdmin(whoOf(session)));
+  if (adminsToken && !git && tokenPath(url.pathname)) return null;
 
   const signedIn = !!session && !session.agent;
   const why = !session ? "Staging is for Erga's admins only: sign in as an admin, or send an admin-scope token (Authorization: Bearer erga_…)."
-    : session.agent && (await users.isAdmin(whoOf(session))) ? "Staging is for Erga's admins only, with admin power: this token has no admin scope. Make one with the admin scope at /tokens."
+    : adminsToken ? "Staging is for Erga's admins only, with admin power: this token has no admin scope, so it reaches only the API, MCP and documents here. Make one with the admin scope at /tokens."
     : "Staging is for Erga's admins only.";
   if (git) {
     return new Response(`${why}\n`, { status: session ? 403 : 401, headers: { "Content-Type": "text/plain; charset=utf-8", ...(session ? {} : { "WWW-Authenticate": 'Basic realm="Erga", charset="UTF-8"' }) } });

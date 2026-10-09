@@ -35,3 +35,11 @@ test("no GitHub OAuth app (GITHUB_CLIENT_ID empty): sign-in says so, rather than
   expect(set.status).toBe(302);
   expect(set.headers.get("location")).toStartWith("https://github.com/login/oauth/authorize?client_id=Ov23abc&");
 });
+
+test("an admin's token without the admin scope reaches only the API, MCP and documents' routes on staging (tokenPath)", async () => {
+  const { tokenPath } = await import("../worker/token-paths");
+  for (const p of ["/llms.txt", "/api", "/api/ext", "/api/ext/tools/read", "/mcp", "/api/publish", "/api/docs/abcd2345/versions", "/api/docs/abcd2345/versions/v1/restore", "/api/docs/abcd2345/tree",
+    "/ada/notes/api/ext", "/ada/notes/doc/index.html", "/d/abcd2345/doc/a.css", "/d/abcd2345/api/name"]) expect(`${p}: ${tokenPath(p)}`).toBe(`${p}: true`);
+  for (const p of ["/admin", "/admin/source/api/x", "/api/admin/agent", "/api/admin/guide", "/api/source/api/x", "/api/deploys", "/api/events", "/api/docs/abcd2345/home", "/settings", "/tokens/new",
+    "/docs", "/new", "/deploy/x/api", "/git/erga.git/info/refs", "/git/x/api", "/source/x/doc", "/tokens/x/api", "/ada/notes", "/d/notanid/doc/x", "/"]) expect(`${p}: ${tokenPath(p)}`).toBe(`${p}: false`);
+});
