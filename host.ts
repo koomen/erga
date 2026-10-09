@@ -39,7 +39,12 @@ export interface HostOptions {
     /** Where the folder is, as the caller describes it (a directory, a URL). */
     readonly dir: string;
   };
-  readonly agent: AgentConfig | { readonly missing: string };
+  /**
+   * The agent's settings, or a function that reads them now: asked at each
+   * turn and each time a panel opens, so a key an admin stores, replaces or
+   * clears reaches every open document's agent (worker/doc-host.ts).
+   */
+  readonly agent: AgentSettings | (() => Promise<AgentSettings>);
   /** Who a request is from. */
   readonly personOf: (request: HttpServerRequest.HttpServerRequest) => { id: string; name: string };
   /**
@@ -119,8 +124,14 @@ const fromStorage = Layer.mergeAll(
   Path.layer,
 );
 
+type AgentSettings = AgentConfig | { readonly missing: string };
+
 export function makeHost(opts: HostOptions) {
   const { room, files, doc, agent } = opts;
+  /** The agent's settings now, or why it's off. */
+  const settings = (): Promise<AgentSettings> => typeof agent == "function"
+    ? agent().catch((e: unknown) => ({ missing: `the agent's settings couldn't be read (${e instanceof Error ? e.message : String(e)}); try again in a moment` }))
+    : Promise.resolve(agent);
   const tabs = new Set<Tab>();
   const sendTo = (user: string, msg: unknown) => { for (const t of tabs) if (t.user == user) t.send(msg); };
   /** Every open tab, whoever's. */
@@ -185,7 +196,6 @@ export function makeHost(opts: HostOptions) {
     return { path: file, tabs: n, message: `Opened ${file} (${at}) in ${user.name}'s editor${n > 1 ? `, in all ${n} of their tabs` : ""}.` };
   };
 
-  const agentOff = "missing" in agent ? agent.missing : "";
   const sessions = new Map<string, Promise<AgentSession>>();
   /**
    * A person's agent session, started the first time they open the panel. With
@@ -194,8 +204,8 @@ export function makeHost(opts: HostOptions) {
   const sessionFor = (user: { id: string; name: string }) => {
     let s = sessions.get(user.id);
     if (!s) {
-      s = startSession({
-        cfg: "missing" in agent ? null : agent, room, owner: user, docName: doc.name, kind: doc.kind, only: opts.only,
+      s = settings().then((cfg) => startSession({
+        cfg: "missing" in cfg ? null : cfg, room, owner: user, docName: doc.name, kind: doc.kind, only: opts.only,
         canEdit: () => opts.canEdit?.(user) ?? true,
         view: view(user.id),
         naming: namingAs(user),
@@ -206,7 +216,7 @@ export function makeHost(opts: HostOptions) {
         tree: async (op) => { await tree(op); },
         pages: pagesFor(user),
         open: openFor(user),
-      });
+      }));
       s.then((session) => session.subscribe((ev) => sendTo(user.id, { type: "agent", ev })), () => sessions.delete(user.id));
       sessions.set(user.id, s);
     }
@@ -214,10 +224,19 @@ export function makeHost(opts: HostOptions) {
   };
   /** The person's agent session, or why it didn't start. */
   const session = (user: { id: string; name: string }) => Effect.tryPromise(() => sessionFor(user));
-  /** For the panel's endpoints: their session, unless the embedded agent is off. */
-  const agentSession = Person.use((user) => agentOff
-    ? Effect.fail(new AgentOff({ ok: false, reason: agentOff }))
-    : Effect.mapError(session(user), () => new AgentOff({ ok: false, reason: "the agent did not start" })));
+  /** Gives the session the settings there are now; answers why the embedded agent is off ("" if it's on). */
+  const configured = (s: AgentSession) => Effect.promise(async () => {
+    const cfg = await settings();
+    await s.configure("missing" in cfg ? null : cfg);
+    return "missing" in cfg ? cfg.missing : "";
+  });
+  /** For the panel's endpoints: their session, with the settings there are now, unless the embedded agent is off. */
+  const agentSession = Person.use((user) => Effect.gen(function* () {
+    const s = yield* Effect.mapError(session(user), () => new AgentOff({ ok: false, reason: "the agent did not start" }));
+    const off = yield* configured(s);
+    if (off) return yield* new AgentOff({ ok: false, reason: off });
+    return s;
+  }));
   /** For an external agent: the session's tools work even with the embedded agent off. */
   const extSession = Person.use((user) => Effect.mapError(session(user), () => new SessionFailed({ ok: false, error: "The agent's session didn't start." })));
 
@@ -261,7 +280,7 @@ export function makeHost(opts: HostOptions) {
 
   const agentApi = HttpApiBuilder.group(Api, "agent", (h) => h
     .handle("state", () => Person.use((user) => session(user).pipe(
-      Effect.map((s): AgentState => agentOff ? { enabled: false, reason: agentOff, log: s.log() } : { enabled: true, ...modelState(s), log: s.log() }),
+      Effect.flatMap((s) => Effect.map(configured(s), (off): AgentState => off ? { enabled: false, reason: off, log: s.log() } : { enabled: true, ...modelState(s), log: s.log() })),
       Effect.catch((e) => Effect.succeed<AgentState>({ enabled: false, reason: `the agent did not start: ${e.cause instanceof Error ? e.cause.message : String(e.cause)}` })),
     )))
     .handle("prompt", ({ payload }) => Effect.gen(function* () {
@@ -418,7 +437,6 @@ export function makeHost(opts: HostOptions) {
     renamed,
     /** A message for every open tab, whoever's (the homepage's deploy status, { type: "home" }: worker/home.ts). */
     notify: (msg: unknown) => { for (const t of tabs) t.send(msg); },
-    agentOff,
   };
 }
 

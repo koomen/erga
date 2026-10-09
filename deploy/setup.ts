@@ -63,7 +63,7 @@ const PLAN = [
   `Staging's GitHub OAuth app: its Client ID in deploy/targets.json (homepage https://${STAGING.host}, callback https://${STAGING.host}/auth/github/callback).`,
   `A certificate for *.${STAGING.pages.domain} (documents' pages on staging): ${UNIVERSAL ? `the zone's free Universal SSL certificate covers it (it covers *.${STAGING.pages.zone}).` : `Universal SSL covers only *.${STAGING.pages.zone}. An advanced certificate is paid: ordered only with --certificate.`}`,
   `The builder Worker (${BUILDER}, deploy/builder/): deployed with \`bunx ${WRANGLER} deploy\` there (Docker builds its image) if it isn't there, or with --builder.`,
-  `Staging's secrets: a SESSION_SECRET (kept if it has one), its GitHub app's client secret, an Anthropic key if you want the agent, and two shared with production: SNAPSHOT_TOKEN and DEPLOY_HOOK_SECRET.`,
+  `Staging's secrets: a SESSION_SECRET and a FACTORY_KEY, which encrypts the API keys admins store (each kept if it has one), its GitHub app's client secret, an Anthropic key if you want the agent, and two shared with production: SNAPSHOT_TOKEN and DEPLOY_HOOK_SECRET.`,
   `Production's Worker (${PROD.worker}): set SNAPSHOT_TOKEN and DEPLOY_HOOK_SECRET on it (a new version of the same code; nothing else changes), so staging can read its documents and production can pass staging's pushes on.`,
   `The staging deploy, from this machine: build HEAD, make ${STAGING.worker} and its database ${STAGING.database} with a copy of production's data, ${STAGING.host}, *.${STAGING.pages.domain}.`,
   `Staging's deploy token (${tokenPlan("staging").name}): Editor on ${tokenPlan("staging").workers.join(", ")} only, D1, read on its zones. Made, checked with itself, stored on ${STAGING.worker} as CLOUDFLARE_DEPLOY_TOKEN.`,
@@ -207,12 +207,14 @@ try {
     const had = scripts.includes(STAGING.worker)
       ? ((await cf.call<{ name: string }[]>("GET", `${acc}/workers/scripts/${STAGING.worker}/secrets`, `list ${STAGING.worker}'s secrets`).catch(() => [])) ?? []).map((s) => s.name)
       : [];
-    const secrets: Record<string, string> = { ...(had.includes("SESSION_SECRET") ? {} : { SESSION_SECRET: secret() }), ...shared };
+    // FACTORY_KEY: staging's own (not production's), so the API keys it stores (credentials.ts) are its own; without one, /admin/api-keys can't store any.
+    const secrets: Record<string, string> = { ...(had.includes("SESSION_SECRET") ? {} : { SESSION_SECRET: secret() }), ...(had.includes("FACTORY_KEY") ? {} : { FACTORY_KEY: randomBytes(32).toString("base64") }), ...shared };
     const github = read("GITHUB_CLIENT_SECRET", "mock-staging-github-client-secret");
     if (github) secrets.GITHUB_CLIENT_SECRET = github;
     const anthropic = read("ANTHROPIC_API_KEY");
     if (anthropic) secrets.ANTHROPIC_API_KEY = anthropic;
-    console.log(`   Ready: ${Object.keys(secrets).join(", ")}${had.includes("SESSION_SECRET") ? " (SESSION_SECRET kept as it is)" : ""} (new ones made here; none are printed).`);
+    const keptAsIs = ["SESSION_SECRET", "FACTORY_KEY"].filter((n) => had.includes(n));
+    console.log(`   Ready: ${Object.keys(secrets).join(", ")}${keptAsIs.length ? ` (${keptAsIs.join(" and ")} kept as ${keptAsIs.length > 1 ? "they are" : "it is"})` : ""} (new ones made here; none are printed).`);
 
     step(7);
     if (ask(`   Set SNAPSHOT_TOKEN and DEPLOY_HOOK_SECRET on ${PROD.worker} (production)?`, yes)) {

@@ -263,6 +263,8 @@ export interface AdminAgent {
   readonly model: string | null;
   readonly modelChoice: ModelChoice | null;
   setModel(choice: ModelChoice): boolean;
+  /** The settings now (a key an admin stored, replaced or cleared since it started): the next model call uses them. */
+  configure(cfg: AgentConfig): void;
   log(): Log;
   /** The model's messages so far (what worker/admin-agent.ts stores, admin-agent/chat-store.ts). */
   messages(): AgentMessage[];
@@ -294,7 +296,8 @@ function about(name: string, args: unknown): string | null {
 
 /** One admin's agent session; `restore`: the conversation stored before (admin-agent/chat-store.ts), to go on with. */
 export function startAdminAgent(opts: { cfg: AgentConfig; owner: string; tools: AgentTool[]; restore?: { log: Log; messages: AgentMessage[] } }): AdminAgent {
-  const { cfg, owner, tools, restore } = opts;
+  const { owner, tools, restore } = opts;
+  let cfg = opts.cfg;
   let choice: ModelChoice | null = cfg.model == "script" ? null : cfg.model;
   const model = choice == null ? scriptModel() : describeModel(choice);
   const log = restore?.log ?? emptyLog();
@@ -311,7 +314,7 @@ export function startAdminAgent(opts: { cfg: AgentConfig; owner: string; tools: 
   const agent = new PiAgent({
     initialState: { systemPrompt: systemPrompt(owner), model, thinkingLevel: "medium", tools, messages: restore?.messages ?? [] },
     getApiKey: () => Redacted.value(cfg.apiKey) || "none",
-    onPayload: isScript(cfg) ? undefined : patchPayload(cfg, () => choice ?? DEFAULT_MODEL),
+    onPayload: isScript(cfg) ? undefined : patchPayload(() => cfg, () => choice ?? DEFAULT_MODEL),
   });
   agent.subscribe((e: AgentEvent) => {
     switch (e.type) {
@@ -343,6 +346,7 @@ export function startAdminAgent(opts: { cfg: AgentConfig; owner: string; tools: 
       agent.state.model = describeModel(next);
       return true;
     },
+    configure(next) { cfg = next; },
     log: () => log,
     messages: () => agent.state.messages,
     prompt(text, context, files = []) {

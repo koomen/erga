@@ -121,8 +121,9 @@ export function describeModel(choice: ModelChoice): Model<"anthropic-messages"> 
  * request: adaptive thinking with summaries (so the panel can show them),
  * explicit effort, and fast mode when the current model has it.
  */
-export function patchPayload(cfg: AgentConfig, current: () => ModelChoice) {
+export function patchPayload(settings: () => AgentConfig, current: () => ModelChoice) {
   return (payload: unknown) => {
+    const cfg = settings();
     const p = payload as Record<string, unknown>;
     return {
       ...p,
@@ -781,6 +782,11 @@ export interface AgentSession {
   readonly modelChoice: ModelChoice | null;
   /** Switches model from the next turn on (a running turn finishes on the old one). */
   setModel(choice: ModelChoice): boolean;
+  /**
+   * The agent's settings now (null: off): a key an admin stored, replaced or
+   * cleared since the session started. The next model call uses them.
+   */
+  configure(cfg: AgentConfig | null): Promise<void>;
   /** The transcript so far (for a tab that just loaded). */
   log(): Log;
   /** Sends a message, with any files attached (src/page/attach.ts); while a turn is running it steers the current one. */
@@ -803,7 +809,7 @@ export interface AgentSession {
 }
 
 export interface SessionOptions {
-  /** Null when the embedded agent is off: no model, but the tools still work for an external agent. */
+  /** Null when the embedded agent is off: no model, but the tools still work for an external agent. `configure` changes it later. */
   cfg: AgentConfig | null;
   room: Room;
   /** The person this session works for. */
@@ -840,7 +846,9 @@ export interface SessionOptions {
 const TOOL_ACTIVITY: Record<string, string> = { ...SERVER_TOOL_ACTIVITY, new_page: "making a page", list_pages: "looking at the pages", open_page: "opening a page", mkdir: "making a folder", mv: "moving", rm: "deleting", read: "reading", edit: "editing", write: "writing", ls: "looking around", find: "looking for files", grep: "searching", view_page: "looking at the page", evaluate_page: "inspecting the page", get_title: "reading the title", set_title: "renaming the document", list_versions: "looking at versions", read_version: "reading an old version", diff_versions: "comparing versions", restore_version: "restoring a version", publish_version: "publishing" };
 
 export async function startSession(opts: SessionOptions): Promise<AgentSession> {
-  const { cfg, owner } = opts;
+  const { owner } = opts;
+  /** The settings now: configure changes them (a key an admin stores reaches the next model call). */
+  let cfg = opts.cfg;
   // Its work is its person's, via it (attribution.ts): "Ada, via their agent".
   const me: Author = { user: owner.id, name: byLine(owner.name, VIA.agent), color: colorFor(owner.id, true), kind: "agent", via: VIA.agent };
   /** Who the session's edits are by now: the embedded agent, or, while an outside agent's calls run, that agent (runTool). */
@@ -860,7 +868,6 @@ export async function startSession(opts: SessionOptions): Promise<AgentSession> 
   const undo = new Y.UndoManager(files(doc), { trackedOrigins: new Set([origin]), captureTimeout: 0 });
   const ws = new YjsWorkspace(doc, () => acting, opts.canEdit, origin, opts.only ?? null);
   let choice: ModelChoice | null = cfg == null || cfg.model == "script" ? null : cfg.model;
-  const model = cfg == null ? null : choice == null ? scriptModel() : describeModel(choice);
 
   const log = emptyLog();
   const listeners = new Set<(ev: LogEvent) => void>();
@@ -926,16 +933,23 @@ export async function startSession(opts: SessionOptions): Promise<AgentSession> 
 
   // The tools beyond the document, as the owner may use them now (none if they can't be had).
   const beyond = async () => (await opts.serverTools?.().catch((e: unknown) => { console.log(`server tools for ${owner.id}: ${e}`); return null; })) ?? [];
-  const serverTools = cfg ? await beyond() : [];
   let starting = false;
   const prompted = (more: AgentTool[]) => systemPrompt(opts.docName, opts.kind, owner.name, opts.only != null, more.map((t) => t.name));
-  const agent = cfg && model ? new PiAgent({
-    initialState: { systemPrompt: prompted(serverTools), model, thinkingLevel: "medium", tools: [...tools, ...serverTools] },
-    getApiKey: () => Redacted.value(cfg.apiKey) || "none",
-    onPayload: isScript(cfg) ? undefined : patchPayload(cfg, () => choice ?? DEFAULT_MODEL),
-  }) : null;
+  /** The model's side, made once there are settings (at the start, or when a key arrives later). It reads the key at each call. */
+  let agent: PiAgent | null = null;
+  const makeAgent = async (first: AgentConfig) => {
+    const serverTools = await beyond();
+    choice = first.model == "script" ? null : first.model;
+    const a = new PiAgent({
+      initialState: { systemPrompt: prompted(serverTools), model: choice == null ? scriptModel() : describeModel(choice), thinkingLevel: "medium", tools: [...tools, ...serverTools] },
+      getApiKey: () => (cfg ? Redacted.value(cfg.apiKey) : "") || "none",
+      onPayload: isScript(first) ? undefined : patchPayload(() => cfg ?? first, () => choice ?? DEFAULT_MODEL),
+    });
+    a.subscribe(onEvent);
+    return a;
+  };
 
-  agent?.subscribe((e: AgentEvent) => {
+  const onEvent = (e: AgentEvent) => {
     switch (e.type) {
       case "message_update": {
         const m = e.assistantMessageEvent;
@@ -966,7 +980,11 @@ export async function startSession(opts: SessionOptions): Promise<AgentSession> 
       case "agent_start": busy.agent = true; syncBusy("thinking"); emit({ t: "busy", busy: true }); break;
       case "agent_end": busy.agent = false; syncBusy(); emit({ t: "busy", busy: false }); break;
     }
-  });
+  };
+  if (cfg) agent = await makeAgent(cfg);
+  const piAgent = () => agent;
+  /** The model's side, being made (a key arrived after the session started). */
+  let making: Promise<void> | null = null;
 
   return {
     get model() { return agent?.state.model.name ?? null; },
@@ -977,9 +995,14 @@ export async function startSession(opts: SessionOptions): Promise<AgentSession> 
       agent.state.model = describeModel(next);
       return true;
     },
+    async configure(next) {
+      cfg = next;
+      if (next && !agent) await (making ??= makeAgent(next).then((a) => { agent ??= a; }).finally(() => { making = null; }));
+    },
     log: () => log,
     prompt(text, context, files = []) {
       emit(files.length ? { t: "user", text, files: fileRefs(files) } : { t: "user", text });
+      const agent = piAgent();
       if (!agent || !cfg) { emit({ t: "error", text: "The agent is off." }); return; }
       const content = messageContent(context ? `<editor>\n${context}\n</editor>\n\n${text}` : text, files);
       if (isScript(cfg)) scriptModel();

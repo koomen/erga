@@ -239,7 +239,8 @@ export function credentialRow(c: CredentialEntry, session: Session): string {
   const state = c.set
     ? `<span class="on">Set</span> · ends in <span class="last4">…${esc(c.last4 ?? "")}</span>${c.updated != null ? ` · updated ${esc(setAt(c.updated))}${c.updatedBy ? ` by ${esc(byLine(c.updatedBy, c.updatedVia))}` : ""}` : ""}`
     : c.fallback ? `Not set here. The server uses ${esc(c.env)} from the deploy.` : "Not set.";
-  const cannot = !c.canStore ? ` <b>This server has no FACTORY_KEY, so it can't store a key.</b>` : "";
+  const cannot = !c.canStore ? ` <b>This server has no FACTORY_KEY, so it can't store a key.</b>`
+    : c.unreadable ? ` <b class="unreadable">This server can't open it: it was encrypted with another server's FACTORY_KEY. Paste the key again.</b>` : "";
   return `  <li class="setting credential" data-name="${esc(c.name)}" data-label="${esc(c.label)}" data-env="${esc(c.env)}"${c.fallback ? ` data-fallback="1"` : ""}>
     <div class="about">
       <div class="head"><label class="key" for="${id}">${esc(c.label)}</label><span class="meta">${esc(c.env)}</span></div>

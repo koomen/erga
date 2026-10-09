@@ -20,9 +20,7 @@
 //   GET    /api/admin/guide                 the admin APIs, how to call them, and the token's limits (admin-agent/agent.ts)
 
 import { DurableObject } from "cloudflare:workers";
-import * as ConfigProvider from "effect/ConfigProvider";
-import * as Effect from "effect/Effect";
-import { agentConfigFrom, isModelChoice, MODELS, type AgentConfig } from "../agent";
+import { isModelChoice, MODELS } from "../agent";
 import type { ToolWho } from "../server-tools";
 import { authOps } from "./auth-settings";
 import type { SourceAnswer, SourceRead } from "../source/browse";
@@ -33,7 +31,8 @@ import { whoOf } from "../front";
 import { sessionOf } from "./auth";
 import { byLine, VIA } from "../attribution";
 import { checkAttachments } from "../src/page/attach";
-import { directoryOf, tokensOf, withKeys } from "./d1";
+import { directoryOf, tokensOf } from "./d1";
+import { agentSettings } from "./agent-settings";
 import { SHARE_ADMIN_HOURS } from "../tokens";
 import { LOCKED } from "../users";
 import { forgetHome } from "./home";
@@ -48,8 +47,6 @@ export class AdminAgentHost extends DurableObject<Env> {
   private clients = new Map<WritableStreamDefaultWriter<Uint8Array>, string>();
   /** Each admin's agent, with where the server is, as their page said last. */
   private agents = new Map<string, { agent: AdminAgent; origin: string }>();
-  /** The agent's settings, read again after a minute, so a key an admin changes on /admin reaches it. */
-  private agentCfg: { at: number; cfg: Promise<AgentConfig | { missing: string }> } | null = null;
   /** Conversations with a save waiting (a reply streams in: at most one save a second). */
   private chatSaves = new Map<string, ReturnType<typeof setTimeout>>();
   private beat: ReturnType<typeof setInterval> | null = null;
@@ -61,25 +58,21 @@ export class AdminAgentHost extends DurableObject<Env> {
     this.sql.exec(`CREATE TABLE IF NOT EXISTS agent_prefs (login TEXT PRIMARY KEY, prefs TEXT NOT NULL, updated INTEGER NOT NULL)`);
   }
 
-  private config(): Promise<AgentConfig | { missing: string }> {
-    if (!this.agentCfg || Date.now() - this.agentCfg.at > 60_000) {
-      this.agentCfg = { at: Date.now(), cfg: withKeys(this.env).then((env) => Effect.runPromise(agentConfigFrom(ConfigProvider.fromUnknown(env)))) };
-    }
-    return this.agentCfg.cfg;
-  }
-
   /** Why the admin may not act now, or null: they must still be an admin. Every tool call asks. */
   private async refusal(login: string): Promise<string | null> {
     if (!(await directoryOf(this.env).users.isAdmin(login))) return "Only admins have an admin agent.";
     return null;
   }
 
-  /** The admin's session, made the first time; the origin is the latest the page sent. */
+  /**
+   * The admin's session, made the first time; the origin is the latest the page sent.
+   * The settings are read each time (each turn, each time the panel opens), so a key an admin stores, replaces or clears reaches it.
+   */
   private async session(login: string, origin: string): Promise<{ agent: AdminAgent; origin: string } | string> {
-    const cfg = await this.config();
+    const cfg = await agentSettings(this.env).catch((e: unknown) => ({ missing: `the agent's settings couldn't be read (${e instanceof Error ? e.message : String(e)}); try again in a moment` }));
     if ("missing" in cfg) return cfg.missing;
     let s = this.agents.get(login);
-    if (s) { s.origin = origin; return s; }
+    if (s) { s.origin = origin; s.agent.configure(cfg); return s; }
     const state = { origin };
     const guard = async () => {
       const why = await this.refusal(login);

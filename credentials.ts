@@ -18,8 +18,10 @@
 //     (`withCredentials`), so a server deployed without this page still works.
 //
 // Staging has a FACTORY_KEY of its own, so production's keys, copied into
-// staging's database, don't open there: staging uses its own stored keys or
-// its Worker secrets. The last four characters are kept in plain text, for the page.
+// staging's database, don't open there: on each new copy the deploy removes
+// them and puts staging's own back (deploy/cloudflare.ts, ownCredentials). A
+// key that still doesn't open is shown as such (`unreadable`), and the agents
+// say so. The last four characters are kept in plain text, for the page.
 
 import { changeLogEntry } from "./attribution.ts";
 import type { Sql, Statement } from "./directory.ts";
@@ -77,6 +79,8 @@ export interface CredentialEntry {
   fallback: boolean;
   /** This server has the secret to encrypt with, so it can store a key. */
   canStore: boolean;
+  /** A key is stored, but it doesn't open here: it was encrypted under another FACTORY_KEY. The server can't use it. */
+  unreadable: boolean;
 }
 
 /** A key that can't be stored (not one, or no secret to encrypt it with): the message says why. */
@@ -117,11 +121,12 @@ export class Credentials {
   /** Every key, as an admin sees it. Admins only. */
   async list(by: Actor): Promise<CredentialEntry[]> {
     await this.users.mustAdmin(by);
-    const rows = new Map((await this.sql.all<Row>("SELECT name, last4, updated, updated_by FROM credentials")).map((r) => [r.name, r]));
-    return (Object.keys(CREDENTIALS) as CredentialName[]).map((name) => {
+    const rows = new Map((await this.sql.all<Row>("SELECT name, iv, data, last4, updated, updated_by, updated_via FROM credentials")).map((r) => [r.name, r]));
+    return Promise.all((Object.keys(CREDENTIALS) as CredentialName[]).map(async (name) => {
       const c = CREDENTIALS[name], r = rows.get(name);
-      return { name, env: c.env, label: c.label, service: c.service, description: c.description, set: !!r, last4: r?.last4 ?? null, updated: r ? Number(r.updated) : null, updatedBy: r?.updated_by ?? null, updatedVia: r?.updated_via ?? null, fallback: this.fallback(c.env), canStore: !!this.aesKey };
-    });
+      const unreadable = !!r && (await this.decrypt(name, r)) == null;
+      return { name, env: c.env, label: c.label, service: c.service, description: c.description, set: !!r, last4: r?.last4 ?? null, updated: r ? Number(r.updated) : null, updatedBy: r?.updated_by ?? null, updatedVia: r?.updated_via ?? null, fallback: this.fallback(c.env), canStore: !!this.aesKey, unreadable };
+    }));
   }
 
   /** The secrets only the deploy sets, and whether this server has each (never a value). Admins only. */
@@ -169,9 +174,20 @@ export class Credentials {
    * Never for a page.
    */
   async value(name: CredentialName): Promise<string | null> {
-    if (!this.aesKey) return null;
+    return (await this.opened(name)).key;
+  }
+
+  /** The stored key, decrypted (null if none), and whether one is stored that doesn't open here. Never for a page. */
+  async opened(name: CredentialName): Promise<{ key: string | null; unreadable: boolean }> {
     const [r] = await this.sql.all<Row>("SELECT iv, data FROM credentials WHERE name = ?1", name);
-    if (!r) return null;
+    if (!r) return { key: null, unreadable: false };
+    const key = await this.decrypt(name, r);
+    return { key, unreadable: key == null };
+  }
+
+  /** A row's key, or null if it doesn't open with this server's secret (or the server has none). */
+  private async decrypt(name: CredentialName, r: Pick<Row, "iv" | "data">): Promise<string | null> {
+    if (!this.aesKey) return null;
     try {
       return new TextDecoder().decode(await crypto.subtle.decrypt({ name: "AES-GCM", iv: unb64(r.iv), additionalData: enc.encode(name) }, await this.aesKey, unb64(r.data)));
     } catch {

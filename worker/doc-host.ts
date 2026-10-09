@@ -29,12 +29,10 @@
 // document holds: nobody can make another.
 
 import { DurableObject } from "cloudflare:workers";
-import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Redacted from "effect/Redacted";
 import * as Scope from "effect/Scope";
-import { agentConfigFrom, type AgentConfig } from "../agent";
 import { DIRECTORY_EVERY_MS, nameOf, namingFor, throttle, UNTITLED, type DocName, type DocRow } from "../directory";
 import { afterUnedited, titleOf } from "../front";
 import { cleanRel, docFile, makeHost, relativeUrl } from "../host";
@@ -46,7 +44,8 @@ import { assets, authorOf, editorOf, files as texts, folders, isTextPath, type A
 import { describeChange, fallbackDescription, firePublished, publicVersion, versionNumber, Versions, type KV, type Published, type PublishRequest, type PublishResult, type RestoreResult, type StoredVersion, type Version, type VersionsState } from "../versions";
 import * as Y from "yjs";
 import { decodeValue, encodeValue, type DocSnapshot } from "../deploy/snapshot";
-import { directoryOf, withKeys } from "./d1";
+import { directoryOf } from "./d1";
+import { agentSettings } from "./agent-settings";
 import { platform } from "./platform";
 import { DiskLink } from "./disk";
 import { publishedChanged } from "./published";
@@ -575,8 +574,9 @@ export class DocHost extends DurableObject<Env> {
   /** Writes a version's description in the background: the model's five words, or the fallback. Never in the way of editing. */
   private async describe(version: StoredVersion, previous: StoredVersion, meta: Meta): Promise<void> {
     const changes = await this.versions.changes(previous, version);
-    const cfg = this.opened?.agent;
-    const key = !meta.test && cfg && !("missing" in cfg) && cfg.model != "script" ? Redacted.value(cfg.apiKey) : "";
+    // The agent's key, as it is now (an admin may have stored one since the document opened).
+    const cfg = meta.test ? null : await agentSettings(this.env);
+    const key = cfg && !("missing" in cfg) && cfg.model != "script" ? Redacted.value(cfg.apiKey) : "";
     const text = (key ? await describeChange(key, changes) : null) ?? fallbackDescription(changes);
     await this.versions.describe(version.n, text);
     this.opened?.broadcast({ type: "versions" });
@@ -781,10 +781,10 @@ export class DocHost extends DurableObject<Env> {
       Scope.provide(scope),
     ));
     // A test document's agent is the scripted one (agent.ts): free, and the same every run.
-    // Read once, as the host starts: an open document keeps this key until it closes, so an admin's new key reaches it then.
+    // Others read the key at each turn (one row of D1), so a key an admin stores, replaces or clears reaches an open document's agent.
     const agent = meta.test
       ? { apiKey: Redacted.make(""), model: "script" as const, effort: "medium" }
-      : await Effect.runPromise(agentConfigFrom(ConfigProvider.fromUnknown(await withKeys(this.env))));
+      : () => agentSettings(this.env);
     const host = makeHost({
       room, files, agent,
       doc: { name: meta.index, path: meta.index, kind: meta.index.endsWith(".md") ? "md" : "html", dir: meta.disk?.path ?? meta.owner },
@@ -830,7 +830,6 @@ export class DocHost extends DurableObject<Env> {
     const naming = namingFor(directoryOf(this.env), this.idOf(meta), () => titleOf(room.text(meta.index) ?? "", meta.index));
 
     const opened: Opened = {
-      agent,
       broadcast: host.broadcast,
       // Every file as it is now: text from the room (the latest keystroke), the rest from storage.
       current: async () => {
@@ -909,8 +908,6 @@ export class DocHost extends DurableObject<Env> {
 }
 
 interface Opened {
-  /** The agent's settings: its key also writes versions' descriptions. */
-  agent: AgentConfig | { missing: string };
   /** Tells every open tab, whoever's. */
   broadcast: (msg: unknown) => void;
   /** Every file the document holds as it is now. */

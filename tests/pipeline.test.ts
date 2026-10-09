@@ -87,7 +87,7 @@ describe("staging", () => {
     const all = Object.keys(release.migrations).sort(), newer = all.filter((n) => !prod.migrations.includes(n));
     expect(db.migrations).toEqual([...prod.migrations, ...newer]);
     expect(db.migrations).toEqual(all);
-    expect(steps).toContain(newer.length ? `migrations:done applied ${newer.join(", ")}` : "migrations:done already up to date");
+    expect(steps).toContain(`${newer.length ? `migrations:done applied ${newer.join(", ")}` : "migrations:done already up to date"}; no API keys of its own to keep`);
 
     // Its own Worker: bound to its database, its settings, its secrets, the builder; Durable Objects of its own (a new Worker: no tombstone).
     const b = bindingsOf(mock.state, "erga-staging");
@@ -133,9 +133,15 @@ describe("staging", () => {
     expect(productionOf(mock.state)).toBe(before);
   });
 
-  test("again: a fresh snapshot each time (staging's old copy gone, its own documents emptied), its secrets kept", async () => {
+  test("again: a fresh snapshot each time (staging's old copy gone, its own documents emptied), its secrets and API keys kept", async () => {
     const mock = mockCloudflare({ fleet: true });
     await deployTo(staging({ secrets: stagingSecrets }), mock);
+    // Each server stored its own Anthropic key (credentials.ts), under its own FACTORY_KEY.
+    const key = (who: string) => `INSERT INTO credentials (name, iv, data, last4, updated, updated_by, updated_via) VALUES ('anthropic', 'iv-${who}', 'data-${who}', '${who.slice(0, 4)}', 1, 'koomen', NULL);`;
+    stagingDbOf(mock.state).rows!.push(key("staging"));
+    const prodDb = mock.state.databases.find((d) => d.uuid == PROD_DB)!;
+    prodDb.tables.push("credentials");
+    prodDb.rows!.push(key("production"));
     // Things happen on both: someone makes a document on staging, and one on production.
     const stagingDb = stagingDbOf(mock.state);
     stagingDb.rows!.push("INSERT INTO documents (id, owner, slug, title) VALUES ('zzzz9999', 'bo', 'scratch', 'Scratch');");
@@ -149,6 +155,9 @@ describe("staging", () => {
     expect(mock.state.deletedDatabases).toEqual([stagingDb.name]);
     const db = stagingDbOf(mock.state);
     expect(db.uuid).not.toBe(stagingDb.uuid);
+    // Staging's own key, not production's (which doesn't open on staging).
+    expect(db.rows!.filter((r) => r.startsWith("INSERT INTO credentials"))).toEqual([key("staging")]);
+    expect(steps.find((s) => s.startsWith("migrations:done"))).toContain("its own API keys kept (anthropic)");
     expect(db.rows!.some((r) => r.includes("zzzz9999"))).toBe(false);
     expect(db.rows!.some((r) => r.includes("newp4567"))).toBe(true);
     const docs = mock.state.docs["erga-staging"].docs;
@@ -844,7 +853,7 @@ describe("the one-time setup", () => {
     const out = run.stdout.toString();
     expect(run.exitCode).toBe(0);
     expect(out).toContain("(the mock Cloudflare: nothing real)");
-    expect(out).toContain("secrets set: SESSION_SECRET, SNAPSHOT_TOKEN, DEPLOY_HOOK_SECRET, GITHUB_CLIENT_SECRET\n");
+    expect(out).toContain("secrets set: SESSION_SECRET, FACTORY_KEY, SNAPSHOT_TOKEN, DEPLOY_HOOK_SECRET, GITHUB_CLIENT_SECRET\n");
     expect(out).toContain("the zone's free Universal SSL certificate covers it (it covers *.erga-pages-staging.dev).");
     expect(out).toContain("There's one already (Universal SSL).");
     expect(out).toContain("Made and checked: it deploys erga-staging, reads erga.dev and erga-pages-staging.dev, and can't reach erga or write DNS and routes.");

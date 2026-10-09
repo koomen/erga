@@ -493,7 +493,7 @@ export function mockCloudflare(opts: {
   }
 
   /** The few statements the deploy runs, understood well enough to answer them. */
-  function d1Query(db: MockState["databases"][number], { sql }: { sql: string; params?: unknown[] }): Record<string, unknown>[] {
+  function d1Query(db: MockState["databases"][number], { sql, params }: { sql: string; params?: unknown[] }): Record<string, unknown>[] {
     db.statements.push(sql.slice(0, 200));
     if (/FROM sqlite_master/i.test(sql)) return db.tables.map((name) => ({ name }));
     if (/^SELECT id FROM documents/i.test(sql.trim())) {
@@ -503,6 +503,22 @@ export function mockCloudflare(opts: {
     if (/^SELECT name FROM d1_migrations/i.test(sql.trim())) {
       if (!db.tables.includes("d1_migrations")) throw new D1Error("no such table: d1_migrations: SQLITE_ERROR");
       return db.migrations.map((name) => ({ name }));
+    }
+    // The API keys (credentials.ts), as the deploy keeps a server's own on a new copy (deploy/cloudflare.ts, ownCredentials).
+    const CRED = /^INSERT INTO credentials \(([^)]+)\) VALUES \((.*)\);?$/;
+    if (/^SELECT \* FROM credentials/i.test(sql.trim())) {
+      if (!db.tables.includes("credentials")) throw new D1Error("no such table: credentials: SQLITE_ERROR");
+      return (db.rows ?? []).map((r) => CRED.exec(r)).filter((m) => m != null).map((m) => {
+        const values = [...m[2].matchAll(/'((?:[^']|'')*)'|(-?\d+)|NULL/g)].map((v) => (v[1] != null ? v[1].replace(/''/g, "'") : v[2] != null ? Number(v[2]) : null));
+        return Object.fromEntries(m[1].split(",").map((c, i) => [c.trim(), values[i]]));
+      });
+    }
+    if (/^DELETE FROM credentials$/i.test(sql.trim())) { db.rows = (db.rows ?? []).filter((r) => !CRED.test(r)); return []; }
+    const put = /^INSERT INTO credentials \(([^)]+)\) VALUES \(\?/.exec(sql);
+    if (put) {
+      const lit = (v: unknown) => (v == null ? "NULL" : typeof v == "number" ? String(v) : `'${String(v).replace(/'/g, "''")}'`);
+      (db.rows ??= []).push(`INSERT INTO credentials (${put[1]}) VALUES (${(params ?? []).map(lit).join(", ")});`);
+      return [];
     }
     // A statement batch is all or nothing: a CREATE TABLE of one that's there fails the lot, as SQLite would.
     const made = [...sql.matchAll(/CREATE TABLE (IF NOT EXISTS )?(\w+)/gi)];

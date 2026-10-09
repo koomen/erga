@@ -318,7 +318,7 @@ export interface Target {
  * What runs on from one step to the next (and across a restart, deploy/branches.ts keeps it): the database, the version,
  * and the documents staging had before.
  */
-export interface Carry { dbId?: string; version?: string; oldDocs?: string[]; existing?: boolean; copied?: boolean }
+export interface Carry { dbId?: string; version?: string; oldDocs?: string[]; existing?: boolean; copied?: boolean; /** The copy the target was on before a new one (its own API keys come from it). */ ownDb?: string | null }
 
 /** A copy of another server's data, by when it was made: `<base>-<ms since the epoch, base 36>` (Target.snapshot). */
 export const copyName = (base: string, at: number) => `${base}-${at.toString(36)}`;
@@ -548,6 +548,7 @@ export async function runPipeline(cf: Cloudflare, release: Release | null, targe
         if (!made?.uuid) throw new DeployError("Cloudflare made the database but didn't say its id. Deploy again: the next one deletes it.");
         carry.dbId = made.uuid;
         carry.copied = true;
+        carry.ownDb = live?.uuid ?? null;
         return `"${name}" (${carry.dbId}), a new copy beside ${live ? `"${live.name}", which ${target.workerName} stays on until its upload` : "nothing (there's no copy yet)"}: ${why}${leftNote}`;
       }
       const found = await findDatabase(cf, acc, target.databaseName)
@@ -593,7 +594,9 @@ export async function runPipeline(cf: Cloudflare, release: Release | null, targe
         const sql = rel.migrations[name].trim();
         await d1(cf, acc, db, `${sql}${sql.endsWith(";") ? "" : ";"}\nINSERT INTO d1_migrations (name) VALUES ('${name.replace(/'/g, "''")}');`, [], `apply the database migration ${name}`);
       }
-      return pending.length ? `applied ${pending.join(", ")}` : "already up to date";
+      const did = pending.length ? `applied ${pending.join(", ")}` : "already up to date";
+      // A new copy has production's API keys (credentials.ts), which don't open on the target (its FACTORY_KEY is its own): its own come back.
+      return target.snapshot && carry.copied ? `${did}; ${await ownCredentials(cf, acc, carry.ownDb ?? null, db)}` : did;
     },
 
     // The static assets: the manifest, then each bucket Cloudflare asks for.
@@ -940,6 +943,23 @@ function jwtClaims(jwt: string): Record<string, unknown> {
 }
 
 /** One statement (or a few, separated by semicolons) on a D1 database, through the API: the first statement's rows. */
+/**
+ * The API keys a server stored itself (credentials.ts), into the new copy of
+ * another server's data it moves to: the copy's rows (the other server's,
+ * encrypted with its FACTORY_KEY, so they don't open here) go, and the rows of
+ * the copy it was on (`from`; none on its first copy) come in. Without this,
+ * each new copy would drop staging's Anthropic key, and its agents would stop.
+ */
+async function ownCredentials(cf: Cloudflare, acc: string, from: string | null, to: string): Promise<string> {
+  const rows = from ? (await d1(cf, acc, from, "SELECT * FROM credentials", [], "read the API keys this server stored")) ?? [] : [];
+  await d1(cf, acc, to, "DELETE FROM credentials", [], "remove the other server's API keys from the copy");
+  for (const r of rows) {
+    const cols = Object.keys(r).filter((c) => /^\w+$/.test(c));
+    await d1(cf, acc, to, `INSERT INTO credentials (${cols.join(", ")}) VALUES (${cols.map((_, i) => `?${i + 1}`).join(", ")})`, cols.map((c) => r[c] as string | number | null), `keep the API key ${String(r.name)}`);
+  }
+  return rows.length ? `its own API keys kept (${rows.map((r) => String(r.name)).join(", ")})` : "no API keys of its own to keep";
+}
+
 async function d1(cf: Cloudflare, acc: string, db: string, sql: string, params: (string | number | null)[], what: string): Promise<Record<string, unknown>[] | null> {
   const answer = await cf.call<{ results?: Record<string, unknown>[]; success?: boolean }[]>("POST", `${acc}/d1/database/${db}/query`, what, { sql, ...(params.length ? { params } : {}) });
   return answer?.[0]?.results ?? [];
