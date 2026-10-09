@@ -230,7 +230,7 @@ function balanceWhitespace(text: string): string {
 
 const PAGE_STYLE = `
 html { overscroll-behavior: none; }
-[data-erga-id][contenteditable] { caret-color: #3b7cf0; cursor: text; outline: none; }
+[data-erga-id][contenteditable] { cursor: text; outline: none; }
 [data-erga-id].erga-empty { min-height: 1lh; }
 [data-erga-id].erga-locked { cursor: default; }
 [data-erga-id] [contenteditable="false"] { cursor: default; }

@@ -23,6 +23,9 @@ test("the drawn caret shows in place of the native one, is wider than 1 px, and 
   expect(heading.height).toBeGreaterThan(20);
   // The native caret is transparent, so there aren't two.
   expect(await ed.frame<string>(`getComputedStyle(${F}.querySelector("h1")).caretColor`)).toBe("rgba(0, 0, 0, 0)");
+  // It has the text's colour.
+  const colors = await ed.frame<[string, string]>(`[getComputedStyle(${F}.querySelector("erga-caret")).backgroundColor, getComputedStyle(${F}.querySelector("h1")).color]`);
+  expect(colors[0]).toBe(colors[1]);
 
   await ed.clickEnd("p.lede em");
   await expect.poll(async () => { const c = await ed.frame<Caret>(CARET); return !!c?.shown && c.off < 2; }).toBe(true);

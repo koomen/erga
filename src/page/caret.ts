@@ -50,8 +50,8 @@ function attach(doc: Document, win: Window & typeof globalThis): void {
   (doc.head ?? html).append(style);
   const caret = doc.createElement("erga-caret");
   html.classList.add(DRAWN);
-  /** The native caret's colour for each element (the page's caret-color, else the editor's). */
-  const colors = new WeakMap<Element, string>();
+  /** The native caret's colour for each element (the page's caret-color, else its text colour). */
+  let colors = new WeakMap<Element, string>();
   let last = "", queued = false, moved = false;
 
   const queue = (restart = false) => {
@@ -140,7 +140,7 @@ function attach(doc: Document, win: Window & typeof globalThis): void {
     return { left, top, height };
   }
 
-  /** The colour the native caret would have here: what the page sets, else the editor's own (editor.ts, PAGE_STYLE). */
+  /** The colour the native caret would have here: what the page sets, else the text's colour. */
   function colorOf(el: Element): string {
     let color = colors.get(el);
     if (color) return color;
@@ -158,6 +158,8 @@ function attach(doc: Document, win: Window & typeof globalThis): void {
   for (const type of ["keydown", "input", "compositionstart", "compositionupdate", "compositionend", "mousedown"]) on(doc, type, true);
   for (const type of ["mouseup", "focusin", "focusout", "scroll"]) on(doc, type);
   for (const type of ["focus", "blur", "resize"]) on(win, type);
+  // Dark mode can change the text's colour, and so the caret's.
+  win.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { colors = new WeakMap(); queue(); });
   // The text around the caret can move without the selection changing: someone else's edit above it, an image that loads, a font.
   new win.ResizeObserver(() => queue()).observe(html);
   new win.MutationObserver(() => queue()).observe(doc, { childList: true, characterData: true, subtree: true });

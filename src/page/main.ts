@@ -292,10 +292,10 @@ type TreeModule = { mountTree: typeof mountTree };
   // left margin, no right margin and no wrapping; long lines scroll sideways.
   const baseTheme = EditorView.theme({
     "&": { backgroundColor: "transparent", color: "var(--fg)", height: "100%" },
-    ".cm-content": { caretColor: "var(--caret)" },
+    ".cm-content": { caretColor: "var(--fg)" },
     "&.cm-focused": { outline: "none" },
     // As wide as the page's caret (caret.ts): 2px, more in large type.
-    ".cm-cursor, .cm-dropCursor": { borderLeft: "max(2px, 0.085em) solid var(--caret)" },
+    ".cm-cursor, .cm-dropCursor": { borderLeft: "max(2px, 0.085em) solid var(--fg)" },
     "&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground, .cm-selectionBackground": { backgroundColor: "var(--selection)" },
     ".cm-line": { padding: "0" },
   });
