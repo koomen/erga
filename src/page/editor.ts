@@ -25,6 +25,7 @@ import * as M from "./manuscript";
 import { analyzeMarkdown, escapeMarkdownText, parseMarkdown, type Node as MdNode } from "./markdown";
 import { changesBetween } from "./merge";
 import { applyMorph, planMorph } from "./morph";
+import * as I from "./items";
 
 export type Kind = "html" | "md";
 
@@ -267,6 +268,17 @@ erga-tip {
 }
 erga-del:hover erga-tip { display: block; }
 erga-who { all: initial; display: inline-block; font: 600 11px/1.55 ui-sans-serif, system-ui, -apple-system, sans-serif; margin-right: 6px; text-decoration: none; }
+erga-items { all: initial; position: absolute; top: 0; left: 0; width: 0; height: 0; z-index: 2147483645; pointer-events: none; --erga-ui: #1f6feb; --erga-ui-bg: #fff; --erga-ui-ink: #333; --erga-ui-line: rgba(0, 0, 0, 0.14); }
+erga-items[data-dark], erga-add[data-dark] { --erga-ui: #58a6ff; --erga-ui-bg: #1d1d1f; --erga-ui-ink: #ddd; --erga-ui-line: rgba(255, 255, 255, 0.18); }
+erga-item-box { all: initial; position: absolute; border: 1.5px dashed var(--erga-ui); border-radius: 6px; opacity: 0.55; }
+erga-item-tools { all: initial; position: absolute; display: flex; gap: 1px; padding: 2px; transform: translateY(-50%); background: var(--erga-ui-bg); border: 1px solid var(--erga-ui-line); border-radius: 7px; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12); pointer-events: auto; }
+erga-item-tools erga-btn { all: initial; display: grid; place-items: center; width: 22px; height: 20px; border-radius: 5px; font: 500 13px/1 ui-sans-serif, system-ui, -apple-system, sans-serif; color: var(--erga-ui-ink); cursor: pointer; user-select: none; }
+erga-item-tools erga-btn:hover { background: var(--erga-ui-line); }
+erga-item-tools erga-btn[data-off] { opacity: 0.3; cursor: default; background: none; }
+erga-item-tools erga-btn[data-op="remove"]:hover { color: #e5484d; }
+erga-add { all: initial; display: block; margin: 6px 0 2px; --erga-ui: #1f6feb; --erga-ui-line: rgba(0, 0, 0, 0.18); }
+erga-add erga-btn { all: initial; display: inline-block; padding: 4px 10px; border: 1.5px dashed var(--erga-ui-line); border-radius: 999px; font: 500 12px/1.2 ui-sans-serif, system-ui, -apple-system, sans-serif; color: var(--erga-ui); cursor: pointer; opacity: 0.6; user-select: none; }
+erga-add erga-btn:hover { opacity: 1; border-color: var(--erga-ui); }
 `;
 
 type Mark = ({ kind: "add"; from: number; to: number } | { kind: "del"; pos: number; text: string }) & { level?: number; born?: number; author?: MarkAuthor | null };
@@ -435,6 +447,14 @@ export class PageEditor {
   /** Other people's carets and selections, drawn over the page like the marks. */
   private peers: Peer[] = [];
   private peerLayer: HTMLElement | null = null;
+  /** Item lists (items.ts): the source they were found in, and what was found. */
+  private itemCache: { src: string; s: I.Structure } | null = null;
+  /** The controls over the item the pointer is on, and the rendered items they can be on. */
+  private itemLayer: HTMLElement | null = null;
+  private itemEls = new Map<Element, M.ElementNode>();
+  private hoverItem: Element | null = null;
+  /** Item-list problems already reported in this render. */
+  private itemProblems = new Set<string>();
   /** Highlight names registered for each author colour. */
   private authorStyles = new Map<string, number>();
   private markObserver: ResizeObserver | null = null;
@@ -584,6 +604,9 @@ export class PageEditor {
       // The old document's layers are gone with it (though they'd still say isConnected).
       this.overlay = null;
       this.peerLayer = null;
+      this.itemLayer = null;
+      this.hoverItem = null;
+      this.itemProblems.clear();
       const RO = (this.frame.contentWindow as (Window & typeof globalThis) | null)?.ResizeObserver;
       if (RO) { this.markObserver = new RO(() => this.queuePaint()); this.markObserver.observe(this.doc.documentElement); }
       this.paintMarks();
@@ -1016,8 +1039,11 @@ export class PageEditor {
     on("copy", (e) => { if (this.ours(e) || this.spanning) this.copy(e); });
     on("dragstart", (e) => { if (this.ours(e)) e.preventDefault(); });
     on("drop", (e) => { if (this.ours(e)) e.preventDefault(); });
+    // The item controls (see paintItems) take their own clicks, before the editor's.
+    on("mousedown", (e) => { if ((e.target as Element).closest?.("erga-item-tools, erga-add")) { e.preventDefault(); e.stopImmediatePropagation(); } }, { capture: true });
+    on("click", (e) => this.itemClick(e), { capture: true });
     on("mousedown", (e) => this.mousedown(e));
-    on("mousemove", (e) => { this.drag(e); this.config.onPointer?.(e); });
+    on("mousemove", (e) => { this.drag(e); this.hoverItemAt(e.target as Element); this.config.onPointer?.(e); });
     on("mouseup", () => { if (this.dragFrom) { this.dragFrom = null; this.settleSpan(); } });
   }
 
@@ -2387,7 +2413,7 @@ export class PageEditor {
   }
 
   private queuePaint(): void {
-    if (this.paintQueued || (!this.marks.length && !this.overlay && !this.peers.length && !this.peerLayer)) return;
+    if (this.paintQueued || (!this.marks.length && !this.overlay && !this.peers.length && !this.peerLayer && !this.itemEls.size)) return;
     this.paintQueued = true;
     requestAnimationFrame(() => { this.paintQueued = false; this.paintMarks(); });
   }
@@ -2438,6 +2464,7 @@ export class PageEditor {
     }
 
     this.paintPeers();
+    this.paintItems();
   }
 
   /** DOM ranges over the page text of source [from, to), one per text node it touches. */
@@ -2479,6 +2506,189 @@ export class PageEditor {
     const win = this.frame.contentWindow;
     const at = this.anchorAt(pos);
     if (win && at && (at.rect.bottom < 0 || at.rect.top > win.innerHeight)) win.scrollBy({ top: at.rect.top - win.innerHeight / 2, behavior: "smooth" });
+  }
+
+  // ------------------------------------------------------------ item lists
+
+  /** The page's item lists (items.ts), for the source as it is now. */
+  private items(): I.Structure | null {
+    if (this.kind != "html") return null;
+    const src = this.state.doc.toString();
+    if (this.itemCache?.src != src) this.itemCache = { src, s: I.analyzeItems(src, M.parseHtml(src)) };
+    return this.itemCache.s;
+  }
+
+  /**
+   * The rendered element of a source element: up from a text block inside
+   * it, as many levels as the source has between them, checking each tag on
+   * the way (a page whose script moved things gets no controls there).
+   */
+  private renderedOf(node: M.ElementNode): Element | null {
+    const u = this.units.find((x) => x.from >= node.from && x.to <= node.to && x.node && this.els[x.id]);
+    if (!u) {
+      // No text in it (an empty list): by its place among its parent's elements.
+      const parent = node.parent && node.parent.tag != "#root" ? this.renderedOf(node.parent) : null;
+      const i = node.parent?.children.filter((c): c is M.ElementNode => c.kind == "element").indexOf(node) ?? -1;
+      const el = parent && [...parent.children].filter((c) => !c.localName.startsWith("erga-"))[i];
+      return el && el.localName == node.tag ? el : null;
+    }
+    // The units come from their own parse of the same source: the same element is the one at the same offset.
+    let el: Element | null = this.els[u.id]!, n: M.ElementNode | null = u.node!;
+    while (el && n && n.from != node.from) {
+      if (el.localName != n.tag) return null;
+      el = el.parentElement;
+      n = n.parent;
+    }
+    return el && n?.from == node.from && el.localName == node.tag ? el : null;
+  }
+
+  /** Draws the item controls: an add button at the end of each list, and the tools on the item the pointer is on. */
+  private paintItems(): void {
+    const doc = this.doc, win = this.frame.contentWindow;
+    if (!doc || !win || this.rendering) return;
+    const s = this.items();
+    this.itemEls.clear();
+    const adds = new Map<Element, string>();
+    for (const l of s?.lists ?? []) {
+      if (l.broken) continue;
+      for (const it of l.items) { const el = this.renderedOf(it); if (el) this.itemEls.set(el, it); }
+      const listEl = this.renderedOf(l.node);
+      if (listEl && s!.templates.has(l.kind)) adds.set(listEl, l.kind);
+    }
+    for (const p of s?.problems ?? []) {
+      if (this.itemProblems.has(p.key)) continue;
+      this.itemProblems.add(p.key);
+      this.config.onProblem?.(p);
+    }
+    const dark = this.pageIsDark();
+    // Each list's add button goes right after it, so the page grows by one row while editing (inside the
+    // list it would upset the page's own :last-child styles). Added once, kept while the list is there.
+    const owner = new Map<Element, Element>();
+    for (const add of [...doc.querySelectorAll("erga-add")]) {
+      const listEl = add.previousElementSibling;
+      if (listEl && adds.has(listEl) && !owner.has(listEl)) owner.set(listEl, add);
+      else add.remove();
+    }
+    for (const [listEl, kind] of adds) {
+      let add = owner.get(listEl) as HTMLElement | undefined;
+      if (!add) {
+        add = doc.createElement("erga-add");
+        const btn = doc.createElement("erga-btn");
+        btn.setAttribute("role", "button");
+        btn.textContent = `+ Add ${kind || "item"}`;
+        add.append(btn);
+        listEl.after(add);
+      }
+      // In line with the items' content (the first item's first element: a card, a paragraph).
+      const item = [...listEl.children].find((c) => this.itemEls.has(c));
+      const target = item ? this.itemBox(item) : listEl;
+      const shift = target.getBoundingClientRect().left - add.getBoundingClientRect().left + (parseFloat(add.style.marginLeft) || 0);
+      if (Math.abs(shift - (parseFloat(add.style.marginLeft) || 0)) > 0.5) add.style.marginLeft = `${shift}px`;
+      add.toggleAttribute("data-dark", dark);
+    }
+    if (this.hoverItem && !this.itemEls.has(this.hoverItem)) this.hoverItem = [...this.itemEls.keys()].find((el) => el.isSameNode(this.hoverItem)) ?? null;
+    this.paintItemTools();
+  }
+
+  /** What shows as the item: its first element (a tree's card), unless that's text beside nothing else. */
+  private itemBox(el: Element): Element {
+    const first = el.firstElementChild;
+    return first && !first.localName.startsWith("erga-") && (el.children.length > 1 || !M.INLINE.has(first.localName)) ? first : el;
+  }
+
+  private pageIsDark(): boolean {
+    const win = this.frame.contentWindow, doc = this.doc;
+    if (!win || !doc) return false;
+    for (const el of [doc.body, doc.documentElement]) {
+      const m = el && /rgba?\((\d+), (\d+), (\d+)(?:, ([\d.]+))?/.exec(win.getComputedStyle(el).backgroundColor);
+      if (m && (m[4] == null || +m[4] > 0.5)) return 0.299 * +m[1] + 0.587 * +m[2] + 0.114 * +m[3] < 128;
+    }
+    return win.matchMedia("(prefers-color-scheme: dark)").matches;
+  }
+
+  /** The innermost item under the pointer gets the tools. */
+  private hoverItemAt(target: Element | null): void {
+    if (!this.itemEls.size || target?.closest?.("erga-item-tools")) return;
+    let el: Element | null = target;
+    while (el && !this.itemEls.has(el)) el = el.parentElement;
+    if (el == this.hoverItem) return;
+    this.hoverItem = el;
+    this.paintItemTools();
+  }
+
+  private paintItemTools(): void {
+    const doc = this.doc, win = this.frame.contentWindow, s = this.items();
+    if (!doc || !win || !s) return;
+    const el = this.hoverItem, item = el && this.itemEls.get(el);
+    if (!el || !item || !el.isConnected) { this.itemLayer?.remove(); this.itemLayer = null; return; }
+    if (!this.itemLayer || !this.itemLayer.isConnected) {
+      this.itemLayer = doc.createElement("erga-items");
+      doc.documentElement.append(this.itemLayer);
+    }
+    const layer = this.itemLayer;
+    layer.textContent = "";
+    layer.toggleAttribute("data-dark", this.pageIsDark());
+    const list = I.listOf(s, item)!, i = list.items.indexOf(item);
+    const r = this.itemBox(el).getBoundingClientRect();
+    const box = doc.createElement("erga-item-box");
+    box.style.cssText = `left:${r.left + win.scrollX - 3}px;top:${r.top + win.scrollY - 3}px;width:${r.width + 6}px;height:${r.height + 6}px`;
+    const tools = doc.createElement("erga-item-tools");
+    const ops: [string, string, string, boolean][] = [
+      ["up", "↑", "Move up", i > 0],
+      ["down", "↓", "Move down", i < list.items.length - 1],
+      ["out", "←", "Move out", !!list.parentItem],
+      ["in", "→", "Move in, under the item above", i > 0],
+      ["add", "+", "Add one after this", s.templates.has(list.kind)],
+      ["remove", "×", "Delete", true],
+    ];
+    for (const [op, label, title, on] of ops) {
+      const b = doc.createElement("erga-btn");
+      b.setAttribute("role", "button");
+      b.setAttribute("data-op", op);
+      b.setAttribute("title", title);
+      b.setAttribute("aria-label", title);
+      if (!on) b.setAttribute("data-off", "");
+      b.textContent = label;
+      tools.append(b);
+    }
+    tools.style.cssText = `left:${r.right + win.scrollX - 8}px;top:${r.top + win.scrollY}px;transform:translate(-100%,-50%)`;
+    layer.append(box, tools);
+  }
+
+  /** A click on an item control: the change it stands for, made to the source. */
+  private itemClick(e: MouseEvent): void {
+    const btn = (e.target as Element).closest?.("erga-btn");
+    if (!btn || !btn.closest("erga-item-tools, erga-add")) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    if (btn.hasAttribute("data-off")) return;
+    const s = this.items();
+    if (!s) return;
+    const src = this.state.doc.toString();
+    let edit: I.ItemEdit | null = null;
+    let op = btn.getAttribute("data-op") ?? "append";
+    if (op == "append") {
+      const listEl = btn.closest("erga-add")!.previousElementSibling;
+      const l = s.lists.find((x) => !x.broken && this.renderedOf(x.node) == listEl);
+      if (l) edit = I.addItem(src, s, l);
+    } else {
+      const was = this.hoverItem && this.itemEls.get(this.hoverItem);
+      const item = was && s.lists.flatMap((l) => l.items).find((x) => x.from == was.from && x.to == was.to);
+      const list = item && I.listOf(s, item);
+      if (!item || !list) return;
+      edit = op == "up" ? I.moveItem(src, s, item, -1) : op == "down" ? I.moveItem(src, s, item, 1) : op == "in" ? I.indentItem(src, s, item)
+        : op == "out" ? I.outdentItem(src, s, item) : op == "add" ? I.addItem(src, s, list, item) : I.removeItem(src, s, item);
+    }
+    if (!edit) { this.config.onNotice?.("That can't be done to this item."); return; }
+    const set = this.state.changes(edit.changes);
+    const c = edit.changes[edit.item.change];
+    const at = set.mapPos(c.from, -1) + edit.item.offset;
+    this.dispatch({ changes: set, userEvent: `input.item.${op}` });
+    // A new item: its first text selected, to type over. A moved one keeps the tools under the pointer.
+    const u = op == "add" || op == "append" ? this.units.find((x) => x.from >= at && x.runs.some((r) => r.editable)) : null;
+    if (u) { this.dispatch({ selection: { anchor: M.textStart(u), head: M.textEnd(u) }, scrollIntoView: true }); this.focus(); }
+    this.hoverItem = null;
+    this.paintItems();
   }
 
   /** Shows other people's carets and selections (positions in the current source). */
