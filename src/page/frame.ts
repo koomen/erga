@@ -134,11 +134,12 @@ function start(m: Extract<ToFrame, { type: "init" }>) {
       if (u.changes && !u.remote && !detached) relay!.local(u.changes);
       if (u.docChanged || u.selectionSet) sendSelection();
       // A presentation's pictures of its steps are out of date once its text changes (front.ts, HOST_SCRIPT).
-      if (u.docChanged) window.ergaHost?.changed?.();
+      if (u.docChanged) { window.ergaHost?.changed?.(); queueBackdrop(); }
       if (u.rendered) {
         drawCaret(cur());
         watchPage();
-        syncBackdrop();
+        watchBackdrop();
+        syncBackdrop(true);
         // (Shown first: the host page puts it where the plain page was scrolled, which a kept position then overrides.)
         if (!cur().dataset.ready) { cur().dataset.ready = "1"; window.ergaHost?.ready(); }
         if (restoreScroll != null) { cur().contentWindow?.scrollTo(0, restoreScroll); restoreScroll = null; }
@@ -252,21 +253,42 @@ window.addEventListener("keydown", (e) => {
 });
 
 // The page's background, so the shell can paint its canvas to match: its
-// root's, or its body's when the root has none, as the browser would.
-let backdropObserver: MutationObserver | null = null;
-function syncBackdrop() {
+// root's, or its body's when the root has none, as the browser would. Read
+// after every change applied to the page (an edit in place can change a
+// style rule: morph.ts), after a render, when a stylesheet loads, and when
+// the page's own script switches themes (a class or style on <html> or
+// <body>); said again only when it changed, at most once a task.
+let backdropObserver: MutationObserver | null = null, backdropSaid = "", backdropQueued = false;
+function syncBackdrop(always = false) {
   const d = cur().contentDocument, win = cur().contentWindow;
   if (!d?.documentElement || !win) return;
   const transparent = (cs: CSSStyleDeclaration) => cs.backgroundImage == "none" && /^(transparent|rgba\([^)]*,\s*0\))$/.test(cs.backgroundColor);
   let cs = win.getComputedStyle(d.documentElement);
   if (transparent(cs) && d.body) cs = win.getComputedStyle(d.body);
   const backdrop: Backdrop = { color: transparent(cs) ? "" : cs.backgroundColor, image: cs.backgroundImage == "none" ? "" : cs.backgroundImage };
+  const said = JSON.stringify(backdrop);
+  if (!always && said == backdropSaid) return;
+  backdropSaid = said;
   post({ type: "backdrop", backdrop });
-  // Follow the page if its own script switches themes.
-  backdropObserver ??= new MutationObserver(() => syncBackdrop());
+}
+/** The background read once the change in hand is made (before the browser paints it), however many changes it has. */
+function queueBackdrop() {
+  if (backdropQueued) return;
+  backdropQueued = true;
+  queueMicrotask(() => { backdropQueued = false; syncBackdrop(); });
+}
+/** Follows the page now in the frame (a render puts it in a new frame): its script's theme switches, and its stylesheets as they load. */
+function watchBackdrop() {
+  const d = cur().contentDocument as (Document & { ergaBackdrop?: boolean }) | null;
+  if (!d?.documentElement) return;
+  backdropObserver ??= new MutationObserver(() => queueBackdrop());
   backdropObserver.disconnect();
   backdropObserver.observe(d.documentElement, { attributes: true, attributeFilter: ["class", "style", "data-theme"] });
   if (d.body) backdropObserver.observe(d.body, { attributes: true, attributeFilter: ["class", "style", "data-theme"] });
+  if (d.ergaBackdrop) return;
+  d.ergaBackdrop = true;
+  // (A stylesheet's load event doesn't bubble: heard on its way down.)
+  d.addEventListener("load", (e) => { if ((e.target as Element).localName == "link") queueBackdrop(); }, true);
 }
 
 // The agent asks to see the page. This frame renders the latest version
