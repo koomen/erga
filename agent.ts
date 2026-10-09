@@ -240,9 +240,9 @@ ${PAGES_PROMPT}`}
 - Messages may begin with an <editor> block saying which page ${owner} has open, and
   where their caret or selection is. "This page", "this", "here" and "the selection"
   refer to it. ${owner} may move to another page between messages: trust the latest block.
-- Edits to the text show up in the page as you make them. Changes to anything else
-  (the page's structure, scripts, styles, other files) show up when you finish your
-  turn.
+- Edits to the page show up as you make them, its structure and styles included.
+  Changes to its scripts and to other files (a stylesheet, a script file) show up
+  when you finish your turn.
 - ls, find and grep look around the whole document (from its root, unless you give a
   folder); list_pages lists its pages with their titles and addresses. new_page makes a
   page from the template, mkdir a folder, mv moves or renames a file or folder, rm deletes

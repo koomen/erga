@@ -24,6 +24,7 @@ import type { SyntaxNode } from "@lezer/common";
 import * as M from "./manuscript";
 import { analyzeMarkdown, escapeMarkdownText, parseMarkdown, type Node as MdNode } from "./markdown";
 import { changesBetween } from "./merge";
+import { applyMorph, planMorph } from "./morph";
 
 export type Kind = "html" | "md";
 
@@ -283,7 +284,6 @@ function rgba(hex: string, alpha: number): string {
 function marksFor(changes: ChangeSet, oldUnits: M.Unit[], newUnits: M.Unit[], level: number, author: MarkAuthor | null = null) {
   const marks: Mark[] = [];
   const unmarked: { from: number; to: number }[] = [];
-  let first: number | null = null;
   changes.iterChanges((fromA, toA, fromB, toB, inserted) => {
     const gone = toA > fromA ? textIn(oldUnits, fromA, toA).replace(/\s+/g, " ").trim() : "";
     const shown = toB > fromB && /\S/.test(textIn(newUnits, fromB, toB));
@@ -292,9 +292,8 @@ function marksFor(changes: ChangeSet, oldUnits: M.Unit[], newUnits: M.Unit[], le
     // A typed space (someone else typing, a keystroke at a time) is nothing to point at.
     if (!shown && !gone && toA == fromA && !/\S/.test(inserted.toString())) return;
     if (!shown && !gone) unmarked.push({ from: fromB, to: toB });
-    else first ??= fromB;
   });
-  return { marks, unmarked, first };
+  return { marks, unmarked };
 }
 
 /**
@@ -302,7 +301,7 @@ function marksFor(changes: ChangeSet, oldUnits: M.Unit[], newUnits: M.Unit[], le
  * patching the text blocks can't update. Two versions of a document with the
  * same skeleton differ only in their text, which the page can show in place.
  */
-function skeleton(src: string, units: M.Unit[]): string {
+function skeletonOfSource(src: string, units: M.Unit[]): string {
   let out = "", pos = 0;
   for (const u of units) { out += src.slice(pos, u.from) + "\u0000"; pos = u.to; }
   // Runs of blocks count as one, so adding a paragraph among paragraphs (which patching handles) isn't a change.
@@ -403,8 +402,16 @@ export class PageEditor {
   private listeners: ((u: PageUpdate) => void)[] = [];
   /** Set while a full render is in flight; edits wait for it. */
   private rendering = false;
+  /** The frame a render in flight loads the page into, out of sight, while the page it replaces stays on screen. */
+  private next: HTMLIFrameElement | null = null;
+  /** Where the reader was in the page a render replaces: the block at the top of the window, and how far down it was. */
+  private view: { pos: number; top: number; x: number; y: number } | null = null;
   /** A Markdown page's blocks around its units (lists and their nesting, quotes), as last rendered: when they change, patching the units isn't enough. */
   private skeleton = "";
+  /** The HTML the page on screen shows (rendered from, then patched to): what a morph (morph.ts) starts from. */
+  private domHtml = "";
+  /** The last patch left a change outside the text blocks off the page: only a render shows it (see `stale`). */
+  private unshown = false;
   /** Source ranges to flash once the render in flight is done. */
   private pendingFlash: { from: number; to: number }[] = [];
   /**
@@ -443,7 +450,6 @@ export class PageEditor {
   private reportRaw: ((raw: RawProblem) => void) | null = null;
   /** Why each locked unit (see `verify`) can't be edited, for when someone clicks it. */
   private lockReasons = new WeakMap<Element, { message: string; fix?: string }>();
-  private revealPending: number | null = null;
   /** Keys and input held while the editor couldn't take them, oldest first (see release). */
   private held: HeldInput[] = [];
   /** Takes the keys while the page renders afresh (see render). */
@@ -513,6 +519,20 @@ export class PageEditor {
     // A render must not take focus from elsewhere (the agent's input, say); it puts the caret back only if the page had it.
     const hadFocus = this.hasFocus;
     const token = ++this.renderToken;
+    // A page already on screen stays there while the new one loads in a frame of its own, out of sight, and gives it
+    // its place once it has rendered, scrolled to the same text: no blank page, no jump. (Only the first render loads
+    // into the frame itself.)
+    if (!this.rendering) this.view = this.viewNow();
+    const old = this.doc ? this.frame : null;
+    this.next?.remove();
+    this.next = null;
+    let target = this.frame;
+    if (old) {
+      target = this.next = old.cloneNode(false) as HTMLIFrameElement;
+      target.removeAttribute("srcdoc");
+      target.classList.remove("on");
+      target.style.visibility = "hidden";
+    }
     this.rendering = true;
     // Keys from now until the new page loads wait for it: a page between two documents takes none (Chrome drops them).
     if (hadFocus) this.focusSink();
@@ -521,9 +541,12 @@ export class PageEditor {
     const a = this.analyze(src);
     this.units = a.units;
     this.skeleton = skeletonOf(a);
+    this.domHtml = a.html;
+    this.unshown = false;
     const onLoad = () => {
       if (token != this.renderToken) return;
-      this.frame.removeEventListener("load", onLoad);
+      target.removeEventListener("load", onLoad);
+      if (old) this.swap(old, target);
       this.doc = this.frame.contentDocument!;
       this.watchProblems();
       this.collectEls();
@@ -562,8 +585,44 @@ export class PageEditor {
       this.paintMarks();
       this.release();
     };
-    this.frame.addEventListener("load", onLoad);
-    this.frame.srcdoc = a.html;
+    target.addEventListener("load", onLoad);
+    target.srcdoc = a.html;
+    if (old) old.after(target);
+  }
+
+  /** The frame the page is in (a render replaces it). */
+  get frameElement(): HTMLIFrameElement { return this.frame; }
+
+  /** Where the reader is in the page on screen: the first block in the window, with how far it is from the top. */
+  private viewNow(): { pos: number; top: number; x: number; y: number } | null {
+    const win = this.frame.contentWindow;
+    if (!win || !this.doc) return null;
+    const view = { pos: -1, top: 0, x: win.scrollX, y: win.scrollY };
+    if (win.scrollY > 0) {
+      for (const u of this.units) {
+        const r = this.els[u.id]?.getBoundingClientRect();
+        if (!r || r.bottom <= 0 || !r.height) continue;
+        if (r.top < win.innerHeight) { view.pos = u.from; view.top = r.top; }
+        break;
+      }
+    }
+    return view;
+  }
+
+  /** A render's new page takes the old one's place, scrolled to show the same text where it was. */
+  private swap(old: HTMLIFrameElement, frame: HTMLIFrameElement): void {
+    this.frame = frame;
+    this.next = null;
+    const win = frame.contentWindow, view = this.view;
+    this.view = null;
+    if (win && view) {
+      const u = view.pos < 0 ? null : this.units.find((u) => u.to >= view.pos);
+      const r = u && frame.contentDocument?.querySelector(`[data-erga-id="${u.id}"]`)?.getBoundingClientRect();
+      win.scrollTo(view.x, r ? win.scrollY + r.top - view.top : view.y);
+    }
+    frame.style.visibility = "";
+    if (old.classList.contains("on")) frame.classList.add("on");
+    old.remove();
   }
 
   /** Hands the page's problems (see PROBLEM_WATCH) to the shell, as they happen. */
@@ -2161,18 +2220,20 @@ export class PageEditor {
     this.state = tr.state;
     this.mapMarks(changes);
     this.recordAuthorship(changes, author);
-    this.applyChanges(tr, oldUnits, oldSrc);
-    if (this.hasFocus) this.syncDOMSelection(true);
+    // (Read first: a change that replaces the block with the caret takes the focus with it, and this puts it back.)
+    const hadFocus = this.hasFocus;
+    this.keepView(() => this.applyChanges(tr, oldUnits, oldSrc));
+    if (hadFocus) this.syncDOMSelection(true);
     this.notify({ docChanged: true, selectionSet: false, rendered: false, changes, remote: true });
-    if (this.staleSince == null && skeleton(oldSrc, oldUnits) != skeleton(this.state.doc.toString(), this.units)) this.staleSince = oldSrc;
+    if (this.staleSince == null && this.unshown) this.staleSince = oldSrc;
+    // The view stays where the reader put it: a change off screen is marked, not followed (reveal finds a peer on request).
     const found = marksFor(changes, oldUnits, this.units, 0, author);
-    this.revealPending = found.first;
     if (!this.tracking) {
       this.marks.push(...found.marks);
       this.startFade();
     }
     if (this.rendering) { this.pendingFlash = found.unmarked; return; }
-    if (found.unmarked.length) this.flash(found.unmarked, found.first == null);
+    if (found.unmarked.length) this.flash(found.unmarked);
     if (this.tracking) this.queueDiff();
     else this.paintMarks();
   }
@@ -2323,12 +2384,6 @@ export class PageEditor {
     }
 
     this.paintPeers();
-
-    if (this.revealPending != null) {
-      const at = this.anchorAt(this.revealPending);
-      this.revealPending = null;
-      if (at && (at.rect.bottom < 0 || at.rect.top > win.innerHeight)) win.scrollBy({ top: at.rect.top - win.innerHeight / 2, behavior: "smooth" });
-    }
   }
 
   /** DOM ranges over the page text of source [from, to), one per text node it touches. */
@@ -2433,10 +2488,8 @@ export class PageEditor {
     return { rect: new DOMRect(r.left, next.from >= pos ? r.top : r.bottom - 18, 0, 0), inline: false };
   }
 
-  /** Highlights the units that overlap the ranges, scrolling the first into view if it is off screen. */
-  private flash(ranges: { from: number; to: number }[], reveal = true): void {
-    const win = this.frame.contentWindow;
-    let first: Element | null = null;
+  /** Highlights the units that overlap the ranges, where they are: the view doesn't move to them. */
+  private flash(ranges: { from: number; to: number }[]): void {
     for (const u of this.units) {
       if (!ranges.some((r) => r.from <= u.to && r.to >= u.from)) continue;
       const el = this.els[u.id];
@@ -2445,11 +2498,6 @@ export class PageEditor {
       void (el as HTMLElement).offsetWidth;
       el.classList.add("erga-flash");
       el.addEventListener("animationend", () => el.classList.remove("erga-flash"), { once: true });
-      first ??= el;
-    }
-    if (first && win && reveal) {
-      const r = first.getBoundingClientRect();
-      if (r.bottom < 0 || r.top > win.innerHeight) first.scrollIntoView({ block: "center", behavior: "smooth" });
     }
   }
 
@@ -2468,8 +2516,9 @@ export class PageEditor {
     this.state = clicked ? state.update({ selection: changes ? clicked.map(changes) : clicked, annotations: noHistory() }).state : state;
     if (this.tracking) this.queueDiff();
     else this.marks = [];
-    if (!this.doc || this.rendering || skeleton(oldSrc, oldUnits) != skeleton(src, this.analyze(src).units)) { this.render(); return; }
-    if (changes) this.applyChanges({ changes }, oldUnits, oldSrc);
+    if (!this.doc || this.rendering) { this.render(); return; }
+    if (changes) this.keepView(() => this.applyChanges({ changes }, oldUnits, oldSrc));
+    if (this.unshown) this.render();
     if (this.rendering) return; // Patching couldn't show it: the render does.
     const head = this.state.selection.main.head;
     const first = this.units.find((u) => u.runs.some((r) => r.editable && /\S/.test(r.text))) ?? this.units[0];
@@ -2542,8 +2591,19 @@ export class PageEditor {
     const skeleton = skeletonOf(a), reshaped = skeleton != this.skeleton;
     this.skeleton = skeleton;
     const structural = reshaped || matched.size != newUnits.length || matched.size != oldUnits.length;
+    // Something outside the text blocks changed (a list, a diagram, a style): patching the blocks doesn't show it.
+    const outside = skeletonOfSource(oldSrc, oldUnits) != skeletonOfSource(src, newUnits);
+    const fromHtml = this.domHtml;
+    this.domHtml = a.html;
+    this.unshown = false;
     const changed = new Set<number>();
     try {
+      // Whatever changed, in place where it can be: the elements that changed, and only those.
+      if ((outside || structural) && this.morph(fromHtml, a.html)) return true;
+      this.unshown = outside;
+      // The page is what a.html says only where the blocks are, after a structural patch (it inserts no whitespace) or
+      // a change outside them it couldn't show: no morph starts from it until a render.
+      if (outside || structural) this.domHtml = "";
       if (!structural) {
         this.els = [];
         for (const u of newUnits) {
@@ -2558,6 +2618,7 @@ export class PageEditor {
         const article = this.doc.getElementById("erga-article");
         if (!article) throw new Error("no article");
         article.innerHTML = a.html;
+        this.domHtml = a.html;
         this.collectEls();
         for (const el of this.els) if (el) this.prepareUnit(el);
         this.updateEmpty();
@@ -2610,6 +2671,66 @@ export class PageEditor {
     } catch {
       this.render();
       return false;
+    }
+  }
+
+  /** Brings the page to `to` in place (morph.ts); false if it can't (a script changed, or the page's own script built that part). */
+  private morph(from: string, to: string): boolean {
+    const doc = this.doc;
+    if (!doc || !from) return false;
+    let ops: ReturnType<typeof planMorph>;
+    try { ops = planMorph(doc, from, to); } catch { return false; }
+    if (!ops) return false;
+    const was = this.els;
+    applyMorph(doc, ops);
+    this.collectEls();
+    // An element that is no longer a text block (a list item whose text went into a <p>) stops being an editing host.
+    const now = new Set(this.els);
+    for (const el of was) {
+      if (!el || now.has(el) || !el.isConnected) continue;
+      el.removeAttribute("contenteditable");
+      el.removeAttribute("spellcheck");
+      el.classList.remove("erga-empty", "erga-locked", "erga-flash");
+      if (!el.classList.length) el.removeAttribute("class");
+    }
+    for (const u of this.units) {
+      const el = this.els[u.id];
+      if (!el) continue;
+      if (el.classList.contains("erga-locked")) { el.classList.remove("erga-locked"); this.lockReasons.delete(el); }
+      this.prepareUnit(el);
+      this.verify(u);
+    }
+    this.updateEmpty();
+    return true;
+  }
+
+  /**
+   * Makes a change to the page with the reader's view held still: the text
+   * at the top of the window stays where it is, however much changes above
+   * it. (Chrome's scroll anchoring does this too, but not when the element
+   * it holds on to is replaced, and not every browser has it: it is off
+   * meanwhile, so the two don't both move the page.)
+   */
+  private keepView(change: () => void): void {
+    const win = this.frame.contentWindow, doc = this.doc, root = doc?.documentElement;
+    if (!win || !root || this.rendering || win.scrollY <= 0) { change(); return; }
+    const held: { el: Element; top: number }[] = [];
+    for (const el of this.els) {
+      if (!el) continue;
+      const r = el.getBoundingClientRect();
+      if (r.bottom <= 0 || !r.height) continue;
+      if (r.top >= win.innerHeight) break;
+      held.push({ el, top: r.top });
+      if (held.length == 8) break;
+    }
+    if (!held.length) { change(); return; }
+    const styled = root.hasAttribute("style"), before = root.style.overflowAnchor;
+    root.style.overflowAnchor = "none";
+    try { change(); } finally {
+      const keep = this.rendering || this.doc != doc ? null : held.find((h) => h.el.isConnected);
+      if (keep) { const d = keep.el.getBoundingClientRect().top - keep.top; if (Math.abs(d) >= 0.5) win.scrollBy(0, d); }
+      root.style.overflowAnchor = before;
+      if (!styled && !root.getAttribute("style")) root.removeAttribute("style");
     }
   }
 

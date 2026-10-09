@@ -34,8 +34,10 @@ frame.id = "page";
 frame.title = "Document";
 frame.setAttribute("sandbox", "allow-scripts allow-same-origin allow-forms allow-modals allow-popups");
 document.body.append(frame);
-// Your caret on the page, wider than the browser's own (caret.ts).
+// Your caret on the page, wider than the browser's own (caret.ts); in the frame of each render too (onUpdate).
 drawCaret(frame);
+/** The frame the page is in now: a render loads the page afresh into a new one, which takes this one's place (editor.ts). */
+const cur = () => page?.frameElement ?? frame;
 
 let page: PageEditor | null = null;
 let relay: Relay | null = null;
@@ -63,7 +65,8 @@ window.addEventListener("message", (e: MessageEvent) => {
     case "authorship": page.recordAuthorship(ChangeSet.fromJSON(m.changes), m.author); return;
     case "tracking": page.setTracking(m.on); return;
     case "paused": page.setPaused(m.on); queueSnapshot(); return;
-    case "render": restoreScroll = frame.contentWindow?.scrollY ?? 0; page.render(); return;
+    // (The editor keeps the reader's place across it.)
+    case "render": page.render(); return;
     // The shell focuses this frame as it asks (Remote.focus): if this frame lost the focus since, something that opened
     // after the ask has it (the pages card, the agent's box), and keeps it.
     case "focus": if (document.hasFocus()) page.focus(); return;
@@ -102,9 +105,9 @@ function start(m: Extract<ToFrame, { type: "init" }>) {
     const y = restoreScroll = m.scroll, until = Date.now() + 3000;
     let last: number | null = null;
     const again = () => {
-      const w = frame.contentWindow;
+      const w = cur().contentWindow;
       if (Date.now() > until || !w) return;
-      if (!frame.dataset.ready || restoreScroll != null) { setTimeout(again, 100); return; }
+      if (!cur().dataset.ready || restoreScroll != null) { setTimeout(again, 100); return; }
       if (Math.abs(w.scrollY - y) < 2 || (last != null && Math.abs(w.scrollY - last) >= 2)) return;
       w.scrollTo(0, y);
       last = w.scrollY;
@@ -133,11 +136,12 @@ function start(m: Extract<ToFrame, { type: "init" }>) {
       // A presentation's pictures of its steps are out of date once its text changes (front.ts, HOST_SCRIPT).
       if (u.docChanged) window.ergaHost?.changed?.();
       if (u.rendered) {
+        drawCaret(cur());
         watchPage();
         syncBackdrop();
         // (Shown first: the host page puts it where the plain page was scrolled, which a kept position then overrides.)
-        if (!frame.dataset.ready) { frame.dataset.ready = "1"; window.ergaHost?.ready(); }
-        if (restoreScroll != null) { frame.contentWindow?.scrollTo(0, restoreScroll); restoreScroll = null; }
+        if (!cur().dataset.ready) { cur().dataset.ready = "1"; window.ergaHost?.ready(); }
+        if (restoreScroll != null) { cur().contentWindow?.scrollTo(0, restoreScroll); restoreScroll = null; }
       }
       queueSnapshot(u.rendered);
     },
@@ -184,7 +188,7 @@ function queueSnapshot(rendered = false) {
         has: { strong: page.hasStyle("strong"), em: page.hasStyle("em"), code: page.hasStyle("code") },
         link: page.linkAt(),
       },
-      scrollY: Math.round(frame.contentWindow?.scrollY ?? 0),
+      scrollY: Math.round(cur().contentWindow?.scrollY ?? 0),
     };
     post({ type: "update", rendered: renderedSince, snapshot });
     renderedSince = false;
@@ -202,7 +206,7 @@ function detach(id: number) {
 
 /** The page's text column, so the source view can match it. */
 function measureColumn(): number {
-  const d = frame.contentDocument, win = frame.contentWindow;
+  const d = cur().contentDocument, win = cur().contentWindow;
   let left = Infinity, right = -Infinity;
   for (const el of d?.querySelectorAll("[data-erga-id]") ?? []) {
     const r = el.getBoundingClientRect();
@@ -213,7 +217,7 @@ function measureColumn(): number {
 
 /** Tells the shell what happens in the page that its controls follow: pointers, keys, focus, the selection moving. */
 function watchPage() {
-  const d = frame.contentDocument, win = frame.contentWindow;
+  const d = cur().contentDocument, win = cur().contentWindow;
   if (!d || !win || (d as Document & { ergaWatched?: boolean }).ergaWatched) return;
   (d as Document & { ergaWatched?: boolean }).ergaWatched = true;
   d.addEventListener("pointerdown", (e) => post({ type: "pointer", kind: "down", x: e.clientX, y: e.clientY }), true);
@@ -251,7 +255,7 @@ window.addEventListener("keydown", (e) => {
 // root's, or its body's when the root has none, as the browser would.
 let backdropObserver: MutationObserver | null = null;
 function syncBackdrop() {
-  const d = frame.contentDocument, win = frame.contentWindow;
+  const d = cur().contentDocument, win = cur().contentWindow;
   if (!d?.documentElement || !win) return;
   const transparent = (cs: CSSStyleDeclaration) => cs.backgroundImage == "none" && /^(transparent|rgba\([^)]*,\s*0\))$/.test(cs.backgroundColor);
   let cs = win.getComputedStyle(d.documentElement);
@@ -307,8 +311,8 @@ function forceScheme(d: Document, scheme: ColorScheme) {
 const MAX_SHOT = 4000;
 const LOAD_WAIT = 5000;
 async function captureView(req: ViewRequest, text?: string): Promise<ViewResult> {
-  const width = Math.round(Math.max(320, Math.min(2400, req.width ?? (frame.clientWidth || 1280))));
-  const viewport = Math.round(Math.max(200, Math.min(MAX_SHOT, req.height ?? (frame.clientHeight || 800))));
+  const width = Math.round(Math.max(320, Math.min(2400, req.width ?? (cur().clientWidth || 1280))));
+  const viewport = Math.round(Math.max(200, Math.min(MAX_SHOT, req.height ?? (cur().clientHeight || 800))));
   const prefers: ColorScheme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
   const scheme = req.colorScheme ?? prefers;
   const forced = scheme != prefers;

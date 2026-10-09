@@ -255,7 +255,8 @@ type TreeModule = { mountTree: typeof mountTree };
     me,
     path: info.path,
     onRemote: (changes, author) => applyRemote(changes, author),
-    onFiles: () => needRefresh(),
+    // Another page of the document is no part of this one (a page frames another only rarely): its edits leave this one be.
+    onFiles: (paths) => { if (paths.some((p) => !/\.(html?|md)$/i.test(p))) needRefresh(); },
     onPresence: () => { if (started) presenceChanged(); },
     onStatus: (connected) => { if (started) connectionChanged(connected); },
     onStale: () => {
@@ -586,12 +587,13 @@ type TreeModule = { mountTree: typeof mountTree };
     queuePeers();
   }
 
-  // Changes patching can't show (another file in the folder, or the page's
-  // structure: a diagram, a script) need the page rendered again. While the
-  // agent is working that waits for the end of its turn, so a half-built
-  // change never renders; a pill says it's pending and offers to refresh now.
-  // Otherwise it happens straight away.
-  // Either way the scroll position is kept.
+  // Changes the editor can't make in place (another file in the folder: a
+  // stylesheet, a script; or a script in the page itself) need the page
+  // rendered again. While the agent is working that waits for the end of its
+  // turn, so a half-built script never runs; a pill says it's pending and
+  // offers to refresh now. Otherwise it happens straight away. Either way the
+  // new page renders out of sight and takes the old one's place scrolled to
+  // the same text (editor.ts, render). Everything else shows as it's made.
   let reloadTimer = 0;
   // Whether any agent in the room (yours or anyone's) is mid-turn: a
   // structural re-render waits for it, so half-built changes never render.

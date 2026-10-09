@@ -27,12 +27,17 @@ erga-caret.on.again { animation-name: erga-caret-b; }
 @keyframes erga-caret-b { from, to { opacity: 1; } 50% { opacity: 0; } }
 `;
 
-/** Draws the caret in each page the frame shows (each render loads a new one). */
+/** Draws the caret in each page the frame shows (each render loads a new one), from the page it shows now if it has one. */
+const drawn = new WeakSet<HTMLIFrameElement>(), attached = new WeakSet<Document>();
 export function drawCaret(frame: HTMLIFrameElement): void {
-  frame.addEventListener("load", () => {
+  const start = () => {
     const doc = frame.contentDocument, win = frame.contentWindow;
-    if (doc && win) attach(doc, win as Window & typeof globalThis);
-  });
+    if (doc && win && doc.URL != "about:blank" && !attached.has(doc)) { attached.add(doc); attach(doc, win as Window & typeof globalThis); }
+  };
+  if (drawn.has(frame)) return;
+  drawn.add(frame);
+  frame.addEventListener("load", start);
+  start();
 }
 
 interface Spot { x: number; y: number; width: number; height: number; color: string }
