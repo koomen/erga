@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { EditorState } from "@codemirror/state";
-import { planPageEdits, applyChanges, type PageOp } from "../src/page/page-edits";
+import { planCustomEdits, applyChanges, type CustomEdit } from "../src/page/custom-edits";
 import { parseHtml, type ElementNode } from "../src/page/manuscript";
 
 const page = `<body>
@@ -22,10 +22,10 @@ function el(src: string, root: ElementNode, open: string, n = 0): ElementNode {
   walk(root);
   return found[n];
 }
-/** Runs a page's edits; the new source, or the error. Checks CodeMirror applies the changes the same way. */
-function run(src: string, ops: (find: (open: string, n?: number) => ElementNode) => PageOp<ElementNode | null>[]): string {
+/** Runs a page's custom edits; the new source, or the error. Checks CodeMirror applies the changes the same way. */
+function run(src: string, ops: (find: (open: string, n?: number) => ElementNode) => CustomEdit<ElementNode | null>[]): string {
   const root = parseHtml(src);
-  const plan = planPageEdits(src, root, ops((open, n) => el(src, root, open, n)));
+  const plan = planCustomEdits(src, root, ops((open, n) => el(src, root, open, n)));
   if ("error" in plan) return `ERROR: ${plan.error}`;
   const out = applyChanges(src, plan.changes);
   const state = EditorState.create({ doc: src });
@@ -34,7 +34,7 @@ function run(src: string, ops: (find: (open: string, n?: number) => ElementNode)
 }
 const NEW = `<li>\n<div class="view"><h3>New</h3></div>\n</li>`;
 
-describe("page edits", () => {
+describe("custom edits", () => {
   test("inserts after, before, into and at the start of an element, indented like the code around it", () => {
     expect(run(page, (f) => [{ op: "insert", after: f("<li>", 1), html: NEW }])).toContain(
       `      <div class="view"><h3>Docs</h3></div>\n    </li>\n    <li>\n      <div class="view"><h3>New</h3></div>\n    </li>\n  </ul>`);
@@ -90,6 +90,6 @@ describe("page edits", () => {
     expect(err(() => [])).toMatch(/list of edits/);
     const unclosed = `<div><p>One<div>x</div></div>`;
     const root = parseHtml(unclosed);
-    expect(planPageEdits(unclosed, root, [{ op: "remove", el: el(unclosed, root, "<p>") }])).toEqual({ error: expect.stringMatching(/isn't closed by its own end tag/) });
+    expect(planCustomEdits(unclosed, root, [{ op: "remove", el: el(unclosed, root, "<p>") }])).toEqual({ error: expect.stringMatching(/isn't closed by its own end tag/) });
   });
 });

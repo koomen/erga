@@ -1,7 +1,7 @@
-// Page edits: a page that is its own editor (DOCUMENT_PROMPT.md, "Editing
-// controls"). In the editor, the page gets `window.ergaEditor`; its own
-// controls (buttons it draws) call `ergaEditor.apply(ops)` with a list of
-// edits to its elements: insert HTML before, after or into one, remove one,
+// Custom edits: a document defines its own edits, beyond typing
+// (DOCUMENT_PROMPT.md, "Custom edits"). In the editor, the page gets
+// `window.ergaEditor`; its own controls (buttons it draws) call
+// `ergaEditor.apply(edits)` with a list of custom edits to its elements: insert HTML before, after or into one, remove one,
 // move one, replace one, set or remove an attribute. The page names the
 // elements it sees on screen; the editor finds each in the source (editor.ts)
 // and this module turns the list into one change to the source, or refuses
@@ -23,8 +23,8 @@ import * as M from "./manuscript";
 /** Where new or moved HTML goes, by an element of the page. */
 export type Where<R> = { before: R } | { after: R } | { into: R } | { prepend: R };
 
-/** One edit, as the page writes it; R is how it names elements (DOM elements in the page, source elements here). */
-export type PageOp<R> =
+/** One custom edit, as the page writes it; R is how it names elements (DOM elements in the page, source elements here). */
+export type CustomEdit<R> =
   | ({ op: "insert"; html: string } & Where<R>)
   | ({ op: "move"; el: R } & Where<R>)
   | { op: "remove"; el: R }
@@ -178,10 +178,10 @@ function checkRef(src: string, el: M.ElementNode | null | undefined, what: strin
 }
 
 /**
- * Turns a page's edits into one change to the source: all of them, in the
+ * Turns a page's custom edits into one change to the source: all of them, in the
  * order given, or none (an error that says why).
  */
-export function planPageEdits(src: string, root: M.ElementNode, ops: PageOp<M.ElementNode | null>[]): { changes: Change[] } | { error: string } {
+export function planCustomEdits(src: string, root: M.ElementNode, ops: CustomEdit<M.ElementNode | null>[]): { changes: Change[] } | { error: string } {
   try {
     if (!Array.isArray(ops) || !ops.length) refuse("apply takes a list of edits, e.g. [{ op: \"remove\", el }]");
     const changes: Change[] = [];

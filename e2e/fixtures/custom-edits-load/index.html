@@ -1,10 +1,10 @@
 <!doctype html>
 <html>
-<head><meta charset="utf-8"><title>Edits itself on load</title></head>
+<head><meta charset="utf-8"><title>Custom edits on load</title></head>
 <body style="background: #fff">
 <p id="note">Nobody clicked.</p>
 <script>
-  // A page that tries to change its own source as it loads: the editor refuses, as no one clicked.
+  // A page that tries a custom edit as it loads: the editor refuses, as no one clicked.
   if (window.ergaEditor) ergaEditor.apply([{ op: "remove", el: document.getElementById("note") }]).then((r) => { window.result = r; });
 </script>
 </body>

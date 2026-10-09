@@ -1,5 +1,5 @@
-// A page that is its own editor (DOCUMENT_PROMPT.md, "Editing controls"): in the editor its script draws buttons, and a
-// click sends edits (ergaEditor.apply) that the editor makes to the source as one undo step.
+// Custom edits (DOCUMENT_PROMPT.md, "Custom edits"): in the editor a page's script draws buttons, and a click sends
+// custom edits (ergaEditor.apply) that the editor makes to the source as one undo step.
 import { expect, servers, test } from "../../fixtures";
 import { F, W, openEditor, type Editor } from "../../editor";
 
@@ -21,7 +21,7 @@ async function press(ed: Editor, name: string, button: string) {
 }
 
 test("the page's buttons edit its source: add, delete, move, add under; each is one undo; the buttons take no caret", async ({ tab }) => {
-  const ed = await openEditor(tab, await servers.main(), "self-edit");
+  const ed = await openEditor(tab, await servers.main(), "custom-edits");
   expect(await views(ed)).toEqual(["Front page", "Documents", "New document", "Document", "Page", "Editor", "Settings", "Admin"]);
   expect(await ed.frame<boolean>(`${F}.documentElement.hasAttribute("data-erga-editing") && ${W}.ergaEditor.editing`)).toBe(true);
 
@@ -48,8 +48,8 @@ test("the page's buttons edit its source: add, delete, move, add under; each is 
   await expect.poll(() => views(ed)).toEqual(["Front page", "Admin", "Documents", "New document", "Document", "Page", "Editor", "Billing"]);
 });
 
-test("a page can't edit itself when nobody clicked: as it loads, say", async ({ tab }) => {
-  const ed = await openEditor(tab, await servers.main(), "self-edit-load");
+test("a page can't make custom edits when nobody clicked: as it loads, say", async ({ tab }) => {
+  const ed = await openEditor(tab, await servers.main(), "custom-edits-load");
   await expect.poll(() => ed.frame<{ ok: boolean; error: string } | undefined>(`${W}.result`)).toBeTruthy();
   const r = await ed.frame<{ ok: boolean; error: string }>(`${W}.result`);
   expect(r.ok).toBe(false);

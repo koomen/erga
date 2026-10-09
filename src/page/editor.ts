@@ -25,7 +25,7 @@ import * as M from "./manuscript";
 import { analyzeMarkdown, escapeMarkdownText, parseMarkdown, type Node as MdNode } from "./markdown";
 import { changesBetween } from "./merge";
 import { applyMorph, planMorph } from "./morph";
-import { planPageEdits, type PageOp } from "./page-edits";
+import { planCustomEdits, type CustomEdit } from "./custom-edits";
 
 export type Kind = "html" | "md";
 
@@ -59,13 +59,13 @@ const PROBLEM_WATCH = `<script data-erga>(function(){var q=window.__ergaProblems
 
 /**
  * Put in an HTML page's <head> after PROBLEM_WATCH: tells the page it's in the
- * editor (DOCUMENT_PROMPT.md, "Editing controls") and gives it
- * `ergaEditor.apply(ops)`, which hands the page's edits to the editor once
+ * editor and gives it `ergaEditor.apply(edits)` for its custom edits
+ * (DOCUMENT_PROMPT.md, "Custom edits"), which hands them to the editor once
  * it's there (`__ergaApply`).
  */
-const EDIT_API = `<script data-erga>(function(){var q=[];window.__ergaApplyQueue=q;window.ergaEditor=Object.freeze({editing:true,apply:function(ops){return new Promise(function(done){window.__ergaApply?done(window.__ergaApply(ops)):q.push([ops,done])})}});document.documentElement.setAttribute("data-erga-editing","")})()</script>`;
+const CUSTOM_EDITS_API = `<script data-erga>(function(){var q=[];window.__ergaApplyQueue=q;window.ergaEditor=Object.freeze({editing:true,apply:function(ops){return new Promise(function(done){window.__ergaApply?done(window.__ergaApply(ops)):q.push([ops,done])})}});document.documentElement.setAttribute("data-erga-editing","")})()</script>`;
 
-/** How long after the person's click or key the page's controls may edit it: as long as a browser's user activation lasts. */
+/** How long after the person's click or key the page may make a custom edit: as long as a browser's user activation lasts. */
 const GESTURE_MS = 5000;
 
 /** A key or input that came while the editor couldn't take it (see hold, render), to apply once it can. */
@@ -507,7 +507,7 @@ export class PageEditor {
 
   private injectHead(html: string): string {
     // <base> first, before any script: Chrome's preload scanner otherwise fetches the page's files against the frame's own address too (404s).
-    const inject = `<base href="${this.config.base}">${PROBLEM_WATCH}${EDIT_API}<style data-erga>${PAGE_STYLE}</style>`;
+    const inject = `<base href="${this.config.base}">${PROBLEM_WATCH}${CUSTOM_EDITS_API}<style data-erga>${PAGE_STYLE}</style>`;
     const m = /<head(\s[^>]*)?>/i.exec(html);
     if (m) return html.slice(0, m.index + m[0].length) + inject + html.slice(m.index + m[0].length);
     const h = /<html(\s[^>]*)?>/i.exec(html);
@@ -564,7 +564,7 @@ export class PageEditor {
       if (old) { this.frame = target; this.next = null; }
       this.doc = this.frame.contentDocument!;
       this.watchProblems();
-      this.takePageEdits();
+      this.takeCustomEdits();
       this.collectEls();
       this.bind();
       // A new page starts live: tell it it's paused again, if it still can be.
@@ -708,35 +708,35 @@ export class PageEditor {
     for (const raw of win.__ergaProblems ?? []) report(raw);
   }
 
-  // ------------------------------------------------------------ page edits
+  // ------------------------------------------------------------ custom edits
 
   /** When the person last clicked or pressed a key on the page (performance.now()). */
   private lastGesture = -Infinity;
 
-  /** Takes the page's own edits (`ergaEditor.apply`, see EDIT_API): those it made before the editor was there, then each as it comes. */
-  private takePageEdits(): void {
+  /** Takes the page's custom edits (`ergaEditor.apply`, see CUSTOM_EDITS_API): those it made before the editor was there, then each as it comes. */
+  private takeCustomEdits(): void {
     type EditWindow = Window & { __ergaApply?: (ops: unknown) => { ok: boolean; error?: string }; __ergaApplyQueue?: [unknown, (r: unknown) => void][] };
     const win = this.frame.contentWindow as EditWindow | null;
     if (!win) return;
-    win.__ergaApply = (ops) => this.applyPageEdits(win, ops);
+    win.__ergaApply = (ops) => this.applyCustomEdits(win, ops);
     for (const [ops, done] of win.__ergaApplyQueue?.splice(0) ?? []) done(win.__ergaApply(ops));
   }
 
   /**
-   * A list of edits from the page's own controls, made to the source as one
+   * A list of custom edits from the page's own controls, made to the source as one
    * change (one undo step), or refused whole. Only right after the person
    * clicks or types on the page: a page can't rewrite itself on its own (on
    * load, on a timer), which with several people editing would never stop.
    */
-  private applyPageEdits(win: Window, ops: unknown): { ok: boolean; error?: string } {
+  private applyCustomEdits(win: Window, ops: unknown): { ok: boolean; error?: string } {
     const refuse = (error: string) => {
-      this.config.onNotice?.(`The page's controls asked for an edit that can't be made: ${error}.`, `The page's editing controls (ergaEditor.apply) asked for an edit the editor refused: “${error}”. Fix the page's script or markup so its controls work.`);
+      this.config.onNotice?.(`The page asked for a custom edit that can't be made: ${error}.`, `The page's custom edits (ergaEditor.apply) asked for an edit the editor refused: “${error}”. Fix the page's script or markup so its custom edits work.`);
       return { ok: false, error };
     };
     if (performance.now() - this.lastGesture > ms(GESTURE_MS)) return refuse("ergaEditor.apply works only when the person has just clicked or pressed a key on the page");
     if (win != this.frame.contentWindow || this.rendering) return refuse("the page is being rendered again; try once more");
-    if (this.kind != "html") return refuse("only HTML pages can edit themselves");
-    if (!Array.isArray(ops)) return refuse("apply takes a list of edits");
+    if (this.kind != "html") return refuse("only HTML pages can have custom edits");
+    if (!Array.isArray(ops)) return refuse("apply takes a list of custom edits");
     // A fresh analysis: its units match the page's data-erga-id numbers, and their elements are in one parse of the source as it is.
     const src = this.state.doc.toString(), fresh = M.analyzeHtml(src, this.decoder);
     let root = fresh.units[0]?.node ?? M.parseHtml(src);
@@ -747,14 +747,14 @@ export class PageEditor {
       const out: Record<string, unknown> = { ...op };
       for (const k of ["el", "before", "after", "into", "prepend"]) if (k in out) out[k] = isEl(out[k]) ? this.sourceOf(out[k] as Element, fresh.units) : null;
       return out;
-    }) as PageOp<M.ElementNode | null>[];
-    const plan = planPageEdits(src, root, resolved);
+    }) as CustomEdit<M.ElementNode | null>[];
+    const plan = planCustomEdits(src, root, resolved);
     if ("error" in plan) return refuse(plan.error);
     if (!plan.changes.length) return { ok: true };
     const set = this.state.changes(plan.changes);
     const inserted = plan.changes.find((c) => c.insert.trim());
     const at = set.mapPos((inserted ?? plan.changes[0]).from, -1);
-    this.dispatch({ changes: set, userEvent: "input.page" });
+    this.dispatch({ changes: set, userEvent: "input.custom" });
     // The caret goes where the change is, so typing and undo go on from there: new text selected, to type over it.
     const u = this.units.find((x) => x.to > at && x.runs.some((r) => r.editable)) ?? this.units.at(-1);
     if (u) this.dispatch({ selection: inserted ? { anchor: M.textStart(u), head: M.textEnd(u) } : { anchor: M.textEnd(u) } });
@@ -1122,7 +1122,7 @@ export class PageEditor {
     on("dragstart", (e) => { if (this.ours(e)) e.preventDefault(); });
     on("drop", (e) => { if (this.ours(e)) e.preventDefault(); });
     on("mousedown", (e) => this.mousedown(e));
-    // What lets the page's own controls edit it (applyPageEdits): the person's own clicks and keys, not a script's.
+    // What lets the page make custom edits (applyCustomEdits): the person's own clicks and keys, not a script's.
     on("pointerdown", (e) => { if (e.isTrusted) this.lastGesture = performance.now(); }, { capture: true });
     on("keydown", (e) => { if (e.isTrusted) this.lastGesture = performance.now(); }, { capture: true });
     on("mousemove", (e) => { this.drag(e); this.config.onPointer?.(e); });

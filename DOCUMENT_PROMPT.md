@@ -112,14 +112,14 @@ rendered page:
     can open beside it, viewing and editing alike. The ← and → keys step too,
     except while someone types in the page's text. See "Presentations" below.
 
-12. **Let a page be its own editor.** When a page holds something people
-    will change by more than typing (add a card, delete a row, move a node of
-    a tree), give it editing controls of its own: in the editor, its script
-    draws buttons, and a click sends edits to its source through
-    `window.ergaEditor.apply`. Erga makes them as one change, one undo step,
-    and refuses any that would break the page. Offer this when you make such
-    a page, or when someone asks to make one editable. See "Editing
-    controls" below.
+12. **Give a page custom edits.** A document can define its own custom
+    edits: changes people make by more than typing (add a card, delete a
+    row, move a node of a tree). In the editor, the page's script draws
+    buttons for them, and a click sends the custom edit to the source through
+    `window.ergaEditor.apply`. Erga makes it as one change, one undo step,
+    and refuses any that would break the page. Offer custom edits when you
+    make such a page, or when someone asks to make one editable. See "Custom
+    edits" below.
 
 ## Presentations
 
@@ -189,9 +189,11 @@ A minimal presentation: each `section` is a step.
 
 `e2e/fixtures/steps/index.html` is a fuller example.
 
-## Editing controls
+## Custom edits
 
-In the editor, and only there, a page has `window.ergaEditor` (before its
+A document can define its own custom edits: the changes its page offers
+beyond typing, each with its own control on the page, and each made to the
+source by Erga. In the editor, and only there, a page has `window.ergaEditor` (before its
 first script runs) and its `<html>` element has the attribute
 `data-erga-editing`. Outside the editor neither exists, so the page shows as
 it always does, controls and all left out.
@@ -199,9 +201,9 @@ it always does, controls and all left out.
 | Member | What it does |
 |---|---|
 | `editing` | `true`. |
-| `apply(edits)` | Makes a list of edits to the page's source, all of them or none. Answers a Promise of `{ ok: true }` or `{ ok: false, error }`, the error saying why. |
+| `apply(edits)` | Makes a list of custom edits to the page's source, all of them or none. Answers a Promise of `{ ok: true }` or `{ ok: false, error }`, the error saying why. |
 
-Each edit names elements of the page as the script sees them:
+Each custom edit names elements of the page as the script sees them:
 
 | Edit | What it does |
 |---|---|
@@ -214,18 +216,18 @@ Each edit names elements of the page as the script sees them:
 What Erga makes sure of, so the page can't break itself:
 
 - Every element named is in the source. One the script made isn't, and the
-  edit is refused.
+  custom edit is refused.
 - New HTML is well-formed (every tag closed), with no `<script>`, no `on…`
   attribute and no `data-erga` attribute. Erga indents it to match the code
   around it, so it can be written on one line.
-- All the edits in one call refer to the source as it was before the call,
+- All the custom edits in one call refer to the source as it was before the call,
   and none may fall inside an element another removes or replaces.
-- Edits come only right after the person clicks or presses a key on the
+- Custom edits come only right after the person clicks or presses a key on the
   page: a page can't change itself as it loads, or on a timer.
 - When Erga refuses, it says why to the person and offers to ask the agent
   to fix the page.
 
-How to write the controls:
+How to write the controls for custom edits:
 
 - Make every control a `<button>`. Erga never puts a caret in a button, and a
   click on one is the page's. Style it (`cursor: pointer`) so it looks like
@@ -234,13 +236,13 @@ How to write the controls:
   exists, so the source holds only what readers see. Put them in elements of
   their own (a `div` of buttons in a card, an `li` for an add button at the
   end of a list), never inside a paragraph or heading (rule 5).
-- After an edit the page may render again, so draw the controls in a
+- After a custom edit the page may render again, so draw the controls in a
   function you can run more than once, and run it on a `MutationObserver` as
   well as at the start. Handle clicks with one listener on `document`.
 - Keep a new item's markup in a `<template>` and insert its `innerHTML`.
   Erga selects the new text, so people type over its placeholder.
 
-A tree of views that edits itself:
+A tree of views with custom edits:
 
 ```html
 <ul class="tree">
@@ -275,7 +277,7 @@ A tree of views that edits itself:
 </script>
 ```
 
-`e2e/fixtures/self-edit/index.html` is a fuller example.
+`e2e/fixtures/custom-edits/index.html` is a fuller example.
 
 ## Markdown documents
 
