@@ -113,6 +113,16 @@ export class Tokens {
   }
 
   /**
+   * The working token for a row, or null if this server didn't make it: a copy of another server's database (staging
+   * takes production's) holds that server's share tokens, which our secret can't make again (verify refuses them).
+   */
+  private async ownToken(id: string): Promise<string | null> {
+    const token = await this.tokenFor(id);
+    const [row] = await this.sql.all<{ hash: string }>("SELECT hash FROM agent_tokens WHERE id = ?1", id);
+    return row?.hash == (await sha256(token)) ? token : null;
+  }
+
+  /**
    * Checks what someone asks a token to be (throws ScopeError, saying why):
    * a scope there is, an admin token only for an admin, a document token for
    * a document they may open, and an expiry in the future. Returns it tidied.
@@ -149,7 +159,9 @@ export class Tokens {
    */
   async share(who: Who, rotate: boolean): Promise<{ token: string; info: AgentToken }> {
     const [row] = await this.sql.all<Row>(`SELECT ${COLUMNS} FROM agent_tokens WHERE login = ?1 AND kind = 'share' AND scope != 'admin' ORDER BY created DESC LIMIT 1`, who.login.toLowerCase());
-    if (row && !rotate) return { token: await this.tokenFor(row.id), info: fromRow(row) };
+    // Not ours (another server's row): a new one in its place, as with rotate.
+    const own = row && !rotate ? await this.ownToken(row.id) : null;
+    if (own) return { token: own, info: fromRow(row) };
     if (row) await this.sql.run("DELETE FROM agent_tokens WHERE login = ?1 AND kind = 'share' AND scope != 'admin'", who.login.toLowerCase());
     return this.mint(who, "Share button", { scope: "documents" }, "share");
 
@@ -167,7 +179,8 @@ export class Tokens {
     const login = who.login.toLowerCase(), now = Date.now();
     const [row] = await this.sql.all<Row>(`SELECT ${COLUMNS} FROM agent_tokens WHERE login = ?1 AND kind = 'share' AND scope = 'admin' ORDER BY created DESC LIMIT 1`, login);
     if (row && !rotate && !who.testBy && row.expires != null && Number(row.expires) - now > SHARE_ADMIN_RENEW_MS && (await this.dir.users.isAdmin(login))) {
-      return { token: await this.tokenFor(row.id), info: fromRow(row) };
+      const own = await this.ownToken(row.id);
+      if (own) return { token: own, info: fromRow(row) };
     }
     if (rotate) await this.sql.run("DELETE FROM agent_tokens WHERE login = ?1 AND kind = 'share' AND scope = 'admin'", login);
     else await this.sql.run("DELETE FROM agent_tokens WHERE login = ?1 AND kind = 'share' AND scope = 'admin' AND expires <= ?2", login, now);
