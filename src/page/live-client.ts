@@ -4,8 +4,11 @@
 // a queue it takes on as it starts.
 
 export interface Live {
-  /** Keeps `save()`'s answer for the reloaded page (restore.ts reads it back, by name). */
-  keep(name: string, save: () => unknown): void;
+  /**
+   * Keeps `save()`'s answer for the reloaded page (restore.ts reads it back, by name). `everyReload`: for a reload by hand
+   * too (the page saves it as it goes), not only for a new release.
+   */
+  keep(name: string, save: () => unknown, opts?: { everyReload?: boolean }): void;
   /** Not now: a reason the page can't reload at this moment (a drag, an IME composition), or null. */
   hold(why: () => string | null): void;
   /** Before a reload: resolves once what the page has is safe on the server (false: not yet, try again later). */

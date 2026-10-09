@@ -492,7 +492,7 @@ async function pagesDoor(request: Request, url: URL, doc: { owner: string; id: s
   return answer;
 }
 
-const HOST_STYLE = "html,body{margin:0;height:100%;overflow:hidden;overscroll-behavior:none;background:transparent}iframe{position:fixed;inset:0;width:100%;height:100%;border:0;background:transparent;visibility:hidden}iframe.on{visibility:visible}html.wait iframe{visibility:hidden}";
+const HOST_STYLE = "html,body{margin:0;height:100%;overflow:hidden;overscroll-behavior:none;background:transparent}iframe{position:fixed;inset:0;width:100%;height:100%;border:0;background:transparent;visibility:hidden}iframe.on{visibility:visible}html.wait iframe,html.placing iframe{visibility:hidden}";
 
 /** The frame's host page's version: a digest of its code (FNV-1a), which changes whenever that does. */
 const versionOf = (text: string) => {
@@ -565,7 +565,20 @@ const HOST_SCRIPT = `(function () {
       report(f);
     } catch (e) {}
   }
-  if (view) view.addEventListener("load", function () { still(view); moved(view); follow(view); });
+  if (view) view.addEventListener("load", function () { view.ergaLoaded = true; still(view); moved(view); follow(view); });
+  // Reloaded in the editor (&y=, FRAME_SRC): the page shown opens where it was scrolled to, out of sight until it's there
+  // (its content may still be coming), or as far as it goes once it has loaded (a shorter page now), or after a moment.
+  var startY = Number((/[?&]y=(\\d+)/.exec(location.search) || [])[1]) || 0;
+  function placed() { startY = 0; document.documentElement.classList.remove("placing"); }
+  function place(f) {
+    try {
+      var w = f.contentWindow, d = f.contentDocument;
+      if (!d || !d.documentElement || d.URL == "about:blank" || (!d.body && d.readyState == "loading")) return;
+      w.scrollTo(0, startY);
+      if (Math.abs(w.scrollY - startY) < 2 || (f.ergaLoaded && w.scrollY + w.innerHeight >= d.documentElement.scrollHeight - 2)) placed();
+    } catch (e) { placed(); }
+  }
+  if (startY) { document.documentElement.classList.add("placing"); setTimeout(placed, 1500); }
   // The band above the page (the document's page, viewDocument) takes the page's background: this tells the shell what it is,
   // on every frame it changes (a page of a multi-page document, a theme switch), as a solid colour (a gradient's first one).
   // The first time this page sees the document (nothing remembered here), the page waits out of sight until the shell has
@@ -653,6 +666,7 @@ const HOST_SCRIPT = `(function () {
   (function watch() {
     try {
       var f = document.querySelector("iframe.on"), c = f ? colourOf(f) : null;
+      if (f && startY) place(f);
       // The fade's too (above), from as soon as the page shown has a document (well before its load event, on a page with
       // large images), and again after it goes to another of the document's pages.
       if (f) follow(f);
@@ -949,7 +963,7 @@ async function viewDocument(platform: Platform, request: Request, opened: { doc:
 ${FAVICON_LINK}
 <meta name="erga-doc" content="${esc(doc.id)}">
 <link rel="preconnect" href="${esc(origin)}">
-${meta}${backdrop}${opening}${crumbsFont(session)}<style>${BAND_STYLE}</style>
+${meta}${backdrop}${crumbsFont(session)}<style>${BAND_STYLE}</style>${opening}
 <body>${editable ? `<script>${EDITING_BODY}</script>` : ""}
 <div class="erga-canvas" aria-hidden="true"><div></div></div>${frame}${editable ? `<script>${FRAME_SRC}</script>` : ""}
 ${viewCrumbs(session, landing ? null : doc.title)}<div class="erga-view-buttons">${newDocButton("erga-view-button")}${clone}${edit}</div>${newDocMenu((path) => link(path, session), !!session && !session.test && !session.agent)}${VIEW_STYLE}${NEW_DOC_STYLE}<script>${NEW_DOC_SCRIPT}ergaNewDoc(document);</script><script>${NAV_SCRIPT}</script><script>${BAND_BOOT}</script><script>${FADE_BOOT}</script>${STEPS_STYLE}<script>${STEPS_BOOT}</script>${editable ? `<script>${EDIT_BOOT}</script>` : ""}
@@ -966,18 +980,68 @@ export const editButton = (href: string, editing: boolean) => `<a href="${esc(hr
  * For whoever may edit, at the top of a document's page: opened with #edit, it
  * fetches the editor's files at once. (The page's background, remembered
  * from last time, is BAND_HEAD's.)
+ *
+ * Reloaded in the editor (by hand, or for a new release), the page opens as
+ * the editor was, from its first frame, rather than as the viewer until the
+ * editor's code has come: its layout (the agent's pane open or not, the
+ * document beside it: what the editor kept, main.ts's "shell", restore.ts)
+ * and its controls, from the copy of the editor's page this tab keeps
+ * (EDIT_BOOT, erga:editor-html), its stylesheets holding the first frame
+ * until they're in. The controls wait, inert, for the editor's code
+ * (erga-restored; if that never comes, the viewer's controls come back),
+ * and the document opens where it was scrolled to (FRAME_SRC). Only for
+ * the window's same size, and at the same address.
  */
+/** Where a tab keeps its copy of the editor's page (EDIT_BOOT), for a reload in the editor to open with (EDITING_HEAD). */
+export const EDITOR_COPY = "erga:editor-html";
+/** What a page kept for its reload (src/page/restore.ts, RESTORE_KEY: the same, which tests/restore-key.test.ts checks). */
+export const RESTORE_KEY = "erga:live:restore";
 const EDITING_HEAD = `if (location.hash == "#edit") {
   for (const [href, as] of [["/editor.html", "fetch"], ["/page.js", "script"], ["/style.css", "style"], ["/fonts/inter.css", "style"]]) {
     const l = Object.assign(document.createElement("link"), { rel: "preload", href, as });
     if (as == "fetch") l.crossOrigin = "anonymous";
     document.head.append(l);
   }
+  try {
+    const s = JSON.parse(sessionStorage.getItem("${RESTORE_KEY}") || "null"), me = performance.timeOrigin;
+    const shell = s?.keep?.shell, html = sessionStorage.getItem("${EDITOR_COPY}"), root = document.documentElement;
+    if (shell && html && s.url == location.pathname + location.search && (s.used == null || s.used == me) && s.at <= me + 1000 && me - s.at < 60000
+      && (!s.hand || performance.getEntriesByType("navigation")[0]?.type == "reload") && shell.width == innerWidth && shell.height == innerHeight) {
+      const doc = new DOMParser().parseFromString(html, "text/html");
+      window.ergaRestored = { html, doc, body: shell.body, parts: shell.parts, editor: s.keep.editor };
+      root.dataset.theme = "light";
+      root.style.cssText += ";" + shell.style;
+      root.classList.add(...shell.html);
+      // Written into the page as it parses, in their order, so the first frame waits for them as for its own.
+      document.write([...doc.head.querySelectorAll('link[rel="stylesheet"], style')].map((el) => { el.dataset.ergaRestored = ""; return el.outerHTML; }).join(""));
+    }
+  } catch (e) {}
 }`;
-/** ... and as its body starts: editing, from the first frame. */
-const EDITING_BODY = `if (location.hash == "#edit") document.body.classList.add("erga-editing");`;
-/** The frame, for whoever may edit: opened with #edit, its host page starts on its half of the editor at once (pagesDoor). */
-const FRAME_SRC = `{ const f = document.getElementById("frame"); f.src = f.dataset.src + (location.hash == "#edit" ? "&edit=1" : ""); }`;
+/** ... and as its body starts: editing, from the first frame; reloaded in the editor, with its controls (EDITING_HEAD). */
+const EDITING_BODY = `if (location.hash == "#edit") {
+  document.body.classList.add("erga-editing");
+  const r = window.ergaRestored;
+  if (r) {
+    document.body.classList.add(...r.body, "erga-restored", "erga-editor-ready", "no-motion");
+    const wrap = Object.assign(document.createElement("div"), { id: "erga-editor", inert: true });
+    for (const el of r.doc.body.children) if (el.id != "frame" && el.tagName != "SCRIPT") wrap.append(document.importNode(el, true));
+    for (const [id, html] of Object.entries(r.parts || {})) {
+      const t = document.createElement("template");
+      t.innerHTML = html;
+      const was = wrap.querySelector("#" + CSS.escape(id)), now = t.content.firstElementChild;
+      if (was && now?.id == id) was.replaceWith(now);
+    }
+    document.body.append(wrap);
+  }
+}`;
+/**
+ * The frame, for whoever may edit: opened with #edit, its host page starts on its half of the editor at once (pagesDoor);
+ * reloaded in the editor, scrolled where it was (&y=, HOST_SCRIPT).
+ */
+const FRAME_SRC = `{
+  const f = document.getElementById("frame"), kept = window.ergaRestored?.editor, y = kept?.mode == "text" ? Math.round(kept.scroll) : 0;
+  f.src = f.dataset.src + (location.hash == "#edit" ? "&edit=1" + (y > 0 ? "&y=" + y : "") : "");
+}`;
 
 /**
  * Which of the document's pages is shown, for everyone on a document's page
@@ -1146,6 +1210,14 @@ const EDIT_BOOT = `(() => {
   const frame = document.getElementById("frame"), body = document.body;
   const pages = new URL(document.querySelector('meta[name="erga-pages"]').content, location.href).origin;
   let hostUp = false, wanted = null, editor = null, ready = false;
+  // Reloaded in the editor, its controls are up already (EDITING_BODY), shown as if it were ready (but inert) until it is:
+  // last on the page, as they'd be added below.
+  const restored = window.ergaRestored;
+  if (restored) {
+    body.append(document.getElementById("erga-editor"));
+    // (The editor's code not there in a while: the viewer's controls, with the pencil waiting, as on any way in.)
+    setTimeout(() => { if (!ready) { body.classList.remove("erga-restored", "no-motion"); sync(); } }, 8000);
+  }
   const toFrame = (type) => frame.contentWindow.postMessage({ type }, pages);
   // The frame's host page is up (or up again): what it was asked before then goes now.
   addEventListener("message", (e) => {
@@ -1156,7 +1228,7 @@ const EDIT_BOOT = `(() => {
   const ask = (type) => { wanted = type; if (hostUp) toFrame(type); };
   const sync = () => {
     const wrap = document.getElementById("erga-editor");
-    body.classList.toggle("erga-editor-ready", ready);
+    body.classList.toggle("erga-editor-ready", ready || (!!restored && body.classList.contains("erga-restored") && body.classList.contains("erga-editing")));
     if (wrap) wrap.inert = !(ready && body.classList.contains("erga-editing"));
   };
   // The document's details (main.ts), asked for as soon as editing starts, alongside the editor's files: that wakes its room too.
@@ -1166,18 +1238,26 @@ const EDIT_BOOT = `(() => {
   const load = () => editor ??= (async () => {
     window.ergaDocInfo = info();
     document.head.append(Object.assign(document.createElement("link"), { rel: "preload", as: "script", href: "/page.js" }));
-    const d = new DOMParser().parseFromString(await (await fetch("/editor.html")).text(), "text/html");
-    document.documentElement.dataset.theme = "light";
-    await Promise.all([...d.head.querySelectorAll('link[rel="stylesheet"], style')].map((el) => {
-      el = document.importNode(el, true);
-      const loaded = el.tagName == "LINK" && new Promise((done) => { el.onload = el.onerror = done; });
-      document.head.append(el);
-      return loaded;
-    }));
-    const wrap = document.createElement("div");
-    wrap.id = "erga-editor";
-    for (const el of d.body.children) if (el.id != "frame" && el.tagName != "SCRIPT") wrap.append(document.importNode(el, true));
-    body.append(wrap);
+    const html = await (await fetch("/editor.html")).text();
+    // This tab's copy, for a reload to open with (EDITING_HEAD).
+    try { sessionStorage.setItem("${EDITOR_COPY}", html); } catch (e) {}
+    // Reloaded with this very page's copy: its controls are the ones up already. Otherwise (a new release, say) they're the
+    // new page's, which take the copy's place once their stylesheets are in.
+    if (!restored || restored.html != html) {
+      const d = new DOMParser().parseFromString(html, "text/html");
+      document.documentElement.dataset.theme = "light";
+      await Promise.all([...d.head.querySelectorAll('link[rel="stylesheet"], style')].map((el) => {
+        el = document.importNode(el, true);
+        const loaded = el.tagName == "LINK" && new Promise((done) => { el.onload = el.onerror = done; });
+        document.head.append(el);
+        return loaded;
+      }));
+      for (const el of document.querySelectorAll("[data-erga-restored], #erga-editor")) el.remove();
+      const wrap = document.createElement("div");
+      wrap.id = "erga-editor";
+      for (const el of d.body.children) if (el.id != "frame" && el.tagName != "SCRIPT") wrap.append(document.importNode(el, true));
+      body.append(wrap);
+    }
     sync();
     body.append(Object.assign(document.createElement("script"), { src: "/page.js" }));
   })();
@@ -1209,7 +1289,15 @@ const EDIT_BOOT = `(() => {
   }
   // Whether the page was opened in the editor (with #edit), rather than switched into it: main.ts restores
   // the agent as it was left only then, and otherwise opens it the way it does on any later switch.
-  window.ergaShell = { ready() { ready = true; sync(); }, loadedEditing: editing() };
+  window.ergaShell = {
+    ready() {
+      ready = true;
+      sync();
+      // Its controls run now; what moves moves again from the next frame.
+      requestAnimationFrame(() => requestAnimationFrame(() => body.classList.remove("erga-restored", "no-motion")));
+    },
+    loadedEditing: editing(),
+  };
   document.addEventListener("click", (e) => {
     const a = e.target.closest?.(".erga-edit-button, #btn-edit");
     if (!a || e.button || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;

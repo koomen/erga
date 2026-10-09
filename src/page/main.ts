@@ -97,6 +97,16 @@ interface EditorKept {
   /** Everything the tab held of the room (Collab.held), merged after the reload in case an edit hadn't reached it. */
   held?: { epoch: string; update: string };
 }
+/**
+ * The editor's look, kept across a reload for the document's page to open with from its first frame (front.ts,
+ * EDITING_HEAD): the window's size it was for, the classes on <html> and <body> that place things (of SHELL_HTML,
+ * SHELL_BODY), <html>'s style (the layout's variables, layout.ts; the page's colour), and the controls this script fills
+ * in as it starts (SHELL_PARTS, by id: the title, the pencil, the avatars), as they were, so none appears late and moves
+ * the others. (Only those this script sets afresh as it starts, never adds to: not the agent's conversation.)
+ */
+interface ShellKept { width: number; height: number; html: string[]; body: string[]; style: string; parts: Record<string, string> }
+const SHELL_HTML = ["page-dark", "page-light", "erga-faded"], SHELL_BODY = ["agent-open", "agent-right", "layout-narrow"];
+const SHELL_PARTS = ["nav-docs", "people", "btn-clone", "btn-edit", "me", "agent-model", "agent-input", "agent-voice", "agent-send"];
 /** pages-tree.js, once loaded (it sets window.ergaTree). */
 type TreeModule = { mountTree: typeof mountTree };
 
@@ -228,7 +238,8 @@ type TreeModule = { mountTree: typeof mountTree };
   const syncGroup = () => {
     const open = groupOpen();
     editGroup.inert = !open;
-    if (!open || !editGroup.classList.contains("settled")) editGroup.classList.toggle("settled", open && matchMedia("(prefers-reduced-motion: reduce)").matches);
+    // (Open from the first frame, reloaded in the editor (front.ts, erga-restored): settled at once.)
+    if (!open || !editGroup.classList.contains("settled")) editGroup.classList.toggle("settled", open && (matchMedia("(prefers-reduced-motion: reduce)").matches || body.classList.contains("erga-restored")));
   };
   editGroup.addEventListener("transitionend", (e) => { if (e.target == editGroup && e.propertyName == "grid-template-columns" && groupOpen()) editGroup.classList.add("settled"); });
   new MutationObserver(syncGroup).observe(body, { attributes: true, attributeFilter: ["class"] });
@@ -1869,7 +1880,9 @@ Once you've read the guide, await further instructions.`;
   // The page reloads by itself for a new release of the editor (live.ts), once the room has this tab's edits,
   // never while you drag or compose or speak, and comes back as it was: the page and its caret, where it was
   // scrolled to, the view (page or source), the cards that were open, the files attached to the next message.
-  // (The agent's draft, the pane and its layout are kept in this browser anyway.)
+  // (The agent's draft, the pane and its layout are kept in this browser anyway.) A reload by hand comes back
+  // the same way, and so does the editor's look: the document's page opens with it from its first frame
+  // (front.ts, EDITING_HEAD), before this script has loaded.
   live((l) => {
     l.flush(() => collab.flushed());
     l.hold(() => pointerDown ? "a pointer is down on the page" : voice ? "voice mode is on" : agentFiles.reading ? "files are being read" : null);
@@ -1880,7 +1893,17 @@ Once you've read the guide, await further instructions.`;
         pages: !pagesCard.hidden, settings: !!docSettings?.isOpen(), help: !help.hidden,
         files: agentFiles.files, held: collab.held() ?? undefined,
       };
-    });
+    }, { everyReload: true });
+    l.keep("shell", (): ShellKept | null => {
+      if (!editing() || mode != "text") return null;
+      const root = document.documentElement;
+      return {
+        width: innerWidth, height: innerHeight,
+        html: SHELL_HTML.filter((c) => root.classList.contains(c)), body: SHELL_BODY.filter((c) => document.body.classList.contains(c)),
+        style: root.style.cssText,
+        parts: Object.fromEntries(SHELL_PARTS.map((id) => [id, document.getElementById(id)?.outerHTML ?? ""]).filter(([, html]) => html)),
+      };
+    }, { everyReload: true });
     // The first look at the editor's files: their builds, as it starts.
     l.check("the editor started");
   });

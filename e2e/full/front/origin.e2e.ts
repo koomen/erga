@@ -62,7 +62,7 @@ test("doc/ is the page; a file has an ETag, is checked each time, and is a 304 w
   expect(await again.text()).toBe("");
   const src = /<iframe id="frame"[^>]* (?:data-)?src="([^"]+)"/.exec(editor)?.[1]?.replace(/&amp;/g, "&") ?? "";
   expect(src).toMatch(/[?&]v=[a-z0-9]+/);
-  expect(editor).toContain('f.src = f.dataset.src + (location.hash == "#edit" ? "&edit=1" : "")');
+  expect(editor).toContain('f.src = f.dataset.src + (location.hash == "#edit" ? "&edit=1"');
   const host = await pagesFetch(src);
   expect(host.headers.get("cache-control") ?? "").toMatch(/max-age=\d+/);
   expect(await host.text()).toContain(`<base href="${at.pathname}doc/">`);

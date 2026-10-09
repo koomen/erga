@@ -20,7 +20,7 @@ test("the canonical address is the viewer (the page, Edit, Clone, a way back to 
   for (const want of ['<iframe id="frame" class="erga-view"', `href="/${p.login}/untitled#edit"`, `href="/new?from=${id}"`, 'href="/docs"']) expect(html, want).toContain(want);
   expect(html).toContain(`<meta name="erga-base" content="/d/${id}">`);
   expect(html).toContain("<title>Untitled</title>");
-  expect(html).toContain('if (location.hash == "#edit") document.body.classList.add("erga-editing")');
+  expect(html).toContain('if (location.hash == "#edit") {\n  document.body.classList.add("erga-editing");');
   // The editor's code isn't in the viewer's page.
   expect(html).not.toContain('/page.js"></script>');
 });

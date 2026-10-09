@@ -7,6 +7,13 @@
 // page: the first reader marks it with the page's start time, so the next
 // load (a reload by hand, a page opened later) finds it used and ignores it.
 // It is also ignored after a minute, and on another address.
+//
+// A reload by hand (the browser's own) keeps what the scripts that ask for it
+// keep (Live.keep, everyReload: the editor), written as the page goes
+// (pagehide); that one is only for a load that is a reload (`hand`), not for
+// the same address opened again another way. The document's page reads it
+// too, before any of this loads (front.ts, EDITING_HEAD), to open the editor
+// as it was from its first frame.
 
 export const RESTORE_KEY = "erga:live:restore";
 /** How old a saved page may be, when the reload that follows it shows (a slow server can take a while to come back). */
@@ -23,6 +30,8 @@ export interface Saved {
   page?: unknown;
   /** What each script that asked (Live.keep) kept: by name. */
   keep: Record<string, unknown>;
+  /** Kept as the page went, for a reload by hand: only a load that is a reload restores it. */
+  hand?: boolean;
 }
 
 const here = () => location.pathname + location.search;
@@ -40,6 +49,7 @@ export function restored(): Saved | null {
     if (!s || typeof s.at != "number" || typeof s.url != "string" || !s.keep) return memo;
     if (s.used != null && s.used != me) return memo;
     if (s.url != here() || s.at > me + 1000 || me - s.at > FRESH_MS) return memo;
+    if (s.hand && (performance.getEntriesByType("navigation")[0] as PerformanceNavigationTiming | undefined)?.type != "reload") return memo;
     if (s.used == null) { s.used = me; sessionStorage.setItem(RESTORE_KEY, JSON.stringify(s)); }
     memo = s;
   } catch { /* storage off (a private window), or a broken entry */ }

@@ -44,14 +44,14 @@ const session = {
 
 // ------------------------------------------------------------------ what the page tells us
 
-const keepers = new Map<string, () => unknown>();
+const keepers = new Map<string, { save: () => unknown; everyReload: boolean }>();
 const holds: (() => string | null)[] = [];
 const flushes: (() => Promise<boolean>)[] = [];
 let lastActivity = 0, pointerHeld = false, composing = false;
 const connections = new Map<string, { up: boolean; since: number; wasUp: boolean }>();
 
 const api: Live = {
-  keep(name, save) { keepers.set(name, save); },
+  keep(name, save, opts) { keepers.set(name, { save, everyReload: !!opts?.everyReload }); },
   hold(why) { holds.push(why); },
   flush(fn) { flushes.push(fn); },
   activity() { lastActivity = now(); },
@@ -233,19 +233,31 @@ async function reload() {
   if (flushed.includes(false)) { window.setTimeout(waitForQuiet, 2000); return; }
   if (blocker()) { waitForQuiet(); return; }
   reloading = true;
-  const keep: Record<string, unknown> = {};
-  for (const [name, save] of keepers) { try { keep[name] = save(); } catch (e) { console.error(e); } }
-  const saved: Saved = { url: location.pathname + location.search, at: now(), page: savePage(), keep };
-  if (!session.set(RESTORE_KEY, JSON.stringify(saved))) {
-    // Too much to keep (files attached to a draft, say): keep the rest.
-    for (const [name, v] of Object.entries(keep)) if (JSON.stringify(v ?? null).length > 200_000) delete keep[name];
-    session.set(RESTORE_KEY, JSON.stringify(saved));
-  }
+  keepAll([...keepers.keys()], false);
   let past: number[] = [];
   try { past = JSON.parse(session.get(KEYS.last) || "[]"); } catch { /* none */ }
   session.set(KEYS.last, JSON.stringify([...past.slice(-5), now()]));
   location.reload();
 }
+
+/** Keeps what the page shows and what the keepers named keep, for the reloaded page (restore.ts); `hand`: a reload by hand. */
+function keepAll(names: string[], hand: boolean) {
+  const keep: Record<string, unknown> = {};
+  for (const name of names) { try { keep[name] = keepers.get(name)!.save(); } catch (e) { console.error(e); } }
+  const saved: Saved = { url: location.pathname + location.search, at: now(), page: savePage(), keep, ...(hand ? { hand } : {}) };
+  if (!session.set(RESTORE_KEY, JSON.stringify(saved))) {
+    // Too much to keep (files attached to a draft, say): keep the rest.
+    for (const [name, v] of Object.entries(keep)) if (JSON.stringify(v ?? null).length > 200_000) delete keep[name];
+    session.set(RESTORE_KEY, JSON.stringify(saved));
+  }
+}
+
+// A reload by hand, or the page left any other way: what the keepers that asked keep (everyReload), in case it's a reload.
+// (Not on the way out of a reload for a release, which kept everything already.)
+addEventListener("pagehide", () => {
+  const names = [...keepers].filter(([, k]) => k.everyReload).map(([name]) => name);
+  if (!reloading && names.length) keepAll(names, true);
+});
 
 // ------------------------------------------------------------------ the page's own state
 
