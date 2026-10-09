@@ -117,6 +117,9 @@ const MD_STYLED = new Set(["Emphasis", "StrongEmphasis", "Strikethrough", "Inlin
 
 interface Analysis { units: M.Unit[]; html: string }
 
+/** Where the reader is in the page (see viewNow): the text on the window's top line, the first block in it, the scroll. */
+interface View { text: { pos: number; top: number } | null; block: { pos: number; top: number } | null; x: number; y: number }
+
 /** A Markdown page's HTML with its units cut out: what's left is the blocks around them. Empty for HTML pages, whose units don't carry their HTML. */
 function skeletonOf(a: Analysis): string {
   let out = "", at = 0;
@@ -405,7 +408,7 @@ export class PageEditor {
   /** The frame a render in flight loads the page into, out of sight, while the page it replaces stays on screen. */
   private next: HTMLIFrameElement | null = null;
   /** Where the reader was in the page a render replaces: the block at the top of the window, and how far down it was. */
-  private view: { pos: number; top: number; x: number; y: number } | null = null;
+  private view: View | null = null;
   /** A Markdown page's blocks around its units (lists and their nesting, quotes), as last rendered: when they change, patching the units isn't enough. */
   private skeleton = "";
   /** The HTML the page on screen shows (rendered from, then patched to): what a morph (morph.ts) starts from. */
@@ -546,7 +549,7 @@ export class PageEditor {
     const onLoad = () => {
       if (token != this.renderToken) return;
       target.removeEventListener("load", onLoad);
-      if (old) this.swap(old, target);
+      if (old) { this.frame = target; this.next = null; }
       this.doc = this.frame.contentDocument!;
       this.watchProblems();
       this.collectEls();
@@ -560,9 +563,10 @@ export class PageEditor {
       // source is locked now, not when someone tries to type into it.
       for (const u of this.units) this.verify(u);
       this.updateEmpty();
+      if (old) this.show(old);
       // Edits that arrived while the page loaded (someone else typing) are patched in now.
       const now = this.state.doc.toString();
-      if (now != src) this.applyChanges({ changes: changesBetween(src, now) }, this.units, src);
+      if (now != src) { const changes = changesBetween(src, now); this.keepView(() => this.applyChanges({ changes }, this.units, src), changes); }
       // Start with the caret in the manuscript, like a document that opens ready to type.
       const head = this.state.selection.main.head;
       const first = this.units.find((u) => u.runs.some((r) => r.editable && /\S/.test(r.text))) ?? this.units[0];
@@ -593,36 +597,86 @@ export class PageEditor {
   /** The frame the page is in (a render replaces it). */
   get frameElement(): HTMLIFrameElement { return this.frame; }
 
-  /** Where the reader is in the page on screen: the first block in the window, with how far it is from the top. */
-  private viewNow(): { pos: number; top: number; x: number; y: number } | null {
+  /**
+   * Where the reader is in the page on screen: the text on the top line of
+   * the window (a source position, and how far down the window its line is),
+   * the first block in the window as a fallback, and the scroll.
+   */
+  private viewNow(): View | null {
     const win = this.frame.contentWindow;
     if (!win || !this.doc) return null;
-    const view = { pos: -1, top: 0, x: win.scrollX, y: win.scrollY };
+    const view: View = { text: null, block: null, x: win.scrollX, y: win.scrollY };
     if (win.scrollY > 0) {
+      view.text = this.topText();
       for (const u of this.units) {
         const r = this.els[u.id]?.getBoundingClientRect();
         if (!r || r.bottom <= 0 || !r.height) continue;
-        if (r.top < win.innerHeight) { view.pos = u.from; view.top = r.top; }
+        if (r.top < win.innerHeight) view.block = { pos: u.from, top: r.top };
         break;
       }
     }
     return view;
   }
 
-  /** A render's new page takes the old one's place, scrolled to show the same text where it was. */
-  private swap(old: HTMLIFrameElement, frame: HTMLIFrameElement): void {
-    this.frame = frame;
-    this.next = null;
-    const win = frame.contentWindow, view = this.view;
+  /** A render's new page (now this.frame) takes the old one's place, scrolled to show the same text on its top line. */
+  private show(old: HTMLIFrameElement): void {
+    const frame = this.frame, win = frame.contentWindow, view = this.view;
     this.view = null;
     if (win && view) {
-      const u = view.pos < 0 ? null : this.units.find((u) => u.to >= view.pos);
-      const r = u && frame.contentDocument?.querySelector(`[data-erga-id="${u.id}"]`)?.getBoundingClientRect();
-      win.scrollTo(view.x, r ? win.scrollY + r.top - view.top : view.y);
+      win.scrollTo(view.x, view.y);
+      const t = view.text && this.textTop(view.text.pos);
+      if (t != null) win.scrollBy(0, t - view.text!.top);
+      else {
+        const u = view.block && this.units.find((u) => u.to >= view.block!.pos);
+        const r = u && this.els[u.id]?.getBoundingClientRect();
+        if (r) win.scrollBy(0, r.top - view.block!.top);
+      }
     }
     frame.style.visibility = "";
     if (old.classList.contains("on")) frame.classList.add("on");
     old.remove();
+  }
+
+  /**
+   * The text on the top line of the window: the source position of the
+   * character at a point just inside the window's top, over the first block
+   * there, and how far down the window that character's line is. Null where
+   * no text is (a picture, a widget).
+   */
+  private topText(): { pos: number; top: number } | null {
+    const doc = this.doc as (Document & { caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null }) | null;
+    const win = this.frame.contentWindow;
+    if (!doc || !win) return null;
+    for (const el of this.els) {
+      if (!el) continue;
+      const r = el.getBoundingClientRect();
+      if (r.bottom <= 0 || !r.height) continue;
+      if (r.top >= win.innerHeight) return null;
+      const x = r.left + Math.min(8, r.width / 2), y = Math.max(r.top, 0) + 2;
+      let node: Node | null = null, offset = 0;
+      const p = doc.caretPositionFromPoint?.(x, y);
+      if (p) { node = p.offsetNode; offset = p.offset; }
+      else { const rg = doc.caretRangeFromPoint?.(x, y); if (rg) { node = rg.startContainer; offset = rg.startOffset; } }
+      if (!node || !el.contains(node)) return null;
+      const pos = this.posFromDOM(node, offset), top = pos == null ? null : this.textTop(pos);
+      return pos == null || top == null ? null : { pos, top };
+    }
+    return null;
+  }
+
+  /** How far down the window the character at a source position is (its own box, so a line break doesn't blur it). */
+  private textTop(pos: number): number | null {
+    const at = this.domAtPos(pos, 1);
+    if (!at || at.node.nodeType != 3) return null;
+    const range = this.doc!.createRange();
+    const len = at.node.nodeValue!.length;
+    try {
+      if (at.offset < len) range.setStart(at.node, at.offset), range.setEnd(at.node, at.offset + 1);
+      else if (len) range.setStart(at.node, len - 1), range.setEnd(at.node, len);
+      else return null;
+    } catch { return null; }
+    const rects = [...range.getClientRects()].filter((r) => r.height > 0);
+    return rects.length ? rects[at.offset < len ? 0 : rects.length - 1].top : null;
   }
 
   /** Hands the page's problems (see PROBLEM_WATCH) to the shell, as they happen. */
@@ -2222,7 +2276,7 @@ export class PageEditor {
     this.recordAuthorship(changes, author);
     // (Read first: a change that replaces the block with the caret takes the focus with it, and this puts it back.)
     const hadFocus = this.hasFocus;
-    this.keepView(() => this.applyChanges(tr, oldUnits, oldSrc));
+    this.keepView(() => this.applyChanges(tr, oldUnits, oldSrc), changes);
     if (hadFocus) this.syncDOMSelection(true);
     this.notify({ docChanged: true, selectionSet: false, rendered: false, changes, remote: true });
     if (this.staleSince == null && this.unshown) this.staleSince = oldSrc;
@@ -2517,7 +2571,7 @@ export class PageEditor {
     if (this.tracking) this.queueDiff();
     else this.marks = [];
     if (!this.doc || this.rendering) { this.render(); return; }
-    if (changes) this.keepView(() => this.applyChanges({ changes }, oldUnits, oldSrc));
+    if (changes) this.keepView(() => this.applyChanges({ changes }, oldUnits, oldSrc), changes);
     if (this.unshown) this.render();
     if (this.rendering) return; // Patching couldn't show it: the render does.
     const head = this.state.selection.main.head;
@@ -2711,9 +2765,12 @@ export class PageEditor {
    * it holds on to is replaced, and not every browser has it: it is off
    * meanwhile, so the two don't both move the page.)
    */
-  private keepView(change: () => void): void {
+  private keepView(change: () => void, changes: ChangeSet | null): void {
     const win = this.frame.contentWindow, doc = this.doc, root = doc?.documentElement;
     if (!win || !root || this.rendering || win.scrollY <= 0) { change(); return; }
+    // First the text on the top line, by its source position (a long paragraph that starts above the window, edited
+    // up there, keeps the line you're reading still); else the first block that's still there.
+    const text = this.topText();
     const held: { el: Element; top: number }[] = [];
     for (const el of this.els) {
       if (!el) continue;
@@ -2723,12 +2780,16 @@ export class PageEditor {
       held.push({ el, top: r.top });
       if (held.length == 8) break;
     }
-    if (!held.length) { change(); return; }
+    if (!held.length && !text) { change(); return; }
     const styled = root.hasAttribute("style"), before = root.style.overflowAnchor;
     root.style.overflowAnchor = "none";
     try { change(); } finally {
-      const keep = this.rendering || this.doc != doc ? null : held.find((h) => h.el.isConnected);
-      if (keep) { const d = keep.el.getBoundingClientRect().top - keep.top; if (Math.abs(d) >= 0.5) win.scrollBy(0, d); }
+      const live = !this.rendering && this.doc == doc;
+      const pos = live && text ? (changes ? changes.mapPos(text.pos, 1, MapMode.TrackDel) : text.pos) : null;
+      const top = pos == null ? null : this.textTop(pos);
+      const keep = !live || top != null ? null : held.find((h) => h.el.isConnected);
+      const d = top != null ? top - text!.top : keep ? keep.el.getBoundingClientRect().top - keep.top : 0;
+      if (Math.abs(d) >= 0.5) win.scrollBy(0, d);
       root.style.overflowAnchor = before;
       if (!styled && !root.getAttribute("style")) root.removeAttribute("style");
     }

@@ -115,3 +115,41 @@ test("the agent edits above the view as it works: each edit shows at once and th
   expect(await ed.frame<number>(`document.querySelectorAll("#page").length`), "one page frame").toBe(1);
   expect(await ed.frame<boolean>(`!!${F}.querySelector("style[data-erga-caret]")`), "the new page draws your caret too (caret.ts)").toBe(true);
 });
+
+test("the agent edits the first sentence of a long paragraph that starts above the window: the line you read stays put, and so it does when its change to a script renders the page afresh", async ({ tab }) => {
+  await tab.page.setViewportSize({ width: 1280, height: 800 });
+  const ed = await openEditor(tab, await servers.script(), "long");
+  const sentences = Array.from({ length: 80 }, (_, i) => i == 50 ? "Here is the word zebra, in the middle." : `Sentence ${i + 1} of the long paragraph.`);
+  ed.write(ed.disk().replace(`<h2 id="s3">`, `<p id="long">${sentences.join(" ")}</p>\n    <h2 id="s3">`));
+  await until(() => ed.frame<boolean>(`!!${F}.getElementById("long")`), 5000, "the long paragraph shows");
+  await ed.openAgent();
+  // The word "zebra" 300 px down the window, the paragraph's start far above it.
+  const word = `(() => { const d = document.getElementById("page").contentDocument; const p = d.getElementById("long"); const t = p && [...p.childNodes].find((n) => n.nodeType == 3 && n.nodeValue.includes("zebra")); if (!t) return null; const r = d.createRange(); const i = t.nodeValue.indexOf("zebra"); r.setStart(t, i); r.setEnd(t, i + 5); return r.getBoundingClientRect().top; })()`;
+  await ed.frame(`${W}.scrollBy(0, ${word} - 300)`);
+  await ed.settle();
+  const top = (await ed.frame<number>(word))!;
+  expect(await ed.frame<number>(`${F}.getElementById("long").getBoundingClientRect().top`), "the paragraph starts above the window").toBeLessThan(-300);
+  await ed.frame(`(() => { ${W}.__marker = 1; const out = window.__tops = []; const tick = () => { out.push(${word}); if (window.__tops == out) requestAnimationFrame(tick); }; requestAnimationFrame(tick); })()`);
+  const reading = async () => {
+    const tops = await ed.frame<(number | null)[]>(`window.__tops`);
+    const seen = tops.filter((t): t is number => t != null);
+    return { worst: Math.round(Math.max(0, ...seen.map((t) => Math.abs(t - top)))), end: Math.round((seen.at(-1) ?? top) - top), missing: tops.length - seen.length, reloaded: !(await ed.frame<boolean>(`${W}.__marker == 1`)) };
+  };
+  const run = async (steps: unknown[]) => {
+    const replies = () => ed.eval<number>(`document.querySelectorAll(".msg-assistant").length`);
+    const before = await replies();
+    await ed.eval(`(() => { const i = document.getElementById("agent-input"); i.value = ${JSON.stringify("Edit @script " + JSON.stringify(steps))}; i.dispatchEvent(new Event("input")); i.focus(); })()`);
+    await ed.page.keyboard.press("Enter");
+    await until(async () => await replies() > before && !(await ed.eval<boolean>(`document.getElementById("agent-send").classList.contains("stop")`)), 15_000, "the agent finishes");
+  };
+  // Its first sentence, far above the window, becomes several lines longer.
+  await run([{ tool: "edit", args: { path: "index.html", edits: [{ oldText: "Sentence 1 of the long paragraph.", newText: `The agent rewrote this first sentence.${LONG}` }] } }, { text: "Done." }]);
+  await until(() => ed.frame<boolean>(`${F}.getElementById("long").textContent.startsWith("The agent rewrote")`), 5000, "the edit shows");
+  await ed.settle();
+  still(await reading(), false);
+  // A change to the script: the page renders afresh, on the same line.
+  await run([{ tool: "edit", args: { path: "index.html", edits: [{ oldText: "let n = 0;", newText: `let n = 0; document.getElementById("count").textContent = "ran";` }] } }, { text: "Done." }]);
+  await until(() => ed.frame<boolean>(`${F}.getElementById("count")?.textContent == "ran"`), 15_000, "the page renders afresh");
+  await ed.settle();
+  still(await reading(), true);
+});
