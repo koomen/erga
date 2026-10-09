@@ -82,10 +82,9 @@ rendered page:
 8. **Give the page an explicit background colour** on `body` or `html`. The
    editor's floating controls take their colours from it, light or dark.
 
-9. **Leave `data-erga*` alone.** Apart from `data-erga-noedit`,
-   `data-erga-list` and `data-erga-item` (rule 12), the editor owns every
-   `data-erga` attribute and `erga-` element and class; never write them into
-   a document.
+9. **Leave `data-erga*` alone.** Apart from `data-erga-noedit`, the editor owns
+   every `data-erga` attribute and `erga-` element and class; never write them
+   into a document.
 
 10. **Let the editor pause a page that reacts to input.** If the page's script
     answers clicks, keys or scrolling on the page itself (slides that advance
@@ -112,16 +111,6 @@ rendered page:
     page, the step it is at ("3 / 12"), and a list of the steps that people
     can open beside it, viewing and editing alike. The ← and → keys step too,
     except while someone types in the page's text. See "Presentations" below.
-
-12. **Make a list of like things an item list.** When a page holds things of
-    one kind that people will add to, delete, reorder or nest (cards, rows of
-    a plan, a tree of views, a list of people), mark the element that holds
-    them with `data-erga-list` and give the page one `<template>` for a new
-    item. Erga then shows controls on each item while someone edits the page
-    (add, delete, move up and down, move in and out) and makes each change in
-    the source for them. Offer it whenever you make such a page, or when
-    someone asks to edit one "as a tree", "as cards" or the like. See "Item
-    lists" below.
 
 ## Presentations
 
@@ -191,55 +180,7 @@ A minimal presentation: each `section` is a step.
 
 `e2e/fixtures/steps/index.html` is a fuller example.
 
-## Item lists
-
-An item list is markup only: no script takes part, so it can't break the
-page. Every change it makes moves whole elements, from open tag to close tag.
-
-```html
-<ul class="branch" data-erga-list="view">
-  <li>
-    <div class="card"><h3>Front page</h3><p class="url">/</p></div>
-  </li>
-  <li>
-    <div class="card"><h3>Documents</h3><p class="url">/docs</p></div>
-    <ul class="branch" data-erga-list="view">
-      <li>
-        <div class="card"><h3>New document</h3><p class="url">/new</p></div>
-      </li>
-    </ul>
-  </li>
-</ul>
-
-<template data-erga-item="view">
-  <li>
-    <div class="card"><h3>New view</h3><p class="url">/path</p></div>
-  </li>
-</template>
-```
-
-- `data-erga-list="<kind>"` goes on the element whose children are the
-  items. Every element child is an item (a `template`, `script` or `style`
-  child isn't). The kind names what the items are ("view", "person", "row"):
-  the add button says "+ Add view".
-- `<template data-erga-item="<kind>">` holds exactly one new item, written
-  like the others, with short placeholder text. Put it anywhere in the page,
-  once for each kind. A new item's first text is selected, so people type
-  over the placeholder.
-- A tree is lists of the same kind nested in items. "Move in" puts an item in
-  the list of its kind inside the item above it; if there's none, Erga makes
-  one, a copy of the open tag of the list the item is in. "Move out" puts the
-  item after the item its list is in. A nested list that loses its last item
-  goes. So style nested lists by their place (`.branch .branch`), not by a
-  class only the first level has.
-- Keep each item's text in units (rule 2): people edit it in place, as any
-  text. An item that's only inline text (`<li>Ana</li>`) works too.
-- Keep the markup well-formed (rule 1): a list with an unclosed tag gets no
-  controls, and Erga says why. So does a list kind without a template.
-- Style the items as you like; the controls float over the page, and each
-  list gets one row below it for its add button while someone edits.
-
-
+## Markdown documents
 
 - CommonMark with GitHub's extensions (tables, task lists, strikethrough).
   Headings, paragraphs, list items, quotes, table cells and fenced code are
