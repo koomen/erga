@@ -9,6 +9,7 @@ import { ChangeSet, EditorState } from "@codemirror/state";
 import { historyField } from "@codemirror/commands";
 import { domToPng } from "modern-screenshot";
 import { PageEditor } from "./editor";
+import { drawCaret } from "./caret";
 import { Relay, docExtensions, isAppShortcut, stateJSON, type Backdrop, type FromFrame, type Snapshot, type ToFrame } from "./bridge";
 import { EVAL_MAX_JSON, evalTimeout, type ColorScheme, type RenderedFont, type ViewRequest, type ViewResult } from "./agent-log";
 
@@ -33,6 +34,8 @@ frame.id = "page";
 frame.title = "Document";
 frame.setAttribute("sandbox", "allow-scripts allow-same-origin allow-forms allow-modals allow-popups");
 document.body.append(frame);
+// Your caret on the page, wider than the browser's own (caret.ts).
+drawCaret(frame);
 
 let page: PageEditor | null = null;
 let relay: Relay | null = null;

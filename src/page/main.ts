@@ -293,7 +293,8 @@ type TreeModule = { mountTree: typeof mountTree };
     "&": { backgroundColor: "transparent", color: "var(--fg)", height: "100%" },
     ".cm-content": { caretColor: "var(--caret)" },
     "&.cm-focused": { outline: "none" },
-    ".cm-cursor, .cm-dropCursor": { borderLeft: "2px solid var(--caret)" },
+    // As wide as the page's caret (caret.ts): 2px, more in large type.
+    ".cm-cursor, .cm-dropCursor": { borderLeft: "max(2px, 0.085em) solid var(--caret)" },
     "&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground, .cm-selectionBackground": { backgroundColor: "var(--selection)" },
     ".cm-line": { padding: "0" },
   });
