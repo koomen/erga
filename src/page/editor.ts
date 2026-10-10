@@ -1721,8 +1721,10 @@ export class PageEditor {
     if (!u || !this.verify(u)) return false;
     const src = this.state.doc.toString();
     if (this.kind == "md" && !forward && deleteMarkupBackward(this.target())) return true;
-    if (!forward && pos <= M.textStart(u)) return this.join(u.id - 1, u.id);
-    if (forward && pos >= M.textEnd(u)) return this.join(u.id, u.id + 1);
+    // A block that holds only its placeholder <br> has no text to delete: the caret, before or after the <br>, is at both ends.
+    const blank = this.kind == "html" && !!placeholderBr(src, u);
+    if (!forward && (blank || pos <= M.textStart(u))) return this.join(u.id - 1, u.id);
+    if (forward && (blank || pos >= M.textEnd(u))) return this.join(u.id, u.id + 1);
     // One grapheme within the unit's text, skipping inline tag boundaries.
     let i = M.runAt(u, pos, !forward);
     if (i < 0) return false;

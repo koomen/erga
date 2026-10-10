@@ -374,15 +374,20 @@ export function analyzeHtml(src: string, decode: EntityDecoder = basicDecoder): 
 
 type Kind = "unit" | "container" | "none";
 
-/** Leaf block with text -> unit; has block children -> container; nothing to edit -> none. */
+/**
+ * Leaf block with text -> unit; has block children -> container; nothing to edit -> none. A leaf block with a <br>
+ * is a unit too: it is an empty line (Enter in a <div> makes `<div><br></div>`), and the caret must go in it.
+ */
 function classify(src: string, el: ElementNode): Kind {
-  let hasText = false, hasBlock = false;
+  let hasText = false, hasBlock = false, hasBr = false;
   const scan = (node: ElementNode) => {
     for (const child of node.children) {
       if (child.kind == "text") {
         if (!hasText && /\S/.test(src.slice(child.from, child.to))) hasText = true;
       } else if (TRANSPARENT.has(child.tag) || ATOMIC.has(child.tag)) {
         continue;
+      } else if (child.tag == "br") {
+        hasBr = true;
       } else if (INLINE.has(child.tag)) {
         // A no-edit span is part of its unit but has no editable text.
         if (!noEdit(src, child)) scan(child);
@@ -393,7 +398,7 @@ function classify(src: string, el: ElementNode): Kind {
     }
   };
   scan(el);
-  return hasBlock ? "container" : hasText || TEXT_TAGS.has(el.tag) ? "unit" : "none";
+  return hasBlock ? "container" : hasText || hasBr || TEXT_TAGS.has(el.tag) ? "unit" : "none";
 }
 
 function makeUnit(src: string, el: ElementNode, id: number, decode: EntityDecoder): Unit {

@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Custom Edit Examples</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@500&family=Instrument+Serif&display=swap">
+<style>
+  /* A copy of custom-edit-examples.html in erga-designs, with blocks of other kinds after its header (e2e/full/page/backspace-empty.e2e.ts). */
+  :root {
+    --bg: #fff; --ink: #111; --muted: #777; --line: #d9d9d9; --accent: #e2480f;
+    --serif: "Instrument Serif", "Iowan Old Style", Georgia, serif;
+    --body: "Geist", "Helvetica Neue", Arial, sans-serif;
+    --mono: "Geist Mono", ui-monospace, Menlo, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #0e0e0e; --ink: #f2f2f2; --muted: #999; --line: #333; --accent: #ff7a45; color-scheme: dark; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--body); font-size: 17px; line-height: 1.6; -webkit-font-smoothing: antialiased; }
+  p, h1 { margin: 0; }
+  main { max-width: 48rem; margin: 0 auto; padding: 96px 16px 120px; display: grid; gap: 56px; }
+  header { display: grid; gap: 14px; }
+  .kicker { font: 500 12px/1 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--accent); }
+  h1 { font: 400 clamp(34px, 5vw, 48px)/1.08 var(--serif); letter-spacing: -.015em; }
+  .intro { font-size: 18px; color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <p class="kicker">Erga designs</p>
+    <h1>Custom Edit Examples</h1>
+    <p class="intro">Pages that offer edits beyond typing: adding, moving and deleting parts of the page with buttons.</p>
+    <p class="intro"><br></p>
+    <p class="intro"><br></p>
+  </header>
+  <section>
+    <div class="note">A note in a div.</div>
+    <ul>
+      <li class="item">A list item.</li>
+    </ul>
+    <div class="view">
+      <div class="view-head"><h3>Page</h3><p class="url">/owner/slug/page</p></div>
+    </div>
+  </section>
+</main>
+</body>
+</html>
