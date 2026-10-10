@@ -95,6 +95,18 @@ export class Collab {
     return this.text.toString();
   }
 
+  /**
+   * Another of the document's pages, from now on (the editor went to it without a reload): its text, or null if the
+   * room has no such page (then nothing changes). This tab's caret leaves the page it was on.
+   */
+  setPath(path: string): string | null {
+    if (!files(this.doc).get(path)) return null;
+    this.setCursor(null, null);
+    this.opts.path = path;
+    this.bind();
+    return this.text!.toString();
+  }
+
   private bind(): void {
     const t = files(this.doc).get(this.opts.path) ?? null;
     if (t == this.text) return;

@@ -48,8 +48,8 @@ export interface TreeOptions {
   current?: string | null;
   /** Renaming the home page is renaming the document (its title and address): the caller's to do. */
   onRenameRoot?: () => void;
-  /** Goes to a page (default: the browser goes there). `replace` when the page you were on moved. */
-  navigate?: (url: string, opts: { replace?: boolean }) => void;
+  /** Goes to a page (default: the browser goes there). `replace` when the page you were on moved; `path`, the page's, when one was picked. */
+  navigate?: (url: string, opts: { replace?: boolean; path?: string }) => void;
   /** Whether a document links to other files by relative paths (../style.css), where the caller knows: a move may break those (warnMoved). Unknown: assume it does. */
   hasRelativeLinks?: (path: string) => boolean | undefined;
   /** What the server answered last, for a caller that wants it (e.g. to count the pages). */
@@ -494,7 +494,7 @@ export function mountTree(container: HTMLElement, opts: TreeOptions): TreeHandle
     const url = href(path);
     if (newTab) { window.open(url, "_blank", "noopener"); return; }
     if (path == current) return;
-    (opts.navigate ?? ((u) => location.assign(u)))(url, {});
+    (opts.navigate ?? ((u) => location.assign(u)))(url, { path });
   }
   function toggle(path: string, force?: boolean) {
     const on = force ?? !open.has(path);

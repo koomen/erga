@@ -397,7 +397,7 @@ function describeProblem(raw: RawProblem, base: string): PageProblem | null {
 
 export class PageEditor {
   state: EditorState;
-  readonly kind: Kind;
+  kind: Kind;
   private frame: HTMLIFrameElement;
   private units: M.Unit[] = [];
   private els: (Element | undefined)[] = [];
@@ -605,6 +605,20 @@ export class PageEditor {
     target.addEventListener("load", onLoad);
     target.srcdoc = a.html;
     if (old) old.after(target);
+  }
+
+  /**
+   * Another page in this one's place (the shell went to another of the document's pages): its state (with an undo
+   * history of its own), its kind and its folder (`base`, as in the config). It renders as any render does, out of sight
+   * until it has loaded, so the last page shows until then; but from its top, and with none of the last page's marks.
+   */
+  open(state: EditorState, kind: Kind, base: string): void {
+    this.kind = kind;
+    this.config.base = base;
+    this.state = state;
+    this.marks = [];
+    this.render();
+    this.view = null;
   }
 
   /** The frame the page is in (a render replaces it). */

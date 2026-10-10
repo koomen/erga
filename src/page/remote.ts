@@ -52,7 +52,7 @@ const EMPTY: Snapshot = { title: "", column: 0, canPause: false, paused: false, 
 export class RemotePage {
   /** The text and the page's selection, as the shell (and the room) has them. */
   state: EditorState;
-  readonly kind: Kind;
+  kind: Kind;
   private readonly frame: HTMLIFrameElement;
   private readonly authority = new Authority();
   private snapshot: Snapshot = EMPTY;
@@ -84,6 +84,27 @@ export class RemotePage {
    */
   start(): void {
     this.frame.contentWindow?.postMessage({ type: "erga-edit" }, this.config.origin);
+  }
+
+  /**
+   * Another of the document's pages, in place of this one (the shell went to it without a reload): the shell's state
+   * is its text from now on, and the frame's (it renders it from its top, with an undo history of its own). Its numbering
+   * moves on by one, so an edit of the last page still on its way from the frame never fits the new one.
+   */
+  load(page: { kind: Kind; dir: string; text: string; extensions: Extension }): void {
+    const c = this.config;
+    this.kind = page.kind;
+    c.kind = page.kind;
+    c.dir = page.dir;
+    c.extensions = page.extensions;
+    c.scroll = undefined;
+    this.state = EditorState.create({ doc: page.text });
+    this.authority.reset(this.authority.version + 1);
+    this.snapshot = EMPTY;
+    this.detached = false;
+    // What was queued for the last page is of no use; a frame not up yet starts on the new one (its init).
+    this.queue = [];
+    if (this.ready) this.post({ type: "page", kind: page.kind, dir: page.dir, state: this.state.toJSON(), version: this.authority.version });
   }
 
   // ------------------------------------------------------------ messages

@@ -73,6 +73,14 @@ window.addEventListener("message", (e: MessageEvent) => {
     case "reveal": page.reveal(m.pos); return;
     case "peers": page.setPeers(m.peers); return;
     case "detach": detach(m.id); return;
+    case "page": {
+      relay.reset(m.version);
+      detached = false;
+      restoreScroll = null;
+      page.open(stateFrom(m.state, m.kind), m.kind, setBase(m.dir));
+      page.hold(false);
+      return;
+    }
     case "attach":
       relay.reset(m.version);
       detached = false;
@@ -93,7 +101,18 @@ window.addEventListener("message", (e: MessageEvent) => {
 });
 post({ type: "ready" });
 
-const stateFrom = (json: unknown) => EditorState.fromJSON(json, { extensions: docExtensions(page!.kind) }, { history: historyField });
+const stateFrom = (json: unknown, kind = page!.kind) => EditorState.fromJSON(json, { extensions: docExtensions(kind) }, { history: historyField });
+/**
+ * The page's own folder (`dir`, in the document), so its relative links and assets resolve as they would on disk (tree.ts):
+ * the editor's base for it, which is this page's <base> too (front.ts set it to the document's folder): Chrome's preload
+ * scanner resolves the srcdoc page's files against it, not against the <base> the page itself gets, so a page in a folder
+ * asked for each of its relative files at the document's root first (404s), at every render and every capture.
+ */
+function setBase(dir: string | undefined): string {
+  const base = BASE + (dir ? dir.split("/").map(encodeURIComponent).join("/") + "/" : "");
+  document.querySelector("base")?.setAttribute("href", base);
+  return base;
+}
 
 function start(m: Extract<ToFrame, { type: "init" }>) {
   if (page) return;
@@ -117,12 +136,7 @@ function start(m: Extract<ToFrame, { type: "init" }>) {
   }
   relay = new Relay(m.version, (version, changes) => post({ type: "push", version, changes: changes.toJSON() }));
   const state = EditorState.fromJSON(m.state, { extensions: docExtensions(m.kind) }, { history: historyField });
-  // The page's own folder, so its relative links and assets resolve as they would on disk (tree.ts).
-  const base = BASE + (m.dir ? m.dir.split("/").map(encodeURIComponent).join("/") + "/" : "");
-  // This page's <base> too (front.ts set it to the document's folder): Chrome's preload scanner resolves the srcdoc
-  // page's files against it, not against the <base> the page itself gets, so a page in a folder asked for each of its
-  // relative files at the document's root first (404s), at every render and every capture.
-  document.querySelector("base")?.setAttribute("href", base);
+  const base = setBase(m.dir);
   page = new PageEditor({
     frame,
     kind: m.kind,

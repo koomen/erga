@@ -93,6 +93,8 @@ export type ToFrame =
   | { type: "detach"; id: number }
   /** Back from the source view: the state to carry on from. */
   | { type: "attach"; state: unknown; version: number }
+  /** Another of the document's pages in this one's place (the shell went to it): its kind, folder and state. */
+  | { type: "page"; kind: Kind; dir: string; state: unknown; version: number }
   | { type: "style"; id: number; op: "toggle"; style: InlineStyle }
   | { type: "style"; id: number; op: "clear" }
   | { type: "style"; id: number; op: "link"; url: string }

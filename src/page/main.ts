@@ -193,7 +193,8 @@ type TreeModule = { mountTree: typeof mountTree };
 
   // Which of the document's pages this is (tree.ts): the one the address named (the front door says, erga-page),
   // else the document's own. One room holds them all; this tab edits this one, and goes to another by its address.
-  const pagePath = document.querySelector<HTMLMetaElement>('meta[name="erga-page"]')?.content || info.path;
+  // (Another page opened in place, while editing, changes it: swapPage.)
+  let pagePath = document.querySelector<HTMLMetaElement>('meta[name="erga-page"]')?.content || info.path;
   info = { ...info, path: pagePath, name: pagePath, kind: pagePath.endsWith(".md") ? "md" : "html" };
   /** A page's address (the editor's, while editing), given its path in the document; the root page's for null. */
   const addressOf = (path: string | null) => {
@@ -216,8 +217,8 @@ type TreeModule = { mountTree: typeof mountTree };
     setTimeout(() => { if (goingTo == url) goingTo = null; }, 2000);
     if (replace) location.replace(url); else location.assign(url);
   };
-  /** Goes to another of the document's pages: its address, in the editor while editing. */
-  const openPage = (path: string) => goTo(addressOf(path));
+  /** Goes to another of the document's pages: in place while editing (swapPage), else to its address. */
+  const openPage = (path: string) => { if (!swapPage(path)) goTo(addressOf(path)); };
 
   // The host attributes your edits and your agent to who you are, so the tab takes that.
   const me: Author = { user: info.userId, name: info.user, color: colorFor(info.userId), kind: "person", ...(info.avatar ? { avatar: info.avatar } : {}) };
@@ -334,15 +335,16 @@ type TreeModule = { mountTree: typeof mountTree };
   ]);
   // The source view's state: the frame hands over its own (undo history and
   // all) when the view opens, and takes it back when it closes.
-  const sourceExtensions: Extension = [
+  // (Of the page's kind: another page, opened in place (swapPage), may be the other.)
+  const sourceExtensions = (kind: "md" | "html"): Extension => [
       peersField,
       history(),
-      info.kind == "md" ? markdown({ base: markdownLanguage }) : html(),
+      kind == "md" ? markdown({ base: markdownLanguage }) : html(),
       drawSelection(),
       highlightSpecialChars(),
       keymap.of([...defaultKeymap, ...historyKeymap, indentWithTab]),
       syntaxHighlighting(sourceHighlight),
-      look.of(info.kind == "md" ? markdownLook : htmlLook),
+      look.of(kind == "md" ? markdownLook : htmlLook),
       // The source view's own edits go to the room; edits from the room come in marked "external".
       EditorView.updateListener.of((u) => {
         for (const tr of u.transactions) {
@@ -382,14 +384,19 @@ type TreeModule = { mountTree: typeof mountTree };
     if (n.address) tree?.setBase(n.address);
     // The editor's own address is the page's, with #edit (without, it's the viewer, which the pencil, blue while editing, goes back to).
     if (!n.address) return;
-    const view = $("btn-edit") as HTMLAnchorElement;
-    const at = pageUrl(n.address, pagePath);
-    view.href = at + as;
-    view.hidden = false;
+    const at = viewHref(n.address);
     document.querySelector<HTMLMetaElement>('meta[name="erga-address"]')?.setAttribute("content", n.address);
     // At the front page's address (/), it stays there.
     const here = location.pathname == "/" ? "/" : at;
     if (location.pathname != here) window.history.replaceState(window.history.state, "", here + location.search + location.hash);
+  }
+  /** The pencil, blue while editing, goes to this page in the viewer: its address (answered without the query). */
+  function viewHref(address: string) {
+    const view = $("btn-edit") as HTMLAnchorElement;
+    const at = pageUrl(address, pagePath);
+    view.href = at + as;
+    view.hidden = false;
+    return at;
   }
   if (info.docName) showName(info.docName);
   /** Asks for the name again (when the event channel connects: a rename may have gone by while it was down). */
@@ -480,7 +487,8 @@ type TreeModule = { mountTree: typeof mountTree };
       return (tree = t.mountTree(slot, {
         id: docName!.id, base: docName!.address, editing: true, query: as, showRoot: true, label: "Pages",
         rootTitle: docName!.title, titleOf: pageTitle, current: info!.path, hasRelativeLinks, initial: kept(), onChange: keep,
-        onRenameRoot: () => toggleNaming(true), navigate: (url, o) => goTo(url, o.replace),
+        onRenameRoot: () => toggleNaming(true),
+        navigate: (url, o) => { if (o.replace || !o.path || !swapPage(o.path)) goTo(url, o.replace); },
       }));
     }, (e: Error) => { treeReady = null; throw e; }));
   }
@@ -1122,7 +1130,7 @@ Once you've read the guide, await further instructions.`;
     markdownHead,
     self,
     tracking: settings.track,
-    extensions: sourceExtensions,
+    extensions: sourceExtensions(info.kind),
     ...(back && back.path == pagePath ? { selection: back.selection, scroll: back.scroll } : {}),
     onLocal(changes) {
       collab.push(changes);
@@ -1848,8 +1856,60 @@ Once you've read the guide, await further instructions.`;
     if (back.files?.length) agentFiles.restore(back.files);
   }
 
+  // ---------------------------------------------------------------- another page
+
+  // Another of the document's pages, opened while editing (the pages card, a link on the page, your agent's open_page),
+  // opens in place: the room holds every page already, so the editor takes the new page's text, and the frame renders it
+  // (RemotePage.load), out of sight until it has loaded, the last page showing until then. The frame's own address stays
+  // the first page's: a frame that changes address adds to the tab's history, and Back would go through that first. The controls, the agent's pane and its conversation, and the cards stay as they are. The
+  // address changes as it would have (a new entry in the history), and Back and Forward go between the pages the same way.
+  // Anything else (viewing, a page the room hasn't got yet, a folder's address) is a page load, as before.
+  let swaps: Promise<void> = Promise.resolve();
+  /** Opens `path` in place, if it can (else false: the caller loads its address). `push`: a new entry in the history. */
+  function swapPage(path: string, push = true): boolean {
+    if (!started || !editing() || !docName?.address || !files(collab.doc).get(path)) return false;
+    swaps = swaps.then(() => swapTo(path, push)).catch((e) => { console.error(e); location.assign(addressOf(path)); });
+    return true;
+  }
+  async function swapTo(path: string, push: boolean) {
+    if (path == pagePath) return;
+    // The page's source view gives the text back to the page first (the new page opens on the page itself).
+    if (mode != "text") { setMode("text"); await switching; }
+    const text = collab.setPath(path);
+    if (text == null) { goTo(addressOf(path)); return; }
+    pagePath = path;
+    info = { ...info!, path, name: path, kind: path.endsWith(".md") ? "md" : "html" };
+    page.load({ kind: info.kind, dir: dirOf(path), text, extensions: sourceExtensions(info.kind) });
+    // What was said of the last page was of it alone.
+    shownProblems.clear();
+    problemQueue.length = 0;
+    if (explaining) hideExplanation();
+    refreshPending = false;
+    renderRefreshPill();
+    hideFmt();
+    togglePages(false);
+    let meta = document.querySelector<HTMLMetaElement>('meta[name="erga-page"]');
+    if (!meta) meta = document.head.appendChild(Object.assign(document.createElement("meta"), { name: "erga-page" }));
+    meta.content = path;
+    tree?.setCurrent(path);
+    viewHref(docName!.address);
+    if (push) window.history.pushState({ ...window.history.state, ergaPage: path }, "", addressOf(path));
+    queueCursor();
+    queuePeers();
+  }
+  // Each entry in the history says which page it is (one added as the hash changes, by the pencil, is stamped as it comes).
+  const stamp = () => { if (typeof window.history.state?.ergaPage != "string") window.history.replaceState({ ...window.history.state, ergaPage: pagePath }, ""); };
+  stamp();
+  addEventListener("hashchange", stamp);
+  addEventListener("popstate", () => {
+    const to = window.history.state?.ergaPage;
+    if (typeof to == "string") { if (to != pagePath && !swapPage(to, false)) location.reload(); return; }
+    // An entry that doesn't say (made before this page loaded): this page, unless its address is another's.
+    if (docName?.address && location.pathname != "/" && location.pathname != pageUrl(docName.address, pagePath)) location.reload();
+  });
+
   started = true;
   presenceChanged();
-  window.ergaPage = { page, collab, toggleSource, captureView, agentContext: editorContext, setEditing, pagePath, openPage, get state() { return currentState(); } };
+  window.ergaPage = { page, collab, toggleSource, captureView, agentContext: editorContext, setEditing, get pagePath() { return pagePath; }, openPage, get state() { return currentState(); } };
   window.ergaShell?.ready();
 })();
