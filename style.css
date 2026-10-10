@@ -334,7 +334,7 @@ body.previewing #btn-preview { color: var(--chrome-hover); }
    just below the pointer with its right edge there, following it (account.ts sets
    --tip-x and --tip-y as it moves; without them, right-aligned under the control).
    (Avatars use ::before: their ::after widens them for a finger.) */
-:is(.icon-btn, .mode button)[data-tip]::after, :is(.avatar, .agent-badge)[data-tip]::before {
+.icon-btn[data-tip]::after, :is(.avatar, .agent-badge)[data-tip]::before {
   content: attr(data-tip);
   position: absolute; left: var(--tip-x, 100%); top: var(--tip-y, calc(100% + 6px)); transform: translateX(-100%); z-index: 40;
   white-space: pre;
@@ -343,7 +343,7 @@ body.previewing #btn-preview { color: var(--chrome-hover); }
   opacity: 0; pointer-events: none;
 }
 @media (hover: hover) {
-  :is(.icon-btn, .mode button)[data-tip]:hover::after, :is(.avatar, .agent-badge)[data-tip]:hover::before { opacity: 1; }
+  .icon-btn[data-tip]:hover::after, :is(.avatar, .agent-badge)[data-tip]:hover::before { opacity: 1; }
 }
 /* Its card or menu is open, where the tooltip would be. */
 .icon-btn[aria-expanded="true"][data-tip]::after, .avatar[aria-expanded="true"][data-tip]::before { display: none; }

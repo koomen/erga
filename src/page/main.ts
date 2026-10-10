@@ -22,8 +22,6 @@ import { changesBetween } from "./merge";
 import { Collab, type Presence } from "./collab";
 import { colorFor, files, type Author } from "../room/doc";
 import type { mountTree, TreeHandle } from "./tree";
-import { analyzeMarkdown } from "./markdown";
-import TurndownService from "turndown";
 import { type Log, type LogEvent, type ViewRequest, type ViewResult } from "./agent-log";
 import { chat, escapeHtml } from "./agent-chat";
 import { fileRefs, type Attachment } from "./attach";
@@ -586,7 +584,6 @@ type TreeModule = { mountTree: typeof mountTree };
     }
     // The shell's copy of the text takes it either way; the page does when it isn't set aside for the source view.
     page.applyExternal(changes, markAuthor(author));
-    refreshDerived();
     // The editor and the room must agree; if they ever don't, the room wins.
     const want = collab.current(), have = currentState().doc.toString();
     if (want != have) {
@@ -1157,7 +1154,6 @@ Once you've read the guide, await further instructions.`;
       activate();
       pointerDown = true;
       hideFmt();
-      closeModeMenu();
       if (!help.hidden) toggleHelp(false);
       if (!naming.hidden) toggleNaming(false);
       if (!pagesCard.hidden) togglePages(false);
@@ -1255,44 +1251,22 @@ Once you've read the guide, await further instructions.`;
 
   // ---------------------------------------------------------------- views
 
-  // Three views of the document: T, the page itself; *T*, Markdown; <T>,
-  // HTML. The view in the file's own format is the file, editable, sharing
-  // the page's state and undo history. The other is a read-only conversion
-  // (an HTML file's text as Markdown, or the HTML a Markdown file renders
-  // to): editing through a lossy conversion would rewrite the file in ways
-  // nobody asked for, and the view says so.
+  // Two views of the document: the page itself, and the file's source (its
+  // HTML or Markdown), editable, with the page's state and undo history.
+  // ⌘⇧P goes between them.
   type Mode = "text" | "md" | "html";
-  const MODE_NAMES: Record<Mode, string> = { text: "Page", md: "Markdown", html: "HTML" };
   let mode: Mode = "text";
   let sourceView: EditorView | null = null;
-  let derivedView: EditorView | null = null;
-  const modeEl = $("mode");
-  const modeNote = $("mode-note");
-
-  function htmlToMarkdown(src: string): string {
-    const d = new DOMParser().parseFromString(src, "text/html");
-    d.querySelectorAll("head, script, style, noscript, template, svg, canvas, iframe, button, input, select, textarea").forEach((e) => e.remove());
-    const td = new TurndownService({ headingStyle: "atx", codeBlockStyle: "fenced", bulletListMarker: "-", emDelimiter: "*", hr: "---" });
-    return td.turndown(d.body).replace(/^(\s*)([-*]|\d+\.)[ ]{2,}/gm, "$1$2 ").trim() + "\n";
-  }
-  function markdownToHtml(src: string): string {
-    return analyzeMarkdown(src).html
-      .replace(/ data-erga-id="\d+"/g, "").replace(/ class="erga-empty"/g, "")
-      .replace(/(<(?:ul|ol|blockquote|table|thead|tbody|tr)>)/g, "$1\n")
-      .replace(/(<\/(?:h[1-6]|p|li|ul|ol|blockquote|pre|table|thead|tbody|tr|hr)>)/g, "$1\n");
-  }
-  const derivedText = (m: Mode) => (m == "md" ? htmlToMarkdown(page.state.doc.toString()) : markdownToHtml(page.state.doc.toString()));
 
   // Opening the source view waits for the page to hand over its state; a switch asked for meanwhile waits its turn.
   let switching: Promise<void> = Promise.resolve();
   function setMode(next: Mode) {
-    closeModeMenu();
     switching = switching.then(() => switchMode(next));
   }
   async function switchMode(next: Mode) {
+    if (next != "text") next = info!.kind;
     if (next == mode) return;
     // Leave the current view; the source view hands the state back to the page.
-    if (derivedView) { derivedView.destroy(); derivedView = null; modeNote.hidden = true; }
     if (sourceView) {
       const st = sourceView.state;
       sourceView.destroy();
@@ -1300,62 +1274,21 @@ Once you've read the guide, await further instructions.`;
       page.attach(st);
     }
     let handed: EditorState | null = null;
-    if (next == info!.kind) handed = (await page.detach()).state;
-    if (next != "text") setColumn(page.column);
+    if (next != "text") { handed = (await page.detach()).state; setColumn(page.column); }
     mode = next;
     if (next == "text") {
       $("source").hidden = true;
       document.body.classList.remove("source");
       page.focus();
-      queuePeers();
-    } else if (next == info!.kind) {
+    } else {
       sourceView = new EditorView({ parent: $("source"), state: handed! });
       $("source").hidden = false;
       document.body.classList.add("source");
       sourceView.focus();
-      queuePeers();
-    } else {
-      derivedView = new EditorView({
-        parent: $("source"),
-        state: EditorState.create({
-          doc: derivedText(next),
-          extensions: [next == "md" ? markdown({ base: markdownLanguage }) : html(), EditorState.readOnly.of(true), EditorView.editable.of(false), highlightSpecialChars(), syntaxHighlighting(sourceHighlight), next == "md" ? markdownLook : htmlLook],
-        }),
-      });
-      $("source").hidden = false;
-      document.body.classList.add("source");
-      modeNote.textContent = next == "md"
-        ? "Read-only: this page's text as Markdown. The file is HTML, so edit it on the page (T) or as HTML (<T>)."
-        : "Read-only: the HTML this Markdown renders to. Edit it on the page (T) or as Markdown (*T*).";
-      modeNote.hidden = false;
     }
-    renderMode();
+    queuePeers();
     queueFmt();
   }
-  /** Keeps a read-only conversion up to date when the file changes underneath it. */
-  function refreshDerived() {
-    if (derivedView) derivedView.dispatch({ changes: { from: 0, to: derivedView.state.doc.length, insert: derivedText(mode) } });
-  }
-  function renderMode() {
-    for (const b of modeEl.querySelectorAll<HTMLButtonElement>("button")) {
-      const m = b.dataset.mode as Mode;
-      b.setAttribute("aria-checked", String(m == mode));
-      const ro = m != "text" && m != info?.kind;
-      b.dataset.tip = `${MODE_NAMES[m]}${ro ? " (read-only)" : ""}${m == "text" || m == info?.kind ? (isMac ? "  ⌘⇧P" : "  Ctrl+Shift+P") : ""}`;
-      b.setAttribute("aria-label", b.dataset.tip);
-      b.dataset.tipClosed = `View: ${MODE_NAMES[mode]}${mode == "text" || mode == info?.kind ? (isMac ? "  ⌘⇧P" : "  Ctrl+Shift+P") : ""}`;
-    }
-  }
-  function openModeMenu() { modeEl.classList.add("open"); showChrome(); }
-  function closeModeMenu() { modeEl.classList.remove("open"); }
-  modeEl.addEventListener("mousedown", (e) => e.preventDefault());
-  modeEl.addEventListener("click", (e) => {
-    const b = (e.target as Element).closest<HTMLButtonElement>("button");
-    if (!b) return;
-    if (!modeEl.classList.contains("open")) openModeMenu();
-    else setMode(b.dataset.mode as Mode);
-  });
-  document.addEventListener("mousedown", (e) => { if (!modeEl.contains(e.target as Node)) closeModeMenu(); });
   /** ⌘⇧P: between the page and the file's own source. */
   const toggleSource = (force?: boolean) => setMode((typeof force == "boolean" ? force : mode == "text") ? info!.kind : "text");
 
@@ -1747,7 +1680,6 @@ Once you've read the guide, await further instructions.`;
       else if (!sharing.hidden) toggleSharing(false);
       else if (!$("pause-card").hidden) showPauseCard(false);
       else if (agentPanel.contains(document.activeElement)) toggleAgent(false);
-      else if (modeEl.classList.contains("open")) closeModeMenu();
       else if (mode != "text") setMode("text");
       else hideChrome();
       return true;
@@ -1758,7 +1690,6 @@ Once you've read the guide, await further instructions.`;
     if (appShortcut(e)) { e.preventDefault(); e.stopPropagation(); }
   }, true);
 
-  renderMode();
   // Track changes: keep every change marked, as a growing diff, instead of
   // letting the agent's edits fade once seen.
   function setTracking(on: boolean) {

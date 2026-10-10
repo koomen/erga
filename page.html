@@ -79,37 +79,6 @@
     #welcome[hidden] { display: none; }
     #welcome.blocking { z-index: 100; background: color-mix(in srgb, var(--bg) 92%, transparent); color: var(--fg); }
     #welcome button { font: 600 14px var(--font-text); padding: 8px 16px; border-radius: 10px; border: 0; background: var(--fg-strong); color: var(--bg); cursor: pointer; }
-    /* View switcher: shows the current view; click it and all three appear. */
-    /* The views: each a control as the icons beside it are (style.css, .icon-btn): 34px square at least, the same hover. */
-    .mode { display: flex; align-items: center; gap: 2px; height: 34px; border-radius: 8px; transition: background-color 160ms ease; }
-    .mode.open { background: color-mix(in srgb, var(--chrome) 12%, transparent); }
-    .mode button {
-      -webkit-user-select: none; user-select: none;
-      position: relative; height: 34px; min-width: 34px; max-width: 48px; padding: 0 7px; border: 0; border-radius: 8px; background: transparent; color: var(--chrome);
-      font: 600 16.3px/1 var(--font-mono); white-space: nowrap; cursor: pointer; overflow: hidden;
-      transition: max-width 220ms var(--agent-ease), min-width 220ms var(--agent-ease), padding 220ms var(--agent-ease), opacity 160ms ease, color 150ms ease, background-color 150ms ease;
-    }
-    /* Open, a view's tooltip may reach past its button (style.css); not while the buttons are still opening out. */
-    .mode.open button { overflow: visible; transition: max-width 220ms var(--agent-ease), min-width 220ms var(--agent-ease), padding 220ms var(--agent-ease), opacity 160ms ease, color 150ms ease, background-color 150ms ease, overflow 0s 220ms; transition-behavior: allow-discrete; }
-    .mode button:focus-visible { outline: 2px solid var(--caret); outline-offset: 1px; }
-    /* Closed, the view you're in shows (and its tooltip may reach past it); its tooltip says what it is: the views, and which. */
-    .mode:not(.open) button[aria-checked="true"] { overflow: visible; }
-    .mode:not(.open) button[data-tip-closed]::after { content: attr(data-tip-closed); }
-    /* The letters' capitals are as tall as the icons beside them (style.css, .icon-btn svg): 11.9px. */
-    .mode button[data-mode="text"] { font-family: var(--font-text); }
-    .mode button:not([data-mode="text"]) { top: 0.45px; } /* the monospace capitals sit that much high in their line */
-    .mode button:hover { color: var(--chrome-hover); background: color-mix(in srgb, var(--chrome) 12%, transparent); }
-    .mode:not(.open) button:not([aria-checked="true"]) { min-width: 0; max-width: 0; padding: 0; opacity: 0; pointer-events: none; }
-    /* Closed, the one view that shows sits where its gap would be. */
-    .mode:not(.open) { gap: 0; }
-    /* Open, the view you're in is blue, as any control that's on. */
-    /* The view you're in is blue, open or closed, as any control that's on. */
-    .mode button[aria-checked="true"], .mode button[aria-checked="true"]:hover { color: var(--caret); }
-    .mode-note {
-      position: fixed; left: 50%; top: max(14px, env(safe-area-inset-top)); transform: translateX(-50%); z-index: 9;
-      font: 12.5px/1.4 var(--font-text); color: var(--soft); background: var(--code-bg); border-radius: 8px; padding: 6px 12px; max-width: min(560px, calc(100vw - 260px));
-    }
-    .mode-note[hidden] { display: none; }
     .refresh-pill {
       position: fixed; left: 50%; top: max(14px, env(safe-area-inset-top)); transform: translateX(-50%); z-index: 12;
       display: flex; align-items: center; gap: 8px; border: 1px solid var(--panel-border); border-radius: 999px; padding: 6px 14px 6px 10px;
@@ -429,7 +398,7 @@
       .nav-title { padding: 0 6px; }
       .people { gap: 0; }
       .people > * + * { margin-left: -5px; }
-      .mode-note, .refresh-pill { top: calc(var(--top-clear) - 6px); left: 16px; right: 16px; width: fit-content; max-width: none; margin: 0 auto; transform: none; }
+      .refresh-pill { top: calc(var(--top-clear) - 6px); left: 16px; right: 16px; width: fit-content; max-width: none; margin: 0 auto; transform: none; }
       .toast { bottom: calc(max(var(--agent-inset), env(safe-area-inset-bottom)) + var(--agent-fab) + 12px); }
       #source .cm-scroller { padding-top: 24px; padding-left: 16px; }
     }
@@ -458,7 +427,6 @@
   <iframe id="frame" title="Document" sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups"></iframe>
   <div id="welcome" hidden></div>
   <main id="source" hidden aria-label="Source"></main>
-  <div id="mode-note" class="mode-note" role="note" hidden></div>
   <button type="button" id="refresh-pill" class="refresh-pill" hidden title="The agent changed more than text; the page re-renders when it finishes.">
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.34-5.66M20 4v5h-5"/></svg>
     <span>Page changes will show when the agent finishes · <b>Refresh now</b></span>
@@ -497,11 +465,6 @@
       <button type="button" class="icon-btn" id="btn-settings" aria-label="Document settings" data-tip="Document settings" aria-haspopup="dialog" aria-expanded="false" aria-controls="doc-settings">
         <svg viewBox="0 0 24 24" aria-hidden="true"><g transform="translate(12 12) scale(0.8523) translate(-12 -11.55)" stroke-width="1.8773"><path d="M12.22 2.75h-.44a1.75 1.75 0 0 0-1.75 1.75v.16a1.75 1.75 0 0 1-.88 1.51l-.38.22a1.75 1.75 0 0 1-1.75 0l-.13-.07a1.75 1.75 0 0 0-2.39.64l-.22.38a1.75 1.75 0 0 0 .64 2.39l.13.09a1.75 1.75 0 0 1 .88 1.5v.45a1.75 1.75 0 0 1-.88 1.52l-.13.08a1.75 1.75 0 0 0-.64 2.39l.22.38a1.75 1.75 0 0 0 2.39.64l.13-.07a1.75 1.75 0 0 1 1.75 0l.38.22a1.75 1.75 0 0 1 .88 1.51v.16a1.75 1.75 0 0 0 1.75 1.75h.44a1.75 1.75 0 0 0 1.75-1.75v-.16a1.75 1.75 0 0 1 .88-1.51l.38-.22a1.75 1.75 0 0 1 1.75 0l.13.07a1.75 1.75 0 0 0 2.39-.64l.22-.39a1.75 1.75 0 0 0-.64-2.39l-.13-.07a1.75 1.75 0 0 1-.88-1.52v-.44a1.75 1.75 0 0 1 .88-1.52l.13-.08a1.75 1.75 0 0 0 .64-2.39l-.22-.38a1.75 1.75 0 0 0-2.39-.64l-.13.07a1.75 1.75 0 0 1-1.75 0l-.38-.22a1.75 1.75 0 0 1-.88-1.51V4.5a1.75 1.75 0 0 0-1.75-1.75Z"/><circle cx="12" cy="12" r="2.75"/></g></svg>
       </button>
-      <div class="mode" id="mode" role="radiogroup" aria-label="View">
-        <button type="button" role="radio" data-mode="text" aria-checked="true">T</button>
-        <button type="button" role="radio" data-mode="md" aria-checked="false">*T*</button>
-        <button type="button" role="radio" data-mode="html" aria-checked="false">&lt;T&gt;</button>
-      </div>
     </div></div>
     <a class="icon-btn" id="btn-edit" href="" aria-label="Editing: stop, and view the page" aria-pressed="true" data-tip="Edit" hidden>
       <svg viewBox="0 0 24 24" aria-hidden="true"><g transform="translate(12 12) scale(1.0512) translate(-11.885 -13.365)" stroke-width="1.5221"><g transform="translate(0 1.25)"><path d="M4.75 19.25l1-4L15.6 5.4a1.4 1.4 0 0 1 2 0l1 1a1.4 1.4 0 0 1 0 2L8.75 18.25zM13.75 7.25l3 3"/></g></g></svg>

@@ -18,3 +18,13 @@ test("⌘⇧P shows the file, and again goes back to a page that edits", async (
   await ed.type("!");
   await expect.poll(() => ed.textOf("h1")).toBe("Launch notes!");
 });
+
+test("the source view is the file, editable, as code (smaller monospace, lines not wrapped); Esc goes back to the page", async ({ tab }) => {
+  const ed = await openEditor(tab, await servers.main(), "page");
+  await ed.press("ControlOrMeta+Shift+p");
+  await expect.poll(() => ed.eval<string | null>(`document.querySelector("#source .cm-content")?.getAttribute("contenteditable") ?? null`)).toBe("true");
+  await ed.settle();
+  expect(await ed.eval<boolean>(`(() => { const c = document.querySelector("#source .cm-content"); return getComputedStyle(c).fontSize == "13px" && !c.classList.contains("cm-lineWrapping"); })()`)).toBe(true);
+  await ed.press("Escape");
+  await expect.poll(() => ed.eval<boolean>(`document.body.classList.contains("source")`)).toBe(false);
+});
