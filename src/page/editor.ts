@@ -334,6 +334,11 @@ function emptyIn(src: string, u: M.Unit, from: number, to: number): boolean {
   return !/\S|\u00a0/.test(textIn([u], from, to)) && !CONTENT_TAG.test(src.slice(from, to));
 }
 
+/** An open tag as written, without the attributes that must be unique in the page (id, and a link's name). */
+function withoutUniqueAttrs(open: string): string {
+  return open.replace(/\s(id|name)(\s*=\s*("[^"]*"|'[^']*'|[^\s"'=<>`]+))?(?=[\s/>])/gi, "");
+}
+
 /**
  * The <br> that holds an empty HTML block open, so it has a line's height
  * on the page (`<p><br></p>`, maybe inside inline tags): the block's only
@@ -1882,8 +1887,14 @@ export class PageEditor {
       this.dispatch({ changes: { from: pos, to: u.to, insert: head + `${brAfter}</${newTag}>` }, selection: { anchor: pos + head.length }, userEvent: "input", scrollIntoView: true });
       return true;
     }
-    const insert = brBefore + M.closeTags(stack) + `</${u.tag}>\n${indent}` + openTag + M.openTags(stack);
-    insertAt(insert + brAfter, pos + insert.length);
+    // An id (or a name) stays with one block, the one that keeps the text, so links to it still find it:
+    // the new block after, unless Enter was at the start of the text, which goes on in the new block.
+    const atStart = !!brBefore && !brAfter, bare = withoutUniqueAttrs(openTag);
+    const insert = brBefore + M.closeTags(stack) + `</${u.tag}>\n${indent}` + (atStart ? openTag : bare)
+      + M.openTags(stack.map((t) => ({ ...t, open: withoutUniqueAttrs(t.open) })));
+    if (!atStart || bare == openTag) { insertAt(insert + brAfter, pos + insert.length); return true; }
+    const changes = this.state.changes([{ from: u.openFrom, to: u.openTo, insert: bare }, { from: pos, insert }]);
+    this.dispatch({ changes, selection: { anchor: changes.mapPos(pos, 1) }, userEvent: "input", scrollIntoView: true });
     return true;
   }
 

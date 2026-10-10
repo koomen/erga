@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@500&family=Instrument+Serif&display=swap">
 <style>
-  /* A copy of custom-edit-examples.html in erga-designs, with blocks of other kinds after its header (e2e/full/page/backspace-empty.e2e.ts). */
+  /* A copy of custom-edit-examples.html in erga-designs, with blocks of other kinds after its header (e2e/full/page/backspace-empty.e2e.ts, enter-ids.e2e.ts). */
   :root {
     --bg: #fff; --ink: #111; --muted: #777; --line: #d9d9d9; --accent: #e2480f;
     --serif: "Instrument Serif", "Iowan Old Style", Georgia, serif;
@@ -45,6 +45,10 @@
     <div class="view">
       <div class="view-head"><h3>Page</h3><p class="url">/owner/slug/page</p></div>
     </div>
+  </section>
+  <section>
+    <p id="target" class="lead">A block with an id.</p>
+    <p id="linked">See <a id="link" name="link" href="#target">the target block</a> above.</p>
   </section>
 </main>
 </body>
