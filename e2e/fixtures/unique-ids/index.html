@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Unique ids</title>
+<style>
+  /* Blocks with ids, and cards with buttons that copy and move them (e2e/full/page/unique-ids.e2e.ts). */
+  body { font: 17px/1.6 sans-serif; margin: 40px; }
+  .card { border: 1px solid #ccc; padding: 8px; margin: 8px 0; }
+</style>
+</head>
+<body>
+<main>
+  <p id="target" class="lead">A block with an id.</p>
+  <p id="linked">See <a id="link" name="link" href="#target">the target block</a> above.</p>
+  <p class="other">Another block.</p>
+  <section class="cards">
+    <article class="card" id="card-1">
+      <h3>First card</h3>
+    </article>
+    <article class="card" id="card-2">
+      <h3>Second card</h3>
+    </article>
+  </section>
+</main>
+<script>
+  // In the editor, each card gets a "Copy" and an "Up" button: custom edits (ergaEditor.apply).
+  (() => {
+    const editor = window.ergaEditor;
+    if (!editor) return;
+    function decorate() {
+      for (const card of document.querySelectorAll(".card")) {
+        if (card.querySelector(":scope > .ctl")) continue;
+        const ctl = document.createElement("div");
+        ctl.className = "ctl";
+        ctl.innerHTML = `<button class="copy">Copy</button><button class="up">Up</button>`;
+        card.append(ctl);
+      }
+    }
+    document.addEventListener("click", (e) => {
+      const b = e.target.closest(".card button");
+      if (!b) return;
+      const card = b.closest(".card");
+      const edits = b.classList.contains("copy")
+        ? [{ op: "insert", after: card, html: `<article class="card" id="${card.id}">\n  <h3>${card.querySelector("h3").textContent} (copy)</h3>\n</article>` }]
+        : card.previousElementSibling ? [{ op: "move", el: card, before: card.previousElementSibling }] : null;
+      if (edits) editor.apply(edits).then((r) => { if (!r.ok) console.warn(r.error); });
+    });
+    decorate();
+    new MutationObserver(decorate).observe(document.querySelector(".cards"), { childList: true, subtree: true });
+  })();
+</script>
+</body>
+</html>

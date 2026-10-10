@@ -241,6 +241,9 @@ How to write the controls for custom edits:
   well as at the start. Handle clicks with one listener on `document`.
 - Keep a new item's markup in a `<template>` and insert its `innerHTML`.
   Erga selects the new text, so people type over its placeholder.
+- An id is unique in the page: if new HTML has an id (or a link's `name`)
+  that the page has already, Erga leaves it out of the new element. A moved
+  element keeps its id. Find elements by class, not by an id you copy.
 
 A tree of views with custom edits:
 

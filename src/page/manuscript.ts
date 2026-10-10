@@ -422,6 +422,36 @@ function makeUnit(src: string, el: ElementNode, id: number, decode: EntityDecode
   };
 }
 
+/**
+ * An id is unique in the page. `added` are the ranges of `src` an edit wrote; the answer is the ids (and an anchor's
+ * name) of the elements it added that the page has already, each as a range to delete, with the space before it. An
+ * element the edit didn't add keeps its id, and of two added ones, the first. A <template>'s content isn't in the page.
+ */
+export function duplicateIds(src: string, added: [number, number][]): { from: number; to: number }[] {
+  if (!added.some(([from, to]) => /\s(id|name)\s*=/i.test(src.slice(from, to)))) return [];
+  const isAdded = (pos: number) => added.some(([from, to]) => pos >= from && pos < to);
+  const all: ElementNode[] = [];
+  const walk = (e: ElementNode) => {
+    for (const c of e.children) if (c.kind == "element") { all.push(c); if (c.tag != "template") walk(c); }
+  };
+  walk(parseHtml(src));
+  const unique = (e: ElementNode) => [...src.slice(e.from, e.openTo).matchAll(/\s([^\s"'=<>/]+)(?:\s*=\s*("[^"]*"|'[^']*'|[^\s"'=<>`]+))?/g)]
+    .map((m) => ({ name: m[1].toLowerCase(), value: (m[2] ?? "").replace(/^["']|["']$/g, ""), from: e.from + m.index!, to: e.from + m.index! + m[0].length }))
+    .filter((a) => a.value && (a.name == "id" || (a.name == "name" && e.tag == "a")));
+  const seen = new Set<string>();
+  for (const e of all) if (!isAdded(e.from)) for (const a of unique(e)) seen.add(a.name + " " + a.value);
+  const drops: { from: number; to: number }[] = [];
+  for (const e of all) {
+    if (!isAdded(e.from)) continue;
+    for (const a of unique(e)) {
+      const key = a.name + " " + a.value;
+      if (seen.has(key)) drops.push({ from: a.from, to: a.to });
+      else seen.add(key);
+    }
+  }
+  return drops;
+}
+
 /** Inserts data-erga-id attributes into the units' open tags. */
 export function stamp(src: string, units: Unit[]): string {
   let out = "";

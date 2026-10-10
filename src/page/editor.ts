@@ -334,11 +334,6 @@ function emptyIn(src: string, u: M.Unit, from: number, to: number): boolean {
   return !/\S|\u00a0/.test(textIn([u], from, to)) && !CONTENT_TAG.test(src.slice(from, to));
 }
 
-/** An open tag as written, without the attributes that must be unique in the page (id, and a link's name). */
-function withoutUniqueAttrs(open: string): string {
-  return open.replace(/\s(id|name)(\s*=\s*("[^"]*"|'[^']*'|[^\s"'=<>`]+))?(?=[\s/>])/gi, "");
-}
-
 /**
  * The <br> that holds an empty HTML block open, so it has a line's height
  * on the page (`<p><br></p>`, maybe inside inline tags): the block's only
@@ -1611,7 +1606,15 @@ export class PageEditor {
   }
 
   private dispatch(spec: TransactionSpec | Transaction): void {
-    const tr = spec instanceof Transaction ? spec : this.state.update(spec);
+    let tr = spec instanceof Transaction ? spec : this.state.update(spec);
+    // An id is unique in the page: an element an edit here adds (Enter, a custom edit) loses an id the page has already.
+    // Edits from elsewhere (the source, an agent, the disk) and undo (a Transaction) stay as they are.
+    if (!(spec instanceof Transaction) && this.kind == "html" && tr.docChanged && !tr.isUserEvent("external")) {
+      const added: [number, number][] = [];
+      tr.changes.iterChangedRanges((_fromA, _toA, from, to) => { if (to > from) added.push([from, to]); });
+      const drops = M.duplicateIds(tr.newDoc.toString(), added);
+      if (drops.length) tr = this.state.update(spec, { changes: drops, sequential: true });
+    }
     const oldUnits = this.units, oldSrc = this.state.doc.toString();
     this.state = tr.state;
     if (tr.docChanged) {
@@ -1887,14 +1890,14 @@ export class PageEditor {
       this.dispatch({ changes: { from: pos, to: u.to, insert: head + `${brAfter}</${newTag}>` }, selection: { anchor: pos + head.length }, userEvent: "input", scrollIntoView: true });
       return true;
     }
-    // An id (or a name) stays with one block, the one that keeps the text, so links to it still find it:
-    // the new block after, unless Enter was at the start of the text, which goes on in the new block.
-    const atStart = !!brBefore && !brAfter, bare = withoutUniqueAttrs(openTag);
-    const insert = brBefore + M.closeTags(stack) + `</${u.tag}>\n${indent}` + (atStart ? openTag : bare)
-      + M.openTags(stack.map((t) => ({ ...t, open: withoutUniqueAttrs(t.open) })));
-    if (!atStart || bare == openTag) { insertAt(insert + brAfter, pos + insert.length); return true; }
-    const changes = this.state.changes([{ from: u.openFrom, to: u.openTo, insert: bare }, { from: pos, insert }]);
-    this.dispatch({ changes, selection: { anchor: changes.mapPos(pos, 1) }, userEvent: "input", scrollIntoView: true });
+    if (brBefore && !brAfter) {
+      // At the start of the text: a blank block goes before, and the text stays in its block, with its id (dispatch).
+      const insert = openTag + `<br></${u.tag}>\n${indent}`;
+      this.dispatch({ changes: { from: u.from, insert }, selection: { anchor: pos + insert.length }, userEvent: "input", scrollIntoView: true });
+      return true;
+    }
+    const insert = brBefore + M.closeTags(stack) + `</${u.tag}>\n${indent}` + openTag + M.openTags(stack);
+    insertAt(insert + brAfter, pos + insert.length);
     return true;
   }
 

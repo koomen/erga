@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { analyzeHtml, stamp, runPos, runOffset, unitAt, inlineStackAt, closeTags, openTags, balanced, decodeText, basicDecoder, adjacent, textStart, textEnd } from "../src/page/manuscript";
+import { analyzeHtml, stamp, runPos, runOffset, unitAt, inlineStackAt, closeTags, openTags, balanced, decodeText, basicDecoder, adjacent, textStart, textEnd, duplicateIds } from "../src/page/manuscript";
 
 const doc = `<!doctype html>
 <html>
@@ -142,5 +142,35 @@ describe("decodeText", () => {
     const { text, map } = decodeText("&amp;", 0, 5, true, basicDecoder);
     expect(text).toBe("&amp;");
     expect(map).toBeNull();
+  });
+});
+
+describe("duplicateIds", () => {
+  /** The source with the edit's new text marked [like this], after the ids it would drop are gone. */
+  const drop = (marked: string) => {
+    const added: [number, number][] = [];
+    let src = "";
+    for (const part of marked.split(/([[\]])/)) {
+      if (part == "[") added.push([src.length, src.length]);
+      else if (part == "]") added[added.length - 1][1] = src.length;
+      else src += part;
+    }
+    let out = src;
+    for (const d of duplicateIds(src, added).reverse()) out = out.slice(0, d.from) + out.slice(d.to);
+    return out;
+  };
+  test("an added element loses an id the page has; the one that was there keeps it", () => {
+    expect(drop(`<p id="a" class="x">one</p>[<p id="a" class="x">two</p>]`)).toBe(`<p id="a" class="x">one</p><p class="x">two</p>`);
+    expect(drop(`[<p id='a'>two</p>]<p id=a>one</p>`)).toBe(`<p>two</p><p id=a>one</p>`);
+  });
+  test("an added element with a new id keeps it, and of two added ones the first does", () => {
+    expect(drop(`<p id="a">one</p>[<p id="b">two</p><p id="b">three</p>]`)).toBe(`<p id="a">one</p><p id="b">two</p><p>three</p>`);
+  });
+  test("a name counts on a link only; other attributes, and text that looks like one, stay", () => {
+    expect(drop(`<a name="n">x</a>[<a name="n" href="#n">y</a><input name="n">]`)).toBe(`<a name="n">x</a><a href="#n">y</a><input name="n">`);
+    expect(drop(`<p id="a">x</p>[<p data-id="a" title=' id="a"'>id="a"</p>]`)).toBe(`<p id="a">x</p><p data-id="a" title=' id="a"'>id="a"</p>`);
+  });
+  test("an id in a template isn't in the page", () => {
+    expect(drop(`<template><li id="t">x</li></template>[<li id="t">y</li>]`)).toBe(`<template><li id="t">x</li></template><li id="t">y</li>`);
   });
 });
