@@ -14,6 +14,7 @@
 // tell where the caret is, it lets the native caret show instead.
 
 import { watchMoves } from "./moves";
+import { listenAsEditor } from "./text-guard";
 
 /** The caret's width: this fraction of the font size, at least MIN_WIDTH px. */
 const WIDTH_EM = 0.085;
@@ -155,8 +156,11 @@ function attach(doc: Document, win: Window & typeof globalThis): void {
     return color;
   }
 
-  const on = (target: EventTarget, type: string, restart = false) =>
-    target.addEventListener(type, () => queue(restart), { capture: true, passive: true });
+  const on = (target: Document | Window, type: string, restart = false) => {
+    const opts = { capture: true, passive: true };
+    if (target == doc) listenAsEditor(doc, type, () => queue(restart), opts);
+    else target.addEventListener(type, () => queue(restart), opts);
+  };
   on(doc, "selectionchange");
   for (const type of ["keydown", "input", "compositionstart", "compositionupdate", "compositionend", "mousedown"]) on(doc, type, true);
   for (const type of ["mouseup", "focusin", "focusout"]) on(doc, type);

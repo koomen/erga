@@ -27,6 +27,7 @@ import { changesBetween } from "../document/merge";
 import { applyMorph, planMorph } from "./morph";
 import { planCustomEdits, type CustomEdit } from "./custom-edits";
 import { watchMoves } from "./moves";
+import { TEXT_GUARD, listenAsEditor } from "./text-guard";
 
 export type Kind = "html" | "md";
 
@@ -508,7 +509,8 @@ export class PageEditor {
 
   private injectHead(html: string): string {
     // <base> first, before any script: Chrome's preload scanner otherwise fetches the page's files against the frame's own address too (404s).
-    const inject = `<base href="${this.config.base}">${PROBLEM_WATCH}${CUSTOM_EDITS_API}<style data-erga>${PAGE_STYLE}</style>`;
+    // TEXT_GUARD before the page's scripts too: a press on the text is the editor's, not the page's (text-guard.ts).
+    const inject = `<base href="${this.config.base}">${PROBLEM_WATCH}${TEXT_GUARD}${CUSTOM_EDITS_API}<style data-erga>${PAGE_STYLE}</style>`;
     const m = /<head(\s[^>]*)?>/i.exec(html);
     if (m) return html.slice(0, m.index + m[0].length) + inject + html.slice(m.index + m[0].length);
     const h = /<html(\s[^>]*)?>/i.exec(html);
@@ -1126,8 +1128,7 @@ export class PageEditor {
   private bind(): void {
     const doc = this.doc!;
     const on = <K extends keyof DocumentEventMap>(type: K, f: (e: DocumentEventMap[K]) => void, opts?: AddEventListenerOptions) => {
-      doc.addEventListener(type, f as EventListener, opts);
-      this.cleanup.push(() => doc.removeEventListener(type, f as EventListener, opts));
+      this.cleanup.push(listenAsEditor(doc, type, f as EventListener, opts));
     };
     on("beforeinput", (e) => { if (!this.holdKey(e, { input: e.inputType, data: e.data })) this.beforeinput(e as InputEvent); });
     on("keydown", (e) => { if (!this.holdKey(e, { key: e.key, shift: e.shiftKey, alt: e.altKey, ctrl: e.ctrlKey, meta: e.metaKey })) this.keydown(e); });

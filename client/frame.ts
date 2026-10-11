@@ -11,6 +11,7 @@ import { domToPng } from "modern-screenshot";
 import { PageEditor } from "./editor";
 import { drawCaret } from "./caret";
 import { watchMoves } from "./moves";
+import { listenAsEditor } from "./text-guard";
 import { Relay, docExtensions, isAppShortcut, stateJSON, type Backdrop, type FromFrame, type Snapshot, type ToFrame } from "./bridge";
 import { catchZoomGestures, clampZoom } from "./zoom";
 import { EVAL_MAX_JSON, evalTimeout, type ColorScheme, type RenderedFont, type ViewRequest, type ViewResult } from "../shared/agent-log";
@@ -262,8 +263,8 @@ function watchPage() {
   const d = cur().contentDocument, win = cur().contentWindow;
   if (!d || !win || (d as Document & { ergaWatched?: boolean }).ergaWatched) return;
   (d as Document & { ergaWatched?: boolean }).ergaWatched = true;
-  d.addEventListener("pointerdown", (e) => post({ type: "pointer", kind: "down", x: z(e.clientX), y: z(e.clientY) }), true);
-  d.addEventListener("mouseup", (e) => post({ type: "pointer", kind: "up", x: z(e.clientX), y: z(e.clientY) }), true);
+  listenAsEditor(d, "pointerdown", (e) => { const p = e as PointerEvent; post({ type: "pointer", kind: "down", x: z(p.clientX), y: z(p.clientY) }); }, true);
+  listenAsEditor(d, "mouseup", (e) => { const p = e as MouseEvent; post({ type: "pointer", kind: "up", x: z(p.clientX), y: z(p.clientY) }); }, true);
   catchZoomGestures(win, (by) => post({ type: "zoom", zoom: by }));
   d.addEventListener("keydown", () => post({ type: "activity", kind: "key" }), true);
   win.addEventListener("focus", () => post({ type: "activity", kind: "focus" }), true);

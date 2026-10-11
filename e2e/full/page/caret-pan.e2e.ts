@@ -1,6 +1,7 @@
 // A page that moves its text without a scroll of the window (a board panned by a drag or the wheel, with a
 // transform; a column that scrolls by itself): the caret drawn by the editor (client/caret.ts) and the format bar
-// move with the text, at 100% and with the page zoomed.
+// move with the text, at 100% and with the page zoomed. And a drag that starts on the text selects it: the page's
+// own handlers, which pan the board from any press, don't see it (client/text-guard.ts).
 import { expect, servers, test } from "../../fixtures";
 import { F, openEditor, type Editor } from "../../editor";
 
@@ -82,4 +83,27 @@ test("the format bar follows selected text as the board pans", async ({ tab }) =
   await ed.page.mouse.move(p.x, p.y);
   await ed.page.mouse.wheel(-40, -70);
   await expect.poll(async () => { const b = await bar(); return b.shown && Math.round(b.left - before.left) == 40 && Math.round(b.top - before.top) == 70; }).toBe(true);
+});
+
+test("a drag on the text selects it and doesn't pan the board; a drag on the empty board pans it", async ({ tab }) => {
+  await tab.page.setViewportSize({ width: 1200, height: 760 });
+  const ed = await openEditor(tab, await servers.main(), "pan");
+  const board = () => ed.frame<string>(`${F}.querySelector(".board").style.transform`);
+  // Across two blocks: the heading into the paragraph.
+  const a = await ed.charAt(".card h2", 0), b = await ed.charAt(".card p.note", 3);
+  await ed.drag(a.x, a.y, b.x, b.y);
+  await expect.poll(() => ed.frame<string>(`${F}.getSelection().toString().replace(/\\s+/g, " ")`)).toBe("Board title Dra");
+  expect(await board()).toBe("");
+  // In one block. (The format bar now floats over the heading.)
+  await ed.selectChars(".card p.note", 8);
+  await expect.poll(() => ed.frame<string>(`${F}.getSelection().toString()`)).toBe("Drag the");
+  expect(await board()).toBe("");
+  // Typing replaces what the drag selected.
+  await ed.selectChars(".card p.note", 4);
+  await ed.type("Pull");
+  await expect.poll(() => ed.textOf(".card p.note")).toBe("Pull the board to move this card around.");
+  // The page still has the rest: a drag on its empty part pans.
+  const p = await onPage(ed, 40, 380);
+  await ed.drag(p.x, p.y, p.x + 50, p.y + 30);
+  await expect.poll(board).toBe("translate(50px, 30px)");
 });

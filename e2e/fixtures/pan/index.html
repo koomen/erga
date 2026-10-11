@@ -29,12 +29,11 @@
     <div class="tall"></div>
   </aside>
   <script>
-    // Drag the empty board, or scroll with the wheel (a trackpad's two fingers), to pan it.
+    // Drag anywhere on the board (its text too), or scroll with the wheel (a trackpad's two fingers), to pan it.
     const stage = document.querySelector(".stage"), board = document.querySelector(".board");
     let x = 0, y = 0, from = null;
     const place = () => { board.style.transform = `translate(${x}px, ${y}px)`; };
     stage.addEventListener("pointerdown", (e) => {
-      if (e.target.closest(".card")) return;
       e.preventDefault();
       from = { px: e.clientX, py: e.clientY, x, y };
       stage.setPointerCapture(e.pointerId);
@@ -45,7 +44,7 @@
       place();
     });
     stage.addEventListener("pointerup", () => { from = null; });
-    stage.addEventListener("mousedown", (e) => { if (!e.target.closest(".card")) e.preventDefault(); });
+    stage.addEventListener("mousedown", (e) => e.preventDefault());
     addEventListener("wheel", (e) => {
       if (e.ctrlKey || e.target.closest(".side")) return;
       e.preventDefault();

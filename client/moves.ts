@@ -6,6 +6,8 @@
 // itself, a CSS transition. This tells each one of those, for a page's
 // document, to whoever draws over it.
 
+import { listenAsEditor } from "./text-guard";
+
 type Win = Window & typeof globalThis;
 
 const hubs = new WeakMap<Document, Set<() => void>>();
@@ -28,7 +30,7 @@ export function watchMoves(doc: Document, win: Win, moved: () => void): void {
   const tell = () => { for (const f of all) f(); };
 
   const listen = (type: string, when: (e: Event) => boolean = () => true) =>
-    doc.addEventListener(type, (e) => { if (when(e)) tell(); }, { capture: true, passive: true });
+    listenAsEditor(doc, type, (e) => { if (when(e)) tell(); }, { capture: true, passive: true });
   listen("scroll");
   listen("wheel");
   listen("pointermove", (e) => (e as PointerEvent).buttons != 0);
