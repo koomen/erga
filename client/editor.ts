@@ -26,6 +26,7 @@ import { analyzeMarkdown, escapeMarkdownText, parseMarkdown, type Node as MdNode
 import { changesBetween } from "../document/merge";
 import { applyMorph, planMorph } from "./morph";
 import { planCustomEdits, type CustomEdit } from "./custom-edits";
+import { watchMoves } from "./moves";
 
 export type Kind = "html" | "md";
 
@@ -599,6 +600,9 @@ export class PageEditor {
       this.peerLayer = null;
       const RO = (this.frame.contentWindow as (Window & typeof globalThis) | null)?.ResizeObserver;
       if (RO) { this.markObserver = new RO(() => this.queuePaint()); this.markObserver.observe(this.doc.documentElement); }
+      // The text can move with no change of size: a scroll in an element, a pan of the page's own (moves.ts).
+      const win = this.frame.contentWindow as (Window & typeof globalThis) | null;
+      if (win) watchMoves(this.doc, win, () => this.queuePaint());
       this.paintMarks();
       this.release();
     };

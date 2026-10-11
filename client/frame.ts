@@ -10,6 +10,7 @@ import { historyField } from "@codemirror/commands";
 import { domToPng } from "modern-screenshot";
 import { PageEditor } from "./editor";
 import { drawCaret } from "./caret";
+import { watchMoves } from "./moves";
 import { Relay, docExtensions, isAppShortcut, stateJSON, type Backdrop, type FromFrame, type Snapshot, type ToFrame } from "./bridge";
 import { catchZoomGestures, clampZoom } from "./zoom";
 import { EVAL_MAX_JSON, evalTimeout, type ColorScheme, type RenderedFont, type ViewRequest, type ViewResult } from "../shared/agent-log";
@@ -267,6 +268,8 @@ function watchPage() {
   d.addEventListener("keydown", () => post({ type: "activity", kind: "key" }), true);
   win.addEventListener("focus", () => post({ type: "activity", kind: "focus" }), true);
   d.addEventListener("scroll", () => queueSnapshot(), { passive: true });
+  // The format bar follows selected text that moves another way: a scroll in an element, a pan of the page's own (moves.ts).
+  watchMoves(d, win as Window & typeof globalThis, () => { if (d.getSelection()?.isCollapsed === false) queueSnapshot(); });
   d.addEventListener("selectionchange", () => queueSnapshot());
   // A link to another of the document's pages, outside the text being edited (a menu, say): the shell goes
   // there, to that page's editor. Links in the text itself aren't followed (⌘-click opens them in a tab).

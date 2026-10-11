@@ -6,11 +6,14 @@
 // text at the caret: 2 px for body text, more for large type.
 //
 // It moves only when something could have moved it (a selection change,
-// typing, a scroll, a change to the page's layout), at most once a frame. It
+// typing, a scroll, a change to the page's layout, a pan of the page's own:
+// moves.ts), at most once a frame. It
 // blinks like the native caret, and stays solid for a moment after each move,
 // so it doesn't blink away while someone types. It shows only for a collapsed
 // selection in editable text, while the page has the focus. Where it can't
 // tell where the caret is, it lets the native caret show instead.
+
+import { watchMoves } from "./moves";
 
 /** The caret's width: this fraction of the font size, at least MIN_WIDTH px. */
 const WIDTH_EM = 0.085;
@@ -156,12 +159,14 @@ function attach(doc: Document, win: Window & typeof globalThis): void {
     target.addEventListener(type, () => queue(restart), { capture: true, passive: true });
   on(doc, "selectionchange");
   for (const type of ["keydown", "input", "compositionstart", "compositionupdate", "compositionend", "mousedown"]) on(doc, type, true);
-  for (const type of ["mouseup", "focusin", "focusout", "scroll"]) on(doc, type);
+  for (const type of ["mouseup", "focusin", "focusout"]) on(doc, type);
   for (const type of ["focus", "blur", "resize"]) on(win, type);
   // Dark mode can change the text's colour, and so the caret's.
   win.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { colors = new WeakMap(); queue(); });
   // The text around the caret can move without the selection changing: someone else's edit above it, an image that loads, a font.
   new win.ResizeObserver(() => queue()).observe(html);
   new win.MutationObserver(() => queue()).observe(doc, { childList: true, characterData: true, subtree: true });
+  // A scroll, here or in an element, and a page that moves its text itself: a board panned by a drag, a transition.
+  watchMoves(doc, win, () => queue());
   queue();
 }

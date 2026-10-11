@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Pan board</title>
+  <style>
+    html, body { margin: 0; height: 100%; overflow: hidden; font: 18px/1.5 Georgia, serif; }
+    .stage { position: fixed; inset: 0; overflow: hidden; background: #f4f5f7; }
+    .board { position: absolute; left: 0; top: 0; width: 3000px; height: 2000px; transform-origin: 0 0; }
+    .card { position: absolute; left: 120px; top: 160px; width: 340px; padding: 24px 28px; background: #fff; border-radius: 12px; }
+    .card h2 { margin: 0 0 8px; font-size: 32px; }
+    .card p { margin: 0; }
+    .side { position: fixed; right: 0; top: 0; bottom: 0; width: 260px; overflow: auto; background: #fff; }
+    .side p { margin: 16px; }
+    .side .tall { height: 1600px; }
+  </style>
+</head>
+<body>
+  <div class="stage">
+    <div class="board">
+      <section class="card">
+        <h2>Board title</h2>
+        <p class="note">Drag the board to move this card around.</p>
+      </section>
+    </div>
+  </div>
+  <aside class="side">
+    <p class="aside">A side column that scrolls by itself.</p>
+    <div class="tall"></div>
+  </aside>
+  <script>
+    // Drag the empty board, or scroll with the wheel (a trackpad's two fingers), to pan it.
+    const stage = document.querySelector(".stage"), board = document.querySelector(".board");
+    let x = 0, y = 0, from = null;
+    const place = () => { board.style.transform = `translate(${x}px, ${y}px)`; };
+    stage.addEventListener("pointerdown", (e) => {
+      if (e.target.closest(".card")) return;
+      e.preventDefault();
+      from = { px: e.clientX, py: e.clientY, x, y };
+      stage.setPointerCapture(e.pointerId);
+    });
+    stage.addEventListener("pointermove", (e) => {
+      if (!from) return;
+      x = from.x + e.clientX - from.px; y = from.y + e.clientY - from.py;
+      place();
+    });
+    stage.addEventListener("pointerup", () => { from = null; });
+    stage.addEventListener("mousedown", (e) => { if (!e.target.closest(".card")) e.preventDefault(); });
+    addEventListener("wheel", (e) => {
+      if (e.ctrlKey || e.target.closest(".side")) return;
+      e.preventDefault();
+      x -= e.deltaX; y -= e.deltaY;
+      place();
+    }, { passive: false });
+  </script>
+</body>
+</html>
