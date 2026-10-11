@@ -3,7 +3,7 @@
 // one, with a row for each run of versions in between.
 
 import { expect, test } from "bun:test";
-import { nearNeed, pickerRows, type Row, type Version } from "../src/page/versions";
+import { nearNeed, pickerRows, type Row, type Version } from "../client/versions";
 
 const v = (n: number): Version => ({ id: `id${n}`, n, at: new Date(0).toISOString(), authors: ["a"], description: `v${n}` });
 const range = (hi: number, lo: number) => Array.from({ length: hi - lo + 1 }, (_, i) => v(hi - i));

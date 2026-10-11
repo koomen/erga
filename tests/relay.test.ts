@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { ChangeSet, Text } from "@codemirror/state";
-import { Authority, Relay, changesFrom } from "../src/page/bridge";
+import { Authority, Relay, changesFrom } from "../client/bridge";
 
 /** A seeded random number generator (mulberry32), so a failure can be replayed. */
 function rng(seed: number) {

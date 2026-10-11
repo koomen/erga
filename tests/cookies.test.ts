@@ -1,7 +1,7 @@
 // Cookies named for the port in local development (worker/cookies.ts): two dev servers on localhost never read or
 // write each other's; a real hostname's names stay as they are.
 import { describe, expect, test } from "bun:test";
-import { cookieName, cookies } from "../worker/cookies";
+import { cookieName, cookies } from "../cloudflare/cookies";
 
 const req = (url: string, cookie = "") => new Request(url, { headers: cookie ? { cookie } : {} });
 

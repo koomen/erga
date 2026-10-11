@@ -17,7 +17,7 @@ export { servers };
 
 export interface Name { id: string; owner: string; title: string; slug: string; address: string; titleSet: boolean; slugSet: boolean }
 
-export const template = (name: string) => readFileSync(join(ROOT, `templates/${name}/index.html`), "utf8");
+export const template = (name: string) => readFileSync(join(ROOT, `assets/templates/${name}/index.html`), "utf8");
 
 let people = 0;
 /** A login no one has used on any server yet. */

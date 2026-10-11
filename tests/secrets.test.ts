@@ -4,10 +4,10 @@
 import { Database } from "bun:sqlite";
 import { readdirSync, readFileSync } from "node:fs";
 import { expect, test } from "bun:test";
-import { Directory, type Param, type Sql } from "../directory";
-import { Tokens } from "../tokens";
+import { Directory, type Param, type Sql } from "../server/directory";
+import { Tokens } from "../server/tokens";
 
-const MIGRATIONS = new URL("../migrations/", import.meta.url).pathname;
+const MIGRATIONS = new URL("../server/migrations/", import.meta.url).pathname;
 
 function memory(): Sql {
   const db = new Database(":memory:", { strict: true });
@@ -63,7 +63,7 @@ test("a build's failed fetch never puts the source token in its error, or the de
 });
 
 test("a document's pages token is checked whole (its MAC compared in constant time): a changed one opens nothing", async () => {
-  const { pagesToken, readPagesToken } = await import("../front");
+  const { pagesToken, readPagesToken } = await import("../server/routes");
   const token = await pagesToken("pages-secret", "ada", "abcd1234", "https://erga.dev");
   expect(await readPagesToken("pages-secret", token, "ada", "abcd1234")).toBe("https://erga.dev");
   const flip = token.slice(0, -1) + (token.endsWith("A") ? "B" : "A");

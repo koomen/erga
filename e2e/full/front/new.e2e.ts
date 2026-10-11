@@ -10,7 +10,7 @@ test("a new person's list is empty", async () => {
   expect(await p.docs()).toContain("No documents yet");
 });
 
-test("/new makes a blank document, a copy of templates/doc, Untitled at /<you>/untitled, listed as unedited; it sends its maker to its editor", async () => {
+test("/new makes a blank document, a copy of assets/templates/doc, Untitled at /<you>/untitled, listed as unedited; it sends its maker to its editor", async () => {
   const p = await person(await servers.script());
   const id = await p.make();
   const name = await p.nameOf(id);

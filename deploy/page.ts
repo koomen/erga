@@ -3,7 +3,7 @@
 // price), give it a GitHub app to sign in with, deploy, and watch each step.
 // One page; its script asks /deploy/api/* and redraws.
 
-import { appPage, crumbs, esc } from "../front";
+import { appPage, crumbs, esc } from "../server/routes";
 
 export interface DeployPageConfig {
   login: string;

@@ -5,11 +5,11 @@
 import { Database } from "bun:sqlite";
 import { readdirSync, readFileSync } from "node:fs";
 import { expect, test } from "bun:test";
-import { ConfigError, deployedSettings, parseDeployed, SETTINGS } from "../config";
-import serverConfig from "../server.config";
-import { Directory, NameError, NotAllowed, slugify, type Param, type Sql } from "../directory";
+import { ConfigError, deployedSettings, parseDeployed, SETTINGS } from "../server/settings";
+import serverConfig from "../deploy/locked-settings";
+import { Directory, NameError, NotAllowed, slugify, type Param, type Sql } from "../server/directory";
 
-const MIGRATIONS = new URL("../migrations/", import.meta.url).pathname;
+const MIGRATIONS = new URL("../server/migrations/", import.meta.url).pathname;
 
 /** A fresh in-memory database, its tables made by migrations/, as D1's are. */
 function memory(): Sql {
@@ -339,7 +339,7 @@ test("server config: what the deploy fixes is locked, with its deployed value", 
   expect(await after.reset(admin, "delete_docs_after_hours")).toMatchObject({ value: 24, source: "default", locked: false });
 });
 
-test("server config: the deploy's values, from server.config.ts and SERVER_CONFIG", () => {
+test("server config: the deploy's values, from deploy/locked-settings.ts and SERVER_CONFIG", () => {
   // The repo's own file is a config the deploy takes.
   expect(() => deployedSettings(serverConfig)).not.toThrow();
   // The binding is JSON; empty or missing locks nothing.

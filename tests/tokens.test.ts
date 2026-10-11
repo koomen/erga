@@ -11,17 +11,17 @@ import { existsSync, readFileSync } from "fs";
 import { join } from "path";
 import { BranchDeploys, targetOf, type DeployEnv } from "../deploy/branches";
 import { artifactsNamespace } from "../deploy/builder/build";
-import { Cloudflare, loadRelease, runPipeline, targetOfPlan, workerMetadata, type Release } from "../deploy/cloudflare";
-import { FLEET_ACCOUNT, MOCK_HOOK_SECRET, MOCK_SNAPSHOT_TOKEN, mockBuilder, mockCloudflare } from "../deploy/mock";
+import { Cloudflare, loadRelease, runPipeline, targetOfPlan, workerMetadata, type Release } from "../deploy/pipeline";
+import { FLEET_ACCOUNT, MOCK_HOOK_SECRET, MOCK_SNAPSHOT_TOKEN, mockBuilder, mockCloudflare } from "../deploy/mock-cloudflare";
 import { TARGETS } from "../deploy/targets";
-import { checkToken, createToken, diagnoseMaker, permissionIds, policiesFor, tokenPlan } from "../deploy/tokens";
+import { checkToken, createToken, diagnoseMaker, permissionIds, policiesFor, tokenPlan } from "../deploy/server-tokens";
 
 const ROOT = new URL("..", import.meta.url).pathname;
 let release: Release;
 beforeAll(async () => {
-  const dir = join(ROOT, ".site/release");
+  const dir = join(ROOT, ".build/release");
   if (!existsSync(join(dir, "release.json"))) {
-    if (!existsSync(join(ROOT, ".site/page.js"))) expect(Bun.spawnSync([join(ROOT, "site.sh")], { cwd: ROOT }).exitCode).toBe(0);
+    if (!existsSync(join(ROOT, ".build/page.js"))) expect(Bun.spawnSync([join(ROOT, "client/build.sh")], { cwd: ROOT }).exitCode).toBe(0);
     expect(Bun.spawnSync(["bun", join(ROOT, "deploy/release.ts")], { cwd: ROOT }).exitCode).toBe(0);
   }
   release = (await loadRelease(async (p) => (existsSync(join(dir, p)) ? new Uint8Array(readFileSync(join(dir, p))) : null)))!;

@@ -11,10 +11,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as Redacted from "effect/Redacted";
 import { localToken } from "../dev/git-server.ts";
-import { lsRefs } from "../source/remote.ts";
-import { SourceRepo } from "../source/repo.ts";
-import type { SourceRead } from "../source/browse.ts";
-import { sourceTools, startAdminAgent } from "../admin-agent/agent.ts";
+import { lsRefs } from "../server/source/remote.ts";
+import { SourceRepo } from "../server/source/repo.ts";
+import type { SourceRead } from "../server/source/browse.ts";
+import { sourceTools, startAdminAgent } from "../agents/admin.ts";
 import { must, startFixture, type Fixture } from "./source-fixture.ts";
 
 setDefaultTimeout(30_000);

@@ -9,23 +9,23 @@
 
 import { expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
-import { AGENT_ACTIONS, type AgentAction } from "../agent-actions";
-import { beyondPrompt, documentToolSpecs } from "../agent";
-import { adminTools, dashboardTools, sourceTools, systemPrompt, type DashboardOps } from "../admin-agent/agent";
-import { SERVER_TOOLS, type ToolWho } from "../server-tools";
+import { AGENT_ACTIONS, type AgentAction } from "../agents/actions";
+import { beyondPrompt, documentToolSpecs } from "../agents/document";
+import { adminTools, dashboardTools, sourceTools, systemPrompt, type DashboardOps } from "../agents/admin";
+import { SERVER_TOOLS, type ToolWho } from "../agents/tools";
 
 const ROOT = new URL("../", import.meta.url).pathname;
 const read = (file: string) => readFileSync(ROOT + file, "utf8");
 
 /** The files whose opening comment is a route table ("//   POST /api/...   what it does"). */
 const ROUTE_TABLES = [
-  "worker/index.ts", "worker/admin-agent.ts", "worker/source.ts", "worker/deploys.ts", "worker/deploy.ts", "worker/home.ts", "worker/auth-settings.ts",
-  "admin.ts", "server-api.ts", "front.ts", "home.ts", "host.ts", "site-publish.ts",
+  "cloudflare/index.ts", "cloudflare/admin-agent-host.ts", "cloudflare/source.ts", "cloudflare/branch-deploys.ts", "cloudflare/deploy-routes.ts", "cloudflare/home.ts", "cloudflare/auth-settings.ts",
+  "server/admin/pages.ts", "server/api.ts", "server/routes.ts", "server/home.ts", "server/doc-host.ts", "server/site-publish.ts",
 ];
 /** The pages' own scripts (and the pages that carry theirs inline): every route they call must be audited. */
 const PAGE_SCRIPTS = [
-  ...readdirSync(ROOT + "src/page").filter((f) => f.endsWith(".ts")).map((f) => `src/page/${f}`),
-  "source/page.ts", "deploy/page.ts", "admin.ts", "front.ts", "server-api.ts", "home.ts",
+  ...readdirSync(ROOT + "client").filter((f) => f.endsWith(".ts")).map((f) => `client/${f}`),
+  "server/source/page.ts", "deploy/page.ts", "server/admin/pages.ts", "server/routes.ts", "server/api.ts", "server/home.ts",
 ];
 
 const METHOD = "GET|POST|PUT|PATCH|DELETE";
@@ -50,10 +50,10 @@ function tableRoutes(file: string): string[] {
   return out;
 }
 
-/** The document API's endpoints (api.ts), under a document's address. */
-const apiRoutes = () => [...read("api.ts").matchAll(/HttpApiEndpoint\.(get|post|put|patch|delete)\("\w+", "([^"]+)"/g)].map((m) => `${m[1].toUpperCase()} /d/<id>${m[2]}`);
+/** The document API's endpoints (shared/doc-api.ts), under a document's address. */
+const apiRoutes = () => [...read("shared/doc-api.ts").matchAll(/HttpApiEndpoint\.(get|post|put|patch|delete)\("\w+", "([^"]+)"/g)].map((m) => `${m[1].toUpperCase()} /d/<id>${m[2]}`);
 /** The page tree's operations (tree.ts, TreeOp): each a POST to the tree. */
-const treeRoutes = () => [...read("tree.ts").matchAll(/\{ op: "(\w+)"/g)].map((m) => `POST /api/docs/<id>/tree op=${m[1]}`);
+const treeRoutes = () => [...read("shared/tree.ts").matchAll(/\{ op: "(\w+)"/g)].map((m) => `POST /api/docs/<id>/tree op=${m[1]}`);
 
 const every = () => [...new Set([...ROUTE_TABLES.flatMap(tableRoutes), ...apiRoutes(), ...treeRoutes()])];
 /** The audited routes, and each one with several actions ("do=", "op=") as a whole too. */

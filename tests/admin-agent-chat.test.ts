@@ -5,9 +5,9 @@
 import { expect, test } from "bun:test";
 import * as Redacted from "effect/Redacted";
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
-import { CUT, panelPrefs, restoredLog, restoredMessages, STOPPED, storedLog, storedMessages } from "../admin-agent/chat-store";
-import { startAdminAgent } from "../admin-agent/agent";
-import type { Log } from "../src/page/agent-log";
+import { CUT, panelPrefs, restoredLog, restoredMessages, STOPPED, storedLog, storedMessages } from "../agents/admin-chats";
+import { startAdminAgent } from "../agents/admin";
+import type { Log } from "../client/agent-log";
 
 const script = { apiKey: Redacted.make(""), model: "script" as const, effort: "medium" as const };
 

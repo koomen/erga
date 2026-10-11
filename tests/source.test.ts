@@ -12,7 +12,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import zlib from "node:zlib";
-import { hashObject, inflate, parseCommit, parseTree, readPack, tar, text, treeBytes, utf8, writePack } from "../source/git.ts";
+import { hashObject, inflate, parseCommit, parseTree, readPack, tar, text, treeBytes, utf8, writePack } from "../server/source/git.ts";
 import { git, must, startFixture, type Fixture } from "./source-fixture.ts";
 
 const scratch = () => mkdtempSync(join(tmpdir(), "erga-src-"));

@@ -166,7 +166,7 @@ test("Redeploy now deploys at once; a failed deploy says why and the last good o
   await expect.poll(async () => (await home(server, id)).deploy.state == "deployed" && (await front(server)).html.includes("<h1>Fixed</h1>")).toBe(true);
 });
 
-test("isHome: false clears it: the next / makes a fresh homepage from landing/ and deploys it", async () => {
+test("isHome: false clears it: the next / makes a fresh homepage from assets/landing/ and deploys it", async () => {
   const { server, id } = await secondHome();
   const cleared = (await (await post(server, `/api/docs/${id}/home`, { isHome: false })).json()) as { isHome: boolean; deploy: { state: string } };
   expect(cleared).toMatchObject({ isHome: false, deploy: { state: "idle" } });

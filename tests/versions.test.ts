@@ -3,7 +3,7 @@
 // the descriptions written when no model does.
 
 import { expect, test } from "bun:test";
-import { cleanDescription, fallbackDescription, firePublished, onPublished, unifiedDiff, versionNumber, Versions, type KV } from "../versions";
+import { cleanDescription, fallbackDescription, firePublished, onPublished, unifiedDiff, versionNumber, Versions, type KV } from "../server/versions";
 
 /** Durable Object storage's shape, in a Map, counting what's written. */
 function memory() {

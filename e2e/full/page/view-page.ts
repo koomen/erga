@@ -5,12 +5,12 @@ import { mkdirSync, copyFileSync, writeFileSync } from "node:fs";
 import { createServer, type Server as HttpServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { ViewResult } from "../../../src/page/agent-log";
+import type { ViewResult } from "../../../client/agent-log";
 import { ROOT } from "../../env";
 import { expect, servers, type Tab } from "../../fixtures";
 import { editor, type Editor } from "../../editor";
 
-export const FONT = join(ROOT, "fonts/inter-latin-normal.woff2");
+export const FONT = join(ROOT, "client/fonts/inter-latin-normal.woff2");
 /** How long the other site's font takes to arrive. */
 export const SLOW_MS = 800;
 

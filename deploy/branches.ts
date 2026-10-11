@@ -56,7 +56,7 @@
 // HISTORY_KEEP of each target, in the same storage (the Pipeline Durable
 // Object's).
 
-import { ALL_STEPS, BEFORE_BUILD, Cloudflare, dropCopies, DeployError, runPipeline, stepsFor, workerVersion, type Carry, type Fetch, type Release, type StepId, type Target } from "./cloudflare";
+import { ALL_STEPS, BEFORE_BUILD, Cloudflare, dropCopies, DeployError, runPipeline, stepsFor, workerVersion, type Carry, type Fetch, type Release, type StepId, type Target } from "./pipeline";
 import { sourceFor, type Source } from "./source";
 import { BUILDER, isTargetName, PRODUCTION, SOURCE, TARGETS, targetNames, type TargetName, type TargetSpec } from "./targets";
 

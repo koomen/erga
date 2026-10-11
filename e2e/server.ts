@@ -169,7 +169,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<Server> {
       const at = fixed ?? await freePort();
       const root = `http://127.0.0.1:${at}`;
       output = "";
-      const p = proc = spawn("bun", [join(ROOT, "dev.ts"), ...(opts.open ? [opts.open] : []), "--port", String(at), "--no-open"], { cwd: ROOT, env, stdio: ["ignore", "pipe", "pipe"], detached: true });
+      const p = proc = spawn("bun", [join(ROOT, "dev/start.ts"), ...(opts.open ? [opts.open] : []), "--port", String(at), "--no-open"], { cwd: ROOT, env, stdio: ["ignore", "pipe", "pipe"], detached: true });
       const take = (c: Buffer) => { output = (output + c.toString()).slice(-20_000); };
       p.stdout!.on("data", take);
       p.stderr!.on("data", take);

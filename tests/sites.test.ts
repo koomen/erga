@@ -7,13 +7,13 @@
 import { Database } from "bun:sqlite";
 import { readdirSync, readFileSync } from "node:fs";
 import { expect, test } from "bun:test";
-import { Cloudflare } from "../deploy/cloudflare.ts";
-import { mockCloudflare, mockSite } from "../deploy/mock.ts";
-import { Directory, type Param, type Sql } from "../directory.ts";
-import { deploySite, listZones, removeSite, siteFiles, verifyToken } from "../site-publish.ts";
-import { checkHostname, scriptName, SiteError, type CfZone, type SiteRow } from "../sites.ts";
+import { Cloudflare } from "../deploy/pipeline.ts";
+import { mockCloudflare, mockSite } from "../deploy/mock-cloudflare.ts";
+import { Directory, type Param, type Sql } from "../server/directory.ts";
+import { deploySite, listZones, removeSite, siteFiles, verifyToken } from "../server/site-publish.ts";
+import { checkHostname, scriptName, SiteError, type CfZone, type SiteRow } from "../server/sites.ts";
 
-const MIGRATIONS = new URL("../migrations/", import.meta.url).pathname;
+const MIGRATIONS = new URL("../server/migrations/", import.meta.url).pathname;
 const TOKEN = "mock-" + "t".repeat(36) + "Cf12";
 
 function fresh(secret: string | null = "the factory key") {

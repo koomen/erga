@@ -20,7 +20,7 @@
 // worktree, shows what it will do, and asks before doing it.
 //
 // ERGA_DEPLOY_MOCK=1: against the mock Cloudflare's copy of Erga's account
-// (deploy/mock.ts), with .site/release/ for the build: nothing real is touched.
+// (deploy/mock.ts), with .build/release/ for the build: nothing real is touched.
 //
 // To roll erga.dev back at once, with no build, to an earlier Worker version
 // (D1 stays as it is): bunx cf workers deployments create --worker erga
@@ -32,9 +32,9 @@ import { join } from "node:path";
 import { targetOf } from "./branches";
 import { buildIn } from "./builder/build";
 import { unpackRelease } from "./bundle";
-import { ALL_STEPS, Cloudflare, guardTarget, loadRelease, runPipeline, stepsFor, targetHost, type Fetch, type Release, type Target } from "./cloudflare";
-import { machineCredential } from "./credential";
-import { FLEET_ACCOUNT, MOCK_SNAPSHOT_TOKEN, mockCloudflare } from "./mock";
+import { ALL_STEPS, Cloudflare, guardTarget, loadRelease, runPipeline, stepsFor, targetHost, type Fetch, type Release, type Target } from "./pipeline";
+import { machineCredential } from "./local-credential";
+import { FLEET_ACCOUNT, MOCK_SNAPSHOT_TOKEN, mockCloudflare } from "./mock-cloudflare";
 import { isTargetName, TARGETS, type TargetName } from "./targets";
 
 const ROOT = new URL("..", import.meta.url).pathname;
@@ -67,13 +67,13 @@ export function ask(question: string, yes = false): boolean {
   return /^y(es)?$/i.test(answer?.trim() ?? "");
 }
 
-/** Builds `commit` here, in a scratch worktree: the release. Under the mock, the checkout's own .site/release/, stamped. */
+/** Builds `commit` here, in a scratch worktree: the release. Under the mock, the checkout's own .build/release/, stamped. */
 export async function buildHere(commit: string, log: (line: string) => void, mock = false): Promise<Release> {
   if (mock) {
-    const dir = join(ROOT, ".site/release");
-    if (!existsSync(join(dir, "release.json"))) throw new Error("no .site/release/: run ./site.sh and bun deploy/release.ts first");
+    const dir = join(ROOT, ".build/release");
+    if (!existsSync(join(dir, "release.json"))) throw new Error("no .build/release/: run bun run build and bun run release first");
     const r = await loadRelease(async (p) => (existsSync(join(dir, p)) ? new Uint8Array(readFileSync(join(dir, p))) : null));
-    log(`build: (mock) .site/release/ as ${commit.slice(0, 12)}`);
+    log(`build: (mock) .build/release/ as ${commit.slice(0, 12)}`);
     return { ...r!, version: commit.slice(0, 12) };
   }
   const dir = mkdtempSync(join(tmpdir(), "erga-build-"));
@@ -97,7 +97,7 @@ export async function deployFromMachine(o: MachineDeploy): Promise<boolean> {
   if (!/^[0-9a-f]{32}$/.test(accountId)) throw new Error("Set CLOUDFLARE_ACCOUNT_ID (the account's id: 32 hex digits).");
   const token = o.token ?? (mock ? "mock-machine-token" : machineCredential()?.token ?? "");
   const snapshotToken = o.snapshotToken ?? o.secrets?.SNAPSHOT_TOKEN ?? (mock ? MOCK_SNAPSHOT_TOKEN : process.env.SNAPSHOT_TOKEN?.trim() ?? "");
-  if (!token) throw new Error("Set CLOUDFLARE_API_TOKEN, or log in with `bunx cf auth login` (see deploy/credential.ts).");
+  if (!token) throw new Error("Set CLOUDFLARE_API_TOKEN, or log in with `bunx cf auth login` (see deploy/local-credential.ts).");
   const commit = o.commit ?? git("rev-parse", "HEAD");
   if (!o.commit && !mock && git("status", "--porcelain")) throw new Error("The checkout has changes that aren't committed: commit them, or name a commit (--commit).");
   const spec = TARGETS[o.name];

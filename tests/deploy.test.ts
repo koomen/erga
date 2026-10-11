@@ -11,19 +11,19 @@ import { join } from "path";
 import {
   assetHash, checkPlan, Cloudflare, deploy, DeployError, loadRelease, registerDomain, searchDomains, STEPS, tokenTemplateUrl,
   type DeployPlan, type Release,
-} from "../deploy/cloudflare";
-import { mockCloudflare } from "../deploy/mock";
+} from "../deploy/pipeline";
+import { mockCloudflare } from "../deploy/mock-cloudflare";
 import { open, seal } from "../deploy/seal";
-import { pagesHost, pagesOrigin, pagesToken, type Platform } from "../front";
+import { pagesHost, pagesOrigin, pagesToken, type Platform } from "../server/routes";
 
 const ROOT = new URL("..", import.meta.url).pathname;
 const ACC = "0123456789abcdef0123456789abcdef";
 let release: Release;
 
 beforeAll(async () => {
-  const dir = join(ROOT, ".site/release");
+  const dir = join(ROOT, ".build/release");
   if (!existsSync(join(dir, "release.json"))) {
-    if (!existsSync(join(ROOT, ".site/page.js"))) expect(Bun.spawnSync([join(ROOT, "site.sh")], { cwd: ROOT }).exitCode).toBe(0);
+    if (!existsSync(join(ROOT, ".build/page.js"))) expect(Bun.spawnSync([join(ROOT, "client/build.sh")], { cwd: ROOT }).exitCode).toBe(0);
     expect(Bun.spawnSync(["bun", join(ROOT, "deploy/release.ts")], { cwd: ROOT }).exitCode).toBe(0);
   }
   release = (await loadRelease(async (p) => (existsSync(join(dir, p)) ? new Uint8Array(readFileSync(join(dir, p))) : null)))!;

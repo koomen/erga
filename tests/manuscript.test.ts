@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { analyzeHtml, stamp, runPos, runOffset, unitAt, inlineStackAt, closeTags, openTags, balanced, decodeText, basicDecoder, adjacent, textStart, textEnd, duplicateIds } from "../src/page/manuscript";
+import { analyzeHtml, stamp, runPos, runOffset, unitAt, inlineStackAt, closeTags, openTags, balanced, decodeText, basicDecoder, adjacent, textStart, textEnd, duplicateIds } from "../client/manuscript";
 
 const doc = `<!doctype html>
 <html>

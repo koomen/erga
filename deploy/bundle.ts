@@ -4,7 +4,7 @@
 // pipeline reads it with loadRelease, as /deploy reads the server's own.
 // (deploy/builder/build.ts packs one: packRelease.)
 
-import { DeployError, loadRelease, type Release, type ReleaseIndex } from "./cloudflare";
+import { DeployError, loadRelease, type Release, type ReleaseIndex } from "./pipeline";
 
 export interface Bundle { index: ReleaseIndex; files: Record<string, string> }
 

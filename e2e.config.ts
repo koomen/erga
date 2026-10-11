@@ -23,8 +23,8 @@ process.env.E2E_TELEMETRY_DISABLED = "1";
 /** Each test's time limit (e2e/fixtures.ts gives it to every test that doesn't name its own). */
 process.env.ERGA_TEST_MS ||= "15000";
 if (hermetic() && !process.env.ERGA_BUILT) {
-  const r = spawnSync("./site.sh", { cwd: ROOT, env: cleanEnv(), stdio: ["ignore", "ignore", "inherit"], timeout: 180_000 });
-  if (r.status != 0) throw new Error(`site.sh failed (${r.error?.message ?? `exit ${r.status}`})`);
+  const r = spawnSync("client/build.sh", { cwd: ROOT, env: cleanEnv(), stdio: ["ignore", "ignore", "inherit"], timeout: 180_000 });
+  if (r.status != 0) throw new Error(`client/build.sh failed (${r.error?.message ?? `exit ${r.status}`})`);
   process.env.ERGA_BUILT = "1";
 }
 

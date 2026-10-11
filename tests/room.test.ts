@@ -6,10 +6,10 @@ import { expect, test } from "bun:test";
 import * as Y from "yjs";
 import { Awareness } from "y-protocols/awareness";
 import * as Layer from "effect/Layer";
-import { FileStore, Room, StateStore, joinLocal } from "../room";
+import { FileStore, Room, StateStore, joinLocal } from "../server/room";
 import * as Effect from "effect/Effect";
-import { YjsWorkspace, type WorkspaceError } from "../workspace";
-import { authorOf, files, introduce, type Author } from "../src/room/doc";
+import { YjsWorkspace, type WorkspaceError } from "../agents/workspace";
+import { authorOf, files, introduce, type Author } from "../shared/doc";
 
 /** Files in memory, as the room's storage (no saved state: each room starts afresh). */
 function memoryStore(init: Record<string, string>) {

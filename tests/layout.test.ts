@@ -7,7 +7,7 @@ import { expect, test } from "bun:test";
 import {
   AGENT_DEFAULT, AGENT_MAX, AGENT_MIN, DEFAULT, DOC_MIN, INSET, KEY, PICKER_W,
   agentWidth, geometry, insertAt, load, magnets, normalize, pickSlot, resized, save, sideOf, type Layout,
-} from "../src/page/layout";
+} from "../client/layout";
 
 const view = { width: 1400, safeL: 0, safeR: 0 };
 const both = { agent: true, picker: true };

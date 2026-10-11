@@ -3,7 +3,7 @@
 // linked where the deploy serves them, and the place for the controls.
 
 import { expect, test } from "bun:test";
-import { homeHeader, renderHome } from "../home";
+import { homeHeader, renderHome } from "../server/home";
 
 const files = {
   "index.html": "",

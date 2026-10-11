@@ -6,7 +6,7 @@ import { join } from "node:path";
 import type { Page } from "playwright-core";
 import { expect, servers, settle, test, until } from "../../fixtures";
 import { ROOT } from "../../env";
-import { TEMPLATES } from "../../../templates";
+import { TEMPLATES } from "../../../server/templates";
 import { editorReady, idOf, newDoc, openTab } from "./templates";
 
 await servers.main();
@@ -51,7 +51,7 @@ test("/new?template=<id> makes each template's document, Page first; an unknown 
   expect(page.status).toBe(302);
   expect(page.location).toMatch(/#edit$/);
   expect(TEMPLATES[0].id).toBe("page");
-  expect(await fileOf(s.root, page.address)).toBe(template("templates/doc"));
+  expect(await fileOf(s.root, page.address)).toBe(template("assets/templates/doc"));
   for (const t of TEMPLATES.slice(1)) expect(await fileOf(s.root, (await newDoc(s, t.id)).address), t.name).toBe(template(t.files));
   expect((await newDoc(s, "nope")).status).toBe(404);
   expect((await newDoc(s, "demo")).status).toBe(404);
@@ -73,7 +73,7 @@ test("the viewer's + opens the picker, in one typeface; Escape closes it; Page m
   const from = new URL(address).pathname;
   await expect.poll(() => page.evaluate(() => location.hash)).toBe("#edit");
   await expect.poll(() => page.evaluate(() => location.pathname)).not.toBe(from);
-  expect(await fileOf(s.root, s.root + await page.evaluate(() => location.pathname))).toBe(template("templates/doc"));
+  expect(await fileOf(s.root, s.root + await page.evaluate(() => location.pathname))).toBe(template("assets/templates/doc"));
 });
 
 test("the editor's + opens the picker under it, in the window, in one typeface; Page makes a blank document and opens it", async ({ tab }) => {

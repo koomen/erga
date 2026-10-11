@@ -6,12 +6,12 @@
 import { Database } from "bun:sqlite";
 import { readdirSync, readFileSync } from "node:fs";
 import { expect, test } from "bun:test";
-import { Directory, type Param, type Sql } from "../directory";
-import { withTokens, type Platform } from "../front";
-import { serverApi } from "../server-api";
-import { ScopeError, Tokens } from "../tokens";
+import { Directory, type Param, type Sql } from "../server/directory";
+import { withTokens, type Platform } from "../server/routes";
+import { serverApi } from "../server/api";
+import { ScopeError, Tokens } from "../server/tokens";
 
-const MIGRATIONS = new URL("../migrations/", import.meta.url).pathname;
+const MIGRATIONS = new URL("../server/migrations/", import.meta.url).pathname;
 const ORIGIN = "https://erga.test";
 
 function memory(): Sql {

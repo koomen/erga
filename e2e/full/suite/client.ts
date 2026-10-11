@@ -6,7 +6,7 @@
 
 import * as Y from "yjs";
 import { WebsocketProvider } from "y-websocket";
-import { authorOf, colorFor, files, introduce, roomInfo, stamp, type Author } from "../../../src/room/doc";
+import { authorOf, colorFor, files, introduce, roomInfo, stamp, type Author } from "../../../shared/doc";
 import type { Doc } from "./target";
 import { Failure, until } from "./harness";
 

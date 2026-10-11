@@ -61,7 +61,7 @@ test("someone who isn't an admin sees it with Clone, without Edit; /new?from=lan
   expect(to).toMatch(/^\/tester\/.+#edit$/);
 });
 
-test("deleted, the landing document is made again from landing/ on the next /", async () => {
+test("deleted, the landing document is made again from assets/landing/ on the next /", async () => {
   const server = await servers.short();
   const { id } = await fresh(server);
   const del = await get(server, "/docs/delete", { method: "POST", headers: { Origin: server.root }, body: new URLSearchParams({ id }) });
@@ -71,7 +71,7 @@ test("deleted, the landing document is made again from landing/ on the next /", 
   expect(id2).toBeTruthy();
   expect(id2).not.toBe(id);
   expect(editOf(again)).toMatch(/^\/tester\/landing(-\d+)?$/);
-  expect(await (await get(server, `/d/${id2}/doc/index.html`)).text()).toBe(readFileSync(join(ROOT, "landing/index.html"), "utf8"));
+  expect(await (await get(server, `/d/${id2}/doc/index.html`)).text()).toBe(readFileSync(join(ROOT, "assets/landing/index.html"), "utf8"));
 });
 
 test("a landing document an admin chose is the front page, and nothing more is made", async () => {

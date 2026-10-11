@@ -1,9 +1,9 @@
 // Which servers are for admins only (deploy/targets.json `adminsOnly`), and sign-in on a server with no GitHub OAuth app.
 import { expect, test } from "bun:test";
 import { isAdminsOnly, TARGETS } from "../deploy/targets";
-import { pagesToken, readPagesClaims } from "../front";
-import { finishSignIn, startSignIn } from "../worker/auth";
-import type { Env } from "../worker/env";
+import { pagesToken, readPagesClaims } from "../server/routes";
+import { finishSignIn, startSignIn } from "../cloudflare/auth";
+import type { Env } from "../cloudflare/env";
 
 test("staging is for admins only; production, a /deploy server and local development aren't", () => {
   expect(TARGETS.staging.adminsOnly).toBe(true);
@@ -37,7 +37,7 @@ test("no GitHub OAuth app (GITHUB_CLIENT_ID empty): sign-in says so, rather than
 });
 
 test("an admin's token without the admin scope reaches only the API, MCP and documents' routes on staging (tokenPath)", async () => {
-  const { tokenPath } = await import("../worker/token-paths");
+  const { tokenPath } = await import("../cloudflare/token-paths");
   for (const p of ["/llms.txt", "/api", "/api/ext", "/api/ext/tools/read", "/mcp", "/api/publish", "/api/docs/abcd2345/versions", "/api/docs/abcd2345/versions/v1/restore", "/api/docs/abcd2345/tree",
     "/ada/notes/api/ext", "/ada/notes/doc/index.html", "/d/abcd2345/doc/a.css", "/d/abcd2345/api/name"]) expect(`${p}: ${tokenPath(p)}`).toBe(`${p}: true`);
   for (const p of ["/admin", "/admin/source/api/x", "/api/admin/agent", "/api/admin/guide", "/api/source/api/x", "/api/deploys", "/api/events", "/api/docs/abcd2345/home", "/settings", "/tokens/new",

@@ -10,13 +10,13 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Scope from "effect/Scope";
 import * as Redacted from "effect/Redacted";
-import { startAdminAgent } from "../admin-agent/agent.ts";
-import { Directory, type Param, type Sql } from "../directory.ts";
-import { makeHost } from "../host.ts";
-import { FileStore, Room, StateStore } from "../room.ts";
-import { agentSettingsFrom, UNREADABLE_KEY } from "../worker/agent-settings.ts";
+import { startAdminAgent } from "../agents/admin.ts";
+import { Directory, type Param, type Sql } from "../server/directory.ts";
+import { makeHost } from "../server/doc-host.ts";
+import { FileStore, Room, StateStore } from "../server/room.ts";
+import { agentSettingsFrom, UNREADABLE_KEY } from "../cloudflare/agent-settings.ts";
 
-const MIGRATIONS = new URL("../migrations/", import.meta.url).pathname;
+const MIGRATIONS = new URL("../server/migrations/", import.meta.url).pathname;
 const KEY1 = "sk-ant-api03-" + "a".repeat(80) + "One1", KEY2 = "sk-ant-api03-" + "b".repeat(80) + "Two2";
 const ada = { login: "ada", admin: true };
 

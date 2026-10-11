@@ -5,10 +5,10 @@
 // static assets (built into .site/ by site.sh). In local development (`bun
 // start`, dev.ts) the same Worker runs under Vite.
 import { bindings, defineConfig, exports, triggers } from "cf/config";
-import * as entrypoint from "./worker/index.ts" with { type: "cf-worker" };
+import * as entrypoint from "./cloudflare/index.ts" with { type: "cf-worker" };
 // The server settings the deploy fixes (locks): server.config.ts, with ERGA_SERVER_CONFIG
 // (JSON, from the environment) over them. site.sh and dev.ts check them first (`bun server.config.ts`).
-import { deployed } from "./server.config.ts";
+import { deployed } from "./deploy/locked-settings.ts";
 import { localAgentKey } from "./dev/agent-key.ts";
 import { readFileSync } from "node:fs";
 

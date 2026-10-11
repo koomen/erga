@@ -9,9 +9,9 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { gitServers, localToken, MOCK_GITHUB_TOKEN } from "../dev/git-server.ts";
-import { gitHttp } from "../source/http.ts";
-import { SourceRepo, type Move } from "../source/repo.ts";
-import type { Remote } from "../source/remote.ts";
+import { gitHttp } from "../server/source/http.ts";
+import { SourceRepo, type Move } from "../server/source/repo.ts";
+import type { Remote } from "../server/source/remote.ts";
 
 export interface Fixture {
   url: string;

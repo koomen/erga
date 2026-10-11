@@ -19,10 +19,10 @@
 
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
-import type { ReleaseIndex } from "./cloudflare.ts";
+import type { ReleaseIndex } from "./pipeline.ts";
 
 const ROOT = resolve(import.meta.dirname, "..");
-const SITE = join(ROOT, ".site"), OUT = join(SITE, "release");
+const SITE = join(ROOT, ".build"), OUT = join(SITE, "release");
 
 /** Every file under `dir`, relative to it, dotfiles left out. */
 function files(dir: string): string[] {
@@ -40,7 +40,7 @@ function files(dir: string): string[] {
 }
 
 export async function makeRelease(): Promise<ReleaseIndex> {
-  if (!existsSync(join(SITE, "page.js"))) throw new Error(".site isn't built: run ./site.sh first");
+  if (!existsSync(join(SITE, "page.js"))) throw new Error(".build isn't built: run bun run build first");
   // The build copies .site into its assets: last run's release mustn't go in.
   rmSync(OUT, { recursive: true, force: true });
   const build = Bun.spawn(["bunx", "cf", "build"], { cwd: ROOT, env: { ...process.env, CF_QUIET: "1", NO_COLOR: "1", ERGA_SERVER_CONFIG: "" }, stdout: "pipe", stderr: "pipe" });
@@ -56,8 +56,8 @@ export async function makeRelease(): Promise<ReleaseIndex> {
   cpSync(join(built, "bundle"), join(staging, "bundle"), { recursive: true, filter: (p) => !p.includes("/.vite") });
   const assets = files(SITE).filter((p) => !p.startsWith("release/") && !p.startsWith("release."));
   for (const p of assets) { mkdirSync(join(staging, "assets", p, ".."), { recursive: true }); cpSync(join(SITE, p), join(staging, "assets", p)); }
-  const migrations = files(join(ROOT, "migrations")).filter((n) => n.endsWith(".sql"));
-  cpSync(join(ROOT, "migrations"), join(staging, "migrations"), { recursive: true });
+  const migrations = files(join(ROOT, "server/migrations")).filter((n) => n.endsWith(".sql"));
+  cpSync(join(ROOT, "server/migrations"), join(staging, "migrations"), { recursive: true });
 
   const sha = process.env.WORKERS_CI_COMMIT_SHA || Bun.spawnSync(["git", "rev-parse", "--short", "HEAD"], { cwd: ROOT }).stdout.toString().trim() || "dev";
   const index: ReleaseIndex = { version: sha.slice(0, 12), built: new Date().toISOString(), worker, mainModule: worker.manifest?.mainModule ?? "index.js", modules, assets, migrations };
@@ -70,5 +70,5 @@ export async function makeRelease(): Promise<ReleaseIndex> {
 
 if (import.meta.main) {
   const r = await makeRelease();
-  console.log(`release ${r.version}: ${r.modules.length} modules, ${r.assets.length} files, ${r.migrations.length} migrations, in .site/release/`);
+  console.log(`release ${r.version}: ${r.modules.length} modules, ${r.assets.length} files, ${r.migrations.length} migrations, in .build/release/`);
 }

@@ -30,7 +30,7 @@
 // The same handler runs in the Worker (worker/index.ts) and in the mock
 // Cloudflare's pretend servers (deploy/mock.ts), so the tests exercise it.
 
-import { DeployError, type Fetch } from "./cloudflare";
+import { DeployError, type Fetch } from "./pipeline";
 
 export type Encoded = { b: string } | { j: unknown };
 /** A document's storage, or a part of it: `more` on export (another part follows), `append` on import (a part after the first). */

@@ -44,7 +44,7 @@ process.on("exit", () => { for (const s of running) for (const p of tree(s.proc.
 /** `bun dev.ts ARGS` in `dir`, with `env` added to a clean environment (no ERGA_BUILT: it builds the editor's files itself). */
 export function startIn(dir: string, args: string[], env: Record<string, string> = {}): Started {
   let output = "";
-  const proc = spawn("bun", [join(dir, "dev.ts"), ...args], { cwd: dir, env: cleanEnv(env), stdio: ["ignore", "pipe", "pipe"], detached: true });
+  const proc = spawn("bun", [join(dir, "dev/start.ts"), ...args], { cwd: dir, env: cleanEnv(env), stdio: ["ignore", "pipe", "pipe"], detached: true });
   const take = (c: Buffer) => { output = (output + c.toString()).slice(-20_000); };
   proc.stdout!.on("data", take);
   proc.stderr!.on("data", take);

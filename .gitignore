@@ -8,18 +8,10 @@ node_modules
 
 # cf build output and local state (and Vite's cache, vite.config.ts)
 .cloudflare/
-# A running dev server's address (dev.ts)
+# A running dev server's address (dev/start.ts)
 .dev-url
-.site/
-# The editor's bundles once lived at the root (build.sh writes them into .site/ now): an old checkout's copies stay out.
-/page.js
-/frame.js
-/settings.js
-/pages-tree.js
-/admin-nav.js
-/admin-share.js
-/live.js
-.site.*/
+# The client's build (client/build.sh) and the release in it (deploy/release.ts)
+.build/
 .dev.vars
 .dev.vars.*
 !.dev.vars.example

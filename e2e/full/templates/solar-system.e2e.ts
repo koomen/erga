@@ -14,13 +14,13 @@ await servers.main();
 const LABELS = ["The solar system", "Mercury", "Venus", "Earth", "Mars", "Jupiter", "Saturn", "Uranus", "Neptune"];
 const moves = async (page: Page) => { const a = await view(page); await expect.poll(async () => (await view(page)).pixels != a.pixels).toBe(true); return a; };
 
-test("/new?template=solar-system opens a new document in the editor, made from templates/solar-system", async () => {
+test("/new?template=solar-system opens a new document in the editor, made from assets/templates/solar-system", async () => {
   const s = await servers.main();
   const made = await newDoc(s, "solar-system");
   expect(made.status).toBe(302);
   expect(made.location).toMatch(/#edit$/);
   const id = await idOf(made.address);
-  expect(await (await fetch(`${s.root}/d/${id}/doc/index.html`)).text()).toBe(readFileSync(join(ROOT, "templates/solar-system/index.html"), "utf8"));
+  expect(await (await fetch(`${s.root}/d/${id}/doc/index.html`)).text()).toBe(readFileSync(join(ROOT, "assets/templates/solar-system/index.html"), "utf8"));
 });
 
 test("viewing: nine steps at the overview, its note shows and the model moves; forward three times goes to Earth, whose note shows as the camera flies", async ({ tab }) => {

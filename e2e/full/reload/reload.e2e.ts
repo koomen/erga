@@ -63,25 +63,25 @@ async function reloads(page: Page, change: () => void, ready: string, ms = 30_00
 }
 
 // Vite restarts the server (seconds; more on a busy machine) before the tab can reload.
-test("the Worker's front door changes (front.ts: Vite restarts the server): the page reloads, showing it", { timeout: 45_000 }, async ({ tab }) => {
+test("the Worker's front door changes (server/routes.ts: Vite restarts the server): the page reloads, showing it", { timeout: 45_000 }, async ({ tab }) => {
   tab.strict = true;
   await docs(tab.page);
-  await reloads(tab.page, () => edit("front.ts", TITLE, "<title>${esc(title)} · Erga, front</title>"), `document.title == "Documents · Erga, front"`);
+  await reloads(tab.page, () => edit("server/routes.ts", TITLE, "<title>${esc(title)} · Erga, front</title>"), `document.title == "Documents · Erga, front"`);
   withoutOutage(tab.errors);
 });
 
-test("another Worker module changes (worker/index.ts: Vite reloads the Worker): the page reloads", { timeout: 45_000 }, async ({ tab }) => {
+test("another Worker module changes (cloudflare/index.ts: Vite reloads the Worker): the page reloads", { timeout: 45_000 }, async ({ tab }) => {
   tab.strict = true;
   await docs(tab.page);
-  await reloads(tab.page, () => edit("worker/index.ts", "\n", `\n// edited ${crypto.randomUUID()}\n`), "true");
+  await reloads(tab.page, () => edit("cloudflare/index.ts", "\n", `\n// edited ${crypto.randomUUID()}\n`), "true");
 });
 
 // The editor's files are rebuilt (site.sh) before the tab reloads.
-test("the editor's own files change (style.css: they're rebuilt): the page reloads, with them, and they're what's served", { timeout: 45_000 }, async ({ tab }) => {
+test("the editor's own files change (client/style.css: they're rebuilt): the page reloads, with them, and they're what's served", { timeout: 45_000 }, async ({ tab }) => {
   tab.strict = true;
   await docs(tab.page);
   const rule = `erga-reload-${crypto.randomUUID().slice(0, 8)}`;
-  await reloads(tab.page, () => edit("style.css", "\n", `\n.${rule} { color: red; }\n`), hasRule(rule));
+  await reloads(tab.page, () => edit("client/style.css", "\n", `\n.${rule} { color: red; }\n`), hasRule(rule));
   expect(await (await fetch(`${root}/style.css`)).text()).toContain(`.${rule}`);
 });
 
@@ -90,20 +90,20 @@ test("the front door and the editor's files change together: the page comes back
   tab.strict = true;
   await docs(tab.page);
   const rule = `erga-reload-${crypto.randomUUID().slice(0, 8)}`;
-  await reloads(tab.page, () => { edit("front.ts", TITLE, "<title>${esc(title)} · Erga, together</title>"); edit("style.css", "\n", `\n.${rule} { color: red; }\n`); }, `document.title == "Documents · Erga, together"`);
+  await reloads(tab.page, () => { edit("server/routes.ts", TITLE, "<title>${esc(title)} · Erga, together</title>"); edit("client/style.css", "\n", `\n.${rule} { color: red; }\n`); }, `document.title == "Documents · Erga, together"`);
   // The server has done both (restarted, rebuilt), and whatever reload that set off, the tab is on the good page, with both.
   await until(async () => (await (await fetch(`${root}/style.css`)).text()).includes(`.${rule}`), 30_000, "the rebuilt files are served");
   await until(() => tab.page.evaluate(`document.readyState == "complete" && document.title == "Documents · Erga, together" && ${hasRule(rule)}`).catch(() => false), 30_000, "the tab is on the good page, with both changes");
   withoutOutage(tab.errors);
 });
 
-test("the editor's code changes (src/page/main.ts): the editor reloads, on the same document", { timeout: 45_000 }, async ({ tab }) => {
+test("the editor's code changes (client/main.ts): the editor reloads, on the same document", { timeout: 45_000 }, async ({ tab }) => {
   tab.strict = true;
   const page = tab.page;
   await page.goto(`${root}/new`);
   await until(() => page.evaluate(`!!document.querySelector("iframe") && /^\\/tester\\/./.test(location.pathname)`).catch(() => false), 10_000, "a new document opens in the editor");
   const doc = await page.evaluate(`location.pathname`) as string;
-  await reloads(page, () => edit("src/page/main.ts", "\n", `\n// edited ${crypto.randomUUID()}\n`), `location.pathname == ${JSON.stringify(doc)} && !!document.querySelector("iframe")`);
+  await reloads(page, () => edit("client/main.ts", "\n", `\n// edited ${crypto.randomUUID()}\n`), `location.pathname == ${JSON.stringify(doc)} && !!document.querySelector("iframe")`);
 });
 
 test("only top-level pages get the reload script, not a frame or a fetch", async () => {

@@ -36,12 +36,12 @@
 import { randomBytes } from "node:crypto";
 import { copyFileSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { Cloudflare, DeployError, zoneIdOf, type Fetch } from "./cloudflare";
-import { machineCredential } from "./credential";
-import { MOCK_HOOK_SECRET, mockCloudflare } from "./mock";
+import { Cloudflare, DeployError, zoneIdOf, type Fetch } from "./pipeline";
+import { machineCredential } from "./local-credential";
+import { MOCK_HOOK_SECRET, mockCloudflare } from "./mock-cloudflare";
 import { ask, deployFromMachine } from "./run";
 import { BUILDER, SOURCE, TARGETS } from "./targets";
-import { checkToken, createToken, describePlan, diagnoseMaker, olderTokens, permissionIds, policiesFor, tokenPlan, type TokenPlan } from "./tokens";
+import { checkToken, createToken, describePlan, diagnoseMaker, olderTokens, permissionIds, policiesFor, tokenPlan, type TokenPlan } from "./server-tokens";
 
 const args = process.argv.slice(2);
 const flag = (f: string) => args.includes(f);
@@ -158,7 +158,7 @@ try {
     if (repo) console.log(`   It's there (${repo.remote ?? "no remote said"}).`);
     else if (ask(`   Make the Artifacts repo ${SOURCE.namespace}/${SOURCE.repo} (default branch main)?`, yes)) {
       await cf.call("POST", base, "make the source repo", { name: SOURCE.repo, default_branch: "main", description: "Erga's source: staging and main" });
-      console.log("   Made. Push the history to it through a server's Git endpoint (bun source/import.ts), or straight to Artifacts.");
+      console.log("   Made. Push the history to it through a server's Git endpoint (bun server/source/import.ts), or straight to Artifacts.");
     } else console.log("   Skipped: servers have no Git endpoint until it's there.");
 
     step(3);

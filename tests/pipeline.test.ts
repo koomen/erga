@@ -24,8 +24,8 @@ import { packRelease } from "../deploy/builder/build";
 import { handle as builderServer } from "../deploy/builder/server";
 import { containerBuilder, ndjsonLines } from "../deploy/builder/client";
 import { CACHE_KEEP, CHUNK, cachedBuild, releaseKey, storageStore, toolchainKey } from "../deploy/builder/cache";
-import { ALL_STEPS, Cloudflare, copyName, copyReason, guardTarget, loadRelease, runPipeline, type Release, type Target } from "../deploy/cloudflare";
-import { FLEET_ACCOUNT, MOCK_HOOK_SECRET, MOCK_SNAPSHOT_TOKEN, mockBuilder, mockCloudflare, namespaceId, PROD_DB, PROD_DOCS, scriptTag, type MockState } from "../deploy/mock";
+import { ALL_STEPS, Cloudflare, copyName, copyReason, guardTarget, loadRelease, runPipeline, type Release, type Target } from "../deploy/pipeline";
+import { FLEET_ACCOUNT, MOCK_HOOK_SECRET, MOCK_SNAPSHOT_TOKEN, mockBuilder, mockCloudflare, namespaceId, PROD_DB, PROD_DOCS, scriptTag, type MockState } from "../deploy/mock-cloudflare";
 import { memoryStore, snapshotDoor } from "../deploy/snapshot";
 import { TARGETS } from "../deploy/targets";
 
@@ -33,9 +33,9 @@ const ROOT = new URL("..", import.meta.url).pathname;
 let release: Release;
 
 beforeAll(async () => {
-  const dir = join(ROOT, ".site/release");
+  const dir = join(ROOT, ".build/release");
   if (!existsSync(join(dir, "release.json"))) {
-    if (!existsSync(join(ROOT, ".site/page.js"))) expect(Bun.spawnSync([join(ROOT, "site.sh")], { cwd: ROOT }).exitCode).toBe(0);
+    if (!existsSync(join(ROOT, ".build/page.js"))) expect(Bun.spawnSync([join(ROOT, "client/build.sh")], { cwd: ROOT }).exitCode).toBe(0);
     expect(Bun.spawnSync(["bun", join(ROOT, "deploy/release.ts")], { cwd: ROOT }).exitCode).toBe(0);
   }
   release = (await loadRelease(async (p) => (existsSync(join(dir, p)) ? new Uint8Array(readFileSync(join(dir, p))) : null)))!;
@@ -776,12 +776,12 @@ describe("a newer deploy cancels the running one", () => {
 
 describe("the builder", () => {
   test("the container's server streams the build and hands back the release; the pipeline's client reads it", async () => {
-    const bundle = packRelease(join(ROOT, ".site/release"));
-    const fake = async (o: { log: (l: string) => void; commit: string }) => { o.log(`$ bun install (${o.commit.slice(0, 7)})`); o.log("$ ./site.sh"); return bundle; };
+    const bundle = packRelease(join(ROOT, ".build/release"));
+    const fake = async (o: { log: (l: string) => void; commit: string }) => { o.log(`$ bun install (${o.commit.slice(0, 7)})`); o.log("$ bun run build"); return bundle; };
     const fetcher = { fetch: (async (input: RequestInfo | URL, init?: RequestInit) => builderServer(new Request(new URL(String(input)), init), fake as never)) as typeof fetch };
     const lines: string[] = [];
     const built = await containerBuilder(fetcher).build({ commit: SHA2, branch: "staging", source: { cloneUrl: "https://artifacts.mock/git/erga/erga.git", token: "t" } }, (l) => lines.push(l));
-    expect(lines).toEqual(["$ bun install (2222222)", "$ ./site.sh"]);
+    expect(lines).toEqual(["$ bun install (2222222)", "$ bun run build"]);
     expect(built.version).toBe(SHA2.slice(0, 12));
     expect(Object.keys(built.modules).sort()).toEqual(Object.keys(release.modules).sort());
     expect(Object.keys(built.assets).sort()).toEqual(Object.keys(release.assets).sort());
@@ -792,7 +792,7 @@ describe("the builder", () => {
   });
 
   test("the release, one line of ~15 MB in small chunks, is read in one pass (it reset the Pipeline object on 2026-10-05)", async () => {
-    const bundle = packRelease(join(ROOT, ".site/release"));
+    const bundle = packRelease(join(ROOT, ".build/release"));
     const text = `${JSON.stringify({ log: "é and ✓" })}\n${JSON.stringify({ bundle: new TextDecoder().decode(bundle) })}\n`;
     const bytes = new TextEncoder().encode(text);
     // 1 KB chunks, so a character's bytes and the newlines fall across them.
@@ -844,7 +844,7 @@ describe("the builder", () => {
   });
 
   test("two builds at once each get a container of their own, and both succeed; a 503 (no container free) is waited out (it failed staging's deploy on 2026-10-05)", async () => {
-    const bundle = new TextDecoder().decode(packRelease(join(ROOT, ".site/release")));
+    const bundle = new TextDecoder().decode(packRelease(join(ROOT, ".build/release")));
     // The Worker in front, as a mock: one container per build id (each busy with one build), and the first start of one build finds none free.
     const busy = new Set<string>(), ids: string[] = [], cancels: string[] = [];
     let refused = 0, inFlight = 0, most = 0;
@@ -1239,7 +1239,7 @@ describe("the release cache", () => {
   const src = { cloneUrl: "x", token: "t" };
 
   test("a commit built for staging is reused by production's build of it: no second build, the same release; a new toolchain builds again", async () => {
-    const bundle = packRelease(join(ROOT, ".site/release"));
+    const bundle = packRelease(join(ROOT, ".build/release"));
     let builds = 0;
     const fake = async (o: { log: (l: string) => void }) => { builds++; o.log("$ bun install"); return bundle; };
     const store = memStore();
@@ -1304,7 +1304,7 @@ describe("the release cache", () => {
   test("the same kept release on two targets: each gets its own settings, names, database and secrets at the upload", async () => {
     const store = memStore();
     const toolchain = await toolchainKey({ bun: "1.4.2", builderVersion: "v-1" });
-    const bundle = new TextDecoder().decode(packRelease(join(ROOT, ".site/release")));
+    const bundle = new TextDecoder().decode(packRelease(join(ROOT, ".build/release")));
     const kept: Promise<unknown>[] = [];
     await (await cachedBuild(body(SHA2, "staging"), { store, toolchain, keep: (p) => kept.push(p), build: async () => new Response(`${JSON.stringify({ bundle })}\n`) })).text();
     await Promise.all(kept);
@@ -1381,7 +1381,7 @@ describe("the builder fetches only the commit", () => {
             if (o.byId === false && cmd[1] == "fetch" && cmd.at(-1) == commit) throw new Error("not our ref");
             return spawnRunner(cmd, x);
           }
-          if (cmd.join(" ") == "bun deploy/release.ts") { mkdirSync(join(dir, ".site/release"), { recursive: true }); writeFileSync(join(dir, ".site/release/release.json"), "{}"); }
+          if (cmd.join(" ") == "bun run release") { mkdirSync(join(dir, ".build/release"), { recursive: true }); writeFileSync(join(dir, ".build/release/release.json"), "{}"); }
         };
         await buildCommit({ source: { cloneUrl: url }, commit, branch: "staging", dir, log: (l) => log.push(l), run });
         return { dir, cmds, log, depth: Number(sh(dir, "git", "rev-list", "--count", "HEAD")), head: sh(dir, "git", "rev-parse", "HEAD") };
@@ -1392,7 +1392,7 @@ describe("the builder fetches only the commit", () => {
       expect(head.depth).toBe(1);
       expect(head.cmds.filter((c) => c.startsWith("git fetch"))).toEqual([`git fetch -q --no-tags --depth 1 ${url} ${commits[2]}`]);
       expect(sh(head.dir, "git", "rev-parse", "--is-shallow-repository")).toBe("true");
-      expect(head.cmds.slice(-3)).toEqual(["bun install --frozen-lockfile", "./site.sh", "bun deploy/release.ts"]);
+      expect(head.cmds.slice(-3)).toEqual(["bun install --frozen-lockfile", "bun run build", "bun run release"]);
       // A server that won't fetch by id: the branch's head, depth 1.
       const byBranch = await build(commits[2], { byId: false });
       expect(byBranch.head).toBe(commits[2]);

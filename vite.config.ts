@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import { resolve, sep } from "node:path";
 import { cloudflare } from "@cloudflare/vite-plugin";
 import { defineConfig, type Plugin } from "vite";
-import { ergaDev } from "./dev/plugin.ts";
+import { ergaDev } from "./dev/vite-plugin.ts";
 
 /** Markdown imported as text (`with { type: "text" }`), as Bun does natively. */
 const markdownAsText: Plugin = {
@@ -17,8 +17,8 @@ process.env.ERGA_LINK_SECRET ||= randomBytes(24).toString("hex");
 
 export default defineConfig({
   // The editor's own files, gathered by site.sh: they're the Worker's static assets.
-  // (A test that changes them works on a copy: ERGA_SITE_DIR, e2e/redeploy/new-release.e2e.ts.)
-  publicDir: process.env.ERGA_SITE_DIR || ".site",
+  // (A test that changes them works on a copy: ERGA_BUILD_DIR, e2e/redeploy/new-release.e2e.ts.)
+  publicDir: process.env.ERGA_BUILD_DIR || ".build",
   // Tests point these elsewhere: their own .dev.vars, and a cache of their own so servers started at once don't trip on each other.
   // The cache is the checkout's own, not node_modules/.vite: a worktree's node_modules may be a link to another checkout's.
   envDir: process.env.ERGA_ENV_DIR || undefined,
