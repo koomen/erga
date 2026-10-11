@@ -16,7 +16,7 @@
 //   bun deploy/setup.ts --hook-secret      (only a new DEPLOY_HOOK_SECRET on both Workers; not kept anywhere else)
 //
 // The credential is yours, never a server's: CLOUDFLARE_API_TOKEN if set,
-// else the cf CLI's login (deploy/credential.ts). It needs Workers, D1,
+// else the cf CLI's login. It needs Workers, D1,
 // Workers Routes, DNS, Zone read and Artifacts (the cf CLI's login has
 // them). Making the deploy tokens needs a credential that may make account
 // API tokens, which the cf CLI's OAuth login can't (Cloudflare doesn't grant
@@ -25,13 +25,13 @@
 // Account API Tokens; a short TTL; delete it after). The setup checks it
 // first and says what's wrong with it, if anything.
 //
-// The tokens (deploy/tokens.ts): staging's may deploy erga-staging only;
+// The tokens: staging's may deploy erga-staging only;
 // production's may deploy erga and erga-staging. Each also has D1 Write
 // (account-wide: Cloudflare has no per-database scope) and read on the two
 // zones. Each is checked with itself before it's stored, and never printed.
 //
 // ERGA_DEPLOY_MOCK=1: all of it against the mock Cloudflare's copy of Erga's
-// account (deploy/mock.ts), with --yes taking the defaults: the tests run it so.
+// account, with --yes taking the defaults: the tests run it so.
 
 import { randomBytes } from "node:crypto";
 import { copyFileSync, mkdirSync, rmSync } from "node:fs";
@@ -186,7 +186,7 @@ try {
     if (scripts.includes(BUILDER) && !flag("--builder")) console.log("   It's there.");
     else if (mock) console.log("   (mock) It's there.");
     else if (ask(`   Deploy it now (\`bunx ${WRANGLER} deploy\` in deploy/builder; needs Docker running)?`, yes)) {
-      // The image caches the checkout's dependencies (deploy/builder/Dockerfile): package.json and bun.lock go in its
+      // The image caches the checkout's dependencies: package.json and bun.lock go in its
       // build context, deps/, for the build only.
       const dir = new URL("./builder/", import.meta.url).pathname, deps = join(dir, "deps");
       mkdirSync(deps, { recursive: true });
@@ -207,7 +207,7 @@ try {
     const had = scripts.includes(STAGING.worker)
       ? ((await cf.call<{ name: string }[]>("GET", `${acc}/workers/scripts/${STAGING.worker}/secrets`, `list ${STAGING.worker}'s secrets`).catch(() => [])) ?? []).map((s) => s.name)
       : [];
-    // FACTORY_KEY: staging's own (not production's), so the API keys it stores (credentials.ts) are its own; without one, /admin/api-keys can't store any.
+    // FACTORY_KEY: staging's own (not production's), so the API keys it stores are its own; without one, /admin/api-keys can't store any.
     const secrets: Record<string, string> = { ...(had.includes("SESSION_SECRET") ? {} : { SESSION_SECRET: secret() }), ...(had.includes("FACTORY_KEY") ? {} : { FACTORY_KEY: randomBytes(32).toString("base64") }), ...shared };
     const github = read("GITHUB_CLIENT_SECRET", "mock-staging-github-client-secret");
     if (github) secrets.GITHUB_CLIENT_SECRET = github;

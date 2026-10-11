@@ -79,7 +79,7 @@ export class RemotePage {
   }
 
   /**
-   * Asks the frame for the editor (front.ts: its host page shows the page as
+   * Asks the frame for the editor (server/routes.ts: its host page shows the page as
    * it renders until then): it answers "ready" once the editor is loaded.
    */
   start(): void {
@@ -126,7 +126,7 @@ export class RemotePage {
     const c = this.config;
     switch (m.type) {
       case "ready": {
-        // A frame that (re)loads starts from the shell's state (once: it may say so twice, see frame.ts).
+        // A frame that (re)loads starts from the shell's state (once: it may say so twice.
         if (this.ready) return;
         this.ready = true;
         this.authority.reset();

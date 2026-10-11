@@ -1,5 +1,5 @@
 // The document agent's and the admin agent's settings, as they are now: the
-// Anthropic key an admin stored on /admin/api-keys (credentials.ts), else the
+// Anthropic key an admin stored on /admin/api-keys, else the
 // Worker secret. Read at each turn (one row of D1), so a key an admin stores,
 // replaces or clears reaches every agent at its next turn, with no reload.
 

@@ -1,5 +1,5 @@
 // A document's files on disk, in local development: the folder (or single
-// file) the dev server linked it to (dev/plugin.ts), reached over the
+// file) the dev server linked it to, reached over the
 // document's /api/mirror WebSocket. As a FileStore it's the room's storage,
 // just as a folder was for the old local host: the room lists, reads and
 // writes the files themselves, and merges each change made on disk (the

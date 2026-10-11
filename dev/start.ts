@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 // Local development: erga.dev's app on your machine, the very same Worker
-// (worker/index.ts) run by Vite and the Cloudflare plugin, with any file or
+// run by Vite and the Cloudflare plugin, with any file or
 // folder from disk as a document.
 //
 //   bun start [file-or-folder] [--port N] [--no-open] [--reload]
@@ -12,23 +12,23 @@
 // if that's taken. --port (or ERGA_PORT) picks one outright. The server
 // writes its address to .dev-url once it answers, and removes it on the way
 // out. Its state, cache and settings are this checkout's (.cloudflare/,
-// .dev.vars), and its cookies are named for its port (worker/cookies.ts).
+// .dev.vars), and its cookies are named for its port.
 //
 // --reload reloads open tabs by itself when the editor is rebuilt, the
-// Worker's code changes or the server restarts (dev/reload.ts), for working
-// locally with someone watching (AGENTS.md).
+// Worker's code changes or the server restarts, for working
+// locally with someone watching.
 //
 // A folder (with index.html or index.md) or a single .html or .md file
 // named here is linked to one of your documents and edited where it is:
 // edits are written back to it, and changes made to it on disk (another
-// editor, git) show up in the page as they happen (dev/plugin.ts). A single
+// editor, git) show up in the page as they happen. A single
 // file is synced on its own, and no other files can be made beside it. More
 // can be opened from /docs while it runs. With nothing named, the browser
 // opens on your documents.
 //
 // It builds the editor first, makes .dev.vars if there isn't one (you're
-// DEV_LOGIN, signed in without GitHub), checks the settings the deploy fixes
-// (server.config.ts), and on the way out has every linked
+// DEV_LOGIN, signed in without GitHub), checks the settings the deploy fixes,
+// and on the way out has every linked
 // document write what it holds to disk before the server stops.
 
 import { existsSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -60,7 +60,7 @@ const target = args.find((a) => !a.startsWith("--"));
 
 // Fail fast on a target that won't open, before anything starts.
 if (target) await resolveTarget(target, process.cwd()).catch((e) => { console.error((e as Error).message); process.exit(2); });
-// The settings the deploy fixes (server.config.ts, ERGA_SERVER_CONFIG): a bad one stops here, saying why.
+// The settings the deploy fixes: a bad one stops here, saying why.
 try { deployedSettings(deployed()); } catch (e) { console.error(`deploy/locked-settings.ts: ${(e as Error).message}`); process.exit(2); }
 // Tests give each server its own state (ERGA_STATE_DIR); otherwise it's this checkout's, which one server at a time may hold.
 const ownState = !process.env.ERGA_STATE_DIR;
@@ -103,7 +103,7 @@ const vite = Bun.spawn(["node", "--no-experimental-webstorage", join(ROOT, "node
     ERGA_RELOAD: reload ? "1" : "",
     ERGA_CWD: process.cwd(),
     ERGA_PARENT: String(process.pid),
-    // Where the Worker finds the dev server's stand-ins for Artifacts and GitHub (dev/git-server.ts).
+    // Where the Worker finds the dev server's stand-ins for Artifacts and GitHub.
     ERGA_DEV_ORIGIN: `http://127.0.0.1:${port}`,
     ...(inspector ? { ERGA_INSPECTOR_PORT: String(inspector) } : {}),
   },

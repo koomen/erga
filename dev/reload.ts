@@ -2,7 +2,7 @@
 // locally): every page the server sends a browser tab gets a small
 // script that listens on /__erga/reload and reloads the tab when
 //
-//   - the editor's own files are rebuilt (src/page/, page.html, style.css, fonts/: site.sh),
+//   - the editor's own files are rebuilt,
 //   - the Worker's code changes (Vite reloads it; the next request runs the new code),
 //   - or the dev server restarts (Vite does when its config, or a file it imports, changes;
 //     or `bun start` was stopped and run again): the tab reconnects, sees a new server and reloads.

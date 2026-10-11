@@ -1,5 +1,5 @@
-// Publishing a document to a domain in the person's own Cloudflare account (site-publish.ts), against the pretend
-// Cloudflare (deploy/mock.ts, ERGA_DEPLOY_MOCK=1, a "mock-" token): connect on /settings, publish at a hostname, the
+// Publishing a document to a domain in the person's own Cloudflare account, against the pretend
+// Cloudflare (deploy/mock-cloudflare.ts, ERGA_DEPLOY_MOCK=1, a "mock-" token): connect on /settings, publish at a hostname, the
 // site following a new published version, and the take-down. The pieces alone: tests/sites.test.ts.
 import { expect, servers, test } from "../../fixtures";
 import { cut, intoHeading, person, someone } from "./versions";

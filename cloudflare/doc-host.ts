@@ -1,21 +1,21 @@
 // One document, as a Durable Object (on erga.dev, and in local development
 // alike). It keeps the document's files and the room's Yjs state in its own
-// storage, opens the room (room.ts) when the first request arrives, and
-// serves the per-document host (host.ts): the API,
+// storage, opens the room when the first request arrives, and
+// serves the per-document host: the API,
 // /api/stored and /doc/. It takes the two WebSockets itself, since a Durable
 // Object accepts them its own way.
 //
-// The front door (worker/index.ts) has already checked who's asking: it
+// The front door has already checked who's asking: it
 // forwards each request with the path inside the document (/api/doc, not
 // /koomen/abc123/api/doc), the document's public address in x-erga-base,
 // the signed-in person in x-erga-person, and what they may do in
 // x-erga-access ("edit", or "view": their room connection is then read-only,
 // and so are their agent and publishes). A request that came with an agent
-// token (tokens.ts) also has x-erga-agent: only those may call the external
+// token also has x-erga-agent: only those may call the external
 // agent's tools (/api/ext), as the person the token stands for, who may do
 // what they last could.
 //
-// It also keeps its row in the directory (directory.ts, D1) up to date: when
+// It also keeps its row in the directory up to date: when
 // it was last edited, and the title that follows its first heading (at most
 // every DIRECTORY_EVERY_MS). It deletes itself, row included, if nobody
 // edits it within its unedited time (the delete_docs_after_hours setting) of
@@ -66,7 +66,7 @@ interface Person { id: string; name: string }
 /** Storage keys: a file's bytes, a folder made as one (empty ones too), what the document is, the room's Yjs state. */
 const FILE = "file:", DIR = "dir:", META = "meta", STATE = "state";
 
-/** The new-document template's page (templates/doc), which a new page starts from. */
+/** The new-document template's page, which a new page starts from. */
 const TEMPLATE = Object.values(import.meta.glob("../assets/templates/doc/index.html", { query: "?raw", import: "default", eager: true }) as Record<string, string>)[0] ?? "";
 const AVATARS = "https://avatars.githubusercontent.com";
 
@@ -86,7 +86,7 @@ export class DocHost extends DurableObject<Env> {
 
   private sync: (() => void) | null = null;
 
-  /** Its versions (versions.ts), in its own storage. */
+  /** Its versions, in its own storage. */
   private versions = new Versions(kvOf(this.ctx.storage));
   /**
    * Edits not yet in a version: since when, by whom, and the timers that cut
@@ -200,7 +200,7 @@ export class DocHost extends DurableObject<Env> {
     return [...new Set([...texts(opened.room.doc).keys(), ...assets(opened.room.doc).keys()])].sort();
   }
 
-  /** The document's page (index.html, index.md...), or null if there's no such document. */
+  /** The document's page, or null if there's no such document. */
   async index(): Promise<string | null> {
     return (await this.ctx.storage.get<Meta>(META))?.index ?? null;
   }
@@ -295,7 +295,7 @@ export class DocHost extends DurableObject<Env> {
     await this.ctx.storage.deleteAll();
     this.versions = new Versions(kvOf(this.ctx.storage));
     this.pub = undefined;
-    // If it had a site on its person's Cloudflare account, the site comes down too (worker/site-host.ts).
+    // If it had a site on its person's Cloudflare account, the site comes down too.
     const site = await directoryOf(this.env).sites.get(this.idOf(meta)).catch(() => null);
     if (site) {
       const refused = await this.env.SITES.getByName(site.docId).remove(site.docId, site).catch((e) => String(e));
@@ -328,7 +328,7 @@ export class DocHost extends DurableObject<Env> {
     if (r?.renamed) (await this.open)?.renamed(nameOf(r.doc));
   }
 
-  /** A message for everyone who has the document open (the homepage's deploy status: worker/home.ts). Opens nothing. */
+  /** A message for everyone who has the document open (the homepage's deploy status: cloudflare/home.ts). Opens nothing. */
   async notify(msg: unknown): Promise<void> {
     this.opened?.notify(msg);
   }
@@ -380,8 +380,8 @@ export class DocHost extends DurableObject<Env> {
   }
 
   /**
-   * A part of its storage, and its alarm: the snapshot staging copies
-   * (deploy/snapshot.ts), a part at a time, since the whole can be more than
+   * A part of its storage, and its alarm: the snapshot staging copies,
+   * a part at a time, since the whole can be more than
    * one RPC carries. Only reads: the room isn't opened, nothing is written,
    * the directory isn't touched. Null if there's no document.
    */
@@ -429,7 +429,7 @@ export class DocHost extends DurableObject<Env> {
   async fetch(request: Request): Promise<Response> {
     // The dev server, bringing the files of a document on disk: before the room opens, which waits for them.
     if (new URL(request.url).pathname == "/api/mirror") return this.mirror(request);
-    // What viewers see (pub/): in "manual" mode the published version's files; in "latest" the files as they are now, as doc/.
+    // What viewers see: in "manual" mode the published version's files; in "latest" the files as they are now, as doc/.
     const asked = new URL(request.url);
     if (asked.pathname.startsWith("/pub/")) {
       const served = await this.publishedFile(request, asked);
@@ -467,7 +467,7 @@ export class DocHost extends DurableObject<Env> {
     if ((request.method != "GET" && request.method != "HEAD") || !url.pathname.startsWith("/doc/") || request.headers.get("upgrade")) return null;
     const meta = await this.ctx.storage.get<Meta>(META);
     if (!meta || meta.disk) return null;
-    // doc/ itself is its page (front.ts's frame asks for it so, not knowing its name).
+    // doc/ itself is its page (server/routes.ts's frame asks for it so, not knowing its name).
     const rel = url.pathname == "/doc/" ? meta.index : cleanRel(url.pathname.slice("/doc/".length));
     if (!rel) return new Response("Not found", { status: 404, headers: { "Content-Type": "text/plain; charset=utf-8" } });
     const bytes = await this.ctx.storage.get<Uint8Array>(FILE + rel);
@@ -477,7 +477,7 @@ export class DocHost extends DurableObject<Env> {
   }
 
   /**
-   * A GET of one of the published version's files (pub/...), in "manual"
+   * A GET of one of the published version's files, in "manual"
    * mode; null in "latest" mode (the caller serves the files as they are now),
    * which costs no more than reading the document's meta, kept in memory.
    */
@@ -489,7 +489,7 @@ export class DocHost extends DurableObject<Env> {
     const notFound = () => new Response("Not found", { status: 404, headers: { "Content-Type": "text/plain; charset=utf-8" } });
     const raw = url.pathname.slice("/pub/".length);
     const rel = raw ? cleanRel(raw) : v.index;
-    // A page by its address (blog for blog.html or blog/index.html), as doc/ does (host.ts): sent to its file, relatively.
+    // A page by its address (blog for blog.html or blog/index.html), as doc/ does: sent to its file, relatively.
     if (!rel || !(rel in v.files)) {
       const found = resolvePage((p) => p in v.files, raw, v.index);
       if (!found || found.file == rel) return notFound();
@@ -604,10 +604,10 @@ export class DocHost extends DurableObject<Env> {
     const docId = this.idOf(meta);
     this.publishedNow(meta).then((published) => firePublished({ docId, published, files: async () => (await this.publishedFiles())?.files ?? new Map() }))
       .catch((e) => console.log(`couldn't tell of ${docId}'s published version: ${e}`));
-    // If it's the homepage, its next deploy is scheduled (published.ts).
+    // If it's the homepage, its next deploy is scheduled.
     this.ctx.waitUntil(directoryOf(this.env).homeId().then((home) => home == docId ? publishedChanged(this.env, docId) : undefined)
       .catch((e) => console.log(`couldn't schedule the homepage's deploy: ${e}`)));
-    // If it has a site on its person's Cloudflare account, the site's next deploy is scheduled (worker/site-host.ts).
+    // If it has a site on its person's Cloudflare account, the site's next deploy is scheduled.
     this.ctx.waitUntil(siteChanged(this.env, docId).catch((e) => console.log(`couldn't schedule ${docId}'s site deploy: ${e}`)));
   }
 
@@ -720,7 +720,7 @@ export class DocHost extends DurableObject<Env> {
    * The files viewers see, and which version that is: the published
    * version's in "manual" mode; in "latest" mode the document as it is now
    * (up to the keystroke), with the current version. For the homepage's
-   * deploy (versions.ts, publishedFiles).
+   * deploy.
    */
   async publishedFiles(): Promise<{ published: Published; index: string; files: Map<string, Uint8Array> } | null> {
     const r = await this.ready();
@@ -794,7 +794,7 @@ export class DocHost extends DurableObject<Env> {
       Effect.provideService(StateStore, state),
       Scope.provide(scope),
     ));
-    // A test document's agent is the scripted one (agent.ts): free, and the same every run.
+    // A test document's agent is the scripted one: free, and the same every run.
     // Others read the key at each turn (one row of D1), so a key an admin stores, replaces or clears reaches an open document's agent.
     const agent = meta.test
       ? { apiKey: Redacted.make(""), model: "script" as const, effort: "medium" }
@@ -805,7 +805,7 @@ export class DocHost extends DurableObject<Env> {
       only: meta.disk?.only ? meta.index : undefined,
       personOf: (req) => personOf(new Headers(req.headers as Record<string, string>)),
       // The front door sets x-erga-agent only on a request whose agent token it checked.
-      // With x-erga-via, how the person acts through it (attribution.ts): "a shared agent (label)".
+      // With x-erga-via, how the person acts through it: "a shared agent (label)".
       agentOf: (req) => (req.headers["x-erga-agent"] ? { ...personOf(new Headers(req.headers as Record<string, string>)), via: viaOf(req.headers["x-erga-via"]) } : null),
       // Their agent edits only if they may (and only while they may).
       canEdit: (person) => this.editors.get(person.id) ?? false,
@@ -875,7 +875,7 @@ export class DocHost extends DurableObject<Env> {
           server.addEventListener("close", left);
           server.addEventListener("error", left);
         }
-        // A tab holding another epoch's history is refused, never merged (room.ts).
+        // A tab holding another epoch's history is refused, never merged.
         if (!conn) server.close(4409, "stale epoch");
         else {
           server.addEventListener("message", (e) => {
@@ -938,7 +938,7 @@ interface Opened {
   close: () => Promise<void>;
 }
 
-/** Durable Object storage as versions.ts's KV. */
+/** Durable Object storage as server/versions.ts's KV. */
 function kvOf(storage: DurableObjectStorage): KV {
   return {
     get: ((k: string | string[]) => storage.get(k as string)) as KV["get"],
@@ -972,7 +972,7 @@ function bytesOf(data: string | ArrayBuffer | ArrayBufferView): Uint8Array {
   return new Uint8Array(data);
 }
 
-/** How an outside agent's person acts through it, as the front door said (x-erga-via, JSON; attribution.ts). */
+/** How an outside agent's person acts through it, as the front door said (x-erga-via, JSON; shared/attribution.ts). */
 function viaOf(header: string | undefined): string {
   try { const v = JSON.parse(header ?? ""); if (typeof v == "string" && v) return v; } catch { /* none */ }
   return VIA.token("");

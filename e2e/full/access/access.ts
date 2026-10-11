@@ -1,7 +1,7 @@
-// Helpers for the tests of who may do what: the account corner (account.ts),
-// the admin pages' layout and guard (admin-layout.ts), scoped tokens
-// (tokens.ts) and a document's page kept apart from its viewer
-// (src/page/bridge.ts). Requests go to a worker's server as DEV_LOGIN
+// Helpers for the tests of who may do what: the account corner,
+// the admin pages' layout and guard, scoped tokens
+// and a document's page kept apart from its viewer
+//. Requests go to a worker's server as DEV_LOGIN
 // ("tester", local development's admin) unless they say otherwise (?user=,
 // a cookie, a token); each test makes its own people, documents and tokens.
 
@@ -36,7 +36,7 @@ export const corner = (page: Page) => page.evaluate(() => {
 
 /**
  * Clicks the middle of an element of the tab's own document, once nothing else is on top of it there: coming into
- * the editor, the viewer's own buttons stay over the editor's for their 200 ms fade (front.ts), and take the click.
+ * the editor, the viewer's own buttons stay over the editor's for their 200 ms fade, and take the click.
  */
 export async function clickOn(page: Page, selector: string) {
   const r = await until(() => page.evaluate((s) => {
@@ -54,7 +54,7 @@ export async function clickOn(page: Page, selector: string) {
 export const inFrames = <T>(page: Page, expr: string): Promise<(T | null)[]> =>
   Promise.all(page.frames().filter((f) => f != page.mainFrame()).map((f) => f.evaluate(expr).then((v) => v as T, () => null)));
 
-/** Evaluates in the document's page that a frame on another site shows (iframe.on: viewing or editing, front.ts). */
+/** Evaluates in the document's page that a frame on another site shows (iframe.on: viewing or editing, server/routes.ts). */
 export const inPage = <T>(page: Page, expr: string) =>
   inFrames<T>(page, `(() => { const w = document.querySelector("iframe.on")?.contentWindow; return w ? w.eval(${JSON.stringify(expr)}) : null; })()`);
 

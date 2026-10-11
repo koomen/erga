@@ -1,4 +1,4 @@
-// view_page's words beside its picture (agent.ts, describeView): the size and
+// view_page's words beside its picture: the size and
 // mode the page rendered in, the fonts its text rendered in (a fallback says
 // what the page asked for), what was still loading, and its script errors.
 // The capture itself, in a browser: e2e/page/view-*.e2e.ts.

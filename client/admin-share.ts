@@ -1,11 +1,11 @@
-// "Share with an agent" on every admin page (admin-layout.ts: the icon in
-// the header bar, upper right, as in the editor): the editor's card
-// (share-agent.ts), with a short-lived admin token (POST /admin/share:
-// tokens.ts, shareAdmin) in the prompt to paste into an outside agent. The
+// "Share with an agent" on every admin page (server/admin/layout.ts: the icon in
+// the header bar, upper right, as in the editor): the editor's card,
+// with a short-lived admin token (POST /admin/share:
+// server/tokens.ts, shareAdmin) in the prompt to paste into an outside agent. The
 // agent reads the admin guide (/api/admin/guide) and can then do what the
 // admin can do on the admin pages, as their agent. The card shows the same
 // token each time until it's near its end; New token turns it off and makes
-// another. /tokens lists and revokes it with the rest. Built by build.sh to
+// another. /tokens lists and revokes it with the rest. Built by client/build.sh to
 // admin-share.js.
 
 import { shareWithAgent } from "./share-agent";

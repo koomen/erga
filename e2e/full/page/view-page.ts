@@ -85,6 +85,6 @@ export async function expectColour(ed: Editor, png: string, x: number, y: number
   expect(c.every((v, i) => Math.abs(v - want[i]) <= 3), `pixel (${x}, ${y}) is ${c}, not ${want}`).toBe(true);
 }
 // A capture takes about 3 s: it loads the page afresh, waits for the slow font (which its picture fetches again), and
-// gives the page's scripts 600 ms to draw (frame.ts). A test that takes two or more needs more than the usual 15 s.
+// gives the page's scripts 600 ms to draw. A test that takes two or more needs more than the usual 15 s.
 export const CAPTURES = { timeout: 30_000 };
 export const WHITE = [255, 255, 255], DARK = [10, 20, 30], SCRIPT_LIGHT = [200, 0, 0], SCRIPT_DARK = [0, 200, 0];

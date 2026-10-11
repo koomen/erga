@@ -35,7 +35,7 @@ async function call(remote: Remote, path: string, init: RequestInit & { headers?
 }
 const hostOf = (url: string) => { try { return new URL(url).host; } catch { return url; } };
 
-/** The remote's branches (refs/heads/...), and where HEAD points, with protocol v2's ls-refs. */
+/** The remote's branches, and where HEAD points, with protocol v2's ls-refs. */
 export async function lsRefs(remote: Remote, prefix = "refs/heads/"): Promise<{ refs: Map<string, string>; head: string | null }> {
   const body = concat([pkt("command=ls-refs\n"), pkt("agent=erga\n"), DELIM, pkt("symrefs\n"), pkt(`ref-prefix ${prefix}\n`), pkt("ref-prefix HEAD\n"), FLUSH]);
   const answer = await call(remote, "/git-upload-pack", { method: "POST", body: body as BodyInit, headers: { "Content-Type": "application/x-git-upload-pack-request", Accept: "application/x-git-upload-pack-result", "Git-Protocol": "version=2" } });

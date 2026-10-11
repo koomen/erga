@@ -9,7 +9,7 @@
 import type { FileRef } from "./attach";
 
 export type LogItem =
-  /** `files`: what was attached (attach.ts), as the log shows it. */
+  /** `files`: what was attached, as the log shows it. */
   | { kind: "user"; text: string; files?: FileRef[] }
   | { kind: "assistant"; text: string }
   | { kind: "thinking"; text: string }
@@ -74,7 +74,7 @@ export interface ViewRequest {
   /** Light or dark mode, for the page's prefers-color-scheme (default: the user's). */
   colorScheme?: ColorScheme;
   /**
-   * The agent's Yjs state vector when it asked (src/room/doc.ts): the tab
+   * The agent's Yjs state vector when it asked: the tab
    * renders once it has seen every edit the agent had made by then.
    */
   after?: string;

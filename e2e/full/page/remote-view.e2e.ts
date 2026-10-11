@@ -1,7 +1,7 @@
 // Edits from elsewhere (the agent, another tab, the disk) while you read or type in another part of the page, as in a
 // shared document: only what changed changes. The view doesn't move, however much changes above it; the page isn't
 // rendered again, so its scripts keep their state; the caret stays where you type. Only a change to a script renders
-// the page afresh, out of sight, and the new page takes the old one's place at the same spot (src/page/editor.ts,
+// the page afresh, out of sight, and the new page takes the old one's place at the same spot (client/editor.ts,
 // morph.ts).
 import { expect, servers, test, until } from "../../fixtures";
 import { F, W, openEditor, type Editor } from "../../editor";

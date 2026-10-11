@@ -1,4 +1,4 @@
-// The editor's side panels on a presentation, its list of steps open (src/page/layout.ts, mountLayout), for
+// The editor's side panels on a presentation, its list of steps open, for
 // e2e/page/layout*.e2e.ts: where each panel is, and the presentation opened at W × H with both panels open.
 import { KEY } from "../../../client/layout";
 import { center, drag, still, type Span } from "../../drag";

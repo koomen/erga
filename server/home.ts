@@ -2,14 +2,14 @@
 // landing_document setting) rendered on this site itself, with no frame and
 // no pages origin, as close to a static file as it gets, and Erga's controls
 // (Clone, Edit, who you are) on top, in a shadow root of their own. Every
-// other document still renders in a frame on its own origin (front.ts,
+// other document still renders in a frame on its own origin (server/routes.ts,
 // pagesDoor); the homepage may skip that only because only admins may edit
-// it (directory.ts, homeBlocked and homeLimit): its script runs on this
+// it: its script runs on this
 // site's own origin, where it could act as whoever views it.
 //
 // This file is the platform-neutral half: rendering a deploy's page
 // (`renderHome`), the controls (`homeHeader`), and the homepage's API
-// (`homeApi`). The Worker's half (worker/home.ts) keeps the deployed
+// (`homeApi`). The Worker's half keeps the deployed
 // snapshot, deploys it again after changes, and serves it.
 //
 //   GET  /api/docs/<id>/home          { isHome, canSet, blocked, deploy }
@@ -38,13 +38,13 @@ export interface DeployStatus {
   version: number | null;
   /** Why the last deploy failed, while it's failed. */
   error: string | null;
-  /** Who asked for the latest deploy (attribution.ts, byLine): "ada", "ada, via their admin agent", or "the system" (one after a publish, or a new homepage). */
+  /** Who asked for the latest deploy: "ada", "ada, via their admin agent", or "the system" (one after a publish, or a new homepage). */
   by?: string | null;
 }
 
 export const IDLE: DeployStatus = { state: "idle", at: null, scheduledFor: null, version: null, error: null };
 
-/** What the homepage's API needs of its deploys (worker/home.ts's Home). */
+/** What the homepage's API needs of its deploys (cloudflare/home.ts's Home). */
 export interface HomeDeploys {
   status(): Promise<DeployStatus>;
   /** Deploys now; answers the status (deploying). */
@@ -56,7 +56,7 @@ export interface HomeDeploys {
 export interface RenderedHome { before: string; after: string }
 
 const MARK = "<!--erga:home-controls-->";
-/** What the viewer's own page sets around a document (front.ts, viewDocument): the same here, so the page lays out as it does there. */
+/** What the viewer's own page sets around a document: the same here, so the page lays out as it does there. */
 const VIEWPORT = `<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">`;
 /**
  * The controls' band (homeHeader): their height, 12px above and below them (more under a notch). The page starts below it,
@@ -66,7 +66,7 @@ export const BAND = "calc(max(12px, env(safe-area-inset-top)) + 46px)";
 /**
  * What the page gets in its head: it starts below the controls' band (the root's padding, which only moves it down, unlike a
  * margin on its body; in a rule the page's own can't outweigh), anchors scroll to below the band too, and it stops dead at
- * its top and bottom, as the viewer's frame makes it (front.ts, HOST_SCRIPT's still).
+ * its top and bottom, as the viewer's frame makes it (server/routes.ts, HOST_SCRIPT's still).
  */
 const STILL = `<style>html { overscroll-behavior: none; } html:root:root { padding-top: ${BAND} !important; scroll-padding-top: ${BAND}; }</style>`;
 
@@ -107,7 +107,7 @@ function rewriteSrcset(srcset: string, to: (v: string) => string | null): string
  * where this deploy serves them (/_home/<gen>/<path>): every relative URL in
  * an attribute that loads something, in srcset, and in CSS, that names one of
  * the document's files. Links to its other pages stay relative (they're
- * served at the root too: worker/home.ts). Throws if the page isn't HTML.
+ * served at the root too: cloudflare/home.ts). Throws if the page isn't HTML.
  */
 export async function renderHome(opts: { index: string; files: Record<string, string | Uint8Array>; gen: string; title: string }): Promise<RenderedHome> {
   const { index, gen } = opts;
@@ -168,9 +168,9 @@ export async function renderHome(opts: { index: string; files: Record<string, st
 }
 
 /**
- * The homepage's controls, over the page as on any document's viewer
- * (front.ts, viewDocument): New document (templates.ts), Clone, Edit for those who may edit it, and who
- * you are (account.ts). They live in a shadow root (declarative, so they
+ * The homepage's controls, over the page as on any document's viewer:
+ *New document, Clone, Edit for those who may edit it, and who
+ * you are. They live in a shadow root (declarative, so they
  * paint as soon as they arrive, before any script), out of the page's
  * styles' reach and the page out of theirs, on a host that resets whatever
  * the page's CSS could give it. The script then moves the host out of the
@@ -186,7 +186,7 @@ export function homeHeader(o: { clone: string; edit: string | null; account: Acc
 
 // The host: nothing of the page's applies to it (its own !important rules win over the page's, from inside the shadow root).
 // Fixed, the width of the window (scrollbar included, as the viewer's controls sit over the frame's scrollbar), no height.
-// On a phone they stay at the top of the page, as the viewer's do (front.ts, VIEW_STYLE).
+// On a phone they stay at the top of the page, as the viewer's do.
 const HOST_STYLE = `:host { all: initial !important; display: block !important; position: fixed !important; top: 0 !important; left: 0 !important;
   right: calc(-1 * var(--erga-scrollbar, 0px)) !important; width: auto !important; height: 0 !important; margin: 0 !important; padding: 0 !important;
   z-index: 2147483647 !important; contain: none !important; transform: none !important; filter: none !important; visibility: visible !important; opacity: 1 !important; }
@@ -218,7 +218,7 @@ const HEADER_SCRIPT = `(() => {
   new MutationObserver(band).observe(document.documentElement, { attributes: true, subtree: false });
   if (document.body) new MutationObserver(band).observe(document.body, { attributes: true, attributeFilter: ["class", "style"] });
   matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change", band);
-  // Who you are (account.ts's corner): its menu opens and closes as everywhere else on the site.
+  // Who you are (server/account-menu.ts's corner): its menu opens and closes as everywhere else on the site.
   const acc = root.querySelector(".erga-account"), btn = acc && acc.querySelector("button"), menu = acc && acc.querySelector(".erga-account-menu");
   if (btn && menu) {
     const show = (open) => { menu.hidden = !open; btn.setAttribute("aria-expanded", String(open)); };
@@ -227,10 +227,10 @@ const HEADER_SCRIPT = `(() => {
     document.addEventListener("keydown", (e) => { if (e.key == "Escape" && !menu.hidden) { show(false); btn.focus(); } });
     addEventListener("blur", () => show(false));
   }
-  // New document's picker (templates.ts).
+  // New document's picker.
   ${NEW_DOC_SCRIPT}
   ergaNewDoc(root);
-  // The controls fade once the page is scrolled, as on any document's page (front.ts, FADE): on the host, whose own opacity
+  // The controls fade once the page is scrolled, as on any document's page: on the host, whose own opacity
   // the page can't touch; the band stays as it is.
   ${FADE}
   const fade = ergaFade(host, root);

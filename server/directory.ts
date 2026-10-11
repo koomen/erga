@@ -1,11 +1,11 @@
 // The directory: every document's address, title, owner and who may do what
-// with it, in SQL (migrations/), on D1 (worker/d1.ts; locally, the dev
+// with it, in SQL, on D1 (cloudflare/d1.ts; locally, the dev
 // server's D1). It sits behind the three-method `Sql` below, so the tests
 // run it on bun:sqlite. A document's content and live room stay with its own
 // host (a DocHost Durable Object, named by the document's id). The server's
-// users and admins (users.ts) and its settings (config.ts) are on the same
+// users and admins and its settings are on the same
 // database, and reached through the directory: `dir.users`, `dir.config`,
-// and the API keys admins enter (credentials.ts), `dir.credentials`.
+// and the API keys admins enter, `dir.credentials`.
 //
 // Addresses: /d/<id> always works. /<owner>/<slug> is the pretty, canonical
 // one; /<owner>/<id> and /<owner>/<an old slug> lead to it. A slug is unique
@@ -30,7 +30,7 @@
 // token. Server admins get nothing on documents by being admins.
 //
 // The front page (landing_document) is the exception: its scripts run on
-// this site itself (worker/home.ts), so while it's the front page only admins
+// this site itself, so while it's the front page only admins
 // may edit it. It can't be made the front page while anyone else may
 // (homeBlocked), nobody else can be made its editor (share), and anyone else
 // whose permission says otherwise only views it (homeLimit).
@@ -94,11 +94,11 @@ export type Action = "open" | "edit" | "rename" | "delete" | "share";
  */
 export interface Who {
   login: string; test?: boolean; by?: string;
-  /** Comes with admin power (users.ts, Actor.admin): a browser session, or an admin token. Set by the front door. */
+  /** Comes with admin power: a browser session, or an admin token. Set by the front door. */
   admin?: boolean;
-  /** A document token's document (tokens.ts): they may touch this one document, and no other. */
+  /** A document token's document: they may touch this one document, and no other. */
   onlyDoc?: string;
-  /** How they act, when not in person: through one of their agents (attribution.ts, VIA). Recorded beside their login. */
+  /** How they act, when not in person: through one of their agents. Recorded beside their login. */
   via?: string;
 }
 /** The login a permission for anyone signed in (who has the link) is under. */
@@ -107,7 +107,7 @@ export const ANYONE = "*";
 /** One person's (or anyone's, "*") permission on a document. */
 export interface Permission {
   login: string; role: Role; granted: number; grantedBy: string | null;
-  /** How `grantedBy` shared it, when not in person (attribution.ts): "their agent", "a shared agent (label)". */
+  /** How `grantedBy` shared it, when not in person: "their agent", "a shared agent (label)". */
   grantedVia?: string | null;
 }
 
@@ -126,8 +126,8 @@ const SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const ID_SHAPE = /^[a-z0-9]{8}$/;
 
 /**
- * Words that can't be slugs: the app's own first path segments (front.ts,
- * worker/index.ts) and the document host's (host.ts), so an
+ * Words that can't be slugs: the app's own first path segments (server/routes.ts,
+ * cloudflare/index.ts) and the document host's, so an
  * address never reads as one of those, and a few kept for later.
  */
 export const RESERVED = new Set([
@@ -184,16 +184,16 @@ export class Directory {
   readonly config: ServerConfig;
   /** The API keys admins enter, encrypted. */
   readonly credentials: Credentials;
-  /** Each person's Cloudflare connection, encrypted (sites.ts). */
+  /** Each person's Cloudflare connection, encrypted. */
   readonly cloudflare: CloudflareConnections;
-  /** Documents published to a domain in their person's Cloudflare account (sites.ts). */
+  /** Documents published to a domain in their person's Cloudflare account. */
   readonly sites: Sites;
 
   /**
-   * `admins`: the deploy's bootstrap admins (users.ts). `locked`: settings
-   * the deploy fixes (config.ts). `credentialSecret`: what the API keys are
+   * `admins`: the deploy's bootstrap admins. `locked`: settings
+   * the deploy fixes. `credentialSecret`: what the API keys are
    * encrypted with (none: they can't be stored); `fallback`: which Worker
-   * secrets stand in for them (credentials.ts).
+   * secrets stand in for them.
    */
   constructor(private sql: Sql, opts: { admins?: Iterable<string>; locked?: Record<string, unknown>; changed?: (key: string) => Promise<void>; credentialSecret?: string | null; fallback?: (env: string) => boolean } = {}) {
     this.users = new Users(sql, opts.admins);
@@ -203,7 +203,7 @@ export class Directory {
     this.config = new ServerConfig(sql, this.users, {
       locked: opts.locked,
       changed: opts.changed,
-      // The front page shows a document to everyone, and runs its scripts on this site itself (worker/home.ts): an admin
+      // The front page shows a document to everyone, and runs its scripts on this site itself: an admin
       // who may edit it puts it there, and only if everyone who may edit it is an admin. Kept by id, which a rename never changes.
       checks: {
         landing_document: async (by, value) => {
@@ -252,7 +252,7 @@ export class Directory {
 
   /**
    * Why a document can't be the front page, or null if it can: the front
-   * page runs its scripts on this site itself (worker/home.ts), where they
+   * page runs its scripts on this site itself, where they
    * act as whoever views it, so everyone who may edit it must be an admin.
    */
   async homeBlocked(id: string): Promise<string | null> {
@@ -409,7 +409,7 @@ export class Directory {
   /**
    * Moves a document to the slug `base`, or base-2, base-3... if another of
    * its owner's has that: the server's own naming (the front page it makes,
-   * front.ts seedLanding), not a person's, so it never refuses. The slug
+   * server/routes.ts seedLanding), not a person's, so it never refuses. The slug
    * stays set.
    */
   async reslug(id: string, base: string): Promise<DocRow | null> {
@@ -571,7 +571,7 @@ export function throttle(fn: () => Promise<unknown>, ms: number): () => void {
 /** How often edits may update a document's row (its time, and the title that follows its heading). */
 export const DIRECTORY_EVERY_MS = 2000;
 
-/** What a document's host (host.ts) needs to show and change its name, as one person. */
+/** What a document's host needs to show and change its name, as one person. */
 export interface Naming {
   get(): Promise<DocName>;
   /** Throws a NameError a person or agent can act on (taken, reserved, not allowed). */

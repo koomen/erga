@@ -1,6 +1,6 @@
 // Document settings: the popover under the gear in the editor's top row
-// (page.html, #btn-settings). Built on its own (build.sh: settings.js) and
-// loaded only when the gear is reached for (main.ts, loadSettings), so it
+// (client/editor.html, #btn-settings). Built on its own and
+// loaded only when the gear is reached for, so it
 // costs viewing and opening the editor nothing.
 //
 // It holds, top to bottom:
@@ -8,12 +8,12 @@
 //     Manual (viewers see the version picked), and in Manual the picker,
 //     which always shows the published version, the latest ten and the few
 //     before the published one, with a row for each run in between that
-//     loads more (versions.ts, pickerRows).
+//     loads more.
 //     Below it, "Publish the current version" when that isn't the published one.
 //   - Homepage (for admins, and on the homepage itself): whether this is the
 //     server's homepage, how its deploy is going, and Redeploy now.
 //   - Custom domain: the document published at a domain of the person's own,
-//     from their Cloudflare account (site-publish.ts): Connect Cloudflare
+//     from their Cloudflare account: Connect Cloudflare
 //     (on /settings) if they haven't, else a name and one of their domains,
 //     and once it's up, the site's address, how its deploy is going, Deploy
 //     now and Remove.
@@ -22,8 +22,8 @@
 //     current and the published one marked. Edit, on hover or focus, makes a
 //     copy of a version the current one (POST .../versions/<id>/restore).
 //
-// It talks to the server's API as the shared contract says (versions.ts
-// home.ts and site-publish.ts), and refreshes on the event channel's
+// It talks to the server's API as the shared contract says (server/versions.ts
+// server/home.ts and server/site-publish.ts), and refreshes on the event channel's
 // { type: "versions" }, { type: "home" } and { type: "site" } (main.ts passes them on).
 // Someone who can't edit sees it all read-only, with a line saying why: what
 // viewers see is worth knowing even when you can't change it.
@@ -32,9 +32,9 @@ import { ago, clock, nearNeed, pickerRows, RECENT, type Published, type Row, typ
 
 export interface Deploy { state: "idle" | "scheduled" | "deploying" | "deployed" | "failed"; at: string | null; scheduledFor: string | null; version: number | null; error: string | null }
 /** GET /api/docs/<id>/home. `blocked`: why this document can't be made the homepage (others may edit it), or null. */
-export interface Home { isHome: boolean; canSet: boolean; /** An admin acting through a token without the admin scope (tokens.ts). */ locked?: boolean; blocked?: string | null; deploy: Deploy }
+export interface Home { isHome: boolean; canSet: boolean; /** An admin acting through a token without the admin scope. */ locked?: boolean; blocked?: string | null; deploy: Deploy }
 
-/** GET /api/docs/<id>/site (site-publish.ts). */
+/** GET /api/docs/<id>/site. */
 export interface SiteState {
   canEdit: boolean;
   connection: { connected: boolean; last4: string | null; accounts: { id: string; name: string }[]; canStore: boolean; unreadable: boolean };

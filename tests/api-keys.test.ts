@@ -1,4 +1,4 @@
-// The API keys admins enter on /admin/api-keys (credentials.ts, admin.ts), on an
+// The API keys admins enter on /admin/api-keys, on an
 // in-memory SQLite database with the same migrations D1 gets: stored
 // encrypted, never answered back (only set, the last four characters, and who
 // set it when), in the change log without the value, admins only, and read by

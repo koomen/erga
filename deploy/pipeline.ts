@@ -1,7 +1,7 @@
 // The deploy pipeline: the one way any Erga server is deployed, through the
 // Cloudflare API, with no CLI and no container. Each step below is a few
 // plain API calls, so a page can show them one at a time, and the tests run
-// every one against a mock Cloudflare (deploy/mock.ts).
+// every one against a mock Cloudflare.
 //
 // Its input is a target (Target: an account, a Worker, a database, its
 // addresses, settings and secrets, and maybe a snapshot to copy in) and a
@@ -9,11 +9,11 @@
 // cloudflare.config.ts, its static assets and the migrations). Its output is
 // a live server, each step reported as it goes. Three kinds of targets use it:
 //
-//   - /deploy (worker/deployer.ts, deploy/page.ts): a copy of Erga on
+//   - /deploy: a copy of Erga on
 //     someone's own Cloudflare account, them its admin (targetOfPlan);
-//   - production and staging (deploy/targets.ts): erga.dev and
-//     staging.erga.dev, deployed by the server itself when their branch moves
-//     (deploy/branches.ts, worker/pipeline.ts), or from a machine (deploy/run.ts);
+//   - production and staging: erga.dev and
+//     staging.erga.dev, deployed by the server itself when their branch moves,
+//    or from a machine;
 //   - staging runs on a copy of production's data, frozen: a deploy keeps
 //     it, and copies afresh only when asked (a Redeploy with a fresh copy)
 //     or when staging has no copy yet (Target.snapshot: the "data" and
@@ -22,14 +22,14 @@
 // The steps (ALL_STEPS): check the account, find or make the D1 database
 // (for a snapshot, a new copy beside the one the Worker is on, or that one
 // kept: Target.snapshot), copy the source's database into it, apply
-// migrations/ to it (recorded in d1_migrations, as `cf d1 migrations apply`
+// server/migrations/ to it (recorded in d1_migrations, as `cf d1 migrations apply`
 // does), upload the static assets (direct upload), upload the Worker with its
 // bindings, secrets and Durable Objects, give it its address (workers.dev,
 // or a custom domain), give documents' pages theirs, wait for it to answer,
 // copy the source's documents into it, and delete the old copies of the
 // database (a snapshot's: only once the new version answers). A new server makes its own front
 // page from the landing project built into it, the first time someone opens
-// it (front.ts), owned by its first admin.
+// it, owned by its first admin.
 
 
 import { createHash } from "node:crypto";
@@ -111,11 +111,11 @@ export interface Release {
   modules: Record<string, Uint8Array>;
   /** Its static assets, by path ("/page.js"). */
   assets: Record<string, Uint8Array>;
-  /** migrations/, by file name, in order. */
+  /** server/migrations/, by file name, in order. */
   migrations: Record<string, string>;
 }
 
-/** The release's table of contents (release.json). */
+/** The release's table of contents. */
 export interface ReleaseIndex {
   version: string;
   built: string;
@@ -251,7 +251,7 @@ export const WORKER_TAG = "erga-deploy";
  * Where a deploy goes: everything the pipeline needs to know about it, in
  * any account. /deploy makes one from the page's plan (targetOfPlan); the
  * branch deploys make production's and staging's from deploy/targets.ts
- * (deploy/branches.ts, targetOf).
+ *.
  */
 export interface Target {
   /** What to call it in the log ("staging", or the account's name). */
@@ -300,7 +300,7 @@ export interface Target {
    * deleted database, and a deploy that stops before its upload leaves it as
    * it was; the copies such a deploy leaves are deleted by the next one. Each
    * document's Durable Object is copied from the source server's snapshot
-   * endpoint (deploy/snapshot.ts), authorized with `token`. Nothing is ever
+   * endpoint, authorized with `token`. Nothing is ever
    * written to the source.
    *
    * A deploy copies only when the target has no copy yet, or with `fresh`
@@ -375,7 +375,7 @@ export async function dropCopies(cf: Cloudflare, target: Target, keep: string | 
 }
 
 /**
- * The steps a target with a snapshot (staging) runs while its commit builds (deploy/branches.ts): they need no
+ * The steps a target with a snapshot (staging) runs while its commit builds: they need no
  * release (the snapshot's database step decides by copyReason, not from the release). They change nothing the
  * target runs on: a new copy goes beside the database its Worker is on.
  */
@@ -481,7 +481,7 @@ export async function runPipeline(cf: Cloudflare, release: Release | null, targe
   const run: Record<StepId, () => Promise<string | undefined>> = {
     // The account, its workers.dev subdomain (made if it has none and the target names one), and whether the Worker is Erga's.
     async account() {
-      // A narrow token (Erga's own deploy tokens: deploy/tokens.ts) may not read the account itself: its id is enough.
+      // A narrow token (Erga's own deploy tokens: deploy/server-tokens.ts) may not read the account itself: its id is enough.
       const account = await cf.call<{ id: string; name: string }>("GET", acc, "read your account").catch((e) => {
         if (target.keepSecrets && e instanceof DeployError && e.status == 403) return null;
         throw e;
@@ -571,7 +571,7 @@ export async function runPipeline(cf: Cloudflare, release: Release | null, targe
       return `${snap.databaseName} (${source}) → ${target.databaseName}: ${sql.length} bytes of SQL`;
     },
 
-    // migrations/, each once, recorded in d1_migrations as the cf CLI does (on a new copy, the ones production hasn't had yet; on a kept one, the ones it hasn't).
+    // server/migrations/, each once, recorded in d1_migrations as the cf CLI does (on a new copy, the ones production hasn't had yet; on a kept one, the ones it hasn't).
     async migrations() {
       const rel = needRelease();
       const db = carry.dbId!;
@@ -584,7 +584,7 @@ export async function runPipeline(cf: Cloudflare, release: Release | null, targe
         await d1(cf, acc, db, `${sql}${sql.endsWith(";") ? "" : ";"}\nINSERT INTO d1_migrations (name) VALUES ('${name.replace(/'/g, "''")}');`, [], `apply the database migration ${name}`);
       }
       const did = pending.length ? `applied ${pending.join(", ")}` : "already up to date";
-      // A new copy has production's API keys (credentials.ts), which don't open on the target (its FACTORY_KEY is its own): its own come back.
+      // A new copy has production's API keys, which don't open on the target (its FACTORY_KEY is its own): its own come back.
       return target.snapshot && carry.copied ? `${did}; ${await ownCredentials(cf, acc, carry.ownDb ?? null, db)}` : did;
     },
 
@@ -741,7 +741,7 @@ export function workerMetadata(release: Release, target: Target, o: { dbId: stri
     else if (b.type == "text") bindings.push({ type: "plain_text", name, text: text[name] ?? b.value ?? "" });
     else if (b.type == "secret") { if (secrets[name] != null) bindings.push({ type: "secret_text", name, text: secrets[name] }); }
     else if (b.type == "service" && b.name && target.services?.[name]) bindings.push({ type: "service", name, service: target.services[name] });
-    // Erga's own source (worker/artifacts.ts): only on a target that names the namespace; elsewhere left out.
+    // Erga's own source: only on a target that names the namespace; elsewhere left out.
     else if (b.type == "artifacts") { if (target.artifacts) bindings.push({ type: "artifacts", name, namespace: target.artifacts }); }
     else throw new DeployError(`This release has a binding this page doesn't know how to make (${name}, ${b.type}): it needs a newer deploy page.`);
   }
@@ -749,7 +749,7 @@ export function workerMetadata(release: Release, target: Target, o: { dbId: stri
   for (const [name, value] of Object.entries(text)) if (!named.has(name)) { bindings.push({ type: "plain_text", name, text: value }); named.add(name); }
   for (const [name, value] of Object.entries(secrets)) if (!named.has(name)) { bindings.push({ type: "secret_text", name, text: value }); named.add(name); }
   for (const [name, service] of Object.entries(target.services ?? {})) if (!named.has(name)) { bindings.push({ type: "service", name, service }); named.add(name); }
-  // Where documents' pages run (front.ts, pagesOrigin): a domain of their own, or the shared host.
+  // Where documents' pages run: a domain of their own, or the shared host.
   if (target.pages.kind == "zone") bindings.push({ type: "plain_text", name: "PAGES_DOMAIN", text: target.pages.domain ?? target.pages.zoneName });
   else bindings.push({ type: "plain_text", name: "PAGES_HOST", text: o.pagesHost });
   // Durable Objects as declarative exports, as `cf deploy` sends them: the platform makes each namespace on the first
@@ -763,7 +763,7 @@ export function workerMetadata(release: Release, target: Target, o: { dbId: stri
     compatibility_date: w.compatibilityDate,
     compatibility_flags: w.compatibilityFlags ?? [],
     bindings,
-    // Secrets set once on the Worker (deploy/setup.ts) stay from version to version, as with `cf deploy`.
+    // Secrets set once on the Worker stay from version to version, as with `cf deploy`.
     ...(target.keepSecrets ? { keep_bindings: ["secret_text", "secret_key"] } : {}),
     assets: {
       jwt: o.assetsJwt,
@@ -778,7 +778,7 @@ export function workerMetadata(release: Release, target: Target, o: { dbId: stri
 /**
  * The account's Workers, as the account step needs them (is the target's
  * there, and is it Erga's). A token scoped to some Workers only (Erga's own
- * deploy tokens: deploy/tokens.ts) may not list the account's: then the
+ * deploy tokens: deploy/server-tokens.ts) may not list the account's: then the
  * target's own settings answer whether it's there and Erga's.
  */
 async function listScripts(cf: Cloudflare, acc: string, target: Target): Promise<{ id: string; tags?: string[]; named_handlers?: { name?: string }[] }[]> {
@@ -934,7 +934,7 @@ function jwtClaims(jwt: string): Record<string, unknown> {
 
 /** One statement (or a few, separated by semicolons) on a D1 database, through the API: the first statement's rows. */
 /**
- * The API keys a server stored itself (credentials.ts), into the new copy of
+ * The API keys a server stored itself, into the new copy of
  * another server's data it moves to: the copy's rows (the other server's,
  * encrypted with its FACTORY_KEY, so they don't open here) go, and the rows of
  * the copy it was on (`from`; none on its first copy) come in. Without this,
@@ -965,7 +965,7 @@ export const b64 = (bytes: Uint8Array) => {
 
 /**
  * The permissions the deploy needs, as the "Create API token" template link
- * takes them (developers.cloudflare.com/fundamentals/api/how-to/account-owned-token-template).
+ * takes them.
  * `registrar` adds buying a domain.
  */
 export function tokenPermissions(registrar: boolean) {
@@ -986,7 +986,7 @@ export function tokenTemplateUrl(registrar: boolean): string {
   return `https://dash.cloudflare.com/profile/api-tokens?permissionGroupKeys=${encodeURIComponent(JSON.stringify(keys))}&accountId=*&zoneId=all&name=${encodeURIComponent("Erga deploy")}`;
 }
 
-/** Cloudflare's OAuth endpoints (developers.cloudflare.com/fundamentals/oauth/integrate-with-cloudflare). */
+/** Cloudflare's OAuth endpoints. */
 export const OAUTH = {
   authorize: "https://dash.cloudflare.com/oauth2/auth",
   token: "https://dash.cloudflare.com/oauth2/token",

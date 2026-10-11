@@ -1,4 +1,4 @@
-// The admin area as one page (admin-layout.ts): a link to another admin page
+// The admin area as one page: a link to another admin page
 // (the sidebar, the breadcrumb, a link in a page or in the agent's reply)
 // changes only the page in <main>, so the shell around it (the sidebar, Share
 // with agent and, above all, the admin's agent panel, with its conversation and
@@ -11,13 +11,13 @@
 // again, each in a function of its own (so its consts don't clash with the
 // last page's). A page's script that keeps something running (an EventSource,
 // a timer, a listener on document) stops it when the page goes, with
-// window.ergaView (set by admin-layout.ts's first script, and again here for
+// window.ergaView (set by server/admin/layout.ts's first script, and again here for
 // each page): view.signal aborts, and view.onLeave(fn) runs fn. ergaAdmin.reload()
 // shows the page again, as it is now on the server, where the page used to
 // reload. Anything that isn't an admin page of the layout (a redirect to sign
 // in, an error, another kind of answer) opens as a whole page instead.
 //
-// Built by build.sh to admin-nav.js.
+// Built by client/build.sh to admin-nav.js.
 
 interface View { signal: AbortSignal; onLeave(fn: () => void): void; leave(): void }
 declare global { interface Window { ergaView: View; ergaAdmin?: { go(url: string, opts?: { replace?: boolean }): Promise<void>; reload(): Promise<void> } } }
@@ -84,7 +84,7 @@ function swap(doc: Document, next: HTMLElement) {
   document.title = doc.title;
   const style = document.querySelector("style"), nextStyle = doc.querySelector("style");
   if (style && nextStyle && style.textContent != nextStyle.textContent) style.textContent = nextStyle.textContent;
-  // Which code the page now shown carries (worker/live.ts): live.js asks the server about this one from now on.
+  // Which code the page now shown carries: live.js asks the server about this one from now on.
   const build = document.querySelector('meta[name="erga-build"]'), nextBuild = doc.querySelector('meta[name="erga-build"]');
   if (build && nextBuild) build.setAttribute("content", nextBuild.getAttribute("content") ?? "");
   const crumb = document.querySelector(".crumbs .here"), nextCrumb = doc.querySelector(".crumbs .here");

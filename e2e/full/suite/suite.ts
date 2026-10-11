@@ -1,8 +1,8 @@
 // The multiplayer suite on e2e: black-box tests of a document room, its
 // participants and their agents (e2e/suite/target.ts has the contract). The
 // tests themselves are e2e/suite/suites/*.ts, written against a Target, so
-// one test runs against a worker's dev server here and against a deployment
-// (prod.ts); each e2e/suite/<name>.e2e.ts file registers some of them with
+// one test runs against a worker's dev server here and against a deployment;
+// each e2e/suite/<name>.e2e.ts file registers some of them with
 // `register`. The browser tests are e2e files of their own (browser-*.e2e.ts,
 // with `openAs` below), and the latency tests are a bench (latency.bench.e2e.ts).
 //
@@ -12,7 +12,7 @@
 //                         or kills the server gets a server of its own, with its document opened as it starts.
 //   remote                ERGA_SUITE_TARGET names a JSON file of RemoteTarget's settings (ERGA_TARGET_DOC and
 //                         the rest, e2e/suite/target.ts), as prod.ts writes it. A file, not the environment:
-//                         the runner drops variables that look like credentials (e2e/env.ts), as cookies do.
+//                         the runner drops variables that look like credentials, as cookies do.
 //
 // Randomised tests are seeded: ERGA_SUITE_SEED=n replays one (a failure names its seed). ERGA_SUITE_LONG=1 runs the
 // long versions (bigger crowds, longer fuzzing, real idle-eviction waits), with longer time limits.
@@ -83,7 +83,7 @@ export const target: Target = (() => {
   return new RemoteTarget();
 })();
 export const local = target instanceof LocalTarget;
-// The worker's suite server, started as the worker imports its first suite file: outside any test's time limit (fixtures.ts).
+// The worker's suite server, started as the worker imports its first suite file: outside any test's time limit.
 if (local) await servers.suite();
 
 /** What a test's own server costs: one start, and a restart or two, each a few seconds (more on a busy machine). */
@@ -103,7 +103,7 @@ function limit(t: Pick<Test, "needs" | "slow">): number {
 const lacks = (t: Pick<Test, "needs">) => { const m = (t.needs ?? []).filter((c) => !target.caps.has(c)); return m.length ? `the target lacks ${m.join(", ")}` : false; };
 
 /**
- * A Ctx for one test (e2e/suite/harness.ts): its documents and deferred steps, undone by `end`. Its documents come
+ * A Ctx for one test: its documents and deferred steps, undone by `end`. Its documents come
  * with what the test needs (a local target gives one that restarts a server of its own).
  */
 export function context(suite: string, name: string, needs: Capability[] = []) {

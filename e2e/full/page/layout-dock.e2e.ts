@@ -1,4 +1,4 @@
-// The editor's side panels on a presentation (src/page/layout.ts; tests/layout.ts): docking by the head, with a ghost
+// The editor's side panels on a presentation: docking by the head, with a ghost
 // where the panel lands, and a reload, which keeps the arrangement.
 import { AGENT_DEFAULT, INSET, PICKER_W } from "../../../client/layout";
 import { center, drag } from "../../drag";

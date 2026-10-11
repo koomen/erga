@@ -1,14 +1,14 @@
-// Sign-in's settings on Cloudflare (auth-apps.ts says what they are and the
+// Sign-in's settings on Cloudflare (server/auth.ts says what they are and the
 // lockout rules): the values an admin sets on /admin/auth, kept in this
-// server's Pipeline Durable Object, the app sign-in uses (worker/auth.ts), and
+// server's Pipeline Durable Object, the app sign-in uses, and
 // the other deploy target's status and values, server to server:
 //
 //   GET  /api/sign-in/status            another of Erga's servers (DEPLOY_HOOK_SECRET): this server's sign-in status
-//                                       (auth-apps.ts, AuthStatus: never a secret), with a live check of its app
+//                                       (server/auth.ts, AuthStatus: never a secret), with a live check of its app
 //   POST /api/sign-in/github            the server this one copies its data from (DEPLOY_HOOK_SECRET; staging takes
 //                                       production's): {do: "save", clientId, secret, by} or {do: "discard" | "clear", by, force?}
 //
-// Staging's admins-only guard lets both through with the secret (worker/admins-only.ts): production's page shows
+// Staging's admins-only guard lets both through with the secret: production's page shows
 // staging's status, and sets staging's app while no admin can sign in to staging.
 
 import { type AppCheck, type AppContext, type AppValues, type AuthOps, type AuthStatus, AuthApps, AuthError, cachedCheck, checkGithubApp, clearApp, discardApp, inUse, type OtherStatus, type Provider, saveApp, statusOf } from "../server/auth";
@@ -43,7 +43,7 @@ const githubOrigin = (env: Env) => local(env, env.ERGA_GITHUB_ORIGIN) ?? "https:
 const originOf = (env: Env, t: TargetName) => local(env, env.ERGA_PEER_ORIGIN) ?? `https://${TARGETS[t].host}`;
 const hookSecret = (env: Env) => env.DEPLOY_HOOK_SECRET?.trim() || (env.ERGA_DEPLOY_MOCK == "1" ? MOCK_HOOK_SECRET : "");
 
-/** The page's values, in this server's own Durable Object (not D1: auth-apps.ts says why). */
+/** The page's values, in this server's own Durable Object (not D1: server/auth.ts says why). */
 const appsOf = (env: Env) => {
   const pipeline = () => env.PIPELINE.getByName("deploys");
   return new AuthApps({
@@ -73,7 +73,7 @@ const contextOf = (env: Env): AppContext => ({
 });
 
 /**
- * The app sign-in uses (worker/auth.ts): the values in use (the page's, else the deploy's), or those waiting for a
+ * The app sign-in uses: the values in use (the page's, else the deploy's), or those waiting for a
  * test sign-in (null if none). A server whose Durable Object doesn't answer signs in with the deploy's.
  */
 export async function signInApp(env: Env, which: "active" | "pending"): Promise<AppValues | null> {
@@ -89,7 +89,7 @@ export async function signInApp(env: Env, which: "active" | "pending"): Promise<
 }
 
 /**
- * A test sign-in with the pending values ended (worker/auth.ts): an admin's that worked puts them in use; anything
+ * A test sign-in with the pending values ended: an admin's that worked puts them in use; anything
  * else leaves the values in use as they are, and the page says why.
  */
 export async function testedSignIn(env: Env, clientId: string, o: { ok: boolean; login?: string; admin?: boolean; error?: string }): Promise<boolean> {
@@ -131,8 +131,8 @@ async function askPeer<T>(env: Env, t: TargetName, path: string, init: { method?
 }
 
 /**
- * What the page and the admin agent do (auth-apps.ts, AuthOps), as `origin`'s server. Admins only: each call checks
- * who's asking (Users.mustAdmin), as credentials.ts does.
+ * What the page and the admin agent do, as `origin`'s server. Admins only: each call checks
+ * who's asking (Users.mustAdmin), as server/api-keys.ts does.
  */
 export function authOps(env: Env, origin: string): AuthOps {
   const mustAdmin = (by: Act & { admin?: boolean }) => directoryOf(env).users.mustAdmin({ login: by.login, admin: by.admin, via: by.via ?? undefined });

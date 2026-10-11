@@ -1,6 +1,6 @@
 // The Worker's cookies, read and named. A browser shares a host's cookies
 // across all its ports, so in local development, where several dev servers
-// (one per checkout, dev.ts) run on localhost at once, each server names its
+// (one per checkout, dev/start.ts) run on localhost at once, each server names its
 // cookies for its port (erga_session_4400): signing in or out on one never
 // touches another. On a real hostname the names are as they are.
 

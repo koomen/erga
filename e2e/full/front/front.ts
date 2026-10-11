@@ -1,4 +1,4 @@
-// Helpers for the front door's tests (front.ts, api.ts, server-api.ts, directory.ts, users.ts, worker/doc-host.ts):
+// Helpers for the front door's tests:
 // a fresh person signed in on the worker's scripted-model server, so their list starts empty and nothing they make
 // meets another test's; their documents made, named, shared and joined; agent tokens and the tools over HTTP.
 //
@@ -80,7 +80,7 @@ export async function person(s: Server, login = freshLogin()) {
       return token;
     },
   };
-  // Their first request with the cookie gives them a user's row (worker/auth.ts), as opening their list does.
+  // Their first request with the cookie gives them a user's row, as opening their list does.
   expect((await get("/docs")).ok).toBe(true);
   return p;
 }
@@ -89,7 +89,7 @@ export type Person = Awaited<ReturnType<typeof person>>;
 /** Replaces the page's first heading's text. */
 export const retitle = (p: Participant, from: string, to: string) => p.edit((t) => { const i = t.toString().indexOf(`<h1>${from}`); t.delete(i + 4, from.length); t.insert(i + 4, to); });
 
-/** The server's tools over HTTP with an agent token (server-api.ts): status, text, the text as JSON if it is. */
+/** The server's tools over HTTP with an agent token: status, text, the text as JSON if it is. */
 export function tools(base: string, token: string) {
   const auth = { Authorization: `Bearer ${token}` };
   const call = async (name: string, args: unknown = {}) => {

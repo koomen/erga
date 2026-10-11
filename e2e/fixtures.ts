@@ -1,4 +1,4 @@
-// The tests' fixtures, on e2e (tester-army/e2e) and its web engine.
+// The tests' fixtures, on e2e and its web engine.
 //
 // Per worker, started on first use: dev servers (servers.*), one of the named
 // kinds and one servers.of at a time (`once`). e2e has no
@@ -14,7 +14,7 @@
 // start nothing (WORKER). A file's own processes start the same way, in
 // beforeTests(). A test still calls servers.x() for the server (at
 // once: started), which also starts again one that stopped by itself. They
-// stop when the worker exits (server.ts), and e2e/run.ts sweeps up after a
+// stop when the worker exits, and e2e/run.ts sweeps up after a
 // worker that was killed.
 // Hooks get config.timeout (90 s, e2e.config.ts) as a backstop; each test still gets ERGA_TEST_MS
 // (15 s, which `test` below gives it).
@@ -23,7 +23,7 @@
 //   servers.agent()    the same with an agent key that is never used (the agent's UI comes on)
 //   servers.script()   a plain dev server whose agents (the editor's, the admin's) run on the scripted model
 //   servers.short()    the scripted agent model, and short timings (SHORT): versions cut, homepages deployed, in seconds
-//   servers.suite()    the multiplayer suite's: the scripted agent model, and a short write delay (e2e/suite/suite.ts)
+//   servers.suite()    the multiplayer suite's: the scripted agent model, and a short write delay
 //   servers.of(key, o) a kind one file needs alone (its own settings, or one it changes or restarts),
 //                      started with ServerOptions `o`: `const own = () => servers.of("deploy-page");`
 //                      (the worker keeps the last file's only)
@@ -86,7 +86,7 @@ export const servers = {
     ERGA_AGENT_MODEL: "script", ERGA_WRITE_DELAY_MS: "50", ERGA_VERSION_IDLE_MS: String(SHORT.idle), ERGA_VERSION_MAX_MS: String(SHORT.max),
     ERGA_HOME_DELAY_MS: String(SHORT.homeDelay), ERGA_HOME_RECHECK_MS: "0",
   } })),
-  // The scripted model (agent.ts, "@script [...]"): a message plays the tool calls and replies it lists.
+  // The scripted model (agents/document.ts, "@script [...]"): a message plays the tool calls and replies it lists.
   script: once("script", () => startServer({ env: { ERGA_AGENT_MODEL: "script" } })),
   suite: once("suite", () => startServer({ env: SUITE_ENV })),
   /**

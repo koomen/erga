@@ -1,13 +1,13 @@
-// The server's settings: key/value pairs in the server_config table
-// (migrations/), each a JSON value, with who set it and when. Only the keys
+// The server's settings: key/value pairs in the server_config table,
+// each a JSON value, with who set it and when. Only the keys
 // declared in SETTINGS exist: each has a description, a default (what it is
 // until an admin sets it) and a parser that checks a value and says what's
 // wrong with a bad one, for a person or an agent to act on.
 //
 // Reading a setting is for anyone (the server reads them to do its work);
-// listing them and changing them is for admins (users.ts).
+// listing them and changing them is for admins.
 //
-// A key can also be fixed by the deploy (server.config.ts, and
+// A key can also be fixed by the deploy (deploy/locked-settings.ts, and
 // ERGA_SERVER_CONFIG over it): then its deployed value wins over the table,
 // and nobody can change it here (admin page, API or agent): it's `locked`,
 // and shows its deployed value. A key the deploy leaves out is the admins'
@@ -116,15 +116,15 @@ export interface ConfigEntry {
   /** When it was last set, and by whom (null if it never was, or it's locked). */
   updated: number | null;
   updatedBy: string | null;
-  /** How `updatedBy` set it, when not in person (attribution.ts): "their admin agent", "a shared agent (label)". */
+  /** How `updatedBy` set it, when not in person: "their admin agent", "a shared agent (label)". */
   updatedVia?: string | null;
 }
 
 /**
  * The values a deploy fixes, checked against `settings`: each key must be
  * one there is, and each value one it takes. Throws a ConfigError saying
- * what's wrong. `bun server.config.ts` runs it on what the deploy fixes, so a
- * bad one fails the deploy (site.sh) or `bun start` (dev.ts), not the server.
+ * what's wrong. `bun deploy/locked-settings.ts` runs it on what the deploy fixes, so a
+ * bad one fails the deploy or `bun start`, not the server.
  */
 export function deployedSettings(values: Record<string, unknown>, settings: Settings = SETTINGS): Record<string, unknown> {
   if (!values || typeof values != "object" || Array.isArray(values)) throw new ConfigError("the deploy's server config must be an object of settings by key");
@@ -140,7 +140,7 @@ export function deployedSettings(values: Record<string, unknown>, settings: Sett
 
 /**
  * The deploy's values as the Worker gets them: the SERVER_CONFIG binding, a
- * JSON object (cloudflare.config.ts makes it from server.config.ts and
+ * JSON object (cloudflare.config.ts makes it from deploy/locked-settings.ts and
  * ERGA_SERVER_CONFIG). Empty or missing: nothing is locked. A bad one
  * throws, as the server starts (but the deploy checks it first).
  */
@@ -158,7 +158,7 @@ export interface SettingChange {
   to: unknown;
   /** Put back to its default (Reset). */
   reset?: boolean;
-  /** An API key admins enter (credentials.ts), by its Worker secret's name: what happened to it. `from` and `to` are null, never the key. */
+  /** An API key admins enter, by its Worker secret's name: what happened to it. `from` and `to` are null, never the key. */
   credential?: "set" | "replaced" | "cleared";
   /** A factory task (key "task", from before the factory was removed): added to the board, or merged into staging (`commit`: the merge commit). `from` and `to` are null. */
   task?: { id: number; title: string; event: "added" | "merged"; commit?: string };
@@ -168,13 +168,13 @@ export interface SettingChange {
     /** main moved past the production gate (its tests hadn't passed), or staging past the staging rule: an admin's emergency override, with their reason and what the gate or rule said. */
     override?: { reason: string; gate: string };
   };
-  /** An admin opened an override of the staging rule (key "staging"; source/repo.ts, STAGING_RULE): their pushes to staging land until `until` (ms). `from` and `to` are null. A push made under it is a `release` with `override`. */
+  /** An admin opened an override of the staging rule (key "staging"; server/source/repo.ts, STAGING_RULE): their pushes to staging land until `until` (ms). `from` and `to` are null. A push made under it is a `release` with `override`. */
   stagingOverride?: { reason: string; until: number };
   /** A user (key "user"): added, their role or deploy role changed, or removed. `from` and `to` are null. */
   user?: { login: string; event: "added" | "role" | "deploy" | "removed"; role?: string; deploy?: boolean };
   /** An agent token (key "token"): revoked (`by` revoked it; `of`, whose it was). `from` and `to` are null. */
   token?: { id: string; label: string; event: "revoked"; of: string };
-  /** A server's sign-in app (key "sign-in"; auth-apps.ts): set, waiting for a test sign-in, put in use by one, discarded or cleared. Never the secret. */
+  /** A server's sign-in app (key "sign-in"; server/auth.ts): set, waiting for a test sign-in, put in use by one, discarded or cleared. Never the secret. */
   signIn?: SignInChange;
   /** Before #69, how the version's `by` did it, kept on the change; now on the version (SettingsVersion.via). */
   via?: string;
@@ -185,9 +185,9 @@ export interface SettingsVersion {
   /** 1, 2, 3..., in the order they were made. */
   n: number;
   at: number;
-  /** The person's login (SYSTEM for the server itself: attribution.ts). */
+  /** The person's login (SYSTEM for the server itself: shared/attribution.ts). */
   by: string;
-  /** How they did it, when not in person (attribution.ts): "their admin agent", "a shared agent (label)", "the factory (task #3)". */
+  /** How they did it, when not in person: "their admin agent", "a shared agent (label)", "the factory (task #3)". */
   via?: string;
   changes: SettingChange[];
 }
@@ -214,7 +214,7 @@ export class ServerConfig<S extends Settings = typeof SETTINGS> {
    * `checks`: by key, what else a value set by someone must pass, beyond its
    * parser (the directory's: a landing document must be the setter's own).
    * `changed`: told of every change to a key (set, reset or claimed), once
-   * it's written (the Worker tells the homepage's deploys: worker/home.ts).
+   * it's written (the Worker tells the homepage's deploys: cloudflare/home.ts).
    */
   constructor(private sql: Sql, private users: Users, opts: { settings?: S; locked?: Record<string, unknown>; checks?: Checks; changed?: (key: string) => Promise<void> } = {}) {
     this.settings = opts.settings ?? (SETTINGS as unknown as S);
@@ -343,7 +343,7 @@ export class ServerConfig<S extends Settings = typeof SETTINGS> {
    * The server's own record of something an admin did that isn't a setting
    * (a factory task added or merged, main moved to production): a version
    * with these changes, by `by` (a login, or SYSTEM), `via` how when not in
-   * person (attribution.ts). No check here: the caller made the change
+   * person. No check here: the caller made the change
    * already, as `by`.
    */
   async record(by: string, changes: SettingChange[], at = Date.now(), via: string | null = null): Promise<void> {

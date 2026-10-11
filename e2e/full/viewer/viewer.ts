@@ -1,4 +1,4 @@
-// The viewer, for its tests: a document's page (front.ts) in the test's tab.
+// The viewer, for its tests: a document's page in the test's tab.
 // The tab holds the host page: the band, the controls, and the document's
 // frame (#frame, on the document's own origin), which shows the page itself in
 // its visible iframe (iframe.on). `inPage` evaluates there.

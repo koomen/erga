@@ -1,6 +1,6 @@
-// Sealing the deploy page's Cloudflare token (worker/deployer.ts): AES-GCM,
+// Sealing the deploy page's Cloudflare token: AES-GCM,
 // with a key the front door makes from the browser's half (a cookie) and the
-// server's SESSION_SECRET (worker/deploy.ts), so neither alone opens it.
+// server's SESSION_SECRET, so neither alone opens it.
 
 export interface Sealed { iv: string; data: string }
 

@@ -1,18 +1,18 @@
-// Makes Erga's logo: "erga" set in Special Elite (logo/SpecialElite-Regular.ttf,
+// Makes Erga's logo: "erga" set in Special Elite (assets/logo/SpecialElite-Regular.ttf,
 // Google Fonts, Apache 2.0, a worn typewriter face), its letters turned into
 // outlines, so the SVG needs no font and looks the same anywhere (a README,
 // Slack, a favicon tool). Run it after changing anything here:
 //
-//   bun logo/make.ts
+//   bun assets/logo/make.ts
 //
 // It writes:
-//   logo/erga.svg        the wordmark, fill="currentColor" (takes the text colour)
-//   logo/erga-ink.svg    the wordmark in dark ink, for light backgrounds
-//   logo/erga-light.svg  the wordmark in light ink, for dark backgrounds
-//   logo/favicon.svg     a typed "e" in dark ink on a white rounded square
-//   logo/logo.ts         the wordmark sized for the header and the favicon as a
-//                        data: URL, for the pages (front.ts, page.html, landing/)
-// and puts the wordmark and the favicon into page.html and landing/index.html,
+//   assets/logo/erga.svg        the wordmark, fill="currentColor" (takes the text colour)
+//   assets/logo/erga-ink.svg    the wordmark in dark ink, for light backgrounds
+//   assets/logo/erga-light.svg  the wordmark in light ink, for dark backgrounds
+//   assets/logo/favicon.svg     a typed "e" in dark ink on a white rounded square
+//   assets/logo/logo.ts         the wordmark sized for the header and the favicon as a
+//                        data: URL, for the pages (server/routes.ts, client/editor.html, assets/landing/)
+// and puts the wordmark and the favicon into client/editor.html and assets/landing/index.html,
 // which can't import logo.ts. No dependencies: the script reads the TrueType
 // tables it needs (cmap, hmtx, loca, glyf) itself.
 import { readFileSync, writeFileSync } from "node:fs";
@@ -165,12 +165,12 @@ const k = HEADER_X_HEIGHT / xHeight;
 const px = (n: number) => String(Math.round(n * k * 10) / 10);
 const header = wordmark("currentColor", ` class="wordmark" width="${px(word.w)}" height="${px(word.h)}" style="vertical-align:-${px(word.y + word.h)}px"`);
 
-writeFileSync(join(here, "logo.ts"), `// Made by logo/make.ts: don't edit it, run \`bun logo/make.ts\`.
+writeFileSync(join(here, "logo.ts"), `// Made by assets/logo/make.ts: don't edit it, run \`bun assets/logo/make.ts\`.
 
 /** Erga's wordmark ("erga" in Special Elite, as outlines), sized for the breadcrumbs: the text colour, on the baseline. */
 export const WORDMARK = ${JSON.stringify(header)};
 
-/** The favicon (logo/favicon.svg) as a data: URL, so a page needs no request for it. */
+/** The favicon (assets/logo/favicon.svg) as a data: URL, so a page needs no request for it. */
 export const FAVICON = ${JSON.stringify(faviconUrl)};
 
 /** The <link> for it, for a page's head. */

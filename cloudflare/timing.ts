@@ -1,4 +1,4 @@
-// Where a request's time went, for its Server-Timing header (worker/index.ts):
+// Where a request's time went, for its Server-Timing header:
 // how many times it asked the database (D1) and documents' Durable Objects,
 // and how long those took, added up (calls made at once each count). On
 // erga.dev each is a round trip from wherever the Worker runs, so the count is

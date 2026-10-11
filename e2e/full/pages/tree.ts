@@ -1,5 +1,5 @@
-// Helpers for the tests of documents with many pages (tree.ts,
-// src/page/tree.ts, the agents' file tools): a sample document of DEV_LOGIN's
+// Helpers for the tests of documents with many pages (shared/tree.ts,
+// client/pages-tree.ts, the agents' file tools): a sample document of DEV_LOGIN's
 // with a home page, a blog folder with its own stylesheet, and an about page,
 // made through the server's API with an agent token, and the tree's API.
 

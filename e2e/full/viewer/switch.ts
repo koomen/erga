@@ -1,11 +1,11 @@
-// The first switch into editing after a hard reload, on a slow network (front.ts, EDIT_BOOT), for its tests:
+// The first switch into editing after a hard reload, on a slow network, for its tests:
 // the agent was left open last time, so it opens as the editor comes up.
 
 import { expect, type Page, type Server } from "../../fixtures";
 import { docShows, openViewer, throttle } from "./viewer";
 
 export const W = 1200, H = 760;
-/** The backdrops' page colours (e2e/fixtures/backdrops). */
+/** The backdrops' page colours. */
 export const BG = { light: [0xe9, 0xdc, 0xc0], dark: [0x16, 0x18, 0x1d] } as Record<"light" | "dark", [number, number, number]>;
 
 /** The page in the viewer, the agent left open, after a hard reload with nothing cached, then the network slowed. */

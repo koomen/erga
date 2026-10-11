@@ -15,11 +15,11 @@
 // agent on the admin pages makes an admin token that ends within 12 hours
 // (shareAdmin). Only a person signed in in a browser makes a token: an agent
 // never can, whatever its scope. The front door
-// (front.ts, withTokens) treats "Authorization: Bearer erga_..." as signing
+// treats "Authorization: Bearer erga_..." as signing
 // the person in, within the token's scope, for the server's API
-// (server-api.ts, /api/ext and /mcp) and every document's own (/api/ext).
+// (server/api.ts, /api/ext and /mcp) and every document's own (/api/ext).
 //
-// Kept in SQL (migrations/0100_tokens.sql, 0150_tokens_scoped.sql) behind the directory's `Sql`, so
+// Kept in SQL behind the directory's `Sql`, so
 // D1 holds them on erga.dev and locally, and the tests run them on
 // bun:sqlite. A token is an HMAC of its id with the server's secret, and only
 // its SHA-256 is stored, so the database alone holds no working token. That
@@ -45,7 +45,7 @@ export interface AgentToken {
    * token), or Share with agent's on the admin pages (an admin token that always ends: shareAdmin); "agent": any other.
    */
   kind: "agent" | "share";
-  /** A test person's token: who minted their test token (front.ts, Session.test). */
+  /** A test person's token: who minted their test token. */
   testBy: string | null;
   /** What it may do (see the top of this file). */
   scope: Scope;
@@ -215,7 +215,7 @@ export class Tokens {
   /** Turns one of someone's tokens off; false if they have none by that id. */
   /**
    * Turns one of `login`'s tokens off. `via`: how they did it, when not in
-   * person (attribution.ts): the change log (/admin/changes) records it under
+   * person: the change log (/admin/changes) records it under
    * them, with that.
    */
   async revoke(login: string, id: string, via?: string | null): Promise<boolean> {

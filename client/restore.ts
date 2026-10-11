@@ -1,4 +1,4 @@
-// What a page kept of itself before it reloaded for a new release (live.ts):
+// What a page kept of itself before it reloaded for a new release:
 // one entry in the tab's sessionStorage, for the page at the same address,
 // written just before the reload. Every script of the reloaded page may read
 // it (live.js for the scroll, the forms and the focus; page.js for the
@@ -12,7 +12,7 @@
 // keep (Live.keep, everyReload: the editor), written as the page goes
 // (pagehide); that one is only for a load that is a reload (`hand`), not for
 // the same address opened again another way. The document's page reads it
-// too, before any of this loads (front.ts, EDITING_HEAD), to open the editor
+// too, before any of this loads, to open the editor
 // as it was from its first frame.
 
 export const RESTORE_KEY = "erga:live:restore";

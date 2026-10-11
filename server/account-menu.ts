@@ -6,8 +6,8 @@
 // menu has only Sign in (with GitHub, coming back to the same page).
 //
 // The Worker adds it to each of the site's HTML pages (`withAccount`,
-// worker/index.ts), so every page has it without each building it. The
-// editor shows it itself, as the last of its own controls (src/page/main.ts,
+// cloudflare/index.ts), so every page has it without each building it. The
+// editor shows it itself, as the last of its own controls (client/main.ts,
 // the avatar at the far right), and says so with `OWN_ACCOUNT`. A document's
 // pages origin never gets it: nothing of the person belongs there.
 
@@ -50,7 +50,7 @@ export function accountHtml(account: Account | null, here: string): string {
   return `${accountMarkup(account, here)}${ACCOUNT_STYLE}${ACCOUNT_SCRIPT}`;
 }
 
-/** The corner's markup alone (the homepage puts it in a shadow root of its own, with ACCOUNT_STYLE: home.ts). */
+/** The corner's markup alone (the homepage puts it in a shadow root of its own, with ACCOUNT_STYLE: server/home.ts). */
 export function accountMarkup(account: Account | null, here: string): string {
   const id = "erga-account-menu";
   if (!account) {
@@ -99,7 +99,7 @@ export async function withAccount(response: Response, account: () => Promise<Acc
   return new Response(body, { status: response.status, statusText: response.statusText, headers });
 }
 
-// Its own colours, since pages differ (style.css's, the small pages', the
+// Its own colours, since pages differ (client/style.css's, the small pages', the
 // landing page's frame): quiet like the editor's controls, a card for the menu.
 export const ACCOUNT_STYLE = `<style>
   .erga-account { --acc-bg: #fff; --acc-fg: #1c1c1f; --acc-soft: #6b6b73; --acc-chrome: #a1a1a9; --acc-ring: #e6e6ea; --acc-hover: rgba(161, 161, 169, .14);

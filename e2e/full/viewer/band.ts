@@ -1,4 +1,4 @@
-// The band at the top of a document's page (front.ts, BAND_STYLE), for its
+// The band at the top of a document's page, for its
 // tests: the fixtures under e2e/fixtures/top, each linked as a
 // document, and what the band and the controls look like once settled.
 

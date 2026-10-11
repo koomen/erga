@@ -15,8 +15,8 @@
 // The editor for a page is its address with #edit, which only the browser
 // sees: an address always means a page, so a page may be called edit too.
 //
-// Shared by the host (host.ts: the tree's API and its operations), the front
-// door (front.ts: which page an address is) and the browser (the editor and
+// Shared by the host (server/doc-host.ts: the tree's API and its operations), the front
+// door (server/routes.ts: which page an address is) and the browser (the editor and
 // the tree's UI), so it holds only plain functions and the operations' shape.
 
 /** One entry in the tree: a page (.html or .md), any other file, or a folder. */
@@ -38,7 +38,7 @@ const PAGE = /\.(html|md)$/i;
 /** Whether a file is a page: .html or .md. */
 export const isPage = (path: string) => PAGE.test(path);
 
-/** Paths a document never holds or serves: dotfiles and node_modules (src/room/doc.ts says the same). */
+/** Paths a document never holds or serves: dotfiles and node_modules (shared/doc.ts says the same). */
 const ignoredSeg = (seg: string) => seg.startsWith(".") || seg == "node_modules";
 
 /**

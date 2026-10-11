@@ -1,5 +1,5 @@
-// A small Git host for the source tests (tests/source.test.ts): Erga's Git
-// endpoint (source/http.ts) and SourceRepo on bun:sqlite, in front of the
+// A small Git host for the source tests: Erga's Git
+// endpoint and SourceRepo on bun:sqlite, in front of the
 // pretend Artifacts and GitHub (dev/git-server.ts, real `git http-backend`),
 // all on one Bun server. No Worker: the logic alone, quickly.
 
@@ -66,7 +66,7 @@ export function startFixture(opts: { mirror?: boolean } = {}): Fixture {
     async fetch(request) {
       const url = new URL(request.url);
       if (url.pathname.startsWith("/git/erga.git")) {
-        // As worker/source.ts, but anyone with credentials is Ada.
+        // As cloudflare/source.ts, but anyone with credentials is Ada.
         const basic = /^Basic\s+(\S+)$/i.exec(request.headers.get("authorization") ?? "")?.[1];
         if (!basic) return new Response("who?", { status: 401, headers: { "WWW-Authenticate": 'Basic realm="Erga"' } });
         return gitHttp(request, url.pathname.slice("/git/erga.git".length), {

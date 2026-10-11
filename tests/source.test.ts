@@ -1,7 +1,7 @@
-// Erga's own repository without the Worker (source/): Git's formats against
+// Erga's own repository without the Worker: Git's formats against
 // real git, then pushes, fast-forward rules, merges and the GitHub mirror,
 // with the real git CLI against Erga's endpoint in front of pretend
-// Artifacts and GitHub (tests/source-fixture.ts).
+// Artifacts and GitHub.
 
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 
@@ -167,7 +167,7 @@ describe("Erga's Git endpoint", () => {
     // Merge: main moves to a chosen staging commit, then to staging's head; never anywhere else.
     const sixth = await must(src, "rev-parse", "HEAD~2");
     let r = await f.repo.merge({ ...ada, via: "their admin agent" }, sixth);
-    // The move is the person's, with how they did it (#69, attribution.ts).
+    // The move is the person's, with how they did it (#69, shared/attribution.ts).
     expect(f.moves.at(-1)).toMatchObject({ branch: "main", by: "ada", via: "their admin agent" });
     expect(r).toEqual({ commit: sixth, fastForward: true, upToDate: false });
     await expect(f.repo.merge(ada, "0".repeat(39) + "1")).rejects.toThrow(/isn't one of staging's commits/);

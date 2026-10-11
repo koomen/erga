@@ -1,10 +1,10 @@
-// Helpers for the front page tests (front.ts seedLanding, home.ts,
-// worker/home.ts): / as served, the landing document, the homepage's state
+// Helpers for the front page tests (server/routes.ts seedLanding, server/home.ts,
+// cloudflare/home.ts): / as served, the landing document, the homepage's state
 // and deploys, and documents published through the server's API.
 //
 // On servers.short(), tests share the server's one front page one after
 // another: each starts from a fresh one (fresh(): landing_document reset, so
-// the next / makes it again from landing/) and puts it back after (the
+// the next / makes it again from assets/landing/) and puts it back after (the
 // same, in test.afterEach), and finds the landing document's address from the
 // server, never assumes it (a fresh one is /tester/landing-2 while an earlier
 // one still holds /tester/landing).
@@ -34,10 +34,10 @@ export const editOf = (html: string) => /href="([^"]+)#edit"/.exec(html)?.[1] ??
 /** The landing_document setting as /admin shows it (the document's address). */
 export const landingSetting = async (server: Server) => (await (await get(server, "/admin")).text()).match(/data-key="landing_document"[\s\S]*?name="value"[^>]*value="([^"]*)"/)?.[1] ?? "";
 
-/** Unsets landing_document: the next / makes a fresh front page from landing/. */
+/** Unsets landing_document: the next / makes a fresh front page from assets/landing/. */
 export const resetLanding = (server: Server) => get(server, "/admin/settings", { method: "POST", headers: { Origin: server.root }, body: new URLSearchParams({ key: "landing_document", reset: "1" }) });
 
-/** A fresh front page from landing/ (made by the first / after the reset): its id and address. */
+/** A fresh front page from assets/landing/ (made by the first / after the reset): its id and address. */
 export async function fresh(server: Server) {
   await resetLanding(server);
   const html = (await front(server)).html;
@@ -54,7 +54,7 @@ export const deployed = (server: Server, ms = 5_000) => until(async () => (await
 export const home = async (server: Server, id: string, user?: string) => (await (await get(server, `/api/docs/${id}/home${user ? `?user=${user}` : ""}`)).json()) as HomeState;
 
 /**
- * An admin-scope agent token of DEV_LOGIN's (only an admin's token with it may edit the homepage: directory.ts,
+ * An admin-scope agent token of DEV_LOGIN's (only an admin's token with it may edit the homepage: server/directory.ts,
  * homeLimit; a documents token only views it). Asked again for a while: a server just started may still be setting up.
  */
 export async function adminToken(server: Server) {

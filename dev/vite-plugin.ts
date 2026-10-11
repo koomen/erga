@@ -5,21 +5,21 @@
 //     or opened from /docs) is linked to a document of its own, at an
 //     address that comes from its path, so it's the same every time. A
 //     Mirror then serves the document its files over the document's
-//     /api/mirror WebSocket (worker/disk.ts): the room lists, reads and
+//     /api/mirror WebSocket: the room lists, reads and
 //     writes them there, as it would a folder of its own, and hears about
 //     every change made on disk, which it merges in as an edit. A single
 //     file is linked on its own: only it is synced, and the document can't
-//     make others. The links are kept in the state directory
-//     (erga-links.json), so they come back after a restart.
+//     make others. The links are kept in the state directory,
+//    so they come back after a restart.
 //   - The editor's own files: page.js and frame.js are built by bun
-//     (build.sh) and served from .site/, so a change to src/page/,
-//     page.html, style.css or fonts/ runs site.sh again.
+//     and served from .build/, so a change to client/,
+//     client/editor.html, client/style.css or client/fonts/ runs client/build.sh again.
 //
 // Its routes, before the Worker's:
 //
 //   POST /__erga/open    path=<file or folder>: links it for whoever's signed in and goes to it
-//   POST /__erga/flush   ?link=<secret>: every linked document writes what it holds to disk now (dev.ts, before stopping)
-//   /__artifacts/..., /__github/...   stand-ins for Cloudflare Artifacts and GitHub, real Git (dev/git-server.ts):
+//   POST /__erga/flush   ?link=<secret>: every linked document writes what it holds to disk now (dev/start.ts, before stopping)
+//   /__artifacts/..., /__github/...   stand-ins for Cloudflare Artifacts and GitHub, real Git:
 //                        where Erga's own repository and its mirror are, locally
 
 import { spawn } from "node:child_process";
@@ -49,7 +49,7 @@ export interface DevOptions {
   stateDir: string;
   /** What the Worker knows the dev server by (ERGA_LINK_SECRET). */
   secret: string;
-  /** A file or folder to open on start (dev.ts passes what `bun start` was given). */
+  /** A file or folder to open on start (dev/start.ts passes what `bun start` was given). */
   open?: string;
   /** Open it in the browser too. */
   browser?: boolean;
@@ -126,7 +126,7 @@ export function ergaDev(opts: DevOptions): Plugin {
         res.writeHead(r.status, r.headers).end(Buffer.from(r.body));
       }
 
-      /** The local database brought up to date (migrations/), which linking needs: set once the server's listening. */
+      /** The local database brought up to date, which linking needs: set once the server's listening. */
       let migrated: Promise<void> | null = null;
 
       /** /__erga/open: the form on /docs (or a test) links a path for the person asking, then goes there. */
@@ -180,7 +180,7 @@ export function ergaDev(opts: DevOptions): Plugin {
       });
 
       const unwatch = process.env.ERGA_BUILT ? () => {} : watchEditor(log, () => live?.reload("rebuilt the editor"));
-      // Started by dev.ts in a process group of its own: if dev.ts is gone (killed outright), so is this.
+      // Started by dev/start.ts in a process group of its own: if dev/start.ts is gone (killed outright), so is this.
       const parent = Number(process.env.ERGA_PARENT);
       if (parent) setInterval(() => { try { process.kill(parent, 0); } catch { process.exit(1); } }, 1000).unref();
       // Closed (stopping, or Vite restarting it when its config changes): nothing of this one stays behind.
@@ -408,7 +408,7 @@ class Mirror {
 // ------------------------------------------------------------ the editor's own files
 
 /**
- * Rebuilds the client (client/build.sh) when their sources change: reload
+ * Rebuilds the client when their sources change: reload
  * the page to see it. Only a real change counts (a file's time moved on):
  * watchers also report files merely touched. Returns the way to stop.
  */

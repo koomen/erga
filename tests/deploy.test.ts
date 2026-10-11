@@ -1,5 +1,5 @@
-// The deploy page's deploy (deploy/cloudflare.ts), against the pretend
-// Cloudflare (deploy/mock.ts), with the release this checkout builds
+// The deploy page's deploy, against the pretend
+// Cloudflare, with the release this checkout builds
 // (deploy/release.ts, made here if there's none): every step, what it asks
 // Cloudflare for, a second deploy, what it refuses, its errors, buying a
 // domain, and the pieces around it (sealing the token, the token link, the

@@ -1,7 +1,7 @@
-// The builder Worker's own config (deploy/builder/worker.ts). It isn't the
+// The builder Worker's own config. It isn't the
 // app: it's deployed once, apart, with `bunx wrangler deploy` from this
 // folder (deploy/setup.ts does it, after asking). Its container image is
-// Dockerfile here. Each build has its own container (worker.ts): up to 4 at once, each
+// Dockerfile here. Each build has its own container: up to 4 at once, each
 // standard-4 (4 vCPU, 12 GiB, 20 GB disk), the largest Cloudflare Containers offers
 // (custom instance types go no higher: developers.cloudflare.com/containers, limits).
 // A change here takes a deploy of the builder: bun deploy/setup.ts --builder.
@@ -9,7 +9,7 @@
   "name": "erga-builder",
   "main": "worker.ts",
   "compatibility_date": "2026-09-30",
-  // The Worker's version id, which every deploy of the builder (and so every new image) changes: the release cache's key (cache.ts).
+  // The Worker's version id, which every deploy of the builder (and so every new image) changes: the release cache's key.
   "version_metadata": { "binding": "CF_VERSION_METADATA" },
   "workers_dev": false,
   "preview_urls": false,

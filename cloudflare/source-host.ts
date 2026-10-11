@@ -1,6 +1,6 @@
 // Erga's repository's Durable Object: one, "erga", where every push and
-// merge happens one at a time (source/repo.ts, SourceRepo), with the commit
-// index and the mirror's status in its SQLite. The Worker (worker/source.ts)
+// merge happens one at a time, with the commit
+// index and the mirror's status in its SQLite. The Worker
 // checks who's asking and hands it the request.
 //
 // Calls name the address the request came to (`origin`), which local
@@ -71,11 +71,11 @@ export class SourceHost extends DurableObject<Env> {
 
   advertise(origin: string) { return this.at(origin).advertise(); }
   branches(origin: string) { return this.at(origin).branches(); }
-  /** `by`: who asked (attribution.ts, byLine). */
+  /** `by`: who asked. */
   mirrorNow(origin: string, by?: string) { return this.at(origin).mirror(by); }
   files(origin: string, commit: string) { return this.at(origin).files(commit); }
 
-  /** A read of the source (source/browse.ts), as the deploy pipeline asks for a commit's migrations: the answer, or { error }. */
+  /** A read of the source, as the deploy pipeline asks for a commit's migrations: the answer, or { error }. */
   async read(origin: string, q: SourceRead): Promise<SourceAnswer | { error: string }> {
     try { return await this.at(origin).read(q); } catch (e) {
       return { error: e instanceof SourceError ? e.message : `Erga couldn't read its repository: ${(e as Error).message}` };

@@ -3,7 +3,7 @@
 // every admin page (admin-share.ts: an admin token) it's the card under the
 // share button, made here as #share at the end of the body (style.css,
 // .share). In the editor (main.ts: your agent token, for this document) it's
-// the lower half of the Share card (page.html, #sharing-agent): `into` says
+// the lower half of the Share card (client/editor.html, #sharing-agent): `into` says
 // where, the card opens and closes it, and the prompt shows on request.
 
 export interface ShareOptions {

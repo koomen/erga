@@ -1,7 +1,7 @@
-// Publishing a document to a domain in the person's own Cloudflare account
-// (sites.ts, site-publish.ts): the token kept encrypted and bound to its
+// Publishing a document to a domain in the person's own Cloudflare account:
+// the token kept encrypted and bound to its
 // person, hostnames checked against their zones, the site's files, and a
-// deploy and a take-down against the pretend Cloudflare (deploy/mock.ts).
+// deploy and a take-down against the pretend Cloudflare.
 // In the browser: e2e/full/versions/site.e2e.ts.
 
 import { Database } from "bun:sqlite";

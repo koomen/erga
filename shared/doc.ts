@@ -1,7 +1,7 @@
 // The shared document: what a document room holds and every participant
 // (editor tabs, agent sessions, the room itself merging edits made on disk)
-// replicates. Shared by the host (room.ts, agent.ts) and the shell
-// (src/page/collab.ts), so both sides agree on its shape.
+// replicates. Shared by the host and the shell,
+// so both sides agree on its shape.
 //
 //   files    path -> Y.Text, one per text file in the folder (pages,
 //            stylesheets, scripts). Paths are relative, with "/" separators.
@@ -13,7 +13,7 @@
 //            the client ids it carries.
 //   folders  path -> true, for every folder made as one (a new folder, or one
 //            moved): empty ones too. Folders holding files are there anyway,
-//            from the files' paths (tree.ts puts the two together).
+//            from the files' paths (shared/tree.ts puts the two together).
 //   room     the room's epoch: a fresh id whenever a room starts without
 //            its saved history. A tab only ever merges into the epoch its
 //            history came from.
@@ -34,7 +34,7 @@ export interface Author {
   kind: AuthorKind;
   /** Their picture, if signed in with one (a GitHub avatar's URL). */
   avatar?: string;
-  /** An agent's: how its person acts through it (attribution.ts), "their agent" or "a shared agent (label)". Its edits are `user`'s, via this. */
+  /** An agent's: how its person acts through it, "their agent" or "a shared agent (label)". Its edits are `user`'s, via this. */
   via?: string;
 }
 
@@ -42,7 +42,7 @@ export const files = (doc: Y.Doc) => doc.getMap<Y.Text>("files");
 export const assets = (doc: Y.Doc) => doc.getMap<string>("assets");
 export const authors = (doc: Y.Doc) => doc.getMap<Author>("authors");
 export const folders = (doc: Y.Doc) => doc.getMap<boolean>("folders");
-/** The room's own facts: its `epoch` (which history this is; see room.ts). */
+/** The room's own facts: its `epoch` (which history this is. */
 export const roomInfo = (doc: Y.Doc) => doc.getMap<string>("room");
 
 /** Files the room holds as text; anything else is an asset. */
@@ -70,10 +70,10 @@ export function colorFor(user: string, agent = false): string {
   return PALETTE[agent ? (i + PALETTE.length / 2) % PALETTE.length : i];
 }
 
-/** What an agent calls itself ("Pete’s agent"). Its work is attributed to its person, via it: byLine (attribution.ts). */
+/** What an agent calls itself ("Pete’s agent"). Its work is attributed to its person, via it: byLine. */
 export const agentName = (owner: string) => `${owner}’s agent`;
 
-/** Who an edit is by, as a version records it (attribution.ts): a person's login, and an agent's person, via it ("pete, via their agent"). */
+/** Who an edit is by, as a version records it: a person's login, and an agent's person, via it ("pete, via their agent"). */
 export const editorOf = (a: Author): string => (a.kind == "agent" ? byLine(a.user, a.via ?? VIA.agent) : a.user);
 
 /** Records who this doc's client is, so its edits can be attributed. */

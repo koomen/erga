@@ -1,4 +1,4 @@
-// The published-version picker's rows (src/page/versions.ts): always the
+// The published-version picker's rows: always the
 // published version, the latest ten, and the few just before the published
 // one, with a row for each run of versions in between.
 

@@ -1,6 +1,6 @@
 // A key an admin stores, replaces or clears on /admin/api-keys reaches the
-// agent of a document that is already open, at its next turn (host.ts reads
-// the settings at each turn: worker/agent-settings.ts). No real API call: a
+// agent of a document that is already open, at its next turn (server/doc-host.ts reads
+// the settings at each turn: cloudflare/agent-settings.ts). No real API call: a
 // fake fetch answers for Anthropic and records the key each request sent.
 
 import { Database } from "bun:sqlite";
@@ -127,7 +127,7 @@ test("the admin agent: a key replaced after its session started reaches its next
   const agent = startAdminAgent({ cfg: { apiKey: Redacted.make(KEY1), model: "sonnet", effort: "medium" }, owner: "ada", tools: [] });
   agent.prompt("hello", null);
   expect(await requests(1)).toEqual([KEY1]);
-  // worker/admin-agent.ts reads the settings at each turn and gives them to the session it keeps.
+  // cloudflare/admin-agent-host.ts reads the settings at each turn and gives them to the session it keeps.
   agent.configure({ apiKey: Redacted.make(KEY2), model: "sonnet", effort: "medium" });
   await new Promise((r) => setTimeout(r, 50));
   agent.prompt("again", null);

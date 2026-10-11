@@ -1,7 +1,7 @@
 // Where Erga's own branches deploy: the one list of them. cloudflare.config.ts
 // reads production's names from targets.json (its Worker, database, domain and pages
-// route), and the deploy pipeline (deploy/cloudflare.ts, runPipeline) turns
-// each into a target to deploy to (deploy/branches.ts, deploy/run.ts).
+// route), and the deploy pipeline turns
+// each into a target to deploy to.
 //
 //   production   branch main      erga.dev           Worker erga          D1 erga           pages *.erga-pages.dev
 //   staging      branch staging   staging.erga.dev   Worker erga-staging  D1 erga-staging   pages *.erga-pages-staging.dev
@@ -15,10 +15,10 @@
 // keeps it, and only a Redeploy with a fresh copy (or a first deploy, with no
 // copy yet) copies again: the database through D1's export (read-only on
 // production) and every document's Durable Object through production's
-// read-only snapshot endpoint (deploy/snapshot.ts).
+// read-only snapshot endpoint.
 //
 // Everything here is public (names, hostnames, OAuth client ids). Secrets are
-// set on each Worker once (deploy/setup.ts) and kept by every deploy after.
+// set on each Worker once and kept by every deploy after.
 //
 // The names themselves are in targets.json: cloudflare.config.ts reads that
 // file (the dev server can't load a module the config imports into the
@@ -52,7 +52,7 @@ export interface TargetSpec {
   snapshotFrom?: TargetName;
   /**
    * Only Erga's admins may use this target's server (staging, which runs on a copy of production's data): every request
-   * needs an admin's session or admin-scope token, with the few exemptions worker/admins-only.ts lists. The server
+   * needs an admin's session or admin-scope token, with the few exemptions cloudflare/admins-only.ts lists. The server
    * knows from DEPLOY_TARGET, which the pipeline sets on each deploy, so no setting turns it off.
    */
   adminsOnly?: boolean;
@@ -60,11 +60,11 @@ export interface TargetSpec {
    * Branch moves this target's server hears of for other targets go on to
    * them (production tells staging of staging's, staging tells production of
    * main's). Production deploys main's head as its own repository has it,
-   * never the commit another server names (deploy/branches.ts, remoteHook).
+   * never the commit another server names.
    */
   notifies?: TargetName[];
   /**
-   * The targets this server's own Cloudflare token may deploy (deploy/tokens.ts
+   * The targets this server's own Cloudflare token may deploy (deploy/server-tokens.ts
    * makes the token so: Editor on these Workers only). Production's may deploy
    * staging and production; staging's, staging only. Production deploys staging
    * itself only when staging's server doesn't take a move passed on to it (it's
@@ -75,13 +75,13 @@ export interface TargetSpec {
 
 import data from "./targets.json";
 
-/** The bootstrap admins (users.ts): the same on every target. */
+/** The bootstrap admins: the same on every target. */
 export const ADMINS: string = data.admins;
 
 /** The source: one Artifacts repo (task #39 hosts it, with branches main and staging). */
 export const SOURCE: { namespace: string; repo: string } = data.source;
 
-/** The Worker that builds a commit (deploy/builder/): a container with bun and git, reached over a service binding. */
+/** The Worker that builds a commit: a container with bun and git, reached over a service binding. */
 export const BUILDER: string = data.builder;
 
 /**
@@ -93,8 +93,8 @@ export const BUILDER: string = data.builder;
  * has no API for OAuth apps), puts its Client ID here and sets its secret
  * (`bunx cf workers secrets update GITHUB_CLIENT_SECRET --name erga-staging`),
  * or pastes both on production's Authentication page (/admin/auth, which
- * sets staging's through staging's server: worker/auth-settings.ts),
- * /auth/github on staging shows a page saying so (worker/auth.ts).
+ * sets staging's through staging's server: cloudflare/auth-settings.ts),
+ * /auth/github on staging shows a page saying so.
  * Every target gets ADMINS.
  */
 export const TARGETS = Object.fromEntries(Object.entries(data.targets).map(([name, t]) => [name, { ...t, vars: { ADMINS, ...t.vars } }])) as unknown as Record<TargetName, TargetSpec>;
@@ -102,7 +102,7 @@ export const TARGETS = Object.fromEntries(Object.entries(data.targets).map(([nam
 export const targetNames = Object.keys(TARGETS) as TargetName[];
 export const isTargetName = (s: string): s is TargetName => s in TARGETS;
 
-/** Whether a server whose DEPLOY_TARGET is this is for Erga's admins only (`adminsOnly`: staging; worker/admins-only.ts). */
+/** Whether a server whose DEPLOY_TARGET is this is for Erga's admins only (`adminsOnly`: staging; cloudflare/admins-only.ts). */
 export const isAdminsOnly = (deployTarget: string | undefined): boolean => {
   const name = deployTarget?.trim() ?? "";
   return Object.prototype.hasOwnProperty.call(TARGETS, name) && TARGETS[name as TargetName].adminsOnly == true;
@@ -110,6 +110,6 @@ export const isAdminsOnly = (deployTarget: string | undefined): boolean => {
 
 /**
  * Names nothing but production may use: a deploy to another target that
- * would touch one of these stops before it starts (deploy/cloudflare.ts).
+ * would touch one of these stops before it starts.
  */
 export const PRODUCTION = { worker: TARGETS.production.worker, database: TARGETS.production.database, host: TARGETS.production.host, pages: TARGETS.production.pages.domain };

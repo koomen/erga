@@ -1,25 +1,25 @@
-// The front door: the app around the documents (worker/index.ts serves it,
+// The front door: the app around the documents (cloudflare/index.ts serves it,
 // on erga.dev and in local development alike). It's written against web
 // Requests and Responses, and the Worker supplies the rest (`Platform`):
-// who's signed in, the templates, the directory of documents (directory.ts,
+// who's signed in, the templates, the directory of documents (server/directory.ts,
 // in D1) and the documents themselves (Durable Objects).
 //
 //   /                          the front page: the viewer on the landing document (a setting), for anyone
 //   /new                       a blank document for you, in the editor (signs you in first); /new?template=<id> one from
-//                              a template (templates.ts); /new?from=landing a copy
+//                              a template; /new?from=landing a copy
 //                              of the front page's, /new?from=<id> of another you may open (the viewer's Clone)
 //   /docs                      your documents, latest edit first; POST /docs/delete deletes one,
 //                              /docs/share shares one (or stops sharing it), GET /docs/share?id= says with whom
-//   /admin                     the server's settings and users, for admins (admin.ts); POST /admin/settings, /admin/users
+//   /admin                     the server's settings and users, for admins; POST /admin/settings, /admin/users
 //   /<owner>/<slug>            the viewer on that document (for those it's shared with): its canonical address;
 //                              Clone, and Edit for those who may edit it
 //   /<owner>/<slug>#edit       the editor on it, under Documents (its breadcrumbs): the same page, which
 //                              goes into the editor for #edit (the server never sees it)
-//   /<owner>/<slug>/<page>     another of its pages (tree.ts: blog is blog.html, else blog/index.html), #edit
+//   /<owner>/<slug>/<page>     another of its pages (shared/tree.ts: blog is blog.html, else blog/index.html), #edit
 //                              for its editor; never with a slash added at the end
 //   /<owner>/<id>, /<owner>/<old slug>, /d/<id> (and pages under them)
 //                              redirect there
-//   /d/<id>/<rest>             the document's own host (host.ts): /api/..., /doc/..., the sockets; the
+//   /d/<id>/<rest>             the document's own host: /api/..., /doc/..., the sockets; the
 //                              editor uses this address, which never changes. Under any of the
 //                              addresses above it works too (older tabs and share links use them).
 //
@@ -29,9 +29,9 @@
 // person may edit or only view (x-erga-access).
 //
 // The server's API for agents (/llms.txt, /api/..., /mcp) and /tokens are
-// server-api.ts's, which the Worker calls with `withTokens(platform)`.
+// server/api.ts's, which the Worker calls with `withTokens(platform)`.
 //
-// Anywhere, "Authorization: Bearer erga_..." (an agent token, tokens.ts)
+// Anywhere, "Authorization: Bearer erga_..." (an agent token, server/tokens.ts)
 // signs in as the person it stands for, as their agent (Session.agent), with
 // that person's permissions.
 //
@@ -60,15 +60,15 @@ export interface Session {
   test?: { by: string };
   /** In local development, the name a tab gave in ?user=, carried along in the links it follows. */
   as?: string;
-  /** Signed in with an agent token (tokens.ts): an agent acting as this person. */
+  /** Signed in with an agent token: an agent acting as this person. */
   agent?: AgentToken;
   /**
-   * Comes with admin power: a signed-in browser session does (worker/auth.ts),
+   * Comes with admin power: a signed-in browser session does,
    * a token only with the admin scope (withTokens). Every admin-only call
    * needs it, and Users.isAdmin must say yes too (Users.mustAdmin).
    */
   admin?: boolean;
-  /** Signed in with a document token (tokens.ts): this one document (its id), and no other. */
+  /** Signed in with a document token: this one document (its id), and no other. */
   onlyDoc?: string;
 }
 
@@ -97,10 +97,10 @@ export interface Listed {
 export interface Platform {
   /** Who's asking, if anyone is signed in (in local development, someone always is). */
   sessionOf(request: Request): Promise<Session | null>;
-  /** The templates' text files, by template then path ("doc" → { "index.html": "..." }): templates/doc is a blank document. */
+  /** The templates' text files, by template then path ("doc" → { "index.html": "..." }): assets/templates/doc is a blank document. */
   templates: Record<string, Record<string, string>>;
   /**
-   * The repo's landing project (landing/, built into the Worker), which the
+   * The repo's landing project (assets/landing/, built into the Worker), which the
    * server makes the front page by itself when landing_document is unset or
    * names a document that's gone (seedLanding): its text files by path, whose
    * document it becomes (locally DEV_LOGIN, else the deploy's first bootstrap
@@ -113,7 +113,7 @@ export interface Platform {
   /**
    * Local development: /new may name the document (?id=) and shorten its
    * unedited time (?unedited=<ms>). Files open from disk through the
-   * dev server's /__erga/open (dev/plugin.ts).
+   * dev server's /__erga/open.
    */
   dev(url: URL): boolean;
   /**
@@ -131,17 +131,17 @@ export interface Platform {
   /** Signs the tokens that open a document's files on its pages origin. */
   secret: string;
   /**
-   * A server for Erga's admins alone (staging: deploy/targets.json `adminsOnly`; worker/admins-only.ts guards every
+   * A server for Erga's admins alone (staging: deploy/targets.json `adminsOnly`; cloudflare/admins-only.ts guards every
    * request). Its pages tokens name the admin they were made for, so its pages origin can check them again.
    */
   adminsOnly?: boolean;
   /** Every document's address, title and permissions; the server's users and settings. */
   directory: Directory;
-  /** Agent tokens (tokens.ts). */
+  /** Agent tokens. */
   tokens: Tokens;
-  /** How people sign in (auth-apps.ts): this server's and the other deploy target's GitHub app, as `origin`'s server. */
+  /** How people sign in: this server's and the other deploy target's GitHub app, as `origin`'s server. */
   auth?(origin: string): AuthOps;
-  /** Documents' sites on their person's Cloudflare account (site-publish.ts), as `origin`'s server, where the platform has them. */
+  /** Documents' sites on their person's Cloudflare account, as `origin`'s server, where the platform has them. */
   sites?(origin: string): SiteOps;
 
   /** A test token for the test suite, minted by `login` (shown on /tokens), where the platform makes them. */
@@ -160,11 +160,11 @@ export interface Platform {
     publish(doc: Route, files: Record<string, string | Uint8Array>, remove: string[], by?: string): Promise<{ written: string[]; removed: string[]; refused: { path: string; why: string }[] }>;
     /** Every file a document holds. */
     paths(doc: Route): Promise<string[]>;
-    /** A document's page (index.html, index.md...), or null if it has no host. */
+    /** A document's page, or null if it has no host. */
     index(doc: Route): Promise<string | null>;
     /** A document's files as they are now, and its page: what a copy starts from. Null if it has no host. */
     snapshot(doc: Route, opts?: { published?: boolean }): Promise<{ index: string; files: Record<string, string | Uint8Array> } | null>;
-    /** A document's versions, the current one and the published one (versions.ts); null if it has no host. */
+    /** A document's versions, the current one and the published one; null if it has no host. */
     versions(doc: Route, opts: { before?: string | null; limit?: number }): Promise<VersionsState | null>;
     /** Sets what a document's viewers see: "latest", or one version ("manual"). The caller checks the person may edit. */
     setPublished(doc: Route, req: PublishRequest): Promise<PublishResult>;
@@ -217,13 +217,13 @@ export async function frontDoor(request: Request, base: Platform): Promise<Respo
   if (!first || (first != "d" && !OWNER.test(first))) return page("Not found", "There's nothing here. <a href=\"/\">Back to the start</a>.", 404);
   const session = await platform.sessionOf(request);
 
-  // A document's address is the document: /<owner>/<slug>, and /<page> after it for its other pages (tree.ts). Its editor
+  // A document's address is the document: /<owner>/<slug>, and /<page> after it for its other pages. Its editor
   // is the same page with #edit, which never reaches the server. Sign in first, then the page, at its canonical address.
   // /api/... and /doc/... under it are the document's host (so no page or folder at its top may be called api or doc).
   if (!/^\/(api|doc)(\/|$)/.test(rest ?? "")) {
     if (!session) return signInFirst(path + url.search);
     // The document and what they may do with it, in one round trip to the database, and none to the document itself: its frame
-    // asks for its page (doc/, pagesDoor), which is all the document needs to say, so the page answers as soon as it can.
+    // asks for its page, which is all the document needs to say, so the page answers as soon as it can.
     const found = first == "d" && !ID.test(second) ? null : await platform.directory.openAs(whoOf(session), first, second);
     if (!found) return nothing();
     const { doc, role } = found;
@@ -254,14 +254,14 @@ export async function frontDoor(request: Request, base: Platform): Promise<Respo
   }
   const access = await platform.directory.access(whoOf(session), route);
   if (!access) return new Response("Not allowed", { status: 403 });
-  // The share button's token is the front door's (tokens.ts), not the document's.
+  // The share button's token is the front door's, not the document's.
   if (rest == "/api/share" && request.method == "POST") return shareToken(platform, request, session);
   // The document's sockets (its room, its events) are opened by this site's own pages: a page of another origin, even
   // of this site (another subdomain, which the session cookie reaches), may not open one as whoever's signed in.
   const origin = request.headers.get("origin");
   if (request.headers.get("upgrade")?.toLowerCase() == "websocket" && origin && origin != url.origin) return new Response("Not from this site", { status: 403 });
   const answer = await platform.docs.fetch(route, forwarded(request, url, rest, `${url.origin}/d/${route.id}`, session, accessOf(access)));
-  // A document's own files are its own: nothing of the site's goes into them (account.ts).
+  // A document's own files are its own: nothing of the site's goes into them.
   if (!/^text\/html\b/i.test(answer.headers.get("content-type") ?? "") || answer.status == 101) return answer;
   const headers = new Headers(answer.headers);
   headers.set(OWN_ACCOUNT, "1");
@@ -288,7 +288,7 @@ export async function mayDeploy(directory: Directory, session: Session | null): 
   return mode == "admins" && (await directory.users.hasDeploy(whoOf(session)));
 }
 
-/** What the editor's menu on your avatar needs to know that the document doesn't (account.ts): the links it offers. */
+/** What the editor's menu on your avatar needs to know that the document doesn't: the links it offers. */
 async function accountMeta(platform: Platform, session: Session): Promise<string> {
   const admin = !session.test && !session.agent && (await platform.directory.users.isAdmin(whoOf(session)));
   const deploy = await mayDeploy(platform.directory, session);
@@ -299,7 +299,7 @@ async function accountMeta(platform: Platform, session: Session): Promise<string
 /**
  * The platform with agent tokens: a request carrying one ("Authorization:
  * Bearer erga_...") is signed in as the person it stands for, within its
- * scope (tokens.ts), as long as they may still sign in, whatever cookie it
+ * scope, as long as they may still sign in, whatever cookie it
  * has: admin power only with the admin scope, one document only with the
  * document scope. A bearer token that isn't a good one (revoked, expired)
  * signs in nobody.
@@ -333,7 +333,7 @@ export const accessOf = (role: Role | null): "edit" | "view" | null =>
 export const whoOf = (session: Session): Who => ({
   login: session.login.toLowerCase(), test: !!session.test, ...(session.test ? { by: session.test.by.toLowerCase() } : {}),
   ...(session.admin && !session.test ? { admin: true } : {}), ...(session.onlyDoc != null ? { onlyDoc: session.onlyDoc } : {}),
-  // An agent with their token acts for them: what it does is theirs, via it (attribution.ts).
+  // An agent with their token acts for them: what it does is theirs, via it.
   ...(session.agent ? { via: VIA.token(session.agent.label) } : {}),
 });
 
@@ -344,7 +344,7 @@ const refused = (session: Session) => session.test
 /**
  * How to reach the document at /<first>/<second>, for the requests under
  * it. By id it's remembered (an id is never another of the owner's slugs,
- * directory.ts), so a document's many subrequests rarely ask the database.
+ * server/directory.ts), so a document's many subrequests rarely ask the database.
  */
 export async function documentRoute(platform: Pick<Platform, "directory">, first: string, second: string): Promise<Route | null> {
   if (first == "d") return ID.test(second) ? platform.directory.route(second) : null;
@@ -363,7 +363,7 @@ export async function documentRoute(platform: Pick<Platform, "directory">, first
 // A document's page runs on an origin of its own, <id>-<owner>.erga-pages.dev
 // (or <id>-<owner>.localhost:<port> on this machine), never this site's: its
 // scripts, whoever wrote them, can't act as the person viewing it (see
-// src/page/bridge.ts). That origin has no cookies. It serves the page
+// client/bridge.ts). That origin has no cookies. It serves the page
 // editor's frame and the document's files under a token, signed here, that
 // opens this one document for a week; the editor's address on this site hands
 // it out to whoever may open the document.
@@ -420,12 +420,12 @@ const b64url = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes)).replac
 /**
  * A token that opens one document's files on its pages origin, for a week, for the editor at `shell` (whose origin it names).
  * Its expiry is rounded up to the next whole day, so the token, and with it the address of every file of the page, stays the
- * same all day: the browser's cache can answer for them (they're checked by ETag, front.ts's pagesDoor and host.ts's docFile).
+ * same all day: the browser's cache can answer for them (they're checked by ETag, server/routes.ts's pagesDoor and server/doc-host.ts's docFile).
  */
 export async function pagesToken(secret: string, owner: string, id: string, shell: string, now = Date.now(), opts: { published?: boolean; by?: string } = {}): Promise<string> {
-  // published: for someone who may only view it, whose every file is the published version's (versions.ts), doc/ as pub/.
+  // published: for someone who may only view it, whose every file is the published version's, doc/ as pub/.
   // by: whom it was made for, only on a server for admins alone (staging, Platform.adminsOnly): its pages origin lets the
-  // token in only while they're still an admin (worker/admins-only.ts). Elsewhere a token names nobody (a page's own
+  // token in only while they're still an admin. Elsewhere a token names nobody (a page's own
   // scripts can read its address).
   const claims = b64url(new TextEncoder().encode(JSON.stringify({ d: `${owner.toLowerCase()}/${id}`, e: Math.ceil((now / 1000 + WEEK) / DAY) * DAY, s: shell, ...(opts.published ? { p: 1 } : {}), ...(opts.by ? { a: opts.by.toLowerCase() } : {}) })));
   return `${claims}.${await hmac(secret, claims)}`;
@@ -464,7 +464,7 @@ async function pagesDoor(request: Request, url: URL, doc: { owner: string; id: s
     // ?view= (empty): the document's page, whatever its name (its host answers doc/ with it).
     const view = url.searchParams.get("view");
     const files = `/t/${token}/doc/`;
-    // The page as it renders is what viewers see (pub/: the published version, or the files as they are now; versions.ts).
+    // The page as it renders is what viewers see (pub/: the published version, or the files as they are now; server/versions.ts).
     const shown = `/t/${token}/${VIEW_FILES}/`;
     const src = view == "" ? shown : view && !/^\/|(^|\/)\.\.(\/|$)/.test(view) ? `${shown}${view.split("/").map(encodeURIComponent).join("/")}` : "";
     // Its base is the document's folder: the editable page (frame.js renders it as srcdoc, which takes this page's base) then
@@ -507,12 +507,12 @@ const versionOf = (text: string) => {
 /** What a document's page may do in its frame, in the viewer and the editor alike (frame.ts makes the editor's the same). */
 const PAGE_SANDBOX = "allow-scripts allow-same-origin allow-forms allow-modals allow-popups";
 
-/** Where the frame's host page shows the page as it renders from: what viewers see (versions.ts), which the document serves at pub/. */
+/** Where the frame's host page shows the page as it renders from: what viewers see, which the document serves at pub/. */
 const VIEW_FILES = "pub";
 /**
  * The frame's host page, on the document's own origin: it shows the page as
  * it renders (#view) until the document's page asks for the editor
- * ("erga-edit"). Then it loads the editor's half (frame.js), which renders
+ * ("erga-edit"). Then it loads the editor's half, which renders
  * the editable page in a frame of its own (#page) and calls ergaHost.ready;
  * the editable page takes the plain one's place, scrolled to the same spot.
  * Back to viewing ("erga-view"), the plain page loads afresh behind it and
@@ -705,7 +705,7 @@ const HOST_SCRIPT = `(function () {
     if (from.id == "view") from.remove();
   }
   window.ergaHost = { ready: function () { if (want == "edit") show(page()); } };
-  // A presentation (DOCUMENT_PROMPT.md, "Presentations"): the page shown says it has steps (window.ergaSteps). This tells
+  // A presentation (agents/DOCUMENT_PROMPT.md, "Presentations"): the page shown says it has steps (window.ergaSteps). This tells
   // the shell how many, their labels and the current one (STEPS_BOOT shows them) whenever that changes, goes to a step or
   // draws one when the shell asks, and steps with the arrow keys pressed in the page. "rev" changes whenever a step's
   // picture may have changed: another page shown, the document edited (ergaHost.changed, frame.ts), different steps.
@@ -813,7 +813,7 @@ const HOST_VERSION = versionOf(HOST_STYLE + PAGE_SANDBOX + HOST_SCRIPT + VIEW_FI
 export const link = (path: string, session: Session | null) =>
   session?.as ? `${path}${path.includes("?") ? "&" : "?"}user=${encodeURIComponent(session.as)}` : path;
 
-/** The front page: the viewer on the landing document (the landing_document setting), for anyone, signed in or not. Made from the repo's landing/ if there's none (seedLanding). */
+/** The front page: the viewer on the landing document (the landing_document setting), for anyone, signed in or not. Made from the repo's assets/landing/ if there's none (seedLanding). */
 async function viewLanding(platform: Platform, request: Request, session: Session | null): Promise<Response> {
   const roleOf = (doc: DocRow) => (session ? platform.directory.access(whoOf(session), doc) : Promise.resolve(null));
   // The usual case, the setting's document there: whether it is (its host's page) and what they may do with it, at once.
@@ -829,7 +829,7 @@ async function viewLanding(platform: Platform, request: Request, session: Sessio
 
 /**
  * The front page's document: the one landing_document names, else (unset,
- * or naming a document that's gone) a new one made from the repo's landing/
+ * or naming a document that's gone) a new one made from the repo's assets/landing/
  * (seedLanding). Null only when the deploy locks the setting to a document
  * that isn't there, or there's nobody to own one.
  */
@@ -851,7 +851,7 @@ async function landingPage(platform: Platform): Promise<{ doc: DocRow; index: st
 const seeding = new WeakMap<object, Promise<DocRow | null>>();
 
 /**
- * Makes the front page from the repo's landing/ (built into the Worker) the
+ * Makes the front page from the repo's assets/landing/ (built into the Worker) the
  * first time anyone asks for it, and again when the one it named was deleted
  * or an admin reset the setting: a document of the landing owner's at
  * /<owner>/landing, which the other bootstrap admins may edit too, and sets
@@ -898,7 +898,7 @@ export function seedLanding(platform: Platform): Promise<DocRow | null> {
     }
     made = (await settle(made)) ?? made;
     // The deploy's own doing (its ADMINS), not a person's: the server shares as the owner, with admin power
-    // (editing the front page needs that: directory.ts, homeLimit).
+    // (editing the front page needs that: server/directory.ts, homeLimit).
     const server = { login: owner, test: false, admin: true };
     for (const login of project.editors) {
       if (login.toLowerCase() == owner) continue;
@@ -932,7 +932,7 @@ async function viewDocument(platform: Platform, request: Request, opened: { doc:
   const editable = canEdit;
   const [token, account] = await Promise.all([
     // Someone who may not edit it sees only its published version, in every file the frame asks for.
-    // On a server for admins alone (staging), the token names its admin, whom the pages origin checks again (worker/admins-only.ts).
+    // On a server for admins alone (staging), the token names its admin, whom the pages origin checks again.
     pagesToken(platform.secret, doc.owner, doc.id, url.origin, undefined, { published: !canEdit, ...(platform.adminsOnly && session ? { by: session.login } : {}) }),
     editable && session ? accountMeta(platform, session) : "",
   ]);
@@ -948,7 +948,7 @@ async function viewDocument(platform: Platform, request: Request, opened: { doc:
   const meta = `<meta name="erga-address" content="${esc(address)}">${index ? `<meta name="erga-page" content="${esc(index)}">` : ""}` + (editable && session
     ? `<meta name="erga-pages" content="${esc(host)}"><meta name="erga-base" content="/d/${doc.id}">${canShare ? `<meta name="erga-share" content="${esc(link("/docs/share", session))}">` : ""}${account}`
     : "");
-  // Its page by name when it's known (the front page's, or another of its pages), else the folder (doc/), which its host answers with its page.
+  // Its page by name when it's known (the front page's, or another of its pages), else the folder, which its host answers with its page.
   const src = `${host}?view=${index ? encodeURIComponent(index) : ""}&v=${HOST_VERSION}`;
   // Opened with #edit (which only the browser sees), for whoever may edit: the page is the editor's from its first moment
   // (EDITING_HEAD, EDITING_BODY), the frame starts on its half of the editor at once (&edit=1), and the editor's files are
@@ -974,9 +974,9 @@ ${viewCrumbs(session, landing ? null : doc.title)}<div class="erga-view-buttons"
 </html>`, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "Referrer-Policy": "no-referrer", Link: `<${origin}>; rel=preconnect` } });
 }
 
-/** The viewer's Clone button (a copy of your own, at `href`): also the homepage's (home.ts). */
+/** The viewer's Clone button (a copy of your own, at `href`): also the homepage's. */
 export const cloneButton = (href: string) => `<a href="${esc(href)}" class="erga-view-button erga-clone-button" aria-label="Clone: make your own copy" data-tip="Clone"><svg viewBox="0 0 24 24" aria-hidden="true"><g transform="translate(12 12) scale(1.0345) translate(-12 -13.25)" stroke-width="1.5467"><g transform="translate(0 1.25)"><rect x="8.75" y="8.75" width="10.5" height="10.5" rx="2"/><path d="M15.25 8.75V6.5a1.75 1.75 0 0 0-1.75-1.75H6.5A1.75 1.75 0 0 0 4.75 6.5v7c0 .97.78 1.75 1.75 1.75h2.25"/></g></g></svg></a>`;
-/** The viewer's pencil (Edit, the editor at `href`), blue while editing: also the homepage's (home.ts). */
+/** The viewer's pencil (Edit, the editor at `href`), blue while editing: also the homepage's. */
 export const editButton = (href: string, editing: boolean) => `<a href="${esc(href)}" class="erga-view-button erga-edit-button" aria-label="Edit" aria-pressed="${editing}" data-tip="Edit"><svg viewBox="0 0 24 24" aria-hidden="true"><g transform="translate(12 12) scale(1.0512) translate(-11.885 -13.365)" stroke-width="1.5221"><g transform="translate(0 1.25)"><path d="M4.75 19.25l1-4L15.6 5.4a1.4 1.4 0 0 1 2 0l1 1a1.4 1.4 0 0 1 0 2L8.75 18.25zM13.75 7.25l3 3"/></g></g></svg></a>`;
 
 /**
@@ -997,7 +997,7 @@ export const editButton = (href: string, editing: boolean) => `<a href="${esc(hr
  */
 /** Where a tab keeps its copy of the editor's page (EDIT_BOOT), for a reload in the editor to open with (EDITING_HEAD). */
 export const EDITOR_COPY = "erga:editor-html";
-/** What a page kept for its reload (src/page/restore.ts, RESTORE_KEY: the same, which tests/restore-key.test.ts checks). */
+/** What a page kept for its reload (client/restore.ts, RESTORE_KEY: the same, which tests/restore-key.test.ts checks). */
 export const RESTORE_KEY = "erga:live:restore";
 const EDITING_HEAD = `if (location.hash == "#edit") {
   for (const [href, as] of [["/editor.html", "fetch"], ["/page.js", "script"], ["/style.css", "style"], ["/fonts/inter.css", "style"]]) {
@@ -1050,7 +1050,7 @@ const FRAME_SRC = `{
  * Which of the document's pages is shown, for everyone on a document's page
  * (viewDocument): the frame says when the page in it goes to another of the
  * document's pages (a link followed: HOST_SCRIPT), and the address bar
- * follows, without a reload: /<owner>/<slug>/<page> (tree.ts), #edit kept
+ * follows, without a reload: /<owner>/<slug>/<page>, #edit kept
  * while editing. `ergaPageAddress()` is the page's address now.
  */
 const NAV_SCRIPT = `(() => {
@@ -1086,7 +1086,7 @@ const NAV_SCRIPT = `(() => {
  * the document, and it takes the document's own background, so it reads as
  * part of the page: its colour, and over that its gradient or image
  * (.erga-canvas, which has the frame's box; BAND_BOOT paints it). --band-h is the controls' row
- * (34px, at max(12px, the notch)) and a 10px gap; the editor's page.html
+ * (34px, at max(12px, the notch)) and a 10px gap; the editor's client/editor.html
  * keeps the frame there too. Until the frame says (BAND_BOOT), the colour
  * is the one this document had last time on this browser, and the
  * controls' tone (light or dark text) with it.
@@ -1200,9 +1200,9 @@ const BAND_BOOT = `(() => {
  * Going into the editor and back, on a document's page (viewDocument), for
  * those who may: the pencil, the editor's eye, the browser's back and
  * forward, or a page opened with #edit. Only the address's #edit changes, never the page.
- * The first time, the editor's controls and styles (page.html, served as
- * /editor.html) are added to the page, then its code (page.js), which joins
- * the room; the frame loads its half (frame.js) and swaps the plain page for
+ * The first time, the editor's controls and styles (client/editor.html, served as
+ * /editor.html) are added to the page, then its code, which joins
+ * the room; the frame loads its half and swaps the plain page for
  * the editable one, at the same place (pagesDoor). The editor's controls fade
  * in over the viewer's once it's ready (main.ts calls ergaShell.ready), and
  * out again on the way back; the editor keeps running meanwhile, so going back
@@ -1234,7 +1234,7 @@ const EDIT_BOOT = `(() => {
     body.classList.toggle("erga-editor-ready", ready || (!!restored && body.classList.contains("erga-restored") && body.classList.contains("erga-editing")));
     if (wrap) wrap.inert = !(ready && body.classList.contains("erga-editing"));
   };
-  // The document's details (main.ts), asked for as soon as editing starts, alongside the editor's files: that wakes its room too.
+  // The document's details, asked for as soon as editing starts, alongside the editor's files: that wakes its room too.
   const base = document.querySelector('meta[name="erga-base"]').content;
   const user = new URLSearchParams(location.search).get("user")?.trim();
   const info = () => { const url = base + "/api/doc" + (user ? "?user=" + encodeURIComponent(user) : ""); return { url, response: fetch(url) }; };
@@ -1264,7 +1264,7 @@ const EDIT_BOOT = `(() => {
     sync();
     body.append(Object.assign(document.createElement("script"), { src: "/page.js" }));
   })();
-  // Editing, unless on the way out (erga-closing: the editor's own actions closing back into the pencil, page.html).
+  // Editing, unless on the way out (erga-closing: the editor's own actions closing back into the pencil, client/editor.html).
   const editing = () => body.classList.contains("erga-editing") && !body.classList.contains("erga-closing");
   let closing = 0;
   function go(edit, push) {
@@ -1279,7 +1279,7 @@ const EDIT_BOOT = `(() => {
     clearTimeout(closing);
     body.classList.remove("erga-closing");
     if (!edit && ready && body.classList.contains("erga-editing") && !matchMedia("(prefers-reduced-motion: reduce)").matches) {
-      // Out of the editor: its own actions close back into the pencil first (page.html, .edit-group, 420ms), with the editor's
+      // Out of the editor: its own actions close back into the pencil first (client/editor.html, .edit-group, 420ms), with the editor's
       // row still up; then the viewer's, the same buttons in the same places, takes over.
       body.classList.add("erga-closing");
       closing = setTimeout(() => { body.classList.remove("erga-closing", "erga-editing"); sync(); }, 420);
@@ -1333,7 +1333,7 @@ const EDIT_BOOT = `(() => {
 /**
  * A presentation's steps, on a document's page (viewDocument), viewing and
  * editing alike: the frame's host page says when the page shown has steps
- * (HOST_SCRIPT: erga-steps; DOCUMENT_PROMPT.md, "Presentations"), and this
+ * (HOST_SCRIPT: erga-steps; agents/DOCUMENT_PROMPT.md, "Presentations"), and this
  * shows back and forward under the page, the step it's at, and a list of the
  * steps that opens over its right side. The arrow keys step too, pressed here
  * or in the page (the host page's), except in text. The list shows each step's
@@ -1349,7 +1349,7 @@ const STEPS_BOOT = `(() => {
     + '<button type="button" class="erga-steps-back" aria-label="Back">' + svg("M14.5 6.5L9 12l5.5 5.5") + '</button>'
     + '<span class="erga-steps-at" aria-live="polite"></span>'
     + '<button type="button" class="erga-steps-next" aria-label="Forward">' + svg("M9.5 6.5L15 12l-5.5 5.5") + '</button>';
-  // The list under a head: the editor docks it beside the page, and the head is where it's dragged from (layout.ts).
+  // The list under a head: the editor docks it beside the page, and the head is where it's dragged from.
   panel.className = "erga-steps-panel"; panel.hidden = true; panel.setAttribute("role", "region"); panel.setAttribute("aria-label", "Steps");
   panel.innerHTML = '<div class="erga-steps-head">Steps</div><ol class="erga-steps-list"></ol>';
   const list = panel.querySelector("ol");
@@ -1416,7 +1416,7 @@ const STEPS_BOOT = `(() => {
     place();
   }
   // Under the page and over its right side (its left, if the editor's layout has the list left of the page), wherever the editor puts
-  // the frame (the agent beside it), out of sight with it. Docked beside the page in the editor, the editor places the list (layout.ts).
+  // the frame (the agent beside it), out of sight with it. Docked beside the page in the editor, the editor places the list.
   function place() {
     if (!steps) return;
     const r = frame.getBoundingClientRect(), hidden = getComputedStyle(frame).visibility == "hidden" || !r.width;
@@ -1536,7 +1536,7 @@ async function startPage(platform: Platform, session: Session | null): Promise<R
 /**
  * The viewer's controls (Clone, Edit, who you are) fade once the page is
  * scrolled, on a document's page (viewDocument, FADE_BOOT) and on the
- * homepage (home.ts) alike: whole at the top of the page, faded (VIEW_STYLE,
+ * homepage alike: whole at the top of the page, faded (VIEW_STYLE,
  * FADED) anywhere below it, and whole again while the pointer is within
  * FADE_NEAR px of them, one of them has keyboard focus or your menu is open.
  * On a touch screen, with no pointer to come near, a tap near them brings
@@ -1620,8 +1620,8 @@ const FADE_BOOT = `(() => {
 
 export const VIEW_STYLE = `
 <style>
-  /* The editor's look (style.css, .icon-btn): small icons. Right of them is who you are (account.ts). Upper left, for
-     someone signed in, the breadcrumbs (viewCrumbs), where the editor's are (page.html, .chrome-nav) and as they look. */
+  /* The editor's look (client/style.css, .icon-btn): small icons. Right of them is who you are. Upper left, for
+     someone signed in, the breadcrumbs (viewCrumbs), where the editor's are (client/editor.html, .chrome-nav) and as they look. */
   :is(.erga-view-buttons, .erga-crumbs) { --chrome: #a1a1a9; --chrome-hover: #3f3f46; --fg: #1c1c1f; --fg-strong: #0d0d0f; --soft: #6b6b73;
     position: fixed; top: max(12px, env(safe-area-inset-top)); z-index: 1000; display: flex; align-items: center;
     font: 500 13px/1 "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
@@ -1680,7 +1680,7 @@ export const VIEW_STYLE = `
   }
 </style>`;
 
-/** A template's starting files (templates.ts: a folder under templates/), and its page; null if this server hasn't them. */
+/** A template's starting files (server/templates.ts: a folder under assets/templates/), and its page; null if this server hasn't them. */
 export function templateFiles(platform: Platform, template: Template): { files: Record<string, string | Uint8Array>; index: string } | null {
   const files = platform.templates[template.files.slice("assets/templates/".length)];
   if (!files) return null;
@@ -1691,7 +1691,7 @@ export function templateFiles(platform: Platform, template: Template): { files: 
 /**
  * What a new document starts from: a copy of the front page's document
  * (`landing`), of another document by id (one `who` may open), or a
- * template's files (templates.ts; the first, a blank page, by default).
+ * template's files (server/templates.ts; the first, a blank page, by default).
  * Null if there's nothing there to copy.
  */
 export async function startingFiles(platform: Platform, from: string | null, who?: Who, template?: Template): Promise<{ files: Record<string, string | Uint8Array>; index: string } | null> {
@@ -1703,7 +1703,7 @@ export async function startingFiles(platform: Platform, from: string | null, who
   return platform.docs.snapshot(doc, { published: !editor });
 }
 
-/** A new document for the signed-in person, at /<login>/<id>: blank (templates/doc), from a template (?template=<id>, templates.ts), or a copy of the front page's (?from=landing). */
+/** A new document for the signed-in person, at /<login>/<id>: blank, from a template (?template=<id>, server/templates.ts), or a copy of the front page's (?from=landing). */
 async function newDoc(platform: Platform, request: Request): Promise<Response> {
   const session = await platform.sessionOf(request);
   const url = new URL(request.url);
@@ -1866,7 +1866,7 @@ function ago(t: number, now: number): string {
 
 /**
  * The look the app's own pages share (/docs, /admin): the editor's type and
- * colours (style.css), light or dark with the system, a column of rows, small
+ * colours, light or dark with the system, a column of rows, small
  * icon buttons that show on hover, and dialogs as small cards.
  */
 export const APP_STYLE = `
@@ -1876,7 +1876,7 @@ export const APP_STYLE = `
   .site-foot { padding: 24px 16px 32px; text-align: center; font-size: 12.5px; color: var(--chrome); }
   main { flex: 1; width: 100%; min-height: 0; box-sizing: border-box; max-width: 1080px; margin: 0 auto; padding: 120px 24px 96px; display: flex; flex-direction: column; }
   /* The breadcrumbs (crumbs): the wordmark, then where you are, upper left, on the line of the account corner upper right
-     (account.ts). The viewer's (VIEW_STYLE) and the editor's (page.html) look the same, in the same place. */
+     (server/account-menu.ts). The viewer's (VIEW_STYLE) and the editor's (client/editor.html) look the same, in the same place. */
   .crumbs { position: absolute; top: max(14px, env(safe-area-inset-top)); left: max(20px, env(safe-area-inset-left)); height: 30px; display: flex; align-items: center; gap: 0; margin: 0; min-width: 0; max-width: calc(100vw - 140px); }
   .brand { flex: none; display: flex; align-items: center; font-size: 15px; font-weight: 650; letter-spacing: -0.02em; color: var(--fg-strong); text-decoration: none; }
   .brand:hover { opacity: 0.7; }
@@ -1964,7 +1964,7 @@ export function crumbs(session: Session | null, trail: Crumb[], here = "span"): 
 
 /**
  * The viewer's breadcrumbs (VIEW_STYLE), for someone signed in: Erga › Documents › the document, as the editor's
- * (page.html). The front page's are the wordmark alone; a test person's skip Documents, as they have none. An agent sees none.
+ *. The front page's are the wordmark alone; a test person's skip Documents, as they have none. An agent sees none.
  */
 /** The breadcrumbs' type (Inter, as the editor's), for a page that shows them (viewCrumbs) but has none of the app's style. */
 export const crumbsFont = (session: Session | null) => session && !session.agent ? `<link rel="stylesheet" href="/fonts/inter.css">` : "";
@@ -1996,7 +1996,7 @@ export const ICON = {
   close: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7 7 17"/></svg>`,
   plus: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>`,
   chevron: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9.75 7.5 4.5 4.5-4.5 4.5"/></svg>`,
-  /** Share with an agent: the editor's (page.html, #btn-share). */
+  /** Share with an agent: the editor's (client/editor.html, #btn-share). */
   agent: `<svg viewBox="0 0 24 24" aria-hidden="true"><g transform="translate(12 12) scale(0.8824) translate(-12 -12)" stroke-width="1.8133"><path d="M12 15V3.5M7.5 8 12 3.5 16.5 8"/><path d="M8 11.5H6.5a1 1 0 0 0-1 1v7a1 1 0 0 0 1 1h11a1 1 0 0 0 1-1v-7a1 1 0 0 0-1-1H16"/></g></svg>`,
 };
 
@@ -2074,7 +2074,7 @@ function docsPage(session: Session, docs: Listed[], now: number, hours: number |
   time { margin: 0; text-align: left; }
   /* The buttons (only on your own documents) take the same room on every row, so the times line up. */
   .acts { display: flex; justify-content: flex-end; gap: 2px; }
-  /* Help text on the buttons, as the editor's (style.css): plain, under the pointer, following it (account.ts moves it). */
+  /* Help text on the buttons, as the editor's: plain, under the pointer, following it (server/account-menu.ts moves it). */
   .acts .act { position: relative; }
   .acts .act[data-tip]::after { content: attr(data-tip); position: absolute; left: var(--tip-x, 100%); top: var(--tip-y, calc(100% + 6px)); transform: translateX(-100%); z-index: 40;
     white-space: pre; font: 400 12px/1.3 var(--font-text); letter-spacing: 0.01em; color: var(--soft); opacity: 0; pointer-events: none; }
@@ -2201,7 +2201,7 @@ function docsPage(session: Session, docs: Listed[], now: number, hours: number |
   });
   share.querySelector(".done").addEventListener("click", () => share.close());
   share.addEventListener("close", () => { if (changed) location.reload(); });
-  // A document's pages, beneath its row: the tree (pages-tree.js). The script loads once the list is up and the tab is idle, and a
+  // A document's pages, beneath its row: the tree. The script loads once the list is up and the tab is idle, and a
   // document's pages are read as the pointer heads for its row, together, so a click shows them at once. Each document's last
   // answer is kept for the tab: opened again, or on the next visit, its pages show straight away, and are read again behind.
   // Pages open in the editor for those who may edit, in the viewer otherwise. Which are open is remembered for the tab.
@@ -2306,7 +2306,7 @@ const signInFirst = (next: string) => new Response(null, { status: 302, headers:
 
 /**
  * POST <document>/api/share {rotate}: the share button's token, the
- * person's one 'share' token (tokens.ts), the same each time until rotated.
+ * person's one 'share' token, the same each time until rotated.
  */
 async function shareToken(platform: Platform, request: Request, session: Session): Promise<Response> {
   const refuse = (error: string) => Response.json({ ok: false, error }, { status: 403 });
@@ -2335,9 +2335,9 @@ export function forwarded(request: Request, url: URL, rest: string, base: string
   headers.set("x-erga-base", base);
   if (session) headers.set("x-erga-person", JSON.stringify({ id: session.login.toLowerCase(), name: session.name }));
   if (session && access) headers.set("x-erga-access", access);
-  // Only an agent token's request may call a document's external agent tools (host.ts).
+  // Only an agent token's request may call a document's external agent tools.
   if (session?.agent) headers.set("x-erga-agent", session.agent.id);
-  // How the person acts there (attribution.ts): through this token's agent, by its label (JSON: a header is ASCII).
+  // How the person acts there: through this token's agent, by its label (JSON: a header is ASCII).
   if (session?.agent) headers.set("x-erga-via", JSON.stringify(VIA.token(session.agent.label)).replace(/[\u007f-\uffff]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`));
   return new Request(inner, { method: request.method, headers, body: request.body, redirect: "manual" });
 }

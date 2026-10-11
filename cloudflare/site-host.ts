@@ -1,8 +1,8 @@
-// A document's site on Cloudflare (site-publish.ts has the design): its
+// A document's site on Cloudflare (server/site-publish.ts has the design): its
 // deploys, in one Durable Object for each document that has a site, named by
 // the document's id.
 //
-// When the document's published version changes (worker/doc-host.ts tells
+// When the document's published version changes (cloudflare/doc-host.ts tells
 // it), the next deploy runs a short time later (ERGA_SITE_DELAY_MS, 30
 // seconds by default), each change pushing it back, on the object's alarm.
 // In "latest" mode a version is cut after each burst of edits, so a site
@@ -16,7 +16,7 @@
 // ({ type: "site" } on its /api/events).
 //
 // In local development with ERGA_DEPLOY_MOCK=1, a token that starts with
-// "mock-" talks to a pretend Cloudflare (deploy/mock.ts), whose sites the dev
+// "mock-" talks to a pretend Cloudflare, whose sites the dev
 // server shows at /__erga/site/<hostname>/<path>.
 
 import { DurableObject } from "cloudflare:workers";
@@ -67,7 +67,7 @@ export function mockSiteFile(env: Env, hostname: string, path: string): Response
   return new Response(file.bytes, { headers: { "Content-Type": types[ext] ?? "application/octet-stream", "Cache-Control": "no-store" } });
 }
 
-/** The site API's view of the deploys (site-publish.ts, SiteOps), as `origin`'s server. */
+/** The site API's view of the deploys, as `origin`'s server. */
 export function siteOps(env: Env, origin: string): SiteOps {
   const host = (docId: string) => env.SITES.getByName(docId);
   return {
@@ -78,7 +78,7 @@ export function siteOps(env: Env, origin: string): SiteOps {
   };
 }
 
-/** A document's published version changed: if it has a site, its next deploy is scheduled (worker/doc-host.ts calls this). */
+/** A document's published version changed: if it has a site, its next deploy is scheduled (cloudflare/doc-host.ts calls this). */
 export async function siteChanged(env: Env, docId: string): Promise<void> {
   if (await directoryOf(env).sites.get(docId)) await env.SITES.getByName(docId).changed(docId);
 }

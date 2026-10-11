@@ -1,6 +1,6 @@
-// The rule (agent-actions.ts): an embedded agent can do everything its person
+// The rule: an embedded agent can do everything its person
 // can do in its domain. Every route in the files' own route tables, every
-// operation of the document API (api.ts) and of the page tree (tree.ts), and
+// operation of the document API and of the page tree, and
 // every route a page's script calls must be in the audit, AGENT_ACTIONS; each
 // one is the admin agent's or the document agent's with a tool that agent has,
 // or says why there's none (a secret, or not a person's action). A new route
@@ -50,9 +50,9 @@ function tableRoutes(file: string): string[] {
   return out;
 }
 
-/** The document API's endpoints (shared/doc-api.ts), under a document's address. */
+/** The document API's endpoints, under a document's address. */
 const apiRoutes = () => [...read("shared/doc-api.ts").matchAll(/HttpApiEndpoint\.(get|post|put|patch|delete)\("\w+", "([^"]+)"/g)].map((m) => `${m[1].toUpperCase()} /d/<id>${m[2]}`);
-/** The page tree's operations (tree.ts, TreeOp): each a POST to the tree. */
+/** The page tree's operations: each a POST to the tree. */
 const treeRoutes = () => [...read("shared/tree.ts").matchAll(/\{ op: "(\w+)"/g)].map((m) => `POST /api/docs/<id>/tree op=${m[1]}`);
 
 const every = () => [...new Set([...ROUTE_TABLES.flatMap(tableRoutes), ...apiRoutes(), ...treeRoutes()])];
@@ -73,7 +73,7 @@ test("the route tables are read: the known routes are found", () => {
 
 test("every route in the route tables, the document API and the page tree is in the audit", () => {
   const missing = every().filter((r) => !audited.has(r));
-  if (missing.length) console.log(`Not in agent-actions.ts (add each, with the agent's tool, or why there's none):\n${missing.join("\n")}`);
+  if (missing.length) console.log(`Not in agents/actions.ts (add each, with the agent's tool, or why there's none):\n${missing.join("\n")}`);
   expect(missing).toEqual([]);
 });
 
@@ -94,7 +94,7 @@ test("every route a page's script calls is in the audit", () => {
     }
   }
   expect(seen).toBeGreaterThan(20);
-  if (calls.length) console.log(`Called by a page, but not in agent-actions.ts:\n${calls.join("\n")}`);
+  if (calls.length) console.log(`Called by a page, but not in agents/actions.ts:\n${calls.join("\n")}`);
   expect(calls).toEqual([]);
 });
 

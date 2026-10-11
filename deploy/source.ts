@@ -2,11 +2,11 @@
 // Artifacts (task #39 hosts Erga's source there: one repo, branches main and
 // staging). The pipeline asks Artifacts for the repo's Git remote and a
 // short-lived read-only token for it (15 minutes), and hands both to the
-// builder (deploy/builder/), which clones the commit with them. GitHub isn't
+// builder, which clones the commit with them. GitHub isn't
 // involved.
 //
 // A server with the Artifacts binding uses its own reader instead
-// (worker/source.ts, sourceForBuild, through Deps.source in deploy/branches.ts);
+// (cloudflare/source.ts, sourceForBuild, through Deps.source in deploy/branches.ts);
 // this, with the REST API, is for one without.
 
 import { DeployError, type Cloudflare } from "./pipeline";

@@ -1,13 +1,13 @@
 // The layout every admin page shares (/admin, /admin/changes, /admin/users, /admin/source,
 // /admin/api-keys, /admin/auth): a breadcrumb in the upper left (Erga › Admin › the page),
 // Share with agent in the header bar upper right (the editor's button and
-// card: admin-share.js, built from src/page/admin-share.ts), the admin's agent
-// (admin-agent/agent.ts: its panel is admin-agent.js, built from
-// src/page/admin-agent.ts) in a column left of the page, and, on the left, a
+// card: admin-share.js, built from client/admin-share.ts), the admin's agent
+// (agents/admin.ts: its panel is admin-agent.js, built from
+// client/admin-agent.ts) in a column left of the page, and, on the left, a
 // sidebar that links to Settings, API keys, Authentication, Change log, Users and Source.
 //
 // As in the editor, the user drags the agent by its head to the right of the
-// page, and its inner edge to resize it (src/page/layout.ts, mountPaneLayout;
+// page, and its inner edge to resize it (client/layout.ts, mountPaneLayout;
 // kept in this browser). It collapses to a round button in the lower corner
 // on its side, as the editor's does (its own button, Esc in the panel, or
 // ⌘J), and expands from it again;
@@ -20,13 +20,13 @@
 // links above the page.
 //
 // In the browser the admin pages are one page (admin-nav.js, built from
-// src/page/admin-nav.ts): a link to another admin page changes only <main>
+// client/admin-nav.ts): a link to another admin page changes only <main>
 // (and the title, the style, the breadcrumb and the sidebar's mark), so the
 // agent panel and its conversation stay. Each page is still made whole here,
 // for a deep link or a reload.
 //
 // Only the page: who may see it is checked on the server, before any admin
-// page is made (adminGate, below, in worker/index.ts; and each page's own door).
+// page is made (adminGate, below, in cloudflare/index.ts; and each page's own door).
 
 import { appPage, crumbs as trail, esc, ICON, link, page, type Platform, type Session, whoOf } from "../routes.ts";
 
@@ -57,7 +57,7 @@ export interface AdminLayout {
   wide?: boolean;
 }
 
-/** The agent's panel: the editor's markup (page.html), with a button that collapses it. admin-agent.js runs it. */
+/** The agent's panel: the editor's markup, with a button that collapses it. admin-agent.js runs it. */
 const AGENT_ICON = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5c.4 3.9 2.6 6.1 6.5 6.5-3.9.4-6.1 2.6-6.5 6.5-.4-3.9-2.6-6.1-6.5-6.5 3.9-.4 6.1-2.6 6.5-6.5Z"/><path d="M18.5 15.5c.2 1.6 1 2.4 2.5 2.5-1.5.2-2.3 1-2.5 2.5-.2-1.5-1-2.3-2.5-2.5 1.5-.1 2.3-.9 2.5-2.5Z"/></svg>`;
 const AGENT = `<div class="agent-dock" id="agent-dock"><aside class="admin-agent" id="agent" aria-label="Agent"><div class="agent-card">
     <div class="agent-head">
@@ -80,7 +80,7 @@ const AGENT = `<div class="agent-dock" id="agent-dock"><aside class="admin-agent
 <button type="button" class="agent-fab admin-fab" id="agent-fab" aria-label="Open the agent (⌘J)" title="Agent  ⌘J" aria-expanded="true" aria-controls="agent">${AGENT_ICON}</button>`;
 
 export const LAYOUT_STYLE = `
-  /* The header: the breadcrumbs (front.ts, crumbs) upper left; Share with agent left of the account corner (account.ts) upper right. */
+  /* The header: the breadcrumbs upper left; Share with agent left of the account corner upper right. */
   /* The header bar: left of your avatar, as the editor's icons are; it scrolls with the page, as the avatar does. */
   .chrome-top { position: absolute; right: calc(max(16px, env(safe-area-inset-right)) + 38px); }
   /* The sidebar beside the page. */
@@ -103,7 +103,7 @@ export const LAYOUT_STYLE = `
   :root:not(.side-ready) .admin-side, :root:not(.side-ready) .admin-side .label { transition: none; }
   @media (prefers-reduced-motion: reduce) { .admin-side, .admin-side .label { transition: none; } }
   /* The admin's agent and the page: a grid of two, the agent on the left, as the editor's card, or on the right. As in the
-     editor, the user drags the agent by its head to the other side, and its inner edge to resize it (src/page/layout.ts,
+     editor, the user drags the agent by its head to the other side, and its inner edge to resize it (client/layout.ts,
      mountPaneLayout, sets --agent-w and .agent-right; the grip and the ghost are style.css's). Collapsed, the agent is a
      round button in the lower corner on its side; expanding grows the card out of that corner (a clip-path from the
      button's circle), and the page slides over. */
@@ -174,7 +174,7 @@ export const LAYOUT_STYLE = `
   }
 `;
 
-/** Remembered state, before the sidebar paints; the toggle; and the animation only from then on. And the first page's view (admin-nav.ts): what its scripts stop when it goes. */
+/** Remembered state, before the sidebar paints; the toggle; and the animation only from then on. And the first page's view: what its scripts stop when it goes. */
 const EARLY_SCRIPT = `<script>try { if (localStorage.getItem("erga:admin-sidebar") == "closed") document.documentElement.classList.add("side-closed"); } catch {}
 try { if (matchMedia("(max-width: 999.98px)").matches || localStorage.getItem("erga:admin-agent") == "closed") document.documentElement.classList.add("agent-closed"); } catch {}
 window.ergaView = (() => { const c = new AbortController(), fns = []; return { signal: c.signal, onLeave: (fn) => { if (c.signal.aborted) fn(); else fns.push(fn); }, leave: () => { c.abort(); for (const fn of fns.splice(0)) try { fn(); } catch (e) { console.error(e); } } }; })();</script>`;
@@ -188,7 +188,7 @@ const AGENT_SCRIPT = `<script>
   const keep = (open) => { root.classList.toggle("agent-closed", !open); if (!narrow.matches) try { localStorage.setItem("erga:admin-agent", open ? "open" : "closed"); } catch {} sync(); };
   const show = (open) => {
     keep(open);
-    // On a wide window the server keeps it too, for the admin's other browsers (admin-agent.js).
+    // On a wide window the server keeps it too, for the admin's other browsers.
     if (!narrow.matches) window.dispatchEvent(new CustomEvent("erga:agent-toggled", { detail: { open } }));
     if (open) window.dispatchEvent(new Event("erga:agent-shown"));
     else fab.focus();
@@ -228,7 +228,7 @@ const SIDEBAR_SCRIPT = `<script>
 /** An admin page, whole: the header, the sidebar and the page's own body. */
 export function adminLayout(o: AdminLayout): string {
   const crumbs = trail(o.session, [{ label: "Admin", href: "/admin" }, { label: o.title }], "h1");
-  // Share with agent: the editor's icon button (page.html, .chrome-top), the card from admin-share.js.
+  // Share with agent: the editor's icon button (client/editor.html, .chrome-top), the card from admin-share.js.
   const bar = `<div class="chrome chrome-top" role="toolbar" aria-label="Controls"><button type="button" class="icon-btn" id="btn-share" aria-label="Share with an agent" data-tip="Share with an agent" aria-expanded="false" aria-controls="share">${ICON.agent}</button></div>`;
   const links = SECTIONS.map((s) => `<li><a href="${esc(link(s.path, o.session))}"${s.key == o.here ? ` aria-current="page"` : ""}>${s.icon}<span class="label">${s.label}</span></a></li>`).join("");
   const side = `<nav class="admin-side" id="admin-side" aria-label="Admin"><button type="button" class="side-toggle" id="side-toggle" aria-controls="admin-side" aria-expanded="true" aria-label="Collapse the sidebar">${TOGGLE_ICON}</button><ul>${links}</ul></nav>`;

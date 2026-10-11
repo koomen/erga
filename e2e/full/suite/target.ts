@@ -26,7 +26,7 @@ import { dirname, join, relative } from "path";
  *   restart        stop the server gracefully and start it again
  *   kill           stop it abruptly (SIGKILL) and start it again
  *   disk           edit the stored files directly, behind the server's back
- *   scriptedAgent  the agent runs the scripted test model (agent.ts); staging
+ *   scriptedAgent  the agent runs the scripted test model; staging
  *                  only, never a server real people reach (production)
  *   liveAgent      the agent runs a real model (costs money)
  *   browser        a headless Chrome is available here to open the shell

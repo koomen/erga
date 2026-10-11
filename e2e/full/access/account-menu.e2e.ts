@@ -50,7 +50,7 @@ test("on the front page, the avatar sits right of the Edit and Clone buttons, le
   const page = tab.page;
   await page.setViewportSize({ width: 1100, height: 720 });
   await page.goto(`${(await servers.main()).root}/`);
-  // The page itself once deployed (worker/home.ts), its controls in their own shadow root; the viewer's frame before.
+  // The page itself once deployed, its controls in their own shadow root; the viewer's frame before.
   await until(async () => (await page.evaluate(() => document.querySelector("h1")?.textContent ?? "")) == "Erga" || (await inPage<string>(page, `document.querySelector("h1")?.textContent ?? ""`)).includes("Erga"), 10_000, "the landing page renders");
   expect(await page.evaluate(() => {
     const r = document.querySelector("erga-controls")?.shadowRoot ?? document;

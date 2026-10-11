@@ -1,4 +1,4 @@
-// The multiplayer suite in real tabs (e2e/suite/suites/browser.ts): the agent pane follows the agent's output
+// The multiplayer suite in real tabs: the agent pane follows the agent's output
 // until you scroll back, like a terminal.
 import { settle } from "../../fixtures";
 import { expect, until } from "./harness";

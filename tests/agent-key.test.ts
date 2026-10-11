@@ -1,4 +1,4 @@
-// The agent's key in local development (dev/agent-key.ts): a real one in .dev.vars wins, else the environment's.
+// The agent's key in local development: a real one in .dev.vars wins, else the environment's.
 import { expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";

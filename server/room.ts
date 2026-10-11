@@ -1,5 +1,5 @@
 // The document room: one per document, holding the shared Yjs doc (see
-// src/room/doc.ts) that every participant edits. Editor tabs join over a
+// shared/doc.ts) that every participant edits. Editor tabs join over a
 // WebSocket, agent sessions in process (`joinLocal`), and both speak the
 // same Yjs sync and awareness protocol, so the room can't tell them apart.
 //
@@ -8,7 +8,7 @@
 // and git still see ordinary files, and edits that arrive as files (an
 // editor, git) are merged in as ordinary edits:
 // diffed word by word against the last version both sides agreed on and
-// rebased over the room's edits since (src/page/merge.ts). Writes and merges
+// rebased over the room's edits since. Writes and merges
 // take turns on one queue, so neither can slip between the other's read and
 // write.
 //
@@ -21,7 +21,7 @@
 //
 // Platform-neutral on purpose: storage is the small `FileStore` and
 // `StateStore` services and connections are `send` callbacks, so the same
-// room runs in a Durable Object (worker/doc-host.ts), and tests
+// room runs in a Durable Object, and tests
 // give it storage in memory.
 //
 // A room is a scoped resource (`Room.make`): it writes on a fiber in its
@@ -415,7 +415,7 @@ export class Room {
 
   // ------------------------------------------------------------ the tree
   //
-  // Files and folders made, moved and deleted as such (tree.ts checks what's
+  // Files and folders made, moved and deleted as such (shared/tree.ts checks what's
   // asked first): storage and the shared doc change together, in one turn
   // of the queue, so every participant sees the new tree at once.
 

@@ -1,6 +1,6 @@
-// The branch deploys' routes (deploy/branches.ts, in worker/pipeline.ts), and
-// the snapshot endpoints staging copies production's documents through
-// (deploy/snapshot.ts):
+// The branch deploys' routes (deploy/branches.ts, in cloudflare/pipeline.ts), and
+// the snapshot endpoints staging copies production's documents through:
+//
 //
 //   GET  /api/deploys[?history=N]       admins: every target's status {targets: [...]}, with each one's last N deploys
 //                                       (`history`, newest first) if asked
@@ -109,7 +109,7 @@ export async function deploysDoor(request: Request, env: Env, base: Platform): P
   return Response.json({ error: `There's nothing at ${method} ${path}.` }, { status: 404 });
 }
 
-/** The request carries this server's DEPLOY_HOOK_SECRET (staging's admins-only guard asks too: worker/admins-only.ts). */
+/** The request carries this server's DEPLOY_HOOK_SECRET (staging's admins-only guard asks too: cloudflare/admins-only.ts). */
 export function peer(request: Request, env: Env): boolean {
   const secret = env.DEPLOY_HOOK_SECRET?.trim() || (env.ERGA_DEPLOY_MOCK == "1" ? "mock-hook-secret-0123456789abcdef" : "");
   const bearer = /^Bearer\s+(\S+)\s*$/i.exec(request.headers.get("authorization") ?? "")?.[1] ?? "";

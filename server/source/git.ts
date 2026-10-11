@@ -1,4 +1,4 @@
-// Just enough Git to host Erga's own repository (source/): objects and their
+// Just enough Git to host Erga's own repository: objects and their
 // hashes, commits and trees, packfiles (read and write), and pkt-lines, the
 // framing of Git's smart HTTP protocol. Platform-neutral (web APIs only), so
 // it runs in the Worker, in a Durable Object and under `bun test` alike.

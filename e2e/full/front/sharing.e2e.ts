@@ -1,4 +1,4 @@
-// Who may open and edit a document (front.ts, worker/doc-host.ts): nobody but its owner until it's
+// Who may open and edit a document: nobody but its owner until it's
 // shared; then editors edit and viewers only look; only the owner shares.
 import { expect, test, until } from "../../fixtures";
 import { person, servers } from "./front";

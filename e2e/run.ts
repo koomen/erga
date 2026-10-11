@@ -1,13 +1,13 @@
 #!/usr/bin/env bun
 // Runs the tests, one step after another, stopping at the first that fails:
 //
-//   bun run test               the typecheck, the unit tests (tests/) and the smoke run (e2e/smoke): about a minute
-//   bun run test:full          the same, then every end-to-end test (e2e/full): only when you want the whole suite
-//   bun run test:e2e [ARGS]    the end-to-end tests only; ARGS go to `e2e run`: files or folders (e2e/full/page/),
+//   bun run test               the typecheck, the unit tests and the smoke run: about a minute
+//   bun run test:full          the same, then every end-to-end test: only when you want the whole suite
+//   bun run test:e2e [ARGS]    the end-to-end tests only; ARGS go to `e2e run`: files or folders,
 //                              --grep, --workers 2, --headed ...; with no files, the smoke run
 //
 // The smoke run has a time limit (E2E_SMOKE_LIMIT_S, 90 s): past it, it fails, so it stays small. Everything a test
-// starts carries ERGA_TEST_RUN in its environment (e2e/env.ts): what's left of it at the end is killed. Telemetry is
+// starts carries ERGA_TEST_RUN in its environment: what's left of it at the end is killed. Telemetry is
 // off (E2E_TELEMETRY_DISABLED: the CLI reads it before it reads the config).
 
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";

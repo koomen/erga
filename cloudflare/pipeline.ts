@@ -9,10 +9,10 @@
 //
 // Each target's deploy history (deploy/branches.ts: the last 100 deploys and
 // their logs) is in this object's storage too, and so are the sign-in values an
-// admin sets on /admin/auth (worker/auth-settings.ts).
+// admin sets on /admin/auth.
 //
 // In local development with ERGA_DEPLOY_MOCK=1 it deploys to the mock
-// Cloudflare's Erga account (deploy/mock.ts, fleet) with the mock builder,
+// Cloudflare's Erga account with the mock builder,
 // which "builds" a commit by stamping the server's own release with it. The
 // dev server is one target (ERGA_DEPLOY_TARGET); the other target's server
 // is played here too, in the mock (`peer`, its storage apart under "peer:"),
@@ -82,7 +82,7 @@ export class Pipeline extends DurableObject<Env> {
       schedule,
       changed: () => this.publish({ type: "deploys" }),
       logged: (event) => this.publish(event),
-      // The commit to build: the source repo's remote and a read token, through Erga's own binding (worker/source.ts).
+      // The commit to build: the source repo's remote and a read token, through Erga's own binding.
       source: async (commit) => {
         if (!env.ARTIFACTS) return null;
         const s = await sourceForBuild(env, commit);
@@ -95,7 +95,7 @@ export class Pipeline extends DurableObject<Env> {
     if (peerName) this.peer = make(peerName, "peer:");
   }
 
-  /** The mock's other server, at its host: what deploysDoor answers another of Erga's servers (worker/deploys.ts). */
+  /** The mock's other server, at its host: what deploysDoor answers another of Erga's servers. */
   private async peerSite(req: Request, script: string, peerName: TargetName | null): Promise<Response | null> {
     const url = new URL(req.url);
     if (!peerName || !this.peer || script != TARGETS[peerName].worker || !url.pathname.startsWith("/api/deploys/") || url.pathname == "/api/deploys/version") return null;
@@ -118,7 +118,7 @@ export class Pipeline extends DurableObject<Env> {
   remoteHook(name: string, body: { branch?: string; commit?: string; redeploy?: boolean; trigger?: string }) { return this.deploys.remoteHook(name, body); }
   async alarm(): Promise<void> { await Promise.all([this.deploys.alarm(), this.peer?.alarm()]); }
 
-  // ---- sign-in's values set on /admin/auth (auth-apps.ts, worker/auth-settings.ts): this server's own, here and not
+  // ---- sign-in's values set on /admin/auth: this server's own, here and not
   // in D1, which a fresh copy of production's replaces on staging. Keys "auth:<provider>"; the secret in them is encrypted.
 
   authGet(key: string): Promise<unknown> { return this.ctx.storage.get(key); }

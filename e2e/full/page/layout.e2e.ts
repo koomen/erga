@@ -1,4 +1,4 @@
-// The editor's side panels on a presentation (src/page/layout.ts; tests/layout.ts): where they start, the agent's inner
+// The editor's side panels on a presentation: where they start, the agent's inner
 // edge, and Escape while dragging. Docking: layout-dock.e2e.ts.
 import { AGENT_DEFAULT, AGENT_MAX, DOC_MIN, INSET, PICKER_W } from "../../../client/layout";
 import { center, drag } from "../../drag";

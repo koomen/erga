@@ -2,8 +2,8 @@
 // other files, from GET /api/docs/<id>/tree, changed through POST to the same
 // address (new_page, new_folder, move, delete). One component, in two places:
 // the editor (a card under the document's title, top left: main.ts) and
-// Documents (beneath a document's row: front.ts). It's built on its own
-// (build.sh: pages-tree.js) and loaded only when someone opens it, so it costs the
+// Documents (beneath a document's row: server/routes.ts). It's built on its own
+// and loaded only when someone opens it, so it costs the
 // viewer nothing.
 //
 // index.html is the home page; the others sit under it. People think in
@@ -50,7 +50,7 @@ export interface TreeOptions {
   onRenameRoot?: () => void;
   /** Goes to a page (default: the browser goes there). `replace` when the page you were on moved; `path`, the page's, when one was picked. */
   navigate?: (url: string, opts: { replace?: boolean; path?: string }) => void;
-  /** Whether a document links to other files by relative paths (../style.css), where the caller knows: a move may break those (warnMoved). Unknown: assume it does. */
+  /** Whether a document links to other files by relative paths, where the caller knows: a move may break those (warnMoved). Unknown: assume it does. */
   hasRelativeLinks?: (path: string) => boolean | undefined;
   /** What the server answered last, for a caller that wants it (e.g. to count the pages). */
   onChange?: (answer: { entries: Entry[]; canEdit: boolean }) => void;

@@ -1,4 +1,4 @@
-// A document's versions (versions.ts) on storage in memory: cutting, sharing
+// A document's versions on storage in memory: cutting, sharing
 // unchanged files between versions, listing, reading back, what changed, and
 // the descriptions written when no model does.
 

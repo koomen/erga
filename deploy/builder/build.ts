@@ -1,6 +1,6 @@
 // Building one commit of Erga into a release, the same way on any machine:
-// in the builder's container (deploy/builder/server.ts) and on a developer's
-// machine (deploy/run.ts). A Worker can't run `bun install` or Vite, so this
+// in the builder's container and on a developer's
+// machine. A Worker can't run `bun install` or Vite, so this
 // is the one part of a deploy that runs outside the Worker.
 //
 //   1. fetch the commit from the source repo, depth 1 (a Git remote and a read token: deploy/source.ts)
@@ -35,7 +35,7 @@ export async function buildCommit(o: { source: Source; commit: string; branch?: 
   const auth: Record<string, string> = o.source.token ? { GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "http.extraHeader", GIT_CONFIG_VALUE_0: `Authorization: Basic ${btoa(`x:${o.source.token}`)}` } : {};
   o.log(`fetching ${o.commit.slice(0, 12)} from ${o.source.cloneUrl}`);
   await run(["git", "init", "-q"], { cwd: o.dir, env, log: o.log });
-  // Only the commit, not the branch's history: nothing in the build reads history (site.sh and build.sh run no git,
+  // Only the commit, not the branch's history: nothing in the build reads history (client/build.sh and client/build.sh run no git,
   // and deploy/release.ts stamps the version from WORKERS_CI_COMMIT_SHA). The cheapest fetch that has the commit:
   //   1. the commit by its id, depth 1 (Git's protocol v2 servers serve any commit a branch reaches);
   //   2. else the branch's head, depth 1 (a server that won't fetch by id: the head is the commit nearly always);
@@ -62,7 +62,7 @@ export async function buildCommit(o: { source: Source; commit: string; branch?: 
 /** Steps 2 to 5 in a checkout of `commit` at `dir`: the release bundle's bytes. */
 export async function buildIn(o: { dir: string; commit: string; log: Log; run?: Runner; nodeModules?: string }): Promise<Uint8Array> {
   const run = o.run ?? spawnRunner;
-  // On a developer's machine, its checkout's packages (deploy/run.ts); in the container, installed from the lockfile.
+  // On a developer's machine, its checkout's packages; in the container, installed from the lockfile.
   if (o.nodeModules) { symlinkSync(o.nodeModules, join(o.dir, "node_modules"), "dir"); o.log(`node_modules: ${o.nodeModules}`); }
   else await run(["bun", "install", "--frozen-lockfile"], { cwd: o.dir, log: o.log });
   // Erga's own servers serve its source (the Artifacts binding, cloudflare.config.ts): the namespace the commit's
@@ -71,7 +71,7 @@ export async function buildIn(o: { dir: string; commit: string; log: Log; run?: 
   const ns: Record<string, string> = artifacts ? { ERGA_ARTIFACTS_NAMESPACE: artifacts } : {};
   if (artifacts) o.log(`source: the Artifacts namespace ${artifacts} (deploy/targets.json)`);
   // The commit's own package.json says how it builds (bun run build, then bun run release), so the builder needs no
-  // redeploy when a script moves. A commit from before the client/ layout has ./site.sh instead, and its output in .site/.
+  // redeploy when a script moves. A commit from before the client/ layout has ./site.sh instead, and its output in .build/.
   // WORKERS_CI empty: a commit from before task #3 ran migrate.ts in its build when it was set (on Workers Builds).
   const old = existsSync(join(o.dir, "site.sh"));
   await run(old ? ["./site.sh"] : ["bun", "run", "build"], { cwd: o.dir, log: o.log, env: { WORKERS_CI: "", ...ns } });

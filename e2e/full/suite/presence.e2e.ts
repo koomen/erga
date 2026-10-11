@@ -1,4 +1,4 @@
-// The multiplayer suite, presence (e2e/suite/suites/presence.ts): carets, people leaving, attribution.
+// The multiplayer suite, presence: carets, people leaving, attribution.
 import { presence } from "./suites/presence";
 import { register } from "./suite";
 

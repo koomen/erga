@@ -1,7 +1,7 @@
 // The credential deploy/setup.ts and deploy/run.ts use on this machine: a
 // person's own, never a server's. CLOUDFLARE_API_TOKEN if it's set; else
 // the cf CLI's own login (`bunx cf auth login`), refreshed first. Making
-// Erga's deploy tokens (deploy/tokens.ts) needs one that may make account
+// Erga's deploy tokens needs one that may make account
 // API tokens: the cf CLI's login asks for that (account_api_tokens:create)
 // since its 2026-10 versions (log in again with `bunx cf auth login --force`
 // if yours is older), or an API token with Account API Tokens Write.

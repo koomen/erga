@@ -1,6 +1,6 @@
-// A document's file tree without a server: which page an address is (tree.ts),
+// A document's file tree without a server: which page an address is,
 // the tree as entries, the names it takes, and its operations in the room
-// (host.ts, runTreeOp) on storage in memory: files and folders made, moved
+// on storage in memory: files and folders made, moved
 // and deleted, storage following, and everyone hearing of it.
 
 import { expect, test } from "bun:test";

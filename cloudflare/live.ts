@@ -1,7 +1,7 @@
 // Open pages across a redeploy, the Worker's side (the page's side is
-// src/page/live.ts):
+// client/live.ts):
 //
-//   - GET /api/release: the build of each of the editor's files, as site.sh
+//   - GET /api/release: the build of each of the editor's files, as client/build.sh
 //     listed them in build.json, and the release ({ files: { "page.js":
 //     "<build>", ... }, version });
 //   - every HTML page of the site's own gets live.js, and a meta erga-build:
@@ -10,7 +10,7 @@
 //   - a GET of a page with X-Erga-Check: build answers 204 with that digest
 //     (X-Erga-Build), and no page.
 //
-// A document's pages origin never gets any of it (worker/index.ts).
+// A document's pages origin never gets any of it.
 
 import type { Env } from "./env";
 

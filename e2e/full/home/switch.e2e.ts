@@ -87,7 +87,7 @@ test("the page's styles can't reach the controls, nor theirs the page; its files
   expect(iso.cookie).not.toContain("erga_session");
 });
 
-// Making a user an admin and back: users are remembered ten seconds (users.ts), so the demotion takes that long to show.
+// Making a user an admin and back: users are remembered ten seconds, so the demotion takes that long to show.
 test("only admins may edit the homepage: not made one while others may edit it, no non-admin editors, an ex-admin only views; the cookie is HttpOnly", { timeout: 30_000 }, async () => {
   const { server, token, id } = await secondHome();
   const cookie = (await get(server, "/auth/github?as=Ada")).headers.get("set-cookie") ?? "";

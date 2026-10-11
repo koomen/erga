@@ -1,5 +1,5 @@
-// The shell's side of the document room: a replica of the shared Yjs doc
-// (src/room/doc.ts), synced with the host over a WebSocket (y-websocket's
+// The shell's side of the document room: a replica of the shared Yjs doc,
+// synced with the host over a WebSocket (y-websocket's
 // protocol), and the binding between it and the editor's CodeMirror state.
 //
 // Local edits are CodeMirror transactions; each becomes one Yjs transaction
@@ -45,7 +45,7 @@ export interface CollabOptions {
   onStatus: (connected: boolean) => void;
   /**
    * The room refused this tab: it holds a history from before the host lost
-   * its state (room.ts), and merging would double the document. Reload.
+   * its state, and merging would double the document. Reload.
    */
   onStale: () => void;
 }
@@ -238,7 +238,7 @@ export class Collab {
   }
 
   /**
-   * Everything this tab holds of the room, for the page that reloads in its place (live.ts), with the room's epoch:
+   * Everything this tab holds of the room, for the page that reloads in its place, with the room's epoch:
    * merged into the room after the reload, it brings back any edit that hadn't reached it (and changes nothing
    * otherwise). Null when it's too big to keep in the tab.
    */

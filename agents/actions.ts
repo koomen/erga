@@ -1,10 +1,10 @@
 // The rule: an embedded agent can do everything its person can do in its
 // domain, so they can ask for anything there in words.
 //
-//   the admin agent     (admin-agent/agent.ts: on every /admin page) everything on /admin: the settings, the API keys,
+//   the admin agent     (agents/admin.ts: on every /admin page) everything on /admin: the settings, the API keys,
 //                       sign-in (Authentication), the change log, the users, the dashboard of source and deploys (Source), the
 //                       homepage's deploy, and the admin's own agent tokens (/settings)
-//   the document agent  (agent.ts, with server-tools.ts: in the editor) everything a person does with a document in
+//   the document agent  (agents/document.ts, with agents/tools.ts: in the editor) everything a person does with a document in
 //                       the editor and on the documents list (/docs)
 //
 // The one exception is a secret: an API key, a GitHub app's secret, a new agent token is pasted
@@ -14,8 +14,8 @@
 //
 // This is the audit: every action in the UI and the HTTP API, with the agent tool that does it, or why there
 // is none. tests/agent-actions.test.ts reads the routes from each file's own route table (the comments at the
-// top of worker/admin-agent.ts, admin.ts, server-api.ts, ...), the document API (api.ts) and the file tree's
-// operations (tree.ts), and fails when one isn't here, or when a tool named here isn't the agent's. So a new
+// top of cloudflare/admin-agent-host.ts, server/admin/pages.ts, server/api.ts, ...), the document API and the file tree's
+// operations, and fails when one isn't here, or when a tool named here isn't the agent's. So a new
 // route, or a new button calling one, needs a line here and, unless it's a secret, a tool.
 
 /** Who the action belongs to: an agent's domain, or nobody's (a VM's, another server's, the agent panel itself). */
@@ -38,7 +38,7 @@ const PANEL = "the agent panel itself (the conversation, its model, stop, undo)"
 const STREAM = "the page's live updates (server-sent events)";
 
 export const AGENT_ACTIONS: AgentAction[] = [
-  // ------------------------------------------------------------ /admin: settings, change log, users, API keys (admin.ts)
+  // ------------------------------------------------------------ /admin: settings, change log, users, API keys
   { route: "GET /admin", domain: "admin", action: "Read the settings (Settings)", tool: "list_settings" },
   { route: "POST /admin/settings", domain: "admin", action: "Change a setting (Settings)", tool: "set_setting" },
   { route: "POST /admin/settings", domain: "admin", action: "Reset a setting to its default (Settings)", tool: "reset_setting" },
@@ -60,7 +60,7 @@ export const AGENT_ACTIONS: AgentAction[] = [
   { route: "POST /admin/auth do=clear", domain: "admin", action: "Clear the values set on the page: back to the deploy's (Authentication)", tool: "clear_sign_in_app" },
   { route: "POST /admin/share", domain: "admin", action: "Make an admin token for an outside agent (Share with agent, every admin page)", exempt: SECRET },
 
-  // ------------------------------------------------------------ the admin agent's panel, and the outside agents' guide (worker/admin-agent.ts)
+  // ------------------------------------------------------------ the admin agent's panel, and the outside agents' guide
   { route: "GET /api/admin/guide", domain: "none", action: "What an outside agent with an admin token reads first (Share with agent)", exempt: "an outside agent's guide, not a person's action" },
   { route: "GET /api/admin/agent", domain: "none", action: "The admin agent's panel", exempt: PANEL },
   { route: "POST /api/admin/agent", domain: "none", action: "A message to the admin agent", exempt: PANEL },
@@ -91,12 +91,12 @@ export const AGENT_ACTIONS: AgentAction[] = [
   { route: "POST /api/sign-in/github", domain: "none", action: "Production's Authentication page sets staging's GitHub app", exempt: "server to server, with the shared secret: the admin's action is POST /admin/auth" },
   { route: "POST /api/snapshot/docs[/import]", domain: "none", action: "Staging copies production's documents", exempt: "the deploy pipeline's, server to server" },
 
-  // ------------------------------------------------------------ the homepage (home.ts: in the editor's settings, admins only)
+  // ------------------------------------------------------------ the homepage (server/home.ts: in the editor's settings, admins only)
   { route: "GET /api/docs/<id>/home", domain: "admin", action: "See whether a document is the homepage (editor's settings)", tool: "list_settings" },
   { route: "POST /api/docs/<id>/home", domain: "admin", action: "Make a document the homepage, or not (editor's settings)", tool: "set_setting" },
   { route: "POST /api/docs/<id>/home/deploy", domain: "admin", action: "Redeploy the homepage (editor's settings)", tool: "deploy_homepage" },
 
-  // ------------------------------------------------------------ a document at the person's own domain (site-publish.ts: in the editor's settings)
+  // ------------------------------------------------------------ a document at the person's own domain (server/site-publish.ts: in the editor's settings)
   { route: "GET /api/docs/<id>/site", domain: "document", action: "See a document's custom domain, its deploys and your domains (editor's settings, Custom domain)", tool: "domain_status" },
   { route: "POST /api/docs/<id>/site", domain: "document", action: "Publish a document at a domain of yours (editor's settings, Custom domain)", tool: "publish_to_domain" },
   { route: "POST /api/docs/<id>/site/deploy", domain: "document", action: "Deploy to the domain now (editor's settings, Custom domain)", tool: "deploy_domain" },
@@ -105,13 +105,13 @@ export const AGENT_ACTIONS: AgentAction[] = [
   { route: "POST /settings/cloudflare/disconnect", domain: "document", action: "Disconnect your Cloudflare account (/settings)", tool: "disconnect_cloudflare" },
   { route: "GET /__erga/site/<host>/<path>", domain: "none", action: "A site on the pretend Cloudflare (local development)", exempt: "the dev server's" },
 
-  // ------------------------------------------------------------ /settings: the person's agent tokens (server-api.ts)
+  // ------------------------------------------------------------ /settings: the person's agent tokens
   { route: "GET /settings", domain: "admin", action: "Read your agent tokens, Share with agent's too (/settings)", tool: "list_agent_tokens" },
   { route: "POST /tokens/revoke", domain: "admin", action: "Revoke an agent token, Share with agent's too (/settings)", tool: "revoke_agent_token" },
   { route: "POST /tokens/new", domain: "admin", action: "Make an agent token (/settings)", exempt: SECRET },
   { route: "POST /tokens/approve", domain: "admin", action: "Approve an agent's request for a token (/settings)", exempt: `${SECRET} (it hands a new token to an outside agent)` },
 
-  // ------------------------------------------------------------ /deploy: Erga on your own Cloudflare account (worker/deploy.ts)
+  // ------------------------------------------------------------ /deploy: Erga on your own Cloudflare account
   { route: "POST /deploy/api/connect", domain: "admin", action: "Connect a Cloudflare account with an API token (/deploy)", exempt: SECRET },
   { route: "GET /deploy/api/session", domain: "admin", action: "Read the deploy's progress (/deploy)", exempt: `${SECRET}: the session holds the person's Cloudflare token, sealed with their browser's cookie` },
   { route: "POST /deploy/api/account", domain: "admin", action: "Pick a Cloudflare account (/deploy)", exempt: `${SECRET}: the session holds the person's Cloudflare token, sealed with their browser's cookie` },
@@ -121,7 +121,7 @@ export const AGENT_ACTIONS: AgentAction[] = [
   { route: "POST /deploy/api/forget", domain: "admin", action: "Forget the Cloudflare token (/deploy)", exempt: `${SECRET}: the session holds the person's Cloudflare token, sealed with their browser's cookie` },
   { route: "GET /deploy/api/mock", domain: "none", action: "What pretend Cloudflare was asked (tests only)", exempt: "the tests' pretend Cloudflare" },
 
-  // ------------------------------------------------------------ the documents list (/docs, front.ts)
+  // ------------------------------------------------------------ the documents list (/docs, server/routes.ts)
   { route: "GET /docs", domain: "document", action: "Read your documents (Documents)", tool: "list_documents" },
   { route: "GET /new", domain: "document", action: "Make a document: blank, from a template, or a copy (Documents, New; the viewer's Clone)", tool: "create_document" },
   { route: "POST /docs/delete", domain: "document", action: "Delete a document (Documents)", tool: "delete_document" },
@@ -129,7 +129,7 @@ export const AGENT_ACTIONS: AgentAction[] = [
   { route: "POST /docs/share", domain: "document", action: "Share a document, change a role, or stop sharing (Documents and editor, Share)", tool: "share_document" },
   { route: "POST /d/<id>/api/share", domain: "document", action: "The Share card's agent token, for another agent (editor, Share: Share with an agent)", exempt: SECRET },
 
-  // ------------------------------------------------------------ the editor (api.ts, tree.ts, server-api.ts)
+  // ------------------------------------------------------------ the editor
   { route: "WS /d/<id>/api/room", domain: "document", action: "Edit the text (editor)", tool: "edit" },
   { route: "GET /d/<id>/api/doc", domain: "document", action: "Read the document's name and address (editor)", tool: "get_title" },
   { route: "GET /d/<id>/api/name", domain: "document", action: "Read the title and address (editor)", tool: "get_title" },
@@ -151,7 +151,7 @@ export const AGENT_ACTIONS: AgentAction[] = [
   { route: "POST /d/<id>/api/agent/undo", domain: "none", action: "Undo the editor's agent's last change", exempt: PANEL },
   { route: "POST /d/<id>/api/agent/view", domain: "none", action: "The tab answers the agent's view_page and evaluate_page", exempt: PANEL },
 
-  // ------------------------------------------------------------ the API for outside agents (server-api.ts, api.ts)
+  // ------------------------------------------------------------ the API for outside agents
   { route: "GET /llms.txt", domain: "none", action: "The guide for outside agents", exempt: "the outside agents' API: its tools are theirs" },
   { route: "GET /api", domain: "none", action: "The guide, with a token", exempt: "the outside agents' API: its tools are theirs" },
   { route: "GET /api/ext", domain: "none", action: "The guide, with a token", exempt: "the outside agents' API: its tools are theirs" },

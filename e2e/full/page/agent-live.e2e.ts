@@ -1,4 +1,4 @@
-// A live check of the document agent against the real model (tests/agent.ts): it edits the page and its stylesheet,
+// A live check of the document agent against the real model: it edits the page and its stylesheet,
 // and the edits reach the open page without a reload and the disk; it is a participant (a badge on its owner's
 // avatar); its last change can be undone; it draws a diagram and looks at it; it fixes a paragraph broken on disk. It
 // calls the real API, so it costs a little, and it skips itself unless asked for: the gate and `bun run test --all`

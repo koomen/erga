@@ -1,17 +1,17 @@
 // Open pages across a redeploy, the page's side. The Worker adds this script
-// (live.js) to every page of the site's own (worker/live.ts): the editor,
+// to every page of the site's own: the editor,
 // Documents, the admin pages, settings, the homepage. A document's own frame never gets it.
 //
 // A redeploy (or a restart of the dev server) drops every live connection:
 // each script reconnects by itself and reads again what it shows
-// (collab.ts, main.ts, admin-agent.ts) and tells this
+// and tells this
 // one (live-client.ts: `connection`). If a connection stays down for a while,
 // a small "Reconnecting…" note shows in a corner, and nothing else does.
 //
-// Then, the page's code. The server knows its release: build.json (site.sh)
+// Then, the page's code. The server knows its release: build.json
 // lists the build of each of the editor's files, at GET /api/release; and each
 // page the Worker makes says which inline code it carries (its meta
-// erga-build, a digest of its inline scripts: worker/live.ts), which a GET of
+// erga-build, a digest of its inline scripts: cloudflare/live.ts), which a GET of
 // the page with X-Erga-Check: build answers in a header, without the page.
 // This page asks after a connection comes back, after a request fails as a
 // server going away fails, when the tab is shown again, and every
@@ -19,8 +19,8 @@
 // style.css did, the page takes the new one in place. Otherwise it reloads
 // itself at a safe moment: not while you type, compose, drag or hold the
 // mouse button, once what it holds is on the server (each script's `flush`),
-// and at once if the tab is hidden. Before it reloads it keeps what it shows
-// (restore.ts): the scroll of the page and of every panel, the form fields,
+// and at once if the tab is hidden. Before it reloads it keeps what it shows:
+// the scroll of the page and of every panel, the form fields,
 // the focus and the caret in them, and what each script keeps for itself
 // (`keep`: the editor's caret and view, the open task on the board, the files
 // attached to the agent's next message). The reloaded page puts it all back.
@@ -100,7 +100,7 @@ function showNote() {
 
 // ------------------------------------------------------------------ is this page current?
 
-/** Each file's build as this page has it: a bundle's own stamp (build.sh), else what the server said when the page first used it. */
+/** Each file's build as this page has it: a bundle's own stamp, else what the server said when the page first used it. */
 const baseline: Record<string, string> = {};
 /** The files this page uses: its scripts and the editor's stylesheet, and the editor's page and frame once it's open. */
 function used(names: string[]): string[] {
@@ -240,7 +240,7 @@ async function reload() {
   location.reload();
 }
 
-/** Keeps what the page shows and what the keepers named keep, for the reloaded page (restore.ts); `hand`: a reload by hand. */
+/** Keeps what the page shows and what the keepers named keep, for the reloaded page; `hand`: a reload by hand. */
 function keepAll(names: string[], hand: boolean) {
   const keep: Record<string, unknown> = {};
   for (const name of names) { try { keep[name] = keepers.get(name)!.save(); } catch (e) { console.error(e); } }

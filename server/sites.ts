@@ -1,6 +1,6 @@
 // Publishing a document to a domain in the person's own Cloudflare account:
-// what the server keeps about it. site-publish.ts does the rest (the calls
-// to Cloudflare, the files, the API); worker/site-host.ts runs the deploys.
+// what the server keeps about it. server/site-publish.ts does the rest (the calls
+// to Cloudflare, the files, the API); cloudflare/site-host.ts runs the deploys.
 //
 // The site lives in the person's account, not on Erga: a Worker there with
 // the published version's files as its static assets, on a custom domain of
@@ -8,11 +8,11 @@
 // published version changes. Readers reach Cloudflare only, never erga.dev,
 // so the site keeps working if Erga is down, and its traffic is theirs.
 //
-// Two tables (migrations/0180_sites.sql):
+// Two tables:
 //
 //   - cloudflare_connections: each person's Cloudflare API token, pasted on
 //     /settings, encrypted with AES-GCM under a key from FACTORY_KEY (as the
-//     API keys are, credentials.ts), the login as the additional data, so a
+//     API keys are, server/api-keys.ts), the login as the additional data, so a
 //     row can't be moved to another person. Nothing answers a token to a
 //     page: only its last four characters, and the accounts it reaches.
 //   - sites: each document's hostname, the zone and account it is on, the
@@ -83,7 +83,7 @@ export class CloudflareConnections {
     return { connected: !!r && !unreadable, last4: r?.last4 ?? null, accounts: r ? parseAccounts(r.accounts) : [], updated: r ? Number(r.updated) : null, canStore: !!this.aesKey, unreadable };
   }
 
-  /** Keeps a token someone checked (site-publish.ts, verifyToken), in place of theirs. */
+  /** Keeps a token someone checked, in place of theirs. */
   async save(login: string, token: string, accounts: CfAccount[], via?: string | null): Promise<ConnectionInfo> {
     if (!this.aesKey) throw new SiteError("This server has no FACTORY_KEY to encrypt the token with, so it can't keep one.", 503);
     const who = login.toLowerCase();

@@ -1,7 +1,7 @@
-// The admin's agent (admin-agent/agent.ts), one per admin, in one Durable
-// Object, "admin": each session, its conversation and panel layout
-// (admin-agent/chat-store.ts), and the event stream its panel listens on.
-// The panel is src/page/admin-agent.ts, on every admin page (admin-layout.ts).
+// The admin's agent, one per admin, in one Durable
+// Object, "admin": each session, its conversation and panel layout,
+// and the event stream its panel listens on.
+// The panel is client/admin-agent.ts, on every admin page.
 //
 //   GET    /api/admin/agent                 { enabled, reason?, model, models, choice, log }
 //   POST   /api/admin/agent                 { text, context, files? }: a message (it steers a turn that is running)
@@ -14,10 +14,10 @@
 //   PUT    /api/admin/agent/prefs           { open?, side?, width? }: changes what's given
 //
 // The panel is the admin's, in a browser: no token reaches it. An outside agent with an admin token
-// ("Authorization: Bearer erga_...", tokens.ts, scope admin; Share with agent on the admin pages makes one)
+// ("Authorization: Bearer erga_...", server/tokens.ts, scope admin; Share with agent on the admin pages makes one)
 // calls the same APIs the agent's tools do, and reads this first:
 //
-//   GET    /api/admin/guide                 the admin APIs, how to call them, and the token's limits (admin-agent/agent.ts)
+//   GET    /api/admin/guide                 the admin APIs, how to call them, and the token's limits
 
 import { DurableObject } from "cloudflare:workers";
 import { isModelChoice, MODELS } from "../agents/document";
@@ -82,7 +82,7 @@ export class AdminAgentHost extends DurableObject<Env> {
     const as = (): ToolWho => ({ dir: directoryOf(this.env), who: { login, admin: true, via: VIA.admin }, origin: state.origin, auth: authOps(this.env, state.origin) });
     // The source tools read the server's copy of Erga's repository (SourceHost), read-only.
     const readSource = async (q: SourceRead): Promise<SourceAnswer> => {
-      if (!hasSource(this.env)) throw new Error("Erga's repository isn't set up on this server: it needs the Artifacts binding: bun deploy/setup.ts binds it, and source/import.ts fills it.");
+      if (!hasSource(this.env)) throw new Error("Erga's repository isn't set up on this server: it needs the Artifacts binding: bun deploy/setup.ts binds it, and server/source/import.ts fills it.");
       const r = await this.env.SOURCE.getByName("erga").read(state.origin, q);
       if ("error" in r) throw new Error(r.error);
       return r;
@@ -96,13 +96,13 @@ export class AdminAgentHost extends DurableObject<Env> {
   }
 
   /**
-   * The dashboard tools' work (admin-agent/agent.ts, dashboardTools), as the admin: the same calls the Source page's API
-   * makes (worker/source.ts, worker/deploys.ts), and /settings' tokens (server-api.ts),
+   * The dashboard tools' work, as the admin: the same calls the Source page's API
+   * makes, and /settings' tokens,
    * so the change log and a deploy's trigger name the admin, as when they click.
    */
   private dashboard(login: string, state: { origin: string }): DashboardOps {
     const source = () => {
-      if (!hasSource(this.env)) throw new Error("Erga's repository isn't set up on this server: it needs the Artifacts binding: bun deploy/setup.ts binds it, and source/import.ts fills it.");
+      if (!hasSource(this.env)) throw new Error("Erga's repository isn't set up on this server: it needs the Artifacts binding: bun deploy/setup.ts binds it, and server/source/import.ts fills it.");
       return this.env.SOURCE.getByName("erga");
     };
     const pipeline = () => this.env.PIPELINE.getByName("deploys");
@@ -153,7 +153,7 @@ export class AdminAgentHost extends DurableObject<Env> {
     return { ok: true };
   }
 
-  // -- each admin's conversation, kept (admin-agent/chat-store.ts)
+  // -- each admin's conversation, kept
 
   private storedChat(login: string): { log: Log; messages: ReturnType<typeof restoredMessages> } | null {
     const r = this.sql.exec<{ log: string; messages: string }>("SELECT log, messages FROM agent_chats WHERE login = ?", login).toArray()[0];
@@ -253,7 +253,7 @@ async function adminOf(env: Env, request: Request): Promise<{ login: string; nam
   return { login: session.login.toLowerCase(), name: session.name };
 }
 
-/** An admin, or an outside agent acting as one: with `token`, it came with an admin token (tokens.ts). */
+/** An admin, or an outside agent acting as one: with `token`, it came with an admin token. */
 type GuideReader = { login: string; name: string; token?: { id: string; label: string; expires: number | null } };
 
 /** Who asks for the admin guide: an admin signed in in a browser, or an outside agent with an admin token. */

@@ -3,7 +3,7 @@
 // session, the room, the agent. The page, which anyone who can edit the
 // document may have written, runs on its document's own origin
 // (<id>-<owner>.erga-pages.dev, or <id>-<owner>.localhost locally) with no
-// cookies, inside a host frame (frame.ts) that runs the page editor next to
+// cookies, inside a host frame that runs the page editor next to
 // it. The two talk only through the messages below, and the shell checks
 // every one: the most a page can do is edit its own document, as whoever
 // has it open.
@@ -29,7 +29,7 @@ import type { ViewRequest, ViewResult } from "./agent-log";
  * source view) and, for a Markdown file, the Markdown language, whose tree its
  * commands read (Enter and Backspace in lists and quotes). Nothing else of the
  * languages: the frame has no CodeMirror view to highlight, and an HTML file's
- * page is parsed by the page editor itself (manuscript.ts), so leaving out the
+ * page is parsed by the page editor itself, so leaving out the
  * HTML language (with its CSS and JavaScript) keeps frame.js a third smaller
  * and spares a parse on every edit. The source view, in the shell, has both.
  */
@@ -39,7 +39,7 @@ export const docExtensions = (kind: Kind): Extension[] => [history(), kind == "m
 export interface Keys { key: string; metaKey: boolean; ctrlKey: boolean; shiftKey: boolean; altKey: boolean }
 
 /**
- * The shell's own shortcuts (main.ts, appShortcut), as a key pressed in
+ * The shell's own shortcuts, as a key pressed in
  * the page must be recognised there: the frame stops them and passes them on.
  */
 export function isAppShortcut(e: Keys, isMac: boolean): boolean {

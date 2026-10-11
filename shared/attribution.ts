@@ -4,7 +4,7 @@
 //
 //   (none)                      in person: their browser session
 //   their agent                 the editor's agent, in one of their documents
-//   their admin agent           the agent on the admin pages (admin-agent/agent.ts)
+//   their admin agent           the agent on the admin pages
 //   a shared agent (<label>)    an agent with one of their tokens: the server's
 //                               API, MCP, /api/ext, Git pushes, the admin APIs
 //   the factory (task #<n>)     a factory VM, working on a task they added
@@ -16,11 +16,11 @@
 
 /** How a person did something, when not in person. */
 export const VIA = {
-  /** The editor's agent (agent.ts). */
+  /** The editor's agent. */
   agent: "their agent",
-  /** The admin agent (admin-agent/agent.ts). */
+  /** The admin agent. */
   admin: "their admin agent",
-  /** An agent with one of their tokens (tokens.ts): its label. */
+  /** An agent with one of their tokens: its label. */
   token: (label: string) => `a shared agent (${label.trim() || "no label"})`,
   /** A factory VM, on a task they added. */
   factory: (task: number) => `the factory (task #${task})`,
@@ -42,7 +42,7 @@ export function parseByLine(line: string): { by: string; via: string | null } {
   return at < 0 ? { by: line, via: null } : { by: line.slice(0, at), via: line.slice(at + 6) };
 }
 
-/** The statement that adds an entry to the change log (server_config_versions, config.ts): `changes` (SettingChange[]), by `by`, via `via`. */
+/** The statement that adds an entry to the change log (server_config_versions, server/settings.ts): `changes` (SettingChange[]), by `by`, via `via`. */
 export function changeLogEntry(at: number, by: string, via: string | null | undefined, changes: object[]): [string, number, string, string, string | null] {
   return ["INSERT INTO server_config_versions (at, by, changes, via) VALUES (?1, ?2, ?3, ?4)", at, by.toLowerCase(), JSON.stringify(changes), via ?? null];
 }

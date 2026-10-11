@@ -1,4 +1,4 @@
-// The homepage's page as a deploy renders it (home.ts, renderHome): the
+// The homepage's page as a deploy renders it: the
 // document's page as it is, with what the viewer would give it, its files
 // linked where the deploy serves them, and the place for the controls.
 

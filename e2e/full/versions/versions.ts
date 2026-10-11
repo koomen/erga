@@ -1,5 +1,5 @@
-// Helpers for the versions and settings tests (versions.ts, worker/doc-host.ts,
-// src/page/settings.ts), on servers.short(): people signed in by cookie, a
+// Helpers for the versions and settings tests (server/versions.ts, cloudflare/doc-host.ts,
+// client/settings.ts), on servers.short(): people signed in by cookie, a
 // document's versions and publishing over the HTTP API, an agent token and its
 // tools, and someone in the document's room (a headless Yjs participant, as an
 // editor's tab is: e2e/suite/client.ts).
@@ -21,7 +21,7 @@ export const someone = (prefix: string) => `${prefix}${crypto.randomUUID().repla
 
 export type Get = (path: string, init?: RequestInit) => Promise<Response>;
 
-/** Someone signed in on `server` (worker/auth.ts, /auth/github?as=): requests carrying their session cookie. */
+/** Someone signed in on `server` (cloudflare/auth.ts, /auth/github?as=): requests carrying their session cookie. */
 export async function person(server: Server, as: string) {
   const r = await fetch(`${server.root}/auth/github?as=${as}&next=/docs`, { redirect: "manual" });
   const cookie = r.headers.getSetCookie().map((c) => c.split(";")[0]).find((c) => /^erga_session(_\d+)?=/.test(c));

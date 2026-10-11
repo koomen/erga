@@ -75,7 +75,7 @@ export class Participant {
     this.ydoc.transact(() => {
       const before = Y.getState(this.ydoc.store, this.ydoc.clientID);
       f(t);
-      // Deletions alone carry no client id: stamp them (src/room/doc.ts).
+      // Deletions alone carry no client id: stamp them.
       if (Y.getState(this.ydoc.store, this.ydoc.clientID) == before) stamp(this.ydoc, this.me);
     }, this.local);
   }

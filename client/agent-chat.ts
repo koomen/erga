@@ -1,6 +1,6 @@
 // The agent panel's conversation, as both agents' panels draw it: the
-// editor's (main.ts) and the admin's, on every admin page (admin-agent.ts).
-// It renders the transcript (agent-log.ts) into the panel's log, keeps it
+// editor's and the admin's, on every admin page.
+// It renders the transcript into the panel's log, keeps it
 // following the agent's output as a terminal does, and shows a message the
 // moment it's sent, dimmed until the agent's host echoes it back (or with
 // "Not sent" and a way to try again). The styles are style.css's (.agent-log,

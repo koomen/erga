@@ -1,4 +1,4 @@
-// The multiplayer suite in real tabs (e2e/suite/suites/browser.ts): a paragraph broken by bad markup explains
+// The multiplayer suite in real tabs: a paragraph broken by bad markup explains
 // itself, and its button asks the agent to fix it. (How soon the prompt shows is a bench: browser-broken.bench.e2e.ts.)
 import { expect, until } from "./harness";
 import { browserTest, noErrors, openAs } from "./suite";

@@ -1,7 +1,7 @@
-// A throwaway copy of this checkout, and `bun start` (dev.ts) in it, for the tests that edit the server's own files
+// A throwaway copy of this checkout, and `bun start` in it, for the tests that edit the server's own files
 // (e2e/reload: live reload) or test what a checkout's server does by itself (e2e/alone/checkouts: ports, .dev-url).
 // The copy is the checkout's files, committed or not, minus what git ignores, and a link to its node_modules
-// (read-only here, and copying it is slow). It has no .site: dev.ts builds the editor's files in it as it starts,
+// (read-only here, and copying it is slow). It has no .build: dev/start.ts builds the editor's files in it as it starts,
 // and rebuilds them when they change, as `bun start` does in a fresh worktree.
 
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
@@ -33,7 +33,7 @@ export interface Started {
   output(): string;
   /** Whether it still runs. */
   alive(): boolean;
-  /** SIGTERM (dev.ts stops in under 10 s), then everything under it by force. */
+  /** SIGTERM (dev/start.ts stops in under 10 s), then everything under it by force. */
   stop(): Promise<void>;
 }
 
@@ -41,7 +41,7 @@ export interface Started {
 const running = new Set<Started>();
 process.on("exit", () => { for (const s of running) for (const p of tree(s.proc.pid!)) try { process.kill(p, "SIGKILL"); } catch { /* gone */ } });
 
-/** `bun dev.ts ARGS` in `dir`, with `env` added to a clean environment (no ERGA_BUILT: it builds the editor's files itself). */
+/** `bun dev/start.ts ARGS` in `dir`, with `env` added to a clean environment (no ERGA_BUILT: it builds the editor's files itself). */
 export function startIn(dir: string, args: string[], env: Record<string, string> = {}): Started {
   let output = "";
   const proc = spawn("bun", [join(dir, "dev/start.ts"), ...args], { cwd: dir, env: cleanEnv(env), stdio: ["ignore", "pipe", "pipe"], detached: true });

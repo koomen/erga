@@ -1,20 +1,20 @@
 #!/usr/bin/env bun
 // Makes the release the deploy page (/deploy) deploys to other people's
 // Cloudflare accounts: this checkout's Worker exactly as `cf build` builds it
-// for erga.dev, into .site/release/, which goes up with the server's static
-// assets (the Worker reads it from there, worker/deploy.ts; nothing serves it
+// for erga.dev, into .build/release/, which goes up with the server's static
+// assets (the Worker reads it from there, cloudflare/deploy-routes.ts; nothing serves it
 // to browsers).
 //
 //   bun deploy/release.ts
 //
-// .site/ must be built already (site.sh). site.sh runs this on Workers
-// Builds, and `bun run deploy` does too, so erga.dev's deploy page always
-// deploys the version erga.dev runs. Locally, run it once to try /deploy
+// .build/ must be built already (bun run build). The builder runs this after
+// the build (deploy/builder/build.ts), and `bun run deploy` does too, so erga.dev's
+// deploy page always deploys the version erga.dev runs. Locally, run it once to try /deploy
 // (the deploy page's test does it if there's none).
 //
 // release/ holds release.json (what's in it: the build's worker.config.json,
 // the module and file names), bundle/ (the Worker's modules), assets/ (the
-// editor's files, as .site has them) and migrations/. (The landing project
+// editor's files, as .build has them) and migrations/ (server/migrations/). (The landing project
 // is built into the Worker itself.)
 
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -41,7 +41,7 @@ function files(dir: string): string[] {
 
 export async function makeRelease(): Promise<ReleaseIndex> {
   if (!existsSync(join(SITE, "page.js"))) throw new Error(".build isn't built: run bun run build first");
-  // The build copies .site into its assets: last run's release mustn't go in.
+  // The build copies .build into its assets: last run's release mustn't go in.
   rmSync(OUT, { recursive: true, force: true });
   const build = Bun.spawn(["bunx", "cf", "build"], { cwd: ROOT, env: { ...process.env, CF_QUIET: "1", NO_COLOR: "1", ERGA_SERVER_CONFIG: "" }, stdout: "pipe", stderr: "pipe" });
   const [out, err, code] = await Promise.all([new Response(build.stdout).text(), new Response(build.stderr).text(), build.exited]);

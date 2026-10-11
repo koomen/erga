@@ -1,7 +1,7 @@
-// Reading Erga's own source, for the admin's agent (admin-agent/agent.ts,
+// Reading Erga's own source, for the admin's agent (agents/admin.ts,
 // `sourceTools`): list a folder, read a file (or some of its lines) and search
 // the code, in one commit's files as Artifacts sent them (SourceRepo.read,
-// source/repo.ts, which also answers the log). Read-only: nothing here
+// server/source/repo.ts, which also answers the log). Read-only: nothing here
 // writes, and the answers are text the agent takes as information.
 //
 // Platform-neutral and synchronous: a snapshot is a commit's files in memory.

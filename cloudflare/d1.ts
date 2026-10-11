@@ -1,5 +1,5 @@
-// The directory (directory.ts), with the server's users (users.ts) and
-// settings (config.ts), on D1, through D1's API. A batch is one transaction.
+// The directory, with the server's users and
+// settings, on D1, through D1's API. A batch is one transaction.
 
 import { parseDeployed } from "../server/settings";
 import { Directory, type Param, type Sql } from "../server/directory";
@@ -31,7 +31,7 @@ export const adminsOf = (env: Env): string[] =>
 /** The directory, on this Worker's database, with the settings the deploy locks (SERVER_CONFIG). */
 export function directoryOf(env: Env): Directory {
   if (directory?.db !== env.DB) {
-    // A change to the homepage setting, however it's made (the admin page, an agent, the homepage's API, the first /), reaches its deploys (worker/home.ts).
+    // A change to the homepage setting, however it's made (the admin page, an agent, the homepage's API, the first /), reaches its deploys.
     const changed = async (key: string) => { if (key == "landing_document" && env.HOME) await env.HOME.getByName("home").homeChanged(); };
     directory = { db: env.DB, dir: new Directory(sqlOn(env.DB), { admins: adminsOf(env), locked: parseDeployed(env.SERVER_CONFIG), changed, credentialSecret: factoryKey(env), fallback: (name) => !!String((env as unknown as Record<string, unknown>)[name] ?? "").trim() }) };
   }
@@ -39,7 +39,7 @@ export function directoryOf(env: Env): Directory {
 }
 
 /**
- * What encrypts the API keys and sign-in secrets admins enter (credentials.ts, auth-apps.ts), each with a key of its
+ * What encrypts the API keys and sign-in secrets admins enter, each with a key of its
  * own derived from it: FACTORY_KEY, or locally the session secret.
  */
 export function factoryKey(env: Env): string | null {
@@ -47,7 +47,7 @@ export function factoryKey(env: Env): string | null {
   return env.ERGA_LINK_SECRET && env.DEV_LOGIN ? `local:${env.SESSION_SECRET}` : null;
 }
 
-/** The Worker's bindings with the API keys admins stored (credentials.ts) in place of the Worker secrets: what the code that calls Anthropic or OpenAI reads. */
+/** The Worker's bindings with the API keys admins stored in place of the Worker secrets: what the code that calls Anthropic or OpenAI reads. */
 export const withKeys = (env: Env): Promise<Env> => withCredentials(env, env.DB ? directoryOf(env).credentials : null);
 
 /**
@@ -66,7 +66,7 @@ export function keptKeys(ctx: DurableObjectState, env: Env): () => Env {
   };
 }
 
-/** Agent tokens (tokens.ts), on the same database. */
+/** Agent tokens, on the same database. */
 export function tokensOf(env: Env): Tokens {
   return new Tokens(sqlOn(env.DB), env.SESSION_SECRET, directoryOf(env));
 }

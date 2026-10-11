@@ -1,4 +1,4 @@
-// What a token without the admin scope reaches on staging, past the admins-only guard (worker/admins-only.ts lists
+// What a token without the admin scope reaches on staging, past the admins-only guard (cloudflare/admins-only.ts lists
 // the exemption and why). Apart from the guard, so the unit tests can load it.
 
 import { RESERVED } from "../server/directory";

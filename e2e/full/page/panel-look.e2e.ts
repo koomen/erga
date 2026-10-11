@@ -1,6 +1,6 @@
 // The agent pane is the editor's own card: its light one, or on a dark page its dark one, never a colour of the page's; and the room around the page (the band above it,
 // the room the agent opens beside it) is the page's own surface, with no seam: its colour, and its gradient too
-// (front.ts, canvasOf and BAND_BOOT; page.html).
+//.
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, servers, settle, test, until } from "../../fixtures";

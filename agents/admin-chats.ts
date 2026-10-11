@@ -1,6 +1,6 @@
-// What the AdminAgent object keeps of each admin's agent conversation (worker/admin-agent.ts, agent_chats), so it
+// What the AdminAgent object keeps of each admin's agent conversation, so it
 // survives a reload, a move between admin pages, a new deploy and a sign-in days later: the transcript the
-// panel shows (src/page/agent-log.ts) and the model's own messages (pi's), so the agent remembers too. And
+// panel shows and the model's own messages (pi's), so the agent remembers too. And
 // each admin's panel: open or closed, its side and its width (agent_prefs).
 //
 // A reply that was still streaming when the object went away keeps what arrived: a tool that was running

@@ -1,4 +1,4 @@
-// The builder's release cache (deploy/builder/worker.ts): each release the
+// The builder's release cache: each release the
 // builder builds, kept by its commit and the builder's toolchain, so a commit
 // built once is never built again. Staging builds a commit when it reaches
 // the staging branch; when main fast-forwards to it, production's deploy of
@@ -11,12 +11,12 @@
 //     says where to fetch from, and Git checks every object it fetches against
 //     its id, so a commit's id names its tree exactly, whatever remote it came
 //     from. The container's environment is the image's (no target's vars or
-//     secrets: build.ts runs site.sh and `cf build` with the same fixed env
+//     secrets: build.ts runs client/build.sh and `cf build` with the same fixed env
 //     for every commit; ERGA_SERVER_CONFIG empty, the Artifacts namespace from
 //     the commit's own deploy/targets.json). `cf build` writes production's
 //     names (cloudflare.config.ts) whichever server asked.
 //   - Everything that makes a release a target's own is applied after, by the
-//     pipeline, at the upload (deploy/cloudflare.ts, workerMetadata): the
+//     pipeline, at the upload: the
 //     Worker's name, its database id, its text settings (DEPLOY_TARGET,
 //     ERGA_VERSION, the target's vars), its secrets (kept on the Worker), its
 //     services, its pages' domain and its factory image. None of it is in the
@@ -45,7 +45,7 @@ export const CACHE_KEEP = 16;
 /** Each release is kept in parts of this many characters (a Durable Object's stored value has a size limit). */
 export const CHUNK = 512 * 1024;
 
-/** Where releases are kept: the builder's Durable Object storage (worker.ts), or a Map in the tests. */
+/** Where releases are kept: the builder's Durable Object storage, or a Map in the tests. */
 export interface ReleaseStore {
   get(key: string): Promise<{ line: string; at: number; branch?: string } | null>;
   put(key: string, line: string, meta: { at: number; branch?: string }): Promise<void>;

@@ -1,6 +1,6 @@
-// Scoped tokens (tokens.ts) on an in-memory SQLite database with the same
+// Scoped tokens on an in-memory SQLite database with the same
 // migrations D1 gets, through the front door's withTokens and the server's
-// API (server-api.ts): who may make each scope, each scope allowed and
+// API: who may make each scope, each scope allowed and
 // refused, expiry, and the device flow carrying a scope.
 
 import { Database } from "bun:sqlite";

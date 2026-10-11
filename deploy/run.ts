@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 // A deploy of one of Erga's own targets from this machine: the same pipeline
-// the servers run on themselves (deploy/cloudflare.ts, runPipeline), with a
+// the servers run on themselves, with a
 // build made here instead of in the builder's container. For the first
 // deploy of a target (deploy/setup.ts runs it, with the target's secrets),
 // and as a way round a server that can't deploy itself.
@@ -14,13 +14,13 @@
 //
 // It needs CLOUDFLARE_ACCOUNT_ID in the environment, your own credential for
 // the account (CLOUDFLARE_API_TOKEN, else the cf CLI's login:
-// deploy/credential.ts), and
+// deploy/local-credential.ts), and
 // SNAPSHOT_TOKEN for staging (production's, to copy its documents). It
 // builds the commit (default: HEAD, which must be committed) in a scratch
 // worktree, shows what it will do, and asks before doing it.
 //
-// ERGA_DEPLOY_MOCK=1: against the mock Cloudflare's copy of Erga's account
-// (deploy/mock.ts), with .build/release/ for the build: nothing real is touched.
+// ERGA_DEPLOY_MOCK=1: against the mock Cloudflare's copy of Erga's account,
+// with .build/release/ for the build: nothing real is touched.
 //
 // To roll erga.dev back at once, with no build, to an earlier Worker version
 // (D1 stays as it is): bunx cf workers deployments create --worker erga

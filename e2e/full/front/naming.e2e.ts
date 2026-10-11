@@ -1,4 +1,4 @@
-// Titles and addresses (front.ts, directory.ts, worker/doc-host.ts): what counts as an edit, the
+// Titles and addresses: what counts as an edit, the
 // title that follows the page's heading and the slug that follows the title until they're set, old addresses that
 // redirect, the agent's get_title and set_title, and open tabs following a rename.
 import { expect, test, until } from "../../fixtures";

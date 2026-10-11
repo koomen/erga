@@ -1,6 +1,6 @@
-// Erga's logo (logo/make.ts): the files it makes are portable (outlines, no
-// font, no links, no <text>), and the pages that can't import logo/logo.ts
-// (page.html, the repo's landing/) hold the wordmark and favicon it made last.
+// Erga's logo: the files it makes are portable (outlines, no
+// font, no links, no <text>), and the pages that can't import assets/logo/logo.ts
+// (client/editor.html, the repo's assets/landing/) hold the wordmark and favicon it made last.
 
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";

@@ -27,7 +27,7 @@ test("a document's own files, and the front page's document on its pages origin,
   const root = (await servers.main()).root, get = getter(root);
   const { id } = await newDoc(root);
   expect(await (await get(`/d/${id}/doc/index.html`)).text()).not.toContain("data-erga-account");
-  // The front page: the viewer's frame until its first deploy is done, then the page itself, whose one corner is in its controls (worker/home.ts).
+  // The front page: the viewer's frame until its first deploy is done, then the page itself, whose one corner is in its controls.
   const front = await (await get("/")).text();
   const frameSrc = /<iframe id="frame" class="erga-view" (?:data-)?src="([^"]+)"/.exec(front)?.[1].replaceAll("&amp;", "&");
   if (frameSrc) {

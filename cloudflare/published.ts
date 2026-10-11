@@ -1,11 +1,11 @@
-// The homepage's view of a document's published version (worker/home.ts),
-// behind two functions, over the versions' hooks (versions.ts).
+// The homepage's view of a document's published version,
+// behind two functions, over the versions' hooks.
 //
 // A document's published version is, in "manual" mode, the version
 // published; in "latest" mode, the document as it is now, which "changes"
 // each time a new version is cut (after a burst of edits, an agent's turn,
 // someone leaving). The document's host calls `publishedChanged` whenever it
-// fires `firePublished` (worker/doc-host.ts).
+// fires `firePublished`.
 
 import { publishedFiles as versionsFiles } from "../server/versions";
 import type { Env } from "./env";
@@ -21,7 +21,7 @@ export async function publishedFiles(env: Env, docId: string): Promise<Published
 
 /**
  * A document's published version changed: if it's the homepage, the
- * homepage's next deploy is scheduled (worker/home.ts, debounced).
+ * homepage's next deploy is scheduled.
  */
 export async function publishedChanged(env: Env, docId: string): Promise<void> {
   await env.HOME.getByName("home").changed(docId);

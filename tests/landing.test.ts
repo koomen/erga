@@ -1,6 +1,6 @@
-// The front page the server makes for itself (front.ts, seedLanding): on a
+// The front page the server makes for itself: on a
 // fresh database the first request makes the landing document from the
-// repo's landing/ once, however many ask at once, even from separate
+// repo's assets/landing/ once, however many ask at once, even from separate
 // isolates (two Directory objects over one database); a deleted one is made
 // again; one an admin chose, or one the deploy locks, is left alone.
 
@@ -110,7 +110,7 @@ test("a deleted landing document is made again; an admin's choice stays", async 
   expect((await landingDocument(q))?.id).toBe("chosen01");
   expect(hosts.size).toBe(2);
 
-  // Reset (unset), it's made again: a fresh copy of landing/.
+  // Reset (unset), it's made again: a fresh copy of assets/landing/.
   await q.directory.config.reset({ login: "root", admin: true }, "landing_document");
   const third = (await landingDocument(platformOn(sql, hosts)))!;
   expect(third.id).not.toBe(second.id);

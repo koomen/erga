@@ -1,9 +1,9 @@
-// The homepage on Cloudflare (home.ts is the platform-neutral half): its
+// The homepage on Cloudflare (server/home.ts is the platform-neutral half): its
 // deploys, in one Durable Object (`Home`, named "home"), and serving them
 // at / from the edge.
 //
-// A deploy renders the homepage document's published version (published.ts)
-// into a snapshot: its page (home.ts, renderHome) and its files, kept in the
+// A deploy renders the homepage document's published version
+// into a snapshot: its page and its files, kept in the
 // Durable Object's storage under a generation id that's never reused. The
 // Worker serves / from that snapshot, remembered in the isolate and in the
 // colo's cache (the Cache API), and checks with the Durable Object for a newer
@@ -25,9 +25,9 @@
 // /api/docs/<id>/home/deploy) runs it at once. A deploy that fails leaves
 // the last good snapshot serving. Choosing another homepage (the
 // landing_document setting, however it's set) drops the snapshot and deploys
-// the new one at once; until it's done, / is the viewer on it (front.ts), as
+// the new one at once; until it's done, / is the viewer on it, as
 // it is when there's no snapshot at all (a fresh server, whose first / makes
-// the homepage from landing/ and starts its first deploy).
+// the homepage from assets/landing/ and starts its first deploy).
 //
 // Every change to the deploy's state is told to everyone who has the
 // homepage document open ({ type: "home" } on its /api/events).
@@ -157,7 +157,7 @@ export class Home extends DurableObject<Env> {
   }
 
   /**
-   * The landing_document setting changed (config.ts tells the Worker, which
+   * The landing_document setting changed (server/settings.ts tells the Worker, which
    * tells this): another homepage, or none. What's live is the old one's, so
    * it goes (/ is the viewer on the new one until its deploy is done), and the
    * new one deploys at once.
@@ -364,7 +364,7 @@ export async function serveHome(request: Request, env: Env, ctx: ExecutionContex
     const session = await platform.sessionOf(request);
     const who = session && whoOf(session);
     const dir = platform.directory;
-    // Only admins may edit the homepage (directory.ts, homeLimit): their role is asked of the database only if they are one
+    // Only admins may edit the homepage: their role is asked of the database only if they are one
     // (whether someone is, the isolate remembers for a few seconds), so for anyone else, signed out above all, nothing is.
     const admin = !!who && !session.test && !session.agent && (await dir.users.isAdmin(who));
     const doc = { id: page.docId, owner: page.address.split("/")[1], test: false };

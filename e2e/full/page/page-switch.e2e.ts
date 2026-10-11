@@ -1,4 +1,4 @@
-// Another of the document's pages, picked while editing, opens in place (main.ts, swapPage): the editor's controls, the
+// Another of the document's pages, picked while editing, opens in place: the editor's controls, the
 // agent's pane (open) and the document's place beside it stay as they are, in every frame, and never the viewer's
 // controls; only the page in the frame changes. The address follows, and Back and Forward go between the pages the same way.
 import { readFileSync } from "node:fs";

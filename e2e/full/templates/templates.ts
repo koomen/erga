@@ -1,9 +1,9 @@
-// Helpers for the presentation tests (e2e/templates): documents made from a
+// Helpers for the presentation tests: documents made from a
 // template, opened in the viewer or the editor, and the step controls under
-// them (front.ts, STEPS_BOOT; DOCUMENT_PROMPT.md, "Presentations").
+// them (server/routes.ts, STEPS_BOOT; agents/DOCUMENT_PROMPT.md, "Presentations").
 //
 // The document's page runs in a frame on its own origin: in the viewer the
-// host page's visible frame (iframe.on, front.ts), in the editor the page
+// host page's visible frame (iframe.on, server/routes.ts), in the editor the page
 // editor's frame. `inPage` evaluates an expression in that page.
 
 import type { Page } from "playwright-core";
@@ -40,7 +40,7 @@ export async function openTab(tab: Tab, url: string, size?: { width: number; hei
   await settle(page);
 }
 
-/** The editor is in and ready (front.ts, ergaShell.ready). */
+/** The editor is in and ready. */
 export const editorReady = (page: Page) => until(() => page.evaluate(() => document.body.classList.contains("erga-editor-ready")), 10_000, "the editor is ready");
 
 /** Evaluates an expression in the document's page (whichever frame shows it): the first answer that isn't null. */

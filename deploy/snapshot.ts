@@ -1,6 +1,6 @@
 // Copying documents' Durable Objects from one server to another: how staging
 // gets production's documents when it copies its data (the pipeline's "documents"
-// step, deploy/cloudflare.ts). The database is copied by D1 itself (export
+// step, deploy/pipeline.ts). The database is copied by D1 itself (export
 // and import); a Durable Object's storage can only be read from inside the
 // Worker that owns it, so production serves a read-only snapshot endpoint and
 // staging an import one, both behind a shared bearer token (SNAPSHOT_TOKEN,
@@ -12,7 +12,7 @@
 //   POST /api/snapshot/docs/import   {docs, wipe}   → {imported, wiped}   only with SNAPSHOT_IMPORT=1 and never on production
 //
 // A document's snapshot is every key in its storage (its files, folders,
-// meta, its versions and the room's Yjs state: worker/doc-host.ts) and its
+// meta, its versions and the room's Yjs state: cloudflare/doc-host.ts) and its
 // alarm (when an unedited one expires). Values go as JSON, bytes as base64.
 // The export only reads (DocHost.exportStorage: storage.list and getAlarm,
 // nothing opened); the import empties the document's storage and writes the
@@ -27,8 +27,8 @@
 // couldn't be read (and why): the others are still copied. A part after the
 // first is imported with `append`: added to the earlier ones, nothing emptied.
 //
-// The same handler runs in the Worker (worker/index.ts) and in the mock
-// Cloudflare's pretend servers (deploy/mock.ts), so the tests exercise it.
+// The same handler runs in the Worker and in the mock
+// Cloudflare's pretend servers, so the tests exercise it.
 
 import { DeployError, type Fetch } from "./pipeline";
 

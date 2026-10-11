@@ -1,7 +1,7 @@
 // What a new document can start from: the templates the + button offers
 // (the viewer's, the homepage's and the editor's), and /new?template=<id>
 // makes. One registry, so a new template is one entry in TEMPLATES (its
-// starting files in templates/<name>/, index.html or index.md and text files
+// starting files in assets/templates/<name>/, index.html or index.md and text files
 // beside it, which the Worker reads as text). No server code: the editor's
 // bundle reads it too.
 
@@ -16,7 +16,7 @@ export interface Template {
   /** A line under its name. */
   description: string;
   /**
-   * The starting document: a folder of the repo, templates/<name>, copied
+   * The starting document: a folder of the repo, assets/templates/<name>, copied
    * whole (text files only), whose page is its index.html (or index.md).
    */
   files: `assets/templates/${string}`;
@@ -110,7 +110,7 @@ export const NEW_DOC_STYLE = `<style>
 /**
  * Opens and closes the picker: `ergaNewDoc(root)`, once for each page or
  * shadow root with a picker in it. Any + button in it opens it, under the
- * button, including ones added later (the editor's, page.html). Escape, a
+ * button, including ones added later (the editor's, client/editor.html). Escape, a
  * click elsewhere, or leaving the window closes it; arrow keys move in it.
  */
 export const NEW_DOC_SCRIPT = `window.ergaNewDoc = function (root) {

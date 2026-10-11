@@ -1,4 +1,4 @@
-// The server settings this repo's deploy fixes (config.ts, SETTINGS). A key
+// The server settings this repo's deploy fixes. A key
 // set here is locked: erga.dev (and local development, `bun start`) uses
 // this value, and nobody can change it in the admin page, the API or through
 // an agent; the admin page shows it read-only, with this value. A key left
@@ -11,9 +11,9 @@
 //     ERGA_SERVER_CONFIG='{"delete_docs_after_hours":null}' bun start   (never delete unedited documents)
 //
 // cloudflare.config.ts hands them to the Worker as the SERVER_CONFIG
-// binding. `bun server.config.ts` checks them against SETTINGS (a key that
-// isn't one, or a value it won't take) and prints them; site.sh runs it
-// before every deploy and dev.ts before it starts, so a bad one fails there.
+// binding. `bun deploy/locked-settings.ts` checks them against SETTINGS (a key that
+// isn't one, or a value it won't take) and prints them; client/build.sh runs it
+// before every deploy and dev/start.ts before it starts, so a bad one fails there.
 //
 // Take a key out and deploy to hand it back to the admins: what they set
 // before it was locked counts again.
@@ -28,7 +28,7 @@ const settings: Values = {
 export default settings;
 
 // (This file is loaded by cloudflare.config.ts under Node's type stripping,
-// and must not import config.ts itself: the dev server can't then load it
+// and must not import server/settings.ts itself: the dev server can't then load it
 // into the Worker. Hence the check below imports it only when run.)
 
 /** What the deploy fixes: the settings above, with ERGA_SERVER_CONFIG (JSON) over them. Unchecked. */

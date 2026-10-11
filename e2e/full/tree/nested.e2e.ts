@@ -9,7 +9,7 @@ type Look = { width: string; image: number; font: boolean } | null;
 
 /**
  * How blog/drafts/owls.html rendered, from inside a frame showing it (`doc` names its document there): its stylesheet
- * (../../style.css: the body's width), its image (../../assets/owl.svg) and its font (fonts/field.woff2, named by the
+ * (../../style.css: the body's width), its image and its font (client/fonts/field.woff2, named by the
  * stylesheet).
  */
 const rendered = (doc: string) => `(async () => {

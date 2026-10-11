@@ -1,6 +1,6 @@
-// The directory (directory.ts) on an in-memory SQLite database, with the
+// The directory on an in-memory SQLite database, with the
 // same migrations D1 gets: slugs, history, following, permissions and who
-// may; the server's users and admins (users.ts) and settings (config.ts).
+// may; the server's users and admins and settings.
 
 import { Database } from "bun:sqlite";
 import { readdirSync, readFileSync } from "node:fs";
@@ -11,7 +11,7 @@ import { Directory, NameError, NotAllowed, slugify, type Param, type Sql } from 
 
 const MIGRATIONS = new URL("../server/migrations/", import.meta.url).pathname;
 
-/** A fresh in-memory database, its tables made by migrations/, as D1's are. */
+/** A fresh in-memory database, its tables made by server/migrations/, as D1's are. */
 function memory(): Sql {
   const db = new Database(":memory:", { strict: true });
   db.exec("PRAGMA foreign_keys = ON");

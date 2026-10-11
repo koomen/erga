@@ -1,4 +1,4 @@
-// Dragging the side panels (src/page/layout.ts: the editor's, mountLayout, and
+// Dragging the side panels (client/layout.ts: the editor's, mountLayout, and
 // the admin pages', mountPaneLayout) with the mouse, and waiting until they
 // stop moving. For e2e/full/page/layout-*.e2e.ts.
 

@@ -1,5 +1,5 @@
-// The admin page: the server's settings (config.ts) and its users and
-// admins (users.ts), for admins only. Everyone else gets "not found": they
+// The admin page: the server's settings and its users and
+// admins, for admins only. Everyone else gets "not found": they
 // can't see the page, nor that there is one.
 //
 //   /admin                     the Settings page (GET /admin/settings redirects here)
@@ -7,25 +7,25 @@
 //   /admin/users               the Users page: their roles (admin, deploy) as switches, when they joined, add and remove
 //   /admin/api-keys            the API keys page: every key Erga needs from the services it calls (GET /admin/credentials redirects here)
 //   /admin/auth                the Authentication page: how people sign in (GitHub), on this server and the other deploy target
-//   GET /admin/auth/status     the same as JSON {here, other} (auth-apps.ts, AuthStatus: never a secret), with live checks
+//   GET /admin/auth/status     the same as JSON {here, other} (server/auth.ts, AuthStatus: never a secret), with live checks
 //   POST /admin/auth           server (here or other), and do=save (clientId, secret), do=discard (the values that wait for a test sign-in) or do=clear (force=1: even if sign-in would stop)
 //   POST /admin/settings       key, and value (JSON; null for never) to set it, or reset=1 to put it back to its default
 //   POST /admin/users          do=add (login, role), do=role (login, role), do=deploy (login, deploy: 1 or 0) or do=remove (login)
 //   POST /admin/credentials    name (anthropic, openai, github_mirror, cloudflare_deploy), and value to set or replace its key, or clear=1 to remove it
-//   POST /admin/share          rotate=1 (optional): Share with agent's admin token (tokens.ts, shareAdmin), for an outside
+//   POST /admin/share          rotate=1 (optional): Share with agent's admin token, for an outside
 //                              agent: { token, id, label, expires }; the same one until it's near its end (12 hours), or rotated
 //
-// The API keys page (credentials.ts) shows whether each key is set, its
+// The API keys page shows whether each key is set, its
 // last four characters, and who set it when; and, read-only, the secrets only the
 // deploy sets. The page never gets a saved key back, nor does any answer here.
 //
-// The Authentication page (auth-apps.ts, worker/auth-settings.ts) shows each
+// The Authentication page shows each
 // server's GitHub OAuth app: its client ID (public), whether its secret is
 // set (never the secret), the URLs GitHub needs, a live check, and how to
 // make one. A client ID and secret pasted there win over the deploy's, after
-// GitHub accepts them, and with the lockout rules auth-apps.ts gives.
+// GitHub accepts them, and with the lockout rules server/auth.ts gives.
 //
-// Every page has the layout every admin page shares (admin-layout.ts): the
+// Every page has the layout every admin page shares: the
 // breadcrumb, Share with agent, and the sidebar to Settings, API keys, Authentication, Change log, Users and Source.
 //
 // The POSTs answer JSON ({ entry } or { user } or { ok }, or { error } with
@@ -34,7 +34,7 @@
 // this file only shows it. An agent token (Session.agent) never gets in, even
 // an admin's. A setting the deploy locks is shown, read-only,
 // and so is a bootstrap admin (ADMINS), who can't be demoted or removed here,
-// and the last admin, who can't be demoted or removed at all (users.ts).
+// and the last admin, who can't be demoted or removed at all.
 
 import { ConfigError, type ConfigEntry, type SettingChange, type Settings, type SettingsVersion } from "../settings.ts";
 import { esc, ICON, link, page, type Platform, type Session, TIMES_SCRIPT, whoOf } from "../routes.ts";
@@ -259,7 +259,7 @@ export function credentialRow(c: CredentialEntry, session: Session): string {
 const CHANGES = 50;
 
 /**
- * Who made a version, and how (attribution.ts): the person's login, and, when they
+ * Who made a version, and how: the person's login, and, when they
  * acted through an agent or the factory, "via …" beside it. Never the agent alone.
  */
 function byHtml(by: string, via?: string | null): string {
@@ -342,7 +342,7 @@ const POST_SCRIPT = `
     return body;
   }
   const say = (hint, text, error) => { hint.textContent = text; hint.classList.toggle("error", !!error); };
-  // The page again, as the server has it now: in place, so the agent panel carries on (src/page/admin-nav.ts).
+  // The page again, as the server has it now: in place, so the agent panel carries on.
   const reload = () => window.ergaAdmin ? window.ergaAdmin.reload() : location.reload();
 `;
 
@@ -498,7 +498,7 @@ function deploySecretRow(d: DeploySecretEntry): string {
 
 /**
  * /admin/api-keys: every key and secret Erga needs from the services it
- * calls. The keys an admin sets here (credentials.ts), each with whether it is set, its last four
+ * calls. The keys an admin sets here, each with whether it is set, its last four
  * characters, and who set it when; then the secrets only the deploy sets,
  * read-only. The page never has a key.
  */

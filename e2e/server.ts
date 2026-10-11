@@ -1,11 +1,11 @@
-// A dev server for the tests (dev.ts: the Worker under Vite, as `bun start`
+// A dev server for the tests (dev/start.ts: the Worker under Vite, as `bun start`
 // runs it), on a free port, with its own state, settings (.dev.vars) and Vite
-// cache in a scratch folder, and a clean environment (env.ts). Signed in as
-// DEV_LOGIN ("tester") unless a request says otherwise (worker/auth.ts:
+// cache in a scratch folder, and a clean environment. Signed in as
+// DEV_LOGIN ("tester") unless a request says otherwise (cloudflare/auth.ts:
 // ?user=, /auth/github?as=). The editor's files are built once, in
 // global-setup.ts (ERGA_BUILT).
 //
-// Stopping kills the whole tree at once (dev.ts, Vite, workerd, and anything
+// Stopping kills the whole tree at once (dev/start.ts, Vite, workerd, and anything
 // left running under the scratch folder): tests don't
 // need the documents flushed to disk on the way out.
 
@@ -26,7 +26,7 @@ export interface ServerOptions {
   processEnv?: Record<string, string>;
   /** Up to how long to wait for it to answer. */
   startMs?: number;
-  /** A folder dev.ts opens as it starts (as `bun start <folder>` does), at the same address after every restart: `base`. */
+  /** A folder dev/start.ts opens as it starts (as `bun start <folder>` does), at the same address after every restart: `base`. */
   open?: string;
   /** This port, not a free one: for servers that name each other's address as they start (servers.pair). No second try if it's taken. */
   port?: number;
@@ -54,7 +54,7 @@ export interface Server {
   fixture(name: string): Promise<{ dir: string; address: string }>;
   stop(): void;
   /**
-   * Stops it as a restart or a crash would: SIGTERM lets the documents write what's unsaved first (dev.ts stops in
+   * Stops it as a restart or a crash would: SIGTERM lets the documents write what's unsaved first (dev/start.ts stops in
    * under 10 s), SIGKILL kills everything at once. The state and the port stay, for start().
    */
   halt(signal?: "SIGTERM" | "SIGKILL"): Promise<void>;
@@ -65,7 +65,7 @@ export interface Server {
   dispose(): void;
 }
 
-/** A port nothing listens on right now (dev.ts refuses a taken one, and we try again). */
+/** A port nothing listens on right now (dev/start.ts refuses a taken one, and we try again). */
 export function freePort(): Promise<number> {
   return new Promise((resolve, reject) => {
     const s = createServer();
@@ -137,7 +137,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<Server> {
       if (signal == "SIGTERM") {
         proc = null;
         try { process.kill(p.pid, "SIGTERM"); } catch { /* gone */ }
-        // Past dev.ts's own limit it's stuck: everything goes, as for SIGKILL.
+        // Past dev/start.ts's own limit it's stuck: everything goes, as for SIGKILL.
         if (await within(20_000)) { kill(descendants(p.pid)); return; }
         proc = p;
       }
@@ -162,7 +162,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<Server> {
     },
   };
   live.add(server);
-  /** Starts dev.ts on a free port (or on `fixed`) and waits until it answers; `again`: a restart, which waits for its own port. */
+  /** Starts dev/start.ts on a free port (or on `fixed`) and waits until it answers; `again`: a restart, which waits for its own port. */
   async function launch(fixed?: number, again = false) {
     const until = Date.now() + (opts.startMs ?? 90_000);
     for (let attempt = 0; ; attempt++) {
@@ -186,7 +186,7 @@ export async function startServer(opts: ServerOptions = {}): Promise<Server> {
         if (ok) { up = true; port = at; Object.assign(server, { root, port, base: root + doc }); return; }
         await new Promise((r) => setTimeout(r, 50));
       }
-      // Another server took the port between freePort and dev.ts: once more, on another. (A restart keeps its port: the
+      // Another server took the port between freePort and dev/start.ts: once more, on another. (A restart keeps its port: the
       // killed one's socket may linger a moment, so it tries that port again.)
       if (exited != null && /port \d+ is taken/.test(output) && !(fixed && !again) && attempt < (again ? 40 : 3)) {
         if (again) await new Promise((r) => setTimeout(r, 250));

@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
-// The front door's platform on Cloudflare (front.ts, Platform): the directory in D1 (d1.ts), a document a Durable
-// Object (doc-host.ts) named by its id, the templates and the landing project. The Worker's routes (worker/index.ts)
-// use it, and so does a document's host, for its agent's tools on the person's documents (server-tools.ts: list,
+// The front door's platform on Cloudflare: the directory in D1, a document a Durable
+// Object named by its id, the templates and the landing project. The Worker's routes
+// use it, and so does a document's host, for its agent's tools on the person's documents (agents/tools.ts: list,
 // make and delete them).
 
 import type { Route } from "../server/directory";
@@ -23,8 +23,8 @@ for (const [path, text] of Object.entries(import.meta.glob("../assets/templates/
 }
 
 /**
- * The repo's landing project (landing/), the front page the server makes for
- * itself (front.ts, seedLanding): its text files as they are, and its fonts
+ * The repo's landing project, the front page the server makes for
+ * itself: its text files as they are, and its fonts
  * and images as bytes (Vite inlines them as data: URLs, decoded here).
  */
 const LANDING: Record<string, string | Uint8Array> = {};
@@ -46,15 +46,15 @@ const landingOf = (env: Env): NonNullable<Platform["landing"]> => {
   return { files: LANDING, owner, editors: admins.filter((l) => l != owner) };
 };
 
-/** Where documents' pages run (front.ts, pagesOrigin): an origin each under PAGES_DOMAIN (erga-pages.dev), or the one PAGES_HOST. */
+/** Where documents' pages run: an origin each under PAGES_DOMAIN (erga-pages.dev), or the one PAGES_HOST. */
 const pagesDomainOf = (env: Env) => env.PAGES_DOMAIN?.trim() || "erga-pages.dev";
 export const pagesSite = (env: Env, url: URL) => url.hostname.endsWith(`.${pagesDomainOf(env)}`) || (!!env.PAGES_HOST && url.hostname == env.PAGES_HOST.trim()) || url.hostname.endsWith(".localhost");
 
 
 /**
- * The front door (front.ts) on Cloudflare: people sign in with GitHub, the
- * directory is in D1 (d1.ts), and a document is a Durable Object
- * (doc-host.ts) named by its id.
+ * The front door on Cloudflare: people sign in with GitHub, the
+ * directory is in D1, and a document is a Durable Object
+ * named by its id.
  */
 const local = (url: URL) => url.hostname == "localhost" || url.hostname.endsWith(".localhost") || url.hostname == "127.0.0.1";
 export const platform = (env: Env): Platform => {

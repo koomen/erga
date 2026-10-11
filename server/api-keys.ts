@@ -1,4 +1,4 @@
-// The API keys an admin enters on /admin/api-keys (admin.ts): Anthropic's,
+// The API keys an admin enters on /admin/api-keys: Anthropic's,
 // for the editor's agent, the admin's agent and version descriptions;
 // OpenAI's, for OpenAI's models; the GitHub mirror's token; and the
 // Cloudflare token a server deploys itself with. They are kept so:
@@ -6,20 +6,20 @@
 //   - Each key is encrypted with AES-GCM, a fresh IV each time, its name as
 //     the additional data, under a key derived from a deploy-time secret
 //     (FACTORY_KEY; locally the session secret), in a table of its own
-//     (credentials, migrations/0140_credentials.sql). Not in the settings,
+//     (credentials, server/migrations/0140_credentials.sql). Not in the settings,
 //     whose values are plain and copied into the change log.
 //   - Nothing here answers a key to a page: `list` says only whether there is
 //     one, its last four characters, and who set it when. `value` is for the
 //     server's own calls to the providers.
 //   - The change log gets "ANTHROPIC_API_KEY set by …", never the value.
-//   - Admins only (Users.mustAdmin); admin.ts takes changes only from an
+//   - Admins only (Users.mustAdmin); server/admin/pages.ts takes changes only from an
 //     admin, in a browser, with a same-origin request.
 //   - A server with no key stored uses the Worker secret of the same name
 //     (`withCredentials`), so a server deployed without this page still works.
 //
 // Staging has a FACTORY_KEY of its own, so production's keys, copied into
 // staging's database, don't open there: on each new copy the deploy removes
-// them and puts staging's own back (deploy/cloudflare.ts, ownCredentials). A
+// them and puts staging's own back. A
 // key that still doesn't open is shown as such (`unreadable`), and the agents
 // say so. The last four characters are kept in plain text, for the page.
 
@@ -73,7 +73,7 @@ export interface CredentialEntry {
   last4: string | null;
   updated: number | null;
   updatedBy: string | null;
-  /** How `updatedBy` did it, when not in person (attribution.ts). */
+  /** How `updatedBy` did it, when not in person. */
   updatedVia?: string | null;
   /** The deploy has a Worker secret of the same name: the server uses it while none is stored here. */
   fallback: boolean;
@@ -204,7 +204,7 @@ export class Credentials {
     return name;
   }
 
-  /** The change log's line for it (config.ts's server_config_versions): what happened to which key, never the key. */
+  /** The change log's line for it (server/settings.ts's server_config_versions): what happened to which key, never the key. */
   private logged(name: CredentialName, what: "set" | "replaced" | "cleared", at: number, by: string, via?: string): Statement {
     return changeLogEntry(at, by, via, [{ key: CREDENTIALS[name].env, from: null, to: null, credential: what }]);
   }

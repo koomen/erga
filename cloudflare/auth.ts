@@ -2,15 +2,15 @@
 //
 // The cookie holds the GitHub login and display name with an expiry, signed
 // with HMAC-SHA256 (SESSION_SECRET), so the Worker can trust it without a
-// session store. Only users may sign in (users.ts: a row in the users table,
+// session store. Only users may sign in (server/users.ts: a row in the users table,
 // or a login in ADMINS), and a session lasts only while its person still is
 // one (checked on every request, remembered for a few seconds).
 //
 // The GitHub OAuth app is the deploy's (GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET),
-// or the one an admin set on /admin/auth (worker/auth-settings.ts). New values
+// or the one an admin set on /admin/auth. New values
 // set there while the app in use works wait for a test sign-in: /auth/github
 // ?app=pending signs in with them, and an admin's sign-in that works puts them
-// in use (auth-apps.ts, the lockout rules). Everyone else keeps signing in with
+// in use (server/auth.ts, the lockout rules). Everyone else keeps signing in with
 // the values that work.
 //
 // A signed-in person can also mint a test token (/tokens): it signs in
@@ -59,7 +59,7 @@ const cookie = (request: Request, name: string, value: string, maxAge: number) =
  * unless it signed out (then nobody, until it signs in again: /auth/github).
  */
 export function sessionOf(env: Env, request: Request): Promise<Session | null> {
-  // Asked more than once for one request (the route, then the corner, account.ts): worked out once.
+  // Asked more than once for one request (the route, then the corner, server/account-menu.ts): worked out once.
   let session = sessions.get(request);
   if (!session) sessions.set(request, session = findSession(env, request));
   return session;
@@ -181,9 +181,9 @@ export async function finishSignIn(env: Env, request: Request): Promise<Response
   if (!user.login) return page("Sign-in failed", "GitHub didn't say who you are. <a href=\"/\">Try again</a>.", 400);
   // Their row says they're in (a bootstrap admin's is made now), with the name GitHub gives today.
   if (!(await users(env).signedIn(user.login, user.name?.trim() || user.login))) return page("Invite only", `Erga is invite-only for now, and <b>${escape(user.login)}</b> isn't on the list yet.`, 403);
-  // Their GitHub id: the factory authors their tasks' commits with their noreply address (worker/factory.ts, personOf).
+  // Their GitHub id: the factory authors their tasks' commits with their noreply address.
   if (typeof user.id == "number") await users(env).setGithubId(user.login, user.id).catch(() => {});
-  // A test sign-in with the pending values worked: an admin's puts them in use (worker/auth-settings.ts).
+  // A test sign-in with the pending values worked: an admin's puts them in use.
   if (testing && app) await testedSignIn(env, app.clientId, { ok: true, login: user.login, admin: await users(env).isAdmin({ login: user.login }) });
   return signIn(env, request, { login: user.login, name: user.name?.trim().split(/\s+/)[0] || user.login }, safeNext(next ?? null));
 }

@@ -1,5 +1,5 @@
 // The smoke run: the editor's core, end to end, on one dev server, in about a minute. `bun run test` runs it after
-// the typecheck and the unit tests (e2e/run.ts); the rest of the end-to-end tests are in e2e/full (bun run test:full).
+// the typecheck and the unit tests; the rest of the end-to-end tests are in e2e/full (bun run test:full).
 // Keep it small: a test here is one that would catch a broken editor. Add one only if it replaces another, or the run
 // stays well under its limit (E2E_SMOKE_LIMIT_S in e2e/run.ts).
 import { expect, servers, test } from "../fixtures";

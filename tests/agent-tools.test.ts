@@ -1,4 +1,4 @@
-// The tools both agents have (server-tools.ts), on an in-memory directory:
+// The tools both agents have, on an in-memory directory:
 // admin tools only for admins, a setting the deploy locks seen but not
 // changed, users managed as an admin can, and sharing by a document's owner.
 
@@ -126,7 +126,7 @@ test("sharing: the owner sees and changes who has access; nobody else may; the e
   expect(r.permissions.map((p: { login: string }) => p.login)).toEqual(["ada", "*"]);
 });
 
-/** The platform the documents list's tools need (front.ts, Platform), on the in-memory directory: templates, and documents that are only rows. */
+/** The platform the documents list's tools need, on the in-memory directory: templates, and documents that are only rows. */
 function platformOf(dir: Directory) {
   const made: string[] = [];
   const platform = {

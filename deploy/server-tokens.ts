@@ -12,7 +12,7 @@
 //   DNS Read                        its targets' zones only (staging's: erga.dev and erga-pages-staging.dev;
 //                                   production's: those and erga-pages.dev): read, never write
 //
-// What each permission is for (deploy/cloudflare.ts, runPipeline):
+// What each permission is for:
 //
 //   - Editor on a Worker ("Individual Workers Editor", the Specified Workers
 //     scope): upload its versions and deploy them, its secrets (kept with
@@ -20,7 +20,7 @@
 //     inherit it. It can't make or delete a Worker: the first deploy, from a
 //     machine with the setup's own credential, makes it.
 //   - D1 Write: staging gets a new database, a copy of
-//     production's export, and deletes its old one (deploy/cloudflare.ts, Target.snapshot); both apply migrations/.
+//     production's export, and deletes its old one; both apply server/migrations/.
 //     With no narrower scope, staging's token can also write production's D1: a known risk, as code that reaches
 //     staging can read it (production pushing its copy, or staging on its own account, would close it).
 //   - Read on the zones: find the zones by name, and check that the app's
@@ -29,7 +29,7 @@
 //     after that changes none of them, so no deploy token can move erga.dev,
 //     a route or a DNS record.
 //   - No Artifacts permission: a server reads and writes Erga's source through
-//     its Artifacts binding (worker/artifacts.ts), and the factory pushes
+//     its Artifacts binding, and the factory pushes
 //     through the server's Git endpoint, so no API token is needed for it.
 //   - No account read, no Workers Scripts on the account, nothing on the
 //     builder (a service binding needs no permission on the Worker it binds).

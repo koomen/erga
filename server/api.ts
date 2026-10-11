@@ -1,6 +1,6 @@
 // The server's API for agents: everything a person can do in the app, for an
-// agent holding one of their agent tokens (tokens.ts). It's the same token,
-// and the same mechanism, as a document's own external agent API (host.ts,
+// agent holding one of their agent tokens. It's the same token,
+// and the same mechanism, as a document's own external agent API (server/doc-host.ts,
 // /d/<id>/api/ext): this one covers the whole server, and offers each
 // document's tools for any document the person may edit.
 //
@@ -10,27 +10,27 @@
 //   POST /api/ext/tools/<name>     runs one, the body its arguments: {"ok": true, "content": [...]}
 //   POST /api/publish              a folder of files as a document (multipart or JSON), or into one
 //   GET  /api/docs/<id>/versions   a document's versions and what's published; POST .../publish sets it,
-//                                  POST .../versions/<versionId>/restore brings one back, or one file of it with {"path": ...} (versions.ts)
+//                                  POST .../versions/<versionId>/restore brings one back, or one file of it with {"path": ...}
 //   POST /api/auth/request         an agent asks for a token: a link for its person to approve
 //   POST /api/auth/poll            ... and collects the token once they have
 //   POST /mcp                      the same tools as a stateless MCP server (Streamable HTTP, JSON answers)
-//   GET  /api/docs/<id>/tree       a document's file tree; POST does a tree operation (tree.ts). For people
+//   GET  /api/docs/<id>/tree       a document's file tree; POST does a tree operation. For people
 //                                  signed in (the tree's UI) as well as tokens
 //   /tokens, /tokens/...           a person's tokens: make one (a scope, an expiry), revoke one, approve or deny an agent's request
 //   /settings                      their settings: their Cloudflare connection, the test token, and a link to /tokens
-//   POST /settings/cloudflare      connects their Cloudflare account: a token they paste (site-publish.ts), page only
+//   POST /settings/cloudflare      connects their Cloudflare account: a token they paste, page only
 //   POST /settings/cloudflare/disconnect   forgets it
 //
-// The Worker (worker/index.ts) sends those paths here, with the platform
-// that knows agent tokens (front.ts, withTokens). The share button's token
-// (<document>/api/share) is front.ts's.
+// The Worker sends those paths here, with the platform
+// that knows agent tokens. The share button's token
+// (<document>/api/share) is server/routes.ts's.
 //
 // Tools are a registry (`TOOLS`): a name, a description, arguments as JSON
 // Schema and a `run`, given who's asking and the platform. Adding one is
 // adding an entry; REST, MCP and the guide all list it. The document tools
-// (read, edit, write, ... from agent.ts) are added with a `document`
+// (read, edit, write, ... from agents/document.ts) are added with a `document`
 // argument and run in that document's host, as the person's agent. The
-// tools the editor's own agent has too (server-tools.ts: sharing, and the
+// tools the editor's own agent has too (agents/tools.ts: sharing, and the
 // server's settings and users for an admin) are added as they are; the admin
 // ones are listed only for an admin's token.
 
@@ -68,7 +68,7 @@ export interface ServerTool {
   readonly parameters: ArgsSchema;
   /** Only for server admins: listed only for an admin's token. */
   readonly admin?: boolean;
-  /** Reaches beyond one document (lists or makes documents, manages tokens): never for a document token (tokens.ts). */
+  /** Reaches beyond one document (lists or makes documents, manages tokens): never for a document token. */
   readonly wide?: boolean;
   /** Its answer: text, JSON (shown as text), or content items (text, images). Throws a ToolError the agent can act on. */
   run(args: Record<string, unknown>, ctx: ToolContext): Promise<string | object | ToolContent[]>;
@@ -214,7 +214,7 @@ export const TOOLS: ServerTool[] = [
   },
 ];
 
-/** The document tools (agent.ts), for any document: a `document` argument, and they run in its host. */
+/** The document tools, for any document: a `document` argument, and they run in its host. */
 let docTools: ServerTool[] | null = null;
 function documentTools(): ServerTool[] {
   return docTools ??= documentToolSpecs().map((spec: ToolSpec): ServerTool => {
@@ -235,10 +235,10 @@ function documentTools(): ServerTool[] {
   });
 }
 
-/** What a tool in server-tools.ts runs with, for an agent token's person. */
+/** What a tool in agents/tools.ts runs with, for an agent token's person. */
 const toolWho = (ctx: ToolContext): ToolWho => ({ dir: ctx.platform.directory, who: whoOf(ctx.session), origin: ctx.origin, auth: ctx.platform.auth?.(ctx.origin), sites: ctx.platform.sites?.(ctx.origin) });
 
-/** The tools the editor's agent has too (server-tools.ts): sharing, and the admin ones. The documents list's are in TOOLS above, with files. */
+/** The tools the editor's agent has too: sharing, and the admin ones. The documents list's are in TOOLS above, with files. */
 const sharedTools: ServerTool[] = SERVER_TOOLS.filter((t) => !t.docs).map((t) => ({
   name: t.name,
   description: t.description,
@@ -295,7 +295,7 @@ function resolve(ctx: ToolContext, ref: unknown, action: Action): Promise<DocRow
   return findDocument(toolWho(ctx), ref, action);
 }
 
-/** A request to a document's own host, as the agent's person, with what they may do there (front.ts, forwarded). */
+/** A request to a document's own host, as the agent's person, with what they may do there. */
 async function callDoc(ctx: ToolContext, doc: Route, path: string, init: RequestInit): Promise<Response> {
   const inner = new Request(new URL(path, ctx.origin), init);
   const access = accessOf(await ctx.platform.directory.access(whoOf(ctx.session), doc));
@@ -457,7 +457,7 @@ async function versionsApi(request: Request, platform: Platform, session: Sessio
 }
 
 /**
- * A document's file tree (host.ts, /api/tree): GET reads it, for whoever may
+ * A document's file tree (server/doc-host.ts, /api/tree): GET reads it, for whoever may
  * open the document; POST does one operation, for its editors. Signed in
  * with the app's session (the tree's UI, from this site's pages only) or an
  * agent token. Answers JSON: the tree, or {error}.

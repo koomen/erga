@@ -1,6 +1,6 @@
 // Publishing a document to a domain in the person's own Cloudflare account:
-// the calls to Cloudflare, the site's files, and the API. sites.ts has the
-// tables and the design; worker/site-host.ts runs each document's deploys.
+// the calls to Cloudflare, the site's files, and the API. server/sites.ts has the
+// tables and the design; cloudflare/site-host.ts runs each document's deploys.
 //
 //   GET    /api/docs/<id>/site          { canEdit, connection, site, deploy, tokenUrl } (?zones=1 adds your domains)
 //   POST   /api/docs/<id>/site          { hostname }: publishes the document there, with your Cloudflare connection
@@ -47,7 +47,7 @@ export interface SiteDeploy {
 }
 export const IDLE_SITE: SiteDeploy = { state: "idle", at: null, scheduledFor: null, version: null, error: null, by: null };
 
-/** What the API needs of the deploys (worker/site-host.ts), and of Cloudflare. */
+/** What the API needs of the deploys, and of Cloudflare. */
 export interface SiteOps {
   /** How to reach Cloudflare with this token: the real API, or (local development) a pretend one. */
   net(token: string): Fetch;

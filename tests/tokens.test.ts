@@ -1,5 +1,5 @@
-// Erga's own deploy tokens (deploy/tokens.ts), against the mock Cloudflare's
-// copy of Erga's account (deploy/mock.ts, fleet), which enforces a token's
+// Erga's own deploy tokens, against the mock Cloudflare's
+// copy of Erga's account, which enforces a token's
 // policies as Cloudflare does: staging's token deploys staging and nothing
 // else; production's deploys production and staging; neither can write DNS,
 // routes or custom domains. And production deploying staging itself when
@@ -53,7 +53,7 @@ const productionOf = (mock: Mock) => JSON.stringify({
   domains: mock.state.domains, routes: Object.values(mock.state.routes).flat(), dns: Object.values(mock.state.dns).flat(),
 });
 
-/** One of Erga's servers (deploy/branches.ts), its settings and secrets as the mock has them for its Worker. */
+/** One of Erga's servers, its settings and secrets as the mock has them for its Worker. */
 function server(mock: Mock, script: string, builder: ReturnType<typeof mockBuilder>, over: DeployEnv = {}) {
   const storage = new Map<string, unknown>();
   const scheduled: number[] = [];
@@ -63,7 +63,7 @@ function server(mock: Mock, script: string, builder: ReturnType<typeof mockBuild
     storage: { get: async (k) => structuredClone(storage.get(k)) as any, put: async (k, v) => { storage.set(k, structuredClone(v)); }, delete: async (k) => { storage.delete(k); } },
     env: { DEPLOY_TARGET: b.DEPLOY_TARGET?.text, CLOUDFLARE_ACCOUNT_ID: b.CLOUDFLARE_ACCOUNT_ID?.text ?? FLEET_ACCOUNT, CLOUDFLARE_DEPLOY_TOKEN: s.CLOUDFLARE_DEPLOY_TOKEN, SNAPSHOT_TOKEN: s.SNAPSHOT_TOKEN, DEPLOY_HOOK_SECRET: s.DEPLOY_HOOK_SECRET, ...over },
     net: mock.fetch, builder, schedule: (ms) => { scheduled.push(ms); }, changed: () => {}, ...quick,
-    // The source, through the server's own Artifacts binding (worker/source.ts), as on Cloudflare: the deploy token has no Artifacts permission.
+    // The source, through the server's own Artifacts binding, as on Cloudflare: the deploy token has no Artifacts permission.
     source: async () => ({ cloneUrl: "https://artifacts.mock/git/erga/erga.git", token: "art-read-binding" }),
   });
   return { instance, scheduled, async settle() { for (let i = 0; i < 10 && scheduled.length; i++) { scheduled.length = 0; await instance.alarm(); } } };

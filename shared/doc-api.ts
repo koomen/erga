@@ -1,6 +1,6 @@
 // The host's HTTP API, declared once: what each endpoint takes, what it
-// answers and how it fails. host.ts implements it; the editor
-// (src/page/main.ts) imports its types only, so none of this lands in the
+// answers and how it fails. server/doc-host.ts implements it; the editor
+// imports its types only, so none of this lands in the
 // browser bundle.
 //
 // Failures keep the shape callers already know ({ ok: false, reason } from
@@ -9,11 +9,11 @@
 // decode is a 400 saying what's wrong (BadRequest).
 //
 // The share button's /api/share isn't here either: tokens are the front
-// door's (front.ts, tokens.ts), which answers it before it reaches a document.
+// door's, which answers it before it reaches a document.
 //
 // Not here: the WebSockets (/api/room, /api/events), the files (the editor's
 // own, and the document's under /doc/), and /api/stored, which moves raw
-// bytes with ETags. Those stay plain routes in host.ts and worker/doc-host.ts.
+// bytes with ETags. Those stay plain routes in server/doc-host.ts and cloudflare/doc-host.ts.
 
 import * as Context from "effect/Context";
 import * as Schema from "effect/Schema";
@@ -31,7 +31,7 @@ export class Unauthorized extends Schema.TaggedError<Unauthorized>()("Unauthoriz
 /** The embedded agent is off (no key), or its session didn't start. */
 export class AgentOff extends Schema.TaggedError<AgentOff>()("AgentOff", { ...failed, reason: Schema.String }, { httpApiStatus: 503 }) {}
 export class NoSuchModel extends Schema.TaggedError<NoSuchModel>()("NoSuchModel", { ...failed, reason: Schema.String }, { httpApiStatus: 400 }) {}
-/** A message's attachments that can't be sent (src/page/attach.ts says why). */
+/** A message's attachments that can't be sent (client/attach.ts says why). */
 export class BadAttachment extends Schema.TaggedError<BadAttachment>()("BadAttachment", { ...failed, reason: Schema.String }, { httpApiStatus: 400 }) {}
 /** The scripted test model can't be switched. */
 export class ModelFixed extends Schema.TaggedError<ModelFixed>()("ModelFixed", { ...failed, reason: Schema.String }, { httpApiStatus: 409 }) {}
@@ -46,14 +46,14 @@ export class NameRefused extends Schema.TaggedError<NameRefused>()("NameRefused"
 // ------------------------------------------------------------ who's asking
 
 /** The person a request acts for. */
-/** Who's asking; an outside agent's request also says how they act through it (`via`, attribution.ts: "a shared agent (label)"). */
+/** Who's asking; an outside agent's request also says how they act through it (`via`, shared/attribution.ts: "a shared agent (label)"). */
 export class Person extends Context.Service<Person, { readonly id: string; readonly name: string; readonly via?: string }>()("erga/Person") {}
 
 /** Who a request is from: the person the front door vouched for (its session, or ?user= in local development). */
 export class PersonFromRequest extends HttpApiMiddleware.Service<PersonFromRequest, { provides: Person }>()("erga/PersonFromRequest") {}
 
 /**
- * An external agent: a request that came with an agent token (tokens.ts),
+ * An external agent: a request that came with an agent token,
  * which the front door checked and turned into the person it stands for.
  */
 export class ExternalAgent extends HttpApiMiddleware.Service<ExternalAgent, { provides: Person }>()("erga/ExternalAgent", {
@@ -67,7 +67,7 @@ export class ExplainBadRequests extends HttpApiMiddleware.Service<ExplainBadRequ
 
 const Ok = Schema.Struct({ ok: Schema.Literal(true) });
 
-/** What the document is called (directory.ts): its title, and its address, /<owner>/<slug>. */
+/** What the document is called: its title, and its address, /<owner>/<slug>. */
 export const DocName = Schema.Struct({
   id: Schema.String,
   owner: Schema.String,
@@ -109,7 +109,7 @@ export const ModelState = Schema.Struct({
 export type ModelState = typeof ModelState.Type;
 
 /**
- * The agent's transcript (src/page/agent-log.ts), passed through as the
+ * The agent's transcript, passed through as the
  * session keeps it (Any, not Unknown: its items leave optional fields
  * undefined, which JSON drops).
  */

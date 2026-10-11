@@ -1,20 +1,20 @@
-// Where Erga's repository is (source/repo.ts): one Cloudflare Artifacts repo,
+// Where Erga's repository is: one Cloudflare Artifacts repo,
 // "erga", reached through the Worker's Artifacts binding (ARTIFACTS,
 // cloudflare.config.ts, only when the deploy names a namespace). Erga uses the
 // binding for two things only: the repo's Git remote, and short-lived
-// repo-scoped tokens for it. Everything else is plain Git over HTTPS
-// (source/remote.ts), the same protocol any git client uses. Not the REST
+// repo-scoped tokens for it. Everything else is plain Git over HTTPS,
+// the same protocol any git client uses. Not the REST
 // API: that needs a Cloudflare API token with Artifacts Edit as a secret,
 // which can do far more than one repository's tokens.
 //
-// Erga proxies Git itself (worker/source.ts) rather than hand out this
+// Erga proxies Git itself rather than hand out this
 // remote: Artifacts' tokens don't know Erga's admins, Artifacts can't hold
 // Erga's rules (two branches, main only forward), and every branch move must
 // go through Erga so it can tell the Source page, the deploys and the mirror.
 //
 // Artifacts has no local mode (the binding in `vite dev` only proxies to the
 // real service), so local development uses a stand-in: the dev server serves
-// a bare repository with real `git http-backend` (dev/git-server.ts), and
+// a bare repository with real `git http-backend`, and
 // this file mints tokens for it the way Artifacts would (read or write, with
 // an expiry), signed with the dev server's secret. The GitHub mirror is a
 // pretend GitHub there too: local development never reaches the real ones.
@@ -24,7 +24,7 @@ import type { Env } from "./env";
 
 /** The repository's name in the namespace. */
 export const REPO = "erga";
-/** The pretend GitHub's token (dev/git-server.ts, MOCK_GITHUB_TOKEN). */
+/** The pretend GitHub's token. */
 const MOCK_GITHUB_TOKEN = "erga-dev-github-token";
 /** Erga's canonical repository on GitHub, which becomes a mirror. */
 export const GITHUB_DEFAULT = "https://github.com/koomen/erga.git";

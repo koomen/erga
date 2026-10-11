@@ -1,5 +1,5 @@
-// The factory's agent reading Erga's own source (source/browse.ts,
-// SourceRepo.read, admin-agent/agent.ts `sourceTools`): list a folder, read a file
+// The factory's agent reading Erga's own source (server/source/browse.ts,
+// SourceRepo.read, agents/admin.ts `sourceTools`): list a folder, read a file
 // or some of its lines, search, and the git log, at staging (the default), main,
 // a task's branch or a commit, in front of pretend Artifacts (real git,
 // tests/source-fixture.ts). Read-only: with a read token only, and no branch moves.

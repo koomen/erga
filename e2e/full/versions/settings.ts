@@ -1,4 +1,4 @@
-// Helpers for the document settings tests (src/page/settings.ts) on
+// Helpers for the document settings tests on
 // servers.short(): documents whose every version is its own draft ("Draft n"
 // in the page), the editor opened at a document's #edit address, and the
 // settings popover's parts.
@@ -44,7 +44,7 @@ export async function draftDoc(server: Server, title: string, upTo: number, styl
     },
     /**
      * Holds back the cut of what's pending until `release()`: the room waits for an agent mid-turn (its busy flag on
-     * awareness, worker/doc-host.ts agentWorking), so edits stay "not in a version" however slow the test is.
+     * awareness, cloudflare/doc-host.ts agentWorking), so edits stay "not in a version" however slow the test is.
      */
     async hold() {
       const agent = await Participant.join(roomOf(server, id), "tester");

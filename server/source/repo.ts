@@ -12,7 +12,7 @@
 // commits or conflicts between them.
 //
 // A push is staged before it lands: its objects go to Artifacts under a
-// quarantine branch (refs/heads/erga-incoming/...), Erga reads the new
+// quarantine branch, Erga reads the new
 // commits back and checks them, and only then moves the real branches, each
 // only from where it was (Artifacts refuses a move whose old value is stale,
 // so two pushes at once can't lose one), and drops the quarantine branches.
@@ -25,7 +25,7 @@
 //
 // Platform-neutral: storage is a small synchronous SQL interface (a Durable
 // Object's SQLite, or bun:sqlite in tests), and the repository and the mirror
-// are smart HTTP remotes (source/remote.ts).
+// are smart HTTP remotes.
 
 import {
   concat, emptyPack, FLUSH, isSha, isTreeMode, parseCommit, parseTree, pkt, readPack, readPkts, subjectOf, text,
@@ -43,14 +43,14 @@ const QUARANTINE = "refs/heads/erga-incoming/";
 export const LOG = 100;
 /** At most how many commits a task's card holds. */
 export const TASK_COMMITS = 100;
-/** A task's merge commit, by the factory (factory/vm/merge.ts): "Merge task/<id>-<slug>: title". */
+/** A task's merge commit, by the factory: "Merge task/<id>-<slug>: title". */
 const TASK_MERGE = /^Merge (task\/(\d+)-[^\s:]*): (.+)$/;
 /** How many of staging's commits just after main's head the Source page gets (BranchInfo.afterMain). */
 export const AFTER_MAIN = 5;
 
 export interface Db { exec<T = Record<string, unknown>>(sql: string, ...params: (string | number | null)[]): T[] }
 
-/** Someone acting on the repository: an admin, by their GitHub login, and how when not in person (attribution.ts: "their admin agent", "a shared agent (label)", "the factory (task #3)"). */
+/** Someone acting on the repository: an admin, by their GitHub login, and how when not in person (shared/attribution.ts: "their admin agent", "a shared agent (label)", "the factory (task #3)"). */
 export interface Actor { login: string; name: string; via?: string }
 
 export interface MirrorStatus {
@@ -58,7 +58,7 @@ export interface MirrorStatus {
   url: string | null;
   /** When it last brought the mirror up to date (ms), if ever. */
   lastPushAt: number | null;
-  /** Whom its last push was for (attribution.ts, byLine): who moved the branch it carried, or asked for the push ("ada, via their admin agent"). */
+  /** Whom its last push was for: who moved the branch it carried, or asked for the push ("ada, via their admin agent"). */
   lastPushBy?: string | null;
   error: string | null;
   /** off (not set up), idle, pushing. */
@@ -81,7 +81,7 @@ export interface BranchInfo {
   /** The AFTER_MAIN commits only on staging that come just after main's head, newest first (staging only): the Source page shows them below its break, when staging is far ahead. */
   afterMain?: CommitInfo[];
 }
-/** A branch moved: `by` (a login) did it, `via` how when not in person (attribution.ts). */
+/** A branch moved: `by` (a login) did it, `via` how when not in person. */
 export interface Move {
   branch: Branch; old: string; new: string; how: "push" | "merge"; by: string; via?: string | null; at: number;
   /** main moved past the production gate (a merge's emergency override, before the gate was removed): the reason given, and what the gate said. */
@@ -570,7 +570,7 @@ export class SourceRepo {
   // ---- Reading the source, for the admin's agent and the deploys ------------------------
 
   /**
-   * What the admin's agent's source tools ask (source/browse.ts): a folder's listing, a file's lines, a search,
+   * What the admin's agent's source tools ask: a folder's listing, a file's lines, a search,
    * or the log, at a branch (staging if none is named; also main, or a task's branch) or a commit. Read-only: it
    * only lists refs and fetches, with a read token. Throws a SourceError the agent can act on.
    */
@@ -599,7 +599,7 @@ export class SourceRepo {
   }
 
   /**
-   * For the factory (worker/factory.ts, factory/recover.ts): every branch's head, and staging's newest LOG commits
+   * For the factory: every branch's head, and staging's newest LOG commits
    * (sha and subject), so it can see whether a task's merge reached staging. Read-only, with a read token.
    */
   async stagingLog(): Promise<{ heads: Record<string, string>; commits: { sha: string; subject: string }[] }> {

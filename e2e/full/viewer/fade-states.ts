@@ -6,7 +6,7 @@ import { sample, screenshot } from "./viewer";
 
 const W = 1300, H = 860;
 
-/** Awaited at a file's top level: the server, and the homepage served directly, before any test (fixtures.ts). */
+/** Awaited at a file's top level: the server, and the homepage served directly, before any test. */
 export async function fadeStates(mode: Mode) {
   const name = mode == "home" ? "the homepage" : "a document's page";
   const s = await servers.main();

@@ -1,4 +1,4 @@
-// Where the local agent's key comes from (dev/agent-key.ts): a server of its own for each case ("Agent off").
+// Where the local agent's key comes from: a server of its own for each case ("Agent off").
 import { expect, servers, test } from "../../fixtures";
 
 // A server of this file's own, with its key.

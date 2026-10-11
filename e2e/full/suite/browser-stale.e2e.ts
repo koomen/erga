@@ -1,4 +1,4 @@
-// The multiplayer suite in real tabs (e2e/suite/suites/browser.ts): a tab whose history the room lost says so.
+// The multiplayer suite in real tabs: a tab whose history the room lost says so.
 import { expect, until } from "./harness";
 import { browserTest, openAs } from "./suite";
 

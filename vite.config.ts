@@ -12,12 +12,11 @@ const markdownAsText: Plugin = {
 
 // The Worker's local state: its Durable Objects' storage, and the files linked to documents.
 const stateDir = resolve(process.env.ERGA_STATE_DIR || ".cloudflare/state");
-// What the dev server proves itself to the Worker with (cloudflare.config.ts reads it): new each run unless dev.ts set it.
+// What the dev server proves itself to the Worker with (cloudflare.config.ts reads it): new each run unless dev/start.ts set it.
 process.env.ERGA_LINK_SECRET ||= randomBytes(24).toString("hex");
 
 export default defineConfig({
-  // The editor's own files, gathered by site.sh: they're the Worker's static assets.
-  // (A test that changes them works on a copy: ERGA_BUILD_DIR, e2e/redeploy/new-release.e2e.ts.)
+  // The editor's own files, gathered by client/build.sh: they're the Worker's static assets.
   publicDir: process.env.ERGA_BUILD_DIR || ".build",
   // Tests point these elsewhere: their own .dev.vars, and a cache of their own so servers started at once don't trip on each other.
   // The cache is the checkout's own, not node_modules/.vite: a worktree's node_modules may be a link to another checkout's.
@@ -37,7 +36,7 @@ export default defineConfig({
       cwd: process.env.ERGA_CWD || process.cwd(),
       reload: process.env.ERGA_RELOAD == "1",
     }),
-    // The Worker's debugger: off for tests (ERGA_INSPECTOR=0), else on the port dev.ts picked beside the server's.
+    // The Worker's debugger: off for tests (ERGA_INSPECTOR=0), else on the port dev/start.ts picked beside the server's.
     cloudflare({ persistState: { path: stateDir }, ...(process.env.ERGA_INSPECTOR == "0" ? { inspectorPort: false } : process.env.ERGA_INSPECTOR_PORT ? { inspectorPort: Number(process.env.ERGA_INSPECTOR_PORT) } : {}) }),
   ],
 });

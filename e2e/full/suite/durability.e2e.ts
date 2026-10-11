@@ -1,4 +1,4 @@
-// The multiplayer suite, durability (e2e/suite/suites/durability.ts) on the shared server: everyone leaving, idle eviction, a foreign replica.
+// The multiplayer suite, durability on the shared server: everyone leaving, idle eviction, a foreign replica.
 import { durability } from "./suites/durability";
 import { register } from "./suite";
 

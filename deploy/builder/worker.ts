@@ -19,7 +19,7 @@
 // the image with Docker and pushes it to Cloudflare's registry).
 
 //
-// The release cache (cache.ts): a commit built once is answered from the
+// The release cache: a commit built once is answered from the
 // cache after, with no container (production's deploy of a commit staging
 // built). It's kept in one more object of the same class, named CACHE, which
 // no build's id can be (ids are letters, digits, _ and - only).

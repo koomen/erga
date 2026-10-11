@@ -3,10 +3,10 @@
 // so a server whose deploy target says `adminsOnly`
 // (deploy/targets.json; the pipeline sets DEPLOY_TARGET on each deploy, so no
 // setting turns this off) lets a request in only with admin power: an
-// admin's signed-in session, or an admin-scope token (tokens.ts;
+// admin's signed-in session, or an admin-scope token (server/tokens.ts;
 // Users.actsAsAdmin). Anyone else gets a page (signed out: sign in; signed in:
 // admins only, with a link to production) or a JSON 403, and Git a 401 that
-// asks for a token. This is the one guard, at the front door (worker/index.ts,
+// asks for a token. This is the one guard, at the front door (cloudflare/index.ts,
 // before every route); production and servers made
 // by /deploy never run it.
 //
@@ -20,25 +20,25 @@
 //   GET /api/deploys/version        the health check the deploy pipeline waits on (just the release and target)
 //   /api/deploys/<name>/hook, /api/deploys/status, and /api/deploys/... with DEPLOY_HOOK_SECRET
 //                                   server to server: production passes branch moves on and reads staging's status,
-//                                   logs and history, with the shared secret (worker/deploys.ts checks it)
+//                                   logs and history, with the shared secret (cloudflare/branch-deploys.ts checks it)
 //   /api/sign-in/... with DEPLOY_HOOK_SECRET
 //                                   production's Authentication page reads staging's sign-in status, and sets staging's
-//                                   GitHub app: until staging has one, no admin can sign in there (worker/auth-settings.ts)
-//   /api/snapshot/...               the deploy copying production's documents in, with SNAPSHOT_TOKEN (deploy/snapshot.ts)
-//   /__erga/...                     local development only, behind the dev server's secret (worker/index.ts, linked)
+//                                   GitHub app: until staging has one, no admin can sign in there
+//   /api/snapshot/...               the deploy copying production's documents in, with SNAPSHOT_TOKEN
+//   /__erga/...                     local development only, behind the dev server's secret
 //   the API, MCP and documents' own routes with an admin's token of another scope (document, documents)
 //                                   an admin shares a document with an outside agent (the editor's Share card) and it
 //                                   must work here as on production: /llms.txt, /api, /api/ext/..., /mcp, /api/publish,
 //                                   /api/docs/<id>/(versions|publish|tree), and /<owner or d>/<doc>/(api|doc)/..., and
-//                                   nothing else (worker/token-paths.ts). The token's person must be an admin at each request, as
+//                                   nothing else. The token's person must be an admin at each request, as
 //                                   for the pages origin; a test person's token never passes. Past this guard the token's
-//                                   own scope decides, as on production (tokens.ts, server-api.ts, front.ts): no admin
+//                                   own scope decides, as on production: no admin
 //                                   power, so no /admin, settings, users, deploys, credentials, Source page or Git
 //
 // Everything else needs an admin: documents and their sockets, /docs, the front page and the homepage, /new, /deploy,
 // /settings and /tokens, the APIs and MCP, the Git endpoint (anonymous reads too), and the documents' pages origin
 // (*.erga-pages-staging.dev). That origin has no cookies: on this server its tokens name the admin they were made for
-// (front.ts, pagesToken's `by`), and a file is served only while that person is still an admin. A token without a name
+// (server/routes.ts, pagesToken's `by`), and a file is served only while that person is still an admin. A token without a name
 // (made before this guard, or by another server) is refused.
 
 import { isAdminsOnly, TARGETS } from "../deploy/targets";
@@ -53,7 +53,7 @@ import { tokenPath } from "./token-paths";
 /** Whether this server is for Erga's admins only: its deploy target says so (staging). */
 export const adminsOnly = (env: Pick<Env, "DEPLOY_TARGET">): boolean => isAdminsOnly(env.DEPLOY_TARGET);
 
-/** The editor's own files (worker/index.ts serves them from ASSETS). */
+/** The editor's own files (cloudflare/index.ts serves them from ASSETS). */
 const ASSET_FILES = new Set(["/page.js", "/frame.js", "/settings.js", "/pages-tree.js", "/admin-agent.js", "/admin-share.js", "/admin-nav.js", "/style.css", "/editor.html"]);
 
 /** The request needs no admin: one of the exemptions above. */

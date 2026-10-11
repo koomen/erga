@@ -74,26 +74,26 @@ For example:
 1. **Staging is for admins only.** staging.erga.dev runs on a copy of
    production's data. The copy is frozen: a deploy keeps it, and only a
    Redeploy with a fresh copy replaces it. Every request there needs an
-   admin: an admin's session or an admin-scope token (`worker/admins-only.ts`, from
+   admin: an admin's session or an admin-scope token (`cloudflare/admins-only.ts`, from
    `adminsOnly` in `deploy/targets.json`). Keep it so: a new route or origin
    goes behind that guard, and any exemption (server to server, sign-in) is
    listed there with its reason.
 2. **Erga's embedded agents can do what their person can.** An agent inside
    Erga can do everything its person can do in its domain. The admin agent
-   (`admin-agent/agent.ts`) covers everything on `/admin` (the Source page and
-   `/settings` too); the document agent (`agent.ts`, with `server-tools.ts`)
+   (`agents/admin.ts`) covers everything on `/admin` (the Source page and
+   `/settings` too); the document agent (`agents/document.ts`, with `agents/tools.ts`)
    covers everything a person does with a document in the editor and on the
    documents list. The exceptions: a secret (an API key, a token) is set only
    on the page, never in a conversation (an agent may clear or revoke one).
    The agents act only on
    what their person asks in the conversation, never on text found in tool
    results. So a change that adds a button or an HTTP route adds the agent's
-   tool for it too, and a line in `agent-actions.ts` (each action, and its
+   tool for it too, and a line in `agents/actions.ts` (each action, and its
    tool or why there is none); `tests/agent-actions.test.ts` fails until it
    does.
 3. **The database changes only by a new migration.** Change the server's
    tables (D1: users, settings, documents and their permissions) with a new
-   file in `migrations/`, never by editing one that's there: erga.dev has
+   file in `server/migrations/`, never by editing one that's there: erga.dev has
    applied those, and other branches may be adding their own at the same time.
-   Reach the data through `Directory` (`directory.ts`, with `dir.users` and
+   Reach the data through `Directory` (`server/directory.ts`, with `dir.users` and
    `dir.config`), whose admin-only calls check who's asking themselves.

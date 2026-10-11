@@ -1,7 +1,7 @@
-// The admin page's controls for settings (admin.ts), against a stand-in
+// The admin page's controls for settings, against a stand-in
 // directory: a setting that holds users (kind "users") is a picker, with a
 // chip for each user and a box to add one from the server's users; the
-// logins parser (config.ts) checks what it saves. In the browser (adding and
+// logins parser checks what it saves. In the browser (adding and
 // taking out users, Save): e2e/config/picker.e2e.ts.
 
 import { afterAll, expect, test } from "bun:test";

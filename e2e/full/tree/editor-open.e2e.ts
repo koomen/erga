@@ -12,7 +12,7 @@ test("the title opens the tree: the document by its title as the root row, marke
   await openCard(page);
   const r = await rows(page);
   expect(r[0]).toEqual(["index.html", "Field guide", 1, true]);
-  // No stylesheet, font or image, nor folders of only those (assets/, fonts/).
+  // No stylesheet, font or image, nor folders of only those.
   expect(r.slice(1).map((x) => [x[0], x[2]])).toEqual([["blog", 2], ["about.html", 2], ["contact.html", 2]]);
   expect(r.find((x) => x[0] == "about.html")?.[1]).toBe("About us");
   expect(await js(page, `document.getElementById("doc-title").getAttribute("aria-expanded") == "true"`)).toBe(true);

@@ -1,6 +1,6 @@
 // The builder's container: a small HTTP server that builds one commit at a
-// time (build.ts) and streams how it's going. The builder Worker
-// (deploy/builder/worker.ts) starts the container and forwards the
+// time and streams how it's going. The builder Worker
+// starts the container and forwards the
 // pipeline's request to it (deploy/builder/client.ts sends it).
 //
 //   POST /build {source: {cloneUrl, token}, commit, branch}

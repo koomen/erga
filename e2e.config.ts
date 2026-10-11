@@ -1,17 +1,17 @@
-// The end-to-end tests, under e2e (tester-army/e2e) with its web engine. Pure unit tests stay under `bun test`
-// (tests/*.test.ts). e2e/run.ts runs both, and picks which end-to-end tests with ERGA_E2E:
+// The end-to-end tests, under e2e with its web engine. Pure unit tests stay under `bun test`
+//. e2e/run.ts runs both, and picks which end-to-end tests with ERGA_E2E:
 //
 //   smoke (the default)   e2e/smoke: the editor's core, on one worker and one dev server, in about a minute
 //   full                  e2e/full: the whole suite, one worker per usable core (bun run test:full)
 //   all                   both, for files named on the command line (bun run test:e2e e2e/full/page/)
 //
 // Each test is small and independent and makes its own data. e2e hands a worker a whole file at a time, so the files
-// are small. What is expensive is per worker, started lazily (e2e/fixtures.ts); each test gets a fresh browser
+// are small. What is expensive is per worker, started lazily; each test gets a fresh browser
 // context. Every test has a time limit (TEST_MS, below); every wait is a condition (locators, expect.poll, until),
 // never a pause.
 //
 // This file is imported by the runner and again by every worker. The first import makes the environment hermetic
-// (e2e/env.ts) and builds the editor's files once for every dev server (ERGA_BUILT); the workers inherit it.
+// and builds the editor's files once for every dev server (ERGA_BUILT); the workers inherit it.
 
 import { spawnSync } from "node:child_process";
 import type { E2EConfig } from "e2e";
@@ -30,16 +30,16 @@ if (hermetic() && !process.env.ERGA_BUILT) {
 
 const which = process.env.ERGA_E2E ?? "smoke";
 const TESTS = { smoke: ["e2e/smoke/**/*.e2e.ts"], full: ["e2e/full/**/*.e2e.ts"], all: ["e2e/**/*.e2e.ts"] }[which] ?? ["e2e/smoke/**/*.e2e.ts"];
-/** The smoke run: one worker, one dev server. Else one worker for each usable core (e2e/cores.ts); TEST_JOBS=n picks it. */
+/** The smoke run: one worker, one dev server. Else one worker for each usable core; TEST_JOBS=n picks it. */
 const workers = which == "smoke" ? 1 : testJobs({ env: { TEST_JOBS: process.env.TEST_JOBS, TEST_CORES_PER_JOB: "1", TEST_MEM_PER_JOB_MB: process.env.TEST_MEM_PER_JOB_MB } }).jobs;
 
 export default {
   projectId: "erga",
-  // The app's address is each worker's own dev server (e2e/fixtures.ts), so tests navigate by full URL; this is never opened.
+  // The app's address is each worker's own dev server, so tests navigate by full URL; this is never opened.
   targets: [{ name: "web", engine, app: { url: "http://127.0.0.1:9" } }],
   tests: TESTS,
   // Not a test's limit (ERGA_TEST_MS is): e2e gives this to each test.beforeAll too, which starts the worker's dev
-  // servers (e2e/fixtures.ts). Four cold starts at once in a 4-core VM take longer than a test may.
+  // servers. Four cold starts at once in a 4-core VM take longer than a test may.
   timeout: 90_000,
   assertionTimeout: 5_000,
   actionTimeout: 5_000,

@@ -1,4 +1,4 @@
-// A document's page can't act as whoever has it open (src/page/bridge.ts). The page here tries
+// A document's page can't act as whoever has it open. The page here tries
 // everything a page written to steal would: reach the editor's window, read the session, call the editor's own site
 // as the viewer (their documents, their agent), and forge messages to the shell. It writes down what it got, and the
 // test reads that from the page. (It can still drive the page editor next to it, which is on its origin: that edits

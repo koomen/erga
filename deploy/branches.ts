@@ -2,15 +2,15 @@
 // target it is (DEPLOY_TARGET: production on erga.dev, staging on
 // staging.erga.dev; deploy/targets.ts) and deploys itself when its branch
 // moves: the source repo (task #39, Cloudflare Artifacts) calls deployHook
-// (deploy/index.ts) after a push or merge, and this builds the new head
+// after a push or merge, and this builds the new head
 // (the builder: deploy/builder/) and runs the deploy pipeline
-// (deploy/cloudflare.ts, runPipeline) on the server's own Worker, from inside
+// on the server's own Worker, from inside
 // that Worker. So staging's pipeline builds and deploys staging's own commit,
 // and a deploy that works there is the same code that will deploy erga.dev.
 //
-// It runs in one Durable Object per server (worker/pipeline.ts, "deploys"),
+// It runs in one Durable Object per server (cloudflare/pipeline.ts, "deploys"),
 // which gives it storage and an alarm; everything else is here, so the tests
-// run it as it is, against the mock Cloudflare (deploy/mock.ts).
+// run it as it is, against the mock Cloudflare.
 //
 // The hard part is that a server deploying itself is restarted by its own
 // new version, half way through the deploy: Cloudflare resets a Worker's
@@ -39,7 +39,7 @@
 //
 // Staging's copy of production's data is frozen: a deploy keeps it, however
 // old, and runs a new migration on it in place. Only a Redeploy that asks
-// for a fresh copy copies production's data afresh (deploy/cloudflare.ts,
+// for a fresh copy copies production's data afresh (deploy/pipeline.ts,
 // copyReason).
 //
 // Production builds the same commits staging built (main moves only to a
@@ -112,19 +112,19 @@ export interface TargetStatus {
   remote?: boolean;
 }
 
-/** Builds a commit into a release (deploy/builder/client.ts in production; deploy/mock.ts's in tests). */
+/** Builds a commit into a release (deploy/builder/client.ts in production; deploy/mock-cloudflare.ts's in tests). */
 export interface Builder {
   /** `signal` stops the build (and its container's work) when the deploy is cancelled. */
   build(o: { commit: string; branch: string; source: Source }, log: (line: string) => void, signal?: AbortSignal): Promise<Release>;
 }
 
-/** The server's settings and secrets the branch deploys use (worker/env.ts). */
+/** The server's settings and secrets the branch deploys use. */
 export interface DeployEnv {
   DEPLOY_TARGET?: string;
   CLOUDFLARE_ACCOUNT_ID?: string;
-  /** This server's Cloudflare API token (deploy/tokens.ts: Editor on the Workers it may deploy, D1, read on its zones). Its presence turns branch deploys on. */
+  /** This server's Cloudflare API token (deploy/server-tokens.ts: Editor on the Workers it may deploy, D1, read on its zones). Its presence turns branch deploys on. */
   CLOUDFLARE_DEPLOY_TOKEN?: string;
-  /** Shared by production and staging: reads production's documents (deploy/snapshot.ts). */
+  /** Shared by production and staging: reads production's documents. */
   SNAPSHOT_TOKEN?: string;
   /** Shared by the servers that tell each other of branch moves. */
   DEPLOY_HOOK_SECRET?: string;
@@ -140,7 +140,7 @@ export interface Deps {
   schedule(ms: number): Promise<void> | void;
   /** Something in the status changed (an event to whoever listens). */
   changed(): void;
-  /** Where to clone the commit from (the source repo's own reader, task #39's sourceForBuild); else the REST API's (deploy/source.ts). */
+  /** Where to clone the commit from (the source repo's own reader, task #39's sourceForBuild); else the REST API's. */
   source?(commit: string): Promise<Source | null>;
   /**
    * A branch's head as this server's own repository has it (task #39's).
@@ -158,7 +158,7 @@ export interface Deps {
 
 /** `attempt`: 1 for a deploy as asked for; 2 and on when it runs again by itself after a restart stopped it before the upload. */
 interface Run { deployId: string; commit: string; started: number; cursor: StepId | null; carry: Carry; attempt?: number; fresh?: Fresh }
-/** Staging copies production's data afresh (deploy/cloudflare.ts, Target.snapshot.fresh) only when asked for (`force`). */
+/** Staging copies production's data afresh only when asked for (`force`). */
 interface Fresh { force?: boolean }
 
 /** One line of a deploy's log: when (ms since the epoch), what, and which step it belongs to. */
@@ -785,7 +785,7 @@ function step(s: Stored, id: StepStatus["id"], status: StepStatus["status"], det
 }
 
 /**
- * One of Erga's own targets (deploy/targets.ts) as the pipeline's Target: in
+ * One of Erga's own targets as the pipeline's Target: in
  * this server's account, its secrets kept from version to version (set once:
  * deploy/setup.ts), the builder bound, and, for staging, production's data
  * copied in.
@@ -801,7 +801,7 @@ export function targetOf(spec: TargetSpec, env: DeployEnv, fresh?: Fresh): Targe
     secrets: {},
     keepSecrets: true,
     services: { BUILDER },
-    // Erga's own source (worker/artifacts.ts): the Git endpoint pushes go through.
+    // Erga's own source: the Git endpoint pushes go through.
     artifacts: SOURCE.namespace,
     checkVersion: true,
     production: spec.name == "production",

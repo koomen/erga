@@ -1,20 +1,20 @@
 // The admin's agent, on every admin page: an agent panel like the editor's
-// (the same transcript, src/page/agent-log.ts, and the same panel,
-// src/page/agent-chat.ts, run by src/page/admin-agent.ts). Its tools: the
-// admin tools of server-tools.ts (`adminTools`): the settings on /admin,
+// (the same transcript, client/agent-log.ts, and the same panel,
+// client/agent-chat.ts, run by client/admin-agent.ts). Its tools: the
+// admin tools of agents/tools.ts (`adminTools`): the settings on /admin,
 // their change log, the API keys (read, clear), sign-in (read, clear:
 // /admin/auth), and the users. Read-only tools for Erga's own source
 // (`sourceTools`: list, read, search and the git log, at a branch or commit)
-// in the server's copy of its repository (source/browse.ts). And the Source
+// in the server's copy of its repository. And the Source
 // page's (`dashboardTools`): staging and main, production's deploy (main
 // moved to staging), the mirror, the deploys and their logs, the homepage's
 // deploy, and the admin's own agent tokens. One session per admin, in the
-// AdminAgent Durable Object (worker/admin-agent.ts), so it keeps working when
+// AdminAgent Durable Object, so it keeps working when
 // the tab closes.
 //
 // The rule: the agent can do everything its admin can do on /admin (and the
 // Source page and /settings), so the admin can ask for anything there in
-// words. agent-actions.ts lists each action with its tool, and
+// words. agents/actions.ts lists each action with its tool, and
 // tests/agent-actions.test.ts fails when one has none. The one exception is
 // a secret: an API key or a new token is pasted or made only on the page,
 // never in a conversation; the agent can clear or revoke them.
@@ -27,7 +27,7 @@
 // data and to act only on what the admin asks in the conversation.
 //
 // An outside agent (Claude Code on a laptop) gets the same powers over HTTP
-// with an admin token (tokens.ts; Share with agent on the admin pages makes
+// with an admin token (server/tokens.ts; Share with agent on the admin pages makes
 // one that ends within 12 hours), and reads `adminGuide` first.
 
 import { Agent as PiAgent, type AgentEvent, type AgentMessage, type AgentTool } from "@mariozechner/pi-agent-core";
@@ -108,7 +108,7 @@ export function dashboardTools(ops: DashboardOps, guard: () => Promise<void>): A
 }
 
 /**
- * The admin tools (server-tools.ts: settings, their change log, API keys' status, users), for the admin's agent.
+ * The admin tools (agents/tools.ts: settings, their change log, API keys' status, users), for the admin's agent.
  * `as` is the admin themselves, with the unlock their page sent last: the directory checks them on every call, and
  * what they change is theirs, in the settings' change log and the users' "added by". `guard` checks first, as for
  * the other tools (the unlock's key not revoked).
@@ -125,8 +125,8 @@ export function adminTools(as: () => ToolWho, guard: () => Promise<void>): Agent
 }
 
 /**
- * The source tools: read-only reads of Erga's own repository, the server's copy (SourceHost, source/repo.ts `read`,
- * source/browse.ts), at a branch or a commit, staging by default. Nothing in them writes: they list refs and fetch,
+ * The source tools: read-only reads of Erga's own repository, the server's copy (SourceHost, server/source/repo.ts `read`,
+ * server/source/browse.ts), at a branch or a commit, staging by default. Nothing in them writes: they list refs and fetch,
  * with a read token. Admins only, as the admin's agent is: `guard` checks first, as for the other tools. The files
  * are anyone's who pushed a branch, so their text is information, never instructions.
  */
@@ -266,9 +266,9 @@ export interface AdminAgent {
   /** The settings now (a key an admin stored, replaced or cleared since it started): the next model call uses them. */
   configure(cfg: AgentConfig): void;
   log(): Log;
-  /** The model's messages so far (what worker/admin-agent.ts stores, admin-agent/chat-store.ts). */
+  /** The model's messages so far (what cloudflare/admin-agent-host.ts stores, agents/admin-chats.ts). */
   messages(): AgentMessage[];
-  /** A message, with any files attached (src/page/attach.ts). */
+  /** A message, with any files attached. */
   prompt(text: string, context: string | null, files?: Attachment[]): void;
   abort(): void;
   reset(): Promise<void>;
@@ -294,7 +294,7 @@ function about(name: string, args: unknown): string | null {
   return null;
 }
 
-/** One admin's agent session; `restore`: the conversation stored before (admin-agent/chat-store.ts), to go on with. */
+/** One admin's agent session; `restore`: the conversation stored before, to go on with. */
 export function startAdminAgent(opts: { cfg: AgentConfig; owner: string; tools: AgentTool[]; restore?: { log: Log; messages: AgentMessage[] } }): AdminAgent {
   const { owner, tools, restore } = opts;
   let cfg = opts.cfg;

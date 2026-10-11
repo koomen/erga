@@ -1,4 +1,4 @@
-// The multiplayer suite in real tabs (e2e/suite/suites/browser.ts): a tab rides out a restart of its own server.
+// The multiplayer suite in real tabs: a tab rides out a restart of its own server.
 import { expect, until } from "./harness";
 import { browserTest, openAs } from "./suite";
 

@@ -1,7 +1,7 @@
-// The host for one document, run by its Durable Object (worker/doc-host.ts).
+// The host for one document, run by its Durable Object.
 // Given the open room, its files and the agent's settings, it keeps each
 // person's agent session and their open tabs, and serves
-// the document's API (api.ts), what storage holds (/api/stored) and the
+// the document's API, what storage holds (/api/stored) and the
 // document's files (/doc/).
 //
 // What's the Durable Object's stays with it: where files live, who a request
@@ -42,7 +42,7 @@ export interface HostOptions {
   /**
    * The agent's settings, or a function that reads them now: asked at each
    * turn and each time a panel opens, so a key an admin stores, replaces or
-   * clears reaches every open document's agent (worker/doc-host.ts).
+   * clears reaches every open document's agent.
    */
   readonly agent: AgentSettings | (() => Promise<AgentSettings>);
   /** Who a request is from. */
@@ -56,21 +56,21 @@ export interface HostOptions {
   readonly baseUrl: (request: HttpServerRequest.HttpServerRequest) => string;
   /** A person's picture, if the platform knows one (hosted: their GitHub avatar). */
   readonly avatarOf?: (person: { id: string; name: string }) => string | undefined;
-  /** Whether a person may edit, so their agent may (everyone, if not given; the directory's roles decide, worker/doc-host.ts). */
+  /** Whether a person may edit, so their agent may (everyone, if not given; the directory's roles decide, cloudflare/doc-host.ts). */
   readonly canEdit?: (person: { id: string; name: string }) => boolean;
   /** Whether a request may publish a file (PUT /api/stored): everyone, if not given. */
   readonly mayPublish?: (request: HttpServerRequest.HttpServerRequest) => boolean;
   /** A single file opened from disk: the document holds only it, and no other file can be made. */
   readonly only?: string;
-  /** The document's title and address in the directory (directory.ts), read and changed as a person. */
+  /** The document's title and address in the directory, read and changed as a person. */
   readonly naming?: (person: { id: string; name: string }) => Naming;
-  /** The tools beyond the document a person's agent may use now (server-tools.ts: sharing; settings and users for an admin). */
+  /** The tools beyond the document a person's agent may use now (agents/tools.ts: sharing; settings and users for an admin). */
   readonly serverTools?: (person: { id: string; name: string }) => Promise<AgentTool[]>;
   /** An agent's turn ended (the embedded agent's, or an external agent's run of calls): a version is cut; answers the version the document is at then. */
   readonly turnEnded?: () => Promise<string | null> | void;
-  /** The document's versions and publishing (versions.ts), for the agents' tools. */
+  /** The document's versions and publishing, for the agents' tools. */
   readonly versions?: VersionsAccess;
-  /** A new page's text (templates/doc), by its path; a plain one if not given. */
+  /** A new page's text, by its path; a plain one if not given. */
   readonly newPage?: (path: string) => string;
 }
 
@@ -105,7 +105,7 @@ export const mimeOf = (path: string) => MIME[/\.[^./]+$/.exec(path.toLowerCase()
  * before it's used (no-cache), so a page always loads the latest version, but
  * by its digest (ETag), so a file that hasn't changed since the browser last
  * had it comes back as a 304 with no body. Shared by the host's route and the
- * Durable Object's own (worker/doc-host.ts, which serves stored files before
+ * Durable Object's own (cloudflare/doc-host.ts, which serves stored files before
  * the room is open).
  */
 export function docFile(rel: string, bytes: Uint8Array, ifNoneMatch?: string | null): { status: number; type: string; headers: Record<string, string>; body: Uint8Array | null } {
@@ -241,7 +241,7 @@ export function makeHost(opts: HostOptions) {
   const extSession = Person.use((user) => Effect.mapError(session(user), () => new SessionFailed({ ok: false, error: "The agent's session didn't start." })));
 
   // An external agent (Claude Code, Codex...) holds one of the person's
-  // agent tokens (tokens.ts; the share button makes one), which the front
+  // agent tokens (server/tokens.ts; the share button makes one), which the front
   // door checks; over /api/ext it calls that person's agent tools, as their agent.
 
   const modelState = (s: AgentSession): ModelState => ({
@@ -250,7 +250,7 @@ export function makeHost(opts: HostOptions) {
     models: s.modelChoice == null ? [] : Object.entries(MODELS).map(([id, m]) => ({ id, label: m.label })),
   });
 
-  // ---------------------------------------------------------- the API (api.ts)
+  // ---------------------------------------------------------- the API
 
   const personFromRequest = Layer.succeed(PersonFromRequest, (handler) =>
     HttpServerRequest.HttpServerRequest.use((req) => Effect.provideService(handler, Person, opts.personOf(req))));
@@ -344,7 +344,7 @@ export function makeHost(opts: HostOptions) {
     return title ? { ...e, title } : e;
   });
   const routes: Array<HttpRouter.Route<unknown>> = [
-    // The document's file tree (tree.ts): its pages, other files and folders.
+    // The document's file tree: its pages, other files and folders.
     HttpRouter.route("GET", "/api/tree", Effect.gen(function* () {
       const req = yield* HttpServerRequest.HttpServerRequest;
       const canEdit = (opts.mayPublish?.(req) ?? true) && opts.only == null;
@@ -392,7 +392,7 @@ export function makeHost(opts: HostOptions) {
       const raw = asked.startsWith("/doc/") ? asked.slice("/doc/".length) : (yield* HttpRouter.params)["*"] ?? "";
       // A page by its address (blog for blog.html or blog/index.html): sent to its file, relatively, so the
       // frame's address is the file's and the page's own relative links resolve. doc/ itself is the document's
-      // page, served as it is (the frame asks for it so, front.ts; its links resolve from the root either way).
+      // page, served as it is (the frame asks for it so, server/routes.ts; its links resolve from the root either way).
       const page = () => {
         const found = resolvePage((p) => room.exists(p) == "file", raw, doc.path);
         if (!found || found.file == cleanRel(raw)) return null;
@@ -435,7 +435,7 @@ export function makeHost(opts: HostOptions) {
     broadcast: (msg: unknown) => { for (const t of tabs) t.send(msg); },
     /** The document was renamed some other way (its title following an edit): every tab hears of it. */
     renamed,
-    /** A message for every open tab, whoever's (the homepage's deploy status, { type: "home" }: worker/home.ts). */
+    /** A message for every open tab, whoever's (the homepage's deploy status, { type: "home" }: cloudflare/home.ts). */
     notify: (msg: unknown) => { for (const t of tabs) t.send(msg); },
   };
 }
@@ -466,7 +466,7 @@ export function relativeUrl(from: string, to: string): string {
 export type TreeDone = TreeOp;
 
 /**
- * Checks a tree operation (tree.ts: TreeOp) against the document as it is,
+ * Checks a tree operation against the document as it is,
  * then does it in the room: a new page from the template, a new folder, a
  * move (or rename) of a file or folder, or a delete (a folder with all it
  * holds). The document's own page can't be moved or deleted. Throws a

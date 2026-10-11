@@ -2,7 +2,7 @@
 // bridge.ts). It renders the page in a frame of its own (same origin, so
 // the editor can reach into it as before), and does everything that needs
 // the page's DOM: typing, selections, marks and carets, pausing, and the
-// agent's screenshots. Everything else is the shell's (main.ts), which it
+// agent's screenshots. Everything else is the shell's, which it
 // reaches only by message, and only the shell may command it.
 
 import { ChangeSet, EditorState } from "@codemirror/state";
@@ -27,16 +27,16 @@ const post = (m: FromFrame) => window.parent.postMessage(m, SHELL);
 
 // The page itself: scripts, forms and the rest, as on any web page. It's on
 // this origin, which holds nothing but this document. It starts out of sight,
-// behind the page as it renders (the host page's #view, front.ts), and takes
+// behind the page as it renders (the host page's #view, server/routes.ts), and takes
 // its place once it has rendered (ergaHost.ready).
 const frame = document.createElement("iframe");
 frame.id = "page";
 frame.title = "Document";
 frame.setAttribute("sandbox", "allow-scripts allow-same-origin allow-forms allow-modals allow-popups");
 document.body.append(frame);
-// Your caret on the page, wider than the browser's own (caret.ts); in the frame of each render too (onUpdate).
+// Your caret on the page, wider than the browser's own; in the frame of each render too (onUpdate).
 drawCaret(frame);
-/** The frame the page is in now: a render loads the page afresh into a new one, which takes this one's place (editor.ts). */
+/** The frame the page is in now: a render loads the page afresh into a new one, which takes this one's place. */
 const cur = () => page?.frameElement ?? frame;
 
 let page: PageEditor | null = null;
@@ -48,7 +48,7 @@ let restoreScroll: number | null = null;
 window.addEventListener("message", (e: MessageEvent) => {
   if (e.source != window.parent || e.origin != SHELL) return;
   const m = e.data as ToFrame | { type: "erga-edit" };
-  // The shell asks for the editor (front.ts): it may have missed our "ready", sent before it was listening.
+  // The shell asks for the editor: it may have missed our "ready", sent before it was listening.
   if (m.type == "erga-edit") { if (!page) post({ type: "ready" }); return; }
   if (m.type == "init") return start(m);
   if (!page || !relay) return;
@@ -103,8 +103,8 @@ post({ type: "ready" });
 
 const stateFrom = (json: unknown, kind = page!.kind) => EditorState.fromJSON(json, { extensions: docExtensions(kind) }, { history: historyField });
 /**
- * The page's own folder (`dir`, in the document), so its relative links and assets resolve as they would on disk (tree.ts):
- * the editor's base for it, which is this page's <base> too (front.ts set it to the document's folder): Chrome's preload
+ * The page's own folder (`dir`, in the document), so its relative links and assets resolve as they would on disk:
+ * the editor's base for it, which is this page's <base> too (server/routes.ts set it to the document's folder): Chrome's preload
  * scanner resolves the srcdoc page's files against it, not against the <base> the page itself gets, so a page in a folder
  * asked for each of its relative files at the document's root first (404s), at every render and every capture.
  */
@@ -117,7 +117,7 @@ function setBase(dir: string | undefined): string {
 function start(m: Extract<ToFrame, { type: "init" }>) {
   if (page) return;
   if (m.timescale) window.__ergaTimescale = m.timescale;
-  // Where the page was scrolled to before a reload for a new release (live.ts): there once it renders.
+  // Where the page was scrolled to before a reload for a new release: there once it renders.
   // (Its images may still be loading, so the page may not be that long yet: tried again for a moment, until it gets
   // there or someone else scrolls it.)
   if (typeof m.scroll == "number" && Number.isFinite(m.scroll) && m.scroll > 0) {
@@ -147,7 +147,7 @@ function start(m: Extract<ToFrame, { type: "init" }>) {
     onUpdate(u) {
       if (u.changes && !u.remote && !detached) relay!.local(u.changes);
       if (u.docChanged || u.selectionSet) sendSelection();
-      // A presentation's pictures of its steps are out of date once its text changes (front.ts, HOST_SCRIPT).
+      // A presentation's pictures of its steps are out of date once its text changes.
       if (u.docChanged) { window.ergaHost?.changed?.(); queueBackdrop(); }
       if (u.rendered) {
         drawCaret(cur());
@@ -280,7 +280,7 @@ function syncBackdrop(always = false) {
   let cs = win.getComputedStyle(d.documentElement);
   if (transparent(cs) && d.body) cs = win.getComputedStyle(d.body);
   // (A page that's only a gradient: the gradient's colour at the top, as the header sits there; the gradient itself is
-  // the host page's to tell, front.ts canvasOf.)
+  // the host page's to tell, server/routes.ts canvasOf.)
   const clear = /^(transparent|rgba\([^)]*,\s*0\))$/.test(cs.backgroundColor), img = cs.backgroundImage;
   const stops = clear && /gradient/.test(img) ? img.match(/rgba?\([^)]*\)/g) : null;
   const top = stops ? (/^linear-gradient\((to top|0deg|360deg)[,)]/.test(img) ? stops[stops.length - 1] : stops[0]) : "";

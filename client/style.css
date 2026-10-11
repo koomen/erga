@@ -318,7 +318,7 @@ body.chrome-hidden .chrome-bottom:has(.status.error) { opacity: 1; }
 .icon-btn:hover { color: var(--chrome-hover); background: color-mix(in srgb, var(--chrome) 12%, transparent); }
 .icon-btn:focus-visible, .stat:focus-visible { outline: 2px solid var(--caret); outline-offset: 1px; }
 /* Each page action's icon is drawn 15 units tall of its 24, centred: a group in it scales it there, and sets the stroke's
-   width back by the same amount (page.html, front.ts, templates.ts). So every icon in a header has the same height. */
+   width back by the same amount. So every icon in a header has the same height. */
 .icon-btn svg { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
 
 /* Show the icon for the mode you would switch *to*. */
@@ -331,7 +331,7 @@ body.previewing .i-pen { display: block; }
 body.previewing #btn-preview { color: var(--chrome-hover); }
 
 /* Tooltips, the same on every control: plain text, the moment the pointer is on it,
-   just below the pointer with its right edge there, following it (account.ts sets
+   just below the pointer with its right edge there, following it (server/account-menu.ts sets
    --tip-x and --tip-y as it moves; without them, right-aligned under the control).
    (Avatars use ::before: their ::after widens them for a finger.) */
 .icon-btn[data-tip]::after, :is(.avatar, .agent-badge)[data-tip]::before {
@@ -434,7 +434,7 @@ body.previewing #btn-preview { color: var(--chrome-hover); }
 .help dt { color: var(--soft); }
 .help dd { margin: 0; display: flex; gap: 3px; align-items: center; color: var(--soft); }
 .help p { margin: 14px 0 0; color: var(--soft); font-size: 12.5px; }
-/* The share cards: Share with an agent (src/page/share-agent.ts), in the editor and on /admin/source, and the editor's Share with people. */
+/* The share cards: Share with an agent, in the editor and on /admin/source, and the editor's Share with people. */
 .help.share { width: min(400px, calc(100vw - 32px)); }
 .help.share h2 { margin: 0 0 6px; font: 600 14px/1.3 var(--font-text); color: var(--fg-strong, var(--fg)); }
 .help.share p { margin: 0 0 10px; }
@@ -502,9 +502,9 @@ kbd {
   .chrome, .help, .toast { display: none !important; }
 }
 
-/* Resizing and docking an agent panel (src/page/layout.ts): the editor's and the admin pages'. The grip on the
+/* Resizing and docking an agent panel: the editor's and the admin pages'. The grip on the
    edge that faces the page shows its line on hover and while dragged; a panel dragged by its head is lifted,
-   and the ghost shows the slot it will land in. Where each panel sits is the page's own (page.html, source/page.ts). */
+   and the ghost shows the slot it will land in. Where each panel sits is the page's own. */
 .agent-resize { position: absolute; top: 18px; bottom: 18px; right: -9px; width: 12px; cursor: col-resize; touch-action: none; z-index: 1; }
 .agent-resize[data-side="right"] { right: auto; left: -9px; }
 .agent-resize::after { content: ""; position: absolute; top: 0; bottom: 0; left: 5px; width: 2px; border-radius: 1px; background: var(--caret); opacity: 0; transform: scaleY(0.6); transition: opacity 160ms ease, transform 260ms cubic-bezier(0.45, 0, 0.15, 1); }
@@ -523,7 +523,7 @@ body.layout-dragging, body.layout-dragging * { cursor: grabbing !important; user
 @keyframes dock-ghost-in { from { opacity: 0; transform: scale(0.97); } }
 
 /* ---------- The agent panel's insides ----------
-   Its head, the conversation (src/page/agent-chat.ts) and the box: the editor's panel (page.html places it) and
+   Its head, the conversation and the box: the editor's panel (client/editor.html places it) and
    the admin's on the admin pages both use them. */
 
 .agent-head { display: flex; align-items: center; gap: 4px; padding: 10px 8px 6px 18px; }
@@ -589,7 +589,7 @@ body.layout-dragging, body.layout-dragging * { cursor: grabbing !important; user
 .agent-voice path:nth-child(5) { animation-delay: -450ms; }
 @keyframes agent-wave { from { transform: scaleY(0.45); } to { transform: scaleY(1); } }
 @media (prefers-reduced-motion: reduce) { .agent-voice path { animation: none !important; } }
-/* Attachments (src/page/attach-ui.ts): the paperclip, the chips above the box, the panel lit up while files are dragged over it, and the chips in a sent message. */
+/* Attachments: the paperclip, the chips above the box, the panel lit up while files are dragged over it, and the chips in a sent message. */
 .agent-attach { flex: none; height: 38px; width: 34px; color: var(--soft); }
 .agent-attach svg { width: 19px; height: 19px; }
 .agent-attachments { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 10px 0; border-top: 1px solid var(--rule); }

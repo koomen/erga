@@ -1,4 +1,4 @@
-// Staging (worker/admins-only.ts): an admin's token without the admin scope reaches the API, MCP and its documents,
+// Staging: an admin's token without the admin scope reaches the API, MCP and its documents,
 // within its own scope, while its person is an admin; nothing of the admins' (pages, APIs, settings, deploys, Git).
 import { expect, servers, test, until } from "../../fixtures";
 import { getter, mint, publish, signIn, tool } from "./access";
@@ -45,7 +45,7 @@ test("on staging an admin's document token reads and edits its document (API, MC
   const at = (await get(`${one.address}/api/share`, { method: "POST", headers: { Origin: root, "Content-Type": "application/json" }, body: "{}" }));
   const share = ((await at.json()) as { token: string }).token;
   expect(share).toMatch(/^erga_/);
-  // The Share card's prompt, step by step (src/page/main.ts, promptFor): the document's guide at its address, then its tools.
+  // The Share card's prompt, step by step: the document's guide at its address, then its tools.
   const bearer = { Authorization: `Bearer ${share}` };
   const guide = await get(`${one.address}/api/ext`, { headers: bearer });
   expect(guide.status).toBe(200);

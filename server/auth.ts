@@ -1,6 +1,6 @@
 // How people sign in to a server: its OAuth app (GitHub's, for now), as the
-// Authentication page shows it (/admin/auth, admin.ts) and the admin agent
-// reads it (server-tools.ts: get_sign_in_status, clear_sign_in_app).
+// Authentication page shows it (/admin/auth, server/admin/pages.ts) and the admin agent
+// reads it.
 //
 // The deploy gives each server its app: the public client ID in
 // deploy/targets.json (GITHUB_CLIENT_ID), the client secret as a Worker secret
@@ -10,13 +10,13 @@
 //
 // Where the page's values are kept, and how:
 //
-//   - In the server's own Pipeline Durable Object (worker/pipeline.ts), not in
+//   - In the server's own Pipeline Durable Object, not in
 //     D1: staging's D1 is replaced by a copy of production's when an admin asks
-//     for a fresh copy (deploy/cloudflare.ts, copyReason), which would drop
+//     for a fresh copy, which would drop
 //     staging's values and bring in production's. The Durable Object is each
 //     server's own.
 //   - The secret is encrypted with AES-GCM, a fresh IV each time, under a key
-//     derived from FACTORY_KEY (as credentials.ts does, with its own
+//     derived from FACTORY_KEY (as server/api-keys.ts does, with its own
 //     derivation), with the provider, the target and the client ID as the
 //     additional data, so it opens only for that app on that server.
 //   - Nothing answers the secret to a page or an agent: only whether one is set.
@@ -31,7 +31,7 @@
 //      nothing changes.
 //   2. If the app in use works, the new values wait ("pending"): sign-in keeps
 //      the values that work until an admin signs in with the new ones (Test
-//      sign-in, worker/auth.ts). Only that real sign-in proves the callback URL,
+//      sign-in, cloudflare/auth.ts). Only that real sign-in proves the callback URL,
 //      which GitHub checks during a sign-in only.
 //   3. If the app in use doesn't work (or there is none), there is nothing to
 //      lose: the new values are used at once.
@@ -42,7 +42,7 @@
 // so a change here never signs anyone out.
 //
 // Another server's values: production's page sets staging's too, through
-// staging's server (worker/auth-settings.ts, with DEPLOY_HOOK_SECRET): staging is
+// staging's server (cloudflare/auth-settings.ts, with DEPLOY_HOOK_SECRET): staging is
 // for admins only, and until staging has an app no admin can sign in there.
 // A server takes values only from the target it copies its data from
 // (`snapshotFrom`: staging from production), never the other way round.
@@ -138,7 +138,7 @@ export async function checkGithubApp(v: AppValues, o: { fetch?: typeof fetch; or
 
 // ------------------------------------------------------------ the page's values, kept
 
-/** Where the values are kept: a server's own Durable Object (worker/pipeline.ts), or a Map in the tests. */
+/** Where the values are kept: a server's own Durable Object, or a Map in the tests. */
 export interface AuthStorage {
   get(key: string): Promise<unknown>;
   put(key: string, value: unknown): Promise<void>;
@@ -253,11 +253,11 @@ export interface AppContext {
   provider: Provider;
   deploy: AppValues;
   check(v: AppValues): Promise<AppCheck>;
-  /** A line in the change log (config.ts, record). */
+  /** A line in the change log. */
   log(by: Act, change: SignInChange): Promise<void>;
 }
 
-/** A change log line (config.ts, SettingChange.signIn). */
+/** A change log line. */
 export interface SignInChange {
   provider: Provider;
   /** The server whose app changed ("" for one that isn't a deploy target). */
@@ -387,7 +387,7 @@ export async function statusOf(c: AppContext, o: { origin: string; target: strin
   };
 }
 
-/** Someone acting on sign-in: their login, how (attribution.ts), and whether they come with admin power. */
+/** Someone acting on sign-in: their login, how, and whether they come with admin power. */
 export type By = Act & { admin?: boolean };
 
 /** The other target's status, or why it couldn't be read. */

@@ -1,6 +1,6 @@
-// The one deploy pipeline (deploy/cloudflare.ts, runPipeline) on Erga's own
-// targets, and branches deploying themselves (deploy/branches.ts), against
-// the mock Cloudflare's copy of Erga's account (deploy/mock.ts, fleet):
+// The one deploy pipeline on Erga's own
+// targets, and branches deploying themselves, against
+// the mock Cloudflare's copy of Erga's account:
 // production as cf deploy left it, with data in its database and documents
 // in its Durable Objects. Nothing real is touched: no Cloudflare, no
 // credentials, no production data.
@@ -57,7 +57,7 @@ async function deployTo(target: Target, mock: ReturnType<typeof mockCloudflare>,
 }
 
 const bindingsOf = (state: MockState, script: string) => Object.fromEntries((state.scripts[script].metadata.bindings as any[]).map((b) => [b.name, b]));
-/** Staging's database: the copy its Worker is bound to (each copy has a name of its own: deploy/cloudflare.ts, copyName). */
+/** Staging's database: the copy its Worker is bound to (each copy has a name of its own: deploy/pipeline.ts, copyName). */
 const stagingDbOf = (state: MockState) => state.databases.find((d) => d.uuid == bindingsOf(state, "erga-staging").DB.database_id)!;
 /** Staging's copies of production's data, by name. */
 const stagingCopies = (state: MockState) => state.databases.filter((d) => d.name.startsWith("erga-staging")).map((d) => d.name);
@@ -138,7 +138,7 @@ describe("staging", () => {
   test("again, with a fresh copy asked for: a fresh snapshot (staging's old copy gone, its own documents emptied), its secrets and API keys kept", async () => {
     const mock = mockCloudflare({ fleet: true });
     await deployTo(staging({ secrets: stagingSecrets }), mock);
-    // Each server stored its own Anthropic key (credentials.ts), under its own FACTORY_KEY.
+    // Each server stored its own Anthropic key, under its own FACTORY_KEY.
     const key = (who: string) => `INSERT INTO credentials (name, iv, data, last4, updated, updated_by, updated_via) VALUES ('anthropic', 'iv-${who}', 'data-${who}', '${who.slice(0, 4)}', 1, 'koomen', NULL);`;
     stagingDbOf(mock.state).rows!.push(key("staging"));
     const prodDb = mock.state.databases.find((d) => d.uuid == PROD_DB)!;
@@ -353,7 +353,7 @@ class Server {
   async settle() { for (let i = 0; i < 10 && this.scheduled.length; i++) { this.scheduled = []; await this.instance.alarm(); } }
 }
 
-/** The first staging deploy, from a machine (deploy/run.ts, deploy/setup.ts): staging's Worker, with its secrets. */
+/** The first staging deploy, from a machine: staging's Worker, with its secrets. */
 async function bootstrap(mock: ReturnType<typeof mockCloudflare>) {
   await runPipeline(new Cloudflare("mock-setup-token", mock.fetch), { ...release, version: SHA1.slice(0, 12) }, staging({ secrets: stagingSecrets }), { ...quick, site: mock.fetch, report: () => {} });
 }

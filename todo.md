@@ -7,7 +7,7 @@
 - **Who you are shouldn't come from the address.** Opening `/koomen/<id>`
   locally seemed to make me Koomen. It wasn't the address: the local Worker
   signs everyone in as `DEV_LOGIN` from `.dev.vars` (koomen), whoever owns
-  the document. There's now one local server and one rule (`worker/auth.ts`,
+  the document. There's now one local server and one rule (`cloudflare/auth.ts`,
   `sessionOf`: `?user=`, else the sign-in cookie, else `DEV_LOGIN`), and the
   tab-chosen name stored in the browser is gone. Still to do: show in the
   editor who you are and where that came from.
@@ -18,5 +18,5 @@
 
 - **Let a document extend the editor.** Widen the contract between a document
   and the editor (today mostly `data-erga-noedit` and the rules in
-  `DOCUMENT_PROMPT.md`) so a document can add to the editor itself, not just
+  `agents/DOCUMENT_PROMPT.md`) so a document can add to the editor itself, not just
   mark what it can't touch.

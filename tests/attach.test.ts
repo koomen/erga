@@ -1,4 +1,4 @@
-// The rules for files attached to an agent message (src/page/attach.ts).
+// The rules for files attached to an agent message.
 import { expect, test } from "bun:test";
 import { checkAttachments, classify, fileRefs, MAX_FILES, MAX_IMAGE_DATA, MAX_TEXT_BYTES, messageContent, refusal } from "../client/attach";
 

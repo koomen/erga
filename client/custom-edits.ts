@@ -1,9 +1,9 @@
 // Custom edits: a document defines its own edits, beyond typing
-// (DOCUMENT_PROMPT.md, "Custom edits"). In the editor, the page gets
+// (agents/DOCUMENT_PROMPT.md, "Custom edits"). In the editor, the page gets
 // `window.ergaEditor`; its own controls (buttons it draws) call
 // `ergaEditor.apply(edits)` with a list of custom edits to its elements: insert HTML before, after or into one, remove one,
 // move one, replace one, set or remove an attribute. The page names the
-// elements it sees on screen; the editor finds each in the source (editor.ts)
+// elements it sees on screen; the editor finds each in the source
 // and this module turns the list into one change to the source, or refuses
 // it whole, saying why. What it checks, so a page can't break itself:
 //

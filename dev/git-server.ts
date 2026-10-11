@@ -1,7 +1,7 @@
 // Real Git, over smart HTTP, for local development and tests: `git
 // http-backend` (Git's own CGI server) on bare repositories in a folder.
 // It stands in for the two Git servers Erga talks to and can't reach locally
-// (dev/plugin.ts serves them from the dev server):
+// (dev/vite-plugin.ts serves them from the dev server):
 //
 //   /__artifacts/git/<namespace>/<repo>.git/...   Cloudflare Artifacts (which has no local mode:
 //                                                 miniflare's binding only proxies to the real service),
@@ -90,7 +90,7 @@ export function httpBackend(root: string, req: GitRequest): Promise<GitResponse>
 
 const mac = (secret: string, scope: string, exp: number, repo: string) => createHmac("sha256", secret).update(`${scope}:${exp}:${repo}`).digest("hex").slice(0, 40);
 
-/** A local repo token (the Worker's stand-in binding makes them the same way, worker/artifacts.ts). */
+/** A local repo token (the Worker's stand-in binding makes them the same way, cloudflare/artifacts.ts). */
 export function localToken(secret: string, repo: string, scope: "read" | "write", ttl = 3600): string {
   const exp = Math.floor(Date.now() / 1000) + ttl;
   return `art_local_${scope}_${exp}_${mac(secret, scope, exp, repo)}?expires=${exp}`;

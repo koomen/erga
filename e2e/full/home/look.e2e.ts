@@ -1,4 +1,4 @@
-// / looks as the viewer shows its document, moved below the controls' band (home.ts).
+// / looks as the viewer shows its document, moved below the controls' band.
 import { expect, servers, test } from "../../fixtures";
 import { deployed, fresh, resetLanding } from "./home";
 import { devicePage, diffPng, shoot, steady, VIEWS } from "./shots";

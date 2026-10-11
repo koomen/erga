@@ -1,6 +1,6 @@
-// The Source page, /admin/source (worker/source.ts), for admins with admin
+// The Source page, /admin/source, for admins with admin
 // access: the one place to manage Erga's own source and its deploys. It has
-// the layout every admin page shares (admin-layout.ts): the breadcrumb, Share
+// the layout every admin page shares: the breadcrumb, Share
 // with agent, the admin's agent and the sidebar. /source, /admin/factory and
 // /admin/deploys redirect here.
 //
@@ -37,7 +37,7 @@ export interface SourcePageConfig {
   ready: boolean;
   origin: string;
   mirrorUrl: string;
-  /** This server's Worker (deploy/targets.ts), for the GitHub mirror's setup steps; null when it isn't one of Erga's targets. */
+  /** This server's Worker, for the GitHub mirror's setup steps; null when it isn't one of Erga's targets. */
   worker: string | null;
 }
 
@@ -193,7 +193,7 @@ git push erga HEAD:staging</code></pre>
 
 const SOURCE_SCRIPT = `
 (() => {
-  // The admin pages are one page (src/page/admin-nav.ts): what keeps running stops when another admin page is shown.
+  // The admin pages are one page: what keeps running stops when another admin page is shown.
   const pageView = window.ergaView;
   const setInterval = (f, ms) => { const t = window.setInterval(f, ms); pageView.onLeave(() => clearInterval(t)); return t; };
   const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[ch]);
@@ -548,7 +548,7 @@ export function scopeCss(css: string, scope: string): string {
 }
 
 const PAGE_STYLE = `
-  /* The dashboard, beside the agent (admin-layout.ts). */
+  /* The dashboard, beside the agent. */
   .panes { min-width: 0; display: flex; flex-direction: column; gap: 28px; }
   .pane { container-type: inline-size; min-width: 0; }
   .pane-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-bottom: 10px; }

@@ -1,12 +1,12 @@
-// Who may use the server, and who runs it: the users table (migrations/),
-// behind the directory's `Sql` (directory.ts), so the tests run it on
+// Who may use the server, and who runs it: the users table,
+// behind the directory's `Sql`, so the tests run it on
 // bun:sqlite as D1 runs it on erga.dev.
 //
 // A GitHub login with a row in users may sign in; nobody else may. Each has
 // a server role: "user", or "admin", who may see and change the server's
-// settings (config.ts) and its users. Apart from that, an admin may grant
+// settings and its users. Apart from that, an admin may grant
 // anyone the deploy role: they may then use /deploy when the deploy_page
-// setting keeps it for admins (worker/deploy.ts). Admins may anyway: an
+// setting keeps it for admins. Admins may anyway: an
 // admin may always deploy (User.mayDeploy, hasDeploy). The server always keeps an
 // admin: nobody may demote or remove the last one. The first admins come from the
 // deploy: the logins in the ADMINS binding (cloudflare.config.ts; locally,
@@ -40,7 +40,7 @@ export interface User {
   created: number;
   /** The admin who added them; null for those who came in through ADMINS. */
   addedBy: string | null;
-  /** How `addedBy` added them, when not in person (attribution.ts): "their admin agent", "a shared agent (label)". */
+  /** How `addedBy` added them, when not in person: "their admin agent", "a shared agent (label)". */
   addedVia?: string | null;
   /** When they last used the server (to the nearest few minutes); null if never. */
   lastSeen: number | null;
@@ -52,12 +52,12 @@ export interface User {
  * Someone acting, to a guarded call: a login (lowercase), whether they're a
  * test person (never an admin), and whether they come with admin power
  * (`admin`): a signed-in browser session does, a token only with the admin
- * scope (tokens.ts). Every admin-only call needs it, and the person must be
+ * scope. Every admin-only call needs it, and the person must be
  * an admin too (actsAsAdmin). The front door sets `admin`.
  */
 export interface Actor {
   login: string; test?: boolean; admin?: boolean;
-  /** How they act, when not in person: through one of their agents (attribution.ts, VIA). What they change is recorded under their login, with this. */
+  /** How they act, when not in person: through one of their agents. What they change is recorded under their login, with this. */
   via?: string;
 }
 
@@ -239,7 +239,7 @@ export class Users {
     throw new NotAllowed(`${login == by.login.toLowerCase() ? "You're" : `${login} is`} the last admin: make someone else an admin first, so the server keeps one.`);
   }
 
-  /** The change log's entry for a change to a user (config.ts, SettingChange.user), under the admin who made it and how. */
+  /** The change log's entry for a change to a user, under the admin who made it and how. */
   private logged(by: Actor, at: number, user: { login: string; event: "added" | "role" | "deploy" | "removed"; role?: string; deploy?: boolean }): Statement {
     return changeLogEntry(at, by.login, by.via, [{ key: "user", from: null, to: null, user }]);
   }

@@ -2,7 +2,7 @@
 // script and image), cut now and then as it's edited, and which of them its
 // viewers see (publishing).
 //
-// Storage is the document's own (its Durable Object, worker/doc-host.ts),
+// Storage is the document's own (its Durable Object, cloudflare/doc-host.ts),
 // behind the small `KV` interface so the unit tests run it on a Map. Files are
 // content-addressed blobs (`b:<sha-256>`), shared by every version that has
 // them, so a version that changes one file stores that one file; a version
@@ -18,7 +18,7 @@
 import { createTwoFilesPatch, structuredPatch } from "diff";
 import Anthropic from "@anthropic-ai/sdk";
 
-/** A version as the API shows it (the contract shared with the settings UI, src/page/versions.ts, and the homepage deploy, home.ts). */
+/** A version as the API shows it (the contract shared with the settings UI, client/versions.ts, and the homepage deploy, server/home.ts). */
 export interface Version {
   id: string;
   /** 1, 2, 3... per document. */
@@ -260,7 +260,7 @@ export function fallbackDescription(c: Pick<Changes, "added" | "removed" | "chan
   return verbs.length ? verbs.slice(0, 2).join(", ") : "No changes";
 }
 
-/** The model that writes descriptions: the latest Sonnet (agent.ts's MODELS.sonnet). */
+/** The model that writes descriptions: the latest Sonnet (agents/document.ts's MODELS.sonnet). */
 export const DESCRIBE_MODEL = "claude-sonnet-5-5";
 
 /**
@@ -309,7 +309,7 @@ const listeners = new Map<string, Set<(e: PublishedEvent) => void>>();
  * Calls `cb` whenever the published version of `docId` (or of any document,
  * "*") changes: a manual publish, going back to "latest", or, in "latest"
  * mode, a new version cut. In process: the document's Durable Object fires
- * it, so subscribe from code that runs there (worker/doc-host.ts). Returns
+ * it, so subscribe from code that runs there. Returns
  * the unsubscribe function.
  */
 export function onPublished(docId: string, cb: (e: PublishedEvent) => void): () => void {

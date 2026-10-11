@@ -1,4 +1,4 @@
-// What the Factory object keeps of each admin's agent conversation (factory/chat-store.ts), and the
+// What the Factory object keeps of each admin's agent conversation, and the
 // factory's agent going on with it (factory/agent.ts, `restore`): the transcript and the model's
 // messages, a reply cut off in the middle, screenshots, size limits and the panel's prefs.
 

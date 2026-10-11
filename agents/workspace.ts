@@ -62,7 +62,7 @@ export class YjsWorkspace implements Workspace {
 
   constructor(
     private doc: Y.Doc,
-    /** Who its edits are by (a function: an outside agent's calls are by it, via its token: agent.ts). */
+    /** Who its edits are by (a function: an outside agent's calls are by it, via its token: agents/document.ts). */
     private me: Author | (() => Author),
     /** The agent acts with its user's permissions, checked as it acts. */
     private canEdit: () => boolean,

@@ -1,5 +1,5 @@
 // The page editor's shell: joins the document's room (its Durable Object,
-// worker/doc-host.ts) as one participant among others, renders the document in the
+// cloudflare/doc-host.ts) as one participant among others, renders the document in the
 // page editor, sends every edit to the room as you type and applies everyone
 // else's (people and their agents) as they land, shows who's here and where
 // their carets are, and offers the same quiet chrome as the Markdown editor:
@@ -80,7 +80,7 @@ const peersField = StateField.define<DecorationSet>({
 declare global {
   interface Window { ergaPage?: unknown; ergaShell?: { ready(): void; loadedEditing?: boolean }; ergaDocInfo?: { url: string; response: Promise<Response> } }
 }
-/** What the editor keeps of itself across a reload for a new release (live.ts, restore.ts). */
+/** What the editor keeps of itself across a reload for a new release. */
 interface EditorKept {
   /** The page it was on: the rest applies only to the same one. */
   path: string;
@@ -96,7 +96,7 @@ interface EditorKept {
   held?: { epoch: string; update: string };
 }
 /**
- * The editor's look, kept across a reload for the document's page to open with from its first frame (front.ts,
+ * The editor's look, kept across a reload for the document's page to open with from its first frame (server/routes.ts,
  * EDITING_HEAD): the window's size it was for, the classes on <html> and <body> that place things (of SHELL_HTML,
  * SHELL_BODY), <html>'s style (the layout's variables, layout.ts; the page's colour), and the controls this script fills
  * in as it starts (SHELL_PARTS, by id: the title, the pencil, the avatars), as they were, so none appears late and moves
@@ -123,7 +123,7 @@ type TreeModule = { mountTree: typeof mountTree };
   const settings: { track: boolean; agent: boolean } = { track: false, agent: true, ...store.json(KEYS.settings) };
   const saveSettings = () => store.set(KEYS.settings, JSON.stringify(settings));
 
-  // The page this runs in is the document's page (front.ts), viewing or
+  // The page this runs in is the document's page, viewing or
   // editing: the editor runs either way once loaded, its controls shown only
   // while editing (setEditing, below).
   const editing = () => document.body.classList.contains("erga-editing");
@@ -134,16 +134,16 @@ type TreeModule = { mountTree: typeof mountTree };
   // authors made them, and most don't support one. The shell and the Markdown
   // template are always light (data-theme="light" pins style.css). The
   // floating cards are the editor's light cards, or its dark ones on a dark
-  // page (page.html): never a colour of the page's. The header's text and
+  // page: never a colour of the page's. The header's text and
   // icons turn light on a dark page too.
   // The shell paints its canvas with the page's background colour (and its
-  // gradient or image over that: front.ts, BAND_BOOT), so opening the agent
+  // gradient or image over that: server/routes.ts, BAND_BOOT), so opening the agent
   // never reveals a strip of a different colour. The page's background is its
   // root's, or its body's when the root has none, as the browser itself would
-  // paint it. The page reports its colour (frame.ts): for one that's only a
+  // paint it. The page reports its colour: for one that's only a
   // gradient, the gradient's colour at the top.
   // The first one is what the agent's opening uncovers on the way into the editor (openAgentOnEntry), so that waits for it.
-  // It lands at once, as every later one does: the band above the page (front.ts, BAND_STYLE) shows it too, and must keep
+  // It lands at once, as every later one does: the band above the page shows it too, and must keep
   // up with the page.
   let backdropKnown!: () => void;
   const backdropReady = new Promise<void>((done) => (backdropKnown = done));
@@ -159,7 +159,7 @@ type TreeModule = { mountTree: typeof mountTree };
     const dark = !!rgb && rgb.length >= 3 && (0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2]) / 255 < 0.45;
     document.documentElement.classList.toggle("page-dark", !!color && dark);
     document.documentElement.classList.toggle("page-light", !!color && !dark);
-    // Remembered so the next load paints it before the page arrives (see page.html), not white first.
+    // Remembered so the next load paints it before the page arrives, not white first.
     store.set("erga:backdrop:v1", JSON.stringify({ bg: color, tone: color ? (dark ? "page-dark" : "page-light") : "" }));
     if (first) backdropKnown();
   }
@@ -174,10 +174,10 @@ type TreeModule = { mountTree: typeof mountTree };
   const asked = new URLSearchParams(location.search).get("user")?.trim();
   const as = asked ? `?user=${encodeURIComponent(asked)}` : "";
   let info: DocInfo | null = null;
-  // What this page kept of itself before it reloaded for a new release (live.ts, restore.ts), if it did.
+  // What this page kept of itself before it reloaded for a new release, if it did.
   const back = restoredFor<EditorKept>("editor");
   try {
-    // The page asked for it already, as editing started (front.ts, EDIT_BOOT), if it's for this same address.
+    // The page asked for it already, as editing started, if it's for this same address.
     const early = window.ergaDocInfo;
     window.ergaDocInfo = undefined;
     const url = `${BASE}/api/doc${as}`;
@@ -191,7 +191,7 @@ type TreeModule = { mountTree: typeof mountTree };
     return;
   }
 
-  // Which of the document's pages this is (tree.ts): the one the address named (the front door says, erga-page),
+  // Which of the document's pages this is: the one the address named (the front door says, erga-page),
   // else the document's own. One room holds them all; this tab edits this one, and goes to another by its address.
   // (Another page opened in place, while editing, changes it: swapPage.)
   let pagePath = document.querySelector<HTMLMetaElement>('meta[name="erga-page"]')?.content || info.path;
@@ -227,17 +227,17 @@ type TreeModule = { mountTree: typeof mountTree };
   $("nav-back").hidden = me.user.startsWith("test-");
   ($("nav-back") as HTMLAnchorElement).href = `/docs${as}`;
   ($("nav-brand") as HTMLAnchorElement).href = `/${as}`;
-  // Clone, as the viewer's (front.ts, cloneButton): the same address.
+  // Clone, as the viewer's: the same address.
   const viewerClone = document.querySelector<HTMLAnchorElement>(".erga-clone-button");
   if (viewerClone) { ($("btn-clone") as HTMLAnchorElement).href = viewerClone.href; $("btn-clone").hidden = false; }
-  // The editor's own page actions (page.html, .edit-group) open out of the pencil while editing and close back into it: they
+  // The editor's own page actions (client/editor.html, .edit-group) open out of the pencil while editing and close back into it: they
   // clip sideways while they move, and not once they're open and still (settled), so their tooltips reach past the group.
   const editGroup = $("edit-group"), body = document.body;
   const groupOpen = () => body.classList.contains("erga-editing") && body.classList.contains("erga-editor-ready") && !body.classList.contains("erga-closing");
   const syncGroup = () => {
     const open = groupOpen();
     editGroup.inert = !open;
-    // (Open from the first frame, reloaded in the editor (front.ts, erga-restored): settled at once.)
+    // (Open from the first frame, reloaded in the editor (server/routes.ts, erga-restored): settled at once.)
     if (!open || !editGroup.classList.contains("settled")) editGroup.classList.toggle("settled", open && (matchMedia("(prefers-reduced-motion: reduce)").matches || body.classList.contains("erga-restored")));
   };
   editGroup.addEventListener("transitionend", (e) => { if (e.target == editGroup && e.propertyName == "grid-template-columns" && groupOpen()) editGroup.classList.add("settled"); });
@@ -304,7 +304,7 @@ type TreeModule = { mountTree: typeof mountTree };
     "&": { backgroundColor: "transparent", color: "var(--fg)", height: "100%" },
     ".cm-content": { caretColor: "var(--fg)" },
     "&.cm-focused": { outline: "none" },
-    // As wide as the page's caret (caret.ts): 2px, more in large type.
+    // As wide as the page's caret: 2px, more in large type.
     ".cm-cursor, .cm-dropCursor": { borderLeft: "max(2px, 0.085em) solid var(--fg)" },
     "&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground, .cm-selectionBackground": { backgroundColor: "var(--selection)" },
     ".cm-line": { padding: "0" },
@@ -455,7 +455,7 @@ type TreeModule = { mountTree: typeof mountTree };
 
   // ---------------------------------------------------------------- pages
 
-  // The document's pages: the title opens them, as a tree (tree.ts, built on
+  // The document's pages: the title opens them, as a tree (shared/tree.ts, built on
   // its own as pages-tree.js, so viewing never pays for it). Its first row is
   // the document itself, whose pencil renames it (the naming card above); the
   // rest are its other pages, folders and files. Pages open in the editor; the
@@ -609,7 +609,7 @@ type TreeModule = { mountTree: typeof mountTree };
   // turn, so a half-built script never runs; a pill says it's pending and
   // offers to refresh now. Otherwise it happens straight away. Either way the
   // new page renders out of sight and takes the old one's place scrolled to
-  // the same text (editor.ts, render). Everything else shows as it's made.
+  // the same text. Everything else shows as it's made.
   let reloadTimer = 0;
   // Whether any agent in the room (yours or anyone's) is mid-turn: a
   // structural re-render waits for it, so half-built changes never render.
@@ -676,9 +676,9 @@ type TreeModule = { mountTree: typeof mountTree };
   let opened = false;
   listen();
 
-  // The document's file tree changed (anyone's doing: tree.ts). Whatever shows the tree hears it as an
+  // The document's file tree changed (anyone's doing: shared/tree.ts). Whatever shows the tree hears it as an
   // "erga-tree" event on window (the event's detail is the message: { type: "tree", moved?, deleted? }) and
-  // fetches it again (the tree, tree.ts, does both). This page, moved, goes to where it went; deleted, to the document's own.
+  // fetches it again (the tree, shared/tree.ts, does both). This page, moved, goes to where it went; deleted, to the document's own.
   function treeChanged(msg: { moved?: { from: string; to: string }; deleted?: string }) {
     window.dispatchEvent(new CustomEvent("erga-tree", { detail: { type: "tree", ...msg } }));
     const under = (p: string) => pagePath == p || pagePath.startsWith(`${p}/`);
@@ -803,7 +803,7 @@ type TreeModule = { mountTree: typeof mountTree };
   }
   // Your avatar opens a small menu: who you are, Documents, Settings,
   // Deploy your own if the deploy_page setting lets you, Admin settings if you're an admin, Sign out (the same as every other page's upper
-  // right, account.ts). The front door says which links (meta erga-account).
+  // right, server/account-menu.ts). The front door says which links (meta erga-account).
   const account = $("account");
   const accountLinks = (() => {
     try { return JSON.parse(document.querySelector<HTMLMetaElement>('meta[name="erga-account"]')?.content ?? "") as { docs?: string; settings?: string; deploy?: string; admin?: string; signOut?: string }; } catch { return null; }
@@ -876,7 +876,7 @@ type TreeModule = { mountTree: typeof mountTree };
 
   // The on-screen keyboard. Where the browser lays it over the page instead
   // of resizing the window (Safari), --kb is its height, and the page, the
-  // source view, the cards and the agent stop above it (page.html). Zoomed
+  // source view, the cards and the agent stop above it. Zoomed
   // in, the visual viewport is small for another reason: none of it is keyboard.
   const vv = window.visualViewport;
   if (vv) {
@@ -896,9 +896,9 @@ type TreeModule = { mountTree: typeof mountTree };
   }
 
   // Share with an external agent: a prompt carrying this page's API and your
-  // agent token (tokens.ts: the share button's, the same until rotated), which
-  // lets the agent call your agent's tools here (host.ts, /api/ext) and act
-  // as you on the rest of the server (server-api.ts).
+  // agent token (server/tokens.ts: the share button's, the same until rotated), which
+  // lets the agent call your agent's tools here (server/doc-host.ts, /api/ext) and act
+  // as you on the rest of the server.
   const shareBtn = $("btn-share");
   function promptFor(token: string): string {
     const api = `${location.origin}${BASE}/api/ext`;
@@ -1011,7 +1011,7 @@ Once you've read the guide, await further instructions.`;
     copiedTimer = window.setTimeout(() => { copied.textContent = linkHint; }, 2000);
   });
   // Document settings (publishing, versions, the homepage): the gear opens
-  // them, a popover under it. Their code (src/page/settings.ts, settings.js)
+  // them, a popover under it. Their code
   // loads only when the gear is reached for: hovered, focused or clicked.
   const settingsBtn = $("btn-settings");
   let settingsLoading: Promise<Settings | null> | null = null;
@@ -1117,7 +1117,7 @@ Once you've read the guide, await further instructions.`;
 
   const currentState = () => (sourceView ? sourceView.state : page.state);
 
-  // The page editor runs on the document's own origin (bridge.ts): the
+  // The page editor runs on the document's own origin: the
   // address the front door gave this page (with the token that opens the
   // document's files there), in the frame.
   const pagesUrl = document.querySelector<HTMLMetaElement>('meta[name="erga-pages"]')?.content ?? "";
@@ -1302,8 +1302,8 @@ Once you've read the guide, await further instructions.`;
 
   // ---------------------------------------------------------------- view_page
 
-  // The agent asks to see the page: the page editor's frame draws it
-  // (frame.ts), with the latest edits, and the picture goes back to the agent.
+  // The agent asks to see the page: the page editor's frame draws it,
+  // with the latest edits, and the picture goes back to the agent.
   // No server-side browser: whoever has the editor open is the agent's eyes.
   const captureView = (req: ViewRequest) => page.capture(req);
   async function answerView(id: string, req: ViewRequest) {
@@ -1316,7 +1316,7 @@ Once you've read the guide, await further instructions.`;
   // ---------------------------------------------------------------- the agent
 
   const agentPanel = $("agent");
-  // Where the agent and the steps list sit around the document, and how wide the agent is (layout.ts).
+  // Where the agent and the steps list sit around the document, and how wide the agent is.
   mountLayout(agentPanel, agentPanel.querySelector<HTMLElement>(".agent-head")!);
   const agentLog = $("agent-log");
   const agentInput = $("agent-input") as HTMLTextAreaElement;
@@ -1678,7 +1678,7 @@ Once you've read the guide, await further instructions.`;
     if (mod && !e.shiftKey && (key == "/" || key == "?")) { toggleHelp(); return true; }
     if (mod && !e.shiftKey && key == "s") { flash(connected ? "Saved: edits go to disk as you type" : "Offline: edits sync when the host is back", 2200); return true; }
     if (e.key == "Escape") {
-      // Naming something in the pages tree, a question in it or one of its menus: Escape is theirs (tree.ts) to cancel.
+      // Naming something in the pages tree, a question in it or one of its menus: Escape is theirs to cancel.
       if (document.activeElement?.closest(".et-input, .et-row.confirm, .et-menu")) return false;
       if (docSettings?.escape()) { /* its menu, or itself, closed */ }
       else if (!account.hidden) { toggleAccount(false); accountBtn?.focus(); }
@@ -1714,7 +1714,7 @@ Once you've read the guide, await further instructions.`;
 
   // Pausing the page: a page that reacts to clicks and keys (slides that
   // advance on click, a game) gets in the way of editing its text. If it
-  // defines window.ergaPause (DOCUMENT_PROMPT.md, rule 10), the pause button
+  // defines window.ergaPause (agents/DOCUMENT_PROMPT.md, rule 10), the pause button
   // tells it to stop, and only the editor answers clicks until it resumes.
   // A page that can't be paused gets the button disabled, with a card that
   // offers to have the agent make it pausable.
@@ -1772,7 +1772,7 @@ Once you've read the guide, await further instructions.`;
     if (!$("pause-card").hidden && !$("pause-card").contains(e.target as Node) && !$("btn-pause").contains(e.target as Node)) showPauseCard(false);
   });
 
-  // Out of the editor and back in (front.ts), without leaving the page: the
+  // Out of the editor and back in, without leaving the page: the
   // controls go out of sight, with anything open among them, and come back as they were.
   // Into the editor (or loading in it), the editor shows first, then the agent
   // grows out of its button, unless the user keeps it closed. The first time,
@@ -1804,7 +1804,7 @@ Once you've read the guide, await further instructions.`;
   // were, the pane put back as it was left, unanimated; arriving here from
   // elsewhere is coming into the editor, and the agent grows out as above.
   // Only a page opened with #edit is "loaded in the editor": one opened viewing (by a reload or not) and
-  // switched into it is coming into the editor (front.ts says which, ergaShell.loadedEditing).
+  // switched into it is coming into the editor (server/routes.ts says which, ergaShell.loadedEditing).
   if (!editing()) setEditing(false);
   else if (window.ergaShell?.loadedEditing !== false && ["reload", "back_forward"].includes((performance.getEntriesByType("navigation")[0] as PerformanceNavigationTiming | undefined)?.type ?? "")) {
     if (settings.agent) {
@@ -1816,12 +1816,12 @@ Once you've read the guide, await further instructions.`;
 
   // ---------------------------------------------------------------- a new release
 
-  // The page reloads by itself for a new release of the editor (live.ts), once the room has this tab's edits,
+  // The page reloads by itself for a new release of the editor, once the room has this tab's edits,
   // never while you drag or compose or speak, and comes back as it was: the page and its caret, where it was
   // scrolled to, the view (page or source), the cards that were open, the files attached to the next message.
   // (The agent's draft, the pane and its layout are kept in this browser anyway.) A reload by hand comes back
-  // the same way, and so does the editor's look: the document's page opens with it from its first frame
-  // (front.ts, EDITING_HEAD), before this script has loaded.
+  // the same way, and so does the editor's look: the document's page opens with it from its first frame,
+  // before this script has loaded.
   live((l) => {
     l.flush(() => collab.flushed());
     l.hold(() => pointerDown ? "a pointer is down on the page" : voice ? "voice mode is on" : agentFiles.reading ? "files are being read" : null);

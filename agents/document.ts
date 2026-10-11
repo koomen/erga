@@ -6,18 +6,18 @@
 //
 // It runs on pi's agent core (https://github.com/badlogic/pi-mono:
 // @mariozechner/pi-agent-core + pi-ai) with our own tools, written against
-// the small Workspace interface in workspace.ts, so the same agent could
+// the small Workspace interface in agents/workspace.ts, so the same agent could
 // run elsewhere (a browser) if it ever needs to. Others see only its edits,
 // attributed ("Pete's agent"), and its presence while it works: a labelled
 // cursor where it last edited, and whether it's busy, on awareness.
 //
-// This module is the Promise edge: pi's SDK is async, and host.ts wraps
+// This module is the Promise edge: pi's SDK is async, and server/doc-host.ts wraps
 // what it exposes in Effect.
 //
 // Configuration comes from the Worker's bindings (in local development,
 // .dev.vars; see .dev.vars.example). The key lives only here, in the host:
 //   ANTHROPIC_API_KEY          required: the key an admin stored on /admin
-//                              (credentials.ts, through worker/d1.ts's withKeys),
+//                              (server/api-keys.ts, through cloudflare/d1.ts's withKeys),
 //                              else the Worker secret (locally a real one in
 //                              .dev.vars, else the dev server's environment: dev/agent-key.ts)
 //   ERGA_AGENT_MODEL    the model a session starts on: opus-fast
@@ -163,7 +163,7 @@ async function scriptStep(context: Context) {
     const text = typeof m.content == "string" ? m.content : m.content.map((c) => (c.type == "text" ? c.text : "")).join("");
     const k = text.indexOf("@script");
     if (k < 0) continue;
-    // Attached files come after the message (src/page/attach.ts): the script ends at the first blank line, then.
+    // Attached files come after the message: the script ends at the first blank line, then.
     const src = text.slice(k + 7).trim();
     try { steps = JSON.parse(src); } catch (e) {
       try { steps = JSON.parse(src.split("\n\n")[0]); } catch { return fauxAssistantMessage(`bad script: ${(e as Error).message}`); }
@@ -188,13 +188,13 @@ async function scriptStep(context: Context) {
 
 /**
  * How to write documents the page editor can keep editing by hand
- * (DOCUMENT_PROMPT.md, the one copy of these rules), appended to the system prompt.
+ * (agents/DOCUMENT_PROMPT.md, the one copy of these rules), appended to the system prompt.
  */
 const DOCUMENT_RULES = documentPrompt.trim();
 
 /**
- * What the system prompt says about the tools beyond the document
- * (server-tools.ts), by which of them the person has now.
+ * What the system prompt says about the tools beyond the document,
+ * by which of them the person has now.
  */
 export function beyondPrompt(owner: string, names: string[]): string {
   const lines: string[] = [];
@@ -295,7 +295,7 @@ at the document's folder (paths relative to it), with every page's files, the sh
 assets and the folders, whichever page is open. You may read and change any text file
 in it.`;
 
-/** How a document's pages and addresses go together (tree.ts), for both agents' prompts. */
+/** How a document's pages and addresses go together, for both agents' prompts. */
 const PAGES_PROMPT = `index.html at the root (or index.md) is the document's own page, at
 /<owner>/<slug>; every other .html or .md file is a page of its own, at its path without
 the extension: about.html is /<owner>/<slug>/about, blog/post.html is
@@ -320,11 +320,11 @@ function makeTools(ws: Workspace, opts: {
   /** The version the document was at when this agent's last turn ended (diff_versions' "last_turn"); null before its first turn ends. */
   lastTurn?: () => Promise<string | null>;
   canEdit?: () => boolean;
-  /** Who the agent's restores are by, now (its person, via it: attribution.ts). */
+  /** Who the agent's restores are by, now (its person, via it: shared/attribution.ts). */
   by?: () => string;
   /** Resolves once the agent's replica has everything the room has (after a restore, say). */
   caughtUp?: () => Promise<void>;
-  /** The document's file tree: new pages and folders, moves, deletes (host.ts, runTreeOp); resolves once the agent's replica has the result. */
+  /** The document's file tree: new pages and folders, moves, deletes; resolves once the agent's replica has the result. */
   tree?: (op: TreeOp) => Promise<void>;
   /** The document's pages, with titles, and its address (list_pages). */
   pages?: () => Promise<PageTree>;
@@ -494,7 +494,7 @@ function makeTools(ws: Workspace, opts: {
   ] as AgentTool[];
 }
 
-/** The document's versions and publishing, as the agents' tools reach them (worker/doc-host.ts; versions.ts). */
+/** The document's versions and publishing, as the agents' tools reach them. */
 export interface VersionsAccess {
   state(opts: { before?: string | number | null; limit?: number }): Promise<VersionsState>;
   version(ref: string | number): Promise<(Version & { files: string[]; index: string }) | null>;
@@ -645,7 +645,7 @@ function versionTools(versions: VersionsAccess, canEdit: () => boolean, by: () =
 
 /**
  * new_page, mkdir, mv and rm: the document's file tree, with the same powers
- * a person has in the editor's file tree (host.ts, runTreeOp, checks each).
+ * a person has in the editor's file tree (server/doc-host.ts, runTreeOp, checks each).
  */
 function treeTools(tree: (op: TreeOp) => Promise<void>, open?: (path: string) => Promise<OpenResult>): AgentTool[] {
   const text = (s: string) => ({ content: [{ type: "text" as const, text: s }], details: {} });
@@ -729,7 +729,7 @@ function pageTools(pages: () => Promise<PageTree>, open?: (path: string) => Prom
   ] as AgentTool[];
 }
 
-/** get_title and set_title: the document's title and its address, kept in the directory (directory.ts), not in a file. */
+/** get_title and set_title: the document's title and its address, kept in the directory, not in a file. */
 function namingTools(naming: Naming): AgentTool[] {
   const describe = (n: Awaited<ReturnType<Naming["get"]>>) => [
     `Title: ${n.title}${n.titleSet ? " (set by someone)" : " (follows the page's first heading)"}`,
@@ -763,7 +763,7 @@ function namingTools(naming: Naming): AgentTool[] {
 
 /**
  * The document tools' names, descriptions and arguments (JSON Schema), with
- * no document behind them: for the server's API (server-api.ts), which offers
+ * no document behind them: for the server's API, which offers
  * them for any document by adding a `document` argument and runs them in that
  * document's host.
  */
@@ -794,7 +794,7 @@ export interface AgentSession {
   configure(cfg: AgentConfig | null): Promise<void>;
   /** The transcript so far (for a tab that just loaded). */
   log(): Log;
-  /** Sends a message, with any files attached (src/page/attach.ts); while a turn is running it steers the current one. */
+  /** Sends a message, with any files attached; while a turn is running it steers the current one. */
   prompt(text: string, context: string | null, files?: Attachment[]): void;
   abort(): void;
   reset(): Promise<void>;
@@ -809,7 +809,7 @@ export interface AgentSession {
    * call shows in the transcript, marked as external. Throws with a message
    * the caller can act on (unknown tool, bad arguments, the tool's own error).
    */
-  /** `via`: how the person acts through the outside agent (attribution.ts: "a shared agent (label)"); its edits are theirs, via it. */
+  /** `via`: how the person acts through the outside agent (shared/attribution.ts: "a shared agent (label)"); its edits are theirs, via it. */
   runTool(name: string, args: unknown, via?: string): Promise<ToolContent[]>;
 }
 
@@ -830,14 +830,14 @@ export interface SessionOptions {
   readAsset: (path: string) => Promise<Uint8Array | null>;
   /** The document's title and address, as the owner (get_title, set_title); without it those tools are left out. */
   naming?: Naming;
-  /** Does a tree operation in the room (host.ts, runTreeOp): new_page, mkdir, mv and rm; without it those tools are left out. */
+  /** Does a tree operation in the room: new_page, mkdir, mv and rm; without it those tools are left out. */
   tree?: (op: TreeOp) => Promise<void>;
   /** The document's pages with titles, and its address (list_pages); without it list_pages and open_page are left out. */
   pages?: () => Promise<PageTree>;
   /** Switches the owner's open editor tabs to a page (open_page, new_page's open). */
   open?: (path: string) => Promise<OpenResult>;
   /**
-   * The tools beyond the document the owner may use now (server-tools.ts:
+   * The tools beyond the document the owner may use now (agents/tools.ts:
    * sharing; the server's settings and users for an admin). Asked for again
    * before each new prompt, so becoming (or stopping being) an admin shows.
    */
@@ -854,11 +854,11 @@ export async function startSession(opts: SessionOptions): Promise<AgentSession> 
   const { owner } = opts;
   /** The settings now: configure changes them (a key an admin stores reaches the next model call). */
   let cfg = opts.cfg;
-  // Its work is its person's, via it (attribution.ts): "Ada, via their agent".
+  // Its work is its person's, via it: "Ada, via their agent".
   const me: Author = { user: owner.id, name: byLine(owner.name, VIA.agent), color: colorFor(owner.id, true), kind: "agent", via: VIA.agent };
   /** Who the session's edits are by now: the embedded agent, or, while an outside agent's calls run, that agent (runTool). */
   let acting = me;
-  /** Says who edits now, in the shared doc's authors (src/room/doc.ts), so each edit is attributed to it. */
+  /** Says who edits now, in the shared doc's authors, so each edit is attributed to it. */
   const actAs = (a: Author) => { if (acting != a) { acting = a; introduce(doc, a); presence({ user: a }); } };
 
   // The session's own replica of the shared doc, joined to the room as a peer.
@@ -1044,7 +1044,7 @@ export async function startSession(opts: SessionOptions): Promise<AgentSession> 
     },
     undo() {
       if (!undo.undoStack.length) return false;
-      // Stamped, so the undo is attributed to the agent even when it only deletes (src/room/doc.ts).
+      // Stamped, so the undo is attributed to the agent even when it only deletes.
       doc.transact(() => { undo.undo(); stamp(doc, acting); }, undoOrigin);
       undoable();
       return true;

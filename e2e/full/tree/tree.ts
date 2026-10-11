@@ -1,13 +1,13 @@
-// Helpers for the tree's tests (src/page/tree.ts, built as pages-tree.js):
+// Helpers for the tree's tests (client/pages-tree.ts, built as pages-tree.js):
 // a fresh copy of
 // e2e/fixtures/multi linked as one of DEV_LOGIN's documents, the server's
 // own view of its files, the agents' tools over a token, and the tree's rows
 // read and clicked in a tab (the editor's title card, or a row on Documents).
 //
 // The fixture: index.html ("Field guide"), about.html ("About us"),
-// contact.html, blog/ (index.html, spring-migration.html, drafts/owls.html),
+// contact.html, blog/,
 // and files that aren't documents (style.css, assets/owl.svg,
-// fonts/field.woff2), which the tree never shows.
+// client/fonts/field.woff2), which the tree never shows.
 
 import type { Page } from "playwright-core";
 import { expect, settle, until, type Server, type Tab } from "../../fixtures";
@@ -80,7 +80,7 @@ export const agentClosed = (page: Page) => page.addInitScript(() => {
  * mounted (still closed), and the page in its frame rendered and focused.
  *
  * That last part is the editor's own ready state, and it matters: the shell focuses the page each time the frame
- * reports a render (main.ts, onUpdate), unless the focus is in a card, and the frame takes the focus a message later
+ * reports a render, unless the focus is in a card, and the frame takes the focus a message later
  * (Remote.focus, then frame.ts's "focus"). If the frame starts late (a busy machine), a card opened meanwhile loses
  * its focus to it. So the tests wait until the page has the focus, as a person sees the editor ready, before they open
  * a card.

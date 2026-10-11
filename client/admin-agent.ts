@@ -1,7 +1,7 @@
-// The admin's agent panel, on every admin page (admin-layout.ts has its markup, and collapses it to a round
+// The admin's agent panel, on every admin page (server/admin/layout.ts has its markup, and collapses it to a round
 // button in the lower left). The panel is the editor's (the same markup, styles and conversation,
-// agent-chat.ts), talking to the admin's own agent session in the AdminAgent object (admin-agent/agent.ts,
-// worker/admin-agent.ts):
+// agent-chat.ts), talking to the admin's own agent session in the AdminAgent object (agents/admin.ts,
+// cloudflare/admin-agent-host.ts):
 //
 //   GET  /api/admin/agent              the state: on or off (and why), the model, the conversation so far
 //   POST /api/admin/agent              { text, context }: a message; context says which admin page is open
@@ -11,11 +11,11 @@
 //   GET|PUT    /api/admin/agent/prefs          the panel as the admin left it: open, side, width
 //
 // The conversation and the panel follow the admin from page to page, browser to browser and sign-in to
-// sign-in: the server keeps them (worker/admin-agent.ts, admin-agent/chat-store.ts). This browser keeps a copy of
-// the panel's state (admin-layout.ts, layout.ts), so a page paints it at once.
+// sign-in: the server keeps them. This browser keeps a copy of
+// the panel's state, so a page paints it at once.
 //
-// Share with agent is in every admin page's header (admin-share.ts). Built
-// by build.sh to admin-agent.js.
+// Share with agent is in every admin page's header. Built
+// by client/build.sh to admin-agent.js.
 
 import { chat } from "./agent-chat";
 import { fileRefs, type Attachment } from "./attach";
@@ -52,8 +52,8 @@ const VERBS: Record<string, [string, string]> = {
   source_log: ["Reading the log of", "Read the log of"],
 };
 
-// Which side the agent is on, and how wide: dragged by its head and its inner edge, as in the editor (layout.ts).
-// Off on a narrow window, where the agent covers the page instead (admin-layout.ts).
+// Which side the agent is on, and how wide: dragged by its head and its inner edge, as in the editor.
+// Off on a narrow window, where the agent covers the page instead.
 // Each change goes to the server too, and the server's (the admin's last, from any browser) is put on at load,
 // unless the admin changed that part here while the server's answer was on its way (it's older than theirs).
 const savePrefs = (p: Prefs) => { fetch("/api/admin/agent/prefs", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(p), keepalive: true }).catch(() => {}); };
@@ -71,7 +71,7 @@ const talk = chat({ logEl: $("agent-log"), jump: $("agent-jump") as HTMLButtonEl
 const log = talk.log;
 let off: string | null = "Connecting to the agent…";
 let hintTimer = 0;
-// Files to go with the next message: dropped on the panel, pasted, or picked (attach-ui.ts).
+// Files to go with the next message: dropped on the panel, pasted, or picked.
 const att = attachments({ pane: $("agent"), form: $("agent-form"), input, hint: (t) => showHint(t), changed: () => renderBusy() });
 
 function showHint(text: string, sticky = false) {
@@ -226,7 +226,7 @@ function connect() {
 }
 load().then(connect);
 
-// A new release (live.ts): the page reloads at a quiet moment and comes back as it was. The draft, the panel and
+// A new release: the page reloads at a quiet moment and comes back as it was. The draft, the panel and
 // its layout are kept anyway; this keeps the files attached to the next message.
 interface Kept { files?: Attachment[] }
 live((l) => {

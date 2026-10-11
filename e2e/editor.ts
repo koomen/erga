@@ -22,11 +22,11 @@ const PAGE_AT = `document.getElementById("page").getBoundingClientRect()`;
 const RAW = { Home: 36, End: 35, ArrowLeft: 37, ArrowUp: 38, ArrowRight: 39, ArrowDown: 40 } as const;
 const MOD: Record<string, number> = { Alt: 1, Control: 2, Meta: 4, Shift: 8, ControlOrMeta: process.platform == "darwin" ? 4 : 2 };
 
-/** The editor's timers run at this fraction of real time in the tests (src/page/editor.ts, `ms`). */
+/** The editor's timers run at this fraction of real time in the tests (client/editor.ts, `ms`). */
 export const TIMESCALE = 0.1;
 
 export interface OpenOptions {
-  /** The fixture's file the document is (index.html, index.md). */
+  /** The fixture's file the document is. */
   file?: string;
   /** Added to the document's address, before #edit. */
   query?: string;

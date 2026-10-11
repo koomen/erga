@@ -61,7 +61,7 @@ test("New folder, New page, rename and Move to… (always with the warning here:
   await until(async () => !(await doc.tree()).some((x) => x.startsWith("archive")), 5000, "a folder deleted from Documents, with what's in it");
 });
 
-// Documents reads its open trees again every 4 s (front.ts, refreshOpen): live here means within that.
+// Documents reads its open trees again every 4 s: live here means within that.
 test("live: an agent's new page shows without a reload", async ({ tab }) => {
   const page = tab.page;
   tab.strict = true;

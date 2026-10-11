@@ -1,7 +1,7 @@
 // Live reload (`bun start --reload`, dev/reload.ts): an open tab reloads by itself, showing the
 // change, when the Worker's front door changes (Vite restarts the server), when another Worker module changes (Vite
-// reloads the Worker), when the editor's own files change (dev.ts rebuilds them), and the page editor too. The edits
-// are made in a copy of this checkout (e2e/checkout.ts), with a server of its own for this file: each test makes
+// reloads the Worker), when the editor's own files change (dev/start.ts rebuilds them), and the page editor too. The edits
+// are made in a copy of this checkout, with a server of its own for this file: each test makes
 // its own change, with a mark of its own, and waits for that.
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -18,7 +18,7 @@ const freePort = () => new Promise<number>((resolve, reject) => {
   s.listen(0, "127.0.0.1", () => { const { port } = s.address() as { port: number }; s.close(() => resolve(port)); });
 });
 
-// As the worker imports this file, outside any test's time limit (fixtures.ts).
+// As the worker imports this file, outside any test's time limit.
 await beforeTests(async () => {
   scratch = mkdtempSync(join(realpathSync(tmpdir()), "erga-reload-"));
   copy = join(scratch, "erga");
@@ -76,7 +76,7 @@ test("another Worker module changes (cloudflare/index.ts: Vite reloads the Worke
   await reloads(tab.page, () => edit("cloudflare/index.ts", "\n", `\n// edited ${crypto.randomUUID()}\n`), "true");
 });
 
-// The editor's files are rebuilt (site.sh) before the tab reloads.
+// The editor's files are rebuilt before the tab reloads.
 test("the editor's own files change (client/style.css: they're rebuilt): the page reloads, with them, and they're what's served", { timeout: 45_000 }, async ({ tab }) => {
   tab.strict = true;
   await docs(tab.page);

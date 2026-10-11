@@ -1,5 +1,5 @@
-// A document's versions as the settings popover shows them (settings.ts):
-// the contract's shapes (versions.ts) and which rows
+// A document's versions as the settings popover shows them:
+// the contract's shapes and which rows
 // the published-version picker shows. The picker always has the published
 // version, the latest RECENT, and the NEAR just before the published one
 // (to roll back to); the versions in between, and those older than all of

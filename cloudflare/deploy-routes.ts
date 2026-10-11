@@ -1,10 +1,10 @@
 // /deploy: deploy Erga to your own Cloudflare account, from erga.dev, with
-// the same settings erga.dev has (deploy/cloudflare.ts). Who may use it is
+// the same settings erga.dev has. Who may use it is
 // the deploy_page setting (anyone signed in by default; "admins" for admins
-// and users with the deploy role, users.ts; "off" hides it); anyone else
+// and users with the deploy role, server/users.ts; "off" hides it); anyone else
 // gets "not found".
 //
-//   /deploy                                the page (deploy/page.ts)
+//   /deploy                                the page
 //   /deploy/auth/cloudflare[/callback]     "Authorize with Cloudflare": OAuth with PKCE, when the server has a client
 //   POST /deploy/api/connect               {token}: a pasted API token instead
 //   GET  /deploy/api/session               connected?, the accounts, and the deploy's progress
@@ -14,10 +14,10 @@
 //   POST /deploy/api/start                 {plan}: deploys (DeployPlan)
 //   POST /deploy/api/forget                forgets the token now
 //
-// Each browser's session is a Durable Object (worker/deployer.ts) named by a
+// Each browser's session is a Durable Object named by a
 // random id in a cookie (erga_deploy, with the key half that seals the token).
-// For the tests only (local development with ERGA_DEPLOY_MOCK=1), Cloudflare is pretend
-// (deploy/mock.ts), OAuth included (/deploy/mock/consent), and
+// For the tests only (local development with ERGA_DEPLOY_MOCK=1), Cloudflare is pretend,
+//OAuth included (/deploy/mock/consent), and
 // GET /deploy/api/mock shows what it was asked to do.
 
 import { DEFAULT_OAUTH_SCOPES, OAUTH, tokenPermissions, tokenTemplateUrl, type DeployPlan } from "../deploy/pipeline";

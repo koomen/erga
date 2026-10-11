@@ -1,16 +1,16 @@
 /**
- * The editor's side panels: the agent and the list of a presentation's steps
- * (front.ts, STEPS_BOOT), docked around the document in any order, e.g.
+ * The editor's side panels: the agent and the list of a presentation's steps,
+ * docked around the document in any order, e.g.
  * agent | document | steps, or document | steps | agent. The user drags a
  * panel by its head to another slot (the slots are magnets, with hysteresis,
  * and a ghost shows where it lands), and drags the agent's inner edge to make
  * it wider or narrower. The arrangement and the agent's width are kept in
  * this browser (localStorage, KEY).
  *
- * The first half is the layout's state and geometry, pure (tests/layout.test.ts);
- * mountLayout puts it on the page, as CSS variables page.html's rules read.
+ * The first half is the layout's state and geometry, pure;
+ * mountLayout puts it on the page, as CSS variables client/editor.html's rules read.
  *
- * The admin pages' agent panel (admin-layout.ts) has the same grip and drag (mountGrip,
+ * The admin pages' agent panel has the same grip and drag (mountGrip,
  * dragToDock), in a grid of two: mountPaneLayout, PaneLayout.
  */
 
@@ -156,7 +156,7 @@ export function save(storage: Pick<Storage, "setItem"> | null, layout: Layout) {
 // ---------------------------------------------------------------- the admin pages' agent panel
 
 /**
- * The admin pages' agent panel (admin-layout.ts, src/page/admin-agent.ts): the
+ * The admin pages' agent panel: the
  * same grip and drag as the editor's agent, in a grid of two, the agent and
  * the board's column, either way round. Kept in this browser (PANE_KEY).
  */
@@ -416,7 +416,7 @@ export function mountLayout(agent: HTMLElement, agentHead: HTMLElement): LayoutH
     });
   }
   agentHead.addEventListener("pointerdown", (e) => startDrag("agent", agent, agentHead, e));
-  // The steps list's head (front.ts makes it, before the editor loads).
+  // The steps list's head (server/routes.ts makes it, before the editor loads).
   document.addEventListener("pointerdown", (e) => {
     const head = (e.target as Element).closest?.(".erga-steps-head");
     const p = picker();

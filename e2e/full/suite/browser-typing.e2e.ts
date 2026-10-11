@@ -1,4 +1,4 @@
-// The multiplayer suite in real tabs (e2e/suite/suites/browser.ts): people typing on the page, their carets and
+// The multiplayer suite in real tabs: people typing on the page, their carets and
 // coloured marks, interleaved typing, ⌘Z undoing only your own, a join undone for all.
 import { Participant } from "./client";
 import { expect, until } from "./harness";

@@ -1,12 +1,12 @@
 // A pretend Cloudflare, for testing the deploy page without a real account:
-// the API calls the deploy makes (deploy/cloudflare.ts), Cloudflare's OAuth
+// the API calls the deploy makes, Cloudflare's OAuth
 // token endpoint, Registrar, and the new server itself once it's "deployed"
 // (it answers, nothing more). It keeps what it was
 // asked to do in `state`, which the tests read (and the page shows, at
 // /deploy/api/mock, in local development with ERGA_DEPLOY_MOCK=1).
 //
 // Its requests and answers follow Cloudflare's OpenAPI schema
-// (github.com/cloudflare/api-schemas) and workers-sdk's deploy: the Worker's
+// and workers-sdk's deploy: the Worker's
 // metadata as a form field, Durable Objects as declarative exports (no
 // migration tags), a D1 binding's database_id, assets in buckets of base64
 // or one by one (singleAssetUploads, as the upload JWT can ask), D1's
@@ -23,8 +23,8 @@
 //   mock-fail-<step>    Cloudflare fails at that step (account, database, migrations, assets, worker, address, pages)
 //   mock-slow           each call takes a little while (to watch the steps go by)
 //   mock-flaky          the first asset upload fails with a 502 (the deploy tries it again)
-//   mock-scoped-…       an account API token made through the mock's POST /accounts/{id}/tokens
-//                       (deploy/tokens.ts): it may do only what its policies say (Editor on the
+//   mock-scoped-…       an account API token made through the mock's POST /accounts/{id}/tokens:
+//                      it may do only what its policies say (Editor on the
 //                       Workers it names, D1, read on the zones it names), and is refused the rest
 //                       with a 403, as Cloudflare would
 //
@@ -32,7 +32,7 @@
 // through the API, ".dev" costs 12.18 USD and anything else 10.44.
 //
 // With `fleet`, the account is Erga's own, as the branch deploys
-// (deploy/branches.ts) see it: the zones erga.dev and erga-pages.dev, the
+// see it: the zones erga.dev and erga-pages.dev, the
 // production Worker "erga" already there (deployed by cf deploy, on erga.dev
 // and *.erga-pages.dev) with its database "erga" (tables, rows and
 // migrations) and three documents in its Durable Objects, the builder
@@ -89,7 +89,7 @@ interface TokenPolicy { effect: string; permission_groups: { id: string; name?: 
 /** A policy's resource keys, a Worker's nested under its account. */
 const keysOf = (p: TokenPolicy) => Object.entries(p.resources ?? {}).flatMap(([k, v]) => (typeof v == "string" ? [k] : Object.keys(v)));
 
-/** The permission groups the mock knows, by id (Cloudflare's ids: deploy/tokens.ts KNOWN_IDS). */
+/** The permission groups the mock knows, by id (Cloudflare's ids: deploy/server-tokens.ts KNOWN_IDS). */
 const GROUPS: Record<string, string> = {
   "7e79ec33834341f28dd431ab73884400": "Individual Workers Editor",
   "09b2857d1c31407795e75e3fed8617a1": "D1 Write",
@@ -112,7 +112,7 @@ const b64 = (bytes: Uint8Array) => { let s = ""; for (let i = 0; i < bytes.lengt
  * What a hostname on the mock's custom domains would answer for `path`: the
  * file its Worker's last upload had there (as html_handling "auto-trailing-slash"
  * finds a page: /, /about, /about/), or null. For the tests and the dev server
- * to see a site as it was published (sites.ts).
+ * to see a site as it was published.
  */
 export function mockSite(state: MockState, hostname: string, path: string): { bytes: Uint8Array; path: string } | null {
   const d = state.domains.find((x) => x.hostname == hostname);
@@ -547,7 +547,7 @@ export function mockCloudflare(opts: {
       if (!db.tables.includes("d1_migrations")) throw new D1Error("no such table: d1_migrations: SQLITE_ERROR");
       return db.migrations.map((name) => ({ name }));
     }
-    // The API keys (credentials.ts), as the deploy keeps a server's own on a new copy (deploy/cloudflare.ts, ownCredentials).
+    // The API keys, as the deploy keeps a server's own on a new copy.
     const CRED = /^INSERT INTO credentials \(([^)]+)\) VALUES \((.*)\);?$/;
     if (/^SELECT \* FROM credentials/i.test(sql.trim())) {
       if (!db.tables.includes("credentials")) throw new D1Error("no such table: credentials: SQLITE_ERROR");

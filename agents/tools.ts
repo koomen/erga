@@ -1,33 +1,33 @@
 // Tools both kinds of agent have, defined once: the editor's own agent
-// (agent.ts, given them by its document's host, worker/doc-host.ts) and an
-// external agent holding one of the person's agent tokens (server-api.ts,
-// over HTTP, /mcp and the guide). They need only the directory (directory.ts:
+// (agents/document.ts, given them by its document's host, cloudflare/doc-host.ts) and an
+// external agent holding one of the person's agent tokens (server/api.ts,
+// over HTTP, /mcp and the guide). They need only the directory (server/directory.ts:
 // documents' permissions, the server's users and settings) and who's asking,
 // so they run the same in a document's host and in the Worker.
 //
 //   document_access, share_document     who a document is shared with, and sharing it (its owner)
 //   list_documents, create_document,    the documents list (/docs): the person's documents, a new one (blank, from a
 //   delete_document                     template, or a copy), deleting one; the editor's agent only (`docs`: the
-//                                       REST API has its own, server-api.ts, which also publish files)
-//   list_settings, set_setting,         the server's settings (config.ts), admins only;
+//                                       REST API has its own, server/api.ts, which also publish files)
+//   list_settings, set_setting,         the server's settings, admins only;
 //   reset_setting                       a setting the deploy locks can be seen, not changed
-//   list_setting_changes                the settings' change log (config.ts history), admins only
-//   list_api_keys, clear_api_key        which API keys are set (credentials.ts), never a key, and clearing one,
+//   list_setting_changes                the settings' change log (server/settings.ts history), admins only
+//   list_api_keys, clear_api_key        which API keys are set, never a key, and clearing one,
 //                                       admins only; a key is set only on /admin/api-keys, never in a conversation
-//   get_sign_in_status,                 how people sign in (auth-apps.ts): this server's GitHub app and the other deploy
+//   get_sign_in_status,                 how people sign in: this server's GitHub app and the other deploy
 //   clear_sign_in_app                   target's, never a secret; clearing the values set on /admin/auth, or discarding
 //                                       those that wait for a test sign-in. Admins only, with ToolWho.auth; an app's
 //                                       values are set only on /admin/auth, never in a conversation
 //   domain_status, publish_to_domain,   a document's site at a domain of the person's own, from their Cloudflare account
-//   deploy_domain, remove_domain,       (site-publish.ts), where the platform has it (ToolWho.sites); the token is
+//   deploy_domain, remove_domain,       a document at a domain of the person's own, where the platform has it (ToolWho.sites); the token is
 //   disconnect_cloudflare               pasted only on /settings, never in a conversation (the agent may disconnect it)
-//   list_users, add_user,               who may sign in, and who's an admin (users.ts),
+//   list_users, add_user,               who may sign in, and who's an admin,
 //   set_user_role, set_user_deploy,     admins only
 //   remove_user
 //
 // An admin tool is offered only to an admin with admin power (`toolsFor`;
-// Users.actsAsAdmin): an external agent with an admin-scope token (tokens.ts),
-// and the admin's agent (admin-agent/agent.ts, `adminTools`),
+// Users.actsAsAdmin): an external agent with an admin-scope token,
+// and the admin's agent (agents/admin.ts, `adminTools`),
 // acting as the admin whose session it is. The editor's agent never has them (a document's host never
 // carries admin power, and a document's text could steer its agent). The
 // directory checks again on every call (Users.mustAdmin), so a tool list
@@ -62,11 +62,11 @@ export interface ToolWho {
   readonly here?: string;
   /** The server's origin, for URLs in answers (else addresses only). */
   readonly origin?: string;
-  /** The platform (front.ts): for the documents list's tools (`docs`), which only the editor's agent gets. */
+  /** The platform: for the documents list's tools (`docs`), which only the editor's agent gets. */
   readonly platform?: Platform;
-  /** Sign-in's settings (auth-apps.ts), where the server has them: for the sign-in tools. */
+  /** Sign-in's settings, where the server has them: for the sign-in tools. */
   readonly auth?: AuthOps;
-  /** Documents' sites on the person's Cloudflare account (site-publish.ts), where the server has them: for the domain tools. */
+  /** Documents' sites on the person's Cloudflare account, where the server has them: for the domain tools. */
   readonly sites?: SiteOps;
 }
 
@@ -80,7 +80,7 @@ export interface ServerToolDef {
   readonly parameters: TObject;
   /** Only for server admins. */
   readonly admin?: boolean;
-  /** The documents list's (needs ToolWho.platform): for the editor's agent; the REST API has its own (server-api.ts). */
+  /** The documents list's (needs ToolWho.platform): for the editor's agent; the REST API has its own. */
   readonly docs?: boolean;
   /** The domain tools (need ToolWho.sites): an agent is given them only where the server has sites. */
   readonly sites?: boolean;
@@ -182,7 +182,7 @@ export const SERVER_TOOLS: ServerToolDef[] = [
     },
   },
 
-  // ------------------------------------------------------------ a document at the person's own domain (site-publish.ts)
+  // ------------------------------------------------------------ a document at the person's own domain
   {
     name: "domain_status",
     sites: true,

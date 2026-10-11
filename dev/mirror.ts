@@ -1,5 +1,5 @@
 // What goes over a linked document's /api/mirror WebSocket, between the
-// document (worker/disk.ts) and the dev server (dev/plugin.ts), which has
+// document and the dev server, which has
 // the files. The document asks for them as its room would ask a folder:
 // list, read and write (and the tree's: remove, folders, mkdir, rmdir), each answered by a reply with the same id. The dev
 // server says when a file changed on disk, so the room merges it in; and

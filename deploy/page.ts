@@ -1,4 +1,4 @@
-// The deploy page, /deploy (worker/deploy.ts): connect Cloudflare, choose
+// The deploy page, /deploy: connect Cloudflare, choose
 // where the new server goes (and buy a domain, if you like, after seeing the
 // price), give it a GitHub app to sign in with, deploy, and watch each step.
 // One page; its script asks /deploy/api/* and redraws.

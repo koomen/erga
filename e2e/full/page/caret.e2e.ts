@@ -1,4 +1,4 @@
-// The caret on the page is drawn by the editor (src/page/caret.ts): wider than the browser's 1 px, and wider in large type.
+// The caret on the page is drawn by the editor: wider than the browser's 1 px, and wider in large type.
 import { expect, servers, test } from "../../fixtures";
 import { F, openEditor } from "../../editor";
 

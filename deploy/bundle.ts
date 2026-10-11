@@ -1,5 +1,5 @@
-// A release (deploy/release.ts's .site/release/) as one file, the way the
-// builder (deploy/builder/) hands a built commit back to the pipeline: JSON,
+// A release (deploy/release.ts's .build/release/) as one file, the way the
+// builder hands a built commit back to the pipeline: JSON,
 // {index: release.json, files: {"bundle/index.js": base64, ...}}. The
 // pipeline reads it with loadRelease, as /deploy reads the server's own.
 // (deploy/builder/build.ts packs one: packRelease.)

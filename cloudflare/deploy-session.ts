@@ -1,4 +1,4 @@
-// One person's deploy, from /deploy (worker/deploy.ts): a Durable Object per
+// One person's deploy, from /deploy: a Durable Object per
 // session, named by a random id that only their browser has (with a key, in
 // a cookie). It holds their Cloudflare token, sealed (AES-GCM) with a key
 // made from that cookie's key and the server's SESSION_SECRET, so neither
@@ -9,7 +9,7 @@
 //
 // Every call names who's asking (the front door's signed-in login), and only
 // the person who connected may use the session. The deploy itself runs here
-// (deploy/cloudflare.ts) and records each step as it goes; the page polls
+// and records each step as it goes; the page polls
 // `info` to show them.
 
 import { DurableObject } from "cloudflare:workers";

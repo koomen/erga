@@ -1,4 +1,4 @@
-// The editor's side panels' layout (src/page/layout.ts): the arrangement of
+// The editor's side panels' layout: the arrangement of
 // the agent, the document and the steps list, the agent's width and its
 // limits, the slots a dragged panel snaps to (with hysteresis), and what's
 // kept in localStorage.

@@ -1,10 +1,10 @@
-// How people sign in (auth-apps.ts): the live check of a GitHub OAuth app, the
+// How people sign in: the live check of a GitHub OAuth app, the
 // values kept from /admin/auth (encrypted, never answered), the lockout rules
 // (check first, wait for a test sign-in while the app in use works, no clear
-// that stops sign-in), the status the page shows, and sign-in using them
-// (worker/auth.ts, worker/auth-settings.ts), with GitHub and the Durable Object
+// that stops sign-in), the status the page shows, and sign-in using them,
+// with GitHub and the Durable Object
 // stood in for. The routes and staging's guard are tested in the Worker
-// (e2e/staging/auth-*.e2e.ts).
+//.
 
 import { expect, test } from "bun:test";
 import { type AppCheck, type AppContext, type AppValues, AuthApps, AuthError, cachedCheck, checkGithubApp, checkValues, clearApp, discardApp, inUse, saveApp, type SignInChange, statusOf } from "../server/auth";

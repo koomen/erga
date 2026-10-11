@@ -1,4 +1,4 @@
-// The multiplayer suite in real tabs (e2e/suite/suites/browser.ts): the source view follows others' typing.
+// The multiplayer suite in real tabs: the source view follows others' typing.
 import { until } from "./harness";
 import { browserTest, noErrors, openAs, peerNames } from "./suite";
 
