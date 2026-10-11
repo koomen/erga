@@ -20,7 +20,8 @@
 //   GET /api/deploys/version        the health check the deploy pipeline waits on (just the release and target)
 //   /api/deploys/<name>/hook, /api/deploys/status, and /api/deploys/... with DEPLOY_HOOK_SECRET
 //                                   server to server: production passes branch moves on and reads staging's status,
-//                                   logs and history, with the shared secret (cloudflare/branch-deploys.ts checks it)
+//                                   logs and history, and each passes its live events to the other (/api/deploys/events),
+//                                   with the shared secret (cloudflare/branch-deploys.ts checks it)
 //   /api/sign-in/... with DEPLOY_HOOK_SECRET
 //                                   production's Authentication page reads staging's sign-in status, and sets staging's
 //                                   GitHub app: until staging has one, no admin can sign in there

@@ -87,6 +87,7 @@ export const AGENT_ACTIONS: AgentAction[] = [
   { route: "GET /api/deploys/version", domain: "none", action: "The release this server runs", exempt: "the deploy pipeline's, server to server" },
   { route: "GET /api/deploys/status[?history=N]", domain: "none", action: "Another server's deploys", exempt: "the deploy pipeline's, server to server" },
   { route: "POST /api/deploys/<name>/hook", domain: "none", action: "Another server says a branch moved", exempt: "the deploy pipeline's, server to server" },
+  { route: "POST /api/deploys/events", domain: "none", action: "Another server's live events, for the dashboard", exempt: "the deploy pipeline's, server to server: it feeds the dashboard's live updates, which no one asks for in words" },
   { route: "GET /api/sign-in/status", domain: "none", action: "Another server reads this one's sign-in status", exempt: "server to server, with the shared secret (production's Authentication page shows staging's)" },
   { route: "POST /api/sign-in/github", domain: "none", action: "Production's Authentication page sets staging's GitHub app", exempt: "server to server, with the shared secret: the admin's action is POST /admin/auth" },
   { route: "POST /api/snapshot/docs[/import]", domain: "none", action: "Staging copies production's documents", exempt: "the deploy pipeline's, server to server" },

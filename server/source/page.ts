@@ -24,8 +24,14 @@
 // { type: "deploy-log" } events). Merge moves main forward to staging's
 // head, or to the commit a row's "Merge to here" names. Also how to clone and
 // push, and the GitHub mirror's status (beside Merge; a click opens a dialog:
-// the mirror's state and Push now, or how to turn it on). It updates by
-// itself (/api/events) and follows the system's light or dark.
+// the mirror's state and Push now, or how to turn it on). It follows the
+// system's light or dark.
+//
+// It updates by itself, with no reload: /api/events says what changed (a push
+// or a merge, the mirror, each step of a deploy, a redeploy, its log lines),
+// for this server and for Erga's other server too (deploy/relay.ts passes each
+// server's events to the other). Only rows that changed are drawn again, so
+// the scroll, an open log or dialog, and the focus stay.
 
 import { esc, page as plainPage, type Session } from "../routes";
 import { adminResponse } from "../admin/layout";
@@ -211,6 +217,7 @@ const SOURCE_SCRIPT = `
   /** When staging is far ahead of main: how many of its newest commits show above the break, and how many of main's below it. */
   const GAP_TOP = 11, GAP_MAIN = 6;
   let view = null, deploys = null, busy = false, drawn = false;
+  const drawnRows = new WeakMap();
   const grid = document.getElementById("grid");
   const running = (state) => state == "building" || state == "deploying";
   const short = (t) => {
@@ -282,10 +289,12 @@ const SOURCE_SCRIPT = `
       const up = i > 0, down = !!next || x.parents.length > 0, gapAfter = hidden && after.length && i == top.length - 1;
       const title = x.subject + "\\n" + x.sha.slice(0, 10) + " · " + x.author + " · " + new Date(x.at).toLocaleString() + (x.inMain ? " · on main" : " · only on staging");
       const tail = '<span class="who">' + esc(x.author) + '</span><code class="sha">' + x.sha.slice(0, 7) + '</code><time datetime="' + new Date(x.at).toISOString() + '">' + ago(x.at) + "</time>";
-      r.innerHTML =
+      const html =
         '<span class="rail ' + (up ? "up " : "") + (down ? "down " : "") + (x.inMain ? "on-main" : "") + '"><i class="dot ' + kind + '" title="' + (x.inMain ? "On main (and staging)" : "Only on staging") + '"></i></span>' +
         '<span class="subj" title="' + esc(title) + '"><span>' + esc(x.subject) + "</span>" + (x.inMain ? "" : '<button class="here" type="button" data-merge="' + x.sha + '" title="Move main forward to this commit: production deploys it">Merge to here</button>') + "</span>" + tail +
         TARGETS.map((n) => '<span class="deps" data-target="' + n + '">' + deployCell(n, x.sha, groups[n]) + "</span>").join("");
+      // Only a row that changed is drawn again: a button with focus, or under the pointer, stays as it is.
+      if (drawnRows.get(r) != html) { r.innerHTML = html; drawnRows.set(r, html); }
       grid.insertBefore(r, prev ? prev.nextSibling : document.getElementById("target-production").parentElement.nextSibling);
       prev = r;
       if (gapAfter) {
@@ -416,8 +425,8 @@ const SOURCE_SCRIPT = `
     if (lines.length > open.shown) { append(lines.slice(open.shown)); open.shown = lines.length; }
     if (first) pre.scrollTop = pre.scrollHeight;
   }
-  // Live lines come as events only from the server running the deploy (staging's runs on staging's own server):
-  // while the deploy shown runs and no events arrive, ask for the log every two seconds.
+  // Live lines come as events from the server running the deploy, passed on by the other server only while someone
+  // listens there: while the deploy shown runs and no events arrive, ask for the log every two seconds.
   setInterval(() => {
     if (!open || !dlg.open) return;
     const t = targetOf(open.target);
@@ -488,8 +497,8 @@ const SOURCE_SCRIPT = `
   }
   listen();
   load(); loadDeploys();
-  // Events don't tell everything: another server's deploy (erga.dev's page shows staging's, run by staging's server)
-  // sends this page none, and a server that deploys itself cuts the stream and can miss its last change. So while
+  // Events don't tell everything: the other server's events can fail to come (no DEPLOY_HOOK_SECRET, or it doesn't
+  // answer), and a server that deploys itself cuts the stream and can miss its last change. So while
   // a deploy shows running (or the status didn't load) and no event came lately, ask for the status every two seconds.
   setInterval(() => {
     if (asking || Date.now() - heard < 2500) return;

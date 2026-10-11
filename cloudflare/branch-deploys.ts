@@ -17,6 +17,8 @@
 //   GET  /api/deploys/version           anyone: {version}, the release this server runs (the pipeline waits for it)
 //   GET  /api/deploys/status[?history=N] another of Erga's servers (DEPLOY_HOOK_SECRET): this server's own target
 //   POST /api/deploys/<name>/hook       another of Erga's servers (DEPLOY_HOOK_SECRET): {branch, commit} or {redeploy}
+//   POST /api/deploys/events            another of Erga's servers (DEPLOY_HOOK_SECRET): {from, events}, its own events,
+//                                       which this server sends on /api/events (deploy/relay.ts)
 //   POST /api/snapshot/docs[/import]    SNAPSHOT_TOKEN: read documents' storage (any server), write it (staging only)
 //   GET  /admin/deploys                 redirects to /admin/source: the dashboard of source and deploys
 //
@@ -75,6 +77,13 @@ export async function deploysDoor(request: Request, env: Env, base: Platform): P
   if ((logOf || historyOf) && method == "GET" && peer(request, env)) return logOf ? logAnswer(logOf) : historyAnswer(historyOf);
 
   // Server to server: another of Erga's servers, with the shared secret.
+  if (path == "/api/deploys/events") {
+    if (!peer(request, env) || method != "POST") return Response.json({ error: "Not found" }, { status: 404 });
+    const body = (await request.json().catch(() => ({}))) as { from?: unknown; events?: unknown };
+    const events = Array.isArray(body.events) ? body.events.slice(0, 200).filter((e): e is { type: string } => !!e && typeof (e as { type?: unknown }).type == "string") : [];
+    await stub().relayed(typeof body.from == "string" ? body.from.slice(0, 40) : "", events);
+    return Response.json({ ok: true });
+  }
   const [, hookOf] = /^\/api\/deploys\/([a-z]+)\/hook$/.exec(path) ?? [];
   if (path == "/api/deploys/status" || hookOf) {
     if (!peer(request, env)) return Response.json({ error: "Not found" }, { status: 404 });

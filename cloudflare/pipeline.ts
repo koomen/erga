@@ -5,7 +5,9 @@
 // new version finish a deploy its upload interrupted), and the server's
 // event stream (/api/events: {type: "deploys"} on each change, {type:
 // "deploy-log"} with each deploy's new log lines, and whatever else is
-// published here, e.g. task #39's {type: "source"}).
+// published here, e.g. task #39's {type: "source"}). Its own events go to
+// Erga's other servers too (deploy/relay.ts), and theirs come here (`relayed`),
+// so each Source page shows the other server's deploys and moves at once.
 //
 // Each target's deploy history (deploy/branches.ts: the last 100 deploys and
 // their logs) is in this object's storage too, and so are the sign-in values an
@@ -25,6 +27,7 @@ import { BranchDeploys, type DeployEnv, type DeployLog, type DeployRecord, type 
 import { containerBuilder } from "../deploy/builder/client";
 import { loadRelease, type Release } from "../deploy/pipeline";
 import { FLEET_ACCOUNT, MOCK_HOOK_SECRET, MOCK_SNAPSHOT_TOKEN, mockBuilder, mockCloudflare } from "../deploy/mock-cloudflare";
+import { EventRelay, type RelayEvent } from "../deploy/relay";
 import { isTargetName, TARGETS, targetNames, type TargetName } from "../deploy/targets";
 import { keptKeys } from "./d1";
 import type { Env } from "./env";
@@ -37,6 +40,8 @@ export class Pipeline extends DurableObject<Env> {
   private peer: BranchDeploys | null = null;
   private listeners = new Set<WritableStreamDefaultWriter<Uint8Array>>();
   private beat: ReturnType<typeof setInterval> | null = null;
+  /** This server's events to the servers it notifies; none in the mock, where the other server's are already here. */
+  private relay: EventRelay | null = null;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -93,6 +98,13 @@ export class Pipeline extends DurableObject<Env> {
     });
     this.deploys = make(env.DEPLOY_TARGET, "");
     if (peerName) this.peer = make(peerName, "peer:");
+    const secret = env.DEPLOY_HOOK_SECRET?.trim();
+    if (!mock && secret && isTargetName(self)) {
+      this.relay = new EventRelay({
+        peers: (TARGETS[self].notifies ?? []).filter(isTargetName),
+        send: (peer, events) => fetch(`https://${TARGETS[peer].host}/api/deploys/events`, { method: "POST", headers: { Authorization: `Bearer ${secret}`, "Content-Type": "application/json" }, body: JSON.stringify({ from: self, events }) }).then((r) => r.body?.cancel()),
+      });
+    }
   }
 
   /** The mock's other server, at its host: what deploysDoor answers another of Erga's servers. */
@@ -125,10 +137,20 @@ export class Pipeline extends DurableObject<Env> {
   authPut(key: string, value: unknown): Promise<void> { return this.ctx.storage.put(key, value); }
   async authDelete(key: string): Promise<void> { await this.ctx.storage.delete(key); }
 
-  /** An event to everyone listening on /api/events. */
-  publish(event: { type: string } & Record<string, unknown>): void {
+  /** An event to everyone listening on /api/events, and to Erga's other servers. */
+  publish(event: RelayEvent): void {
+    this.send(event);
+    this.relay?.push(event);
+  }
+
+  private send(event: RelayEvent): void {
     const bytes = new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`);
     for (const w of this.listeners) w.write(bytes).catch(() => this.listeners.delete(w));
+  }
+
+  /** Another of Erga's servers' events (POST /api/deploys/events): to this server's listeners only, never passed on. */
+  relayed(from: string, events: RelayEvent[]): void {
+    for (const e of events) if (e && typeof e.type == "string") this.send({ ...e, from });
   }
 
   /** A redeploy with options (POST /api/deploys/<name> {fresh: true}): staging with a fresh copy of production's data. */
